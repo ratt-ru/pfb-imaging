@@ -2,6 +2,8 @@ import numpy as np
 from numba import njit, prange
 from scipy.linalg import norm, svd
 
+
+
 def pcg(A, b, x0, M=None, tol=1e-5, maxit=500, verbosity=1, report_freq=10):
     
     if M is None:
@@ -260,7 +262,8 @@ def hpd(A, b,
 
         # l21 dual update
         r21 = v21 + xtmp
-        l2norm = norm(r21, axis=0)
+        #l2norm = norm(r21, axis=0)
+        l2norm = np.mean(r21, axis=0)
         l2_soft = np.maximum(np.abs(l2norm) - gamma_21 * sig_21, 0.0) * np.sign(l2norm)
         indices = np.nonzero(l2norm)
         ratio = np.zeros(l2norm.shape, dtype=np.float64)
