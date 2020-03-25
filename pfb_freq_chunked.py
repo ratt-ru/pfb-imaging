@@ -12,7 +12,7 @@ from scipy.fftpack import next_fast_len
 from time import time
 import argparse
 from astropy.io import fits
-from utils import concat_ms_to_I_tbl, str2bool, robust_reweight
+from utils import concat_ms_to_I_tbl, str2bool, robust_reweight, set_wcs
 from operators import OutMemGridder, PSF, Prior
 
 def create_parser():
@@ -78,7 +78,7 @@ def create_parser():
                    help="Name of table to load concatenated STokes I vis from")
     return p
 
-def main(args, table_name, freq):
+def main(args, table_name, freq, radec):
 
     uvw = xds_from_table(table_name, columns=('UVW'), chunks={'row':-1})[0].UVW.compute()
 
@@ -116,9 +116,9 @@ def main(args, table_name, freq):
     R = OutMemGridder(table_name, freq, args)
     freq_out = R.freq_out
 
-    # TODO - set WCS for header
-    hdu = fits.PrimaryHDU()
-    hdr = hdu.header
+    # get headers
+    hdr = set_wcs(args.cell_size/3600, args.cell_size/3600, args.nx, args.ny, radec, freq_out)
+    hdr_mfs = set_wcs(args.cell_size/3600, args.cell_size/3600, args.nx, args.ny, radec, np.mean(freq_out))
     
     # check for cached dirty and psf
     dirty_cache_name = args.outfile + args.outname + "_dirty_cache.npz"
@@ -147,7 +147,6 @@ def main(args, table_name, freq):
         hdu.data = np.transpose(dirty/psf_max[:, None, None], axes=(0, 2, 1))[:, ::-1].astype(np.float32)
         hdu.writeto(args.outfile + args.outname + '_dirty.fits', overwrite=True)
 
-
         psf_crop = np.ascontiguousarray(psf_array[:, args.nx//2:-(args.nx//2), args.ny//2:-(args.ny//2)])
         hdu = fits.PrimaryHDU(header=hdr)
         hdu.data = np.transpose(psf_crop/psf_max[:, None, None], axes=(0, 2, 1))[:, ::-1].astype(np.float32)
@@ -155,10 +154,6 @@ def main(args, table_name, freq):
         del psf_crop
 
     wsum = np.sum(psf_max)
-
-    print(dirty.max())
-
-    quit()
 
     # load in previous result
     result_cache_name = args.outfile + args.outname + "_result_cache.npz"
@@ -268,7 +263,7 @@ def main(args, table_name, freq):
             hdu.writeto(args.outfile + args.outname + str(i) + '.fits', overwrite=True)
 
             mfs_model = np.mean(model, axis=0)
-            hdu = fits.PrimaryHDU(header=hdr)
+            hdu = fits.PrimaryHDU(header=hdr_mfs)
             hdu.data = mfs_model.T[::-1].astype(np.float32)
             hdu.writeto(args.outfile + args.outname + str(i) + '_model_mfs.fits', overwrite=True)
 
@@ -281,7 +276,7 @@ def main(args, table_name, freq):
             hdu.writeto(args.outfile + args.outname + str(i) + '_residual.fits', overwrite=True)
 
             mfs_residual = np.sum(residual, axis=0)/wsum
-            hdu = fits.PrimaryHDU(header=hdr)
+            hdu = fits.PrimaryHDU(header=hdr_mfs)
             hdu.data = mfs_residual.T[::-1].astype(np.float32)
             hdu.writeto(args.outfile + args.outname + str(i) + '_residual_mfs.fits', overwrite=True)
 
@@ -289,7 +284,7 @@ def main(args, table_name, freq):
         print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i, rmax, rms, eps))
 
     # cache results so we can resume if needs be
-    np.savez(result_cache_name, model=model, psf=psf_array, dirty=dirty, L=L, residual=residual, sigma0=sigma0)
+    np.savez(result_cache_name, model=model, L=L, residual=residual, sigma0=sigma0)
 
     if args.make_restored:
         # get the (flat) Wiener filter soln
@@ -297,9 +292,9 @@ def main(args, table_name, freq):
                       positivity=False, tol=args.cgtol, maxit=args.cgmaxit)
         x = K.sqrtdot(xi)
         # x = pcg(A, residual, x, M=K.dot, tol=1e-10, maxit=args.cgmaxit)
-        model += x
+        restored = model + x
         # get residual
-        residual = R.make_residual(model)
+        residual = R.make_residual(restored)
 
         rmax = np.abs(residual/psf_max[:, None, None]).max()
         rms = np.std(residual/psf_max[:, None, None])
@@ -308,11 +303,11 @@ def main(args, table_name, freq):
 
         # save current iteration
         hdu = fits.PrimaryHDU(header=hdr)
-        hdu.data = np.transpose(model, axes=(0, 2, 1))[:, ::-1].astype(np.float32)
+        hdu.data = np.transpose(restored, axes=(0, 2, 1))[:, ::-1].astype(np.float32)
         hdu.writeto(args.outfile + args.outname + '_restored.fits', overwrite=True)
 
-        mfs_restored = np.mean(model, axis=0)
-        hdu = fits.PrimaryHDU(header=hdr)
+        mfs_restored = np.mean(restored, axis=0)
+        hdu = fits.PrimaryHDU(header=hdr_mfs)
         hdu.data = mfs_restored.T[::-1].astype(np.float32)
         hdu.writeto(args.outfile + args.outname + '_restored_mfs.fits', overwrite=True)
 
@@ -321,7 +316,7 @@ def main(args, table_name, freq):
         hdu.writeto(args.outfile + args.outname + '_restored_residual.fits', overwrite=True)
 
         mfs_residual = np.sum(residual, axis=0)/wsum
-        hdu = fits.PrimaryHDU(header=hdr)
+        hdu = fits.PrimaryHDU(header=hdr_mfs)
         hdu.data = mfs_residual.T[::-1].astype(np.float32)
         hdu.writeto(args.outfile + args.outname + '_restored_residual_mfs.fits', overwrite=True)
 
@@ -354,7 +349,17 @@ if __name__=="__main__":
     
     # try to open concatenated Stokes I table if it exists otherwise create it
     table_name = args.outfile + args.outname + ".table"
-    print("Preparing data")
-    freq = concat_ms_to_I_tbl(args.ms, table_name)
-    print("Done")
-    main(args, table_name, freq)
+    try:
+        tbl = xds_from_table(table_name)
+        tbl.close()
+        freq = xds_from_table(args.ms[0] + '::SPECTRAL_WINDOW')[0].CHAN_FREQ.data.compute()[0]
+        radec = xds_from_table(args.ms[0] + 'FIELD')[0].PHASE_DIR.data.compute()
+        print("Successfully loaded cached data at %s"%table_name)
+    except:
+        print("%s does not exist or is invalid. Computing Stokes I visibilities."%table_name)
+        # import subprocess
+        # subprocess.run("rm -r %s"%table_name)
+        freq, radec = concat_ms_to_I_tbl(args.ms, table_name)
+        
+    
+    main(args, table_name, freq, radec)

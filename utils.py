@@ -8,6 +8,7 @@ from daskms import xds_from_ms, xds_from_table, xds_to_table, Dataset
 from pyrap.tables import table
 from numpy.testing import assert_array_equal
 from time import time
+from astropy.wcs import WCS
 
 @njit(parallel=True, nogil=True, cache=True, fastmath=True, inline='always')
 def freqmul(A, x):
@@ -168,12 +169,19 @@ def concat_ms_to_I_tbl(ms, outname, cols=["DATA", "WEIGHT", "UVW"]):
     """
     # Currently MS's need to have the same frequencies and only a single spw
     freq = None
+    radec = None
     for ims in ms:
         if freq is None:
             freq = xds_from_table(ims + '::SPECTRAL_WINDOW')[0].CHAN_FREQ.data.compute()[0]
         else:
             tmpfreq = xds_from_table(ims + '::SPECTRAL_WINDOW')[0].CHAN_FREQ.data.compute()[0]
             assert_array_equal(freq, tmpfreq)
+
+        if radec is None:
+            radec = xds_from_table(ims + '::FIELD')[0].PHASE_DIR.data.compute()[0].squeeze()
+        else:
+            tmpradec = xds_from_table(ims + '::FIELD')[0].PHASE_DIR.data.compute()[0].squeeze()
+            assert_array_equal(radec, tmpradec)
     nchan = freq.size
 
     # convert to Stokes I vis and concatenate
@@ -223,5 +231,33 @@ def concat_ms_to_I_tbl(ms, outname, cols=["DATA", "WEIGHT", "UVW"]):
     writes = xds_to_table([Dataset(data_vars)], outname, "ALL")
     dask.compute(writes)
 
-    return freq
+    return freq, radec
 
+
+def set_wcs(cell_x, cell_y, nx, ny, radec, freq):
+
+    w = WCS(naxis=4)
+    w.wcs.ctype = ['RA---SIN','DEC--SIN','STOKES','FREQ']
+    w.wcs.cdelt[0] = -cell_x/3600.0
+    w.wcs.cdelt[1] = cell_y/3600.0
+    w.wcs.cdelt[2] = 1
+    w.wcs.cunit = ['deg','deg','','Hz']
+    w.wcs.crval = [radec[0]*180.0/np.pi,radec[1]*180.0/np.pi,0.0, 0.0]
+    w.wcs.crpix = [1 + nx//2,1 + ny//2,1,1]
+
+    if freq.size > 1:
+        w.wcs.crval[3] = freq[0]
+        df = freq[1]-freq[0]
+        w.wcs.cdelt[3] = df
+        fmean = np.mean(freq)
+    else:
+        fmean = freq
+
+    header = w.to_header()
+    header['RESTFRQ'] = fmean
+    header['ORIGIN'] = 'pfb-clean'
+    header['BTYPE'] = 'Intensity'
+    header['BUNIT'] = 'Jy/beam'
+    header['SPECSYS'] = 'TOPOCENT'
+
+    return header

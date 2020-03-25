@@ -190,10 +190,6 @@ def main(args, ddict):
             test_convolve(R, psf, args)
     
     wsum = np.sum(psf_max) # to normalise mfs results
-
-    print(dirty.max())
-
-    quit()
     
     # load in previous result
     result_hash = ''

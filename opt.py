@@ -2,6 +2,8 @@ import numpy as np
 from numba import njit, prange
 from scipy.linalg import norm, svd
 
+
+
 def pcg(A, b, x0, M=None, tol=1e-5, maxit=500, verbosity=1, report_freq=10):
     
     if M is None:
@@ -73,7 +75,7 @@ def solve_x0(A, b, x0, y0, L, sigma0, tol=1e-4, maxit=500, positivity=False, rep
     k = 0
     t = 1.0
     gradn = A(x) - b
-    likn = np.vdot(x, gradn)
+    likn = np.vdot(x, gradn) - np.vdot(x, b)
     while eps > tol and k < maxit:
         # gradient decent update
         xold = x.copy()
@@ -86,7 +88,7 @@ def solve_x0(A, b, x0, y0, L, sigma0, tol=1e-4, maxit=500, positivity=False, rep
             tmp[tmp<0.0] = 0.0
         x = tmp/(1 + sigma0/L)
         gradn = A(x) - b 
-        likn = np.vdot(x, gradn)
+        likn = np.vdot(x, gradn) - np.vdot(x, b)
         flam = back_track_func(x, xold, gradp, likp, L)
         # if likn > flam:
         while likn > flam:
@@ -97,7 +99,7 @@ def solve_x0(A, b, x0, y0, L, sigma0, tol=1e-4, maxit=500, positivity=False, rep
                 tmp[tmp<0.0] = 0.0
             x = tmp/(1 + sigma0/L)
             gradn = A(x) - b 
-            likn = np.vdot(x, gradn)
+            likn = np.vdot(x, gradn) - np.vdot(x, b)
             flam = back_track_func(x, xold, gradp, likp, L)
         # else:
         #     L /= 1.2
@@ -138,7 +140,8 @@ def fista(A, b, x0, y0, L, lam, K, tol=1e-5, maxit=300, positivity=True):
     eps = 1.0
     k = 0
     gradn = A(b - x)
-    likn = np.vdot(b-x, gradn)
+    likn = np.vdot(b-x, gradn)  - np.vdot(x, b)
+    Ky = lambda x: K.idot(x)/L + x
     while eps > tol and k < maxit:
         # gradient decent update
         xold = x.copy()
@@ -147,21 +150,38 @@ def fista(A, b, x0, y0, L, lam, K, tol=1e-5, maxit=300, positivity=True):
 
         #z += A(b-x)/L
         
-        # l1 threshold
-        x = np.maximum(np.abs(y + gradp/L) - lam/L, 0.0) * np.sign(y + gradp/L)
+        # gradient update
+        tmp = y - gradp/L 
         if positivity:
-            x[x<0] = 0.0
+            tmp[tmp<0.0] = 0.0
+
+        # l1
+        x = np.maximum(tmp - lam/L, 0.0)
+
+        # l2
+        x = pcg(Ky, x, xold, M=K.dot, tol=tol, maxit=100)
+
         gradn = A(b - x)
-        likn = np.vdot(x, gradn)
+        likn = np.vdot(x, gradn) - np.vdot(x, b)
         flam = back_track_func(x, xold, gradp, likp, L)
         while likn > flam:
             # print("Step size too large, adjusting L")
             L *= 1.5
-            x = np.maximum(np.abs(y + gradp/L) - lam/L, 0.0) * np.sign(y + gradp/L)
+            Ky = lambda x: K.idot(x)/L + x
+
+             # gradient update
+            tmp = y - gradp/L 
             if positivity:
-                x[x<0] = 0.0
+                tmp[tmp<0.0] = 0.0
+
+            # l1
+            x = np.maximum(tmp - lam/L, 0.0)
+
+            # l2
+            x = pcg(Ky, x, xold, M=K.dot, tol=tol, maxit=100)
+            
             gradn = A(b - x)
-            likn = np.vdot(b-x, gradn)
+            likn = np.vdot(b-x, gradn) - np.vdot(x, b)
             flam = back_track_func(x, xold, gradp, likp, L)
             
         # fista update
@@ -261,6 +281,7 @@ def hpd(A, b,
         # l21 dual update
         r21 = v21 + xtmp
         l2norm = norm(r21, axis=0)
+        # l2norm = np.mean(r21, axis=0)
         l2_soft = np.maximum(np.abs(l2norm) - gamma_21 * sig_21, 0.0) * np.sign(l2norm)
         indices = np.nonzero(l2norm)
         ratio = np.zeros(l2norm.shape, dtype=np.float64)
