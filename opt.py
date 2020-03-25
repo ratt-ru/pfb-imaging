@@ -123,7 +123,7 @@ def solve_x0(A, b, x0, y0, L, sigma0, tol=1e-4, maxit=500, positivity=False, rep
         print("PG - Success, converged after %i iterations"%k)
     return x, y, L
 
-def fista(A, b, x0, L, lam, tol=1e-5, maxit=3000, positivity=True):
+def fista(A, b, x0, y0, L, lam, K, tol=1e-5, maxit=300, positivity=True):
     """
     Fast Iterative Shrinkage Thresholding Algorithm for problems of the form
 
@@ -134,7 +134,7 @@ def fista(A, b, x0, L, lam, tol=1e-5, maxit=3000, positivity=True):
     """
     t = 1
     x = x0.copy()
-    y = x0.copy()
+    y = y0.copy()
     eps = 1.0
     k = 0
     gradn = A(b - x)

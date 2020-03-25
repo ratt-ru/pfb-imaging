@@ -156,6 +156,10 @@ def main(args, table_name, freq):
 
     wsum = np.sum(psf_max)
 
+    print(dirty.max())
+
+    quit()
+
     # load in previous result
     result_cache_name = args.outfile + args.outname + "_result_cache.npz"
     try:
@@ -350,6 +354,7 @@ if __name__=="__main__":
     
     # try to open concatenated Stokes I table if it exists otherwise create it
     table_name = args.outfile + args.outname + ".table"
+    print("Preparing data")
     freq = concat_ms_to_I_tbl(args.ms, table_name)
-    
+    print("Done")
     main(args, table_name, freq)

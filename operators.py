@@ -116,7 +116,7 @@ class OutMemGridder(object):
             Ihigh = self.freq_mapping[i+1]
             weighti = weights.blocks[:, i].compute().astype(np.float64)
             datai = data.blocks[:, i].compute().astype(np.complex128)
-            residual_vis = datai - ng.dirty2ms(uvw=uvw, freq=self.freq[Ilow:Ihigh], dirty=x[i], wgt=weighti,
+            residual_vis = weighti * datai - ng.dirty2ms(uvw=uvw, freq=self.freq[Ilow:Ihigh], dirty=x[i], wgt=weighti,
                                                pixsize_x=self.cell, pixsize_y=self.cell, epsilon=self.precision,
                                                nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
             # # recompute weights for band
@@ -140,7 +140,7 @@ class OutMemGridder(object):
             Ihigh = self.freq_mapping[i+1]
             weighti = weights.blocks[:, i].compute().astype(np.float64)
             datai = data.blocks[:, i].compute().astype(np.complex128)
-            dirty[i] = ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=datai, wgt=weighti,
+            dirty[i] = ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=weighti*datai, wgt=weighti,
                                    npix_x=self.nx, npix_y=self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
                                    epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
         return dirty

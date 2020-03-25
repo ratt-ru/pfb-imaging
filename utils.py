@@ -7,6 +7,7 @@ import dask.array as da
 from daskms import xds_from_ms, xds_from_table, xds_to_table, Dataset
 from pyrap.tables import table
 from numpy.testing import assert_array_equal
+from time import time
 
 @njit(parallel=True, nogil=True, cache=True, fastmath=True, inline='always')
 def freqmul(A, x):
@@ -121,7 +122,7 @@ def init_data(args):
         data = np.where(~flags, data, 0.0j)
         weight = np.where(~flags, weight, 0.0)
         nrow = np.sum(~flags)
-        freq = xds_from_table(ims + '::SPECTRAL_WINDOW')[0].CHAN_FREQ.data.compute()
+        freq = xds_from_table(ms_name + '::SPECTRAL_WINDOW')[0].CHAN_FREQ.data.compute().squeeze()
         if freqp is not None:
             try:
                 assert np.array_equal(freqp, freq)
@@ -202,7 +203,7 @@ def concat_ms_to_I_tbl(ms, outname, cols=["DATA", "WEIGHT", "UVW"]):
         flag_I = (flag[:, :, 0] | flag[:, :, ncorr-1])
 
         
-        weight_I = da.where(~flag_I, weight_I, 0.0)
+        weight_I = da.where(~flag_I, da.sqrt(weight_I), 0.0)
         data_I = da.where(~flag_I, data_I, 0.0j)
 
         dataf.append(data_I)

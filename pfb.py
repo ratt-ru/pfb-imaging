@@ -106,6 +106,7 @@ def main(args, ddict):
     from africanus.constants import c as lightspeed
     u_max = np.abs(uvw[:, 0]).max()
     v_max = np.abs(uvw[:, 1]).max()
+    
     uv_max = np.maximum(u_max, v_max)
     cell_N = 1.0/(2*uv_max*freq.max()/lightspeed)
 
@@ -118,16 +119,18 @@ def main(args, ddict):
         print("Cell size set to %5.5e arcseconds" % args.cell_size)
     
     if args.nx is None:
-        nx = int(args.fov/args.cell_size)
+        fov = args.fov*3600
+        nx = int(fov/args.cell_size)
         from scipy.fftpack import next_fast_len
         args.nx = next_fast_len(nx)
 
     if args.ny is None:
-        ny = int(args.fov/args.cell_size)
+        fov = args.fov*3600
+        ny = int(fov/args.cell_size)
         from scipy.fftpack import next_fast_len
         args.ny = next_fast_len(ny)
 
-    print("Image size set to (%i, %i)"%(args.nx, args.ny))
+    print("Image size set to (%i, %i, %i)"%(args.channels_out, args.nx, args.ny))
 
     # init gridder
     R = Gridder(uvw, freq, sqrtW, args)
@@ -187,6 +190,10 @@ def main(args, ddict):
             test_convolve(R, psf, args)
     
     wsum = np.sum(psf_max) # to normalise mfs results
+
+    print(dirty.max())
+
+    quit()
     
     # load in previous result
     result_hash = ''
