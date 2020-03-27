@@ -236,19 +236,19 @@ def concat_ms_to_I_tbl(ms, outname, cols=["DATA", "WEIGHT", "UVW"]):
 
 def set_wcs(cell_x, cell_y, nx, ny, radec, freq):
 
-    w = WCS(naxis=4)
-    w.wcs.ctype = ['RA---SIN','DEC--SIN','STOKES','FREQ']
+    w = WCS(naxis=3)
+    w.wcs.ctype = ['RA---SIN','DEC--SIN','FREQ']
     w.wcs.cdelt[0] = -cell_x/3600.0
     w.wcs.cdelt[1] = cell_y/3600.0
-    w.wcs.cdelt[2] = 1
-    w.wcs.cunit = ['deg','deg','','Hz']
-    w.wcs.crval = [radec[0]*180.0/np.pi,radec[1]*180.0/np.pi,0.0, 0.0]
-    w.wcs.crpix = [1 + nx//2,1 + ny//2,1,1]
+    # w.wcs.cdelt[2] = 1
+    w.wcs.cunit = ['deg','deg','Hz']
+    w.wcs.crval = [radec[0]*180.0/np.pi,radec[1]*180.0/np.pi, 0.0]
+    w.wcs.crpix = [1 + nx//2,1 + ny//2, 1]
 
     if freq.size > 1:
-        w.wcs.crval[3] = freq[0]
+        w.wcs.crval[2] = freq[0]
         df = freq[1]-freq[0]
-        w.wcs.cdelt[3] = df
+        w.wcs.cdelt[2] = df
         fmean = np.mean(freq)
     else:
         fmean = freq
@@ -259,5 +259,8 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq):
     header['BTYPE'] = 'Intensity'
     header['BUNIT'] = 'Jy/beam'
     header['SPECSYS'] = 'TOPOCENT'
+
+    # for key in header.keys():
+    #     print(header[key])
 
     return header

@@ -125,7 +125,7 @@ def solve_x0(A, b, x0, y0, L, sigma0, tol=1e-4, maxit=500, positivity=False, rep
         print("PG - Success, converged after %i iterations"%k)
     return x, y, L
 
-def fista(A, b, x0, y0, L, lam, K, tol=1e-5, maxit=300, positivity=True):
+def fista(A, b, x0, y0, L, sigma0, lam, tol=1e-5, maxit=300, positivity=True):
     """
     Fast Iterative Shrinkage Thresholding Algorithm for problems of the form
 
@@ -134,81 +134,92 @@ def fista(A, b, x0, y0, L, lam, K, tol=1e-5, maxit=300, positivity=True):
     An additional positivity constraint can also be applied
 
     """
-    t = 1
+    t = 1.0
     x = x0.copy()
+    nchan, nx, ny = x.shape
     y = y0.copy()
     eps = 1.0
     k = 0
-    gradn = A(b - x)
-    likn = np.vdot(b-x, gradn)  - np.vdot(x, b)
-    Ky = lambda x: K.idot(x)/L + x
-    while eps > tol and k < maxit:
+    gradn = A(x) - b
+    likn = np.vdot(x, gradn) - np.vdot(x, b)
+    for k in range(maxit):
         # gradient decent update
         xold = x.copy()
         gradp = gradn
         likp = likn
-
-        #z += A(b-x)/L
         
         # gradient update
-        tmp = y - gradp/L 
-        if positivity:
-            tmp[tmp<0.0] = 0.0
+        x = y - gradp/L 
 
-        # l1
-        x = np.maximum(tmp - lam/L, 0.0)
+        if positivity:
+            x[x<0.0] = 0.0
+
+        # l21
+        l2norm = norm(x.reshape(nchan, nx*ny), axis=0)
+        l2_soft = np.maximum(np.abs(l2norm) - lam/L, 0.0) * np.sign(l2norm)
+        indices = np.nonzero(l2norm)
+        ratio = np.zeros(l2norm.shape, dtype=np.float64)
+        ratio[indices] = l2_soft[indices]/l2norm[indices]
+        x *= ratio.reshape(1, nx, ny)
 
         # l2
-        x = pcg(Ky, x, xold, M=K.dot, tol=tol, maxit=100)
+        x /= (1 + sigma0/L)
 
-        gradn = A(b - x)
+        # check convergence criteria
+        normx = norm(x)
+        if np.isnan(normx) or normx == 0.0:
+            normx = 1.0
+        eps = norm(x - xold)/normx
+        if eps <= tol:
+            break
+
+        gradn = A(x) - b
         likn = np.vdot(x, gradn) - np.vdot(x, b)
         flam = back_track_func(x, xold, gradp, likp, L)
         while likn > flam:
-            # print("Step size too large, adjusting L")
             L *= 1.5
-            Ky = lambda x: K.idot(x)/L + x
+            print("Step size too large, adjusting L", L)
 
              # gradient update
-            tmp = y - gradp/L 
-            if positivity:
-                tmp[tmp<0.0] = 0.0
+            x = y - gradp/L 
 
-            # l1
-            x = np.maximum(tmp - lam/L, 0.0)
+            if positivity:
+                x[x<0.0] = 0.0
+
+            # l21
+            l2norm = norm(x.reshape(nchan, nx*ny), axis=0)
+            l2_soft = np.maximum(np.abs(l2norm) - lam/L, 0.0) * np.sign(l2norm)
+            indices = np.nonzero(l2norm)
+            ratio = np.zeros(l2norm.shape, dtype=np.float64)
+            ratio[indices] = l2_soft[indices]/l2norm[indices]
+            x *= ratio.reshape(1, nx, ny)
 
             # l2
-            x = pcg(Ky, x, xold, M=K.dot, tol=tol, maxit=100)
-            
-            gradn = A(b - x)
-            likn = np.vdot(b-x, gradn) - np.vdot(x, b)
+            x /= (1 + sigma0/L)
+
+            gradn = A(x) - b
+            likn = np.vdot(x, gradn) - np.vdot(x, b)
             flam = back_track_func(x, xold, gradp, likp, L)
             
         # fista update
         tp = t
         t = (1. + np.sqrt(1. + 4 * tp**2))/2.
-
-        # soln update
         y = x + (tp - 1)/t * (x - xold)
-
-        # check convergence criteria
-        eps = norm(x - xold)/norm(x)
 
         if not k%10:
             print("At iteration %i eps = %f and current stepsize is %f"%(k, eps, L))
 
-        k += 1
-
-    if k >= maxit:
+    if k == maxit-1:
         print("FISTA - Maximum iterations reached. Relative difference between updates = ", eps)
     else:
         print("FISTA - Success, converged after %i iterations"%k)
-    return x
+    return x, y, L
 
 def hpd(A, b, 
         x0, v210, vn0,  # initial guess for primal and dual variables 
         L, nu21, nun,  # spectral norm 
         sig_21, sig_n, # regulariser strengths
+        weights_21, weights_n,
         gamma_21, gamma_n,  # step sizes
         lam_21, lam_n, lam_p,  # extrapolation
         tol=1e-3, maxit=1000, positivity=True, report_freq=10):
@@ -275,14 +286,13 @@ def hpd(A, b,
 
         # Nuclear dual update
         U, s, Vh = svd(vn + xtmp, full_matrices=False)
-        s = np.maximum(np.abs(s) - gamma_n * sig_n, 0.0) * np.sign(s)
+        s = np.maximum(np.abs(s) - gamma_n * sig_n * weights_n, 0.0) * np.sign(s)
         vn = vn + lam_n*(xtmp - U.dot(s[:, None] * Vh))
 
         # l21 dual update
         r21 = v21 + xtmp
         l2norm = norm(r21, axis=0)
-        # l2norm = np.mean(r21, axis=0)
-        l2_soft = np.maximum(np.abs(l2norm) - gamma_21 * sig_21, 0.0) * np.sign(l2norm)
+        l2_soft = np.maximum(np.abs(l2norm) - gamma_21 * sig_21 * weights_21, 0.0) * np.sign(l2norm)
         indices = np.nonzero(l2norm)
         ratio = np.zeros(l2norm.shape, dtype=np.float64)
         ratio[indices] = l2_soft[indices]/l2norm[indices]
