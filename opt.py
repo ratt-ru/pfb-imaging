@@ -139,7 +139,6 @@ def fista(A, b, x0, y0, L, sigma0, lam, tol=1e-5, maxit=300, positivity=True):
     nchan, nx, ny = x.shape
     y = y0.copy()
     eps = 1.0
-    k = 0
     gradn = A(x) - b
     likn = np.vdot(x, gradn) - np.vdot(x, b)
     for k in range(maxit):
@@ -156,7 +155,7 @@ def fista(A, b, x0, y0, L, sigma0, lam, tol=1e-5, maxit=300, positivity=True):
 
         # l21
         l2norm = norm(x.reshape(nchan, nx*ny), axis=0)
-        l2_soft = np.maximum(np.abs(l2norm) - lam/L, 0.0) * np.sign(l2norm)
+        l2_soft = np.maximum(l2norm - lam/L, 0.0)
         indices = np.nonzero(l2norm)
         ratio = np.zeros(l2norm.shape, dtype=np.float64)
         ratio[indices] = l2_soft[indices]/l2norm[indices]
@@ -188,7 +187,7 @@ def fista(A, b, x0, y0, L, sigma0, lam, tol=1e-5, maxit=300, positivity=True):
 
             # l21
             l2norm = norm(x.reshape(nchan, nx*ny), axis=0)
-            l2_soft = np.maximum(np.abs(l2norm) - lam/L, 0.0) * np.sign(l2norm)
+            l2_soft = np.maximum(l2norm - lam/L, 0.0)
             indices = np.nonzero(l2norm)
             ratio = np.zeros(l2norm.shape, dtype=np.float64)
             ratio[indices] = l2_soft[indices]/l2norm[indices]
@@ -207,13 +206,14 @@ def fista(A, b, x0, y0, L, sigma0, lam, tol=1e-5, maxit=300, positivity=True):
         y = x + (tp - 1)/t * (x - xold)
 
         if not k%10:
-            print("At iteration %i eps = %f and current stepsize is %f"%(k, eps, L))
+            print("At iteration %i: eps = %f, L = %f, lambda = %f"%(k, eps, L, (tp - 1)/t))
 
     if k == maxit-1:
         print("FISTA - Maximum iterations reached. Relative difference between updates = ", eps)
     else:
         print("FISTA - Success, converged after %i iterations"%k)
     return x, y, L
+
 
 def hpd(A, b, 
         x0, v210, vn0,  # initial guess for primal and dual variables 

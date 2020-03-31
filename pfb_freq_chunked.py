@@ -158,6 +158,11 @@ def main(args, table_name, freq, radec):
         del psf_crop
 
     wsum = np.sum(psf_max)
+    dirty_mfs = np.sum(dirty, axis=0)/wsum 
+    rmax = np.abs(dirty_mfs).max()
+    rms = np.std(dirty_mfs)
+    print("Peak of dirty is %f and rms is %f"%(rmax, rms))       
+
 
     # load in previous result
     result_cache_name = args.outfile + args.outname + "_result_cache.npz"
@@ -169,14 +174,14 @@ def main(args, table_name, freq, radec):
         L = rdict['L']
         # dual = rdict['dual']
         # weights_l1 = rdict['weights_l1']
-        sigma0 = rdict['sigma0']
+        # sigma0 = rdict['sigma0']
         
-        # set prior
-        l = 0.25 * (freq_out.max() - freq_out.min())/np.mean(freq_out)  # length scale in terms of fractional bandwidth
-        print("Length scale set to ", l)
-        K = Prior(freq_out, sigma0, l, args.nx, args.ny)
-        def op(x):  # used for stabalised updates
-            return K.sqrthdot(psf.convolve(K.sqrtdot(x)))
+        # # set prior
+        # l = 0.25 * (freq_out.max() - freq_out.min())/np.mean(freq_out)  # length scale in terms of fractional bandwidth
+        # print("Length scale set to ", l)
+        # K = Prior(freq_out, sigma0, l, args.nx, args.ny)
+        def op(x):  
+            return psf.convolve(x)
         
         print(" L = %5.5e "%L)
     except:
@@ -203,9 +208,7 @@ def main(args, table_name, freq, radec):
         #                       np.zeros_like(dirty), np.zeros_like(dirty), 
         #                       L, 1.0, maxit=2*args.cgmaxit, positivity=True)
         # model = K.sqrtdot(soln)
-        dirty_mfs = np.sum(dirty, axis=0)/wsum
-        rmax = np.abs(dirty_mfs).max()
-        rms = np.std(dirty_mfs)
+        
         model, _, _ = fista(op, dirty, 
                             np.zeros_like(dirty), np.zeros_like(dirty), 
                             L, args.sig_l2, 1e-3*rmax*L, tol=args.cgtol, maxit=args.cgmaxit, positivity=args.positivity)
@@ -235,7 +238,7 @@ def main(args, table_name, freq, radec):
     i = 0
     rms = np.std(residual/psf_max[:, None, None])
     # v_dof = 5.0
-    reweight_iters = [3, 4, 5, 6]
+    reweight_iters = [5, 6, 7, 8]
     reweight_alpha = 0.05
     reweight_alpha_ff = 0.5
     weights_l21 = np.ones(args.nx * args.ny, dtype=np.float64)
@@ -258,15 +261,15 @@ def main(args, table_name, freq, radec):
         modelp = model
         model = modelp + x
 
-        norm21 = la.norm(model.reshape(nband, args.nx*args.ny), axis=0)
-        indices = np.nonzero(norm21)
-        _, sig_l21 = laplace.fit(np.append(norm21[indices], -norm21[indices]))
+        # norm21 = la.norm(model.reshape(nband, args.nx*args.ny), axis=0)
+        # indices = np.nonzero(norm21)
+        # _, sig_l21 = laplace.fit(np.append(norm21[indices], -norm21[indices]))
 
-        _, s, _ = la.svd(model.reshape(nband, args.nx*args.ny), full_matrices=False)
-        _, sig_n = laplace.fit(np.append(s, -s))
+        # _, s, _ = la.svd(model.reshape(nband, args.nx*args.ny), full_matrices=False)
+        # _, sig_n = laplace.fit(np.append(s, -s))
 
-        indices = np.nonzero(x)
-        sig_l2 = 1.0/(0.25 + np.var(x[indices].flatten()))
+        # indices = np.nonzero(x)
+        # sig_l2 = 1.0/(0.25 + np.var(x[indices].flatten()))
 
         print("Prior parameters: sig2 = %f, sig21 = %f and sign = %f"%(sig_l2, sig_l21, sig_n))
 
@@ -329,7 +332,7 @@ def main(args, table_name, freq, radec):
         print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i, rmax, rms, eps))
 
     # cache results so we can resume if needs be
-    np.savez(result_cache_name, model=model, L=L, residual=residual, sigma0=sigma0)
+    np.savez(result_cache_name, model=model, L=L, residual=residual)
 
     if args.make_restored:
         # get the (flat) Wiener filter soln
