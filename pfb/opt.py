@@ -125,44 +125,68 @@ def solve_x0(A, b, x0, y0, L, sigma0, tol=1e-4, maxit=500, positivity=False, rep
         print("PG - Success, converged after %i iterations"%k)
     return x, y, L
 
-def fista(A, b, x0, y0, L, sigma0, lam, tol=1e-5, maxit=300, positivity=True):
+def fista(fprime,
+          x0, y0,  # initial guess for primal and dual variables 
+          beta,    # lipschitz constant
+          sig_21, # regulariser strengths
+          tol=1e-3, maxit=1000, positivity=True, report_freq=10):
     """
-    Fast Iterative Shrinkage Thresholding Algorithm for problems of the form
+    Algorithm to solve problems of the form
 
-    argmin_x (b - x).T A (b - x) + lam |x|_1
+    argmin_x (b - Rx).T (b - Rx) + x.T K^{-1} x +  lam_21 |x|_21
 
-    An additional positivity constraint can also be applied
+    where x is the image cube, R the measurement operator, K is a
+    prior covariance matrix enforcing smoothness in frequency and
+    and |x|_21 the l21 norm along the frequency axis. Note we can
+    consider the first two terms jointly as a single smooth data
+    fidelity term with Lipschitz constant beta. The non-smooth
+    l21 norm term is then the regulariser and we can solve the
+    optimisation problem via accelerated proximal gradient decent.  
 
+    sig_21   - strength of l21 regulariser
+    
+    # Note - Spectral norms for both decomposition operators are unity.
     """
+    nchan, nx, ny = x0.shape
+    npix = nx*ny
+
+    # # fidelity and gradient term
+    # def fidgrad(x):
+    #     diff = data - R.dot(x)
+    #     tmp = K.idot(x)
+    #     return 0.5*np.vdot(diff, diff).real + 0.5*np.vdot(x, tmp), -R.hdot(diff) + tmp
+
+    # start iterations
     t = 1.0
     x = x0.copy()
-    nchan, nx, ny = x.shape
-    y = y0.copy()
+    y = x0.copy()
     eps = 1.0
-    gradn = A(x) - b
-    likn = np.vdot(x, gradn) - np.vdot(x, b)
+    k = 0
+    fidn, gradn = fprime(x)
+    objective = np.zeros(maxit)
+    fidelity = np.zeros(maxit)
+    fidupper = np.zeros(maxit)
     for k in range(maxit):
-        # gradient decent update
         xold = x.copy()
+        fidp = fidn
         gradp = gradn
-        likp = likn
-        
+
+        objective[k] = fidp + sig_21*np.sum(norm(x.reshape(nchan, nx*ny), axis=0))
+
         # gradient update
-        x = y - gradp/L 
-
+        x = y - gradp/beta
+        
+        # apply prox
         if positivity:
-            x[x<0.0] = 0.0
-
+            x[x<0] = 0.0
+        
         # l21
         l2norm = norm(x.reshape(nchan, nx*ny), axis=0)
-        l2_soft = np.maximum(l2norm - lam/L, 0.0)
+        l2_soft = np.maximum(l2norm - sig_21, 0.0)
         indices = np.nonzero(l2norm)
         ratio = np.zeros(l2norm.shape, dtype=np.float64)
         ratio[indices] = l2_soft[indices]/l2norm[indices]
         x *= ratio.reshape(1, nx, ny)
-
-        # l2
-        x /= (1 + sigma0/L)
 
         # check convergence criteria
         normx = norm(x)
@@ -172,47 +196,47 @@ def fista(A, b, x0, y0, L, sigma0, lam, tol=1e-5, maxit=300, positivity=True):
         if eps <= tol:
             break
 
-        gradn = A(x) - b
-        likn = np.vdot(x, gradn) - np.vdot(x, b)
-        flam = back_track_func(x, xold, gradp, likp, L)
-        while likn > flam:
-            L *= 1.5
-            print("Step size too large, adjusting L", L)
+        fidn, gradn = fprime(x)
+        flam = back_track_func(x, xold, gradp, fidp, beta)
+        fidelity[k] = fidn
+        fidupper[k] = flam
+        while fidn > flam:
+            beta *= 1.5
+            print("Step size too large, adjusting L", beta)
 
              # gradient update
-            x = y - gradp/L 
+            x = y - gradp/beta
 
+            # prox
             if positivity:
                 x[x<0.0] = 0.0
 
             # l21
             l2norm = norm(x.reshape(nchan, nx*ny), axis=0)
-            l2_soft = np.maximum(l2norm - lam/L, 0.0)
+            l2_soft = np.maximum(l2norm - sig_21, 0.0)
             indices = np.nonzero(l2norm)
             ratio = np.zeros(l2norm.shape, dtype=np.float64)
             ratio[indices] = l2_soft[indices]/l2norm[indices]
             x *= ratio.reshape(1, nx, ny)
 
-            # l2
-            x /= (1 + sigma0/L)
+            fidn, gradn = fprime(x)
+            flam = back_track_func(x, xold, gradp, fidp, beta)
 
-            gradn = A(x) - b
-            likn = np.vdot(x, gradn) - np.vdot(x, b)
-            flam = back_track_func(x, xold, gradp, likp, L)
-            
         # fista update
         tp = t
         t = (1. + np.sqrt(1. + 4 * tp**2))/2.
-        y = x + (tp - 1)/t * (x - xold)
+        gamma = (tp - 1)/t
+        y = x +  gamma * (x - xold)
 
         if not k%10:
-            print("At iteration %i: eps = %f, L = %f, lambda = %f"%(k, eps, L, (tp - 1)/t))
+            print("At iteration %i: eps = %f, L = %f, lambda = %f"%(k, eps, beta, (tp - 1)/t))
 
     if k == maxit-1:
         print("FISTA - Maximum iterations reached. Relative difference between updates = ", eps)
     else:
         print("FISTA - Success, converged after %i iterations"%k)
-    return x, y, L
+
+    return x, objective, fidelity, fidupper
 
 
 def hpd(A, b, 

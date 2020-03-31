@@ -9,32 +9,33 @@ iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
 class Gridder(object):
-    def __init__(self, uvw, freq, sqrtW, args):
+    def __init__(self, uvw, freq, sqrtW, nx, ny, cell_size, nband=None, precision=1e-7, ncpu=8, do_wstacking=1):
         self.wgt = sqrtW
         self.uvw = uvw
         self.nrow = uvw.shape[0]
-        self.nx = args.nx
-        self.ny = args.ny
-        self.cell = args.cell_size * np.pi/60/60/180
+        self.nx = nx
+        self.ny = ny
+        self.cell = cell_size * np.pi/60/60/180
         self.freq = freq
-        self.precision = args.precision
-        self.nthreads = args.ncpu
-        self.do_wstacking = args.do_wstacking
+        self.precision = precision
+        self.nthreads = ncpu
+        self.do_wstacking = do_wstacking
         self.flags = np.where(self.wgt==0, 1, 0)
 
         # freq mapping
         self.nchan = freq.size
-        if args.channels_out is None or args.channels_out == 0:
-            args.channels_out = self.nchan
-        step = self.nchan//args.channels_out
+        if nband is None or nband == 0:
+            self.nband = self.nchan
+        else:
+            self.nband = nband
+        step = self.nchan//self.nband
         freq_mapping = np.arange(0, self.nchan, step)
         self.freq_mapping = np.append(freq_mapping, self.nchan)
-        self.nband = self.freq_mapping.size - 1
         self.freq_out = np.zeros(self.nband)
         for i in range(self.nband):
             Ilow = self.freq_mapping[i]
             Ihigh = self.freq_mapping[i+1]
-            self.freq_out[i] = np.mean(self.freq[Ilow:Ihigh])
+            self.freq_out[i] = np.mean(self.freq[Ilow:Ihigh])  # weighted mean?
 
     def dot(self, x):
         model_data = np.zeros((self.nrow, self.nchan), dtype=np.complex128)
