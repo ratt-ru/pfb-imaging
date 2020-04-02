@@ -10,7 +10,7 @@ from numpy.testing import assert_array_equal
 from time import time
 from astropy.wcs import WCS
 
-@njit(parallel=True, nogil=True, cache=True, fastmath=True, inline='always')
+@njit(parallel=True, nogil=True, fastmath=True, inline='always')
 def freqmul(A, x):
     nchan, npix = x.shape
     out = np.zeros((nchan, npix), dtype=x.dtype)

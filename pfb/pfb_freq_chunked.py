@@ -7,13 +7,13 @@ from pyrap.tables import table
 from daskms import xds_from_table
 import dask
 import dask.array as da
-from opt import power_method, solve_x0, hpd, fista
+from pfb.opt import power_method, solve_x0, hpd, fista
 from scipy.fftpack import next_fast_len
 from time import time
 import argparse
 from astropy.io import fits
-from utils import concat_ms_to_I_tbl, str2bool, robust_reweight, set_wcs
-from operators import OutMemGridder, PSF, Prior
+from pfb.utils import concat_ms_to_I_tbl, str2bool, robust_reweight, set_wcs
+from pfb.operators import OutMemGridder, PSF, Prior
 import scipy.linalg as la
 from scipy.stats import laplace
 

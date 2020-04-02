@@ -3,7 +3,7 @@ import dask.array as da
 from daskms import xds_from_table
 import nifty_gridder as ng
 from pypocketfft import r2c, c2r
-from utils import freqmul
+from pfb.utils import freqmul
 from africanus.gps.kernels import exponential_squared as expsq
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
