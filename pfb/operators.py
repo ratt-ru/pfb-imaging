@@ -73,23 +73,35 @@ class Gridder(object):
 
 
 class OutMemGridder(object):
-    def __init__(self, table_name, freq, args):
-        self.nx = args.nx
-        self.ny = args.ny
-        self.cell = args.cell_size * np.pi/60/60/180
-        self.precision = args.precision
-        self.nthreads = args.ncpu
-        self.do_wstacking = args.do_wstacking
+    def __init__(self, table_name, nx, ny, cell_size, freq, nband=None, field=0, precision=1e-7, ncpu=8, do_wstacking=1):
+        if precision > 1e-6:
+            self.real_type = np.float32
+            self.complex_type = np.complex64
+        else:
+            self.real_type = np.float64
+            self.complex_type=np.complex128
+
+        self.nx = nx
+        self.ny = ny
+        self.cell = cell_size * np.pi/60/60/180
+        if isinstance(field, list):
+            self.field = field
+        else:
+            self.field = [field]
+        self.precision = precision
+        self.nthreads = ncpu
+        self.do_wstacking = do_wstacking
 
         # freq mapping
         self.freq = freq
         self.nchan = freq.size
-        if args.channels_out is None or args.channels_out == 0:
-            args.channels_out = self.nchan
-        step = self.nchan//args.channels_out
+        if nband is None:
+            self.nband = self.nchan
+        else:
+            self.nband = nband
+        step = self.nchan//self.nband
         freq_mapping = np.arange(0, self.nchan, step)
         self.freq_mapping = np.append(freq_mapping, self.nchan)
-        self.nband = self.freq_mapping.size - 1
         self.freq_out = np.zeros(self.nband)
         for i in range(self.nband):
             Ilow = self.freq_mapping[i]
@@ -107,57 +119,77 @@ class OutMemGridder(object):
         }
         
     def make_residual(self, x, v_dof=None):
-        tbl = xds_from_table(self.table_name, chunks={"row":-1, "chan": self.chan_chunks}, table_schema=self.schema)[0]
-        data = tbl.DATA.data
-        weights = tbl.WEIGHT.data
-        uvw = tbl.UVW.data.compute()
         residual = np.zeros(x.shape, dtype=x.dtype)
-        for i in range(self.nband):
-            Ilow = self.freq_mapping[i]
-            Ihigh = self.freq_mapping[i+1]
-            weighti = weights.blocks[:, i].compute().astype(np.float64)
-            datai = data.blocks[:, i].compute().astype(np.complex128)
-            residual_vis = weighti * datai - ng.dirty2ms(uvw=uvw, freq=self.freq[Ilow:Ihigh], dirty=x[i], wgt=weighti,
-                                               pixsize_x=self.cell, pixsize_y=self.cell, epsilon=self.precision,
-                                               nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
-            # # recompute weights for band
-            # if v_dof is not None:
-            #     _, robust_reweight
+        xds = xds_from_table(self.table_name, group_cols=('FIELD_ID'), chunks={"row":-1, "chan": self.chan_chunks}, table_schema=self.schema)
+        for ds in xds:
+            print(ds.FIELD_ID, self.field)
+            if ds.FIELD_ID not in list(self.field):
+                continue
+            print("Processing field %i"%ds.FIELD_ID)
+            data = ds.DATA.data
+            weights = ds.WEIGHT.data
+            uvw = ds.UVW.data.compute().astype(self.real_type)
+            
+            for i in range(self.nband):
+                Ilow = self.freq_mapping[i]
+                Ihigh = self.freq_mapping[i+1]
+                weighti = weights.blocks[:, i].compute().astype(self.real_type)
+                datai = data.blocks[:, i].compute().astype(self.complex_type)
 
-            # make residual image
-            residual[i] = ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=residual_vis, wgt=weighti,
-                                      npix_x=self.nx, npix_y=self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
-                                      epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
+                # TODO - load and apply interpolated fits beam patterns for field
+
+                # get residual vis
+                residual_vis = weighti * datai - ng.dirty2ms(uvw=uvw, freq=self.freq[Ilow:Ihigh], dirty=x[i], wgt=weighti,
+                                                             pixsize_x=self.cell, pixsize_y=self.cell, epsilon=self.precision,
+                                                             nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
+
+                # make residual image
+                residual[i] += ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=residual_vis, wgt=weighti,
+                                           npix_x=self.nx, npix_y=self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
+                                           epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
         return residual
 
     def make_dirty(self):
-        tbl = xds_from_table(self.table_name, chunks={"row":-1, "chan": self.chan_chunks}, table_schema=self.schema)[0]
-        data = tbl.DATA.data
-        weights = tbl.WEIGHT.data
-        uvw = tbl.UVW.data.compute()
-        dirty = np.zeros((self.nband, self.nx, self.ny), dtype=np.float64)
-        for i in range(self.nband):
-            Ilow = self.freq_mapping[i]
-            Ihigh = self.freq_mapping[i+1]
-            weighti = weights.blocks[:, i].compute().astype(np.float64)
-            datai = data.blocks[:, i].compute().astype(np.complex128)
-            dirty[i] = ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=weighti*datai, wgt=weighti,
-                                   npix_x=self.nx, npix_y=self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
-                                   epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
+        dirty = np.zeros((self.nband, self.nx, self.ny), dtype=self.real_type)
+        xds = xds_from_table(self.table_name, group_cols=('FIELD_ID'), chunks={"row":-1, "chan": self.chan_chunks}, table_schema=self.schema)
+        for ds in xds:
+            if ds.FIELD_ID not in list(self.field):
+                continue
+            print("Processing field %i"%ds.FIELD_ID)
+            data = ds.DATA.data
+            weights = ds.WEIGHT.data
+            uvw = ds.UVW.data.compute().astype(self.real_type)
+        
+            for i in range(self.nband):
+                Ilow = self.freq_mapping[i]
+                Ihigh = self.freq_mapping[i+1]
+                weighti = weights.blocks[:, i].compute().astype(self.real_type)
+                datai = data.blocks[:, i].compute().astype(self.complex_type)
+
+                # TODO - load and apply interpolated fits beam patterns for field
+
+                dirty[i] += ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=weighti*datai, wgt=weighti,
+                                        npix_x=self.nx, npix_y=self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
+                                        epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
         return dirty
 
     def make_psf(self):
-        tbl = xds_from_table(self.table_name, chunks={"row":-1, "chan": self.chan_chunks}, table_schema=self.schema)[0]
-        weights = tbl.WEIGHT.data
-        uvw = tbl.UVW.data.compute()
         psf_array = np.zeros((self.nband, 2*self.nx, 2*self.ny))
-        for i in range(self.nband):
-            Ilow = self.freq_mapping[i]
-            Ihigh = self.freq_mapping[i+1]
-            weighti = weights.blocks[:, i].compute().astype(np.float64)
-            psf_array[i] = ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=weighti.astype(np.complex128), wgt=weighti,
-                                       npix_x=2*self.nx, npix_y=2*self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
-                                       epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking)
+        xds = xds_from_table(self.table_name, group_cols=('FIELD_ID'), chunks={"row":-1, "chan": self.chan_chunks}, table_schema=self.schema)
+        for ds in xds:
+            if ds.FIELD_ID not in list(self.field):
+                continue
+            print("Processing field %i"%ds.FIELD_ID)
+            weights = ds.WEIGHT.data
+            uvw = ds.UVW.data.compute().astype(self.real_type)
+        
+            for i in range(self.nband):
+                Ilow = self.freq_mapping[i]
+                Ihigh = self.freq_mapping[i+1]
+                weighti = weights.blocks[:, i].compute().astype(self.real_type)
+                psf_array[i] += ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=weighti.astype(self.complex_type), wgt=weighti,
+                                            npix_x=2*self.nx, npix_y=2*self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
+                                            epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking)
         return psf_array
 
 

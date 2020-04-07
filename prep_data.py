@@ -1,13 +1,9 @@
 
 import numpy as np
-from daskms import xds_from_table
 import dask
 import dask.array as da
 from daskms import xds_from_ms, xds_from_table, xds_to_table, Dataset
-from scipy.fftpack import next_fast_len
 import argparse
-from astropy.io import fits
-from pfb.operators import OutMemGridder, PSF, Prior
 from pfb.utils import str2bool
 
 def create_parser():
@@ -17,97 +13,142 @@ def create_parser():
                    help="The column to image.")
     p.add_argument("--weight_column", default='WEIGHT_SPECTRUM', type=str,
                    help="Weight column to use. Will use WEIGHT if no WEIGHT_SPECTRUM is found")
-    p.add_argument("--outfile", type=str,
+    p.add_argument("--table_name", type=str,
                    help='Directory in which to place the output.')
-    p.add_argument("--outname", default='image', type=str,
-                   help='base name of output.')
-    p.add_argument("--ncpu", default=0, type=int,
-                   help='Number of threads to use.')
-    p.add_argument("--row_chunks", type=int, default=100000,
+    p.add_argument("--field", default=0, nargs='+',
+                   help="Which fields to image. Set to 'all' to combine all fields or comma separated list to combine a subset.")
+    p.add_argument("--radec", type=float, default=None, nargs='+',
+                   help="Measurements will be rephased to have this field center. "
+                   "If none all will be rephased to field 0 of first ms")
+    p.add_argument("--ddid", type=int, default=0, nargs='+',
+                   help="Spectral windows to combine")
+    p.add_argument("--pol_products", type=str, default='I',
+                   help="Polarisation products to compute. Only Stokes I currently supported")
+    p.add_argument("--row_chunks", type=int, default=1000000,
                    help="Row chunking when loading in data")
-    p.add_argument("--field", type=int, default=0, nargs='+')
-                   help="Which field to image")
-    p.add_argument("--ddid", type=int, )
-    p.add_argument("--super_resolution_factor", type=float, default=1.2,
-                   help="Pixel sizes will be set to Nyquist divided by this factor")
-
+    p.add_argument("--ncpu", type=int, default=0)
+    p.add_argument("--overwrite_table", type=str2bool, nargs='?', const=True, default=False,
+                   help="Allow overwriting of existing table")
     return p
 
+# LB - TODO - rephase and interpolate beams
 def main(args):
-    """
-    Concatenate list of measurement sets to single table holding
-    Stokes I data and weights
-
-    ms - list of measurement sets to concatenate
-    outname - name of the table to write
-    cols - list of column names to concatenate
-
-    """
-    # Currently MS's need to have the same frequencies and only a single spw
+    # use key value pair to keep track of fields which much not have the same id number across measurement sets
+    radec_ids = {}
+    ifield = 0
+    field_id = None
+    # only single spectral window supported
     freq = None
-    radec = None
-    for ims in args.ms:
-        if freq is None:
-            freq = xds_from_table(ims + '::SPECTRAL_WINDOW')[0].CHAN_FREQ.data.compute()[0]
-        else:
-            tmpfreq = xds_from_table(ims + '::SPECTRAL_WINDOW')[0].CHAN_FREQ.data.compute()[0]
-            np.testing.assert_array_equal(freq, tmpfreq)
+    # only single ddid
+    ddid_id = 0
+    for ms in args.ms:
+        datasets = xds_from_ms(ms, 
+                               columns=(args.data_column, args.weight_column, 'FLAG', 'FLAG_ROW', 'UVW', 'TIME'),
+                               chunks={"row": args.row_chunks})
 
-        if radec is None:
-            radec = xds_from_table(ims + '::FIELD')[0].PHASE_DIR.data.compute()[0].squeeze()
-        else:
-            tmpradec = xds_from_table(ims + '::FIELD')[0].PHASE_DIR.data.compute()[0].squeeze()
-            np.testing.assert_array_equal(radec, tmpradec)
-    nchan = freq.size
+        out_datasets = []
 
-    # convert to Stokes I vis and concatenate
-    fid = 0
-    concat_cols = ('FLAG', 'FLAG_ROW', 'UVW', 'DATA', 'WEIGHT')
-    nrows = 0
-    dataf = []
-    uvwf = []
-    weightf = []
-    for ims in ms:
-        xds = xds_from_ms(ims, 
-                          columns=concat_cols,
-                          group_cols=["FIELD_ID"],
-                          chunks={"row": 10000})[fid]
-        
-        nrow, _, ncorr = xds.DATA.shape
-        nrows += nrow
+        # subtables
+        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")
+        fields = xds_from_table(ms + "::FIELD", group_cols="__row__")
+        spws = xds_from_table(ms + "::SPECTRAL_WINDOW", group_cols="__row__")
+        pols = xds_from_table(ms + "::POLARIZATION", group_cols="__row__")
 
-        data = xds.DATA.data
-        weight = xds.WEIGHT.data
-        weight = da.tile(weight[:, None, :], (1, nchan, 1))
-        uvw = xds.UVW.data
-        flag = xds.FLAG.data
+        # Get subtable data
+        ddids = dask.compute(ddids)[0]
+        fields = dask.compute(fields)[0]
+        spws = dask.compute(spws)[0]
+        pols = dask.compute(pols)[0]
 
-        data_I = ((weight[:, :, 0] * data[:, :, 0] + weight[:, :, ncorr-1] * data[:, :, ncorr-1])/(weight[:, :, 0] + weight[:, :, ncorr-1]))
-        weight_I = (weight[:, :, 0] + weight[:, :, ncorr-1])
-        flag_I = (flag[:, :, 0] | flag[:, :, ncorr-1])
+        for ds in datasets:
+            if ds.FIELD_ID not in args.field:
+                continue
 
-        
-        weight_I = da.where(~flag_I, da.sqrt(weight_I), 0.0)
-        data_I = da.where(~flag_I, data_I, 0.0j)
+            field = fields[ds.FIELD_ID]
+            radec = field.PHASE_DIR.data.squeeze()
 
-        dataf.append(data_I)
-        uvwf.append(uvw)
-        weightf.append(weight_I)
+            if args.radec is None:
+                args.radec = radec
 
-    data = da.concatenate(dataf, axis=0)
-    weight = da.concatenate(weightf, axis=0)
-    uvw = da.concatenate(uvwf, axis=0)
+            for key in radec_ids.keys():
+                if np.array_equal(radec, radec_ids[key]):
+                    field_id = key
+                else:
+                    field_id = None
 
-    data_vars = {
-        'DATA':(('row', 'chan'), data),
-        'WEIGHT':(('row', 'chan'), weight),
-        'UVW':(('row', 'uvw'), uvw)
-    }
+            if field_id is None:
+                radec_ids[ifield] = radec
+                field_id = ifield
+                ifield += 1
 
-    writes = xds_to_table([Dataset(data_vars)], outname, "ALL")
-    dask.compute(writes)
+            print("Adding field %i from %s. New field ID is %i"%(ds.FIELD_ID, ms, field_id))
 
-    return freq, radec
+            ddid = ddids[ds.DATA_DESC_ID]
+
+            pol = pols[ddid.POLARIZATION_ID.values[0]]
+            corr_type_set = set(pol.CORR_TYPE.data.squeeze())
+            if corr_type_set.issubset(set([9, 10, 11, 12])):
+                pol_type = 'linear'
+            elif corr_type_set.issubset(set([5, 6, 7, 8])):
+                pol_type = 'circular'
+            else:
+                raise ValueError("Cannot determine polarisation type "
+                                "from correlations %s. Constructing "
+                                "a feed rotation matrix will not be "
+                                "possible." % (corr_type_set,))
+                        
+            spw = spws[ddid.SPECTRAL_WINDOW_ID.values[0]]
+            if freq is None:
+                freq = spw.CHAN_FREQ
+            else:
+                try:
+                    np.testing.assert_array_equal(freq, spw.CHAN_FREQ)
+                    ddid_id = 0
+                except:
+                    raise ValueError("Frequencies don't match") 
+
+            # get data and convert to output products
+            data = getattr(ds, args.data_column).data
+            weight = getattr(ds, args.weight_column).data
+            if len(weight.shape)<3:  # tile over frequency if no WEIGHT_SPECTRUM
+                weight = da.tile(weight[:, None, :], (1, freq.size, 1))
+            uvw = ds.UVW.data
+            flag = da.logical_or(ds.FLAG.data, ds.FLAG_ROW.data[:, None, None])
+            weight = da.where(~flag, weight, 0.0)
+
+            if 'I' in args.pol_products:
+                ncorr = data.shape[-1]
+                data = ((weight[:, :, 0] * data[:, :, 0] + weight[:, :, ncorr-1] * data[:, :, ncorr-1])/(weight[:, :, 0] + weight[:, :, ncorr-1]))
+                weight = (weight[:, :, 0] + weight[:, :, ncorr-1])
+
+            data_vars = {
+                'FIELD_ID':(('row',), da.full_like(ds.TIME.data, field_id)),
+                'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data, ddid_id)),
+                'DATA':(('row', 'chan'), data),
+                'WEIGHT':(('row', 'chan'), da.sqrt(weight)),
+                'UVW':(('row', 'uvw'), uvw)
+            }
+
+            out_ds = Dataset(data_vars)
+
+            out_datasets.append(out_ds)
+    
+    out_freq = Dataset(
+            {
+                'FREQ':(('row','chan'), da.from_array(freq))
+            }
+    )
+    radec = args.radec[None, :]
+    out_radec = Dataset(
+            {
+                'RADEC':(('row', 'dir'), da.from_array(radec))
+            }
+    )
+
+    writes = xds_to_table(out_datasets, args.table_name, columns="ALL")
+    writes_freq = xds_to_table(out_freq, args.table_name+'::FREQ', columns='ALL')
+    writes_radec = xds_to_table(out_radec, args.table_name+'::RADEC', columns='ALL')
+    dask.compute(writes, writes_freq, writes_radec)
 
 
 if __name__=="__main__":
@@ -120,15 +161,27 @@ if __name__=="__main__":
         import multiprocessing
         args.ncpu = multiprocessing.cpu_count()
 
+    if not isinstance(args.field, list):
+        args.field = [args.field]
+
+    if 'all' in args.field:
+        class tmp(object):
+            def __contains__(self, other):
+                return True
+        args.field = tmp()
+
     GD = vars(args)
     print('Input Options:')
     for key in GD.keys():
         print(key, ' = ', GD[key])
 
-    if args.outfile[-1] != '/':
-        args.outfile += '/'    
-    
-    if args.table_name is None:
-        args.table_name = args.outfile + args.outname + ".table"
+    import os
+    if os.path.exists(args.table_name):
+        if args.overwrite_table:
+            print("Removing %s"%args.table_name)
+            import shutil
+            shutil.rmtree(args.table_name)
+        else:
+            raise ValueError("Table %s exists and overwrite_table is prohibited"%args.table_name) 
 
     main(args)
