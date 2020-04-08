@@ -79,7 +79,7 @@ def create_parser():
     p.add_argument("--super_resolution_factor", type=float, default=1.2,
                    help="Pixel sizes will be set to Nyquist divided by this factor")
     p.add_argument("--table_name", type=str, default=None,
-                   help="Name of table to load concatenated STokes I vis from")
+                   help="Name of table to load concatenated Stokes I vis from")
     return p
 
 def main(args, table_name, freq, radec):

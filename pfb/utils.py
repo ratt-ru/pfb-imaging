@@ -8,7 +8,36 @@ from daskms import xds_from_ms, xds_from_table, xds_to_table, Dataset
 from pyrap.tables import table
 from numpy.testing import assert_array_equal
 from time import time
+from astropy.io import fits
 from astropy.wcs import WCS
+
+
+def data_from_header(hdr, axis=3):
+    npix = hdr['NAXIS' + str(axis)]
+    refpix = hdr['CRPIX' + str(axis)]
+    delta = hdr['CDELT' + str(axis)]  # assumes units are Hz
+    ref_val = hdr['CRVAL' + str(axis)]
+    return ref_val + np.arange(1 - refpix, 1 + npix - refpix) * delta
+
+def load_fits(name, dtype=np.float64):
+    data = fits.getdata(name)
+    if len(data.shape) == 3:
+        return np.ascontiguousarray(np.transpose(data[:, :, ::-1].astype(dtype), axes=(0, 2, 1)))
+    elif len(data.shape) == 2:
+        return np.ascontiguousarray(data[:, ::-1].T.astype(dtype))
+    else:
+        raise ValueError("Unsupported number of axes for fits file %s"%name)
+
+def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
+    hdu = fits.PrimaryHDU(header=hdr)
+    if len(data.shape) == 3:
+        hdu.data = np.transpose(data, axes=(0, 2, 1))[:, :, ::-1].astype(np.float32)
+    elif len(data.shape) == 2:
+        hdu.data = data.T[:, ::-1].astype(dtype)
+    else:
+        raise ValueError("Unsupported number of axes for fits file %s"%name)
+    hdu.writeto(name, overwrite=overwrite)
+
 
 @njit(parallel=True, nogil=True, fastmath=True, inline='always')
 def freqmul(A, x):

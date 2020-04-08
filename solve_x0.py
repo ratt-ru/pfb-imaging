@@ -4,6 +4,7 @@ from scipy.linalg import norm, svd
 from scipy.fftpack import next_fast_len
 from scipy.stats import laplace
 from pfb.opt import pcg, hpd
+from pfb.utils import load_fits, save_fits, data_from_header
 from pyrap.tables import table
 from pfb.operators import Gridder, Prior, PSF
 from africanus.constants import c as lightspeed
@@ -15,9 +16,11 @@ result_name = 'testing/ref_images/hpd_minor.npz'
 
 def create_parser():
     p = argparse.ArgumentParser()
-    p.add_argument("--ddict", type=str,
-                   help=".npz dictionary holding psf, dirty and freq")
-    p.add_argument("--outname", default='image', type=str,
+    p.add_argument("--dirty", type=str,
+                   help="Fits file with dirty cube")
+    p.add_argument("--psf", type=str,
+                   help="Fits file with psf cube")
+    p.add_argument("--outfile", default='image', type=str,
                    help='base name of output.')
     p.add_argument("--ncpu", default=0, type=int,
                    help='Number of threads to use.')
@@ -29,12 +32,14 @@ def create_parser():
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=10,
                    help="Maximum number of iterations for the cg updates")
+    p.add_argument("--pmtol", type=float, default=1e-14,
+                   help="Tolerance for power method used to compute spectral norms")
+    p.add_argument("--pmmaxit", type=int, default=25,
+                   help="Maximum number of iterations for power method")
     p.add_argument("--beta", type=float, default=None,
                    help="Lipschitz constant of F")
     p.add_argument("--sig_21", type=float, default=1e-3,
                    help="Tolerance for cg updates")
-    p.add_argument("--ref_image", type=str, default=None,
-                   help="Reference image to pinch header from")
     p.add_argument("--x0", type=str, default=None,
                    help="Initial guess in form of fits file")
     p.add_argument("--reweight_start", type=int, default=20,
@@ -46,23 +51,30 @@ def create_parser():
 
 def main(args):
     # load dirty and psf
-    ddict = np.load(args.ddict)
-    dirty = ddict['dirty']
+    dirty = load_fits(args.dirty)
+    real_type = dirty.dtype
+    hdr = fits.getheader(args.dirty)
+    freq = data_from_header(hdr, axis=3)
+    
     nchan, nx, ny = dirty.shape
-    psf_array = ddict['psf']
+    psf_array = load_fits(args.psf)
+    hdr_psf = fits.getheader(args.psf)
+    try:
+        assert np.array_equal(freq, data_from_header(hdr_psf, axis=3))
+    except:
+        raise ValueError("Fits frequency axes dont match")
+    
     psf_max = np.amax(psf_array.reshape(nchan, 4*nx*ny), axis=1)
-    freq = ddict['freq']
-    freq /= np.mean(freq)
     
     # set operators
     psf = PSF(psf_array, args.ncpu)
-    K = Prior(freq, 1.0, 0.25, nx, ny, nthreads=args.ncpu)
+    K = Prior(freq/np.mean(freq), 1.0, 0.25, nx, ny, nthreads=args.ncpu)
     def hess(x):
         return psf.convolve(x) + K.idot(x)
 
     if args.beta is None:
         from pfb.opt import power_method
-        beta = power_method(hess, dirty.shape, tol=1e-15, maxit=25)
+        beta = power_method(hess, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
     else:
         beta = args.beta   # 212346753.18840605
     print("beta = ", beta)
@@ -96,44 +108,37 @@ def main(args):
     if args.x0 is None:
         x0 = pcg(hess, dirty, np.zeros((nchan, nx, ny)), M=K.dot, tol=1e-3, maxit=50)
     else:
-        x0 = fits.getdata(args.x0)
-        x0 = np.transpose(x0[:,:, ::-1], axes=(0, 2, 1)).astype(np.float64)
+        x0 = load_fits(args.x0)
         
     model, objhist, fidhist, reghist = hpd(fprime, prox, reg, x0, 1.0, beta, args.sig_21, 
                                            hess=hess, cgprecond=K.dot, cgtol=1e-2, cgmaxit=10, 
                                            alpha0=0.5, alpha_ff=0.25, reweight_start=args.reweight_start, reweight_freq=args.reweight_freq,
                                            tol=1e-5, maxit=args.maxit, report_freq=1)
 
-    if args.ref_image is not None:
-        hdr = fits.getheader(args.ref_image)
-    else:
-        hdu = fits.PrimaryHDU()
-        hdr = hdu.header
-
-    hdu = fits.PrimaryHDU(header=hdr)
-    hdu.data = np.transpose(model, axes=(0, 2, 1))[:, ::-1].astype(np.float32)
-    hdu.writeto(args.outname + '_model.fits', overwrite=True)
+    save_fits(args.outfile + '_model.fits', model, hdr, dtype=real_type)
+    # hdu = fits.PrimaryHDU(header=hdr)
+    # hdu.data = np.transpose(model, axes=(0, 2, 1))[:, ::-1].astype(np.float32)
+    # hdu.writeto(args.outfile + '_model.fits', overwrite=True)
 
     residual = dirty - psf.convolve(model)
 
+    save_fits(args.outfile + '_residual.fits', residual/psf_max[:, None, None], hdr)
     hdu = fits.PrimaryHDU(header=hdr)
     hdu.data = np.transpose(residual/psf_max[:, None, None], axes=(0, 2, 1))[:, ::-1].astype(np.float32)
-    hdu.writeto(args.outname + '_residual.fits', overwrite=True)
+    hdu.writeto(args.outfile + '_residual.fits', overwrite=True)
 
-    
-    import matplotlib as mpl
-    mpl.use('TkAgg')
     import matplotlib.pyplot as plt
     plt.figure('obj')
     plt.plot(np.arange(args.maxit+1), objhist + 1.1*np.abs(objhist.min()), 'r', alpha=0.5)
     plt.plot(np.arange(args.maxit+1), fidhist + 1.1*np.abs(fidhist.min()), 'b', alpha=0.5)
     plt.yscale('log')
 
+    plt.savefig(args.outfile + '_obj_hist.png', dpi=250)
+
     plt.figure('reg')
     plt.plot(np.arange(args.maxit+1), reghist, 'k')
-    plt.show()
 
-    plt.show()
+    plt.savefig(args.outfile + '_reg_hist.png', dpi=250)
 
 
 if __name__=="__main__":
