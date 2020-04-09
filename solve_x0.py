@@ -24,6 +24,8 @@ def create_parser():
                    help='base name of output.')
     p.add_argument("--ncpu", default=0, type=int,
                    help='Number of threads to use.')
+    p.add_argument("--gamma0", type=float, default=0.9,
+                   help="Initial primal step size.")
     p.add_argument("--maxit", type=int, default=20,
                    help="Number of hpd iterations")
     p.add_argument("--tol", type=float, default=1e-4,
@@ -108,14 +110,14 @@ def main(args):
 
 
     if args.x0 is None:
-        x0 = pcg(hess, dirty, np.zeros((nchan, nx, ny)), M=K.dot, tol=1e-3, maxit=50)
+        x0 = pcg(hess, dirty, np.zeros((nchan, nx, ny)), M=K.dot, tol=args.cgtol, maxit=2*args.cgmaxit)
     else:
         x0 = load_fits(args.x0)
         
-    model, objhist, fidhist, reghist = hpd(fprime, prox, reg, x0, 1.0, beta, args.sig_21, 
-                                           hess=hess, cgprecond=K.dot, cgtol=1e-2, cgmaxit=10, cgverbose=args.cgverbose,
+    model, objhist, fidhist, reghist = hpd(fprime, prox, reg, x0, args.gamma0, beta, args.sig_21, 
+                                           hess=hess, cgprecond=K.dot, cgtol=args.cgtol, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose,
                                            alpha0=0.5, alpha_ff=0.25, reweight_start=args.reweight_start, reweight_freq=args.reweight_freq,
-                                           tol=1e-5, maxit=args.maxit, report_freq=1)
+                                           tol=args.tol, maxit=args.maxit, report_freq=1)
 
     save_fits(args.outfile + '_model.fits', model, hdr, dtype=real_type)
     # hdu = fits.PrimaryHDU(header=hdr)
@@ -125,9 +127,9 @@ def main(args):
     residual = dirty - psf.convolve(model)
 
     save_fits(args.outfile + '_residual.fits', residual/psf_max[:, None, None], hdr)
-    hdu = fits.PrimaryHDU(header=hdr)
-    hdu.data = np.transpose(residual/psf_max[:, None, None], axes=(0, 2, 1))[:, ::-1].astype(np.float32)
-    hdu.writeto(args.outfile + '_residual.fits', overwrite=True)
+    # hdu = fits.PrimaryHDU(header=hdr)
+    # hdu.data = np.transpose(residual/psf_max[:, None, None], axes=(0, 2, 1))[:, ::-1].astype(np.float32)
+    # hdu.writeto(args.outfile + '_residual.fits', overwrite=True)
 
     import matplotlib.pyplot as plt
     plt.figure('obj')
