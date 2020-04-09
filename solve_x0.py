@@ -32,6 +32,8 @@ def create_parser():
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=10,
                    help="Maximum number of iterations for the cg updates")
+    p.add_argument("--cgverbose", type=int, default=0,
+                   help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
     p.add_argument("--pmtol", type=float, default=1e-14,
                    help="Tolerance for power method used to compute spectral norms")
     p.add_argument("--pmmaxit", type=int, default=25,
@@ -111,7 +113,7 @@ def main(args):
         x0 = load_fits(args.x0)
         
     model, objhist, fidhist, reghist = hpd(fprime, prox, reg, x0, 1.0, beta, args.sig_21, 
-                                           hess=hess, cgprecond=K.dot, cgtol=1e-2, cgmaxit=10, 
+                                           hess=hess, cgprecond=K.dot, cgtol=1e-2, cgmaxit=10, cgverbose=args.cgverbose,
                                            alpha0=0.5, alpha_ff=0.25, reweight_start=args.reweight_start, reweight_freq=args.reweight_freq,
                                            tol=1e-5, maxit=args.maxit, report_freq=1)
 

@@ -173,6 +173,7 @@ def hpd(fprime, prox, reg, x0, gamma, beta, sig_21,
         cgprecond=None,
         cgtol=1e-3,
         cgmaxit=35,
+        cgverbose=0,
         alpha0=0.25,
         alpha_ff=0.2,
         reweight_start=20,
@@ -228,7 +229,7 @@ def hpd(fprime, prox, reg, x0, gamma, beta, sig_21,
 
         # get update 
         if hess is not None:
-            delx = pcg(hess, -gradp, np.zeros(x.shape), M=cgprecond, tol=cgtol, maxit=cgmaxit, verbosity=0)
+            delx = pcg(hess, -gradp, np.zeros(x.shape), M=cgprecond, tol=cgtol, maxit=cgmaxit, verbosity=cgverbose)
         else:
             delx = -gradp
         p = xp + gamma * delx
