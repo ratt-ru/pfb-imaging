@@ -15,6 +15,7 @@ import scipy.linalg as la
 from scipy.stats import laplace
 
 def create_parser():
+    p = argparse.ArgumentParser()
     p.add_argument("table_name", type=str,
                    help="Name of table to load concatenated Stokes I vis from")
     p.add_argument("--data_column", default="CORRECTED_DATA", type=str,
@@ -55,7 +56,7 @@ def create_parser():
     p.add_argument("--sig_l2", default=1.0, type=float,
                    help="The strength of the l2 norm regulariser")
     p.add_argument("--sig_21", type=float, default=1e-3,
-                   help="Tolerance for cg updates")
+                   help="The strength of the l21 norm regulariser")
     p.add_argument("--x0", type=str, default=None,
                    help="Initial guess in form of fits file")
     p.add_argument("--reweight_start", type=int, default=20,
@@ -74,9 +75,9 @@ def create_parser():
                    help="Maximum number of iterations for the cg updates")
     p.add_argument("--cgverbose", type=int, default=0,
                    help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
-    p.add_argument("--hpdtol", type=float, default=1e-2,
+    p.add_argument("--hpdtol", type=float, default=1e-5,
                    help="Tolerance for hpd sub-iters")
-    p.add_argument("--hpdmaxit", type=int, default=10,
+    p.add_argument("--hpdmaxit", type=int, default=100,
                    help="Maximum number of iterations for hpd sub-iters")
     p.add_argument("--pmtol", type=float, default=1e-14,
                    help="Tolerance for power method used to compute spectral norms")
@@ -85,7 +86,7 @@ def create_parser():
     return p
 
 def main(args, table_name, freq, radec):
-if args.precision > 1e-6:
+    if args.precision > 1e-6:
         real_type = np.float32
         complex_type=np.complex64
     else:
@@ -185,6 +186,9 @@ if args.precision > 1e-6:
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)       
     
     #  preconditioning matrix
+    l = 0.25 * (freq_out.max() - freq_out.min())/np.mean(freq_out)
+    print(" l = ", l)
+    K = Prior(freq_out, args.sig_l2, l, args.nx, args.ny, nthreads=args.ncpu)
     def Uop(x):  
         return psf.convolve(x) + K.idot(x)
     if args.beta is None:
@@ -224,11 +228,7 @@ if args.precision > 1e-6:
     gamma = args.gamma0
     residual = dirty.copy()
     for i in range(args.maxit):
-        # solve enet vanishing to TK
-        # fct = 1e-3/2.0**i
-        # print("Thresholding values below %f " % (fct*rmax))
-        # x, y, L = fista(op, residual, x, y, L, sig_l2, fct*rmax*L, tol=args.cgtol, maxit=args.cgmaxit, positivity=False)
-        x = pcg(Uop, residual, np.zeros(*dirty.shape, dtype=real_type), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit)
+        x = pcg(Uop, residual, np.zeros(*dirty.shape, dtype=real_type), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
         
         # update model
         modelp = model
@@ -240,8 +240,9 @@ if args.precision > 1e-6:
             fp = lambda x: fprime(x, model)
 
         # compute prox
+        reweight_alpha = args.reweight_alpha/(1+i)**args.reweight_alpha_ff
         model, objhist, fidhist, reghist = hpd(fp, prox_21, reg, modelp, args.gamma0, beta, args.sig_21, 
-                                               alpha0=args.reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=1, reweight_freq=1,
+                                               alpha0=reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=1, reweight_freq=1,
                                                tol=args.hpdtol, maxit=args.hpdmaxit, report_freq=1)
 
         # get residual
@@ -257,38 +258,27 @@ if args.precision > 1e-6:
             # save current iteration
             save_fits(args.outfile + str(i+1) + '_model.fits', model, hdr, dtype=real_type)
             
-
-            mfs_model = np.mean(model, axis=0)
+            model_mfs = np.mean(model, axis=0)
             save_fits(args.outfile + str(i+1) + '_model_mfs.fits', model_mfs, hdr_mfs)
 
             save_fits(args.outfile + str(i+1) + '_update.fits', x, hdr)
 
-            save_fits(args.outfile + str(i+1) + '_residual.fits', model, hdr, dtype=real_type)
-            hdu = fits.PrimaryHDU(header=hdr)
-            hdu.data = np.transpose(residual/psf_max[:, None, None], axes=(0, 2, 1))[:, ::-1].astype(np.float32)
-            hdu.writeto(args.outfile + args.outname + str(i+1) + '_residual.fits', overwrite=True)
+            save_fits(args.outfile + str(i+1) + '_residual.fits', residual, hdr, dtype=real_type)
 
-            hdu = fits.PrimaryHDU(header=hdr_mfs)
-            hdu.data = residual_mfs.T[::-1].astype(np.float32)
-            hdu.writeto(args.outfile + args.outname + str(i) + '_residual_mfs.fits', overwrite=True)
+            save_fits(args.outfile + str(i+1) + '_residual_mfs.fits', residual_mfs, hdr_mfs)
 
         i += 1
         print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i, rmax, rms, eps))
 
-    # cache results so we can resume if needs be
-    np.savez(result_cache_name, model=model, L=L, residual=residual)
-
     if args.make_restored:
-        # get the (flat) Wiener filter soln
-        x, y, L = fista(op, residual, 
-                        x, y, L, 1.0, 0.0,
-                        positivity=False, tol=args.cgtol, maxit=args.cgmaxit)
-        
-        # x = pcg(A, residual, x, M=K.dot, tol=1e-10, maxit=args.cgmaxit)
+        # get the uninformative Wiener filter soln
+        op = lambda x: psf.convolve(x) + 0.001*x
+        M = lambda x: x/0.0001
+        x = pcg(op, residual, np.zeros(*dirty.shape, dtype=real_type), M=M, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
         restored = model + x
+        
         # get residual
         residual = R.make_residual(restored)
-
         residual_mfs = np.sum(residual, axis=0)/wsum 
         rmax = np.abs(residual_mfs).max()
         rms = np.std(residual_mfs)
@@ -296,22 +286,14 @@ if args.precision > 1e-6:
         print("After restoring peak of residual is %f and rms is %f" % (rmax, rms))
 
         # save current iteration
-        hdu = fits.PrimaryHDU(header=hdr)
-        hdu.data = np.transpose(restored, axes=(0, 2, 1))[:, ::-1].astype(np.float32)
-        hdu.writeto(args.outfile + args.outname + '_restored.fits', overwrite=True)
+        save_fits(args.outfile + str(i+1) + '_restored.fits', restored, hdr, dtype=real_type)
 
-        mfs_restored = np.mean(restored, axis=0)
-        hdu = fits.PrimaryHDU(header=hdr_mfs)
-        hdu.data = mfs_restored.T[::-1].astype(np.float32)
-        hdu.writeto(args.outfile + args.outname + '_restored_mfs.fits', overwrite=True)
+        restored_mfs = np.mean(restored, axis=0)
+        save_fits(args.outfile + str(i+1) + '_restored_mfs.fits', restored_mfs, hdr_mfs)
 
-        hdu = fits.PrimaryHDU(header=hdr)
-        hdu.data = np.transpose(residual/psf_max[:, None, None], axes=(0, 2, 1))[:, ::-1].astype(np.float32)
-        hdu.writeto(args.outfile + args.outname + '_restored_residual.fits', overwrite=True)
+        save_fits(args.outfile + str(i+1) + '_restored_residual.fits', residual/psf_max[:, None, None], hdr)
 
-        hdu = fits.PrimaryHDU(header=hdr_mfs)
-        hdu.data = residual_mfs.T[::-1].astype(np.float32)
-        hdu.writeto(args.outfile + args.outname + '_restored_residual_mfs.fits', overwrite=True)
+        save_fits(args.outfile + str(i+1) + '_restored_residual_mfs.fits', residual_mfs, hdr_mfs)
 
 
 if __name__=="__main__":
