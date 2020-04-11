@@ -119,10 +119,10 @@ class OutMemGridder(object):
         }
         
     def make_residual(self, x, v_dof=None):
+        print("Making residual")
         residual = np.zeros(x.shape, dtype=x.dtype)
         xds = xds_from_table(self.table_name, group_cols=('FIELD_ID'), chunks={"row":-1, "chan": self.chan_chunks}, table_schema=self.schema)
         for ds in xds:
-            print(ds.FIELD_ID, self.field)
             if ds.FIELD_ID not in list(self.field):
                 continue
             print("Processing field %i"%ds.FIELD_ID)
@@ -150,6 +150,7 @@ class OutMemGridder(object):
         return residual
 
     def make_dirty(self):
+        print("Making dirty")
         dirty = np.zeros((self.nband, self.nx, self.ny), dtype=self.real_type)
         xds = xds_from_table(self.table_name, group_cols=('FIELD_ID'), chunks={"row":-1, "chan": self.chan_chunks}, table_schema=self.schema)
         for ds in xds:
@@ -174,6 +175,7 @@ class OutMemGridder(object):
         return dirty
 
     def make_psf(self):
+        print("Making PSF")
         psf_array = np.zeros((self.nband, 2*self.nx, 2*self.ny))
         xds = xds_from_table(self.table_name, group_cols=('FIELD_ID'), chunks={"row":-1, "chan": self.chan_chunks}, table_schema=self.schema)
         for ds in xds:

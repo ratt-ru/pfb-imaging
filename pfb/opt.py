@@ -180,7 +180,8 @@ def hpd(fprime, prox, reg, x0, gamma, beta, sig_21,
         reweight_freq=5,
         tol=1e-3, 
         maxit=1000,
-        report_freq=1):
+        report_freq=1,
+        verbosity=1):
     """
     Algorithm to solve problems of the form
 
@@ -231,7 +232,7 @@ def hpd(fprime, prox, reg, x0, gamma, beta, sig_21,
         if hess is not None:
             delx = pcg(hess, -gradp, np.zeros(x.shape), M=cgprecond, tol=cgtol, maxit=cgmaxit, verbosity=cgverbose)
         else:
-            delx = -gradp
+            delx = -gradp/beta
         p = xp + gamma * delx
 
         x = prox(p, sig_21, weights_21)
@@ -270,14 +271,14 @@ def hpd(fprime, prox, reg, x0, gamma, beta, sig_21,
             weights_21 = 1.0/(normx + alpha)
             i += 1
 
-        if not k%report_freq:
+        if not k%report_freq and verbosity>1:
             print("At iteration %i eps = %f, norm21 = %f "%(k, eps, regx))
 
-
-    if k == maxit-1:
-        print("HPD - Maximum iterations reached. Relative difference between updates = ", eps)
-    else:
-        print("HPD - Success, converged after %i iterations"%k)
+    if verbosity >= 1:
+        if k == maxit-1:
+            print("HPD - Maximum iterations reached. Relative difference between updates = ", eps)
+        else:
+            print("HPD - Success, converged after %i iterations"%k)
 
     return x, objective, fidelity, regulariser
 

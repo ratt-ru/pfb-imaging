@@ -9,7 +9,7 @@ from scipy.fftpack import next_fast_len
 from time import time
 import argparse
 from astropy.io import fits
-from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers
+from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, prox_21
 from pfb.operators import OutMemGridder, PSF, Prior
 import scipy.linalg as la
 from scipy.stats import laplace
@@ -22,6 +22,10 @@ def create_parser():
                    help="The column to image.")
     p.add_argument("--weight_column", default='WEIGHT_SPECTRUM', type=str,
                    help="Weight column to use. Will use WEIGHT if no WEIGHT_SPECTRUM is found")
+    p.add_argument("--dirty", type=str,
+                   help="Fits file with dirty cube")
+    p.add_argument("--psf", type=str,
+                   help="Fits file with psf cube")
     p.add_argument("--outfile", type=str, default='pfb',
                    help='Base name of output file.')
     p.add_argument("--fov", type=float, default=None,
@@ -59,21 +63,21 @@ def create_parser():
                    help="The strength of the l21 norm regulariser")
     p.add_argument("--x0", type=str, default=None,
                    help="Initial guess in form of fits file")
-    p.add_argument("--reweight_start", type=int, default=20,
+    p.add_argument("--reweight_start", type=int, default=10,
                    help="When to start l1 reweighting scheme")
-    p.add_argument("--reweight_freq", type=int, default=2,
+    p.add_argument("--reweight_freq", type=int, default=1,
                    help="How often to do l1 reweighting")
     p.add_argument("--reweight_alpha", type=float, default=0.5,
                    help="Determines how aggressively the reweighting is applied."
                    "1.0 = very mild whereas close to zero = aggressive.")
-    p.add_argument("--reweight_aplha_ff", type=float, default=0.25,
+    p.add_argument("--reweight_alpha_ff", type=float, default=0.25,
                    help="Determines how quickly the reweighting progresses."
                    "alpha will grow like alpha/(1+i)**alpha_ff.")
-    p.add_argument("--cgtol", type=float, default=1e-2,
+    p.add_argument("--cgtol", type=float, default=5e-3,
                    help="Tolerance for cg updates")
-    p.add_argument("--cgmaxit", type=int, default=10,
+    p.add_argument("--cgmaxit", type=int, default=35,
                    help="Maximum number of iterations for the cg updates")
-    p.add_argument("--cgverbose", type=int, default=0,
+    p.add_argument("--cgverbose", type=int, default=1,
                    help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
     p.add_argument("--hpdtol", type=float, default=1e-5,
                    help="Tolerance for hpd sub-iters")
@@ -82,10 +86,14 @@ def create_parser():
     p.add_argument("--pmtol", type=float, default=1e-14,
                    help="Tolerance for power method used to compute spectral norms")
     p.add_argument("--pmmaxit", type=int, default=25,
-                   help="Maximum number of iterations for power method")    
+                   help="Maximum number of iterations for power method")   
+    p.add_argument("--tidy",type=str2bool, nargs='?', const=True, default=False,
+                   help="Tidy after clean")
+    p.add_argument("--make_restored", type=str2bool, nargs='?', const=True, default=True,
+                   help="Make 'restored' image")
     return p
 
-def main(args, table_name, freq, radec):
+def main(args):
     if args.precision > 1e-6:
         real_type = np.float32
         complex_type=np.complex64
@@ -153,7 +161,6 @@ def main(args, table_name, freq, radec):
         compare_headers(hdr_psf, fits.getheader(args.psf))
         psf_array = load_fits(args.psf)
     else:
-        print("Making PSF.")
         psf_array = R.make_psf()
         save_fits(args.outfile + '_psf.fits', psf_array, hdr_psf, dtype=real_type)
     nband = R.nband
@@ -164,15 +171,14 @@ def main(args, table_name, freq, radec):
     if args.dirty is not None and args.x0 is None:  # no use for dirty if we are starting from input image
         compare_headers(hdr, fits.getheader(args.dirty))
         dirty = load_fits(args.dirty)
+        model = np.zeros((nband, args.nx, args.ny), dtype=real_type)
     else:
         if args.x0 is None:
-            print("Making dirty.")
             model = np.zeros((nband, args.nx, args.ny), dtype=real_type)
             dirty = R.make_dirty()
             save_fits(args.outfile + '_dirty.fits', dirty, hdr, dtype=real_type)
         else:
             compare_headers(hdr, fits.getheader(args.x0))
-            print("Making first residual")
             model = load_fits(args.x0, dtype=real_type)
             dirty = R.make_residual(model)
             save_fits(args.outfile + '_first_residual.fits', dirty, hdr, dtype=real_type)
@@ -196,24 +202,24 @@ def main(args, table_name, freq, radec):
         beta = power_method(Uop, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
     else:
         beta = args.beta
-    print(" beta = %5.5e "%beta)
+    print(" beta = %f "%beta)
 
     # Reweighting
     reweight_iters = list(np.arange(args.reweight_start, args.maxit, args.reweight_freq))
 
     # Reporting    
     print("At iteration 0 peak of residual is %f and rms is %f" % (rmax, rms))
-    report_iters = list(np.arange(0, args.nmiter, args.report_freq))
-    if report_iters[-1] != args.nmiter-1:
-        report_iters.append(args.nmiter-1)
+    report_iters = list(np.arange(0, args.maxit, args.report_freq))
+    if report_iters[-1] != args.maxit-1:
+        report_iters.append(args.maxit-1)
 
     # fidelity and gradient term
     def fprime(x, y, A=None):
         if A is None:
-            grad = y-x
+            tmp = y-x
         else:
-            grad = A(y-x)
-        return 0.5*np.vdot(y-x, grad), grad
+            tmp = A(y-x)
+        return 0.5*np.vdot(y-x, tmp), -tmp
     
     # regulariser
     def reg(x):
@@ -228,22 +234,26 @@ def main(args, table_name, freq, radec):
     gamma = args.gamma0
     residual = dirty.copy()
     for i in range(args.maxit):
-        x = pcg(Uop, residual, np.zeros(*dirty.shape, dtype=real_type), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
+        x = pcg(Uop, residual, np.zeros(dirty.shape, dtype=real_type), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
         
         # update model
         modelp = model
         model = modelp + gamma * x
 
         if args.tidy:
-            fp = lambda x: fprime(x, model, A=Uop)
+            fp = lambda x: fprime(x, model.copy(), A=Uop)
         else:
-            fp = lambda x: fprime(x, model)
+            fp = lambda x: fprime(x, model.copy())
 
         # compute prox
         reweight_alpha = args.reweight_alpha/(1+i)**args.reweight_alpha_ff
+        if i in reweight_iters:
+            reweight_start = 1
+        else:
+            reweight_start = args.hpdmaxit
         model, objhist, fidhist, reghist = hpd(fp, prox_21, reg, modelp, args.gamma0, beta, args.sig_21, 
-                                               alpha0=reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=1, reweight_freq=1,
-                                               tol=args.hpdtol, maxit=args.hpdmaxit, report_freq=1)
+                                               alpha0=reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=reweight_start, reweight_freq=1,
+                                               tol=args.hpdtol, maxit=args.hpdmaxit)
 
         # get residual
         residual = R.make_residual(model)
@@ -274,7 +284,7 @@ def main(args, table_name, freq, radec):
         # get the uninformative Wiener filter soln
         op = lambda x: psf.convolve(x) + 0.001*x
         M = lambda x: x/0.0001
-        x = pcg(op, residual, np.zeros(*dirty.shape, dtype=real_type), M=M, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
+        x = pcg(op, residual, np.zeros(dirty.shape, dtype=real_type), M=M, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
         restored = model + x
         
         # get residual
@@ -286,14 +296,14 @@ def main(args, table_name, freq, radec):
         print("After restoring peak of residual is %f and rms is %f" % (rmax, rms))
 
         # save current iteration
-        save_fits(args.outfile + str(i+1) + '_restored.fits', restored, hdr, dtype=real_type)
+        save_fits(args.outfile + '_restored.fits', restored, hdr, dtype=real_type)
 
         restored_mfs = np.mean(restored, axis=0)
-        save_fits(args.outfile + str(i+1) + '_restored_mfs.fits', restored_mfs, hdr_mfs)
+        save_fits(args.outfile + '_restored_mfs.fits', restored_mfs, hdr_mfs)
 
-        save_fits(args.outfile + str(i+1) + '_restored_residual.fits', residual/psf_max[:, None, None], hdr)
+        save_fits(args.outfile + '_restored_residual.fits', residual/psf_max[:, None, None], hdr)
 
-        save_fits(args.outfile + str(i+1) + '_restored_residual_mfs.fits', residual_mfs, hdr_mfs)
+        save_fits(args.outfile + '_restored_residual_mfs.fits', residual_mfs, hdr_mfs)
 
 
 if __name__=="__main__":
@@ -306,38 +316,9 @@ if __name__=="__main__":
         import multiprocessing
         args.ncpu = multiprocessing.cpu_count()
 
-    if args.numba_threads:
-        import os
-        os.environ.update(NUMBA_NUM_THREADS = str(args.numba_threads))
-    else:
-        os.environ.update(NUMBA_NUM_THREADS = str(args.ncpu))
-
-    if args.outfile[-1] != '/':
-        args.outfile += '/'
-
-    print("Using %i threads"%args.ncpu)
-
     GD = vars(args)
     print('Input Options:')
     for key in GD.keys():
         print(key, ' = ', GD[key])
     
-    # try to open concatenated Stokes I table if it exists otherwise create it
-    if args.table_name is None:
-        table_name = args.outfile + args.outname + ".table"
-    else:
-        table_name = args.table_name
-
-    try:
-        tbl = xds_from_table(table_name)
-        freq = xds_from_table(args.ms[0] + '::SPECTRAL_WINDOW')[0].CHAN_FREQ.data.compute()[0]
-        radec = xds_from_table(args.ms[0] + '::FIELD')[0].PHASE_DIR.data.compute().squeeze()
-        print("Successfully loaded cached data at %s"%table_name)
-    except:
-        print("%s does not exist or is invalid. Computing Stokes I visibilities."%table_name)
-        # import subprocess
-        # subprocess.run("rm -r %s"%table_name)
-        freq, radec = concat_ms_to_I_tbl(args.ms, table_name)
-        
-    
-    main(args, table_name, freq, radec)
+    main(args)
