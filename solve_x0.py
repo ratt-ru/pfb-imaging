@@ -4,7 +4,7 @@ from scipy.linalg import norm, svd
 from scipy.fftpack import next_fast_len
 from scipy.stats import laplace
 from pfb.opt import pcg, hpd
-from pfb.utils import load_fits, save_fits, data_from_header
+from pfb.utils import load_fits, save_fits, data_from_header, prox_21
 from pyrap.tables import table
 from pfb.operators import Gridder, Prior, PSF
 from africanus.constants import c as lightspeed
@@ -30,16 +30,8 @@ def create_parser():
                    help="Number of hpd iterations")
     p.add_argument("--tol", type=float, default=1e-4,
                    help="Tolerance")
-    p.add_argument("--cgtol", type=float, default=1e-2,
-                   help="Tolerance for cg updates")
-    p.add_argument("--cgmaxit", type=int, default=10,
-                   help="Maximum number of iterations for the cg updates")
-    p.add_argument("--cgverbose", type=int, default=0,
-                   help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
-    p.add_argument("--pmtol", type=float, default=1e-14,
-                   help="Tolerance for power method used to compute spectral norms")
-    p.add_argument("--pmmaxit", type=int, default=25,
-                   help="Maximum number of iterations for power method")
+    p.add_argument("--report_freq", type=int, default=2,
+                   help="How often to save output images during deconvolution")
     p.add_argument("--beta", type=float, default=None,
                    help="Lipschitz constant of F")
     p.add_argument("--sig_21", type=float, default=1e-3,
@@ -50,7 +42,22 @@ def create_parser():
                    help="When to start l1 reweighting scheme")
     p.add_argument("--reweight_freq", type=int, default=2,
                    help="How often to do l1 reweighting")
-    
+    p.add_argument("--reweight_alpha", type=float, default=0.5,
+                   help="Determines how aggressively the reweighting is applied."
+                   "1.0 = very mild whereas close to zero = aggressive.")
+    p.add_argument("--reweight_alpha_ff", type=float, default=0.25,
+                   help="Determines how quickly the reweighting progresses."
+                   "alpha will grow like alpha/(1+i)**alpha_ff.")
+    p.add_argument("--cgtol", type=float, default=1e-2,
+                   help="Tolerance for cg updates")
+    p.add_argument("--cgmaxit", type=int, default=10,
+                   help="Maximum number of iterations for the cg updates")
+    p.add_argument("--cgverbose", type=int, default=0,
+                   help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
+    p.add_argument("--pmtol", type=float, default=1e-14,
+                   help="Tolerance for power method used to compute spectral norms")
+    p.add_argument("--pmmaxit", type=int, default=25,
+                   help="Maximum number of iterations for power method")
     return p
 
 def main(args):
@@ -89,19 +96,6 @@ def main(args):
         tmp = K.idot(x)
         return 0.5*np.vdot(x, diff) - 0.5*np.vdot(x, dirty) + 0.5*np.vdot(x, tmp), diff + tmp
 
-    def prox(p, sig_21, weights_21):
-        # l21 norm
-        nchan, nx, ny = p.shape
-        # meanp = norm(p.reshape(nchan, nx*ny), axis=0)
-        meanp = np.mean(p.reshape(nchan, nx*ny), axis=0)
-        l2_soft = np.maximum(meanp - sig_21 * weights_21, 0.0) 
-        indices = np.nonzero(meanp)
-        ratio = np.zeros(meanp.shape, dtype=np.float64)
-        ratio[indices] = l2_soft[indices]/meanp[indices]
-        x = (p.reshape(nchan, nx*ny) * ratio[None, :]).reshape(nchan, nx, ny)  
-        x[x<0] = 0.0
-        return x
-
     def reg(x):
         nchan, nx, ny = x.shape
         # normx = norm(x.reshape(nchan, nx*ny), axis=0)
@@ -114,22 +108,16 @@ def main(args):
     else:
         x0 = load_fits(args.x0)
         
-    model, objhist, fidhist, reghist = hpd(fprime, prox, reg, x0, args.gamma0, beta, args.sig_21, 
+    model, objhist, fidhist, reghist = hpd(fprime, prox_21, reg, x0, args.gamma0, beta, args.sig_21, 
                                            hess=hess, cgprecond=K.dot, cgtol=args.cgtol, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose,
-                                           alpha0=0.5, alpha_ff=0.25, reweight_start=args.reweight_start, reweight_freq=args.reweight_freq,
+                                           alpha0=args.reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=args.reweight_start, reweight_freq=args.reweight_freq,
                                            tol=args.tol, maxit=args.maxit, report_freq=1)
 
     save_fits(args.outfile + '_model.fits', model, hdr, dtype=real_type)
-    # hdu = fits.PrimaryHDU(header=hdr)
-    # hdu.data = np.transpose(model, axes=(0, 2, 1))[:, ::-1].astype(np.float32)
-    # hdu.writeto(args.outfile + '_model.fits', overwrite=True)
 
     residual = dirty - psf.convolve(model)
 
     save_fits(args.outfile + '_residual.fits', residual/psf_max[:, None, None], hdr)
-    # hdu = fits.PrimaryHDU(header=hdr)
-    # hdu.data = np.transpose(residual/psf_max[:, None, None], axes=(0, 2, 1))[:, ::-1].astype(np.float32)
-    # hdu.writeto(args.outfile + '_residual.fits', overwrite=True)
 
     import matplotlib.pyplot as plt
     plt.figure('obj')

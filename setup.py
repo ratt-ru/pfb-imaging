@@ -16,6 +16,7 @@ setuptools.setup(
      install_requires=[
           'numpy',
           'scipy',
+          'matplotlib',
           'numba',
           'astropy',
           'python-casacore',

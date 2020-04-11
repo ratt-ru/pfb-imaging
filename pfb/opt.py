@@ -44,7 +44,7 @@ def pcg(A, b, x0, M=None, tol=1e-5, maxit=500, verbosity=1, report_freq=10):
 
     if k >= maxit:
         if verbosity > 0:
-            print("CG - Maximum iterations reacged. Norm of residual = %f.  "%(rnorm/eps0))
+            print("CG - Maximum iterations reached. Norm of residual = %f.  "%(rnorm/eps0))
     else:
         if verbosity > 0:
             print("CG - Success, converged after %i iterations"%k)

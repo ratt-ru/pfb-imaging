@@ -113,27 +113,15 @@ def main(args):
 
     # save dirty and psf images
     save_fits(args.outfile + '_dirty.fits', dirty, hdr, dtype=real_type)
-    # hdu = fits.PrimaryHDU(header=hdr)
-    # hdu.data = np.transpose(dirty, axes=(0, 2, 1))[:, ::-1].astype(real_type)
-    # hdu.writeto(args.outfile + '_dirty.fits', overwrite=True)
-
     save_fits(args.outfile + '_psf.fits', psf, hdr_psf, dtype=real_type)
-    # hdu = fits.PrimaryHDU(header=hdr_psf)
-    # hdu.data = np.transpose(psf, axes=(0, 2, 1))[:, ::-1].astype(real_type)
-    # hdu.writeto(args.outfile + '_psf.fits', overwrite=True)
-
+    
+    # MFS images
     wsum = np.sum(psf_max)
     dirty_mfs = np.sum(dirty, axis=0)/wsum 
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)
-    # hdu = fits.PrimaryHDU(header=hdr_mfs)
-    # hdu.data = dirty_mfs[::-1].T.astype(real_type)
-    # hdu.writeto(args.outfile + '_dirty_mfs.fits', overwrite=True)
 
     psf_mfs = np.sum(psf, axis=0)/wsum
     save_fits(args.outfile + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs)
-    # hdu = fits.PrimaryHDU(header=hdr_psf_mfs)
-    # hdu.data = psf_mfs[::-1].T.astype(real_type)
-    # hdu.writeto(args.outfile + '_psf_mfs.fits', overwrite=True)
 
     rmax = np.abs(dirty_mfs).max()
     rms = np.std(dirty_mfs)

@@ -22,18 +22,18 @@ def data_from_header(hdr, axis=3):
 def load_fits(name, dtype=np.float64):
     data = fits.getdata(name)
     if len(data.shape) == 3:
-        return np.ascontiguousarray(np.transpose(data[:, :, ::-1].astype(dtype), axes=(0, 2, 1)))
+        return np.ascontiguousarray(np.transpose(data[:, ::-1].astype(dtype), axes=(0, 2, 1)))
     elif len(data.shape) == 2:
-        return np.ascontiguousarray(data[:, ::-1].T.astype(dtype))
+        return np.ascontiguousarray(data[::-1].T.astype(dtype))
     else:
         raise ValueError("Unsupported number of axes for fits file %s"%name)
 
 def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
     hdu = fits.PrimaryHDU(header=hdr)
     if len(data.shape) == 3:
-        hdu.data = np.transpose(data, axes=(0, 2, 1))[:, :, ::-1].astype(np.float32)
+        hdu.data = np.transpose(data, axes=(0, 2, 1))[:, ::-1].astype(dtype)
     elif len(data.shape) == 2:
-        hdu.data = data.T[:, ::-1].astype(dtype)
+        hdu.data = data.T[::-1].astype(dtype)
     else:
         raise ValueError("Unsupported number of axes for fits file %s"%name)
     hdu.writeto(name, overwrite=overwrite)
@@ -48,6 +48,19 @@ def freqmul(A, x):
             for k in range(nchan):
                 out[j, i] += A[j, k] * x[k, i]
     return out
+
+def prox_21(p, sig_21, weights_21):
+        # l21 norm
+        nchan, nx, ny = p.shape
+        # meanp = norm(p.reshape(nchan, nx*ny), axis=0)
+        meanp = np.mean(p.reshape(nchan, nx*ny), axis=0)
+        l2_soft = np.maximum(meanp - sig_21 * weights_21, 0.0) 
+        indices = np.nonzero(meanp)
+        ratio = np.zeros(meanp.shape, dtype=np.float64)
+        ratio[indices] = l2_soft[indices]/meanp[indices]
+        x = (p.reshape(nchan, nx*ny) * ratio[None, :]).reshape(nchan, nx, ny)  
+        x[x<0] = 0.0
+        return x
 
 def robust_reweight(v, residuals):
     """
@@ -103,78 +116,6 @@ def test_adjoint(R):
     rhs = np.vdot(x, R.uhdot(y))
     print(" Uniform = ", (lhs - rhs)/rhs)
 
-def init_data(args):
-    print("Reading data")
-    if args.precision < 1e-7:
-        complex_type = np.complex64
-        real_type = np.float32
-    else:
-        complex_type = np.complex128
-        real_type = np.float64
-
-    ti = time()
-    uvw_list = []
-    data_list = []
-    weight_list = []
-    freqp = None
-    nrow = 0
-    nvis = 0
-    for ms_name in args.ms:
-        print("Loading data from ", ms_name)
-        xds = xds_from_ms(ms_name,
-                          columns=('UVW', 'FLAG', args.data_column, args.weight_column),
-                          group_cols=["FIELD_ID"],
-                          chunks={"row": args.row_chunks})[args.field]
-        
-        data_full = getattr(xds, args.data_column).data
-        _, nchan, ncorr = data_full.shape
-        weight_full = getattr(xds, args.weight_column).data
-        if len(weight_full.shape) < 3:
-            # print("Assuming weights were taken from less informative "
-            #     "WEIGHT column. Tiling over frequency.")
-            weight_full = da.tile(weight_full[:, None, :], (1, nchan, 1))
-        flags_full = xds.FLAG
-        
-        # taking weighted sum to get Stokes I
-        data = ((weight_full[:, :, 0] * data_full[:, :, 0] + weight_full[:, :, ncorr-1] * data_full[:, :, ncorr-1])/(weight_full[:, :, 0] + weight_full[:, :, ncorr-1])).compute()
-        weight = (weight_full[:, :, 0] + weight_full[:, :, ncorr-1]).compute()
-        flags = (flags_full[:, :, 0] | flags_full[:, :, ncorr-1]).compute()
-
-        nrowtmp = np.sum(~flags)
-        nrow += nrowtmp
-
-        nvis += data.size
-
-        print("Effective number of rows for ms = ", nrowtmp)
-        print("Number of visibilities for ms = ", data.size)
-
-        # only keep data where both correlations are unflagged
-        data = np.where(~flags, data, 0.0j)
-        weight = np.where(~flags, weight, 0.0)
-        nrow = np.sum(~flags)
-        freq = xds_from_table(ms_name + '::SPECTRAL_WINDOW')[0].CHAN_FREQ.data.compute().squeeze()
-        if freqp is not None:
-            try:
-                assert np.array_equal(freqp, freq)
-            except:
-                raise RuntimeError("Not all MS Freqs match")
-
-        data_list.append(data)
-        weight_list.append(weight)
-        uvw_list.append(xds.UVW.data.compute())
-        freqp = freq
-
-    data = np.concatenate(data_list)
-    uvw = np.concatenate(uvw_list)
-    weight = np.concatenate(weight_list)
-    sqrtW = np.sqrt(weight)
-    print("Time to read data = ", time()- ti)
-
-    print("Effective number of rows total = ", nrow)
-    print("Total number of visibilities = ", nvis)
-    return {'data':data.astype(complex_type), 'uvw':uvw.astype(real_type), 
-            'sqrtW':sqrtW.astype(real_type), 'freq':freq.astype(real_type)}
-
 def str2bool(v):
     if isinstance(v, bool):
        return v
@@ -185,83 +126,6 @@ def str2bool(v):
     else:
         import argparse
         raise argparse.ArgumentTypeError('Boolean value expected.')
-
-def concat_ms_to_I_tbl(ms, outname, cols=["DATA", "WEIGHT", "UVW"]):
-    """
-    Concatenate list of measurement sets to single table holding
-    Stokes I data and weights
-
-    ms - list of measurement sets to concatenate
-    outname - name of the table to write
-    cols - list of column names to concatenate
-
-    """
-    # Currently MS's need to have the same frequencies and only a single spw
-    freq = None
-    radec = None
-    for ims in ms:
-        if freq is None:
-            freq = xds_from_table(ims + '::SPECTRAL_WINDOW')[0].CHAN_FREQ.data.compute()[0]
-        else:
-            tmpfreq = xds_from_table(ims + '::SPECTRAL_WINDOW')[0].CHAN_FREQ.data.compute()[0]
-            assert_array_equal(freq, tmpfreq)
-
-        if radec is None:
-            radec = xds_from_table(ims + '::FIELD')[0].PHASE_DIR.data.compute()[0].squeeze()
-        else:
-            tmpradec = xds_from_table(ims + '::FIELD')[0].PHASE_DIR.data.compute()[0].squeeze()
-            assert_array_equal(radec, tmpradec)
-    nchan = freq.size
-
-    # convert to Stokes I vis and concatenate
-    fid = 0
-    concat_cols = ('FLAG', 'FLAG_ROW', 'UVW', 'DATA', 'WEIGHT')
-    nrows = 0
-    dataf = []
-    uvwf = []
-    weightf = []
-    for ims in ms:
-        xds = xds_from_ms(ims, 
-                          columns=concat_cols,
-                          group_cols=["FIELD_ID"],
-                          chunks={"row": 10000})[fid]
-        
-        nrow, _, ncorr = xds.DATA.shape
-        nrows += nrow
-
-        data = xds.DATA.data
-        weight = xds.WEIGHT.data
-        weight = da.tile(weight[:, None, :], (1, nchan, 1))
-        uvw = xds.UVW.data
-        flag = xds.FLAG.data
-
-        data_I = ((weight[:, :, 0] * data[:, :, 0] + weight[:, :, ncorr-1] * data[:, :, ncorr-1])/(weight[:, :, 0] + weight[:, :, ncorr-1]))
-        weight_I = (weight[:, :, 0] + weight[:, :, ncorr-1])
-        flag_I = (flag[:, :, 0] | flag[:, :, ncorr-1])
-
-        
-        weight_I = da.where(~flag_I, da.sqrt(weight_I), 0.0)
-        data_I = da.where(~flag_I, data_I, 0.0j)
-
-        dataf.append(data_I)
-        uvwf.append(uvw)
-        weightf.append(weight_I)
-
-    data = da.concatenate(dataf, axis=0)
-    weight = da.concatenate(weightf, axis=0)
-    uvw = da.concatenate(uvwf, axis=0)
-
-    data_vars = {
-        'DATA':(('row', 'chan'), data),
-        'WEIGHT':(('row', 'chan'), weight),
-        'UVW':(('row', 'uvw'), uvw)
-    }
-
-    writes = xds_to_table([Dataset(data_vars)], outname, "ALL")
-    dask.compute(writes)
-
-    return freq, radec
-
 
 def set_wcs(cell_x, cell_y, nx, ny, radec, freq):
 
@@ -289,7 +153,11 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq):
     header['BUNIT'] = 'Jy/beam'
     header['SPECSYS'] = 'TOPOCENT'
 
-    # for key in header.keys():
-    #     print(header[key])
-
     return header
+
+def compare_headers(hdr1, hdr2):
+    for key in hdr1.keys():
+        try:
+            assert hdr1[key] == hdr2[key]
+        except:
+            raise ValueError("Headers do not match on key %s"%key)
