@@ -61,9 +61,11 @@ def create_parser():
                    help="The strength of the l2 norm regulariser")
     p.add_argument("--sig_21", type=float, default=1e-3,
                    help="The strength of the l21 norm regulariser")
+    p.add_argument("--sig_21_scale", type=float, default=0.8,
+                   help="Decrease sig_21 by this factor every iteration")
     p.add_argument("--x0", type=str, default=None,
                    help="Initial guess in form of fits file")
-    p.add_argument("--reweight_start", type=int, default=10,
+    p.add_argument("--reweight_start", type=int, default=1,
                    help="When to start l1 reweighting scheme")
     p.add_argument("--reweight_freq", type=int, default=1,
                    help="How often to do l1 reweighting")
@@ -251,7 +253,8 @@ def main(args):
             reweight_start = 1
         else:
             reweight_start = args.hpdmaxit
-        model, objhist, fidhist, reghist = hpd(fp, prox_21, reg, modelp, args.gamma0, beta, args.sig_21, 
+        sig_21 = args.sig_21 * args.sig_21_scale**i
+        model, objhist, fidhist, reghist = hpd(fp, prox_21, reg, modelp, args.gamma0, beta, sig_21, 
                                                alpha0=reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=reweight_start, reweight_freq=1,
                                                tol=args.hpdtol, maxit=args.hpdmaxit)
 
