@@ -105,7 +105,7 @@ def main(args):
     if args.use_psi:
         # wavelet basis and regulariser
         nchan, nx, ny = dirty.shape
-        PSI, PSIT = set_Psi(nx, ny)
+        PSI, PSIT = set_Psi(nx, ny, nlevel=args.psi_levels)
         psi = {}
         psi['PSI'] = PSI
         psi['PSIT'] = PSIT

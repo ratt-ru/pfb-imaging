@@ -6,11 +6,13 @@ import dask
 import dask.array as da
 from pfb.opt import power_method, hpd, fista, pcg
 from scipy.fftpack import next_fast_len
+from scipy.linalg import norm
 from time import time
 import argparse
 from astropy.io import fits
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, prox_21
 from pfb.operators import OutMemGridder, PSF, Prior
+from pfb.sara import set_Psi
 import scipy.linalg as la
 from scipy.stats import laplace
 
@@ -73,10 +75,10 @@ def create_parser():
                    help="When to start l1 reweighting scheme")
     p.add_argument("--reweight_freq", type=int, default=1,
                    help="How often to do l1 reweighting")
-    p.add_argument("--reweight_alpha_percent", type=float, default=95.0,
+    p.add_argument("--reweight_alpha", type=float, default=1e-6,
                    help="Determines how aggressively the reweighting is applied."
-                   "100 = very mild whereas close to zero = aggressive.")
-    p.add_argument("--reweight_alpha_ff", type=float, default=0.25,
+                   " >= 1 is very mild whereas << 1 is aggressive.")
+    p.add_argument("--reweight_alpha_ff", type=float, default=0.0,
                    help="Determines how quickly the reweighting progresses."
                    "alpha will grow like alpha/(1+i)**alpha_ff.")
     p.add_argument("--cgtol", type=float, default=5e-3,
@@ -87,7 +89,7 @@ def create_parser():
                    help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
     p.add_argument("--hpdtol", type=float, default=1e-5,
                    help="Tolerance for hpd sub-iters")
-    p.add_argument("--hpdmaxit", type=int, default=100,
+    p.add_argument("--hpdmaxit", type=int, default=20,
                    help="Maximum number of iterations for hpd sub-iters")
     p.add_argument("--pmtol", type=float, default=1e-14,
                    help="Tolerance for power method used to compute spectral norms")
@@ -229,11 +231,34 @@ def main(args):
     
     # regulariser
     sig_21 = np.linspace(args.sig_21_start, args.sig_21_end, args.maxit)
-    def reg(x):
-        nchan, nx, ny = x.shape
-        # normx = norm(x.reshape(nchan, nx*ny), axis=0)
-        normx = np.mean(x.reshape(nchan, nx*ny), axis=0)
-        return np.sum(np.abs(normx))
+    if args.use_psi:
+        # wavelet basis and regulariser
+        nchan, nx, ny = dirty.shape
+        PSI, PSIT = set_Psi(nx, ny, nlevels=args.psi_levels)
+        psi = {}
+        psi['PSI'] = PSI
+        psi['PSIT'] = PSIT
+        prox = lambda p, sig21, w21: prox_21(p, sig21, w21, psi=psi)
+
+        def reg(x):
+            nchan, nx, ny = x.shape
+            nbasis = len(PSIT)
+            norm21 = 0.0
+            for k in range(nbasis):
+                v = np.zeros((nchan, nx*ny), x.dtype)
+                for l in range(nchan):
+                    v[l] = PSIT[k](x[l])
+                l2norm = norm(v, axis=0)
+                norm21 += np.sum(l2norm)
+            return norm21
+    else:
+        prox = prox_21
+        psi = None
+        def reg(x):
+            nchan, nx, ny = x.shape
+            # normx = norm(x.reshape(nchan, nx*ny), axis=0)
+            normx = np.mean(x.reshape(nchan, nx*ny), axis=0)
+            return np.sum(np.abs(normx))
 
     # deconvolve
     eps = 1.0
@@ -255,17 +280,17 @@ def main(args):
         # compute prox
         if i in reweight_iters:
             reweight_start = 1
-            modelmin = np.amin(modelp, axis=0)
-            idx, idy = np.nonzero(modelmin)  # model >= 0
-            meanx = np.mean(modelp[:, idx, idy], axis=0)
-            reweight_alpha = np.percentile(meanx, args.reweight_alpha_percent)
+            # modelmin = np.amin(modelp, axis=0)
+            # idx, idy = np.nonzero(modelmin)  # model >= 0
+            # meanx = np.mean(modelp[:, idx, idy], axis=0)
+            # reweight_alpha = np.percentile(meanx, args.reweight_alpha_percent)
             # reweight_alpha = args.reweight_alpha/(1+i)**args.reweight_alpha_ff
         else:
-            reweight_alpha = 1.0
+            # reweight_alpha = 1.0
             reweight_start = args.hpdmaxit
-        # sig_21 = args.sig_21 * args.sig_21_scale**i
-        model, objhist, fidhist, reghist = hpd(fp, prox_21, reg, modelp, args.gamma0, beta, sig_21[i], 
-                                               alpha0=reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=reweight_start, reweight_freq=1,
+        
+        model, objhist, fidhist, reghist = hpd(fp, prox, reg, modelp, args.gamma0, beta, sig_21[i], psi=psi,
+                                               alpha0=args.reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=reweight_start, reweight_freq=1,
                                                tol=args.hpdtol, maxit=args.hpdmaxit)
 
         # get residual
