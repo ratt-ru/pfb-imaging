@@ -169,6 +169,7 @@ def fista(fprime,
 
 
 def hpd(fprime, prox, reg, x0, gamma, beta, sig_21, 
+        psi=None,
         hess=None,
         cgprecond=None,
         cgtol=1e-3,
@@ -185,15 +186,13 @@ def hpd(fprime, prox, reg, x0, gamma, beta, sig_21,
     """
     Algorithm to solve problems of the form
 
-    argmin_x F(x) + lam_n |s|_1 + lam_21 |L x|_21
+    argmin_x F(x) + lam_21 |L x|_21
 
-    where x is the image cube and s are the singular values along 
-    the frequency dimension and there is an optional positivity 
+    where x is the image cube and there is an optional positivity 
     constraint. 
 
     fprime      - function that produces F(x), grad F(x)
-    x           - primal variable
-    y           - dual variable
+    x0           - primal variable
     gamma       - initial step-size
     beta        - Lipschitz constant of F
     sig_21      - strength of l21 regulariser
@@ -203,7 +202,12 @@ def hpd(fprime, prox, reg, x0, gamma, beta, sig_21,
     npix = nx*ny
 
     # weights
-    weights_21 = np.ones(npix, dtype=np.float64)
+    if psi is None:
+        weights_21 = np.ones(npix, dtype=x0.dtype)
+    else:
+        PSIT = psi['PSIT']
+        nbasis = len(PSIT)
+        weights_21 = np.ones((nbasis, npix), dtype=x0.dtype)
 
     # initialise
     x = x0
@@ -267,8 +271,16 @@ def hpd(fprime, prox, reg, x0, gamma, beta, sig_21,
 
         if k >= reweight_start and not k%reweight_freq:
             alpha = alpha0/(1+i)**alpha_ff
-            normx = norm(x.reshape(nchan, npix), axis=0)
-            weights_21 = 1.0/(normx + alpha)
+            if psi is None:
+                normx = norm(x.reshape(nchan, npix), axis=0)
+                weights_21 = 1.0/(normx + alpha)
+            else:
+                for m in range(nbasis):
+                    v = np.zeros((nchan, nx*ny), x.dtype)
+                    for l in range(nchan):
+                        v[l] = PSIT[m](x[l])
+                    l2norm = norm(v, axis=0)
+                    weights_21[m] = 1.0/(l2norm + alpha)
             i += 1
 
         if not k%report_freq and verbosity > 1:

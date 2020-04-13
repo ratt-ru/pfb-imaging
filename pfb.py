@@ -63,8 +63,10 @@ def create_parser():
                    help="The strength of the l21 norm regulariser")
     p.add_argument("--sig_21_end", type=float, default=1e-3,
                    help="The strength of the l21 norm regulariser")
-    p.add_argument("--sig_21_scale", type=float, default=0.8,
-                   help="Decrease sig_21 by this factor every iteration")
+    p.add_argument("--use_psi", type=str2bool, nargs='?', const=True, default=False,
+                   help="Use SARA basis")
+    p.add_argument("--psi_levels", type=int, default=2,
+                   help="Wavelet decomposition level")
     p.add_argument("--x0", type=str, default=None,
                    help="Initial guess in form of fits file")
     p.add_argument("--reweight_start", type=int, default=1,

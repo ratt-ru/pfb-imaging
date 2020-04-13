@@ -2,6 +2,7 @@ import numpy as np
 from numba import njit, prange
 from scipy.special import digamma, polygamma
 from scipy.optimize import fmin_l_bfgs_b
+from scipy.linalg import norm
 import dask
 import dask.array as da
 from daskms import xds_from_ms, xds_from_table, xds_to_table, Dataset
@@ -49,9 +50,10 @@ def freqmul(A, x):
                 out[j, i] += A[j, k] * x[k, i]
     return out
 
-def prox_21(p, sig_21, weights_21):
+def prox_21(p, sig_21, weights_21, psi=None):
+    nchan, nx, ny = p.shape
+    if psi is None:
         # l21 norm
-        nchan, nx, ny = p.shape
         # meanp = norm(p.reshape(nchan, nx*ny), axis=0)
         meanp = np.mean(p.reshape(nchan, nx*ny), axis=0)
         l2_soft = np.maximum(meanp - sig_21 * weights_21, 0.0) 
@@ -59,8 +61,30 @@ def prox_21(p, sig_21, weights_21):
         ratio = np.zeros(meanp.shape, dtype=np.float64)
         ratio[indices] = l2_soft[indices]/meanp[indices]
         x = (p.reshape(nchan, nx*ny) * ratio[None, :]).reshape(nchan, nx, ny)  
-        x[x<0] = 0.0
-        return x
+    else:
+        PSI = psi['PSI']
+        PSIT = psi['PSIT']
+        nbasis = len(PSI)
+        ncahn, nx, ny = p.shape
+        x = np.zeros(p.shape, p.dtype)
+        for k in range(nbasis):
+            v = np.zeros((nchan, nx*ny), p.dtype)
+            for l in range(nchan):
+                v[l] = PSIT[k](p[l])
+            # get 2-norm along spectral axis
+            l2norm = norm(v, axis=0)
+            # impose average sparsity
+            l2_soft = np.maximum(np.abs(l2norm) - sig_21 * weights_21[k], 0.0) * np.sign(l2norm)
+            indices = np.nonzero(l2norm)
+            ratio = np.zeros(l2norm.shape, dtype=np.float64)
+            ratio[indices] = l2_soft[indices]/l2norm[indices]
+            v *= ratio[None]
+            for l in range(nchan):
+                x[l] += PSI[k](v[l])
+
+    x[x<0] = 0.0    
+    return x
+        
 
 def robust_reweight(v, residuals):
     """

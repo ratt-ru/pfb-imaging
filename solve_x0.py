@@ -4,7 +4,8 @@ from scipy.linalg import norm, svd
 from scipy.fftpack import next_fast_len
 from scipy.stats import laplace
 from pfb.opt import pcg, hpd
-from pfb.utils import load_fits, save_fits, data_from_header, prox_21
+from pfb.sara import set_Psi
+from pfb.utils import load_fits, save_fits, data_from_header, prox_21, str2bool
 from pyrap.tables import table
 from pfb.operators import Gridder, Prior, PSF
 from africanus.constants import c as lightspeed
@@ -36,6 +37,10 @@ def create_parser():
                    help="Lipschitz constant of F")
     p.add_argument("--sig_21", type=float, default=1e-3,
                    help="Tolerance for cg updates")
+    p.add_argument("--use_psi", type=str2bool, nargs='?', const=True, default=False,
+                   help="Use SARA basis")
+    p.add_argument("--psi_levels", type=int, default=2,
+                   help="Wavelet decomposition level")
     p.add_argument("--x0", type=str, default=None,
                    help="Initial guess in form of fits file")
     p.add_argument("--reweight_start", type=int, default=20,
@@ -96,11 +101,35 @@ def main(args):
         tmp = K.idot(x)
         return 0.5*np.vdot(x, diff) - 0.5*np.vdot(x, dirty) + 0.5*np.vdot(x, tmp), diff + tmp
 
-    def reg(x):
-        nchan, nx, ny = x.shape
-        # normx = norm(x.reshape(nchan, nx*ny), axis=0)
-        normx = np.mean(x.reshape(nchan, nx*ny), axis=0)
-        return np.sum(np.abs(normx))
+    
+    if args.use_psi:
+        # wavelet basis and regulariser
+        nchan, nx, ny = dirty.shape
+        PSI, PSIT = set_Psi(nx, ny)
+        psi = {}
+        psi['PSI'] = PSI
+        psi['PSIT'] = PSIT
+        prox = lambda p, sig21, w21: prox_21(p, sig21, w21, psi=psi)
+
+        def reg(x):
+            nchan, nx, ny = x.shape
+            nbasis = len(PSIT)
+            norm21 = 0.0
+            for k in range(nbasis):
+                v = np.zeros((nchan, nx*ny), x.dtype)
+                for l in range(nchan):
+                    v[l] = PSIT[k](x[l])
+                l2norm = norm(v, axis=0)
+                norm21 += np.sum(l2norm)
+            return norm21
+    else:
+        prox = prox_21
+    
+        def reg(x):
+            nchan, nx, ny = x.shape
+            # normx = norm(x.reshape(nchan, nx*ny), axis=0)
+            normx = np.mean(x.reshape(nchan, nx*ny), axis=0)
+            return np.sum(np.abs(normx))
 
 
     if args.x0 is None:
@@ -108,10 +137,10 @@ def main(args):
     else:
         x0 = load_fits(args.x0)
         
-    model, objhist, fidhist, reghist = hpd(fprime, prox_21, reg, x0, args.gamma0, beta, args.sig_21, 
+    model, objhist, fidhist, reghist = hpd(fprime, prox, reg, x0, args.gamma0, beta, args.sig_21, psi=psi,
                                            hess=hess, cgprecond=K.dot, cgtol=args.cgtol, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose,
                                            alpha0=args.reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=args.reweight_start, reweight_freq=args.reweight_freq,
-                                           tol=args.tol, maxit=args.maxit, report_freq=1, verbosity=1)
+                                           tol=args.tol, maxit=args.maxit, report_freq=1, verbosity=2)
 
     save_fits(args.outfile + '_model.fits', model, hdr, dtype=real_type)
 
@@ -143,7 +172,10 @@ if __name__=="__main__":
         import multiprocessing
         args.ncpu = multiprocessing.cpu_count()
 
-    print("Using %i threads"%args.ncpu)
+    GD = vars(args)
+    print('Input Options:')
+    for key in GD.keys():
+        print(key, ' = ', GD[key])
 
     main(args)
 
