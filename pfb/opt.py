@@ -274,6 +274,7 @@ def hpd(fprime, prox, reg, x0, gamma, beta, sig_21,
         if not k%report_freq and verbosity > 1:
             print("At iteration %i eps = %f, norm21 = %f "%(k, eps, regx))
 
+
     if verbosity > 0:
         if k == maxit-1:
             print("HPD - Maximum iterations reached. Relative difference between updates = ", eps)

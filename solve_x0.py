@@ -111,7 +111,7 @@ def main(args):
     model, objhist, fidhist, reghist = hpd(fprime, prox_21, reg, x0, args.gamma0, beta, args.sig_21, 
                                            hess=hess, cgprecond=K.dot, cgtol=args.cgtol, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose,
                                            alpha0=args.reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=args.reweight_start, reweight_freq=args.reweight_freq,
-                                           tol=args.tol, maxit=args.maxit, report_freq=1, verbosity=0)
+                                           tol=args.tol, maxit=args.maxit, report_freq=1, verbosity=1)
 
     save_fits(args.outfile + '_model.fits', model, hdr, dtype=real_type)
 

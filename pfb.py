@@ -59,7 +59,9 @@ def create_parser():
                    help="Lipschitz constant of F")
     p.add_argument("--sig_l2", default=1.0, type=float,
                    help="The strength of the l2 norm regulariser")
-    p.add_argument("--sig_21", type=float, default=1e-3,
+    p.add_argument("--sig_21_start", type=float, default=1e-3,
+                   help="The strength of the l21 norm regulariser")
+    p.add_argument("--sig_21_end", type=float, default=1e-3,
                    help="The strength of the l21 norm regulariser")
     p.add_argument("--sig_21_scale", type=float, default=0.8,
                    help="Decrease sig_21 by this factor every iteration")
@@ -69,9 +71,9 @@ def create_parser():
                    help="When to start l1 reweighting scheme")
     p.add_argument("--reweight_freq", type=int, default=1,
                    help="How often to do l1 reweighting")
-    p.add_argument("--reweight_alpha", type=float, default=0.5,
+    p.add_argument("--reweight_alpha_percent", type=float, default=95.0,
                    help="Determines how aggressively the reweighting is applied."
-                   "1.0 = very mild whereas close to zero = aggressive.")
+                   "100 = very mild whereas close to zero = aggressive.")
     p.add_argument("--reweight_alpha_ff", type=float, default=0.25,
                    help="Determines how quickly the reweighting progresses."
                    "alpha will grow like alpha/(1+i)**alpha_ff.")
@@ -199,7 +201,7 @@ def main(args):
     K = Prior(freq_out, args.sig_l2, l, args.nx, args.ny, nthreads=args.ncpu)
     def Uop(x):  
         return psf.convolve(x) + K.idot(x)
-    if args.beta is None:
+    if args.beta is None and args.tidy:
         print("Getting spectral norm of update operator")
         beta = power_method(Uop, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
     else:
@@ -224,6 +226,7 @@ def main(args):
         return 0.5*np.vdot(y-x, tmp), -tmp
     
     # regulariser
+    sig_21 = np.linspace(args.sig_21_start, args.sig_21_end, args.maxit)
     def reg(x):
         nchan, nx, ny = x.shape
         # normx = norm(x.reshape(nchan, nx*ny), axis=0)
@@ -248,13 +251,18 @@ def main(args):
             fp = lambda x: fprime(x, model.copy())
 
         # compute prox
-        reweight_alpha = args.reweight_alpha/(1+i)**args.reweight_alpha_ff
         if i in reweight_iters:
             reweight_start = 1
+            modelmin = np.amin(modelp, axis=0)
+            idx, idy = np.nonzero(modelmin)  # model >= 0
+            meanx = np.mean(modelp[:, idx, idy], axis=0)
+            reweight_alpha = np.percentile(meanx, args.reweight_alpha_percent)
+            # reweight_alpha = args.reweight_alpha/(1+i)**args.reweight_alpha_ff
         else:
+            reweight_alpha = 1.0
             reweight_start = args.hpdmaxit
-        sig_21 = args.sig_21 * args.sig_21_scale**i
-        model, objhist, fidhist, reghist = hpd(fp, prox_21, reg, modelp, args.gamma0, beta, sig_21, 
+        # sig_21 = args.sig_21 * args.sig_21_scale**i
+        model, objhist, fidhist, reghist = hpd(fp, prox_21, reg, modelp, args.gamma0, beta, sig_21[i], 
                                                alpha0=reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=reweight_start, reweight_freq=1,
                                                tol=args.hpdtol, maxit=args.hpdmaxit)
 
