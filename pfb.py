@@ -11,8 +11,7 @@ from time import time
 import argparse
 from astropy.io import fits
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, prox_21
-from pfb.operators import OutMemGridder, PSF, Prior
-from pfb.sara import set_Psi
+from pfb.operators import OutMemGridder, PSF, Prior, PSI
 import scipy.linalg as la
 from scipy.stats import laplace
 
@@ -67,7 +66,7 @@ def create_parser():
                    help="The strength of the l21 norm regulariser")
     p.add_argument("--use_psi", type=str2bool, nargs='?', const=True, default=False,
                    help="Use SARA basis")
-    p.add_argument("--psi_levels", type=int, default=2,
+    p.add_argument("--psi_levels", type=int, default=4,
                    help="Wavelet decomposition level")
     p.add_argument("--x0", type=str, default=None,
                    help="Initial guess in form of fits file")
@@ -232,28 +231,29 @@ def main(args):
     # regulariser
     sig_21 = np.linspace(args.sig_21_start, args.sig_21_end, args.maxit)
     if args.use_psi:
-        # wavelet basis and regulariser
+        # set up wavelet basis
         nchan, nx, ny = dirty.shape
-        PSI, PSIT = set_Psi(nx, ny, nlevels=args.psi_levels)
-        psi = {}
-        psi['PSI'] = PSI
-        psi['PSIT'] = PSIT
+        psi = PSI(nchan, nx, ny, nlevels=args.psi_levels)
+        nbasis = psi.nbasis
         prox = lambda p, sig21, w21: prox_21(p, sig21, w21, psi=psi)
+        weights_21 = np.empty(psi.nbasis, dtype=object)
+        weights_21[0] = np.ones(nx*ny, dtype=real_type)
+        for m in range(1, psi.nbasis):
+            weights_21[m] = np.ones(psi.ntot, dtype=real_type)
 
         def reg(x):
             nchan, nx, ny = x.shape
-            nbasis = len(PSIT)
+            nbasis = len(psi.nbasis)
             norm21 = 0.0
-            for k in range(nbasis):
-                v = np.zeros((nchan, nx*ny), x.dtype)
-                for l in range(nchan):
-                    v[l] = PSIT[k](x[l])
+            for k in range(psi.nbasis):
+                v = psi.hdot(x, k)
                 l2norm = norm(v, axis=0)
                 norm21 += np.sum(l2norm)
             return norm21
     else:
         prox = prox_21
         psi = None
+        weights_21 = np.ones(nx*ny, dtype=real_type)
         def reg(x):
             nchan, nx, ny = x.shape
             # normx = norm(x.reshape(nchan, nx*ny), axis=0)
@@ -266,32 +266,31 @@ def main(args):
     gamma = args.gamma0
     residual = dirty.copy()
     for i in range(args.maxit):
-        x = pcg(Uop, residual, np.zeros(dirty.shape, dtype=real_type), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
+        tmp = K.idot(model)
+        x = pcg(Uop, residual - tmp, np.zeros(dirty.shape, dtype=real_type), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
         
         # update model
         modelp = model
         model = modelp + gamma * x
 
+        # compute prox
         if args.tidy:
             fp = lambda x: fprime(x, model.copy(), A=Uop)
+            # LB - TODO - compute with fista
         else:
-            fp = lambda x: fprime(x, model.copy())
+            model = prox(model, sig_21[i], weights_21)
 
-        # compute prox
-        if i in reweight_iters:
-            reweight_start = 1
-            # modelmin = np.amin(modelp, axis=0)
-            # idx, idy = np.nonzero(modelmin)  # model >= 0
-            # meanx = np.mean(modelp[:, idx, idy], axis=0)
-            # reweight_alpha = np.percentile(meanx, args.reweight_alpha_percent)
-            # reweight_alpha = args.reweight_alpha/(1+i)**args.reweight_alpha_ff
-        else:
-            # reweight_alpha = 1.0
-            reweight_start = args.hpdmaxit
-        
-        model, objhist, fidhist, reghist = hpd(fp, prox, reg, modelp, args.gamma0, beta, sig_21[i], psi=psi,
-                                               alpha0=args.reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=reweight_start, reweight_freq=1,
-                                               tol=args.hpdtol, maxit=args.hpdmaxit)
+        # reweighting
+        if i >= args.reweight_start and not i%args.reweight_freq:
+            alpha = args.reweight_alpha/(1+i)**args.reweight_alpha_ff
+            if psi is None:
+                normx = norm(x.reshape(nchan, npix), axis=0)
+                weights_21 = 1.0/(normx + alpha)
+            else:
+                for m in range(psi.nbasis):
+                    v = psi.hdot(model, m)
+                    l2norm = norm(v, axis=0)
+                    weights_21[m] = 1.0/(l2norm + alpha)
 
         # get residual
         residual = R.make_residual(model)

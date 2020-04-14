@@ -62,15 +62,10 @@ def prox_21(p, sig_21, weights_21, psi=None):
         ratio[indices] = l2_soft[indices]/meanp[indices]
         x = (p.reshape(nchan, nx*ny) * ratio[None, :]).reshape(nchan, nx, ny)  
     else:
-        PSI = psi['PSI']
-        PSIT = psi['PSIT']
-        nbasis = len(PSI)
-        ncahn, nx, ny = p.shape
+        nchan, nx, ny = p.shape
         x = np.zeros(p.shape, p.dtype)
-        for k in range(nbasis):
-            v = np.zeros((nchan, nx*ny), p.dtype)
-            for l in range(nchan):
-                v[l] = PSIT[k](p[l])
+        for k in range(psi.nbasis):
+            v = psi.hdot(p, k)
             # get 2-norm along spectral axis
             l2norm = norm(v, axis=0)
             # impose average sparsity
@@ -79,8 +74,7 @@ def prox_21(p, sig_21, weights_21, psi=None):
             ratio = np.zeros(l2norm.shape, dtype=np.float64)
             ratio[indices] = l2_soft[indices]/l2norm[indices]
             v *= ratio[None]
-            for l in range(nchan):
-                x[l] += PSI[k](v[l])
+            x += psi.dot(v, k)
 
     x[x<0] = 0.0    
     return x
