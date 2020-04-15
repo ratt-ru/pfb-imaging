@@ -199,7 +199,7 @@ def main(args):
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)       
     
     #  preconditioning matrix
-    l = 0.1 * (freq_out.max() - freq_out.min())/np.mean(freq_out)
+    l = 0.15* (freq_out.max() - freq_out.min())/np.mean(freq_out)
     print(" l = ", l)
     K = Prior(freq_out, args.sig_l2, l, args.nx, args.ny, nthreads=args.ncpu)
     def Uop(x):  
@@ -221,11 +221,8 @@ def main(args):
         report_iters.append(args.maxit-1)
 
     # fidelity and gradient term
-    def fprime(x, y, A=None):
-        if A is None:
-            tmp = y-x
-        else:
-            tmp = A(y-x)
+    def fprime(x, y, A):
+        tmp = A(y-x)
         return 0.5*np.vdot(y-x, tmp), -tmp
     
     # regulariser
@@ -275,7 +272,7 @@ def main(args):
         # compute prox
         if args.tidy:
             fp = lambda x: fprime(x, model.copy(), A=Uop)
-            # LB - TODO - compute with fista
+            model, fid, fidu = fista(fp, prox, modelp, beta, sig_21[i], weights_21, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
         else:
             model = prox(model, sig_21[i], weights_21)
 

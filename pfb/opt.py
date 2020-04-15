@@ -55,35 +55,26 @@ def back_track_func(x, xold, gradp, likp, L):
         return likp + np.vdot(gradp, df) + L* np.vdot(df, df)/2
 
 def fista(fprime,
-          x0, y0,  # initial guess for primal and dual variables 
+          prox,
+          x0, # initial guess for primal and dual variables 
           beta,    # lipschitz constant
           sig_21, # regulariser strengths
+          weights_21,
           tol=1e-3, maxit=1000, positivity=True, report_freq=10):
     """
     Algorithm to solve problems of the form
 
-    argmin_x (b - Rx).T (b - Rx) + x.T K^{-1} x +  lam_21 |x|_21
+    argmin_x F(x) +  lam_21 R(x)
 
-    where x is the image cube, R the measurement operator, K is a
-    prior covariance matrix enforcing smoothness in frequency and
-    and |x|_21 the l21 norm along the frequency axis. Note we can
-    consider the first two terms jointly as a single smooth data
-    fidelity term with Lipschitz constant beta. The non-smooth
-    l21 norm term is then the regulariser and we can solve the
-    optimisation problem via accelerated proximal gradient decent.  
+    where x is the image cube, F(x) is a smooth data fidelity
+    term and R(x) a non-smooth convex regulariser.   
 
     sig_21   - strength of l21 regulariser
-    
+    weights_21 - l1 reweighting
     # Note - Spectral norms for both decomposition operators are unity.
     """
     nchan, nx, ny = x0.shape
     npix = nx*ny
-
-    # # fidelity and gradient term
-    # def fidgrad(x):
-    #     diff = data - R.dot(x)
-    #     tmp = K.idot(x)
-    #     return 0.5*np.vdot(diff, diff).real + 0.5*np.vdot(x, tmp), -R.hdot(diff) + tmp
 
     # start iterations
     t = 1.0
@@ -100,22 +91,11 @@ def fista(fprime,
         fidp = fidn
         gradp = gradn
 
-        objective[k] = fidp + sig_21*np.sum(norm(x.reshape(nchan, nx*ny), axis=0))
-
         # gradient update
         x = y - gradp/beta
         
-        # apply prox
-        if positivity:
-            x[x<0] = 0.0
-        
-        # l21
-        l2norm = norm(x.reshape(nchan, nx*ny), axis=0)
-        l2_soft = np.maximum(l2norm - sig_21, 0.0)
-        indices = np.nonzero(l2norm)
-        ratio = np.zeros(l2norm.shape, dtype=np.float64)
-        ratio[indices] = l2_soft[indices]/l2norm[indices]
-        x *= ratio.reshape(1, nx, ny)
+        # prox w.r.t R(x)
+        x = prox(x, sig_21, weights_21)
 
         # check convergence criteria
         normx = norm(x)
@@ -137,16 +117,7 @@ def fista(fprime,
             x = y - gradp/beta
 
             # prox
-            if positivity:
-                x[x<0.0] = 0.0
-
-            # l21
-            l2norm = norm(x.reshape(nchan, nx*ny), axis=0)
-            l2_soft = np.maximum(l2norm - sig_21, 0.0)
-            indices = np.nonzero(l2norm)
-            ratio = np.zeros(l2norm.shape, dtype=np.float64)
-            ratio[indices] = l2_soft[indices]/l2norm[indices]
-            x *= ratio.reshape(1, nx, ny)
+            x = prox(x, sig_21, weights_21)
 
             fidn, gradn = fprime(x)
             flam = back_track_func(x, xold, gradp, fidp, beta)
@@ -165,7 +136,7 @@ def fista(fprime,
     else:
         print("FISTA - Success, converged after %i iterations"%k)
 
-    return x, objective, fidelity, fidupper
+    return x, fidelity, fidupper
 
 
 def hpd(fprime, prox, reg, x0, gamma, beta, sig_21, 
