@@ -199,7 +199,7 @@ def main(args):
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)       
     
     #  preconditioning matrix
-    l = 0.25 * (freq_out.max() - freq_out.min())/np.mean(freq_out)
+    l = 0.1 * (freq_out.max() - freq_out.min())/np.mean(freq_out)
     print(" l = ", l)
     K = Prior(freq_out, args.sig_l2, l, args.nx, args.ny, nthreads=args.ncpu)
     def Uop(x):  
@@ -266,8 +266,7 @@ def main(args):
     gamma = args.gamma0
     residual = dirty.copy()
     for i in range(args.maxit):
-        tmp = K.idot(model)
-        x = pcg(Uop, residual - tmp, np.zeros(dirty.shape, dtype=real_type), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
+        x = pcg(Uop, residual - K.idot(model), np.zeros(dirty.shape, dtype=real_type), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
         
         # update model
         modelp = model
