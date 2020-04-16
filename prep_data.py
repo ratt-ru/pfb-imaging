@@ -41,12 +41,11 @@ def main(args):
     freq = None
     # only single ddid
     ddid_id = 0
+    out_datasets = []
     for ms in args.ms:
         datasets = xds_from_ms(ms, 
                                columns=(args.data_column, args.weight_column, 'FLAG', 'FLAG_ROW', 'UVW', 'TIME'),
                                chunks={"row": args.row_chunks})
-
-        out_datasets = []
 
         # subtables
         ddids = xds_from_table(ms + "::DATA_DESCRIPTION")
