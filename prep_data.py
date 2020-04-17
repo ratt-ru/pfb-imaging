@@ -113,18 +113,25 @@ def main(args):
                 weight = da.tile(weight[:, None, :], (1, freq.size, 1))
             uvw = ds.UVW.data
             flag = da.logical_or(ds.FLAG.data, ds.FLAG_ROW.data[:, None, None])
-            weight = da.where(~flag, weight, 0.0)
+            flag = flag[:, :, 0] | flag[:, :, -1]
+
+            
 
             if 'I' in args.pol_products:
                 ncorr = data.shape[-1]
-                data = ((weight[:, :, 0] * data[:, :, 0] + weight[:, :, ncorr-1] * data[:, :, ncorr-1])/(weight[:, :, 0] + weight[:, :, ncorr-1]))
+                data = (weight[:, :, 0] * data[:, :, 0] + weight[:, :, ncorr-1] * data[:, :, ncorr-1])
                 weight = (weight[:, :, 0] + weight[:, :, ncorr-1])
+
+            # normalise by sum of weights
+            weight = da.where(flag, 0.0, weight)
+            data = da.where(weight != 0.0, data/weight, 0.0j)
 
             data_vars = {
                 'FIELD_ID':(('row',), da.full_like(ds.TIME.data, field_id)),
                 'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data, ddid_id)),
                 'DATA':(('row', 'chan'), data),
-                'WEIGHT':(('row', 'chan'), da.sqrt(weight)),
+                'WEIGHT':(('row', 'chan'), weight),
+                'IMAGING_WEIGHT':(('row', 'chan'), da.sqrt(weight)),
                 'UVW':(('row', 'uvw'), uvw)
             }
 

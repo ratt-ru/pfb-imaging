@@ -4,10 +4,9 @@ from scipy.linalg import norm, svd
 from scipy.fftpack import next_fast_len
 from scipy.stats import laplace
 from pfb.opt import pcg, hpd
-from pfb.sara import set_Psi
 from pfb.utils import load_fits, save_fits, data_from_header, prox_21, str2bool
 from pyrap.tables import table
-from pfb.operators import Gridder, Prior, PSF
+from pfb.operators import Gridder, Prior, PSF, PSI
 from africanus.constants import c as lightspeed
 from astropy.io import fits
 import argparse
@@ -81,6 +80,7 @@ def main(args):
         raise ValueError("Fits frequency axes dont match")
     
     psf_max = np.amax(psf_array.reshape(nchan, 4*nx*ny), axis=1)
+    psf_max[psf_max < 1e-15] = 1e-15
     
     # set operators
     psf = PSF(psf_array, args.ncpu)
@@ -103,28 +103,29 @@ def main(args):
 
     
     if args.use_psi:
-        # wavelet basis and regulariser
+        # set up wavelet basis
         nchan, nx, ny = dirty.shape
-        PSI, PSIT = set_Psi(nx, ny, nlevels=args.psi_levels)
-        psi = {}
-        psi['PSI'] = PSI
-        psi['PSIT'] = PSIT
+        psi = PSI(nchan, nx, ny, nlevels=args.psi_levels)
+        nbasis = psi.nbasis
         prox = lambda p, sig21, w21: prox_21(p, sig21, w21, psi=psi)
+        weights_21 = np.empty(psi.nbasis, dtype=object)
+        weights_21[0] = np.ones(nx*ny, dtype=real_type)
+        for m in range(1, psi.nbasis):
+            weights_21[m] = np.ones(psi.ntot, dtype=real_type)
 
         def reg(x):
             nchan, nx, ny = x.shape
-            nbasis = len(PSIT)
+            nbasis = len(psi.nbasis)
             norm21 = 0.0
-            for k in range(nbasis):
-                v = np.zeros((nchan, nx*ny), x.dtype)
-                for l in range(nchan):
-                    v[l] = PSIT[k](x[l])
+            for k in range(psi.nbasis):
+                v = psi.hdot(x, k)
                 l2norm = norm(v, axis=0)
                 norm21 += np.sum(l2norm)
             return norm21
     else:
         prox = prox_21
-    
+        psi = None
+        weights_21 = np.ones(nx*ny, dtype=real_type)
         def reg(x):
             nchan, nx, ny = x.shape
             # normx = norm(x.reshape(nchan, nx*ny), axis=0)

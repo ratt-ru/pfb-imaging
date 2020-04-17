@@ -60,6 +60,8 @@ def create_parser():
                    help="Lipschitz constant of F")
     p.add_argument("--sig_l2", default=1.0, type=float,
                    help="The strength of the l2 norm regulariser")
+    p.add_argument("--lfrac", default=0.2, type=float,
+                   help="The length scale of the frequency prior will be lfrac * fractional bandwidth")
     p.add_argument("--sig_21_start", type=float, default=1e-3,
                    help="The strength of the l21 norm regulariser")
     p.add_argument("--sig_21_end", type=float, default=1e-3,
@@ -173,6 +175,7 @@ def main(args):
     nband = R.nband
     psf_max = np.amax(psf_array.reshape(nband, 4*args.nx*args.ny), axis=1)
     psf = PSF(psf_array, args.ncpu)
+    psf_max[psf_max < 1e-15] = 1e-15
 
     # dirty
     if args.dirty is not None and args.x0 is None:  # no use for dirty if we are starting from input image
@@ -199,8 +202,8 @@ def main(args):
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)       
     
     #  preconditioning matrix
-    l = 0.15* (freq_out.max() - freq_out.min())/np.mean(freq_out)
-    print(" l = ", l)
+    l = args.lfrac * (freq_out.max() - freq_out.min())/np.mean(freq_out)
+    print("GP prior over frequency sigma_f = %f l = %f"%(args.sig_l2, l))
     K = Prior(freq_out, args.sig_l2, l, args.nx, args.ny, nthreads=args.ncpu)
     def Uop(x):  
         return psf.convolve(x) + K.idot(x)
@@ -221,9 +224,18 @@ def main(args):
         report_iters.append(args.maxit-1)
 
     # fidelity and gradient term
-    def fprime(x, y, A):
-        tmp = A(y-x)
-        return 0.5*np.vdot(y-x, tmp), -tmp
+    def fprime(x, y, A, mu=0.0):
+        d = y - mu
+        tmp = A(d-x)
+        return 0.5*np.vdot(d-x, tmp), -tmp
+
+    # mean function fitting
+    w = (freq_out/np.mean(freq_out)).reshape(nband, 1)
+    order = 3
+    X = np.tile(w, (1, nband))**np.arange(order)
+    XTX = X.T @ psf_max[:, None] * X
+    XTXinv = np.linalg.pinv(XTX)
+    Xinv = XTXinv @ X.T @ psf_max[:, None]
     
     # regulariser
     sig_21 = np.linspace(args.sig_21_start, args.sig_21_end, args.maxit)
@@ -233,6 +245,7 @@ def main(args):
         psi = PSI(nchan, nx, ny, nlevels=args.psi_levels)
         nbasis = psi.nbasis
         prox = lambda p, sig21, w21: prox_21(p, sig21, w21, psi=psi)
+        
         weights_21 = np.empty(psi.nbasis, dtype=object)
         weights_21[0] = np.ones(nx*ny, dtype=real_type)
         for m in range(1, psi.nbasis):
@@ -269,19 +282,25 @@ def main(args):
         modelp = model
         model = modelp + gamma * x
 
+        # print("Before = ", model[2].max())
+
         # compute prox
         if args.tidy:
-            fp = lambda x: fprime(x, model.copy(), A=Uop)
-            model, fid, fidu = fista(fp, prox, modelp, beta, sig_21[i], weights_21, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
+            theta = Xinv @ modelp.reshape(nband, args.nx * args.ny)
+            mu = (X @ theta).reshape(nband, args.nx, args.ny)
+            fp = lambda x: fprime(x, model.copy(), A=Uop, mu)
+            model, fid, fidu = fista(fp, prox, np.zeros(dirty.shape, dtype=real_type), beta, sig_21[i], weights_21, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
         else:
             model = prox(model, sig_21[i], weights_21)
+
+        # print("After = ", model[2].max())
 
         # reweighting
         if i >= args.reweight_start and not i%args.reweight_freq:
             alpha = args.reweight_alpha/(1+i)**args.reweight_alpha_ff
             if psi is None:
-                normx = norm(x.reshape(nchan, npix), axis=0)
-                weights_21 = 1.0/(normx + alpha)
+                l2norm = norm(model.reshape(nchan, npix), axis=0)
+                weights_21 = 1.0/(l2norm + alpha)
             else:
                 for m in range(psi.nbasis):
                     v = psi.hdot(model, m)

@@ -115,7 +115,7 @@ class OutMemGridder(object):
         self.table_name = table_name
         self.schema = {
             "DATA": {'dims': ('chan',)},
-            "WEIGHT": {'dims': ('chan', )},
+            "IMAGING_WEIGHT": {'dims': ('chan', )},
             "UVW": {'dims': ('uvw',)},
         }
         
@@ -128,7 +128,7 @@ class OutMemGridder(object):
                 continue
             print("Processing field %i"%ds.FIELD_ID)
             data = ds.DATA.data
-            weights = ds.WEIGHT.data
+            weights = ds.IMAGING_WEIGHT.data
             uvw = ds.UVW.data.compute().astype(self.real_type)
             
             for i in range(self.nband):
@@ -140,14 +140,15 @@ class OutMemGridder(object):
                 # TODO - load and apply interpolated fits beam patterns for field
 
                 # get residual vis
-                residual_vis = weighti * datai - ng.dirty2ms(uvw=uvw, freq=self.freq[Ilow:Ihigh], dirty=x[i], wgt=weighti,
-                                                             pixsize_x=self.cell, pixsize_y=self.cell, epsilon=self.precision,
-                                                             nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
+                if weighti.any():
+                    residual_vis = weighti * datai - ng.dirty2ms(uvw=uvw, freq=self.freq[Ilow:Ihigh], dirty=x[i], wgt=weighti,
+                                                                pixsize_x=self.cell, pixsize_y=self.cell, epsilon=self.precision,
+                                                                nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
 
-                # make residual image
-                residual[i] += ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=residual_vis, wgt=weighti,
-                                           npix_x=self.nx, npix_y=self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
-                                           epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
+                    # make residual image
+                    residual[i] += ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=residual_vis, wgt=weighti,
+                                            npix_x=self.nx, npix_y=self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
+                                            epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
         return residual
 
     def make_dirty(self):
@@ -159,7 +160,7 @@ class OutMemGridder(object):
                 continue
             print("Processing field %i"%ds.FIELD_ID)
             data = ds.DATA.data
-            weights = ds.WEIGHT.data
+            weights = ds.IMAGING_WEIGHT.data
             uvw = ds.UVW.data.compute().astype(self.real_type)
         
             for i in range(self.nband):
@@ -169,10 +170,10 @@ class OutMemGridder(object):
                 datai = data.blocks[:, i].compute().astype(self.complex_type)
 
                 # TODO - load and apply interpolated fits beam patterns for field
-
-                dirty[i] += ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=weighti*datai, wgt=weighti,
-                                        npix_x=self.nx, npix_y=self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
-                                        epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
+                if weighti.any():
+                    dirty[i] += ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=weighti*datai, wgt=weighti,
+                                            npix_x=self.nx, npix_y=self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
+                                            epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
         return dirty
 
     def make_psf(self):
@@ -183,16 +184,18 @@ class OutMemGridder(object):
             if ds.FIELD_ID not in list(self.field):
                 continue
             print("Processing field %i"%ds.FIELD_ID)
-            weights = ds.WEIGHT.data
+            weights = ds.IMAGING_WEIGHT.data
             uvw = ds.UVW.data.compute().astype(self.real_type)
         
             for i in range(self.nband):
                 Ilow = self.freq_mapping[i]
                 Ihigh = self.freq_mapping[i+1]
                 weighti = weights.blocks[:, i].compute().astype(self.real_type)
-                psf_array[i] += ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=weighti.astype(self.complex_type), wgt=weighti,
-                                            npix_x=2*self.nx, npix_y=2*self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
-                                            epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking)
+
+                if weighti.any():
+                    psf_array[i] += ng.ms2dirty(uvw=uvw, freq=self.freq[Ilow:Ihigh], ms=weighti.astype(self.complex_type), wgt=weighti,
+                                                npix_x=2*self.nx, npix_y=2*self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
+                                                epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking)
         return psf_array
 
 
