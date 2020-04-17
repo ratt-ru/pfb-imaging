@@ -232,11 +232,12 @@ def main(args):
     # mean function fitting
     w = (freq_out/np.mean(freq_out)).reshape(nband, 1)
     order = 3
-    X = np.tile(w, (1, nband))**np.arange(order)
-    XTX = X.T @ psf_max[:, None] * X
+    X = np.tile(w, order)**np.arange(0,order)
+    WX = (psf_max[:, None] * X)
+    XTX = X.T @ WX
     XTXinv = np.linalg.pinv(XTX)
-    Xinv = XTXinv @ X.T @ psf_max[:, None]
-    
+    Xinv = XTXinv @ WX.T
+
     # regulariser
     sig_21 = np.linspace(args.sig_21_start, args.sig_21_end, args.maxit)
     if args.use_psi:
@@ -245,7 +246,12 @@ def main(args):
         psi = PSI(nchan, nx, ny, nlevels=args.psi_levels)
         nbasis = psi.nbasis
         prox = lambda p, sig21, w21: prox_21(p, sig21, w21, psi=psi)
-        
+
+        def prox_func(p, sigma_21, weights_21, psi, mu):
+            x = mu + p
+            x = prox_21(x, sigma_21, weights_21, psi=psi)
+            return x - mu
+
         weights_21 = np.empty(psi.nbasis, dtype=object)
         weights_21[0] = np.ones(nx*ny, dtype=real_type)
         for m in range(1, psi.nbasis):
@@ -286,10 +292,12 @@ def main(args):
 
         # compute prox
         if args.tidy:
-            theta = Xinv @ modelp.reshape(nband, args.nx * args.ny)
+            theta = Xinv @ model.reshape(nband, args.nx * args.ny)
             mu = (X @ theta).reshape(nband, args.nx, args.ny)
-            fp = lambda x: fprime(x, model.copy(), A=Uop, mu)
-            model, fid, fidu = fista(fp, prox, np.zeros(dirty.shape, dtype=real_type), beta, sig_21[i], weights_21, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
+            fp = lambda x: fprime(x, model.copy(), Uop, mu)
+            prox = lambda p : prox_func(p, sig_21[i], weights_21, psi, mu)
+            upd, fid, fidu = fista(fp, prox, np.zeros(dirty.shape, dtype=real_type), beta, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
+            model = mu + upd
         else:
             model = prox(model, sig_21[i], weights_21)
 
@@ -319,6 +327,8 @@ def main(args):
         if i in report_iters:
             # save current iteration
             save_fits(args.outfile + str(i+1) + '_model.fits', model, hdr, dtype=real_type)
+
+            save_fits(args.outfile + str(i+1) + '_mu.fits', mu, hdr, dtype=real_type)
             
             model_mfs = np.mean(model, axis=0)
             save_fits(args.outfile + str(i+1) + '_model_mfs.fits', model_mfs, hdr_mfs)
@@ -334,9 +344,9 @@ def main(args):
 
     if args.make_restored:
         # get the uninformative Wiener filter soln
-        op = lambda x: psf.convolve(x) + 0.001*x
+        op = lambda x: psf.convolve(x) + 0.0001*x
         M = lambda x: x/0.0001
-        x = pcg(op, residual, np.zeros(dirty.shape, dtype=real_type), M=M, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
+        x = pcg(op, residual - 0.0001*model, np.zeros(dirty.shape, dtype=real_type), M=M, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
         restored = model + x
         
         # get residual

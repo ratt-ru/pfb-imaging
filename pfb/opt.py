@@ -58,20 +58,19 @@ def fista(fprime,
           prox,
           x0, # initial guess for primal and dual variables 
           beta,    # lipschitz constant
-          sig_21, # regulariser strengths
-          weights_21,
-          tol=1e-3, maxit=1000, positivity=True, report_freq=10):
+          tol=1e-3, maxit=100, report_freq=10):
     """
     Algorithm to solve problems of the form
 
-    argmin_x F(x) +  lam_21 R(x)
+    argmin_x F(x) +  R(x)
 
-    where x is the image cube, F(x) is a smooth data fidelity
+    where F(x) is a smooth data fidelity
     term and R(x) a non-smooth convex regulariser.   
 
-    sig_21   - strength of l21 regulariser
-    weights_21 - l1 reweighting
-    # Note - Spectral norms for both decomposition operators are unity.
+    fprime   - gradient of F
+    prox     - sub-gradient of R
+    x0       - initial guess
+    beta     - Lipschitz constant of F
     """
     nchan, nx, ny = x0.shape
     npix = nx*ny
@@ -95,7 +94,7 @@ def fista(fprime,
         x = y - gradp/beta
         
         # prox w.r.t R(x)
-        x = prox(x, sig_21, weights_21)
+        x = prox(x)
 
         # check convergence criteria
         normx = norm(x)
@@ -117,7 +116,7 @@ def fista(fprime,
             x = y - gradp/beta
 
             # prox
-            x = prox(x, sig_21, weights_21)
+            x = prox(x)
 
             fidn, gradn = fprime(x)
             flam = back_track_func(x, xold, gradp, fidp, beta)
