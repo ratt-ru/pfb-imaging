@@ -76,6 +76,8 @@ def create_parser():
                    help="When to start l1 reweighting scheme")
     p.add_argument("--reweight_freq", type=int, default=1,
                    help="How often to do l1 reweighting")
+    p.add_argument("--reweight_end", type=int, default=20,
+                   help="When to end the l1 reweighting scheme")
     p.add_argument("--reweight_alpha", type=float, default=1e-6,
                    help="Determines how aggressively the reweighting is applied."
                    " >= 1 is very mild whereas << 1 is aggressive.")
@@ -205,17 +207,18 @@ def main(args):
     l = args.lfrac * (freq_out.max() - freq_out.min())/np.mean(freq_out)
     print("GP prior over frequency sigma_f = %f l = %f"%(args.sig_l2, l))
     K = Prior(freq_out, args.sig_l2, l, args.nx, args.ny, nthreads=args.ncpu)
-    def Uop(x):  
+    def hess(x):  
         return psf.convolve(x) + K.idot(x)
     if args.beta is None and args.tidy:
         print("Getting spectral norm of update operator")
-        beta = power_method(Uop, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
+        beta = power_method(hess, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
     else:
         beta = args.beta
     print(" beta = %f "%beta)
 
     # Reweighting
-    reweight_iters = list(np.arange(args.reweight_start, args.maxit, args.reweight_freq))
+    reweight_iters = list(np.arange(args.reweight_start, args.reweight_end, args.reweight_freq))
+    reweight_iters.append(args.reweight_end)
 
     # Reporting    
     print("At iteration 0 peak of residual is %f and rms is %f" % (rmax, rms))
@@ -282,7 +285,7 @@ def main(args):
     gamma = args.gamma0
     residual = dirty.copy()
     for i in range(args.maxit):
-        x = pcg(Uop, residual - K.idot(model), np.zeros(dirty.shape, dtype=real_type), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
+        x = pcg(hess, residual - K.idot(model), np.zeros(dirty.shape, dtype=real_type), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
         
         # update model
         modelp = model
@@ -294,7 +297,7 @@ def main(args):
         if args.tidy:
             theta = Xinv @ model.reshape(nband, args.nx * args.ny)
             mu = (X @ theta).reshape(nband, args.nx, args.ny)
-            fp = lambda x: fprime(x, model.copy(), Uop, mu)
+            fp = lambda x: fprime(x, model.copy(), hess, mu)
             prox = lambda p : prox_func(p, sig_21[i], weights_21, psi, mu)
             upd, fid, fidu = fista(fp, prox, np.zeros(dirty.shape, dtype=real_type), beta, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
             model = mu + upd
@@ -339,14 +342,13 @@ def main(args):
 
             save_fits(args.outfile + str(i+1) + '_residual_mfs.fits', residual_mfs, hdr_mfs)
 
-        i += 1
         print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i, rmax, rms, eps))
 
     if args.make_restored:
         # get the uninformative Wiener filter soln
         op = lambda x: psf.convolve(x) + 0.0001*x
         M = lambda x: x/0.0001
-        x = pcg(op, residual - 0.0001*model, np.zeros(dirty.shape, dtype=real_type), M=M, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
+        x = pcg(op, residual, np.zeros(dirty.shape, dtype=real_type), M=M, tol=0.01*args.cgtol, maxit=2*args.cgmaxit)
         restored = model + x
         
         # get residual

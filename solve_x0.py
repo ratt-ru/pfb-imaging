@@ -1,18 +1,10 @@
 import numpy as np
-import dask
-from scipy.linalg import norm, svd
-from scipy.fftpack import next_fast_len
-from scipy.stats import laplace
-from pfb.opt import pcg, hpd
-from pfb.utils import load_fits, save_fits, data_from_header, prox_21, str2bool
-from pyrap.tables import table
-from pfb.operators import Gridder, Prior, PSF, PSI
-from africanus.constants import c as lightspeed
+from scipy.linalg import norm
+from pfb.opt import pcg, power_method
+from pfb.utils import load_fits, save_fits, data_from_header, prox_21, str2bool, compare_headers
+from pfb.operators import Prior, PSF, PSI
 from astropy.io import fits
 import argparse
-
-ms_name = "testing/test_data/point_gauss_nb.MS_p0"
-result_name = 'testing/ref_images/hpd_minor.npz'
 
 def create_parser():
     p = argparse.ArgumentParser()
@@ -24,7 +16,7 @@ def create_parser():
                    help='base name of output.')
     p.add_argument("--ncpu", default=0, type=int,
                    help='Number of threads to use.')
-    p.add_argument("--gamma0", type=float, default=0.9,
+    p.add_argument("--gamma", type=float, default=0.9,
                    help="Initial primal step size.")
     p.add_argument("--maxit", type=int, default=20,
                    help="Number of hpd iterations")
@@ -34,6 +26,10 @@ def create_parser():
                    help="How often to save output images during deconvolution")
     p.add_argument("--beta", type=float, default=None,
                    help="Lipschitz constant of F")
+    p.add_argument("--sig_l2", default=1.0, type=float,
+                   help="The strength of the l2 norm regulariser")
+    p.add_argument("--lfrac", default=0.2, type=float,
+                   help="The length scale of the frequency prior will be lfrac * fractional bandwidth")
     p.add_argument("--sig_21", type=float, default=1e-3,
                    help="Tolerance for cg updates")
     p.add_argument("--use_psi", type=str2bool, nargs='?', const=True, default=False,
@@ -42,14 +38,18 @@ def create_parser():
                    help="Wavelet decomposition level")
     p.add_argument("--x0", type=str, default=None,
                    help="Initial guess in form of fits file")
-    p.add_argument("--reweight_start", type=int, default=20,
+    p.add_argument("--reweight_iters", type=int, default=None, nargs='+',
+                   help="Set reweighting iters exmplicitly")
+    p.add_argument("--reweight_start", type=int, default=10,
                    help="When to start l1 reweighting scheme")
     p.add_argument("--reweight_freq", type=int, default=2,
                    help="How often to do l1 reweighting")
-    p.add_argument("--reweight_alpha", type=float, default=0.5,
+    p.add_argument("--reweight_end", type=int, default=20,
+                   help="When to end the l1 reweighting scheme")
+    p.add_argument("--reweight_alpha", type=float, default=1.0e-6,
                    help="Determines how aggressively the reweighting is applied."
-                   "1.0 = very mild whereas close to zero = aggressive.")
-    p.add_argument("--reweight_alpha_ff", type=float, default=0.25,
+                   " >= 1 is very mild whereas << 1 is aggressive.")
+    p.add_argument("--reweight_alpha_ff", type=float, default=0.0,
                    help="Determines how quickly the reweighting progresses."
                    "alpha will grow like alpha/(1+i)**alpha_ff.")
     p.add_argument("--cgtol", type=float, default=1e-2,
@@ -80,20 +80,43 @@ def main(args):
         raise ValueError("Fits frequency axes dont match")
     
     psf_max = np.amax(psf_array.reshape(nchan, 4*nx*ny), axis=1)
+    wsum = np.sum(psf_max)
     psf_max[psf_max < 1e-15] = 1e-15
+
+    dirty_mfs = np.sum(dirty, axis=0)/wsum 
+    rmax = np.abs(dirty_mfs).max()
+    rms = np.std(dirty_mfs)
+    print("Peak of dirty is %f and rms is %f"%(rmax, rms))
+
     
     # set operators
     psf = PSF(psf_array, args.ncpu)
-    K = Prior(freq/np.mean(freq), 1.0, 0.25, nx, ny, nthreads=args.ncpu)
+    l = args.lfrac * (freq.max() - freq.min())/np.mean(freq)
+    print("GP prior over frequency sigma_f = %f l = %f"%(args.sig_l2, l))
+    K = Prior(freq/np.mean(freq), args.sig_l2, l, nx, ny, nthreads=args.ncpu)
+    
     def hess(x):
         return psf.convolve(x) + K.idot(x)
 
+    # get Lipschitz constant
     if args.beta is None:
         from pfb.opt import power_method
         beta = power_method(hess, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
     else:
-        beta = args.beta   # 212346753.18840605
+        beta = args.beta
     print("beta = ", beta)
+
+    # Reweighting
+    if args.reweight_iters is not None:
+        reweight_iters = args.reweight_iters
+    else:  
+        reweight_iters = list(np.arange(args.reweight_start, args.reweight_end, args.reweight_freq))
+        reweight_iters.append(args.reweight_end)
+
+    # Reporting    
+    report_iters = list(np.arange(0, args.maxit, args.report_freq))
+    if report_iters[-1] != args.maxit-1:
+        report_iters.append(args.maxit-1)
 
     # fidelity and gradient term
     def fprime(x):
@@ -101,66 +124,94 @@ def main(args):
         tmp = K.idot(x)
         return 0.5*np.vdot(x, diff) - 0.5*np.vdot(x, dirty) + 0.5*np.vdot(x, tmp), diff + tmp
 
-    
+    # set up wavelet basis
     if args.use_psi:
-        # set up wavelet basis
         nchan, nx, ny = dirty.shape
         psi = PSI(nchan, nx, ny, nlevels=args.psi_levels)
         nbasis = psi.nbasis
-        prox = lambda p, sig21, w21: prox_21(p, sig21, w21, psi=psi)
         weights_21 = np.empty(psi.nbasis, dtype=object)
         weights_21[0] = np.ones(nx*ny, dtype=real_type)
         for m in range(1, psi.nbasis):
             weights_21[m] = np.ones(psi.ntot, dtype=real_type)
-
-        def reg(x):
-            nchan, nx, ny = x.shape
-            nbasis = len(psi.nbasis)
-            norm21 = 0.0
-            for k in range(psi.nbasis):
-                v = psi.hdot(x, k)
-                l2norm = norm(v, axis=0)
-                norm21 += np.sum(l2norm)
-            return norm21
     else:
-        prox = prox_21
         psi = None
         weights_21 = np.ones(nx*ny, dtype=real_type)
-        def reg(x):
-            nchan, nx, ny = x.shape
-            # normx = norm(x.reshape(nchan, nx*ny), axis=0)
-            normx = np.mean(x.reshape(nchan, nx*ny), axis=0)
-            return np.sum(np.abs(normx))
 
 
+    # initalise model
     if args.x0 is None:
-        x0 = pcg(hess, dirty, np.zeros((nchan, nx, ny)), M=K.dot, tol=args.cgtol, maxit=2*args.cgmaxit)
+        model = np.zeros(dirty.shape, dtype=real_type)
     else:
-        x0 = load_fits(args.x0)
-        
-    model, objhist, fidhist, reghist = hpd(fprime, prox, reg, x0, args.gamma0, beta, args.sig_21, psi=psi,
-                                           hess=hess, cgprecond=K.dot, cgtol=args.cgtol, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose,
-                                           alpha0=args.reweight_alpha, alpha_ff=args.reweight_alpha_ff, reweight_start=args.reweight_start, reweight_freq=args.reweight_freq,
-                                           tol=args.tol, maxit=args.maxit, report_freq=1, verbosity=2)
+        compare_headers(hdr, fits.getheader(args.x0))
+        model = load_fits(args.x0).astype(real_type)
+        residual = dirty - psf.convolve(model)
+        residual_mfs = np.sum(residual, axis=0)/wsum 
+        rmax = np.abs(residual_mfs).max()
+        rms = np.std(residual_mfs)
+        print("At iteration 0 peak of residual is %f and rms is %f" % (rmax, rms))
 
+    # deconvolve
+    for k in range(args.maxit):
+        fid, grad = fprime(model)        
+        x = pcg(hess, -grad, np.zeros(dirty.shape, dtype=real_type), M=K.dot, 
+                tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
+    
+        modelp = model.copy()
+        model = modelp + args.gamma * x
+
+        model = prox_21(model, args.sig_21, weights_21, psi=psi)
+
+        # convergence check
+        normx = norm(model)
+        if np.isnan(normx) or normx == 0.0:
+            normx = 1.0
+        
+        eps = norm(model-modelp)/normx
+        if eps < args.tol:
+            break
+
+        # reweighting
+        if k  in reweight_iters:
+            alpha = args.reweight_alpha/(1+k)**args.reweight_alpha_ff
+            if psi is None:
+                l2norm = norm(model.reshape(nchan, npix), axis=0)
+                weights_21 = 1.0/(l2norm + alpha)
+            else:
+                for m in range(psi.nbasis):
+                    v = psi.hdot(model, m)
+                    l2norm = norm(v, axis=0)
+                    weights_21[m] = 1.0/(l2norm + alpha)
+
+        # get residual
+        residual = dirty - psf.convolve(model)
+       
+        # check stopping criteria
+        residual_mfs = np.sum(residual, axis=0)/wsum 
+        rmax = np.abs(residual_mfs).max()
+        rms = np.std(residual_mfs)
+
+        # reporting
+        if k in report_iters:
+            save_fits(args.outfile + str(k+1) + '_model.fits', model, hdr, dtype=real_type)
+            
+            model_mfs = np.mean(model, axis=0)
+            save_fits(args.outfile + str(k+1) + '_model_mfs.fits', model_mfs, hdr)
+
+            save_fits(args.outfile + str(k+1) + '_update.fits', x, hdr)
+
+            save_fits(args.outfile + str(k+1) + '_residual.fits', residual, hdr, dtype=real_type)
+
+            save_fits(args.outfile + str(k+1) + '_residual_mfs.fits', residual_mfs, hdr)
+
+        print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (k+1, rmax, rms, eps))
+
+    
+    # save final results
     save_fits(args.outfile + '_model.fits', model, hdr, dtype=real_type)
 
     residual = dirty - psf.convolve(model)
 
     save_fits(args.outfile + '_residual.fits', residual/psf_max[:, None, None], hdr)
-
-    import matplotlib.pyplot as plt
-    plt.figure('obj')
-    plt.plot(np.arange(args.maxit+1), objhist + 1.1*np.abs(objhist.min()), 'r', alpha=0.5)
-    plt.plot(np.arange(args.maxit+1), fidhist + 1.1*np.abs(fidhist.min()), 'b', alpha=0.5)
-    plt.yscale('log')
-
-    plt.savefig(args.outfile + '_obj_hist.png', dpi=250)
-
-    plt.figure('reg')
-    plt.plot(np.arange(args.maxit+1), reghist, 'k')
-
-    plt.savefig(args.outfile + '_reg_hist.png', dpi=250)
 
 
 if __name__=="__main__":

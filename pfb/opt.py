@@ -172,15 +172,6 @@ def hpd(fprime, prox, reg, x0, gamma, beta, sig_21,
     npix = nx*ny
     real_type = x0.dtype
 
-    # weights
-    if psi is None:
-        weights_21 = np.ones(npix, dtype=x0.dtype)
-    else:
-        weights_21 = np.empty(psi.nbasis, dtype=object)
-        weights_21[0] = np.ones(nx*ny, dtype=real_type)
-        for m in range(1, psi.nbasis):
-            weights_21[m] = np.ones(psi.ntot, dtype=real_type)
-
     # initialise
     x = x0
 
