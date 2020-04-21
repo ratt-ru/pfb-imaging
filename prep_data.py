@@ -10,9 +10,13 @@ def create_parser():
     p = argparse.ArgumentParser()
     p.add_argument("--ms", type=str, nargs='+')
     p.add_argument("--data_column", default="CORRECTED_DATA", type=str,
-                   help="The column to image.")
+                   help="Take data from this column in all measurement sets.")
+    p.add_argument("--data_out_column", default="DATA", type=str,
+                   help="Write data to this column.")
     p.add_argument("--weight_column", default='WEIGHT_SPECTRUM', type=str,
                    help="Weight column to use. Will use WEIGHT if no WEIGHT_SPECTRUM is found")
+     p.add_argument("--weight_out_column", default='IMAGING_WEIGHT', type=str,
+                   help="Write imaging weights to this column.")               
     p.add_argument("--table_name", type=str,
                    help='Directory in which to place the output.')
     p.add_argument("--field", default=0, nargs='+',
@@ -129,9 +133,9 @@ def main(args):
             data_vars = {
                 'FIELD_ID':(('row',), da.full_like(ds.TIME.data, field_id)),
                 'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data, ddid_id)),
-                'DATA':(('row', 'chan'), data),
+                args.data_out_column:(('row', 'chan'), data),
                 'WEIGHT':(('row', 'chan'), weight),
-                'IMAGING_WEIGHT':(('row', 'chan'), da.sqrt(weight)),
+                args.weight_out_column:(('row', 'chan'), da.sqrt(weight)),
                 'UVW':(('row', 'uvw'), uvw)
             }
 

@@ -74,7 +74,8 @@ class Gridder(object):
 
 
 class OutMemGridder(object):
-    def __init__(self, table_name, nx, ny, cell_size, freq, nband=None, field=0, precision=1e-7, ncpu=8, do_wstacking=1):
+    def __init__(self, table_name, nx, ny, cell_size, freq, nband=None, field=0, precision=1e-7, ncpu=8, do_wstacking=1,
+                 data_column='DATA', weight_column='IMAGING_WEIGHT'):
         if precision > 1e-6:
             self.real_type = np.float32
             self.complex_type = np.complex64
@@ -112,10 +113,12 @@ class OutMemGridder(object):
         self.chan_chunks = self.freq_mapping[1] - self.freq_mapping[0]
 
         # meta info for xds_from_table
+        self.data_column = data_column
+        self.weight_column = weight_column
         self.table_name = table_name
         self.schema = {
-            "DATA": {'dims': ('chan',)},
-            "IMAGING_WEIGHT": {'dims': ('chan', )},
+            data_column: {'dims': ('chan',)},
+            weight_column: {'dims': ('chan', )},
             "UVW": {'dims': ('uvw',)},
         }
         
@@ -127,8 +130,8 @@ class OutMemGridder(object):
             if ds.FIELD_ID not in list(self.field):
                 continue
             print("Processing field %i"%ds.FIELD_ID)
-            data = ds.DATA.data
-            weights = ds.IMAGING_WEIGHT.data
+            data = getattr(ds, self.data_column).data
+            weights = getattr(ds, self.weight_column).data
             uvw = ds.UVW.data.compute().astype(self.real_type)
             
             for i in range(self.nband):
@@ -159,8 +162,8 @@ class OutMemGridder(object):
             if ds.FIELD_ID not in list(self.field):
                 continue
             print("Processing field %i"%ds.FIELD_ID)
-            data = ds.DATA.data
-            weights = ds.IMAGING_WEIGHT.data
+            data = getattr(ds, self.data_column).data
+            weights = getattr(ds, self.weight_column).data
             uvw = ds.UVW.data.compute().astype(self.real_type)
         
             for i in range(self.nband):
@@ -184,7 +187,7 @@ class OutMemGridder(object):
             if ds.FIELD_ID not in list(self.field):
                 continue
             print("Processing field %i"%ds.FIELD_ID)
-            weights = ds.IMAGING_WEIGHT.data
+            weights = getattr(ds, self.weight_column).data
             uvw = ds.UVW.data.compute().astype(self.real_type)
         
             for i in range(self.nband):

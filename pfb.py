@@ -19,10 +19,10 @@ def create_parser():
     p = argparse.ArgumentParser()
     p.add_argument("table_name", type=str,
                    help="Name of table to load concatenated Stokes I vis from")
-    p.add_argument("--data_column", default="CORRECTED_DATA", type=str,
+    p.add_argument("--data_column", default="DATA", type=str,
                    help="The column to image.")
-    p.add_argument("--weight_column", default='WEIGHT_SPECTRUM', type=str,
-                   help="Weight column to use. Will use WEIGHT if no WEIGHT_SPECTRUM is found")
+    p.add_argument("--weight_column", default='IMAGING_WEIGHT', type=str,
+                   help="Weight column to use.")
     p.add_argument("--dirty", type=str,
                    help="Fits file with dirty cube")
     p.add_argument("--psf", type=str,
@@ -157,7 +157,8 @@ def main(args):
     # init gridder
     R = OutMemGridder(args.table_name, args.nx, args.ny, args.cell_size, freq, 
                       nband=args.channels_out, field=args.field, precision=args.precision, 
-                      ncpu=args.ncpu, do_wstacking=args.do_wstacking)
+                      ncpu=args.ncpu, do_wstacking=args.do_wstacking,
+                      data_column=args.data_column,weight_column=args.weight_column)
     freq_out = R.freq_out
 
     # get headers
