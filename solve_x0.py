@@ -49,6 +49,7 @@ def create_parser():
     p.add_argument("--reweight_alpha", type=float, default=1.0e-6,
                    help="Determines how aggressively the reweighting is applied."
                    " >= 1 is very mild whereas << 1 is aggressive.")
+    p.add_argument("--reweight_alpha_percent", type=float, default=5)
     p.add_argument("--reweight_alpha_ff", type=float, default=0.0,
                    help="Determines how quickly the reweighting progresses."
                    "alpha will grow like alpha/(1+i)**alpha_ff.")
@@ -180,6 +181,7 @@ def main(args):
                 for m in range(psi.nbasis):
                     v = psi.hdot(model, m)
                     l2norm = norm(v, axis=0)
+                    alpha = np.percentile(l2norm.flatten(), args.reweight_alpha_percent)
                     weights_21[m] = 1.0/(l2norm + alpha)
 
         # get residual
