@@ -7,19 +7,32 @@ The following dependencies are installed automatically:
 
 numpy\
 scipy\
+matplotlib\
 numba\
 astropy\
 python-casacore\
 dask\
 dask[array]\
 dask-ms[xarray]\
-codex-africanus
+codex-africanus\
+PyWavelets
 
 The following packages need to be installed manually from requirements.txt
 
 pypocketfft (git+https://gitlab.mpcdf.mpg.de/mtr/pypocketfft) \
 nifty_gridder (git+https://gitlab.mpcdf.mpg.de/ift/nifty_gridder.git)
 
+Install the package with
+
+```
+$ python setup.py develop
+```
+
+Then run
+
+```
+$ pip install -e requirements.txt
+```
 
 ## Outline of functionality
 The following standalone scripts are included:
