@@ -250,7 +250,7 @@ class Prior(object):
         return freqmul(self.LH, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
 
 class PSI(object):
-    def __init__(self, nchan, nx, ny,
+    def __init__(self, nband, nx, ny,
                  nlevels=2,
                  basis=['self', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8']):
         """
@@ -259,6 +259,7 @@ class PSI(object):
 
         Parameters
         ----------
+        nband - number of bands
         nx - number of pixels in x-dimension
         ny - number of pixels in y-dimension
         nlevels - The level of the decomposition. Default=2
@@ -273,7 +274,7 @@ class PSI(object):
                 each entry corresponds to one of the basis elements.
         """
         self.real_type = np.float64
-        self.nchan = nchan
+        self.nband = nband
         self.nx = nx
         self.ny = ny
         self.nlevels = nlevels
@@ -320,10 +321,10 @@ class PSI(object):
         """
         base = self.basis[basis_k]
         if base == 'self':
-            return alpha.reshape(self.nchan, self.nx, self.ny)/self.sqrtP
+            return alpha.reshape(self.nband, self.nx, self.ny)/self.sqrtP
         else:
-            x = np.zeros((self.nchan, self.nx, self.ny), dtype=self.real_type)
-            for l in range(self.nchan):
+            x = np.zeros((self.nband, self.nx, self.ny), dtype=self.real_type)
+            for l in range(self.nband):
                 # stack array back into expected shape
                 n = int(self.n[0])
                 idx = int(self.indx[0])
@@ -356,10 +357,10 @@ class PSI(object):
         base = self.basis[basis_k]
         if base == 'self':
             # just flatten image, no need to stack in this case
-            return x.reshape(self.nchan, self.nx*self.ny)/self.sqrtP
+            return x.reshape(self.nband, self.nx*self.ny)/self.sqrtP
         else:
-            alpha = np.zeros((self.nchan, self.ntot), dtype=self.real_type)
-            for l in range(self.nchan):
+            alpha = np.zeros((self.nband, self.ntot), dtype=self.real_type)
+            for l in range(self.nband):
                 # decompose
                 alphal = pywt.wavedec2(x[l], base, mode='periodization', level=self.nlevels)
                 # stack decomp into vector
@@ -446,7 +447,7 @@ class DaskPSI(PSI):
         # Chunk per basis
         bases = da.from_array(self.basis, chunks=1)
         # Chunk per band
-        alpha = alpha.reshape(self.nchan, self.nx, self.ny)
+        alpha = alpha.reshape(self.nband, self.nx, self.ny)
         alpha = alpha.rechunk((1, self.nx, self.ny))
 
         x = da.blockwise(_dot_internal, ("basis", "nband", "nx", "ny"),
@@ -465,7 +466,7 @@ class DaskPSI(PSI):
         # Chunk per basis
         bases = da.from_array(self.basis, chunks=1)
         # Chunk per band
-        x = x.reshape(self.nchan, self.nx, self.ny)
+        x = x.reshape(self.nband, self.nx, self.ny)
         x = x.rechunk((1, self.nx, self.ny))
 
         alpha = da.blockwise(_hdot_internal, ("basis", "nband", "nx", "ny"),
