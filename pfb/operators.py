@@ -336,13 +336,16 @@ class PSI(object):
                     idx = int(self.indx[i])
                     idy = int(self.indy[i])
                     tpl = ()
+
                     for j in range(3):
                         tpl += (alpha[l, ind:ind+n].reshape(idx, idy),)
                         ind += n
 
                     alpha_rec.append(tpl)
+
                 # return reconstructed image from coeff
-                x[l, :, :] = pywt.waverec2(alpha_rec, base, mode='periodization')/self.sqrtP
+                wave = pywt.waverec2(alpha_rec, base, mode='periodization')
+                x[l, :, :] = wave / self.sqrtP
 
             return x
 
@@ -370,28 +373,27 @@ class PSI(object):
 
 import dask.array as da
 
-def _dot_internal(alpha, base, nd, indx, indy, sqrtp):
+def _dot_internal(alpha, base, nd, indx, indy, sqrtp, real_type):
     assert type(base) == np.ndarray and base.shape[0] == 1
     base = base[0]
 
     if base == "self":
         return alpha[None, ...] / sqrtp
 
-    nchan, nx, ny = alpha.shape
+    nband, nx, ny = alpha.shape
     nlevels = nd.shape[0] - 1
     # Note extra dimension for the single basis chunk
-    x = np.empty((1,) + alpha.shape, dtype=alpha.dtype)
+    x = np.zeros((1,) + alpha.shape, dtype=real_type)
 
-    alpha = alpha.reshape(nchan, nx*ny)
+    alpha = alpha.reshape(nband, nx*ny)
 
-    for l in range(nchan):
+    for l in range(nband):
         # stack array back into expected shape
-        n = int(nd[0])
+        n = ind = int(nd[0])
         idx = int(indx[0])
         idy = int(indy[0])
 
-        alpha_rec = [alpha[l, 0:n].reshape(idx, idy)]
-        ind = int(nd[0])
+        alpha_rec = [alpha[l, 0:ind].reshape(idx, idy)]
 
         for i in range(1, nlevels + 1):
             n = int(nd[i])
@@ -405,24 +407,26 @@ def _dot_internal(alpha, base, nd, indx, indy, sqrtp):
 
             alpha_rec.append(tpl)
 
-        # return reconstructed image from coeff
         wave = pywt.waverec2(alpha_rec, base, mode='periodization')
+
+        # return reconstructed image from coeff
         x[0, l, :, :] = wave / sqrtp
 
     return x
 
 def _hdot_internal(x, base, ntot, nlevels, sqrtp, real_type):
+    assert type(base) == np.ndarray and base.shape[0] == 1
     base = base[0]
 
-    nchan, nx, ny = x.shape
+    nband, nx, ny = x.shape
 
     if base == 'self':
         # just flatten image, no need to stack in this case
-        return x.reshape(1, nchan, nx, ny) / sqrtp
+        return x.reshape(1, nband, nx, ny) / sqrtp
 
-    alpha = np.zeros((1, nchan, ntot), dtype=real_type)
+    alpha = np.zeros((1, nband, ntot), dtype=real_type)
 
-    for l in range(nchan):
+    for l in range(nband):
         # decompose
         alphal = pywt.wavedec2(x[l], base, mode='periodization', level=nlevels)
         # stack decomp into vector
@@ -434,7 +438,7 @@ def _hdot_internal(x, base, ntot, nlevels, sqrtp, real_type):
 
         alpha[0, l] = np.concatenate(tmp) / sqrtp
 
-    return alpha.reshape(1, nchan, nx, ny)
+    return alpha.reshape(1, nband, nx, ny)
 
 
 class DaskPSI(PSI):
@@ -445,14 +449,15 @@ class DaskPSI(PSI):
         alpha = alpha.reshape(self.nchan, self.nx, self.ny)
         alpha = alpha.rechunk((1, self.nx, self.ny))
 
-        x = da.blockwise(_dot_internal, ("basis", "chan", "nx", "ny"),
-                         alpha, ("chan", "nx", "ny"),
+        x = da.blockwise(_dot_internal, ("basis", "nband", "nx", "ny"),
+                         alpha, ("nband", "nx", "ny"),
                          bases, ("basis", ),
                          self.n, None,
                          self.indx, None,
                          self.indy, None,
                          self.sqrtP, None,
-                         dtype=alpha.dtype)
+                         self.real_type, None,
+                         dtype=self.real_type)
 
         return x
 
@@ -463,13 +468,13 @@ class DaskPSI(PSI):
         x = x.reshape(self.nchan, self.nx, self.ny)
         x = x.rechunk((1, self.nx, self.ny))
 
-        x = da.blockwise(_hdot_internal, ("basis", "chan", "nx", "ny"),
-                         x, ("chan", "nx", "ny"),
-                         bases, ("basis", ),
-                         self.ntot, None,
-                         self.nlevels, None,
-                         self.sqrtP, None,
-                         self.real_type, None,
-                         dtype=self.real_type)
+        alpha = da.blockwise(_hdot_internal, ("basis", "nband", "nx", "ny"),
+                             x, ("nband", "nx", "ny"),
+                             bases, ("basis", ),
+                             self.ntot, None,
+                             self.nlevels, None,
+                             self.sqrtP, None,
+                             self.real_type, None,
+                             dtype=self.real_type)
 
-        return x
+        return alpha
