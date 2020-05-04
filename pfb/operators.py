@@ -1,13 +1,26 @@
+from numba import njit, prange
 import numpy as np
 import dask.array as da
 from daskms import xds_from_table
 import pywt
 import nifty_gridder as ng
 from pypocketfft import r2c, c2r
-from pfb.utils import freqmul
 from africanus.gps.kernels import exponential_squared as expsq
+
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
+
+
+@njit(parallel=True, nogil=True, fastmath=True, inline='always')
+def freqmul(A, x):
+    nchan, npix = x.shape
+    out = np.zeros((nchan, npix), dtype=x.dtype)
+    for i in prange(npix):
+        for j in range(nchan):
+            for k in range(nchan):
+                out[j, i] += A[j, k] * x[k, i]
+    return out
+
 
 class Gridder(object):
     def __init__(self, uvw, freq, sqrtW, nx, ny, cell_size, nband=None, precision=1e-7, ncpu=8, do_wstacking=1):
@@ -419,13 +432,14 @@ def _hdot_internal(x, base, ntot, nlevels, sqrtp, real_type):
     assert type(base) == np.ndarray and base.shape[0] == 1
     base = base[0]
 
-    nband, nx, ny = x.shape
+    nbasis, nband, nx, ny = x.shape
+    assert nbasis == 1
 
     if base == 'self':
         # just flatten image, no need to stack in this case
-        return x.reshape(1, nband, nx, ny) / sqrtp
+        return x / sqrtp
 
-    alpha = np.zeros((1, nband, ntot), dtype=real_type)
+    alpha = np.zeros((nbasis, nband, ntot), dtype=real_type)
 
     for l in range(nband):
         # decompose
@@ -466,12 +480,12 @@ class DaskPSI(PSI):
         # Chunk per basis
         bases = da.from_array(self.basis, chunks=1)
         # Chunk per band
-        x = x.reshape(self.nband, self.nx, self.ny)
-        x = x.rechunk((1, self.nx, self.ny))
+        x = x.reshape(self.nbasis, self.nband, self.nx, self.ny)
+        x = x.rechunk((1, 1, self.nx, self.ny))
 
-        alpha = da.blockwise(_hdot_internal, ("basis", "nband", "nx", "ny"),
-                             x, ("nband", "nx", "ny"),
-                             bases, ("basis", ),
+        alpha = da.blockwise(_hdot_internal, ("nbasis", "nband", "nx", "ny"),
+                             x, ("nbasis", "nband", "nx", "ny"),
+                             bases, ("nbasis", ),
                              self.ntot, None,
                              self.nlevels, None,
                              self.sqrtP, None,

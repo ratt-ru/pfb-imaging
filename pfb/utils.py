@@ -12,6 +12,8 @@ from time import time
 from astropy.io import fits
 from astropy.wcs import WCS
 
+from .operators import PSI, DaskPSI
+
 
 def data_from_header(hdr, axis=3):
     npix = hdr['NAXIS' + str(axis)]
@@ -40,28 +42,19 @@ def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
     hdu.writeto(name, overwrite=overwrite)
 
 
-@njit(parallel=True, nogil=True, fastmath=True, inline='always')
-def freqmul(A, x):
-    nchan, npix = x.shape
-    out = np.zeros((nchan, npix), dtype=x.dtype)
-    for i in prange(npix):
-        for j in range(nchan):
-            for k in range(nchan):
-                out[j, i] += A[j, k] * x[k, i]
-    return out
-
 def prox_21(p, sig_21, weights_21, psi=None):
     nchan, nx, ny = p.shape
     if psi is None:
         # l21 norm
         # meanp = norm(p.reshape(nchan, nx*ny), axis=0)
         meanp = np.mean(p.reshape(nchan, nx*ny), axis=0)
-        l2_soft = np.maximum(meanp - sig_21 * weights_21, 0.0) 
+        l2_soft = np.maximum(meanp - sig_21 * weights_21, 0.0)
         indices = np.nonzero(meanp)
         ratio = np.zeros(meanp.shape, dtype=np.float64)
         ratio[indices] = l2_soft[indices]/meanp[indices]
-        x = (p.reshape(nchan, nx*ny) * ratio[None, :]).reshape(nchan, nx, ny)  
-    else:
+        x = (p.reshape(nchan, nx*ny) * ratio[None, :]).reshape(nchan, nx, ny)
+        x[x<0] = 0.0
+    elif type(psi) is PSI:
         nchan, nx, ny = p.shape
         x = np.zeros(p.shape, p.dtype)
         for k in range(psi.nbasis):
@@ -75,10 +68,41 @@ def prox_21(p, sig_21, weights_21, psi=None):
             ratio[indices] = l2_soft[indices]/l2norm[indices]
             v *= ratio[None]
             x += psi.dot(v, k)
+        x[x<0] = 0.0
 
-    x[x<0] = 0.0    
+    elif type(psi) is DaskPSI:
+        v = psi.dot(p)
+        # 2-norm along spectral axis
+        l2_norm = da.linalg.norm(v, axis=1)
+        w = sig_21*weights_21
+        l2_soft = da.maximum(da.absolute(l2_norm) - sig_21*w, 0.0)*da.sign(l2_norm)
+
+        def safe_ratio(l2_norm, l2_soft):
+            result = np.zeros_like(l2_norm)
+            mask = l2_norm != 0
+            result[mask] = l2_norm[mask] /  l2_soft[mask]
+            return result
+
+        r = da.blockwise(safe_ratio, ("basis", "nx", "ny"),
+                         l2_norm, ("basis", "nx", "ny"),
+                         l2_soft, ("basis", "nx", "ny"),
+                         dtype=l2_norm.dtype)
+
+        # apply inverse operator
+        x = psi.hdot(v * r[:, None, :, :])
+        # Sum over bases
+        x = x.sum(axis=0)
+
+        def ensure_positivity(x):
+            x = x.copy()
+            x[x < 0] = 0.0
+            return x
+
+        x = x.map_blocks(ensure_positivity, dtype=x.dtype)
+
+
     return x
-        
+
 
 def robust_reweight(v, residuals):
     """
@@ -104,7 +128,7 @@ def robust_reweight(v, residuals):
         dEtau = 1.0/tmp - (v+1)/tmp**2
         dElogtau = polygamma(1, v + 1) - 1.0/(v + ressq)
         return N*np.log(v) - N*digamma(v) + np.sum(Elogtau) - np.sum(Etau), N/v - N*polygamma(1, v) + np.sum(dElogtau) - np.sum(dEtau)
-        
+
 
     # v, f, d = fmin_l_bfgs_b(func, v, args=(nrow, ressq), pgtol=1e-2, approx_grad=False, bounds=[(1e-3, 30)])
     Etau = (v + 1.0)/(v + ressq)  # used as new weights
