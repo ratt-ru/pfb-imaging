@@ -75,7 +75,7 @@ def prox_21(p, sig_21, weights_21, psi=None):
         # 2-norm along spectral axis
         l2_norm = da.linalg.norm(v, axis=1)
         w = sig_21*weights_21
-        l2_soft = da.maximum(da.absolute(l2_norm) - sig_21*w, 0.0)*da.sign(l2_norm)
+        l2_soft = da.maximum(da.absolute(l2_norm) - w, 0.0)*da.sign(l2_norm)
 
         def safe_ratio(l2_norm, l2_soft):
             result = np.zeros_like(l2_norm)
