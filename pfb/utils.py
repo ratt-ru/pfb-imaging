@@ -79,7 +79,7 @@ def prox_21(p, sig_21, weights_21, psi=None):
             l2_soft = np.maximum(np.abs(l2_norm) - weights*sig_21, 0.0)*np.sign(l2_norm)
             result = np.zeros_like(l2_norm)
             mask = l2_norm != 0
-            result[mask] = l2_norm[mask] / l2_soft[mask]
+            result[mask] = l2_soft[mask] / l2_norm[mask]
             return result
 
         r = da.blockwise(safe_ratio, ("basis", "nx", "ny"),
