@@ -74,18 +74,18 @@ def prox_21(p, sig_21, weights_21, psi=None):
         v = psi.dot(p)
         # 2-norm along spectral axis
         l2_norm = da.linalg.norm(v, axis=1)
-        w = sig_21*weights_21
-        l2_soft = da.maximum(da.absolute(l2_norm) - w, 0.0)*da.sign(l2_norm)
 
-        def safe_ratio(l2_norm, l2_soft):
+        def safe_ratio(l2_norm, weights, sig_21):
+            l2_soft = np.maximum(np.abs(l2_norm) - weights*sig_21, 0.0)*np.sign(l2_norm)
             result = np.zeros_like(l2_norm)
             mask = l2_norm != 0
-            result[mask] = l2_norm[mask] /  l2_soft[mask]
+            result[mask] = l2_norm[mask] / l2_soft[mask]
             return result
 
         r = da.blockwise(safe_ratio, ("basis", "nx", "ny"),
                          l2_norm, ("basis", "nx", "ny"),
-                         l2_soft, ("basis", "nx", "ny"),
+                         weights_21, ("basis", "nx", "ny"),
+                         sig_21, None,
                          dtype=l2_norm.dtype)
 
         # apply inverse operator
