@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.linalg import norm
 from pfb.utils import prox_21
-from pfb.operators import PSI
+from pfb.operators import PSI, DaskPSI
 import pywt
 
 if __name__=="__main__":
@@ -20,9 +20,8 @@ if __name__=="__main__":
     weights_21[0] = np.ones(nx*ny, dtype=np.float64)  # for dirac basis
     for m in range(1, psi.nbasis):
         weights_21[m] = np.ones(psi.ntot, dtype=np.float64)  # all other wavelet bases
-    
+
     sig_21 = 1e-5
 
     x = prox_21(p, sig_21, weights_21, psi=psi)
 
-            

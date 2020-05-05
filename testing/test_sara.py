@@ -1,9 +1,10 @@
 import numpy as np
 from numpy.testing import assert_array_almost_equal
-from pfb.sara import set_Psi
-from pfb.operators import PSI
 
 def compare_old():
+    from pfb.sara import set_Psi
+    from pfb.operators import PSI
+
     nx = 1024
     ny = 1024
     nchan = 8
@@ -12,7 +13,7 @@ def compare_old():
 
     psi = PSI(nchan, nx, ny, nlevels=nlevels)
     ntot = psi.ntot
-    
+
     psi_old, psit_old = set_Psi(nx, ny, nlevels=nlevels)
 
     x = np.ones((nchan, nx, ny), dtype=np.float64)
