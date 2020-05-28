@@ -47,20 +47,26 @@ def test_dask_psi_operator():
 
     assert_array_almost_equal(alphad, alpha, decimal=13)
 
-    # # compare prox
-    # for m in range(1, dask_psi.nbasis):
-    #     mdbasis = dask_dot[m].compute()
-    #     mbasis = psi.dot(p, m)
-    #     assert_array_equal(mdbasis, mbasis)
+def test_prox():
+    nx = 2050
+    ny = 2050
+    nband = 8
+    nlevels = 5
+    
+    # random test image
+    x = np.random.randn(nband, nx, ny)
+    
+    # initialise serial operator 
+    psi = PSI(nband, nx, ny, nlevels)
+    ntot = psi.ntot
+    nbasis = psi.nbasis
 
-    #     mdbasis = dask_hdot[m].compute()
-    #     #mbasis = psi.hdot(p.reshape(nchan, nx, ny), m)
-    #     mbasis = psi.hdot(mbasis, m)
-    #     assert_array_equal(mdbasis, mbasis.reshape(nchan, nx, ny))
+    weights_21 = np.ones((nbasis, ntot))
+    sig_21 = 0.0
 
+    y = prox_21(x, sig_21, weights_21, psi=psi)
 
-    # x = prox_21(dask_p, sig_21, dask_weights_21, psi=dask_psi)
-    # x.compute()
+    assert_array_almost_equal(x, y, decimal=13)
 
     # weight_21 = dask_weights_21.compute().reshape(psi.nbasis, nx*ny)
     # x2 = prox_21(image_cube, sig_21, weight_21, psi=psi)
@@ -68,4 +74,5 @@ def test_dask_psi_operator():
     # assert_array_equal(x, x2)
 
 if __name__=="__main__":
-    test_dask_psi_operator()
+    # test_dask_psi_operator()
+    test_prox()
