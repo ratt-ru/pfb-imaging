@@ -1,8 +1,9 @@
 import numpy as np
+import dask.array as da
 from scipy.linalg import norm
 from pfb.opt import pcg, power_method
 from pfb.utils import load_fits, save_fits, data_from_header, prox_21, str2bool, compare_headers
-from pfb.operators import Prior, PSF, PSI
+from pfb.operators import Prior, PSF, PSI, DaskPSI
 from astropy.io import fits
 import argparse
 
@@ -79,6 +80,8 @@ def main(args):
         assert np.array_equal(freq, data_from_header(hdr_psf, axis=3))
     except:
         raise ValueError("Fits frequency axes dont match")
+
+    print("Image size is (%i, %i, %i)"%(chan, nx, ny))
     
     psf_max = np.amax(psf_array.reshape(nchan, 4*nx*ny), axis=1)
     wsum = np.sum(psf_max)
@@ -129,11 +132,13 @@ def main(args):
     if args.use_psi:
         nchan, nx, ny = dirty.shape
         psi = PSI(nchan, nx, ny, nlevels=args.psi_levels)
+        # psi = DaskPSI(nchan, nx, ny, nlevels=args.psi_levels)
         nbasis = psi.nbasis
-        weights_21 = np.empty(psi.nbasis, dtype=object)
-        weights_21[0] = np.ones(nx*ny, dtype=real_type)
-        for m in range(1, psi.nbasis):
-            weights_21[m] = np.ones(psi.ntot, dtype=real_type)
+        weights_21 = np.ones((psi.nbasis, psi.ntot), dtype=object)
+        # weights_21[0] = np.ones(nx*ny, dtype=real_type)
+        # for m in range(1, psi.nbasis):
+        #     weights_21[m] = np.ones(psi.ntot, dtype=real_type)
+        #dask_weights_21 = da.ones((psi.nbasis, nx, ny), dtype=psi.real_type)
     else:
         psi = None
         weights_21 = np.ones(nx*ny, dtype=real_type)
@@ -161,6 +166,8 @@ def main(args):
         model = modelp + args.gamma * x
 
         model = prox_21(model, args.sig_21, weights_21, psi=psi)
+        # dask_model = da.from_array(model, chunks=(1, nx, ny))
+        # model = prox_21(dask_model, args.sig_21, dask_weights_21, psi=psi).compute()
 
         # convergence check
         normx = norm(model)
@@ -178,6 +185,12 @@ def main(args):
                 l2norm = norm(model.reshape(nchan, npix), axis=0)
                 weights_21 = 1.0/(l2norm + alpha)
             else:
+                # v = psi.hdot(model).compute()
+                # for m in range(psi.nbasis):
+                #     l2norm = norm(v[m], axis=0)
+                #     alpha = np.percentile(l2norm.flatten(), args.reweight_alpha_percent)
+                #     weights_21[m] = 1.0/(l2norm + alpha)
+                
                 for m in range(psi.nbasis):
                     v = psi.hdot(model, m)
                     l2norm = norm(v, axis=0)

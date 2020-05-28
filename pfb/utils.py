@@ -71,7 +71,7 @@ def prox_21(p, sig_21, weights_21, psi=None):
         x[x<0] = 0.0
 
     elif type(psi) is DaskPSI:
-        v = psi.dot(p)
+        v = psi.hdot(p)
         # 2-norm along spectral axis
         l2_norm = da.linalg.norm(v, axis=1)
 
@@ -89,7 +89,7 @@ def prox_21(p, sig_21, weights_21, psi=None):
                          dtype=l2_norm.dtype)
 
         # apply inverse operator
-        x = psi.hdot(v * r[:, None, :, :])
+        x = psi.dot(v * r[:, None, :, :])
         # Sum over bases
         x = x.sum(axis=0)
 
