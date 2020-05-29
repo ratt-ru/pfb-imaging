@@ -1,8 +1,9 @@
 import numpy as np
+import dask.array as da
 from scipy.linalg import norm
 from pfb.opt import pcg, power_method
 from pfb.utils import load_fits, save_fits, data_from_header, prox_21, str2bool, compare_headers
-from pfb.operators import Prior, PSF, PSI
+from pfb.operators import Prior, PSF, PSI, DaskPSI
 from astropy.io import fits
 import argparse
 
@@ -72,15 +73,17 @@ def main(args):
     hdr = fits.getheader(args.dirty)
     freq = data_from_header(hdr, axis=3)
     
-    nchan, nx, ny = dirty.shape
+    nband, nx, ny = dirty.shape
     psf_array = load_fits(args.psf)
     hdr_psf = fits.getheader(args.psf)
     try:
         assert np.array_equal(freq, data_from_header(hdr_psf, axis=3))
     except:
         raise ValueError("Fits frequency axes dont match")
+
+    print("Image size is (%i, %i, %i)"%(nband, nx, ny))
     
-    psf_max = np.amax(psf_array.reshape(nchan, 4*nx*ny), axis=1)
+    psf_max = np.amax(psf_array.reshape(nband, 4*nx*ny), axis=1)
     wsum = np.sum(psf_max)
     psf_max[psf_max < 1e-15] = 1e-15
 
@@ -127,13 +130,15 @@ def main(args):
 
     # set up wavelet basis
     if args.use_psi:
-        nchan, nx, ny = dirty.shape
-        psi = PSI(nchan, nx, ny, nlevels=args.psi_levels)
+        nband, nx, ny = dirty.shape
+        psi = PSI(nband, nx, ny, nlevels=args.psi_levels)
+        # psi = DaskPSI(nband, nx, ny, nlevels=args.psi_levels)
         nbasis = psi.nbasis
-        weights_21 = np.empty(psi.nbasis, dtype=object)
-        weights_21[0] = np.ones(nx*ny, dtype=real_type)
-        for m in range(1, psi.nbasis):
-            weights_21[m] = np.ones(psi.ntot, dtype=real_type)
+        weights_21 = np.ones((psi.nbasis, psi.ntot), dtype=object)
+        # weights_21[0] = np.ones(nx*ny, dtype=real_type)
+        # for m in range(1, psi.nbasis):
+        #     weights_21[m] = np.ones(psi.ntot, dtype=real_type)
+        #dask_weights_21 = da.ones((psi.nbasis, nx, ny), dtype=psi.real_type)
     else:
         psi = None
         weights_21 = np.ones(nx*ny, dtype=real_type)
@@ -160,7 +165,9 @@ def main(args):
         modelp = model.copy()
         model = modelp + args.gamma * x
 
-        model = prox_21(model, args.sig_21, weights_21, psi=psi)
+        model = prox_21(model, args.sig_21, weights_21, psi=psi, positivity=True)
+        # dask_model = da.from_array(model, chunks=(1, nx, ny))
+        # model = prox_21(dask_model, args.sig_21, dask_weights_21, psi=psi).compute()
 
         # convergence check
         normx = norm(model)
@@ -175,14 +182,14 @@ def main(args):
         if k  in reweight_iters:
             alpha = args.reweight_alpha/(1+k)**args.reweight_alpha_ff
             if psi is None:
-                l2norm = norm(model.reshape(nchan, npix), axis=0)
+                l2norm = norm(model.reshape(nband, npix), axis=0)
                 weights_21 = 1.0/(l2norm + alpha)
             else:
+                v = psi.hdot(model)
+                l2_norm = norm(v, axis=1)
                 for m in range(psi.nbasis):
-                    v = psi.hdot(model, m)
-                    l2norm = norm(v, axis=0)
-                    alpha = np.percentile(l2norm.flatten(), args.reweight_alpha_percent)
-                    weights_21[m] = 1.0/(l2norm + alpha)
+                    alpha = np.percentile(l2_norm[m].flatten(), args.reweight_alpha_percent)
+                    weights_21[m] = 1.0/(l2_norm[m] + alpha)
 
         # get residual
         residual = dirty - psf.convolve(model)

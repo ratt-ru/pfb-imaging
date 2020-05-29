@@ -42,7 +42,7 @@ def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
     hdu.writeto(name, overwrite=overwrite)
 
 
-def prox_21(p, sig_21, weights_21, psi=None):
+def prox_21(p, sig_21, weights_21, psi=None, positivity=False):
     nchan, nx, ny = p.shape
     if psi is None:
         # l21 norm
@@ -53,25 +53,21 @@ def prox_21(p, sig_21, weights_21, psi=None):
         ratio = np.zeros(meanp.shape, dtype=np.float64)
         ratio[indices] = l2_soft[indices]/meanp[indices]
         x = (p.reshape(nchan, nx*ny) * ratio[None, :]).reshape(nchan, nx, ny)
-        x[x<0] = 0.0
+        
     elif type(psi) is PSI:
         nchan, nx, ny = p.shape
         x = np.zeros(p.shape, p.dtype)
-        for k in range(psi.nbasis):
-            v = psi.hdot(p, k)
-            # get 2-norm along spectral axis
-            l2norm = norm(v, axis=0)
-            # impose average sparsity
-            l2_soft = np.maximum(np.abs(l2norm) - sig_21 * weights_21[k], 0.0) * np.sign(l2norm)
-            indices = np.nonzero(l2norm)
-            ratio = np.zeros(l2norm.shape, dtype=np.float64)
-            ratio[indices] = l2_soft[indices]/l2norm[indices]
-            v *= ratio[None]
-            x += psi.dot(v, k)
-        x[x<0] = 0.0
+        v = psi.hdot(p)
+        l2_norm = norm(v, axis=1)  # drops freq axis
+        l2_soft = np.maximum(np.abs(l2_norm) - sig_21 * weights_21, 0.0) * np.sign(l2_norm)
+        mask = l2_norm[:, :] != 0
+        ratio = np.zeros(mask.shape, dtype=psi.real_type)
+        ratio[mask] = l2_soft[mask] / l2_norm[mask]
+        v *= ratio[:, None, :]  # restore freq axis
+        x = psi.dot(v)
 
     elif type(psi) is DaskPSI:
-        v = psi.dot(p)
+        v = psi.hdot(p)
         # 2-norm along spectral axis
         l2_norm = da.linalg.norm(v, axis=1)
 
@@ -89,7 +85,7 @@ def prox_21(p, sig_21, weights_21, psi=None):
                          dtype=l2_norm.dtype)
 
         # apply inverse operator
-        x = psi.hdot(v * r[:, None, :, :])
+        x = psi.dot(v * r[:, None, :, :])
         # Sum over bases
         x = x.sum(axis=0)
 
@@ -100,6 +96,8 @@ def prox_21(p, sig_21, weights_21, psi=None):
 
         x = x.map_blocks(ensure_positivity, dtype=x.dtype)
 
+    if positivity:
+        x[x<0] = 0.0
 
     return x
 

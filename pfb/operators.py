@@ -268,7 +268,7 @@ class Prior(object):
 class PSI(object):
     def __init__(self, nband, nx, ny,
                  nlevels=2,
-                 basis=['self', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8']):
+                 bases=['self', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8']):
         """
         Sets up operators to move between wavelet coefficients
         in each basis and the image x.
@@ -294,10 +294,10 @@ class PSI(object):
         self.nx = nx
         self.ny = ny
         self.nlevels = nlevels
-        self.P = len(basis)
+        self.P = len(bases)
         self.sqrtP = np.sqrt(self.P)
-        self.basis = basis
-        self.nbasis = len(basis)
+        self.bases = bases
+        self.nbasis = len(bases)
 
         tmpx = np.zeros(self.nlevels)
         tmpx[-1] = self.nx//2 + self.nx%2
@@ -318,8 +318,9 @@ class PSI(object):
             self.ntot += 3 * self.indx[i] * self.indy[i]
 
         self.ntot = int(self.ntot)
+        self.npad = self.ntot - self.nx*self.ny
 
-    def dot(self, alpha, basis_k):
+    def dot(self, alpha):
         """
         Takes array of coefficients to image.
         The input does not have the form expected by pywt
@@ -335,164 +336,187 @@ class PSI(object):
 
         where entries are arrays with size defined by set_index_scheme.
         """
-        base = self.basis[basis_k]
-        if base == 'self':
-            return alpha.reshape(self.nband, self.nx, self.ny)/self.sqrtP
-        else:
-            x = np.zeros((self.nband, self.nx, self.ny), dtype=self.real_type)
+        x = np.zeros((self.nband, self.nx, self.ny), dtype=self.real_type)
+        for b in range(self.nbasis):
+            base = self.bases[b]
             for l in range(self.nband):
-                # stack array back into expected shape
-                n = int(self.n[0])
-                idx = int(self.indx[0])
-                idy = int(self.indy[0])
+                if base == 'self':
+                    # just unpad and reshape
+                    if self.npad:  # otherwise returns None when npad==0
+                        x[l] += alpha[b, l, 0:-self.npad].reshape(self.nx, self.ny)/self.sqrtP
+                    else:
+                        x[l] += alpha[b, l].reshape(self.nx, self.ny)/self.sqrtP
+                else:
+                    # stack array back into expected shape
+                    n = ind = int(self.n[0])
+                    idx = int(self.indx[0])
+                    idy = int(self.indy[0])
 
-                alpha_rec = [alpha[l, 0:n].reshape(idx, idy)]
-                ind = int(self.n[0])
-                for i in range(1, self.nlevels+1):
-                    n = int(self.n[i])
-                    idx = int(self.indx[i])
-                    idy = int(self.indy[i])
-                    tpl = ()
+                    alpha_rec = [alpha[b, l, 0:ind].reshape(idx, idy)]
 
-                    for j in range(3):
-                        tpl += (alpha[l, ind:ind+n].reshape(idx, idy),)
-                        ind += n
+                    for i in range(1, self.nlevels + 1):
+                        n = int(self.n[i])
+                        idx = int(self.indx[i])
+                        idy = int(self.indy[i])
+                        tpl = ()
 
-                    alpha_rec.append(tpl)
+                        for j in range(3):
+                            tpl += (alpha[b, l, ind:ind+n].reshape(idx, idy),)
+                            ind += n
 
-                # return reconstructed image from coeff
-                wave = pywt.waverec2(alpha_rec, base, mode='periodization')
-                x[l, :, :] = wave / self.sqrtP
+                        alpha_rec.append(tpl)
 
-            return x
+                    wave = pywt.waverec2(alpha_rec, base, mode='periodization')
 
-    def hdot(self, x, basis_k):
+                    # return reconstructed image from coeff
+                    x[l, :, :] += wave / self.sqrtP
+        return x
+
+    def hdot(self, x):
         """
         This implements the adjoint of Psi_func i.e. image to coeffs
         """
-        base = self.basis[basis_k]
-        if base == 'self':
-            # just flatten image, no need to stack in this case
-            return x.reshape(self.nband, self.nx*self.ny)/self.sqrtP
-        else:
-            alpha = np.zeros((self.nband, self.ntot), dtype=self.real_type)
+        alpha = np.zeros((self.nbasis, self.nband, self.ntot))
+        for b in range(self.nbasis):
+            base = self.bases[b]
             for l in range(self.nband):
-                # decompose
-                alphal = pywt.wavedec2(x[l], base, mode='periodization', level=self.nlevels)
-                # stack decomp into vector
-                tmp = [alphal[0].ravel()]
-                for item in alphal[1::]:
-                    for j in range(len(item)):
-                        tmp.append(item[j].ravel())
-                alpha[l] = np.concatenate(tmp)/self.sqrtP
-            return alpha
+                if base == 'self':
+                    # just pad image to have same shape as flattened wavelet coefficients
+                    alpha[b, l] = np.pad(x[l].reshape(self.nx*self.ny)/self.sqrtP, (0, self.npad), mode='constant')
+                else:
+                    # decompose
+                    alphal = pywt.wavedec2(x[l], base, mode='periodization', level=self.nlevels)
+                    # stack decomp into vector
+                    tmp = [alphal[0].ravel()]
+
+                    for item in alphal[1::]:
+                        for j in range(len(item)):
+                            tmp.append(item[j].ravel())
+
+                    alpha[b, l] = np.concatenate(tmp) / self.sqrtP
+        return alpha
 
 
 import dask.array as da
 
-def _dot_internal(alpha, base, nd, indx, indy, sqrtp, real_type):
-    assert type(base) == np.ndarray and base.shape[0] == 1
-    base = base[0]
+def _dot_internal(alpha, bases, nd, indx, indy, sqrtP, real_type,
+                  npad, nx, ny, nlevels):
+    nbasis, nband, _ = alpha.shape
+    # note reduction over basis axis is external since we need to
+    # chunk over the axis
+    x = np.zeros((nbasis, nband, nx, ny), dtype=real_type)
+    for b in range(nbasis):
+        base = bases[b]
+        for l in range(nband):
+            if base == 'self':
+                # just unpad and reshape
+                if npad:  # otherwise returns None when npad==0
+                    x[b, l] = alpha[b, l, 0:-npad].reshape(nx, ny)/sqrtP
+                else:
+                    x[b, l] = alpha[b, l].reshape(nx, ny)/sqrtP
+            else:
+                # stack array back into expected shape
+                n = ind = int(nd[0])
+                idx = int(indx[0])
+                idy = int(indy[0])
 
-    if base == "self":
-        return alpha[None, ...] / sqrtp
+                alpha_rec = [alpha[b, l, 0:ind].reshape(idx, idy)]
 
-    nband, nx, ny = alpha.shape
-    nlevels = nd.shape[0] - 1
-    # Note extra dimension for the single basis chunk
-    x = np.zeros((1,) + alpha.shape, dtype=real_type)
+                for i in range(1, nlevels + 1):
+                    n = int(nd[i])
+                    idx = int(indx[i])
+                    idy = int(indy[i])
+                    tpl = ()
 
-    alpha = alpha.reshape(nband, nx*ny)
+                    for j in range(3):
+                        tpl += (alpha[b, l, ind:ind+n].reshape(idx, idy),)
+                        ind += n
 
-    for l in range(nband):
-        # stack array back into expected shape
-        n = ind = int(nd[0])
-        idx = int(indx[0])
-        idy = int(indy[0])
+                    alpha_rec.append(tpl)
 
-        alpha_rec = [alpha[l, 0:ind].reshape(idx, idy)]
+                wave = pywt.waverec2(alpha_rec, base, mode='periodization')
 
-        for i in range(1, nlevels + 1):
-            n = int(nd[i])
-            idx = int(indx[i])
-            idy = int(indy[i])
-            tpl = ()
-
-            for j in range(3):
-                tpl += (alpha[l, ind:ind+n].reshape(idx, idy),)
-                ind += n
-
-            alpha_rec.append(tpl)
-
-        wave = pywt.waverec2(alpha_rec, base, mode='periodization')
-
-        # return reconstructed image from coeff
-        x[0, l, :, :] = wave / sqrtp
+                # return reconstructed image from coeff
+                x[b, l, :, :] = wave / sqrtP
 
     return x
 
-def _hdot_internal(x, base, ntot, nlevels, sqrtp, real_type):
-    assert type(base) == np.ndarray and base.shape[0] == 1
-    base = base[0]
+def _dot_internal_wrapper(alpha, bases, nd, indx, indy, sqrtP, real_type,
+                          npad, nx, ny, nlevels):
+    return _dot_internal(alpha[0], bases, nd, indx, indy, sqrtP, real_type,
+                         npad, nx, ny, nlevels)
 
-    nbasis, nband, nx, ny = x.shape
-    assert nbasis == 1
+def _hdot_internal(x, bases, ntot, nlevels, sqrtP, real_type, npad, nx, ny):
+    nband = x.shape[0]
+    nbasis = len(bases)
+    alpha = np.zeros((nbasis, nband, ntot))
+    for b in range(nbasis):
+        base = bases[b]
+        for l in range(nband):
+            if base == 'self':
+                # just pad image to have same shape as flattened wavelet coefficients
+                alpha[b, l] = np.pad(x[l].reshape(nx*ny)/sqrtP, (0, npad), mode='constant')
+            else:
+                # decompose
+                alphal = pywt.wavedec2(x[l], base, mode='periodization', level=nlevels)
+                # stack decomp into vector
+                tmp = [alphal[0].ravel()]
 
-    if base == 'self':
-        # just flatten image, no need to stack in this case
-        return x / sqrtp
+                for item in alphal[1::]:
+                    for j in range(len(item)):
+                        tmp.append(item[j].ravel())
 
-    alpha = np.zeros((nbasis, nband, ntot), dtype=real_type)
+                alpha[b, l] = np.concatenate(tmp) / sqrtP
 
-    for l in range(nband):
-        # decompose
-        alphal = pywt.wavedec2(x[l], base, mode='periodization', level=nlevels)
-        # stack decomp into vector
-        tmp = [alphal[0].ravel()]
+    return alpha
 
-        for item in alphal[1::]:
-            for j in range(len(item)):
-                tmp.append(item[j].ravel())
-
-        alpha[0, l] = np.concatenate(tmp) / sqrtp
-
-    return alpha.reshape(1, nband, nx, ny)
-
+def _hdot_internal_wrapper(x, bases, ntot, nlevels, sqrtP, real_type,
+                           npad, nx, ny):
+    return _hdot_internal(x[0][0], bases, ntot, nlevels, sqrtP, real_type,
+                          npad, nx, ny)
 
 class DaskPSI(PSI):
     def dot(self, alpha):
         # Chunk per basis
-        bases = da.from_array(self.basis, chunks=1)
-        # Chunk per band
-        alpha = alpha.reshape(self.nband, self.nx, self.ny)
-        alpha = alpha.rechunk((1, self.nx, self.ny))
-
-        x = da.blockwise(_dot_internal, ("basis", "nband", "nx", "ny"),
-                         alpha, ("nband", "nx", "ny"),
+        bases = da.from_array(self.bases, chunks=1)
+        
+        # Chunk per basis and band
+        alpha_dask = da.from_array(alpha, chunks=(1, 1, self.ntot))
+        
+        x = da.blockwise(_dot_internal_wrapper, ("basis", "nband", "nx", "ny"),
+                         alpha_dask, ("basis", "nband", "ntot"),
                          bases, ("basis", ),
                          self.n, None,
                          self.indx, None,
                          self.indy, None,
                          self.sqrtP, None,
                          self.real_type, None,
+                         self.npad, None,
+                         self.nx, None,
+                         self.ny, None,
+                         self.nlevels, None,
+                         new_axes={"nx": self.nx, "ny": self.ny},
                          dtype=self.real_type)
 
-        return x
+        return x.sum(axis=0).compute()
 
     def hdot(self, x):
         # Chunk per basis
-        bases = da.from_array(self.basis, chunks=1)
+        bases = da.from_array(self.bases, chunks=1)
         # Chunk per band
-        x = x.reshape(self.nbasis, self.nband, self.nx, self.ny)
-        x = x.rechunk((1, 1, self.nx, self.ny))
+        xdask = da.from_array(x, chunks=(1, self.nx, self.ny))
 
-        alpha = da.blockwise(_hdot_internal, ("nbasis", "nband", "nx", "ny"),
-                             x, ("nbasis", "nband", "nx", "ny"),
+        alpha = da.blockwise(_hdot_internal_wrapper, ("nbasis", "nband", "ntot"),
+                             xdask, ("nband", "nx", "ny"),
                              bases, ("nbasis", ),
                              self.ntot, None,
                              self.nlevels, None,
                              self.sqrtP, None,
                              self.real_type, None,
+                             self.npad, None,
+                             self.nx, None,
+                             self.ny, None,
+                             new_axes={"ntot": self.ntot},
                              dtype=self.real_type)
 
-        return alpha
+        return alpha.compute()
