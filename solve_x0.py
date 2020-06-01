@@ -1,7 +1,7 @@
 import numpy as np
 import dask.array as da
 from scipy.linalg import norm
-from pfb.opt import pcg, power_method
+from pfb.opt import pcg, power_method, simple_pd
 from pfb.utils import load_fits, save_fits, data_from_header, prox_21, str2bool, compare_headers
 from pfb.operators import Prior, PSF, PSI, DaskPSI
 from astropy.io import fits
@@ -18,9 +18,9 @@ def create_parser():
     p.add_argument("--ncpu", default=0, type=int,
                    help='Number of threads to use.')
     p.add_argument("--gamma", type=float, default=0.9,
-                   help="Initial primal step size.")
+                   help="Step size of 'primal' update.")
     p.add_argument("--maxit", type=int, default=20,
-                   help="Number of hpd iterations")
+                   help="Number of iterations")
     p.add_argument("--tol", type=float, default=1e-4,
                    help="Tolerance")
     p.add_argument("--report_freq", type=int, default=2,
@@ -32,7 +32,7 @@ def create_parser():
     p.add_argument("--lfrac", default=0.2, type=float,
                    help="The length scale of the frequency prior will be lfrac * fractional bandwidth")
     p.add_argument("--sig_21", type=float, default=1e-3,
-                   help="Tolerance for cg updates")
+                   help="Strength of l21 regulariser")
     p.add_argument("--use_psi", type=str2bool, nargs='?', const=True, default=False,
                    help="Use SARA basis")
     p.add_argument("--psi_levels", type=int, default=2,
@@ -40,7 +40,7 @@ def create_parser():
     p.add_argument("--x0", type=str, default=None,
                    help="Initial guess in form of fits file")
     p.add_argument("--reweight_iters", type=int, default=None, nargs='+',
-                   help="Set reweighting iters exmplicitly")
+                   help="Set reweighting iters explicitly")
     p.add_argument("--reweight_start", type=int, default=10,
                    help="When to start l1 reweighting scheme")
     p.add_argument("--reweight_freq", type=int, default=2,
@@ -64,6 +64,10 @@ def create_parser():
                    help="Tolerance for power method used to compute spectral norms")
     p.add_argument("--pmmaxit", type=int, default=25,
                    help="Maximum number of iterations for power method")
+    p.add_argument("--pdtol", type=float, default=1e-4,
+                   help="Tolerance for primal dual")
+    p.add_argument("--pdmaxit", type=int, default=50,
+                   help="Maximum number of iterations for primal dual")
     return p
 
 def main(args):
@@ -132,21 +136,16 @@ def main(args):
     if args.use_psi:
         nband, nx, ny = dirty.shape
         psi = PSI(nband, nx, ny, nlevels=args.psi_levels)
-        # psi = DaskPSI(nband, nx, ny, nlevels=args.psi_levels)
         nbasis = psi.nbasis
-        weights_21 = np.ones((psi.nbasis, psi.ntot), dtype=object)
-        # weights_21[0] = np.ones(nx*ny, dtype=real_type)
-        # for m in range(1, psi.nbasis):
-        #     weights_21[m] = np.ones(psi.ntot, dtype=real_type)
-        #dask_weights_21 = da.ones((psi.nbasis, nx, ny), dtype=psi.real_type)
+        weights_21 = np.ones((psi.nbasis, psi.ntot), dtype=real_type)
     else:
         psi = None
         weights_21 = np.ones(nx*ny, dtype=real_type)
 
-
     # initalise model
     if args.x0 is None:
         model = np.zeros(dirty.shape, dtype=real_type)
+        dual = np.zeros((psi.nbasis, nband, psi.ntot), dtype=real_type)
     else:
         compare_headers(hdr, fits.getheader(args.x0))
         model = load_fits(args.x0).astype(real_type)
@@ -165,7 +164,10 @@ def main(args):
         modelp = model.copy()
         model = modelp + args.gamma * x
 
-        model = prox_21(model, args.sig_21, weights_21, psi=psi, positivity=True)
+        if args.use_psi:
+            model, dual = simple_pd(lambda x: x, model, modelp, dual, args.sig_21, psi, weights_21, 1.0, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
+        else:
+            model = prox_21(model, args.sig_21, weights_21, psi=psi, positivity=True)
         # dask_model = da.from_array(model, chunks=(1, nx, ny))
         # model = prox_21(dask_model, args.sig_21, dask_weights_21, psi=psi).compute()
 
@@ -189,6 +191,7 @@ def main(args):
                 l2_norm = norm(v, axis=1)
                 for m in range(psi.nbasis):
                     alpha = np.percentile(l2_norm[m].flatten(), args.reweight_alpha_percent)
+                    alpha = np.maximum(alpha, 1e-14)
                     weights_21[m] = 1.0/(l2_norm[m] + alpha)
 
         # get residual
