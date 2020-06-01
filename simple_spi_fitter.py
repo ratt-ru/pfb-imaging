@@ -125,7 +125,7 @@ def main(args):
             pa = rhdr['BPA']
             beampars = (emaj, emin, pa)
     else:
-        beampars = tuple(args.pp)
+        beampars = tuple(args.psf_pars)
         
     if args.circ_psf:
         e = (beampars[0] + beampars[1])/2.0
