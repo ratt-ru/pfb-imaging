@@ -23,7 +23,7 @@ setuptools.setup(
           'dask',
           "dask[array]",
           "dask-ms[xarray]",
-          'codex-africanus',
+          'codex-africanus >= 0.2.4',
           'PyWavelets',
       ],
      classifiers=[

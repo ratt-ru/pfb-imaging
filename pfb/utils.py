@@ -248,8 +248,7 @@ def set_header_info(mhdr, ref_freq, freq_axis, args, beampars):
     hdr_keys = ['SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'NAXIS3',
                 'NAXIS4', 'CTYPE1', 'CTYPE2', 'CTYPE3', 'CTYPE4', 'CRPIX1',
                 'CRPIX2', 'CRPIX3', 'CRPIX4', 'CRVAL1', 'CRVAL2', 'CRVAL3',
-                'CRVAL4', 'CDELT1', 'CDELT2', 'CDELT3', 'CDELT4', 'CUNIT1',
-                'CUNIT2', 'CUNIT3', 'CUNIT4']
+                'CRVAL4', 'CDELT1', 'CDELT2', 'CDELT3', 'CDELT4']
 
     new_hdr = {}
     for key in hdr_keys:
