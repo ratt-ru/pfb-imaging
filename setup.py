@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 setuptools.setup(
      name='pfb',  
      version='0.0.1',
-     scripts=[] ,
+     scripts=['simple_spi_fitter.py', 'power_beam_maker.py', 'image_convolver.py'] ,
      author="Landman Bester",
      author_email="lbester@ska.ac.za",
      description="Pre-conditioned forward-backward CLEAN algorithm",

@@ -10,7 +10,7 @@ from africanus.util.numba import jit
 from astropy.io import fits
 import warnings
 from africanus.model.spi.dask import fit_spi_components
-from africanus.model.spi.examples.utils import load_fits_contiguous, get_fits_freq_space_info, set_header_info, Gaussian2D
+from pfb.utils import load_fits_contiguous, get_fits_freq_space_info, set_header_info, Gaussian2D
 from pypocketfft import r2c, c2r
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift

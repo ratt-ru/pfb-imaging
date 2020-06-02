@@ -11,7 +11,7 @@ from astropy.io import fits
 import warnings
 from africanus.model.spi.dask import fit_spi_components
 from africanus.rime import parallactic_angles
-from africanus.model.spi.examples.utils import load_fits_contiguous, get_fits_freq_space_info
+from pfb.utils import load_fits_contiguous, get_fits_freq_space_info
 from daskms import xds_from_ms, xds_from_table
 
 @jit(nopython=True, nogil=True, cache=True)
