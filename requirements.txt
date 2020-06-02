@@ -1,2 +1,2 @@
--e git+git@gitlab.mpcdf.mpg.de:mtr/pypocketfft.git@110381ce34213f3f404e341bbe6d0a58240f248b#egg=pypocketfft
--e git+git@gitlab.mpcdf.mpg.de:ift/nifty_gridder.git@f1540b9cca161e1aa32aa3cd09a592b3dac5f16b#egg=nifty_gridder
+-e git+https://gitlab.mpcdf.mpg.de:mtr/pypocketfft.git@110381ce34213f3f404e341bbe6d0a58240f248b#egg=pypocketfft
+-e git+https://gitlab.mpcdf.mpg.de:ift/nifty_gridder.git@f1540b9cca161e1aa32aa3cd09a592b3dac5f16b#egg=nifty_gridder
