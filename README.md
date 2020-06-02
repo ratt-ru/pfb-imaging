@@ -31,7 +31,7 @@ $ python setup.py develop
 Then run
 
 ```
-$ pip install -e requirements.txt
+$ pip install -r requirements.txt
 ```
 
 ## Outline of functionality
