@@ -161,7 +161,7 @@ def simple_pd(A, xbar,
     v0       - Initial guess for dual variable
     lam      - Strength of l21 regulariser
     psi      - Orthogonal basis operator where 
-               psi.hdot() does expansion and
+               psi.hdot() does decomposition and
                psi.dot() the reconstruction
                for all bases and channels
     weights  - Weights for l1 thresholding

@@ -166,10 +166,9 @@ def main(args):
 
         if args.use_psi:
             model, dual = simple_pd(lambda x: x, model, modelp, dual, args.sig_21, psi, weights_21, 1.0, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
+            # model, dual = simple_pd(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
         else:
             model = prox_21(model, args.sig_21, weights_21, psi=psi, positivity=True)
-        # dask_model = da.from_array(model, chunks=(1, nx, ny))
-        # model = prox_21(dask_model, args.sig_21, dask_weights_21, psi=psi).compute()
 
         # convergence check
         normx = norm(model)
@@ -191,7 +190,8 @@ def main(args):
                 l2_norm = norm(v, axis=1)
                 for m in range(psi.nbasis):
                     alpha = np.percentile(l2_norm[m].flatten(), args.reweight_alpha_percent)
-                    alpha = np.maximum(alpha, 1e-14)
+                    alpha = np.maximum(alpha, 1e-8)
+                    print("Reweighting - ", m, alpha)
                     weights_21[m] = 1.0/(l2_norm[m] + alpha)
 
         # get residual
