@@ -47,11 +47,11 @@ def create_parser():
                    help="How often to do l1 reweighting")
     p.add_argument("--reweight_end", type=int, default=20,
                    help="When to end the l1 reweighting scheme")
-    p.add_argument("--reweight_alpha", type=float, default=1.0e-6,
+    p.add_argument("--reweight_alpha_min", type=float, default=1.0e-6,
                    help="Determines how aggressively the reweighting is applied."
                    " >= 1 is very mild whereas << 1 is aggressive.")
     p.add_argument("--reweight_alpha_percent", type=float, default=5)
-    p.add_argument("--reweight_alpha_ff", type=float, default=0.0,
+    p.add_argument("--reweight_alpha_ff", type=float, default=0.5,
                    help="Determines how quickly the reweighting progresses."
                    "alpha will grow like alpha/(1+i)**alpha_ff.")
     p.add_argument("--cgtol", type=float, default=1e-2,
@@ -181,7 +181,6 @@ def main(args):
 
         # reweighting
         if k  in reweight_iters:
-            alpha = args.reweight_alpha/(1+k)**args.reweight_alpha_ff
             if psi is None:
                 l2norm = norm(model.reshape(nband, npix), axis=0)
                 weights_21 = 1.0/(l2norm + alpha)
@@ -189,10 +188,12 @@ def main(args):
                 v = psi.hdot(model)
                 l2_norm = norm(v, axis=1)
                 for m in range(psi.nbasis):
-                    alpha = np.percentile(l2_norm[m].flatten(), args.reweight_alpha_percent)
-                    alpha = np.maximum(alpha, 1e-8)
+                    indnz = l2_norm[m].nonzero()
+                    alpha = np.percentile(l2_norm[m, indnz].flatten(), args.reweight_alpha_percent)
+                    alpha = np.maximum(alpha, args.reweight_alpha_min)
                     print("Reweighting - ", m, alpha)
                     weights_21[m] = 1.0/(l2_norm[m] + alpha)
+                args.reweight_alpha_percent *= args.reweight_alpha_ff
 
         # get residual
         residual = dirty - psf.convolve(model)
