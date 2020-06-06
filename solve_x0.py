@@ -45,12 +45,12 @@ def create_parser():
                    help="When to start l1 reweighting scheme")
     p.add_argument("--reweight_freq", type=int, default=2,
                    help="How often to do l1 reweighting")
-    p.add_argument("--reweight_end", type=int, default=20,
+    p.add_argument("--reweight_end", type=int, default=90,
                    help="When to end the l1 reweighting scheme")
-    p.add_argument("--reweight_alpha_min", type=float, default=1.0e-6,
+    p.add_argument("--reweight_alpha_min", type=float, default=1.0e-5,
                    help="Determines how aggressively the reweighting is applied."
                    " >= 1 is very mild whereas << 1 is aggressive.")
-    p.add_argument("--reweight_alpha_percent", type=float, default=5)
+    p.add_argument("--reweight_alpha_percent", type=float, default=50)
     p.add_argument("--reweight_alpha_ff", type=float, default=0.5,
                    help="Determines how quickly the reweighting progresses."
                    "alpha will grow like alpha/(1+i)**alpha_ff.")
@@ -165,8 +165,8 @@ def main(args):
         model = modelp + args.gamma * x
 
         if args.use_psi:
-            model, dual = simple_pd(lambda x: x, model, modelp, dual, args.sig_21, psi, weights_21, 1.0, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
-            # model, dual = simple_pd(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
+            # model, dual = simple_pd(lambda x: x, model, modelp, dual, args.sig_21, psi, weights_21, 1.0, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
+            model, dual = simple_pd(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
         else:
             model = prox_21(model, args.sig_21, weights_21, psi=psi, positivity=True)
 
