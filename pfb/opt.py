@@ -187,11 +187,9 @@ def simple_pd(A, xbar,
 
     # stepsize control
     tau = 0.9/(L/2.0 + sigma*nu**2)
-    print("tau = %f, sigma = %f"%(tau, sigma))
 
     # start iterations
     eps = 1.0
-    k = 0
     for k in range(maxit):
         xp = x.copy()
         vp = v.copy()
