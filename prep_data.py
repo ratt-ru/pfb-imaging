@@ -15,7 +15,7 @@ def create_parser():
                    help="Write data to this column.")
     p.add_argument("--weight_column", default='WEIGHT_SPECTRUM', type=str,
                    help="Weight column to use. Will use WEIGHT if no WEIGHT_SPECTRUM is found")
-     p.add_argument("--weight_out_column", default='IMAGING_WEIGHT', type=str,
+    p.add_argument("--weight_out_column", default='IMAGING_WEIGHT', type=str,
                    help="Write imaging weights to this column.")               
     p.add_argument("--table_name", type=str,
                    help='Directory in which to place the output.')
