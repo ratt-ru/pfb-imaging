@@ -1,6 +1,7 @@
 import numpy as np
 from numba import njit, prange
 from scipy.linalg import norm, svd
+from pfb.utils import new_prox_21
 
 def pcg(A, b, x0, M=None, tol=1e-5, maxit=500, verbosity=1, report_freq=10):
     
@@ -138,125 +139,86 @@ def fista(fprime,
     return x, fidelity, fidupper
 
 
-def hpd(fprime, prox, reg, x0, gamma, beta, sig_21, 
-        psi=None,
-        hess=None,
-        cgprecond=None,
-        cgtol=1e-3,
-        cgmaxit=35,
-        cgverbose=0,
-        alpha0=0.25,
-        alpha_ff=0.2,
-        reweight_start=20,
-        reweight_freq=5,
-        tol=1e-3, 
-        maxit=1000,
-        report_freq=1,
-        verbosity=1):
+def simple_pd(A, xbar, 
+              x0, v0,  # initial guess for primal and dual variables 
+              lam,  # regulariser strength,
+              psi,  # orthogonal basis operator
+              weights,  # weights for l1 thresholding 
+              L, nu=1.0,  # spectral norms
+              sigma=None,  # step size of dual update
+              tol=1e-5, maxit=1000, positivity=True, report_freq=10):
     """
     Algorithm to solve problems of the form
 
-    argmin_x F(x) + lam_21 |L x|_21
+    argmin_x (xbar - x).T A (xbar - x)/2 + lam |PSI.H x|_21 s.t. x >= 0
 
-    where x is the image cube and there is an optional positivity 
-    constraint. 
+    where x is the image cubex is an PSI an orthogonal basis for the spatial axes
+    and the positivity constraint is optional.
 
-    fprime      - function that produces F(x), grad F(x)
-    x0           - primal variable
-    gamma       - initial step-size
-    beta        - Lipschitz constant of F
-    sig_21      - strength of l21 regulariser
+    A        - Positive definite Hermitian operator
+    xbar     - Data-like term
+    x0       - Initial guess for primal variable
+    v0       - Initial guess for dual variable
+    lam      - Strength of l21 regulariser
+    psi      - Orthogonal basis operator where 
+               psi.hdot() does decomposition and
+               psi.dot() the reconstruction
+               for all bases and channels
+    weights  - Weights for l1 thresholding
+    L        - Lipschitz constant of A
+    nu       - Spectral norm of psi
+    sigma    - l21 step size (set to L/2 by default)
 
+    Note that the primal variable (i.e. x) has shape (nband, nx, ny) where nband is the number of imaging bands
+    and the dual variable (i.e. v) has shape (nbasis, nband, ntot) where ntot is the total number of coefficients
+    for all bases. It is assumed that all bases are decomposed into the same number of coeffcients. To deal with
+    the fact that the Dirac basis does not necessarily have the same number of coefficients as the wavelets it
+    is simply padded by zeros. This doe snot effect the algorithm. 
     """
-    nchan, nx, ny = x0.shape
-    npix = nx*ny
-    real_type = x0.dtype
-
     # initialise
-    x = x0
+    x = x0.copy()
+    v = v0.copy()
 
-    # initial fidelity and gradient
-    fid, gradn = fprime(x)
-    regx = reg(x)
-    # initial objective and fidelity funcs
-    fidelity = np.zeros(maxit+1)
-    objective = np.zeros(maxit+1)
-    regulariser = np.zeros(maxit+1)
-    fidelity[0] = fid
-    regulariser[0] = regx
-    objective[0] = fid + regx
+    # gradient function
+    grad_func = lambda x: -A(xbar - x)
+
+    if sigma is None:
+        sigma = L/2.0
+
+    # stepsize control
+    tau = 0.9/(L/2.0 + sigma*nu**2)
 
     # start iterations
     eps = 1.0
-    k = 0
-    i = 0  # reweighting counter
     for k in range(maxit):
         xp = x.copy()
-        # gradient
-        gradp = gradn
+        vp = v.copy()
+        
+        # tmp prox variable
+        vtilde = v + sigma * psi.hdot(xp)
 
-        # get update 
-        if hess is not None:
-            delx = pcg(hess, -gradp, np.zeros(x.shape), M=cgprecond, tol=cgtol, maxit=cgmaxit, verbosity=cgverbose)
-        else:
-            delx = -gradp/beta
-        p = xp + gamma * delx
+        # dual update
+        v = vtilde - sigma * new_prox_21(vtilde/sigma, lam/sigma, weights)
 
-        x = prox(p, sig_21, weights_21)
-
-        fid, gradn = fprime(x)
-        regx = reg(x)
-        objective[k+1] = fid + regx
-        fidelity[k+1] = fid
-        regulariser[k+1] = regx
-        while objective[k+1] >= objective[k] and k < reweight_start and k%reweight_freq:
-            gamma *= 0.9
-            print("Step size too large, adjusting gamma = %f"%gamma)
-            
-            p = xp + gamma * delx
-
-            x = prox(p, sig_21, weights_21)
-
-            fid, gradn = fprime(x)
-            regx = reg(x)
-            objective[k+1] = fid + regx
-            fidelity[k+1] = fid
-            regulariser[k+1] = regx
+        # primal update
+        x = xp - tau*(psi.dot(2*v - vp) + grad_func(xp))
+        if positivity:
+            x[x<0] = 0.0
 
         # convergence check
-        normx = norm(x)
-        if np.isnan(normx) or normx == 0.0:
-            normx = 1.0
-        
-        eps = norm(x-xp)/normx
+        eps = norm(x-xp)/norm(x)
         if eps < tol:
             break
 
-        if k >= reweight_start and not k%reweight_freq:
-            alpha = alpha0/(1+i)**alpha_ff
-            if psi is None:
-                normx = norm(x.reshape(nchan, npix), axis=0)
-                weights_21 = 1.0/(normx + alpha)
-            else:
-                for m in range(nbasis):
-                    v = np.zeros((nchan, nx*ny), x.dtype)
-                    for l in range(nchan):
-                        v[l] = PSIT[m](x[l])
-                    l2norm = norm(v, axis=0)
-                    weights_21[m] = 1.0/(l2norm + alpha)
-            i += 1
+        if not k%report_freq:
+            print("At iteration %i eps = %f"%(k, eps))
 
-        if not k%report_freq and verbosity > 1:
-            print("At iteration %i eps = %f, norm21 = %f "%(k, eps, regx))
+    if k == maxit-1:
+        print("PD - Maximum iterations reached. Relative difference between updates = ", eps)
+    else:
+        print("PD - Success, converged after %i iterations"%k)
 
-
-    if verbosity > 0:
-        if k == maxit-1:
-            print("HPD - Maximum iterations reached. Relative difference between updates = ", eps)
-        else:
-            print("HPD - Success, converged after %i iterations"%k)
-
-    return x, objective, fidelity, regulariser
+    return x, v
 
 def power_method(A, imsize, tol=1e-5, maxit=250):
     b = np.random.randn(*imsize)
