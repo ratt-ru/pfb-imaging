@@ -1,24 +1,28 @@
+from time import time as timeit
+
 import numpy as np
 from numpy.testing import assert_array_almost_equal
 from scipy.linalg import norm
 import scipy.misc
+import pywt
+import pytest
+import yappi
+
 from pfb.utils import prox_21
 from pfb.operators import PSI, DaskPSI
-import pywt
-from time import time as timeit
-import pytest
+
 
 def test_dask_psi_operator():
     da = pytest.importorskip('dask.array')
-    nx = 2050
-    ny = 2050
+    nx = 1024
+    ny = 1024
     nband = 8
     nlevels = 5
 
     # random test image
     x = np.random.randn(nband, nx, ny)
-    
-    # initialise serial operator 
+
+    # initialise serial operator
     psi = PSI(nband, nx, ny, nlevels)
 
     # decompose
@@ -35,8 +39,12 @@ def test_dask_psi_operator():
     # initialise parallel operator
     dask_psi = DaskPSI(nband, nx, ny, nlevels)
     # decompose
-    ti = timeit()
+    yappi.set_clock_type("cpu")
+    yappi.start()
     alphad = dask_psi.hdot(x)
+    yappi.stop()
+    # import pdb; pdb.set_trace()
+    yappi.get_func_stats().print_all()
     print("Parallel decomp took ", timeit() - ti)
     # reconstruct
     ti = timeit()
@@ -52,11 +60,11 @@ def test_prox():
     ny = 2050
     nband = 8
     nlevels = 5
-    
+
     # random test image
     x = np.random.randn(nband, nx, ny)
-    
-    # initialise serial operator 
+
+    # initialise serial operator
     psi = PSI(nband, nx, ny, nlevels)
     ntot = psi.ntot
     nbasis = psi.nbasis
