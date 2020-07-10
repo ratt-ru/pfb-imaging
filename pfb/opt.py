@@ -203,7 +203,7 @@ def simple_pd(A, xbar,
         # primal update
         x = xp - tau*(psi.dot(2*v - vp) + grad_func(xp))
         if positivity:
-            x[x<0] = 0.0
+            x[x<1e-8] = 1e-8
 
         # convergence check
         eps = norm(x-xp)/norm(x)

@@ -149,6 +149,7 @@ def main(args):
     else:
         compare_headers(hdr, fits.getheader(args.x0))
         model = load_fits(args.x0).astype(real_type)
+        dual = np.zeros((psi.nbasis, nband, psi.ntot), dtype=real_type)
         residual = dirty - psf.convolve(model)
         residual_mfs = np.sum(residual, axis=0)/wsum 
         rmax = np.abs(residual_mfs).max()
@@ -191,6 +192,7 @@ def main(args):
                     # indnz = l2_norm[m].nonzero()
                     # alpha = np.percentile(l2_norm[m, indnz].flatten(), args.reweight_alpha_percent)
                     # alpha = np.maximum(alpha, args.reweight_alpha_min)
+                    alpha = args.reweight_alpha_min
                     print("Reweighting - ", m, alpha)
                     weights_21[m] = 1.0/(l2_norm[m] + alpha)
                 args.reweight_alpha_percent *= args.reweight_alpha_ff

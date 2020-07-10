@@ -33,7 +33,7 @@ def create_parser():
                    help="Whether to do wide-field correction or not")
     p.add_argument("--channels_out", default=None, type=int,
                    help="Number of channels in output cube")
-    p.add_argument("--row_chunks", type=int, default=100000,
+    p.add_argument("--row_chunks", type=int, default=-1,
                    help="Row chunking when loading in data")
     p.add_argument("--field", type=int, default=0, nargs='+',
                    help="Which fields to image")

@@ -4,7 +4,7 @@ from pyrap.tables import table
 from daskms import xds_from_table
 import dask
 import dask.array as da
-from pfb.opt import power_method, hpd, fista, pcg
+from pfb.opt import power_method, hpd, fista, pcg, simplt_pd
 from scipy.fftpack import next_fast_len
 from scipy.linalg import norm
 from time import time
@@ -286,7 +286,7 @@ def main(args):
     gamma = args.gamma0
     residual = dirty.copy()
     for i in range(args.maxit):
-        x = pcg(hess, residual - K.idot(model), np.zeros(dirty.shape, dtype=real_type), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
+        x = pcg(hess, residual, np.zeros(dirty.shape, dtype=real_type), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
         
         # update model
         modelp = model
