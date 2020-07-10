@@ -5,14 +5,15 @@ import scipy.linalg as scl
 from scipy.optimize import fmin_l_bfgs_b as bfgs
 from africanus.constants import c as lightspeed
 from africanus.gps.kernels import exponential_squared as expsq
-import matplotlib as mpl
-mpl.use('TkAgg')
 import matplotlib.pyplot as plt
 from pfb.opt import pcg
 import nifty_gridder as ng
 from pypocketfft import r2c, c2r
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
+from pfb.operators import PSF
+from astropy.io import fits
+from pfb.utils import load_fits, save_fits, data_from_header, prox_21, str2bool, compare_headers
 
 def main1D():
     # signal
@@ -119,15 +120,7 @@ def RH_func(x, uvw, freq, cell, nx, ny):
                        pixsize_x=cell, pixsize_y=cell, 
                        epsilon=1e-10, nthreads=8, do_wstacking=False)
 
-# def convolve(psfhat, ntheads):
-
-
-
-if __name__=='__main__':
-    # main1D()
-    
-
-    # quit()
+def main2D():
     # signal
     nx = 128
     ny = 128
@@ -136,6 +129,13 @@ if __name__=='__main__':
     indx = np.random.randint(5, nx-5, npoints)
     indy = np.random.randint(5, ny-5, npoints)
     I[indx, indy] = np.exp(np.random.randn(npoints))
+
+    x = np.arange(nx)
+    y = np.arange(ny)
+    xx, yy = np.meshgrid(y, y)
+    gshape = 2 * np.exp(-(xx - nx/2)**2/50 - (yy - ny/2)**2/50)
+
+    I += gshape
 
 
     # log-normal data model
@@ -157,7 +157,7 @@ if __name__=='__main__':
 
     model_data = R(I)
     noise = np.random.randn(M, 1)/np.sqrt(2) + 1.0j*np.random.randn(M,1)/np.sqrt(2)
-    data = model_data + noise
+    data = model_data + 10*noise
 
     dirty = RH(data)
     noise_im = RH(noise)
@@ -185,6 +185,10 @@ if __name__=='__main__':
     # plt.show()
 
 
+    # plt.show()
+    # quit()
+
+
     nx_psf, ny_psf = psf.shape
     npad_x = (nx_psf - nx)//2
     npad_y = (ny_psf - ny)//2
@@ -203,7 +207,7 @@ if __name__=='__main__':
         return Fs(xhat, axes=ax)[unpad_x, unpad_y] 
 
     def hess(x):
-        return convolve(x) + x
+        return convolve(x) + 1000*x
 
     # get Wiener filter soln
     xhat1 = pcg(hess, dirty, np.zeros((nx, ny), dtype=np.float64), M=lambda x:x, tol=1e-8)
@@ -217,10 +221,10 @@ if __name__=='__main__':
         I = np.exp(x.reshape(nx, ny))
         tmp1 = convolve(I)
         tmp2 = x.reshape(nx, ny)
-        return np.vdot(I, tmp1 - 2*dirty) + np.vdot(x, tmp2), (2 * I * (tmp1 - dirty) + 2*tmp2).flatten()
+        return np.vdot(I, tmp1 - 2*dirty) + 1000*np.vdot(x, tmp2), (2 * I * (tmp1 - dirty) + 1000*2*tmp2).flatten()
 
     x0 = np.where(xhat1 > 1e-15, np.log(xhat1), 0.0)
-    xhat2, f, d = bfgs(fprime, x0, approx_grad=False, factr=1e10)
+    xhat2, f, d = bfgs(fprime, x0, approx_grad=False, factr=1e8)
 
     for key in d.keys():
         if key != 'grad':
@@ -230,4 +234,72 @@ if __name__=='__main__':
     plt.imshow(np.exp(xhat2.reshape(nx, ny)))
     plt.colorbar()
     plt.show()
+
+def main3D():
+    dirty = load_fits('/home/landman/Data/pfb-testing/output/combined_image_dirty.fits')
+    real_type = dirty.dtype
+    hdr = fits.getheader('/home/landman/Data/pfb-testing/output/combined_image_dirty.fits')
+    freq = data_from_header(hdr, axis=3)
+    
+    nchan, nx, ny = dirty.shape
+    psf_array = load_fits('/home/landman/Data/pfb-testing/output/combined_image_psf.fits')
+    hdr_psf = fits.getheader('/home/landman/Data/pfb-testing/output/combined_image_psf.fits')
+    try:
+        assert np.array_equal(freq, data_from_header(hdr_psf, axis=3))
+    except:
+        raise ValueError("Fits frequency axes dont match")
+    
+    psf_max = np.amax(psf_array.reshape(nchan, 4*nx*ny), axis=1)
+    wsum = np.sum(psf_max)
+    psf_max[psf_max < 1e-15] = 1e-15
+
+    print("Image size = ", nchan, nx, ny)
+
+    # plt.figure('psf')
+    # plt.imshow(psf_array[0])
+    # plt.colorbar()
+
+    plt.figure('dirty')
+    plt.imshow(dirty[0])
+    plt.colorbar()
+
+    # plt.show()
+
+    psf = PSF(psf_array, 8)
+
+    # Tikhonov
+    def hess(x):
+        return psf.convolve(x) + x
+
+    # get Wiener filter soln
+    xhat1 = pcg(hess, dirty, np.zeros((nchan, nx, ny), dtype=np.float64), M=lambda x:x, tol=1e-4, maxit=100)
+
+    x0 = np.where(xhat1 > 1e-10, np.log(xhat1), 1e-10)
+    plt.figure('wsoln')
+    plt.imshow(x0[0])
+    plt.colorbar()
+
+    # get log-normal soln    
+    def fprime(x):
+        I = np.exp(x.reshape(nchan, nx, ny))
+        tmp1 = psf.convolve(I)
+        tmp2 = x.reshape(nchan, nx, ny)
+        return np.vdot(I, tmp1 - 2*dirty) + 100000*np.vdot(x, tmp2), (2 * I * (tmp1 - dirty) + 100000*2*tmp2).flatten()
+
+    
+    xhat2, f, d = bfgs(fprime, x0, approx_grad=False, factr=1e12)
+
+    for key in d.keys():
+        if key != 'grad':
+            print(key, d[key])
+
+    plt.figure('logsol')
+    plt.imshow(xhat2.reshape(nchan, nx, ny)[0])
+    plt.colorbar()
+    plt.show()
+
+
+if __name__=='__main__':
+    main3D()
+    
 
