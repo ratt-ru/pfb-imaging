@@ -93,9 +93,9 @@ def promote_wavelets(wavelets, naxis):
         def impl(wavelets, naxis):
             return numba.typed.List([wavelets] * naxis)
 
-    elif ((isinstance(axis, nbtypes.containers.List) or
-          isinstance(axis, nbtypes.containers.UniTuple)) and
-            isinstance(axis.dtype, nbtypes.misc.UnicodeType)):
+    elif ((isinstance(wavelets, nbtypes.containers.List) or
+          isinstance(wavelets, nbtypes.containers.UniTuple)) and
+            isinstance(wavelets.dtype, nbtypes.misc.UnicodeType)):
 
         def impl(wavelets, naxis):
             if len(wavelets) != naxis:
