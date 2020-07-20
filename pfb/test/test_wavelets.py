@@ -3,9 +3,17 @@ from numpy.testing import assert_array_almost_equal
 import pytest
 
 from pfb.wavelets.wavelets import (dwt, idwt,
+                                   str_to_int,
                                    promote_axis,
                                    promote_mode,
                                    discrete_wavelet)
+
+
+
+def test_str_to_int():
+    assert str_to_int("111") == 111
+    assert str_to_int("23") == 23
+    assert str_to_int("3") == 3
 
 
 def test_promote_mode():
@@ -42,7 +50,7 @@ def test_promote_axis():
     assert [0, 1] == list(promote_axis((0, 1), 3))
 
 
-@pytest.mark.parametrize("wavelet", ["db1", "db5"])
+@pytest.mark.parametrize("wavelet", ["db1", "db4", "db5"])
 def test_discrete_wavelet(wavelet):
     pfb_wave = discrete_wavelet(wavelet)
 
