@@ -1,9 +1,9 @@
-import numba
-
-#numba.gdb_init()
-
 import numpy as np
 from numpy.testing import assert_array_almost_equal, assert_array_equal
+import numba
+from numba.core import types, cgutils
+from numba.extending import intrinsic
+from numba.np.arrayobj import make_view, fix_integer_index
 import pytest
 
 from pfb.wavelets.wavelets import (dwt, idwt,
@@ -11,7 +11,6 @@ from pfb.wavelets.wavelets import (dwt, idwt,
                                    promote_axis,
                                    promote_mode,
                                    discrete_wavelet)
-
 
 
 def test_str_to_int():
@@ -82,11 +81,6 @@ def test_dwt():
     dwt(data, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
 
 
-from numba.core import types, cgutils
-from numba.extending import intrinsic
-from numba.np.arrayobj import make_view, fix_integer_index
-
-
 @intrinsic
 def slice_axis(typingctx, array, index, axis):
     return_type = array.copy(ndim=1)
@@ -115,11 +109,12 @@ def slice_axis(typingctx, array, index, axis):
         llvm_intp_t = context.get_value_type(types.intp)
         ndim = array_type.ndim
 
-        indices = cgutils.pack_array(builder, [zero]*ndim, llvm_intp_t)
         view_shape = cgutils.alloca_once(builder, llvm_intp_t)
         view_stride = cgutils.alloca_once(builder, llvm_intp_t)
 
-        indices = cgutils.alloca_once(builder, llvm_intp_t, size=3)
+        # Final array indexes. We only know the slicing index at runtime
+        # so we need to recreate idx but with zero at the slicing axis
+        indices = cgutils.alloca_once(builder, llvm_intp_t, size=array_type.ndim)
 
         for ax in range(array_type.ndim):
             llvm_ax = context.get_constant(types.intp, ax)
@@ -127,10 +122,15 @@ def slice_axis(typingctx, array, index, axis):
 
             with builder.if_else(predicate) as (not_equal, equal):
                 with not_equal:
+                    # If this is not the slicing axis,
+                    # use the appropriate tuple index
                     value = builder.extract_value(idx, ax)
                     builder.store(value, builder.gep(indices, [llvm_ax]))
 
                 with equal:
+                    # If this is the slicing axis,
+                    # store zero as the index.
+                    # Also record the stride and shape
                     builder.store(zero, builder.gep(indices, [llvm_ax]))
                     size = builder.extract_value(array.shape, ax)
                     stride = builder.extract_value(array.strides, ax)
@@ -138,21 +138,26 @@ def slice_axis(typingctx, array, index, axis):
                     builder.store(stride, view_stride)
 
 
+        # Build a python list from indices
         tmp_indices = []
 
         for i in range(ndim):
             i = context.get_constant(types.intp, i)
             tmp_indices.append(builder.load(builder.gep(indices, [i])))
 
+        # Get the data pointer obtained from indexing the array
         dataptr = cgutils.get_item_pointer(context, builder,
                                            array_type, array,
                                            tmp_indices,
                                            wraparound=True,
                                            boundscheck=True)
 
+        # Set up the shape and stride. There'll only be one
+        # dimension, corresponding to the axis along which we slice
         view_shapes = [builder.load(view_shape)]
         view_strides = [builder.load(view_stride)]
 
+        # Make a view with the data pointer, shapes and strides
         retary = make_view(context, builder,
                            array_type, array, return_type,
                            dataptr, view_shapes, view_strides)
@@ -160,20 +165,20 @@ def slice_axis(typingctx, array, index, axis):
 
     return sig, codegen
 
-
 def test_slicing():
-    from numba.cpython.unsafe.tuple import tuple_setitem
-
-    A = np.random.random((8, 9, 10))
     @numba.njit
     def fn(a, index, axis=1):
-        index = tuple_setitem(index, axis, 1)
         return slice_axis(a, index, axis)
+
+    A = np.random.random((8, 9, 10))
 
     for axis in range(A.ndim):
         tup_idx = tuple(np.random.randint(1, d) for d in A.shape)
         slice_idx = tuple(slice(None) if a == axis else i for a, i in enumerate(tup_idx))
 
-        assert_array_equal(fn(A, tup_idx, axis), A[slice_idx])
-        # The following segfaults
-        # assert fn(A, tup_idx, axis).base is A
+        B = fn(A, tup_idx, axis)
+        assert_array_equal(B, A[slice_idx])
+
+
+if __name__ == "__main__":
+    test_slicing()
