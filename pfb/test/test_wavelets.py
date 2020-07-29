@@ -93,8 +93,11 @@ def test_slice_axis():
         # Replace index with slice along desired axis
         slice_idx = tuple(slice(None) if a == axis else i for a, i in enumerate(tup_idx))
 
+        As = A[slice_idx]
         B = fn(A, tup_idx, axis)
-        assert_array_equal(B, A[slice_idx])
+
+        assert_array_equal(B, As)
+        assert B.flags == As.flags
 
 
 if __name__ == "__main__":
