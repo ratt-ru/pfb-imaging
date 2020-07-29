@@ -1,5 +1,9 @@
+import numba
+
+#numba.gdb_init()
+
 import numpy as np
-from numpy.testing import assert_array_almost_equal
+from numpy.testing import assert_array_almost_equal, assert_array_equal
 import pytest
 
 from pfb.wavelets.wavelets import (dwt, idwt,
@@ -78,75 +82,98 @@ def test_dwt():
     dwt(data, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
 
 
-
 from numba.core import types, cgutils
 from numba.extending import intrinsic
+from numba.np.arrayobj import make_view, fix_integer_index
 
 
 @intrinsic
-def sliced_indexing_tuple(typingctx, input_tuple, axis):
-    if not isinstance(input_tuple, types.UniTuple):
-        raise types.TypingError("tuple_type must be an homogenous tuple %s" % input_tuple)
+def slice_axis(typingctx, array, index, axis):
+    return_type = array.copy(ndim=1)
 
-    if not input_tuple.count > 0:
-        raise types.TypingError("tuple_type must be > 0 elements")
+    if not isinstance(array, types.Array):
+        raise TypeError("array is not an Array")
 
-    return_type = types.UniTuple(types.slice2_type, input_tuple.count)
-    sig = return_type(input_tuple, axis)
+    if (not isinstance(index, types.UniTuple) or
+        not isinstance(index.dtype, types.Integer)):
+        raise TypeError("index is not a Homogenous Tuple of Integers")
+
+    if len(index) != array.ndim:
+        raise TypeError("array.ndim != len(index")
+
+    if not isinstance(axis, types.Integer):
+        raise TypeError("axis is not an Integer")
+
+    sig = return_type(array, index, axis)
 
     def codegen(context, builder, signature, args):
-        input_type = signature.args[0]
-        axis_type = signature.args[1]
-        return_type = signature.return_type
+        array_type, idx_type, axis_type = signature.args
+        array, idx, axis = args
+        array = context.make_array(array_type)(context, builder, array)
 
-        # Allocate an empty tuple
-        llvm_tuple_type = context.get_value_type(return_type)
-        tup = cgutils.get_null_value(llvm_tuple_type)
+        zero = context.get_constant(types.intp, 0)
+        llvm_intp_t = context.get_value_type(types.intp)
+        ndim = array_type.ndim
 
-        def slicer(tup, i, axis):
-            idx = tup[i]
-            #print(tup, i, axis)
-            return slice(0, idx) if i == axis else slice(idx, idx+1)
+        indices = cgutils.pack_array(builder, [zero]*ndim, llvm_intp_t)
+        view_shape = cgutils.alloca_once(builder, llvm_intp_t)
+        view_stride = cgutils.alloca_once(builder, llvm_intp_t)
 
-        for i in range(return_type.count):
-            # Get a constant index value
-            tup_idx = context.get_constant(types.intp, i)
-            # Arguments passed into slicer
-            slicer_args = [args[0], tup_idx, args[1]]
-            slicer_sig = return_type.dtype(input_type, types.intp, axis_type)
-            # Call slicer
-            data = context.compile_internal(builder, slicer,
-                                            slicer_sig,
-                                            slicer_args)
+        indices = cgutils.alloca_once(builder, llvm_intp_t, size=3)
 
-            # Insert result of slicer into the tuple
-            tup = builder.insert_value(tup, data, i)
+        for ax in range(array_type.ndim):
+            llvm_ax = context.get_constant(types.intp, ax)
+            predicate = builder.icmp_unsigned("!=", llvm_ax, axis)
 
-        # Return the tuple
-        return tup
+            with builder.if_else(predicate) as (not_equal, equal):
+                with not_equal:
+                    value = builder.extract_value(idx, ax)
+                    builder.store(value, builder.gep(indices, [llvm_ax]))
+
+                with equal:
+                    builder.store(zero, builder.gep(indices, [llvm_ax]))
+                    size = builder.extract_value(array.shape, ax)
+                    stride = builder.extract_value(array.strides, ax)
+                    builder.store(size, view_shape)
+                    builder.store(stride, view_stride)
+
+
+        tmp_indices = []
+
+        for i in range(ndim):
+            i = context.get_constant(types.intp, i)
+            tmp_indices.append(builder.load(builder.gep(indices, [i])))
+
+        dataptr = cgutils.get_item_pointer(context, builder,
+                                           array_type, array,
+                                           tmp_indices,
+                                           wraparound=True,
+                                           boundscheck=True)
+
+        view_shapes = [builder.load(view_shape)]
+        view_strides = [builder.load(view_stride)]
+
+        retary = make_view(context, builder,
+                           array_type, array, return_type,
+                           dataptr, view_shapes, view_strides)
+        return retary._getvalue()
 
     return sig, codegen
 
 
 def test_slicing():
     from numba.cpython.unsafe.tuple import tuple_setitem
-    import numba
-
-    @numba.njit(nogil=True, cache=True)
-    def fn(a, axis=1):
-
-        shape = a.shape
-        for ax, d in enumerate(a.shape):
-            shape = tuple_setitem(shape, ax, 1 if ax == axis else d)
-
-        for i in np.ndindex(shape):
-            i = tuple_setitem(i, axis, a.shape[axis])
-            idx = sliced_indexing_tuple(i, axis)
-            row = a[idx]
-
-            if not row.flags.c_contiguous:
-                row = row.copy()
-
 
     A = np.random.random((8, 9, 10))
-    B = fn(A, axis=1)
+    @numba.njit
+    def fn(a, index, axis=1):
+        index = tuple_setitem(index, axis, 1)
+        return slice_axis(a, index, axis)
+
+    for axis in range(A.ndim):
+        tup_idx = tuple(np.random.randint(1, d) for d in A.shape)
+        slice_idx = tuple(slice(None) if a == axis else i for a, i in enumerate(tup_idx))
+
+        assert_array_equal(fn(A, tup_idx, axis), A[slice_idx])
+        # The following segfaults
+        # assert fn(A, tup_idx, axis).base is A
