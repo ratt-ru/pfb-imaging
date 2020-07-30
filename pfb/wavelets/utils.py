@@ -17,10 +17,8 @@ def force_type_contiguity(typingctx, array):
                                  "on an array whose layout is "
                                  "non-contiguous")
 
-        sig = typing.signature(types.none, signature.args[0])
-
-        context.compile_internal(builder, check, sig, args)
-
+        check_sig = typing.signature(types.none, signature.args[0])
+        context.compile_internal(builder, check, check_sig, args)
 
         return impl_ret_borrowed(context, builder, return_type, args[0])
 
