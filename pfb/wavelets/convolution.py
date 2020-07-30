@@ -3,9 +3,9 @@ import numba
 from pfb.wavelets.modes import Modes
 
 @numba.generated_jit(nopython=True, nogil=True, cache=True)
-def downsampling_convolution(input, output, filter, mode):
-    def impl(input, output, filter, mode):
-        i = 0
+def downsampling_convolution(input, output, filter, mode, step):
+    def impl(input, output, filter, mode, step):
+        i = step - 1
         o = 0
         N = input.shape[0]
         F = filter.shape[0]
@@ -54,7 +54,7 @@ def downsampling_convolution(input, output, filter, mode):
 
             output[o] = fsum
 
-            i += 1
+            i += step
             o += 1
 
         # center (if input equal or wider than filter: N >= F)
@@ -63,11 +63,12 @@ def downsampling_convolution(input, output, filter, mode):
             j = 0
 
             while j < F:
-                fsum += input[i-j] * filter[j]
+                fsum += input[i - j] * filter[j]
                 j += 1
 
-            output[i] = fsum
-            i += 1
+            output[o] = fsum
+
+            i += step
             o += 1
 
         # center (if filter is wider than input: F > N)
@@ -149,10 +150,10 @@ def downsampling_convolution(input, output, filter, mode):
 
             output[o] = fsum
 
-            i += 1
+            i += step
             o += 1
 
-        # right boundary overhand
+        # right boundary overhang
         while i < N + F - 1:
             fsum = input.dtype.type(0)
             j = 0
@@ -197,7 +198,7 @@ def downsampling_convolution(input, output, filter, mode):
 
             output[o] = fsum
 
-            i += 1
+            i += step
             o += 1
 
     return impl

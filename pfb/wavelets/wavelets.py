@@ -169,15 +169,8 @@ def promote_axis(axis, ndim):
 @numba.generated_jit(nopython=True, nogil=True)
 def dwt_axis(data, wavelet, mode, axis):
     def impl(data, wavelet, mode, axis):
-        out_shape = data.shape
-
-        for i, s in enumerate(data.shape):
-            if i == axis:
-                d = dwt_coeff_length(data.shape[i], len(wavelet.dec_hi), mode)
-            else:
-                d = s
-
-            out_shape = tuple_setitem(out_shape, i, d)
+        coeff_len = dwt_coeff_length(data.shape[axis], len(wavelet.dec_hi), mode)
+        out_shape = tuple_setitem(data.shape, axis, coeff_len)
 
         ca = np.empty(out_shape, dtype=data.dtype)
         cd = np.empty(out_shape, dtype=data.dtype)
@@ -209,8 +202,8 @@ def dwt_axis(data, wavelet, mode, axis):
             else:
                 cd_row = initial_cd_row.copy()
 
-            # downsampling_convolution(in_row, ca_row, wavelet.dec_lo, mode)
-            # downsampling_convolution(in_row, cd_row, wavelet.dec_hi, mode)
+            downsampling_convolution(in_row, ca_row, wavelet.dec_lo, mode, 2)
+            downsampling_convolution(in_row, cd_row, wavelet.dec_hi, mode, 2)
 
             if not initial_ca_row.flags.c_contiguous:
                 initial_ca_row[:] = ca_row[:]
