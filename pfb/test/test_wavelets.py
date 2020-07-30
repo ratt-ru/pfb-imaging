@@ -6,11 +6,12 @@ import pytest
 
 from pfb.wavelets.wavelets import (dwt, idwt,
                                    str_to_int,
-                                   mode_str_to_enum,
                                    promote_axis,
-                                   promote_mode,
-                                   discrete_wavelet,
-                                   Modes)
+                                   discrete_wavelet)
+from pfb.wavelets.modes import (Modes,
+                                promote_mode,
+                                mode_str_to_enum)
+
 from pfb.wavelets.utils import slice_axis
 
 
@@ -18,14 +19,6 @@ def test_str_to_int():
     assert str_to_int("111") == 111
     assert str_to_int("23") == 23
     assert str_to_int("3") == 3
-
-
-def test_mode_str_to_enum():
-    @numba.njit
-    def fn(mode_str):
-        return mode_str_to_enum(mode_str)
-
-    assert fn("symmetric") is Modes.symmetric
 
 
 def test_promote_mode():
