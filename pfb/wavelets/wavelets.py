@@ -2,6 +2,7 @@ from collections import namedtuple
 
 import numba
 import numba.core.types as nbtypes
+from numba.cpython.unsafe.tuple import tuple_setitem
 from numba.extending import register_jitable
 import numpy as np
 
@@ -71,7 +72,7 @@ def dwt_coeff_length(data_length, filter_length, mode):
     return dwt_buffer_length(data_length, filter_length, mode)
 
 
-@numba.generated_jit(nopython=True, nogil=True, cache=True, debug=True)
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
 def discrete_wavelet(wavelet):
     if not isinstance(wavelet, nbtypes.types.UnicodeType):
         raise TypeError("wavelet must be a string")
@@ -191,7 +192,6 @@ def promote_mode(mode, naxis):
     return impl
 
 
-
 @numba.generated_jit(nopython=True, nogil=True, cache=True)
 def downsampling_convolution(input, N, filter,
                              output, step, mode):
@@ -214,9 +214,8 @@ def downsampling_convolution(input, N, filter,
 
     return impl
 
-from numba.cpython.unsafe.tuple import tuple_setitem
 
-@numba.generated_jit(nopython=True, nogil=True, debug=True)
+@numba.generated_jit(nopython=True, nogil=True)
 def dwt_axis(data, wavelet, mode, axis):
     def impl(data, wavelet, mode, axis):
         out_shape = data.shape
@@ -258,7 +257,7 @@ def dwt_axis(data, wavelet, mode, axis):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, debug=True)
+@numba.generated_jit(nopython=True, nogil=True)
 def dwt(data, wavelet, mode="symmetric", axis=0):
 
     if not isinstance(data, nbtypes.npytypes.Array):
@@ -277,6 +276,7 @@ def dwt(data, wavelet, mode="symmetric", axis=0):
             ca, cd = dwt_axis(data, wv, m, ax)
 
     return impl
+
 
 @numba.generated_jit(nopython=True, nogil=True, cache=True)
 def idwt():
