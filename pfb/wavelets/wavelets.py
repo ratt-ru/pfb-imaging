@@ -4,6 +4,7 @@ import numba
 import numba.core.types as nbtypes
 from numba.cpython.unsafe.tuple import tuple_setitem
 from numba.extending import register_jitable, overload
+from numba.typed import Dict, List
 import numpy as np
 
 from pfb.wavelets.coefficients import coefficients
@@ -166,7 +167,7 @@ def promote_axis(axis, ndim):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True)
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
 def dwt_axis(data, wavelet, mode, axis):
     def impl(data, wavelet, mode, axis):
         coeff_len = dwt_coeff_length(data.shape[axis], len(wavelet.dec_hi), mode)
@@ -202,9 +203,11 @@ def dwt_axis(data, wavelet, mode, axis):
             else:
                 cd_row = initial_cd_row.copy()
 
+            # Compute the approximation and detail coefficients
             downsampling_convolution(in_row, ca_row, wavelet.dec_lo, mode, 2)
             downsampling_convolution(in_row, cd_row, wavelet.dec_hi, mode, 2)
 
+            # If necessary, copy back into the output
             if not initial_ca_row.flags.c_contiguous:
                 initial_ca_row[:] = ca_row[:]
 
@@ -216,7 +219,7 @@ def dwt_axis(data, wavelet, mode, axis):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True)
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
 def dwt(data, wavelet, mode="symmetric", axis=0):
 
     if not isinstance(data, nbtypes.npytypes.Array):
@@ -231,8 +234,24 @@ def dwt(data, wavelet, mode="symmetric", axis=0):
         pwavelets = [discrete_wavelet(w) for w
                      in promote_wavelets(wavelet, naxis)]
 
+        coeffs = List([("", data)])
+
         for a, (ax, m, wv) in enumerate(zip(paxis, pmode, pwavelets)):
-            ca, cd = dwt_axis(data, wv, m, ax)
+            new_coeffs = List()
+
+            for subband, x in coeffs:
+                ca, cd = dwt_axis(x, wv, m, ax)
+                new_coeffs.append((subband + "a", ca))
+                new_coeffs.append((subband + "d", cd))
+
+            coeffs = new_coeffs
+
+        dict_coeffs = Dict()
+
+        for name, coeff in coeffs:
+            dict_coeffs[name] = coeff
+
+        return dict_coeffs
 
     return impl
 

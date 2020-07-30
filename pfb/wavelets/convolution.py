@@ -16,9 +16,11 @@ def downsampling_convolution(input, output, filter, mode, step):
         # left boundary overhang
         while i < F and i < N:
             fsum = input.dtype.type(0)
+            j = 0
 
-            for j in range(i):
+            while j <= i:
                 fsum += filter[j] * input[i - j]
+                j += 1
 
             if mode is Modes.symmetric:
                 k = 0
@@ -200,5 +202,8 @@ def downsampling_convolution(input, output, filter, mode, step):
 
             i += step
             o += 1
+
+        if o != output.shape[0]:
+            raise ValueError("Output mismatch")
 
     return impl

@@ -4,7 +4,7 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 import pytest
 
-from pfb.wavelets.wavelets import (dwt, idwt,
+from pfb.wavelets.wavelets import (dwt, dwt_axis, idwt,
                                    str_to_int,
                                    promote_axis,
                                    discrete_wavelet)
@@ -81,11 +81,36 @@ def test_discrete_wavelet(wavelet):
     assert_array_almost_equal(py_wave.rec_lo, pfb_wave.rec_lo)
 
 
-def test_dwt():
-    data = np.random.random((111, 126))
-    dwt(data, "db1", "symmetric", 0)
-    dwt(data, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
+@pytest.mark.parametrize("wavelet", ["db1"])
+def test_dwt_axis(wavelet):
+    pywt = pytest.importorskip("pywt")
+    data = np.random.random(16)
+    axis = 0
+    pywt_dwt_axis = pywt._dwt.dwt_axis
 
+    pywt_wavelet = pywt.Wavelet(wavelet)
+    pywt_mode = pywt.Modes.symmetric
+
+    wavelet = discrete_wavelet(wavelet)
+
+    ca, cd = dwt_axis(data, wavelet, Modes.symmetric, axis)
+    pywt_ca, pywt_cd = pywt_dwt_axis(data, pywt_wavelet, pywt_mode, axis)
+
+    assert_array_almost_equal(ca, pywt_ca)
+    assert_array_almost_equal(cd, pywt_cd)
+
+
+def test_dwt():
+    pywt = pytest.importorskip("pywt")
+    data = np.random.random((5, 8, 11))
+    res = dwt(data, "db1", "symmetric", 0)
+    res = dwt(data, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
+
+    pywt_res = pywt.dwtn(data, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
+
+    for k, v in res.items():
+        vv = pywt_res[k]
+        assert_array_almost_equal(v, vv)
 
 
 def test_slice_axis():
