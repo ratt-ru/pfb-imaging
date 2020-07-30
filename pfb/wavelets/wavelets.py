@@ -2,9 +2,11 @@ from collections import namedtuple
 
 import numba
 import numba.core.types as nbtypes
+from numba.extending import register_jitable
 import numpy as np
 
 from pfb.wavelets.coefficients import coefficients
+from pfb.wavelets.utils import slice_axis, force_type_contiguity
 
 
 BaseWavelet = namedtuple("BaseWavelet", (
@@ -31,7 +33,7 @@ _VALID_MODES = ["zeropad", "symmetric", "constant_edge",
                 "reflect", "asymmetric", "antireflect"]
 
 
-@numba.njit(nogil=True, cache=True)
+@register_jitable
 def str_to_int(s):
     final_index = len(s) - 1
     value = 0
@@ -47,7 +49,7 @@ def str_to_int(s):
     return value
 
 
-@numba.njit(nogil=True, cache=True)
+@register_jitable
 def dwt_buffer_length(input_length, filter_length, mode):
     if input_length < 1 or filter_length < 1:
         return 0
@@ -58,7 +60,7 @@ def dwt_buffer_length(input_length, filter_length, mode):
         return (input_length + filter_length - 1) // 2
 
 
-@numba.njit(nogil=True, cache=True)
+@register_jitable
 def dwt_coeff_length(data_length, filter_length, mode):
     if data_length < 1:
         raise ValueError("data_length < 1")
@@ -69,7 +71,7 @@ def dwt_coeff_length(data_length, filter_length, mode):
     return dwt_buffer_length(data_length, filter_length, mode)
 
 
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, cache=True, debug=True)
 def discrete_wavelet(wavelet):
     if not isinstance(wavelet, nbtypes.types.UnicodeType):
         raise TypeError("wavelet must be a string")
@@ -214,7 +216,7 @@ def downsampling_convolution(input, N, filter,
 
 from numba.cpython.unsafe.tuple import tuple_setitem
 
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, debug=True)
 def dwt_axis(data, wavelet, mode, axis):
     def impl(data, wavelet, mode, axis):
         out_shape = data.shape
@@ -231,41 +233,32 @@ def dwt_axis(data, wavelet, mode, axis):
         cd = np.empty(out_shape, dtype=data.dtype)
         N = 1
 
-        loop_axes = data.shape[:-1]
+        for idx in np.ndindex(*tuple_setitem(data.shape, axis, 1)):
+            initial_in_row = slice_axis(data, idx, axis)
+            initial_out_row = slice_axis(ca, idx, axis)
 
-        for i, s in enumerate(data.shape):
-            pass
+            # The numba array type returned by slice_axis assumes
+            # non-contiguity in the general case.
+            # However, the slice may actually be contiguous in layout
+            # If so, cast the array type to obtain type contiguity
+            # else, copy the slice to obtain both contiguity in
+            # both type and layout
+            if initial_in_row.flags.c_contiguous:
+                in_row = force_type_contiguity(initial_in_row)
+            else:
+                in_row = initial_in_row.copy()
 
-        # for i, s in enumerate(data.shape):
-        #     if i != axis:
-        #         N *= s
-
-        # for i in range(N):
-        #     reduced_idx = i
-        #     input_offset = 0
-        #     output_offset = 0
-
-        #     for j, (shape, stride) in enumerate(zip(data.shape, data.strides)):
-        #         j_inv = data.ndim - 1 - j
-
-        #         if j_inv != axis:
-        #             axis_idx = reduced_idx % data.shape[j_inv]
-        #             reduced_idx /= data.shape[j_inv]
-        #             input_offset += (axis_idx * data.strides[j_inv])
-        #             output_offset += (axis_idx * data.strides[j_inv])
-
-            # downsampling_convolution(flat_data, N,
-            #                          wavelet.dec_lo,
-            #                          ca, mode)
-
-
+            if initial_out_row.flags.c_contiguous:
+                out_row = force_type_contiguity(initial_out_row)
+            else:
+                out_row = initial_out_row.copy()
 
         return ca, cd
 
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, debug=True)
 def dwt(data, wavelet, mode="symmetric", axis=0):
 
     if not isinstance(data, nbtypes.npytypes.Array):
@@ -281,14 +274,7 @@ def dwt(data, wavelet, mode="symmetric", axis=0):
                      in promote_wavelets(wavelet, naxis)]
 
         for a, (ax, m, wv) in enumerate(zip(paxis, pmode, pwavelets)):
-            print(a, m, ax)
             ca, cd = dwt_axis(data, wv, m, ax)
-
-        # if is_complex:
-        #     print("complex", paxis, pmode)
-        # else:
-        #     print("real", paxis, pmode)
-
 
     return impl
 

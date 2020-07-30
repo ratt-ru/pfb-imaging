@@ -1,4 +1,5 @@
 import numba
+from numba.cpython.unsafe.tuple import tuple_setitem
 import numpy as np
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 import pytest
@@ -100,5 +101,14 @@ def test_slice_axis():
         assert B.flags == As.flags
 
 
-if __name__ == "__main__":
-    test_slicing()
+def test_internal_slice_axis():
+    @numba.njit
+    def fn(A):
+        for axis in range(A.ndim):
+            for i in np.ndindex(*tuple_setitem(A.shape, axis, 1)):
+                S = slice_axis(A, i, axis)
+
+                if S.flags.c_contiguous != (S.itemsize == S.strides[0]):
+                    raise ValueError("contiguity flag doesn't match layout")
+
+    fn(np.random.random((8, 9, 10)))

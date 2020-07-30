@@ -1,16 +1,42 @@
 import numba
-from numba.core import types, cgutils
+from numba.core import types, cgutils, typing
 from numba.extending import intrinsic
 from numba.np.arrayobj import make_view, _change_dtype
 from numba.core.imputils import impl_ret_borrowed
 
 
 @intrinsic
+def force_type_contiguity(typingctx, array):
+    return_type = array.copy(layout="C")
+    sig = return_type(array)
+
+    def codegen(context, builder, signature, args):
+        def check(array):
+            if not array.flags.c_contiguous:
+                raise ValueError("Attempted to force type contiguity "
+                                 "on an array whose layout is "
+                                 "non-contiguous")
+
+        sig = typing.signature(types.none, signature.args[0])
+
+        context.compile_internal(builder, check, sig, args)
+
+
+        return impl_ret_borrowed(context, builder, return_type, args[0])
+
+    return sig, codegen
+
+
+@intrinsic
 def slice_axis(typingctx, array, index, axis):
-    return_type = array.copy(ndim=1)
+    # Return a single array, not necessarily contiguous
+    return_type = array.copy(ndim=1, layout="A")
 
     if not isinstance(array, types.Array):
         raise TypeError("array is not an Array")
+
+    if "C" not in array.layout:
+        raise TypeError("array must be C contiguous")
 
     if (not isinstance(index, types.UniTuple) or
         not isinstance(index.dtype, types.Integer)):
@@ -60,7 +86,6 @@ def slice_axis(typingctx, array, index, axis):
                     stride = builder.extract_value(array.strides, ax)
                     builder.store(size, view_shape)
                     builder.store(stride, view_stride)
-
 
         # Build a python list from indices
         tmp_indices = []
