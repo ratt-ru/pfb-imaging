@@ -12,7 +12,7 @@ from pfb.wavelets.modes import (Modes,
                                 promote_mode,
                                 mode_str_to_enum)
 
-from pfb.wavelets.numba_llvm import slice_axis
+from pfb.wavelets.intrinsics import slice_axis
 
 
 def test_str_to_int():

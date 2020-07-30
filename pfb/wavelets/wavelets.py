@@ -10,7 +10,7 @@ import numpy as np
 from pfb.wavelets.coefficients import coefficients
 from pfb.wavelets.convolution import downsampling_convolution
 from pfb.wavelets.modes import Modes, promote_mode
-from pfb.wavelets.numba_llvm import slice_axis, force_type_contiguity
+from pfb.wavelets.intrinsics import slice_axis, force_type_contiguity
 
 
 BaseWavelet = namedtuple("BaseWavelet", (
