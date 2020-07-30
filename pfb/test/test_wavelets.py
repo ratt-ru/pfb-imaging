@@ -6,9 +6,11 @@ import pytest
 
 from pfb.wavelets.wavelets import (dwt, idwt,
                                    str_to_int,
+                                   mode_str_to_enum,
                                    promote_axis,
                                    promote_mode,
-                                   discrete_wavelet)
+                                   discrete_wavelet,
+                                   Modes)
 from pfb.wavelets.utils import slice_axis
 
 
@@ -18,24 +20,36 @@ def test_str_to_int():
     assert str_to_int("3") == 3
 
 
+def test_mode_str_to_enum():
+    @numba.njit
+    def fn(mode_str):
+        return mode_str_to_enum(mode_str)
+
+    assert fn("symmetric") is Modes.symmetric
+
+
 def test_promote_mode():
-    assert ["s"] == list(promote_mode("s", 1))
-    assert ["s", "s", "s"] == list(promote_mode("s", 3))
+    assert [Modes.symmetric] == list(promote_mode("symmetric", 1))
+    assert [Modes.symmetric]*3 == list(promote_mode("symmetric", 3))
 
-    assert ["s"] == list(promote_mode(["s"], 1))
-    assert ["s"] == list(promote_mode(("s",), 1))
-
-    with pytest.raises(ValueError):
-        assert ["s"] == list(promote_mode(["s"], 2))
-
-    assert ["s", "t"] == list(promote_mode(["s", "t"], 2))
-    assert ["s", "t"] == list(promote_mode(("s", "t"), 2))
+    assert [Modes.symmetric] == list(promote_mode(["symmetric"], 1))
+    assert [Modes.symmetric] == list(promote_mode(("symmetric",), 1))
 
     with pytest.raises(ValueError):
-        assert ["s", "t"] == list(promote_mode(["s", "t"], 3))
+        assert [Modes.symmetric] == list(promote_mode(["symmetric"], 2))
+
+    list_inputs = ["symmetric", "reflect"]
+    tuple_inputs = tuple(list_inputs)
+    result_enums = [Modes.symmetric, Modes.reflect]
+
+    assert result_enums == list(promote_mode(list_inputs, 2))
+    assert result_enums == list(promote_mode(tuple_inputs, 2))
 
     with pytest.raises(ValueError):
-        assert ["s", "t"] == list(promote_mode(["s", "t"], 1))
+        assert result_enums == list(promote_mode(list_inputs, 3))
+
+    with pytest.raises(ValueError):
+        assert result_enums == list(promote_mode(list_inputs, 1))
 
 
 def test_promote_axis():

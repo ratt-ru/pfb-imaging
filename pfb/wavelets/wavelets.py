@@ -1,9 +1,10 @@
 from collections import namedtuple
+from enum import Enum
 
 import numba
 import numba.core.types as nbtypes
 from numba.cpython.unsafe.tuple import tuple_setitem
-from numba.extending import register_jitable
+from numba.extending import register_jitable, overload
 import numpy as np
 
 from pfb.wavelets.coefficients import coefficients
@@ -32,6 +33,64 @@ DiscreteWavelet = namedtuple("DiscreteWavelet",
 _VALID_MODES = ["zeropad", "symmetric", "constant_edge",
                 "smooth", "periodic", "periodisation",
                 "reflect", "asymmetric", "antireflect"]
+
+
+class Modes(Enum):
+    zeropad = 0
+    symmetric = 1
+    constant_edge = 2
+    smooth = 3
+    periodic = 4
+    periodisation = 4
+    reflect = 5
+    asymmetric = 6
+    antireflect = 7
+
+
+def mode_str_to_enum(mode_str):
+    pass
+
+
+@overload(mode_str_to_enum)
+def mode_str_to_enum_impl(mode_str):
+    if isinstance(mode_str, nbtypes.UnicodeType):
+        # Modes.zeropad.name doesn't work in the jitted code
+        # so expand it all.
+        zeropad_name = Modes.zeropad.name
+        symmetric_name = Modes.symmetric.name
+        constant_edge_name = Modes.constant_edge.name
+        smooth_name = Modes.smooth.name
+        periodic_name = Modes.periodic.name
+        periodisation_name = Modes.periodisation.name
+        reflect_name = Modes.reflect.name
+        asymmetric_name = Modes.asymmetric.name
+        antireflect_name = Modes.antireflect.name
+
+        def impl(mode_str):
+            mode_str = mode_str.lower()
+
+            if mode_str == zeropad_name:
+                return Modes.zeropad
+            elif mode_str == symmetric_name:
+                return Modes.symmetric
+            elif mode_str == constant_edge_name:
+                return Modes.constant_edge
+            elif mode_str == smooth_name:
+                return Modes.smooth
+            elif mode_str == periodic_name:
+                return Modes.periodic
+            elif mode_str == periodisation_name:
+                return Modes.periodisation
+            elif mode_str == reflect_name:
+                return Modes.reflect
+            elif mode_str == asymmetric_name:
+                return Modes.asymmetric
+            elif mode_str == antireflect_name:
+                return Modes.antireflect
+            else:
+                raise ValueError("Unknown mode string")
+
+        return impl
 
 
 @register_jitable
@@ -173,7 +232,7 @@ def promote_mode(mode, naxis):
 
     if isinstance(mode, nbtypes.misc.UnicodeType):
         def impl(mode, naxis):
-            return numba.typed.List([mode for _ in range(naxis)])
+            return numba.typed.List([mode_str_to_enum(mode) for _ in range(naxis)])
 
     elif ((isinstance(mode, nbtypes.containers.List) or
           isinstance(mode, nbtypes.containers.UniTuple)) and
@@ -182,7 +241,7 @@ def promote_mode(mode, naxis):
             if len(mode) != naxis:
                 raise ValueError("len(mode) != len(axis)")
 
-            return numba.typed.List(mode)
+            return numba.typed.List([mode_str_to_enum(m) for m in mode])
     else:
         raise TypeError("mode must be a string, "
                         "a list of strings "
@@ -230,8 +289,8 @@ def dwt_axis(data, wavelet, mode, axis):
 
         ca = np.empty(out_shape, dtype=data.dtype)
         cd = np.empty(out_shape, dtype=data.dtype)
-        N = 1
 
+        # Iterate over all points except along the slicing axis
         for idx in np.ndindex(*tuple_setitem(data.shape, axis, 1)):
             initial_in_row = slice_axis(data, idx, axis)
             initial_out_row = slice_axis(ca, idx, axis)
@@ -240,7 +299,7 @@ def dwt_axis(data, wavelet, mode, axis):
             # non-contiguity in the general case.
             # However, the slice may actually be contiguous in layout
             # If so, cast the array type to obtain type contiguity
-            # else, copy the slice to obtain both contiguity in
+            # else, copy the slice to obtain contiguity in
             # both type and layout
             if initial_in_row.flags.c_contiguous:
                 in_row = force_type_contiguity(initial_in_row)
