@@ -1,7 +1,8 @@
 import numba
 from numba.core import types, cgutils
 from numba.extending import intrinsic
-from numba.np.arrayobj import make_view
+from numba.np.arrayobj import make_view, _change_dtype
+from numba.core.imputils import impl_ret_borrowed
 
 
 @intrinsic
@@ -84,6 +85,8 @@ def slice_axis(typingctx, array, index, axis):
         retary = make_view(context, builder,
                            array_type, array, return_type,
                            dataptr, view_shapes, view_strides)
-        return retary._getvalue()
+
+        result = retary._getvalue()
+        return impl_ret_borrowed(context, builder, return_type, result)
 
     return sig, codegen
