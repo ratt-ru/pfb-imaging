@@ -113,12 +113,14 @@ def test_dwt():
         assert_array_almost_equal(v, vv)
 
 
-def test_slice_axis():
+@pytest.mark.parametrize("ndim", [1, 2, 3])
+def test_slice_axis(ndim):
     @numba.njit
     def fn(a, index, axis=1):
         return slice_axis(a, index, axis)
 
-    A = np.random.random((8, 9, 10))
+    A = np.random.random(np.random.randint(4, 10, size=ndim))
+    assert A.ndim == ndim
 
     for axis in range(A.ndim):
         # Randomly choose indexes within the array
@@ -129,8 +131,29 @@ def test_slice_axis():
         As = A[slice_idx]
         B = fn(A, tup_idx, axis)
 
-        assert_array_equal(B, As)
-        assert B.flags == As.flags
+        assert_array_equal(As, B)
+
+        if ndim == 1:
+            assert B.flags.c_contiguous == As.flags.c_contiguous
+            assert B.flags.f_contiguous == As.flags.f_contiguous
+            assert B.flags.aligned == As.flags.aligned
+            assert B.flags.writeable == As.flags.writeable
+            assert B.flags.writebackifcopy == As.flags.writebackifcopy
+            assert B.flags.updateifcopy == As.flags.updateifcopy
+
+            # TODO(sjperkins)
+            # Why is owndata True in the
+            # case of the numba intrinsic, but
+            # not in the case of numpy?
+            assert B.flags.owndata != As.flags.owndata
+        else:
+            assert B.flags == As.flags
+
+        # Check that modifying the numba slice
+        # modifies the numpy slice
+        B[:] = np.arange(B.shape[0])
+        assert_array_equal(As, B)
+
 
 
 def test_internal_slice_axis():
