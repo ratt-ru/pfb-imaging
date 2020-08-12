@@ -78,13 +78,14 @@ def test_discrete_wavelet(wavelet):
     assert_array_almost_equal(py_wave.rec_lo, pfb_wave.rec_lo)
     assert_array_almost_equal(py_wave.dec_lo, pfb_wave.dec_lo)
     assert_array_almost_equal(py_wave.rec_hi, pfb_wave.rec_hi)
-    assert_array_almost_equal(py_wave.rec_lo, pfb_wave.rec_lo)
+    assert_array_almost_equal(py_wave.dec_hi, pfb_wave.dec_hi)
 
 
-@pytest.mark.parametrize("wavelet", ["db1"])
-def test_dwt_axis(wavelet):
+@pytest.mark.parametrize("wavelet", ["db1", "db4", "db5"])
+@pytest.mark.parametrize("data_size", [256])
+def test_dwt_axis(wavelet, data_size):
     pywt = pytest.importorskip("pywt")
-    data = np.random.random(16)
+    data = np.random.random(data_size)
     axis = 0
     pywt_dwt_axis = pywt._dwt.dwt_axis
 

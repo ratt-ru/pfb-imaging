@@ -85,10 +85,11 @@ def discrete_wavelet(wavelet):
 
             coeffs = coefficients("db", order - 1)
             ncoeffs = len(coeffs)
+            index = np.arange(ncoeffs)
             rec_lo = coeffs
             dec_lo = np.flipud(rec_lo)
-            rec_hi = np.where(np.arange(ncoeffs) % 2, -1, 1) * dec_lo
-            dec_hi = np.where(rec_lo % 2, -1, 1) * rec_lo
+            rec_hi = np.where(index % 2, -1, 1) * dec_lo
+            dec_hi = np.where(np.flipud(index) % 2, -1, 1) * rec_lo
 
             return DiscreteWavelet(support_width=2*order - 1,
                                    symmetry="asymmetric",
