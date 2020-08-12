@@ -249,8 +249,7 @@ def idwt_axis(approx_coeffs, detail_coeffs,
             shape = detail_coeffs.shape
             dtype = detail_coeffs.dtype
         else:
-            # noop
-            return None
+            raise ValueError("Either approximation or detail must be present")
 
         if (have_approx and have_detail and
             approx_coeffs.shape != detail_coeffs.shape):
@@ -276,7 +275,7 @@ def idwt_axis(approx_coeffs, detail_coeffs,
                 out_row = np.zeros_like(initial_out_row)
 
             # Apply approximation coefficients if they exist
-            if have_approx:
+            if approx_coeffs is not None:
                 initial_ca_row = slice_axis(approx_coeffs, idx, axis)
 
                 if initial_ca_row.flags.c_contiguous:
@@ -288,7 +287,7 @@ def idwt_axis(approx_coeffs, detail_coeffs,
                                                 out_row, mode)
 
             # Apply detail coefficients if they exist
-            if have_detail:
+            if detail_coeffs is not None:
                 initial_cd_row = slice_axis(detail_coeffs, idx, axis)
 
                 if initial_cd_row.flags.c_contiguous:
@@ -311,14 +310,18 @@ def idwt_axis(approx_coeffs, detail_coeffs,
 
 
 @numba.generated_jit(nopython=True, nogil=True, cache=True)
-def dwt(data, wavelet, mode="symmetric", axis=0):
+def dwt(data, wavelet, mode="symmetric", axis=None):
 
     if not isinstance(data, nbtypes.npytypes.Array):
         raise TypeError("data must be an ndarray")
 
+    have_axis = not is_nonelike(axis)
     is_complex = isinstance(data.dtype, nbtypes.Complex)
 
-    def impl(data, wavelet, mode="symmetric", axis=0):
+    def impl(data, wavelet, mode="symmetric", axis=None):
+        if not have_axis:
+            axis = List(range(data.ndim))
+
         paxis = promote_axis(axis, data.ndim)
         naxis = len(paxis)
         pmode = promote_mode(mode, naxis)
@@ -346,10 +349,58 @@ def dwt(data, wavelet, mode="symmetric", axis=0):
 
     return impl
 
+@register_jitable
+def coeff_product(args, repeat=1):
+    # Adapted from https://docs.python.org/3/library/itertools.html#itertools.product
+    pools = [args] * repeat
+    result = [''] * (len(args) - 1)
 
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
-def idwt():
-    def impl():
-        pass
+    for pool in pools:
+        result = [x + y for x in result for y in pool]
+
+    return result
+
+@numba.generated_jit(nopython=True, nogil=True)
+def idwt(coeffs, wavelet, mode='symmetric', axis=None):
+
+    have_axis = not is_nonelike(axis)
+
+    def impl(coeffs, wavelet, mode='symmetric', axis=None):
+        ndim_transform = max([len(key) for key in coeffs.keys()])
+        coeff_shapes = [v.shape for v in coeffs.values()]
+
+        for cs in coeff_shapes[1:]:
+            if cs != coeff_shapes[0]:
+                raise ValueError("Mismatch in coefficient shapes")
+
+        if not have_axis:
+            axis = List(range(ndim_transform))
+            ndim = ndim_transform
+        else:
+            ndim = len(coeff_shapes[0])
+
+        paxis = promote_axis(axis, ndim)
+        naxis = len(paxis)
+        pmode = promote_mode(mode, naxis)
+        pwavelets = [discrete_wavelet(w) for w
+                     in promote_wavelets(wavelet, naxis)]
+
+        it = list(enumerate(zip(paxis, pwavelets, pmode)))
+
+        for key_length, (ax, wv, m) in it[::-1]:
+            new_coeffs = {}
+            new_keys = coeff_product('ad', key_length)
+
+            for key in new_keys:
+                L = coeffs[key + 'a']
+                H = coeffs[key + 'd']
+                # print(key, "low", None if L is None else L.shape)
+                # print(key, "high", None if H is None else H.shape)
+
+                new_coeffs[key] = idwt_axis(L, H, wv, m, ax)
+
+            coeffs = new_coeffs
+
+        return coeffs['']
 
     return impl

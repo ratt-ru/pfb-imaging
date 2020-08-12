@@ -1,3 +1,5 @@
+from itertools import product
+
 import numba
 from numba.cpython.unsafe.tuple import tuple_setitem
 import numpy as np
@@ -7,6 +9,7 @@ import pytest
 from pfb.wavelets.wavelets import (dwt, dwt_axis,
                                    idwt, idwt_axis,
                                    str_to_int,
+                                   coeff_product,
                                    promote_axis,
                                    discrete_wavelet)
 from pfb.wavelets.modes import (Modes,
@@ -14,6 +17,13 @@ from pfb.wavelets.modes import (Modes,
                                 mode_str_to_enum)
 
 from pfb.wavelets.intrinsics import slice_axis
+
+
+@pytest.mark.parametrize("repeat", range(5))
+def test_coeff_product(repeat):
+    res = coeff_product('ad', repeat=repeat)
+    coeffs = [''.join(c) for c in product('ad', repeat=repeat)]
+    assert res == coeffs
 
 
 def test_str_to_int():
@@ -118,7 +128,7 @@ def test_dwt_idwt_axis(wavelet, data_shape):
         assert_array_almost_equal(output, pywt_out)
 
 
-def test_dwt():
+def test_dwt_only():
     pywt = pytest.importorskip("pywt")
     data = np.random.random((5, 8, 11))
     res = dwt(data, "db1", "symmetric", 0)
@@ -130,6 +140,9 @@ def test_dwt():
         vv = pywt_res[k]
         assert_array_almost_equal(v, vv)
 
+    output = idwt(res, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
+    pywt_out = pywt.idwtn(pywt_res, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
+    assert_array_almost_equal(output, pywt_out)
 
 @pytest.mark.parametrize("ndim", [1, 2, 3])
 def test_slice_axis(ndim):

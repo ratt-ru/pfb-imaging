@@ -27,18 +27,19 @@ def force_type_contiguity(typingctx, array):
 
 @intrinsic
 def slice_axis(typingctx, array, index, axis):
-    # Return a single array, not necessarily contiguous
-    return_type = array.copy(ndim=1, layout="A")
-
     if not isinstance(array, types.Array):
         raise TypeError("array is not an Array")
 
     if "C" not in array.layout:
         raise TypeError("array must be C contiguous")
 
+    # Return a single array, not necessarily contiguous
+    return_type = array.copy(ndim=1, layout="A")
+
+
     if (not isinstance(index, types.UniTuple) or
         not isinstance(index.dtype, types.Integer)):
-        raise TypeError("index is not a Homogenous Tuple of Integers")
+        raise TypeError("index is not an Homogenous Tuple of Integers")
 
     if len(index) != array.ndim:
         raise TypeError("array.ndim != len(index")
