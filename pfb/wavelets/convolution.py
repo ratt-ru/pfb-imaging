@@ -2,7 +2,44 @@ import numba
 
 from pfb.wavelets.modes import Modes
 
-@numba.njit(nogil=True)
+
+@numba.njit(nogil=True, cache=True)
+def upsampling_convolution_valid_sf(input, filter, output, mode):
+    if mode is Modes.periodisation:
+        raise NotImplementedError("periodisation upsampling not implemented")
+
+    N = input.shape[0]
+    F = filter.shape[0]
+    O = output.shape[0]
+
+    if F % 2:
+        raise ValueError("even filter required for upsampling")
+
+    if N < (F // 2):
+        raise ValueError("input.shape[0] < (filter.shape[0] // 2)")
+
+    o = 0
+    i = (F // 2) - 1
+
+    while i < N:
+        sum_even = input.dtype.type(0)
+        sum_odd = input.dtype.type(0)
+        j = 0
+
+        while j < F // 2:
+            sum_even += filter[j*2] * input[i-j]
+            sum_odd += filter[j*2+1] * input[i-j]
+
+            j += 1
+
+        output[o] += sum_even
+        output[o+1] += sum_odd
+
+        i += 1
+        o += 2
+
+
+@numba.njit(nogil=True, cache=True)
 def downsampling_convolution(input, output, filter, mode, step):
     i = step - 1
     o = 0
@@ -37,17 +74,17 @@ def downsampling_convolution(input, output, filter, mode, step):
                 k += 1
 
         elif mode is Modes.asymmetric:
-            raise NotImplementedError("asymmetric convolution not implemented")
+            raise NotImplementedError("asymmetric downsampling not implemented")
         elif mode is Modes.reflect:
-            raise NotImplementedError("reflect convolution not implemented")
+            raise NotImplementedError("reflect downsampling not implemented")
         elif mode is Modes.antireflect:
-            raise NotImplementedError("antireflect convolution not implemented")
+            raise NotImplementedError("antireflect downsampling not implemented")
         elif mode is Modes.constant_edge:
-            raise NotImplementedError("constant_edge convolution not implemented")
+            raise NotImplementedError("constant_edge downsampling not implemented")
         elif mode is Modes.smooth:
-            raise NotImplementedError("smooth convolution not implemented")
+            raise NotImplementedError("smooth downsampling not implemented")
         elif mode is Modes.periodic:
-            raise NotImplementedError("periodic convolution not implemented")
+            raise NotImplementedError("periodic downsampling not implemented")
         elif mode is Modes.zeropad:
             pass
         else:
@@ -94,17 +131,17 @@ def downsampling_convolution(input, output, filter, mode, step):
                     k += 1
 
         elif mode is Modes.asymmetric:
-            raise NotImplementedError("asymmetric convolution not implemented")
+            raise NotImplementedError("asymmetric downsampling not implemented")
         elif mode is Modes.reflect:
-            raise NotImplementedError("reflect convolution not implemented")
+            raise NotImplementedError("reflect downsampling not implemented")
         elif mode is Modes.antireflect:
-            raise NotImplementedError("antireflect convolution not implemented")
+            raise NotImplementedError("antireflect downsampling not implemented")
         elif mode is Modes.constant_edge:
-            raise NotImplementedError("constant_edge convolution not implemented")
+            raise NotImplementedError("constant_edge downsampling not implemented")
         elif mode is Modes.smooth:
-            raise NotImplementedError("smooth convolution not implemented")
+            raise NotImplementedError("smooth downsampling not implemented")
         elif mode is Modes.periodic:
-            raise NotImplementedError("periodic convolution not implemented")
+            raise NotImplementedError("periodic downsampling not implemented")
         elif mode is Modes.zeropad:
             j = i - N + 1
         else:
@@ -133,17 +170,17 @@ def downsampling_convolution(input, output, filter, mode, step):
                     k += 1
 
         elif mode is Modes.asymmetric:
-            raise NotImplementedError("asymmetric convolution not implemented")
+            raise NotImplementedError("asymmetric downsampling not implemented")
         elif mode is Modes.reflect:
-            raise NotImplementedError("reflect convolution not implemented")
+            raise NotImplementedError("reflect downsampling not implemented")
         elif mode is Modes.antireflect:
-            raise NotImplementedError("antireflect convolution not implemented")
+            raise NotImplementedError("antireflect downsampling not implemented")
         elif mode is Modes.constant_edge:
-            raise NotImplementedError("constant_edge convolution not implemented")
+            raise NotImplementedError("constant_edge downsampling not implemented")
         elif mode is Modes.smooth:
-            raise NotImplementedError("smooth convolution not implemented")
+            raise NotImplementedError("smooth downsampling not implemented")
         elif mode is Modes.periodic:
-            raise NotImplementedError("periodic convolution not implemented")
+            raise NotImplementedError("periodic downsampling not implemented")
         elif mode is Modes.zeropad:
             pass
         else:
@@ -176,17 +213,17 @@ def downsampling_convolution(input, output, filter, mode, step):
                     k += 1
 
         elif mode is Modes.asymmetric:
-            raise NotImplementedError("asymmetric convolution not implemented")
+            raise NotImplementedError("asymmetric downsampling not implemented")
         elif mode is Modes.reflect:
-            raise NotImplementedError("reflect convolution not implemented")
+            raise NotImplementedError("reflect downsampling not implemented")
         elif mode is Modes.antireflect:
-            raise NotImplementedError("antireflect convolution not implemented")
+            raise NotImplementedError("antireflect downsampling not implemented")
         elif mode is Modes.constant_edge:
-            raise NotImplementedError("constant_edge convolution not implemented")
+            raise NotImplementedError("constant_edge downsampling not implemented")
         elif mode is Modes.smooth:
-            raise NotImplementedError("smooth convolution not implemented")
+            raise NotImplementedError("smooth downsampling not implemented")
         elif mode is Modes.periodic:
-            raise NotImplementedError("periodic convolution not implemented")
+            raise NotImplementedError("periodic downsampling not implemented")
         elif mode is Modes.zeropad:
             j = i - N + 1
         else:

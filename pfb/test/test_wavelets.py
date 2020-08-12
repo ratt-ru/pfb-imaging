@@ -4,7 +4,8 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 import pytest
 
-from pfb.wavelets.wavelets import (dwt, dwt_axis, idwt,
+from pfb.wavelets.wavelets import (dwt, dwt_axis,
+                                   idwt, idwt_axis,
                                    str_to_int,
                                    promote_axis,
                                    discrete_wavelet)
@@ -82,23 +83,39 @@ def test_discrete_wavelet(wavelet):
 
 
 @pytest.mark.parametrize("wavelet", ["db1", "db4", "db5"])
-@pytest.mark.parametrize("data_size", [256])
-def test_dwt_axis(wavelet, data_size):
+@pytest.mark.parametrize("data_shape", [(13,), (12, 7)])
+def test_dwt_idwt_axis(wavelet, data_shape):
     pywt = pytest.importorskip("pywt")
-    data = np.random.random(data_size)
-    axis = 0
+    data = np.random.random(size=data_shape)
     pywt_dwt_axis = pywt._dwt.dwt_axis
+    pywt_idwt_axis = pywt._dwt.idwt_axis
 
     pywt_wavelet = pywt.Wavelet(wavelet)
     pywt_mode = pywt.Modes.symmetric
 
     wavelet = discrete_wavelet(wavelet)
 
-    ca, cd = dwt_axis(data, wavelet, Modes.symmetric, axis)
-    pywt_ca, pywt_cd = pywt_dwt_axis(data, pywt_wavelet, pywt_mode, axis)
+    for axis in reversed(range(len(data_shape))):
+        # Deconstruct
+        ca, cd = dwt_axis(data, wavelet, Modes.symmetric, axis)
+        pywt_ca, pywt_cd = pywt_dwt_axis(data, pywt_wavelet, pywt_mode, axis)
+        assert_array_almost_equal(ca, pywt_ca)
+        assert_array_almost_equal(cd, pywt_cd)
 
-    assert_array_almost_equal(ca, pywt_ca)
-    assert_array_almost_equal(cd, pywt_cd)
+        # Reconstruct with both approximation and detail
+        pywt_out = pywt_idwt_axis(ca, cd, pywt_wavelet, pywt_mode, axis)
+        output = idwt_axis(ca, cd, wavelet, Modes.symmetric, axis)
+        assert_array_almost_equal(output, pywt_out)
+
+        # Reconstruct with approximation only
+        pywt_out = pywt_idwt_axis(ca, None, pywt_wavelet, pywt_mode, axis)
+        output = idwt_axis(ca, None, wavelet, Modes.symmetric, axis)
+        assert_array_almost_equal(output, pywt_out)
+
+        # Reconstruct with detail only
+        pywt_out = pywt_idwt_axis(None, cd, pywt_wavelet, pywt_mode, axis)
+        output = idwt_axis(None, cd, wavelet, Modes.symmetric, axis)
+        assert_array_almost_equal(output, pywt_out)
 
 
 def test_dwt():

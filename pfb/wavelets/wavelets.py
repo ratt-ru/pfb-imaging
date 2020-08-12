@@ -2,6 +2,7 @@ from collections import namedtuple
 
 import numba
 import numba.core.types as nbtypes
+from numba.core.cgutils import is_nonelike
 from numba.cpython.unsafe.tuple import tuple_setitem
 from numba.extending import register_jitable, overload
 from numba.typed import Dict, List
@@ -9,6 +10,7 @@ import numpy as np
 
 from pfb.wavelets.coefficients import coefficients
 from pfb.wavelets.convolution import downsampling_convolution
+from pfb.wavelets.convolution import upsampling_convolution_valid_sf
 from pfb.wavelets.modes import Modes, promote_mode
 from pfb.wavelets.intrinsics import slice_axis, force_type_contiguity
 
@@ -60,6 +62,14 @@ def dwt_buffer_length(input_length, filter_length, mode):
         return (input_length // 2) + (1 if input_length % 2 else 0)
     else:
         return (input_length + filter_length - 1) // 2
+
+
+@register_jitable
+def idwt_buffer_length(coeffs_length, filter_length, mode):
+    if mode is Modes.periodisation:
+        return 2 * coeffs_length
+    else:
+        return 2 * coeffs_length - filter_length + 2
 
 
 @register_jitable
@@ -173,6 +183,9 @@ def dwt_axis(data, wavelet, mode, axis):
         coeff_len = dwt_coeff_length(data.shape[axis], len(wavelet.dec_hi), mode)
         out_shape = tuple_setitem(data.shape, axis, coeff_len)
 
+        if axis < 0 or axis >= data.ndim:
+            raise ValueError("0 <= axis < data.ndim failed")
+
         ca = np.empty(out_shape, dtype=data.dtype)
         cd = np.empty(out_shape, dtype=data.dtype)
 
@@ -217,6 +230,84 @@ def dwt_axis(data, wavelet, mode, axis):
         return ca, cd
 
     return impl
+
+
+@numba.generated_jit(nopython=True, nogil=True)
+def idwt_axis(approx_coeffs, detail_coeffs,
+              wavelet, mode, axis):
+
+    have_approx = not is_nonelike(approx_coeffs)
+    have_detail = not is_nonelike(detail_coeffs)
+
+    def impl(approx_coeffs, detail_coeffs,
+            wavelet, mode, axis):
+
+        if have_approx:
+            shape = approx_coeffs.shape
+            dtype = approx_coeffs.dtype
+        elif have_detail:
+            shape = detail_coeffs.shape
+            dtype = detail_coeffs.dtype
+        else:
+            # noop
+            return None
+
+        if (have_approx and have_detail and
+            approx_coeffs.shape != detail_coeffs.shape):
+
+                raise ValueError("approx_coeffs.shape != detail_coeffs.shape")
+
+        if not (0 <= axis < len(shape)):
+            raise ValueError(("0 <= axis < coeff.ndim does not hold"))
+
+        idwt_len = idwt_buffer_length(shape[axis], wavelet.rec_lo.shape[0], mode)
+        shape = tuple_setitem(shape, axis, idwt_len)
+        output = np.empty(shape, dtype=dtype)
+
+        # Iterate over all points except along the slicing axis
+        for idx in np.ndindex(*tuple_setitem(output.shape, axis, 1)):
+            initial_out_row = slice_axis(output, idx, axis)
+
+            # Zero if we have a contiguous slice, else allocate
+            if initial_out_row.flags.c_contiguous:
+                out_row = force_type_contiguity(initial_out_row)
+                out_row[:] = 0
+            else:
+                out_row = np.zeros_like(initial_out_row)
+
+            # Apply approximation coefficients if they exist
+            if have_approx:
+                initial_ca_row = slice_axis(approx_coeffs, idx, axis)
+
+                if initial_ca_row.flags.c_contiguous:
+                    ca_row = force_type_contiguity(initial_ca_row)
+                else:
+                    ca_row = initial_ca_row.copy()
+
+                upsampling_convolution_valid_sf(ca_row, wavelet.rec_lo,
+                                                out_row, mode)
+
+            # Apply detail coefficients if they exist
+            if have_detail:
+                initial_cd_row = slice_axis(detail_coeffs, idx, axis)
+
+                if initial_cd_row.flags.c_contiguous:
+                    cd_row = force_type_contiguity(initial_cd_row)
+                else:
+                    cd_row = initial_cd_row.copy()
+
+                upsampling_convolution_valid_sf(cd_row, wavelet.rec_hi,
+                                                out_row, mode)
+
+
+            # Copy back output row if the output space was non-contiguous
+            if not initial_out_row.flags.c_contiguous:
+                initial_out_row[:] = out_row
+
+        return output
+
+    return impl
+
 
 
 @numba.generated_jit(nopython=True, nogil=True, cache=True)
