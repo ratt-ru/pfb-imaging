@@ -128,10 +128,11 @@ def test_dwt_idwt_axis(wavelet, data_shape):
         assert_array_almost_equal(output, pywt_out)
 
 
-def test_dwt_only():
+def test_dwt_idwt():
     pywt = pytest.importorskip("pywt")
     data = np.random.random((5, 8, 11))
-    res = dwt(data, "db1", "symmetric", 0)
+    res = dwt(data, "db1", "symmetric")
+    res = dwt(data, "db1", "symmetric", 1)
     res = dwt(data, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
 
     pywt_res = pywt.dwtn(data, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
@@ -143,6 +144,7 @@ def test_dwt_only():
     output = idwt(res, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
     pywt_out = pywt.idwtn(pywt_res, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
     assert_array_almost_equal(output, pywt_out)
+
 
 @pytest.mark.parametrize("ndim", [1, 2, 3])
 def test_slice_axis(ndim):

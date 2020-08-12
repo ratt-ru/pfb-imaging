@@ -67,13 +67,17 @@ def promote_mode(mode, naxis):
     if not isinstance(naxis, nbtypes.Integer):
         raise TypeError("naxis must be an integer")
 
+    ltypes = (nbtypes.containers.List,
+              nbtypes.containers.ListType,
+              nbtypes.containers.UniTuple)
+
     if isinstance(mode, nbtypes.misc.UnicodeType):
         def impl(mode, naxis):
             return numba.typed.List([mode_str_to_enum(mode) for _ in range(naxis)])
 
-    elif ((isinstance(mode, nbtypes.containers.List) or
-          isinstance(mode, nbtypes.containers.UniTuple)) and
-            isinstance(mode.dtype, nbtypes.UnicodeType)):
+    elif (isinstance(mode, ltypes) and
+            isinstance(mode.dtype, nbtypes.misc.UnicodeType)):
+
         def impl(mode, naxis):
             if len(mode) != naxis:
                 raise ValueError("len(mode) != len(axis)")

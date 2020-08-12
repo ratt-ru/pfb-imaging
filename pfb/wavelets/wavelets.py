@@ -125,12 +125,15 @@ def promote_wavelets(wavelets, naxis):
     if not isinstance(naxis, nbtypes.Integer):
         raise TypeError("naxis must be an integer")
 
+    ltypes = (nbtypes.containers.List,
+              nbtypes.containers.ListType,
+              nbtypes.containers.UniTuple)
+
     if isinstance(wavelets, nbtypes.misc.UnicodeType):
         def impl(wavelets, naxis):
             return numba.typed.List([wavelets] * naxis)
 
-    elif ((isinstance(wavelets, nbtypes.containers.List) or
-          isinstance(wavelets, nbtypes.containers.UniTuple)) and
+    elif (isinstance(wavelets, ltypes) and
             isinstance(wavelets.dtype, nbtypes.misc.UnicodeType)):
 
         def impl(wavelets, naxis):
@@ -152,12 +155,15 @@ def promote_axis(axis, ndim):
     if not isinstance(ndim, nbtypes.Integer):
         raise TypeError("ndim must be an integer")
 
+    ltypes = (nbtypes.containers.List,
+              nbtypes.containers.ListType,
+              nbtypes.containers.UniTuple)
+
     if isinstance(axis, nbtypes.Integer):
         def impl(axis, ndim):
             return numba.typed.List([axis])
 
-    elif ((isinstance(axis, nbtypes.containers.List) or
-          isinstance(axis, nbtypes.containers.UniTuple)) and
+    elif (isinstance(axis, ltypes) and
             isinstance(axis.dtype, nbtypes.Integer)):
         def impl(axis, ndim):
             if len(axis) > ndim:
@@ -320,7 +326,7 @@ def dwt(data, wavelet, mode="symmetric", axis=None):
 
     def impl(data, wavelet, mode="symmetric", axis=None):
         if not have_axis:
-            axis = List(range(data.ndim))
+            axis = numba.typed.List(range(data.ndim))
 
         paxis = promote_axis(axis, data.ndim)
         naxis = len(paxis)
@@ -374,7 +380,7 @@ def idwt(coeffs, wavelet, mode='symmetric', axis=None):
                 raise ValueError("Mismatch in coefficient shapes")
 
         if not have_axis:
-            axis = List(range(ndim_transform))
+            axis = numba.typed.List(range(ndim_transform))
             ndim = ndim_transform
         else:
             ndim = len(coeff_shapes[0])
