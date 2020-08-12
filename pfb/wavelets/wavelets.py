@@ -161,6 +161,7 @@ def promote_axis(axis, ndim):
 
     if isinstance(axis, nbtypes.Integer):
         def impl(axis, ndim):
+            axis = axis + ndim if axis < 0 else axis
             return numba.typed.List([axis])
 
     elif (isinstance(axis, ltypes) and
@@ -173,7 +174,8 @@ def promote_axis(axis, ndim):
                 if a >= ndim:
                     raise ValueError("axis[i] >= data.ndim")
 
-            return numba.typed.List(axis)
+            return [a + ndim if a < 0 else a for a in numba.typed.List(axis)]
+
     else:
         raise TypeError("axis must be an integer, "
                         "a list of integers "

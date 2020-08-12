@@ -131,15 +131,21 @@ def test_dwt_idwt_axis(wavelet, data_shape):
 def test_dwt_idwt():
     pywt = pytest.importorskip("pywt")
     data = np.random.random((5, 8, 11))
+
     res = dwt(data, "db1", "symmetric")
-    res = dwt(data, "db1", "symmetric", 1)
-    res = dwt(data, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
-
-    pywt_res = pywt.dwtn(data, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
-
+    pywt_res = pywt.dwtn(data, "db1", "symmetric")
     for k, v in res.items():
-        vv = pywt_res[k]
-        assert_array_almost_equal(v, vv)
+        assert_array_almost_equal(v, pywt_res[k])
+
+    res = dwt(data, "db1", "symmetric", 1)
+    pywt_res = pywt.dwtn(data, "db1", "symmetric", (1,))
+    for k, v in res.items():
+        assert_array_almost_equal(v, pywt_res[k])
+
+    res = dwt(data, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
+    pywt_res = pywt.dwtn(data, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
+    for k, v in res.items():
+        assert_array_almost_equal(v, pywt_res[k])
 
     output = idwt(res, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
     pywt_out = pywt.idwtn(pywt_res, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
