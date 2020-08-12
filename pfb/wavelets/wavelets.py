@@ -240,7 +240,7 @@ def dwt_axis(data, wavelet, mode, axis):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True)
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
 def idwt_axis(approx_coeffs, detail_coeffs,
               wavelet, mode, axis):
 
@@ -368,7 +368,7 @@ def coeff_product(args, repeat=1):
 
     return result
 
-@numba.generated_jit(nopython=True, nogil=True)
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
 def idwt(coeffs, wavelet, mode='symmetric', axis=None):
 
     have_axis = not is_nonelike(axis)
@@ -402,9 +402,6 @@ def idwt(coeffs, wavelet, mode='symmetric', axis=None):
             for key in new_keys:
                 L = coeffs[key + 'a']
                 H = coeffs[key + 'd']
-                # print(key, "low", None if L is None else L.shape)
-                # print(key, "high", None if H is None else H.shape)
-
                 new_coeffs[key] = idwt_axis(L, H, wv, m, ax)
 
             coeffs = new_coeffs
