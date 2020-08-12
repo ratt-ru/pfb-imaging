@@ -41,6 +41,9 @@ def upsampling_convolution_valid_sf(input, filter, output, mode):
 
 @numba.njit(nogil=True, cache=True)
 def downsampling_convolution(input, output, filter, mode, step):
+    if mode is Modes.periodisation:
+        raise NotImplementedError("periodisation downsampling not implemented")
+
     i = step - 1
     o = 0
     N = input.shape[0]
