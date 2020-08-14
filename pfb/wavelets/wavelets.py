@@ -9,10 +9,11 @@ from numba.typed import Dict, List
 import numpy as np
 
 from pfb.wavelets.coefficients import coefficients
+from pfb.wavelets.common import NUMBA_SEQUENCE_TYPES
 from pfb.wavelets.convolution import downsampling_convolution
 from pfb.wavelets.convolution import upsampling_convolution_valid_sf
 from pfb.wavelets.modes import Modes, promote_mode
-from pfb.wavelets.intrinsics import slice_axis, force_type_contiguity
+from pfb.wavelets.intrinsics import slice_axis, force_type_contiguity, not_optional
 
 
 BaseWavelet = namedtuple("BaseWavelet", (
@@ -51,6 +52,18 @@ def str_to_int(s):
         value += digit * (10 ** (final_index - i))
 
     return value
+
+
+@register_jitable
+def dwt_max_level(data_length, filter_length):
+    if filter_length < 2:
+        raise ValueError("Invalid wavelet filter length")
+
+    if filter_length <= 1 or data_length < (filter_length - 1):
+        return 0
+
+    return int(np.floor(np.log2(data_length / (filter_length - 1))))
+
 
 
 @register_jitable
@@ -125,15 +138,11 @@ def promote_wavelets(wavelets, naxis):
     if not isinstance(naxis, nbtypes.Integer):
         raise TypeError("naxis must be an integer")
 
-    ltypes = (nbtypes.containers.List,
-              nbtypes.containers.ListType,
-              nbtypes.containers.UniTuple)
-
     if isinstance(wavelets, nbtypes.misc.UnicodeType):
         def impl(wavelets, naxis):
             return numba.typed.List([wavelets] * naxis)
 
-    elif (isinstance(wavelets, ltypes) and
+    elif (isinstance(wavelets, NUMBA_SEQUENCE_TYPES) and
             isinstance(wavelets.dtype, nbtypes.misc.UnicodeType)):
 
         def impl(wavelets, naxis):
@@ -155,16 +164,12 @@ def promote_axis(axis, ndim):
     if not isinstance(ndim, nbtypes.Integer):
         raise TypeError("ndim must be an integer")
 
-    ltypes = (nbtypes.containers.List,
-              nbtypes.containers.ListType,
-              nbtypes.containers.UniTuple)
-
     if isinstance(axis, nbtypes.Integer):
         def impl(axis, ndim):
             axis = axis + ndim if axis < 0 else axis
             return numba.typed.List([axis])
 
-    elif (isinstance(axis, ltypes) and
+    elif (isinstance(axis, NUMBA_SEQUENCE_TYPES) and
             isinstance(axis.dtype, nbtypes.Integer)):
         def impl(axis, ndim):
             if len(axis) > ndim:
@@ -320,11 +325,13 @@ def idwt_axis(approx_coeffs, detail_coeffs,
 @numba.generated_jit(nopython=True, nogil=True, cache=True)
 def dwt(data, wavelet, mode="symmetric", axis=None):
 
-    if not isinstance(data, nbtypes.npytypes.Array):
-        raise TypeError("data must be an ndarray")
+    if isinstance(data, nbtypes.misc.Optional):
+        if not isinstance(data.type, nbtypes.npytypes.Array):
+            raise TypeError(f"data must be ndarray. Got {data.type}")
+    elif not isinstance(data, nbtypes.npytypes.Array):
+        raise TypeError(f"data must be an ndarray. Got {data}")
 
     have_axis = not is_nonelike(axis)
-    is_complex = isinstance(data.dtype, nbtypes.Complex)
 
     def impl(data, wavelet, mode="symmetric", axis=None):
         if not have_axis:
@@ -379,6 +386,7 @@ def idwt(coeffs, wavelet, mode='symmetric', axis=None):
 
         for cs in coeff_shapes[1:]:
             if cs != coeff_shapes[0]:
+                print(cs, coeff_shapes[0])
                 raise ValueError("Mismatch in coefficient shapes")
 
         if not have_axis:
@@ -407,5 +415,132 @@ def idwt(coeffs, wavelet, mode='symmetric', axis=None):
             coeffs = new_coeffs
 
         return coeffs['']
+
+    return impl
+
+
+
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
+def promote_level(sizes, dec_lens, level=None):
+    have_level = not is_nonelike(level)
+
+    if isinstance(sizes, nbtypes.Integer):
+        int_sizes = True
+    elif (isinstance(sizes, NUMBA_SEQUENCE_TYPES) and
+            isinstance(sizes.dtype, nbtypes.Integer)):
+        int_sizes = False
+    else:
+        raise TypeError("sizes must be an integer or "
+                        "sequence of integers")
+
+    if isinstance(dec_lens, nbtypes.Integer):
+        int_dec_len = True
+    elif (isinstance(dec_lens, NUMBA_SEQUENCE_TYPES) and
+            isinstance(dec_lens.dtype, nbtypes.Integer)):
+        int_dec_len = False
+    else:
+        raise TypeError("dec_len must be an integer or "
+                        "sequence of integers")
+
+    def impl(sizes, dec_lens, level=None):
+        if int_sizes:
+            sizes = List([sizes])
+
+        if int_dec_len:
+            dec_lens = List([dec_lens])
+
+        max_level = min([dwt_max_level(s, d) for s, d in zip(sizes, dec_lens)])
+
+        if not have_level:
+            level = max_level
+        elif level < 0:
+            raise ValueError("Negative levels are invalid. Minimum level is 0")
+        elif level > max_level:
+            raise ValueError("Level value is too high. "
+                             "All coefficients will experience "
+                             "boundary effects")
+
+        return level
+
+    return impl
+
+
+@numba.generated_jit(nopython=True, nogil=True, cache=False)
+def wavedecn(data, wavelet, mode='symmetric', level=None, axis=None):
+    have_axis = not is_nonelike(axis)
+
+    def impl(data, wavelet, mode='symmetric', level=None, axis=None):
+        if not have_axis:
+            axis = List(range(data.ndim))
+
+        paxis = promote_axis(axis, data.ndim)
+        naxis = len(paxis)
+        # pmodes = promote_mode(mode, naxis)
+        pwavelets = [discrete_wavelet(w) for w
+                     in promote_wavelets(wavelet, naxis)]
+        dec_lens = [w.dec_hi.shape[0] for w in pwavelets]
+        sizes = [data.shape[ax] for ax in paxis]
+        plevel = promote_level(sizes, dec_lens, level)
+
+        coeffs_list = []
+
+        a = data
+
+        for i in range(plevel):
+            coeffs = dwt(a, wavelet, mode, paxis)
+            a = not_optional(coeffs.pop('a' * naxis))
+            coeffs_list.append(coeffs)
+
+        coeffs_list.reverse()
+
+        return a, coeffs_list
+
+    return impl
+
+
+@numba.generated_jit(nopython=True, nogil=True, cache=False)
+def waverecn(ca, coeffs, wavelet, mode='symmetric', level=None, axis=None):
+    if not isinstance(ca, nbtypes.npytypes.Array):
+        raise TypeError("ca must be an ndarray")
+
+    have_axis = not is_nonelike(axis)
+    ndim_slices = (slice(None),) * ca.ndim
+
+    def impl(ca, coeffs, wavelet, mode='symmetric', level=None, axis=None):
+        if len(coeffs) == 0:
+            return ca
+
+        coeff_ndims = [ca.ndim]
+        coeff_shapes = [ca.shape]
+
+        for c in coeffs:
+            coeff_ndims.extend([v.ndim for v in c.values()])
+            coeff_shapes.extend([v.shape for v in c.values()])
+
+        unique_coeff_ndims = np.unique(np.array(coeff_ndims))
+
+        if len(unique_coeff_ndims) == 1:
+            ndim = unique_coeff_ndims[0]
+        else:
+            raise ValueError("Coefficient dimensions don't match")
+
+        if not have_axis:
+            axis = List(range(ndim))
+
+        paxes = promote_axis(axis, ndim)
+        naxis = len(paxes)
+
+        for idx, c in enumerate(coeffs):
+            # cshape = next(iter(c.values())).shape
+            # trim_coeffs = ndim_slices
+
+            # for d in range(ndim):
+            #     trim_coeffs = tuple_setitem(trim_coeffs, d, slice(cshape[d]))
+
+            # c[not_optional('a' * naxis)] = force_type_contiguity(ca[trim_coeffs])
+            c[not_optional('a' * naxis)] = ca
+            ca = idwt(c, wavelet, mode, axis)
+
+        return ca
 
     return impl

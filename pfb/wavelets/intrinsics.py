@@ -114,3 +114,18 @@ def slice_axis(typingctx, array, index, axis):
         return impl_ret_borrowed(context, builder, return_type, result)
 
     return sig, codegen
+
+
+@intrinsic
+def not_optional(typingctx, value):
+    # Copied from numba/typed/typedobjectutils.py::_nonoptional
+    if not isinstance(value, types.Optional):
+        raise TypeError(f"value should be an Optional. {value}")
+
+    def codegen(context, builder, sig, args):
+        context.nrt.incref(builder, sig.return_type, args[0])
+        return args[0]
+
+    casted = value.type
+    sig = casted(casted)
+    return sig, codegen

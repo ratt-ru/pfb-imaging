@@ -8,15 +8,73 @@ import pytest
 
 from pfb.wavelets.wavelets import (dwt, dwt_axis,
                                    idwt, idwt_axis,
+                                   dwt_max_level,
                                    str_to_int,
                                    coeff_product,
                                    promote_axis,
-                                   discrete_wavelet)
+                                   promote_level,
+                                   discrete_wavelet,
+                                   wavedecn, waverecn)
 from pfb.wavelets.modes import (Modes,
                                 promote_mode,
                                 mode_str_to_enum)
 
 from pfb.wavelets.intrinsics import slice_axis
+
+
+@pytest.mark.parametrize("ndim", [1, 2, 3])
+def test_slice_axis(ndim):
+    @numba.njit
+    def fn(a, index, axis=1):
+        return slice_axis(a, index, axis)
+
+    A = np.random.random(np.random.randint(4, 10, size=ndim))
+    assert A.ndim == ndim
+
+    for axis in range(A.ndim):
+        # Randomly choose indexes within the array
+        tup_idx = tuple(np.random.randint(0, d) for d in A.shape)
+        # Replace index with slice along desired axis
+        slice_idx = tuple(slice(None) if a == axis else i for a, i in enumerate(tup_idx))
+
+        As = A[slice_idx]
+        B = fn(A, tup_idx, axis)
+
+        assert_array_equal(As, B)
+
+        if ndim == 1:
+            assert B.flags.c_contiguous == As.flags.c_contiguous
+            assert B.flags.f_contiguous == As.flags.f_contiguous
+            assert B.flags.aligned == As.flags.aligned
+            assert B.flags.writeable == As.flags.writeable
+            assert B.flags.writebackifcopy == As.flags.writebackifcopy
+            assert B.flags.updateifcopy == As.flags.updateifcopy
+
+            # TODO(sjperkins)
+            # Why is owndata True in the
+            # case of the numba intrinsic, but
+            # not in the case of numpy?
+            assert B.flags.owndata != As.flags.owndata
+        else:
+            assert B.flags == As.flags
+
+        # Check that modifying the numba slice
+        # modifies the numpy slice
+        B[:] = np.arange(B.shape[0])
+        assert_array_equal(As, B)
+
+
+def test_internal_slice_axis():
+    @numba.njit
+    def fn(A):
+        for axis in range(A.ndim):
+            for i in np.ndindex(*tuple_setitem(A.shape, axis, 1)):
+                S = slice_axis(A, i, axis)
+
+                if S.flags.c_contiguous != (S.itemsize == S.strides[0]):
+                    raise ValueError("contiguity flag doesn't match layout")
+
+    fn(np.random.random((8, 9, 10)))
 
 
 @pytest.mark.parametrize("repeat", range(5))
@@ -68,6 +126,13 @@ def test_promote_axis():
     assert [0, 1] == list(promote_axis([0, 1], 2))
 
     assert [0, 1] == list(promote_axis((0, 1), 3))
+
+
+@pytest.mark.parametrize("data", [500, 100, 12])
+@pytest.mark.parametrize("filter", [500, 100, 24])
+def test_dwt_max_level(data, filter):
+    pywt = pytest.importorskip("pywt")
+    assert pywt.dwt_max_level(data, filter) == dwt_max_level(data, filter)
 
 
 @pytest.mark.parametrize("wavelet", ["db1", "db4", "db5"])
@@ -152,57 +217,23 @@ def test_dwt_idwt():
     assert_array_almost_equal(output, pywt_out)
 
 
-@pytest.mark.parametrize("ndim", [1, 2, 3])
-def test_slice_axis(ndim):
-    @numba.njit
-    def fn(a, index, axis=1):
-        return slice_axis(a, index, axis)
+def test_wavedecn_waverecn():
+    pywt = pytest.importorskip("pywt")
+    data = np.random.random((50, 24, 63))
 
-    A = np.random.random(np.random.randint(4, 10, size=ndim))
-    assert A.ndim == ndim
+    out = pywt.wavedecn(data, "db1", "symmetric")
+    a, coeffs = wavedecn(data, "db1", "symmetric")
 
-    for axis in range(A.ndim):
-        # Randomly choose indexes within the array
-        tup_idx = tuple(np.random.randint(0, d) for d in A.shape)
-        # Replace index with slice along desired axis
-        slice_idx = tuple(slice(None) if a == axis else i for a, i in enumerate(tup_idx))
+    assert_array_almost_equal(a, out[0])
 
-        As = A[slice_idx]
-        B = fn(A, tup_idx, axis)
+    for d1, d2 in zip(out[1:], coeffs):
+        assert list(d1.keys()) == list(d2.keys())
 
-        assert_array_equal(As, B)
+        for k, v in d1.items():
+            assert_array_almost_equal(v, d2[k])
 
-        if ndim == 1:
-            assert B.flags.c_contiguous == As.flags.c_contiguous
-            assert B.flags.f_contiguous == As.flags.f_contiguous
-            assert B.flags.aligned == As.flags.aligned
-            assert B.flags.writeable == As.flags.writeable
-            assert B.flags.writebackifcopy == As.flags.writebackifcopy
-            assert B.flags.updateifcopy == As.flags.updateifcopy
-
-            # TODO(sjperkins)
-            # Why is owndata True in the
-            # case of the numba intrinsic, but
-            # not in the case of numpy?
-            assert B.flags.owndata != As.flags.owndata
-        else:
-            assert B.flags == As.flags
-
-        # Check that modifying the numba slice
-        # modifies the numpy slice
-        B[:] = np.arange(B.shape[0])
-        assert_array_equal(As, B)
+    pywt_rec = pywt.waverecn(out, "db1", "symmetric")
+    rec = waverecn(a, coeffs, "db1", "symmetric")
+    assert_array_almost_equal(pywt_rec, rec)
 
 
-
-def test_internal_slice_axis():
-    @numba.njit
-    def fn(A):
-        for axis in range(A.ndim):
-            for i in np.ndindex(*tuple_setitem(A.shape, axis, 1)):
-                S = slice_axis(A, i, axis)
-
-                if S.flags.c_contiguous != (S.itemsize == S.strides[0]):
-                    raise ValueError("contiguity flag doesn't match layout")
-
-    fn(np.random.random((8, 9, 10)))
