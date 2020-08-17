@@ -252,29 +252,50 @@ def idwt_axis(approx_coeffs, detail_coeffs,
     have_approx = not is_nonelike(approx_coeffs)
     have_detail = not is_nonelike(detail_coeffs)
 
+    if not have_approx and not have_detail:
+        raise ValueError("Either approximation or detail "
+                         "coefficients must be present")
+
+    dtypes = [approx_coeffs.dtype if have_approx else None,
+              detail_coeffs.dtype if have_detail else None]
+
+    out_dtype = np.result_type(*(np.dtype(dt.name) for dt in dtypes if dt))
+
+    if have_approx and have_detail:
+        if approx_coeffs.ndim != detail_coeffs.ndim:
+            raise ValueError("approx_coeffs.ndim != detail_coeffs.ndim")
+
     def impl(approx_coeffs, detail_coeffs,
             wavelet, mode, axis):
 
-        if have_approx:
-            shape = approx_coeffs.shape
-            dtype = approx_coeffs.dtype
+        if have_approx and have_detail:
+            coeff_shape = approx_coeffs.shape
+            it = enumerate(zip(approx_coeffs.shape, detail_coeffs.shape))
+
+            # NOTE(sjperkins)
+            # Clip the coefficient dimensions to the smallest dimensions
+            # pywt clips in waverecn and fails in idwt and idwt_axis
+            # on heterogenous coefficient shapes.
+            # The actual clipping is performed in slice_axis
+            for i, (asize, dsize) in it:
+                size = asize if asize < dsize else dsize
+                coeff_shape = tuple_setitem(coeff_shape, i, size)
+
+        elif have_approx:
+            coeff_shape = approx_coeffs.shape
         elif have_detail:
-            shape = detail_coeffs.shape
-            dtype = detail_coeffs.dtype
+            coeff_shape = detail_coeffs.shape
         else:
             raise ValueError("Either approximation or detail must be present")
 
-        if (have_approx and have_detail and
-            approx_coeffs.shape != detail_coeffs.shape):
-
-                raise ValueError("approx_coeffs.shape != detail_coeffs.shape")
-
-        if not (0 <= axis < len(shape)):
+        if not (0 <= axis < len(coeff_shape)):
             raise ValueError(("0 <= axis < coeff.ndim does not hold"))
 
-        idwt_len = idwt_buffer_length(shape[axis], wavelet.rec_lo.shape[0], mode)
-        shape = tuple_setitem(shape, axis, idwt_len)
-        output = np.empty(shape, dtype=dtype)
+        idwt_len = idwt_buffer_length(coeff_shape[axis],
+                                      wavelet.rec_lo.shape[0],
+                                      mode)
+        out_shape = tuple_setitem(coeff_shape, axis, idwt_len)
+        output = np.empty(out_shape, dtype=out_dtype)
 
         # Iterate over all points except along the slicing axis
         for idx in np.ndindex(*tuple_setitem(output.shape, axis, 1)):
@@ -289,7 +310,8 @@ def idwt_axis(approx_coeffs, detail_coeffs,
 
             # Apply approximation coefficients if they exist
             if approx_coeffs is not None:
-                initial_ca_row = slice_axis(approx_coeffs, idx, axis, None)
+                initial_ca_row = slice_axis(approx_coeffs, idx,
+                                            axis, coeff_shape[axis])
 
                 if initial_ca_row.flags.c_contiguous:
                     ca_row = force_type_contiguity(initial_ca_row)
@@ -301,7 +323,8 @@ def idwt_axis(approx_coeffs, detail_coeffs,
 
             # Apply detail coefficients if they exist
             if detail_coeffs is not None:
-                initial_cd_row = slice_axis(detail_coeffs, idx, axis, None)
+                initial_cd_row = slice_axis(detail_coeffs, idx,
+                                            axis, coeff_shape[axis])
 
                 if initial_cd_row.flags.c_contiguous:
                     cd_row = force_type_contiguity(initial_cd_row)
@@ -383,11 +406,6 @@ def idwt(coeffs, wavelet, mode='symmetric', axis=None):
     def impl(coeffs, wavelet, mode='symmetric', axis=None):
         ndim_transform = max([len(key) for key in coeffs.keys()])
         coeff_shapes = [v.shape for v in coeffs.values()]
-
-        for cs in coeff_shapes[1:]:
-            if cs != coeff_shapes[0]:
-                print(cs, coeff_shapes[0])
-                raise ValueError("Mismatch in coefficient shapes")
 
         if not have_axis:
             axis = numba.typed.List(range(ndim_transform))
@@ -531,13 +549,6 @@ def waverecn(ca, coeffs, wavelet, mode='symmetric', level=None, axis=None):
         naxis = len(paxes)
 
         for idx, c in enumerate(coeffs):
-            # cshape = next(iter(c.values())).shape
-            # trim_coeffs = ndim_slices
-
-            # for d in range(ndim):
-            #     trim_coeffs = tuple_setitem(trim_coeffs, d, slice(cshape[d]))
-
-            # c[not_optional('a' * naxis)] = force_type_contiguity(ca[trim_coeffs])
             c[not_optional('a' * naxis)] = ca
             ca = idwt(c, wavelet, mode, axis)
 

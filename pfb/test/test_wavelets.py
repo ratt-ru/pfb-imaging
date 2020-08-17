@@ -222,9 +222,11 @@ def test_dwt_idwt():
     assert_array_almost_equal(output, pywt_out)
 
 
-def test_wavedecn_waverecn():
+
+@pytest.mark.parametrize("data_shape", [(13,), (12, 7), (50, 24, 63)])
+def test_wavedecn_waverecn(data_shape):
     pywt = pytest.importorskip("pywt")
-    data = np.random.random((50, 24, 63))
+    data = np.random.random(data_shape)
 
     out = pywt.wavedecn(data, "db1", "symmetric")
     a, coeffs = wavedecn(data, "db1", "symmetric")
