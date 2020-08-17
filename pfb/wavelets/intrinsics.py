@@ -26,32 +26,36 @@ def force_type_contiguity(typingctx, array):
 
 
 @intrinsic
-def slice_axis(typingctx, array, index, axis):
+def slice_axis(typingctx, array, index, axis, extent):
     if not isinstance(array, types.Array):
         raise TypeError("array is not an Array")
 
     if "C" not in array.layout:
         raise TypeError("array must be C contiguous")
 
-    # Return a single array, not necessarily contiguous
-    return_type = array.copy(ndim=1, layout="A")
-
-
     if (not isinstance(index, types.UniTuple) or
         not isinstance(index.dtype, types.Integer)):
         raise TypeError("index is not an Homogenous Tuple of Integers")
 
-    if len(index) != array.ndim:
-        raise TypeError("array.ndim != len(index")
-
     if not isinstance(axis, types.Integer):
         raise TypeError("axis is not an Integer")
 
-    sig = return_type(array, index, axis)
+    have_extent = not cgutils.is_nonelike(extent)
+
+    if have_extent and not isinstance(extent, types.Integer):
+        raise TypeError("extent must be an integer or None")
+
+    if len(index) != array.ndim:
+        raise TypeError("array.ndim != len(index")
+
+    # Return a single array, not necessarily contiguous
+    return_type = array.copy(ndim=1, layout="A")
+
+    sig = return_type(array, index, axis, extent)
 
     def codegen(context, builder, signature, args):
-        array_type, idx_type, axis_type = signature.args
-        array, idx, axis = args
+        array_type, idx_type, axis_type, extent_type = signature.args
+        array, idx, axis, extent = args
         array = context.make_array(array_type)(context, builder, array)
 
         zero = context.get_constant(types.intp, 0)
@@ -83,6 +87,11 @@ def slice_axis(typingctx, array, index, axis):
                     builder.store(zero, builder.gep(indices, [llvm_ax]))
                     size = builder.extract_value(array.shape, ax)
                     stride = builder.extract_value(array.strides, ax)
+
+                    if have_extent:
+                        ext_predicate = builder.icmp_signed(">=", extent, size)
+                        size = builder.select(ext_predicate, size, extent)
+
                     builder.store(size, view_shape)
                     builder.store(stride, view_stride)
 

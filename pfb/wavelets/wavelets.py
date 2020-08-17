@@ -204,9 +204,9 @@ def dwt_axis(data, wavelet, mode, axis):
 
         # Iterate over all points except along the slicing axis
         for idx in np.ndindex(*tuple_setitem(data.shape, axis, 1)):
-            initial_in_row = slice_axis(data, idx, axis)
-            initial_ca_row = slice_axis(ca, idx, axis)
-            initial_cd_row = slice_axis(cd, idx, axis)
+            initial_in_row = slice_axis(data, idx, axis, None)
+            initial_ca_row = slice_axis(ca, idx, axis, None)
+            initial_cd_row = slice_axis(cd, idx, axis, None)
 
             # The numba array type returned by slice_axis assumes
             # non-contiguity in the general case.
@@ -278,7 +278,7 @@ def idwt_axis(approx_coeffs, detail_coeffs,
 
         # Iterate over all points except along the slicing axis
         for idx in np.ndindex(*tuple_setitem(output.shape, axis, 1)):
-            initial_out_row = slice_axis(output, idx, axis)
+            initial_out_row = slice_axis(output, idx, axis, None)
 
             # Zero if we have a contiguous slice, else allocate
             if initial_out_row.flags.c_contiguous:
@@ -289,7 +289,7 @@ def idwt_axis(approx_coeffs, detail_coeffs,
 
             # Apply approximation coefficients if they exist
             if approx_coeffs is not None:
-                initial_ca_row = slice_axis(approx_coeffs, idx, axis)
+                initial_ca_row = slice_axis(approx_coeffs, idx, axis, None)
 
                 if initial_ca_row.flags.c_contiguous:
                     ca_row = force_type_contiguity(initial_ca_row)
@@ -301,7 +301,7 @@ def idwt_axis(approx_coeffs, detail_coeffs,
 
             # Apply detail coefficients if they exist
             if detail_coeffs is not None:
-                initial_cd_row = slice_axis(detail_coeffs, idx, axis)
+                initial_cd_row = slice_axis(detail_coeffs, idx, axis, None)
 
                 if initial_cd_row.flags.c_contiguous:
                     cd_row = force_type_contiguity(initial_cd_row)

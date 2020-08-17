@@ -23,10 +23,11 @@ from pfb.wavelets.intrinsics import slice_axis
 
 
 @pytest.mark.parametrize("ndim", [1, 2, 3])
-def test_slice_axis(ndim):
+@pytest.mark.parametrize("extent", [-1, 0, 1])
+def test_slice_axis(ndim, extent):
     @numba.njit
-    def fn(a, index, axis=1):
-        return slice_axis(a, index, axis)
+    def fn(a, index, axis=1, extent=None):
+        return slice_axis(a, index, axis, extent)
 
     A = np.random.random(np.random.randint(4, 10, size=ndim))
     assert A.ndim == ndim
@@ -35,26 +36,30 @@ def test_slice_axis(ndim):
         # Randomly choose indexes within the array
         tup_idx = tuple(np.random.randint(0, d) for d in A.shape)
         # Replace index with slice along desired axis
-        slice_idx = tuple(slice(None) if a == axis else i for a, i in enumerate(tup_idx))
+        ax_size = A.shape[axis]
+
+        ext = None if extent == 0 else ax_size + extent
+        slice_idx = tuple(slice(ext) if a == axis
+                          else i for a, i in enumerate(tup_idx))
 
         As = A[slice_idx]
-        B = fn(A, tup_idx, axis)
+        B = fn(A, tup_idx, axis, ext)
 
         assert_array_equal(As, B)
 
         if ndim == 1:
-            assert B.flags.c_contiguous == As.flags.c_contiguous
-            assert B.flags.f_contiguous == As.flags.f_contiguous
-            assert B.flags.aligned == As.flags.aligned
-            assert B.flags.writeable == As.flags.writeable
-            assert B.flags.writebackifcopy == As.flags.writebackifcopy
-            assert B.flags.updateifcopy == As.flags.updateifcopy
+            assert B.flags.c_contiguous is As.flags.c_contiguous
+            assert B.flags.f_contiguous is As.flags.f_contiguous
+            assert B.flags.aligned is As.flags.aligned
+            assert B.flags.writeable is As.flags.writeable
+            assert B.flags.writebackifcopy is As.flags.writebackifcopy
+            assert B.flags.updateifcopy is As.flags.updateifcopy
 
             # TODO(sjperkins)
             # Why is owndata True in the
             # case of the numba intrinsic, but
             # not in the case of numpy?
-            assert B.flags.owndata != As.flags.owndata
+            assert B.flags.owndata is not (extent or As.flags.owndata)
         else:
             assert B.flags == As.flags
 
@@ -69,7 +74,7 @@ def test_internal_slice_axis():
     def fn(A):
         for axis in range(A.ndim):
             for i in np.ndindex(*tuple_setitem(A.shape, axis, 1)):
-                S = slice_axis(A, i, axis)
+                S = slice_axis(A, i, axis, None)
 
                 if S.flags.c_contiguous != (S.itemsize == S.strides[0]):
                     raise ValueError("contiguity flag doesn't match layout")
