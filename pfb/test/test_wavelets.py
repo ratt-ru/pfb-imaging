@@ -86,7 +86,7 @@ def test_internal_slice_axis():
 def test_coeff_product(repeat):
     res = coeff_product('ad', repeat=repeat)
     coeffs = [''.join(c) for c in product('ad', repeat=repeat)]
-    assert res == coeffs
+    assert list(res) == coeffs
 
 
 def test_str_to_int():

@@ -140,7 +140,7 @@ def promote_wavelets(wavelets, naxis):
 
     if isinstance(wavelets, nbtypes.misc.UnicodeType):
         def impl(wavelets, naxis):
-            return numba.typed.List([wavelets] * naxis)
+            return List([wavelets] * naxis)
 
     elif (isinstance(wavelets, NUMBA_SEQUENCE_TYPES) and
             isinstance(wavelets.dtype, nbtypes.misc.UnicodeType)):
@@ -149,7 +149,7 @@ def promote_wavelets(wavelets, naxis):
             if len(wavelets) != naxis:
                 raise ValueError("len(wavelets) != len(axis)")
 
-            return numba.typed.List(wavelets)
+            return List(wavelets)
     else:
         raise TypeError("wavelet must be a string, "
                         "a list of strings "
@@ -167,7 +167,7 @@ def promote_axis(axis, ndim):
     if isinstance(axis, nbtypes.Integer):
         def impl(axis, ndim):
             axis = axis + ndim if axis < 0 else axis
-            return numba.typed.List([axis])
+            return List([axis])
 
     elif (isinstance(axis, NUMBA_SEQUENCE_TYPES) and
             isinstance(axis.dtype, nbtypes.Integer)):
@@ -179,7 +179,7 @@ def promote_axis(axis, ndim):
                 if a >= ndim:
                     raise ValueError("axis[i] >= data.ndim")
 
-            return [a + ndim if a < 0 else a for a in numba.typed.List(axis)]
+            return List([a + ndim if a < 0 else a for a in axis])
 
     else:
         raise TypeError("axis must be an integer, "
@@ -358,7 +358,7 @@ def dwt(data, wavelet, mode="symmetric", axis=None):
 
     def impl(data, wavelet, mode="symmetric", axis=None):
         if not have_axis:
-            axis = numba.typed.List(range(data.ndim))
+            axis = List(range(data.ndim))
 
         paxis = promote_axis(axis, data.ndim)
         naxis = len(paxis)
@@ -390,11 +390,18 @@ def dwt(data, wavelet, mode="symmetric", axis=None):
 @register_jitable
 def coeff_product(args, repeat=1):
     # Adapted from https://docs.python.org/3/library/itertools.html#itertools.product
-    pools = [args] * repeat
-    result = [''] * (len(args) - 1)
+    pools = List()
+
+    for i in range(repeat):
+        pools.append(args)
+
+    result = List()
+
+    for i in range(len(args) - 1):
+        result.append('')
 
     for pool in pools:
-        result = [x + y for x in result for y in pool]
+        result = List([x + y for x in result for y in pool])
 
     return result
 
@@ -408,7 +415,7 @@ def idwt(coeffs, wavelet, mode='symmetric', axis=None):
         coeff_shapes = [v.shape for v in coeffs.values()]
 
         if not have_axis:
-            axis = numba.typed.List(range(ndim_transform))
+            axis = List(range(ndim_transform))
             ndim = ndim_transform
         else:
             ndim = len(coeff_shapes[0])
@@ -416,8 +423,8 @@ def idwt(coeffs, wavelet, mode='symmetric', axis=None):
         paxis = promote_axis(axis, ndim)
         naxis = len(paxis)
         pmode = promote_mode(mode, naxis)
-        pwavelets = [discrete_wavelet(w) for w
-                     in promote_wavelets(wavelet, naxis)]
+        pwavelets = List([discrete_wavelet(w) for w
+                          in promote_wavelets(wavelet, naxis)])
 
         it = list(enumerate(zip(paxis, pwavelets, pmode)))
 
@@ -500,7 +507,7 @@ def wavedecn(data, wavelet, mode='symmetric', level=None, axis=None):
         sizes = [data.shape[ax] for ax in paxis]
         plevel = promote_level(sizes, dec_lens, level)
 
-        coeffs_list = []
+        coeffs_list = List()
 
         a = data
 
