@@ -222,8 +222,7 @@ def test_dwt_idwt():
     assert_array_almost_equal(output, pywt_out)
 
 
-
-@pytest.mark.parametrize("data_shape", [(13,), (12, 7), (50, 24, 63)])
+@pytest.mark.parametrize("data_shape", [(50, 24, 63)])
 def test_wavedecn_waverecn(data_shape):
     pywt = pytest.importorskip("pywt")
     data = np.random.random(data_shape)
@@ -243,4 +242,34 @@ def test_wavedecn_waverecn(data_shape):
     rec = waverecn(a, coeffs, "db1", "symmetric")
     assert_array_almost_equal(pywt_rec, rec)
 
+    out = pywt.wavedecn(data, "db1", "symmetric", axes=(1, 2))
+    a, coeffs = wavedecn(data, "db1", "symmetric", axis=(1, 2))
+
+    assert_array_almost_equal(a, out[0])
+
+    for d1, d2 in zip(out[1:], coeffs):
+        assert list(d1.keys()) == list(d2.keys())
+
+        for k, v in d1.items():
+            assert_array_almost_equal(v, d2[k])
+
+    pywt_rec = pywt.waverecn(out, "db1", "symmetric", axes=(1, 2))
+    rec = waverecn(a, coeffs, "db1", "symmetric", axis=(1, 2))
+    assert_array_almost_equal(pywt_rec, rec)
+
+
+    out = pywt.wavedecn(data, "db1", "symmetric", level=2, axes=(1, 2))
+    a, coeffs = wavedecn(data, "db1", "symmetric", level=2, axis=(1, 2))
+
+    assert_array_almost_equal(a, out[0])
+
+    for d1, d2 in zip(out[1:], coeffs):
+        assert list(d1.keys()) == list(d2.keys())
+
+        for k, v in d1.items():
+            assert_array_almost_equal(v, d2[k])
+
+    pywt_rec = pywt.waverecn(out, "db1", "symmetric", axes=(1, 2))
+    rec = waverecn(a, coeffs, "db1", "symmetric", axis=(1, 2))
+    assert_array_almost_equal(pywt_rec, rec)
 
