@@ -242,8 +242,13 @@ def test_wavedecn_waverecn(data_shape):
     rec = waverecn(a, coeffs, "db1", "symmetric")
     assert_array_almost_equal(pywt_rec, rec)
 
+    import time
+    start = time.clock()
     out = pywt.wavedecn(data, "db1", "symmetric", axes=(1, 2))
+    pwavedecnt = time.clock() - start
+    start = time.clock()
     a, coeffs = wavedecn(data, "db1", "symmetric", axis=(1, 2))
+    wavedecnt = time.clock() - start
 
     assert_array_almost_equal(a, out[0])
 
@@ -253,9 +258,22 @@ def test_wavedecn_waverecn(data_shape):
         for k, v in d1.items():
             assert_array_almost_equal(v, d2[k])
 
+    start = time.clock()
     pywt_rec = pywt.waverecn(out, "db1", "symmetric", axes=(1, 2))
+    pwaverecnt = time.clock() - start
+
+    start = time.clock()
     rec = waverecn(a, coeffs, "db1", "symmetric", axis=(1, 2))
+    waverecnt = time.clock() - start
     assert_array_almost_equal(pywt_rec, rec)
+
+    print("pywt.wavedecn", pwavedecnt)
+    print("wavedecn", wavedecnt)
+    print("Decomposition ratio", wavedecnt / pwavedecnt)
+    print("pywt.waverecn", pwaverecnt)
+    print("waverecn", waverecnt)
+    print("Reconstruction ratio", waverecnt / pwaverecnt)
+
 
 
     out = pywt.wavedecn(data, "db1", "symmetric", level=2, axes=(1, 2))
