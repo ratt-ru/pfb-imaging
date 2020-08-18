@@ -483,7 +483,7 @@ def promote_level(sizes, dec_lens, level=None):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, cache=False)
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
 def wavedecn(data, wavelet, mode='symmetric', level=None, axis=None):
     have_axis = not is_nonelike(axis)
 
@@ -516,15 +516,15 @@ def wavedecn(data, wavelet, mode='symmetric', level=None, axis=None):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, cache=False)
-def waverecn(ca, coeffs, wavelet, mode='symmetric', level=None, axis=None):
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
+def waverecn(ca, coeffs, wavelet, mode='symmetric', axis=None):
     if not isinstance(ca, nbtypes.npytypes.Array):
         raise TypeError("ca must be an ndarray")
 
     have_axis = not is_nonelike(axis)
     ndim_slices = (slice(None),) * ca.ndim
 
-    def impl(ca, coeffs, wavelet, mode='symmetric', level=None, axis=None):
+    def impl(ca, coeffs, wavelet, mode='symmetric', axis=None):
         if len(coeffs) == 0:
             return ca
 
