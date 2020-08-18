@@ -190,7 +190,7 @@ def promote_axis(axis, ndim):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
 def dwt_axis(data, wavelet, mode, axis):
     def impl(data, wavelet, mode, axis):
         coeff_len = dwt_coeff_length(data.shape[axis], len(wavelet.dec_hi), mode)
@@ -245,7 +245,7 @@ def dwt_axis(data, wavelet, mode, axis):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
 def idwt_axis(approx_coeffs, detail_coeffs,
               wavelet, mode, axis):
 
@@ -345,7 +345,7 @@ def idwt_axis(approx_coeffs, detail_coeffs,
 
 
 
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
 def dwt(data, wavelet, mode="symmetric", axis=None):
 
     if isinstance(data, nbtypes.misc.Optional):
@@ -398,7 +398,7 @@ def coeff_product(args, repeat=1):
 
     return result
 
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
 def idwt(coeffs, wavelet, mode='symmetric', axis=None):
 
     have_axis = not is_nonelike(axis)
@@ -483,7 +483,7 @@ def promote_level(sizes, dec_lens, level=None):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
 def wavedecn(data, wavelet, mode='symmetric', level=None, axis=None):
     have_axis = not is_nonelike(axis)
 
@@ -516,7 +516,7 @@ def wavedecn(data, wavelet, mode='symmetric', level=None, axis=None):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
 def waverecn(ca, coeffs, wavelet, mode='symmetric', axis=None):
     if not isinstance(ca, nbtypes.npytypes.Array):
         raise TypeError("ca must be an ndarray")
