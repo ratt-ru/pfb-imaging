@@ -25,9 +25,9 @@ def mode_str_to_enum(mode_str):
 @overload(mode_str_to_enum)
 def mode_str_to_enum_impl(mode_str):
     if isinstance(mode_str, nbtypes.UnicodeType):
-        # Modes.zeropad.name doesn't work in the jitted code
+        # Modes.mode.name doesn't work in the jitted code
         # so expand it all.
-        zeropad_name = Modes.zeropad.name
+        zeropad_name = "zero"  # pywt is zero not zeropad
         symmetric_name = Modes.symmetric.name
         constant_edge_name = Modes.constant_edge.name
         smooth_name = Modes.smooth.name

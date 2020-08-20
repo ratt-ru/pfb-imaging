@@ -22,6 +22,9 @@ from pfb.wavelets.modes import (Modes,
 from pfb.wavelets.intrinsics import slice_axis
 
 
+convert_mode = numba.njit(lambda s: mode_str_to_enum(s))
+
+
 @pytest.mark.parametrize("ndim", [1, 2, 3])
 @pytest.mark.parametrize("extent", [-1, 0, 1])
 def test_slice_axis(ndim, extent):
@@ -164,37 +167,40 @@ def test_discrete_wavelet(wavelet):
 
 @pytest.mark.parametrize("wavelet", ["db1", "db4", "db5"])
 @pytest.mark.parametrize("data_shape", [(13,), (12, 7)])
-def test_dwt_idwt_axis(wavelet, data_shape):
+@pytest.mark.parametrize("mode", ["symmetric", "zero"])
+def test_dwt_idwt_axis(wavelet, mode, data_shape):
     pywt = pytest.importorskip("pywt")
     data = np.random.random(size=data_shape)
+    enum_mode = convert_mode(mode)
+
     pywt_dwt_axis = pywt._dwt.dwt_axis
     pywt_idwt_axis = pywt._dwt.idwt_axis
 
     pywt_wavelet = pywt.Wavelet(wavelet)
-    pywt_mode = pywt.Modes.symmetric
+    pywt_mode = pywt.Modes.from_object(mode)
 
     wavelet = discrete_wavelet(wavelet)
 
     for axis in reversed(range(len(data_shape))):
         # Deconstruct
-        ca, cd = dwt_axis(data, wavelet, Modes.symmetric, axis)
+        ca, cd = dwt_axis(data, wavelet, enum_mode, axis)
         pywt_ca, pywt_cd = pywt_dwt_axis(data, pywt_wavelet, pywt_mode, axis)
         assert_array_almost_equal(ca, pywt_ca)
         assert_array_almost_equal(cd, pywt_cd)
 
         # Reconstruct with both approximation and detail
         pywt_out = pywt_idwt_axis(ca, cd, pywt_wavelet, pywt_mode, axis)
-        output = idwt_axis(ca, cd, wavelet, Modes.symmetric, axis)
+        output = idwt_axis(ca, cd, wavelet, enum_mode, axis)
         assert_array_almost_equal(output, pywt_out)
 
         # Reconstruct with approximation only
         pywt_out = pywt_idwt_axis(ca, None, pywt_wavelet, pywt_mode, axis)
-        output = idwt_axis(ca, None, wavelet, Modes.symmetric, axis)
+        output = idwt_axis(ca, None, wavelet, enum_mode, axis)
         assert_array_almost_equal(output, pywt_out)
 
         # Reconstruct with detail only
         pywt_out = pywt_idwt_axis(None, cd, pywt_wavelet, pywt_mode, axis)
-        output = idwt_axis(None, cd, wavelet, Modes.symmetric, axis)
+        output = idwt_axis(None, cd, wavelet, enum_mode, axis)
         assert_array_almost_equal(output, pywt_out)
 
 
@@ -221,9 +227,12 @@ def test_dwt_idwt():
     pywt_out = pywt.idwtn(pywt_res, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
     assert_array_almost_equal(output, pywt_out)
 
+xf = pytest.mark.xfail(reason="level too high")
 
 @pytest.mark.parametrize("data_shape", [(50, 24, 63)])
-def test_wavedecn_waverecn(data_shape):
+@pytest.mark.parametrize("level", list(range(5)) + [
+    pytest.param(i, marks=xf) for i in range(6, 10)])
+def test_wavedecn_waverecn(data_shape, level):
     pywt = pytest.importorskip("pywt")
     data = np.random.random(data_shape)
 
@@ -257,9 +266,9 @@ def test_wavedecn_waverecn(data_shape):
     rec = waverecn(a, coeffs, "db1", "symmetric", axis=(1, 2))
     assert_array_almost_equal(pywt_rec, rec)
 
-
-    out = pywt.wavedecn(data, "db1", "symmetric", level=2, axes=(1, 2))
-    a, coeffs = wavedecn(data, "db1", "symmetric", level=2, axis=(1, 2))
+    # Test various levels of decomposition
+    out = pywt.wavedecn(data, "db1", "symmetric", level=level, axes=(1, 2))
+    a, coeffs = wavedecn(data, "db1", "symmetric", level=level, axis=(1, 2))
 
     assert_array_almost_equal(a, out[0])
 
