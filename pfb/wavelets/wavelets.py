@@ -1,4 +1,5 @@
 from collections import namedtuple
+import warnings
 
 import numba
 import numba.core.types as nbtypes
@@ -481,9 +482,11 @@ def promote_level(sizes, dec_lens, level=None):
         elif level < 0:
             raise ValueError("Negative levels are invalid. Minimum level is 0")
         elif level > max_level:
-            raise ValueError("Level value is too high. "
-                             "All coefficients will experience "
-                             "boundary effects")
+            # with numba.objmode():
+            #     warnings.warn("Level value is too high. "
+            #                   "All coefficients will experience "
+            #                   "boundary effects")
+            pass
 
         return level
 

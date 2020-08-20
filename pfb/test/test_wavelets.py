@@ -227,17 +227,21 @@ def test_dwt_idwt():
     pywt_out = pywt.idwtn(pywt_res, ("db1", "db2"), ("symmetric", "symmetric"), (0, 1))
     assert_array_almost_equal(output, pywt_out)
 
-xf = pytest.mark.xfail(reason="level too high")
 
 @pytest.mark.parametrize("data_shape", [(50, 24, 63)])
-@pytest.mark.parametrize("level", list(range(5)) + [
-    pytest.param(i, marks=xf) for i in range(6, 10)])
-def test_wavedecn_waverecn(data_shape, level):
+@pytest.mark.parametrize("complex_data", [True, False])
+@pytest.mark.parametrize("level", list(range(10)))
+@pytest.mark.parametrize("mode", ["symmetric", "zero"])
+@pytest.mark.parametrize("wavelet", ["db1", "db4", "db5"])
+def test_wavedecn_waverecn(data_shape, wavelet, mode, level, complex_data):
     pywt = pytest.importorskip("pywt")
     data = np.random.random(data_shape)
 
-    out = pywt.wavedecn(data, "db1", "symmetric")
-    a, coeffs = wavedecn(data, "db1", "symmetric")
+    if complex_data:
+        data = data + np.random.random(data_shape) * 1j
+
+    out = pywt.wavedecn(data, wavelet, mode)
+    a, coeffs = wavedecn(data, wavelet, mode)
 
     assert_array_almost_equal(a, out[0])
 
@@ -247,12 +251,12 @@ def test_wavedecn_waverecn(data_shape, level):
         for k, v in d1.items():
             assert_array_almost_equal(v, d2[k])
 
-    pywt_rec = pywt.waverecn(out, "db1", "symmetric")
-    rec = waverecn(a, coeffs, "db1", "symmetric")
+    pywt_rec = pywt.waverecn(out, wavelet, mode)
+    rec = waverecn(a, coeffs, wavelet, mode)
     assert_array_almost_equal(pywt_rec, rec)
 
-    out = pywt.wavedecn(data, "db1", "symmetric", axes=(1, 2))
-    a, coeffs = wavedecn(data, "db1", "symmetric", axis=(1, 2))
+    out = pywt.wavedecn(data, wavelet, mode, axes=(1, 2))
+    a, coeffs = wavedecn(data, wavelet, mode, axis=(1, 2))
 
     assert_array_almost_equal(a, out[0])
 
@@ -262,13 +266,13 @@ def test_wavedecn_waverecn(data_shape, level):
         for k, v in d1.items():
             assert_array_almost_equal(v, d2[k])
 
-    pywt_rec = pywt.waverecn(out, "db1", "symmetric", axes=(1, 2))
-    rec = waverecn(a, coeffs, "db1", "symmetric", axis=(1, 2))
+    pywt_rec = pywt.waverecn(out, wavelet, mode, axes=(1, 2))
+    rec = waverecn(a, coeffs, wavelet, mode, axis=(1, 2))
     assert_array_almost_equal(pywt_rec, rec)
 
     # Test various levels of decomposition
-    out = pywt.wavedecn(data, "db1", "symmetric", level=level, axes=(1, 2))
-    a, coeffs = wavedecn(data, "db1", "symmetric", level=level, axis=(1, 2))
+    out = pywt.wavedecn(data, wavelet, mode, level=level, axes=(1, 2))
+    a, coeffs = wavedecn(data, wavelet, mode, level=level, axis=(1, 2))
 
     assert_array_almost_equal(a, out[0])
 
@@ -278,7 +282,7 @@ def test_wavedecn_waverecn(data_shape, level):
         for k, v in d1.items():
             assert_array_almost_equal(v, d2[k])
 
-    pywt_rec = pywt.waverecn(out, "db1", "symmetric", axes=(1, 2))
-    rec = waverecn(a, coeffs, "db1", "symmetric", axis=(1, 2))
+    pywt_rec = pywt.waverecn(out, wavelet, mode, axes=(1, 2))
+    rec = waverecn(a, coeffs, wavelet, mode, axis=(1, 2))
     assert_array_almost_equal(pywt_rec, rec)
 
