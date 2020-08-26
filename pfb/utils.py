@@ -18,7 +18,7 @@ from .operators import PSI, DaskPSI
 def data_from_header(hdr, axis=3):
     npix = hdr['NAXIS' + str(axis)]
     refpix = hdr['CRPIX' + str(axis)]
-    delta = hdr['CDELT' + str(axis)]  # assumes units are Hz
+    delta = hdr['CDELT' + str(axis)] 
     ref_val = hdr['CRVAL' + str(axis)]
     return ref_val + np.arange(1 - refpix, 1 + npix - refpix) * delta
 

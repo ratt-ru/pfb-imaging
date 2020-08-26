@@ -3,9 +3,10 @@ import numpy as np
 import dask.array as da
 from daskms import xds_from_table
 import pywt
-import nifty_gridder as ng
-from pypocketfft import r2c, c2r
+from ducc0.wgridder import ms2dirty, dirty2ms
+from ducc0.fft import r2c, c2r
 from africanus.gps.kernels import exponential_squared as expsq
+from africanus.linalg import kronecker_tools as kt
 
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
@@ -239,7 +240,7 @@ class PSF(object):
         return Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
 
 class Prior(object):
-    def __init__(self, freq, sigma0, l, nx, ny, nthreads=8):
+    def __init__(self, freq, sigma0, l, nx, ny, cell_rad, nthreads=8):
         self.nthreads = nthreads
         self.nx = nx
         self.ny = ny
@@ -253,11 +254,29 @@ class Prior(object):
         self.L = np.linalg.cholesky(self.Kv + 1e-12*np.eye(self.nband))
         self.LH = self.L.T
 
+        # construct l and m coords
+        xl = np.arange(-(nx//2), nx//2) * cell_rad
+        xm = np.arange(-(ny//2), ny//2) * cell_rad
+
+        # FWHM is about 5 pixels wide at highest frequency
+        lx = cell_rad/(2*np.sqrt(2*np.log(2)))
+        self.Kl = expsq(xl, xl, 1.0, lx)
+        self.Klinv = np.linalg.inv(self.Kl + 1e-12*np.eye(self.nx))
+        self.Km = expsq(xm, xm, 1.0, lx)
+        self.Kminv = np.linalg.inv(self.Km + 1e-12*np.eye(self.ny))
+
+        self.Kkron = (self.Kv, self.Kl, self.Km)
+        self.Kinvkron = (self.Kvinv, self.Klinv, self.Kminv)
+
+
+
     def idot(self, x):
-        return freqmul(self.Kvinv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+        # return freqmul(self.Kvinv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+        return kt.kron_matvec(self.Kinvkron, x)
 
     def dot(self, x):
-        return freqmul(self.Kv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+        # return freqmul(self.Kv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+        return kt.kron_matvec(self.Kkron, x)
 
     def sqrtdot(self, x):
         return freqmul(self.L, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)

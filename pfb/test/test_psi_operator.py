@@ -48,8 +48,8 @@ def test_dask_psi_operator():
     assert_array_almost_equal(alphad, alpha, decimal=13)
 
 def test_prox():
-    nx = 2050
-    ny = 2050
+    nx = 12
+    ny = 7
     nband = 8
     nlevels = 5
     
@@ -60,6 +60,8 @@ def test_prox():
     psi = PSI(nband, nx, ny, nlevels)
     ntot = psi.ntot
     nbasis = psi.nbasis
+
+    print(ntot, nx*ny)
 
     weights_21 = np.ones((nbasis, ntot))
     sig_21 = 0.0

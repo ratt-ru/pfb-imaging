@@ -1,27 +1,37 @@
 import numpy as np
-from scipy.linalg import norm
-from pfb.utils import prox_21
-from pfb.operators import PSI, DaskPSI
-import pywt
+np.random.seed(420)
+from pfb.operators import Prior
+from africanus.gps.kernels import exponential_squared as expsq
+from africanus.linalg import kronecker_tools as kt
 
 if __name__=="__main__":
-    nx = 512
-    ny = 512
-    nchan = 8
-    nlevels = 3
+    nx = 16
+    ny = 16
+    nchan = 4
+    N = nchan*nx*ny
 
-    # construct operator (frequency axis dealt with in dot and hdot)
-    psi = PSI(nchan, nx, ny, nlevels=nlevels)
-    nbasis = psi.nbasis
-    ntot = psi.ntot  # number of wavelet coefficients
+    v = np.linspace(0.5, 1.5, nchan)
+    Kop = Prior(v, 1.0, 0.1, nx, ny, 1e-5)
+    
+    K = np.kron(Kop.Kv, np.kron(Kop.Kl, Kop.Km))
 
-    p = np.ones((nchan, nx, ny), dtype=np.float64)
-    weights_21 = np.empty(nbasis, dtype=object)
-    weights_21[0] = np.ones(nx*ny, dtype=np.float64)  # for dirac basis
-    for m in range(1, psi.nbasis):
-        weights_21[m] = np.ones(psi.ntot, dtype=np.float64)  # all other wavelet bases
+    xi = np.random.randn(N)
+    res1 = Kop.dot(xi)
+    res2 = K.dot(xi)
 
-    sig_21 = 1e-5
+    print(np.abs(res1 - res2).max())
 
-    x = prox_21(p, sig_21, weights_21, psi=psi)
+    Kinv = np.kron(Kop.Kvinv, np.kron(Kop.Klinv, Kop.Kminv))
+
+    xi = np.random.randn(N)
+
+    res1 = Kop.idot(xi)
+    res2 = Kinv.dot(xi)
+
+    print(np.abs(res1 - res2).max())
+
+
+    
+
+
 
