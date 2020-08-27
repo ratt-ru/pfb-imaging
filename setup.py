@@ -25,7 +25,7 @@ setuptools.setup(
           "dask-ms[xarray]",
           'codex-africanus >= 0.2.4',
           'PyWavelets',
-          'ducc0',
+          'ducc0 >= 0.4.0',
       ],
      classifiers=[
          "Programming Language :: Python :: 3",

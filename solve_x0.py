@@ -76,6 +76,8 @@ def main(args):
     real_type = dirty.dtype
     hdr = fits.getheader(args.dirty)
     freq = data_from_header(hdr, axis=3)
+    l_coord = data_from_header(hdr, axis=1)
+    m_coord = data_from_header(hdr, axis=2)
     
     nband, nx, ny = dirty.shape
     psf_array = load_fits(args.psf)
@@ -96,7 +98,8 @@ def main(args):
     rms = np.std(dirty_mfs)
     print("Peak of dirty is %f and rms is %f"%(rmax, rms))
 
-    
+    psf_mfs = np.sum(psf_array, axis=0)/wsum 
+   
     # set operators
     psf = PSF(psf_array, args.ncpu)
     l = args.lfrac * (freq.max() - freq.min())/np.mean(freq)
@@ -104,7 +107,7 @@ def main(args):
     K = Prior(freq/np.mean(freq), args.sig_l2, l, nx, ny, nthreads=args.ncpu)
     
     def hess(x):
-        return psf.convolve(x) + K.idot(x)
+        return psf.convolve(x) + x  #K.idot(x)
 
     # get Lipschitz constant
     if args.beta is None:
@@ -129,7 +132,7 @@ def main(args):
     # fidelity and gradient term
     def fprime(x):
         diff = psf.convolve(x) - dirty
-        tmp = K.idot(x)
+        tmp = x  #K.idot(x)
         return 0.5*np.vdot(x, diff) - 0.5*np.vdot(x, dirty) + 0.5*np.vdot(x, tmp), diff + tmp
 
     # set up wavelet basis
@@ -161,7 +164,14 @@ def main(args):
         fid, grad = fprime(model)        
         x = pcg(hess, -grad, np.zeros(dirty.shape, dtype=real_type), M=K.dot, 
                 tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
-    
+
+        import matplotlib.pyplot as plt
+        for i in range(nband):
+            plt.imshow(x[i])
+            plt.colorbar()
+            plt.show()
+
+        quit(())    
         modelp = model.copy()
         model = modelp + args.gamma * x
 

@@ -4,7 +4,7 @@ from pyrap.tables import table
 from daskms import xds_from_table
 import dask
 import dask.array as da
-from pfb.opt import power_method, hpd, fista, pcg, simplt_pd
+from pfb.opt import power_method, fista, pcg, simple_pd
 from scipy.fftpack import next_fast_len
 from scipy.linalg import norm
 from time import time
