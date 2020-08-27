@@ -33,24 +33,24 @@ if __name__=="__main__":
     
     
 
-    ti = time()
-    res2 = Kop.dothat(xi).real
-    print("dot = ", time()-ti)
+    # ti = time()
+    # res2 = Kop.dothat(xi).real
+    # print("dot = ", time()-ti)
 
 
-    ti = time()
-    res1 = Kop.dot(xi)
-    print(" dot Vanilla = ", time()-ti)
+    # ti = time()
+    # res1 = Kop.dot(xi)
+    # print(" dot Vanilla = ", time()-ti)
 
-    # print("dot diff = ", np.abs(res1 - res2).max())
+    # # print("dot diff = ", np.abs(res1 - res2).max())
 
-    xirec1 = Kop.idot(res1)
+    # xirec1 = Kop.idot(res1)
 
-    print(" idot Vanilla = ", np.abs(xi - xirec1).max())
+    # print(" idot Vanilla = ", np.abs(xi - xirec1).max())
 
-    xirec2 = Kop.idothat(res2)
+    # xirec2 = Kop.idothat(res2)
 
-    print(" idot = ", np.abs(xi - xirec2).max())
+    # print(" idot = ", np.abs(xi - xirec2).max())
 
     # ti = time()
     # xipad = np.zeros((2*nchan-2, 2*nx-2, 2*ny-2), dtype=np.complex128)
@@ -76,7 +76,10 @@ if __name__=="__main__":
     # xihat = c2c(xi, xi)
 
 
-    # import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt
+    plt.imshow(Kop.K)
+    plt.colorbar()
+    
     # plt.figure('fft')
     # plt.plot(sv, chatv.real, '.')
 
@@ -89,7 +92,7 @@ if __name__=="__main__":
     # plt.figure('hist')
     # plt.hist((xi - res3).real)
     
-    # plt.show()
+    plt.show()
 
     
 

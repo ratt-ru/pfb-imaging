@@ -258,11 +258,24 @@ class Prior(object):
         
         # always work in pixel coordinates
         v_coord = np.arange(-(nband//2), nband//2)
-        l_coord = np.arange(-(nx//2), nx//2)
-        m_coord = np.arange(-(ny//2), ny//2)
+        # l_coord = np.arange(-(nx//2), nx//2)
+        # m_coord = np.arange(-(ny//2), ny//2)
+        l_coord = np.arange(-(nx_psf//2), nx_psf//2)
+        m_coord = np.arange(-(ny_psf//2), ny_psf//2)
+
+        ll, mm = np.meshgrid(l_coord, m_coord)
+        rrsq = ll**2 + mm*2
+
+
 
         # set length scales
         length_scale = 2.5/(2*np.sqrt(2*np.log(2)))
+
+        self.K = np.exp(-rrsq/(2*length_scale**2))
+
+        
+
+
 
         # get covariance in each dimension
         self.Kv = expsq(v_coord, v_coord, sigma0, 0.1*length_scale) # + 1e-6*np.eye(nband)
