@@ -104,10 +104,13 @@ def main(args):
     psf = PSF(psf_array, args.ncpu)
     l = args.lfrac * (freq.max() - freq.min())/np.mean(freq)
     print("GP prior over frequency sigma_f = %f l = %f"%(args.sig_l2, l))
-    K = Prior(freq/np.mean(freq), args.sig_l2, l, nx, ny, nthreads=args.ncpu)
+    K = Prior(args.sig_l2, nband, nx, ny, nthreads=args.ncpu)
     
     def hess(x):
-        return psf.convolve(x) + x  #K.idot(x)
+        return psf.convolve(x) + K.iconvolve(x)
+
+    def hess2(x):
+        return psf.convolve(x) + x/args.sig_l2**2
 
     # get Lipschitz constant
     if args.beta is None:
@@ -129,12 +132,6 @@ def main(args):
     if report_iters[-1] != args.maxit-1:
         report_iters.append(args.maxit-1)
 
-    # fidelity and gradient term
-    def fprime(x):
-        diff = psf.convolve(x) - dirty
-        tmp = x  #K.idot(x)
-        return 0.5*np.vdot(x, diff) - 0.5*np.vdot(x, dirty) + 0.5*np.vdot(x, tmp), diff + tmp
-
     # set up wavelet basis
     if args.use_psi:
         nband, nx, ny = dirty.shape
@@ -149,25 +146,36 @@ def main(args):
     if args.x0 is None:
         model = np.zeros(dirty.shape, dtype=real_type)
         dual = np.zeros((psi.nbasis, nband, psi.ntot), dtype=real_type)
+        residual = dirty
     else:
         compare_headers(hdr, fits.getheader(args.x0))
         model = load_fits(args.x0).astype(real_type)
         dual = np.zeros((psi.nbasis, nband, psi.ntot), dtype=real_type)
         residual = dirty - psf.convolve(model)
-        residual_mfs = np.sum(residual, axis=0)/wsum 
-        rmax = np.abs(residual_mfs).max()
-        rms = np.std(residual_mfs)
-        print("At iteration 0 peak of residual is %f and rms is %f" % (rmax, rms))
+    
+    residual_mfs = np.sum(residual, axis=0)/wsum 
+    rmax = np.abs(residual_mfs).max()
+    rms = np.std(residual_mfs)
+    print("At iteration 0 peak of residual is %f and rms is %f" % (rmax, rms))
 
     # deconvolve
     for k in range(args.maxit):
-        fid, grad = fprime(model)        
-        x = pcg(hess, -grad, np.zeros(dirty.shape, dtype=real_type), M=K.dot, 
+        # fid, grad = fprime(model)        
+        x = pcg(hess, residual, np.zeros(dirty.shape, dtype=real_type), M=K.convolve, 
+                tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
+        x2 = pcg(hess2, residual, np.zeros(dirty.shape, dtype=real_type), M=K.convolve, 
                 tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
 
         import matplotlib.pyplot as plt
-        for i in range(nband):
-            plt.imshow(x[i])
+        for i in range(2):
+            plt.figure('x')
+            plt.imshow(x[i], vmin=x2[i].min(), vmax=0.1)
+            plt.colorbar()
+            plt.figure('x2')
+            plt.imshow(x2[i], vmin=x2[i].min(), vmax=0.1)
+            plt.colorbar()
+            plt.figure('diff')
+            plt.imshow(x[i] - x2[i])
             plt.colorbar()
             plt.show()
 

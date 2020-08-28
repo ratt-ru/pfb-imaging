@@ -258,48 +258,53 @@ class Prior(object):
         
         # always work in pixel coordinates
         v_coord = np.arange(-(nband//2), nband//2)
-        # l_coord = np.arange(-(nx//2), nx//2)
-        # m_coord = np.arange(-(ny//2), ny//2)
         l_coord = np.arange(-(nx_psf//2), nx_psf//2)
         m_coord = np.arange(-(ny_psf//2), ny_psf//2)
 
-        ll, mm = np.meshgrid(l_coord, m_coord)
-        rrsq = ll**2 + mm*2
+        
 
 
 
         # set length scales
         length_scale = 2.5/(2*np.sqrt(2*np.log(2)))
 
-        self.K = np.exp(-rrsq/(2*length_scale**2))
+        K = np.zeros((nx_psf, ny_psf))
+        for i, l in enumerate(l_coord):
+            for j, m in enumerate(m_coord):
+                K[i,j] = sigma0**2*np.exp(-(l**2+m**2)/(2*length_scale**2))
 
+        self.K = K[None, :, :]
+        K_pad = iFs(self.K, axes=self.ax)
+        self.Khat = r2c(K_pad, axes=self.ax, forward=True, nthreads=nthreads, inorm=0)
+
+
+
+
+        # # get covariance in each dimension
+        # l_coord = np.arange(-(nx//2), nx//2)
+        # m_coord = np.arange(-(ny//2), ny//2)
+        # self.Kv = np.eye(nband) #expsq(v_coord, v_coord, sigma0, 0.1*length_scale) # + 1e-6*np.eye(nband)
+        # self.Kl = expsq(l_coord, l_coord, 1.0, length_scale) # + 1e-6*np.eye(nx)
+        # self.Km = expsq(m_coord, m_coord, 1.0, length_scale) # + 1e-6*np.eye(ny)
         
+        # # explicit inverses
+        # self.Kvinv = np.linalg.pinv(self.Kv)  
+        # self.Klinv = np.linalg.pinv(self.Kl)
+        # self.Kminv = np.linalg.pinv(self.Km)
 
+        # # Kronecker matrices for fast matrix vector products
+        # self.Kkron = (self.Kv, self.Kl, self.Km)
+        # self.Kinvkron = (self.Kvinv, self.Klinv, self.Kminv)
 
-
-        # get covariance in each dimension
-        self.Kv = expsq(v_coord, v_coord, sigma0, 0.1*length_scale) # + 1e-6*np.eye(nband)
-        self.Kl = expsq(l_coord, l_coord, 1.0, length_scale) # + 1e-6*np.eye(nx)
-        self.Km = expsq(m_coord, m_coord, 1.0, length_scale) # + 1e-6*np.eye(ny)
-        
-        # explicit inverses
-        self.Kvinv = np.linalg.pinv(self.Kv)  
-        self.Klinv = np.linalg.pinv(self.Kl)
-        self.Kminv = np.linalg.pinv(self.Km)
-
-        # Kronecker matrices for fast matrix vector products
-        self.Kkron = (self.Kv, self.Kl, self.Km)
-        self.Kinvkron = (self.Kvinv, self.Klinv, self.Kminv)
-
-        # spectral density
-        tl = self.Kl[0, :]
-        cl = np.append(tl, tl[np.arange(self.nx)[1:-1][::-1]])
-        Sl = c2c(cl, forward=True, nthreads=8)
-        tm = self.Km[0, :]
-        cm = np.append(tm, tm[np.arange(self.ny)[1:-1][::-1]])
-        Sm = c2c(cm, forward=True, nthreads=8)
-        self.S = np.kron(Sl, Sm).reshape(1, 2*self.nx-2, 2*self.ny-2)
-        self.Sinv = 1.0/self.S
+        # # spectral density
+        # tl = self.Kl[0, :]
+        # cl = np.append(tl, tl[np.arange(self.nx)[1:-1][::-1]])
+        # Sl = c2c(cl, forward=True, nthreads=8)
+        # tm = self.Km[0, :]
+        # cm = np.append(tm, tm[np.arange(self.ny)[1:-1][::-1]])
+        # Sm = c2c(cm, forward=True, nthreads=8)
+        # self.S = np.kron(Sl, Sm).reshape(1, 2*self.nx-2, 2*self.ny-2)
+        # self.Sinv = 1.0/self.S
         # tlinv = self.Klinv[0, :]
         # clinv = np.append(tlinv, tlinv[np.arange(self.nx)[1:-1][::-1]])
         # Slinv = c2c(clinv, forward=True, nthreads=8)
@@ -315,9 +320,22 @@ class Prior(object):
         xhat = c2c(xhat*self.S, axes=(1,2), forward=False, inorm=2, nthreads=8)[0:self.nband, 0:self.nx, 0:self.ny].real
         return freqmul(self.Kv, xhat.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
 
+    def convolve(self, x):
+        xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
+        xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
+        xhat = c2r(xhat * self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
+        res = Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
+        return res
+
+    def iconvolve(self, x):
+        xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
+        xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
+        xhat = c2r(xhat / self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
+        res = Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
+        return res
+
     def idothat(self, x):
         xpad = np.zeros((self.nband, 2*self.nx-2, 2*self.ny-2), dtype=np.complex128)
-        xpad = 
         xpad[0:self.nband, 0:self.nx, 0:self.ny] = x
         xhat = c2c(xpad, axes=(1, 2), forward=True, nthreads=self.nthreads)
         xhat = c2c(xhat*self.Sinv, axes=(1,2), forward=False, inorm=2, nthreads=8)[0:self.nband, 0:self.nx, 0:self.ny].real

@@ -19,15 +19,15 @@ def expsq_hat(s, sigmaf, l):
     return np.sqrt(2*np.pi*l**2) * sigmaf**2.0 * np.exp(-2 * np.pi**2 * l**2 * s**2) 
 
 if __name__=="__main__":
-    nx = 256
-    ny = 256
+    nx = 32
+    ny = 32
     nchan = 8
     
     Kop = Prior(1.0, nchan, nx, ny, 8)
 
     # xi = np.random.randn(nchan, nx, ny)
     xi = np.zeros((nchan, nx, ny))
-    xi[:, nx//4:3*nx//4, nx//4:3*nx//4] = np.random.randn(nchan, nx//2, ny//2)
+    xi[:, 10:22, 10:22] = np.random.randn(nchan, 12, 12)
     # xi[:, nx//4, ny//4] = 1.0
     # xi[:, 3*nx//4, ny//2] = 1.0
     
@@ -75,11 +75,15 @@ if __name__=="__main__":
     # xihat = np.zeros(Kop.)
     # xihat = c2c(xi, xi)
 
+    res = Kop.convolve(xi)
+    rec = Kop.iconvolve(res)
 
     import matplotlib.pyplot as plt
-    plt.imshow(Kop.K)
-    plt.colorbar()
-    
+    for i in range(2):
+        plt.imshow(rec[i] -xi[i])
+        plt.colorbar()
+        plt.show()
+
     # plt.figure('fft')
     # plt.plot(sv, chatv.real, '.')
 
