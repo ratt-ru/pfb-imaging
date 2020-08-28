@@ -7,11 +7,11 @@ from africanus.constants import c as lightspeed
 from africanus.gps.kernels import exponential_squared as expsq
 import matplotlib.pyplot as plt
 from pfb.opt import pcg
-import nifty_gridder as ng
-from pypocketfft import r2c, c2r
+from ducc0.wgridder import dirty2ms, ms2dirty
+from ducc0.fft import r2c, c2r
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
-from pfb.operators import PSF
+from pfb.operators import PSF, Prior
 from astropy.io import fits
 from pfb.utils import load_fits, save_fits, data_from_header, prox_21, str2bool, compare_headers
 
@@ -110,12 +110,12 @@ def main1D():
     plt.show()
 
 def R_func(x, uvw, freq, cell):
-    return ng.dirty2ms(uvw=uvw, freq=freq, dirty=x, 
+    return dirty2ms(uvw=uvw, freq=freq, dirty=x, 
                        pixsize_x=cell, pixsize_y=cell, 
                        epsilon=1e-10, nthreads=8, do_wstacking=False)
 
 def RH_func(x, uvw, freq, cell, nx, ny):
-    return ng.ms2dirty(uvw=uvw, freq=freq, ms=x,
+    return ms2dirty(uvw=uvw, freq=freq, ms=x,
                        npix_x=nx, npix_y=ny,
                        pixsize_x=cell, pixsize_y=cell, 
                        epsilon=1e-10, nthreads=8, do_wstacking=False)
@@ -162,7 +162,7 @@ def main2D():
     dirty = RH(data)
     noise_im = RH(noise)
 
-    psf = ng.ms2dirty(uvw=uvw, freq=freq, ms=np.ones((M, 1), dtype=np.complex128),
+    psf = ms2dirty(uvw=uvw, freq=freq, ms=np.ones((M, 1), dtype=np.complex128),
                       npix_x=2*nx, npix_y=2*ny,
                       pixsize_x=cell, pixsize_y=cell, 
                       epsilon=1e-10, nthreads=8, do_wstacking=False)
@@ -266,10 +266,11 @@ def main3D():
     # plt.show()
 
     psf = PSF(psf_array, 8)
+    K = Prior(0.0001, nchan, nx, ny, 8)
 
     # Tikhonov
     def hess(x):
-        return psf.convolve(x) + x
+        return psf.convolve(x) + K.iconvolve(x)
 
     # get Wiener filter soln
     xhat1 = pcg(hess, dirty, np.zeros((nchan, nx, ny), dtype=np.float64), M=lambda x:x, tol=1e-4, maxit=100)
@@ -283,8 +284,8 @@ def main3D():
     def fprime(x):
         I = np.exp(x.reshape(nchan, nx, ny))
         tmp1 = psf.convolve(I)
-        tmp2 = x.reshape(nchan, nx, ny)
-        return np.vdot(I, tmp1 - 2*dirty) + 100000*np.vdot(x, tmp2), (2 * I * (tmp1 - dirty) + 100000*2*tmp2).flatten()
+        tmp2 = K.iconvolve(x.reshape(nchan, nx, ny))
+        return np.vdot(I, tmp1 - 2*dirty) + np.vdot(x, tmp2), (2 * I * (tmp1 - dirty) + 2*tmp2).flatten()
 
     
     xhat2, f, d = bfgs(fprime, x0, approx_grad=False, factr=1e12)
