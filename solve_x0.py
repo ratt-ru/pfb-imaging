@@ -160,32 +160,15 @@ def main(args):
 
     # deconvolve
     for k in range(args.maxit):
-        # fid, grad = fprime(model)        
         x = pcg(hess, residual, np.zeros(dirty.shape, dtype=real_type), M=K.convolve, 
                 tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
-        x2 = pcg(hess2, residual, np.zeros(dirty.shape, dtype=real_type), M=K.convolve, 
-                tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
-
-        import matplotlib.pyplot as plt
-        for i in range(2):
-            plt.figure('x')
-            plt.imshow(x[i], vmin=x2[i].min(), vmax=0.1)
-            plt.colorbar()
-            plt.figure('x2')
-            plt.imshow(x2[i], vmin=x2[i].min(), vmax=0.1)
-            plt.colorbar()
-            plt.figure('diff')
-            plt.imshow(x[i] - x2[i])
-            plt.colorbar()
-            plt.show()
-
-        quit(())    
+        
         modelp = model.copy()
         model = modelp + args.gamma * x
 
         if args.use_psi:
-            # model, dual = simple_pd(lambda x: x, model, modelp, dual, args.sig_21, psi, weights_21, 1.0, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
-            model, dual = simple_pd(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
+            model, dual = simple_pd(lambda x: x, model, modelp, dual, args.sig_21, psi, weights_21, 1.0, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
+            # model, dual = simple_pd(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
         else:
             model = prox_21(model, args.sig_21, weights_21, psi=psi, positivity=True)
 

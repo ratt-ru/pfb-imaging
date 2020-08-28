@@ -21,13 +21,13 @@ def expsq_hat(s, sigmaf, l):
 if __name__=="__main__":
     nx = 32
     ny = 32
-    nchan = 8
+    nchan = 32
     
     Kop = Prior(1.0, nchan, nx, ny, 8)
 
     # xi = np.random.randn(nchan, nx, ny)
     xi = np.zeros((nchan, nx, ny))
-    xi[:, 10:22, 10:22] = np.random.randn(nchan, 12, 12)
+    xi[10:22, 10:22, 10:22] = np.random.randn(12, 12, 12)
     # xi[:, nx//4, ny//4] = 1.0
     # xi[:, 3*nx//4, ny//2] = 1.0
     
@@ -75,11 +75,17 @@ if __name__=="__main__":
     # xihat = np.zeros(Kop.)
     # xihat = c2c(xi, xi)
 
+    res2 = Kop.dot(xi)
+
     res = Kop.convolve(xi)
+
+    print(np.abs(res-res2).max())
     rec = Kop.iconvolve(res)
 
+    print(np.abs(rec-xi).max())
+
     import matplotlib.pyplot as plt
-    for i in range(2):
+    for i in range(10,12):
         plt.imshow(rec[i] -xi[i])
         plt.colorbar()
         plt.show()
