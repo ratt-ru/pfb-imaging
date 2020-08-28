@@ -1,13 +1,38 @@
+from numba import njit, prange
 import numpy as np
 import dask.array as da
 from daskms import xds_from_table
 import pywt
-import nifty_gridder as ng
-from pypocketfft import r2c, c2r
-from pfb.utils import freqmul
+from ducc0.wgridder import ms2dirty, dirty2ms
+from ducc0.fft import r2c, c2r, c2c
 from africanus.gps.kernels import exponential_squared as expsq
+from africanus.linalg import kronecker_tools as kt
+
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
+
+
+@njit(parallel=True, nogil=True, fastmath=True, inline='always')
+def freqmul(A, x):
+    nchan, npix = x.shape
+    out = np.zeros((nchan, npix), dtype=x.dtype)
+    for i in prange(npix):
+        for j in range(nchan):
+            for k in range(nchan):
+                out[j, i] += A[j, k] * x[k, i]
+    return out
+
+@njit(parallel=True, nogil=True, fastmath=True, inline='always')
+def make_kernel(nv_psf, nx_psf, ny_psf, sigma0, length_scale):
+    K = np.zeros((nv_psf, nx_psf, ny_psf), dtype=np.float64)
+    for i in range(nv_psf):
+        for j in range(nx_psf):
+            for k in range(ny_psf):
+                v = float(i - (nv_psf//2))
+                l = float(j - (nx_psf//2))
+                m = float(k - (ny_psf//2))
+                K[i,j,k] = sigma0**2*np.exp(-(v**2+l**2+m**2)/(2*length_scale**2))
+    return K
 
 class Gridder(object):
     def __init__(self, uvw, freq, sqrtW, nx, ny, cell_size, nband=None, precision=1e-7, ncpu=8, do_wstacking=1):
@@ -43,9 +68,9 @@ class Gridder(object):
         for i in range(self.nband):
             Ilow = self.freq_mapping[i]
             Ihigh = self.freq_mapping[i+1]
-            model_data[:, Ilow:Ihigh] = ng.dirty2ms(uvw=self.uvw, freq=self.freq[Ilow:Ihigh], dirty=x[i], wgt=self.wgt[:, Ilow:Ihigh],
-                                                    pixsize_x=self.cell, pixsize_y=self.cell, epsilon=self.precision,
-                                                    nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
+            model_data[:, Ilow:Ihigh] = dirty2ms(uvw=self.uvw, freq=self.freq[Ilow:Ihigh], dirty=x[i], wgt=self.wgt[:, Ilow:Ihigh],
+                                                 pixsize_x=self.cell, pixsize_y=self.cell, epsilon=self.precision,
+                                                 nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
         return model_data
 
     def hdot(self, x):
@@ -53,9 +78,9 @@ class Gridder(object):
         for i in range(self.nband):
             Ilow = self.freq_mapping[i]
             Ihigh = self.freq_mapping[i+1]
-            image[i] = ng.ms2dirty(uvw=self.uvw, freq=self.freq[Ilow:Ihigh], ms=x[:, Ilow:Ihigh], wgt=self.wgt[:, Ilow:Ihigh],
-                                   npix_x=self.nx, npix_y=self.ny, pixsize_x=self.cell, pixsize_y=self.cell, epsilon=self.precision,
-                                   nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
+            image[i] = ms2dirty(uvw=self.uvw, freq=self.freq[Ilow:Ihigh], ms=x[:, Ilow:Ihigh], wgt=self.wgt[:, Ilow:Ihigh],
+                                npix_x=self.nx, npix_y=self.ny, pixsize_x=self.cell, pixsize_y=self.cell, epsilon=self.precision,
+                                nthreads=self.nthreads, do_wstacking=self.do_wstacking, verbosity=0)
         return image
 
     def make_psf(self):
@@ -63,10 +88,10 @@ class Gridder(object):
         for i in range(self.nband):
             Ilow = self.freq_mapping[i]
             Ihigh = self.freq_mapping[i+1]
-            psf_array[i] = ng.ms2dirty(uvw=self.uvw, freq=self.freq[Ilow:Ihigh], 
-                                       ms=self.wgt[:, Ilow:Ihigh].astype(np.complex128), wgt=self.wgt[:, Ilow:Ihigh],
-                                       npix_x=2*self.nx, npix_y=2*self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
-                                       epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking)
+            psf_array[i] = ms2dirty(uvw=self.uvw, freq=self.freq[Ilow:Ihigh],
+                                    ms=self.wgt[:, Ilow:Ihigh].astype(np.complex128), wgt=self.wgt[:, Ilow:Ihigh],
+                                    npix_x=2*self.nx, npix_y=2*self.ny, pixsize_x=self.cell, pixsize_y=self.cell,
+                                    epsilon=self.precision, nthreads=self.nthreads, do_wstacking=self.do_wstacking)
         return psf_array
 
     def convolve(self, x):
@@ -121,7 +146,7 @@ class OutMemGridder(object):
             weight_column: {'dims': ('chan', )},
             "UVW": {'dims': ('uvw',)},
         }
-        
+
     def make_residual(self, x, v_dof=None):
         print("Making residual")
         residual = np.zeros(x.shape, dtype=x.dtype)
@@ -133,7 +158,7 @@ class OutMemGridder(object):
             data = getattr(ds, self.data_column).data
             weights = getattr(ds, self.weight_column).data
             uvw = ds.UVW.data.compute().astype(self.real_type)
-            
+
             for i in range(self.nband):
                 Ilow = self.freq_mapping[i]
                 Ihigh = self.freq_mapping[i+1]
@@ -165,7 +190,7 @@ class OutMemGridder(object):
             data = getattr(ds, self.data_column).data
             weights = getattr(ds, self.weight_column).data
             uvw = ds.UVW.data.compute().astype(self.real_type)
-        
+
             for i in range(self.nband):
                 Ilow = self.freq_mapping[i]
                 Ihigh = self.freq_mapping[i+1]
@@ -189,7 +214,7 @@ class OutMemGridder(object):
             print("Processing field %i"%ds.FIELD_ID)
             weights = getattr(ds, self.weight_column).data
             uvw = ds.UVW.data.compute().astype(self.real_type)
-        
+
             for i in range(self.nband):
                 Ilow = self.freq_mapping[i]
                 Ihigh = self.freq_mapping[i+1]
@@ -223,28 +248,120 @@ class PSF(object):
         xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
         xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
         xhat = c2r(xhat * self.psfhat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
-        return Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y] 
+        return Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
 
 class Prior(object):
-    def __init__(self, freq, sigma0, l, nx, ny, nthreads=8):
+    def __init__(self, sigma0, nband, nx, ny, nthreads=8):
         self.nthreads = nthreads
         self.nx = nx
         self.ny = ny
-        self.nband = freq.size
-        self.freq = freq/np.mean(freq)
-        self.Kv = expsq(self.freq, self.freq, sigma0, l)
-        self.x0 = np.zeros((self.nband, self.nx, self.ny), dtype=freq.dtype)
-
-        self.Kvinv = np.linalg.inv(self.Kv + 1e-12*np.eye(self.nband))
-
-        self.L = np.linalg.cholesky(self.Kv + 1e-12*np.eye(self.nband))
-        self.LH = self.L.T
+        self.nv = nband
+        nv_psf = 2*self.nv
+        npad_v = (nv_psf - nband)//2
+        nx_psf = 2*self.nx
+        npad_x = (nx_psf - nx)//2
+        ny_psf = 2*self.ny
+        npad_y = (ny_psf - ny)//2
+        self.padding = ((npad_v,npad_v), (npad_x, npad_x), (npad_y, npad_y))
+        self.ax = (0, 1,2)
+        self.unpad_v = slice(npad_v, -npad_v)
+        self.unpad_x = slice(npad_x, -npad_x)
+        self.unpad_y = slice(npad_y, -npad_y)
+        self.lastsize = ny + np.sum(self.padding[-1])
         
+        # always work in pixel coordinates
+        v_coord = np.arange(-(nv_psf//2), nv_psf//2)
+        l_coord = np.arange(-(nx_psf//2), nx_psf//2)
+        m_coord = np.arange(-(ny_psf//2), ny_psf//2)
+
+        # set length scales
+        length_scale = 2.5/(2*np.sqrt(2*np.log(2)))
+
+        # K = np.zeros((nv_psf, nx_psf, ny_psf))
+        # for i, v in enumerate(v_coord):
+        #     for j, l in enumerate(l_coord):
+        #         for k, m in enumerate(m_coord):
+        #             K[i,j,k] = sigma0**2*np.exp(-(v**2+l**2+m**2)/(2*length_scale**2))
+
+        K = make_kernel(nv_psf, nx_psf, ny_psf, sigma0, length_scale)
+
+        self.K = K
+        K_pad = iFs(self.K, axes=self.ax)
+        self.Khat = r2c(K_pad, axes=self.ax, forward=True, nthreads=nthreads, inorm=0)
+
+
+
+
+        # get covariance in each dimension
+        v_coord = np.arange(-(nband//2), nband//2)
+        l_coord = np.arange(-(nx//2), nx//2)
+        m_coord = np.arange(-(ny//2), ny//2)
+        self.Kv = expsq(v_coord, v_coord, sigma0, length_scale) # + 1e-6*np.eye(nband)
+        self.Kl = expsq(l_coord, l_coord, 1.0, length_scale) # + 1e-6*np.eye(nx)
+        self.Km = expsq(m_coord, m_coord, 1.0, length_scale) # + 1e-6*np.eye(ny)
+        
+        # # explicit inverses
+        # self.Kvinv = np.linalg.pinv(self.Kv)  
+        # self.Klinv = np.linalg.pinv(self.Kl)
+        # self.Kminv = np.linalg.pinv(self.Km)
+
+        # # Kronecker matrices for fast matrix vector products
+        self.Kkron = (self.Kv, self.Kl, self.Km)
+        # self.Kinvkron = (self.Kvinv, self.Klinv, self.Kminv)
+
+        # # spectral density
+        # tl = self.Kl[0, :]
+        # cl = np.append(tl, tl[np.arange(self.nx)[1:-1][::-1]])
+        # Sl = c2c(cl, forward=True, nthreads=8)
+        # tm = self.Km[0, :]
+        # cm = np.append(tm, tm[np.arange(self.ny)[1:-1][::-1]])
+        # Sm = c2c(cm, forward=True, nthreads=8)
+        # self.S = np.kron(Sl, Sm).reshape(1, 2*self.nx-2, 2*self.ny-2)
+        # self.Sinv = 1.0/self.S
+        # tlinv = self.Klinv[0, :]
+        # clinv = np.append(tlinv, tlinv[np.arange(self.nx)[1:-1][::-1]])
+        # Slinv = c2c(clinv, forward=True, nthreads=8)
+        # tminv = self.Kminv[0, :]
+        # cminv = np.append(tminv, tminv[np.arange(self.ny)[1:-1][::-1]])
+        # Sminv = c2c(cminv, forward=True, nthreads=8)
+        # self.Sinv = np.kron(Slinv, Sminv).reshape(1, 2*self.nx-2, 2*self.ny-2)
+
+    def dothat(self, x):
+        xpad = np.zeros((self.nband, 2*self.nx-2, 2*self.ny-2))
+        xpad[0:self.nband, 0:self.nx, 0:self.ny] = x
+        xhat = c2c(xpad, axes=(1, 2), forward=True, nthreads=self.nthreads)
+        xhat = c2c(xhat*self.S, axes=(1,2), forward=False, inorm=2, nthreads=8)[0:self.nband, 0:self.nx, 0:self.ny].real
+        return freqmul(self.Kv, xhat.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+
+    def convolve(self, x):
+        xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
+        xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
+        xhat = c2r(xhat * self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
+        res = Fs(xhat, axes=self.ax)[self.unpad_v, self.unpad_x, self.unpad_y]
+        return res
+
+    def iconvolve(self, x):
+        xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
+        xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
+        xhat = c2r(xhat / self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
+        res = Fs(xhat, axes=self.ax)[self.unpad_v, self.unpad_x, self.unpad_y]
+        return res
+
+    def idothat(self, x):
+        xpad = np.zeros((self.nband, 2*self.nx-2, 2*self.ny-2), dtype=np.complex128)
+        xpad[0:self.nband, 0:self.nx, 0:self.ny] = x
+        xhat = c2c(xpad, axes=(1, 2), forward=True, nthreads=self.nthreads)
+        xhat = c2c(xhat*self.Sinv, axes=(1,2), forward=False, inorm=2, nthreads=8)[0:self.nband, 0:self.nx, 0:self.ny].real
+        return freqmul(self.Kvinv, xhat.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+
+
     def idot(self, x):
-        return freqmul(self.Kvinv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
-    
+        # return freqmul(self.Kvinv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+        return kt.kron_matvec(self.Kinvkron, x.flatten()).reshape(*x.shape)
+
     def dot(self, x):
-        return freqmul(self.Kv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+        # return freqmul(self.Kv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+        return kt.kron_matvec(self.Kkron, x.flatten()).reshape(*x.shape)
 
     def sqrtdot(self, x):
         return freqmul(self.L, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
@@ -253,19 +370,20 @@ class Prior(object):
         return freqmul(self.LH, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
 
 class PSI(object):
-    def __init__(self, nchan, nx, ny,
+    def __init__(self, nband, nx, ny,
                  nlevels=2,
-                 basis=['self', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8']):
+                 bases=['self', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8']):
         """
         Sets up operators to move between wavelet coefficients
-        in each basis and the image x. 
-        
+        in each basis and the image x.
+
         Parameters
         ----------
+        nband - number of bands
         nx - number of pixels in x-dimension
         ny - number of pixels in y-dimension
         nlevels - The level of the decomposition. Default=2
-        basis - List holding basis names. 
+        basis - List holding basis names.
                 Default is delta + first 8 DB wavelets
 
         Returns
@@ -276,15 +394,15 @@ class PSI(object):
                 each entry corresponds to one of the basis elements.
         """
         self.real_type = np.float64
-        self.nchan = nchan
+        self.nband = nband
         self.nx = nx
         self.ny = ny
         self.nlevels = nlevels
-        self.P = len(basis)
+        self.P = len(bases)
         self.sqrtP = np.sqrt(self.P)
-        self.basis = basis
-        self.nbasis = len(basis)
-    
+        self.bases = bases
+        self.nbasis = len(bases)
+
         tmpx = np.zeros(self.nlevels)
         tmpx[-1] = self.nx//2 + self.nx%2
         tmpy = np.zeros(self.nlevels)
@@ -294,9 +412,9 @@ class PSI(object):
             tmpx[i] += tmpx[i+1]%2
             tmpy[i] = tmpy[i+1]//2
             tmpy[i] += tmpy[i+1]%2
-            
-        self.indx = np.append(np.array(tmpx[0]), tmpx) 
-        self.indy = np.append(np.array(tmpy[0]), tmpy) 
+
+        self.indx = np.append(np.array(tmpx[0]), tmpx)
+        self.indy = np.append(np.array(tmpy[0]), tmpy)
         self.n = self.indx * self.indy
 
         self.ntot = 4 * self.indx[0] * self.indy[0]
@@ -304,69 +422,205 @@ class PSI(object):
             self.ntot += 3 * self.indx[i] * self.indy[i]
 
         self.ntot = int(self.ntot)
+        self.npad = self.ntot - self.nx*self.ny
 
-    def dot(self, alpha, basis_k):
+    def dot(self, alpha):
         """
-        Takes array of coefficients to image. 
+        Takes array of coefficients to image.
         The input does not have the form expected by pywt
         so we have to reshape it. Comes in as a flat vector
         arranged as
 
         [cAn, cHn, cVn, cDn, ..., cH1, cV1, cD1]
 
-        where each entry is a flattened array and n denotes the 
+        where each entry is a flattened array and n denotes the
         level of the decomposition. This has to be restructured as
 
         [cAn, (cHm, cVn, cDn), ..., (cH1, cV1, cD1)]
 
-        where entries are arrays with size defined by set_index_scheme. 
-        """ 
-        base = self.basis[basis_k]
-        if base == 'self':
-            return alpha.reshape(self.nchan, self.nx, self.ny)/self.sqrtP
-        else:
-            x = np.zeros((self.nchan, self.nx, self.ny), dtype=self.real_type)
-            for l in range(self.nchan):
-                # stack array back into expected shape
-                n = int(self.n[0])
-                idx = int(self.indx[0])
-                idy = int(self.indy[0])
-                
-                alpha_rec = [alpha[l, 0:n].reshape(idx, idy)]
-                ind = int(self.n[0])
-                for i in range(1, self.nlevels+1): 
-                    n = int(self.n[i])
-                    idx = int(self.indx[i])
-                    idy = int(self.indy[i])  
-                    tpl = ()
-                    for j in range(3):
-                        tpl += (alpha[l, ind:ind+n].reshape(idx, idy),)
-                        ind += n
+        where entries are arrays with size defined by set_index_scheme.
+        """
+        x = np.zeros((self.nband, self.nx, self.ny), dtype=self.real_type)
+        for b in range(self.nbasis):
+            base = self.bases[b]
+            for l in range(self.nband):
+                if base == 'self':
+                    # just unpad and reshape
+                    if self.npad:  # otherwise returns None when npad==0
+                        x[l] += alpha[b, l, 0:-self.npad].reshape(self.nx, self.ny)/self.sqrtP
+                    else:
+                        x[l] += alpha[b, l].reshape(self.nx, self.ny)/self.sqrtP
+                else:
+                    # stack array back into expected shape
+                    n = ind = int(self.n[0])
+                    idx = int(self.indx[0])
+                    idy = int(self.indy[0])
 
-                    alpha_rec.append(tpl)
-                # return reconstructed image from coeff
-                x[l, :, :] = pywt.waverec2(alpha_rec, base, mode='periodization')/self.sqrtP
-            
-            return x 
+                    alpha_rec = [alpha[b, l, 0:ind].reshape(idx, idy)]
 
-    def hdot(self, x, basis_k):
+                    for i in range(1, self.nlevels + 1):
+                        n = int(self.n[i])
+                        idx = int(self.indx[i])
+                        idy = int(self.indy[i])
+                        tpl = ()
+
+                        for j in range(3):
+                            tpl += (alpha[b, l, ind:ind+n].reshape(idx, idy),)
+                            ind += n
+
+                        alpha_rec.append(tpl)
+
+                    wave = pywt.waverec2(alpha_rec, base, mode='periodization')
+
+                    # return reconstructed image from coeff
+                    x[l, :, :] += wave / self.sqrtP
+        return x
+
+    def hdot(self, x):
         """
         This implements the adjoint of Psi_func i.e. image to coeffs
         """
-        base = self.basis[basis_k]
-        if base == 'self':
-            # just flatten image, no need to stack in this case
-            return x.reshape(self.nchan, self.nx*self.ny)/self.sqrtP
-        else:
-            alpha = np.zeros((self.nchan, self.ntot), dtype=self.real_type)
-            for l in range(self.nchan):
+        alpha = np.zeros((self.nbasis, self.nband, self.ntot))
+        for b in range(self.nbasis):
+            base = self.bases[b]
+            for l in range(self.nband):
+                if base == 'self':
+                    # just pad image to have same shape as flattened wavelet coefficients
+                    alpha[b, l] = np.pad(x[l].reshape(self.nx*self.ny)/self.sqrtP, (0, self.npad), mode='constant')
+                else:
+                    # decompose
+                    alphal = pywt.wavedec2(x[l], base, mode='periodization', level=self.nlevels)
+                    # stack decomp into vector
+                    tmp = [alphal[0].ravel()]
+
+                    for item in alphal[1::]:
+                        for j in range(len(item)):
+                            tmp.append(item[j].ravel())
+
+                    alpha[b, l] = np.concatenate(tmp) / self.sqrtP
+        return alpha
+
+
+import dask.array as da
+
+def _dot_internal(alpha, bases, nd, indx, indy, sqrtP, real_type,
+                  npad, nx, ny, nlevels):
+    nbasis, nband, _ = alpha.shape
+    # note reduction over basis axis is external since we need to
+    # chunk over the axis
+    x = np.zeros((nbasis, nband, nx, ny), dtype=real_type)
+    for b in range(nbasis):
+        base = bases[b]
+        for l in range(nband):
+            if base == 'self':
+                # just unpad and reshape
+                if npad:  # otherwise returns None when npad==0
+                    x[b, l] = alpha[b, l, 0:-npad].reshape(nx, ny)/sqrtP
+                else:
+                    x[b, l] = alpha[b, l].reshape(nx, ny)/sqrtP
+            else:
+                # stack array back into expected shape
+                n = ind = int(nd[0])
+                idx = int(indx[0])
+                idy = int(indy[0])
+
+                alpha_rec = [alpha[b, l, 0:ind].reshape(idx, idy)]
+
+                for i in range(1, nlevels + 1):
+                    n = int(nd[i])
+                    idx = int(indx[i])
+                    idy = int(indy[i])
+                    tpl = ()
+
+                    for j in range(3):
+                        tpl += (alpha[b, l, ind:ind+n].reshape(idx, idy),)
+                        ind += n
+
+                    alpha_rec.append(tpl)
+
+                wave = pywt.waverec2(alpha_rec, base, mode='periodization')
+
+                # return reconstructed image from coeff
+                x[b, l, :, :] = wave / sqrtP
+
+    return x
+
+def _dot_internal_wrapper(alpha, bases, nd, indx, indy, sqrtP, real_type,
+                          npad, nx, ny, nlevels):
+    return _dot_internal(alpha[0], bases, nd, indx, indy, sqrtP, real_type,
+                         npad, nx, ny, nlevels)
+
+def _hdot_internal(x, bases, ntot, nlevels, sqrtP, real_type, npad, nx, ny):
+    nband = x.shape[0]
+    nbasis = len(bases)
+    alpha = np.zeros((nbasis, nband, ntot))
+    for b in range(nbasis):
+        base = bases[b]
+        for l in range(nband):
+            if base == 'self':
+                # just pad image to have same shape as flattened wavelet coefficients
+                alpha[b, l] = np.pad(x[l].reshape(nx*ny)/sqrtP, (0, npad), mode='constant')
+            else:
                 # decompose
-                alphal = pywt.wavedec2(x[l], base, mode='periodization', level=self.nlevels)
+                alphal = pywt.wavedec2(x[l], base, mode='periodization', level=nlevels)
                 # stack decomp into vector
                 tmp = [alphal[0].ravel()]
+
                 for item in alphal[1::]:
                     for j in range(len(item)):
                         tmp.append(item[j].ravel())
-                alpha[l] = np.concatenate(tmp)/self.sqrtP 
-            return alpha
 
+                alpha[b, l] = np.concatenate(tmp) / sqrtP
+
+    return alpha
+
+def _hdot_internal_wrapper(x, bases, ntot, nlevels, sqrtP, real_type,
+                           npad, nx, ny):
+    return _hdot_internal(x[0][0], bases, ntot, nlevels, sqrtP, real_type,
+                          npad, nx, ny)
+
+class DaskPSI(PSI):
+    def dot(self, alpha):
+        # Chunk per basis
+        bases = da.from_array(self.bases, chunks=1)
+        
+        # Chunk per basis and band
+        alpha_dask = da.from_array(alpha, chunks=(1, 1, self.ntot))
+        
+        x = da.blockwise(_dot_internal_wrapper, ("basis", "nband", "nx", "ny"),
+                         alpha_dask, ("basis", "nband", "ntot"),
+                         bases, ("basis", ),
+                         self.n, None,
+                         self.indx, None,
+                         self.indy, None,
+                         self.sqrtP, None,
+                         self.real_type, None,
+                         self.npad, None,
+                         self.nx, None,
+                         self.ny, None,
+                         self.nlevels, None,
+                         new_axes={"nx": self.nx, "ny": self.ny},
+                         dtype=self.real_type)
+
+        return x.sum(axis=0).compute()
+
+    def hdot(self, x):
+        # Chunk per basis
+        bases = da.from_array(self.bases, chunks=1)
+        # Chunk per band
+        xdask = da.from_array(x, chunks=(1, self.nx, self.ny))
+
+        alpha = da.blockwise(_hdot_internal_wrapper, ("nbasis", "nband", "ntot"),
+                             xdask, ("nband", "nx", "ny"),
+                             bases, ("nbasis", ),
+                             self.ntot, None,
+                             self.nlevels, None,
+                             self.sqrtP, None,
+                             self.real_type, None,
+                             self.npad, None,
+                             self.nx, None,
+                             self.ny, None,
+                             new_axes={"ntot": self.ntot},
+                             dtype=self.real_type)
+
+        return alpha.compute()

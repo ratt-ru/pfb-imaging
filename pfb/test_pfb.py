@@ -1,5 +1,7 @@
 # import matplotlib as mpl
 # mpl.use('TkAgg')
+import pytest
+opt = pytest.importorskip('opt')
 import matplotlib.pyplot as plt
 import numpy as np
 from numba import njit, prange
@@ -69,7 +71,7 @@ def create_parser():
                    help="Apply positivity constraint")
     p.add_argument("--continue_from", type=str, default='',
                    help='File containing results to continue from')
-    p.add_argument("--mtol", type=float, default=1e-5, 
+    p.add_argument("--mtol", type=float, default=1e-5,
                    help="Major cycle tolerance")
     p.add_argument("--report_freq", type=int, default=2,
                    help="How often to save output images during deconvolution")
@@ -106,7 +108,7 @@ def main(args, ddict):
     from africanus.constants import c as lightspeed
     u_max = np.abs(uvw[:, 0]).max()
     v_max = np.abs(uvw[:, 1]).max()
-    
+
     uv_max = np.maximum(u_max, v_max)
     cell_N = 1.0/(2*uv_max*freq.max()/lightspeed)
 
@@ -117,7 +119,7 @@ def main(args, ddict):
         cell_rad = cell_N/args.super_resolution_factor
         args.cell_size = cell_rad*60*60*180/np.pi
         print("Cell size set to %5.5e arcseconds" % args.cell_size)
-    
+
     if args.nx is None:
         fov = args.fov*3600
         nx = int(fov/args.cell_size)
@@ -144,7 +146,7 @@ def main(args, ddict):
     else:
         hdu = fits.PrimaryHDU()
         hdr = hdu.header
-    
+
     # check for cached dirty and psf
     GD = vars(args)
     dirty_hash = ''
@@ -161,12 +163,12 @@ def main(args, ddict):
         nband = freq_out.size
         psf_max = np.amax(psf_array.reshape(nband, 4*args.nx*args.ny), axis=1)
         print("Found valid dirty and psf cache")
-    except: 
+    except:
         psf_array = R.make_psf()
         nband = R.nband
         psf_max = np.amax(psf_array.reshape(nband, 4*args.nx*args.ny), axis=1)
         psf = PSF(psf_array, args.ncpu)
-    
+
         # make dirty (data hasn't been whitened)
         dirty = R.hdot(R.wgt * data)
 
@@ -188,9 +190,9 @@ def main(args, ddict):
         if args.verify_convolve:
             print("Verifying convolution")
             test_convolve(R, psf, args)
-    
+
     wsum = np.sum(psf_max) # to normalise mfs results
-    
+
     # load in previous result
     result_hash = ''
     result_hash_options = ['nx', 'ny', 'cell_size', 'channels_out']
@@ -207,7 +209,7 @@ def main(args, ddict):
         # dual = rdict['dual']
         # weights_l1 = rdict['weights_l1']
         sigma0 = rdict['sigma0']
-        
+
         # set prior
         l = 0.25 * (freq_out.max() - freq_out.min())/np.mean(freq_out)  # length scale in terms of fractional bandwidth
         print("Length scale set to ", l)
@@ -225,15 +227,15 @@ def main(args, ddict):
         l = 0.25 * (freq_out.max() - freq_out.min())/np.mean(freq_out)  # length scale in terms of fractional bandwidth
         print("Length scale set to ", l)
         K = Prior(freq_out, sigma0, l, args.nx, args.ny)
-        
+
         def op(x):  # used for stabalised updates
             return K.sqrthdot(psf.convolve(K.sqrtdot(x)))
-        
+
         print("Getting spectral norm for update operator")
         L = power_method(op, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
         print(" L = %5.5e "%L)
-        soln, _, _ = solve_x0(op, K.sqrthdot(dirty), 
-                              np.zeros_like(dirty), np.zeros_like(dirty), 
+        soln, _, _ = solve_x0(op, K.sqrthdot(dirty),
+                              np.zeros_like(dirty), np.zeros_like(dirty),
                               L, 1.0, maxit=2*args.cgmaxit, positivity=True)
         model = K.sqrtdot(soln)
 
@@ -253,7 +255,7 @@ def main(args, ddict):
     if args.tidy:
         A = lambda x: psf.convolve(x) + K.idot(x)
         nuA = L
-    else: 
+    else:
         A = lambda x: x
         nuA = 1.0
 
@@ -280,7 +282,7 @@ def main(args, ddict):
         xi, yi, L = solve_x0(op, K.sqrthdot(residual), xi, yi, L, 1.0, tol=args.cgtol, maxit=args.cgmaxit, positivity=False)
         x = K.sqrtdot(xi)
         # x = pcg(A, residual, x, M=K.dot, tol=1e-10, maxit=args.cgmaxit)
-        
+
         # update model
         modelp = model
         model = modelp + x
@@ -292,26 +294,26 @@ def main(args, ddict):
             args.sig_l21 = 2*rms
 
         # compute prox
-        model, v21, vn = hpd(A, model, 
+        model, v21, vn = hpd(A, model,
                              modelp, v21, vn,  # initial guesses
                              nuA, 1.0, 1.0,    # spectral norms
                              args.sig_l21, args.sig_n,       # regularisers
                              1.0, 1.0,      # step sizes
                              1.0, 1.0, 1.0,  # extrapolation
-                             tol=args.cgtol, maxit=args.cgmaxit, positivity=args.positivity) 
+                             tol=args.cgtol, maxit=args.cgmaxit, positivity=args.positivity)
 
         # get residual
         residual_vis = R.wgt*data - R.dot(model)
 
         if i in reweight_iters:
-            # # l1 reweighting 
+            # # l1 reweighting
             # weights_l21 = reweight_alpha / (reweight_alpha + np.abs(v21))
 
             # # nuclear norm reweighting
             # weights_l21 = reweight_alpha / (reweight_alpha + np.abs(vn))
-            
+
             # reweight_alpha = reweight_alpha_ff * reweight_alpha
-            
+
             # l2 reweighting compute new weights based on current residuals
             v_dof, wgt = robust_reweight(v_dof, residual_vis)
 
@@ -321,7 +323,7 @@ def main(args, ddict):
             R.wgt *= wgt
 
             # apply new sqrtW to residual visibilities
-            residual_vis *= wgt   
+            residual_vis *= wgt
 
             del wgt
 
@@ -336,10 +338,10 @@ def main(args, ddict):
             print("Getting spectral norm for update operator")
             L = power_method(op, residual.shape, tol=args.pmtol, maxit=args.pmmaxit)
             print("L = %5.5e"%L)
-       
+
         # residual image
         residual = R.hdot(residual_vis)
-       
+
         # check stopping criteria
         rmax = np.abs(residual/psf_max[:, None, None]).max()
         rms = np.std(residual/psf_max[:, None, None])
@@ -377,14 +379,14 @@ def main(args, ddict):
 
     if args.make_restored:
         # get the (flat) Wiener filter soln
-        xi, yi, L = solve_x0(op, K.sqrthdot(residual), xi, yi, L, 1.0, 
+        xi, yi, L = solve_x0(op, K.sqrthdot(residual), xi, yi, L, 1.0,
                       positivity=False, tol=args.cgtol, maxit=args.cgmaxit)
         x = K.sqrtdot(xi)
         # x = pcg(A, residual, x, M=K.dot, tol=1e-10, maxit=args.cgmaxit)
         model += x
         # get residual
         residual_vis = R.wgt*data - R.dot(model)
-        residual = R.hdot(residual_vis)  # negative of gradient term  
+        residual = R.hdot(residual_vis)  # negative of gradient term
 
         rmax = np.abs(residual/psf_max[:, None, None]).max()
         rms = np.std(residual/psf_max[:, None, None])
@@ -444,15 +446,15 @@ if __name__=="__main__":
         data_hash += '%s=%s_'%(opt, str(GD[opt]))
     data_hash = data_hash[0:-1]
     data_hash = data_hash.replace('/', '.')
-    
+
     if args.cache_name == '':
         cache_name = args.outfile + data_hash + '.npz'
     else:
         if args.cache_name[-4:] != '.npz':
             cache_name = args.cache_name + '.npz'
-        else:    
+        else:
             cache_name = args.cache_name
-    
+
     # try load in cache if it exists
     try:
         ddict = np.load(cache_name)
