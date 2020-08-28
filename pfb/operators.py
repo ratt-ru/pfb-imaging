@@ -403,26 +403,50 @@ class PSI(object):
         self.bases = bases
         self.nbasis = len(bases)
 
-        tmpx = np.zeros(self.nlevels)
-        tmpx[-1] = self.nx//2 + self.nx%2
-        tmpy = np.zeros(self.nlevels)
-        tmpy[-1] = self.ny//2 + self.ny%2
-        for i in range(self.nlevels-2, -1, -1):
-            tmpx[i] = tmpx[i+1]//2
-            tmpx[i] += tmpx[i+1]%2
-            tmpy[i] = tmpy[i+1]//2
-            tmpy[i] += tmpy[i+1]%2
+        # tmpx = np.zeros(self.nlevels)
+        # tmpx[-1] = self.nx//2 + self.nx%2
+        # tmpy = np.zeros(self.nlevels)
+        # tmpy[-1] = self.ny//2 + self.ny%2
+        # for i in range(self.nlevels-2, -1, -1):
+        #     tmpx[i] = tmpx[i+1]//2
+        #     tmpx[i] += tmpx[i+1]%2
+        #     tmpy[i] = tmpy[i+1]//2
+        #     tmpy[i] += tmpy[i+1]%2
 
-        self.indx = np.append(np.array(tmpx[0]), tmpx)
-        self.indy = np.append(np.array(tmpy[0]), tmpy)
-        self.n = self.indx * self.indy
+        # self.indx = np.append(np.array(tmpx[0]), tmpx)
+        # self.indy = np.append(np.array(tmpy[0]), tmpy)
+        # self.n = self.indx * self.indy
 
-        self.ntot = 4 * self.indx[0] * self.indy[0]
-        for i in range(2, self.nlevels+1):
-            self.ntot += 3 * self.indx[i] * self.indy[i]
+        # self.ntot = 4 * self.indx[0] * self.indy[0]
+        # for i in range(2, self.nlevels+1):
+        #     self.ntot += 3 * self.indx[i] * self.indy[i]
 
-        self.ntot = int(self.ntot)
-        self.npad = self.ntot - self.nx*self.ny
+        # self.ntot = int(self.ntot)
+        # self.npad = self.ntot - self.nx*self.ny
+
+        # do a mock decomposition to get max coeff size
+        x = np.random.randn(nx, ny)
+        self.ntot = []
+        self.iy = []
+        self.sy = []
+        for i, b in enumerate(bases):
+            if b=='self':
+                alpha = x.flatten()
+                y, iy, sy = x.flatten(), 0, 0
+            else:
+                alpha = pywt.wavedecn(x, b, mode='zero', level=self.nlevels)
+                y, iy, sy = pywt.ravel_coeffs(alpha)
+            self.iy.append(iy)
+            self.sy.append(sy)
+            self.ntot.append(y.size)
+            print(self.ntot[i])
+        
+        # get padding info
+        self.nmax = np.asarray(self.ntot).max()
+        self.padding = []
+        for i in range(nbasis):
+            self.padding.append(slice(0, ntot[i]))
+
 
     def dot(self, alpha):
         """
@@ -444,36 +468,15 @@ class PSI(object):
         for b in range(self.nbasis):
             base = self.bases[b]
             for l in range(self.nband):
+                a = alpha[b, l, self.padding[b]]
                 if base == 'self':
-                    # just unpad and reshape
-                    if self.npad:  # otherwise returns None when npad==0
-                        x[l] += alpha[b, l, 0:-self.npad].reshape(self.nx, self.ny)/self.sqrtP
-                    else:
-                        x[l] += alpha[b, l].reshape(self.nx, self.ny)/self.sqrtP
+                    wave = a.reshape(self.nx, self.ny)
                 else:
-                    # stack array back into expected shape
-                    n = ind = int(self.n[0])
-                    idx = int(self.indx[0])
-                    idy = int(self.indy[0])
-
-                    alpha_rec = [alpha[b, l, 0:ind].reshape(idx, idy)]
-
-                    for i in range(1, self.nlevels + 1):
-                        n = int(self.n[i])
-                        idx = int(self.indx[i])
-                        idy = int(self.indy[i])
-                        tpl = ()
-
-                        for j in range(3):
-                            tpl += (alpha[b, l, ind:ind+n].reshape(idx, idy),)
-                            ind += n
-
-                        alpha_rec.append(tpl)
-
-                    wave = pywt.waverec2(alpha_rec, base, mode='periodization')
+                    alpha_rec = pywt.unravel_coeffs(a, self.iy[b], self.sy[b], format='wavedec2')
+                    wave = pywt.waverec2(alpha_rec, base, mode='zero')
 
                     # return reconstructed image from coeff
-                    x[l, :, :] += wave / self.sqrtP
+                x[l] += wave / self.sqrtP
         return x
 
     def hdot(self, x):
@@ -486,18 +489,13 @@ class PSI(object):
             for l in range(self.nband):
                 if base == 'self':
                     # just pad image to have same shape as flattened wavelet coefficients
-                    alpha[b, l] = np.pad(x[l].reshape(self.nx*self.ny)/self.sqrtP, (0, self.npad), mode='constant')
+                    alpha[b, l] = np.pad(x[l].reshape(self.nx*self.ny)/self.sqrtP, (0, self.nmax-self.ntot[b]), mode='constant')
                 else:
                     # decompose
-                    alphal = pywt.wavedec2(x[l], base, mode='periodization', level=self.nlevels)
-                    # stack decomp into vector
-                    tmp = [alphal[0].ravel()]
-
-                    for item in alphal[1::]:
-                        for j in range(len(item)):
-                            tmp.append(item[j].ravel())
-
-                    alpha[b, l] = np.concatenate(tmp) / self.sqrtP
+                    alphal = pywt.wavedec2(x[l], base, mode='zero', level=self.nlevels)
+                    # ravel and pad
+                    tmp, _, _ = pywt.ravel_coeffs(alphal)
+                    alpha[b, l] = np.pad(tmp/self.sqrtP, (0, self.nmax-self.ntot[b]), mode='constant')
         return alpha
 
 
