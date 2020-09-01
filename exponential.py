@@ -259,13 +259,31 @@ def main3D():
     # plt.imshow(psf_array[0])
     # plt.colorbar()
 
-    plt.figure('dirty')
-    plt.imshow(dirty[0])
-    plt.colorbar()
+    # plt.figure('dirty')
+    # plt.imshow(dirty[0])
+    # plt.colorbar()
 
     # plt.show()
 
-    psf = PSF(psf_array, 8)
+    psf = PSF(psf_array, 8, 1.0)
+    
+    # x = np.zeros((nchan, nx, ny), dtype=np.float64)
+    # x[:, nx//4:3*nx//4, ny//4:3*ny//4] = np.random.randn(nchan, nx//2, ny//2)
+
+    # res = psf.hess(x)
+
+
+    rec = pcg(psf.hess, dirty, np.zeros((nchan, nx, ny), dtype=np.float64), tol=1e-10, maxit=30)
+
+    for i in range(2):
+        plt.imshow(rec[i])
+        plt.colorbar()
+        plt.show()
+
+    
+
+    quit()
+    
     K = Prior(0.0001, nchan, nx, ny, 8)
 
     # Tikhonov
@@ -273,11 +291,11 @@ def main3D():
         return psf.convolve(x) + K.iconvolve(x)
 
     # get Wiener filter soln
-    xhat1 = pcg(hess, dirty, np.zeros((nchan, nx, ny), dtype=np.float64), M=lambda x:x, tol=1e-4, maxit=100)
+    xhat1 = pcg(hess, dirty, np.zeros((nchan, nx, ny), dtype=np.float64), M=K.convolve, tol=1e-3, maxit=30)
 
-    x0 = np.where(xhat1 > 1e-10, np.log(xhat1), 1e-10)
-    plt.figure('wsoln')
-    plt.imshow(x0[0])
+    x0 = np.where(xhat1 > 1e-5, np.log(xhat1), 1e-10)
+    plt.figure('cgsol')
+    plt.imshow(xhat1[0], vmax=0.05)
     plt.colorbar()
 
     # get log-normal soln    
@@ -295,7 +313,7 @@ def main3D():
             print(key, d[key])
 
     plt.figure('logsol')
-    plt.imshow(xhat2.reshape(nchan, nx, ny)[0])
+    plt.imshow(np.exp(xhat2.reshape(nchan, nx, ny)[0]), vmax=0.05)
     plt.colorbar()
     plt.show()
 

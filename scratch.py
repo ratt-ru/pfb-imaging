@@ -18,16 +18,34 @@ def expsq_hat(s, sigmaf, l):
     # print(np.exp(-2 * np.pi**2 * l**2 * s**2) )
     return np.sqrt(2*np.pi*l**2) * sigmaf**2.0 * np.exp(-2 * np.pi**2 * l**2 * s**2) 
 
+from scipy.special import comb
+def smoothstep(x, x_min, x_max, N=5):
+    x = np.clip((x - x_min) / (x_max - x_min), 0, 1)
+
+    result = 0
+    for n in range(0, N + 1):
+         result += comb(N + n, n) * comb(2 * N + 1, N - n) * (-x) ** n
+
+    result *= x ** (N + 1)
+
+    return result
+
 if __name__=="__main__":
-    nx = 32
-    ny = 32
-    nchan = 32
+    nx = 256
+    ny = 256
+    nchan = 8
+
+    x = np.zeros((nchan, 2*nx, 2*ny), dtype=np.float64)
+    x[:, nx//2:3*nx//2, ny//2:3*ny//2] = 1.0
+
     
-    Kop = Prior(1.0, nchan, nx, ny, 8)
+
+    
+    # Kop = Prior(1.0, nchan, nx, ny, 8)
 
     # xi = np.random.randn(nchan, nx, ny)
-    xi = np.zeros((nchan, nx, ny))
-    xi[10:22, 10:22, 10:22] = np.random.randn(12, 12, 12)
+    # xi = np.zeros((nchan, nx, ny))
+    # xi[10:22, 10:22, 10:22] = np.random.randn(12, 12, 12)
     # xi[:, nx//4, ny//4] = 1.0
     # xi[:, 3*nx//4, ny//2] = 1.0
     
@@ -75,20 +93,21 @@ if __name__=="__main__":
     # xihat = np.zeros(Kop.)
     # xihat = c2c(xi, xi)
 
-    res2 = Kop.dot(xi)
+    # res2 = Kop.dot(xi)
 
-    res = Kop.convolve(xi)
+    # res = Kop.convolve(xi)
 
-    print(np.abs(res-res2).max())
-    rec = Kop.iconvolve(res)
+    # print(np.abs(res-res2).max())
+    # rec = Kop.iconvolve(res)
 
-    print(np.abs(rec-xi).max())
+    # print(np.abs(rec-xi).max())
+
+    
 
     import matplotlib.pyplot as plt
-    for i in range(10,12):
-        plt.imshow(rec[i] -xi[i])
-        plt.colorbar()
-        plt.show()
+    
+    plt.imshow(x[0])
+    plt.show()
 
     # plt.figure('fft')
     # plt.plot(sv, chatv.real, '.')
@@ -102,7 +121,7 @@ if __name__=="__main__":
     # plt.figure('hist')
     # plt.hist((xi - res3).real)
     
-    plt.show()
+    # plt.show()
 
     
 

@@ -23,7 +23,7 @@ def freqmul(A, x):
     return out
 
 @njit(parallel=True, nogil=True, fastmath=True, inline='always')
-def make_kernel(nv_psf, nx_psf, ny_psf, sigma0, length_scale):
+def make_kernel_v(nv_psf, nx_psf, ny_psf, sigma0, length_scale):
     K = np.zeros((nv_psf, nx_psf, ny_psf), dtype=np.float64)
     for i in range(nv_psf):
         for j in range(nx_psf):
@@ -32,6 +32,16 @@ def make_kernel(nv_psf, nx_psf, ny_psf, sigma0, length_scale):
                 l = float(j - (nx_psf//2))
                 m = float(k - (ny_psf//2))
                 K[i,j,k] = sigma0**2*np.exp(-(v**2+l**2+m**2)/(2*length_scale**2))
+    return K
+
+@njit(parallel=True, nogil=True, fastmath=True, inline='always')
+def make_kernel(nx_psf, ny_psf, sigma0, length_scale):
+    K = np.zeros((1, nx_psf, ny_psf), dtype=np.float64)
+    for i in range(nx_psf):
+        for j in range(ny_psf):
+            l = float(i - (nx_psf//2))
+            m = float(j - (ny_psf//2))
+            K[0,i,j] = sigma0**2*np.exp(-(l**2+m**2)/(2*length_scale**2))
     return K
 
 class Gridder(object):
@@ -228,7 +238,7 @@ class OutMemGridder(object):
 
 
 class PSF(object):
-    def __init__(self, psf, nthreads):
+    def __init__(self, psf, nthreads, sigma0=1.0):
         self.nthreads = nthreads
         self.nband, nx_psf, ny_psf = psf.shape
         nx = nx_psf//2
@@ -244,11 +254,39 @@ class PSF(object):
         psf_pad = iFs(psf, axes=self.ax)
         self.psfhat = r2c(psf_pad, axes=self.ax, forward=True, nthreads=nthreads, inorm=0)
 
+        # get pre-conditioner kernel
+        length_scale = 2.5/(2*np.sqrt(2*np.log(2)))
+        K = make_kernel(nx_psf, ny_psf, sigma0, length_scale)
+        K_pad = iFs(K, axes=self.ax)
+        Khat = r2c(K_pad, axes=self.ax, forward=True, nthreads=nthreads, inorm=0)
+        self.Kinv = 1.0/Khat
+
+        self.kernel = self.psfhat + self.Kinv
+
+        # mask edges
+        self.mask = np.zeros((self.nband, nx_psf, ny_psf), dtype=np.float64)
+        indx = slice(nx//2 + int(0.05*nx), 3*nx//2 - int(0.05*nx))
+        indy = slice(ny//2 + int(0.05*ny), 3*ny//2 - int(0.05*ny))
+
+        self.mask[:, indx, indy] = 1.0
+
     def convolve(self, x):
         xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
         xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
         xhat = c2r(xhat * self.psfhat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
         return Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
+
+    def hess(self, x):
+        xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
+        xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
+        xhat = c2r(xhat * self.kernel, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
+        return Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
+
+    # def ihess(self, x):
+    #     xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
+    #     xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
+    #     xhat = c2r(xhat / self.kernel, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
+    #     return Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
 
 class Prior(object):
     def __init__(self, sigma0, nband, nx, ny, nthreads=8):
@@ -263,7 +301,7 @@ class Prior(object):
         ny_psf = 2*self.ny
         npad_y = (ny_psf - ny)//2
         self.padding = ((npad_v,npad_v), (npad_x, npad_x), (npad_y, npad_y))
-        self.ax = (0, 1,2)
+        self.ax = (0,1,2)
         self.unpad_v = slice(npad_v, -npad_v)
         self.unpad_x = slice(npad_x, -npad_x)
         self.unpad_y = slice(npad_y, -npad_y)
@@ -283,7 +321,7 @@ class Prior(object):
         #         for k, m in enumerate(m_coord):
         #             K[i,j,k] = sigma0**2*np.exp(-(v**2+l**2+m**2)/(2*length_scale**2))
 
-        K = make_kernel(nv_psf, nx_psf, ny_psf, sigma0, length_scale)
+        K = make_kernel_v(nv_psf, nx_psf, ny_psf, sigma0, length_scale)
 
         self.K = K
         K_pad = iFs(self.K, axes=self.ax)
@@ -326,13 +364,6 @@ class Prior(object):
         # Sminv = c2c(cminv, forward=True, nthreads=8)
         # self.Sinv = np.kron(Slinv, Sminv).reshape(1, 2*self.nx-2, 2*self.ny-2)
 
-    def dothat(self, x):
-        xpad = np.zeros((self.nband, 2*self.nx-2, 2*self.ny-2))
-        xpad[0:self.nband, 0:self.nx, 0:self.ny] = x
-        xhat = c2c(xpad, axes=(1, 2), forward=True, nthreads=self.nthreads)
-        xhat = c2c(xhat*self.S, axes=(1,2), forward=False, inorm=2, nthreads=8)[0:self.nband, 0:self.nx, 0:self.ny].real
-        return freqmul(self.Kv, xhat.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
-
     def convolve(self, x):
         xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
         xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
@@ -347,14 +378,6 @@ class Prior(object):
         res = Fs(xhat, axes=self.ax)[self.unpad_v, self.unpad_x, self.unpad_y]
         return res
 
-    def idothat(self, x):
-        xpad = np.zeros((self.nband, 2*self.nx-2, 2*self.ny-2), dtype=np.complex128)
-        xpad[0:self.nband, 0:self.nx, 0:self.ny] = x
-        xhat = c2c(xpad, axes=(1, 2), forward=True, nthreads=self.nthreads)
-        xhat = c2c(xhat*self.Sinv, axes=(1,2), forward=False, inorm=2, nthreads=8)[0:self.nband, 0:self.nx, 0:self.ny].real
-        return freqmul(self.Kvinv, xhat.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
-
-
     def idot(self, x):
         # return freqmul(self.Kvinv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
         return kt.kron_matvec(self.Kinvkron, x.flatten()).reshape(*x.shape)
@@ -362,12 +385,6 @@ class Prior(object):
     def dot(self, x):
         # return freqmul(self.Kv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
         return kt.kron_matvec(self.Kkron, x.flatten()).reshape(*x.shape)
-
-    def sqrtdot(self, x):
-        return freqmul(self.L, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
-
-    def sqrthdot(self, x):
-        return freqmul(self.LH, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
 
 class PSI(object):
     def __init__(self, nband, nx, ny,
@@ -403,27 +420,6 @@ class PSI(object):
         self.bases = bases
         self.nbasis = len(bases)
 
-        # tmpx = np.zeros(self.nlevels)
-        # tmpx[-1] = self.nx//2 + self.nx%2
-        # tmpy = np.zeros(self.nlevels)
-        # tmpy[-1] = self.ny//2 + self.ny%2
-        # for i in range(self.nlevels-2, -1, -1):
-        #     tmpx[i] = tmpx[i+1]//2
-        #     tmpx[i] += tmpx[i+1]%2
-        #     tmpy[i] = tmpy[i+1]//2
-        #     tmpy[i] += tmpy[i+1]%2
-
-        # self.indx = np.append(np.array(tmpx[0]), tmpx)
-        # self.indy = np.append(np.array(tmpy[0]), tmpy)
-        # self.n = self.indx * self.indy
-
-        # self.ntot = 4 * self.indx[0] * self.indy[0]
-        # for i in range(2, self.nlevels+1):
-        #     self.ntot += 3 * self.indx[i] * self.indy[i]
-
-        # self.ntot = int(self.ntot)
-        # self.npad = self.ntot - self.nx*self.ny
-
         # do a mock decomposition to get max coeff size
         x = np.random.randn(nx, ny)
         self.ntot = []
@@ -439,13 +435,12 @@ class PSI(object):
             self.iy.append(iy)
             self.sy.append(sy)
             self.ntot.append(y.size)
-            print(self.ntot[i])
         
         # get padding info
         self.nmax = np.asarray(self.ntot).max()
         self.padding = []
-        for i in range(nbasis):
-            self.padding.append(slice(0, ntot[i]))
+        for i in range(self.nbasis):
+            self.padding.append(slice(0, self.ntot[i]))
 
 
     def dot(self, alpha):
@@ -472,7 +467,7 @@ class PSI(object):
                 if base == 'self':
                     wave = a.reshape(self.nx, self.ny)
                 else:
-                    alpha_rec = pywt.unravel_coeffs(a, self.iy[b], self.sy[b], format='wavedec2')
+                    alpha_rec = pywt.unravel_coeffs(a, self.iy[b], self.sy[b], output_format='wavedec2')
                     wave = pywt.waverec2(alpha_rec, base, mode='zero')
 
                     # return reconstructed image from coeff
@@ -483,7 +478,7 @@ class PSI(object):
         """
         This implements the adjoint of Psi_func i.e. image to coeffs
         """
-        alpha = np.zeros((self.nbasis, self.nband, self.ntot))
+        alpha = np.zeros((self.nbasis, self.nband, self.nmax))
         for b in range(self.nbasis):
             base = self.bases[b]
             for l in range(self.nband):
@@ -502,80 +497,53 @@ class PSI(object):
 import dask.array as da
 
 def _dot_internal(alpha, bases, nd, indx, indy, sqrtP, real_type,
-                  npad, nx, ny, nlevels):
+                  npad, nx, ny, nlevels, padding, iy, sy):
     nbasis, nband, _ = alpha.shape
     # note reduction over basis axis is external since we need to
     # chunk over the axis
     x = np.zeros((nbasis, nband, nx, ny), dtype=real_type)
     for b in range(nbasis):
-        base = bases[b]
-        for l in range(nband):
-            if base == 'self':
-                # just unpad and reshape
-                if npad:  # otherwise returns None when npad==0
-                    x[b, l] = alpha[b, l, 0:-npad].reshape(nx, ny)/sqrtP
+            base = bases[b]
+            for l in range(nband):
+                a = alpha[b, l, padding[b]]
+                if base == 'self':
+                    wave = a.reshape(nx, ny)
                 else:
-                    x[b, l] = alpha[b, l].reshape(nx, ny)/sqrtP
-            else:
-                # stack array back into expected shape
-                n = ind = int(nd[0])
-                idx = int(indx[0])
-                idy = int(indy[0])
+                    alpha_rec = pywt.unravel_coeffs(a, iy[b], sy[b], output_format='wavedec2')
+                    wave = pywt.waverec2(alpha_rec, base, mode='zero')
 
-                alpha_rec = [alpha[b, l, 0:ind].reshape(idx, idy)]
-
-                for i in range(1, nlevels + 1):
-                    n = int(nd[i])
-                    idx = int(indx[i])
-                    idy = int(indy[i])
-                    tpl = ()
-
-                    for j in range(3):
-                        tpl += (alpha[b, l, ind:ind+n].reshape(idx, idy),)
-                        ind += n
-
-                    alpha_rec.append(tpl)
-
-                wave = pywt.waverec2(alpha_rec, base, mode='periodization')
-
-                # return reconstructed image from coeff
-                x[b, l, :, :] = wave / sqrtP
-
+                    # return reconstructed image from coeff
+                x[l] += wave / sqrtP
     return x
 
 def _dot_internal_wrapper(alpha, bases, nd, indx, indy, sqrtP, real_type,
-                          npad, nx, ny, nlevels):
+                          npad, nx, ny, nlevels, padding, iy, sy):
     return _dot_internal(alpha[0], bases, nd, indx, indy, sqrtP, real_type,
-                         npad, nx, ny, nlevels)
+                         npad, nx, ny, nlevels, padding, iy, sy)
 
-def _hdot_internal(x, bases, ntot, nlevels, sqrtP, real_type, npad, nx, ny):
+def _hdot_internal(x, bases, nmax, nlevels, sqrtP, real_type, npad, nx, ny, ntot):
     nband = x.shape[0]
     nbasis = len(bases)
     alpha = np.zeros((nbasis, nband, ntot))
     for b in range(nbasis):
-        base = bases[b]
-        for l in range(nband):
-            if base == 'self':
-                # just pad image to have same shape as flattened wavelet coefficients
-                alpha[b, l] = np.pad(x[l].reshape(nx*ny)/sqrtP, (0, npad), mode='constant')
-            else:
-                # decompose
-                alphal = pywt.wavedec2(x[l], base, mode='periodization', level=nlevels)
-                # stack decomp into vector
-                tmp = [alphal[0].ravel()]
-
-                for item in alphal[1::]:
-                    for j in range(len(item)):
-                        tmp.append(item[j].ravel())
-
-                alpha[b, l] = np.concatenate(tmp) / sqrtP
+            base = bases[b]
+            for l in range(nband):
+                if base == 'self':
+                    # just pad image to have same shape as flattened wavelet coefficients
+                    alpha[b, l] = np.pad(x[l].reshape(nx*ny)/sqrtP, (0, nmax-ntot[b]), mode='constant')
+                else:
+                    # decompose
+                    alphal = pywt.wavedec2(x[l], base, mode='zero', level=nlevels)
+                    # ravel and pad
+                    tmp, _, _ = pywt.ravel_coeffs(alphal)
+                    alpha[b, l] = np.pad(tmp/sqrtP, (0, nmax-ntot[b]), mode='constant')
 
     return alpha
 
-def _hdot_internal_wrapper(x, bases, ntot, nlevels, sqrtP, real_type,
-                           npad, nx, ny):
-    return _hdot_internal(x[0][0], bases, ntot, nlevels, sqrtP, real_type,
-                          npad, nx, ny)
+def _hdot_internal_wrapper(x, bases, nmax, nlevels, sqrtP, real_type,
+                           npad, nx, ny, ntot):
+    return _hdot_internal(x[0][0], bases, nmax, nlevels, sqrtP, real_type,
+                          npad, nx, ny, ntot)
 
 class DaskPSI(PSI):
     def dot(self, alpha):

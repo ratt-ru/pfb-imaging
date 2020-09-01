@@ -47,6 +47,26 @@ def test_dask_psi_operator():
 
     assert_array_almost_equal(alphad, alpha, decimal=13)
 
+def test_psi():
+    nx = 64
+    ny = 64
+    nband = 8
+    nlevels = 2
+    
+    # random test image
+    x = np.random.randn(nband, nx, ny)
+    
+    # initialise serial operator 
+    psi = PSI(nband, nx, ny, nlevels)
+
+    y = psi.hdot(x)
+
+    rec = psi.dot(y)
+
+    print(np.abs(x-rec).max())
+
+
+
 def test_prox():
     nx = 12
     ny = 7
@@ -77,4 +97,4 @@ def test_prox():
 
 if __name__=="__main__":
     # test_dask_psi_operator()
-    test_prox()
+    test_psi()

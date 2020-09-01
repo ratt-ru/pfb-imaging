@@ -47,13 +47,12 @@ def create_parser():
                    help="How often to do l1 reweighting")
     p.add_argument("--reweight_end", type=int, default=90,
                    help="When to end the l1 reweighting scheme")
-    p.add_argument("--reweight_alpha_min", type=float, default=1.0e-5,
+    p.add_argument("--reweight_alpha_min", type=float, default=1.0e-7,
                    help="Determines how aggressively the reweighting is applied."
                    " >= 1 is very mild whereas << 1 is aggressive.")
-    p.add_argument("--reweight_alpha_percent", type=float, default=50)
+    p.add_argument("--reweight_alpha_percent", type=float, default=30)
     p.add_argument("--reweight_alpha_ff", type=float, default=0.5,
-                   help="Determines how quickly the reweighting progresses."
-                   "alpha will grow like alpha/(1+i)**alpha_ff.")
+                   help="Determines how quickly the reweighting progresses.")
     p.add_argument("--cgtol", type=float, default=1e-2,
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=10,
@@ -101,21 +100,16 @@ def main(args):
     psf_mfs = np.sum(psf_array, axis=0)/wsum 
    
     # set operators
-    psf = PSF(psf_array, args.ncpu)
-    l = args.lfrac * (freq.max() - freq.min())/np.mean(freq)
-    print("GP prior over frequency sigma_f = %f l = %f"%(args.sig_l2, l))
+    psf = PSF(psf_array, args.ncpu, sigma0=args.sig_l2)
     K = Prior(args.sig_l2, nband, nx, ny, nthreads=args.ncpu)
     
-    def hess(x):
-        return psf.convolve(x) + K.iconvolve(x)
-
-    def hess2(x):
-        return psf.convolve(x) + x/args.sig_l2**2
+    # def hess(x):
+    #     return psf.convolve(x) + K.iconvolve(x)
 
     # get Lipschitz constant
     if args.beta is None:
         from pfb.opt import power_method
-        beta = power_method(hess, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
+        beta = power_method(psf.hess, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
     else:
         beta = args.beta
     print("beta = ", beta)
@@ -137,7 +131,7 @@ def main(args):
         nband, nx, ny = dirty.shape
         psi = PSI(nband, nx, ny, nlevels=args.psi_levels)
         nbasis = psi.nbasis
-        weights_21 = np.ones((psi.nbasis, psi.ntot), dtype=real_type)
+        weights_21 = np.ones((psi.nbasis, psi.nmax), dtype=real_type)
     else:
         psi = None
         weights_21 = np.ones(nx*ny, dtype=real_type)
@@ -145,12 +139,12 @@ def main(args):
     # initalise model
     if args.x0 is None:
         model = np.zeros(dirty.shape, dtype=real_type)
-        dual = np.zeros((psi.nbasis, nband, psi.ntot), dtype=real_type)
+        dual = np.zeros((psi.nbasis, nband, psi.nmax), dtype=real_type)
         residual = dirty
     else:
         compare_headers(hdr, fits.getheader(args.x0))
         model = load_fits(args.x0).astype(real_type)
-        dual = np.zeros((psi.nbasis, nband, psi.ntot), dtype=real_type)
+        dual = np.zeros((psi.nbasis, nband, psi.nmax), dtype=real_type)
         residual = dirty - psf.convolve(model)
     
     residual_mfs = np.sum(residual, axis=0)/wsum 
@@ -160,15 +154,15 @@ def main(args):
 
     # deconvolve
     for k in range(args.maxit):
-        x = pcg(hess, residual, np.zeros(dirty.shape, dtype=real_type), M=K.convolve, 
+        x = pcg(psf.hess, residual, np.zeros(dirty.shape, dtype=real_type), M=K.convolve, 
                 tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
         
         modelp = model.copy()
         model = modelp + args.gamma * x
 
         if args.use_psi:
-            model, dual = simple_pd(lambda x: x, model, modelp, dual, args.sig_21, psi, weights_21, 1.0, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
-            # model, dual = simple_pd(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta, tol=args.pdtol, maxit=args.pdmaxit, report_freq=1)
+            # model, dual = simple_pd(lambda x: x, model, modelp, dual, args.sig_21, psi, weights_21, 1.0, tol=args.pdtol, maxit=args.pdmaxit, report_freq=10)
+            model, dual = simple_pd(psf.hess, model, modelp, dual, args.sig_21, psi, weights_21, beta, tol=args.pdtol, maxit=args.pdmaxit, report_freq=10)
         else:
             model = prox_21(model, args.sig_21, weights_21, psi=psi, positivity=True)
 
@@ -190,13 +184,14 @@ def main(args):
                 v = psi.hdot(model)
                 l2_norm = norm(v, axis=1)
                 for m in range(psi.nbasis):
-                    # indnz = l2_norm[m].nonzero()
-                    # alpha = np.percentile(l2_norm[m, indnz].flatten(), args.reweight_alpha_percent)
-                    # alpha = np.maximum(alpha, args.reweight_alpha_min)
-                    alpha = args.reweight_alpha_min
+                    indnz = l2_norm[m].nonzero()
+                    alpha = np.percentile(l2_norm[m, indnz].flatten(), args.reweight_alpha_percent)
+                    alpha = np.maximum(alpha, args.reweight_alpha_min)
+                    # alpha = args.reweight_alpha_min
                     print("Reweighting - ", m, alpha)
                     weights_21[m] = 1.0/(l2_norm[m] + alpha)
                 args.reweight_alpha_percent *= args.reweight_alpha_ff
+                print(" reweight alpha percent = ", args.reweight_alpha_percent)
 
         # get residual
         residual = dirty - psf.convolve(model)
