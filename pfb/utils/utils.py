@@ -12,7 +12,7 @@ from time import time
 from astropy.io import fits
 from astropy.wcs import WCS
 
-from .operators import PSI, DaskPSI
+from pfb.operators import PSI, DaskPSI
 
 
 def data_from_header(hdr, axis=3):
