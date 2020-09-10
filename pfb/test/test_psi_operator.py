@@ -14,7 +14,7 @@ def test_dask_psi_operator():
     nx = 2050
     ny = 2050
     nband = 4
-    nlevels = 2
+    nlevels = 4
 
     # random test image
     x = np.random.randn(nband, nx, ny)
