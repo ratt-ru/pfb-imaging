@@ -565,3 +565,65 @@ def waverecn(ca, coeffs, wavelet, mode='symmetric', axis=None):
         return ca
 
     return impl
+    
+@numba.njit(nogil=True, fastmath=True, cache=True)
+def ravel_coeffs(a_coeffs, coeffs):
+    ndim = a_coeffs.ndim
+
+    # initialize with the approximation coefficients.
+    a_size = a_coeffs.size
+
+    # preallocate output array
+    arr_size = a_size
+    n_coeffs = 0
+    for d in coeffs:
+        n_coeffs += 1
+        for k, v in d.items():
+            arr_size += v.size
+    
+    coeff_arr = np.empty((arr_size, ), dtype=a_coeffs.dtype)
+
+    a_slice = slice(a_size)
+    coeff_arr[a_slice] = a_coeffs.ravel()
+
+    # initialize list of coefficient slices
+    # coeff_slices = List()
+    # coeff_shapes = List()
+    # coeff_slices.append(a_slice)
+    # coeff_shapes.append(a_coeffs.shape)
+
+    # numba.typed.Dict(numba.types.unicode_type, numba.types.float64[:])
+
+    # loop over the detail cofficients, embedding them in coeff_arr
+    offset = a_size
+    for coeff_dict in coeffs:
+        # new dictionaries for detail coefficient slices and shapes
+        # coeff_slices.append(Dict())
+        # coeff_shapes.append(Dict())
+        
+        # sort to make sure key order is consistent across Python versions
+        keys = sorted(coeff_dict.keys())
+        for i, key in enumerate(keys):
+            d = coeff_dict[key]
+            sl = slice(offset, offset + d.size)
+            offset += d.size
+            coeff_arr[sl] = d.ravel()
+            # coeff_slices[-1][key] = sl
+            # coeff_shapes[-1][key] = d.shape
+    return coeff_arr  #, coeff_slices, coeff_shapes
+
+
+@numba.njit(nogil=True, fastmath=True, cache=True)
+def unravel_coeffs(arr, coeff_slices, coeff_shapes, output_format='wavedecn'):
+    arr = np.asarray(arr)
+    coeffs = List(arr[coeff_slices[0]].reshape(coeff_shapes[0]))
+
+    # difference coefficients at each level
+    for n in range(1, len(coeff_slices)):
+        slice_dict = coeff_slices[n]
+        shape_dict = coeff_shapes[n]
+        d = {}
+        for k, v in coeff_slices[n].items():
+            d[k] = arr[v].reshape(shape_dict[k])
+        coeffs.append(d)
+    return coeffs[0], coeffs[1:]

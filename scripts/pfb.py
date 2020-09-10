@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# flake8: noqa
+
 import numpy as np
 from numba import njit, prange
 from pyrap.tables import table

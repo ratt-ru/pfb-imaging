@@ -7,13 +7,14 @@ from pfb.operators import PSI, DaskPSI
 import pywt
 from time import time as timeit
 import pytest
+from pfb.wavelets.wavelets import wavedecn, waverecn
 
 def test_dask_psi_operator():
     da = pytest.importorskip('dask.array')
     nx = 2050
     ny = 2050
-    nband = 8
-    nlevels = 5
+    nband = 4
+    nlevels = 2
 
     # random test image
     x = np.random.randn(nband, nx, ny)
@@ -48,22 +49,27 @@ def test_dask_psi_operator():
     assert_array_almost_equal(alphad, alpha, decimal=13)
 
 def test_psi():
-    nx = 64
-    ny = 64
+    nx = 2050
+    ny = 2050
     nband = 8
     nlevels = 2
     
     # random test image
-    x = np.random.randn(nband, nx, ny)
+    x = np.random.randn(nx, ny)
+
+    alpha = pywt.wavedecn(x, 'db4', 'zero')
+    a, coeffs = wavedecn(x, 'db4', 'zero')
+    alpha2 = [a, *coeffs]
+
+    print(type(coeffs[0]))
+    print(isinstance(coeffs[0], dict))
+
+    z = pywt.ravel_coeffs(alpha2)
+
+
     
-    # initialise serial operator 
-    psi = PSI(nband, nx, ny, nlevels)
-
-    y = psi.hdot(x)
-
-    rec = psi.dot(y)
-
-    print(np.abs(x-rec).max())
+    # print(alpha[1])
+    # print(coeffs[1])
 
 
 
@@ -96,5 +102,5 @@ def test_prox():
     # assert_array_equal(x, x2)
 
 if __name__=="__main__":
-    # test_dask_psi_operator()
-    test_psi()
+    test_dask_psi_operator()
+    # test_psi()

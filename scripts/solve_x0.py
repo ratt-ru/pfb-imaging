@@ -154,14 +154,13 @@ def main(args):
 
     # deconvolve
     for k in range(args.maxit):
-        x = pcg(psf.hess, residual, np.zeros(dirty.shape, dtype=real_type), M=K.convolve, 
+        x = pcg(psf.hess, residual, np.zeros(dirty.shape, dtype=real_type), M=K.dot, 
                 tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
         
         modelp = model.copy()
         model = modelp + args.gamma * x
 
         if args.use_psi:
-            # model, dual = simple_pd(lambda x: x, model, modelp, dual, args.sig_21, psi, weights_21, 1.0, tol=args.pdtol, maxit=args.pdmaxit, report_freq=10)
             model, dual = simple_pd(psf.hess, model, modelp, dual, args.sig_21, psi, weights_21, beta, tol=args.pdtol, maxit=args.pdmaxit, report_freq=10)
         else:
             model = prox_21(model, args.sig_21, weights_21, psi=psi, positivity=True)

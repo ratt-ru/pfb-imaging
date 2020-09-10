@@ -7,6 +7,7 @@ from ducc0.wgridder import ms2dirty, dirty2ms
 from ducc0.fft import r2c, c2r, c2c
 from africanus.gps.kernels import exponential_squared as expsq
 from africanus.linalg import kronecker_tools as kt
+from pfb.wavelets.wavelets import wavedecn, waverecn, ravel_coeffs, unravel_coeffs
 
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
@@ -21,18 +22,6 @@ def freqmul(A, x):
             for k in range(nchan):
                 out[j, i] += A[j, k] * x[k, i]
     return out
-
-@njit(parallel=True, nogil=True, fastmath=True, inline='always')
-def make_kernel_v(nv_psf, nx_psf, ny_psf, sigma0, length_scale):
-    K = np.zeros((nv_psf, nx_psf, ny_psf), dtype=np.float64)
-    for i in range(nv_psf):
-        for j in range(nx_psf):
-            for k in range(ny_psf):
-                v = float(i - (nv_psf//2))
-                l = float(j - (nx_psf//2))
-                m = float(k - (ny_psf//2))
-                K[i,j,k] = sigma0**2*np.exp(-(v**2+l**2+m**2)/(2*length_scale**2))
-    return K
 
 @njit(parallel=True, nogil=True, fastmath=True, inline='always')
 def make_kernel(nx_psf, ny_psf, sigma0, length_scale):
@@ -294,102 +283,40 @@ class Prior(object):
         self.nx = nx
         self.ny = ny
         self.nv = nband
-        nv_psf = 2*self.nv
-        npad_v = (nv_psf - nband)//2
         nx_psf = 2*self.nx
         npad_x = (nx_psf - nx)//2
         ny_psf = 2*self.ny
         npad_y = (ny_psf - ny)//2
-        self.padding = ((npad_v,npad_v), (npad_x, npad_x), (npad_y, npad_y))
-        self.ax = (0,1,2)
-        self.unpad_v = slice(npad_v, -npad_v)
+        self.padding = ((0,0), (npad_x, npad_x), (npad_y, npad_y))
+        self.ax = (1,2)
         self.unpad_x = slice(npad_x, -npad_x)
         self.unpad_y = slice(npad_y, -npad_y)
         self.lastsize = ny + np.sum(self.padding[-1])
-        
-        # always work in pixel coordinates
-        v_coord = np.arange(-(nv_psf//2), nv_psf//2)
-        l_coord = np.arange(-(nx_psf//2), nx_psf//2)
-        m_coord = np.arange(-(ny_psf//2), ny_psf//2)
 
-        # set length scales
+        # get kernel (always pixel coordinates)
         length_scale = 2.5/(2*np.sqrt(2*np.log(2)))
-
-        # K = np.zeros((nv_psf, nx_psf, ny_psf))
-        # for i, v in enumerate(v_coord):
-        #     for j, l in enumerate(l_coord):
-        #         for k, m in enumerate(m_coord):
-        #             K[i,j,k] = sigma0**2*np.exp(-(v**2+l**2+m**2)/(2*length_scale**2))
-
-        K = make_kernel_v(nv_psf, nx_psf, ny_psf, sigma0, length_scale)
-
-        self.K = K
+        self.K = make_kernel(nx_psf, ny_psf, sigma0, length_scale)
         K_pad = iFs(self.K, axes=self.ax)
         self.Khat = r2c(K_pad, axes=self.ax, forward=True, nthreads=nthreads, inorm=0)
 
-
-
-
-        # get covariance in each dimension
-        v_coord = np.arange(-(nband//2), nband//2)
-        l_coord = np.arange(-(nx//2), nx//2)
-        m_coord = np.arange(-(ny//2), ny//2)
-        self.Kv = expsq(v_coord, v_coord, sigma0, length_scale) # + 1e-6*np.eye(nband)
-        self.Kl = expsq(l_coord, l_coord, 1.0, length_scale) # + 1e-6*np.eye(nx)
-        self.Km = expsq(m_coord, m_coord, 1.0, length_scale) # + 1e-6*np.eye(ny)
-        
-        # # explicit inverses
-        # self.Kvinv = np.linalg.pinv(self.Kv)  
-        # self.Klinv = np.linalg.pinv(self.Kl)
-        # self.Kminv = np.linalg.pinv(self.Km)
-
-        # # Kronecker matrices for fast matrix vector products
-        self.Kkron = (self.Kv, self.Kl, self.Km)
-        # self.Kinvkron = (self.Kvinv, self.Klinv, self.Kminv)
-
-        # # spectral density
-        # tl = self.Kl[0, :]
-        # cl = np.append(tl, tl[np.arange(self.nx)[1:-1][::-1]])
-        # Sl = c2c(cl, forward=True, nthreads=8)
-        # tm = self.Km[0, :]
-        # cm = np.append(tm, tm[np.arange(self.ny)[1:-1][::-1]])
-        # Sm = c2c(cm, forward=True, nthreads=8)
-        # self.S = np.kron(Sl, Sm).reshape(1, 2*self.nx-2, 2*self.ny-2)
-        # self.Sinv = 1.0/self.S
-        # tlinv = self.Klinv[0, :]
-        # clinv = np.append(tlinv, tlinv[np.arange(self.nx)[1:-1][::-1]])
-        # Slinv = c2c(clinv, forward=True, nthreads=8)
-        # tminv = self.Kminv[0, :]
-        # cminv = np.append(tminv, tminv[np.arange(self.ny)[1:-1][::-1]])
-        # Sminv = c2c(cminv, forward=True, nthreads=8)
-        # self.Sinv = np.kron(Slinv, Sminv).reshape(1, 2*self.nx-2, 2*self.ny-2)
-
-    def convolve(self, x):
+    def dot(self, x):
         xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
         xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
         xhat = c2r(xhat * self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
-        res = Fs(xhat, axes=self.ax)[self.unpad_v, self.unpad_x, self.unpad_y]
-        return res
-
-    def iconvolve(self, x):
-        xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
-        xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
-        xhat = c2r(xhat / self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
-        res = Fs(xhat, axes=self.ax)[self.unpad_v, self.unpad_x, self.unpad_y]
+        res = Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
         return res
 
     def idot(self, x):
-        # return freqmul(self.Kvinv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
-        return kt.kron_matvec(self.Kinvkron, x.flatten()).reshape(*x.shape)
-
-    def dot(self, x):
-        # return freqmul(self.Kv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
-        return kt.kron_matvec(self.Kkron, x.flatten()).reshape(*x.shape)
+        xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
+        xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
+        xhat = c2r(xhat / self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
+        res = Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
+        return res
 
 class PSI(object):
     def __init__(self, nband, nx, ny,
                  nlevels=2,
-                 bases=['self', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8']):
+                 bases=['self', 'db1', 'db2', 'db3', 'db4', 'db5']):
         """
         Sets up operators to move between wavelet coefficients
         in each basis and the image x.
@@ -431,6 +358,7 @@ class PSI(object):
                 y, iy, sy = x.flatten(), 0, 0
             else:
                 alpha = pywt.wavedecn(x, b, mode='zero', level=self.nlevels)
+                # a, coeffs = wavedecn(x, b, 'zero', level=self.nlevels)
                 y, iy, sy = pywt.ravel_coeffs(alpha)
             self.iy.append(iy)
             self.sy.append(sy)
@@ -467,8 +395,9 @@ class PSI(object):
                 if base == 'self':
                     wave = a.reshape(self.nx, self.ny)
                 else:
-                    alpha_rec = pywt.unravel_coeffs(a, self.iy[b], self.sy[b], output_format='wavedec2')
-                    wave = pywt.waverec2(alpha_rec, base, mode='zero')
+                    a, coeffs = unravel_coeffs(a, self.iy[b], self.sy[b])
+                    wave = pywt.waverecn(alpha_rec, base, mode='zero')
+                    wave = waverecn(a, coeffs, base, mode='zero')
 
                     # return reconstructed image from coeff
                 x[l] += wave / self.sqrtP
@@ -487,20 +416,19 @@ class PSI(object):
                     alpha[b, l] = np.pad(x[l].reshape(self.nx*self.ny)/self.sqrtP, (0, self.nmax-self.ntot[b]), mode='constant')
                 else:
                     # decompose
-                    alphal = pywt.wavedec2(x[l], base, mode='zero', level=self.nlevels)
+                    # alphal = pywt.wavedecn(x[l], base, mode='zero', level=self.nlevels)
+                    a, coeffs = wavedecn(x[l], base, 'zero', level=self.nlevels)
                     # ravel and pad
-                    tmp, _, _ = pywt.ravel_coeffs(alphal)
+                    tmp, _, _ = ravel_coeffs(a, coeffs)
                     alpha[b, l] = np.pad(tmp/self.sqrtP, (0, self.nmax-self.ntot[b]), mode='constant')
         return alpha
 
 
 import dask.array as da
 
-def _dot_internal(alpha, bases, nd, indx, indy, sqrtP, real_type,
-                  npad, nx, ny, nlevels, padding, iy, sy):
+def _dot_internal(alpha, bases, padding, iy, sy, sqrtP, nx, ny, real_type):
     nbasis, nband, _ = alpha.shape
-    # note reduction over basis axis is external since we need to
-    # chunk over the axis
+    # reduction over basis done externally since chunked
     x = np.zeros((nbasis, nband, nx, ny), dtype=real_type)
     for b in range(nbasis):
             base = bases[b]
@@ -509,84 +437,92 @@ def _dot_internal(alpha, bases, nd, indx, indy, sqrtP, real_type,
                 if base == 'self':
                     wave = a.reshape(nx, ny)
                 else:
-                    alpha_rec = pywt.unravel_coeffs(a, iy[b], sy[b], output_format='wavedec2')
-                    wave = pywt.waverec2(alpha_rec, base, mode='zero')
+                    a, coeffs = unravel_coeffs(a, iy[b], sy[b], output_format='wavedecn')
+                    # a, coeffs = alpha_rec[0], alpha_rec[1::]
+                    wave = waverecn(a, coeffs, base, mode='zero')
+                    # wave = pywt.waverecn(alpha_rec, base, mode='zero')
 
-                    # return reconstructed image from coeff
                 x[l] += wave / sqrtP
     return x
 
-def _dot_internal_wrapper(alpha, bases, nd, indx, indy, sqrtP, real_type,
-                          npad, nx, ny, nlevels, padding, iy, sy):
-    return _dot_internal(alpha[0], bases, nd, indx, indy, sqrtP, real_type,
-                         npad, nx, ny, nlevels, padding, iy, sy)
+def _dot_internal_wrapper(alpha, bases, padding, iy, sy, sqrtP, nx, ny, real_type):
+    return _dot_internal(alpha[0], bases, padding, iy, sy, sqrtP, nx, ny, real_type)
 
-def _hdot_internal(x, bases, nmax, nlevels, sqrtP, real_type, npad, nx, ny, ntot):
+def _hdot_internal(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_type):
     nband = x.shape[0]
     nbasis = len(bases)
-    alpha = np.zeros((nbasis, nband, ntot))
+    alpha = np.zeros((nbasis, nband, nmax), dtype=real_type)
     for b in range(nbasis):
             base = bases[b]
             for l in range(nband):
                 if base == 'self':
-                    # just pad image to have same shape as flattened wavelet coefficients
+                    # ravel and pad
                     alpha[b, l] = np.pad(x[l].reshape(nx*ny)/sqrtP, (0, nmax-ntot[b]), mode='constant')
                 else:
                     # decompose
-                    alphal = pywt.wavedec2(x[l], base, mode='zero', level=nlevels)
+                    # alphal = pywt.wavedecn(x[l], base, mode='zero', level=nlevels)
+                    a, coeffs = wavedecn(x[l], base, 'zero', level=nlevels)
+                    # alphal = [a, coeffs]
                     # ravel and pad
-                    tmp, _, _ = pywt.ravel_coeffs(alphal)
+                    tmp, _, _ = ravel_coeffs(a, coeffs)
                     alpha[b, l] = np.pad(tmp/sqrtP, (0, nmax-ntot[b]), mode='constant')
 
     return alpha
 
-def _hdot_internal_wrapper(x, bases, nmax, nlevels, sqrtP, real_type,
-                           npad, nx, ny, ntot):
-    return _hdot_internal(x[0][0], bases, nmax, nlevels, sqrtP, real_type,
-                          npad, nx, ny, ntot)
+def _hdot_internal_wrapper(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_type):
+    return _hdot_internal(x[0][0], bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_type)
 
 class DaskPSI(PSI):
+    def __init__(self, nband, nx, ny,
+                 nlevels=2,
+                 bases=['self', 'db1', 'db2', 'db3', 'db4', 'db5'],
+                 nthreads=8):
+        PSI.__init__(self, nband, nx, ny, nlevels=nlevels,
+                     bases=bases)
+        # required to chunk over basis
+        bases = np.array(self.bases, dtype=object)
+        self.bases = da.from_array(bases, chunks=1)
+        padding = np.array(self.padding, dtype=object)
+        self.padding = da.from_array(padding, chunks=1)
+        iy = np.array(self.iy, dtype=object)
+        self.iy = da.from_array(iy, chunks=1)
+        sy = np.array(self.sy, dtype=object)
+        self.sy = da.from_array(sy, chunks=1)
+        ntot = np.array(self.ntot, dtype=object)
+        self.ntot = da.from_array(ntot, chunks=1)
+        
     def dot(self, alpha):
-        # Chunk per basis
-        bases = da.from_array(self.bases, chunks=1)
-        
-        # Chunk per basis and band
-        alpha_dask = da.from_array(alpha, chunks=(1, 1, self.ntot))
-        
-        x = da.blockwise(_dot_internal_wrapper, ("basis", "nband", "nx", "ny"),
-                         alpha_dask, ("basis", "nband", "ntot"),
-                         bases, ("basis", ),
-                         self.n, None,
-                         self.indx, None,
-                         self.indy, None,
+        alpha_dask = da.from_array(alpha, chunks=(1, 1, self.nmax))
+        x = da.blockwise(_dot_internal_wrapper, ("basis", "band", "nx", "ny"),
+                         alpha_dask, ("basis", "band", "ntot"),
+                         self.bases, ("basis",),
+                         self.padding, ("basis",),
+                         self.iy, ("basis",),
+                         self.sy, ("basis",),
                          self.sqrtP, None,
-                         self.real_type, None,
-                         self.npad, None,
                          self.nx, None,
                          self.ny, None,
-                         self.nlevels, None,
+                         self.real_type, None,
                          new_axes={"nx": self.nx, "ny": self.ny},
-                         dtype=self.real_type)
+                         dtype=self.real_type,
+                         align_arrays=False)
 
         return x.sum(axis=0).compute()
 
     def hdot(self, x):
-        # Chunk per basis
-        bases = da.from_array(self.bases, chunks=1)
-        # Chunk per band
         xdask = da.from_array(x, chunks=(1, self.nx, self.ny))
-
-        alpha = da.blockwise(_hdot_internal_wrapper, ("nbasis", "nband", "ntot"),
-                             xdask, ("nband", "nx", "ny"),
-                             bases, ("nbasis", ),
-                             self.ntot, None,
+        alpha = da.blockwise(_hdot_internal_wrapper, ("basis", "band", "nmax"),
+                             xdask, ("band", "nx", "ny"),
+                             self.bases, ("basis", ),
+                             self.ntot,("basis", ),
+                             self.nmax, None,
                              self.nlevels, None,
                              self.sqrtP, None,
-                             self.real_type, None,
-                             self.npad, None,
                              self.nx, None,
                              self.ny, None,
-                             new_axes={"ntot": self.ntot},
-                             dtype=self.real_type)
+                             self.real_type, None,
+                             new_axes={"nmax": self.nmax},
+                             dtype=self.real_type,
+                             align_arrays=False)
 
         return alpha.compute()
