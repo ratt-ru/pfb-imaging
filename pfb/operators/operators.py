@@ -7,7 +7,7 @@ from ducc0.wgridder import ms2dirty, dirty2ms
 from ducc0.fft import r2c, c2r, c2c
 from africanus.gps.kernels import exponential_squared as expsq
 from africanus.linalg import kronecker_tools as kt
-from pfb.wavelets.wavelets import wavedecn, waverecn, ravel_coeffs, unravel_coeffs
+# from pfb.wavelets.wavelets import wavedecn, waverecn, ravel_coeffs, unravel_coeffs
 
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
@@ -316,7 +316,7 @@ class Prior(object):
 class PSI(object):
     def __init__(self, nband, nx, ny,
                  nlevels=2,
-                 bases=['self', 'db1', 'db2', 'db3', 'db4', 'db5']):
+                 bases=['self', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8']):
         """
         Sets up operators to move between wavelet coefficients
         in each basis and the image x.
@@ -358,7 +358,6 @@ class PSI(object):
                 y, iy, sy = x.flatten(), 0, 0
             else:
                 alpha = pywt.wavedecn(x, b, mode='zero', level=self.nlevels)
-                # a, coeffs = wavedecn(x, b, 'zero', level=self.nlevels)
                 y, iy, sy = pywt.ravel_coeffs(alpha)
             self.iy.append(iy)
             self.sy.append(sy)
@@ -391,15 +390,16 @@ class PSI(object):
         for b in range(self.nbasis):
             base = self.bases[b]
             for l in range(self.nband):
+                # unpad
                 a = alpha[b, l, self.padding[b]]
                 if base == 'self':
                     wave = a.reshape(self.nx, self.ny)
                 else:
-                    a, coeffs = unravel_coeffs(a, self.iy[b], self.sy[b])
+                    # unravel and rec
+                    alpha_rec = pywt.unravel_coeffs(a, self.iy[b], self.sy[b])
                     wave = pywt.waverecn(alpha_rec, base, mode='zero')
-                    wave = waverecn(a, coeffs, base, mode='zero')
 
-                    # return reconstructed image from coeff
+                # accumulate
                 x[l] += wave / self.sqrtP
         return x
 
@@ -416,10 +416,9 @@ class PSI(object):
                     alpha[b, l] = np.pad(x[l].reshape(self.nx*self.ny)/self.sqrtP, (0, self.nmax-self.ntot[b]), mode='constant')
                 else:
                     # decompose
-                    # alphal = pywt.wavedecn(x[l], base, mode='zero', level=self.nlevels)
-                    a, coeffs = wavedecn(x[l], base, 'zero', level=self.nlevels)
+                    alphal = pywt.wavedecn(x[l], base, mode='zero', level=self.nlevels)
                     # ravel and pad
-                    tmp, _, _ = ravel_coeffs(a, coeffs)
+                    tmp, _, _ = pywt.ravel_coeffs(alphal)
                     alpha[b, l] = np.pad(tmp/self.sqrtP, (0, self.nmax-self.ntot[b]), mode='constant')
         return alpha
 
@@ -437,10 +436,8 @@ def _dot_internal(alpha, bases, padding, iy, sy, sqrtP, nx, ny, real_type):
                 if base == 'self':
                     wave = a.reshape(nx, ny)
                 else:
-                    a, coeffs = unravel_coeffs(a, iy[b], sy[b], output_format='wavedecn')
-                    # a, coeffs = alpha_rec[0], alpha_rec[1::]
-                    wave = waverecn(a, coeffs, base, mode='zero')
-                    # wave = pywt.waverecn(alpha_rec, base, mode='zero')
+                    alpha_rec = pywt.unravel_coeffs(a, iy[b], sy[b], output_format='wavedecn')
+                    wave = pywt.waverecn(alpha_rec, base, mode='zero')
 
                 x[l] += wave / sqrtP
     return x
@@ -460,11 +457,9 @@ def _hdot_internal(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_type):
                     alpha[b, l] = np.pad(x[l].reshape(nx*ny)/sqrtP, (0, nmax-ntot[b]), mode='constant')
                 else:
                     # decompose
-                    # alphal = pywt.wavedecn(x[l], base, mode='zero', level=nlevels)
-                    a, coeffs = wavedecn(x[l], base, 'zero', level=nlevels)
-                    # alphal = [a, coeffs]
+                    alphal = pywt.wavedecn(x[l], base, mode='zero', level=nlevels)
                     # ravel and pad
-                    tmp, _, _ = ravel_coeffs(a, coeffs)
+                    tmp, _, _ = pywt.ravel_coeffs(alphal)
                     alpha[b, l] = np.pad(tmp/sqrtP, (0, nmax-ntot[b]), mode='constant')
 
     return alpha
@@ -475,7 +470,7 @@ def _hdot_internal_wrapper(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_ty
 class DaskPSI(PSI):
     def __init__(self, nband, nx, ny,
                  nlevels=2,
-                 bases=['self', 'db1', 'db2', 'db3', 'db4', 'db5'],
+                 bases=['self', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8'],
                  nthreads=8):
         PSI.__init__(self, nband, nx, ny, nlevels=nlevels,
                      bases=bases)
