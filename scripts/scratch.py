@@ -1,41 +1,39 @@
+
 import numpy as np
+import dask.array as da
+import time
 
-import numba
-from numba.cpython.unsafe.tuple import tuple_setitem
-from numba.typed import Dict, List
+def accumulate_dirty(dirty, this_dirty, bands, subbands):
+    return da.blockwise(_accumulate_dirty, ('band', 'nx', 'ny'),
+                        dirty, ('band', 'nx', 'ny'),
+                        this_dirty, ('subband', 'nx', 'ny'),
+                        bands, ('band',),
+                        subbands, None,
+                        dtype=dirty.dtype)
 
-import numba
-from numba import generated_jit, njit
-
-
-# @generated_jit(nopython=True)
-# def fn(key, value):
-#     dict_type = numba.types.DictType(numba.types.unicode_type, value)
-#     value_type = value
-
-#     def impl(key, value):
-#         d = numba.typed.Dict.empty(numba.types.unicode_type, value_type)
-#         d[key] = value
-#         return d
-
-
-#     return impl
-
-@numba.njit
-def impl(x, keys, values):
-    for i, item in x:  #enumerate(numba.literal_unroll(x)):
-        item[keys[i]]  = values[i]
-    return x
+def _accumulate_dirty(dirty, this_dirty, bands, subbands):
+    if bands in subbands:
+        dirty += this_dirty[subbands.index(bands)]
+    return dirty
 
 if __name__=="__main__":
-    
-    nlevels = 3
-    # x = nlevels*(numba.typed.Dict.empty(numba.types.unicode_type, numba.types.SliceType),)
-    x = nlevels*(numba.typed.Dict(),)
-    keys = List(['dd', 'ad', 'da'])
-    
-    values = List([numba.types.UniTuple(dtype=array.dtype, count=tuple_size)(1, 2), (5, 8), (8,10)])
-    # # # values = List([np.random.randn(5, 5), np.random.randn(4, 4), np.random.randn(3, 3)])
-    x = impl(x, keys, values)
+    nband = 8
+    subband = 3
+    nx = 12
+    ny = 12
 
-    # print(fn('key', slice(0,10)))
+    subbands = (2, 4, 6)
+    this_dirty = np.random.randn(subband, nx, ny)
+    this_dirty_da = da.from_array(this_dirty, chunks=(1, nx, ny))
+    
+    bands = (0, 1, 2, 3, 4, 5, 6, 7)
+    bands_da = da.from_array(bands, chunks=1)
+    dirty  = np.zeros((nband, nx, ny))
+    dirty_da = da.from_array(dirty, chunks=(1, nx, ny))
+
+    result = accumulate_dirty(dirty_da, this_dirty_da, bands_da, subbands).compute()
+
+    for i in subbands:
+        result[i] -= this_dirty[subbands.index(i)]
+
+    print(np.abs(result).max())

@@ -25,6 +25,7 @@ setuptools.setup(
           'codex-africanus[complete] >= 0.2.6',
           'dask-ms[xarray]',
           'PyWavelets',
+          'zarr',
       ],
      classifiers=[
          "Programming Language :: Python :: 3",
