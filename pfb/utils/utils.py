@@ -12,13 +12,13 @@ from time import time
 from astropy.io import fits
 from astropy.wcs import WCS
 
-from .operators import PSI, DaskPSI
+from pfb.operators import PSI, DaskPSI
 
 
 def data_from_header(hdr, axis=3):
     npix = hdr['NAXIS' + str(axis)]
     refpix = hdr['CRPIX' + str(axis)]
-    delta = hdr['CDELT' + str(axis)]  # assumes units are Hz
+    delta = hdr['CDELT' + str(axis)] 
     ref_val = hdr['CRVAL' + str(axis)]
     return ref_val + np.arange(1 - refpix, 1 + npix - refpix) * delta
 
@@ -100,6 +100,25 @@ def prox_21(p, sig_21, weights_21, psi=None, positivity=False):
         x[x<0] = 0.0
 
     return x
+
+def new_prox_21(v, sigma, weights):
+    """
+    Computes weighted version of
+
+    prox_{sigma * || . ||_{21}}(v)
+
+    Assumed that v has shape nbasis x nband x ntot where
+
+    nbasis  - number of orthogonal bases
+    nband   - number of imaging bands
+    ntot    - total number of coefficients for each basis (must be equal)
+    """
+    l2_norm = norm(v, axis=1)  # drops freq axis
+    l2_soft = np.maximum(l2_norm - sigma * weights, 0.0)  # norm is always positive
+    mask = l2_norm != 0
+    ratio = np.zeros(mask.shape, dtype=v.dtype)
+    ratio[mask] = l2_soft[mask] / l2_norm[mask]
+    return v * ratio[:, None, :]  # restore freq axis
 
 
 def robust_reweight(v, residuals):
