@@ -11,7 +11,7 @@ from africanus.model.coherency.dask import convert
 from pprint import pprint
 
 class Gridder(object):
-    def __init__(self, ms_name, nx, ny, cell_size, nband=None, ncpu=8, do_wstacking=1, Stokes='I',
+    def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',
                  row_chunks=100000, optimise_chunks=True,
                  data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM', model_column="MODEL_DATA", flag_column='FLAG'):
         if Stokes != 'I':
@@ -19,7 +19,7 @@ class Gridder(object):
         self.nx = nx
         self.ny = ny
         self.cell = cell_size * np.pi/60/60/180
-        self.nthreads = ncpu
+        self.nthreads = nthreads
 
         self.data_column = data_column
         self.weight_column = weight_column
@@ -84,6 +84,12 @@ class Gridder(object):
         fmin = ufreqs[0]
         fmax = ufreqs[-1]
         fbins = np.linspace(fmin, fmax, self.nband+1)
+        self.freq_out = np.zeros(self.nband)
+        for band in range(self.nband):
+            indl = ufreqs >= fbins[band]
+            indu = ufreqs < fbins[band + 1] + 1e-6
+            self.freq_out[band] = np.mean(ufreqs[indl & indu])
+        
         # chan <-> band mapping
         self.band_mapping = {}
         self.chunks = {}
@@ -183,7 +189,7 @@ class Gridder(object):
         
         residuals = dask.compute(residuals, scheduler='single-threaded')[0]
         
-        return accumulate_dirty(residuals, self.nband, self.band_mapping)
+        return accumulate_dirty(residuals, self.nband, self.band_mapping).astype(np.float64)
 
     def make_dirty(self):
         print("Making dirty")
@@ -256,7 +262,7 @@ class Gridder(object):
         
         dirties = dask.compute(dirties, scheduler='single-threaded')[0]
         
-        return accumulate_dirty(dirties, self.nband, self.band_mapping)
+        return accumulate_dirty(dirties, self.nband, self.band_mapping).astype(np.float64)
 
     def make_psf(self):
         print("Making PSF")
@@ -319,7 +325,7 @@ class Gridder(object):
 
         psfs = dask.compute(psfs)[0]
                 
-        return accumulate_dirty(psfs, self.nband, self.band_mapping)
+        return accumulate_dirty(psfs, self.nband, self.band_mapping).astype(np.float64)
 
     def write_model(self, x):
         x = da.from_array(x.astype(np.float32), chunks=(1, self.nx, self.ny))

@@ -15,7 +15,7 @@ def create_parser():
                    help="Fits file with psf cube")
     p.add_argument("--outfile", default='image', type=str,
                    help='base name of output.')
-    p.add_argument("--ncpu", default=0, type=int,
+    p.add_argument("--nthreads", default=0, type=int,
                    help='Number of threads to use.')
     p.add_argument("--gamma", type=float, default=0.9,
                    help="Step size of 'primal' update.")
