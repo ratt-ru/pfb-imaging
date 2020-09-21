@@ -253,8 +253,6 @@ class Gridder(object):
                 flagyy = flag[:, :, -1]
                 flag = ~ (flagxx | flagyy)  # ducc0 convention
 
-
-                print("Pixels  = ", self.nx, self.ny)
                 dirty = vis2im(uvw, freq, data, freq_bin_idx, freq_bin_counts,
                                self.nx, self.ny, self.cell, weights=weights,
                                flag=flag.astype(np.uint8), nthreads=self.nthreads)

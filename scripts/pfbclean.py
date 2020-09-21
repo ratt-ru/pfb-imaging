@@ -143,11 +143,11 @@ def main(args):
     
     if args.nx is None or args.ny is None:
         fov = args.fov*3600
-        nx = int(fov/args.cell_size)
-        ny = nx
-        from scipy.fftpack import next_fast_len
-        args.nx = next_fast_len(nx)
-        args.ny = next_fast_len(ny)
+        npix = int(fov/args.cell_size)
+        if npix % 2:
+            npix += 1
+        nx = npix
+        ny = npix
 
     if args.nband is None:
         args.nband = freq.size
