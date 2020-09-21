@@ -146,8 +146,8 @@ def main(args):
         npix = int(fov/args.cell_size)
         if npix % 2:
             npix += 1
-        nx = npix
-        ny = npix
+        args.nx = npix
+        args.ny = npix
 
     if args.nband is None:
         args.nband = freq.size
