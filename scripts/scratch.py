@@ -1,26 +1,40 @@
 
 import numpy as np
-import dask.array as da
 import time
-from pfb.operators import Gridder
+from africanus.gps.kernels import exponential_squared as expsq
+from pfb.operators import freqmul, Prior
+import matplotlib.pyplot as plt
+import dask.array as da
+
 
 if __name__=="__main__":
-    nband = 5
-    cell = 0.15
-    nx = 2048
-    ny = 2048
+    nv = 12
+    nx = 4096
+    ny = 4096
 
-    ms = ['/home/landman/Data/VLA/CYGA/CygA-S-D-HI.MS']
+    v = np.arange(nv).astype(np.float64)
 
-    R = Gridder(ms, nx, ny, cell, nband)
+    sigma0 = 0.01
+    l = 0.25*nv
+    Kmat = expsq(v, v, sigma0, l)
 
-    x = np.zeros((nband, nx, ny), dtype=np.float64)
-    x[:, nx//2, ny//2] = 100.0
+    x = np.random.randn(nv, nx, ny)
+
+    K = Prior(sigma0, nv, nx, ny)
+
+    ti = time.time()
+    res1 = Kmat.dot(x.reshape(nv, nx*ny)).reshape(nv, nx, ny)
+    print(time.time() - ti)
+    ti = time.time()
+    res2 = K.dot(x)
+    print(time.time() - ti)
+    ti = time.time()
+    res3 = np.einsum('ij,jkl->ikl', Kmat, x)
+    print(time.time() - ti)
+
+
+    print(np.abs(res1-res2).max())
+    print(np.abs(res1-res3).max())
+
+
     
-    residual = R.make_residual(x)
-
-    import matplotlib.pyplot as plt
-    for i in range(nband):
-        plt.imshow(residual[i])
-        plt.colorbar()
-        plt.show()

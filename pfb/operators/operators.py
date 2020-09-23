@@ -78,30 +78,11 @@ class Prior(object):
         self.Kinv = np.linalg.pinv(self.K)
 
     def dot(self, x):
-        return freqmul(self.K, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+        return self.K.dot(x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
 
     def idot(self, x):
-        return freqmul(self.Kinv, x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+        return self.Kinv.dot(x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
 
-    #     # get kernel (always pixel coordinates)
-    #     length_scale = 2.5/(2*np.sqrt(2*np.log(2)))
-    #     self.K = make_kernel(nx_psf, ny_psf, sigma0, length_scale)
-    #     K_pad = iFs(self.K, axes=self.ax)
-    #     self.Khat = r2c(K_pad, axes=self.ax, forward=True, nthreads=nthreads, inorm=0)
-
-    # def dot(self, x):
-    #     xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
-    #     xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
-    #     xhat = c2r(xhat * self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
-    #     res = Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
-    #     return res
-
-    # def idot(self, x):
-    #     xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
-    #     xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
-    #     xhat = c2r(xhat / self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
-    #     res = Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
-    #     return res
 
 class PSI(object):
     def __init__(self, nband, nx, ny,

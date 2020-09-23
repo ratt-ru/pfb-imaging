@@ -175,7 +175,8 @@ def main(args):
         psf_array = load_fits(args.psf)
     else:
         psf_array = R.make_psf()
-        save_fits(args.outfile + '_psf.fits', psf_array, hdr_psf, dtype=np.float64)
+        save_fits(args.outfile + '_psf.fits', psf_array, hdr_psf)
+
     
     psf_max = np.amax(psf_array.reshape(args.nband, 4*args.nx*args.ny), axis=1)
     psf = PSF(psf_array, args.nthreads)
@@ -203,7 +204,11 @@ def main(args):
     rmax = np.abs(dirty_mfs).max()
     rms = np.std(dirty_mfs)
     print("Peak of dirty is %f and rms is %f"%(rmax, rms))
-    save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs, dtype=np.float32)       
+    save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)       
+
+    psf_mfs = np.sum(psf_array, axis=0)/wsum
+    save_fits(args.outfile + '_psf_mfs.fits', psf_mfs[args.nx//2:3*args.nx//2, 
+                                                      args.ny//2:3*args.ny//2], hdr_mfs)
     
     #  preconditioning matrix
     K = Prior(args.sig_l2, args.nband, args.nx, args.ny, nthreads=args.nthreads)
