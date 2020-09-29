@@ -28,6 +28,7 @@ setup(
           'dask-ms[xarray]',
           'PyWavelets',
           'zarr',
+          'numpydoc',
       ],
      classifiers=[
          "Programming Language :: Python :: 3",
