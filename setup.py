@@ -1,11 +1,12 @@
+from setuptools import setup, find_packages
 import pfb
-import setuptools
-with open("README.md", "r") as fh:
+
+with open("README.rst", "r") as fh:
     long_description = fh.read()
 
-setuptools.setup(
+setup(
      name='pfb',  
-     version='0.0.1',
+     version=pfb.__version__,
      scripts=['scripts/simple_spi_fitter.py',
               'scripts/power_beam_maker.py',
               'scripts/image_convolver.py',
@@ -18,9 +19,9 @@ setuptools.setup(
      author_email="lbester@ska.ac.za",
      description="Pre-conditioned forward-backward CLEAN algorithm",
      long_description=long_description,
-   long_description_content_type="text/markdown",
+     long_description_content_type="text/markdown",
      url="https://github.com/ratt-ru/pfb-clean",
-     packages=setuptools.find_packages(),
+     packages=find_packages(),
      install_requires=[
           'matplotlib',
           'codex-africanus[complete] >= 0.2.6',

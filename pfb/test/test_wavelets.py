@@ -14,8 +14,7 @@ from pfb.wavelets.wavelets import (dwt, dwt_axis,
                                    promote_axis,
                                    promote_level,
                                    discrete_wavelet,
-                                   wavedecn, waverecn,
-                                   ravel_coeffs, unravel_coeffs)
+                                   wavedecn, waverecn)
 from pfb.wavelets.modes import (Modes,
                                 promote_mode,
                                 mode_str_to_enum)
