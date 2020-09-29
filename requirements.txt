@@ -1,0 +1,2 @@
+-e git+https://gitlab.mpcdf.mpg.de/mtr/pypocketfft.git#egg=pypocketfft
+-e git+https://gitlab.mpcdf.mpg.de/ift/nifty_gridder.git#egg=nifty_gridder

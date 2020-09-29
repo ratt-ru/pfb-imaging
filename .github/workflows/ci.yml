@@ -1,0 +1,22 @@
+name: pfb-clean Workflow
+
+on: [push, pull_request]
+
+jobs: 
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Hello World Step
+        run: >
+          echo "Hello World"
+
+  deploy:
+    needs: [test]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy Step
+        run: >
+          echo "Deploying PyPI"
+          

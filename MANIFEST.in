@@ -1,0 +1,8 @@
+include pfb/*.py
+include simple_spi_fitter.py
+include power_beam_maker.py
+include image_convolver.py
+include pfb.py
+include solve_x0.py
+include make_dirty.py
+include prep_data.py
