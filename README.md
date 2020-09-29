@@ -25,7 +25,7 @@ You have to use the dirty image and psf produced by ```make_dirty.py``` as these
 Note that the input dirty image and psf should not be normalised by wsum. 
 
 
-### ```pfb.py```
+### ```pfbclean.py```
 Performs pre-conditioned forward-backward clean algorithm. 
 In principle you just need to point it at a measurement set but it might be beneficial to to tune the regularisers (eg. sig_l21) using ```solve_x0.py```.
 The result can be used as a starting point for ```pfbclean.py``` by passing in the model produced using the ```--x0``` option.
