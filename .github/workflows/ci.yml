@@ -1,0 +1,40 @@
+name: pfb-clean Workflow
+
+on: [push, pull_request]
+
+jobs: 
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.6", "3.7", "3.8"]
+
+    steps:
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version}}
+        
+      - name: Checkout source
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 1
+
+      - name: Upgrade pip and setuptools
+        run: python -m pip install -U pip setuptools
+
+      - name: Install pfb-clean
+        run: python -m pip install .
+
+      - name: Run tests
+        run: py.test -s -vvv pfb/
+
+  deploy:
+    needs: [test]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy Step
+        run: >
+          echo "Deploying PyPI"
+          
