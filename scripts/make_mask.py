@@ -5,7 +5,7 @@ from astropy.io import fits
 from scipy.ndimage import gaussian_filter, median_filter, map_coordinates
 import matplotlib.pyplot as plt
 from numba import njit, prange
-from pfb.utils import data_from_header
+from pfb.utils import data_from_header, save_fits, load_fits
 from pfb.operators import PSI
 import argparse
 
@@ -135,10 +135,7 @@ def main(args):
 
     
     hdr = fits.getheader(args.image)
-    hdu = fits.PrimaryHDU(header=hdr)
-    hdu.data = mask.T[::-1][None, None].astype(np.float32)
-
-    hdu.writeto(args.outname, overwrite=True)
+    save_fits(args,outname, mask, hdr)
 
 
 if __name__=="__main__":
