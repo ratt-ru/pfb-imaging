@@ -56,7 +56,7 @@ def map_region(region, ox, oy, x, y):
     return new_region
 
 def main(args):
-    image = fits.getdata(args.image).squeeze().astype(args.dtype)[::-1].T
+    image = load_fits(args.image, args.dtype).squeeze()
     hdr = fits.getheader(args.image)
     x_coords = data_from_header(hdr, axis=1)
     y_coords = data_from_header(hdr, axis=2)
@@ -135,7 +135,7 @@ def main(args):
 
     
     hdr = fits.getheader(args.image)
-    save_fits(args,outname, mask, hdr)
+    save_fits(args.outname, mask, hdr)
 
 
 if __name__=="__main__":

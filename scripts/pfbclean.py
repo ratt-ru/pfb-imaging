@@ -10,7 +10,7 @@ from pfb.opt import power_method, fista, pcg, simple_pd
 from time import time
 import argparse
 from astropy.io import fits
-from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, prox_21, load_fits_contiguous
+from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, prox_21
 from pfb.operators import Gridder, PSF, Prior, DaskPSI
 import scipy.linalg as sla
 
@@ -215,7 +215,7 @@ def main(args):
     # mask
     if args.mask is not None:
         compare_headers(hdr_mfs, fits.getheader(args.mask))
-        mask = load_fits_contiguous(args.mask).astype(np.bool)
+        mask = load_fits(args.mask, dtype=np.bool)
         print(mask.shape)
     else:
         mask = None

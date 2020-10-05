@@ -24,7 +24,10 @@ def data_from_header(hdr, axis=3):
 
 def load_fits(name, dtype=np.float64):
     data = fits.getdata(name)
-    if len(data.shape) == 3:
+    print(data)
+    if len(data.shape) == 4:
+        return np.ascontiguousarray(np.transpose(data[:, :, ::-1].astype(dtype), axes=(0, 1, 3, 2)))
+    elif len(data.shape) == 3:
         return np.ascontiguousarray(np.transpose(data[:, ::-1].astype(dtype), axes=(0, 2, 1)))
     elif len(data.shape) == 2:
         return np.ascontiguousarray(data[::-1].T.astype(dtype))
@@ -33,7 +36,9 @@ def load_fits(name, dtype=np.float64):
 
 def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
     hdu = fits.PrimaryHDU(header=hdr)
-    if len(data.shape) == 3:
+    if len(data.shape) == 4:
+        hdu.data = np.transpose(data, axes=(0, 1, 3, 2))[:, ::-1].astype(dtype)
+    elif len(data.shape) == 3:
         hdu.data = np.transpose(data, axes=(0, 2, 1))[:, ::-1].astype(dtype)
     elif len(data.shape) == 2:
         hdu.data = data.T[::-1].astype(dtype)
