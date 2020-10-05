@@ -196,7 +196,7 @@ def main(args):
             save_fits(args.outfile + '_dirty.fits', dirty, hdr)
         else:
             compare_headers(hdr, fits.getheader(args.x0))
-            model = load_fits(args.x0, dtype=np.flota64)
+            model = load_fits(args.x0, dtype=np.float64)
             dirty = R.make_residual(model)
             save_fits(args.outfile + '_first_residual.fits', dirty, hdr)
 
