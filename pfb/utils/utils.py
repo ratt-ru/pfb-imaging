@@ -1,5 +1,4 @@
 import numpy as np
-from numba import njit, prange
 from scipy.special import digamma, polygamma
 from scipy.optimize import fmin_l_bfgs_b
 from scipy.linalg import norm
@@ -47,66 +46,66 @@ def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
     hdu.writeto(name, overwrite=overwrite)
 
 
-def prox_21(p, sig_21, weights_21, psi=None, positivity=False):
-    nchan, nx, ny = p.shape
-    if psi is None:
-        # l21 norm
-        # meanp = norm(p.reshape(nchan, nx*ny), axis=0)
-        meanp = np.mean(p.reshape(nchan, nx*ny), axis=0)
-        l2_soft = np.maximum(meanp - sig_21 * weights_21, 0.0)
-        indices = np.nonzero(meanp)
-        ratio = np.zeros(meanp.shape, dtype=np.float64)
-        ratio[indices] = l2_soft[indices]/meanp[indices]
-        x = (p.reshape(nchan, nx*ny) * ratio[None, :]).reshape(nchan, nx, ny)
+# def prox_21(p, sig_21, weights_21, psi=None, positivity=False):
+#     nchan, nx, ny = p.shape
+#     if psi is None:
+#         # l21 norm
+#         # meanp = norm(p.reshape(nchan, nx*ny), axis=0)
+#         meanp = np.mean(p.reshape(nchan, nx*ny), axis=0)
+#         l2_soft = np.maximum(meanp - sig_21 * weights_21, 0.0)
+#         indices = np.nonzero(meanp)
+#         ratio = np.zeros(meanp.shape, dtype=np.float64)
+#         ratio[indices] = l2_soft[indices]/meanp[indices]
+#         x = (p.reshape(nchan, nx*ny) * ratio[None, :]).reshape(nchan, nx, ny)
         
-    elif type(psi) is PSI:
-        nchan, nx, ny = p.shape
-        x = np.zeros(p.shape, p.dtype)
-        v = psi.hdot(p)
-        l2_norm = norm(v, axis=1)  # drops freq axis
-        l2_soft = np.maximum(np.abs(l2_norm) - sig_21 * weights_21, 0.0) * np.sign(l2_norm)
-        mask = l2_norm[:, :] != 0
-        ratio = np.zeros(mask.shape, dtype=psi.real_type)
-        ratio[mask] = l2_soft[mask] / l2_norm[mask]
-        v *= ratio[:, None, :]  # restore freq axis
-        x = psi.dot(v)
+#     elif type(psi) is PSI:
+#         nchan, nx, ny = p.shape
+#         x = np.zeros(p.shape, p.dtype)
+#         v = psi.hdot(p)
+#         l2_norm = norm(v, axis=1)  # drops freq axis
+#         l2_soft = np.maximum(np.abs(l2_norm) - sig_21 * weights_21, 0.0) * np.sign(l2_norm)
+#         mask = l2_norm[:, :] != 0
+#         ratio = np.zeros(mask.shape, dtype=psi.real_type)
+#         ratio[mask] = l2_soft[mask] / l2_norm[mask]
+#         v *= ratio[:, None, :]  # restore freq axis
+#         x = psi.dot(v)
 
-    elif type(psi) is DaskPSI:
-        v = psi.hdot(p)
-        # 2-norm along spectral axis
-        l2_norm = da.linalg.norm(v, axis=1)
+#     elif type(psi) is DaskPSI:
+#         v = psi.hdot(p)
+#         # 2-norm along spectral axis
+#         l2_norm = da.linalg.norm(v, axis=1)
 
-        def safe_ratio(l2_norm, weights, sig_21):
-            l2_soft = np.maximum(np.abs(l2_norm) - weights*sig_21, 0.0)*np.sign(l2_norm)
-            result = np.zeros_like(l2_norm)
-            mask = l2_norm != 0
-            result[mask] = l2_soft[mask] / l2_norm[mask]
-            return result
+#         def safe_ratio(l2_norm, weights, sig_21):
+#             l2_soft = np.maximum(np.abs(l2_norm) - weights*sig_21, 0.0)*np.sign(l2_norm)
+#             result = np.zeros_like(l2_norm)
+#             mask = l2_norm != 0
+#             result[mask] = l2_soft[mask] / l2_norm[mask]
+#             return result
 
-        r = da.blockwise(safe_ratio, ("basis", "nx", "ny"),
-                         l2_norm, ("basis", "nx", "ny"),
-                         weights_21, ("basis", "nx", "ny"),
-                         sig_21, None,
-                         dtype=l2_norm.dtype)
+#         r = da.blockwise(safe_ratio, ("basis", "nx", "ny"),
+#                          l2_norm, ("basis", "nx", "ny"),
+#                          weights_21, ("basis", "nx", "ny"),
+#                          sig_21, None,
+#                          dtype=l2_norm.dtype)
 
-        # apply inverse operator
-        x = psi.dot(v * r[:, None, :, :])
-        # Sum over bases
-        x = x.sum(axis=0)
+#         # apply inverse operator
+#         x = psi.dot(v * r[:, None, :, :])
+#         # Sum over bases
+#         x = x.sum(axis=0)
 
-        def ensure_positivity(x):
-            x = x.copy()
-            x[x < 0] = 0.0
-            return x
+#         def ensure_positivity(x):
+#             x = x.copy()
+#             x[x < 0] = 0.0
+#             return x
 
-        x = x.map_blocks(ensure_positivity, dtype=x.dtype)
+#         x = x.map_blocks(ensure_positivity, dtype=x.dtype)
 
-    if positivity:
-        x[x<0] = 0.0
+#     if positivity:
+#         x[x<0] = 0.0
 
-    return x
+#     return x
 
-def new_prox_21(v, sigma, weights):
+def prox_21(v, sigma, weights):
     """
     Computes weighted version of
 

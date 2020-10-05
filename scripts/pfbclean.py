@@ -6,13 +6,11 @@ import numpy as np
 from daskms import xds_from_ms, xds_from_table
 import dask
 import dask.array as da
-from pfb.opt import power_method, fista, pcg, simple_pd
-from time import time
+from pfb.opt import power_method, pcg, primal_dual
 import argparse
 from astropy.io import fits
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, prox_21
 from pfb.operators import Gridder, PSF, Prior, DaskPSI
-import scipy.linalg as sla
 
 def create_parser():
     p = argparse.ArgumentParser()
