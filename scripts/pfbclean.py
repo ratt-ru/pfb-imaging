@@ -45,6 +45,8 @@ def create_parser():
                    help="Cell size in arcseconds. Computed automatically from super_resolution_factor if None")
     p.add_argument("--nband", default=None, type=int,
                    help="Number of imaging bands in output cube")
+    p.add_argument("--mask", type=str, default=None,
+                   help="A fits mask (True where unmasked)")
     p.add_argument("--do_wstacking", type=str2bool, nargs='?', const=True, default=True,
                    help='Whether to use wstacking or not.')
     p.add_argument("--field", type=int, default=0, nargs='+',
@@ -210,6 +212,13 @@ def main(args):
     save_fits(args.outfile + '_psf_mfs.fits', psf_mfs[args.nx//2:3*args.nx//2, 
                                                       args.ny//2:3*args.ny//2], hdr_mfs)
     
+    # mask
+    if args.mask is not None:
+        compare_headers(hdr_mfs, fits.getheader(args.mask))
+        mask = load_fits(args.mask).astype(np.bool)
+    else:
+        mask = None
+
     #  preconditioning matrix
     K = Prior(args.sig_l2, args.nband, args.nx, args.ny, nthreads=args.nthreads)
     def hess(x):  
@@ -234,11 +243,13 @@ def main(args):
     # regulariser
     if args.use_psi:
         # set up wavelet basis
-        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels, nthreads=args.nthreads)
+        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
+                      nthreads=args.nthreads)
         nbasis = psi.nbasis
         weights_21 = np.ones((psi.nbasis, psi.nmax), dtype=np.float64)
     else:
-        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels, nthreads=args.nthreads, bases=[self])
+        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
+                      nthreads=args.nthreads, bases=[self])
         weights_21 = np.ones(nx*ny, dtype=np.float64)
 
     dual = np.zeros((psi.nbasis, args.nband, psi.nmax), dtype=np.float64)
@@ -248,13 +259,15 @@ def main(args):
     i = 0
     residual = dirty.copy()
     for i in range(args.maxit):
-        x = pcg(hess, residual, np.zeros(dirty.shape, dtype=np.float64), M=K.dot, tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbose)
+        x = pcg(hess, residual, np.zeros(dirty.shape, dtype=np.float64), M=K.dot, tol=args.cgtol,
+                maxit=args.cgmaxit, verbosity=args.cgverbose)
         
         # update model
         modelp = model
         model = modelp + args.gamma * x
 
-        model, dual = simple_pd(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta, tol=args.pdtol, maxit=args.pdmaxit, report_freq=100)
+        model, dual = simple_pd(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta,
+                                tol=args.pdtol, maxit=args.pdmaxit, report_freq=100, mask=mask)
 
         # reweighting
         if i in reweight_iters:

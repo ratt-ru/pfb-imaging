@@ -124,10 +124,12 @@ def main(args):
 
     plt.figure(3)
     plt.imshow(mask)
+    plt.colorbar()
     
     if args.region is not None:
         plt.figure(4)
         plt.imshow(new_region)
+        plt.colorbar()
     
     plt.show()
 

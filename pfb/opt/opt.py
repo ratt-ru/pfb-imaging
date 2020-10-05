@@ -194,6 +194,7 @@ def simple_pd(A, xbar,
               weights,  # weights for l1 thresholding 
               L, nu=1.0,  # spectral norms
               sigma=None,  # step size of dual update
+              mask=None,  # regions where mask is False will be masked 
               tol=1e-5, maxit=1000, positivity=True, report_freq=10):
     """
     Algorithm to solve problems of the form
@@ -252,6 +253,10 @@ def simple_pd(A, xbar,
         x = xp - tau*(psi.dot(2*v - vp) + grad_func(xp))
         if positivity:
             x[x<0] = 0.0
+
+        # apply mask
+        if mask is not None:
+            x = np.where(mask, x, 0.0)
 
         # convergence check
         eps = norm(x-xp)/norm(x)
