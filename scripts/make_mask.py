@@ -87,7 +87,7 @@ def main(args):
         elif (old_y_coords >=360.0).any():
             old_y_coords -= 360
 
-        if not x_coords==old_x_coords or not y_coords==old_y_coords:
+        if not (x_coords==old_x_coords).any() or not (y_coords==old_y_coords).any():
             print("Mapping region")
             new_region = map_region(region, old_x_coords, old_y_coords, x_coords, y_coords)
         else:
@@ -106,7 +106,6 @@ def main(args):
     alpha = psi.hdot(image[None])
     alpha = np.maximum(np.abs(alpha) - args.soft_threshold, 0.0) * np.sign(alpha)
     model = psi.dot(alpha)[0]
-    model = image
     
     # mask based on threshold and region
     mask = np.where(model * new_region > args.threshold, 1.0, 0.0)
