@@ -214,14 +214,15 @@ def main(args):
     if args.mask is not None:
         compare_headers(hdr_mfs, fits.getheader(args.mask))
         mask = load_fits(args.mask, dtype=np.bool)
-        print(mask.shape)
     else:
         mask = np.ones_like(dirty)
+
+    print("mask shape = ", mask.shape)
 
     #  preconditioning matrix
     K = Prior(args.sig_l2, args.nband, args.nx, args.ny, nthreads=args.nthreads)
     def hess(x):  
-        return mask*psf.convolve(x*mask) + K.idot(x)
+        return psf.convolve(x) + K.idot(x)
     if args.beta is None:
         print("Getting spectral norm of update operator")
         beta = power_method(hess, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
