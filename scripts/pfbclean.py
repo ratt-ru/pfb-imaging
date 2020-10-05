@@ -216,12 +216,12 @@ def main(args):
         mask = load_fits(args.mask, dtype=np.bool)
         print(mask.shape)
     else:
-        mask = None
+        mask = np.ones_like(dirty)
 
     #  preconditioning matrix
     K = Prior(args.sig_l2, args.nband, args.nx, args.ny, nthreads=args.nthreads)
     def hess(x):  
-        return psf.convolve(x) + K.idot(x)
+        return mask*psf.convolve(x*mask) + K.idot(x)
     if args.beta is None:
         print("Getting spectral norm of update operator")
         beta = power_method(hess, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
@@ -230,8 +230,11 @@ def main(args):
     print(" beta = %f "%beta)
 
     # Reweighting
-    reweight_iters = list(np.arange(args.reweight_start, args.reweight_end, args.reweight_freq))
-    reweight_iters.append(args.reweight_end)
+    if args.reweight_iters is not None:
+        reweight_iters = args.reweight_iters
+    else:
+        reweight_iters = list(np.arange(args.reweight_start, args.reweight_end, args.reweight_freq))
+        reweight_iters.append(args.reweight_end)
 
     # Reporting    
     print("At iteration 0 peak of residual is %f and rms is %f" % (rmax, rms))
@@ -257,7 +260,7 @@ def main(args):
     eps = 1.0
     i = 0
     residual = dirty.copy()
-    for i in range(args.maxit):
+    for i in range(1, args.maxit):
         x = pcg(hess, residual, np.zeros(dirty.shape, dtype=np.float64), M=K.dot, tol=args.cgtol,
                 maxit=args.cgmaxit, verbosity=args.cgverbose)
         

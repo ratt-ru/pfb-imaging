@@ -171,10 +171,9 @@ def primal_dual(A, xbar,
     sigma    - l21 step size (set to L/2 by default)
 
     Note that the primal variable (i.e. x) has shape (nband, nx, ny) where nband is the number of imaging bands
-    and the dual variable (i.e. v) has shape (nbasis, nband, ntot) where ntot is the total number of coefficients
-    for all bases. It is assumed that all bases are decomposed into the same number of coeffcients. To deal with
-    the fact that the Dirac basis does not necessarily have the same number of coefficients as the wavelets it
-    is simply padded by zeros. This doe snot effect the algorithm. 
+    and the dual variable (i.e. v) has shape (nbasis, nband, nmax) where nmax is the total number of coefficients
+    for all bases. It is assumed that all bases are decomposed into the same number of coefficients. We use zero
+    padding to deal with the fact that the basess do not necessarily have the same number of coefficients.
     """
     # initialise
     x = x0.copy()
