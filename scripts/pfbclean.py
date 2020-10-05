@@ -269,8 +269,8 @@ def main(args):
         modelp = model
         model = modelp + args.gamma * x
 
-        model, dual = simple_pd(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta,
-                                tol=args.pdtol, maxit=args.pdmaxit, report_freq=100, mask=mask)
+        model, dual = primal_dual(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta,
+                                  tol=args.pdtol, maxit=args.pdmaxit, report_freq=100, mask=mask)
 
         # reweighting
         if i in reweight_iters:
