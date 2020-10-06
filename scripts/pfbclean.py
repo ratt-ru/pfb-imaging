@@ -26,6 +26,8 @@ def create_parser():
     p.add_argument("--flag_column", default='FLAG', type=str)
     p.add_argument("--row_chunks", default=100000, type=int,
                    help="Rows per chunk")
+    p.add_argument("--write_model", type=str2bool, nargs='?', const=True, default=True,
+                   help="Whether to write model visibilities to model_column")
     p.add_argument("--dirty", type=str,
                    help="Fits file with dirty cube")
     p.add_argument("--psf", type=str,
@@ -313,6 +315,9 @@ def main(args):
             save_fits(args.outfile + str(i+1) + '_residual_mfs.fits', residual_mfs, hdr_mfs)
 
         print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i, rmax, rms, eps))
+
+    if args.write_model:
+        R.write_model(model)
 
     if args.make_restored:
         # get the uninformative Wiener filter soln
