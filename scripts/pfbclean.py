@@ -4,6 +4,7 @@
 
 import numpy as np
 from daskms import xds_from_ms, xds_from_table
+from scipy.linalg import norm
 import dask
 import dask.array as da
 from pfb.opt import power_method, pcg, primal_dual
