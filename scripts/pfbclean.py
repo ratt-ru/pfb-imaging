@@ -51,7 +51,7 @@ def create_parser():
     p.add_argument("--field", type=int, default=0, nargs='+',
                    help="Which fields to image")
     p.add_argument("--nthreads", type=int, default=0)
-    p.add_argument("--gamma", type=float, default=0.95,
+    p.add_argument("--gamma", type=float, default=0.99,
                    help="Step size of 'primal' update.")
     p.add_argument("--maxit", type=int, default=10,
                    help="Number of pfb iterations")
@@ -233,7 +233,10 @@ def main(args):
 
     # Reweighting
     if args.reweight_iters is not None:
-        reweight_iters = args.reweight_iters
+        if not isinstance(args.reweight_iters, list):
+            reweight_iters = [args.reweight_iters]
+        else:    
+            reweight_iters = list(args.reweight_iters)
     else:
         reweight_iters = list(np.arange(args.reweight_start, args.reweight_end, args.reweight_freq))
         reweight_iters.append(args.reweight_end)
