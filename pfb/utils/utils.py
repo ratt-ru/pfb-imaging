@@ -23,7 +23,6 @@ def data_from_header(hdr, axis=3):
 
 def load_fits(name, dtype=np.float64):
     data = fits.getdata(name)
-    print(data)
     if len(data.shape) == 4:
         return np.ascontiguousarray(np.transpose(data[:, :, ::-1].astype(dtype), axes=(0, 1, 3, 2)))
     elif len(data.shape) == 3:

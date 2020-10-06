@@ -303,7 +303,7 @@ class Gridder(object):
 
                 weights = getattr(ds, self.weight_column).data
                 if len(weights.shape) < 3:
-                    weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
+                    weights = da.broadcast_to(weights[:, None, :], flag.shape, chunks=flag.chunks)
                 weightsxx = weights[:, :, 0]
                 weightsyy = weights[:, :, -1]
 

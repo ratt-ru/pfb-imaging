@@ -4,6 +4,7 @@
 
 import numpy as np
 from daskms import xds_from_ms, xds_from_table
+from scipy.linalg import norm
 import dask
 import dask.array as da
 from pfb.opt import power_method, pcg, primal_dual
@@ -50,7 +51,7 @@ def create_parser():
     p.add_argument("--field", type=int, default=0, nargs='+',
                    help="Which fields to image")
     p.add_argument("--nthreads", type=int, default=0)
-    p.add_argument("--gamma", type=float, default=0.95,
+    p.add_argument("--gamma", type=float, default=0.99,
                    help="Step size of 'primal' update.")
     p.add_argument("--maxit", type=int, default=10,
                    help="Number of pfb iterations")
@@ -214,9 +215,10 @@ def main(args):
     if args.mask is not None:
         compare_headers(hdr_mfs, fits.getheader(args.mask))
         mask = load_fits(args.mask, dtype=np.bool)
-        print(mask.shape)
     else:
-        mask = None
+        mask = np.ones_like(dirty)
+
+    print("mask shape = ", mask.shape)
 
     #  preconditioning matrix
     K = Prior(args.sig_l2, args.nband, args.nx, args.ny, nthreads=args.nthreads)
@@ -230,8 +232,14 @@ def main(args):
     print(" beta = %f "%beta)
 
     # Reweighting
-    reweight_iters = list(np.arange(args.reweight_start, args.reweight_end, args.reweight_freq))
-    reweight_iters.append(args.reweight_end)
+    if args.reweight_iters is not None:
+        if not isinstance(args.reweight_iters, list):
+            reweight_iters = [args.reweight_iters]
+        else:    
+            reweight_iters = list(args.reweight_iters)
+    else:
+        reweight_iters = list(np.arange(args.reweight_start, args.reweight_end, args.reweight_freq))
+        reweight_iters.append(args.reweight_end)
 
     # Reporting    
     print("At iteration 0 peak of residual is %f and rms is %f" % (rmax, rms))
@@ -257,7 +265,7 @@ def main(args):
     eps = 1.0
     i = 0
     residual = dirty.copy()
-    for i in range(args.maxit):
+    for i in range(1, args.maxit):
         x = pcg(hess, residual, np.zeros(dirty.shape, dtype=np.float64), M=K.dot, tol=args.cgtol,
                 maxit=args.cgmaxit, verbosity=args.cgverbose)
         
@@ -265,8 +273,8 @@ def main(args):
         modelp = model
         model = modelp + args.gamma * x
 
-        model, dual = simple_pd(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta,
-                                tol=args.pdtol, maxit=args.pdmaxit, report_freq=100, mask=mask)
+        model, dual = primal_dual(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta,
+                                  tol=args.pdtol, maxit=args.pdmaxit, report_freq=100, mask=mask)
 
         # reweighting
         if i in reweight_iters:

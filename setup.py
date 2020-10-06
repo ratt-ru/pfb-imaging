@@ -25,6 +25,7 @@ setup(
           'dask-ms[xarray]',
           'PyWavelets',
           'zarr',
+          'packratt'
       ],
      classifiers=[
          "Programming Language :: Python :: 3",
