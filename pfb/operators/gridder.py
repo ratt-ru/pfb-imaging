@@ -328,6 +328,7 @@ class Gridder(object):
         return accumulate_dirty(psfs, self.nband, self.band_mapping).astype(np.float64)
 
     def write_model(self, x):
+        print("Writing model data")
         x = da.from_array(x.astype(np.float32), chunks=(1, self.nx, self.ny))
         writes  = []
         for ims in self.ms:
