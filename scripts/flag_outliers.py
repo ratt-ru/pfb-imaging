@@ -20,7 +20,7 @@ def create_parser():
     p.add_argument("--model_column", default='MODEL_DATA', type=str,
                    help="Column to write model data to")
     p.add_argument("--flag_column", default='FLAG', type=str)
-    p.add_argument("--flag_out_column", default='UPDATED_FLAGS', type=str,
+    p.add_argument("--flag_out_column", default='UPDATED_FLAG', type=str,
                    help="Column to write updated flags to")
     p.add_argument("--sigma_cut", type=float, default=5.0, 
                    help="Whitened residual visibilities with amplitudes larger than"

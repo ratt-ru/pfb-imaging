@@ -76,17 +76,17 @@ def create_parser():
     p.add_argument("--reweight_iters", type=int, default=None, nargs='+',
                    help="Set reweighting iters explicitly")
     p.add_argument("--reweight_start", type=int, default=10,
-                   help="When to start l1 reweighting scheme")
+                   help="When to start l21 reweighting scheme")
     p.add_argument("--reweight_freq", type=int, default=2,
-                   help="How often to do l1 reweighting")
+                   help="How often to do l21 reweighting")
     p.add_argument("--reweight_end", type=int, default=90,
-                   help="When to end the l1 reweighting scheme")
-    p.add_argument("--reweight_alpha_min", type=float, default=1.0e-7,
-                   help="Determines how aggressively the reweighting is applied."
-                   " >= 1 is very mild whereas << 1 is aggressive.")
-    p.add_argument("--reweight_alpha_percent", type=float, default=30)
+                   help="When to end the l21 reweighting scheme")
+    p.add_argument("--reweight_alpha_min", type=float, default=1.0e-8,
+                   help="MInimum alpha in l21 reweighting formula.")
+    p.add_argument("--reweight_alpha_percent", type=float, default=10)
     p.add_argument("--reweight_alpha_ff", type=float, default=0.5,
-                   help="Determines how quickly the reweighting progresses.")
+                   help="Determines how quickly the reweighting progresses."
+                   "reweight_alpha_percent will be scaled by this factor after each reweighting step.")
     p.add_argument("--cgtol", type=float, default=1e-3,
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=50,
@@ -225,7 +225,7 @@ def main(args):
     #  preconditioning matrix
     K = Prior(args.sig_l2, args.nband, args.nx, args.ny, nthreads=args.nthreads)
     def hess(x):  
-        return psf.convolve(x) + K.idot(x)
+        return psf.convolve(x) + x / args.sig_l2**2  #K.idot(x)
     if args.beta is None:
         print("Getting spectral norm of update operator")
         beta = power_method(hess, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
@@ -268,7 +268,9 @@ def main(args):
     i = 0
     residual = dirty.copy()
     for i in range(1, args.maxit):
-        x = pcg(hess, residual, np.zeros(dirty.shape, dtype=np.float64), M=K.dot, tol=args.cgtol,
+        # M = K.dot
+        M = lambda x: x * args.sig_l2**2
+        x = pcg(hess, residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol,
                 maxit=args.cgmaxit, verbosity=args.cgverbose)
         
         # update model
@@ -286,7 +288,6 @@ def main(args):
                 indnz = l2_norm[m].nonzero()
                 alpha = np.percentile(l2_norm[m, indnz].flatten(), args.reweight_alpha_percent)
                 alpha = np.maximum(alpha, args.reweight_alpha_min)
-                # alpha = args.reweight_alpha_min
                 print("Reweighting - ", m, alpha)
                 weights_21[m] = 1.0/(l2_norm[m] + alpha)
             args.reweight_alpha_percent *= args.reweight_alpha_ff
@@ -321,8 +322,8 @@ def main(args):
 
     if args.make_restored:
         # get the uninformative Wiener filter soln
-        op = lambda x: psf.convolve(x) + 0.0001*x
-        M = lambda x: x/0.0001
+        op = lambda x: psf.convolve(x) + 1e-6*x
+        M = lambda x: x/1e-6
         x = pcg(op, residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
         restored = model + x
         
