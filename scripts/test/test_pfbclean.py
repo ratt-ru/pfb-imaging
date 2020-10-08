@@ -13,7 +13,7 @@ def test_pfb(tmp_path_factory):
     args.ms = [str(test_dir / 'smallest_ms.ms_p0')]
     args.data_column = 'DATA'
     args.weight_column = 'WEIGHT'
-    args.outfile = test_dir / 'image'
+    args.outfile = str(test_dir / 'image')
     args.fov = 1.0
     args.maxit = 2
     args.report_freq = 1
