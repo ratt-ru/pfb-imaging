@@ -24,7 +24,7 @@ jobs:
         run: python -m pip install -U pip setuptools
 
       - name: Install pfb-clean
-        run: python -m pip install .
+        run: python -m pip install .[testing]
 
       - name: Run tests
         run: py.test -s -vvv pfb/ scripts/

@@ -27,11 +27,13 @@ setup(
           'dask-ms[xarray]',
           'PyWavelets',
           'zarr',
-          'packratt'
       ],
      classifiers=[
          "Programming Language :: Python :: 3",
          "License :: OSI Approved :: MIT License",
          "Operating System :: OS Independent",
      ],
+     extras_require={
+         'testing' : ['packratt', 'pytest']
+     }
  )
