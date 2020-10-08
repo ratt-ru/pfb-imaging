@@ -4,8 +4,9 @@ import pfb
 with open("README.rst", "r") as fh:
     long_description = fh.read()
 
+
 setup(
-     name='pfb',  
+     name='pfb',
      version=pfb.__version__,
      scripts=['scripts/simple_spi_fitter.py',
               'scripts/power_beam_maker.py',
@@ -22,7 +23,7 @@ setup(
      packages=find_packages(),
      install_requires=[
           'matplotlib',
-          'codex-africanus[complete] >= 0.2.6',
+          'codex-africanus[complete] >= 0.2.8',
           'dask-ms[xarray]',
           'PyWavelets',
           'zarr',
