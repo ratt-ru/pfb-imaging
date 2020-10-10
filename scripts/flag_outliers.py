@@ -26,6 +26,8 @@ def create_parser():
                    help="Whitened residual visibilities with amplitudes larger than"
                    "sigma_cut * global mean will be flagged")
     p.add_argument("--nthreads", type=int, default=0)
+    p.add_argument("--row_chunks", type=int, default=100000)
+    p.add_argument("--chan_chunks", type=int, default=-1)
     return p
 
 
@@ -39,9 +41,9 @@ def main(args):
     counts = []
     for ims in args.ms:
         xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
-                            chunks={"row":-1, "chan":1},
-                            columns=('UVW', args.data_column, args.weight_column,
-                                     args.model_column, args.flag_column))
+                          chunks={"row":args.row_chunks, "chan":args.chan_chunks},
+                          columns=('UVW', args.data_column, args.weight_column,
+                                   args.model_column, args.flag_column))
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
@@ -90,9 +92,9 @@ def main(args):
     writes  = []
     for ims in args.ms:
         xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
-                            chunks={"row":-1, "chan":1},
-                            columns=('UVW', args.data_column, args.weight_column,
-                                     args.model_column, args.flag_column))
+                          chunks={"row":args.row_chunks, "chan":args.chan_chunks},
+                          columns=('UVW', args.data_column, args.weight_column,
+                                   args.model_column, args.flag_column))
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
