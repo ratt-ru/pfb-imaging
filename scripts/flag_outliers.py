@@ -26,7 +26,7 @@ def create_parser():
                    help="Whitened residual visibilities with amplitudes larger than"
                    "sigma_cut * global mean will be flagged")
     p.add_argument("--nthreads", type=int, default=0)
-    p.add_argument("--row_chunks", type=int, default=100000)
+    p.add_argument("--row_chunks", type=int, default=-1)
     p.add_argument("--chan_chunks", type=int, default=-1)
     return p
 
@@ -76,17 +76,25 @@ def main(args):
             if len(weights.shape) < 3:
                 weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
             
-            resid_vis = ~flag*(data - model)*da.sqrt(weights)
-            abs_resid_vis_I = (0.5*(resid_vis[:, :, 0] + resid_vis[:, :, -1])).__abs__()
+            # Stokes I vis 
+            weights = (~flag)*weights
+            resid_vis = (data - model)*weights
+            wsums = (weights[:, :, 0] + weights[:, :, -1])
+            resid_vis_I = da.where(wsums, (resid_vis[:, :, 0] + resid_vis[:, :, -1])/wsums, 0.0j)
+
+            # whiten and take abs
+            abs_resid_vis_I = (resid_vis_I*da.sqrt(wsums)).__abs__()
 
             # get abs value and accumulate 
             sum_amps.append(da.sum(abs_resid_vis_I))
-            counts.append(da.sum(~flag))
+            counts.append(da.sum(wsums>0))
 
     # compute mean
-    sum_amps = dask.compute(sum_amps)
-    counts = dask.compute(counts)
+    sum_amps = np.array(dask.compute(sum_amps)[0])
+    counts = np.array(dask.compute(counts)[0])
     mean_amp = np.sum(sum_amps)/np.sum(counts)
+    print(sum_amps/counts)
+    print(mean_amp)
 
     # second pass updates flags
     writes  = []
@@ -128,8 +136,14 @@ def main(args):
             if len(weights.shape) < 3:
                 weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
             
-            resid_vis = ~flag*(data - model)*da.sqrt(weights)
-            abs_resid_vis_I = (0.5*(resid_vis[:, :, 0] + resid_vis[:, :, -1])).__abs__()
+            # Stokes I vis 
+            weights = (~flag)*weights
+            resid_vis = (data - model)*weights
+            wsums = (weights[:, :, 0] + weights[:, :, -1])
+            resid_vis_I = da.where(wsums, (resid_vis[:, :, 0] + resid_vis[:, :, -1])/wsums, 0.0j)
+
+            # whiten and take abs
+            abs_resid_vis_I = (resid_vis_I*da.sqrt(wsums)).__abs__()
 
             # update flags
             tmp = abs_resid_vis_I >= args.sigma_cut * mean_amp
