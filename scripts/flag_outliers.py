@@ -43,7 +43,7 @@ def main(args):
         xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
                           chunks={"row":args.row_chunks, "chan":args.chan_chunks},
                           columns=('UVW', args.data_column, args.weight_column,
-                                   args.model_column, args.flag_column))
+                                   args.model_column, args.flag_column, 'FLAG_ROW'))
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
@@ -72,6 +72,7 @@ def main(args):
             data = getattr(ds, args.data_column).data
             model = getattr(ds, args.model_column).data
             flag = getattr(ds, args.flag_column).data
+            flag = da.logical_or(flag, ds.FLAG_ROW.data[:, None, None])
             weights = getattr(ds, args.weight_column).data
             if len(weights.shape) < 3:
                 weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
@@ -102,7 +103,7 @@ def main(args):
         xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
                           chunks={"row":args.row_chunks, "chan":args.chan_chunks},
                           columns=('UVW', args.data_column, args.weight_column,
-                                   args.model_column, args.flag_column))
+                                   args.model_column, args.flag_column, 'FLAG_ROW'))
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
@@ -132,6 +133,7 @@ def main(args):
             data = getattr(ds, args.data_column).data
             model = getattr(ds, args.model_column).data
             flag = getattr(ds, args.flag_column).data
+            flag = da.logical_or(flag, ds.FLAG_ROW.data[:, None, None])
             weights = getattr(ds, args.weight_column).data
             if len(weights.shape) < 3:
                 weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
