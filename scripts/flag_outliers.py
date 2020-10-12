@@ -28,6 +28,8 @@ def create_parser():
     p.add_argument("--nthreads", type=int, default=0)
     p.add_argument("--row_chunks", type=int, default=-1)
     p.add_argument("--chan_chunks", type=int, default=-1)
+    p.add_argument("--dry_run", type=str2bool, nargs='?', const=True, default=False,
+                   help="Will not write flags if True")
     return p
 
 
@@ -98,64 +100,67 @@ def main(args):
     print(mean_amp)
 
     # second pass updates flags
-    writes  = []
-    for ims in args.ms:
-        xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
-                          chunks={"row":args.row_chunks, "chan":args.chan_chunks},
-                          columns=('UVW', args.data_column, args.weight_column,
-                                   args.model_column, args.flag_column, 'FLAG_ROW'))
+    if args.dry_run:
+        print("This was a dry run, no flags have been written")
+    else:
+        writes  = []
+        for ims in args.ms:
+            xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
+                            chunks={"row":args.row_chunks, "chan":args.chan_chunks},
+                            columns=('UVW', args.data_column, args.weight_column,
+                                    args.model_column, args.flag_column, 'FLAG_ROW'))
 
-        # subtables
-        ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
-        fields = xds_from_table(ims + "::FIELD", group_cols="__row__")
-        spws = xds_from_table(ims + "::SPECTRAL_WINDOW", group_cols="__row__")
-        pols = xds_from_table(ims + "::POLARIZATION", group_cols="__row__")
+            # subtables
+            ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
+            fields = xds_from_table(ims + "::FIELD", group_cols="__row__")
+            spws = xds_from_table(ims + "::SPECTRAL_WINDOW", group_cols="__row__")
+            pols = xds_from_table(ims + "::POLARIZATION", group_cols="__row__")
 
-        # subtable data
-        ddids = dask.compute(ddids)[0]
-        fields = dask.compute(fields)[0]
-        spws = dask.compute(spws)[0]
-        pols = dask.compute(pols)[0]
-        
-        out_data = []
-        for ds in xds:
-            field = fields[ds.FIELD_ID]
-            radec = field.PHASE_DIR.data.squeeze()
-
-            # check fields match
-            if radec_ref is None:
-                radec_ref = radec
-
-            if not np.array_equal(radec, radec_ref):
-                continue
-
-            # load in data and compute whitened residuals
-            data = getattr(ds, args.data_column).data
-            model = getattr(ds, args.model_column).data
-            flag = getattr(ds, args.flag_column).data
-            flag = da.logical_or(flag, ds.FLAG_ROW.data[:, None, None])
-            weights = getattr(ds, args.weight_column).data
-            if len(weights.shape) < 3:
-                weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
+            # subtable data
+            ddids = dask.compute(ddids)[0]
+            fields = dask.compute(fields)[0]
+            spws = dask.compute(spws)[0]
+            pols = dask.compute(pols)[0]
             
-            # Stokes I vis 
-            weights = (~flag)*weights
-            resid_vis = (data - model)*weights
-            wsums = (weights[:, :, 0] + weights[:, :, -1])
-            resid_vis_I = da.where(wsums, (resid_vis[:, :, 0] + resid_vis[:, :, -1])/wsums, 0.0j)
+            out_data = []
+            for ds in xds:
+                field = fields[ds.FIELD_ID]
+                radec = field.PHASE_DIR.data.squeeze()
 
-            # whiten and take abs
-            abs_resid_vis_I = (resid_vis_I*da.sqrt(wsums)).__abs__()
+                # check fields match
+                if radec_ref is None:
+                    radec_ref = radec
 
-            # update flags
-            tmp = abs_resid_vis_I >= args.sigma_cut * mean_amp
-            updated_flag = da.broadcast_to(tmp[:, :, None], flag.shape, chunks=flag.chunks)
+                if not np.array_equal(radec, radec_ref):
+                    continue
 
-            out_ds = ds.assign(**{args.flag_out_column: (("row", "chan", "corr"), updated_flag)})
+                # load in data and compute whitened residuals
+                data = getattr(ds, args.data_column).data
+                model = getattr(ds, args.model_column).data
+                flag = getattr(ds, args.flag_column).data
+                flag = da.logical_or(flag, ds.FLAG_ROW.data[:, None, None])
+                weights = getattr(ds, args.weight_column).data
+                if len(weights.shape) < 3:
+                    weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
+                
+                # Stokes I vis 
+                weights = (~flag)*weights
+                resid_vis = (data - model)*weights
+                wsums = (weights[:, :, 0] + weights[:, :, -1])
+                resid_vis_I = da.where(wsums, (resid_vis[:, :, 0] + resid_vis[:, :, -1])/wsums, 0.0j)
 
-            out_data.append(out_ds)
-        writes.append(xds_to_table(out_data, ims, columns=[args.flag_out_column]))
-    dask.compute(writes)
+                # whiten and take abs
+                abs_resid_vis_I = (resid_vis_I*da.sqrt(wsums)).__abs__()
+
+                # update flags
+                tmp = abs_resid_vis_I >= args.sigma_cut * mean_amp
+                updated_flag = da.broadcast_to(tmp[:, :, None], flag.shape, chunks=flag.chunks)
+
+                out_ds = ds.assign(**{args.flag_out_column: (("row", "chan", "corr"), updated_flag)})
+
+                out_data.append(out_ds)
+            writes.append(xds_to_table(out_data, ims, columns=[args.flag_out_column]))
+        dask.compute(writes)
 
 
 
