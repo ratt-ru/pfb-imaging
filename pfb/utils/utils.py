@@ -124,14 +124,16 @@ def prox_21(v, sigma, weights):
     return v * ratio[:, None, :]  # restore freq axis
 
 
-def robust_reweight(v, residuals):
+def robust_reweight(residuals, weights, v=None):
     """
     Find the robust weights corresponding to a soln that generated residuals
 
-    v - initial guess for degrees of freedom parameter (float)
-    residuals - array containing residuals of soln (N x 1)
+    residuals - residuals i.e. (data - model) (nrow, nchan, ncorr)
+    weights - inverse of data covariance (nrow, nchan, ncorr)
+    v - initial guess for degrees for freedom parameter (float)
+    corrs - which correlation axes to compute new weights for (default is for LL and RR (or XX and)) 
 
-    Note only one dimensional data points currently supported
+    Correlation axis not currently supported
     """
     # elements of Mahalanobis distance (Delta^2_i's)
     nrow, nchan = residuals.shape
@@ -150,7 +152,7 @@ def robust_reweight(v, residuals):
         return N*np.log(v) - N*digamma(v) + np.sum(Elogtau) - np.sum(Etau), N/v - N*polygamma(1, v) + np.sum(dElogtau) - np.sum(dEtau)
 
 
-    # v, f, d = fmin_l_bfgs_b(func, v, args=(nrow, ressq), pgtol=1e-2, approx_grad=False, bounds=[(1e-3, 30)])
+    v, f, d = fmin_l_bfgs_b(func, v, args=(nrow, ressq), pgtol=1e-2, approx_grad=False, bounds=[(1e-3, 30)])
     Etau = (v + 1.0)/(v + ressq)  # used as new weights
     Lambda = np.mean(ressq*Etau, axis=0)
     return v, np.sqrt(Etau / Lambda[None, :])
