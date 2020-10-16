@@ -304,16 +304,16 @@ def main(args):
 
         if i in report_iters:
             # save current iteration
-            save_fits(args.outfile + str(i+1) + '_model.fits', model, hdr)
+            save_fits(args.outfile + str(i) + '_model.fits', model, hdr)
             
             model_mfs = np.mean(model, axis=0)
-            save_fits(args.outfile + str(i+1) + '_model_mfs.fits', model_mfs, hdr_mfs)
+            save_fits(args.outfile + str(i) + '_model_mfs.fits', model_mfs, hdr_mfs)
 
-            save_fits(args.outfile + str(i+1) + '_update.fits', x, hdr)
+            save_fits(args.outfile + str(i) + '_update.fits', x, hdr)
 
-            save_fits(args.outfile + str(i+1) + '_residual.fits', residual, hdr)
+            save_fits(args.outfile + str(i) + '_residual.fits', residual, hdr)
 
-            save_fits(args.outfile + str(i+1) + '_residual_mfs.fits', residual_mfs, hdr_mfs)
+            save_fits(args.outfile + str(i) + '_residual_mfs.fits', residual_mfs, hdr_mfs)
 
         print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i, rmax, rms, eps))
 
