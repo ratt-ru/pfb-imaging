@@ -243,3 +243,25 @@ def power_method(A, imsize, tol=1e-5, maxit=250):
     else:
         print("PM - Success - convergence after %i iterations"%k)
     return np.vdot(bp, A(bp))/np.vdot(bp, bp)
+
+# def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=10000):
+#     nband, nx, ny = ID.shape
+#     x = np.zeros((nband, nx, ny), dtype=ID.dtype) 
+#     IR = ID.copy()
+#     IRmean = np.mean(IR, axis=0)
+#     IRmax = IRmean.max()
+#     tol = pf*IRmax
+#     for i in range(maxit):
+#         if IRmax < tol:
+#             break
+#         p, q = np.argwhere(IRmean == IRmax).squeeze()[0]
+#         xhat = IR[:, p, q][:, None, None]
+#         x[:, p, q] += xhat
+#         IR -= xhat * PSF[:, nx//2 - p, ny//2 - q]
+#         IRmean = np.mean(IR, axis=0)
+#         IRmax = IRmean.max()
+#     return x
+
+
+        
+

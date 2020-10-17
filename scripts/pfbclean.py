@@ -285,13 +285,14 @@ def main(args):
             v = psi.hdot(model)
             l2_norm = norm(v, axis=1)
             for m in range(psi.nbasis):
-                indnz = l2_norm[m].nonzero()
-                alpha = np.percentile(l2_norm[m, indnz].flatten(), args.reweight_alpha_percent)
-                alpha = np.maximum(alpha, args.reweight_alpha_min)
+                #indnz = l2_norm[m].nonzero()
+                #alpha = np.percentile(l2_norm[m, indnz].flatten(), args.reweight_alpha_percent)
+                #alpha = np.maximum(alpha, args.reweight_alpha_min)
+                alpha = args.reweight_alpha_min
                 print("Reweighting - ", m, alpha)
                 weights_21[m] = 1.0/(l2_norm[m] + alpha)
-            args.reweight_alpha_percent *= args.reweight_alpha_ff
-            print(" reweight alpha percent = ", args.reweight_alpha_percent)
+            args.reweight_alpha_min *= args.reweight_alpha_ff
+            # print(" reweight alpha percent = ", args.reweight_alpha_percent)
 
         # get residual
         residual = R.make_residual(model)
