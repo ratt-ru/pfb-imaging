@@ -263,6 +263,18 @@ def main(args):
 
     dual = np.zeros((psi.nbasis, args.nband, psi.nmax), dtype=np.float64)
 
+    # # deconvolve the PSF
+    # psf_tmp = psf_array[:, args.nx//2:3*args.nx//2, args.ny//2:3*args.ny//2]
+    # M = lambda x: x * args.sig_l2**2
+    # latent_psf = pcg(hess, psf_tmp, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol,
+    #                  maxit=args.cgmaxit, verbosity=args.cgverbose)
+
+    # save_fits(args.outfile + '_latent_psf.fits', latent_psf, hdr)
+
+    # quit()
+
+    
+
     # deconvolve
     eps = 1.0
     i = 0
@@ -312,7 +324,7 @@ def main(args):
 
             save_fits(args.outfile + str(i) + '_update.fits', x, hdr)
 
-            save_fits(args.outfile + str(i) + '_residual.fits', residual, hdr)
+            save_fits(args.outfile + str(i) + '_residual.fits', residual/psf_max[:, None, None], hdr)
 
             save_fits(args.outfile + str(i) + '_residual_mfs.fits', residual_mfs, hdr_mfs)
 

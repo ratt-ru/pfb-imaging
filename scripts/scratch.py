@@ -1,40 +1,38 @@
 
 import numpy as np
-import time
-from africanus.gps.kernels import exponential_squared as expsq
-from pfb.operators import freqmul, Prior
+from pfb.opt import hogbom
+from pfb.utils import give_edges, load_fits
 import matplotlib.pyplot as plt
-import dask.array as da
 
 
 if __name__=="__main__":
-    nv = 12
-    nx = 4096
-    ny = 4096
+    psf = load_fits('/home/landman/Data/VLA/CYGA/pfbclean_out/config-D_psf.fits')
+    dirty = load_fits('/home/landman/Data/VLA/CYGA/pfbclean_out/config-D_dirty.fits')
+    nband, nx, ny = dirty.shape
+    psf = psf[:, nx//2:3*nx//2, ny//2:3*ny//2]
+    psf_max = psf_max = np.amax(psf.reshape(nband, nx*ny), axis=1)[:, None, None]
 
-    v = np.arange(nv).astype(np.float64)
+    dirty /= psf_max
+    psf /= psf_max
 
-    sigma0 = 0.01
-    l = 0.25*nv
-    Kmat = expsq(v, v, sigma0, l)
-
-    x = np.random.randn(nv, nx, ny)
-
-    K = Prior(sigma0, nv, nx, ny)
-
-    ti = time.time()
-    res1 = Kmat.dot(x.reshape(nv, nx*ny)).reshape(nv, nx, ny)
-    print(time.time() - ti)
-    ti = time.time()
-    res2 = K.dot(x)
-    print(time.time() - ti)
-    ti = time.time()
-    res3 = np.einsum('ij,jkl->ikl', Kmat, x)
-    print(time.time() - ti)
+    model, residual = hogbom(dirty, psf, pf=0.1)
 
 
-    print(np.abs(res1-res2).max())
-    print(np.abs(res1-res3).max())
+    plt.figure('dirty')
+    plt.imshow(dirty[0])
+    plt.colorbar()
 
+    plt.figure('psf')
+    plt.imshow(psf[0])
+    plt.colorbar()
+
+    plt.figure('model')
+    plt.imshow(model[0], vmin=0.0, vmax=0.01)
+    plt.colorbar()
+
+    plt.figure('residual')
+    plt.imshow(residual[0], vmin=0.0, vmax=0.01)
+    plt.colorbar()
+    plt.show()
 
     

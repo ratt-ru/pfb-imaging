@@ -333,3 +333,30 @@ def get_fits_freq_space_info(hdr):
                                  1 + nband - refpix_nu) * delta_nu
 
     return l_coord, m_coord, freqs, ref_freq, freq_axis
+
+def give_edges(p, q, nx, ny):
+    # image overlap edges
+    # left edge for x coordinate
+    dxl = p - nx//2
+    xl = np.maximum(dxl, 0)
+    # right edge for x coordinate
+    dxu = p + nx//2
+    xu = np.minimum(dxu, nx)
+    # left edge for y coordinate
+    dyl = q - ny//2
+    yl = np.maximum(dyl, 0)
+    # right edge for y coordinate
+    dyu = q + ny//2
+    yu = np.minimum(dyu, ny)
+
+    # PSF overlap edges
+    
+    xlpsf = np.maximum(nx//2 - p, 0)
+    xupsf = np.minimum(3*nx//2 - p, nx)
+    ylpsf = np.maximum(ny//2 - q, 0)
+    yupsf = np.minimum(3*ny//2 - q, ny)
+
+
+    return slice(xl, xu), slice(yl, yu), slice(xlpsf, xupsf), slice(ylpsf, yupsf)
+
+
