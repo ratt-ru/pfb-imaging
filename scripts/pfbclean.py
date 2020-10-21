@@ -71,6 +71,9 @@ def create_parser():
                    help="Use SARA basis")
     p.add_argument("--psi_levels", type=int, default=4,
                    help="Wavelet decomposition level")
+    p.add_argument("--psi_basis", type=str, default=None, nargs='+',
+                   help="Explicitly set which bases to use for psi out of:"
+                   "[self, db1, db2, db3, db4, db5, db6, db7, db8]")
     p.add_argument("--x0", type=str, default=None,
                    help="Initial guess in form of fits file")
     p.add_argument("--reweight_iters", type=int, default=None, nargs='+',
@@ -157,7 +160,6 @@ def main(args):
 
     print("Image size set to (%i, %i, %i)"%(args.nband, args.nx, args.ny))
 
-
     # init gridder
     R = Gridder(args.ms, args.nx, args.ny, args.cell_size, nband=args.nband, nthreads=args.nthreads,
                 do_wstacking=args.do_wstacking, row_chunks=args.row_chunks, optimise_chunks=True,
@@ -180,7 +182,6 @@ def main(args):
         psf_array = R.make_psf()
         save_fits(args.outfile + '_psf.fits', psf_array, hdr_psf)
 
-    
     psf_max = np.amax(psf_array.reshape(args.nband, 4*args.nx*args.ny), axis=1)
     psf = PSF(psf_array, args.nthreads)
     psf_max[psf_max < 1e-15] = 1e-15
@@ -220,8 +221,6 @@ def main(args):
     else:
         mask = np.ones_like(dirty)
 
-    print("mask shape = ", mask.shape)
-
     #  preconditioning matrix
     K = Prior(args.sig_l2, args.nband, args.nx, args.ny, nthreads=args.nthreads)
     def hess(x):  
@@ -252,8 +251,16 @@ def main(args):
     # regulariser
     if args.use_psi:
         # set up wavelet basis
-        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
-                      nthreads=args.nthreads)
+        if args.psi_basis is None:
+            print("Using Dirac + db1-8 dictionary")
+            psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
+                          nthreads=args.nthreads)
+        else:
+            if not isinstance(args.psi_basis):
+                args.psi_basis = list(args.psi_basis)
+            print("Using ", args.basis, " dictionary")
+            psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
+                          nthreads=args.nthreads, bases=args.psi_basis)
         nbasis = psi.nbasis
         weights_21 = np.ones((psi.nbasis, psi.nmax), dtype=np.float64)
     else:
