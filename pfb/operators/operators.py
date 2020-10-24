@@ -84,6 +84,79 @@ class Prior(object):
         return self.Kinv.dot(x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
 
 
+class Dirac(object):
+    def __init__(self, nband, nx, ny, mask=None):
+        """
+        Models image as a sum of Dirac deltas i.e.
+        
+        x = H beta
+
+        where H is a design matrix that maps the Dirac coefficients onto the image cube.
+
+        Parameters
+        ----------
+        nband - number of bands
+        nx - number of pixels in x-dimension
+        ny - number of pixels in y-dimension
+        mask - nx x my bool array containing locations of sources
+        """
+        self.nx = nx
+        self.ny = ny
+        self.nband = nband
+        self.mask = mask
+        self.I = np.argwhere(mask).squeeze()
+        self.beta = {}
+        for i, xy in enumerate(self.I):
+            self.beta.setdefault(tuple(xy), 0.0)
+
+    def dot(self, beta):
+        x = np.zeros((self.nband, self.nx, self.ny), dtype=np.float64)
+        for i, xy in enumerate(self.I):
+            ix = xy[0]
+            iy = xy[1]
+            x[:, ix, iy] = beta[:, i]
+        return x
+
+    def hdot(self, x):
+        ncomps = self.I.shape[0]
+        beta = np.zeros((self.nband, ncomps), dtype=np.float64)
+        for i, xy in enumerate(self.I):
+            ix = xy[0]
+            iy = xy[1]
+            beta[:, i] = x[:, ix, iy]
+        return beta
+
+    def update_locs(self, mask):
+        self.mask = np.logical_or(self.mask, mask)
+        self.I = np.argwhere(self.mask).squeeze()
+        for i, xy in enumerate(self.I):
+            self.beta.setdefault(tuple(xy), 0.0)
+
+    def update_comps(self, dbeta):
+        betabar = np.zeros(dbeta.shape, dtype=dbeta.dtype)
+        betap = np.zeros(dbeta.shape, dtype=dbeta.dtype)
+        for i, xy in enumerate(self.I):
+            betabar[:, i] = self.beta[tuple(xy)] + dbeta[:, i]
+            betap[:, i] = self.beta[tuple(xy)]
+        return betabar, betap
+
+    def trim_fat(self, model):
+        self.mask = np.any(model, axis=0)
+        self.I = np.argwhere(self.mask).squeeze()
+        self.beta = {}
+        for i, xy in enumerate(self.I):
+            ix = xy[0]
+            iy = xy[1]
+            self.beta[tuple(xy)] = model[:, ix, iy] 
+        
+
+
+
+
+
+
+    
+
 class PSI(object):
     def __init__(self, nband, nx, ny,
                  nlevels=2,
