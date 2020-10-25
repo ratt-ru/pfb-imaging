@@ -69,6 +69,10 @@ def create_parser():
                    help="Strength of l21 regulariser")
     # p.add_argument("--x0", type=str, default=None,
     #                help="Initial guess in form of fits file")
+    p.add_argument("--peak_factor", type=float, default=0.1,
+                   help="Clean peak factor")
+    p.add_argument("--cgamma", type=float, default=0.1,
+                   help="Clean step size")
     p.add_argument("--cgtol", type=float, default=1e-3,
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=50,
@@ -263,7 +267,7 @@ def main(args):
     residual = dirty.copy()
     for i in range(1, args.maxit):
         # find point source candidates
-        model_tmp = hogbom(residual/psf_max[:, None, None], psf_array/psf_max[:, None, None], gamma=0.001, pf=0.1)
+        model_tmp = hogbom(residual/psf_max[:, None, None], psf_array/psf_max[:, None, None], gamma=args.cgamma, pf=args.peak_factor)
         H.update_locs(np.any(model_tmp, axis=0))
         
         # solve for beta updates
