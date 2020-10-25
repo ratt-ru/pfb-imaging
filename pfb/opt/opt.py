@@ -69,7 +69,7 @@ def fista(A, xbar, x0, lam,  L,
     L        - Lipschitz constant of A
     sigma    - l21 step size (set to L/2 by default)
     """
-    nchan, ncomps = x0.shape
+    # nchan, ncomps = x0.shape
     
 
     # gradient function
@@ -79,6 +79,7 @@ def fista(A, xbar, x0, lam,  L,
 
     def prox(x):
         l2_norm = norm(x, axis=0)  # drops freq axis
+        # l2_norm = np.mean(x, axis=0)  # drops freq axis
         l2_soft = np.maximum(l2_norm - lam, 0.0)  # norm is always positive
         mask = l2_norm != 0
         ratio = np.zeros(mask.shape, dtype=x.dtype)

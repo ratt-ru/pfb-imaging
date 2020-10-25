@@ -215,6 +215,35 @@ def main(args):
     def hess(x):  
         return psf.convolve(x) + x / args.sig_l2**2  #K.idot(x)
 
+    # # get the clean beam
+    # L = power_method(hess, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
+    # psf_residual = psf_array[:, args.nx//2:3*args.nx//2, args.ny//2:3*args.ny//2]
+    # eps = 1.0
+    # psf_clean = np.zeros(dirty.shape, dtype=dirty.dtype)
+    # M = lambda x: x * args.sig_l2**2
+    # for k in range(args.maxit):
+    #     x = pcg(hess, psf_residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
+
+    #     psf_cleanp = psf_clean
+    #     psf_clean += x
+
+    #     # impose positivity
+    #     psf_clean, _, _ = fista(hess, 
+    #                             psf_clean, psf_cleanp, 0.0,  L,
+    #                             tol=args.fistatol, maxit=args.fistamaxit, report_freq=10)
+
+    #     psf_residual = psf_array[:, args.nx//2:3*args.nx//2, args.ny//2:3*args.ny//2] - psf.convolve(psf_clean)
+
+    #     eps = np.linalg.norm(psf_clean - psf_cleanp)/np.linalg.norm(psf_clean)
+
+    #     if eps < args.tol:
+    #         break
+
+    # # save clean beam
+    # save_fits(args.outfile + '_psf_clean.fits', psf_clean, hdr)
+
+    # quit()
+
     # Reporting    
     print("At iteration 0 peak of residual is %f and rms is %f" % (rmax, rms))
     report_iters = list(np.arange(0, args.maxit, args.report_freq))
@@ -282,6 +311,9 @@ def main(args):
 
         print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i, rmax, rms, eps))
 
+        if eps < args.tol:
+            break
+
     # final iteration with only a positivity constraint on pixel locs
     dbeta = pcg(phess, 
                 H.hdot(residual), H.hdot(model_tmp), 
@@ -316,10 +348,35 @@ def main(args):
         R.write_model(model)
 
     if args.make_restored:
+        # augment data
+        y = np.append(residual.reshape(args.nband, args.nx*args.ny), H.hdot(residual), axis=1)
+
+        # augment dictionary
+        def psi(x):
+            alpha = x[:, 0:args.nx*args.ny].reshape(args.nband, args.nx, args.ny)
+            beta = x[:, args.nx*args.ny::] 
+            return alpha + H.dot(beta)
+        
+        def psih(x):
+            y = x.reshape(args.nband, args.nx*args.ny)
+            y = np.append(y, H.hdot(x), axis=1)
+            return y
+
+        # augment hess
+        def hess(x):
+            tmp1 = psi(x)
+            # print(tmp1.shape)
+            tmp2 = psf.convolve(tmp1)
+            # print(tmp2.shape)
+            tmp3 = psih(tmp2)
+            # print(tmp3.shape)
+            # return psih(psf.convolve(psi(x))) + x/args.sig_l2**2
+            return tmp3 + x/args.sig_l2**2
+        
         # get Wiener filter soln
         M = lambda x: x * args.sig_l2**2
-        x = pcg(hess, residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
-        restored = model + x
+        x = pcg(hess, y, np.zeros(y.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
+        restored = model + psi(x)
         
         # get residual
         residual = R.make_residual(restored)
