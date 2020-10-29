@@ -200,7 +200,9 @@ def main(args):
 
     if args.point_mask is not None:
         compare_headers(hdr_mfs, fits.getheader(args.point_mask))
-        pmask = load_fits(args.mask, dtype=np.bool)
+        pmask = load_fits(args.point_mask, dtype=np.bool)
+    else:
+        pmask = None
 
     # Reporting    
     print("At iteration 0 peak of residual is %f and rms is %f" % (rmax, rms))
@@ -307,29 +309,63 @@ def main(args):
         # fit integrated polynomial to model components taking covariance into account
         # we are given frequencies at bin centers, convert to bin edges
         ref_freq = np.mean(freq_out)
-        delta_freq = freq_out[1] - freq_out[0]
-        wlow = (freq_out - delta_freq/2.0)/ref_freq
-        whigh = (Freqs + delta_freq/2.0)/ref_freq
-        wdiff = whigh - wlow
+        # delta_freq = freq_out[1] - freq_out[0]
+        # wlow = (freq_out - delta_freq/2.0)/ref_freq
+        # whigh = (freq_out + delta_freq/2.0)/ref_freq
+        # wdiff = whigh - wlow
 
-        # set design matrix for each component
-        Xdesign = np.zeros([freq_out.size, args.spectral_poly_order])
-        for i in range(1, args.spectral_poly_order+1):
-            Xdesign[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+        # # set design matrix for each component
+        # Xdesign = np.zeros([freq_out.size, args.spectral_poly_order])
+        # for i in range(1, args.spectral_poly_order+1):
+        #     Xdesign[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+
+        # get un-averaged model from monomial design matrix
+        w = (freq_out / ref_freq).reshape(freq_out.size, 1)
+        Xdesign = np.tile(w, args.spectral_poly_order) ** np.arange(0, args.spectral_poly_order)
 
         # get model components
         model_comps = H.hdot(model)
 
+        phess = lambda x: x
+
+        print(model_comps.shape)
+
         # make dirty spectral cube
         dirty_comps = Xdesign.T.dot(phess(model_comps))
 
+        print(dirty_comps.shape)
+
         # get spectral Hessian
         def hess_comps(x):
-            return Xdesign.T.dot(phess(Xdesign.dot(x)))
+            return Xdesign.T.dot(phess(Xdesign.dot(x)))   #+ x/args.sig_l2**2
+        
+        hess_comps_explicit1 = Xdesign.T.dot(Xdesign)
 
-        comps = pcg(hess_comps, dirty_comps, np.zeros(dirty_comps.shape), tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbosity)
+        M = lambda x: x  #* args.sig_l2**2
+        hess_comps = lambda x: hess_comps_explicit1.dot(x)
+
+        comps = pcg(hess_comps, dirty_comps, np.zeros(dirty_comps.shape, dtype=np.float64), M=M, tol=1e-10, maxit=500, verbosity=args.cgverbose)
+
+        # comps = np.linalg.solve(hess_comps, dirty_comps)
+
+        print(comps.shape)
 
         np.savez(args.outfile + "spectral_comps", comps=comps, ref_freq=ref_freq, mask=np.any(model, axis=0))
+
+        # # get un-averaged model from monomial design matrix
+        # w = (freq_out / ref_freq).reshape(freq_out.size, 1)
+        # Xdesign = np.tile(w, args.spectral_poly_order) ** np.arange(0, args.spectral_poly_order)
+
+        # model from comps
+        model_comps = Xdesign.dot(comps)
+
+        print(model_comps.shape)
+
+        model = H.dot(model_comps)
+
+        save_fits(args.outfile + '_model_comps.fits', model, hdr)
+
+
 
 
     # if args.make_restored:
