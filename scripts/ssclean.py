@@ -28,10 +28,12 @@ def create_parser():
                    help="Rows per chunk")
     p.add_argument("--write_model", type=str2bool, nargs='?', const=True, default=True,
                    help="Whether to write model visibilities to model_column")
+    p.add_argument("--interp_model", type=str2bool, nargs='?', const=True, default=True,
+                   help="Interpolate final model with integrated polynomial")
+    p.add_argument("--spectral_poly_order", type=int, default=4,
+                   help="Order of interpolating polynomial")
     p.add_argument("--dirty", type=str,
                    help="Fits file with dirty cube")
-    # p.add_argument("--first_residual", type=str,
-    #                help="Fits file with residual cube corresponding to input model")
     p.add_argument("--psf", type=str,
                    help="Fits file with psf cube")
     p.add_argument("--outfile", type=str, default='pfb',
@@ -48,8 +50,10 @@ def create_parser():
                    help="Cell size in arcseconds. Computed automatically from super_resolution_factor if None")
     p.add_argument("--nband", default=None, type=int,
                    help="Number of imaging bands in output cube")
-    # p.add_argument("--mask", type=str, default=None,
-    #                help="A fits mask (True where unmasked)")
+    p.add_argument("--mask", type=str, default=None,
+                   help="A fits mask (True where unmasked)")
+    p.add_argument("--point_mask", type=str, default=None,
+                   help="A fits mask with a priori known point source locations (True where unmasked)")
     p.add_argument("--do_wstacking", type=str2bool, nargs='?', const=True, default=True,
                    help='Whether to use wstacking or not.')
     p.add_argument("--field", type=int, default=0, nargs='+',
@@ -67,8 +71,6 @@ def create_parser():
                    help="The strength of the l2 norm regulariser")
     p.add_argument("--sig_21", type=float, default=1e-3,
                    help="Strength of l21 regulariser")
-    # p.add_argument("--x0", type=str, default=None,
-    #                help="Initial guess in form of fits file")
     p.add_argument("--peak_factor", type=float, default=0.1,
                    help="Clean peak factor")
     p.add_argument("--cgamma", type=float, default=0.1,
@@ -177,25 +179,6 @@ def main(args):
     else:
         dirty = R.make_dirty()
         save_fits(args.outfile + '_dirty.fits', dirty, hdr)
-
-    # # init image and dirty
-    # if args.x0 is None:
-    #     model = np.zeros((args.nband, args.nx, args.ny))
-    #     if args.dirty is not None:
-    #         compare_headers(hdr, fits.getheader(args.dirty))
-    #         dirty = load_fits(args.dirty)
-    #     else:
-    #         dirty = R.make_dirty()
-    #         save_fits(args.outfile + '_dirty.fits', dirty, hdr)
-    # else:
-    #     compare_headers(hdr, fits.getheader(args.x0))
-    #     model = load_fits(args.x0, dtype=np.float64)
-    #     if args.first_residual is not None:
-    #         compare_headers(hdr, fits.getheader(args.first_residual))
-    #         dirty = load_fits(args.first_residual)
-    #     else:
-    #         dirty = R.make_residual(model)
-    #         save_fits(args.outfile + '_first_residual.fits', dirty, hdr)
     
     # mfs residual 
     wsum = np.sum(psf_max)
@@ -208,45 +191,16 @@ def main(args):
     save_fits(args.outfile + '_psf_mfs.fits', psf_mfs[args.nx//2:3*args.nx//2, 
                                                       args.ny//2:3*args.ny//2], hdr_mfs)
     
-    # # mask
-    # if args.mask is not None:
-    #     compare_headers(hdr_mfs, fits.getheader(args.mask))
-    #     mask = load_fits(args.mask, dtype=np.bool)
-    # else:
-    #     mask = np.ones_like(dirty)
+    # mask
+    if args.mask is not None:
+        compare_headers(hdr_mfs, fits.getheader(args.mask))
+        mask = load_fits(args.mask, dtype=np.bool)
+    else:
+        mask = np.ones((args.nx, args.ny), dtype=np.bool)
 
-    #  preconditioning matrix for image
-    def hess(x):  
-        return psf.convolve(x) + x / args.sig_l2**2  #K.idot(x)
-
-    # # get the clean beam
-    # L = power_method(hess, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
-    # psf_residual = psf_array[:, args.nx//2:3*args.nx//2, args.ny//2:3*args.ny//2]
-    # eps = 1.0
-    # psf_clean = np.zeros(dirty.shape, dtype=dirty.dtype)
-    # M = lambda x: x * args.sig_l2**2
-    # for k in range(args.maxit):
-    #     x = pcg(hess, psf_residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
-
-    #     psf_cleanp = psf_clean
-    #     psf_clean += x
-
-    #     # impose positivity
-    #     psf_clean, _, _ = fista(hess, 
-    #                             psf_clean, psf_cleanp, 0.0,  L,
-    #                             tol=args.fistatol, maxit=args.fistamaxit, report_freq=10)
-
-    #     psf_residual = psf_array[:, args.nx//2:3*args.nx//2, args.ny//2:3*args.ny//2] - psf.convolve(psf_clean)
-
-    #     eps = np.linalg.norm(psf_clean - psf_cleanp)/np.linalg.norm(psf_clean)
-
-    #     if eps < args.tol:
-    #         break
-
-    # # save clean beam
-    # save_fits(args.outfile + '_psf_clean.fits', psf_clean, hdr)
-
-    # quit()
+    if args.point_mask is not None:
+        compare_headers(hdr_mfs, fits.getheader(args.point_mask))
+        pmask = load_fits(args.mask, dtype=np.bool)
 
     # Reporting    
     print("At iteration 0 peak of residual is %f and rms is %f" % (rmax, rms))
@@ -255,7 +209,7 @@ def main(args):
         report_iters.append(args.maxit-1)
 
     # set up point sources
-    H = Dirac(args.nband, args.nx, args.ny)
+    H = Dirac(args.nband, args.nx, args.ny, mask=pmask)
 
     # preconditioning matrix for points
     def phess(beta):
@@ -267,7 +221,7 @@ def main(args):
     residual = dirty.copy()
     for i in range(1, args.maxit):
         # find point source candidates
-        model_tmp = hogbom(residual/psf_max[:, None, None], psf_array/psf_max[:, None, None], gamma=args.cgamma, pf=args.peak_factor)
+        model_tmp = hogbom(mask[None] * residual/psf_max[:, None, None], psf_array/psf_max[:, None, None], gamma=args.cgamma, pf=args.peak_factor)
         H.update_locs(np.any(model_tmp, axis=0))
         
         # solve for beta updates
@@ -296,8 +250,8 @@ def main(args):
        
         # check stopping criteria
         residual_mfs = np.sum(residual, axis=0)/wsum 
-        rmax = np.abs(residual_mfs).max()
-        rms = np.std(residual_mfs)
+        rmax = np.abs(mask * residual_mfs).max()
+        rms = np.std(mask * residual_mfs)
         eps = np.linalg.norm(beta - betap)/np.linalg.norm(beta)
 
         if i in report_iters:
@@ -306,8 +260,6 @@ def main(args):
             
             model_mfs = np.mean(model, axis=0)
             save_fits(args.outfile + str(i) + '_model_mfs.fits', model_mfs, hdr_mfs)
-
-            # save_fits(args.outfile + str(i) + '_update.fits', x, hdr)
 
             save_fits(args.outfile + str(i) + '_residual.fits', residual/psf_max[:, None, None], hdr)
 
@@ -320,7 +272,7 @@ def main(args):
 
     # final iteration with only a positivity constraint on pixel locs
     dbeta = pcg(phess, 
-                H.hdot(residual), H.hdot(model_tmp), 
+                H.hdot(residual), H.hdot(model), 
                 M=lambda x: x * args.sig_l2**2, tol=args.cgtol,
                 maxit=args.cgmaxit, verbosity=args.cgverbose)
     betabar, betap = H.update_comps(dbeta)
@@ -351,54 +303,105 @@ def main(args):
     if args.write_model:
         R.write_model(model)
 
-    if args.make_restored:
-        # augment data
-        y = np.append(residual.reshape(args.nband, args.nx*args.ny), H.hdot(residual), axis=1)
+    if args.interp_model:
+        # fit integrated polynomial to model components taking covariance into account
+        # we are given frequencies at bin centers, convert to bin edges
+        ref_freq = np.mean(freq_out)
+        delta_freq = freq_out[1] - freq_out[0]
+        wlow = (freq_out - delta_freq/2.0)/ref_freq
+        whigh = (Freqs + delta_freq/2.0)/ref_freq
+        wdiff = whigh - wlow
 
-        # augment dictionary
-        def psi(x):
-            alpha = x[:, 0:args.nx*args.ny].reshape(args.nband, args.nx, args.ny)
-            beta = x[:, args.nx*args.ny::] 
-            return alpha + H.dot(beta)
+        # set design matrix for each component
+        Xdesign = np.zeros([freq_out.size, args.spectral_poly_order])
+        for i in range(1, args.spectral_poly_order+1):
+            Xdesign[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+
+        # get model components
+        model_comps = H.hdot(model)
+
+        # make dirty spectral cube
+        dirty_comps = Xdesign.T.dot(phess(model_comps))
+
+        # get spectral Hessian
+        def hess_comps(x):
+            return Xdesign.T.dot(phess(Xdesign.dot(x)))
+
+        comps = pcg(hess_comps, dirty_comps, np.zeros(dirty_comps.shape), tol=args.cgtol, maxit=args.cgmaxit, verbosity=args.cgverbosity)
+
+        np.savez(args.outfile + "spectral_comps", comps=comps, ref_freq=ref_freq, mask=np.any(model, axis=0))
+
+
+    # if args.make_restored:
+    #     # # get the clean beam
+    #     # L = power_method(hess, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
+    #     # psf_residual = psf_array[:, args.nx//2:3*args.nx//2, args.ny//2:3*args.ny//2]
+    #     # eps = 1.0
+    #     # psf_clean = np.zeros(dirty.shape, dtype=dirty.dtype)
+    #     # M = lambda x: x * args.sig_l2**2
+    #     # for k in range(args.maxit):
+    #     #     x = pcg(hess, psf_residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
+
+    #     #     psf_cleanp = psf_clean
+    #     #     psf_clean += x
+
+    #     #     # impose positivity
+    #     #     psf_clean, _, _ = fista(hess, 
+    #     #                             psf_clean, psf_cleanp, 0.0,  L,
+    #     #                             tol=args.fistatol, maxit=args.fistamaxit, report_freq=10)
+
+    #     #     psf_residual = psf_array[:, args.nx//2:3*args.nx//2, args.ny//2:3*args.ny//2] - psf.convolve(psf_clean)
+
+    #     #     eps = np.linalg.norm(psf_clean - psf_cleanp)/np.linalg.norm(psf_clean)
+
+    #     #     if eps < args.tol:
+    #     #         break
+
+    #     # # save clean beam
+    #     # save_fits(args.outfile + '_psf_clean.fits', psf_clean, hdr)
+
+    #     # quit()
+
+    #     # augment data
+    #     y = np.append(residual.reshape(args.nband, args.nx*args.ny), H.hdot(residual), axis=1)
+
+    #     # augment dictionary
+    #     def psi(x):
+    #         alpha = x[:, 0:args.nx*args.ny].reshape(args.nband, args.nx, args.ny)
+    #         beta = x[:, args.nx*args.ny::] 
+    #         return alpha + H.dot(beta)
         
-        def psih(x):
-            y = x.reshape(args.nband, args.nx*args.ny)
-            y = np.append(y, H.hdot(x), axis=1)
-            return y
+    #     def psih(x):
+    #         y = x.reshape(args.nband, args.nx*args.ny)
+    #         y = np.append(y, H.hdot(x), axis=1)
+    #         return y
 
-        # augment hess
-        def hess(x):
-            tmp1 = psi(x)
-            # print(tmp1.shape)
-            tmp2 = psf.convolve(tmp1)
-            # print(tmp2.shape)
-            tmp3 = psih(tmp2)
-            # print(tmp3.shape)
-            # return psih(psf.convolve(psi(x))) + x/args.sig_l2**2
-            return tmp3 + x/args.sig_l2**2
+    #     # augment hess
+    #     def hess(x):
+    #         return psih(psf.convolve(psi(x))) + x/args.sig_l2**2
         
-        # get Wiener filter soln
-        M = lambda x: x * args.sig_l2**2
-        x = pcg(hess, y, np.zeros(y.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
-        restored = model + psi(x)
+    #     # get Wiener filter soln
+    #     M = lambda x: x * args.sig_l2**2
+    #     x = pcg(hess, y, np.zeros(y.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
+    #     restored = model + psi(x)
         
-        # get residual
-        residual = R.make_residual(restored)
-        residual_mfs = np.sum(residual, axis=0)/wsum 
-        rmax = np.abs(residual_mfs).max()
-        rms = np.std(residual_mfs)
+    #     # get residual
+    #     residual = R.make_residual(restored)
+    #     residual_mfs = np.sum(residual, axis=0)/wsum 
+    #     rmax = np.abs(residual_mfs).max()
+    #     rms = np.std(residual_mfs)
 
-        print("After restoring peak of residual is %f and rms is %f" % (rmax, rms))
+    #     print("After restoring peak of residual is %f and rms is %f" % (rmax, rms))
 
-        # save current iteration
-        save_fits(args.outfile + '_restored.fits', restored, hdr)
+    #     # save current iteration
+    #     save_fits(args.outfile + '_restored.fits', restored, hdr)
 
-        restored_mfs = np.mean(restored, axis=0)
-        save_fits(args.outfile + '_restored_mfs.fits', restored_mfs, hdr_mfs)
+    #     restored_mfs = np.mean(restored, axis=0)
+    #     save_fits(args.outfile + '_restored_mfs.fits', restored_mfs, hdr_mfs)
 
-        save_fits(args.outfile + '_restored_residual.fits', residual/psf_max[:, None, None], hdr)
+    #     save_fits(args.outfile + '_restored_residual.fits', residual/psf_max[:, None, None], hdr)
 
-        save_fits(args.outfile + '_restored_residual_mfs.fits', residual_mfs, hdr_mfs)
+    #     save_fits(args.outfile + '_restored_residual_mfs.fits', residual_mfs, hdr_mfs)
 
 
 if __name__=="__main__":
