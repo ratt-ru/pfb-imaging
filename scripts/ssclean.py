@@ -223,43 +223,37 @@ def main(args):
     dual = np.zeros((args.nband, args.nx, args.ny), dtype=np.float64)
     weights_21 = np.where(psi.mask, 1, np.inf)
 
-    # preconditioning matrix for points
-    def phess(beta):
+    # preconditioning matrix
+    def hess(beta):
         return psi.hdot(psf.convolve(psi.dot(beta))) + beta/args.sig_l2**2  # vague prior on beta
 
     # deconvolve
     eps = 1.0
     i = 0
     residual = dirty.copy()
+    model = np.zeros(dirty.shape, dtype=dirty.dtype)
     for i in range(1, args.maxit):
         # find point source candidates
         model_tmp = hogbom(mask[None] * residual/psf_max[:, None, None], psf_array/psf_max[:, None, None], gamma=args.cgamma, pf=args.peak_factor)
         psi.update_locs(np.any(model_tmp, axis=0))
-        
-        # solve for beta updates
-        dbeta = pcg(phess, 
-                    psi.hdot(residual), psi.hdot(model_tmp), 
-                    M=lambda x: x * args.sig_l2**2, tol=args.cgtol,
-                    maxit=args.cgmaxit, verbosity=args.cgverbose)
-
-        # update point source locations
-        betabar, betap = psi.update_comps(args.gamma*dbeta)
 
         # get new spectral norm
-        L = power_method(phess, betap.shape, tol=args.pmtol, maxit=args.pmmaxit)
+        L = power_method(hess, model.shape, tol=args.pmtol, maxit=args.pmmaxit)
+        
+        # solve for beta updates
+        x = pcg(hess, psi.hdot(residual), psi.hdot(model_tmp), 
+                M=lambda x: x * args.sig_l2**2, tol=args.cgtol,
+                maxit=args.cgmaxit, verbosity=args.cgverbose)
+
+        modelp = model.copy()
+        model += args.gamma * x
 
         # impose sparsity and positivity in point sources
-        # beta, _, _ = fista(phess, 
-        #                    betabar, betap, args.sig_21,  L,
-        #                    tol=args.fistatol, maxit=args.fistamaxit, report_freq=10)
-
         weights_21 = np.where(psi.mask, 1, np.inf)
-        beta, dual = primal_dual(phess, betabar, betap, dual, args.sig_21, psi, weights_21, L, tol=args.fistatol, maxit=args.fistamaxit)
-
-        
+        model, dual = primal_dual(hess, model, modelp, dual, args.sig_21, psi, weights_21, L,
+                                  tol=args.fistatol, maxit=args.fistamaxit, axis=0)
 
         # update Dirac dictionary (remove zero components)
-        model = psi.dot(beta)
         psi.trim_fat(model)
 
         # get residual
@@ -269,7 +263,7 @@ def main(args):
         residual_mfs = np.sum(residual, axis=0)/wsum 
         rmax = np.abs(mask * residual_mfs).max()
         rms = np.std(mask * residual_mfs)
-        eps = np.linalg.norm(beta - betap)/np.linalg.norm(beta)
+        eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
         if i in report_iters:
             # save current iteration
@@ -288,15 +282,16 @@ def main(args):
             break
 
     # final iteration with only a positivity constraint on pixel locs
-    dbeta = pcg(phess, 
-                psi.hdot(residual), psi.hdot(model), 
-                M=lambda x: x * args.sig_l2**2, tol=args.cgtol,
-                maxit=args.cgmaxit, verbosity=args.cgverbose)
-    betabar, betap = psi.update_comps(dbeta)
-    L = power_method(phess, betap.shape, tol=args.pmtol, maxit=args.pmmaxit)
-    weights_21 = np.where(psi.mask, 1, np.inf)
-    beta, dual = primal_dual(phess, betabar, betap, dual, args.sig_21, psi, weights_21, L, tol=args.fistatol, maxit=args.fistamaxit)
-    model = psi.dot(beta)
+    x = pcg(hess, psi.hdot(residual), psi.hdot(model), 
+            M=lambda x: x * args.sig_l2**2, tol=args.cgtol,
+            maxit=args.cgmaxit, verbosity=args.cgverbose)
+    
+    modelp = model.copy()
+    model += x
+    model, dual = primal_dual(hess, model, modelp, dual, 0.0,
+                              psi, weights_21, L, tol=args.fistatol,
+                              maxit=args.fistamaxit, axis=0)
+    
     # get residual
     residual = R.make_residual(model)/psf_max_mean
     
@@ -323,10 +318,13 @@ def main(args):
         nband = args.nband
         order = args.spectral_poly_order
         psi.trim_fat(model)
-        npix = psi.I.shape[0]
+        I = np.argwhere(psi.mask).squeeze()
+        Ix = I[:, 0]
+        Iy = I[:, 1]
+        npix = I.shape[0]
         
         # get components
-        beta = psi.hdot(model)
+        beta = model[:, Ix, Iy]
 
         # fit integrated polynomial to model components
         # we are given frequencies at bin centers, convert to bin edges
@@ -351,9 +349,14 @@ def main(args):
         
         comps = np.linalg.solve(hess_comps, dirty_comps)
 
-        model_rec_exp = psi.dot(Xdesign.dot(comps))
+        beta_rec = Xdesign.dot(comps)
+        model_interp = np.zeros(model.shape, dtype=model.dtype)
+        for i, xy in enumerate(I):
+            ix = xy[0]
+            iy = xy[1]
+            model_interp[:, ix, iy] = beta_rec[:, i]
 
-        save_fits(args.outfile + '_model_comps.fits', model_rec_exp, hdr)
+        save_fits(args.outfile + '_model_interp.fits', model_interp, hdr)
 
         np.savez(args.outfile + "spectral_comps", comps=comps, ref_freq=ref_freq, mask=np.any(model, axis=0))
 

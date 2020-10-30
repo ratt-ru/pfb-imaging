@@ -167,57 +167,24 @@ class Dirac(object):
         self.ny = ny
         self.nband = nband
         self.mask = mask
-        self.I = np.argwhere(mask).squeeze()
-        self.beta = {}
-        for i, xy in enumerate(self.I):
-            self.beta.setdefault(tuple(xy), 0.0)
 
-    def dot(self, beta):
+    def dot(self, x):
         """
         Components to image
         """
-        x = np.zeros((self.nband, self.nx, self.ny), dtype=np.float64)
-        for i, xy in enumerate(self.I):
-            ix = xy[0]
-            iy = xy[1]
-            x[:, ix, iy] = beta[:, i]
-        return x
+        return np.where(self.mask[None, :, :], x, 0)
 
     def hdot(self, x):
         """
         Image to components
         """
-        ncomps = self.I.shape[0]
-        beta = np.zeros((self.nband, ncomps), dtype=np.float64)
-        for i, xy in enumerate(self.I):
-            ix = xy[0]
-            iy = xy[1]
-            beta[:, i] = x[:, ix, iy]
-        return beta
+        return np.where(self.mask[None, :, :], x, 0)
 
     def update_locs(self, mask):
         self.mask = np.logical_or(self.mask, mask)
-        self.I = np.argwhere(self.mask).squeeze()
-        for i, xy in enumerate(self.I):
-            self.beta.setdefault(tuple(xy), 0.0)
-
-    def update_comps(self, dbeta):
-        betabar = np.zeros(dbeta.shape, dtype=dbeta.dtype)
-        betap = np.zeros(dbeta.shape, dtype=dbeta.dtype)
-        for i, xy in enumerate(self.I):
-            betabar[:, i] = self.beta[tuple(xy)] + dbeta[:, i]
-            betap[:, i] = self.beta[tuple(xy)]
-
-        return betabar, betap
 
     def trim_fat(self, model):
         self.mask = np.any(model, axis=0)
-        self.I = np.argwhere(self.mask).squeeze()
-        self.beta = {}
-        for i, xy in enumerate(self.I):
-            ix = xy[0]
-            iy = xy[1]
-            self.beta[tuple(xy)] = model[:, ix, iy]
     
 
 class PSI(object):
