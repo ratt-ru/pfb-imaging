@@ -173,6 +173,9 @@ class Dirac(object):
             self.beta.setdefault(tuple(xy), 0.0)
 
     def dot(self, beta):
+        """
+        Components to image
+        """
         x = np.zeros((self.nband, self.nx, self.ny), dtype=np.float64)
         for i, xy in enumerate(self.I):
             ix = xy[0]
@@ -181,6 +184,9 @@ class Dirac(object):
         return x
 
     def hdot(self, x):
+        """
+        Image to components
+        """
         ncomps = self.I.shape[0]
         beta = np.zeros((self.nband, ncomps), dtype=np.float64)
         for i, xy in enumerate(self.I):
@@ -201,6 +207,7 @@ class Dirac(object):
         for i, xy in enumerate(self.I):
             betabar[:, i] = self.beta[tuple(xy)] + dbeta[:, i]
             betap[:, i] = self.beta[tuple(xy)]
+
         return betabar, betap
 
     def trim_fat(self, model):
@@ -210,7 +217,7 @@ class Dirac(object):
         for i, xy in enumerate(self.I):
             ix = xy[0]
             iy = xy[1]
-            self.beta[tuple(xy)] = model[:, ix, iy] 
+            self.beta[tuple(xy)] = model[:, ix, iy]
     
 
 class PSI(object):

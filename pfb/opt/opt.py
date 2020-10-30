@@ -2,7 +2,7 @@ import numpy as np
 from scipy.linalg import norm
 from pfb.utils import prox_21
 
-def pcg(A, b, x0, M=None, tol=1e-5, maxit=500, verbosity=1, report_freq=10):
+def pcg(A, b, x0, M=None, tol=1e-5, maxit=500, verbosity=1, report_freq=10, backtrack=True):
     
     if M is None:
         M = lambda x: x
@@ -27,7 +27,7 @@ def pcg(A, b, x0, M=None, tol=1e-5, maxit=500, verbosity=1, report_freq=10):
         r = rp + alpha*Ap
         y = M(r)
         rnorm_next = np.vdot(r, y)
-        while rnorm_next > rnorm:  # TODO - better line search
+        while rnorm_next > rnorm and backtrack:  # TODO - better line search
             alpha *= 0.75
             x = xp + alpha*p
             r = rp + alpha*Ap
@@ -159,7 +159,7 @@ def primal_dual(A, xbar,
                 L, nu=1.0,  # spectral norms
                 sigma=None,  # step size of dual update
                 mask=None,  # regions where mask is False will be masked 
-                tol=1e-5, maxit=1000, positivity=True, report_freq=10):
+                tol=1e-5, maxit=1000, positivity=True, report_freq=10, axis=1):
     """
     Algorithm to solve problems of the form
 
@@ -210,7 +210,7 @@ def primal_dual(A, xbar,
         vtilde = v + sigma * psi.hdot(xp)
 
         # dual update
-        v = vtilde - sigma * prox_21(vtilde/sigma, lam/sigma, weights)
+        v = vtilde - sigma * prox_21(vtilde/sigma, lam/sigma, weights, axis=axis)
 
         # primal update
         x = xp - tau*(psi.dot(2*v - vp) + grad_func(xp))

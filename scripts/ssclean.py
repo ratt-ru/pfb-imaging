@@ -7,11 +7,12 @@ from daskms import xds_from_ms, xds_from_table
 from scipy.linalg import norm
 import dask
 import dask.array as da
-from pfb.opt import power_method, pcg, fista, hogbom
+from pfb.opt import power_method, pcg, fista, hogbom, primal_dual
 import argparse
 from astropy.io import fits
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers
 from pfb.operators import Gridder, PSF, Prior, Dirac
+
 
 def create_parser():
     p = argparse.ArgumentParser()
@@ -169,7 +170,12 @@ def main(args):
 
     
     psf_max = np.amax(psf_array.reshape(args.nband, 4*args.nx*args.ny), axis=1)
+    wsum = np.sum(psf_max)
+    counts = np.sum(psf_max > 0)
+    psf_max_mean = wsum/counts
+    psf_array /= psf_max_mean
     psf = PSF(psf_array, args.nthreads)
+    psf_max = np.amax(psf_array.reshape(args.nband, 4*args.nx*args.ny), axis=1)
     psf_max[psf_max < 1e-15] = 1e-15
 
 
@@ -179,6 +185,8 @@ def main(args):
     else:
         dirty = R.make_dirty()
         save_fits(args.outfile + '_dirty.fits', dirty, hdr)
+
+    dirty /= psf_max_mean
     
     # mfs residual 
     wsum = np.sum(psf_max)
@@ -211,11 +219,13 @@ def main(args):
         report_iters.append(args.maxit-1)
 
     # set up point sources
-    H = Dirac(args.nband, args.nx, args.ny, mask=pmask)
+    psi = Dirac(args.nband, args.nx, args.ny, mask=pmask)
+    dual = np.zeros((args.nband, args.nx, args.ny), dtype=np.float64)
+    weights_21 = np.where(psi.mask, 1, np.inf)
 
     # preconditioning matrix for points
     def phess(beta):
-        return H.hdot(psf.convolve(H.dot(beta))) + beta/args.sig_l2**2  # vague prior on beta
+        return psi.hdot(psf.convolve(psi.dot(beta))) + beta/args.sig_l2**2  # vague prior on beta
 
     # deconvolve
     eps = 1.0
@@ -224,31 +234,36 @@ def main(args):
     for i in range(1, args.maxit):
         # find point source candidates
         model_tmp = hogbom(mask[None] * residual/psf_max[:, None, None], psf_array/psf_max[:, None, None], gamma=args.cgamma, pf=args.peak_factor)
-        H.update_locs(np.any(model_tmp, axis=0))
+        psi.update_locs(np.any(model_tmp, axis=0))
         
         # solve for beta updates
         dbeta = pcg(phess, 
-                    H.hdot(residual), H.hdot(model_tmp), 
+                    psi.hdot(residual), psi.hdot(model_tmp), 
                     M=lambda x: x * args.sig_l2**2, tol=args.cgtol,
                     maxit=args.cgmaxit, verbosity=args.cgverbose)
 
         # update point source locations
-        betabar, betap = H.update_comps(args.gamma*dbeta)
+        betabar, betap = psi.update_comps(args.gamma*dbeta)
 
         # get new spectral norm
         L = power_method(phess, betap.shape, tol=args.pmtol, maxit=args.pmmaxit)
 
         # impose sparsity and positivity in point sources
-        beta, _, _ = fista(phess, 
-                           betabar, betap, args.sig_21,  L,
-                           tol=args.fistatol, maxit=args.fistamaxit, report_freq=10)
+        # beta, _, _ = fista(phess, 
+        #                    betabar, betap, args.sig_21,  L,
+        #                    tol=args.fistatol, maxit=args.fistamaxit, report_freq=10)
+
+        weights_21 = np.where(psi.mask, 1, np.inf)
+        beta, dual = primal_dual(phess, betabar, betap, dual, args.sig_21, psi, weights_21, L, tol=args.fistatol, maxit=args.fistamaxit)
+
+        
 
         # update Dirac dictionary (remove zero components)
-        model = H.dot(beta)
-        H.trim_fat(model)
+        model = psi.dot(beta)
+        psi.trim_fat(model)
 
         # get residual
-        residual = R.make_residual(model)
+        residual = R.make_residual(model)/psf_max_mean
        
         # check stopping criteria
         residual_mfs = np.sum(residual, axis=0)/wsum 
@@ -274,17 +289,16 @@ def main(args):
 
     # final iteration with only a positivity constraint on pixel locs
     dbeta = pcg(phess, 
-                H.hdot(residual), H.hdot(model), 
+                psi.hdot(residual), psi.hdot(model), 
                 M=lambda x: x * args.sig_l2**2, tol=args.cgtol,
                 maxit=args.cgmaxit, verbosity=args.cgverbose)
-    betabar, betap = H.update_comps(dbeta)
+    betabar, betap = psi.update_comps(dbeta)
     L = power_method(phess, betap.shape, tol=args.pmtol, maxit=args.pmmaxit)
-    beta, _, _ = fista(phess, 
-                       betabar, betap, 0.0,  L,
-                       tol=args.fistatol, maxit=args.fistamaxit, report_freq=10)
-    model = H.dot(beta)
+    weights_21 = np.where(psi.mask, 1, np.inf)
+    beta, dual = primal_dual(phess, betabar, betap, dual, args.sig_21, psi, weights_21, L, tol=args.fistatol, maxit=args.fistamaxit)
+    model = psi.dot(beta)
     # get residual
-    residual = R.make_residual(model)
+    residual = R.make_residual(model)/psf_max_mean
     
     # check stopping criteria
     residual_mfs = np.sum(residual, axis=0)/wsum 
@@ -306,67 +320,42 @@ def main(args):
         R.write_model(model)
 
     if args.interp_model:
-        # fit integrated polynomial to model components taking covariance into account
+        nband = args.nband
+        order = args.spectral_poly_order
+        psi.trim_fat(model)
+        npix = psi.I.shape[0]
+        
+        # get components
+        beta = psi.hdot(model)
+
+        # fit integrated polynomial to model components
         # we are given frequencies at bin centers, convert to bin edges
         ref_freq = np.mean(freq_out)
-        # delta_freq = freq_out[1] - freq_out[0]
-        # wlow = (freq_out - delta_freq/2.0)/ref_freq
-        # whigh = (freq_out + delta_freq/2.0)/ref_freq
-        # wdiff = whigh - wlow
+        delta_freq = freq_out[1] - freq_out[0]
+        wlow = (freq_out - delta_freq/2.0)/ref_freq
+        whigh = (freq_out + delta_freq/2.0)/ref_freq
+        wdiff = whigh - wlow
 
-        # # set design matrix for each component
-        # Xdesign = np.zeros([freq_out.size, args.spectral_poly_order])
-        # for i in range(1, args.spectral_poly_order+1):
-        #     Xdesign[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
-
-        # get un-averaged model from monomial design matrix
-        w = (freq_out / ref_freq).reshape(freq_out.size, 1)
-        Xdesign = np.tile(w, args.spectral_poly_order) ** np.arange(0, args.spectral_poly_order)
-
-        # get model components
-        model_comps = H.hdot(model)
-
-        phess = lambda x: x
-
-        print(model_comps.shape)
-
-        # make dirty spectral cube
-        dirty_comps = Xdesign.T.dot(phess(model_comps))
-
-        print(dirty_comps.shape)
-
-        # get spectral Hessian
-        def hess_comps(x):
-            return Xdesign.T.dot(phess(Xdesign.dot(x)))   #+ x/args.sig_l2**2
-        
-        hess_comps_explicit1 = Xdesign.T.dot(Xdesign)
-
-        M = lambda x: x  #* args.sig_l2**2
-        hess_comps = lambda x: hess_comps_explicit1.dot(x)
-
-        comps = pcg(hess_comps, dirty_comps, np.zeros(dirty_comps.shape, dtype=np.float64), M=M, tol=1e-10, maxit=500, verbosity=args.cgverbose)
-
-        # comps = np.linalg.solve(hess_comps, dirty_comps)
-
-        print(comps.shape)
-
-        np.savez(args.outfile + "spectral_comps", comps=comps, ref_freq=ref_freq, mask=np.any(model, axis=0))
+        # set design matrix for each component
+        Xdesign = np.zeros([freq_out.size, args.spectral_poly_order])
+        for i in range(1, args.spectral_poly_order+1):
+            Xdesign[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
 
         # # get un-averaged model from monomial design matrix
         # w = (freq_out / ref_freq).reshape(freq_out.size, 1)
-        # Xdesign = np.tile(w, args.spectral_poly_order) ** np.arange(0, args.spectral_poly_order)
+        # Xdesign = np.tile(w, order) ** np.arange(0, order)
 
-        # model from comps
-        model_comps = Xdesign.dot(comps)
+        dirty_comps = Xdesign.T.dot(beta)
+        
+        hess_comps = Xdesign.T.dot(Xdesign)
+        
+        comps = np.linalg.solve(hess_comps, dirty_comps)
 
-        print(model_comps.shape)
+        model_rec_exp = psi.dot(Xdesign.dot(comps))
 
-        model = H.dot(model_comps)
+        save_fits(args.outfile + '_model_comps.fits', model_rec_exp, hdr)
 
-        save_fits(args.outfile + '_model_comps.fits', model, hdr)
-
-
-
+        np.savez(args.outfile + "spectral_comps", comps=comps, ref_freq=ref_freq, mask=np.any(model, axis=0))
 
     # if args.make_restored:
     #     # # get the clean beam

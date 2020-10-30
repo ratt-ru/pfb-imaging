@@ -104,7 +104,7 @@ def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
 
 #     return x
 
-def prox_21(v, sigma, weights):
+def prox_21(v, sigma, weights, axis=1):
     """
     Computes weighted version of
 
@@ -116,12 +116,12 @@ def prox_21(v, sigma, weights):
     nband   - number of imaging bands
     ntot    - total number of coefficients for each basis (must be equal)
     """
-    l2_norm = norm(v, axis=1)  # drops freq axis
+    l2_norm = norm(v, axis=axis)  # drops freq axis
     l2_soft = np.maximum(l2_norm - sigma * weights, 0.0)  # norm is always positive
     mask = l2_norm != 0
     ratio = np.zeros(mask.shape, dtype=v.dtype)
     ratio[mask] = l2_soft[mask] / l2_norm[mask]
-    return v * ratio[:, None, :]  # restore freq axis
+    return v * np.expand_dims(ratio, axis=axis)  # restore freq axis
 
 
 def robust_reweight(residuals, weights, v=None):

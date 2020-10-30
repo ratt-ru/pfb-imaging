@@ -3,6 +3,7 @@
 import numpy as np
 from astropy.io import fits
 from scipy.ndimage import gaussian_filter, median_filter, map_coordinates
+from scipy.ndimage.morphology import binary_dilation
 import matplotlib.pyplot as plt
 from numba import njit, prange
 from pfb.utils import data_from_header, save_fits, load_fits
@@ -14,7 +15,7 @@ def create_parser():
     p = argparse.ArgumentParser()
     p.add_argument("--image", help="Restored image", type=str)
     p.add_argument("--region", default=None, help="Region based mask (optional)", type=str)
-    p.add_argument("--sigma", default=5, help="Standard deviation of convolving Gaussian in pixels (used to dilate the mask)", type=float)
+    p.add_argument("--sigma", default=1, help="Dilate mask sigma times", type=int)
     p.add_argument("--threshold", help="Absolute masking threshold to apply on reconstructed image", type=float)
     p.add_argument("--soft_threshold", default=1e-3, help="Soft thresholding for wavelet coefficients", type=float)
     p.add_argument("--outname", help="Mask out name", type=str)
@@ -87,13 +88,14 @@ def main(args):
         elif (old_y_coords >=360.0).any():
             old_y_coords -= 360
 
-        if not (x_coords==old_x_coords).any() or not (y_coords==old_y_coords).any():
+        if not (x_coords==old_x_coords) or not (y_coords==old_y_coords):
             print("Mapping region")
             new_region = map_region(region, old_x_coords, old_y_coords, x_coords, y_coords)
         else:
             print("Coordinates match")
             new_region = region
     else:
+        print("Ended up here")
         new_region = np.ones_like(image)
     
     
@@ -111,8 +113,8 @@ def main(args):
     mask = np.where(model * new_region > args.threshold, 1.0, 0.0)
     
     # dilate the mask a little by convolving with Gassian of width sigma
-    mask = gaussian_filter(mask, args.sigma, mode='constant')
-    mask = np.where(mask > 1e-3, 1.0, 0.0)  # 1e-3 fiddle factor
+    if args.sigma:
+        mask = binary_dilation(input=mask, iterations=args.sigma)
 
     plt.figure(1)
     plt.imshow(model, vmin=0.0, vmax=0.01*model.max())
