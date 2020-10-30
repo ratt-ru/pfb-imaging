@@ -34,8 +34,6 @@ def make_kernel(nv_psf, nx_psf, ny_psf, sigma0, length_scale):
                 l = float(j - (nx_psf//2))
                 m = float(k - (ny_psf//2))
                 K[i,j,k] = sigma0**2*np.exp(-(v**2+l**2+m**2)/(2*length_scale**2))
-                #r = np.sqrt(v**2+l**2+m**2)
-                #K[i,j,k] = sigma0**2*(1+np.sqrt(5)*r/length_scale + 5*r**2/(3*length_scale**2))*np.exp(-np.sqrt(5)*r/length_scale)
     return K
 
 

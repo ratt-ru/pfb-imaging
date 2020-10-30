@@ -1,107 +1,160 @@
 
 import numpy as np
-from pfb.operators import Dirac, Prior, PSF
+from pfb.operators import Dirac, PSF, Prior
+from pfb.opt import pcg
 from ducc0.wgridder import ms2dirty, dirty2ms
 import matplotlib.pyplot as plt
 from africanus.constants import c as lightspeed
+import pywt
 
-def pcg(A, b, x0, M=None, tol=1e-5, maxit=500, verbosity=1, report_freq=10):
+nband = 1
+nx = 128
+ny = 128
+
+def psi_func(y, H):
+    return y[0] + H.dot(y[1])
+
+def psih_func(x, H):
+    return np.concatenate((x[None], H.hdot(x)[None]), axis=0)
+
+def hess_func(x, A, psf, psi, psih, sig_b):
+    alpha = x[0]
+    tmp1 = A.idot(alpha)
+
+    beta = x[1]
+    tmp2 = beta/sig_b**2
+    return  psih(psf.convolve(psi(x))) + np.concatenate((tmp1[None], tmp2[None]), axis=0)
+
+def M_func(x, A, sig_b):
+    alpha = x[0]
+    tmp1 = A.dot(alpha)
+
+    beta = x[1]
+    tmp2 = beta*sig_b**2
+
+    return np.concatenate((tmp1[None], tmp2[None]), axis=0)
+
+
+# class Prior(object):
+#     def __init__(self, sigma0):
+#         self.sigma0 = sigma0
+#     def dot(self, x):
+#         return x * self.sigma0**2
+#     def idot(self, x):
+#         return x / self.sigma0**2
     
-    if M is None:
-        M = lambda x: x
-    
-    r = A(x0) - b
-    y = M(r)
-    p = -y
-    rnorm = np.vdot(r, y)
-    if np.isnan(rnorm) or rnorm == 0.0:
-        eps0 = 1.0
-    else:
-        eps0 = rnorm
-    k = 0
-    x = x0
-    while rnorm/eps0 > tol and k < maxit:
-        xp = x.copy()
-        rp = r.copy()
-        Ap = A(p)
-        rnorm = np.vdot(r, y)
-        alpha = rnorm/np.vdot(p, Ap)
-        x = xp + alpha*p
-        r = rp + alpha*Ap
-        y = M(r)
-        rnorm_next = np.vdot(r, y)
-        # while rnorm_next > rnorm:  # TODO - better line search
-        #     alpha *= 0.75
-        #     x = xp + alpha*p
-        #     r = rp + alpha*Ap
-        #     y = M(r)
-        #     rnorm_next = np.vdot(r, y)
-
-        beta = rnorm_next/rnorm
-        p = beta*p - y
-        rnorm = rnorm_next
-        k += 1
-
-        if not k%report_freq and verbosity > 1:
-            print("At iteration %i rnorm = %f"%(k, rnorm/eps0))
-
-    if k >= maxit:
-        if verbosity > 0:
-            print("CG - Maximum iterations reached. Norm of residual = %f.  "%(rnorm/eps0))
-    else:
-        if verbosity > 0:
-            print("CG - Success, converged after %i iterations"%k)
-    return x
-
-
-def X_func(x, Xdesign):
-    return Xdesign.dot(x)
-
-
-def XH_func(x, Xdesign):
-    nband, npix = x.shape
-    ncomps = Xdesign.shape[-1]
-    res = np.zeros((ncomps, npix), dtype=np.float64)
-    XdesH = Xdesign.T
-    for i in range(npix):
-        res[:, i] = XdesH.dot(x[:, i])
-    return res
-
 
 if __name__=="__main__":
-    npix = 27
-    nband = 8
-    order = 4
+    nrow = 100000
+    uvw = np.random.randn(nrow, 3)
+    uvw[:, 2] = 0.0
 
-    # random coefficients
-    comps = np.random.randn(order, npix)
+    u_max = abs(uvw[:, 0]).max()
+    v_max = abs(uvw[:, 1]).max()
+    uv_max = np.maximum(u_max, v_max)
 
-    # freqs
-    w = np.linspace(0.5, 1.4, nband)[:, None]
+    cell = 0.9/(2*uv_max)
+
+    freq = np.array([lightspeed])
+
+    model = np.zeros((nband, nx, ny))
+    npoints = 10
+    Ix = np.random.randint(0, nx, npoints)
+    Iy = np.random.randint(0, ny, npoints)
+    model[:, Ix, Iy] = np.abs(1.0 + np.random.randn(npoints))
+    mask = np.zeros((nx, ny))
+    mask[Ix, Iy] = 1.0
+
+    xx, yy = np.meshgrid(np.arange(nx), np.arange(ny))
+    locs = ((nx//4, ny//4), (nx//2, ny//2), (3*nx//4, ny//4), (nx//4, 3*ny//4), (3*nx//4, 3*ny//4))
     
-    # design matrix
-    Xdesign = np.tile(w, order) ** np.arange(0, order)
-
-    # image
-    model = Xdesign.dot(comps)
+    for loc in locs: 
+        model += np.exp(-(xx-loc[0])**2/15**2 - (yy-loc[1])**2/15**2)[None, :, :]
 
 
-    # add some noise
-    data = model
+    vis = dirty2ms(uvw=uvw, freq=freq, dirty=model[0], pixsize_x=cell, pixsize_y=cell, epsilon=1e-7, do_wstacking=False, nthreads=8)
+    noise = np.random.randn(nrow, 1)/np.sqrt(2) + 1.0j*np.random.randn(nrow, 1)/np.sqrt(2)
 
-    # dirty
-    dirty = Xdesign.T.dot(data)
+    data = vis + noise
+
+    dirty = ms2dirty(uvw=uvw, freq=freq, ms=data, npix_x=nx, npix_y=ny, pixsize_x=cell, pixsize_y=cell, epsilon=1e-7, do_wstacking=False, nthreads=8)[None, :, :]
+
+    psf_array = ms2dirty(uvw=uvw, freq=freq, ms=np.ones(data.shape, dtype=np.complex128),
+                         npix_x=2*nx, npix_y=2*ny, pixsize_x=cell, pixsize_y=cell, epsilon=1e-7, do_wstacking=False, nthreads=8)[None, :, :]
+
+    plt.figure('dirty')
+    plt.imshow(dirty[0])
+    plt.colorbar()
+
+    plt.figure('psf')
+    plt.imshow(psf_array[0])
+    plt.colorbar()
+
+    plt.show()
+
+    psf = PSF(psf_array, 8)
+
+    A = Prior(1.0, nband, nx, ny)
+
+    H = Dirac(nband, nx, ny, mask=mask)
+
+    psi = lambda y:psi_func(y, H)
+    psih = lambda x:psih_func(x, H)
+
+    sig_b = 10
+
+    hess = lambda x:hess_func(x, A, psf, psi, psih, sig_b)
+
+    augmented_dirty = psih(dirty)
+    print(augmented_dirty.shape)
+    M = lambda x:M_func(x, A, sig_b)
+    x = pcg(hess, augmented_dirty, np.zeros(augmented_dirty.shape), M=M, tol=1e-7, maxit=100, verbosity=1)
+
+    model_rec = psi(x)
+
+    plt.figure('rec')
+    plt.imshow(model_rec[0])
+    plt.colorbar()
+
+    plt.figure('model')
+    plt.imshow(model[0])
+    plt.colorbar()
+
+    # get normal Wiener filter solution
+    def hess(x):
+        return psf.convolve(x) + A.idot(x)
+
+    x = pcg(hess, dirty, np.zeros(dirty.shape), M=A.dot, tol=1e-7, maxit=100, verbosity=1)
+
+    plt.figure('wiener')
+    plt.imshow(x[0])
+    plt.colorbar()
 
 
-    # hessian
-    hess = Xdesign.T.dot(Xdesign)
+    # # filter with mexican hat wavelet
+    # wavelet = pywt.ContinuousWavelet('mexh')
+    # psi, g = wavelet.wavefun(25)
+    # print(g)
+    # print(psi)
 
-    comp_rec = np.linalg.solve(hess, dirty)
-
-    print(np.abs(comps-comp_rec).max())
-
-    model_rec = Xdesign.dot(comp_rec)
-
-    print(np.abs(model-model_rec).max())
+    # plt.figure('mexh')
+    # plt.plot(g, psi)
 
 
+
+
+    plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
