@@ -63,7 +63,7 @@ def create_parser():
                    help="How often to save output images during deconvolution")
     p.add_argument("--beta", type=float, default=None,
                    help="Lipschitz constant of F")
-    p.add_argument("--sig_l2", default=0.1, type=float,
+    p.add_argument("--sig_l2", default=1.0, type=float,
                    help="The strength of the l2 norm regulariser")
     p.add_argument("--sig_21", type=float, default=1e-3,
                    help="Strength of l21 regulariser")
@@ -90,7 +90,7 @@ def create_parser():
     p.add_argument("--reweight_alpha_ff", type=float, default=0.5,
                    help="Determines how quickly the reweighting progresses."
                    "reweight_alpha_percent will be scaled by this factor after each reweighting step.")
-    p.add_argument("--cgtol", type=float, default=1e-4,
+    p.add_argument("--cgtol", type=float, default=1e-5,
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=100,
                    help="Maximum number of iterations for the cg updates")
