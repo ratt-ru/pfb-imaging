@@ -150,7 +150,7 @@ class Gridder(object):
 
                 spw = ds.DATA_DESC_ID  # this is not correct, need to use spw
 
-                print("Processing ms %s, field %i, spw %i"%(ims, ds.FIELD_ID, ds.DATA_DESC_ID))
+                # print("Processing ms %s, field %i, spw %i"%(ims, ds.FIELD_ID, ds.DATA_DESC_ID))
                 freq_bin_idx = self.freq_bin_idx[ims][spw]
                 freq_bin_counts = self.freq_bin_counts[ims][spw]
                 freq = self.freq[ims][spw]
@@ -224,7 +224,7 @@ class Gridder(object):
 
                 spw = ds.DATA_DESC_ID  # this is not correct, need to use spw
                 
-                print("Processing ms %s, field %i, spw %i"%(ims, ds.FIELD_ID, ds.DATA_DESC_ID))
+                # print("Processing ms %s, field %i, spw %i"%(ims, ds.FIELD_ID, ds.DATA_DESC_ID))
                 freq_bin_idx = self.freq_bin_idx[ims][spw]
                 freq_bin_counts = self.freq_bin_counts[ims][spw]
                 freq = self.freq[ims][spw]
@@ -292,7 +292,7 @@ class Gridder(object):
 
                 spw = ds.DATA_DESC_ID  # this is not correct, need to use spw
                 
-                print("Processing ms %s, field %i, spw %i"%(ims, ds.FIELD_ID, ds.DATA_DESC_ID))
+                # print("Processing ms %s, field %i, spw %i"%(ims, ds.FIELD_ID, ds.DATA_DESC_ID))
                 freq_bin_idx = self.freq_bin_idx[ims][spw]
                 freq_bin_counts = self.freq_bin_counts[ims][spw]
                 freq = self.freq[ims][spw]
@@ -355,7 +355,7 @@ class Gridder(object):
                 if not np.array_equal(radec, self.radec):
                     continue
 
-                print("Processing ms %s, field %i, spw %i"%(ims, ds.FIELD_ID, ds.DATA_DESC_ID))
+                # print("Processing ms %s, field %i, spw %i"%(ims, ds.FIELD_ID, ds.DATA_DESC_ID))
                 spw = ds.DATA_DESC_ID  # this is not correct, need to use spw
 
                 freq_bin_idx = self.freq_bin_idx[ims][spw]

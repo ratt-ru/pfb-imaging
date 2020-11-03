@@ -6,7 +6,7 @@ import pywt
 from ducc0.wgridder import ms2dirty, dirty2ms
 from ducc0.fft import r2c, c2r, c2c
 from africanus.gps.kernels import exponential_squared as expsq
-from africanus.linalg import kronecker_tools as kt
+
 # from pfb.wavelets.wavelets import wavedecn, waverecn, ravel_coeffs, unravel_coeffs
 
 iFs = np.fft.ifftshift
@@ -24,14 +24,54 @@ def freqmul(A, x):
     return out
 
 @njit(parallel=True, nogil=True, fastmath=True, inline='always')
-def make_kernel(nx_psf, ny_psf, sigma0, length_scale):
-    K = np.zeros((1, nx_psf, ny_psf), dtype=np.float64)
-    for i in range(nx_psf):
-        for j in range(ny_psf):
-            l = float(i - (nx_psf//2))
-            m = float(j - (ny_psf//2))
-            K[0,i,j] = sigma0**2*np.exp(-(l**2+m**2)/(2*length_scale**2))
+def make_kernel(nv_psf, nx_psf, ny_psf, sigma0, length_scale):
+    K = np.zeros((nv_psf, nx_psf, ny_psf), dtype=np.float64)
+    for i in range(nv_psf):
+        for j in range(nx_psf):
+            for k in range(ny_psf):
+                v = float(i - (nv_psf//2))
+                l = float(j - (nx_psf//2))
+                m = float(k - (ny_psf//2))
+                K[i,j,k] = sigma0**2*np.exp(-(v**2+l**2+m**2)/(2*length_scale**2))
     return K
+
+
+# eventually goes in africanus
+@njit(fastmath=True, inline='always')
+def kron_matvec(A, b):
+    """
+    Computes the matrix vector product of
+    a kronecker matrix in linear time.
+    Assumes A consists of kronecker product
+    of square matrices.
+
+    Parameters
+    ----------
+    A : :class:`numpy.ndarray`
+        An array of arrays holding
+        matrices [K0, K1, ...] where
+        :math:`A = K_0 \\otimes K_1 \\otimes \\cdots`
+    b : :class:`numpy.ndarray`
+        The right hand side vector
+
+    Returns
+    -------
+    x : :class:`numpy.ndarray`
+        The result of :code:`A.dot(b)`
+    """
+    D = len(A)
+    N = b.size
+    x = b
+    for d in range(D):
+        Gd = A[d].shape[0]
+        X = np.reshape(x, (Gd, N//Gd))
+        Z = np.zeros((Gd, N//Gd), dtype=A[0].dtype)
+        for i in range(Gd):
+            for j in range(N//Gd):
+                for k in range(Gd):
+                    Z[i, j] += A[d][i, k] * X[k, j]
+        x = Z.T.flatten()
+    return x
 
 
 class PSF(object):
@@ -62,27 +102,125 @@ class Prior(object):
         self.nthreads = nthreads
         self.nx = nx
         self.ny = ny
-        self.nband = nband
+        self.nv = nband
+        if nband > 1:
+            nv_psf = 2*self.nv
+            npad_v = (nv_psf - nband)//2
+            self.unpad_v = slice(npad_v, -npad_v)
+        else:
+            nv_psf = 1
+            npad_v = 0
+            self.unpad_v = slice(None)
         nx_psf = 2*self.nx
         npad_x = (nx_psf - nx)//2
         ny_psf = 2*self.ny
         npad_y = (ny_psf - ny)//2
-        self.padding = ((0,0), (npad_x, npad_x), (npad_y, npad_y))
-        self.ax = (1,2)
+        self.padding = ((npad_v,npad_v), (npad_x, npad_x), (npad_y, npad_y))
+        self.ax = (0, 1,2)
+        
         self.unpad_x = slice(npad_x, -npad_x)
         self.unpad_y = slice(npad_y, -npad_y)
         self.lastsize = ny + np.sum(self.padding[-1])
+        
+        # always work in pixel coordinates
+        if nband > 1:
+            v_coord = np.arange(-(nv_psf//2), nv_psf//2)
+        else:
+            v_coord = np.array([1.0])
+        v_coord = np.arange(-(nv_psf//2), nv_psf//2)
+        l_coord = np.arange(-(nx_psf//2), nx_psf//2)
+        m_coord = np.arange(-(ny_psf//2), ny_psf//2)
 
-        v = np.arange(self.nband).astype(np.float64)
-        self.K = expsq(v, v, sigma0, 0.25*self.nband)
-        self.Kinv = np.linalg.pinv(self.K)
+        # set length scales
+        length_scale = 1.5
 
-    def dot(self, x):
-        return self.K.dot(x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+        K = make_kernel(nv_psf, nx_psf, ny_psf, sigma0, length_scale)
+
+        self.K = K
+        K_pad = iFs(self.K, axes=self.ax)
+        self.Khat = r2c(K_pad, axes=self.ax, forward=True, nthreads=nthreads, inorm=0)
+
+
+        # get covariance in each dimension
+        if nband > 1:
+            v_coord = np.arange(-(nband//2), nband//2)
+        else:
+            v_coord = np.array([1.0])
+        l_coord = np.arange(-(nx//2), nx//2)
+        m_coord = np.arange(-(ny//2), ny//2)
+        self.Kv = expsq(v_coord, v_coord, sigma0, length_scale) # + 1e-6*np.eye(nband)
+        self.Kl = expsq(l_coord, l_coord, 1.0, length_scale) # + 1e-6*np.eye(nx)
+        self.Km = expsq(m_coord, m_coord, 1.0, length_scale) # + 1e-6*np.eye(ny)
+        
+        # explicit inverses
+        self.Kvinv = np.linalg.pinv(self.Kv)  
+        self.Klinv = np.linalg.pinv(self.Kl)
+        self.Kminv = np.linalg.pinv(self.Km)
+
+        # # Kronecker matrices for fast matrix vector products
+        self.Kkron = (self.Kv, self.Kl, self.Km)
+        self.Kinvkron = (self.Kvinv, self.Klinv, self.Kminv)
+
+    def convolve(self, x):
+        xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
+        xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
+        xhat = c2r(xhat * self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
+        res = Fs(xhat, axes=self.ax)[self.unpad_v, self.unpad_x, self.unpad_y]
+        return res
+
+    def iconvolve(self, x):
+        from pfb.opt import pcg
+        return pcg(self.convolve, 
+                   x, np.zeros(x.shape), 
+                   M=lambda x:x, tol=1e-5,
+                   maxit=100, verbosity=1)
 
     def idot(self, x):
-        return self.Kinv.dot(x.reshape(self.nband, self.nx*self.ny)).reshape(self.nband, self.nx, self.ny)
+        return kron_matvec(self.Kinvkron, x.flatten()).reshape(*x.shape)
 
+    def dot(self, x):
+        return kron_matvec(self.Kkron, x.flatten()).reshape(*x.shape)
+
+
+class Dirac(object):
+    def __init__(self, nband, nx, ny, mask=None):
+        """
+        Models image as a sum of Dirac deltas i.e.
+        
+        x = H beta
+
+        where H is a design matrix that maps the Dirac coefficients onto the image cube.
+
+        Parameters
+        ----------
+        nband - number of bands
+        nx - number of pixels in x-dimension
+        ny - number of pixels in y-dimension
+        mask - nx x my bool array containing locations of sources
+        """
+        self.nx = nx
+        self.ny = ny
+        self.nband = nband
+        self.mask = mask
+
+    def dot(self, x):
+        """
+        Components to image
+        """
+        return np.where(self.mask[None, :, :], x, 0)
+
+    def hdot(self, x):
+        """
+        Image to components
+        """
+        return np.where(self.mask[None, :, :], x, 0)
+
+    def update_locs(self, mask):
+        self.mask = np.logical_or(self.mask, mask)
+
+    def trim_fat(self, model):
+        self.mask = np.any(model, axis=0)
+    
 
 class PSI(object):
     def __init__(self, nband, nx, ny,
