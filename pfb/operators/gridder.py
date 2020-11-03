@@ -12,7 +12,7 @@ from pprint import pprint
 
 class Gridder(object):
     def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',
-                 row_chunks=100000, optimise_chunks=True,
+                 row_chunks=100000, optimise_chunks=True, epsilon=1e-5,
                  data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM', model_column="MODEL_DATA", flag_column='FLAG'):
         if Stokes != 'I':
             raise NotImplementedError("Only Stokes I currently supported")
@@ -20,6 +20,8 @@ class Gridder(object):
         self.ny = ny
         self.cell = cell_size * np.pi/60/60/180
         self.nthreads = nthreads
+        self.do_wstacking = do_wstacking
+        self.epsilon = epsilon
 
         self.data_column = data_column
         self.weight_column = weight_column
@@ -182,7 +184,7 @@ class Gridder(object):
                 model = x[list(bands), :, :]
                 residual = im2residim(uvw, freq, model, data, freq_bin_idx, freq_bin_counts,
                                       self.cell, weights=weights, flag=flag.astype(np.uint8),
-                                      nthreads=self.nthreads)
+                                      nthreads=self.nthreads, epsilon=self.epsilon, do_wstacking=self.do_wstacking)
 
                 residuals.append(residual)
         
@@ -255,7 +257,8 @@ class Gridder(object):
 
                 dirty = vis2im(uvw, freq, data, freq_bin_idx, freq_bin_counts,
                                self.nx, self.ny, self.cell, weights=weights,
-                               flag=flag.astype(np.uint8), nthreads=self.nthreads)
+                               flag=flag.astype(np.uint8), nthreads=self.nthreads,
+                               epsilon=self.epsilon, do_wstacking=self.do_wstacking)
 
                 
                 dirties.append(dirty)
@@ -319,7 +322,7 @@ class Gridder(object):
 
                 psf = vis2im(uvw, freq, data, freq_bin_idx, freq_bin_counts,
                              2*self.nx, 2*self.ny, self.cell, flag=flag.astype(np.uint8),
-                             nthreads=self.nthreads)
+                             nthreads=self.nthreads, epsilon=self.epsilon, do_wstacking=self.do_wstacking)
 
                 psfs.append(psf)
 
@@ -369,7 +372,8 @@ class Gridder(object):
                 bands = self.band_mapping[ims][spw]
                 model = x[list(bands), :, :]
                 vis = im2vis(uvw, freq, model, freq_bin_idx, freq_bin_counts,
-                             self.cell, nthreads=self.nthreads)
+                             self.cell, nthreads=self.nthreads, epsilon=self.epsilon,
+                             do_wstacking=self.do_wstacking)
 
                 model_vis = populate_model(vis, model_vis)
                 

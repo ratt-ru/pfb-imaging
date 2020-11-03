@@ -50,6 +50,8 @@ def create_parser():
                    help="A fits mask (True where unmasked)")
     p.add_argument("--do_wstacking", type=str2bool, nargs='?', const=True, default=True,
                    help='Whether to use wstacking or not.')
+    p.add_argument("--epsilon", type=float, default=1e-5,
+                   help="Accuracy of the gridder")
     p.add_argument("--field", type=int, default=0, nargs='+',
                    help="Which fields to image")
     p.add_argument("--nthreads", type=int, default=0)
@@ -162,8 +164,8 @@ def main(args):
 
     # init gridder
     R = Gridder(args.ms, args.nx, args.ny, args.cell_size, nband=args.nband, nthreads=args.nthreads,
-                do_wstacking=args.do_wstacking, row_chunks=args.row_chunks, optimise_chunks=True,
-                data_column=args.data_column, weight_column=args.weight_column,
+                do_wstacking=args.do_wstacking, row_chunks=args.row_chunks,
+                data_column=args.data_column, weight_column=args.weight_column, epsilon=args.epsilon,
                 model_column=args.model_column, flag_column=args.flag_column)
     freq_out = R.freq_out
     radec = R.radec
@@ -176,8 +178,12 @@ def main(args):
     
     # psf
     if args.psf is not None:
-        compare_headers(hdr_psf, fits.getheader(args.psf))
-        psf_array = load_fits(args.psf)
+        try:
+            compare_headers(hdr_psf, fits.getheader(args.psf))
+            psf_array = load_fits(args.psf)
+        except:
+            psf_array = R.make_psf()
+            save_fits(args.outfile + '_psf.fits', psf_array, hdr_psf)
     else:
         psf_array = R.make_psf()
         save_fits(args.outfile + '_psf.fits', psf_array, hdr_psf)
@@ -269,17 +275,6 @@ def main(args):
         weights_21 = np.ones(nx*ny, dtype=np.float64)
 
     dual = np.zeros((psi.nbasis, args.nband, psi.nmax), dtype=np.float64)
-
-    # # deconvolve the PSF
-    # psf_tmp = psf_array[:, args.nx//2:3*args.nx//2, args.ny//2:3*args.ny//2]
-    # M = lambda x: x * args.sig_l2**2
-    # latent_psf = pcg(hess, psf_tmp, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol,
-    #                  maxit=args.cgmaxit, verbosity=args.cgverbose)
-
-    # save_fits(args.outfile + '_latent_psf.fits', latent_psf, hdr)
-
-    # quit()
-
     
 
     # deconvolve
