@@ -57,8 +57,6 @@ def create_parser():
                    help="A fits mask with a priori known point source locations (True where unmasked)")
     p.add_argument("--do_wstacking", type=str2bool, nargs='?', const=True, default=True,
                    help='Whether to use wstacking or not.')
-    p.add_argument("--field", type=int, default=0, nargs='+',
-                   help="Which fields to image")
     p.add_argument("--nthreads", type=int, default=0)
     p.add_argument("--gamma", type=float, default=0.99,
                    help="Step size of 'primal' update.")
