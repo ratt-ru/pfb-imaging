@@ -281,8 +281,8 @@ def main(args):
         nbasis = psi.nbasis
         weights_21 = np.ones((psi.nbasis, psi.nmax), dtype=np.float64)
     else:
-        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
-                      nthreads=args.nthreads, bases=[self])
+        psi = PSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
+                  nthreads=args.nthreads, bases=['self'])
         weights_21 = np.ones(nx*ny, dtype=np.float64)
 
     dual = np.zeros((psi.nbasis, args.nband, psi.nmax), dtype=np.float64)

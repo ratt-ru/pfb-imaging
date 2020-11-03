@@ -381,7 +381,7 @@ def _hdot_internal_wrapper(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_ty
 class DaskPSI(PSI):
     def __init__(self, nband, nx, ny,
                  nlevels=2,
-                 bases=bases=['db1', 'db2', 'db3', 'db4'],
+                 bases=['db1', 'db2', 'db3', 'db4'],
                  nthreads=8):
         PSI.__init__(self, nband, nx, ny, nlevels=nlevels,
                      bases=bases)
@@ -396,8 +396,15 @@ class DaskPSI(PSI):
         self.sy = da.from_array(sy, chunks=1)
         ntot = np.array(self.ntot, dtype=object)
         self.ntot = da.from_array(ntot, chunks=1)
+
+        print(self.bases.compute())
+        print(self.padding.compute())
+        print(self.iy.compute())
+        print(self.sy.compte())
+        print(self.ntot.compute())
         
     def dot(self, alpha):
+        print(alpha.shape)
         alpha_dask = da.from_array(alpha, chunks=(1, 1, self.nmax))
         x = da.blockwise(_dot_internal_wrapper, ("basis", "band", "nx", "ny"),
                          alpha_dask, ("basis", "band", "ntot"),
