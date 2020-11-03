@@ -358,5 +358,3 @@ def give_edges(p, q, nx, ny):
 
 
     return slice(xl, xu), slice(yl, yu), slice(xlpsf, xupsf), slice(ylpsf, yupsf)
-
-

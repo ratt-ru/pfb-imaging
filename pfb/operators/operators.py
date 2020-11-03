@@ -6,7 +6,6 @@ import pywt
 from ducc0.wgridder import ms2dirty, dirty2ms
 from ducc0.fft import r2c, c2r, c2c
 from africanus.gps.kernels import exponential_squared as expsq
-from africanus.linalg import kronecker_tools as kt
 
 # from pfb.wavelets.wavelets import wavedecn, waverecn, ravel_coeffs, unravel_coeffs
 
@@ -35,6 +34,44 @@ def make_kernel(nv_psf, nx_psf, ny_psf, sigma0, length_scale):
                 m = float(k - (ny_psf//2))
                 K[i,j,k] = sigma0**2*np.exp(-(v**2+l**2+m**2)/(2*length_scale**2))
     return K
+
+
+# eventually goes in africanus
+@njit(fastmath=True, inline='always')
+def kron_matvec(A, b):
+    """
+    Computes the matrix vector product of
+    a kronecker matrix in linear time.
+    Assumes A consists of kronecker product
+    of square matrices.
+
+    Parameters
+    ----------
+    A : :class:`numpy.ndarray`
+        An array of arrays holding
+        matrices [K0, K1, ...] where
+        :math:`A = K_0 \\otimes K_1 \\otimes \\cdots`
+    b : :class:`numpy.ndarray`
+        The right hand side vector
+
+    Returns
+    -------
+    x : :class:`numpy.ndarray`
+        The result of :code:`A.dot(b)`
+    """
+    D = len(A)
+    N = b.size
+    x = b
+    for d in range(D):
+        Gd = A[d].shape[0]
+        X = np.reshape(x, (Gd, N//Gd))
+        Z = np.zeros((Gd, N//Gd), dtype=A[0].dtype)
+        for i in range(Gd):
+            for j in range(N//Gd):
+                for k in range(Gd):
+                    Z[i, j] += A[d][i, k] * X[k, j]
+        x = Z.T.flatten()
+    return x
 
 
 class PSF(object):
@@ -139,10 +176,10 @@ class Prior(object):
                    maxit=100, verbosity=1)
 
     def idot(self, x):
-        return kt.kron_matvec(self.Kinvkron, x.flatten()).reshape(*x.shape)
+        return kron_matvec(self.Kinvkron, x.flatten()).reshape(*x.shape)
 
     def dot(self, x):
-        return kt.kron_matvec(self.Kkron, x.flatten()).reshape(*x.shape)
+        return kron_matvec(self.Kkron, x.flatten()).reshape(*x.shape)
 
 
 class Dirac(object):
