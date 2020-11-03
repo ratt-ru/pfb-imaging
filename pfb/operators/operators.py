@@ -225,7 +225,7 @@ class Dirac(object):
 class PSI(object):
     def __init__(self, nband, nx, ny,
                  nlevels=2,
-                 bases=['self', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8']):
+                 bases=['db1', 'db2', 'db3', 'db4']):
         """
         Sets up operators to move between wavelet coefficients
         in each basis and the image x.
@@ -237,7 +237,9 @@ class PSI(object):
         ny - number of pixels in y-dimension
         nlevels - The level of the decomposition. Default=2
         basis - List holding basis names.
-                Default is delta + first 8 DB wavelets
+                Default is db1-4 wavelets
+                Supports any subset of
+                ['self', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8']
 
         Returns
         =======
@@ -379,7 +381,7 @@ def _hdot_internal_wrapper(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_ty
 class DaskPSI(PSI):
     def __init__(self, nband, nx, ny,
                  nlevels=2,
-                 bases=['self', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8'],
+                 bases=bases=['db1', 'db2', 'db3', 'db4'],
                  nthreads=8):
         PSI.__init__(self, nband, nx, ny, nlevels=nlevels,
                      bases=bases)
