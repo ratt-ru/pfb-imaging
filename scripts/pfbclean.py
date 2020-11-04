@@ -67,8 +67,8 @@ def create_parser():
                    help="The strength of the l2 norm regulariser")
     p.add_argument("--sig_21", type=float, default=1e-3,
                    help="Strength of l21 regulariser")
-    p.add_argument("--use_psi", type=str2bool, nargs='?', const=True, default=True,
-                   help="Use SARA basis")
+    p.add_argument("--positivity", type=str2bool, nargs='?', const=True, default=True,
+                   help='Whether to impose a positivity constraint or not.')
     p.add_argument("--psi_levels", type=int, default=3,
                    help="Wavelet decomposition level")
     p.add_argument("--psi_basis", type=str, default=None, nargs='+',
@@ -76,6 +76,8 @@ def create_parser():
                    "[self, db1, db2, db3, db4, db5, db6, db7, db8]")
     p.add_argument("--x0", type=str, default=None,
                    help="Initial guess in form of fits file")
+    p.add_argument("--first_residual", default=None, type=str,
+                   help="Residual corresponding to x0")
     p.add_argument("--reweight_iters", type=int, default=None, nargs='+',
                    help="Set reweighting iters explicitly")
     p.add_argument("--reweight_start", type=int, default=50,
@@ -189,11 +191,16 @@ def main(args):
     psf_max = np.amax(psf_array.reshape(args.nband, 4*args.nx*args.ny), axis=1)
     wsum = np.sum(psf_max)
     counts = np.sum(psf_max > 0)
-    psf_max_mean = wsum/counts
+    psf_max_mean = wsum/counts  # normalissation for more intuitive sig_21 values
     psf_array /= psf_max_mean
     psf = PSF(psf_array, args.nthreads)
     psf_max = np.amax(psf_array.reshape(args.nband, 4*args.nx*args.ny), axis=1)
+    wsum = np.sum(psf_max)
     psf_max[psf_max < 1e-15] = 1e-15  # LB - is this the right thing to do?
+
+    psf_mfs = np.sum(psf_array, axis=0)/wsum
+    save_fits(args.outfile + '_psf_mfs.fits', psf_mfs[args.nx//2:3*args.nx//2, 
+                                                      args.ny//2:3*args.ny//2], hdr_mfs)
 
     # dirty
     if args.dirty is not None:
@@ -206,41 +213,47 @@ def main(args):
     else:
         dirty = R.make_dirty()
         save_fits(args.outfile + '_dirty.fits', dirty, hdr)
-
-    dirty /= psf_max_mean
-        
-    # mfs images
-    wsum = np.sum(psf_max)
-    dirty_mfs = np.sum(dirty, axis=0)/wsum 
-    rmax = np.abs(dirty_mfs).max()
-    rms = np.std(dirty_mfs)
-    save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)       
-
-    psf_mfs = np.sum(psf_array, axis=0)/wsum
-    save_fits(args.outfile + '_psf_mfs.fits', psf_mfs[args.nx//2:3*args.nx//2, 
-                                                      args.ny//2:3*args.ny//2], hdr_mfs)
+    
+    
+    dirty_mfs = np.sum(dirty/psf_max_mean, axis=0)/wsum 
+    save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)
     
     if args.x0 is not None:
         try:
             compare_headers(hdr, fits.getheader(args.x0))
             model = load_fits(args.x0, dtype=np.float64)
-            dirty = R.make_residual(model)/psf_max_mean
+            if args.first_residual is not None:
+                try:
+                    compare_headers(hdr, fits.getheader(args.first_residual))
+                    residual = load_fits(args.first_residual, dtype=np.float64)
+                except:
+                    residual = R.make_residual(model)
+                    save_fits(args.outfile + '_first_residual.fits', residual, hdr)
+            else:
+                residual = R.make_residual(model)
+                save_fits(args.outfile + '_first_residual.fits', residual, hdr)
         except:
             model = np.zeros((args.nband, args.nx, args.ny))
+            residual = dirty.copy()
     else:
         model = np.zeros((args.nband, args.nx, args.ny))
-    
+        residual = dirty.copy()
+
+    # normalise for more intuitive hypers
+    residual /= psf_max_mean
+    residual_mfs = np.sum(residual, axis=0)/wsum 
+    save_fits(args.outfile + '_first_residual_mfs.fits', residual_mfs, hdr_mfs)
+
     # mask
     if args.mask is not None:
         compare_headers(hdr_mfs, fits.getheader(args.mask))
-        mask = load_fits(args.mask, dtype=np.bool)
+        mask = load_fits(args.mask, dtype=np.int64)
     else:
-        mask = np.ones_like(dirty)
+        mask = np.ones((1, args.nx, args.ny), dtype=np.int64)
 
     #  preconditioning matrix
     def hess(x):  
-        return psf.convolve(x) + x / args.sig_l2**2 
-
+        return mask*psf.convolve(mask*x) + x / args.sig_l2**2 
     
     if args.beta is None:
         print("Getting spectral norm of update operator")
@@ -248,6 +261,21 @@ def main(args):
     else:
         beta = args.beta
     print(" beta = %f "%beta)
+
+    # set up wavelet basis
+    if args.psi_basis is None:
+        print("Using Dirac + db1-4 dictionary")
+        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
+                        nthreads=args.nthreads)
+    else:
+        if not isinstance(args.psi_basis, list):
+            args.psi_basis = list(args.psi_basis)
+        print("Using ", args.psi_basis, " dictionary")
+        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
+                        nthreads=args.nthreads, bases=args.psi_basis)
+    nbasis = psi.nbasis
+    weights_21 = np.ones((psi.nbasis, psi.nmax), dtype=np.float64)
+    dual = np.zeros((psi.nbasis, args.nband, psi.nmax), dtype=np.float64)
 
     # Reweighting
     if args.reweight_iters is not None:
@@ -259,41 +287,19 @@ def main(args):
         reweight_iters = list(np.arange(args.reweight_start, args.reweight_end, args.reweight_freq))
         reweight_iters.append(args.reweight_end)
 
-    # Reporting    
-    print("At iteration 0 peak of residual is %f and rms is %f" % (rmax, rms))
+    # Reporting
     report_iters = list(np.arange(0, args.maxit, args.report_freq))
     if report_iters[-1] != args.maxit-1:
         report_iters.append(args.maxit-1)
 
-    # regulariser
-    if args.use_psi:
-        # set up wavelet basis
-        if args.psi_basis is None:
-            print("Using db1-4 dictionary")
-            psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
-                          nthreads=args.nthreads)
-        else:
-            if not isinstance(args.psi_basis, list):
-                args.psi_basis = list(args.psi_basis)
-            print("Using ", args.psi_basis, " dictionary")
-            psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
-                          nthreads=args.nthreads, bases=args.psi_basis)
-        nbasis = psi.nbasis
-        weights_21 = np.ones((psi.nbasis, psi.nmax), dtype=np.float64)
-    else:
-        psi = PSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
-                  nthreads=args.nthreads, bases=['self'])
-        weights_21 = np.ones(nx*ny, dtype=np.float64)
-
-    dual = np.zeros((psi.nbasis, args.nband, psi.nmax), dtype=np.float64)
-
     # deconvolve
     eps = 1.0
     i = 0
-    residual = dirty.copy()
+    rmax = np.abs(residual_mfs).max()
+    rms = np.std(residual_mfs)
+    M = lambda x: x * args.sig_l2**2  # preconditioner
+    print("Peak of initial residual is %f and rms is %f" % (rmax, rms))
     for i in range(1, args.maxit):
-        # M = K.dot
-        M = lambda x: x * args.sig_l2**2
         x = pcg(hess, residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol,
                 maxit=args.cgmaxit, verbosity=args.cgverbose)
 
@@ -303,9 +309,9 @@ def main(args):
         # update model
         modelp = model
         model = modelp + args.gamma * x
-
         model, dual = primal_dual(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta,
-                                  tol=args.pdtol, maxit=args.pdmaxit, report_freq=100, mask=mask)
+                                  tol=args.pdtol, maxit=args.pdmaxit, report_freq=100, mask=mask,
+                                  positivity=args.positivity)
 
         # reweighting
         if i in reweight_iters:
@@ -337,7 +343,7 @@ def main(args):
             model_mfs = np.mean(model, axis=0)
             save_fits(args.outfile + str(i) + '_model_mfs.fits', model_mfs, hdr_mfs)
 
-            save_fits(args.outfile + str(i) + '_residual.fits', residual/psf_max[:, None, None], hdr)
+            save_fits(args.outfile + str(i) + '_residual.fits', residual, hdr)
 
             save_fits(args.outfile + str(i) + '_residual_mfs.fits', residual_mfs, hdr_mfs)
 
@@ -347,10 +353,7 @@ def main(args):
         R.write_model(model)
 
     if args.make_restored:
-        # get the uninformative Wiener filter soln
-        op = lambda x: psf.convolve(x) + 1e-6*x
-        M = lambda x: x/1e-6
-        x = pcg(op, residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
+        x = pcg(hess, residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
         restored = model + x
         
         # get residual
