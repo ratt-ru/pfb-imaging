@@ -246,8 +246,9 @@ def main(args):
 
     # mask
     if args.mask is not None:
-        compare_headers(hdr_mfs, fits.getheader(args.mask))
         mask = load_fits(args.mask, dtype=np.int64)
+        if mask.shape != (1, args.nx, args.ny):
+            raise ValueError("Mask has incorrect shape")
     else:
         mask = np.ones((1, args.nx, args.ny), dtype=np.int64)
 
