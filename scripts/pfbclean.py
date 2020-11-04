@@ -300,7 +300,7 @@ def main(args):
     M = lambda x: x * args.sig_l2**2  # preconditioner
     print("Peak of initial residual is %f and rms is %f" % (rmax, rms))
     for i in range(1, args.maxit):
-        x = pcg(hess, residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol,
+        x = pcg(hess, mask*residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol,
                 maxit=args.cgmaxit, verbosity=args.cgverbose)
 
         if i in report_iters:
