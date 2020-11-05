@@ -214,7 +214,6 @@ def main(args):
         dirty = R.make_dirty()
         save_fits(args.outfile + '_dirty.fits', dirty, hdr)
     
-    
     dirty_mfs = np.sum(dirty/psf_max_mean, axis=0)/wsum 
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)
     
