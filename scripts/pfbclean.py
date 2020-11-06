@@ -100,9 +100,9 @@ def create_parser():
                    help="Maximum number of iterations for the cg updates")
     p.add_argument("--cgverbose", type=int, default=1,
                    help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
-    p.add_argument("--pmtol", type=float, default=1e-5,
+    p.add_argument("--pmtol", type=float, default=1e-4,
                    help="Tolerance for power method used to compute spectral norms")
-    p.add_argument("--pmmaxit", type=int, default=25,
+    p.add_argument("--pmmaxit", type=int, default=50,
                    help="Maximum number of iterations for power method")
     p.add_argument("--pdtol", type=float, default=1e-4,
                    help="Tolerance for primal dual")

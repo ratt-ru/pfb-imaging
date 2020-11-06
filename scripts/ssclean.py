@@ -151,7 +151,7 @@ def main(args):
     # init gridder
     R = Gridder(args.ms, args.nx, args.ny, args.cell_size, nband=args.nband, nthreads=args.nthreads,
                 do_wstacking=args.do_wstacking, row_chunks=args.row_chunks, optimise_chunks=True,
-                data_column=args.data_column, weight_column=args.weight_column, imaging_weight_column=imaging_weight_column,
+                data_column=args.data_column, weight_column=args.weight_column, imaging_weight_column=args.imaging_weight_column,
                 model_column=args.model_column, flag_column=args.flag_column)
     freq_out = R.freq_out
     radec = R.radec
@@ -254,7 +254,7 @@ def main(args):
         weights_21 = np.where(psi.mask, 1, np.inf)
         model, dual = primal_dual(hess, model, modelp, dual, args.sig_21, psi, weights_21, L,
                                   tol=args.pdtol, maxit=args.pdmaxit, axis=0,
-                                  positivity=args.positivity)
+                                  positivity=args.positivity, report_freq=100)
 
         # update Dirac dictionary (remove zero components)
         psi.trim_fat(model)
@@ -292,8 +292,8 @@ def main(args):
     modelp = model.copy()
     model += x
     model, dual = primal_dual(hess, model, modelp, dual, 0.0,
-                              psi, weights_21, L, tol=args.fistatol,
-                              maxit=args.fistamaxit, axis=0)
+                              psi, weights_21, L, tol=args.pdtol,
+                              maxit=args.pdmaxit, axis=0, report_freq=100)
     
     # get residual
     residual = R.make_residual(model)/psf_max_mean

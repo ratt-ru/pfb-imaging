@@ -119,7 +119,7 @@ class Gridder(object):
                 self.freq_bin_idx[ims][spw] = da.from_array(bin_idx, chunks=1)
                 self.freq_bin_counts[ims][spw] = da.from_array(bin_counts, chunks=1)
 
-        self.imaging_weight_column - imaging_weight_column
+        self.imaging_weight_column = imaging_weight_column
         if imaging_weight_column is not None:
             self.columns = (self.data_column, self.weight_column,
                             self.imaging_weight_column, self.flag_column, 'UVW')
@@ -177,11 +177,12 @@ class Gridder(object):
                     
 
                 if self.imaging_weight_column is not None:
-                    imaging_weights = getattr(ds, self.imaging_weight_column)
+                    imaging_weights = getattr(ds, self.imaging_weight_column).data
                     if len(imaging_weights.shape) < 3:
                         imaging_weights = da.broadcast_to(imaging_weights[:, None, :], data.shape, chunks=data.chunks)
-                    weightsxx = imaging_weights[:, : 0] * weights[:, : 0]
-                    weightsyy = imaging_weights[:, : -1] * weights[:, : -1]
+
+                    weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
+                    weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]
                 else:
                     weightsxx = weights[:, :, 0]
                     weightsyy = weights[:, :, -1]
@@ -260,11 +261,12 @@ class Gridder(object):
                     weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
                 
                 if self.imaging_weight_column is not None:
-                    imaging_weights = getattr(ds, self.imaging_weight_column)
+                    imaging_weights = getattr(ds, self.imaging_weight_column).data
                     if len(imaging_weights.shape) < 3:
                         imaging_weights = da.broadcast_to(imaging_weights[:, None, :], data.shape, chunks=data.chunks)
-                    weightsxx = imaging_weights[:, : 0] * weights[:, : 0]
-                    weightsyy = imaging_weights[:, : -1] * weights[:, : -1]
+
+                    weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
+                    weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]
                 else:
                     weightsxx = weights[:, :, 0]
                     weightsyy = weights[:, :, -1]
@@ -334,11 +336,12 @@ class Gridder(object):
                     weights = da.broadcast_to(weights[:, None, :], flag.shape, chunks=flag.chunks)
                 
                 if self.imaging_weight_column is not None:
-                    imaging_weights = getattr(ds, self.imaging_weight_column)
+                    imaging_weights = getattr(ds, self.imaging_weight_column).data
                     if len(imaging_weights.shape) < 3:
                         imaging_weights = da.broadcast_to(imaging_weights[:, None, :], data.shape, chunks=data.chunks)
-                    weightsxx = imaging_weights[:, : 0] * weights[:, : 0]
-                    weightsyy = imaging_weights[:, : -1] * weights[:, : -1]
+
+                    weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
+                    weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]
                 else:
                     weightsxx = weights[:, :, 0]
                     weightsyy = weights[:, :, -1]
