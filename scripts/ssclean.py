@@ -22,6 +22,8 @@ def create_parser():
                    help="The column to image.")
     p.add_argument("--weight_column", default='WEIGHT_SPECTRUM', type=str,
                    help="Weight column to use.")
+    p.add_argument("--imaging_weight_column", default=None, type=str,
+                   help="Weight column to use.")
     p.add_argument("--model_column", default='MODEL_DATA', type=str,
                    help="Column to write model data to")
     p.add_argument("--flag_column", default='FLAG', type=str)
@@ -70,6 +72,8 @@ def create_parser():
                    help="The strength of the l2 norm regulariser")
     p.add_argument("--sig_21", type=float, default=1e-3,
                    help="Strength of l21 regulariser")
+    p.add_argument("--positivity", type=str2bool, nargs='?', const=True, default=True,
+                   help='Whether to impose a positivity constraint or not.')
     p.add_argument("--peak_factor", type=float, default=0.1,
                    help="Clean peak factor")
     p.add_argument("--cgamma", type=float, default=0.1,
@@ -84,9 +88,9 @@ def create_parser():
                    help="Tolerance for power method used to compute spectral norms")
     p.add_argument("--pmmaxit", type=int, default=25,
                    help="Maximum number of iterations for power method")
-    p.add_argument("--fistatol", type=float, default=1e-6,
+    p.add_argument("--pdtol", type=float, default=1e-6,
                    help="Tolerance for fista")
-    p.add_argument("--fistamaxit", type=int, default=50,
+    p.add_argument("--pdmaxit", type=int, default=50,
                    help="Maximum number of iterations for fista")
     p.add_argument("--make_restored", type=str2bool, nargs='?', const=True, default=True,
                    help="Relax positivity and sparsity constraints at final iteration")
@@ -147,7 +151,7 @@ def main(args):
     # init gridder
     R = Gridder(args.ms, args.nx, args.ny, args.cell_size, nband=args.nband, nthreads=args.nthreads,
                 do_wstacking=args.do_wstacking, row_chunks=args.row_chunks, optimise_chunks=True,
-                data_column=args.data_column, weight_column=args.weight_column,
+                data_column=args.data_column, weight_column=args.weight_column, imaging_weight_column=imaging_weight_column,
                 model_column=args.model_column, flag_column=args.flag_column)
     freq_out = R.freq_out
     radec = R.radec
@@ -249,7 +253,8 @@ def main(args):
         # impose sparsity and positivity in point sources
         weights_21 = np.where(psi.mask, 1, np.inf)
         model, dual = primal_dual(hess, model, modelp, dual, args.sig_21, psi, weights_21, L,
-                                  tol=args.fistatol, maxit=args.fistamaxit, axis=0)
+                                  tol=args.pdtol, maxit=args.pdmaxit, axis=0,
+                                  positivity=args.positivity)
 
         # update Dirac dictionary (remove zero components)
         psi.trim_fat(model)

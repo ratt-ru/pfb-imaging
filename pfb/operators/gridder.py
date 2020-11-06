@@ -13,7 +13,8 @@ from pprint import pprint
 class Gridder(object):
     def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',
                  row_chunks=100000, optimise_chunks=True, epsilon=1e-5,
-                 data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM', model_column="MODEL_DATA", flag_column='FLAG'):
+                 data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM',
+                 model_column="MODEL_DATA", flag_column='FLAG', imaging_weight_column=None):
         if Stokes != 'I':
             raise NotImplementedError("Only Stokes I currently supported")
         self.nx = nx
@@ -118,6 +119,13 @@ class Gridder(object):
                 self.freq_bin_idx[ims][spw] = da.from_array(bin_idx, chunks=1)
                 self.freq_bin_counts[ims][spw] = da.from_array(bin_counts, chunks=1)
 
+        self.imaging_weight_column - imaging_weight_column
+        if imaging_weight_column is not None:
+            self.columns = (self.data_column, self.weight_column,
+                            self.imaging_weight_column, self.flag_column, 'UVW')
+        else:
+            self.columns = (self.data_column, self.weight_column, self.flag_column, 'UVW')
+
         # optimise chunking by concatenating measurement sets and pre-computing corr to Stokes
         # if optimise_chunks:
         #     for 
@@ -130,7 +138,7 @@ class Gridder(object):
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
                               chunks=self.chunks[ims],
-                              columns=(self.data_column, self.weight_column, self.flag_column, 'UVW'))
+                              columns=self.columns)
 
             # subtables
             ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
@@ -166,8 +174,17 @@ class Gridder(object):
                 weights = getattr(ds, self.weight_column).data
                 if len(weights.shape) < 3:
                     weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
-                weightsxx = weights[:, :, 0]
-                weightsyy = weights[:, :, -1]
+                    
+
+                if self.imaging_weight_column is not None:
+                    imaging_weights = getattr(ds, self.imaging_weight_column)
+                    if len(imaging_weights.shape) < 3:
+                        imaging_weights = da.broadcast_to(imaging_weights[:, None, :], data.shape, chunks=data.chunks)
+                    weightsxx = imaging_weights[:, : 0] * weights[:, : 0]
+                    weightsyy = imaging_weights[:, : -1] * weights[:, : -1]
+                else:
+                    weightsxx = weights[:, :, 0]
+                    weightsyy = weights[:, :, -1]
 
                 # weighted sum corr to Stokes I
                 weights = weightsxx + weightsyy
@@ -202,7 +219,7 @@ class Gridder(object):
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
                               chunks=self.chunks[ims],
-                              columns=(self.data_column, self.weight_column, self.flag_column, 'UVW'))
+                              columns=self.columns)
 
             # subtables
             ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
@@ -241,8 +258,16 @@ class Gridder(object):
                 weights = getattr(ds, self.weight_column).data
                 if len(weights.shape) < 3:
                     weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
-                weightsxx = weights[:, :, 0]
-                weightsyy = weights[:, :, -1]
+                
+                if self.imaging_weight_column is not None:
+                    imaging_weights = getattr(ds, self.imaging_weight_column)
+                    if len(imaging_weights.shape) < 3:
+                        imaging_weights = da.broadcast_to(imaging_weights[:, None, :], data.shape, chunks=data.chunks)
+                    weightsxx = imaging_weights[:, : 0] * weights[:, : 0]
+                    weightsyy = imaging_weights[:, : -1] * weights[:, : -1]
+                else:
+                    weightsxx = weights[:, :, 0]
+                    weightsyy = weights[:, :, -1]
 
                 # weighted sum corr to Stokes I
                 weights = weightsxx + weightsyy
@@ -273,7 +298,7 @@ class Gridder(object):
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
                               chunks=self.chunks[ims],
-                              columns=(self.data_column, self.weight_column, self.flag_column, 'UVW'))
+                              columns=self.columns)
 
             # subtables
             ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
@@ -307,8 +332,16 @@ class Gridder(object):
                 weights = getattr(ds, self.weight_column).data
                 if len(weights.shape) < 3:
                     weights = da.broadcast_to(weights[:, None, :], flag.shape, chunks=flag.chunks)
-                weightsxx = weights[:, :, 0]
-                weightsyy = weights[:, :, -1]
+                
+                if self.imaging_weight_column is not None:
+                    imaging_weights = getattr(ds, self.imaging_weight_column)
+                    if len(imaging_weights.shape) < 3:
+                        imaging_weights = da.broadcast_to(imaging_weights[:, None, :], data.shape, chunks=data.chunks)
+                    weightsxx = imaging_weights[:, : 0] * weights[:, : 0]
+                    weightsyy = imaging_weights[:, : -1] * weights[:, : -1]
+                else:
+                    weightsxx = weights[:, :, 0]
+                    weightsyy = weights[:, :, -1]
 
                 # weighted sum corr to Stokes I
                 weights = weightsxx + weightsyy

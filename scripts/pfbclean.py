@@ -21,6 +21,8 @@ def create_parser():
                    help="The column to image.")
     p.add_argument("--weight_column", default='WEIGHT_SPECTRUM', type=str,
                    help="Weight column to use.")
+    p.add_argument("--imaging_weight_column", default=None, type=str,
+                   help="Weight column to use.")
     p.add_argument("--model_column", default='MODEL_DATA', type=str,
                    help="Column to write model data to")
     p.add_argument("--flag_column", default='FLAG', type=str)
@@ -165,7 +167,8 @@ def main(args):
     # init gridder
     R = Gridder(args.ms, args.nx, args.ny, args.cell_size, nband=args.nband, nthreads=args.nthreads,
                 do_wstacking=args.do_wstacking, row_chunks=args.row_chunks,
-                data_column=args.data_column, weight_column=args.weight_column, epsilon=args.epsilon,
+                data_column=args.data_column, weight_column=args.weight_column,
+                epsilon=args.epsilon, imaging_weight_column=args.imaging_weight_column,
                 model_column=args.model_column, flag_column=args.flag_column)
     freq_out = R.freq_out
     radec = R.radec
