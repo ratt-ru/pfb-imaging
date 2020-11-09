@@ -82,16 +82,16 @@ def create_parser():
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=50,
                    help="Maximum number of iterations for the cg updates")
-    p.add_argument("--cgverbose", type=int, default=0,
+    p.add_argument("--cgverbose", type=int, default=1,
                    help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
     p.add_argument("--pmtol", type=float, default=1e-14,
                    help="Tolerance for power method used to compute spectral norms")
     p.add_argument("--pmmaxit", type=int, default=25,
                    help="Maximum number of iterations for power method")
     p.add_argument("--pdtol", type=float, default=1e-6,
-                   help="Tolerance for fista")
+                   help="Tolerance for primal dual")
     p.add_argument("--pdmaxit", type=int, default=50,
-                   help="Maximum number of iterations for fista")
+                   help="Maximum number of iterations for primal dual")
     p.add_argument("--make_restored", type=str2bool, nargs='?', const=True, default=True,
                    help="Relax positivity and sparsity constraints at final iteration")
     return p
@@ -251,7 +251,7 @@ def main(args):
         model += args.gamma * x
 
         # impose sparsity and positivity in point sources
-        weights_21 = np.where(psi.mask, 1, np.inf)
+        weights_21 = np.where(psi.mask, 1, 1e10)  # 1e10 for effective infinity
         model, dual = primal_dual(hess, model, modelp, dual, args.sig_21, psi, weights_21, L,
                                   tol=args.pdtol, maxit=args.pdmaxit, axis=0,
                                   positivity=args.positivity, report_freq=100)
@@ -312,10 +312,6 @@ def main(args):
     save_fits(args.outfile + '_residual.fits', residual/psf_max[:, None, None], hdr)
 
     save_fits(args.outfile + '_residual_mfs.fits', residual_mfs, hdr_mfs)
-    
-
-    if args.write_model:
-        R.write_model(model)
 
     if args.interp_model:
         nband = args.nband
@@ -342,26 +338,19 @@ def main(args):
         for i in range(1, args.spectral_poly_order+1):
             Xdesign[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
 
-        # # get un-averaged model from monomial design matrix
-        # w = (freq_out / ref_freq).reshape(freq_out.size, 1)
-        # Xdesign = np.tile(w, order) ** np.arange(0, order)
-
         dirty_comps = Xdesign.T.dot(beta)
         
         hess_comps = Xdesign.T.dot(Xdesign)
         
         comps = np.linalg.solve(hess_comps, dirty_comps)
 
-        beta_rec = Xdesign.dot(comps)
-        model_interp = np.zeros(model.shape, dtype=model.dtype)
-        for i, xy in enumerate(I):
-            ix = xy[0]
-            iy = xy[1]
-            model_interp[:, ix, iy] = beta_rec[:, i]
-
-        save_fits(args.outfile + '_model_interp.fits', model_interp, hdr)
-
         np.savez(args.outfile + "spectral_comps", comps=comps, ref_freq=ref_freq, mask=np.any(model, axis=0))
+
+    if args.write_model:
+        if args.interp_model:
+            R.write_component_model(comps, ref_freq, psi.mask, -1, -1)
+        else:
+            R.write_model(model)
 
     # if args.make_restored:
     #     # # get the clean beam
