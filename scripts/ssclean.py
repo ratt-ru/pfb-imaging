@@ -236,7 +236,7 @@ def main(args):
         return phi.hdot(psf.convolve(phi.dot(beta))) + beta/args.sig_l2**2  # vague prior on beta
 
     # get new spectral norm
-    L = power_method(hess, model.shape, tol=args.pmtol, maxit=args.pmmaxit)
+    L = power_method(hess, dirty.shape, tol=args.pmtol, maxit=args.pmmaxit)
 
     # deconvolve
     eps = 1.0
