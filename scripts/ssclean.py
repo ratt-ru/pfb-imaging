@@ -80,6 +80,8 @@ def create_parser():
                    help="Clean peak factor")
     p.add_argument("--cgamma", type=float, default=0.1,
                    help="Clean step size")
+    p.add_argument("--do_clean", type=str2bool, nargs='?', const=True, default=True,
+                   help='Use Hogbom peak finding step or not.')
     p.add_argument("--cgtol", type=float, default=1e-4,
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=100,
@@ -233,6 +235,9 @@ def main(args):
     def hess(beta):
         return phi.hdot(psf.convolve(phi.dot(beta))) + beta/args.sig_l2**2  # vague prior on beta
 
+    # get new spectral norm
+    L = power_method(hess, model.shape, tol=args.pmtol, maxit=args.pmmaxit)
+
     # deconvolve
     eps = 1.0
     i = 0
@@ -240,11 +245,13 @@ def main(args):
     model = np.zeros(dirty.shape, dtype=dirty.dtype)
     for i in range(1, args.maxit):
         # find point source candidates
-        model_tmp = hogbom(mask[None] * residual/psf_max[:, None, None], psf_array/psf_max[:, None, None], gamma=args.cgamma, pf=args.peak_factor)
-        phi.update_locs(np.any(model_tmp, axis=0))
-
-        # get new spectral norm
-        L = power_method(hess, model.shape, tol=args.pmtol, maxit=args.pmmaxit)
+        if args.do_clean:
+            model_tmp = hogbom(mask[None] * residual/psf_max[:, None, None], psf_array/psf_max[:, None, None], gamma=args.cgamma, pf=args.peak_factor)
+            phi.update_locs(np.any(model_tmp, axis=0))
+            # get new spectral norm
+            L = power_method(hess, model.shape, tol=args.pmtol, maxit=args.pmmaxit)
+        else:
+            model_tmp = np.zeros_like(residual, dtype=residual.dtype)
         
         # solve for beta updates
         x = pcg(hess, phi.hdot(residual), phi.hdot(model_tmp), 
@@ -306,8 +313,8 @@ def main(args):
     
     # check stopping criteria
     residual_mfs = np.sum(residual, axis=0)/wsum 
-    rmax = np.abs(residual_mfs).max()
-    rms = np.std(residual_mfs)
+    rmax = np.abs(mask * residual_mfs).max()
+    rms = np.std(mask * residual_mfs)
     print("At final iteration peak of residual is %f and rms is %f" % (rmax, rms))
 
     save_fits(args.outfile + '_model.fits', model, hdr)
