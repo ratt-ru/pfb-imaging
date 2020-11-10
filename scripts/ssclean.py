@@ -80,19 +80,19 @@ def create_parser():
                    help="Clean peak factor")
     p.add_argument("--cgamma", type=float, default=0.1,
                    help="Clean step size")
-    p.add_argument("--cgtol", type=float, default=1e-3,
+    p.add_argument("--cgtol", type=float, default=1e-4,
                    help="Tolerance for cg updates")
-    p.add_argument("--cgmaxit", type=int, default=50,
+    p.add_argument("--cgmaxit", type=int, default=100,
                    help="Maximum number of iterations for the cg updates")
     p.add_argument("--cgverbose", type=int, default=1,
                    help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
-    p.add_argument("--pmtol", type=float, default=1e-14,
+    p.add_argument("--pmtol", type=float, default=1e-4,
                    help="Tolerance for power method used to compute spectral norms")
-    p.add_argument("--pmmaxit", type=int, default=25,
+    p.add_argument("--pmmaxit", type=int, default=50,
                    help="Maximum number of iterations for power method")
-    p.add_argument("--pdtol", type=float, default=1e-6,
+    p.add_argument("--pdtol", type=float, default=1e-5,
                    help="Tolerance for primal dual")
-    p.add_argument("--pdmaxit", type=int, default=50,
+    p.add_argument("--pdmaxit", type=int, default=250,
                    help="Maximum number of iterations for primal dual")
     p.add_argument("--make_restored", type=str2bool, nargs='?', const=True, default=True,
                    help="Relax positivity and sparsity constraints at final iteration")
