@@ -225,13 +225,13 @@ def main(args):
         report_iters.append(args.maxit-1)
 
     # set up point sources
-    psi = Dirac(args.nband, args.nx, args.ny, mask=pmask)
+    phi = Dirac(args.nband, args.nx, args.ny, mask=pmask)
     dual = np.zeros((args.nband, args.nx, args.ny), dtype=np.float64)
-    weights_21 = np.where(psi.mask, 1, np.inf)
+    weights_21 = np.where(phi.mask, 1, np.inf)
 
     # preconditioning matrix
     def hess(beta):
-        return psi.hdot(psf.convolve(psi.dot(beta))) + beta/args.sig_l2**2  # vague prior on beta
+        return phi.hdot(psf.convolve(phi.dot(beta))) + beta/args.sig_l2**2  # vague prior on beta
 
     # deconvolve
     eps = 1.0
@@ -241,13 +241,13 @@ def main(args):
     for i in range(1, args.maxit):
         # find point source candidates
         model_tmp = hogbom(mask[None] * residual/psf_max[:, None, None], psf_array/psf_max[:, None, None], gamma=args.cgamma, pf=args.peak_factor)
-        psi.update_locs(np.any(model_tmp, axis=0))
+        phi.update_locs(np.any(model_tmp, axis=0))
 
         # get new spectral norm
         L = power_method(hess, model.shape, tol=args.pmtol, maxit=args.pmmaxit)
         
         # solve for beta updates
-        x = pcg(hess, psi.hdot(residual), psi.hdot(model_tmp), 
+        x = pcg(hess, phi.hdot(residual), phi.hdot(model_tmp), 
                 M=lambda x: x * args.sig_l2**2, tol=args.cgtol,
                 maxit=args.cgmaxit, verbosity=args.cgverbose)
 
@@ -255,13 +255,13 @@ def main(args):
         model += args.gamma * x
 
         # impose sparsity and positivity in point sources
-        weights_21 = np.where(psi.mask, 1, 1e10)  # 1e10 for effective infinity
-        model, dual = primal_dual(hess, model, modelp, dual, args.sig_21, psi, weights_21, L,
+        weights_21 = np.where(phi.mask, 1, 1e10)  # 1e10 for effective infinity
+        model, dual = primal_dual(hess, model, modelp, dual, args.sig_21, phi, weights_21, L,
                                   tol=args.pdtol, maxit=args.pdmaxit, axis=0,
                                   positivity=args.positivity, report_freq=100)
 
         # update Dirac dictionary (remove zero components)
-        psi.trim_fat(model)
+        phi.trim_fat(model)
 
         # get residual
         residual = R.make_residual(model)/psf_max_mean
@@ -290,15 +290,15 @@ def main(args):
             break
 
     # final iteration with only a positivity constraint on pixel locs
-    tmp = psi.hdot(model)
-    x = pcg(hess, psi.hdot(residual), np.zeros_like(tmp, dtype=tmp.dtype), 
+    tmp = phi.hdot(model)
+    x = pcg(hess, phi.hdot(residual), np.zeros_like(tmp, dtype=tmp.dtype), 
             M=lambda x: x * args.sig_l2**2, tol=args.cgtol,
             maxit=args.cgmaxit, verbosity=args.cgverbose)
     
     modelp = model.copy()
     model += args.gamma * x
     model, dual = primal_dual(hess, model, modelp, dual, 0.0,
-                              psi, weights_21, L, tol=args.pdtol,
+                              phi, weights_21, L, tol=args.pdtol,
                               maxit=args.pdmaxit, axis=0, report_freq=100)
     
     # get residual
@@ -322,8 +322,8 @@ def main(args):
     if args.interp_model:
         nband = args.nband
         order = args.spectral_poly_order
-        psi.trim_fat(model)
-        I = np.argwhere(psi.mask).squeeze()
+        phi.trim_fat(model)
+        I = np.argwhere(phi.mask).squeeze()
         Ix = I[:, 0]
         Iy = I[:, 1]
         npix = I.shape[0]
@@ -357,7 +357,7 @@ def main(args):
 
     if args.write_model:
         if args.interp_model:
-            R.write_component_model(comps, ref_freq, psi.mask, args.row_chunks, args.chan_chunks)
+            R.write_component_model(comps, ref_freq, phi.mask, args.row_chunks, args.chan_chunks)
         else:
             R.write_model(model)
 
@@ -395,24 +395,24 @@ def main(args):
     #     y = np.append(residual.reshape(args.nband, args.nx*args.ny), H.hdot(residual), axis=1)
 
     #     # augment dictionary
-    #     def psi(x):
+    #     def phi(x):
     #         alpha = x[:, 0:args.nx*args.ny].reshape(args.nband, args.nx, args.ny)
     #         beta = x[:, args.nx*args.ny::] 
     #         return alpha + H.dot(beta)
         
-    #     def psih(x):
+    #     def phih(x):
     #         y = x.reshape(args.nband, args.nx*args.ny)
     #         y = np.append(y, H.hdot(x), axis=1)
     #         return y
 
     #     # augment hess
     #     def hess(x):
-    #         return psih(psf.convolve(psi(x))) + x/args.sig_l2**2
+    #         return phih(psf.convolve(phi(x))) + x/args.sig_l2**2
         
     #     # get Wiener filter soln
     #     M = lambda x: x * args.sig_l2**2
     #     x = pcg(hess, y, np.zeros(y.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
-    #     restored = model + psi(x)
+    #     restored = model + phi(x)
         
     #     # get residual
     #     residual = R.make_residual(restored)
