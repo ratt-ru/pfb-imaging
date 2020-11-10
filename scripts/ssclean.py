@@ -29,6 +29,8 @@ def create_parser():
     p.add_argument("--flag_column", default='FLAG', type=str)
     p.add_argument("--row_chunks", default=100000, type=int,
                    help="Rows per chunk")
+    p.add_argument("--chan_chunks", default=8, type=int,
+                   help="Channels per chunk (only used for writing component model")
     p.add_argument("--write_model", type=str2bool, nargs='?', const=True, default=True,
                    help="Whether to write model visibilities to model_column")
     p.add_argument("--interp_model", type=str2bool, nargs='?', const=True, default=True,
@@ -203,14 +205,16 @@ def main(args):
     
     # mask
     if args.mask is not None:
-        compare_headers(hdr_mfs, fits.getheader(args.mask))
-        mask = load_fits(args.mask, dtype=np.bool)
+        mask = load_fits(args.mask, dtype=np.int64)[None, :, :]
+        if mask.shape != (1, args.nx, args.ny):
+            raise ValueError("Mask has incorrect shape")
     else:
-        mask = np.ones((args.nx, args.ny), dtype=np.bool)
+        mask = np.ones((1, args.nx, args.ny), dtype=np.int64)
 
     if args.point_mask is not None:
-        compare_headers(hdr_mfs, fits.getheader(args.point_mask))
         pmask = load_fits(args.point_mask, dtype=np.bool)
+        if pmask.shape != (args.nx, args.ny):
+            raise ValueError("Mask has incorrect shape")
     else:
         pmask = None
 
@@ -286,12 +290,13 @@ def main(args):
             break
 
     # final iteration with only a positivity constraint on pixel locs
-    x = pcg(hess, psi.hdot(residual), psi.hdot(model), 
+    tmp = psi.hdot(model)
+    x = pcg(hess, psi.hdot(residual), np.zeros_like(tmp, dtype=tmp.dtype), 
             M=lambda x: x * args.sig_l2**2, tol=args.cgtol,
             maxit=args.cgmaxit, verbosity=args.cgverbose)
     
     modelp = model.copy()
-    model += x
+    model += args.gamma * x
     model, dual = primal_dual(hess, model, modelp, dual, 0.0,
                               psi, weights_21, L, tol=args.pdtol,
                               maxit=args.pdmaxit, axis=0, report_freq=100)
@@ -339,9 +344,12 @@ def main(args):
         for i in range(1, args.spectral_poly_order+1):
             Xdesign[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
 
-        dirty_comps = Xdesign.T.dot(beta)
+
+
+        weights = psf_max[:, None]
+        dirty_comps = Xdesign.T.dot(weights*beta)
         
-        hess_comps = Xdesign.T.dot(Xdesign)
+        hess_comps = Xdesign.T.dot(weights*Xdesign)
         
         comps = np.linalg.solve(hess_comps, dirty_comps)
 
@@ -349,7 +357,7 @@ def main(args):
 
     if args.write_model:
         if args.interp_model:
-            R.write_component_model(comps, ref_freq, psi.mask, -1, -1)
+            R.write_component_model(comps, ref_freq, psi.mask, args.row_chunks, args.chan_chunks)
         else:
             R.write_model(model)
 
