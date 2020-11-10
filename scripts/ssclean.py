@@ -205,11 +205,11 @@ def main(args):
     
     # mask
     if args.mask is not None:
-        mask = load_fits(args.mask, dtype=np.int64)[None, :, :]
-        if mask.shape != (1, args.nx, args.ny):
+        mask = load_fits(args.mask, dtype=np.int64)
+        if mask.shape != (args.nx, args.ny):
             raise ValueError("Mask has incorrect shape")
     else:
-        mask = np.ones((1, args.nx, args.ny), dtype=np.int64)
+        mask = np.ones((args.nx, args.ny), dtype=np.int64)
 
     if args.point_mask is not None:
         pmask = load_fits(args.point_mask, dtype=np.bool)
