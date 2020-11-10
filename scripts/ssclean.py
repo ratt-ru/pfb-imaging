@@ -282,6 +282,7 @@ def main(args):
         print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i, rmax, rms, eps))
 
         if eps < args.tol:
+            print("We have convergence!")
             break
 
     # final iteration with only a positivity constraint on pixel locs
