@@ -261,8 +261,8 @@ class PSI(object):
         # do a mock decomposition to get max coeff size
         x = np.random.randn(nx, ny)
         self.ntot = []
-        self.iy = []
-        self.sy = []
+        self.iy = {}
+        self.sy = {}
         for i, b in enumerate(bases):
             if b=='self':
                 alpha = x.flatten()
@@ -270,8 +270,8 @@ class PSI(object):
             else:
                 alpha = pywt.wavedecn(x, b, mode='zero', level=self.nlevels)
                 y, iy, sy = pywt.ravel_coeffs(alpha)
-            self.iy.append(iy)
-            self.sy.append(sy)
+            self.iy[b] = iy
+            self.sy[b] = sy
             self.ntot.append(y.size)
         
         # get padding info
@@ -347,7 +347,7 @@ def _dot_internal(alpha, bases, padding, iy, sy, sqrtP, nx, ny, real_type):
                 if base == 'self':
                     wave = a.reshape(nx, ny)
                 else:
-                    alpha_rec = pywt.unravel_coeffs(a, iy[b], sy[b], output_format='wavedecn')
+                    alpha_rec = pywt.unravel_coeffs(a, iy[base], sy[base], output_format='wavedecn')
                     wave = pywt.waverecn(alpha_rec, base, mode='zero')
 
                 x[l] += wave / sqrtP
@@ -390,10 +390,10 @@ class DaskPSI(PSI):
         self.bases = da.from_array(bases, chunks=1)
         padding = np.array(self.padding, dtype=object)
         self.padding = da.from_array(padding, chunks=1)
-        iy = np.array(self.iy, dtype=object)
-        self.iy = da.from_array(iy, chunks=1)
-        sy = np.array(self.sy, dtype=object)
-        self.sy = da.from_array(sy, chunks=1)
+        # iy = np.array(self.iy, dtype=object)
+        # self.iy = da.from_array(iy, chunks=1)
+        # sy = np.array(self.sy, dtype=object)
+        # self.sy = da.from_array(sy, chunks=1)
         ntot = np.array(self.ntot, dtype=object)
         self.ntot = da.from_array(ntot, chunks=1)
         
@@ -403,8 +403,8 @@ class DaskPSI(PSI):
                          alpha_dask, ("basis", "band", "ntot"),
                          self.bases, ("basis",),
                          self.padding, ("basis",),
-                         self.iy, ("basis",),
-                         self.sy, ("basis",),
+                         self.iy, None, #("basis",),
+                         self.sy, None, # ("basis",),
                          self.sqrtP, None,
                          self.nx, None,
                          self.ny, None,
