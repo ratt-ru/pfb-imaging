@@ -24,15 +24,13 @@ def freqmul(A, x):
     return out
 
 @njit(parallel=True, nogil=True, fastmath=True, inline='always')
-def make_kernel(nv_psf, nx_psf, ny_psf, sigma0, length_scale):
-    K = np.zeros((nv_psf, nx_psf, ny_psf), dtype=np.float64)
-    for i in range(nv_psf):
-        for j in range(nx_psf):
-            for k in range(ny_psf):
-                v = float(i - (nv_psf//2))
-                l = float(j - (nx_psf//2))
-                m = float(k - (ny_psf//2))
-                K[i,j,k] = sigma0**2*np.exp(-(v**2+l**2+m**2)/(2*length_scale**2))
+def make_kernel(nx_psf, ny_psf, sigma0, length_scale):
+    K = np.zeros((1, nx_psf, ny_psf), dtype=np.float64)
+    for j in range(nx_psf):
+        for k in range(ny_psf):
+            l = float(j - (nx_psf//2))
+            m = float(k - (ny_psf//2))
+            K[0,j,k] = sigma0**2*np.exp(-(l**2+m**2)/(2*length_scale**2))
     return K
 
 
@@ -98,43 +96,29 @@ class PSF(object):
         return Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
 
 class Prior(object):
-    def __init__(self, sigma0, nband, nx, ny, nthreads=8):
+    def __init__(self, sigma0, nx, ny, nthreads=8):
         self.nthreads = nthreads
         self.nx = nx
         self.ny = ny
-        self.nv = nband
-        if nband > 1:
-            nv_psf = 2*self.nv
-            npad_v = (nv_psf - nband)//2
-            self.unpad_v = slice(npad_v, -npad_v)
-        else:
-            nv_psf = 1
-            npad_v = 0
-            self.unpad_v = slice(None)
         nx_psf = 2*self.nx
         npad_x = (nx_psf - nx)//2
         ny_psf = 2*self.ny
         npad_y = (ny_psf - ny)//2
-        self.padding = ((npad_v,npad_v), (npad_x, npad_x), (npad_y, npad_y))
-        self.ax = (0, 1,2)
+        self.padding = ((0, 0), (npad_x, npad_x), (npad_y, npad_y))
+        self.ax = (1,2)
         
         self.unpad_x = slice(npad_x, -npad_x)
         self.unpad_y = slice(npad_y, -npad_y)
         self.lastsize = ny + np.sum(self.padding[-1])
         
         # always work in pixel coordinates
-        if nband > 1:
-            v_coord = np.arange(-(nv_psf//2), nv_psf//2)
-        else:
-            v_coord = np.array([1.0])
-        v_coord = np.arange(-(nv_psf//2), nv_psf//2)
         l_coord = np.arange(-(nx_psf//2), nx_psf//2)
         m_coord = np.arange(-(ny_psf//2), ny_psf//2)
 
         # set length scales
         length_scale = 1.5
 
-        K = make_kernel(nv_psf, nx_psf, ny_psf, sigma0, length_scale)
+        K = make_kernel(nx_psf, ny_psf, sigma0, length_scale)
 
         self.K = K
         K_pad = iFs(self.K, axes=self.ax)
@@ -142,18 +126,12 @@ class Prior(object):
 
 
         # get covariance in each dimension
-        if nband > 1:
-            v_coord = np.arange(-(nband//2), nband//2)
-        else:
-            v_coord = np.array([1.0])
-        l_coord = np.arange(-(nx//2), nx//2)
-        m_coord = np.arange(-(ny//2), ny//2)
-        self.Kv = expsq(v_coord, v_coord, sigma0, length_scale) # + 1e-6*np.eye(nband)
+        self.Kv = np.array([1.0])
         self.Kl = expsq(l_coord, l_coord, 1.0, length_scale) # + 1e-6*np.eye(nx)
         self.Km = expsq(m_coord, m_coord, 1.0, length_scale) # + 1e-6*np.eye(ny)
         
         # explicit inverses
-        self.Kvinv = np.linalg.pinv(self.Kv)  
+        self.Kvinv = np.array([1.0])
         self.Klinv = np.linalg.pinv(self.Kl)
         self.Kminv = np.linalg.pinv(self.Km)
 
@@ -168,11 +146,19 @@ class Prior(object):
         res = Fs(xhat, axes=self.ax)[self.unpad_v, self.unpad_x, self.unpad_y]
         return res
 
+    def iconvolve_approx(self, x):
+        xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
+        xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
+        xhat = c2r(xhat * self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
+        res = Fs(xhat, axes=self.ax)[self.unpad_v, self.unpad_x, self.unpad_y]
+        return res
+    
+    
     def iconvolve(self, x):
         from pfb.opt import pcg
         return pcg(self.convolve, 
                    x, np.zeros(x.shape), 
-                   M=lambda x:x, tol=1e-5,
+                   M=self.iconvolve_approx, tol=1e-5,
                    maxit=100, verbosity=1)
 
     def idot(self, x):
