@@ -1,5 +1,6 @@
 from numba import njit, prange
 import numpy as np
+np.random.seed(420)
 import dask.array as da
 from daskms import xds_from_table
 import pywt
@@ -71,6 +72,23 @@ def kron_matvec(A, b):
         x = Z.T.flatten()
     return x
 
+@njit(fastmath=True, inline='always')
+def kron_matvec2(A, b):
+    D = len(A)
+    N = b.size
+    x = b
+    for d in range(D):
+        Gd = A[d].shape[0]
+        NGd = N//Gd
+        X = np.reshape(x, (Gd, NGd))
+        Z = np.zeros((Gd, NGd), dtype=A[0].dtype)
+        Ad = A[d]
+        for i in range(Gd):
+            for j in range(NGd):
+                for k in range(Gd):
+                    Z[i, j] += Ad[i, k] * X[k, j]
+        x = Z.T.ravel()
+    return x
 
 class PSF(object):
     def __init__(self, psf, nthreads, sigma0=1.0):
@@ -96,7 +114,7 @@ class PSF(object):
         return Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
 
 class Prior(object):
-    def __init__(self, sigma0, nx, ny, nthreads=8):
+    def __init__(self, sigma0, nband, nx, ny, nthreads=8):
         self.nthreads = nthreads
         self.nx = nx
         self.ny = ny
@@ -110,10 +128,6 @@ class Prior(object):
         self.unpad_x = slice(npad_x, -npad_x)
         self.unpad_y = slice(npad_y, -npad_y)
         self.lastsize = ny + np.sum(self.padding[-1])
-        
-        # always work in pixel coordinates
-        l_coord = np.arange(-(nx_psf//2), nx_psf//2)
-        m_coord = np.arange(-(ny_psf//2), ny_psf//2)
 
         # set length scales
         length_scale = 1.5
@@ -123,19 +137,23 @@ class Prior(object):
         self.K = K
         K_pad = iFs(self.K, axes=self.ax)
         self.Khat = r2c(K_pad, axes=self.ax, forward=True, nthreads=nthreads, inorm=0)
+        self.Khatinv = np.where(self.Khat.real > 1e-14, 1.0/self.Khat, 1e-14)
 
 
         # get covariance in each dimension
-        self.Kv = np.array([1.0])
+        # pixel coordinates
+        l_coord = np.arange(-(nx//2), nx//2)
+        m_coord = np.arange(-(ny//2), ny//2)
+        self.Kv = np.eye(nband) * sigma0**2
         self.Kl = expsq(l_coord, l_coord, 1.0, length_scale) # + 1e-6*np.eye(nx)
         self.Km = expsq(m_coord, m_coord, 1.0, length_scale) # + 1e-6*np.eye(ny)
         
         # explicit inverses
-        self.Kvinv = np.array([1.0])
+        self.Kvinv = np.linalg.pinv(self.Kv)
         self.Klinv = np.linalg.pinv(self.Kl)
         self.Kminv = np.linalg.pinv(self.Km)
 
-        # # Kronecker matrices for fast matrix vector products
+        # Kronecker matrices for "fast" matrix vector products
         self.Kkron = (self.Kv, self.Kl, self.Km)
         self.Kinvkron = (self.Kvinv, self.Klinv, self.Kminv)
 
@@ -143,14 +161,14 @@ class Prior(object):
         xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
         xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
         xhat = c2r(xhat * self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
-        res = Fs(xhat, axes=self.ax)[self.unpad_v, self.unpad_x, self.unpad_y]
+        res = Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
         return res
 
     def iconvolve_approx(self, x):
         xhat = iFs(np.pad(x, self.padding, mode='constant'), axes=self.ax)
         xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
-        xhat = c2r(xhat * self.Khat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
-        res = Fs(xhat, axes=self.ax)[self.unpad_v, self.unpad_x, self.unpad_y]
+        xhat = c2r(xhat * self.Khatinv, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
+        res = Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
         return res
     
     
@@ -158,8 +176,8 @@ class Prior(object):
         from pfb.opt import pcg
         return pcg(self.convolve, 
                    x, np.zeros(x.shape), 
-                   M=self.iconvolve_approx, tol=1e-5,
-                   maxit=100, verbosity=1)
+                   M=self.iconvolve_approx, tol=1e-10,
+                   maxit=25, verbosity=0)
 
     def idot(self, x):
         return kron_matvec(self.Kinvkron, x.flatten()).reshape(*x.shape)
@@ -399,7 +417,7 @@ class DaskPSI(PSI):
                          dtype=self.real_type,
                          align_arrays=False)
 
-        return x.sum(axis=0).compute()
+        return x.sum(axis=0).compute(shedular='processes')
 
     def hdot(self, x):
         xdask = da.from_array(x, chunks=(1, self.nx, self.ny))
@@ -417,4 +435,4 @@ class DaskPSI(PSI):
                              dtype=self.real_type,
                              align_arrays=False)
 
-        return alpha.compute()
+        return alpha.compute(shedular='processes')

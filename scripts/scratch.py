@@ -27,7 +27,7 @@ def hess_func(x, A, psf, psi, psih, sig_b):
 
 def M_func(x, A, sig_b):
     alpha = x[0]
-    tmp1 = A.dot(alpha)
+    tmp1 = A.convolve(alpha)
 
     beta = x[1]
     tmp2 = beta*sig_b**2
@@ -82,15 +82,15 @@ if __name__=="__main__":
     psf_array = ms2dirty(uvw=uvw, freq=freq, ms=np.ones(data.shape, dtype=np.complex128),
                          npix_x=2*nx, npix_y=2*ny, pixsize_x=cell, pixsize_y=cell, epsilon=1e-7, do_wstacking=False, nthreads=8)[None, :, :]
 
-    plt.figure('dirty')
-    plt.imshow(dirty[0])
-    plt.colorbar()
+    # plt.figure('dirty')
+    # plt.imshow(dirty[0])
+    # plt.colorbar()
 
-    plt.figure('psf')
-    plt.imshow(psf_array[0])
-    plt.colorbar()
+    # plt.figure('psf')
+    # plt.imshow(psf_array[0])
+    # plt.colorbar()
 
-    plt.show()
+    # plt.show()
 
     psf = PSF(psf_array, 8)
 
@@ -101,7 +101,7 @@ if __name__=="__main__":
     psi = lambda y:psi_func(y, H)
     psih = lambda x:psih_func(x, H)
 
-    sig_b = 10
+    sig_b = 5.0
 
     hess = lambda x:hess_func(x, A, psf, psi, psih, sig_b)
 
@@ -113,11 +113,11 @@ if __name__=="__main__":
     model_rec = psi(x)
 
     plt.figure('rec')
-    plt.imshow(model_rec[0])
+    plt.imshow(model_rec[0], vmin=-0.1, vmax=2)
     plt.colorbar()
 
     plt.figure('model')
-    plt.imshow(model[0])
+    plt.imshow(model[0], vmin=-0.1, vmax=2)
     plt.colorbar()
 
     # get normal Wiener filter solution
@@ -127,7 +127,7 @@ if __name__=="__main__":
     x = pcg(hess, dirty, np.zeros(dirty.shape), M=A.dot, tol=1e-7, maxit=100, verbosity=1)
 
     plt.figure('wiener')
-    plt.imshow(x[0])
+    plt.imshow(x[0], vmin=-0.1, vmax=2)
     plt.colorbar()
 
 

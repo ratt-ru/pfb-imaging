@@ -266,10 +266,13 @@ def main(args):
     phi = lambda x: x[0]*mask + H.dot(x[1])
     phih = lambda x: np.concatenate(((mask*x)[None], H.hdot(x)[None]), axis=0)
 
+    # Gaussian prior
+    A = Prior(args.sig_a, args.nband, args.nx, args.ny, args.nthreads)
+
     #  preconditioning matrix
     def hess(x):
-        return  phih(psf.convolve(phi(x))) + np.concatenate((x[0:1]/args.sig_a**2, x[1::]/args.sig_b**2), axis=0)
-    M_func = lambda x: np.concatenate((x[0:1]/args.sig_a**2, x[1::]/args.sig_b**2), axis=0)
+        return  phih(psf.convolve(phi(x))) + np.concatenate((A.idot(x[0:1]), x[1::]/args.sig_b**2), axis=0)
+    M_func = lambda x: np.concatenate((A.convolve(x[0])[None], x[1::] * args.sig_b**2), axis=0)
 
     par_shape = phih(dirty).shape
     if args.beta is None:
@@ -389,7 +392,7 @@ def main(args):
         restored_mfs = np.mean(restored, axis=0)
         save_fits(args.outfile + '_restored_mfs.fits', restored_mfs, hdr_mfs)
 
-        save_fits(args.outfile + '_restored_residual.fits', residual/psf_max[:, None, None], hdr)
+        save_fits(args.outfile + '_restored_residual.fits', residual, hdr)
 
         save_fits(args.outfile + '_restored_residual_mfs.fits', residual_mfs, hdr_mfs)
 

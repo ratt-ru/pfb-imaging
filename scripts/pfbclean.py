@@ -373,7 +373,7 @@ def main(args):
         restored_mfs = np.mean(restored, axis=0)
         save_fits(args.outfile + '_restored_mfs.fits', restored_mfs, hdr_mfs)
 
-        save_fits(args.outfile + '_restored_residual.fits', residual/psf_max[:, None, None], hdr)
+        save_fits(args.outfile + '_restored_residual.fits', residual, hdr)
 
         save_fits(args.outfile + '_restored_residual_mfs.fits', residual_mfs, hdr_mfs)
 

@@ -5,20 +5,69 @@ import pytest
 pmp = pytest.mark.parametrize
 
 
+# @pmp("nx", [120, 240])
+# @pmp("ny", [32, 150])
+# @pmp("nband", [1, 6])
+# @pmp("sigma0", [0.1, 1.0])
+# def test_dot_idot_explicit(nx, ny, nband, sigma0):
+#     # Initialise operator
+#     Kop = Prior(sigma0, nband, nx, ny)
+
+#     # generate random vector and act on it
+#     xi = np.zeros((nband, nx, ny), dtype=np.float64)
+#     xi[:, 5:-5, 5:-5] = np.random.randn(nband, nx-10, ny-10)
+#     res = Kop.dot(xi)
+
+#     # rec with idot and compare
+#     rec = Kop.idot(res)
+
+#     assert_array_almost_equal(xi, rec, decimal=6)
+
+
+# @pmp("nx", [120, 240])
+# @pmp("ny", [32, 150])
+# @pmp("nband", [1, 6])
+# @pmp("sigma0", [0.1, 1.0])
+# def test_dot_convolve(nx, ny, nband, sigma0):
+#     # Initialise operator
+#     Kop = Prior(sigma0, nband, nx, ny)
+
+#     # generate random vector and act on it
+#     xi = np.zeros((nband, nx, ny), dtype=np.float64)
+#     xi[:, 5:-5, 5:-5] = np.random.randn(nband, nx-10, ny-10)
+#     res = Kop.dot(xi)
+#     res2 = Kop.convolve(xi)
+
+#     assert_array_almost_equal(res, res2, decimal=6)
+
+# @pmp("nx", [120, 240])
+# @pmp("ny", [32, 150])
+# @pmp("nband", [1, 6])
+# @pmp("sigma0", [0.1, 1.0])
+# def test_idot_iconvolve(nx, ny, nband, sigma0):
+#     # Initialise operator
+#     Kop = Prior(sigma0, nband, nx, ny)
+
+#     # generate random vector and act on it
+#     xi = np.zeros((nband, nx, ny), dtype=np.float64)
+#     xi[:, nx//2, ny//2] = 1.0
+#     res = Kop.idot(xi)
+#     res2 = Kop.iconvolve(xi)
+
+#     assert_array_almost_equal(res, res2, decimal=6)
+
 @pmp("nx", [120, 240])
-@pmp("ny", [32, 150])
-@pmp("nband", [1, 4, 6])
+@pmp("ny", [56, 150])
+@pmp("nband", [1, 6])
 @pmp("sigma0", [0.1, 1.0])
-def test_dot_idot_explicit(nx, ny, nband, sigma0):
+def test_convolve_iconvolve(nx, ny, nband, sigma0):
     # Initialise operator
     Kop = Prior(sigma0, nband, nx, ny)
 
     # generate random vector and act on it
     xi = np.zeros((nband, nx, ny), dtype=np.float64)
-    xi[:, nx//2, ny//2] = 1.0
-    res = Kop.dot(xi)
-
-    # rec with idot and compare
-    rec = Kop.idot(res)
+    xi[:, 25:-25, 25:-25] = np.random.randn(nband, nx-50, ny-50)
+    res = Kop.convolve(xi)
+    rec = Kop.iconvolve(res)
 
     assert_array_almost_equal(xi, rec, decimal=6)
