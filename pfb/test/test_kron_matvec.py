@@ -1,44 +1,35 @@
 import numpy as np
-from pfb.operators import kron_matvec, kron_matvec2
+from numpy.testing import assert_array_almost_equal
+from pfb.operators import kron_matvec
 from africanus.gps.kernels import exponential_squared as expsq
-from time import time
-from ducc0.fft import r2c
+import pytest
+pmp = pytest.mark.parametrize
 
-def test_matvec():
-    nv = 8
-    nx = 1024
-    ny = 1024
+@pmp("nx", [120, 240])
+@pmp("ny", [32, 150])
+@pmp("nband", [2, 6])
+@pmp("sigma0", [0.1, 1.0])
+@pmp("length_scale", [1.0, 1.5])
+def test_matvec(nx, ny, nband, sigma0, length_scale):
+    v = np.arange(-(nband//2), nband//2)
+    x = np.arange(-(nx//2), nx//2)
+    y = np.arange(-(ny//2), ny//2)
 
-    xi = np.random.randn(nv,nx,ny)
+    A1 = expsq(v, v, sigma0, length_scale)
+    A2 = expsq(x, x, 1.0, length_scale)
+    A3 = expsq(y, y, 1.0, length_scale)
 
-    v = np.linspace(-0.5, 0.5, nv)
-    x = np.linspace(-0.5, 0.5, nx)
-    y = np.linspace(-0.5, 0.5, ny)
-
-    A1 = expsq(v, v, 1.0, 0.1)
-    A2 = expsq(x, x, 1.0, 0.1)
-    A3 = expsq(y, y, 1.0, 0.01)
+    sigma = 1e-13
+    C1 = np.linalg.pinv(A1, hermitian=True, rcond=sigma)
+    C2 = np.linalg.pinv(A2, hermitian=True, rcond=sigma)
+    C3 = np.linalg.pinv(A3, hermitian=True, rcond=sigma)
 
     A = (A1, A2, A3)
+    C = (C1, C2, C3)
 
-    # make sure they have compiled
-    res1 = kron_matvec(A, xi)
-    res2 = kron_matvec2(A, xi)
+    xi = np.random.randn(nband*nx*ny)
+    res = kron_matvec(A, xi)
 
+    rec = kron_matvec(C, res)
 
-    ti = time()
-    res1 = kron_matvec(A, xi)
-    print(time() - ti)
-
-    ti = time()
-    res2 = kron_matvec2(A, xi)
-    print(time() - ti)
-
-
-    # FFT for reference
-    # ti = time()
-    # res2 = r2c(xi, axes=(0,1,2), nthreads=2, forward=True, inorm=0)
-    # print(time() - ti)
-
-
-test_matvec()
+    assert_array_almost_equal(rec, xi, decimal=5)
