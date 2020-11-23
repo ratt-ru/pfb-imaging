@@ -105,7 +105,7 @@ class Gauss(object):
         self.lastsize = ny + np.sum(self.padding[-1])
 
         # set length scales
-        length_scale = 1.5
+        length_scale = 0.5
 
         K = make_kernel(nx_psf, ny_psf, sigma0, length_scale)
 

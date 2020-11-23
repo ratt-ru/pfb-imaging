@@ -11,7 +11,7 @@ from pfb.opt import power_method, pcg, primal_dual
 import argparse
 from astropy.io import fits
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, prox_21
-from pfb.operators import Gridder, PSF, Gauss, DaskPSI, Dirac
+from pfb.operators import Gridder, PSF, Gauss, Theta
 
 def create_parser():
     p = argparse.ArgumentParser()
@@ -77,36 +77,13 @@ def create_parser():
                    help="Strength of l21 regulariser")
     p.add_argument("--positivity", type=str2bool, nargs='?', const=True, default=True,
                    help='Whether to impose a positivity constraint or not.')
-    p.add_argument("--psi_levels", type=int, default=3,
-                   help="Wavelet decomposition level")
-    p.add_argument("--psi_basis", type=str, default=None, nargs='+',
-                   help="Explicitly set which bases to use for psi out of:"
-                   "[self, db1, db2, db3, db4, db5, db6, db7, db8]")
-    p.add_argument("--x0", type=str, default=None,
-                   help="Initial guess in form of fits file")
-    p.add_argument("--first_residual", default=None, type=str,
-                   help="Residual corresponding to x0")
-    p.add_argument("--reweight_iters", type=int, default=None, nargs='+',
-                   help="Set reweighting iters explicitly")
-    p.add_argument("--reweight_start", type=int, default=50,
-                   help="When to start l21 reweighting scheme")
-    p.add_argument("--reweight_freq", type=int, default=2,
-                   help="How often to do l21 reweighting")
-    p.add_argument("--reweight_end", type=int, default=90,
-                   help="When to end the l21 reweighting scheme")
-    p.add_argument("--reweight_alpha_min", type=float, default=1.0e-8,
-                   help="MInimum alpha in l21 reweighting formula.")
-    p.add_argument("--reweight_alpha_percent", type=float, default=10)
-    p.add_argument("--reweight_alpha_ff", type=float, default=0.5,
-                   help="Determines how quickly the reweighting progresses."
-                   "reweight_alpha_percent will be scaled by this factor after each reweighting step.")
     p.add_argument("--cgtol", type=float, default=1e-5,
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=100,
                    help="Maximum number of iterations for the cg updates")
     p.add_argument("--cgverbose", type=int, default=1,
                    help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
-    p.add_argument("--pmtol", type=float, default=1e-5,
+    p.add_argument("--pmtol", type=float, default=1e-15,
                    help="Tolerance for power method used to compute spectral norms")
     p.add_argument("--pmmaxit", type=int, default=25,
                    help="Maximum number of iterations for power method")
@@ -114,8 +91,6 @@ def create_parser():
                    help="Tolerance for primal dual")
     p.add_argument("--pdmaxit", type=int, default=300,
                    help="Maximum number of iterations for primal dual")
-    p.add_argument("--make_restored", type=str2bool, nargs='?', const=True, default=True,
-                   help="Relax positivity and sparsity constraints at final iteration")
     return p
 
 def main(args):
@@ -226,26 +201,8 @@ def main(args):
     dirty_mfs = np.sum(dirty/psf_max_mean, axis=0)/wsum 
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)
     
-    if args.x0 is not None:
-        try:
-            compare_headers(hdr, fits.getheader(args.x0))
-            model = load_fits(args.x0, dtype=np.float64)
-            if args.first_residual is not None:
-                try:
-                    compare_headers(hdr, fits.getheader(args.first_residual))
-                    residual = load_fits(args.first_residual, dtype=np.float64)
-                except:
-                    residual = R.make_residual(model)
-                    save_fits(args.outfile + '_first_residual.fits', residual, hdr)
-            else:
-                residual = R.make_residual(model)
-                save_fits(args.outfile + '_first_residual.fits', residual, hdr)
-        except:
-            model = np.zeros((args.nband, args.nx, args.ny))
-            residual = dirty.copy()
-    else:
-        model = np.zeros((args.nband, args.nx, args.ny))
-        residual = dirty.copy()
+    model = np.zeros((2, args.nband, args.nx, args.ny))
+    residual = dirty.copy()
 
     # normalise for more intuitive hypers
     residual /= psf_max_mean
@@ -261,21 +218,23 @@ def main(args):
         mask = np.ones((1, args.nx, args.ny), dtype=np.int64)
 
     # point mask
-    pmask = load_fits(args.point_mask, dtype=np.bool)
-    if pmask.shape != (args.nx, args.ny):
+    pmask = load_fits(args.point_mask, dtype=np.bool)[None, :, :]
+    if pmask.shape != (1, args.nx, args.ny):
         raise ValueError("Mask has incorrect shape")
-    H = Dirac(args.nband, args.nx, args.ny, mask=pmask)
+    
+    # set up splitting operator
+    phi = lambda x: x[0]*pmask + x[1]*mask
+    phih = lambda x: np.concatenate(((pmask*x)[None], (mask*x)[None]), axis=0)
 
-    phi = lambda x: x[0]*mask + H.dot(x[1])
-    phih = lambda x: np.concatenate(((mask*x)[None], H.hdot(x)[None]), axis=0)
-
-    # Gaussian "prior" used for preconditioning
+    # Gaussian "prior" used for preconditioning extended emission
     A = Gauss(args.sig_l2a, args.nband, args.nx, args.ny, args.nthreads)
 
     #  preconditioning matrix
     def hess(x):
-        return  phih(psf.convolve(phi(x))) + np.concatenate((A.idot(x[0:1]), x[1::]/args.sig_l2b**2), axis=0)
-    M_func = lambda x: np.concatenate((A.convolve(x[0])[None], x[1::] * args.sig_l2b**2), axis=0)
+        return  phih(psf.convolve(phi(x))) + np.concatenate((x[0:1]/args.sig_l2b**2, A.idot(x[1])[None]), axis=0)
+        # return  phih(psf.convolve(phi(x))) + np.concatenate((x[0:1]/args.sig_l2b**2, x[1::]/args.sig_l2a**2), axis=0)
+    # M_func = lambda x: np.concatenate((x[0:1] * args.sig_l2b**2, x[1::] * args.sig_l2a**2), axis=0)
+    M_func = lambda x: np.concatenate((x[0:1] * args.sig_l2b**2, A.convolve(x[1])[None]), axis=0)
 
     par_shape = phih(dirty).shape
     if args.beta is None:
@@ -286,30 +245,12 @@ def main(args):
     print(" beta = %f "%beta)
 
     # set up wavelet basis
-    if args.psi_basis is None:
-        print("Using db1-4 dictionary")
-        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
-                        nthreads=args.nthreads)
-    else:
-        if not isinstance(args.psi_basis, list):
-            args.psi_basis = list(args.psi_basis)
-        print("Using ", args.psi_basis, " dictionary")
-        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
-                        nthreads=args.nthreads, bases=args.psi_basis)
-    nbasis = psi.nbasis
-    weights_21a = np.ones((psi.nbasis, psi.nmax), dtype=np.float64)
-    weights_21b = np.where(H.mask, 1, 1e10)
-    dual = np.zeros((psi.nbasis, args.nband, psi.nmax), dtype=np.float64)
-
-    # Reweighting
-    if args.reweight_iters is not None:
-        if not isinstance(args.reweight_iters, list):
-            reweight_iters = [args.reweight_iters]
-        else:    
-            reweight_iters = list(args.reweight_iters)
-    else:
-        reweight_iters = list(np.arange(args.reweight_start, args.reweight_end, args.reweight_freq))
-        reweight_iters.append(args.reweight_end)
+    theta = Theta(args.nband, args.nx, args.ny)
+    nbasis = theta.nbasis
+    weights_21 = np.ones((theta.nbasis+1, theta.nmax), dtype=np.float64)
+    tmp = np.pad(pmask.ravel(), (0, theta.nmax - args.nx*args.ny), mode='constant')
+    weights_21[0] = np.where(tmp, args.sig_21b/args.sig_21a, 1e15)
+    dual = np.zeros((theta.nbasis+1, args.nband, theta.nmax), dtype=np.float64)
 
     # Reporting
     report_iters = list(np.arange(0, args.maxit, args.report_freq))
@@ -321,40 +262,25 @@ def main(args):
     i = 0
     rmax = np.abs(residual_mfs).max()
     rms = np.std(residual_mfs)
-    M = lambda x: x * args.sig_l2**2  # preconditioner
     print("Peak of initial residual is %f and rms is %f" % (rmax, rms))
     for i in range(1, args.maxit):
         x = pcg(hess, phih(residual), np.zeros(par_shape, dtype=np.float64), M=M_func, tol=args.cgtol,
                 maxit=args.cgmaxit, verbosity=args.cgverbose)
 
         if i in report_iters:
-            save_fits(args.outfile + str(i) + '_alpha_update.fits', x[0], hdr)
-            save_fits(args.outfile + str(i) + '_point_update.fits', x[1], hdr)
+            save_fits(args.outfile + str(i) + '_point_update.fits', x[0], hdr)
+            save_fits(args.outfile + str(i) + '_fluff_update.fits', x[1], hdr)
         
-        quit()
         # update model
         modelp = model
-        model = modelp + args.gamma * x[0]
-        model, dual = primal_dual(hess, model, modelp, dual, args.sig_21, psi, weights_21, beta,
+        model = modelp + args.gamma * x
+        model, dual = primal_dual(hess, model, modelp, dual, args.sig_21a, theta, weights_21, beta,
                                   tol=args.pdtol, maxit=args.pdmaxit, report_freq=100, mask=mask,
-                                  positivity=args.positivity)
-
-        # reweighting
-        if i in reweight_iters:
-            v = psi.hdot(model)
-            l2_norm = norm(v, axis=1)
-            for m in range(psi.nbasis):
-                #indnz = l2_norm[m].nonzero()
-                #alpha = np.percentile(l2_norm[m, indnz].flatten(), args.reweight_alpha_percent)
-                #alpha = np.maximum(alpha, args.reweight_alpha_min)
-                alpha = args.reweight_alpha_min
-                print("Reweighting - ", m, alpha)
-                weights_21[m] = 1.0/(l2_norm[m] + alpha)
-            args.reweight_alpha_min *= args.reweight_alpha_ff
-            # print(" reweight alpha percent = ", args.reweight_alpha_percent)
+                                  positivity=args.positivity, gamma=args.gamma)
 
         # get residual
-        residual = R.make_residual(model)/psf_max_mean
+        image = phi(model)
+        residual = R.make_residual(image)/psf_max_mean
        
         # check stopping criteria
         residual_mfs = np.sum(residual, axis=0)/wsum 
@@ -364,9 +290,12 @@ def main(args):
 
         if i in report_iters:
             # save current iteration
-            save_fits(args.outfile + str(i) + '_model.fits', model, hdr)
+            save_fits(args.outfile + str(i) + '_model.fits', image, hdr)
+
+            save_fits(args.outfile + str(i) + '_point.fits', model[0], hdr)
+            save_fits(args.outfile + str(i) + '_fluff.fits', model[1], hdr)
             
-            model_mfs = np.mean(model, axis=0)
+            model_mfs = np.mean(image, axis=0)
             save_fits(args.outfile + str(i) + '_model_mfs.fits', model_mfs, hdr_mfs)
 
             save_fits(args.outfile + str(i) + '_residual.fits', residual, hdr)
@@ -375,30 +304,33 @@ def main(args):
 
         print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i, rmax, rms, eps))
 
-    if args.write_model:
-        R.write_model(model)
+        if eps < args.tol:
+            break
 
-    if args.make_restored:
-        x = pcg(hess, residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
-        restored = model + x
+    # if args.write_model:
+    #     R.write_model(model)
+
+    # if args.make_restored:
+    #     x = pcg(hess, residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol, maxit=args.cgmaxit)
+    #     restored = model + x
         
-        # get residual
-        residual = R.make_residual(restored)/psf_max_mean
-        residual_mfs = np.sum(residual, axis=0)/wsum 
-        rmax = np.abs(residual_mfs).max()
-        rms = np.std(residual_mfs)
+    #     # get residual
+    #     residual = R.make_residual(restored)/psf_max_mean
+    #     residual_mfs = np.sum(residual, axis=0)/wsum 
+    #     rmax = np.abs(residual_mfs).max()
+    #     rms = np.std(residual_mfs)
 
-        print("After restoring peak of residual is %f and rms is %f" % (rmax, rms))
+    #     print("After restoring peak of residual is %f and rms is %f" % (rmax, rms))
 
-        # save current iteration
-        save_fits(args.outfile + '_restored.fits', restored, hdr)
+    #     # save current iteration
+    #     save_fits(args.outfile + '_restored.fits', restored, hdr)
 
-        restored_mfs = np.mean(restored, axis=0)
-        save_fits(args.outfile + '_restored_mfs.fits', restored_mfs, hdr_mfs)
+    #     restored_mfs = np.mean(restored, axis=0)
+    #     save_fits(args.outfile + '_restored_mfs.fits', restored_mfs, hdr_mfs)
 
-        save_fits(args.outfile + '_restored_residual.fits', residual, hdr)
+    #     save_fits(args.outfile + '_restored_residual.fits', residual, hdr)
 
-        save_fits(args.outfile + '_restored_residual_mfs.fits', residual_mfs, hdr_mfs)
+    #     save_fits(args.outfile + '_restored_residual_mfs.fits', residual_mfs, hdr_mfs)
 
 
 if __name__=="__main__":
