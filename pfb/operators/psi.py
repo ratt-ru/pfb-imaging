@@ -6,7 +6,7 @@ import dask.array as da
 class PSI(object):
     def __init__(self, nband, nx, ny,
                  nlevels=2,
-                 bases=['self', 'db1', 'db2', 'db3', 'db4']):
+                 bases=['db1', 'db2', 'db3', 'db4']):
         """
         Sets up operators to move between wavelet coefficients
         in each basis and the image x.
@@ -65,18 +65,8 @@ class PSI(object):
     def dot(self, alpha):
         """
         Takes array of coefficients to image.
-        The input does not have the form expected by pywt
-        so we have to reshape it. Comes in as a flat vector
-        arranged as
-
-        [cAn, cHn, cVn, cDn, ..., cH1, cV1, cD1]
-
-        where each entry is a flattened array and n denotes the
-        level of the decomposition. This has to be restructured as
-
-        [cAn, (cHm, cVn, cDn), ..., (cH1, cV1, cD1)]
-
-        where entries are arrays with size defined by set_index_scheme.
+        alpha comes in as a raveled array of coefficients and has to be unraveled
+        before passing to waverecn.  
         """
         x = np.zeros((self.nband, self.nx, self.ny), dtype=self.real_type)
         for b in range(self.nbasis):
@@ -97,7 +87,9 @@ class PSI(object):
 
     def hdot(self, x):
         """
-        This implements the adjoint of Psi_func i.e. image to coeffs
+        This implements the adjoint of Psi_func i.e. image to coeffs.
+        Per basis and band coefficients are raveled padded so they can be stacked
+        into a single array.
         """
         alpha = np.zeros((self.nbasis, self.nband, self.nmax))
         for b in range(self.nbasis):
@@ -162,7 +154,7 @@ def _hdot_internal_wrapper(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_ty
 class DaskPSI(PSI):
     def __init__(self, nband, nx, ny,
                  nlevels=2,
-                 bases=['self', 'db1', 'db2', 'db3', 'db4'],
+                 bases=['db1', 'db2', 'db3', 'db4'],
                  nthreads=8):
         PSI.__init__(self, nband, nx, ny, nlevels=nlevels,
                      bases=bases)

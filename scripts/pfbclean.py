@@ -11,7 +11,7 @@ from pfb.opt import power_method, pcg, primal_dual
 import argparse
 from astropy.io import fits
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, prox_21
-from pfb.operators import Gridder, PSF, Prior, DaskPSI
+from pfb.operators import Gridder, PSF, DaskPSI
 
 def create_parser():
     p = argparse.ArgumentParser()

@@ -11,7 +11,7 @@ from pfb.opt import power_method, pcg, primal_dual
 import argparse
 from astropy.io import fits
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, prox_21
-from pfb.operators import Gridder, PSF, Prior, DaskPSI, Dirac
+from pfb.operators import Gridder, PSF, Gauss, DaskPSI, Dirac
 
 def create_parser():
     p = argparse.ArgumentParser()
@@ -67,11 +67,13 @@ def create_parser():
                    help="How often to save output images during deconvolution")
     p.add_argument("--beta", type=float, default=None,
                    help="Lipschitz constant of F")
-    p.add_argument("--sig_a", default=1.0, type=float,
+    p.add_argument("--sig_l2a", default=1.0, type=float,
                    help="The strength of the l2 norm regulariser over fluff")
-    p.add_argument("--sig_b", default=10.0, type=float,
+    p.add_argument("--sig_l2b", default=10.0, type=float,
                    help="The strength of the l2 norm regulariser over points")
-    p.add_argument("--sig_21", type=float, default=1e-3,
+    p.add_argument("--sig_21a", type=float, default=1e-3,
+                   help="Strength of l21 regulariser")
+    p.add_argument("--sig_21b", type=float, default=1e-3,
                    help="Strength of l21 regulariser")
     p.add_argument("--positivity", type=str2bool, nargs='?', const=True, default=True,
                    help='Whether to impose a positivity constraint or not.')
@@ -258,6 +260,7 @@ def main(args):
     else:
         mask = np.ones((1, args.nx, args.ny), dtype=np.int64)
 
+    # point mask
     pmask = load_fits(args.point_mask, dtype=np.bool)
     if pmask.shape != (args.nx, args.ny):
         raise ValueError("Mask has incorrect shape")
@@ -266,13 +269,13 @@ def main(args):
     phi = lambda x: x[0]*mask + H.dot(x[1])
     phih = lambda x: np.concatenate(((mask*x)[None], H.hdot(x)[None]), axis=0)
 
-    # Gaussian prior
-    A = Prior(args.sig_a, args.nband, args.nx, args.ny, args.nthreads)
+    # Gaussian "prior" used for preconditioning
+    A = Gauss(args.sig_l2a, args.nband, args.nx, args.ny, args.nthreads)
 
     #  preconditioning matrix
     def hess(x):
-        return  phih(psf.convolve(phi(x))) + np.concatenate((A.idot(x[0:1]), x[1::]/args.sig_b**2), axis=0)
-    M_func = lambda x: np.concatenate((A.convolve(x[0])[None], x[1::] * args.sig_b**2), axis=0)
+        return  phih(psf.convolve(phi(x))) + np.concatenate((A.idot(x[0:1]), x[1::]/args.sig_l2b**2), axis=0)
+    M_func = lambda x: np.concatenate((A.convolve(x[0])[None], x[1::] * args.sig_l2b**2), axis=0)
 
     par_shape = phih(dirty).shape
     if args.beta is None:
@@ -284,7 +287,7 @@ def main(args):
 
     # set up wavelet basis
     if args.psi_basis is None:
-        print("Using Dirac + db1-4 dictionary")
+        print("Using db1-4 dictionary")
         psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
                         nthreads=args.nthreads)
     else:
@@ -294,7 +297,8 @@ def main(args):
         psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
                         nthreads=args.nthreads, bases=args.psi_basis)
     nbasis = psi.nbasis
-    weights_21 = np.ones((psi.nbasis, psi.nmax), dtype=np.float64)
+    weights_21a = np.ones((psi.nbasis, psi.nmax), dtype=np.float64)
+    weights_21b = np.where(H.mask, 1, 1e10)
     dual = np.zeros((psi.nbasis, args.nband, psi.nmax), dtype=np.float64)
 
     # Reweighting

@@ -88,7 +88,7 @@ class PSF(object):
         xhat = c2r(xhat * self.psfhat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
         return Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
 
-class Prior(object):
+class Gauss(object):
     def __init__(self, sigma0, nband, nx, ny, nthreads=8):
         self.nthreads = nthreads
         self.nx = nx

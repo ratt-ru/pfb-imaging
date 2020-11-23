@@ -11,7 +11,7 @@ from pfb.opt import power_method, pcg, fista, hogbom, primal_dual
 import argparse
 from astropy.io import fits
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers
-from pfb.operators import Gridder, PSF, Prior, Dirac
+from pfb.operators import Gridder, PSF, Dirac
 
 
 def create_parser():
