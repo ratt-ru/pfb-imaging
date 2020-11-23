@@ -32,7 +32,7 @@ def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
         raise ValueError("Unsupported number of axes for fits file %s"%name)
     hdu.writeto(name, overwrite=overwrite)
 
-def set_wcs(cell_x, cell_y, nx, ny, radec, freq):
+def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
     """
     cell_x/y - cell sizes in degrees
     nx/y - number of x and y pixels
@@ -45,7 +45,9 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq):
     w.wcs.cdelt[0] = -cell_x
     w.wcs.cdelt[1] = cell_y
     w.wcs.cdelt[3] = 1
-    w.wcs.cunit = ['deg','deg','Hz','I']
+    w.wcs.cunit[0] = 'deg'
+    w.wcs.cunit[1] = 'deg'
+    w.wcs.cunit[2] = 'Hz'
     w.wcs.crval = [radec[0]*180.0/np.pi,radec[1]*180.0/np.pi, 0.0, 1]
     w.wcs.crpix = [1 + nx//2,1 + ny//2, 1, 1]
 
@@ -61,7 +63,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq):
     header['RESTFRQ'] = fmean
     header['ORIGIN'] = 'pfb-clean'
     header['BTYPE'] = 'Intensity'
-    header['BUNIT'] = 'Jy/beam'
+    header['BUNIT'] = unit
     header['SPECSYS'] = 'TOPOCENT'
 
     return header

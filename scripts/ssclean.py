@@ -204,6 +204,8 @@ def main(args):
     psf_mfs = np.sum(psf_array, axis=0)/wsum
     save_fits(args.outfile + '_psf_mfs.fits', psf_mfs[args.nx//2:3*args.nx//2, 
                                                       args.ny//2:3*args.ny//2], hdr_mfs)
+
+    quit()
     
     # mask
     if args.mask is not None:
