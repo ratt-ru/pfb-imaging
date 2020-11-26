@@ -232,7 +232,7 @@ def main(args):
 
     # mask
     if args.mask is not None:
-        mask = load_fits(args.mask, dtype=np.int64).squeeze()[None, :, :]
+        mask = load_fits(args.mask, dtype=np.int64)[None, :, :]
         if mask.shape != (1, args.nx, args.ny):
             raise ValueError("Mask has incorrect shape")
     else:
