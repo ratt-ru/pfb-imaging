@@ -1,5 +1,6 @@
 import numpy as np
-from pfb.operators import Theta
+from numpy.testing import assert_array_almost_equal
+from pfb.operators import Theta, DaskTheta
 from pfb.opt import power_method
 import pytest
 
@@ -8,17 +9,8 @@ pmp = pytest.mark.parametrize
 @pmp("nx", [128, 250])
 @pmp("ny", [64, 78])
 @pmp("nband", [1, 3, 6])
-@pmp("nsource", [5, 20])
-def test_theta_norm(nx, ny, nband, nsource):
-    Ix = np.random.randint(0, nx, nsource)
-    Iy = np.random.randint(0, ny, nsource)
-
-    mask=np.zeros((1, nx, ny))
-    mask[:, Ix, Iy] = 1
-
-
-    theta = Theta(nband, nx, ny, mask)
-
+def test_theta_norm(nx, ny, nband):
+    theta = Theta(nband, nx, ny)
 
     x = np.random.randn(theta.nbasis+1, nband, theta.nmax)
 
@@ -35,16 +27,8 @@ def test_theta_norm(nx, ny, nband, nsource):
 @pmp("nx", [128, 250])
 @pmp("ny", [64, 78])
 @pmp("nband", [1, 3, 6])
-@pmp("nsource", [5, 20])
-def test_theta_adjoint(nx, ny, nband, nsource):
-    Ix = np.random.randint(0, nx, nsource)
-    Iy = np.random.randint(0, ny, nsource)
-
-    mask=np.zeros((1, nx, ny))
-    mask[:, Ix, Iy] = 1
-
-
-    theta = Theta(nband, nx, ny, mask)
+def test_theta_adjoint(nx, ny, nband):
+    theta = Theta(nband, nx, ny)
 
 
     x = np.random.randn(theta.nbasis+1, nband, theta.nmax)
@@ -56,6 +40,33 @@ def test_theta_adjoint(nx, ny, nband, nsource):
 
     assert(np.allclose(res1, res2))
 
+@pmp("nx", [128, 250])
+@pmp("ny", [64, 78])
+@pmp("nband", [1, 3, 6])
+def test_theta_dask(nx, ny, nband):
+    theta = Theta(nband, nx, ny)
+
+    x = np.random.randn(theta.nbasis+1, nband, theta.nmax)
+    y = np.random.randn(2, nband, nx, ny)
+
+    # from time import time
+
+    # ti = time()
+    res1 = theta.dot(x)
+    res2 = theta.hdot(y)
+    # print(time()-ti)
+
+    theta_dask = DaskTheta(nband, nx, ny, 8)
+
+    # ti = time()
+    res1_dask = theta_dask.dot(x)
+    res2_dask = theta_dask.hdot(y)
+    # print(time()-ti)
+
+    assert_array_almost_equal(res1, res1_dask, decimal=10)
+    assert_array_almost_equal(res2, res2_dask, decimal=10)
+
+
 
 # if __name__=="__main__":
-#     test_theta_adjoint(512, 256, 8, 5)
+#     test_theta_dask(1500, 1500, 8)

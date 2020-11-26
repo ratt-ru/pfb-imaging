@@ -89,3 +89,88 @@ class Theta(object):
                 tmp, _, _ = pywt.ravel_coeffs(alphal)
                 coeffs[b+1, l] = np.pad(tmp/self.sqrtP, (0, self.nmax-self.ntot[b]), mode='constant')
         return coeffs
+
+def _dot_internal(alpha, bases, padding, iy, sy, sqrtP, nx, ny, real_type):
+    nbasis, nband, _ = alpha.shape
+    # reduction over basis done externally since chunked
+    x = np.zeros((nbasis, nband, nx, ny), dtype=real_type)
+    for b in range(nbasis):
+            base = bases[b]
+            for l in range(nband):
+                a = alpha[b, l, padding[b]]
+                alpha_rec = pywt.unravel_coeffs(a, iy[base], sy[base], output_format='wavedecn')
+                wave = pywt.waverecn(alpha_rec, base, mode='zero')
+
+                x[b, l] += wave / sqrtP
+    return x
+
+def _dot_internal_wrapper(alpha, bases, padding, iy, sy, sqrtP, nx, ny, real_type):
+    return _dot_internal(alpha[0], bases, padding, iy, sy, sqrtP, nx, ny, real_type)
+
+def _hdot_internal(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_type):
+    nband = x.shape[0]
+    nbasis = len(bases)
+    alpha = np.zeros((nbasis, nband, nmax), dtype=real_type)
+    for b in range(nbasis):
+            base = bases[b]
+            for l in range(nband):
+                # decompose
+                alphal = pywt.wavedecn(x[l], base, mode='zero', level=nlevels)
+                # ravel and pad
+                tmp, _, _ = pywt.ravel_coeffs(alphal)
+                alpha[b, l] = np.pad(tmp/sqrtP, (0, nmax-ntot[b]), mode='constant')
+
+    return alpha
+
+def _hdot_internal_wrapper(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_type):
+    return _hdot_internal(x[0][0], bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_type)
+
+class DaskTheta(Theta):
+    def __init__(self, nband, nx, ny, nthreads=8):
+        Theta.__init__(self, nband, nx, ny)
+        # required to chunk over basis
+        bases = np.array(self.bases, dtype=object)
+        self.bases = da.from_array(bases, chunks=1)
+        padding = np.array(self.padding, dtype=object)
+        self.padding = da.from_array(padding, chunks=1)
+        ntot = np.array(self.ntot, dtype=object)
+        self.ntot = da.from_array(ntot, chunks=1)
+        
+    def dot(self, coeffs):
+        x0 = coeffs[0, :, self.dpadding].reshape(self.nband, self.nx, self.ny)  # Dirac components
+        alpha_dask = da.from_array(coeffs[1::], chunks=(1, self.nband, self.nmax))
+        x1 = da.blockwise(_dot_internal_wrapper, ("basis", "band", "nx", "ny"),
+                         alpha_dask, ("basis", "band", "ntot"),
+                         self.bases, ("basis",),
+                         self.padding, ("basis",),
+                         self.iy, None, #("basis",),
+                         self.sy, None, # ("basis",),
+                         self.sqrtP, None,
+                         self.nx, None,
+                         self.ny, None,
+                         self.real_type, None,
+                         new_axes={"nx": self.nx, "ny": self.ny},
+                         dtype=self.real_type,
+                         align_arrays=False)
+        x1 = x1.sum(axis=0).compute(shedular='processes')
+        return np.concatenate((x0[None], x1[None]), axis=0)
+
+    def hdot(self, x):
+        beta = np.pad(x[0].reshape(self.nband, self.nx*self.ny), ((0,0),(0, self.nmax-self.nx*self.ny)), mode='constant')
+        xdask = da.from_array(x[1], chunks=(self.nband, self.nx, self.ny))
+        alpha = da.blockwise(_hdot_internal_wrapper, ("basis", "band", "nmax"),
+                             xdask, ("band", "nx", "ny"),
+                             self.bases, ("basis", ),
+                             self.ntot,("basis", ),
+                             self.nmax, None,
+                             self.nlevels, None,
+                             self.sqrtP, None,
+                             self.nx, None,
+                             self.ny, None,
+                             self.real_type, None,
+                             new_axes={"nmax": self.nmax},
+                             dtype=self.real_type,
+                             align_arrays=False)
+        alpha = alpha.compute(shedular='processes')
+
+        return np.concatenate((beta[None], alpha), axis=0)

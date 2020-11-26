@@ -11,7 +11,7 @@ from pfb.opt import power_method, pcg, primal_dual
 import argparse
 from astropy.io import fits
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, prox_21
-from pfb.operators import Gridder, PSF, Gauss, Theta
+from pfb.operators import Gridder, PSF, Gauss, Theta, DaskTheta
 
 def create_parser():
     p = argparse.ArgumentParser()
@@ -28,12 +28,22 @@ def create_parser():
     p.add_argument("--flag_column", default='FLAG', type=str)
     p.add_argument("--row_chunks", default=100000, type=int,
                    help="Rows per chunk")
+    p.add_argument("--chan_chunks", default=8, type=int,
+                   help="Channels per chunk (only used for writing component model")
     p.add_argument("--write_model", type=str2bool, nargs='?', const=True, default=True,
                    help="Whether to write model visibilities to model_column")
+    p.add_argument("--interp_model", type=str2bool, nargs='?', const=True, default=True,
+                   help="Interpolate final model with integrated polynomial")
+    p.add_argument("--spectral_poly_order", type=int, default=4,
+                   help="Order of interpolating polynomial")
     p.add_argument("--dirty", type=str,
                    help="Fits file with dirty cube")
     p.add_argument("--psf", type=str,
                    help="Fits file with psf cube")
+    p.add_argument("--beta0", type=str, default=None,
+                   help="Initial point source image")
+    p.add_argument("--alpha0", type=str, default=None,
+                   help="Initial fluff image")               
     p.add_argument("--outfile", type=str, default='pfb',
                    help='Base name of output file.')
     p.add_argument("--fov", type=float, default=None,
@@ -200,9 +210,20 @@ def main(args):
     
     dirty_mfs = np.sum(dirty/psf_max_mean, axis=0)/wsum 
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)
+
+    residual = dirty.copy()
     
     model = np.zeros((2, args.nband, args.nx, args.ny))
-    residual = dirty.copy()
+    recompute_residual = False
+    if args.beta0 is not None:
+        compare_headers(hdr, fits.getheader(args.beta0))
+        model[0] = load_fits(args.beta0).squeeze()
+        recompute_residual = True
+
+    if args.alpha0 is not None:
+        compare_headers(hdr, fits.getheader(args.alpha0))
+        model[1] = load_fits(args.alpha0).squeeze()
+        recompute_residual = True
 
     # normalise for more intuitive hypers
     residual /= psf_max_mean
@@ -226,6 +247,11 @@ def main(args):
     phi = lambda x: x[0]*pmask + x[1]*mask
     phih = lambda x: np.concatenate(((pmask*x)[None], (mask*x)[None]), axis=0)
 
+    if recompute_residual:
+        image = phi(model)
+        residual = R.make_residual(image)/psf_max_mean
+        residual_mfs = np.sum(residual, axis=0)/wsum 
+
     # Gaussian "prior" used for preconditioning extended emission
     A = Gauss(args.sig_l2a, args.nband, args.nx, args.ny, args.nthreads)
 
@@ -245,7 +271,7 @@ def main(args):
     print(" beta = %f "%beta)
 
     # set up wavelet basis
-    theta = Theta(args.nband, args.nx, args.ny)
+    theta = DaskTheta(args.nband, args.nx, args.ny, nthreads=args.nthreads)
     nbasis = theta.nbasis
     weights_21 = np.ones((theta.nbasis+1, theta.nmax), dtype=np.float64)
     tmp = np.pad(pmask.ravel(), (0, theta.nmax - args.nx*args.ny), mode='constant')
@@ -307,6 +333,46 @@ def main(args):
         if eps < args.tol:
             break
 
+    if args.interp_model:
+        nband = args.nband
+        order = args.spectral_poly_order
+        mask = np.where(model_mfs > 1e-10, 1, 0)
+        I = np.argwhere(mask).squeeze()
+        Ix = I[:, 0]
+        Iy = I[:, 1]
+        npix = I.shape[0]
+        
+        # get components
+        beta = image[:, Ix, Iy]
+
+        # fit integrated polynomial to model components
+        # we are given frequencies at bin centers, convert to bin edges
+        ref_freq = np.mean(freq_out)
+        delta_freq = freq_out[1] - freq_out[0]
+        wlow = (freq_out - delta_freq/2.0)/ref_freq
+        whigh = (freq_out + delta_freq/2.0)/ref_freq
+        wdiff = whigh - wlow
+
+        # set design matrix for each component
+        Xdesign = np.zeros([freq_out.size, args.spectral_poly_order])
+        for i in range(1, args.spectral_poly_order+1):
+            Xdesign[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+
+        weights = psf_max[:, None]
+        dirty_comps = Xdesign.T.dot(weights*beta)
+        
+        hess_comps = Xdesign.T.dot(weights*Xdesign)
+        
+        comps = np.linalg.solve(hess_comps, dirty_comps)
+
+        np.savez(args.outfile + "spectral_comps", comps=comps, ref_freq=ref_freq, mask=np.any(model, axis=0))
+
+    if args.write_model:
+        if args.interp_model:
+            R.write_component_model(comps, ref_freq, mask, args.row_chunks, args.chan_chunks)
+        else:
+            R.write_model(model)
+    
     # if args.write_model:
     #     R.write_model(model)
 

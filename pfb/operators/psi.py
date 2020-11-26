@@ -107,8 +107,6 @@ class PSI(object):
         return alpha
 
 
-import dask.array as da
-
 def _dot_internal(alpha, bases, padding, iy, sy, sqrtP, nx, ny, real_type):
     nbasis, nband, _ = alpha.shape
     # reduction over basis done externally since chunked

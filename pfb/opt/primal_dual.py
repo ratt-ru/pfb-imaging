@@ -69,9 +69,12 @@ def primal_dual(A, xbar,
         if positivity:
             x[x<0] = 0.0
 
-        # # apply mask
-        # if mask is not None:
-        #     x[1] = np.where(mask, x[1], 0.0)
+        # apply mask
+        if mask is not None:
+            if x.ndim == 3:
+                x = np.where(mask, x, 0.0)
+            elif x.ndim == 4:
+                x[1] = np.where(mask, x[1], 0.0)
 
         # convergence check
         eps = norm(x-xp)/norm(x)
