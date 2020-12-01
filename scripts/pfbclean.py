@@ -96,8 +96,10 @@ def create_parser():
                    "reweight_alpha_percent will be scaled by this factor after each reweighting step.")
     p.add_argument("--cgtol", type=float, default=1e-5,
                    help="Tolerance for cg updates")
-    p.add_argument("--cgmaxit", type=int, default=100,
+    p.add_argument("--cgmaxit", type=int, default=200,
                    help="Maximum number of iterations for the cg updates")
+    p.add_argument("--cgminit", type=int, default=100,
+                   help="Minimum number of iterations for the cg updates")
     p.add_argument("--cgverbose", type=int, default=1,
                    help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
     p.add_argument("--pmtol", type=float, default=1e-4,
@@ -304,7 +306,7 @@ def main(args):
     print("Peak of initial residual is %f and rms is %f" % (rmax, rms))
     for i in range(1, args.maxit):
         x = pcg(hess, mask*residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=args.cgtol,
-                maxit=args.cgmaxit, verbosity=args.cgverbose)
+                maxit=args.cgmaxit, minit=args.cgminit, verbosity=args.cgverbose)
 
         if i in report_iters:
             save_fits(args.outfile + str(i) + '_update.fits', x, hdr)

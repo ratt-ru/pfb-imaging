@@ -1,6 +1,6 @@
 import numpy as np
 
-def pcg(A, b, x0, M=None, tol=1e-5, maxit=500, verbosity=1, report_freq=10, backtrack=True):
+def pcg(A, b, x0, M=None, tol=1e-5, maxit=500, minit=100, verbosity=1, report_freq=10, backtrack=True):
     
     if M is None:
         M = lambda x: x
@@ -15,7 +15,7 @@ def pcg(A, b, x0, M=None, tol=1e-5, maxit=500, verbosity=1, report_freq=10, back
         eps0 = rnorm
     k = 0
     x = x0
-    while rnorm/eps0 > tol and k < maxit:
+    while (rnorm/eps0 > tol or k < minit) and k < maxit:
         xp = x.copy()
         rp = r.copy()
         Ap = A(p)
