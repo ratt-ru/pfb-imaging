@@ -36,6 +36,9 @@ def create_parser():
                    "(requires two passes through the data)")
     p.add_argument("--trim_channels", type=int, default=0,
                    help="Will flag tis number of channels on either side of the spectral window")
+    p.add_argument("--scale_weights", type=str2bool, nargs='?', const=True, default=False,
+                   help="Will scale weights so that residual visibility amplitude per chunk"
+                        "has a mean amplitude of sqrt(2).")
     return p
 
 
