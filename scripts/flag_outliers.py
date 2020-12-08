@@ -137,10 +137,14 @@ def main(args):
             mean_amp = sum_amp/count
 
             # scale weights (whitened residuals should have mean amplitude of 1/sqrt(2))
-            updated_weight = 2**0.5 * weights/mean_amp**2
-
-            ds = ds.assign(**{args.flag_out_column: (("row", "chan", "corr"), updated_flag)})
+            if args.scale_weights:
+                updated_weight = 2**0.5 * weights/mean_amp**2
+            else:
+                updated_weight = weights
+                
             ds = ds.assign(**{args.weight_out_column: (("row", "chan", "corr"), updated_weight)})
+            ds = ds.assign(**{args.flag_out_column: (("row", "chan", "corr"), updated_flag)})
+            
 
             out_data.append(ds)
         writes.append(xds_to_table(out_data, ims, columns=[args.flag_out_column, args.weight_out_column]))
