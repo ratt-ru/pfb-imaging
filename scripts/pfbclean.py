@@ -11,7 +11,7 @@ from pfb.opt import power_method, pcg, primal_dual
 import argparse
 from astropy.io import fits
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, prox_21
-from pfb.operators import Gridder, PSF, DaskPSI
+from pfb.operators import Gridder, PSF, DaskPSI, PSI
 
 def create_parser():
     p = argparse.ArgumentParser()
@@ -134,7 +134,7 @@ def main(args):
 
             spw = spws[ds.DATA_DESC_ID]
             tmp_freq = spw.CHAN_FREQ.data.squeeze()
-            all_freqs.append(list(tmp_freq))
+            all_freqs.append(list([tmp_freq]))
 
     uv_max = u_max.compute()
     del uvw
@@ -270,14 +270,16 @@ def main(args):
     # set up wavelet basis
     if args.psi_basis is None:
         print("Using Dirac + db1-4 dictionary")
-        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
-                        nthreads=args.nthreads)
+        # psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
+        #                 nthreads=args.nthreads)
+        psi = PSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels)
     else:
         if not isinstance(args.psi_basis, list):
             args.psi_basis = list(args.psi_basis)
         print("Using ", args.psi_basis, " dictionary")
-        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
-                        nthreads=args.nthreads, bases=args.psi_basis)
+        # psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
+        #                 nthreads=args.nthreads, bases=args.psi_basis)
+        psi = PSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels, bases=args.psi_basis)
     nbasis = psi.nbasis
     weights_21 = np.ones((psi.nbasis, psi.nmax), dtype=np.float64)
     dual = np.zeros((psi.nbasis, args.nband, psi.nmax), dtype=np.float64)
@@ -322,14 +324,14 @@ def main(args):
         if i in reweight_iters:
             v = psi.hdot(model)
             l2_norm = norm(v, axis=1)
+            l2_norm = np.where(l2_norm < args.sig_21*weights_21, 0.0, l2_norm)
             for m in range(psi.nbasis):
-                #indnz = l2_norm[m].nonzero()
-                #alpha = np.percentile(l2_norm[m, indnz].flatten(), args.reweight_alpha_percent)
-                #alpha = np.maximum(alpha, args.reweight_alpha_min)
-                alpha = args.reweight_alpha_min
+                indnz = l2_norm[m].nonzero()
+                alpha = np.percentile(l2_norm[m, indnz].flatten(), args.reweight_alpha_percent)
+                alpha = np.maximum(alpha, args.reweight_alpha_min)
                 print("Reweighting - ", m, alpha)
-                weights_21[m] = 1.0/(l2_norm[m] + alpha)
-            args.reweight_alpha_min *= args.reweight_alpha_ff
+                weights_21[m] = alpha/(l2_norm[m] + alpha)
+            args.reweight_alpha_percent *= args.reweight_alpha_ff
             # print(" reweight alpha percent = ", args.reweight_alpha_percent)
 
         # get residual

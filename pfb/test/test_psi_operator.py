@@ -40,8 +40,8 @@ def test_dask_psi_operator(nx, ny, nband, nlevels):
     alphad = dask_psi.hdot(x)
     xrecd = dask_psi.dot(alphad)
 
-    assert_array_almost_equal(x, xrecd, decimal=13)
-    assert_array_almost_equal(alphad, alpha, decimal=13)
+    assert_array_almost_equal(x, xrecd, decimal=12)
+    assert_array_almost_equal(alphad, alpha, decimal=12)
 
 
 @pmp("nx", [120, 240])
@@ -67,7 +67,7 @@ def test_psi(nx, ny, nband, nlevels):
     # reconstruct
     xrec = psi.dot(alpha)
 
-    assert_array_almost_equal(x, xrec, decimal=13)
+    assert_array_almost_equal(x, xrec, decimal=12)
 
 @pmp("nx", [120, 240])
 @pmp("ny", [32, 150])
@@ -95,4 +95,4 @@ def test_prox(nx, ny, nband, nlevels):
 
     xrec = psi.dot(y)
 
-    assert_array_almost_equal(x, xrec, decimal=13)
+    assert_array_almost_equal(x, xrec, decimal=12)

@@ -21,48 +21,14 @@ def prox_21(v, sigma, weights, axis=1):
     nband   - number of imaging bands
     ntot    - total number of coefficients for each basis (must be equal)
     """
-    # l2_norm = norm(v, axis=axis)  # drops freq axis
-    # l2_soft = np.maximum(l2_norm - sigma * weights, 0.0)  # l2_norm is always positive
-    l2_norm = np.abs(np.mean(v, axis=axis))  # drops freq axis
+    l2_norm = norm(v, axis=axis)  # drops axis
     l2_soft = np.maximum(l2_norm - sigma * weights, 0.0)  # l2_norm is always positive
+    # l2_norm = np.abs(np.mean(v, axis=axis))  # drops freq axis
+    # l2_soft = np.maximum(l2_norm - sigma * weights, 0.0)  # l2_norm is always positive
     mask = l2_norm != 0
     ratio = np.zeros(mask.shape, dtype=v.dtype)
     ratio[mask] = l2_soft[mask] / l2_norm[mask]
-    return v * np.expand_dims(ratio, axis=axis)  # restore freq axis
-
-
-def robust_reweight(residuals, weights, v=None):
-    """
-    Find the robust weights corresponding to a soln that generated residuals
-
-    residuals - residuals i.e. (data - model) (nrow, nchan, ncorr)
-    weights - inverse of data covariance (nrow, nchan, ncorr)
-    v - initial guess for degrees for freedom parameter (float)
-    corrs - which correlation axes to compute new weights for (default is for LL and RR (or XX and)) 
-
-    Correlation axis not currently supported
-    """
-    # elements of Mahalanobis distance (Delta^2_i's)
-    nrow, nchan = residuals.shape
-    ressq = (residuals.conj()*residuals).real
-
-    # func to solve for degrees of freedom parameter
-    def func(v, N, ressq):
-        # expectation values
-        tmp = v+ressq
-        Etau = (v + 1)/tmp
-        Elogtau = digamma(v + 1) - np.log(tmp)
-
-        # derivatives of expectation value terms
-        dEtau = 1.0/tmp - (v+1)/tmp**2
-        dElogtau = polygamma(1, v + 1) - 1.0/(v + ressq)
-        return N*np.log(v) - N*digamma(v) + np.sum(Elogtau) - np.sum(Etau), N/v - N*polygamma(1, v) + np.sum(dElogtau) - np.sum(dEtau)
-
-
-    v, f, d = fmin_l_bfgs_b(func, v, args=(nrow, ressq), pgtol=1e-2, approx_grad=False, bounds=[(1e-3, 30)])
-    Etau = (v + 1.0)/(v + ressq)  # used as new weights
-    Lambda = np.mean(ressq*Etau, axis=0)
-    return v, np.sqrt(Etau / Lambda[None, :])
+    return v * np.expand_dims(ratio, axis=axis)  # restores axis
 
 def test_convolve(R, psf, args):
     x = np.random.randn(args.channels_out, args.nx, args.ny)

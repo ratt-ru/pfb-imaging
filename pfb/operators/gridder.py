@@ -71,7 +71,7 @@ class Gridder(object):
                 spw = spws[ds.DATA_DESC_ID]
                 tmp_freq = spw.CHAN_FREQ.data.squeeze()
                 self.freq[ims][ds.DATA_DESC_ID] = tmp_freq
-                all_freqs.append(list(tmp_freq))
+                all_freqs.append(list([tmp_freq]))
 
 
         # freq mapping
@@ -104,7 +104,7 @@ class Gridder(object):
             self.band_mapping[ims] = {}
             self.chunks[ims] = []
             for spw in self.freq[ims]:
-                freq = dask.compute(self.freq[ims][spw])[0]
+                freq = np.atleast_1d(dask.compute(self.freq[ims][spw])[0])
                 band_map = np.zeros(freq.size, dtype=np.int32)
                 for band in range(self.nband):
                     indl = freq >= fbins[band]
@@ -427,7 +427,6 @@ class Gridder(object):
                 flagxx = flag[:, :, 0]
                 flagyy = flag[:, :, -1]
                 flag = ~ (flagxx | flagyy)  # ducc0 convention
-
 
                 psf = vis2im(uvw, freq, data, freq_bin_idx, freq_bin_counts,
                              2*self.nx, 2*self.ny, self.cell, flag=flag.astype(np.uint8),

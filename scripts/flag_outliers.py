@@ -34,8 +34,21 @@ def create_parser():
     p.add_argument("--report_means", type=str2bool, nargs='?', const=True, default=False,
                    help="Will report new mean of whitened residual visibility amplitudes"
                    "(requires two passes through the data)")
+    p.add_argument("--trim_channels", type=int, default=0,
+                   help="Will flag tis number of channels on either side of the spectral window")
     return p
 
+
+def trim_chans(flags, nchans):
+    return da.blockwise(_trim_chans, ("row", "chan", "corr"),
+                        flags, ("row", "chan", "corr"),
+                        nchans, None,
+                        dtype=flags.dtype)
+
+def _trim_chans(flags, nchans):
+    flags[:, 0:nchans, :] = True
+    flags[:, -nchans:, :] = True
+    return flags
 
 def main(args):
     """
@@ -84,6 +97,9 @@ def main(args):
             weights = getattr(ds, args.weight_column).data
             if len(weights.shape) < 3:
                 weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
+
+            if args.trim_channels:
+                flag = trim_chans(flag, args.trim_channels)
             
             # Stokes I vis 
             weights = (~flag)*weights

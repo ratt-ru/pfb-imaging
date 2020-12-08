@@ -57,7 +57,10 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
         w.wcs.cdelt[2] = df
         fmean = np.mean(freq)
     else:
-        fmean = freq
+        if isinstance(freq, np.ndarray):
+            fmean = freq[0]
+        else:
+            fmean = freq
 
     header = w.to_header()
     header['RESTFRQ'] = fmean

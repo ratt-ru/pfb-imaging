@@ -1,6 +1,6 @@
 import numpy as np
 from numpy.testing import assert_array_almost_equal, assert_array_equal
-from pfb.operators import Prior 
+from pfb.operators import Gauss
 import pytest
 pmp = pytest.mark.parametrize
 
@@ -11,7 +11,7 @@ pmp = pytest.mark.parametrize
 @pmp("sigma0", [0.1, 1.0])
 def test_dot_idot_explicit(nx, ny, nband, sigma0):
     # Initialise operator
-    Kop = Prior(sigma0, nband, nx, ny)
+    Kop = Gauss(sigma0, nband, nx, ny)
 
     # generate random vector and act on it
     xi = np.random.randn(nband, nx, ny)
@@ -29,7 +29,7 @@ def test_dot_idot_explicit(nx, ny, nband, sigma0):
 @pmp("sigma0", [0.1, 1.0])
 def test_dot_convolve(nx, ny, nband, sigma0):
     # Initialise operator
-    Kop = Prior(sigma0, nband, nx, ny)
+    Kop = Gauss(sigma0, nband, nx, ny)
 
     # generate random vector and act on it
     xi = np.random.randn(nband, nx, ny)
