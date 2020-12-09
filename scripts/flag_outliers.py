@@ -110,7 +110,6 @@ def main(args):
             wsums = (weights[:, :, 0] + weights[:, :, -1])
             resid_vis_I = da.where(wsums, (resid_vis[:, :, 0] + resid_vis[:, :, -1])/wsums, 0.0j)
 
-
             # whiten and take abs
             white_resid = resid_vis_I*da.sqrt(wsums)
             abs_resid_vis_I = (white_resid).__abs__()
@@ -120,24 +119,24 @@ def main(args):
             count = da.sum(wsums>0)
             mean_amp = sum_amp/count
 
-            flag_I = abs_resid_vis_I >= args.sigma_cut * mean_amp
+            flag_legacy = flag[:, :, 0] | flag[:, :, -1]
+            flag_I = da.logical_or(abs_resid_vis_I > args.sigma_cut * mean_amp, flag_legacy)
 
             # new flags
             updated_flag = da.broadcast_to(flag_I[:, :, None], flag.shape, chunks=flag.chunks)
 
-            # recompute mean amp with new flags
-            weights = (~updated_flag)*weights
-            resid_vis = (data - model)*weights
-            wsums = (weights[:, :, 0] + weights[:, :, -1])
-            resid_vis_I = da.where(wsums, (resid_vis[:, :, 0] + resid_vis[:, :, -1])/wsums, 0.0j)
-            white_resid = resid_vis_I*da.sqrt(wsums)
-            abs_resid_vis_I = (white_resid).__abs__()
-            sum_amp = da.sum(abs_resid_vis_I)
-            count = da.sum(wsums>0)
-            mean_amp = sum_amp/count
-
             # scale weights (whitened residuals should have mean amplitude of 1/sqrt(2))
             if args.scale_weights:
+                # recompute mean amp with new flags
+                weights = (~updated_flag)*weights
+                resid_vis = (data - model)*weights
+                wsums = (weights[:, :, 0] + weights[:, :, -1])
+                resid_vis_I = da.where(wsums, (resid_vis[:, :, 0] + resid_vis[:, :, -1])/wsums, 0.0j)
+                white_resid = resid_vis_I*da.sqrt(wsums)
+                abs_resid_vis_I = (white_resid).__abs__()
+                sum_amp = da.sum(abs_resid_vis_I)
+                count = da.sum(wsums>0)
+                mean_amp = sum_amp/count
                 updated_weight = 2**0.5 * weights/mean_amp**2
             else:
                 updated_weight = weights
