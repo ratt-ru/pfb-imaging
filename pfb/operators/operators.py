@@ -1,4 +1,4 @@
-from numba import njit, prange, jit, jitclass, int32, float64
+from numba import njit, prange
 import numpy as np
 import dask.array as da
 from ducc0.fft import r2c, c2r, c2c
@@ -29,7 +29,6 @@ def make_kernel(nx_psf, ny_psf, sigma0, length_scale):
     return K
 
 
-# @jit(nopython=True, fastmath=True, parallel=False, cache=True, nogil=True)
 def kron_matvec(A, b):
     D = len(A)
     N = b.size
@@ -44,10 +43,6 @@ def kron_matvec(A, b):
     return x
 
 
-# spec = [
-#     ('n', int32),
-# ]
-# @jitclass(spec)
 class mock_array(object):
     def __init__(self, n):
         self.n = n
