@@ -270,16 +270,16 @@ def main(args):
     # set up wavelet basis
     if args.psi_basis is None:
         print("Using Dirac + db1-4 dictionary")
-        # psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
-        #                 nthreads=args.nthreads)
-        psi = PSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels)
+        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
+                        nthreads=args.nthreads)
+        # psi = PSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels)
     else:
         if not isinstance(args.psi_basis, list):
             args.psi_basis = list(args.psi_basis)
         print("Using ", args.psi_basis, " dictionary")
-        # psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
-        #                 nthreads=args.nthreads, bases=args.psi_basis)
-        psi = PSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels, bases=args.psi_basis)
+        psi = DaskPSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels,
+                        nthreads=args.nthreads, bases=args.psi_basis)
+        # psi = PSI(args.nband, args.nx, args.ny, nlevels=args.psi_levels, bases=args.psi_basis)
     nbasis = psi.nbasis
     weights_21 = np.ones((psi.nbasis, psi.nmax), dtype=np.float64)
     dual = np.zeros((psi.nbasis, args.nband, psi.nmax), dtype=np.float64)
