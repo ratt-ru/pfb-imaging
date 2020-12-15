@@ -25,7 +25,7 @@ setup(
      packages=find_packages(),
      install_requires=[
           'matplotlib',
-          'codex-africanus[complete] >= 0.2.8',
+          'codex-africanus[complete] >= 0.2.9',
           'dask-ms[xarray] >= 0.2.6',
           'PyWavelets',
           'zarr',
