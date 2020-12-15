@@ -7,3 +7,4 @@ date   - 31/03/2020
 """
 
 from pfb.utils.utils import *
+from pfb.utils.fits import *

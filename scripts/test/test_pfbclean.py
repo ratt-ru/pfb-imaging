@@ -17,7 +17,7 @@ def test_pfb(tmp_path_factory):
     args.fov = 1.0
     args.maxit = 2
     args.report_freq = 1
-    args.reweight_iters = 1
+    args.reweight_iters = 5
     args.cgmaxit = 5
     args.pmmaxit = 5
     args.pdmaxit = 5

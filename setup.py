@@ -14,7 +14,8 @@ setup(
               'scripts/pfbclean.py',
               'scripts/make_mask.py',
               'scripts/flag_outliers.py',
-              'scripts/ssclean.py',] ,
+              'scripts/ssclean.py',
+              'scripts/multi_pfbclean.py',] ,
      author="Landman Bester",
      author_email="lbester@ska.ac.za",
      description="Pre-conditioned forward-backward CLEAN algorithm",
@@ -24,7 +25,7 @@ setup(
      packages=find_packages(),
      install_requires=[
           'matplotlib',
-          'codex-africanus[complete] >= 0.2.8',
+          'codex-africanus[complete] >= 0.2.9',
           'dask-ms[xarray] >= 0.2.6',
           'PyWavelets',
           'zarr',

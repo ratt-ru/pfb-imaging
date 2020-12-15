@@ -34,8 +34,24 @@ def create_parser():
     p.add_argument("--report_means", type=str2bool, nargs='?', const=True, default=False,
                    help="Will report new mean of whitened residual visibility amplitudes"
                    "(requires two passes through the data)")
+    p.add_argument("--trim_channels", type=int, default=0,
+                   help="Will flag tis number of channels on either side of the spectral window")
+    p.add_argument("--scale_weights", type=str2bool, nargs='?', const=True, default=False,
+                   help="Will scale weights so that residual visibility amplitude per chunk"
+                        "has a mean amplitude of sqrt(2).")
     return p
 
+
+def trim_chans(flags, nchans):
+    return da.blockwise(_trim_chans, ("row", "chan", "corr"),
+                        flags, ("row", "chan", "corr"),
+                        nchans, None,
+                        dtype=flags.dtype)
+
+def _trim_chans(flags, nchans):
+    flags[:, 0:nchans, :] = True
+    flags[:, -nchans:, :] = True
+    return flags
 
 def main(args):
     """
@@ -84,13 +100,15 @@ def main(args):
             weights = getattr(ds, args.weight_column).data
             if len(weights.shape) < 3:
                 weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
+
+            if args.trim_channels:
+                flag = trim_chans(flag, args.trim_channels)
             
             # Stokes I vis 
             weights = (~flag)*weights
             resid_vis = (data - model)*weights
             wsums = (weights[:, :, 0] + weights[:, :, -1])
             resid_vis_I = da.where(wsums, (resid_vis[:, :, 0] + resid_vis[:, :, -1])/wsums, 0.0j)
-
 
             # whiten and take abs
             white_resid = resid_vis_I*da.sqrt(wsums)
@@ -101,27 +119,31 @@ def main(args):
             count = da.sum(wsums>0)
             mean_amp = sum_amp/count
 
-            flag_I = abs_resid_vis_I >= args.sigma_cut * mean_amp
+            flag_legacy = flag[:, :, 0] | flag[:, :, -1]
+            flag_I = da.logical_or(abs_resid_vis_I > args.sigma_cut * mean_amp, flag_legacy)
 
             # new flags
             updated_flag = da.broadcast_to(flag_I[:, :, None], flag.shape, chunks=flag.chunks)
 
-            # recompute mean amp with new flags
-            weights = (~updated_flag)*weights
-            resid_vis = (data - model)*weights
-            wsums = (weights[:, :, 0] + weights[:, :, -1])
-            resid_vis_I = da.where(wsums, (resid_vis[:, :, 0] + resid_vis[:, :, -1])/wsums, 0.0j)
-            white_resid = resid_vis_I*da.sqrt(wsums)
-            abs_resid_vis_I = (white_resid).__abs__()
-            sum_amp = da.sum(abs_resid_vis_I)
-            count = da.sum(wsums>0)
-            mean_amp = sum_amp/count
-
             # scale weights (whitened residuals should have mean amplitude of 1/sqrt(2))
-            updated_weight = 2**0.5 * weights/mean_amp**2
-
-            ds = ds.assign(**{args.flag_out_column: (("row", "chan", "corr"), updated_flag)})
+            if args.scale_weights:
+                # recompute mean amp with new flags
+                weights = (~updated_flag)*weights
+                resid_vis = (data - model)*weights
+                wsums = (weights[:, :, 0] + weights[:, :, -1])
+                resid_vis_I = da.where(wsums, (resid_vis[:, :, 0] + resid_vis[:, :, -1])/wsums, 0.0j)
+                white_resid = resid_vis_I*da.sqrt(wsums)
+                abs_resid_vis_I = (white_resid).__abs__()
+                sum_amp = da.sum(abs_resid_vis_I)
+                count = da.sum(wsums>0)
+                mean_amp = sum_amp/count
+                updated_weight = 2**0.5 * weights/mean_amp**2
+            else:
+                updated_weight = weights
+                
             ds = ds.assign(**{args.weight_out_column: (("row", "chan", "corr"), updated_weight)})
+            ds = ds.assign(**{args.flag_out_column: (("row", "chan", "corr"), updated_flag)})
+            
 
             out_data.append(ds)
         writes.append(xds_to_table(out_data, ims, columns=[args.flag_out_column, args.weight_out_column]))
