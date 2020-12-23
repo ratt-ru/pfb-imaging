@@ -257,7 +257,7 @@ def create_parser():
                         "automatically. \n"
                         "Only real and imaginary beam models currently "
                         "supported.")
-    p.add_argument('-st', "--sparsify-time", type=int, default=1,
+    p.add_argument('-st', "--sparsify-time", type=int, default=10,
                    help="Used to select a subset of time ")
     p.add_argument('-ncpu', '--ncpu', default=0, type=int,
                    help="Number of threads to use. \n"

@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 from astropy.io import fits
 from pfb.utils import load_fits_contiguous, get_fits_freq_space_info, Gaussian2D
-from pypocketfft import r2c, c2r
+from ducc0 import r2c, c2r
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
