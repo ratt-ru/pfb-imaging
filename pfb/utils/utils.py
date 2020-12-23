@@ -66,7 +66,7 @@ def str2bool(v):
 
 
 
-def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.)):
+def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True):
     S0, S1, PA = GaussPar
     Smaj = np.maximum(S0, S1)
     Smin = np.minimum(S0, S1)
@@ -92,6 +92,9 @@ def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.)):
     tmp = np.exp(-fwhm_conv*R)
     gausskern = np.zeros(xflat.shape, dtype=np.float64)
     gausskern[idx, idy] = tmp
+
+    if normalise:
+        gausskern /= np.sum(gausskern)
     return np.ascontiguousarray(gausskern.reshape(sOut),
                                 dtype=np.float64)
 
