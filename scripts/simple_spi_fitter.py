@@ -19,7 +19,7 @@ def convolve_model(model, gausskern, args):
     print("Doing FFT's")
     # get padding
     _, npix_l, npix_m = model.shape
-    pfrac = args.padding_frac/2.0
+    pfrac = args.padding_frac
     npad_l = int(pfrac*npix_l)
     npad_m = int(pfrac*npix_m)
     # get fast FFT sizes
@@ -92,7 +92,7 @@ def create_parser():
                    "c - restoring beam used for convolution \n"
                    "m - convolved model \n"
                    "Default is to write all of them")
-    p.add_argument('-pf', "--padding-frac", default=0.2, type=float,
+    p.add_argument('-pf', "--padding-frac", default=0.5, type=float,
                    help="Padding factor for FFT's.")
     p.add_argument('-dc', "--dont-convolve", action="store_true",
                    help="Passing this flag bypasses the convolution "

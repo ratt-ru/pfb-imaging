@@ -35,6 +35,8 @@ def create_parser():
                         "corresponding to image. ")
     p.add_argument('-pb-min', '--pb-min', type=float, default=0.05,
                    help="Set image to zero where pb falls below this value")
+    p.add_argument('-pf', '--padding-frac', type=float, default=0.5,
+                   help="Will pad image by this fraction (half on either side)")
     return p
 
 def main(args):
@@ -81,7 +83,7 @@ def main(args):
 
     # get padding
     npix_l, npix_m = xx.shape
-    pfrac = 0.2/2
+    pfrac = args.padding_frac
     npad_l = int(pfrac*npix_l)
     npad_m = int(pfrac*npix_m)
     
