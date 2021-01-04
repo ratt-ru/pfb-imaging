@@ -65,7 +65,7 @@ def create_parser():
     p.add_argument('-cp', "--circ-psf", action="store_true",
                    help="Passing this flag will convolve with a circularised "
                    "beam instead of an elliptical one")
-    p.add_argument('-th', '--threshold', default=5, type=float,
+    p.add_argument('-th', '--threshold', default=10, type=float,
                    help="Multiple of the rms in the residual to threshold "
                         "on. \n"
                         "Only components above threshold*rms will be fit.")
@@ -98,10 +98,10 @@ def create_parser():
                    help="Passing this flag bypasses the convolution "
                    "by the clean beam")
     p.add_argument('-cw', "--channel_weights", default=None, nargs='+', type=float,
-                   help="Per-channel weights to use during fit to frqequency axis. \n "
+                   help="Per-channel weights to use during fit to frequency axis. \n "
                    "Only has an effect if no residual is passed in (for now).")
     p.add_argument('-rf', '--ref-freq', default=None, type=np.float64,
-                   help='Refernce frequency at which the cube is saught. \n'
+                   help='Reference frequency where the I0 map is sought. \n'
                    "Will overwrite in fits headers of output.")
     return p
 
