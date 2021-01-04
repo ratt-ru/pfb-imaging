@@ -24,10 +24,10 @@ def convolve_model(model, gausskern, args):
     npad_m = int(pfrac*npix_m)
     # get fast FFT sizes
     from scipy.fftpack import next_fast_len
-    nfft = next_fast_len(npix_l + 2*npad_l)
+    nfft = next_fast_len(npix_l + npad_l)
     npad_ll = (nfft - npix_l)//2
     npad_lr = nfft - npix_l - npad_ll
-    nfft = next_fast_len(npix_m + 2*npad_m)
+    nfft = next_fast_len(npix_m + npad_m)
     npad_ml = (nfft - npix_m)//2
     npad_mr = nfft - npix_m - npad_ml
     padding = ((0, 0), (npad_ll, npad_lr), (npad_ml, npad_mr))
