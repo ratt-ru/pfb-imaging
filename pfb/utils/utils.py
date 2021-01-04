@@ -123,3 +123,20 @@ def give_edges(p, q, nx, ny):
 
 
     return slice(xl, xu), slice(yl, yu), slice(xlpsf, xupsf), slice(ylpsf, yupsf)
+
+
+def get_padding_info(nx, ny, pfrac):
+    from ducc0.fft import good_size
+    npad_x = int(pfrac * nx)
+    nfft = good_size(nx + npad_x, True)
+    npad_xl = (nfft - nx)//2
+    npad_xr = nfft - nx - npad_xl
+    
+    npad_y = int(pfrac * ny)
+    nfft = good_size(ny + npad_y, True)
+    npad_yl = (nfft - ny)//2
+    npad_yr = nfft - ny - npad_yl
+    padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+    unpad_x = slice(npad_xl, -npad_xr)
+    unpad_y = slice(npad_yl, -npad_yr)
+    return padding, unpad_x, unpad_y

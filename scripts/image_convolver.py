@@ -5,7 +5,7 @@
 import argparse
 import numpy as np
 from astropy.io import fits
-from pfb.utils import load_fits_contiguous, get_fits_freq_space_info, Gaussian2D
+from pfb.utils import load_fits_contiguous, get_fits_freq_space_info, Gaussian2D, get_padding_info
 from ducc0.fft import r2c, c2r
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
@@ -83,22 +83,7 @@ def main(args):
 
     # get padding
     npix_l, npix_m = xx.shape
-    pfrac = args.padding_frac
-    npad_l = int(pfrac*npix_l)
-    npad_m = int(pfrac*npix_m)
-    
-    # get fast FFT sizes and update padding
-    from scipy.fftpack import next_fast_len
-    nfft = next_fast_len(npix_l + npad_l)
-    npad_ll = (nfft - npix_l)//2
-    npad_lr = nfft - npix_l - npad_ll
-    nfft = next_fast_len(npix_m + npad_m)
-    npad_ml = (nfft - npix_m)//2
-    npad_mr = nfft - npix_m - npad_ml
-    padding = ((0, 0), (npad_ll, npad_lr), (npad_ml, npad_mr))
-    unpad_l = slice(npad_ll, -npad_lr)
-    unpad_m = slice(npad_ml, -npad_mr)
-    
+    padding, unpad_l, unpad_m = get_padding_info(npix_l, npix_m, args.padding_frac)
     ax = (1, 2)  # axes over which to perform fft
     lastsize = npix_m + np.sum(padding[-1])
 
