@@ -195,7 +195,7 @@ def main(args):
     if not args.dont_convolve:
         print("Computing clean beam")
         # get the Gaussian convolution kernel
-        gausskern = Gaussian2D(xx, yy, beampars)
+        gausskern = Gaussian2D(xx, yy, beampars, normalise=False)
 
         # save clean beam
         if 'c' in args.products:
