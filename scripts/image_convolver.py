@@ -45,13 +45,21 @@ def main(args):
     l_coord, m_coord, freqs, _, freq_axis = get_fits_freq_space_info(hdr)
     nchan = freqs.size
     psf_pars = {}
-    for i in range(1,nchan+1):
-        key = 'BMAJ' + str(i)
-        if key in hdr.keys():
-            emaj = hdr[key]
-            emin = hdr['BMIN' + str(i)]
-            pa = hdr['BPA' + str(i)]
-            psf_pars[i] = (emaj, emin, pa)
+    if freqs.size > 1:
+        for i in range(1,nchan+1):
+            key = 'BMAJ' + str(i)
+            if key in hdr.keys():
+                emaj = hdr[key]
+                emin = hdr['BMIN' + str(i)]
+                pa = hdr['BPA' + str(i)]
+                psf_pars[i] = (emaj, emin, pa)
+    else:
+        if 'BMAJ' in hdr.keys():
+            emaj = hdr['BMAJ']
+            emin = hdr['BMIN']
+            pa = hdr['BPA']
+            # using key of 1 for consistency with fits standard 
+            psf_pars[1] = (emaj, emin, pa)  
     
     if len(psf_pars) == 0 and args.psf_pars is None:
         raise ValueError("No psf parameters in fits file and none passed in.")
@@ -73,10 +81,15 @@ def main(args):
     print("Using emaj = %3.2e, emin = %3.2e, PA = %3.2e \n" % beampars)
 
     # update header
-    for i in range(1, nchan+1):
-        hdr['BMAJ' + str(i)] = beampars[0]
-        hdr['BMIN' + str(i)] = beampars[1]
-        hdr['BPA' + str(i)] = beampars[2]
+    if freqs.size > 1:
+        for i in range(1, nchan+1):
+            hdr['BMAJ' + str(i)] = beampars[0]
+            hdr['BMIN' + str(i)] = beampars[1]
+            hdr['BPA' + str(i)] = beampars[2]
+    else:
+        hdr['BMAJ'] = beampars[0]
+        hdr['BMIN'] = beampars[1]
+        hdr['BPA'] = beampars[2]
 
     # coodinate grid
     xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij') 
