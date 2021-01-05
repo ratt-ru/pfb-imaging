@@ -35,8 +35,7 @@ def convolve_model(model, gausskern, args):
     return Fs(c2r(convmodel, axes=ax, forward=False, lastsize=lastsize, inorm=2, nthreads=args.ncpu), axes=ax)[:, unpad_l, unpad_m]
 
 def create_parser():
-    p = argparse.ArgumentParser(description='Simple spectral index fitting'
-                                            'tool.',
+    p = argparse.ArgumentParser(description='Simple spectral index fitting tool.',
                                 formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument('-model', "--model", type=str, required=True)
     p.add_argument('-residual', "--residual", type=str)

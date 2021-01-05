@@ -2,12 +2,12 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 
-def data_from_header(hdr, axis=3):
+def data_from_header(hdr, axis=3, zero_ref=False):
     npix = hdr['NAXIS' + str(axis)]
     refpix = hdr['CRPIX' + str(axis)]
     delta = hdr['CDELT' + str(axis)] 
     ref_val = hdr['CRVAL' + str(axis)]
-    return ref_val + np.arange(1 - refpix, 1 + npix - refpix) * delta
+    return ref_val + np.arange(1 - refpix, 1 + npix - refpix) * delta, ref_val
 
 def load_fits(name, dtype=np.float64):
     data = fits.getdata(name)
