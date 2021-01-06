@@ -6,9 +6,6 @@ import argparse
 import numpy as np
 from astropy.io import fits
 from pfb.utils import load_fits, save_fits, convolve2gaussres, data_from_header
-from ducc0.fft import r2c, c2r
-iFs = np.fft.ifftshift
-Fs = np.fft.fftshift
 
 def create_parser():
     p = argparse.ArgumentParser(description='Simple spectral index fitting'
@@ -127,7 +124,7 @@ def main(args):
         if not np.array_equal(freqs, freqs_beam):
             raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
 
-        beam_image = load_fits(args.beam_model, dtype=np.float32)
+        beam_image = load_fits(args.beam_model, dtype=np.float32).squeeze()
 
         image = np.where(beam_image >= args.pb_min, image/beam_image, 0.0)
 

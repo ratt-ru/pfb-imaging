@@ -6,33 +6,9 @@ import argparse
 import dask
 import dask.array as da
 import numpy as np
-from africanus.util.numba import jit
 from astropy.io import fits
-import warnings
 from africanus.model.spi.dask import fit_spi_components
-from pfb.utils import load_fits_contiguous, get_fits_freq_space_info, set_header_info, Gaussian2D, get_padding_info
-from ducc0.fft import r2c, c2r
-iFs = np.fft.ifftshift
-Fs = np.fft.fftshift
-
-def convolve_model(model, gausskern, args):
-    print("Doing FFT's")
-    # get padding
-    _, npix_l, npix_m = model.shape
-    padding, unpad_l, unpad_m = get_padding_info(npix_l, npix_m, args.padding_frac)
-    ax = (1, 2)  # axes over which to perform fft
-    lastsize = npix_m + np.sum(padding[-1])
-
-    # get FT of convolution kernel
-    gausskern = iFs(np.pad(gausskern[None], padding, mode='constant'), axes=ax)
-    gausskernhat = r2c(gausskern, axes=ax, forward=True, nthreads=args.ncpu, inorm=0)
-
-    # Convolve model with Gaussian kernel
-    model = iFs(np.pad(model, padding, mode='constant'), axes=ax)
-    convmodel = r2c(model, axes=ax, forward=True, nthreads=args.ncpu, inorm=0)
-
-    convmodel *= gausskernhat
-    return Fs(c2r(convmodel, axes=ax, forward=False, lastsize=lastsize, inorm=2, nthreads=args.ncpu), axes=ax)[:, unpad_l, unpad_m]
+from pfb.utils import load_fits, save_fits, convolve2gaussres, data_from_header, set_header_info
 
 def create_parser():
     p = argparse.ArgumentParser(description='Simple spectral index fitting tool.',
@@ -67,7 +43,7 @@ def create_parser():
                         "corresponding to image. ")
     p.add_argument('-pb-min', '--pb-min', type=float, default=0.05,
                    help="Set image to zero where pb falls below this value")
-    p.add_argument('-products', '--products', default='aeikIbcm', type=str,
+    p.add_argument('-products', '--products', default='aeikIcm', type=str,
                    help="Outputs to write. Letter correspond to: \n"
                    "a - alpha map \n"
                    "e - alpha error map \n"
@@ -88,51 +64,72 @@ def create_parser():
     p.add_argument('-rf', '--ref-freq', default=None, type=np.float64,
                    help='Reference frequency where the I0 map is sought. \n'
                    "Will overwrite in fits headers of output.")
+    p.add_argument('-otype', '--out_dtype', default='f4', type=str,
+                   help="Data type of output. Default is single precision") 
     return p
 
 def main(args):
     if args.psf_pars is None:
-        print("Attempting to take beampars from residual fits header")
+        print("Attempting to take psf_pars from residual fits header")
         try:
             rhdr = fits.getheader(args.residual)
         except KeyError:
             raise RuntimeError("Either provide a residual with beam "
-                               "information or pass them in using --beampars "
+                               "information or pass them in using --psf_pars "
                                "argument")
         if 'BMAJ1' in rhdr.keys():
             emaj = rhdr['BMAJ1']
             emin = rhdr['BMIN1']
             pa = rhdr['BPA1']
-            beampars = (emaj, emin, pa)
+            gaussparf = (emaj, emin, pa)
         elif 'BMAJ' in rhdr.keys():
             emaj = rhdr['BMAJ']
             emin = rhdr['BMIN']
             pa = rhdr['BPA']
-            beampars = (emaj, emin, pa)
+            gaussparf = (emaj, emin, pa)
     else:
-        beampars = tuple(args.psf_pars)
+        gaussparf = tuple(args.psf_pars)
         
     if args.circ_psf:
-        e = (beampars[0] + beampars[1])/2.0
-        beampars[0] = e
-        beampars[1] = e
+        e = (gaussparf[0] + gaussparf[1])/2.0
+        gaussparf[0] = e
+        gaussparf[1] = e
     
-    print("Using emaj = %3.2e, emin = %3.2e, PA = %3.2e \n" % beampars)
+    print("Using emaj = %3.2e, emin = %3.2e, PA = %3.2e \n" % gaussparf)
 
     # load model image
-    model = load_fits_contiguous(args.model)
+    model = load_fits(args.model, dtype=args.out_dtype)
+    orig_shape = model.shape
+    model = model.squeeze()
     mhdr = fits.getheader(args.model)
 
-    l_coord, m_coord, freqs, ref_freq, freq_axis = get_fits_freq_space_info(mhdr)
+    l_coord, ref_l = data_from_header(mhdr, axis=1)
+    l_coord -= ref_l
+    m_coord, ref_m = data_from_header(mhdr, axis=2)
+    m_coord -= ref_m
+    if mhdr["CTYPE4"].lower() == 'freq':
+        freq_axis = 4
+    elif mhdr["CTYPE3"].lower() == 'freq':
+        freq_axis = 3
+    else:
+        raise ValueError("Freq axis must be 3rd or 4th")
+
+    mfs_shape = list(orig_shape)
+    mfs_shape[len(orig_shape) - freq_axis] = 1
+    mfs_shape = tuple(mfs_shape)
+    freqs, ref_freq = data_from_header(mhdr, axis=freq_axis)
+
     nband = freqs.size
+    if nband < 2:
+        raise ValueError("Can't produce alpha map from a single band image")
     npix_l = l_coord.size
     npix_m = m_coord.size
 
     # update cube psf-pars
     for i in range(1, nband+1):
-        mhdr['BMAJ' + str(i)] = beampars[0]
-        mhdr['BMIN' + str(i)] = beampars[1]
-        mhdr['BPA' + str(i)] = beampars[2]
+        mhdr['BMAJ' + str(i)] = gaussparf[0]
+        mhdr['BMIN' + str(i)] = gaussparf[1]
+        mhdr['BPA' + str(i)] = gaussparf[2]
 
     if args.ref_freq is not None and args.ref_freq != ref_freq:
         ref_freq = args.ref_freq
@@ -144,7 +141,7 @@ def main(args):
     print("Reference frequency is %3.2e Hz \n" % ref_freq)
 
     # LB - new header for cubes if ref_freqs differ
-    new_hdr = set_header_info(mhdr, ref_freq, freq_axis, args, beampars)
+    new_hdr = set_header_info(mhdr, ref_freq, freq_axis, args, gaussparf)
 
     # save next to model if no outfile is provided
     if args.output_filename is None:
@@ -160,67 +157,85 @@ def main(args):
     # load beam 
     if args.beam_model is not None:
         bhdr = fits.getheader(args.beam_model)
-        l_coord_beam, m_coord_beam, freqs_beam, _, freq_axis = get_fits_freq_space_info(bhdr)
+        l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
+        l_coord_beam -= ref_lb
         if not np.array_equal(l_coord_beam, l_coord):
             raise ValueError("l coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
 
+        m_coord_beam, ref_mb = data_from_header(bhdr, axis=2)
+        m_coord_beam -= ref_mb
         if not np.array_equal(m_coord_beam, m_coord):
             raise ValueError("m coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
+        
+        freqs_beam, _ = data_from_header(bhdr, axis=freq_axis)
         if not np.array_equal(freqs, freqs_beam):
             raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
 
-        beam_image = load_fits_contiguous(args.beam_model)
+        beam_image = load_fits(args.beam_model, dtype=args.out_dtype).reshape(model.shape)
     else:
-        beam_image = np.ones(model.shape, np.float64)
+        beam_image = np.ones(model.shape, dtype=args.out_dtype)
 
-    # do beam correction
+    # do beam correction LB - TODO: use forward model instead
     model = np.where(beam_image >= args.pb_min, model/beam_image, 0.0)
 
     if not args.dont_convolve:
         print("Computing clean beam")
-        # get the Gaussian convolution kernel
-        gausskern = Gaussian2D(xx, yy, beampars, normalise=False)
+        # convolve model to desired resolution
+        model, gausskern = convolve2gaussres(model, xx, yy, gaussparf, args.ncpu, None, args.padding_frac)
 
         # save clean beam
         if 'c' in args.products:
-            hdu = fits.PrimaryHDU(header=new_hdr)
-            hdu.data = gausskern.T[:, ::-1].astype(np.float32)
             name = outfile + '.clean_psf.fits'
-            hdu.writeto(name, overwrite=True)
+            save_fits(name, gausskern.reshape(mfs_shape), new_hdr, dtype=args.out_dtype)
             print("Wrote clean psf to %s \n" % name)
-
-        # Convolve model with Gaussian restoring beam at lowest frequency
-        model = convolve_model(model, gausskern, args)
 
         # save convolved model
         if 'm' in args.products:
-            hdu = fits.PrimaryHDU(header=mhdr)
-            # save it
-            if freq_axis == 3:
-                hdu.data = np.transpose(model, axes=(0, 2, 1))[None, :, :, ::-1]
-            elif freq_axis == 4:
-                hdu.data = np.transpose(model, axes=(0, 2, 1))[:, None, :, ::-1]
             name = outfile + '.convolved_model.fits'
-            hdu.writeto(name, overwrite=True)
+            save_fits(name, model.reshape(orig_shape), new_hdr, dtype=args.out_dtype)
             print("Wrote convolved model to %s \n" % name)
 
 
-    # set threshold
+    # add in residuals and set threshold
     if args.residual is not None:
-        resid = load_fits_contiguous(args.residual)
-        l_res, m_res, freqs_res, ref_freq, freq_axis = get_fits_freq_space_info(mhdr)
-        
+        resid = load_fits(args.residual, dtype=args.out_dtype).squeeze()
+        rhdr = fits.getheader(args.residual)
+        l_res, ref_lb = data_from_header(rhdr, axis=1)
+        l_res -= ref_lb
         if not np.array_equal(l_res, l_coord):
             raise ValueError("l coordinates of residual do not match those of model")
 
+        m_res, ref_mb = data_from_header(rhdr, axis=2)
+        m_res -= ref_mb
         if not np.array_equal(m_res, m_coord):
             raise ValueError("m coordinates of residual do not match those of model")
-
+        
+        freqs_res, _ = data_from_header(rhdr, axis=freq_axis)
         if not np.array_equal(freqs, freqs_res):
             raise ValueError("Freqs of residual do not match those of model")
 
-        rms = np.std(resid)
+        # convolve residual to same resolution as model
+        gausspari = ()
+        for i in range(1,nband+1):
+            key = 'BMAJ' + str(i)
+            if key in rhdr.keys():
+                emaj = rhdr[key]
+                emin = rhdr['BMIN' + str(i)]
+                pa = rhdr['BPA' + str(i)]
+                gausspari += ((emaj, emin, pa),)
+            else:
+                print("Can't find Gausspars in residual header, unable to add residuals back in")
+                gausspari = None
+                break
+
+        if gausspari is not None:
+            resid, _ = convolve2gaussres(resid, xx, yy, gaussparf, args.ncpu, gausspari, args.padding_frac, norm_kernel=True)
+            model += resid
+            print("Convolved residuals added to convolved model")
+
+
+        counts = np.sum(resid != 0)
+        rms = np.sqrt(np.sum(resid**2)/counts)
         rms_cube = np.std(resid.reshape(nband, npix_l*npix_m), axis=1).ravel()
         threshold = args.threshold * rms
         print("Setting cutoff threshold as %i times the rms "
@@ -278,49 +293,35 @@ def main(args):
     i0_err_map[maskindices[:, 0], maskindices[:, 1]] = i0_err
 
     if 'I' in args.products:
-        hdu = fits.PrimaryHDU(header=mhdr)
         # get the reconstructed cube
         Irec_cube = i0map[None, :, :] * \
             (freqs[:, None, None]/ref_freq)**alphamap[None, :, :]
-        # save it
-        if freq_axis == 3:
-            hdu.data = np.transpose(Irec_cube, axes=(0, 2, 1))[None, :, :, ::-1].astype(np.float32)
-        elif freq_axis == 4:
-            hdu.data = np.transpose(Irec_cube, axes=(0, 2, 1))[:, None, :, ::-1].astype(np.float32)
         name = outfile + '.Irec_cube.fits'
-        hdu.writeto(name, overwrite=True)
+        save_fits(name, Irec_cube.reshape(orig_shape), mhdr, dtype=args.out_dtype)
         print("Wrote reconstructed cube to %s" % name)
 
     # save alpha map
     if 'a' in args.products:
-        hdu = fits.PrimaryHDU(header=new_hdr)
-        hdu.data = alphamap.T[:, ::-1].astype(np.float32)
         name = outfile + '.alpha.fits'
-        hdu.writeto(name, overwrite=True)
+        save_fits(name, alphamap.reshape(mfs_shape), mhdr, dtype=args.out_dtype)
         print("Wrote alpha map to %s" % name)
 
     # save alpha error map
     if 'e' in args.products:
-        hdu = fits.PrimaryHDU(header=new_hdr)
-        hdu.data = alpha_err_map.T[:, ::-1].astype(np.float32)
         name = outfile + '.alpha_err.fits'
-        hdu.writeto(name, overwrite=True)
+        save_fits(name, alpha_err_map.reshape(mfs_shape), mhdr, dtype=args.out_dtype)
         print("Wrote alpha error map to %s" % name)
 
     # save I0 map
     if 'i' in args.products:
-        hdu = fits.PrimaryHDU(header=new_hdr)
-        hdu.data = i0map.T[:, ::-1].astype(np.float32)
         name = outfile + '.I0.fits'
-        hdu.writeto(name, overwrite=True)
+        save_fits(name, i0map.reshape(mfs_shape), mhdr, dtype=args.out_dtype)
         print("Wrote I0 map to %s" % name)
 
     # save I0 error map
-    if 'i' in args.products:
-        hdu = fits.PrimaryHDU(header=new_hdr)
-        hdu.data = i0_err_map.T[:, ::-1].astype(np.float32)
+    if 'k' in args.products:
         name = outfile + '.I0_err.fits'
-        hdu.writeto(name, overwrite=True)
+        save_fits(name, i0_err_map.reshape(mfs_shape), mhdr, dtype=args.out_dtype)
         print("Wrote I0 error map to %s" % name)
 
     print(' \n ')

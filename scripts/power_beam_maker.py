@@ -3,6 +3,7 @@
 # flake8: noqa
 
 import argparse
+from pfb.utils.fits import save_fits
 import dask
 import dask.array as da
 import numpy as np
@@ -11,7 +12,7 @@ from astropy.io import fits
 import warnings
 from africanus.model.spi.dask import fit_spi_components
 from africanus.rime import parallactic_angles
-from pfb.utils import load_fits_contiguous, get_fits_freq_space_info
+from pfb.utils import load_fits, save_fits, data_from_header
 from daskms import xds_from_ms, xds_from_table
 
 @jit(nopython=True, nogil=True, cache=True)
@@ -24,7 +25,7 @@ def _unflagged_counts(flags, time_idx, out):
 
 def extract_dde_info(args, freqs):
     """
-    Computes paramactic angles, antenna scaling and pointing information
+    Computes paralactic angles, antenna scaling and pointing information
     required for beam interpolation. 
     """
     # get ms info required to compute paralactic angles and weighted sum
@@ -118,18 +119,18 @@ def make_power_beam(args, lm_source, freqs, use_dask):
     for path in paths:
         if corr1.lower() in path[-10::]:
             if 're' in path[-7::]:
-                corr1_re = load_fits_contiguous(path)
+                corr1_re = load_fits(path)
                 if beam_hdr is None:
                     beam_hdr = fits.getheader(path)
             elif 'im' in path[-7::]:
-                corr1_im = load_fits_contiguous(path)
+                corr1_im = load_fits(path)
             else:
                 raise NotImplementedError("Only re/im patterns supported")
         elif corr2.lower() in path[-10::]:
             if 're' in path[-7::]:
-                corr2_re = load_fits_contiguous(path)
+                corr2_re = load_fits(path)
             elif 'im' in path[-7::]:
-                corr2_im = load_fits_contiguous(path)
+                corr2_im = load_fits(path)
             else:
                 raise NotImplementedError("Only re/im patterns supported")
     
@@ -269,7 +270,17 @@ def create_parser():
 def main(args):
     # get coord info
     hdr = fits.getheader(args.image)
-    l_coord, m_coord, freqs, _, freq_axis = get_fits_freq_space_info(hdr)
+    l_coord, ref_l = data_from_header(hdr, axis=1)
+    l_coord -= ref_l
+    m_coord, ref_m = data_from_header(hdr, axis=2)
+    m_coord -= ref_m
+    if hdr["CTYPE4"].lower() == 'freq':
+        freq_axis = 4
+    elif hdr["CTYPE3"].lower() == 'freq':
+        freq_axis = 3
+    else:
+        raise ValueError("Freq axis must be 3rd or 4th")
+    freqs, ref_freq = data_from_header(hdr, axis=freq_axis)
     
     xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
     
@@ -277,13 +288,8 @@ def main(args):
     beam_image = interpolate_beam(xx, yy, freqs, args)
 
 
-    # 
-    hdu = fits.PrimaryHDU(header=hdr)
-    if freq_axis == 3:
-        hdu.data =  np.transpose(beam_image, axes=(0, 2, 1))[None, :, :, ::-1]
-    elif freq_axis == 4:
-        hdu.data =  np.transpose(beam_image, axes=(0, 2, 1))[:, None, :, ::-1]
-    hdu.writeto(args.output_filename, overwrite=True)
+    # save power beam
+    save_fits(args.output_filename, beam_image, hdr)
     print("Wrote interpolated beam cube to %s \n" % args.output_filename)
 
 

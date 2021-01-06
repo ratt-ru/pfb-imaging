@@ -142,7 +142,7 @@ def get_padding_info(nx, ny, pfrac):
     unpad_y = slice(npad_yl, -npad_yr)
     return padding, unpad_x, unpad_y
 
-def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None, pfrac=0.5):
+def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None, pfrac=0.5, norm_kernel=False):
     """
     Convolves the image to a specified resolution.
     
@@ -161,7 +161,7 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None, pfrac=
     ax = (1, 2)  # axes over which to perform fft
     lastsize = ny + np.sum(padding[-1])
 
-    gausskern = Gaussian2D(xx, yy, gaussparf)
+    gausskern = Gaussian2D(xx, yy, gaussparf, normalise=norm_kernel)
     gausskern = np.pad(gausskern[None], padding, mode='constant')
     gausskernhat = r2c(iFs(gausskern, axes=ax), axes=ax, forward=True, nthreads=nthreads, inorm=0)
 
@@ -173,7 +173,7 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None, pfrac=
         imhat *= gausskernhat
     else:
         for i in range(nband):
-            thiskern = Gaussian2D(xx, yy, gausspari[i])
+            thiskern = Gaussian2D(xx, yy, gausspari[i], normalise=norm_kernel)
             thiskern = np.pad(thiskern[None], padding, mode='constant')
             thiskernhat = r2c(iFs(thiskern, axes=ax), axes=ax, forward=True, nthreads=nthreads, inorm=0)
 
