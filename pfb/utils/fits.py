@@ -48,7 +48,11 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
     w.wcs.cunit[0] = 'deg'
     w.wcs.cunit[1] = 'deg'
     w.wcs.cunit[2] = 'Hz'
-    w.wcs.crval = [radec[0]*180.0/np.pi,radec[1]*180.0/np.pi, freq[0], 1]
+    if np.size(freq) > 1:
+        ref_freq = freq[0]
+    else:
+        ref_freq = freq
+    w.wcs.crval = [radec[0]*180.0/np.pi,radec[1]*180.0/np.pi, ref_freq, 1]
     w.wcs.crpix = [1 + nx//2,1 + ny//2, 1, 1]
 
     if freq.size > 1:
