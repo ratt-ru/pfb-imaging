@@ -43,7 +43,7 @@ def create_parser():
                         "corresponding to image. ")
     p.add_argument('-pb-min', '--pb-min', type=float, default=0.15,
                    help="Set image to zero where pb falls below this value")
-    p.add_argument('-products', '--products', default='aeikIcm', type=str,
+    p.add_argument('-products', '--products', default='aeikIcmr', type=str,
                    help="Outputs to write. Letter correspond to: \n"
                    "a - alpha map \n"
                    "e - alpha error map \n"
@@ -52,6 +52,7 @@ def create_parser():
                    "I - reconstructed cube form alpha and I0 \n"
                    "c - restoring beam used for convolution \n"
                    "m - convolved model \n"
+                   "m - convolved residual \n"
                    "Default is to write all of them")
     p.add_argument('-pf', "--padding-frac", default=0.5, type=float,
                    help="Padding factor for FFT's.")
@@ -66,6 +67,8 @@ def create_parser():
                    "Will overwrite in fits headers of output.")
     p.add_argument('-otype', '--out_dtype', default='f4', type=str,
                    help="Data type of output. Default is single precision") 
+    p.add_argument('-acr', '--add-convolved-residuals', action="store_true",
+                   help='Flag to add in the convolved residuals before fitting components')
     return p
 
 def main(args):
@@ -229,13 +232,16 @@ def main(args):
                 gausspari = None
                 break
 
-        if gausspari is not None:
+        if gausspari is not None and args.add_convolved_residuals:
             resid, _ = convolve2gaussres(resid, xx, yy, gaussparf, args.ncpu, gausspari, args.padding_frac, norm_kernel=True)
             model += resid
             print("Convolved residuals added to convolved model")
 
-            name = outfile + '.convolved_residual.fits'
-            save_fits(name, resid.reshape(orig_shape), rhdr)
+            if 'c' in args.products:
+                name = outfile + '.convolved_residual.fits'
+                save_fits(name, resid.reshape(orig_shape), rhdr)
+                print("Wrote convolved residuals to %s" % name)
+
 
 
         counts = np.sum(resid != 0)
