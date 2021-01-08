@@ -16,7 +16,7 @@ def load_fits(name, dtype=np.float64):
     elif len(data.shape) == 3:
         return np.ascontiguousarray(np.transpose(data[:, ::-1].astype(dtype), axes=(0, 2, 1)))
     elif len(data.shape) == 2:
-        return np.ascontiguousarray(data[::-1].T.astype(dtype))
+        return np.ascontiguousarray(data[:, ::-1].T.astype(dtype))
     else:
         raise ValueError("Unsupported number of axes for fits file %s"%name)
 
@@ -48,7 +48,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
     w.wcs.cunit[0] = 'deg'
     w.wcs.cunit[1] = 'deg'
     w.wcs.cunit[2] = 'Hz'
-    w.wcs.crval = [radec[0]*180.0/np.pi,radec[1]*180.0/np.pi, 0.0, 1]
+    w.wcs.crval = [radec[0]*180.0/np.pi,radec[1]*180.0/np.pi, freq[0], 1]
     w.wcs.crpix = [1 + nx//2,1 + ny//2, 1, 1]
 
     if freq.size > 1:

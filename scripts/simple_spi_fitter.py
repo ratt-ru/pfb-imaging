@@ -99,8 +99,8 @@ def main(args):
 
     # load model image
     model = load_fits(args.model, dtype=args.out_dtype)
-    orig_shape = model.shape
     model = model.squeeze()
+    orig_shape = model.shape
     mhdr = fits.getheader(args.model)
 
     l_coord, ref_l = data_from_header(mhdr, axis=1)
@@ -115,7 +115,7 @@ def main(args):
         raise ValueError("Freq axis must be 3rd or 4th")
 
     mfs_shape = list(orig_shape)
-    mfs_shape[len(orig_shape) - freq_axis] = 1
+    mfs_shape[0] = 1
     mfs_shape = tuple(mfs_shape)
     freqs, ref_freq = data_from_header(mhdr, axis=freq_axis)
 
@@ -148,7 +148,7 @@ def main(args):
         # strip .fits from model filename 
         tmp = args.model[::-1]
         idx = tmp.find('.')
-        outfile = args.model[0:-idx]
+        outfile = args.model[0:-(idx+1)]
     else:
         outfile = args.output_filename
 
@@ -232,6 +232,9 @@ def main(args):
             resid, _ = convolve2gaussres(resid, xx, yy, gaussparf, args.ncpu, gausspari, args.padding_frac, norm_kernel=True)
             model += resid
             print("Convolved residuals added to convolved model")
+
+            name = outfile + '.convolved_residual.fits'
+            save_fits(name, resid.reshape(orig_shape), rhdr)
 
 
         counts = np.sum(resid != 0)
