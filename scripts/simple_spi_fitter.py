@@ -41,7 +41,7 @@ def create_parser():
                    help="Fits beam model to use. \n"
                         "Use power_beam_maker to make power beam "
                         "corresponding to image. ")
-    p.add_argument('-pb-min', '--pb-min', type=float, default=0.05,
+    p.add_argument('-pb-min', '--pb-min', type=float, default=0.15,
                    help="Set image to zero where pb falls below this value")
     p.add_argument('-products', '--products', default='aeikIcm', type=str,
                    help="Outputs to write. Letter correspond to: \n"
@@ -176,7 +176,8 @@ def main(args):
         beam_image = np.ones(model.shape, dtype=args.out_dtype)
 
     # do beam correction LB - TODO: use forward model instead
-    model = np.where(beam_image >= args.pb_min, model/beam_image, 0.0)
+    beammin = np.amin(beam_image, axis=0)[None, :, :]
+    model = np.where(beammin >= args.pb_min, model/beam_image, 0.0)
 
     if not args.dont_convolve:
         print("Computing clean beam")
