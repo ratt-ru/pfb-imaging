@@ -1,57 +1,131 @@
 import numpy as np
-from numba import jit, prange
+from numba import njit, prange
+import dask.array as da
+from africanus.constants import c as lightspeed
+
+
+def compute_uniform_counts(uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
+    counts = da.blockwise(compute_uniform_counts_wrapper, ('one', 'chan', 'nx', 'ny'),
+                          uvw, ('row', 'three'),
+                          freqs, ('chan',),
+                          freq_bin_idx, ('chan',),
+                          freq_bin_counts, ('chan',),
+                          nx, None,
+                          ny, None,
+                          cell_size_x, None,
+                          cell_size_y, None,
+                          dtype, None,
+                          new_axes={"one": 1, "nx": nx, "ny": ny},
+                          adjust_chunks={'chan': freq_bin_idx.chunks[0],
+                                         'row': (1,)*len(uvw.chunks[0])},
+                          align_arrays=False,
+                          dtype=dtype)
+    
+    return counts.sum(axis=0)
+
+def compute_uniform_counts_wrapper(uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
+    return _compute_uniform_counts(uvw[0][0], freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype)
 
 
 @njit(nogil=True, fastmath=True, cache=True)
-def compute_wsums_band(uvw, weights, freqs, nx, ny, cell_size_x, cell_size_y, dtype):
-    # get u coordinates of the grid 
-    umax = 1.0/cell_size_x
-    # get end points
-    ug = np.linspace(-umax, umax, nx + 1)[1::]
-    # get v coordinates of the grid
-    vmax = 1.0/cell_size_y
-    # get end points
-    vg = np.linspace(-vmax, vmax, ny + 1)[1::]
-    # initialise array to store counts
-    counts = np.zeros((nx, ny), dtype=dtype)
+def _compute_uniform_counts(uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
+    # ufreqs
+    # ug = np.fft.fftshift(np.fft.fftfreq(nx, d=cell_size_x))
+    umax = 1/(2*cell_size_x)
+    u_diff = 1/(nx*cell_size_x)
+    
+    # vfreqs
+    # vg = np.fft.fftshift(np.fft.fftfreq(ny, d=cell_size_y))
+    vmax = 1/(2*cell_size_y)
+    v_diff = 1/(ny*cell_size_y)
+    
+    # initialise array to store counts (the additional axis is to allow chunking over row)
+    nband = freq_bin_idx.size
+    counts = np.zeros((1, nband, nx, ny), dtype=dtype)
+    
+    # accumulate counts
+    nrow = uvw.shape[0]
+    normfreqs = freqs / lightspeed
+    # adjust for chunking (need a copy here if using multiple row chunks)
+    freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
+    for r in range(nrow):
+        uvw_row = uvw[r]
+        for b in range(nband):
+            for c in range(freq_bin_idx2[b], freq_bin_idx2[b] + freq_bin_counts[b]):
+                # get current uv coords
+                chan_normfreq = normfreqs[c]
+                u_tmp = uvw_row[0] * chan_normfreq
+                v_tmp = uvw_row[1] * chan_normfreq
+               # get u index
+                u_idx = int(np.round((u_tmp + umax)/u_diff))
+                # get v index
+                v_idx = int(np.round((v_tmp + vmax)/v_diff))
+                counts[0, b, u_idx, v_idx] += 1
+    return counts
+
+
+def counts_to_weights(counts, uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
+
+    weights = da.blockwise(counts_to_weights_wrapper, ('row', 'chan'),
+                           counts, ('chan', 'nx', 'ny'),
+                           uvw, ('row', 'three'),
+                           freqs, ('chan',),
+                           freq_bin_idx, ('chan',),
+                           freq_bin_counts, ('chan',),
+                           nx, None,
+                           ny, None,
+                           cell_size_x, None,
+                           cell_size_y, None,
+                           dtype, None,
+                           adjust_chunks={'chan': freqs.chunks[0]},
+                           align_arrays=False,
+                           dtype=dtype)
+    return weights
+
+
+def counts_to_weights_wrapper(counts, uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
+    return _counts_to_weights(counts[0][0], uvw[0], freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype)
+
+
+@njit(nogil=True, fastmath=True, cache=True, parallel=True)
+def _counts_to_weights(counts, uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
+    # ufreqs
+    # ug = np.fft.fftshift(np.fft.fftfreq(nx, d=cell_size_x))
+    umax = 1/(2*cell_size_x)
+    u_diff = 1/(nx*cell_size_x)
+    
+    # vfreqs
+    # vg = np.fft.fftshift(np.fft.fftfreq(ny, d=cell_size_y))
+    vmax = 1/(2*cell_size_y)
+    v_diff = 1/(ny*cell_size_y)
+
+    # initialise array to store counts (the additional axis is to allow chunking over row)
+    nband = freq_bin_idx.size
     # accumulate counts
     nchan = freqs.size
     nrow = uvw.shape[0]
-    for r in range(nrow):
-        for c in range(nchan):
-            # get current uv coords
-            u_tmp, v_tmp = uvw[r, 0:2] * freqs[c] / lightspeed
-            # get u index
-            u_idx = (ug < u_tmp).nonzero()[0][-1]
-            # get v index
-            v_idx = (vg < v_tmp).nonzero()[0][-1]
-            counts[u_idx, v_idx] += weights[r, c]
-    return counts
 
-@njit(nogil=True, fastmath=True, cache=True)
-def wsums_to_weights_band(wsums, uvw, freqs, nx, ny, cell_size_x, cell_size_y, dtype):
-    # get u coordinates of the grid 
-    umax = 1.0/cell_size_x
-    # get end points
-    ug = np.linspace(-umax, umax, nx + 1)[1::]
-    # get v coordinates of the grid
-    vmax = 1.0/cell_size_y
-    # get end points
-    vg = np.linspace(-vmax, vmax, ny + 1)[1::]
-    nchan = freqs.size
-    nrow = uvw.shape[0]
-    # initialise array to store weights
+    normfreqs = freqs / lightspeed
+
+    # adjust for chunking
+    # need a copy here if using multiple row chunks
+    freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
+
     weights = np.zeros((nrow, nchan), dtype=dtype)
-    for r in range(nrow):
-        for c in range(nchan):
-            # get current uv
-            u_tmp, v_tmp = uvw[r, 0:2] * freqs[c] / lightspeed
-            # get u index
-            u_idx = (ug < u_tmp).nonzero()[0][-1]
-            # get v index
-            v_idx = (vg < v_tmp).nonzero()[0][-1]
-            if wsums[u_idx, v_idx]:
-                weights[r, c] = 1.0/wsums[u_idx, v_idx]
+    for r in prange(nrow):
+        uvw_row = uvw[r]
+        for b in range(nband):
+            for c in range(freq_bin_idx2[b], freq_bin_idx2[b] + freq_bin_counts[b]):
+                # get current uv
+                chan_normfreq = normfreqs[c]
+                u_tmp = uvw_row[0] * chan_normfreq
+                v_tmp = uvw_row[1] * chan_normfreq
+                # get u index
+                u_idx = int(np.round((u_tmp + umax)/u_diff))
+                # get v index
+                v_idx = int(np.round((v_tmp + vmax)/v_diff))
+                if counts[b, u_idx, v_idx]:
+                    weights[r, c] = 1.0/counts[b, u_idx, v_idx]
     return weights
 
 def robust_reweight(residuals, weights, v=None):

@@ -5,5 +5,4 @@ include scripts/image_convolver.py
 include scripts/pfbclean.py
 include scripts/make_mask.py
 include scripts/flag_outliers.py
-include scripts/ssclean.py
-include scripts/multi_pfbclean.py
+include scripts/kgb2col.py 

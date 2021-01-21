@@ -12,9 +12,14 @@ from pprint import pprint
 
 class Gridder(object):
     def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',
-                 row_chunks=100000, optimise_chunks=True, epsilon=1e-5,
+                 row_chunks=100000, chan_chunks=32, optimise_chunks=True, epsilon=1e-5,
                  data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM',
                  model_column="MODEL_DATA", flag_column='FLAG', imaging_weight_column=None):
+        '''
+        A note on chunking - currently row_chunks and chan_chunks are only used for the
+        compute_weights() and write_component_model() methods. All other methods assume
+        that the data for a single imaging band per ms and spw fits into memory. 
+        '''
         if Stokes != 'I':
             raise NotImplementedError("Only Stokes I currently supported")
         self.nx = nx
@@ -23,6 +28,8 @@ class Gridder(object):
         self.nthreads = nthreads
         self.do_wstacking = do_wstacking
         self.epsilon = epsilon
+        self.row_chunks = row_chunks
+        self.chan_chunks = chan_chunks
 
         self.data_column = data_column
         self.weight_column = weight_column
@@ -130,82 +137,100 @@ class Gridder(object):
         # if optimise_chunks:
         #     for 
 
-    # def dot(self, x):
-    #     """
-    #     Convenience function mapping x to visibilities. Assumes data fit into memory.
-    #     dot and hdot are consistent in the sense that
+    def compute_weights(self):
+        from pfb.utils.weighting import compute_uniform_counts, counts_to_weights
+        # compute counts
+        counts = []
+        for ims in self.ms:
+            xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
+                              chunks=self.chunks[ims],
+                              columns=('UVW'))
 
-    #         real(<y^H, R x>) = real(<R^H y, x>)
+            # subtables
+            ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
+            fields = xds_from_table(ims + "::FIELD", group_cols="__row__")
+            spws = xds_from_table(ims + "::SPECTRAL_WINDOW", group_cols="__row__")
+            pols = xds_from_table(ims + "::POLARIZATION", group_cols="__row__")
 
-    #     where <a, b> is the innder product of a and b. 
-    #     """
-    #     x = da.from_array(x.astype(np.float32), chunks=(1, self.nx, self.ny))
-    #     visibilities  = []
-    #     for ims in self.ms:
-    #         xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
-    #                           chunks=self.chunks[ims],
-    #                           columns=(self.model_column, 'UVW'))
+            # subtable data
+            ddids = dask.compute(ddids)[0]
+            fields = dask.compute(fields)[0]
+            spws = dask.compute(spws)[0]
+            pols = dask.compute(pols)[0]
 
-    #         # subtables
-    #         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
-    #         fields = xds_from_table(ims + "::FIELD", group_cols="__row__")
-    #         spws = xds_from_table(ims + "::SPECTRAL_WINDOW", group_cols="__row__")
-    #         pols = xds_from_table(ims + "::POLARIZATION", group_cols="__row__")
+            for ds in xds:
+                field = fields[ds.FIELD_ID]
+                radec = field.PHASE_DIR.data.squeeze()
+                if not np.array_equal(radec, self.radec):
+                    continue
 
-    #         # subtable data
-    #         ddids = dask.compute(ddids)[0]
-    #         fields = dask.compute(fields)[0]
-    #         spws = dask.compute(spws)[0]
-    #         pols = dask.compute(pols)[0]
+                spw = ds.DATA_DESC_ID  # this is not correct, need to use spw
 
-    #         out_data = []
-    #         for ds in xds:
-    #             field = fields[ds.FIELD_ID]
-    #             radec = field.PHASE_DIR.data.squeeze()
-    #             if not np.array_equal(radec, self.radec):
-    #                 continue
+                freq_bin_idx = self.freq_bin_idx[ims][spw]
+                freq_bin_counts = self.freq_bin_counts[ims][spw]
+                freq = self.freq[ims][spw]
 
-    #             spw = ds.DATA_DESC_ID  # this is not correct, need to use spw
+                uvw = ds.UVW.data
 
-    #             weights = getattr(ds, self.weight_column).data
-    #             if len(weights.shape) < 3:
-    #                 weights = da.broadcast_to(weights[:, None, :], data.shape, chunks=data.chunks)
-                    
+                count = compute_uniform_counts(uvw, freq, freq_bin_idx, freq_bin_counts, 2*self.nx, 2*self.ny, self.cell, self.cell, np.float32)
 
-    #             if self.imaging_weight_column is not None:
-    #                 imaging_weights = getattr(ds, self.imaging_weight_column).data
-    #                 if len(imaging_weights.shape) < 3:
-    #                     imaging_weights = da.broadcast_to(imaging_weights[:, None, :], data.shape, chunks=data.chunks)
+                counts.append(count) 
+            
+        counts = dask.compute(counts)[0]
+        counts = accumulate_dirty(counts, self.nband, self.band_mapping)
 
-    #                 weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
-    #                 weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]
-    #             else:
-    #                 weightsxx = weights[:, :, 0]
-    #                 weightsyy = weights[:, :, -1]
-
-    #             # weighted sum corr to Stokes I
-    #             weights = weightsxx + weightsyy
-
-    #             freq_bin_idx = self.freq_bin_idx[ims][spw]
-    #             freq_bin_counts = self.freq_bin_counts[ims][spw]
-    #             freq = self.freq[ims][spw]
-
-    #             uvw = ds.UVW.data
-
-    #             model_vis = getattr(ds, self.model_column).data
-
-    #             bands = self.band_mapping[ims][spw]
-    #             model = x[list(bands), :, :]
-    #             vis = im2vis(uvw, freq, model, freq_bin_idx, freq_bin_counts,
-    #                          self.cell, nthreads=self.nthreads, epsilon=self.epsilon,
-    #                          do_wstacking=self.do_wstacking)
-
-    #             model_vis = populate_model(vis, model_vis)
-
-    #             visibilities.append(model_vis)
+        # return counts
         
-    #     visibilities  = dask.compute(visibilities, scheduler='single-threaded')[0]
-    #     return 
+        counts = da.from_array(counts, chunks=(1, -1, -1))
+
+        # convert counts to uniform weights
+        writes = []
+        for ims in self.ms:
+            xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
+                              chunks={'row':(self.row_chunks,), 'chan':(self.chan_chunks,)},
+                              columns=self.columns)
+
+            # subtables
+            ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
+            fields = xds_from_table(ims + "::FIELD", group_cols="__row__")
+            spws = xds_from_table(ims + "::SPECTRAL_WINDOW", group_cols="__row__")
+            pols = xds_from_table(ims + "::POLARIZATION", group_cols="__row__")
+
+            # subtable data
+            ddids = dask.compute(ddids)[0]
+            fields = dask.compute(fields)[0]
+            spws = dask.compute(spws)[0]
+            pols = dask.compute(pols)[0]
+
+            out_data = []
+            for ds in xds:
+                field = fields[ds.FIELD_ID]
+                radec = field.PHASE_DIR.data.squeeze()
+                if not np.array_equal(radec, self.radec):
+                    continue
+
+                spw = ds.DATA_DESC_ID  # this is not correct, need to use spw
+
+                freq_bin_idx = self.freq_bin_idx[ims][spw]
+                freq_bin_counts = self.freq_bin_counts[ims][spw]
+                freq = self.freq[ims][spw]
+
+                uvw = ds.UVW.data
+
+                weights = counts_to_weights(counts, uvw, freq, freq_bin_idx, freq_bin_counts, 2*self.nx, 2*self.ny, self.cell, self.cell, np.float32)
+
+                # hack to get shape and chunking info
+                data = getattr(ds, self.data_column).data
+                weights = da.broadcast_to(weights[:, :, None], data.shape, chunks=data.chunks)
+                out_ds = ds.assign(**{"IMAGING_WEIGHT_SPECTRUM": (("row", "chan", "corr"),
+                                   weights)})
+                out_data.append(out_ds)
+            writes.append(xds_to_table(out_data, ims, columns=["IMAGING_WEIGHT_SPECTRUM"]))
+        dask.compute(writes)
+
+
+
+
 
     def make_residual(self, x):
         print("Making residual")
@@ -586,7 +611,7 @@ def _corr_to_stokes(data, weights):
 
         data = dataxx * weightsxx + datayy * weightsyy
         weights = weightsxx + weightsyy
-        data = da.where(weights > 0, data/weights, 0.0j)
+        data = np.where(weights > 0, data/weights, 0.0j)
     else:
         data = data[:, :, 0]
         weights = weights[:, :, 0]

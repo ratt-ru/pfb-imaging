@@ -16,6 +16,7 @@ def test_pfb(tmp_path_factory):
     args.outfile = str(test_dir / 'image')
     args.fov = 1.0
     args.maxit = 2
+    args.minormaxit = 2
     args.report_freq = 1
     args.reweight_iters = 5
     args.cgmaxit = 5
