@@ -5,10 +5,7 @@
 import argparse
 import numpy as np
 from astropy.io import fits
-from pfb.utils import load_fits_contiguous, get_fits_freq_space_info, Gaussian2D
-from pypocketfft import r2c, c2r
-iFs = np.fft.ifftshift
-Fs = np.fft.fftshift
+from pfb.utils import load_fits, save_fits, convolve2gaussres, data_from_header
 
 def create_parser():
     p = argparse.ArgumentParser(description='Simple spectral index fitting'
@@ -35,110 +32,99 @@ def create_parser():
                         "corresponding to image. ")
     p.add_argument('-pb-min', '--pb-min', type=float, default=0.05,
                    help="Set image to zero where pb falls below this value")
+    p.add_argument('-pf', '--padding-frac', type=float, default=0.5,
+                   help="Padding fraction for FFTs (half on either side)")
     return p
 
 def main(args):
-    # read resolution of fits file
+    # read coords from fits file
     hdr = fits.getheader(args.image)
-    l_coord, m_coord, freqs, _, freq_axis = get_fits_freq_space_info(hdr)
+    l_coord, ref_l = data_from_header(hdr, axis=1)
+    l_coord -= ref_l
+    m_coord, ref_m = data_from_header(hdr, axis=2)
+    m_coord -= ref_m
+    if hdr["CTYPE4"].lower() == 'freq':
+        freq_axis = 4
+    elif hdr["CTYPE3"].lower() == 'freq':
+        freq_axis = 3
+    else:
+        raise ValueError("Freq axis must be 3rd or 4th")
+    freqs, ref_freq = data_from_header(hdr, axis=freq_axis)
+
     nchan = freqs.size
-    psf_pars = {}
-    for i in range(1,nchan+1):
-        key = 'BMAJ' + str(i)
-        if key in hdr.keys():
-            emaj = hdr[key]
-            emin = hdr['BMIN' + str(i)]
-            pa = hdr['BPA' + str(i)]
-            psf_pars[i] = (emaj, emin, pa)
+    gausspari = ()
+    if freqs.size > 1:
+        for i in range(1,nchan+1):
+            key = 'BMAJ' + str(i)
+            if key in hdr.keys():
+                emaj = hdr[key]
+                emin = hdr['BMIN' + str(i)]
+                pa = hdr['BPA' + str(i)]
+                gausspari += ((emaj, emin, pa),)
+    else:
+        if 'BMAJ' in hdr.keys():
+            emaj = hdr['BMAJ']
+            emin = hdr['BMIN']
+            pa = hdr['BPA']
+            # using key of 1 for consistency with fits standard 
+            gausspari = ((emaj, emin, pa),)  
     
-    if len(psf_pars) == 0 and args.psf_pars is None:
+    if len(gausspari) == 0 and args.psf_pars is None:
         raise ValueError("No psf parameters in fits file and none passed in.")
     
-    if len(psf_pars) == 0:
+    if len(gausspari) == 0:
         print("No psf parameters in fits file. Convolving model to resolution specified by psf-pars.")
-        beampars = tuple(args.psf_pars)
+        gaussparf = tuple(args.psf_pars)
     else:
         if args.psf_pars is None:
-            beampars = psf_pars[1]
+            gaussparf = gausspari[0]
         else:
-            beampars = tuple(args.psf_pars)
+            gaussparf = tuple(args.psf_pars)
 
     if args.circ_psf:
-        e = (beampars[0] + beampars[1])/2.0
-        beampars[0] = e
-        beampars[1] = e
+        e = (gaussparf[0] + gaussparf[1])/2.0
+        gaussparf[0] = e
+        gaussparf[1] = e
     
-    print("Using emaj = %3.2e, emin = %3.2e, PA = %3.2e \n" % beampars)
+    print("Using emaj = %3.2e, emin = %3.2e, PA = %3.2e \n" % gaussparf)
 
     # update header
-    for i in range(1, nchan+1):
-        hdr['BMAJ' + str(i)] = beampars[0]
-        hdr['BMIN' + str(i)] = beampars[1]
-        hdr['BPA' + str(i)] = beampars[2]
+    if freqs.size > 1:
+        for i in range(1, nchan+1):
+            hdr['BMAJ' + str(i)] = gaussparf[0]
+            hdr['BMIN' + str(i)] = gaussparf[1]
+            hdr['BPA' + str(i)] = gaussparf[2]
+    else:
+        hdr['BMAJ'] = gaussparf[0]
+        hdr['BMIN'] = gaussparf[1]
+        hdr['BPA'] = gaussparf[2]
 
     # coodinate grid
     xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij') 
 
-    # get padding
-    npix_l, npix_m = xx.shape
-    pfrac = 0.2/2
-    npad_l = int(pfrac*npix_l)
-    npad_m = int(pfrac*npix_m)
-    
-    # get fast FFT sizes and update padding
-    from scipy.fftpack import next_fast_len
-    nfft = next_fast_len(npix_l + 2*npad_l)
-    npad_ll = (nfft - npix_l)//2
-    npad_lr = nfft - npix_l - npad_ll
-    nfft = next_fast_len(npix_m + 2*npad_m)
-    npad_ml = (nfft - npix_m)//2
-    npad_mr = nfft - npix_m - npad_ml
-    padding = ((0, 0), (npad_ll, npad_lr), (npad_ml, npad_mr))
-    unpad_l = slice(npad_ll, -npad_lr)
-    unpad_m = slice(npad_ml, -npad_mr)
-    
-    ax = (1, 2)  # axes over which to perform fft
-    lastsize = npix_m + np.sum(padding[-1])
-
-    # kernel of desired resolution
-    gausskern = Gaussian2D(xx, yy, beampars)
-    gausskern = np.pad(gausskern[None], padding, mode='constant')
-    gausskernhat = r2c(iFs(gausskern, axes=ax), axes=ax, forward=True, nthreads=args.ncpu, inorm=0)
-
-    # FT of image
-    image = load_fits_contiguous(args.image)
-    image = np.pad(image, padding, mode='constant')
-    imhat = r2c(iFs(image, axes=ax), axes=ax, forward=True, nthreads=args.ncpu, inorm=0)
-
-    # convolve to desired resolution
-    if len(psf_pars) == 0:
-        imhat *= gausskernhat
-    else:
-        for i in range(nchan):
-            thiskern = Gaussian2D(xx, yy, psf_pars[i+1])
-            thiskern = np.pad(thiskern[None], padding, mode='constant')
-            thiskernhat = r2c(iFs(thiskern, axes=ax), axes=ax, forward=True, nthreads=args.ncpu, inorm=0)
-
-            convkernhat = np.where(np.abs(thiskernhat)>0.0, gausskernhat/thiskernhat, 0.0)
-
-            imhat[i] *= convkernhat[0]
-
-    image = Fs(c2r(imhat, axes=ax, forward=False, lastsize=lastsize, inorm=2, nthreads=args.ncpu), axes=ax)[:, unpad_l, unpad_m]
+    # convolve image
+    imagei = load_fits(args.image, dtype=np.float32).squeeze()
+    print(imagei.shape)
+    image, gausskern = convolve2gaussres(imagei, xx, yy, gaussparf, args.ncpu, gausspari, args.padding_frac)
 
     # load beam and correct
     if args.beam_model is not None:
         bhdr = fits.getheader(args.beam_model)
-        l_coord_beam, m_coord_beam, freqs_beam, _, freq_axis = get_fits_freq_space_info(bhdr)
+        l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
+        l_coord_beam -= ref_lb
         if not np.array_equal(l_coord_beam, l_coord):
             raise ValueError("l coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
 
+        m_coord_beam, ref_mb = data_from_header(bhdr, axis=2)
+        m_coord_beam -= ref_mb
         if not np.array_equal(m_coord_beam, m_coord):
             raise ValueError("m coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
+        
+        freqs_beam, _ = data_from_header(bhdr, axis=freq_axis)
         if not np.array_equal(freqs, freqs_beam):
             raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
 
-        beam_image = load_fits_contiguous(args.beam_model)
+        beam_image = load_fits(args.beam_model, dtype=np.float32).squeeze()
 
         image = np.where(beam_image >= args.pb_min, image/beam_image, 0.0)
 
@@ -151,28 +137,17 @@ def main(args):
     else:
         outfile = args.output_filename
 
-    
-
-    # save clean beam
-    hdu = fits.PrimaryHDU(header=hdr)
-    hdu.data = gausskern.T[:, ::-1].astype(np.float32)
+    # save images
     name = outfile + '.clean_psf.fits'
-    hdu.writeto(name, overwrite=True)
+    save_fits(name, gausskern, hdr)
     print("Wrote clean psf to %s \n" % name)
 
-    hdu = fits.PrimaryHDU(header=hdr)
-    # save it
-    if freq_axis == 3:
-        hdu.data = np.transpose(image, axes=(0, 2, 1))[None, :, :, ::-1].astype(np.float32)
-    elif freq_axis == 4:
-        hdu.data = np.transpose(image, axes=(0, 2, 1))[:, None, :, ::-1].astype(np.float32)
     name = outfile + '.convolved.fits'
-    hdu.writeto(name, overwrite=True)
+    save_fits(name, image, hdr)
     print("Wrote convolved model to %s \n" % name)
 
     print("All done here")
 
-    
 
 if __name__ == "__main__":
     args = create_parser().parse_args()
