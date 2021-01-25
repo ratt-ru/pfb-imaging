@@ -69,7 +69,7 @@ def create_parser():
                    help="Step size of 'primal' update.")
     p.add_argument("--maxit", type=int, default=5,
                    help="Number of pfb iterations")
-    p.add_argument("--minormaxit", type=int, default=20,
+    p.add_argument("--minormaxit", type=int, default=15,
                    help="Number of pfb iterations")
     p.add_argument("--tol", type=float, default=1e-3,
                    help="Tolerance")
@@ -104,7 +104,7 @@ def create_parser():
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=150,
                    help="Maximum number of iterations for the cg updates")
-    p.add_argument("--cgminit", type=int, default=10,
+    p.add_argument("--cgminit", type=int, default=25,
                    help="Minimum number of iterations for the cg updates")
     p.add_argument("--cgverbose", type=int, default=1,
                    help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
@@ -295,13 +295,16 @@ def main(args):
                 weights21 = None 
             
             model, dual, residual_mfs_minor, weights21 = sara(
-                dirty, psf, model, residual, mask, args.sig_21, dual=dual, weights21=weights21,
+                psf, model, residual, mask, args.sig_21, dual=dual, weights21=weights21,
                 nthreads=args.nthreads,  maxit=args.minormaxit, gamma=args.gamma,  tol=args.minortol,
                 psi_levels=args.psi_levels, psi_basis=args.psi_basis,
                 reweight_iters=reweight_iters, reweight_alpha_ff=args.reweight_alpha_ff, reweight_alpha_percent=args.reweight_alpha_percent,
                 pdtol=args.pdtol, pdmaxit=args.pdmaxit, pdverbose=args.pdverbose, positivity=args.positivity,
                 cgtol=args.cgtol, cgminit=args.cgminit, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose, 
                 pmtol=args.pmtol, pmmaxit=args.pmmaxit, pmverbose=args.pmverbose)
+            
+            if args.reweight_iters is None:
+                reweight_iters = np.arange(1, args.minormaxit, dtype=np.int)
 
         else:
             raise ValueError("Unknown deconvolution mode ", args.deconv_mode)
@@ -330,6 +333,10 @@ def main(args):
         if eps < args.tol:
             break
 
+    # save model cube and last residual cube
+    save_fits(args.outfile + '_model.fits', model, hdr)
+    save_fits(args.outfile + '_last_residual.fits', residual, hdr)
+    
     if args.write_model:
         R.write_model(model)
 

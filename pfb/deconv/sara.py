@@ -5,18 +5,19 @@ from pfb.operators import PSF, DaskPSI
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
 
-def sara(dirty, psf, model, residual, mask, sig_21, dual=None, weights21=None, 
+def sara(psf, model, residual, mask, sig_21, dual=None, weights21=None, 
          nthreads=0, maxit=10, gamma=0.99,  tol=1e-3,  # options for outer optimisation
          psi_levels=3, psi_basis=None,  # sara dict options
          reweight_iters=None, reweight_alpha_ff=0.5, reweight_alpha_percent=10,  # reweighting options
          pdtol=1e-6, pdmaxit=250, pdverbose=1, positivity=True,  # primal dual options
-         cgtol=1e-6, cgminit=10, cgmaxit=150, cgverbose=1,  # conjugate gradient options
+         cgtol=1e-6, cgminit=25, cgmaxit=150, cgverbose=1,  # conjugate gradient options
          pmtol=1e-5, pmmaxit=50, pmverbose=1):  # power method options
     
-    nband, nx, ny = dirty.shape
+    nband, nx, ny = residual.shape
     
     # PSF operator
     psfo = PSF(psf, nthreads)
+    dirty = residual + psfo.convolve(model)
 
     # wavelet dictionary
     if psi_basis is None:
@@ -28,6 +29,7 @@ def sara(dirty, psf, model, residual, mask, sig_21, dual=None, weights21=None,
     
     # l21 weights and dual 
     if weights21 is None:
+        print("     Initialising all l21 weights to unity.")
         weights21 = np.ones((psi.nbasis, psi.nmax), dtype=np.float64)
     if dual is None:
         dual = np.zeros((psi.nbasis, nband, psi.nmax), dtype=np.float64)
@@ -48,12 +50,12 @@ def sara(dirty, psf, model, residual, mask, sig_21, dual=None, weights21=None,
         return mask*psfo.convolve(mask*x) + x / (0.5*rmax) 
 
     # spectral norm
-    beta, betavec = power_method(hess, dirty.shape, tol=pmtol, maxit=pmmaxit, verbosity=pmverbose)
+    beta, betavec = power_method(hess, residual.shape, tol=pmtol, maxit=pmmaxit, verbosity=pmverbose)
 
     # deconvolve
     for i in range(0, maxit):
         M = lambda x: x * (0.5*rmax)  # preconditioner
-        x = pcg(hess, mask*residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=cgtol,
+        x = pcg(hess, mask*residual, np.zeros(residual.shape, dtype=np.float64), M=M, tol=cgtol,
                 maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
         
         # update model
@@ -88,6 +90,6 @@ def sara(dirty, psf, model, residual, mask, sig_21, dual=None, weights21=None,
             print("     SARA - Success, convergence after %i iterations" %(i+1))
             break
 
-        beta, betavec = power_method(hess, dirty.shape, b0=betavec, tol=pmtol, maxit=pmmaxit)
+        beta, betavec = power_method(hess, residual.shape, b0=betavec, tol=pmtol, maxit=pmmaxit)
 
     return model, dual, residual_mfs, weights21
