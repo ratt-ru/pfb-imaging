@@ -2,7 +2,7 @@ import numpy as np
 from scipy.linalg import norm
 
 
-def power_method(A, imsize, b0=None, tol=1e-5, maxit=250):
+def power_method(A, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_freq=25):
     if b0 is None:
         b = np.random.randn(*imsize)
         b /= norm(b)
@@ -20,14 +20,16 @@ def power_method(A, imsize, b0=None, tol=1e-5, maxit=250):
         b /= bnorm
         eps = norm(beta - betap)/betap
         k += 1
-        # print(k, eps)
 
-    # beta = np.vdot(bp, A(bp))/np.vdot(bp, bp)
+        if not k%report_freq and verbosity > 1:
+            print("         At iteration %i eps = %f"%(k, eps))
 
     if k == maxit:
-        print("         PM - Maximum iterations reached. eps = %f, current beta = %f"%(eps, beta))
+        if verbosity:
+            print("         PM - Maximum iterations reached. eps = %f, current beta = %f"%(eps, beta))
     else:
-        print("         PM - Success, converged after %i iterations. beta = %f"%(k, beta))
+        if verbosity:
+            print("         PM - Success, converged after %i iterations. beta = %f"%(k, beta))
     return beta, bp
 
 # def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=10000):

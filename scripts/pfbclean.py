@@ -62,7 +62,7 @@ def create_parser():
                    help="A fits mask with a priori known point source locations (True where unmasked)")
     p.add_argument("--do_wstacking", type=str2bool, nargs='?', const=True, default=True,
                    help='Whether to use wstacking or not.')
-    p.add_argument("--epsilon", type=float, default=1e-4,
+    p.add_argument("--epsilon", type=float, default=1e-5,
                    help="Accuracy of the gridder")
     p.add_argument("--nthreads", type=int, default=0)
     p.add_argument("--gamma", type=float, default=0.99,
@@ -71,9 +71,9 @@ def create_parser():
                    help="Number of pfb iterations")
     p.add_argument("--minormaxit", type=int, default=20,
                    help="Number of pfb iterations")
-    p.add_argument("--tol", type=float, default=1e-4,
+    p.add_argument("--tol", type=float, default=1e-3,
                    help="Tolerance")
-    p.add_argument("--minortol", type=float, default=1e-4,
+    p.add_argument("--minortol", type=float, default=1e-3,
                    help="Tolerance")
     p.add_argument("--report_freq", type=int, default=1,
                    help="How often to save output images during deconvolution")
@@ -100,11 +100,11 @@ def create_parser():
                    help="Set alpha as using this percentile of non zero coefficients")
     p.add_argument("--reweight_alpha_ff", type=float, default=0.5,
                    help="reweight_alpha_percent will be scaled by this factor after each reweighting step.")
-    p.add_argument("--cgtol", type=float, default=1e-5,
+    p.add_argument("--cgtol", type=float, default=1e-6,
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=150,
                    help="Maximum number of iterations for the cg updates")
-    p.add_argument("--cgminit", type=int, default=50,
+    p.add_argument("--cgminit", type=int, default=10,
                    help="Minimum number of iterations for the cg updates")
     p.add_argument("--cgverbose", type=int, default=1,
                    help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
@@ -112,7 +112,9 @@ def create_parser():
                    help="Tolerance for power method used to compute spectral norms")
     p.add_argument("--pmmaxit", type=int, default=50,
                    help="Maximum number of iterations for power method")
-    p.add_argument("--pdtol", type=float, default=1e-5,
+    p.add_argument("--pmverbose", type=int, default=1,
+                   help="Verbosity of power method used to get spectral norm of approx Hessian. Set to 1 or 2 for debugging.")
+    p.add_argument("--pdtol", type=float, default=1e-6,
                    help="Tolerance for primal dual")
     p.add_argument("--pdmaxit", type=int, default=250,
                    help="Maximum number of iterations for primal dual")
@@ -299,7 +301,8 @@ def main(args):
                 reweight_iters=reweight_iters, reweight_alpha_ff=args.reweight_alpha_ff, reweight_alpha_percent=args.reweight_alpha_percent,
                 pdtol=args.pdtol, pdmaxit=args.pdmaxit, pdverbose=args.pdverbose, positivity=args.positivity,
                 cgtol=args.cgtol, cgminit=args.cgminit, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose, 
-                pmtol=args.pmtol, pmmaxit=args.pmmaxit)
+                pmtol=args.pmtol, pmmaxit=args.pmmaxit, pmverbose=args.pmverbose)
+
         else:
             raise ValueError("Unknown deconvolution mode ", args.deconv_mode)
 

@@ -9,9 +9,9 @@ def sara(dirty, psf, model, residual, mask, sig_21, dual=None, weights21=None,
          nthreads=0, maxit=10, gamma=0.99,  tol=1e-3,  # options for outer optimisation
          psi_levels=3, psi_basis=None,  # sara dict options
          reweight_iters=None, reweight_alpha_ff=0.5, reweight_alpha_percent=10,  # reweighting options
-         pdtol=1e-4, pdmaxit=250, pdverbose=1, positivity=True,  # primal dual options
-         cgtol=1e-4, cgminit=50, cgmaxit=150, cgverbose=1,  # conjugate gradient options
-         pmtol=1e-5, pmmaxit=50):  # power method options
+         pdtol=1e-6, pdmaxit=250, pdverbose=1, positivity=True,  # primal dual options
+         cgtol=1e-6, cgminit=10, cgmaxit=150, cgverbose=1,  # conjugate gradient options
+         pmtol=1e-5, pmmaxit=50, pmverbose=1):  # power method options
     
     nband, nx, ny = dirty.shape
     
@@ -23,7 +23,7 @@ def sara(dirty, psf, model, residual, mask, sig_21, dual=None, weights21=None,
         psi = DaskPSI(nband, nx, ny, nlevels=psi_levels, nthreads=nthreads)
     else:
         if not isinstance(psi_basis, list):
-            psi_basis = [args.psi_basis]
+            psi_basis = [psi_basis]
         psi = DaskPSI(nband, nx, ny, nlevels=psi_levels, nthreads=nthreads, bases=list(psi_basis))
     
     # l21 weights and dual 
@@ -45,14 +45,14 @@ def sara(dirty, psf, model, residual, mask, sig_21, dual=None, weights21=None,
     
     #  preconditioning operator
     def hess(x):  
-        return mask*psfo.convolve(mask*x) + x / (0.2*rmax) 
+        return mask*psfo.convolve(mask*x) + x / (0.5*rmax) 
 
     # spectral norm
-    beta, betavec = power_method(hess, dirty.shape, tol=pmtol, maxit=pmmaxit)
+    beta, betavec = power_method(hess, dirty.shape, tol=pmtol, maxit=pmmaxit, verbosity=pmverbose)
 
     # deconvolve
     for i in range(0, maxit):
-        M = lambda x: x * (0.2*rmax)  # preconditioner
+        M = lambda x: x * (0.5*rmax)  # preconditioner
         x = pcg(hess, mask*residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=cgtol,
                 maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
         
