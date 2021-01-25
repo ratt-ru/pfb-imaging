@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.linalg import norm
-from pfb.utils import prox_21
+
 
 def power_method(A, imsize, b0=None, tol=1e-5, maxit=250):
     if b0 is None:
@@ -8,24 +8,27 @@ def power_method(A, imsize, b0=None, tol=1e-5, maxit=250):
         b /= norm(b)
     else:
         b = b0/norm(b0)
+    beta = 1.0
     eps = 1.0
     k = 0
-    beta = 1.0
     while eps > tol and k < maxit:
         bp = b
         b = A(bp)
         bnorm = norm(b)
-        b /= bnorm
         betap = beta
-        beta = np.vdot(bp, b)
-        eps = np.abs(beta - betap)/betap
+        beta = np.vdot(bp, b)/np.vdot(bp, bp)
+        b /= bnorm
+        eps = norm(beta - betap)/betap
         k += 1
+        # print(k, eps)
+
+    # beta = np.vdot(bp, A(bp))/np.vdot(bp, bp)
 
     if k == maxit:
-        print("PM - Maximum iterations reached. eps = ", eps)
+        print("         PM - Maximum iterations reached. eps = %f, current beta = %f"%(eps, beta))
     else:
-        print("PM - Success - convergence after %i iterations"%k)
-    return beta, b
+        print("         PM - Success, converged after %i iterations. beta = %f"%(k, beta))
+    return beta, bp
 
 # def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=10000):
 #     from pfb.utils import give_edges

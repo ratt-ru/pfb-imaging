@@ -65,11 +65,11 @@ def create_parser():
     p.add_argument("--epsilon", type=float, default=1e-4,
                    help="Accuracy of the gridder")
     p.add_argument("--nthreads", type=int, default=0)
-    p.add_argument("--gamma", type=float, default=0.95,
+    p.add_argument("--gamma", type=float, default=0.99,
                    help="Step size of 'primal' update.")
     p.add_argument("--maxit", type=int, default=5,
                    help="Number of pfb iterations")
-    p.add_argument("--minormaxit", type=int, default=10,
+    p.add_argument("--minormaxit", type=int, default=20,
                    help="Number of pfb iterations")
     p.add_argument("--tol", type=float, default=1e-4,
                    help="Tolerance")
@@ -104,7 +104,7 @@ def create_parser():
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=150,
                    help="Maximum number of iterations for the cg updates")
-    p.add_argument("--cgminit", type=int, default=25,
+    p.add_argument("--cgminit", type=int, default=50,
                    help="Minimum number of iterations for the cg updates")
     p.add_argument("--cgverbose", type=int, default=1,
                    help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
@@ -112,10 +112,12 @@ def create_parser():
                    help="Tolerance for power method used to compute spectral norms")
     p.add_argument("--pmmaxit", type=int, default=50,
                    help="Maximum number of iterations for power method")
-    p.add_argument("--pdtol", type=float, default=1e-4,
+    p.add_argument("--pdtol", type=float, default=1e-5,
                    help="Tolerance for primal dual")
     p.add_argument("--pdmaxit", type=int, default=250,
                    help="Maximum number of iterations for primal dual")
+    p.add_argument("--pdverbose", type=int, default=1,
+                   help="Verbosity of primal dual used to solve backward step. Set to 1 or 2 for debugging.")
     p.add_argument("--make_restored", type=str2bool, nargs='?', const=True, default=True,
                    help="Relax positivity and sparsity constraints at final iteration")
     return p
@@ -270,7 +272,7 @@ def main(args):
         else:
             reweight_iters = list(args.reweight_iters)
     else:
-        reweight_iters = [4, 5, 6, 7, 8, 9]
+        reweight_iters = np.arange(5, args.minormaxit, dtype=np.int)
 
     # Reporting
     report_iters = list(np.arange(0, args.maxit, args.report_freq))
@@ -280,7 +282,7 @@ def main(args):
     # deconvolve
     rmax = np.abs(residual_mfs).max()
     rms = np.std(residual_mfs)
-    print("Peak of initial residual is %f and rms is %f" % (rmax, rms))
+    print("PFB - Peak of initial residual is %f and rms is %f" % (rmax, rms))
     for i in range(0, args.maxit):
         # run minor cycle of choice
         modelp = model.copy()
@@ -295,7 +297,7 @@ def main(args):
                 nthreads=args.nthreads,  maxit=args.minormaxit, gamma=args.gamma,  tol=args.minortol,
                 psi_levels=args.psi_levels, psi_basis=args.psi_basis,
                 reweight_iters=reweight_iters, reweight_alpha_ff=args.reweight_alpha_ff, reweight_alpha_percent=args.reweight_alpha_percent,
-                pdtol=args.pdtol, pdmaxit=args.pdmaxit, positivity=args.positivity,
+                pdtol=args.pdtol, pdmaxit=args.pdmaxit, pdverbose=args.pdverbose, positivity=args.positivity,
                 cgtol=args.cgtol, cgminit=args.cgminit, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose, 
                 pmtol=args.pmtol, pmmaxit=args.pmmaxit)
         else:
@@ -320,7 +322,7 @@ def main(args):
         rms = np.std(residual_mfs)
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
-        print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i+1, rmax, rms, eps))
+        print("PFB - At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i+1, rmax, rms, eps))
 
         if eps < args.tol:
             break

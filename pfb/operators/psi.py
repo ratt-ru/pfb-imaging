@@ -6,7 +6,7 @@ import dask.array as da
 class PSI(object):
     def __init__(self, nband, nx, ny,
                  nlevels=2,
-                 bases=['db1', 'db2', 'db3', 'db4']):
+                 bases=['self', 'db1', 'db2', 'db3', 'db4']):
         """
         Sets up operators to move between wavelet coefficients
         in each basis and the image x.
@@ -152,7 +152,7 @@ def _hdot_internal_wrapper(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_ty
 class DaskPSI(PSI):
     def __init__(self, nband, nx, ny,
                  nlevels=2,
-                 bases=['db1', 'db2', 'db3', 'db4'],
+                 bases=['self', 'db1', 'db2', 'db3', 'db4'],
                  nthreads=8):
         PSI.__init__(self, nband, nx, ny, nlevels=nlevels,
                      bases=bases)
