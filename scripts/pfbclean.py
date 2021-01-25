@@ -67,7 +67,7 @@ def create_parser():
     p.add_argument("--nthreads", type=int, default=0)
     p.add_argument("--gamma", type=float, default=0.95,
                    help="Step size of 'primal' update.")
-    p.add_argument("--maxit", type=int, default=10,
+    p.add_argument("--maxit", type=int, default=5,
                    help="Number of pfb iterations")
     p.add_argument("--minormaxit", type=int, default=10,
                    help="Number of pfb iterations")
@@ -75,14 +75,13 @@ def create_parser():
                    help="Tolerance")
     p.add_argument("--minortol", type=float, default=1e-4,
                    help="Tolerance")
-    p.add_argument("--report_freq", type=int, default=2,
+    p.add_argument("--report_freq", type=int, default=1,
                    help="How often to save output images during deconvolution")
     p.add_argument("--beta", type=float, default=None,
                    help="Lipschitz constant of F")
-    p.add_argument("--sig_l2", default=1.0, type=float,
-                   help="The strength of the l2 norm regulariser")
     p.add_argument("--sig_21", type=float, default=1e-3,
-                   help="Strength of l21 regulariser")
+                   help="Initial strength of l21 regulariser."
+                   "Initialise to nband x expected rms in MFS dirty if uncertain.")
     p.add_argument("--positivity", type=str2bool, nargs='?', const=True, default=True,
                    help='Whether to impose a positivity constraint or not.')
     p.add_argument("--psi_levels", type=int, default=3,
@@ -95,34 +94,27 @@ def create_parser():
     p.add_argument("--first_residual", default=None, type=str,
                    help="Residual corresponding to x0")
     p.add_argument("--reweight_iters", type=int, default=None, nargs='+',
-                   help="Set reweighting iters explicitly")
-    p.add_argument("--reweight_start", type=int, default=50,
-                   help="When to start l21 reweighting scheme")
-    p.add_argument("--reweight_freq", type=int, default=2,
-                   help="How often to do l21 reweighting")
-    p.add_argument("--reweight_end", type=int, default=90,
-                   help="When to end the l21 reweighting scheme")
-    p.add_argument("--reweight_alpha_min", type=float, default=1.0e-8,
-                   help="MInimum alpha in l21 reweighting formula.")
-    p.add_argument("--reweight_alpha_percent", type=float, default=10)
+                   help="Set reweighting iters explicitly. "
+                   "Default is to reweight at 4th, 5th, 6th, 7th, 8th and 9th iterations.")
+    p.add_argument("--reweight_alpha_percent", type=float, default=10,
+                   help="Set alpha as using this percentile of non zero coefficients")
     p.add_argument("--reweight_alpha_ff", type=float, default=0.5,
-                   help="Determines how quickly the reweighting progresses."
-                   "reweight_alpha_percent will be scaled by this factor after each reweighting step.")
+                   help="reweight_alpha_percent will be scaled by this factor after each reweighting step.")
     p.add_argument("--cgtol", type=float, default=1e-5,
                    help="Tolerance for cg updates")
-    p.add_argument("--cgmaxit", type=int, default=200,
+    p.add_argument("--cgmaxit", type=int, default=150,
                    help="Maximum number of iterations for the cg updates")
-    p.add_argument("--cgminit", type=int, default=100,
+    p.add_argument("--cgminit", type=int, default=25,
                    help="Minimum number of iterations for the cg updates")
     p.add_argument("--cgverbose", type=int, default=1,
                    help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
-    p.add_argument("--pmtol", type=float, default=1e-4,
+    p.add_argument("--pmtol", type=float, default=1e-5,
                    help="Tolerance for power method used to compute spectral norms")
     p.add_argument("--pmmaxit", type=int, default=50,
                    help="Maximum number of iterations for power method")
     p.add_argument("--pdtol", type=float, default=1e-4,
                    help="Tolerance for primal dual")
-    p.add_argument("--pdmaxit", type=int, default=300,
+    p.add_argument("--pdmaxit", type=int, default=250,
                    help="Maximum number of iterations for primal dual")
     p.add_argument("--make_restored", type=str2bool, nargs='?', const=True, default=True,
                    help="Relax positivity and sparsity constraints at final iteration")
@@ -278,8 +270,7 @@ def main(args):
         else:
             reweight_iters = list(args.reweight_iters)
     else:
-        reweight_iters = list(np.arange(args.reweight_start, args.reweight_end, args.reweight_freq))
-        reweight_iters.append(args.reweight_end)
+        reweight_iters = [4, 5, 6, 7, 8, 9]
 
     # Reporting
     report_iters = list(np.arange(0, args.maxit, args.report_freq))
@@ -287,8 +278,6 @@ def main(args):
         report_iters.append(args.maxit-1)
 
     # deconvolve
-    eps = 1.0
-    i = 0
     rmax = np.abs(residual_mfs).max()
     rms = np.std(residual_mfs)
     print("Peak of initial residual is %f and rms is %f" % (rmax, rms))
@@ -298,18 +287,17 @@ def main(args):
         if args.deconv_mode == 'sara':
             # we want to reuse these in subsequent iterations
             if i == 0:
-                beta = None
                 dual = None 
                 weights21 = None 
             
-            model, dual, residual_mfs_minor, weights21, beta = sara(
-                dirty, psf, model, residual, mask, args.sig_l2, args.sig_21, dual=dual, weights21=weights21,
+            model, dual, residual_mfs_minor, weights21 = sara(
+                dirty, psf, model, residual, mask, args.sig_21, dual=dual, weights21=weights21,
                 nthreads=args.nthreads,  maxit=args.minormaxit, gamma=args.gamma,  tol=args.minortol,
                 psi_levels=args.psi_levels, psi_basis=args.psi_basis,
                 reweight_iters=reweight_iters, reweight_alpha_ff=args.reweight_alpha_ff, reweight_alpha_percent=args.reweight_alpha_percent,
                 pdtol=args.pdtol, pdmaxit=args.pdmaxit, positivity=args.positivity,
                 cgtol=args.cgtol, cgminit=args.cgminit, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose, 
-                beta=beta, pmtol=args.pmtol, pmmaxit=args.pmmaxit)
+                pmtol=args.pmtol, pmmaxit=args.pmmaxit)
         else:
             raise ValueError("Unknown deconvolution mode ", args.deconv_mode)
 
@@ -333,6 +321,9 @@ def main(args):
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
         print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i+1, rmax, rms, eps))
+
+        if eps < args.tol:
+            break
 
     if args.write_model:
         R.write_model(model)

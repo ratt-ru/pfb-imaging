@@ -5,27 +5,17 @@ from pfb.operators import PSF, DaskPSI
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
 
-def sara(dirty, psf, model, residual, mask, sig_l2, sig_21,
-         dual=None, weights21=None,
+def sara(dirty, psf, model, residual, mask, sig_21, dual=None, weights21=None, 
          nthreads=0, maxit=10, gamma=0.95,  tol=1e-3,  # options for outer optimisation
          psi_levels=3, psi_basis=None,  # sara dict options
          reweight_iters=None, reweight_alpha_ff=0.5, reweight_alpha_percent=10,  # reweighting options
          pdtol=1e-4, pdmaxit=250, positivity=True,  # primal dual options
          cgtol=1e-4, cgminit=50, cgmaxit=150, cgverbose=1,  # conjugate gradient options
-         beta=None, pmtol=1e-5, pmmaxit=50):  # power method options
+         pmtol=1e-5, pmmaxit=50):  # power method options
     nband, nx, ny = dirty.shape
     
     # PSF operator
     psfo = PSF(psf, nthreads)
-
-    #  preconditioning operator
-    def hess(x):  
-        return mask*psfo.convolve(mask*x) + x / sig_l2**2 
-
-    # spectral norm
-    if beta is None:
-        print("     Getting spectral norm of update operator")
-        beta = power_method(hess, dirty.shape, tol=pmtol, maxit=pmmaxit)
 
     # wavelet dictionary
     if psi_basis is None:
@@ -51,15 +41,23 @@ def sara(dirty, psf, model, residual, mask, sig_l2, sig_21,
     
     # residual
     residual_mfs = np.sum(residual, axis=0)
+    rms = np.std(residual_mfs)
+    
+    #  preconditioning operator
+    def hess(x):  
+        return mask*psfo.convolve(mask*x) + x / rms**2 
+
+    # spectral norm
+    print("     Getting spectral norm of approximate Hessian")
+    beta, betavec = power_method(hess, dirty.shape, tol=pmtol, maxit=pmmaxit)
 
     # deconvolve
     eps = 1.0
     i = 0
     rmax = np.abs(residual_mfs).max()
-    rms = np.std(residual_mfs)
-    M = lambda x: x * sig_l2**2  # preconditioner
     print("     Peak of initial residual is %f and rms is %f" % (rmax, rms))
     for i in range(0, maxit):
+        M = lambda x: x * rms**2  # preconditioner
         x = pcg(hess, mask*residual, np.zeros(dirty.shape, dtype=np.float64), M=M, tol=cgtol,
                 maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
         
@@ -72,9 +70,7 @@ def sara(dirty, psf, model, residual, mask, sig_l2, sig_21,
 
         # reweighting
         if i in reweight_iters:
-            v = psi.hdot(model)
-            l2_norm = np.linalg.norm(v, axis=1)
-            l2_norm = np.where(l2_norm < sig_21*weights21, 0.0, l2_norm)
+            l2_norm = np.linalg.norm(dual, axis=1)
             for m in range(psi.nbasis):
                 indnz = l2_norm[m].nonzero()
                 alpha = np.percentile(l2_norm[m, indnz].flatten(), reweight_alpha_percent)
@@ -97,4 +93,6 @@ def sara(dirty, psf, model, residual, mask, sig_l2, sig_21,
         if eps < tol:
             break
 
-    return model, dual, residual_mfs, weights21, beta
+        beta, betavec = power_method(hess, dirty.shape, b0=betavec, tol=pmtol, maxit=pmmaxit)
+
+    return model, dual, residual_mfs, weights21
