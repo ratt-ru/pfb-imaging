@@ -69,7 +69,7 @@ class PSF(object):
             if nx > nx_psf or ny > ny_psf:
                 raise ValueError("Image size can't be smaller than PSF size")
         else:
-            # if nothing passed in assume PSF is twice the size of image
+            # if imsize not passed in assume PSF is twice the size of image
             nx = nx_psf//2
             ny = ny_psf//2
         npad_xl = (nx_psf - nx)//2
