@@ -61,17 +61,25 @@ class mock_array(object):
 
 
 class PSF(object):
-    def __init__(self, psf, nthreads, sigma0=1.0):
+    def __init__(self, psf, nthreads, imsize=None, sigma0=1.0):
         self.nthreads = nthreads
         self.nband, nx_psf, ny_psf = psf.shape
-        nx = nx_psf//2
-        ny = ny_psf//2
-        npad_x = (nx_psf - nx)//2
-        npad_y = (ny_psf - ny)//2
-        self.padding = ((0,0), (npad_x, npad_x), (npad_y, npad_y))
+        if imsize is not None:
+            _, nx, ny = imsize
+            if nx > nx_psf or ny > ny_psf:
+                raise ValueError("Image size can't be smaller than PSF size")
+        else:
+            # if nothing passed in assume PSF is twice the size of image
+            nx = nx_psf//2
+            ny = ny_psf//2
+        npad_xl = (nx_psf - nx)//2
+        npad_xr = nx_psf - nx - npad_xl
+        npad_yl = (ny_psf - ny)//2
+        npad_yr = ny_psf - ny - npad_yl
+        self.padding = ((0,0), (npad_xl, npad_xr), (npad_yl, npad_yr))
         self.ax = (1,2)
-        self.unpad_x = slice(npad_x, -npad_x)
-        self.unpad_y = slice(npad_y, -npad_y)
+        self.unpad_x = slice(npad_xl, -npad_xr)
+        self.unpad_y = slice(npad_yl, -npad_yr)
         self.lastsize = ny + np.sum(self.padding[-1])
         self.psf = psf
         psf_pad = iFs(psf, axes=self.ax)

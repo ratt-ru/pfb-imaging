@@ -17,7 +17,10 @@ def sara(psf, model, residual, mask, sig_21, dual=None, weights21=None,
     
     # PSF operator
     psfo = PSF(psf, nthreads)
-    dirty = residual + psfo.convolve(model)
+    if model.any():
+        dirty = residual + psfo.convolve(model)
+    else:
+        dirty = residual
 
     # wavelet dictionary
     if psi_basis is None:
