@@ -4,7 +4,7 @@ import dask.array as da
 # from pfb.wavelets.wavelets import wavedecn, waverecn, ravel_coeffs, unravel_coeffs
 
 class PSI(object):
-    def __init__(self, nband, nx, ny,
+    def __init__(self, imsize=None,
                  nlevels=2,
                  bases=['self', 'db1', 'db2', 'db3', 'db4']):
         """
@@ -30,9 +30,10 @@ class PSI(object):
                 each entry corresponds to one of the basis elements.
         """
         self.real_type = np.float64
-        self.nband = nband
-        self.nx = nx
-        self.ny = ny
+        if imsize is None:
+            raise ValueError("You must initialise imsize")
+        else:
+            self.nband, self.nx, self.ny = imsize
         self.nlevels = nlevels
         self.P = len(bases)
         self.sqrtP = np.sqrt(self.P)
@@ -40,7 +41,7 @@ class PSI(object):
         self.nbasis = len(bases)
 
         # do a mock decomposition to get max coeff size
-        x = np.random.randn(nx, ny)
+        x = np.random.randn(self.nx, self.ny)
         self.ntot = []
         self.iy = {}
         self.sy = {}
@@ -150,11 +151,11 @@ def _hdot_internal_wrapper(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_ty
     return _hdot_internal(x[0][0], bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_type)
 
 class DaskPSI(PSI):
-    def __init__(self, nband, nx, ny,
+    def __init__(self, imsize=None,
                  nlevels=2,
                  bases=['self', 'db1', 'db2', 'db3', 'db4'],
                  nthreads=8):
-        PSI.__init__(self, nband, nx, ny, nlevels=nlevels,
+        PSI.__init__(self, imsize, nlevels=nlevels,
                      bases=bases)
         # required to chunk over basis
         bases = np.array(self.bases, dtype=object)

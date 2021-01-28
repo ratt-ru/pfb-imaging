@@ -61,7 +61,7 @@ class mock_array(object):
 
 
 class PSF(object):
-    def __init__(self, psf, nthreads, imsize=None, sigma0=1.0):
+    def __init__(self, psf, nthreads=1, imsize=None):
         self.nthreads = nthreads
         self.nband, nx_psf, ny_psf = psf.shape
         if imsize is not None:

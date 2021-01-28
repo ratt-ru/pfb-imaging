@@ -6,17 +6,20 @@ def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
 
 def sara(psf, model, residual, mask, sig_21, dual=None, weights21=None, 
-         nthreads=0, maxit=10, gamma=0.99,  tol=1e-3,  # options for outer optimisation
+         nthreads=1, maxit=10, gamma=0.99,  tol=1e-3,  # options for outer optimisation
          psi_levels=3, psi_basis=None,  # sara dict options
          reweight_iters=None, reweight_alpha_ff=0.5, reweight_alpha_percent=10,  # reweighting options
          pdtol=1e-6, pdmaxit=250, pdverbose=1, positivity=True,  # primal dual options
          cgtol=1e-6, cgminit=25, cgmaxit=150, cgverbose=1,  # conjugate gradient options
          pmtol=1e-5, pmmaxit=50, pmverbose=1):  # power method options
     
+    if len(residual.shape) > 3:
+        raise ValueError("Residual must have shape (nband, nx, ny)")
+    
     nband, nx, ny = residual.shape
     
     # PSF operator
-    psfo = PSF(psf, nthreads)
+    psfo = PSF(psf, nthreads=nthreads, imsize=residual.shape)
     if model.any():
         dirty = residual + psfo.convolve(model)
     else:
@@ -24,11 +27,11 @@ def sara(psf, model, residual, mask, sig_21, dual=None, weights21=None,
 
     # wavelet dictionary
     if psi_basis is None:
-        psi = DaskPSI(nband, nx, ny, nlevels=psi_levels, nthreads=nthreads)
+        psi = DaskPSI(imsize=residual.shape, nlevels=psi_levels, nthreads=nthreads)
     else:
         if not isinstance(psi_basis, list):
             psi_basis = [psi_basis]
-        psi = DaskPSI(nband, nx, ny, nlevels=psi_levels, nthreads=nthreads, bases=list(psi_basis))
+        psi = DaskPSI(imsize=residual.shape, nlevels=psi_levels, nthreads=nthreads, bases=psi_basis)
     
     # l21 weights and dual 
     if weights21 is None:
