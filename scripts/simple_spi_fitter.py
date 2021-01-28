@@ -178,9 +178,8 @@ def main(args):
     else:
         beam_image = np.ones(model.shape, dtype=args.out_dtype)
 
-    # do beam correction LB - TODO: use forward model instead
-    beammin = np.amin(beam_image, axis=0)[None, :, :]
-    model = np.where(beammin >= args.pb_min, model/beam_image, 0.0)
+    # beam cut off
+    model = np.where(beam_image > args.pb_min, model, 0.0)
 
     if not args.dont_convolve:
         print("Computing clean beam")
@@ -267,6 +266,7 @@ def main(args):
                         "Try lowering your threshold."
                         "Max of convolved model is %3.2e" % model.max())
     fitcube = model[:, maskindices[:, 0], maskindices[:, 1]].T
+    beam_comps = beam_image[:, maskindices[:, 0], maskindices[:, 1]].T
 
     # set weights for fit
     if rms_cube is not None:
@@ -285,12 +285,14 @@ def main(args):
     ncomps, _ = fitcube.shape
     fitcube = da.from_array(fitcube.astype(np.float64),
                             chunks=(ncomps//args.ncpu, nband))
+    beam_comps = da.from_array(beam_comps.astype(np.float64),
+                               chunks=(ncomps//args.ncpu, nband))
     weights = da.from_array(weights.astype(np.float64), chunks=(nband))
     freqsdask = da.from_array(freqs.astype(np.float64), chunks=(nband))
 
     print("Fitting %i components" % ncomps)
     alpha, alpha_err, Iref, i0_err = fit_spi_components(fitcube, weights, freqsdask,
-                                        np.float64(ref_freq)).compute()
+                                        np.float64(ref_freq), beam=beam_comps).compute()
     print("Done. Writing output. \n")
 
     alphamap = np.zeros(model[0].shape, dtype=model.dtype)
