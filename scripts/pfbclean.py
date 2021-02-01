@@ -60,6 +60,8 @@ def create_parser():
                    help="Number of imaging bands in output cube")
     p.add_argument("--mask", type=str, default=None,
                    help="A fits mask (True where unmasked)")
+    p.add_argument("--power_beam", type=str, default=None,
+                   help="Power beam pattern for Stokes I imaging")
     p.add_argument("--point_mask", type=str, default=None,
                    help="A fits mask with a priori known point source locations (True where unmasked)")
     p.add_argument("--do_wstacking", type=str2bool, nargs='?', const=True, default=True,
@@ -265,7 +267,17 @@ def main(args):
             raise ValueError("Mask has incorrect shape")
         mask = lambda x: mask_array * x
     else:
+        mask_array = np.ones((1, args.nx, args.ny), dtype=np.int64)
         mask = lambda x: x
+
+    if args.power_beam is not None:
+        power_beam = load_fits(args.power_beam, dtype=np.float64)
+        # TODO - check correct header
+        if power_beam.shape != (args.nband, args.nx, args.ny):
+            raise ValueError("Power beam has incorrect shape")
+        power_beam *= mask_array
+        mask = lambda x: power_beam * x
+        
 
     # Reweighting
     if args.reweight_iters is not None:
