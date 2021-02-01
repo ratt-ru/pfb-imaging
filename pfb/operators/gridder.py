@@ -8,11 +8,11 @@ from africanus.gridding.wgridder.dask import dirty as vis2im
 from africanus.gridding.wgridder.dask import model as im2vis
 from africanus.gridding.wgridder.dask import residual as im2residim
 from africanus.model.coherency.dask import convert
-from pprint import pprint
+from ducc0.fft import good_size
 
 class Gridder(object):
     def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',
-                 row_chunks=100000, chan_chunks=32, optimise_chunks=True, epsilon=1e-5,
+                 row_chunks=100000, chan_chunks=32, optimise_chunks=True, epsilon=1e-5, psf_oversize=2.0,
                  data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM',
                  model_column="MODEL_DATA", flag_column='FLAG', imaging_weight_column=None):
         '''
@@ -30,6 +30,9 @@ class Gridder(object):
         self.epsilon = epsilon
         self.row_chunks = row_chunks
         self.chan_chunks = chan_chunks
+        self.psf_oversize = psf_oversize
+        self.nx_psf = good_size(int(self.psf_oversize * self.nx))
+        self.ny_psf = good_size(int(self.psf_oversize * self.ny))
 
         self.data_column = data_column
         self.weight_column = weight_column
@@ -302,7 +305,8 @@ class Gridder(object):
                 model = x[list(bands), :, :]
                 residual = im2residim(uvw, freq, model, data, freq_bin_idx, freq_bin_counts,
                                       self.cell, weights=weights, flag=flag.astype(np.uint8),
-                                      nthreads=self.nthreads, epsilon=self.epsilon, do_wstacking=self.do_wstacking)
+                                      nthreads=self.nthreads, epsilon=self.epsilon,
+                                      do_wstacking=self.do_wstacking, double_accum=True)
 
                 residuals.append(residual)
         
@@ -384,7 +388,8 @@ class Gridder(object):
                 dirty = vis2im(uvw, freq, data, freq_bin_idx, freq_bin_counts,
                                self.nx, self.ny, self.cell, weights=weights,
                                flag=flag.astype(np.uint8), nthreads=self.nthreads,
-                               epsilon=self.epsilon, do_wstacking=self.do_wstacking)
+                               epsilon=self.epsilon, do_wstacking=self.do_wstacking,
+                               double_accum=True)
 
                 
                 dirties.append(dirty)
@@ -454,8 +459,9 @@ class Gridder(object):
                 flag = ~ (flagxx | flagyy)  # ducc0 convention
 
                 psf = vis2im(uvw, freq, data, freq_bin_idx, freq_bin_counts,
-                             2*self.nx, 2*self.ny, self.cell, flag=flag.astype(np.uint8),
-                             nthreads=self.nthreads, epsilon=self.epsilon, do_wstacking=self.do_wstacking)
+                             self.nx_psf, self.ny_psf, self.cell, flag=flag.astype(np.uint8),
+                             nthreads=self.nthreads, epsilon=self.epsilon,
+                             do_wstacking=self.do_wstacking, double_accum=True)
 
                 psfs.append(psf)
 

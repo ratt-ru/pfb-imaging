@@ -42,6 +42,8 @@ def create_parser():
                    help="Fits file with dirty cube")
     p.add_argument("--psf", type=str,
                    help="Fits file with psf cube")
+    p.add_argument("--psf_oversize", default=2.0, type=float, 
+                   help="Increase PSF size by this factor")
     p.add_argument("--outfile", type=str, default='pfb',
                    help='Base name of output file.')
     p.add_argument("--fov", type=float, default=None,
@@ -180,7 +182,7 @@ def main(args):
 
     # init gridder
     R = Gridder(args.ms, args.nx, args.ny, args.cell_size, nband=args.nband, nthreads=args.nthreads,
-                do_wstacking=args.do_wstacking, row_chunks=args.row_chunks,
+                do_wstacking=args.do_wstacking, row_chunks=args.row_chunks, psf_oversize=args.psf_oversize,
                 data_column=args.data_column, weight_column=args.weight_column,
                 epsilon=args.epsilon, imaging_weight_column=args.imaging_weight_column,
                 model_column=args.model_column, flag_column=args.flag_column)
@@ -190,8 +192,7 @@ def main(args):
     # get headers
     hdr = set_wcs(args.cell_size/3600, args.cell_size/3600, args.nx, args.ny, radec, freq_out)
     hdr_mfs = set_wcs(args.cell_size/3600, args.cell_size/3600, args.nx, args.ny, radec, np.mean(freq_out))
-    hdr_psf = set_wcs(args.cell_size/3600, args.cell_size/3600, 2*args.nx, 2*args.ny, radec, freq_out)
-    hdr_psf_mfs = set_wcs(args.cell_size/3600, args.cell_size/3600, 2*args.nx, 2*args.ny, radec, np.mean(freq_out))
+    hdr_psf = set_wcs(args.cell_size/3600, args.cell_size/3600, R.nx_psf, R.ny_psf, radec, freq_out)
     
     # psf
     if args.psf is not None:
@@ -210,12 +211,10 @@ def main(args):
     # However, we won't save the cubes that way as it destroys information
     # about the noise in image space. Note only the MFS images will have the
     # usual units of Jy/beam.
-    wsums = np.amax(psf.reshape(args.nband, 4*args.nx*args.ny), axis=1)
+    wsums = np.amax(psf.reshape(args.nband, R.nx_psf*R.ny_psf), axis=1)
     wsum = np.sum(wsums)
     psf /= wsum
     psf_mfs = np.sum(psf, axis=0)
-    save_fits(args.outfile + '_psf_mfs.fits', psf_mfs[args.nx//2:3*args.nx//2, 
-                                                      args.ny//2:3*args.ny//2], hdr_mfs)
 
     # dirty
     if args.dirty is not None:
@@ -261,11 +260,12 @@ def main(args):
 
     # mask
     if args.mask is not None:
-        mask = load_fits(args.mask, dtype=np.int64)[None, :, :]
-        if mask.shape != (1, args.nx, args.ny):
+        mask_array = load_fits(args.mask, dtype=np.int64)[None, :, :]
+        if mask_array.shape != (1, args.nx, args.ny):
             raise ValueError("Mask has incorrect shape")
+        mask = lambda x: mask_array * x
     else:
-        mask = np.ones((1, args.nx, args.ny), dtype=np.int64)
+        mask = lambda x: x
 
     # Reweighting
     if args.reweight_iters is not None:
