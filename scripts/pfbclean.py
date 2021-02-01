@@ -182,6 +182,24 @@ def main(args):
 
     print("Image size set to (%i, %i, %i)"%(args.nband, args.nx, args.ny))
 
+    # mask
+    if args.mask is not None:
+        mask_array = load_fits(args.mask, dtype=np.int64)[None, :, :]
+        if mask_array.shape != (1, args.nx, args.ny):
+            raise ValueError("Mask has incorrect shape")
+        mask = lambda x: mask_array * x
+    else:
+        mask_array = np.ones((1, args.nx, args.ny), dtype=np.int64)
+        mask = lambda x: x
+
+    if args.power_beam is not None:
+        power_beam = load_fits(args.power_beam, dtype=np.float64)
+        # TODO - check correct header
+        if power_beam.shape != (args.nband, args.nx, args.ny):
+            raise ValueError("Power beam has incorrect shape")
+        power_beam *= mask_array
+        mask = lambda x: power_beam * x
+
     # init gridder
     R = Gridder(args.ms, args.nx, args.ny, args.cell_size, nband=args.nband, nthreads=args.nthreads,
                 do_wstacking=args.do_wstacking, row_chunks=args.row_chunks, psf_oversize=args.psf_oversize,
@@ -259,24 +277,6 @@ def main(args):
 
     residual_mfs = np.sum(residual, axis=0) 
     save_fits(args.outfile + '_first_residual_mfs.fits', residual_mfs, hdr_mfs)
-
-    # mask
-    if args.mask is not None:
-        mask_array = load_fits(args.mask, dtype=np.int64)[None, :, :]
-        if mask_array.shape != (1, args.nx, args.ny):
-            raise ValueError("Mask has incorrect shape")
-        mask = lambda x: mask_array * x
-    else:
-        mask_array = np.ones((1, args.nx, args.ny), dtype=np.int64)
-        mask = lambda x: x
-
-    if args.power_beam is not None:
-        power_beam = load_fits(args.power_beam, dtype=np.float64)
-        # TODO - check correct header
-        if power_beam.shape != (args.nband, args.nx, args.ny):
-            raise ValueError("Power beam has incorrect shape")
-        power_beam *= mask_array
-        mask = lambda x: power_beam * x
         
 
     # Reweighting

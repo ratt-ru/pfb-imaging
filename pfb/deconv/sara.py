@@ -61,7 +61,7 @@ def sara(psf, model, residual, mask, sig_21, dual=None, weights21=None,
     # deconvolve
     for i in range(0, maxit):
         M = lambda x: x * (0.5*rmax)  # preconditioner
-        x = pcg(hess, mask*residual, np.zeros(residual.shape, dtype=np.float64), M=M, tol=cgtol,
+        x = pcg(hess, residual, np.zeros(residual.shape, dtype=np.float64), M=M, tol=cgtol,
                 maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
         
         # update model

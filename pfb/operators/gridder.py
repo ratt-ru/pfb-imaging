@@ -14,7 +14,7 @@ class Gridder(object):
     def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',
                  row_chunks=100000, chan_chunks=32, optimise_chunks=True, epsilon=1e-5, psf_oversize=2.0,
                  data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM',
-                 model_column="MODEL_DATA", flag_column='FLAG', imaging_weight_column=None):
+                 model_column="MODEL_DATA", flag_column='FLAG', imaging_weight_column=None, mask=None):
         '''
         A note on chunking - currently row_chunks and chan_chunks are only used for the
         compute_weights() and write_component_model() methods. All other methods assume
@@ -136,6 +136,11 @@ class Gridder(object):
         else:
             self.columns = (self.data_column, self.weight_column, self.flag_column, 'UVW')
 
+        if mask is not None:
+            self.mask = mask
+        else:
+            self.mask = lambda x: x
+
         # optimise chunking by concatenating measurement sets and pre-computing corr to Stokes
         # if optimise_chunks:
         #     for 
@@ -237,7 +242,7 @@ class Gridder(object):
 
     def make_residual(self, x):
         print("Making residual")
-        x = da.from_array(x.astype(np.float32), chunks=(1, self.nx, self.ny))
+        x = da.from_array(self.mask(x).astype(np.float32), chunks=(1, self.nx, self.ny))
         residuals = []
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
@@ -313,7 +318,7 @@ class Gridder(object):
         
         residuals = dask.compute(residuals, scheduler='single-threaded')[0]
         
-        return accumulate_dirty(residuals, self.nband, self.band_mapping).astype(np.float64)
+        return self.mask(accumulate_dirty(residuals, self.nband, self.band_mapping).astype(np.float64))
 
     def make_dirty(self):
         print("Making dirty")
@@ -396,7 +401,7 @@ class Gridder(object):
         
         dirties = dask.compute(dirties, scheduler='single-threaded')[0]
         
-        return accumulate_dirty(dirties, self.nband, self.band_mapping).astype(np.float64)
+        return self.mask(accumulate_dirty(dirties, self.nband, self.band_mapping).astype(np.float64))
 
     def make_psf(self):
         print("Making PSF")
@@ -466,12 +471,13 @@ class Gridder(object):
                 psfs.append(psf)
 
         psfs = dask.compute(psfs)[0]
-                
-        return accumulate_dirty(psfs, self.nband, self.band_mapping).astype(np.float64)
+
+        # LB - this assumes that the beam is normalised to 1 at the center        
+        return self.mask(accumulate_dirty(psfs, self.nband, self.band_mapping).astype(np.float64))
 
     def write_model(self, x):
         print("Writing model data")
-        x = da.from_array(x.astype(np.float32), chunks=(1, self.nx, self.ny))
+        x = da.from_array(self.mask(x).astype(np.float32), chunks=(1, self.nx, self.ny))
         writes  = []
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
@@ -522,6 +528,7 @@ class Gridder(object):
         dask.compute(writes, scheduler='single-threaded')
 
     def write_component_model(self, comps, ref_freq, mask, row_chunks, chan_chunks):
+        raise NotImplementedError("Need to fix beamed masking before this will work")
         print("Writing model data at full freq resolution")
         order, npix = comps.shape
         comps = da.from_array(comps, chunks=(-1, -1))
