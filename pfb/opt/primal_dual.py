@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.linalg import norm
 from pfb.utils import prox_21
 
 def primal_dual(A, xbar, 
@@ -78,7 +77,7 @@ def primal_dual(A, xbar,
                 # x[1] = np.where(mask, x[1], 0.0)
 
         # convergence check
-        eps = norm(x-xp)/norm(x)
+        eps = np.linalg.norm(x-xp)/np.linalg.norm(x)
         if eps < tol:
             break
 

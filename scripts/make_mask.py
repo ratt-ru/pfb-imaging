@@ -59,9 +59,14 @@ def map_region(region, ox, oy, x, y):
 def main(args):
     image = load_fits(args.image, args.dtype).squeeze()
     hdr = fits.getheader(args.image)
-    x_coords = data_from_header(hdr, axis=1)
-    y_coords = data_from_header(hdr, axis=2)
+    x_coords, _ = data_from_header(hdr, axis=1)
+    y_coords, _ = data_from_header(hdr, axis=2)
     nx, ny = image.shape
+
+    # print(x_coords)
+    # print(y_coords)
+
+    # quit()
 
     # check that cords lie in [0,360)
     if (x_coords < 0.0).any():
@@ -103,7 +108,7 @@ def main(args):
     image *= new_region
     
     # wavelet decomposition + thresholding to get rid of spurious structure
-    psi = PSI(1, nx, ny, nlevels=4)  # TODO - adjust nlevels for image size
+    psi = PSI(imsize=(1, nx, ny), nlevels=2)  # TODO - adjust nlevels for image size
 
     alpha = psi.hdot(image[None])
     alpha = np.maximum(np.abs(alpha) - args.soft_threshold, 0.0) * np.sign(alpha)

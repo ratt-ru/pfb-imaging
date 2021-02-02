@@ -473,7 +473,7 @@ class Gridder(object):
         psfs = dask.compute(psfs)[0]
 
         # LB - this assumes that the beam is normalised to 1 at the center        
-        return self.mask(accumulate_dirty(psfs, self.nband, self.band_mapping).astype(np.float64))
+        return accumulate_dirty(psfs, self.nband, self.band_mapping).astype(np.float64)
 
     def write_model(self, x):
         print("Writing model data")

@@ -205,7 +205,7 @@ def main(args):
                 do_wstacking=args.do_wstacking, row_chunks=args.row_chunks, psf_oversize=args.psf_oversize,
                 data_column=args.data_column, weight_column=args.weight_column,
                 epsilon=args.epsilon, imaging_weight_column=args.imaging_weight_column,
-                model_column=args.model_column, flag_column=args.flag_column)
+                model_column=args.model_column, flag_column=args.flag_column, mask=mask)
     freq_out = R.freq_out
     radec = R.radec
 
@@ -251,7 +251,7 @@ def main(args):
     dirty /= wsum
     dirty_mfs = np.sum(dirty, axis=0) 
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)
-    
+
     # initial model and residual 
     if args.x0 is not None:
         try:
@@ -347,7 +347,7 @@ def main(args):
 
     # save model cube and last residual cube
     save_fits(args.outfile + '_model.fits', model, hdr)
-    save_fits(args.outfile + '_last_residual.fits', residual, hdr)
+    save_fits(args.outfile + '_last_residual.fits', residual*wsum, hdr)
     
     if args.write_model:
         R.write_model(model)

@@ -19,7 +19,7 @@ def sara(psf, model, residual, mask, sig_21, dual=None, weights21=None,
     nband, nx, ny = residual.shape
     
     # PSF operator
-    psfo = PSF(psf, nthreads=nthreads, imsize=residual.shape)
+    psfo = PSF(psf, nthreads=nthreads, imsize=residual.shape, mask=mask)
     if model.any():
         dirty = residual + psfo.convolve(model)
     else:
@@ -53,7 +53,7 @@ def sara(psf, model, residual, mask, sig_21, dual=None, weights21=None,
     
     #  preconditioning operator
     def hess(x):  
-        return mask(psfo.convolve(mask(x))) + x / (0.5*rmax) 
+        return psfo.convolve(x) + x / (0.5*rmax) 
 
     # spectral norm
     beta, betavec = power_method(hess, residual.shape, tol=pmtol, maxit=pmmaxit, verbosity=pmverbose)
