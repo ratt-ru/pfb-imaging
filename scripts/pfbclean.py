@@ -111,21 +111,25 @@ def create_parser():
     p.add_argument("--cgminit", type=int, default=25,
                    help="Minimum number of iterations for the cg updates")
     p.add_argument("--cgverbose", type=int, default=1,
-                   help="Verbosity of cg method used to invert Hess. Set to 1 or 2 for debugging.")
+                   help="Verbosity of cg method used to invert Hess. Set to 2 for debugging.")
     p.add_argument("--pmtol", type=float, default=1e-5,
                    help="Tolerance for power method used to compute spectral norms")
     p.add_argument("--pmmaxit", type=int, default=50,
                    help="Maximum number of iterations for power method")
     p.add_argument("--pmverbose", type=int, default=1,
-                   help="Verbosity of power method used to get spectral norm of approx Hessian. Set to 1 or 2 for debugging.")
+                   help="Verbosity of power method used to get spectral norm of approx Hessian. Set to 2 for debugging.")
     p.add_argument("--pdtol", type=float, default=1e-6,
                    help="Tolerance for primal dual")
     p.add_argument("--pdmaxit", type=int, default=250,
                    help="Maximum number of iterations for primal dual")
+    p.add_argument("--tidy", type=str2bool, nargs='?', const=True, default=True,
+                   help="Switch off if you prefer it dirty.")
     p.add_argument("--pdverbose", type=int, default=1,
-                   help="Verbosity of primal dual used to solve backward step. Set to 1 or 2 for debugging.")
+                   help="Verbosity of primal dual used to solve backward step. Set to 2 for debugging.")
     p.add_argument("--make_restored", type=str2bool, nargs='?', const=True, default=True,
                    help="Relax positivity and sparsity constraints at final iteration")
+    p.add_argument("--real_type", type=str, default='f4',
+                   help="Dtype of real valued images. f4/f8 for single or double precision respectively.")
     return p
 
 def main(args):
@@ -184,16 +188,16 @@ def main(args):
 
     # mask
     if args.mask is not None:
-        mask_array = load_fits(args.mask, dtype=np.int64)[None, :, :]
+        mask_array = load_fits(args.mask, dtype=args.real_type)[None, :, :]
         if mask_array.shape != (1, args.nx, args.ny):
             raise ValueError("Mask has incorrect shape")
         mask = lambda x: mask_array * x
     else:
-        mask_array = np.ones((1, args.nx, args.ny), dtype=np.int64)
+        mask_array = np.ones((1, args.nx, args.ny), dtype=args.real_type)
         mask = lambda x: x
 
     if args.power_beam is not None:
-        power_beam = load_fits(args.power_beam, dtype=np.float64)
+        power_beam = load_fits(args.power_beam, dtype=args.real_type)
         # TODO - check correct header
         if power_beam.shape != (args.nband, args.nx, args.ny):
             raise ValueError("Power beam has incorrect shape")
@@ -218,7 +222,7 @@ def main(args):
     if args.psf is not None:
         try:
             compare_headers(hdr_psf, fits.getheader(args.psf))
-            psf = load_fits(args.psf)
+            psf = load_fits(args.psf, dtype=args.real_type)
         except:
             psf = R.make_psf()
             save_fits(args.outfile + '_psf.fits', psf, hdr_psf)
@@ -256,11 +260,11 @@ def main(args):
     if args.x0 is not None:
         try:
             compare_headers(hdr, fits.getheader(args.x0))
-            model = load_fits(args.x0, dtype=np.float64)
+            model = load_fits(args.x0, dtype=args.real_type)
             if args.first_residual is not None:
                 try:
                     compare_headers(hdr, fits.getheader(args.first_residual))
-                    residual = load_fits(args.first_residual, dtype=np.float64)
+                    residual = load_fits(args.first_residual, dtype=args.real_type)
                 except:
                     residual = R.make_residual(model)
                     save_fits(args.outfile + '_first_residual.fits', residual, hdr)
@@ -311,7 +315,7 @@ def main(args):
                 nthreads=args.nthreads,  maxit=args.minormaxit, gamma=args.gamma,  tol=args.minortol,
                 psi_levels=args.psi_levels, psi_basis=args.psi_basis,
                 reweight_iters=reweight_iters, reweight_alpha_ff=args.reweight_alpha_ff, reweight_alpha_percent=args.reweight_alpha_percent,
-                pdtol=args.pdtol, pdmaxit=args.pdmaxit, pdverbose=args.pdverbose, positivity=args.positivity,
+                pdtol=args.pdtol, pdmaxit=args.pdmaxit, pdverbose=args.pdverbose, positivity=args.positivity, tidy=args.tidy,
                 cgtol=args.cgtol, cgminit=args.cgminit, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose, 
                 pmtol=args.pmtol, pmmaxit=args.pmmaxit, pmverbose=args.pmverbose)
             

@@ -90,7 +90,7 @@ def pcg(A, b, x0, M=None, tol=1e-5, maxit=500, minit=100, verbosity=1, report_fr
         eps = np.maximum(epsx, epsn)
 
         if not k%report_freq and verbosity > 1:
-            print("         At iteration %i rnorm = %f"%(k, rnorm/eps0))
+            print("         At iteration %i rnorm = %f"%(k, eps))
 
     if k >= maxit:
         if verbosity:

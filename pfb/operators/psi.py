@@ -185,7 +185,7 @@ class DaskPSI(PSI):
                          dtype=self.real_type,
                          align_arrays=False)
 
-        return x.sum(axis=0).compute(schedular='processes')
+        return x.sum(axis=0).compute()  # scheduler='processes'
 
     def hdot(self, x):
         xdask = da.from_array(x, chunks=(1, self.nx, self.ny))
@@ -203,4 +203,4 @@ class DaskPSI(PSI):
                              dtype=self.real_type,
                              align_arrays=False)
 
-        return alpha.compute(schedular='processes')
+        return alpha.compute()  # scheduler='processes'

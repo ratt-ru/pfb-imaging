@@ -2,14 +2,14 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 
-def data_from_header(hdr, axis=3, zero_ref=False):
+def data_from_header(hdr, axis=3):
     npix = hdr['NAXIS' + str(axis)]
     refpix = hdr['CRPIX' + str(axis)]
     delta = hdr['CDELT' + str(axis)] 
     ref_val = hdr['CRVAL' + str(axis)]
     return ref_val + np.arange(1 - refpix, 1 + npix - refpix) * delta, ref_val
 
-def load_fits(name, dtype=np.float64):
+def load_fits(name, dtype=np.float32):
     data = fits.getdata(name)
     if len(data.shape) == 4:
         return np.ascontiguousarray(np.transpose(data[:, :, ::-1].astype(dtype), axes=(0, 1, 3, 2)))

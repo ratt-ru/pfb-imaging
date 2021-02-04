@@ -14,7 +14,7 @@ class Gridder(object):
     def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',
                  row_chunks=100000, chan_chunks=32, optimise_chunks=True, epsilon=1e-5, psf_oversize=2.0,
                  data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM',
-                 model_column="MODEL_DATA", flag_column='FLAG', imaging_weight_column=None, mask=None):
+                 model_column="MODEL_DATA", flag_column='FLAG', imaging_weight_column=None, mask=None, real_type='f4'):
         '''
         A note on chunking - currently row_chunks and chan_chunks are only used for the
         compute_weights() and write_component_model() methods. All other methods assume
@@ -33,6 +33,7 @@ class Gridder(object):
         self.psf_oversize = psf_oversize
         self.nx_psf = good_size(int(self.psf_oversize * self.nx))
         self.ny_psf = good_size(int(self.psf_oversize * self.ny))
+        self.real_type = real_type
 
         self.data_column = data_column
         self.weight_column = weight_column
@@ -180,7 +181,7 @@ class Gridder(object):
 
                 uvw = ds.UVW.data
 
-                count = compute_uniform_counts(uvw, freq, freq_bin_idx, freq_bin_counts, 2*self.nx, 2*self.ny, self.cell, self.cell, np.float32)
+                count = compute_uniform_counts(uvw, freq, freq_bin_idx, freq_bin_counts, 2*self.nx, 2*self.ny, self.cell, self.cell, self.real_type)
 
                 counts.append(count) 
             
@@ -242,7 +243,7 @@ class Gridder(object):
 
     def make_residual(self, x):
         print("Making residual")
-        x = da.from_array(self.mask(x).astype(np.float32), chunks=(1, self.nx, self.ny))
+        x = da.from_array(self.mask(x).astype(self.real_type), chunks=(1, self.nx, self.ny))
         residuals = []
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
@@ -318,7 +319,7 @@ class Gridder(object):
         
         residuals = dask.compute(residuals, scheduler='single-threaded')[0]
         
-        return self.mask(accumulate_dirty(residuals, self.nband, self.band_mapping).astype(np.float64))
+        return self.mask(accumulate_dirty(residuals, self.nband, self.band_mapping).astype(self.real_type))
 
     def make_dirty(self):
         print("Making dirty")
@@ -401,7 +402,7 @@ class Gridder(object):
         
         dirties = dask.compute(dirties, scheduler='single-threaded')[0]
         
-        return self.mask(accumulate_dirty(dirties, self.nband, self.band_mapping).astype(np.float64))
+        return self.mask(accumulate_dirty(dirties, self.nband, self.band_mapping).astype(self.real_type))
 
     def make_psf(self):
         print("Making PSF")
@@ -473,7 +474,7 @@ class Gridder(object):
         psfs = dask.compute(psfs)[0]
 
         # LB - this assumes that the beam is normalised to 1 at the center        
-        return accumulate_dirty(psfs, self.nband, self.band_mapping).astype(np.float64)
+        return accumulate_dirty(psfs, self.nband, self.band_mapping).astype(self.real_type)
 
     def write_model(self, x):
         print("Writing model data")
@@ -646,7 +647,7 @@ def _model_from_comps(comps, freq, mask, ref_freq):
     order, npix = comps.shape
     nband = freq.size
     nx, ny = mask.shape
-    model = np.zeros((nband, nx, ny), dtype=np.float64)
+    model = np.zeros((nband, nx, ny), dtype=comps.dtype)
     w = (freq / ref_freq).reshape(freq.size, 1)
     Xdes = np.tile(w, order) ** np.arange(0, order)
     beta_rec = Xdes.dot(comps)
