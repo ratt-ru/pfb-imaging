@@ -10,4 +10,4 @@ Note casacore needs to be installed on the system for this to work.
 
 If you find any of this useful please cite (for now)
 
-'pfb-clean <https://arxiv.org/abs/2101.08072>`_
+https://arxiv.org/abs/2101.08072
