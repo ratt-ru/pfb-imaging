@@ -10,7 +10,7 @@ Note casacore needs to be installed on the system for this to work.
 
 If you find any of this useful please cite us using (for now)
 
-"
+``
 @INPROCEEDINGS{P5-58_adassxxx,
    author     = {{Bester}, H.~L. and {Repetti}, A. and {Perkins}, S. and {Smirnov}, O.~M. and {Kenyon}, J.~S.},
 booktitle     = {ADASS XXX},
@@ -22,4 +22,4 @@ booktitle     = {ADASS XXX},
     publisher = "ASP",
     address   = "San Francisco",
 }
-"
+``
