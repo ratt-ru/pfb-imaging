@@ -170,7 +170,7 @@ class DaskPSI(PSI):
         self.ntot = da.from_array(ntot, chunks=1)
         
     def dot(self, alpha):
-        alpha_dask = da.from_array(alpha, chunks=(1, 1, self.nmax))
+        alpha_dask = da.from_array(alpha, chunks=(1, 1, self.nmax), name='myname-' + hash(id(alpha)))
         x = da.blockwise(_dot_internal_wrapper, ("basis", "band", "nx", "ny"),
                          alpha_dask, ("basis", "band", "ntot"),
                          self.bases, ("basis",),
@@ -188,7 +188,7 @@ class DaskPSI(PSI):
         return x.sum(axis=0).compute()  # scheduler='processes'
 
     def hdot(self, x):
-        xdask = da.from_array(x, chunks=(1, self.nx, self.ny))
+        xdask = da.from_array(x, chunks=(1, self.nx, self.ny), name='myname-' + hash(id(x)))
         alpha = da.blockwise(_hdot_internal_wrapper, ("basis", "band", "nmax"),
                              xdask, ("band", "nx", "ny"),
                              self.bases, ("basis", ),
