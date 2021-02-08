@@ -7,6 +7,7 @@ import zarr
 from africanus.gridding.wgridder.dask import dirty as vis2im
 from africanus.gridding.wgridder.dask import model as im2vis
 from africanus.gridding.wgridder.dask import residual as im2residim
+from africanus.gridding.wgridder.dask import hessian
 from africanus.model.coherency.dask import convert
 from ducc0.fft import good_size
 
@@ -237,13 +238,9 @@ class Gridder(object):
             writes.append(xds_to_table(out_data, ims, columns=["IMAGING_WEIGHT_SPECTRUM"]))
         dask.compute(writes)
 
-
-
-
-
     def make_residual(self, x):
         print("Making residual")
-        x = da.from_array(self.mask(x).astype(self.real_type), chunks=(1, self.nx, self.ny))
+        x = da.from_array(self.mask(x).astype(self.real_type), chunks=(1, self.nx, self.ny), name=False)
         residuals = []
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
@@ -325,7 +322,7 @@ class Gridder(object):
         print("Making dirty")
         dirty = da.zeros((self.nband, self.nx, self.ny), 
                          dtype=np.float32,
-                         chunks=(1, self.nx, self.ny))
+                         chunks=(1, self.nx, self.ny), name=False)
         dirties = []
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
@@ -475,6 +472,81 @@ class Gridder(object):
 
         # LB - this assumes that the beam is normalised to 1 at the center        
         return accumulate_dirty(psfs, self.nband, self.band_mapping).astype(self.real_type)
+
+    def convolve(self, x):
+        print("Applying Hessian")
+        x = da.from_array(self.mask(x).astype(self.real_type), chunks=(1, self.nx, self.ny), name=False)
+        convolvedims = []
+        for ims in self.ms:
+            xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
+                              chunks=self.chunks[ims],
+                              columns=self.columns)
+
+            # subtables
+            ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
+            fields = xds_from_table(ims + "::FIELD", group_cols="__row__")
+            spws = xds_from_table(ims + "::SPECTRAL_WINDOW", group_cols="__row__")
+            pols = xds_from_table(ims + "::POLARIZATION", group_cols="__row__")
+
+            # subtable data
+            ddids = dask.compute(ddids)[0]
+            fields = dask.compute(fields)[0]
+            spws = dask.compute(spws)[0]
+            pols = dask.compute(pols)[0]
+
+            for ds in xds:
+                field = fields[ds.FIELD_ID]
+                radec = field.PHASE_DIR.data.squeeze()
+                if not np.array_equal(radec, self.radec):
+                    continue
+
+                spw = ds.DATA_DESC_ID  # is this correct?
+
+                freq_bin_idx = self.freq_bin_idx[ims][spw]
+                freq_bin_counts = self.freq_bin_counts[ims][spw]
+                freq = self.freq[ims][spw]
+
+                uvw = ds.UVW.data
+
+                # only keep data where both corrs are unflagged
+                flag = getattr(ds, self.flag_column).data
+
+                weights = getattr(ds, self.weight_column).data
+                if len(weights.shape) < 3:
+                    weights = da.broadcast_to(weights[:, None, :], flag.shape, chunks=flag.chunks)
+                    
+
+                if self.imaging_weight_column is not None:
+                    imaging_weights = getattr(ds, self.imaging_weight_column).data
+                    if len(imaging_weights.shape) < 3:
+                        imaging_weights = da.broadcast_to(imaging_weights[:, None, :], flag.shape, chunks=flag.chunks)
+
+                    weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
+                    weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]
+                else:
+                    weightsxx = weights[:, :, 0]
+                    weightsyy = weights[:, :, -1]
+
+                # weighted sum corr to Stokes I
+                weights = weightsxx + weightsyy
+                
+                flagxx = flag[:, :, 0]
+                flagyy = flag[:, :, -1]
+                flag = ~ (flagxx | flagyy)  # ducc0 convention
+
+                bands = self.band_mapping[ims][spw]
+                model = x[list(bands), :, :]
+                convolvedim = hessian(uvw, freq, model, freq_bin_idx, freq_bin_counts,
+                                      self.cell, weights=weights, flag=flag.astype(np.uint8),
+                                      nthreads=self.nthreads, epsilon=self.epsilon,
+                                      do_wstacking=self.do_wstacking, double_accum=True)
+
+                convolvedims.append(convolvedim)
+        
+        
+        convolvedims = dask.compute(convolvedims, scheduler='single-threaded')[0]
+        
+        return self.mask(accumulate_dirty(convolvedims, self.nband, self.band_mapping).astype(self.real_type))
 
     def write_model(self, x):
         print("Writing model data")
