@@ -14,12 +14,12 @@ from ducc0.fft import good_size
 class Gridder(object):
     def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',
                  row_chunks=100000, chan_chunks=32, optimise_chunks=True, epsilon=1e-5, psf_oversize=2.0,
-                 data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM',
+                 data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM', mueller_column=None,
                  model_column="MODEL_DATA", flag_column='FLAG', imaging_weight_column=None, mask=None, real_type='f4'):
         '''
         A note on chunking - currently row_chunks and chan_chunks are only used for the
         compute_weights() and write_component_model() methods. All other methods assume
-        that the data for a single imaging band per ms and spw fits into memory. 
+        that the data for a single imaging band per ms and spw fit into memory. 
         '''
         if Stokes != 'I':
             raise NotImplementedError("Only Stokes I currently supported")
@@ -36,10 +36,6 @@ class Gridder(object):
         self.ny_psf = good_size(int(self.psf_oversize * self.ny))
         self.real_type = real_type
 
-        self.data_column = data_column
-        self.weight_column = weight_column
-        self.model_column = model_column
-        self.flag_column = flag_column
         if isinstance(ms_name, list):
             self.ms = ms_name
         else:
@@ -131,12 +127,17 @@ class Gridder(object):
                 self.freq_bin_idx[ims][spw] = da.from_array(bin_idx, chunks=1)
                 self.freq_bin_counts[ims][spw] = da.from_array(bin_counts, chunks=1)
 
+
+        self.data_column = data_column
+        self.weight_column = weight_column
+        self.model_column = model_column
+        self.flag_column = flag_column
+
         self.imaging_weight_column = imaging_weight_column
-        if imaging_weight_column is not None:
-            self.columns = (self.data_column, self.weight_column,
-                            self.imaging_weight_column, self.flag_column, 'UVW')
-        else:
-            self.columns = (self.data_column, self.weight_column, self.flag_column, 'UVW')
+        self.mueller_column = mueller_column
+
+        self.conv_weight_column = 'CONV_WEIGHT_SPECTRUM'
+
 
         if mask is not None:
             self.mask = mask
@@ -239,6 +240,7 @@ class Gridder(object):
         dask.compute(writes)
 
     def make_residual(self, x):
+        # Note deprecated (does not support Jones terms) 
         print("Making residual")
         x = da.from_array(self.mask(x).astype(self.real_type), chunks=(1, self.nx, self.ny), name=False)
         residuals = []

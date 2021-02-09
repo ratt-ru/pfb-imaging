@@ -300,6 +300,7 @@ def main(args):
     # deconvolve
     rmax = np.abs(residual_mfs).max()
     rms = np.std(residual_mfs)
+    redo_dirty = False
     print("PFB - Peak of initial residual is %f and rms is %f" % (rmax, rms))
     for i in range(0, args.maxit):
         # run minor cycle of choice
@@ -319,15 +320,28 @@ def main(args):
                 cgtol=args.cgtol, cgminit=args.cgminit, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose, 
                 pmtol=args.pmtol, pmmaxit=args.pmmaxit, pmverbose=args.pmverbose)
             
+            # by default do l21 reweighting every iteration from the second major cycle onwards 
             if args.reweight_iters is None:
-                reweight_iters = np.arange(1, args.minormaxit, dtype=np.int)
+                reweight_iters = np.arange(args.minormaxit, dtype=np.int)
 
         else:
             raise ValueError("Unknown deconvolution mode ", args.deconv_mode)
 
 
         # get residual
-        residual = R.make_residual(model)/wsum
+        if redo_dirty:
+            # Need to do this if weights or Jones has changed 
+            # (i.e. if we change robustness factor, do l2 reweighting or calibration)
+            psf = R.make_psf()
+            wsums = np.amax(psf.reshape(args.nband, R.nx_psf*R.ny_psf), axis=1)
+            wsum = np.sum(wsums)
+            psf /= wsum
+            dirty = R.make_dirty()/wsum
+
+        
+        # compute in image space
+        residual = dirty - R.convolve(model)/wsum
+
         residual_mfs = np.sum(residual, axis=0)
 
         if i in report_iters:
