@@ -23,7 +23,7 @@ def load_fits(name, dtype=np.float32):
 def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
     hdu = fits.PrimaryHDU(header=hdr)
     if len(data.shape) == 4:
-        hdu.data = np.transpose(data, axes=(0, 1, 3, 2))[:, ::-1].astype(dtype)
+        hdu.data = np.transpose(data, axes=(0, 1, 3, 2))[:, :, ::-1].astype(dtype)
     elif len(data.shape) == 3:
         hdu.data = np.transpose(data, axes=(0, 2, 1))[:, ::-1].astype(dtype)
     elif len(data.shape) == 2:
