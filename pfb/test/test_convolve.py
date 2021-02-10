@@ -3,7 +3,7 @@ from pfb.operators import Gridder, PSF
 from africanus.constants import c as lightspeed
 import packratt
 from pyrap.tables import table
-from numpy.testing import assert_allclose
+from numpy.testing import assert_array_almost_equal
 import pytest
 import os
 import traceback
@@ -60,4 +60,4 @@ def test_convolve(tmp_path_factory):  #, srf, fov, nband):
     res1 = psfo.convolve(model)
     res2 = R.convolve(model)/wsum
 
-    assert_allclose(res1, res2, rtol=0.1, atol=1e-5)
+    assert_array_almost_equal(res1, res2, decimal=4)
