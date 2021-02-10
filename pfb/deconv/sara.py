@@ -5,7 +5,7 @@ from pfb.operators import PSF, DaskPSI
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
 
-def sara(psf, model, residual, mask, sig_21, dual=None, weights21=None, 
+def sara(psf, model, residual, mask, sig_21, sigma_frac, dual=None, weights21=None, 
          nthreads=1, maxit=10, gamma=0.99,  tol=1e-3,  # options for outer optimisation
          psi_levels=3, psi_basis=None,  # sara dict options
          reweight_iters=None, reweight_alpha_ff=0.5, reweight_alpha_percent=10,  # reweighting options
@@ -53,7 +53,7 @@ def sara(psf, model, residual, mask, sig_21, dual=None, weights21=None,
     
     #  preconditioning operator
     def hess(x):  
-        return psfo.convolve(x) + x / (0.5*rmax) 
+        return psfo.convolve(x) + x / (sigma_frac*rmax) 
 
     if tidy:
         # spectral norm

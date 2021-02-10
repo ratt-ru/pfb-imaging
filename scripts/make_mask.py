@@ -100,7 +100,6 @@ def main(args):
             print("Coordinates match")
             new_region = region
     else:
-        print("Ended up here")
         new_region = np.ones_like(image)
     
     

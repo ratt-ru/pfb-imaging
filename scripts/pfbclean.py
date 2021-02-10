@@ -86,6 +86,8 @@ def create_parser():
     p.add_argument("--sig_21", type=float, default=1e-3,
                    help="Initial strength of l21 regulariser."
                    "Initialise to nband x expected rms in MFS dirty if uncertain.")
+    p.add_argument("--sigma_frac", type=float, default=0.5,
+                   help="Fraction of peak MFS residual to use in preconditioner at each iteration.")
     p.add_argument("--positivity", type=str2bool, nargs='?', const=True, default=True,
                    help='Whether to impose a positivity constraint or not.')
     p.add_argument("--psi_levels", type=int, default=3,
@@ -312,7 +314,7 @@ def main(args):
                 weights21 = None 
             
             model, dual, residual_mfs_minor, weights21 = sara(
-                psf, model, residual, mask, args.sig_21, dual=dual, weights21=weights21,
+                psf, model, residual, mask, args.sig_21, args.sigma_frac, dual=dual, weights21=weights21,
                 nthreads=args.nthreads,  maxit=args.minormaxit, gamma=args.gamma,  tol=args.minortol,
                 psi_levels=args.psi_levels, psi_basis=args.psi_basis,
                 reweight_iters=reweight_iters, reweight_alpha_ff=args.reweight_alpha_ff, reweight_alpha_percent=args.reweight_alpha_percent,

@@ -68,13 +68,13 @@ def primal_dual(A, xbar,
         if positivity:
             x[x<0] = 0.0
 
-        # apply mask
-        if mask is not None:
-            if x.ndim == 3:
-                x = mask(x)
-            elif x.ndim == 4:
-                raise NotImplementedError("Forgot why we need this. multi_pfb?")
-                # x[1] = np.where(mask, x[1], 0.0)
+        # # apply mask
+        # if mask is not None:
+        #     if x.ndim == 3:
+        #         x = mask(x)
+        #     elif x.ndim == 4:
+        #         raise NotImplementedError("Forgot why we need this. multi_pfb?")
+        #         # x[1] = np.where(mask, x[1], 0.0)
 
         # convergence check
         eps = np.linalg.norm(x-xp)/np.linalg.norm(x)
