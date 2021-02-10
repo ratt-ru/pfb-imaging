@@ -15,14 +15,14 @@ np.random.seed(420)
 # @pmp("srf", [1.2, 2.0])
 # @pmp("fov", [0.5, 2.5])
 # @pmp("nband", [1, 2])
-def test_convolve(tmp_path_factory):  #, srf, fov, nband):
-    srf = 2.0
-    fov = 1.5
-    nband = 2
-    test_dir = tmp_path_factory.mktemp("test_convolve")
+def test_residual(tmp_path_factory):  #, srf, fov, nband):
+    test_dir = tmp_path_factory.mktemp("test_residual")
     packratt.get('/test/ms/2020-06-04/elwood/smallest_ms.tar.gz', test_dir)
     msname = [str(test_dir / 'smallest_ms.ms_p0')]
 
+    srf = 2.0
+    fov = 1.5
+    nband = 2
     uvw = table(msname[0]).getcol('UVW')
 
     freq = table(msname[0]+'::SPECTRAL_WINDOW').getcol('CHAN_FREQ').squeeze()

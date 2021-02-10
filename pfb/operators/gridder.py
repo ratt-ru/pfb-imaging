@@ -138,6 +138,17 @@ class Gridder(object):
 
         self.conv_weight_column = 'CONV_WEIGHT_SPECTRUM'
 
+        self.columns = (self.data_column, self.weight_column, self.model_column,
+                        self.flag_column, 'UVW')
+
+        if self.imaging_weight_column is not None:
+            self.columns += (self.imaging_weight_column,)
+
+        if self.mueller_column is not None:
+            self.columns += (self.mueller_column,)
+
+        # self.conv_weight_column)
+
 
         if mask is not None:
             self.mask = mask
