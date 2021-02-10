@@ -102,7 +102,7 @@ def sara(psf, model, residual, mask, sig_21, dual=None, weights21=None,
             print("     SARA - Success, convergence after %i iterations" %(i+1))
             break
 
-        if tidy:
+        if tidy and i<maxit-1:
             beta, betavec = power_method(hess, residual.shape, b0=betavec, tol=pmtol, maxit=pmmaxit)
 
     return model, dual, residual_mfs, weights21
