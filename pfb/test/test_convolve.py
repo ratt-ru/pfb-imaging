@@ -17,7 +17,7 @@ np.random.seed(420)
 # @pmp("nband", [1, 2])
 def test_convolve(tmp_path_factory):  #, srf, fov, nband):
     test_dir = tmp_path_factory.mktemp("test_convolve")
-    packratt.get('/test/ms/2020-06-04/elwood/smallest_ms.tar.gz', test_dir)
+    packratt.get('/test/ms/2020-06-04/elwood/smallest_ms.tar.gz', str(test_dir))
     msname = [str(test_dir / 'smallest_ms.ms_p0')]
 
     srf = 2.0
