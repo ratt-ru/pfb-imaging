@@ -8,13 +8,13 @@ import dask.array as da
 import numpy as np
 from astropy.io import fits
 from africanus.model.spi.dask import fit_spi_components
-from pfb.utils import load_fits, save_fits, convolve2gaussres, data_from_header, set_header_info
+from pfb.utils import load_fits, save_fits, convolve2gaussres, data_from_header, set_header_info, str2bool
 from scripts.power_beam_maker import interpolate_beam
 
 def create_parser():
     p = argparse.ArgumentParser(description='Simple spectral index fitting tool.',
                                 formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument('-model', "--model", type=str, required=True)
+    p.add_argument('-model', "--model", type=str)
     p.add_argument('-residual', "--residual", type=str)
     p.add_argument('-o', '--output-filename', type=str,
                    help="Path to output directory + prefix. \n"
@@ -24,7 +24,7 @@ def create_parser():
                         "specified as emaj emin pa. \n"
                         "By default these are taken from the fits header "
                         "of the residual image.")
-    p.add_argument('-cp', "--circ-psf", action="store_true",
+    p.add_argument('-cp', "--circ-psf", type=str2bool, nargs='?', const=True, default=True,
                    help="Passing this flag will convolve with a circularised "
                    "beam instead of an elliptical one")
     p.add_argument('-th', '--threshold', default=10, type=float,
@@ -54,7 +54,7 @@ def create_parser():
                    "Default is to write all of them")
     p.add_argument('-pf', "--padding-frac", default=0.5, type=float,
                    help="Padding factor for FFT's.")
-    p.add_argument('-dc', "--dont-convolve", action="store_true",
+    p.add_argument('-dc', "--dont-convolve", type=str2bool, nargs='?', const=True, default=False,
                    help="Passing this flag bypasses the convolution "
                    "by the clean beam")
     p.add_argument('-cw', "--channel_weights", default=None, nargs='+', type=float,
