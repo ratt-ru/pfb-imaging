@@ -9,6 +9,7 @@ import numpy as np
 from astropy.io import fits
 from africanus.model.spi.dask import fit_spi_components
 from pfb.utils import load_fits, save_fits, convolve2gaussres, data_from_header, set_header_info
+from scripts.power_beam_maker import interpolate_beam
 
 def create_parser():
     p = argparse.ArgumentParser(description='Simple spectral index fitting tool.',
@@ -37,13 +38,9 @@ def create_parser():
     p.add_argument('-ncpu', '--ncpu', default=0, type=int,
                    help="Number of threads to use. \n"
                         "Default of zero means use all threads")
-    p.add_argument('-bm', '--beam-model', default=None, type=str,
-                   help="Fits beam model to use. \n"
-                        "Use power_beam_maker to make power beam "
-                        "corresponding to image. ")
     p.add_argument('-pb-min', '--pb-min', type=float, default=0.15,
                    help="Set image to zero where pb falls below this value")
-    p.add_argument('-products', '--products', default='aeikIcmr', type=str,
+    p.add_argument('-products', '--products', default='aeikIcmrb', type=str,
                    help="Outputs to write. Letter correspond to: \n"
                    "a - alpha map \n"
                    "e - alpha error map \n"
@@ -52,7 +49,8 @@ def create_parser():
                    "I - reconstructed cube form alpha and I0 \n"
                    "c - restoring beam used for convolution \n"
                    "m - convolved model \n"
-                   "m - convolved residual \n"
+                   "r - convolved residual \n"
+                   "b - average power beam \n"
                    "Default is to write all of them")
     p.add_argument('-pf', "--padding-frac", default=0.5, type=float,
                    help="Padding factor for FFT's.")
@@ -69,6 +67,25 @@ def create_parser():
                    help="Data type of output. Default is single precision") 
     p.add_argument('-acr', '--add-convolved-residuals', action="store_true",
                    help='Flag to add in the convolved residuals before fitting components')
+    p.add_argument('-ms', "--ms", nargs="+", type=str, 
+                   help="Mesurement sets used to make the image. \n"
+                   "Used to get paralactic angles if doing primary beam correction")
+    p.add_argument('-f', "--field", type=int, default=0,
+                   help="Field ID")
+    p.add_argument('-bm', '--beam-model', default=None, type=str,
+                   help="Fits beam model to use. \n"
+                        "It is assumed that the pattern is path_to_beam/"
+                        "name_corr_re/im.fits. \n"
+                        "Provide only the path up to name "
+                        "e.g. /home/user/beams/meerkat_lband. \n"
+                        "Patterns mathing corr are determined "
+                        "automatically. \n"
+                        "Only real and imaginary beam models currently "
+                        "supported.")
+    p.add_argument('-st', "--sparsify-time", type=int, default=10,
+                   help="Used to select a subset of time ")
+    p.add_argument('-ct', '--corr-type', type=str, default='linear',
+                   help="Correlation typ i.e. linear or circular. ")
     return p
 
 def main(args):
@@ -159,22 +176,33 @@ def main(args):
 
     # load beam 
     if args.beam_model is not None:
-        bhdr = fits.getheader(args.beam_model)
-        l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
-        l_coord_beam -= ref_lb
-        if not np.array_equal(l_coord_beam, l_coord):
-            raise ValueError("l coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
+        # we can pass in either a fits file with the already interpolated beam of we can interpolate from scratch
+        if args.beam_model[-5:] == '.fits':
+            bhdr = fits.getheader(args.beam_model)
+            l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
+            l_coord_beam -= ref_lb
+            if not np.array_equal(l_coord_beam, l_coord):
+                raise ValueError("l coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
 
-        m_coord_beam, ref_mb = data_from_header(bhdr, axis=2)
-        m_coord_beam -= ref_mb
-        if not np.array_equal(m_coord_beam, m_coord):
-            raise ValueError("m coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-        
-        freqs_beam, _ = data_from_header(bhdr, axis=freq_axis)
-        if not np.array_equal(freqs, freqs_beam):
-            raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
+            m_coord_beam, ref_mb = data_from_header(bhdr, axis=2)
+            m_coord_beam -= ref_mb
+            if not np.array_equal(m_coord_beam, m_coord):
+                raise ValueError("m coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
+            
+            freqs_beam, _ = data_from_header(bhdr, axis=freq_axis)
+            if not np.array_equal(freqs, freqs_beam):
+                raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
 
-        beam_image = load_fits(args.beam_model, dtype=args.out_dtype).reshape(model.shape)
+            beam_image = load_fits(args.beam_model, dtype=args.out_dtype).reshape(model.shape)
+        else:
+            beam_image = interpolate_beam(xx, yy, freqs, args)
+            if 'b' in args.products:
+                name = outfile + '.power_beam.fits'
+                save_fits(name, beam_image, mhdr, dtype=args.out_dtype)
+                print("Wrote average power beam to %s \n" % name)
+
+
+
     else:
         beam_image = np.ones(model.shape, dtype=args.out_dtype)
 
@@ -236,7 +264,7 @@ def main(args):
             model += resid
             print("Convolved residuals added to convolved model")
 
-            if 'c' in args.products:
+            if 'r' in args.products:
                 name = outfile + '.convolved_residual.fits'
                 save_fits(name, resid.reshape(orig_shape), rhdr)
                 print("Wrote convolved residuals to %s" % name)
