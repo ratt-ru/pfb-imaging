@@ -65,7 +65,7 @@ def create_parser():
                    "Will overwrite in fits headers of output.")
     p.add_argument('-otype', '--out_dtype', default='f4', type=str,
                    help="Data type of output. Default is single precision") 
-    p.add_argument('-acr', '--add-convolved-residuals', action="store_true",
+    p.add_argument('-acr', '--add-convolved-residuals', type=str2bool, nargs='?', const=True, default=True,
                    help='Flag to add in the convolved residuals before fitting components')
     p.add_argument('-ms', "--ms", nargs="+", type=str, 
                    help="Mesurement sets used to make the image. \n"
