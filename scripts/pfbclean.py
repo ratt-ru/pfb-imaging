@@ -11,7 +11,7 @@ from astropy.io import fits
 from numpy.lib.histograms import _ravel_and_check_weights
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers
 from pfb.operators import Gridder
-from pfb.deconv import sara
+from pfb.deconv import sara, clean
 
 def create_parser():
     p = argparse.ArgumentParser()
@@ -38,6 +38,10 @@ def create_parser():
                    help="Order of interpolating polynomial")
     p.add_argument("--deconv_mode", type=str, default='sara',
                    help="Select minor cycle to use. Current options are 'sara' (default) or 'clean'")
+    p.add_argument("--weighting", type=str, default=None, 
+                   help="Imaging weights to apply. None means natural, anything else is either Briggs or Uniform depending of the value of robust.")
+    p.add_argument("--robust", type=float, default=None, 
+                   help="Robustness value for Briggs weighting. None means uniform.")
     p.add_argument("--dirty", type=str,
                    help="Fits file with dirty cube")
     p.add_argument("--psf", type=str,
@@ -71,6 +75,10 @@ def create_parser():
     p.add_argument("--nthreads", type=int, default=0)
     p.add_argument("--gamma", type=float, default=0.99,
                    help="Step size of 'primal' update.")
+    p.add_argument("--cgamma", type=float, default=0.1,
+                   help="Clean loop gain.")
+    p.add_argument("--peak_factor", type=float, default=0.85,
+                   help="Clean peak factor.")
     p.add_argument("--maxit", type=int, default=5,
                    help="Number of pfb iterations")
     p.add_argument("--minormaxit", type=int, default=15,
@@ -124,10 +132,10 @@ def create_parser():
                    help="Tolerance for primal dual")
     p.add_argument("--pdmaxit", type=int, default=250,
                    help="Maximum number of iterations for primal dual")
-    p.add_argument("--tidy", type=str2bool, nargs='?', const=True, default=True,
-                   help="Switch off if you prefer it dirty.")
     p.add_argument("--pdverbose", type=int, default=1,
                    help="Verbosity of primal dual used to solve backward step. Set to 2 for debugging.")
+    p.add_argument("--tidy", type=str2bool, nargs='?', const=True, default=True,
+                   help="Switch off if you prefer it dirty.")
     p.add_argument("--make_restored", type=str2bool, nargs='?', const=True, default=True,
                    help="Relax positivity and sparsity constraints at final iteration")
     p.add_argument("--real_type", type=str, default='f4',
@@ -211,7 +219,8 @@ def main(args):
                 do_wstacking=args.do_wstacking, row_chunks=args.row_chunks, psf_oversize=args.psf_oversize,
                 data_column=args.data_column, weight_column=args.weight_column,
                 epsilon=args.epsilon, imaging_weight_column=args.imaging_weight_column,
-                model_column=args.model_column, flag_column=args.flag_column, mask=mask)
+                model_column=args.model_column, flag_column=args.flag_column, mask=mask,
+                weighting=args.weighting, robust=args.robust)
     freq_out = R.freq_out
     radec = R.radec
 
@@ -325,7 +334,10 @@ def main(args):
             # by default do l21 reweighting every iteration from the second major cycle onwards 
             if args.reweight_iters is None:
                 reweight_iters = np.arange(args.minormaxit, dtype=np.int)
-
+        elif args.deconv_mode == 'clean':
+            threshold = np.maximum(args.peak_factor*rmax, rms)
+            model, residual_mfs_minor = clean(psf, model, residual, mask, nthreads=args.nthreads, maxit=args.minormaxit,
+                                               gamma=args.cgamma, peak_factor=args.peak_factor, threshold=threshold)
         else:
             raise ValueError("Unknown deconvolution mode ", args.deconv_mode)
 
@@ -333,7 +345,7 @@ def main(args):
         # get residual
         if redo_dirty:
             # Need to do this if weights or Jones has changed 
-            # (i.e. if we change robustness factor, do l2 reweighting or calibration)
+            # (eg. if we change robustness factor, do l2 reweighting or calibration)
             psf = R.make_psf()
             wsums = np.amax(psf.reshape(args.nband, R.nx_psf*R.ny_psf), axis=1)
             wsum = np.sum(wsums)
@@ -343,6 +355,7 @@ def main(args):
         
         # compute in image space
         residual = dirty - R.convolve(model)/wsum
+        # residual = R.make_residual(model)/wsum
 
         residual_mfs = np.sum(residual, axis=0)
 

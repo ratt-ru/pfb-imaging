@@ -179,21 +179,25 @@ class Dirac(object):
         self.nx = nx
         self.ny = ny
         self.nband = nband
-        self.mask = mask
+
+        if mask is not None:
+            self.mask = mask
+        else:
+            self.mask = lambda x: x
 
     def dot(self, x):
         """
         Components to image
         """
-        return np.where(self.mask[None, :, :], x, 0)
+        return self.mask[None, :, :] * x
 
     def hdot(self, x):
         """
         Image to components
         """
-        return np.where(self.mask[None, :, :], x, 0)
+        return self.mask[None, :, :] * x
 
-    def update_locs(self, mask):
+    def update_locs(self, model):
         self.mask = np.logical_or(self.mask, mask)
 
     def trim_fat(self, model):

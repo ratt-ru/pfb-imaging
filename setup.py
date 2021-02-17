@@ -35,6 +35,6 @@ setup(
          "Operating System :: OS Independent",
      ],
      extras_require={
-         'testing' : ['packratt', 'pytest']
+         'testing' : ['packratt >= 0.1.3', 'pytest']
      }
  )

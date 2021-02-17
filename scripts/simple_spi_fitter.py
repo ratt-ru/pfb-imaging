@@ -112,8 +112,10 @@ def main(args):
         
     if args.circ_psf:
         e = (gaussparf[0] + gaussparf[1])/2.0
+        gaussparf = list(gaussparf)
         gaussparf[0] = e
         gaussparf[1] = e
+        gaussparf = tuple(gaussparf)
     
     print("Using emaj = %3.2e, emin = %3.2e, PA = %3.2e \n" % gaussparf)
 

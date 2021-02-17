@@ -4,8 +4,8 @@ import dask.array as da
 from africanus.constants import c as lightspeed
 
 
-def compute_uniform_counts(uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
-    counts = da.blockwise(compute_uniform_counts_wrapper, ('one', 'chan', 'nx', 'ny'),
+def compute_counts(uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
+    counts = da.blockwise(compute_counts_wrapper, ('one', 'chan', 'nx', 'ny'),
                           uvw, ('row', 'three'),
                           freqs, ('chan',),
                           freq_bin_idx, ('chan',),
@@ -23,20 +23,18 @@ def compute_uniform_counts(uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, ce
     
     return counts.sum(axis=0)
 
-def compute_uniform_counts_wrapper(uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
-    return _compute_uniform_counts(uvw[0][0], freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype)
+def compute_counts_wrapper(uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
+    return _compute_counts(uvw[0][0], freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype)
 
 
 @njit(nogil=True, fastmath=True, cache=True)
-def _compute_uniform_counts(uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
+def _compute_counts(uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
     # ufreqs
-    # ug = np.fft.fftshift(np.fft.fftfreq(nx, d=cell_size_x))
-    umax = 1/(2*cell_size_x)
+    umax = 1/cell_size_x/2
     u_diff = 1/(nx*cell_size_x)
     
     # vfreqs
-    # vg = np.fft.fftshift(np.fft.fftfreq(ny, d=cell_size_y))
-    vmax = 1/(2*cell_size_y)
+    vmax = 1/cell_size_y/2
     v_diff = 1/(ny*cell_size_y)
     
     # initialise array to store counts (the additional axis is to allow chunking over row)
@@ -64,7 +62,7 @@ def _compute_uniform_counts(uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, c
     return counts
 
 
-def counts_to_weights(counts, uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
+def counts_to_weights(counts, uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype, robust):
 
     weights = da.blockwise(counts_to_weights_wrapper, ('row', 'chan'),
                            counts, ('chan', 'nx', 'ny'),
@@ -77,26 +75,27 @@ def counts_to_weights(counts, uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny,
                            cell_size_x, None,
                            cell_size_y, None,
                            dtype, None,
+                           robust, None,
                            adjust_chunks={'chan': freqs.chunks[0]},
                            align_arrays=False,
                            dtype=dtype)
     return weights
 
 
-def counts_to_weights_wrapper(counts, uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
-    return _counts_to_weights(counts[0][0], uvw[0], freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype)
+def counts_to_weights_wrapper(counts, uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype, robust):
+    return _counts_to_weights(counts[0][0], uvw[0], freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype, robust)
 
 
 @njit(nogil=True, fastmath=True, cache=True, parallel=True)
-def _counts_to_weights(counts, uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype):
+def _counts_to_weights(counts, uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny, cell_size_x, cell_size_y, dtype, robust):
     # ufreqs
     # ug = np.fft.fftshift(np.fft.fftfreq(nx, d=cell_size_x))
-    umax = 1/(2*cell_size_x)
+    umax = 1/cell_size_x/2
     u_diff = 1/(nx*cell_size_x)
     
     # vfreqs
     # vg = np.fft.fftshift(np.fft.fftfreq(ny, d=cell_size_y))
-    vmax = 1/(2*cell_size_y)
+    vmax = 1/cell_size_y/2
     v_diff = 1/(ny*cell_size_y)
 
     # initialise array to store counts (the additional axis is to allow chunking over row)
@@ -104,6 +103,14 @@ def _counts_to_weights(counts, uvw, freqs, freq_bin_idx, freq_bin_counts, nx, ny
     # accumulate counts
     nchan = freqs.size
     nrow = uvw.shape[0]
+
+    if robust is not None:
+        numsqrt = 5*10**(-robust)
+        for b in range(nband):
+            counts_band = counts[b]
+            avgW = (counts_band ** 2).sum() / counts_band.sum()
+            ssq = numsqrt**2/avgW
+            counts_band[...] = 1 + counts_band * ssq
 
     normfreqs = freqs / lightspeed
 

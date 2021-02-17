@@ -52,7 +52,7 @@ def power_method(A, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_fr
 #         IRmax = IRmean.max()
 #     return x
 
-def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=10000):
+def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=10000, report_freq=1000, verbosity=1, ):
     from pfb.utils import give_edges
     nband, nx, ny = ID.shape
     x = np.zeros((nband, nx, ny), dtype=ID.dtype) 
@@ -60,15 +60,28 @@ def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=10000):
     IRmean = np.abs(np.mean(IR, axis=0))
     IRmax = IRmean.max()
     tol = pf*IRmax
-    for i in range(maxit):
+    for k in range(maxit):
         if IRmax < tol:
             break
         p, q = np.argwhere(IRmean == IRmax).squeeze()
+        if np.size(p) > 1:
+            p = p.squeeze()[0]
+            q = q.squeeze()[0]
         xhat = IR[:, p, q]
         x[:, p, q] += gamma * xhat
         IR -= gamma * xhat[:, None, None] * PSF[:, nx-p:2*nx - p, ny-q:2*ny - q]
         IRmean = np.abs(np.mean(IR, axis=0))
         IRmax = IRmean.max()
+
+        if not k%report_freq and verbosity > 1:
+            print("         Hogbom - At iteration %i max residual = %f"%(k, IRmax))
+    
+    if k >= maxit:
+        if verbosity:
+            print("         Hogbom - Maximum iterations reached. Max of residual = %f.  "%(IRmax))
+    else:
+        if verbosity:
+            print("         Hogbom - Success, converged after %i iterations"%k)
     return x
 
 

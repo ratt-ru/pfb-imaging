@@ -8,13 +8,11 @@ from africanus.gridding.wgridder.dask import dirty as vis2im
 from africanus.gridding.wgridder.dask import model as im2vis
 from africanus.gridding.wgridder.dask import residual as im2residim
 from africanus.gridding.wgridder.dask import hessian
-from africanus.model.coherency.dask import convert
-from ducc0.fft import good_size
 
 class Gridder(object):
     def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',
-                 row_chunks=100000, chan_chunks=32, optimise_chunks=True, epsilon=1e-5, psf_oversize=2.0,
-                 data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM', mueller_column=None,
+                 row_chunks=100000, chan_chunks=32, optimise_chunks=True, epsilon=1e-5, psf_oversize=2.0, weighting=None, robust=None,
+                 data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM', jones=None,
                  model_column="MODEL_DATA", flag_column='FLAG', imaging_weight_column=None, mask=None, real_type='f4'):
         '''
         A note on chunking - currently row_chunks and chan_chunks are only used for the
@@ -32,8 +30,8 @@ class Gridder(object):
         self.row_chunks = row_chunks
         self.chan_chunks = chan_chunks
         self.psf_oversize = psf_oversize
-        self.nx_psf = good_size(int(self.psf_oversize * self.nx))
-        self.ny_psf = good_size(int(self.psf_oversize * self.ny))
+        self.nx_psf = int(self.psf_oversize * self.nx)
+        self.ny_psf = int(self.psf_oversize * self.ny)
         self.real_type = real_type
 
         if isinstance(ms_name, list):
@@ -133,34 +131,41 @@ class Gridder(object):
         self.model_column = model_column
         self.flag_column = flag_column
 
-        self.imaging_weight_column = imaging_weight_column
-        self.mueller_column = mueller_column
-
-        self.conv_weight_column = 'CONV_WEIGHT_SPECTRUM'
-
         self.columns = (self.data_column, self.weight_column, self.model_column,
                         self.flag_column, 'UVW')
 
-        if self.imaging_weight_column is not None:
-            self.columns += (self.imaging_weight_column,)
+        # check that all measurement sets contain the required columns
+        for ims in self.ms:
+            xds = xds_from_ms(ims)
 
-        if self.mueller_column is not None:
-            self.columns += (self.mueller_column,)
-
-        # self.conv_weight_column)
-
-
+            for ds in xds:
+                for column in self.columns:
+                    try:
+                        getattr(ds, column)
+                    except:
+                        raise ValueError("No column named %s in %s"%(column, ims))
+        
         if mask is not None:
             self.mask = mask
         else:
             self.mask = lambda x: x
 
-        # optimise chunking by concatenating measurement sets and pre-computing corr to Stokes
+        if weighting is not None:
+            if imaging_weight_column is None:
+                self.imaging_weight_column = "IMAGING_WEIGHT_SPECTRUM"
+            else:
+                self.imaging_weight_column = imaging_weight_column
+            self.compute_weights(robust)
+            self.columns += (self.imaging_weight_column,)
+        else:
+            self.imaging_weight_column = None
+
+        # # optimise chunking by pre-computing corr to Stokes + weighting
         # if optimise_chunks:
         #     for 
 
-    def compute_weights(self):
-        from pfb.utils.weighting import compute_uniform_counts, counts_to_weights
+    def compute_weights(self, robust):
+        from pfb.utils.weighting import compute_counts, counts_to_weights
         # compute counts
         counts = []
         for ims in self.ms:
@@ -194,22 +199,21 @@ class Gridder(object):
 
                 uvw = ds.UVW.data
 
-                count = compute_uniform_counts(uvw, freq, freq_bin_idx, freq_bin_counts, 2*self.nx, 2*self.ny, self.cell, self.cell, self.real_type)
+                count = compute_counts(uvw, freq, freq_bin_idx, freq_bin_counts, self.nx, self.ny, self.cell, self.cell, np.float32)
 
                 counts.append(count) 
             
-        counts = dask.compute(counts)[0]
+        counts = dask.compute(counts, scheduler='single-threaded')[0]
+        
         counts = accumulate_dirty(counts, self.nband, self.band_mapping)
-
-        # return counts
         
         counts = da.from_array(counts, chunks=(1, -1, -1))
 
-        # convert counts to uniform weights
+        # convert counts to weights
         writes = []
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
-                              chunks={'row':(self.row_chunks,), 'chan':(self.chan_chunks,)},
+                              chunks=self.chunks[ims],
                               columns=self.columns)
 
             # subtables
@@ -239,15 +243,16 @@ class Gridder(object):
 
                 uvw = ds.UVW.data
 
-                weights = counts_to_weights(counts, uvw, freq, freq_bin_idx, freq_bin_counts, 2*self.nx, 2*self.ny, self.cell, self.cell, np.float32)
+                weights = counts_to_weights(counts, uvw, freq, freq_bin_idx, freq_bin_counts, self.nx, self.ny, self.cell, self.cell, np.float32, robust)
 
                 # hack to get shape and chunking info
                 data = getattr(ds, self.data_column).data
+
                 weights = da.broadcast_to(weights[:, :, None], data.shape, chunks=data.chunks)
-                out_ds = ds.assign(**{"IMAGING_WEIGHT_SPECTRUM": (("row", "chan", "corr"),
+                out_ds = ds.assign(**{self.imaging_weight_column: (("row", "chan", "corr"),
                                    weights)})
                 out_data.append(out_ds)
-            writes.append(xds_to_table(out_data, ims, columns=["IMAGING_WEIGHT_SPECTRUM"]))
+            writes.append(xds_to_table(out_data, ims, columns=[self.imaging_weight_column]))
         dask.compute(writes)
 
     def make_residual(self, x):
