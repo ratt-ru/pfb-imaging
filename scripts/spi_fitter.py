@@ -86,6 +86,8 @@ def create_parser():
                    help="Used to select a subset of time ")
     p.add_argument('-ct', '--corr-type', type=str, default='linear',
                    help="Correlation typ i.e. linear or circular. ")
+    p.add_argument('-band', "--band", type=str, default='l',
+                   help="Band to use with JimBeam. L or UHF")
     return p
 
 def main(args):
@@ -196,6 +198,16 @@ def main(args):
                 raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
 
             beam_image = load_fits(args.beam_model, dtype=args.out_dtype).reshape(model.shape)
+        elif args.beam_model == "JimBeam":
+            from katbeam import JimBeam
+            if args.band.lower() == 'l':
+                beam = JimBeam('MKAT-AA-L-JIM-2020')
+            else:
+                beam = JimBeam('MKAT-AA-UHF-JIM-2020')
+            beam_image = np.zeros(model.shape, dtype=args.out_dtype)
+            for v in range(freqs.size):
+                beam_image[v] = beam.I(xx, yy, freqs[v])
+
         else:
             beam_image = interpolate_beam(xx, yy, freqs, args)
             if 'b' in args.products:

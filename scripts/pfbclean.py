@@ -11,7 +11,7 @@ from astropy.io import fits
 from numpy.lib.histograms import _ravel_and_check_weights
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers
 from pfb.operators import Gridder
-from pfb.deconv import sara, clean
+from pfb.deconv import sara, clean, skoon
 
 def create_parser():
     p = argparse.ArgumentParser()
@@ -337,6 +337,10 @@ def main(args):
         elif args.deconv_mode == 'clean':
             threshold = np.maximum(args.peak_factor*rmax, rms)
             model, residual_mfs_minor = clean(psf, model, residual, mask, nthreads=args.nthreads, maxit=args.minormaxit,
+                                               gamma=args.cgamma, peak_factor=args.peak_factor, threshold=threshold)
+        elif args.deconv_mode == 'skoon':
+            threshold = np.maximum(args.peak_factor*rmax, rms)
+            model, residual_mfs_minor = skoon(psf, model, residual, mask, nthreads=args.nthreads, maxit=args.minormaxit,
                                                gamma=args.cgamma, peak_factor=args.peak_factor, threshold=threshold)
         else:
             raise ValueError("Unknown deconvolution mode ", args.deconv_mode)

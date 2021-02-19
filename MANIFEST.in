@@ -1,5 +1,5 @@
 include pfb/*.py
-include scripts/simple_spi_fitter.py
+include scripts/spi_fitter.py
 include scripts/power_beam_maker.py
 include scripts/image_convolver.py
 include scripts/pfbclean.py

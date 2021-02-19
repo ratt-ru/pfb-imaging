@@ -8,7 +8,7 @@ with open("README.rst", "r") as fh:
 setup(
      name='pfb',
      version=pfb.__version__,
-     scripts=['scripts/simple_spi_fitter.py',
+     scripts=['scripts/spi_fitter.py',
               'scripts/power_beam_maker.py',
               'scripts/image_convolver.py',
               'scripts/pfbclean.py',

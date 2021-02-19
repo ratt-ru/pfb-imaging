@@ -5,7 +5,7 @@ from pfb.opt import hogbom, pcg, primal_dual
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
 
-def tclean(psf, model, residual, mask, nthreads=0, maxit=10, 
+def skoon(psf, model, residual, mask, nthreads=0, maxit=10, 
           gamma=0.1, peak_factor=0.85, threshold=0.1):
 
     nband, nx, ny = model.shape
