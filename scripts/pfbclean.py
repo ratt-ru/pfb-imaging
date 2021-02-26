@@ -8,10 +8,10 @@ import dask
 import dask.array as da
 import argparse
 from astropy.io import fits
-from numpy.lib.histograms import _ravel_and_check_weights
-from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers
-from pfb.operators import Gridder
+from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, data_from_header
+from pfb.operators import Gridder, PSF
 from pfb.deconv import sara, clean, skoon
+from pfb.opt import pcg
 
 def create_parser():
     p = argparse.ArgumentParser()
@@ -36,6 +36,10 @@ def create_parser():
                    help="Interpolate final model with integrated polynomial")
     p.add_argument("--spectral_poly_order", type=int, default=4,
                    help="Order of interpolating polynomial")
+    p.add_argument("--mop_flux", type=str2bool, nargs='?', const=True, default=True,
+                   help="If True then positivity and sparsity will be relaxed at the end and a flux mop will be applied inside the mask.")
+    p.add_argument("--make_restored", type=str2bool, nargs='?', const=True, default=True,
+                   help="Whather to produce a restored image or not.")
     p.add_argument("--deconv_mode", type=str, default='sara',
                    help="Select minor cycle to use. Current options are 'sara' (default) or 'clean'")
     p.add_argument("--weighting", type=str, default=None, 
@@ -64,8 +68,10 @@ def create_parser():
                    help="Number of imaging bands in output cube")
     p.add_argument("--mask", type=str, default=None,
                    help="A fits mask (True where unmasked)")
-    p.add_argument("--power_beam", type=str, default=None,
-                   help="Power beam pattern for Stokes I imaging")
+    p.add_argument("--beam_model", type=str, default=None,
+                   help="Power beam pattern for Stokes I imaging. Pass in a fits file or set to JimBeam to use katbeam.")
+    p.add_argument("--band", type=str, default='l',
+                   help="Band to use with JimBeam. L or UHF")
     p.add_argument("--point_mask", type=str, default=None,
                    help="A fits mask with a priori known point source locations (True where unmasked)")
     p.add_argument("--do_wstacking", type=str2bool, nargs='?', const=True, default=True,
@@ -136,8 +142,6 @@ def create_parser():
                    help="Verbosity of primal dual used to solve backward step. Set to 2 for debugging.")
     p.add_argument("--tidy", type=str2bool, nargs='?', const=True, default=True,
                    help="Switch off if you prefer it dirty.")
-    p.add_argument("--make_restored", type=str2bool, nargs='?', const=True, default=True,
-                   help="Relax positivity and sparsity constraints at final iteration")
     p.add_argument("--real_type", type=str, default='f4',
                    help="Dtype of real valued images. f4/f8 for single or double precision respectively.")
     return p
@@ -198,28 +202,21 @@ def main(args):
 
     # mask
     if args.mask is not None:
-        mask_array = load_fits(args.mask, dtype=args.real_type)[None, :, :]
-        if mask_array.shape != (1, args.nx, args.ny):
-            raise ValueError("Mask has incorrect shape")
+        mask_array = load_fits(args.mask, dtype=args.real_type).squeeze()  # always returns 4D
+        if mask_array.shape != (args.nx, args.ny):
+            raise ValueError("Mask has incorrect shape.")
+        # add freq axis
+        mask_array = mask_array[None]
         mask = lambda x: mask_array * x
     else:
-        mask_array = np.ones((1, args.nx, args.ny), dtype=args.real_type)
         mask = lambda x: x
-
-    if args.power_beam is not None:
-        power_beam = load_fits(args.power_beam, dtype=args.real_type)
-        # TODO - check correct header
-        if power_beam.shape != (args.nband, args.nx, args.ny):
-            raise ValueError("Power beam has incorrect shape")
-        power_beam *= mask_array
-        mask = lambda x: power_beam * x
 
     # init gridder
     R = Gridder(args.ms, args.nx, args.ny, args.cell_size, nband=args.nband, nthreads=args.nthreads,
                 do_wstacking=args.do_wstacking, row_chunks=args.row_chunks, psf_oversize=args.psf_oversize,
                 data_column=args.data_column, weight_column=args.weight_column,
                 epsilon=args.epsilon, imaging_weight_column=args.imaging_weight_column,
-                model_column=args.model_column, flag_column=args.flag_column, mask=mask,
+                model_column=args.model_column, flag_column=args.flag_column,
                 weighting=args.weighting, robust=args.robust)
     freq_out = R.freq_out
     radec = R.radec
@@ -233,7 +230,7 @@ def main(args):
     if args.psf is not None:
         try:
             compare_headers(hdr_psf, fits.getheader(args.psf))
-            psf = load_fits(args.psf, dtype=args.real_type)
+            psf = load_fits(args.psf, dtype=args.real_type).squeeze()
         except:
             psf = R.make_psf()
             save_fits(args.outfile + '_psf.fits', psf, hdr_psf)
@@ -251,11 +248,29 @@ def main(args):
     psf /= wsum
     psf_mfs = np.sum(psf, axis=0)
 
+    # # fit restoring psf
+    # from pfb.utils import fitcleanbeam
+    # GaussPar = fitcleanbeam(psf, level=0.5, pixsize=1.0)  #np.rad2deg(cell_rad))
+
+    # from pfb.utils import Gaussian2D
+    # cpsf = np.zeros(psf.shape, dtype=args.real_type)
+
+    # lpsf = np.arange(-R.nx_psf/2, R.nx_psf/2)
+    # mpsf = np.arange(-R.ny_psf/2, R.ny_psf/2)
+    # xx, yy = np.meshgrid(lpsf, mpsf, indexing='ij')
+
+    # for v in range(args.nband):
+    #     cpsf[v] = Gaussian2D(xx, yy, GaussPar[v], normalise=False)
+        
+    # save_fits(args.outfile + '_cpsf.fits', cpsf, hdr_psf)
+
+    # quit()
+
     # dirty
     if args.dirty is not None:
         try:
             compare_headers(hdr, fits.getheader(args.dirty))
-            dirty = load_fits(args.dirty)
+            dirty = load_fits(args.dirty).squeeze()
         except:
             dirty = R.make_dirty()
             save_fits(args.outfile + '_dirty.fits', dirty, hdr)
@@ -271,11 +286,11 @@ def main(args):
     if args.x0 is not None:
         try:
             compare_headers(hdr, fits.getheader(args.x0))
-            model = load_fits(args.x0, dtype=args.real_type)
+            model = load_fits(args.x0, dtype=args.real_type).squeeze()
             if args.first_residual is not None:
                 try:
                     compare_headers(hdr, fits.getheader(args.first_residual))
-                    residual = load_fits(args.first_residual, dtype=args.real_type)
+                    residual = load_fits(args.first_residual, dtype=args.real_type).squeeze()
                 except:
                     residual = R.make_residual(model)
                     save_fits(args.outfile + '_first_residual.fits', residual, hdr)
@@ -293,6 +308,34 @@ def main(args):
     residual_mfs = np.sum(residual, axis=0) 
     save_fits(args.outfile + '_first_residual_mfs.fits', residual_mfs, hdr_mfs)
         
+    # smooth beam
+    if args.beam_model is not None:
+        if args.beam_model[-5:] == '.fits':
+            beam_image = load_fits(args.beam_model, dtype=args.real_type).squeeze()
+            if beam_image.shape != (args.nband, args.nx, args.ny):
+                raise ValueError("Beam has incorrect shape")
+        
+        elif args.beam_model == "JimBeam":
+            from katbeam import JimBeam
+            if args.band.lower() == 'l':
+                beam = JimBeam('MKAT-AA-L-JIM-2020')
+            else:
+                beam = JimBeam('MKAT-AA-UHF-JIM-2020')
+            beam_image = np.zeros((args.nband, args.nx, args.ny), dtype=args.real_type)
+            
+            l_coord, ref_l = data_from_header(hdr, axis=1)
+            l_coord -= ref_l
+            m_coord, ref_m = data_from_header(hdr, axis=2)
+            m_coord -= ref_m
+            xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
+
+            for v in range(args.nband):
+                beam_image[v] = beam.I(xx, yy, freq_out[v])
+       
+        beam = lambda x: beam_image * x
+    else:
+        beam = lambda x: x
+
 
     # Reweighting
     if args.reweight_iters is not None:
@@ -323,7 +366,7 @@ def main(args):
                 weights21 = None 
             
             model, dual, residual_mfs_minor, weights21 = sara(
-                psf, model, residual, mask, args.sig_21, args.sigma_frac, dual=dual, weights21=weights21,
+                psf, model, residual, args.sig_21, args.sigma_frac, mask=mask, beam=beam, dual=dual, weights21=weights21,
                 nthreads=args.nthreads,  maxit=args.minormaxit, gamma=args.gamma,  tol=args.minortol,
                 psi_levels=args.psi_levels, psi_basis=args.psi_basis,
                 reweight_iters=reweight_iters, reweight_alpha_ff=args.reweight_alpha_ff, reweight_alpha_percent=args.reweight_alpha_percent,
@@ -358,7 +401,7 @@ def main(args):
 
         
         # compute in image space
-        residual = dirty - R.convolve(model)/wsum
+        residual = dirty - R.convolve(beam(mask(model)))/wsum
         # residual = R.make_residual(model)/wsum
 
         residual_mfs = np.sum(residual, axis=0)
@@ -381,13 +424,40 @@ def main(args):
 
         if eps < args.tol:
             break
+    
+    if args.mop_flux:
+        psfo = PSF(psf, nthreads=args.nthreads, imsize=residual.shape, mask=mask, beam=beam)
+        def hess(x):  
+            return psfo.convolve(x) + 1e-6*x
+        M = lambda x: x/1e-6  # preconditioner
+        x = pcg(hess, mask(beam(residual)), np.zeros(residual.shape, dtype=residual.dtype), M=M, tol=args.cgtol,
+                maxit=args.cgmaxit, minit=args.cgminit, verbosity=args.cgverbose)
+
+        model += x
+        residual = dirty - R.convolve(beam(mask(model)))/wsum
+
+        model_mfs = np.mean(model, axis=0)
+        save_fits(args.outfile + '_mopped_model_mfs.fits', model_mfs, hdr_mfs)
+        residual_mfs = np.sum(residual, axis=0)
+        save_fits(args.outfile + '_mopped_residual_mfs.fits', residual_mfs, hdr_mfs)
+
+        rmax = np.abs(residual_mfs).max()
+        rms = np.std(residual_mfs)
+
+        print("PFB - After mopping flux peak of residual is %f, rms is %f" % (rmax, rms))
 
     # save model cube and last residual cube
     save_fits(args.outfile + '_model.fits', model, hdr)
     save_fits(args.outfile + '_last_residual.fits', residual*wsum, hdr)
-    
+
+
     if args.write_model:
         R.write_model(model)
+
+    # if args.make_restored:
+
+        
+        
 
 
 if __name__=="__main__":

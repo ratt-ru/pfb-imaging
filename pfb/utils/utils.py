@@ -62,7 +62,17 @@ def str2bool(v):
         import argparse
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
-
+def to4d(data):
+    if data.ndim == 4:
+        return data
+    elif data.ndim == 2:
+        return data[None, None]
+    elif data.ndim == 3:
+        return data[None]
+    elif data.ndim == 1:
+        return data[None, None, None]
+    else:
+        raise ValueError("Only arrays with ndim <= 4 can be broadcast to 4D.")
 
 def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True):
     S0, S1, PA = GaussPar
@@ -181,3 +191,59 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None, pfrac=
     image = Fs(c2r(imhat, axes=ax, forward=False, lastsize=lastsize, inorm=2, nthreads=nthreads), axes=ax)[:, unpad_x, unpad_y]
 
     return image, gausskern[:, unpad_x, unpad_y]
+
+
+def fitcleanbeam(psf, level=0.5, pixsize=1.0):
+    """
+    Find the Gaussian that approximates the main lobe of the PSF.
+    """
+    from skimage.morphology import label
+    from scipy.optimize import curve_fit
+
+    nband, nx, ny = psf.shape
+
+    # coordinates
+    x = np.arange(-nx/2, nx/2)
+    y = np.arange(-ny/2, ny/2)
+    xx, yy = np.meshgrid(x, y, indexing='ij')
+    
+    # model to fit
+    def func(xy, emaj, emin, pa):
+        Smin = np.minimum(emaj, emin)
+        Smaj = np.maximum(emaj, emin)
+
+        A = np.array([[1. / Smin ** 2, 0],
+                    [0, 1. / Smaj ** 2]])
+
+        c, s, t = np.cos, np.sin, np.deg2rad(-pa)
+        R = np.array([[c(t), -s(t)],
+                    [s(t), c(t)]])
+        A = np.dot(np.dot(R.T, A), R)
+        xy = np.array([x.ravel(), y.ravel()])
+        R = np.einsum('nb,bc,cn->n', xy.T, A, xy)
+        # GaussPar should corresponds to FWHM
+        fwhm_conv = 2*np.sqrt(2*np.log(2))
+        return np.exp(-fwhm_conv*R)
+
+    Gausspars = ()
+    for v in range(nband):
+        # find regions where psf is non-zero
+        mask = np.where(psf[v] > level, 1.0, 0)
+
+        # label all islands and find center
+        islands = label(mask)
+        ncenter = islands[nx//2, ny//2]
+
+        # select psf main lobe
+        psfv = psf[v][islands == ncenter] 
+        x = xx[islands == ncenter]
+        y = yy[islands == ncenter]
+        xy = np.vstack((x, y))
+        xdiff = x.max() - x.min()
+        ydiff = y.max() - y.min()
+        emaj0 = np.maximum(xdiff, ydiff)
+        emin0 = np.minimum(xdiff, ydiff)
+        p, _ = curve_fit(func, xy, psfv, p0=(emaj0, emin0, 0.0))
+        Gausspars += ((p[0]*pixsize, p[1]*pixsize, p[2]),)
+
+    return Gausspars

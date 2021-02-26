@@ -113,17 +113,17 @@ def main(args):
         gaussparf = tuple(args.psf_pars)
         
     if args.circ_psf:
-        e = (gaussparf[0] + gaussparf[1])/2.0
+        e = np.maximum(gaussparf[0], gaussparf[1])
         gaussparf = list(gaussparf)
         gaussparf[0] = e
         gaussparf[1] = e
+        gaussparf[2] = 0.0
         gaussparf = tuple(gaussparf)
     
     print("Using emaj = %3.2e, emin = %3.2e, PA = %3.2e \n" % gaussparf)
 
     # load model image
-    model = load_fits(args.model, dtype=args.out_dtype)
-    model = model.squeeze()
+    model = load_fits(args.model, dtype=args.out_dtype).squeeze()
     orig_shape = model.shape
     mhdr = fits.getheader(args.model)
 
@@ -197,7 +197,7 @@ def main(args):
             if not np.array_equal(freqs, freqs_beam):
                 raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
 
-            beam_image = load_fits(args.beam_model, dtype=args.out_dtype).reshape(model.shape)
+            beam_image = load_fits(args.beam_model, dtype=args.out_dtype).squeeze()
         elif args.beam_model == "JimBeam":
             from katbeam import JimBeam
             if args.band.lower() == 'l':
@@ -210,12 +210,11 @@ def main(args):
 
         else:
             beam_image = interpolate_beam(xx, yy, freqs, args)
-            if 'b' in args.products:
-                name = outfile + '.power_beam.fits'
-                save_fits(name, beam_image, mhdr, dtype=args.out_dtype)
-                print("Wrote average power beam to %s \n" % name)
-
-
+            
+        if 'b' in args.products:
+            name = outfile + '.power_beam.fits'
+            save_fits(name, beam_image, mhdr, dtype=args.out_dtype)
+            print("Wrote average power beam to %s \n" % name)
 
     else:
         beam_image = np.ones(model.shape, dtype=args.out_dtype)
@@ -224,20 +223,20 @@ def main(args):
     model = np.where(beam_image > args.pb_min, model, 0.0)
 
     if not args.dont_convolve:
-        print("Computing clean beam")
+        print("Convolving model")
         # convolve model to desired resolution
         model, gausskern = convolve2gaussres(model, xx, yy, gaussparf, args.ncpu, None, args.padding_frac)
 
         # save clean beam
         if 'c' in args.products:
             name = outfile + '.clean_psf.fits'
-            save_fits(name, gausskern.reshape(mfs_shape), new_hdr, dtype=args.out_dtype)
+            save_fits(name, gausskern, new_hdr, dtype=args.out_dtype)
             print("Wrote clean psf to %s \n" % name)
 
         # save convolved model
         if 'm' in args.products:
             name = outfile + '.convolved_model.fits'
-            save_fits(name, model.reshape(orig_shape), new_hdr, dtype=args.out_dtype)
+            save_fits(name, model, new_hdr, dtype=args.out_dtype)
             print("Wrote convolved model to %s \n" % name)
 
 
@@ -274,13 +273,14 @@ def main(args):
                 break
 
         if gausspari is not None and args.add_convolved_residuals:
-            resid, _ = convolve2gaussres(resid, xx, yy, gaussparf, args.ncpu, gausspari, args.padding_frac, norm_kernel=True)
+            print("Convolving residuals")
+            resid, _ = convolve2gaussres(resid, xx, yy, gaussparf, args.ncpu, gausspari, args.padding_frac, norm_kernel=False)
             model += resid
             print("Convolved residuals added to convolved model")
 
             if 'r' in args.products:
                 name = outfile + '.convolved_residual.fits'
-                save_fits(name, resid.reshape(orig_shape), rhdr)
+                save_fits(name, resid, rhdr)
                 print("Wrote convolved residuals to %s" % name)
 
 
@@ -303,6 +303,7 @@ def main(args):
     # get pixels above threshold
     minimage = np.amin(model, axis=0)
     maskindices = np.argwhere(minimage > threshold)
+    nanindices = np.argwhere(minimage <= threshold)
     if not maskindices.size:
         raise ValueError("No components found above threshold. "
                         "Try lowering your threshold."
@@ -338,9 +339,13 @@ def main(args):
     print("Done. Writing output. \n")
 
     alphamap = np.zeros(model[0].shape, dtype=model.dtype)
+    alphamap[...] = np.nan
     alpha_err_map = np.zeros(model[0].shape, dtype=model.dtype)
+    alpha_err_map[...] = np.nan
     i0map = np.zeros(model[0].shape, dtype=model.dtype)
+    i0map[...] = np.nan
     i0_err_map = np.zeros(model[0].shape, dtype=model.dtype)
+    i0_err_map[...] = np.nan
     alphamap[maskindices[:, 0], maskindices[:, 1]] = alpha
     alpha_err_map[maskindices[:, 0], maskindices[:, 1]] = alpha_err
     i0map[maskindices[:, 0], maskindices[:, 1]] = Iref
@@ -351,31 +356,31 @@ def main(args):
         Irec_cube = i0map[None, :, :] * \
             (freqs[:, None, None]/ref_freq)**alphamap[None, :, :]
         name = outfile + '.Irec_cube.fits'
-        save_fits(name, Irec_cube.reshape(orig_shape), mhdr, dtype=args.out_dtype)
+        save_fits(name, Irec_cube, mhdr, dtype=args.out_dtype)
         print("Wrote reconstructed cube to %s" % name)
 
     # save alpha map
     if 'a' in args.products:
         name = outfile + '.alpha.fits'
-        save_fits(name, alphamap.reshape(mfs_shape), mhdr, dtype=args.out_dtype)
+        save_fits(name, alphamap, mhdr, dtype=args.out_dtype)
         print("Wrote alpha map to %s" % name)
 
     # save alpha error map
     if 'e' in args.products:
         name = outfile + '.alpha_err.fits'
-        save_fits(name, alpha_err_map.reshape(mfs_shape), mhdr, dtype=args.out_dtype)
+        save_fits(name, alpha_err_map, mhdr, dtype=args.out_dtype)
         print("Wrote alpha error map to %s" % name)
 
     # save I0 map
     if 'i' in args.products:
         name = outfile + '.I0.fits'
-        save_fits(name, i0map.reshape(mfs_shape), mhdr, dtype=args.out_dtype)
+        save_fits(name, i0map, mhdr, dtype=args.out_dtype)
         print("Wrote I0 map to %s" % name)
 
     # save I0 error map
     if 'k' in args.products:
         name = outfile + '.I0_err.fits'
-        save_fits(name, i0_err_map.reshape(mfs_shape), mhdr, dtype=args.out_dtype)
+        save_fits(name, i0_err_map, mhdr, dtype=args.out_dtype)
         print("Wrote I0 error map to %s" % name)
 
     print(' \n ')

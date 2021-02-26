@@ -61,7 +61,7 @@ class mock_array(object):
 
 
 class PSF(object):
-    def __init__(self, psf, nthreads=1, imsize=None, mask=None):
+    def __init__(self, psf, nthreads=1, imsize=None, mask=None, beam=None):
         self.nthreads = nthreads
         self.nband, nx_psf, ny_psf = psf.shape
         if imsize is not None:
@@ -90,11 +90,16 @@ class PSF(object):
         else:
             self.mask = lambda x: x
 
+        if beam is not None:
+            self.beam = beam
+        else:
+            self.beam = lambda x: x
+
     def convolve(self, x):
-        xhat = iFs(np.pad(self.mask(x), self.padding, mode='constant'), axes=self.ax)
+        xhat = iFs(np.pad(self.beam(self.mask(x)), self.padding, mode='constant'), axes=self.ax)
         xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
         xhat = c2r(xhat * self.psfhat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
-        return self.mask(Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y])
+        return self.mask(self.beam(Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]))
 
 class Gauss(object):
     def __init__(self, sigma0, nband, nx, ny, nthreads=8):

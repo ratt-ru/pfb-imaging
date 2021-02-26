@@ -5,15 +5,24 @@ from pfb.opt import hogbom
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
 
-def clean(psf, model, residual, mask, nthreads=0, maxit=10, 
+def clean(psf, model, residual, mask=None, beam=None, nthreads=0, maxit=10, 
           gamma=0.1, peak_factor=0.85, threshold=0.1):
 
     nband, nx_psf, ny_psf = psf.shape
     
+    if beam is None:
+        beam = lambda x: x
+    else:
+        raise NotImplementedError("Beam not yet supported in clean minor cycle")
+
+    if mask is None:
+        mask = lambda x: x
+
     # PSF operator
-    psfo = PSF(psf, nthreads)
+    psfo = PSF(psf, nthreads, imsize=residual.shape, mask=mask, beam=beam)
 
     # init dirty
+    residual = beam(mask(residual))
     if model.any():
         dirty = residual + psfo.convolve(model)
     else:

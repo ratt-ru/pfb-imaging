@@ -24,10 +24,12 @@ setup(
      packages=find_packages(),
      install_requires=[
           'matplotlib',
+          'scikit-image',
           'codex-africanus[complete] >= 0.2.10',
           'dask-ms[xarray] >= 0.2.6',
           'PyWavelets',
           'zarr',
+          'katbeam',
       ],
      classifiers=[
          "Programming Language :: Python :: 3",

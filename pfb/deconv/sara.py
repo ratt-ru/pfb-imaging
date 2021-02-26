@@ -5,7 +5,7 @@ from pfb.operators import PSF, DaskPSI
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
 
-def sara(psf, model, residual, mask, sig_21, sigma_frac, dual=None, weights21=None, 
+def sara(psf, model, residual, sig_21, sigma_frac, mask=None, beam=None, dual=None, weights21=None, 
          nthreads=1, maxit=10, gamma=0.99,  tol=1e-3,  # options for outer optimisation
          psi_levels=3, psi_basis=None,  # sara dict options
          reweight_iters=None, reweight_alpha_ff=0.5, reweight_alpha_percent=10,  # reweighting options
@@ -13,13 +13,21 @@ def sara(psf, model, residual, mask, sig_21, sigma_frac, dual=None, weights21=No
          cgtol=1e-6, cgminit=25, cgmaxit=150, cgverbose=1,  # conjugate gradient options
          pmtol=1e-5, pmmaxit=50, pmverbose=1):  # power method options
     
+    
+    if beam is None:
+        beam = lambda x: x
+
+    if mask is None:
+        mask = lambda x: x
+    
     if len(residual.shape) > 3:
         raise ValueError("Residual must have shape (nband, nx, ny)")
     
     nband, nx, ny = residual.shape
     
     # PSF operator
-    psfo = PSF(psf, nthreads=nthreads, imsize=residual.shape, mask=mask)
+    psfo = PSF(psf, nthreads=nthreads, imsize=residual.shape, mask=mask, beam=beam)
+    residual = beam(mask(residual))
     if model.any():
         dirty = residual + psfo.convolve(model)
     else:
@@ -66,7 +74,7 @@ def sara(psf, model, residual, mask, sig_21, sigma_frac, dual=None, weights21=No
 
     # deconvolve
     for i in range(0, maxit):
-        M = lambda x: x * (0.5*rmax)  # preconditioner
+        M = lambda x: x * (sigma_frac*rmax)  # preconditioner
         x = pcg(hess, residual, np.zeros(residual.shape, dtype=residual.dtype), M=M, tol=cgtol,
                 maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
         
