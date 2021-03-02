@@ -12,7 +12,7 @@ from africanus.gridding.wgridder.dask import hessian
 class Gridder(object):
     def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',
                  row_chunks=100000, chan_chunks=32, optimise_chunks=True, epsilon=1e-5, psf_oversize=2.0, weighting=None, robust=None,
-                 data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM', jones=None,
+                 data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM', mueller_column=None,
                  model_column="MODEL_DATA", flag_column='FLAG', imaging_weight_column=None, real_type='f4'):
         '''
         A note on chunking - currently row_chunks and chan_chunks are only used for the
@@ -96,7 +96,7 @@ class Gridder(object):
         self.freq_out = np.zeros(self.nband)
         for band in range(self.nband):
             indl = ufreqs >= fbins[band]
-            indu = ufreqs < fbins[band + 1] + 1e-6
+            indu = ufreqs < fbins[band + 1] + 1e-6  # inclusive except for the last one
             self.freq_out[band] = np.mean(ufreqs[indl & indu])
         
         # chan <-> band mapping
@@ -134,6 +134,12 @@ class Gridder(object):
         self.columns = (self.data_column, self.weight_column, self.model_column,
                         self.flag_column, 'UVW')
 
+
+        # TODO - write jones2col if column does not exist
+        self.mueller_column = mueller_column
+        if mueller_column is not None:
+            self.columns += (self.mueller_column,)
+
         # check that all measurement sets contain the required columns
         for ims in self.ms:
             xds = xds_from_ms(ims)
@@ -145,13 +151,14 @@ class Gridder(object):
                     except:
                         raise ValueError("No column named %s in %s"%(column, ims))
 
+        # compute imaging weights
         if weighting is not None:
             if imaging_weight_column is None:
                 self.imaging_weight_column = "IMAGING_WEIGHT_SPECTRUM"
             else:
                 self.imaging_weight_column = imaging_weight_column
             self.compute_weights(robust)
-            self.columns += (self.imaging_weight_column,)
+            self.columns += (self.imaging_weight_column,)  # this column is always created if asked
         else:
             self.imaging_weight_column = None
 
@@ -165,7 +172,7 @@ class Gridder(object):
         counts = []
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
-                              chunks=self.chunks[ims],
+                              chunks={'row': self.row_chunks},
                               columns=('UVW'))
 
             # subtables
@@ -186,7 +193,7 @@ class Gridder(object):
                 if not np.array_equal(radec, self.radec):
                     continue
 
-                spw = ds.DATA_DESC_ID  # this is not correct, need to use spw
+                spw = ds.DATA_DESC_ID  # not optimal, need to use spw
 
                 freq_bin_idx = self.freq_bin_idx[ims][spw]
                 freq_bin_counts = self.freq_bin_counts[ims][spw]
@@ -198,7 +205,7 @@ class Gridder(object):
 
                 counts.append(count) 
             
-        counts = dask.compute(counts, scheduler='single-threaded')[0]
+        counts = dask.compute(counts)[0]
         
         counts = accumulate_dirty(counts, self.nband, self.band_mapping)
         
@@ -248,7 +255,7 @@ class Gridder(object):
                                    weights)})
                 out_data.append(out_ds)
             writes.append(xds_to_table(out_data, ims, columns=[self.imaging_weight_column]))
-        dask.compute(writes)
+        dask.compute(writes, scheduler='single-threaded')
 
     def make_residual(self, x):
         # Note deprecated (does not support Jones terms) 
@@ -390,16 +397,26 @@ class Gridder(object):
                     weightsxx = weights[:, :, 0]
                     weightsyy = weights[:, :, -1]
 
+                # apply adjoint of mueller term. 
+                # Phases modify data amplitudes modify weights. 
+                if self.mueller_column is not None:
+                    mueller = getattr(ds, self.mueller_column).data
+                    dataxx *= da.exp(-1j*da.angle(mueller[:, :, 0]))
+                    datayy *= da.exp(-1j*da.angle(mueller[:, :, -1]))
+                    weightsxx *= da.absolute(mueller[:, :, 0])
+                    weightsyy *= da.absolute(mueller[:, :, -1])
+
                 # weighted sum corr to Stokes I
                 weights = weightsxx + weightsyy
                 data = (weightsxx * dataxx + weightsyy * datayy)
+                # TODO - turn off this stupid warning
                 data = da.where(weights, data/weights, 0.0j)
                 
                 # only keep data where both corrs are unflagged
                 flag = getattr(ds, self.flag_column).data
                 flagxx = flag[:, :, 0]
                 flagyy = flag[:, :, -1]
-                flag = ~ (flagxx | flagyy)  # ducc0 convention
+                flag = ~ (flagxx | flagyy)  # ducc0 convention uses mask not flag
 
                 dirty = vis2im(uvw, freq, data, freq_bin_idx, freq_bin_counts,
                                self.nx, self.ny, self.cell, weights=weights,
@@ -464,6 +481,13 @@ class Gridder(object):
                 else:
                     weightsxx = weights[:, :, 0]
                     weightsyy = weights[:, :, -1]
+
+                # for the PSF we need to scale the weights by the 
+                # Mueller amplitudes squared
+                if self.mueller_column is not None:
+                    mueller = getattr(ds, self.mueller_column).data
+                    weightsxx *= da.absolute(mueller[:, :, 0])**2
+                    weightsyy *= da.absolute(mueller[:, :, -1])**2
 
                 # weighted sum corr to Stokes I
                 weights = weightsxx + weightsyy
@@ -539,6 +563,13 @@ class Gridder(object):
                 else:
                     weightsxx = weights[:, :, 0]
                     weightsyy = weights[:, :, -1]
+
+                # during "convolve" we need to scale the weights by the 
+                # Mueller amplitudes squared
+                if self.mueller_column is not None:
+                    mueller = getattr(ds, self.mueller_column).data
+                    weightsxx *= da.absolute(mueller[:, :, 0])**2
+                    weightsyy *= da.absolute(mueller[:, :, -1])**2
 
                 # weighted sum corr to Stokes I
                 weights = weightsxx + weightsyy
