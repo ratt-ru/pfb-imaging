@@ -1,3 +1,4 @@
+from multiprocessing import Value
 import numpy as np
 from pfb.opt import power_method, pcg, primal_dual
 from pfb.operators import PSF, DaskPSI
@@ -5,7 +6,8 @@ from pfb.operators import PSF, DaskPSI
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
 
-def sara(psf, model, residual, sig_21, sigma_frac, mask=None, beam=None, dual=None, weights21=None, 
+def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5, 
+         mask=None, beam=None, dual=None, weights21=None, 
          nthreads=1, maxit=10, gamma=0.99,  tol=1e-3,  # options for outer optimisation
          psi_levels=3, psi_basis=None,  # sara dict options
          reweight_iters=None, reweight_alpha_ff=0.5, reweight_alpha_percent=10,  # reweighting options
@@ -13,18 +15,35 @@ def sara(psf, model, residual, sig_21, sigma_frac, mask=None, beam=None, dual=No
          cgtol=1e-6, cgminit=25, cgmaxit=150, cgverbose=1,  # conjugate gradient options
          pmtol=1e-5, pmmaxit=50, pmverbose=1):  # power method options
     
-    
-    if beam is None:
-        beam = lambda x: x
-
-    if mask is None:
-        mask = lambda x: x
-    
     if len(residual.shape) > 3:
         raise ValueError("Residual must have shape (nband, nx, ny)")
     
     nband, nx, ny = residual.shape
-    
+
+    if beam is None:
+        beam = lambda x: x
+    else:
+        try:
+            assert beam.shape == (nband, nx, ny)
+            beam = lambda x: beam * x
+        except:
+            raise ValueError("Beam has incorrect shape")
+
+    if mask is None:
+        mask = lambda x: x
+    else:
+        try:
+            if mask.ndim == 2:
+                assert mask.shape == (nx, ny)
+                mask = lambda x: mask[None] * x
+            elif mask.ndim == 3:
+                assert mask.shape == (1, nx, ny)
+                mask = lambda x: mask * x
+            else:
+                raise ValueError
+        except:
+            raise ValueError("Mask has incorrect shape")
+
     # PSF operator
     psfo = PSF(psf, nthreads=nthreads, imsize=residual.shape, mask=mask, beam=beam)
     residual = beam(mask(residual))

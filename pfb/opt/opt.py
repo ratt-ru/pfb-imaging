@@ -52,8 +52,7 @@ def power_method(A, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_fr
 #         IRmax = IRmean.max()
 #     return x
 
-def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=10000, report_freq=1000, verbosity=1, ):
-    from pfb.utils import give_edges
+def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=10000, report_freq=1000, verbosity=1):
     nband, nx, ny = ID.shape
     x = np.zeros((nband, nx, ny), dtype=ID.dtype) 
     IR = ID.copy()

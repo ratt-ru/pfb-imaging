@@ -209,6 +209,7 @@ def main(args):
         mask_array = mask_array[None]
         mask = lambda x: mask_array * x
     else:
+        mask_array = None
         mask = lambda x: x
 
     # init gridder
@@ -334,6 +335,7 @@ def main(args):
        
         beam = lambda x: beam_image * x
     else:
+        beam_image = None
         beam = lambda x: x
 
 
@@ -365,10 +367,10 @@ def main(args):
                 dual = None 
                 weights21 = None 
             
-            model, dual, residual_mfs_minor, weights21 = sara(
-                psf, model, residual, args.sig_21, args.sigma_frac, mask=mask, beam=beam, dual=dual, weights21=weights21,
-                nthreads=args.nthreads,  maxit=args.minormaxit, gamma=args.gamma,  tol=args.minortol,
-                psi_levels=args.psi_levels, psi_basis=args.psi_basis,
+            model, dual, residual_mfs_minor, weights21 = sara(psf, model, residual,
+                sig_21=args.sig_21, sigma_frac=args.sigma_frac, mask=mask_array, beam=beam_image,
+                dual=dual, weights21=weights21, nthreads=args.nthreads, maxit=args.minormaxit,
+                gamma=args.gamma, tol=args.minortol, psi_levels=args.psi_levels, psi_basis=args.psi_basis,
                 reweight_iters=reweight_iters, reweight_alpha_ff=args.reweight_alpha_ff, reweight_alpha_percent=args.reweight_alpha_percent,
                 pdtol=args.pdtol, pdmaxit=args.pdmaxit, pdverbose=args.pdverbose, positivity=args.positivity, tidy=args.tidy,
                 cgtol=args.cgtol, cgminit=args.cgminit, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose, 
@@ -379,8 +381,9 @@ def main(args):
                 reweight_iters = np.arange(args.minormaxit, dtype=np.int)
         elif args.deconv_mode == 'clean':
             threshold = np.maximum(args.peak_factor*rmax, rms)
-            model, residual_mfs_minor = clean(psf, model, residual, mask, nthreads=args.nthreads, maxit=args.minormaxit,
-                                               gamma=args.cgamma, peak_factor=args.peak_factor, threshold=threshold)
+            model, residual_mfs_minor = clean(psf, model, residual, mask=mask_array, beam=beam_image,
+                                              nthreads=args.nthreads, maxit=args.minormaxit,
+                                              gamma=args.cgamma, peak_factor=args.peak_factor, threshold=threshold)
         elif args.deconv_mode == 'skoon':
             threshold = np.maximum(args.peak_factor*rmax, rms)
             model, residual_mfs_minor = skoon(psf, model, residual, mask, nthreads=args.nthreads, maxit=args.minormaxit,

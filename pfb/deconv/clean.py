@@ -8,8 +8,11 @@ def grad_func(x, dirty, psfo):
 def clean(psf, model, residual, mask=None, beam=None, nthreads=0, maxit=10, 
           gamma=0.1, peak_factor=0.85, threshold=0.1):
 
-    nband, nx_psf, ny_psf = psf.shape
+    if len(residual.shape) > 3:
+        raise ValueError("Residual must have shape (nband, nx, ny)")
     
+    nband, nx, ny = residual.shape
+
     if beam is None:
         beam = lambda x: x
     else:
@@ -17,6 +20,18 @@ def clean(psf, model, residual, mask=None, beam=None, nthreads=0, maxit=10,
 
     if mask is None:
         mask = lambda x: x
+    else:
+        try:
+            if mask.ndim == 2:
+                assert mask.shape == (nx, ny)
+                mask = lambda x: mask[None] * x
+            elif mask.ndim == 3:
+                assert mask.shape == (1, nx, ny)
+                mask = lambda x: mask * x
+            else:
+                raise ValueError
+        except:
+            raise ValueError("Mask has incorrect shape")
 
     # PSF operator
     psfo = PSF(psf, nthreads, imsize=residual.shape, mask=mask, beam=beam)
