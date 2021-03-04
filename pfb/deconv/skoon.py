@@ -1,6 +1,7 @@
 import numpy as np
 from pfb.operators import PSF, Dirac
-from pfb.opt import hogbom, pcg, primal_dual
+from pfb.opt import pcg, primal_dual
+from pfb.deconv import hogbom
 
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
