@@ -486,7 +486,7 @@ def main(args):
 
     if args.make_restored:
         print("PFB - Making restored")
-        cpsfo = PSF(cpsf, nthreads=args.nthrads, imsize=residual.shape)
+        cpsfo = PSF(cpsf, nthreads=args.nthreads, imsize=residual.shape)
         restored = cpsfo.convolve(model)
 
         # residual needs to be in Jy/beam before adding to convolved model
