@@ -5,7 +5,7 @@ import traceback
 
 def test_pfb(tmp_path_factory):
     test_dir = tmp_path_factory.mktemp("test_pfb")
-    packratt.get('/test/ms/2020-06-04/elwood/smallest_ms.tar.gz', test_dir)
+    packratt.get('/test/ms/2020-06-04/elwood/smallest_ms.tar.gz', str(test_dir))
 
     # get default args
     args = create_parser().parse_args([])
@@ -16,6 +16,7 @@ def test_pfb(tmp_path_factory):
     args.outfile = str(test_dir / 'image')
     args.fov = 1.0
     args.maxit = 2
+    args.minormaxit = 2
     args.report_freq = 1
     args.reweight_iters = 5
     args.cgmaxit = 5

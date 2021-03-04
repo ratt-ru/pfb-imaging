@@ -8,14 +8,13 @@ with open("README.rst", "r") as fh:
 setup(
      name='pfb',
      version=pfb.__version__,
-     scripts=['scripts/simple_spi_fitter.py',
+     scripts=['scripts/spi_fitter.py',
               'scripts/power_beam_maker.py',
               'scripts/image_convolver.py',
               'scripts/pfbclean.py',
               'scripts/make_mask.py',
               'scripts/flag_outliers.py',
-              'scripts/ssclean.py',
-              'scripts/multi_pfbclean.py',] ,
+              'scripts/kgb2col.py',] ,
      author="Landman Bester",
      author_email="lbester@ska.ac.za",
      description="Pre-conditioned forward-backward CLEAN algorithm",
@@ -25,10 +24,12 @@ setup(
      packages=find_packages(),
      install_requires=[
           'matplotlib',
-          'codex-africanus[complete] >= 0.2.9',
+          'scikit-image',
+          'codex-africanus[complete] >= 0.2.10',
           'dask-ms[xarray] >= 0.2.6',
           'PyWavelets',
           'zarr',
+          'katbeam',
       ],
      classifiers=[
          "Programming Language :: Python :: 3",
@@ -36,6 +37,6 @@ setup(
          "Operating System :: OS Independent",
      ],
      extras_require={
-         'testing' : ['packratt', 'pytest']
+         'testing' : ['packratt >= 0.1.3', 'pytest']
      }
  )

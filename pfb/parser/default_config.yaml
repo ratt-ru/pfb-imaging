@@ -1,0 +1,223 @@
+general:
+  _description: Top level arguments
+  deconv-mode:
+    type: str
+    help: Deconvolution mode to use
+    default: sara
+  write-model:
+    type: bool
+    help: Determines if model visibilities should be written
+    default: True
+  interp-model:
+    type: bool
+    help: Determines if the model image should be interpolated along frequency axis
+    default: False
+    spectral:
+      poly-order:
+        type: int
+        help: Order of spectral polynomial to fit
+        default: 3
+      poly-type:
+        type: str
+        help: Which kind of spectral polynomial to fit
+        default: AO
+  mop-flux:
+    type: bool
+    help: Determines if the flux gets mopped at the end of the deconvolution
+    default: True
+  restore:
+    type: bool
+    help: Determines if the model should be restored
+    default: True
+  output-filename:
+    type: str
+    help: The base output filename
+    default: pfb
+  nthreads:
+    type: int
+    help: Number of threads available (0 -> use all)
+    default: 0
+  report-freq:
+    type: int
+    help: How often to save images
+    default: 1
+  real-type:
+    type: int
+    help: numeric precision (f4|f8)
+    default: f4
+    
+data:
+  _description: data selection
+  ms:
+    type: str
+    help: List of measurement sets to image
+    required: True
+  data-column:
+    type: str
+    help: The column to image
+    default: DATA
+  weight-column:
+    type: str
+    help: Column containing inverse variance (natural weights)
+    default: WEIGHT_SPECTRUM
+  imaging-weight-column:
+    type: str
+    help: Column to store imaging weights in
+    default: None
+  model-column:
+    type: str
+    help: Column to write model visibilities to
+    default: MODEL_DATA
+  flag-column:
+    type: str
+    help: Column containing data flags
+    default: FLAG
+
+weighting:
+  _description: Options pertaining to weighting
+  mode:
+    type: str
+    help: Type of weighting to use
+    default: natural
+  robustness:
+    type: float
+    help: Robustness factor for Briggs weighting
+    default: 0.0
+
+image:
+  _description: Options pertaining to imaging parameters
+  field-of-view:
+    type: float
+    help: The field of view in degrees
+    default: 3.0
+  super-resolution-factor:
+    type: float
+    help: How much to oversample with respect to Nyquist
+    default: 1.2
+  nx:
+    type: int
+    help: Number of pixels in l direction. Determined automatically from field of view and super resolution factor if not provided
+    default: None
+  ny:
+    type: int
+    help: Number of pixels in m direction. Determined automatically from field of view and super resolution factor if not provided
+    default: None
+  cell-size:
+    type: float
+    help: Cell size in arc-seconds. Determined automatically from super resolution factor and uv-coverage if not provided
+    default: None
+  nband:
+    type: int
+    help: Number of imaging bands. Same as number of visibility channels if not provided
+    default: 1
+
+gridding:
+  _description: Options pertaining to gridding parameters
+  wstacking:
+    type: bool
+    help: Determines if w-correction is applied
+    default: True
+  epsilon:
+    type: float
+    help: Gridding precision
+    default: 0.00001
+  
+
+beam:
+  _description: Options pertaining to the beam model used
+  model:
+    type: str
+    help: Either a path to a fits file ot set to JimBeam to use the katbeam module
+    default: JimBeam
+  band:
+    type: str
+    help: Which band for JimBeam. 'L' or 'UHF'
+    default: L
+  
+sara:
+  _description: Options pertaining to SARA minor cycle
+  psi:
+    basis:
+      type: str
+      help: Basis for SARA dictionary
+      default: None
+    level:
+      type: int
+      help: Number of wavelet decomposition levels
+      default: 2
+  reweight:
+    iters:
+      type: int
+      help: Which minor cycle iterations to do l21 reweighting
+      default: None:
+    alpha:
+      scale:
+        type: float
+        help: How much to rescale the reweighting factor by after each reweighting iteration
+        default: 0.5
+      percent:
+        type: float
+        help: Determine scale as a percentage level of current dual solution
+        default: 10
+      
+  positivity:
+    type: bool
+    help: Impose positivity during SARA minor cycle
+    default: True
+  
+
+clean:
+  _description: Options pertaining to CLEAN minor cycle
+
+hogbom:
+  _description: Options pertaining to Hogbom minor cycle
+
+primal-dual:
+  _description: Options pertaining to primal dual optimisation
+  maxit:
+    type: int
+    help: Maximum number of iterations
+    default: 250
+  tol:
+    type: float
+    help: Will stop when model changes by less than this fraction
+    default: 1e-5
+  verbose:
+    type: int
+    help: Verbosity level
+    default: 1
+
+
+fista:
+  _description: Options pertaining to fista optimisation
+  maxit:
+    type: int
+    help: Maximum number of iterations
+    default: 250
+  tol:
+    type: float
+    help: Will stop when model changes by less than this fraction
+    default: 1e-5
+  verbose:
+    type: int
+    help: Verbosity level
+    default: 1
+
+pcg:
+  _description: Options pertaining to pre-conditioned conjugate gradient optimisation
+  maxit:
+    type: int
+    help: Maximum number of iterations
+    default: 250
+  minit:
+    type: int
+    help: Minimum number of iterations
+    default: 25
+  tol:
+    type: float
+    help: Will stop when model changes by less than this fraction
+    default: 1e-5
+  verbose:
+    type: int
+    help: Verbosity level
+    default: 1

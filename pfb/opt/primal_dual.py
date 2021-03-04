@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.linalg import norm
 from pfb.utils import prox_21
 
 def primal_dual(A, xbar, 
@@ -10,7 +9,7 @@ def primal_dual(A, xbar,
                 L, nu=1.0,  # spectral norms
                 sigma=None,  # step size of dual update
                 mask=None,  # regions where mask is False will be masked 
-                tol=1e-5, maxit=1000, positivity=True, report_freq=10, axis=1, gamma=1.0):
+                tol=1e-5, maxit=1000, positivity=True, report_freq=10, axis=1, gamma=1.0, verbosity=1):
     """
     Algorithm to solve problems of the form
 
@@ -69,42 +68,27 @@ def primal_dual(A, xbar,
         if positivity:
             x[x<0] = 0.0
 
-        # apply mask
-        if mask is not None:
-            if x.ndim == 3:
-                x = np.where(mask, x, 0.0)
-            elif x.ndim == 4:
-                x[1] = np.where(mask, x[1], 0.0)
+        # # apply mask
+        # if mask is not None:
+        #     if x.ndim == 3:
+        #         x = mask(x)
+        #     elif x.ndim == 4:
+        #         raise NotImplementedError("Forgot why we need this. multi_pfb?")
+        #         # x[1] = np.where(mask, x[1], 0.0)
 
         # convergence check
-        eps = norm(x-xp)/norm(x)
+        eps = np.linalg.norm(x-xp)/np.linalg.norm(x)
         if eps < tol:
             break
 
-        if not k%report_freq:
-            print("At iteration %i eps = %f"%(k, eps))
-            # import matplotlib.pyplot as plt
-
-            # tmp = grad_func(x)
-            # plt.figure('a')
-            # plt.imshow(tmp[1][0])
-            # plt.colorbar()
-
-            # plt.figure('b')
-            # plt.imshow(tmp[0][0])
-            # plt.colorbar()
-
-            # plt.figure('c')
-            # plt.imshow(tmp[1][0] + tmp[0][0])
-            # plt.colorbar()
-
-            # plt.show()
-
-
+        if not k%report_freq and verbosity > 1:
+            print("         At iteration %i eps = %f"%(k, eps))
 
     if k == maxit-1:
-        print("PD - Maximum iterations reached. Relative difference between updates = ", eps)
+        if verbosity:
+            print("         PD - Maximum iterations reached. Relative difference between updates = ", eps)
     else:
-        print("PD - Success, converged after %i iterations"%k)
+        if verbosity:
+            print("         PD - Success, converged after %i iterations"%k)
 
     return x, v

@@ -27,7 +27,7 @@ def test_dask_psi_operator(nx, ny, nband, nlevels):
     x = image[None, 0:nx, 0:ny] * nu[:, None, None] ** (-0.7)
     
     # initialise serial operator 
-    psi = PSI(nband, nx, ny, nlevels)
+    psi = PSI(imsize=(nband, nx, ny), nlevels=nlevels)
 
     # decompose
     alpha = psi.hdot(x)
@@ -35,7 +35,7 @@ def test_dask_psi_operator(nx, ny, nband, nlevels):
     xrec = psi.dot(alpha)
 
     # initialise parallel operator
-    dask_psi = DaskPSI(nband, nx, ny, nlevels)
+    dask_psi = DaskPSI(imsize=(nband, nx, ny), nlevels=nlevels)
     # decompose
     alphad = dask_psi.hdot(x)
     xrecd = dask_psi.dot(alphad)
@@ -60,7 +60,7 @@ def test_psi(nx, ny, nband, nlevels):
     x = image[None, 0:nx, 0:ny] * nu[:, None, None] ** (-0.7)
 
     # initialise serial operator 
-    psi = PSI(nband, nx, ny, nlevels)
+    psi = PSI(imsize=(nband, nx, ny), nlevels=nlevels)
 
     # decompose
     alpha = psi.hdot(x)
@@ -82,7 +82,7 @@ def test_prox(nx, ny, nband, nlevels):
     x = image[None, 0:nx, 0:ny] * nu[:, None, None] ** (-0.7)
     
     # initialise serial operator 
-    psi = PSI(nband, nx, ny, nlevels)
+    psi = PSI(imsize=(nband, nx, ny), nlevels=nlevels)
     nmax = psi.nmax
     nbasis = psi.nbasis
 
