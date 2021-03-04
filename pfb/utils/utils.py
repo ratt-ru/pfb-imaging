@@ -227,15 +227,17 @@ def fitcleanbeam(psf, level=0.5, pixsize=1.0):
 
     Gausspars = ()
     for v in range(nband):
+        # make sure psf is normalised
+        psfv = psf[v]/psf[v].max()
         # find regions where psf is non-zero
-        mask = np.where(psf[v] > level, 1.0, 0)
+        mask = np.where(psfv > level, 1.0, 0)
 
         # label all islands and find center
         islands = label(mask)
         ncenter = islands[nx//2, ny//2]
 
         # select psf main lobe
-        psfv = psf[v][islands == ncenter] 
+        psfv = psfv[islands == ncenter] 
         x = xx[islands == ncenter]
         y = yy[islands == ncenter]
         xy = np.vstack((x, y))

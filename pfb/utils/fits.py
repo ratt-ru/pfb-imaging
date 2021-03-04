@@ -30,7 +30,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
     """
 
     w = WCS(naxis=4)
-    w.wcs.ctype = ['RA--SIN','DEC--SIN','FREQ','STOKES']
+    w.wcs.ctype = ['RA---SIN','DEC--SIN','FREQ','STOKES']
     w.wcs.cdelt[0] = -cell_x
     w.wcs.cdelt[1] = cell_y
     w.wcs.cdelt[3] = 1
@@ -70,6 +70,26 @@ def compare_headers(hdr1, hdr2):
             assert hdr1[key] == hdr2[key]
         except:
             raise ValueError("Headers do not match on key %s"%key)
+
+def add_beampars(hdr, GaussPar, GaussPars=None):
+    """
+    Add beam keywords to header.
+    GaussPar - MFS beam pars
+    GaussPars - beam pars for cube 
+    """
+    hdr['BMAJ'] = GaussPar[0]
+    hdr['BMIN'] = GaussPar[1]
+    hdr['PA'] = GaussPar[2]
+
+    if GaussPars is not None:
+        for i in range(len(GaussPars)):
+            hdr['BMAJ' + str(i)] = GaussPars[i][0]
+            hdr['BMIN' + str(i)] = GaussPars[i][1]
+            hdr['PA' + str(i)] = GaussPars[i][2]
+    
+    return hdr
+
+
 
 def set_header_info(mhdr, ref_freq, freq_axis, args, beampars):
     hdr_keys = ['SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'NAXIS3',

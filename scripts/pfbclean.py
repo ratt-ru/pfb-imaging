@@ -226,6 +226,7 @@ def main(args):
     hdr = set_wcs(args.cell_size/3600, args.cell_size/3600, args.nx, args.ny, radec, freq_out)
     hdr_mfs = set_wcs(args.cell_size/3600, args.cell_size/3600, args.nx, args.ny, radec, np.mean(freq_out))
     hdr_psf = set_wcs(args.cell_size/3600, args.cell_size/3600, R.nx_psf, R.ny_psf, radec, freq_out)
+    hdr_psf_mfs = set_wcs(args.cell_size/3600, args.cell_size/3600, R.nx_psf, R.ny_psf, radec, np.mean(freq_out))
     
     # psf
     if args.psf is not None:
@@ -248,24 +249,46 @@ def main(args):
     wsum = np.sum(wsums)
     psf /= wsum
     psf_mfs = np.sum(psf, axis=0)
+    
 
-    # # fit restoring psf
-    # from pfb.utils import fitcleanbeam
-    # GaussPar = fitcleanbeam(psf, level=0.5, pixsize=1.0)  #np.rad2deg(cell_rad))
+    # fit restoring psf
+    from pfb.utils import fitcleanbeam
+    GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)  #np.rad2deg(cell_rad))
+    GaussPars = fitcleanbeam(psf, level=0.5, pixsize=1.0)  #np.rad2deg(cell_rad))
+    print(GaussPars)
+    from pfb.utils import Gaussian2D
+    cpsf_mfs = np.zeros(psf_mfs.shape, dtype=args.real_type)
+    cpsf = np.zeros(psf.shape, dtype=args.real_type)
 
-    # from pfb.utils import Gaussian2D
-    # cpsf = np.zeros(psf.shape, dtype=args.real_type)
+    lpsf = np.arange(-R.nx_psf/2, R.nx_psf/2)
+    mpsf = np.arange(-R.ny_psf/2, R.ny_psf/2)
+    xx, yy = np.meshgrid(lpsf, mpsf, indexing='ij')
 
-    # lpsf = np.arange(-R.nx_psf/2, R.nx_psf/2)
-    # mpsf = np.arange(-R.ny_psf/2, R.ny_psf/2)
-    # xx, yy = np.meshgrid(lpsf, mpsf, indexing='ij')
+    cpsf_mfs = Gaussian2D(xx, yy, GaussPar[0], normalise=False)
 
-    # for v in range(args.nband):
-    #     cpsf[v] = Gaussian2D(xx, yy, GaussPar[v], normalise=False)
-        
-    # save_fits(args.outfile + '_cpsf.fits', cpsf, hdr_psf)
+    for v in range(args.nband):
+        cpsf[v] = Gaussian2D(xx, yy, GaussPars[v], normalise=False)
+    
+    from pfb.utils import add_beampars
+    GaussPar = list(GaussPar[0])
+    GaussPar[0] *= args.cell_size/3600
+    GaussPar[1] *= args.cell_size/3600
+    GaussPar = tuple(GaussPar)
+    hdr_psf_mfs = add_beampars(hdr_psf_mfs, GaussPar)
 
-    # quit()
+    save_fits(args.outfile + '_cpsf_mfs.fits', cpsf_mfs, hdr_psf_mfs)
+    save_fits(args.outfile + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs)
+
+    GaussPars = list(GaussPars)
+    for b in range(args.nband):
+        GaussPars[b] = list(GaussPars[b])
+        GaussPars[b][0] *= args.cell_size/3600
+        GaussPars[b][1] *= args.cell_size/3600
+        GaussPars[b] = tuple(GaussPars[b])
+    GaussPars = tuple(GaussPars)
+    hdr_psf = add_beampars(hdr_psf, GaussPar, GaussPars)
+
+    save_fits(args.outfile + '_cpsf.fits', cpsf, hdr_psf)
 
     # dirty
     if args.dirty is not None:
@@ -429,6 +452,7 @@ def main(args):
             break
     
     if args.mop_flux:
+        print("PFB - Mopping flux")
         psfo = PSF(psf, nthreads=args.nthreads, imsize=residual.shape, mask=mask, beam=beam)
         def hess(x):  
             return psfo.convolve(x) + 1e-6*x
@@ -438,7 +462,9 @@ def main(args):
 
         model += x
         residual = dirty - R.convolve(beam(mask(model)))/wsum
-
+        
+        save_fits(args.outfile + '_mopped_model.fits', model, hdr)
+        save_fits(args.outfile + '_mopped_residual.fits', residual, hdr)
         model_mfs = np.mean(model, axis=0)
         save_fits(args.outfile + '_mopped_model_mfs.fits', model_mfs, hdr_mfs)
         residual_mfs = np.sum(residual, axis=0)
@@ -455,10 +481,23 @@ def main(args):
 
 
     if args.write_model:
+        print("PFB - Writing model")
         R.write_model(model)
 
-    # if args.make_restored:
+    if args.make_restored:
+        print("PFB - Making restored")
+        cpsfo = PSF(cpsf, nthreads=args.nthrads, imsize=residual.shape)
+        restored = cpsfo.convolve(model)
 
+        # residual needs to be in Jy/beam before adding to convolved model
+        wsums = np.amax(psf.reshape(-1, R.nx_psf*R.ny_psf), axis=1)
+        restored += residual/wsums[:, None, None]
+
+        save_fits(args.outfile + '_restored.fits', restored, hdr)
+        restored_mfs = np.mean(restored, axis=0)
+        save_fits(args.outfile + '_restored_mfs.fits', restored_mfs, hdr_mfs)
+        residual_mfs = np.sum(residual, axis=0)
+        save_fits(args.outfile + '_mopped_residual_mfs.fits', residual_mfs, hdr_mfs)
         
         
 
