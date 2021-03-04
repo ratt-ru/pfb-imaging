@@ -10,3 +10,4 @@ from pfb.opt.opt import *
 from pfb.opt.primal_dual import primal_dual
 from pfb.opt.pcg import pcg
 from pfb.opt.fista import fista
+from pfb.opt.power_method import power_method

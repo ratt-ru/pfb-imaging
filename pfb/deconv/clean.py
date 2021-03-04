@@ -47,7 +47,7 @@ def clean(psf, model, residual, mask=None, beam=None, nthreads=0, maxit=10,
     residual_mfs = np.sum(residual, axis=0)
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
-
+    rmax_orig = rmax
     # deconvolve
     for i in range(0, maxit):
         modelu = hogbom(residual, psf, gamma=gamma, pf=peak_factor)
@@ -61,7 +61,7 @@ def clean(psf, model, residual, mask=None, beam=None, nthreads=0, maxit=10,
         rmax = np.abs(residual_mfs).max()
         rms = np.std(residual_mfs)
 
-        if rmax < threshold:
+        if rmax < threshold*rmax_orig:
             print("     CLEAN - Success, convergence after %i iterations. Peak of residual is %f, rms is %f"%(i+1, rmax, rms))
             break
         else:

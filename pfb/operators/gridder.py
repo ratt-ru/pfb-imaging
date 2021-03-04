@@ -161,6 +161,7 @@ class Gridder(object):
 
         # compute imaging weights
         if weighting is not None:
+            print("Computing weights")
             if imaging_weight_column is None:
                 self.imaging_weight_column = "IMAGING_WEIGHT_SPECTRUM"
             else:

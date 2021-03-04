@@ -8,7 +8,7 @@ import dask
 import dask.array as da
 import argparse
 from astropy.io import fits
-from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, data_from_header
+from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, data_from_header, fitcleanbeam, Gaussian2D
 from pfb.operators import Gridder, PSF
 from pfb.deconv import sara, clean, skoon
 from pfb.opt import pcg
@@ -72,8 +72,6 @@ def create_parser():
                    help="Power beam pattern for Stokes I imaging. Pass in a fits file or set to JimBeam to use katbeam.")
     p.add_argument("--band", type=str, default='l',
                    help="Band to use with JimBeam. L or UHF")
-    p.add_argument("--point_mask", type=str, default=None,
-                   help="A fits mask with a priori known point source locations (True where unmasked)")
     p.add_argument("--do_wstacking", type=str2bool, nargs='?', const=True, default=True,
                    help='Whether to use wstacking or not.')
     p.add_argument("--epsilon", type=float, default=1e-5,
@@ -251,12 +249,11 @@ def main(args):
     psf_mfs = np.sum(psf, axis=0)
     
 
+    # TODO - this can be made significantly faster by passing in only a portion of the PSF but how to determine how much?
     # fit restoring psf
-    from pfb.utils import fitcleanbeam
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)  #np.rad2deg(cell_rad))
     GaussPars = fitcleanbeam(psf, level=0.5, pixsize=1.0)  #np.rad2deg(cell_rad))
-    print(GaussPars)
-    from pfb.utils import Gaussian2D
+    
     cpsf_mfs = np.zeros(psf_mfs.shape, dtype=args.real_type)
     cpsf = np.zeros(psf.shape, dtype=args.real_type)
 
@@ -453,11 +450,14 @@ def main(args):
     
     if args.mop_flux:
         print("PFB - Mopping flux")
-        psfo = PSF(psf, nthreads=args.nthreads, imsize=residual.shape, mask=mask, beam=beam)
+        # extacts flux where model is non-zero
+        mask_array2 = np.any(model, axis=0)[None]
+        mask2 = lambda x: mask_array2 * x
+        psfo = PSF(psf, nthreads=args.nthreads, imsize=residual.shape, mask=mask2, beam=beam)
         def hess(x):  
-            return psfo.convolve(x) + 1e-6*x
+            return psfo.convolve(x) + 1e-6*x  # vague Gaussian prior on x
         M = lambda x: x/1e-6  # preconditioner
-        x = pcg(hess, mask(beam(residual)), np.zeros(residual.shape, dtype=residual.dtype), M=M, tol=args.cgtol,
+        x = pcg(hess, mask2(beam(residual)), np.zeros(residual.shape, dtype=residual.dtype), M=M, tol=args.cgtol,
                 maxit=args.cgmaxit, minit=args.cgminit, verbosity=args.cgverbose)
 
         model += x
