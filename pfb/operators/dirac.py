@@ -38,7 +38,17 @@ class Dirac(object):
         return self.mask[None, :, :] * x
 
     def update_locs(self, model):
-        self.mask = np.logical_or(self.mask, np.any(model, axis=0))
+        if model.ndim == 3:
+            self.mask = np.logical_or(self.mask, np.any(model, axis=0))
+        elif model.ndim == 2:
+            self.mask = np.logical_or(self.mask, model != 0)
+        else:
+            raise ValueError("Incorrect number of model dimensions")
 
     def trim_fat(self, model):
-        self.mask = np.any(model, axis=0)
+        if model.ndim == 3:
+            self.mask = np.any(model, axis=0)
+        elif model.ndim == 2:
+            self.mask = model != 0
+        else:
+            raise ValueError("Incorrect number of model dimensions")

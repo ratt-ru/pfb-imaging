@@ -8,5 +8,4 @@ date   - 31/03/2020
 from pfb.deconv.sara import sara
 from pfb.deconv.clean import clean
 from pfb.deconv.spotless import spotless
-from pfb.deconv.hogbom import hogbom, hogbom_mfs
-
+from pfb.deconv.hogbom import hogbom

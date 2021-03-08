@@ -1,7 +1,41 @@
 import numpy as np
 from pfb.operators import PSF2, Dirac
 from pfb.opt import pcg, primal_dual, power_method
-from pfb.deconv import hogbom_mfs
+import matplotlib.pyplot as plt
+
+
+# @njit(nogil=True, fastmath=True, inline='always')
+def hogbom_mfs(ID, PSF, gamma=0.1, pf=0.1, maxit=10000, report_freq=1000, verbosity=1):
+    nx, ny = ID.shape
+    x = np.zeros((nx, ny), dtype=ID.dtype) 
+    IR = ID.copy()
+    IRsearch = IR**2
+    IRmax = IRsearch.max()
+    tol = pf*np.sqrt(IRmax)
+    k = 0
+    while np.sqrt(IRmax) > tol and k < maxit:
+        p, q = np.argwhere(IRsearch == IRmax).squeeze()
+        if np.size(p) > 1:
+            p = p.squeeze()[0]
+            q = q.squeeze()[0]
+        xhat = IR[p, q]
+        x[p, q] += gamma * xhat
+        IR -= gamma * xhat[None, None] * PSF[nx-p:2*nx - p, ny-q:2*ny - q]
+        IRsearch = IR**2
+        IRmax = IRsearch.max()
+        k += 1
+
+        if not k%report_freq and verbosity > 1:
+            print("         Hogbom - At iteration %i max residual = %f"%(k, np.sqrt(IRmax)))
+    
+    if k >= maxit:
+        if verbosity:
+            print("         Hogbom - Maximum iterations reached. Max of residual = %f.  "%(np.sqrt(IRmax)))
+    else:
+        if verbosity:
+            print("         Hogbom - Success, converged after %i iterations"%k)
+    return x
+
 
 def resid_func(x, dirty, psfo, mask, beam):
     residual = dirty - psfo.convolve(x)
@@ -9,12 +43,12 @@ def resid_func(x, dirty, psfo, mask, beam):
     residual = mask(beam(residual))
     return residual, residual_mfs
 
-def spotless(psf, model, residual, mask=None, beam=None, nthreads=1, 
-             maxit=10, tol=1e-4, threshold=0.01, positivity=True, gamma=0.99,
-             hbgamma=0.1, hbpf=0.1, hbmaxit=1000, hbverbose=1,  # Hogbom options
-             pdtol=1e-6, pdmaxit=250, pdverbose=1,  # primal dual options
-             cgtol=1e-6, cgminit=25, cgmaxit=150, cgverbose=1,  # conjugate gradient options
-             pmtol=1e-5, pmmaxit=50, pmverbose=1):  # power method options
+def spotless(psf, model, residual, mask=None, beam=None, nthreads=1, sig_21=1e-3, sigma_frac=100,
+             maxit=10, tol=1e-4, threshold=0.01, positivity=True, gamma=0.9999, tidy=True,
+             hbgamma=0.1, hbpf=0.1, hbmaxit=5000, hbverbose=1,  # Hogbom options
+             pdtol=1e-4, pdmaxit=250, pdverbose=1,  # primal dual options
+             cgtol=1e-4, cgminit=15, cgmaxit=150, cgverbose=1,  # conjugate gradient options
+             pmtol=1e-4, pmmaxit=50, pmverbose=1):  # power method options
     """
     Modified clean algorithm:
 
@@ -62,6 +96,8 @@ def spotless(psf, model, residual, mask=None, beam=None, nthreads=1,
         dirty = residual
     residual_mfs = np.sum(residual, axis=0)
     residual = mask(beam(residual))
+    rmax = np.abs(residual_mfs).max()
+    rms = np.std(residual_mfs)
 
     # set up point sources
     phi = Dirac(nband, nx, ny, mask=np.any(model, axis=0))
@@ -69,36 +105,47 @@ def spotless(psf, model, residual, mask=None, beam=None, nthreads=1,
 
     #  preconditioning operator
     def hess(x):  
-        return phi.hdot(mask(beam(psfo.convolve(phi.dot(x))))) + 1e-6*x
+        return phi.hdot(mask(beam(psfo.convolve(phi.dot(x))))) + x/(sigma_frac*rmax)
+
+    if tidy:
+        # spectral norm
+        posthess = hess
+        beta, betavec = power_method(hess, residual.shape, tol=pmtol, maxit=pmmaxit, verbosity=pmverbose)
+    else:
+        posthess = lambda x: x
+        beta = 1.0
+        betavec = 1.0
 
     # deconvolve
     for i in range(0, maxit):
         # find point source candidates
-        print('     hogbom')
         modelu = hogbom_mfs(residual_mfs, psf_mfs, gamma=hbgamma, pf=hbpf, maxit=hbmaxit, verbosity=hbverbose)
         
-        print('     pm')
         phi.update_locs(modelu)
-        beta, betavec = power_method(hess, model.shape, tol=pmtol, maxit=pmmaxit, verbosity=pmverbose)
 
-        print('     pcg')
         # solve for beta updates
-        x = pcg(hess, phi.hdot(residual), phi.hdot(np.tile(modelu[None], (nband, 1, 1))), 
-                M=lambda x: x / 1e-6, tol=cgtol,
+        x0 = np.tile(modelu[None], (nband, 1, 1))
+        x = pcg(hess, phi.hdot(residual), phi.hdot(x0), 
+                M=lambda x: x * (sigma_frac*rmax), tol=cgtol,
                 maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
 
         modelp = model.copy()
         model += gamma * x
 
-        print('     pd')
-        weights_21 = np.where(phi.mask, 1, 1e10)  # 1e10 for effective infinity
-        model, dual = primal_dual(hess, model, modelp, dual, 1e-6, phi, weights_21, beta,
-                                  tol=pdtol, maxit=pdmaxit, axis=0,
-                                  positivity=positivity, report_freq=100, verbosity=pdverbose)
+        if tidy:
+            beta, betavec = power_method(hess, model.shape, b0=betavec, tol=pmtol, maxit=pmmaxit, verbosity=pmverbose)
+            weights_21 = np.where(phi.mask, 1, 1e10)  # 1e10 for effective infinity
+            model, dual = primal_dual(posthess, model, modelp, dual, sig_21, phi, weights_21, beta,
+                                      tol=pdtol, maxit=pdmaxit, axis=0,
+                                      positivity=positivity, report_freq=100, verbosity=pdverbose)
+        else:
+            weights_21 = np.where(phi.mask, 1, 1e10)  # 1e10 for effective infinity
+            model, dual = primal_dual(posthess, model, modelp, dual, sig_21, phi, weights_21, beta,
+                                      tol=pdtol, maxit=pdmaxit, axis=0,
+                                      positivity=positivity, report_freq=100, verbosity=pdverbose)
 
         # update Dirac dictionary (remove zero components)
         phi.trim_fat(model)
-        print('     resid')
         residual, residual_mfs = resid_func(model, dirty, psfo, mask, beam)
 
         # check stopping criteria
@@ -110,6 +157,6 @@ def spotless(psf, model, residual, mask=None, beam=None, nthreads=1,
             print("     Spotless - Success, convergence after %i iterations"%(i+1))
             break
         else:
-            print("     Spotless - At iteration %i peak of residual is %f, rms is %f" % (i+1, rmax, rms))
+            print("     Spotless - At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i+1, rmax, rms, eps))
     
     return model, residual_mfs
