@@ -10,7 +10,7 @@ import argparse
 from astropy.io import fits
 from pfb.utils import str2bool, set_wcs, load_fits, save_fits, compare_headers, data_from_header, fitcleanbeam, Gaussian2D
 from pfb.operators import Gridder, PSF
-from pfb.deconv import sara, clean, skoon
+from pfb.deconv import sara, clean, spotless
 from pfb.opt import pcg
 
 def create_parser():
@@ -41,7 +41,7 @@ def create_parser():
     p.add_argument("--make_restored", type=str2bool, nargs='?', const=True, default=True,
                    help="Whather to produce a restored image or not.")
     p.add_argument("--deconv_mode", type=str, default='sara',
-                   help="Select minor cycle to use. Current options are 'sara' (default) or 'clean'")
+                   help="Select minor cycle to use. Current options are 'spotless' (default), 'sara' or 'clean'")
     p.add_argument("--weighting", type=str, default=None, 
                    help="Imaging weights to apply. None means natural, anything else is either Briggs or Uniform depending of the value of robust.")
     p.add_argument("--robust", type=float, default=None, 
@@ -138,6 +138,14 @@ def create_parser():
                    help="Maximum number of iterations for primal dual")
     p.add_argument("--pdverbose", type=int, default=1,
                    help="Verbosity of primal dual used to solve backward step. Set to 2 for debugging.")
+    p.add_argument("--hbgamma", type=float, default=0.1,
+                   help="Minor loop gain of Hogbom")
+    p.add_argument("--hbpf", type=float, default=0.05,
+                   help="Peak factor of Hogbom")
+    p.add_argument("--hbmaxit", type=int, default=2500,
+                   help="Maximum number of iterations for Hogbom")
+    p.add_argument("--hbverbose", type=int, default=1,
+                   help="Verbosity of Hogbom. Set to 2 for debugging or zero for silence.")
     p.add_argument("--tidy", type=str2bool, nargs='?', const=True, default=True,
                    help="Switch off if you prefer it dirty.")
     p.add_argument("--real_type", type=str, default='f4',
@@ -402,12 +410,16 @@ def main(args):
         elif args.deconv_mode == 'clean':
             threshold = np.maximum(args.peak_factor*rmax, rms)
             model, residual_mfs_minor = clean(psf, model, residual, mask=mask_array, beam=beam_image,
-                                              nthreads=args.nthreads, maxit=args.minormaxit,
-                                              gamma=args.cgamma, peak_factor=args.peak_factor, threshold=threshold)
-        elif args.deconv_mode == 'skoon':
+                nthreads=args.nthreads, maxit=args.minormaxit,
+                gamma=args.cgamma, peak_factor=args.peak_factor, threshold=threshold)
+        elif args.deconv_mode == 'spotless':
             threshold = np.maximum(args.peak_factor*rmax, rms)
-            model, residual_mfs_minor = skoon(psf, model, residual, mask, nthreads=args.nthreads, maxit=args.minormaxit,
-                                               gamma=args.cgamma, peak_factor=args.peak_factor, threshold=threshold)
+            model, residual_mfs_minor = spotless(psf, model, residual, mask=mask_array, beam=beam_image, nthreads=args.nthreads,
+                maxit=args.minormaxit, tol=args.minortol, threshold=threshold, positivity=args.positivity,
+                hbgamma=args.hbgamma, hbpf=args.hbpf, hbmaxit=args.hbmaxit, hbverbose=args.hbverbose, 
+                pdtol=args.pdtol, pdmaxit=args.pdmaxit, pdverbose=args.pdverbose, tidy=args.tidy,
+                cgtol=args.cgtol, cgminit=args.cgminit, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose, 
+                pmtol=args.pmtol, pmmaxit=args.pmmaxit, pmverbose=args.pmverbose)
         else:
             raise ValueError("Unknown deconvolution mode ", args.deconv_mode)
 
