@@ -116,7 +116,7 @@ def create_parser():
                    help="Set alpha as using this percentile of non zero coefficients")
     p.add_argument("--reweight_alpha_ff", type=float, default=0.5,
                    help="reweight_alpha_percent will be scaled by this factor after each reweighting step.")
-    p.add_argument("--cgtol", type=float, default=1e-6,
+    p.add_argument("--cgtol", type=float, default=1e-4,
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=150,
                    help="Maximum number of iterations for the cg updates")
@@ -130,7 +130,7 @@ def create_parser():
                    help="Maximum number of iterations for power method")
     p.add_argument("--pmverbose", type=int, default=1,
                    help="Verbosity of power method used to get spectral norm of approx Hessian. Set to 2 for debugging.")
-    p.add_argument("--pdtol", type=float, default=1e-6,
+    p.add_argument("--pdtol", type=float, default=1e-4,
                    help="Tolerance for primal dual")
     p.add_argument("--pdmaxit", type=int, default=250,
                    help="Maximum number of iterations for primal dual")
@@ -412,7 +412,7 @@ def main(args):
                 gamma=args.cgamma, peak_factor=args.peak_factor, threshold=threshold)
         elif args.deconv_mode == 'spotless':
             model, residual_mfs_minor = spotless(psf, model, residual, mask=mask_array, beam=beam_image,
-                sig_21=args.sig_21, sigma_frac=args.sigma_frac, nthreads=args.nthreads,
+                sig_21=args.sig_21, sigma_frac=args.sigma_frac, nthreads=args.nthreads, tidy=args.tidy,
                 maxit=args.minormaxit, tol=args.minortol, threshold=args.peak_factor*rmax, positivity=args.positivity,
                 hbgamma=args.hbgamma, hbpf=args.hbpf, hbmaxit=args.hbmaxit, hbverbose=args.hbverbose, 
                 pdtol=args.pdtol, pdmaxit=args.pdmaxit, pdverbose=args.pdverbose,

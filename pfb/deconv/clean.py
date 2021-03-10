@@ -1,6 +1,6 @@
 import numpy as np
 from pfb.operators import PSF
-from pfb.deconv import hogbom
+from pfb.opt import hogbom
 
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty

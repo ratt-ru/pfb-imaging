@@ -3,38 +3,23 @@ from pfb.operators import PSF2, Dirac
 from pfb.opt import pcg, primal_dual, power_method
 import matplotlib.pyplot as plt
 
-
+# from numba import njit
 # @njit(nogil=True, fastmath=True, inline='always')
-def hogbom_mfs(ID, PSF, gamma=0.1, pf=0.1, maxit=10000, report_freq=1000, verbosity=1):
+def hogbom_mfs(ID, PSF):
+    gamma = 0.1
     nx, ny = ID.shape
     x = np.zeros((nx, ny), dtype=ID.dtype) 
     IR = ID.copy()
     IRsearch = IR**2
     IRmax = IRsearch.max()
-    tol = pf*np.sqrt(IRmax)
-    k = 0
-    while np.sqrt(IRmax) > tol and k < maxit:
-        p, q = np.argwhere(IRsearch == IRmax).squeeze()
-        if np.size(p) > 1:
-            p = p.squeeze()[0]
-            q = q.squeeze()[0]
+    for k in range(10000):
+        p, q = np.argwhere(IRsearch == IRmax)[0]
         xhat = IR[p, q]
         x[p, q] += gamma * xhat
-        IR -= gamma * xhat[None, None] * PSF[nx-p:2*nx - p, ny-q:2*ny - q]
+        IR -= gamma * xhat * PSF[nx-p:2*nx - p, ny-q:2*ny - q]
         IRsearch = IR**2
         IRmax = IRsearch.max()
-        k += 1
-
-        if not k%report_freq and verbosity > 1:
-            print("         Hogbom - At iteration %i max residual = %f"%(k, np.sqrt(IRmax)))
-    
-    if k >= maxit:
-        if verbosity:
-            print("         Hogbom - Maximum iterations reached. Max of residual = %f.  "%(np.sqrt(IRmax)))
-    else:
-        if verbosity:
-            print("         Hogbom - Success, converged after %i iterations"%k)
-    return x
+    return x, np.std(IR)
 
 
 def resid_func(x, dirty, psfo, mask, beam):
@@ -105,7 +90,7 @@ def spotless(psf, model, residual, mask=None, beam=None, nthreads=1, sig_21=1e-3
 
     #  preconditioning operator
     def hess(x):  
-        return phi.hdot(mask(beam(psfo.convolve(phi.dot(x))))) + x/(sigma_frac*rmax)
+        return phi.hdot(mask(beam(psfo.convolve(phi.dot(x))))) + x / (sigma_frac * np.maximum(model, 1e-6))
 
     if tidy:
         # spectral norm
@@ -119,14 +104,14 @@ def spotless(psf, model, residual, mask=None, beam=None, nthreads=1, sig_21=1e-3
     # deconvolve
     for i in range(0, maxit):
         # find point source candidates
-        modelu = hogbom_mfs(residual_mfs, psf_mfs, gamma=hbgamma, pf=hbpf, maxit=hbmaxit, verbosity=hbverbose)
+        modelu, rms = hogbom_mfs(residual_mfs, psf_mfs)
         
         phi.update_locs(modelu)
 
         # solve for beta updates
         x0 = np.tile(modelu[None], (nband, 1, 1))
         x = pcg(hess, phi.hdot(residual), phi.hdot(x0), 
-                M=lambda x: x * (sigma_frac*rmax), tol=cgtol,
+                M=lambda x: x * (sigma_frac * np.maximum(model, 1e-6)), tol=cgtol,
                 maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
 
         modelp = model.copy()
@@ -138,11 +123,19 @@ def spotless(psf, model, residual, mask=None, beam=None, nthreads=1, sig_21=1e-3
             model, dual = primal_dual(posthess, model, modelp, dual, sig_21, phi, weights_21, beta,
                                       tol=pdtol, maxit=pdmaxit, axis=0,
                                       positivity=positivity, report_freq=100, verbosity=pdverbose)
+            
         else:
-            weights_21 = np.where(phi.mask, 1, 1e10)  # 1e10 for effective infinity
-            model, dual = primal_dual(posthess, model, modelp, dual, sig_21, phi, weights_21, beta,
-                                      tol=pdtol, maxit=pdmaxit, axis=0,
-                                      positivity=positivity, report_freq=100, verbosity=pdverbose)
+            # weights_21 = np.where(phi.mask, 1, 1e10)  # 1e10 for effective infinity
+            # model, dual = primal_dual(posthess, model, modelp, dual, sig_21, phi, weights_21, beta,
+            #                           tol=pdtol, maxit=pdmaxit, axis=0,
+            #                           positivity=positivity, report_freq=100, verbosity=pdverbose)
+            # soft threshold by rms
+            l2_mean = np.mean(model, axis=0)
+            l2_soft = np.maximum(l2_mean - rms, 0.0)
+            soft_mask = l2_mean != 0
+            ratio = np.zeros(soft_mask.shape, dtype=model.dtype)
+            ratio[soft_mask] = l2_soft[soft_mask] / l2_mean[soft_mask]
+            model = model * ratio[None]
 
         # update Dirac dictionary (remove zero components)
         phi.trim_fat(model)
