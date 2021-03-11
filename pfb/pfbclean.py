@@ -150,7 +150,7 @@ def create_parser():
                    help="Dtype of real valued images. f4/f8 for single or double precision respectively.")
     return p
 
-def main(args):
+def _main(args):
     # get max uv coords over all fields
     uvw = []
     u_max = 0.0
@@ -512,7 +512,7 @@ def main(args):
         
 
 
-if __name__=="__main__":
+def main():
     args = create_parser().parse_args()
 
     if args.nthreads:
@@ -531,4 +531,4 @@ if __name__=="__main__":
         print(key, ' = ', GD[key])
     
 
-    main(args)
+    _main(args)
