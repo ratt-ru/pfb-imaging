@@ -1,4 +1,4 @@
-from scripts.pfbclean import main, create_parser
+from pfb.pfbclean import _main, create_parser
 import packratt
 import os
 import traceback
@@ -23,4 +23,4 @@ def test_pfb(tmp_path_factory):
     args.pmmaxit = 5
     args.pdmaxit = 5
 
-    main(args)
+    _main(args)

@@ -35,5 +35,5 @@ setup(
      ],
      entry_points={'console_scripts':
                     ['pfbclean = pfb.pfbclean:main']
-     }
+     },
  )
