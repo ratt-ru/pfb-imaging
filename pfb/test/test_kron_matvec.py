@@ -1,6 +1,6 @@
 import numpy as np
 from numpy.testing import assert_array_almost_equal
-from pfb.operators import kron_matvec
+from pfb.utils import kron_matvec
 from africanus.gps.kernels import exponential_squared as expsq
 import pytest
 pmp = pytest.mark.parametrize

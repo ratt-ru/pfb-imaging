@@ -1,12 +1,11 @@
-from numba import njit, prange
 import numpy as np
-import dask.array as da
+from numba import njit, prange
 from ducc0.fft import r2c, c2r, c2c
 from africanus.gps.kernels import exponential_squared as expsq
+from pfb.utils import kron_matvec
 
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
-
 
 @njit(parallel=True, nogil=True, fastmath=True, inline='always')
 def freqmul(A, x):
@@ -29,20 +28,6 @@ def make_kernel(nx_psf, ny_psf, sigma0, length_scale):
     return K
 
 
-def kron_matvec(A, b):
-    D = len(A)
-    N = b.size
-    x = b
-
-    for d in range(D):
-        Gd = A[d].shape[0]
-        NGd = N//Gd
-        X = np.reshape(x, (Gd, NGd))
-        Z = A[d].dot(X).T
-        x = Z.ravel()
-    return x
-
-
 class mock_array(object):
     def __init__(self, n):
         self.n = n
@@ -60,46 +45,7 @@ class mock_array(object):
         return x
 
 
-class PSF(object):
-    def __init__(self, psf, nthreads=1, imsize=None, mask=None, beam=None):
-        self.nthreads = nthreads
-        self.nband, nx_psf, ny_psf = psf.shape
-        if imsize is not None:
-            _, nx, ny = imsize
-            if nx > nx_psf or ny > ny_psf:
-                raise ValueError("Image size can't be smaller than PSF size")
-        else:
-            # if imsize not passed in assume PSF is twice the size of image
-            nx = nx_psf//2
-            ny = ny_psf//2
-        npad_xl = (nx_psf - nx)//2
-        npad_xr = nx_psf - nx - npad_xl
-        npad_yl = (ny_psf - ny)//2
-        npad_yr = ny_psf - ny - npad_yl
-        self.padding = ((0,0), (npad_xl, npad_xr), (npad_yl, npad_yr))
-        self.ax = (1,2)
-        self.unpad_x = slice(npad_xl, -npad_xr)
-        self.unpad_y = slice(npad_yl, -npad_yr)
-        self.lastsize = ny + np.sum(self.padding[-1])
-        self.psf = psf
-        psf_pad = iFs(psf, axes=self.ax)
-        self.psfhat = r2c(psf_pad, axes=self.ax, forward=True, nthreads=nthreads, inorm=0)
 
-        if mask is not None:
-            self.mask = mask
-        else:
-            self.mask = lambda x: x
-
-        if beam is not None:
-            self.beam = beam
-        else:
-            self.beam = lambda x: x
-
-    def convolve(self, x):
-        xhat = iFs(np.pad(self.beam(self.mask(x)), self.padding, mode='constant'), axes=self.ax)
-        xhat = r2c(xhat, axes=self.ax, nthreads=self.nthreads, forward=True, inorm=0)
-        xhat = c2r(xhat * self.psfhat, axes=self.ax, forward=False, lastsize=self.lastsize, inorm=2, nthreads=self.nthreads)
-        return self.mask(self.beam(Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]))
 
 class Gauss(object):
     def __init__(self, sigma0, nband, nx, ny, nthreads=8):
@@ -163,47 +109,3 @@ class Gauss(object):
 
     def dot(self, x):
         return kron_matvec(self.Kkron, x.flatten()).reshape(*x.shape)
-
-
-class Dirac(object):
-    def __init__(self, nband, nx, ny, mask=None):
-        """
-        Models image as a sum of Dirac deltas i.e.
-        
-        x = H beta
-
-        where H is a design matrix that maps the Dirac coefficients onto the image cube.
-
-        Parameters
-        ----------
-        nband - number of bands
-        nx - number of pixels in x-dimension
-        ny - number of pixels in y-dimension
-        mask - nx x my bool array containing locations of sources
-        """
-        self.nx = nx
-        self.ny = ny
-        self.nband = nband
-
-        if mask is not None:
-            self.mask = mask
-        else:
-            self.mask = lambda x: x
-
-    def dot(self, x):
-        """
-        Components to image
-        """
-        return self.mask[None, :, :] * x
-
-    def hdot(self, x):
-        """
-        Image to components
-        """
-        return self.mask[None, :, :] * x
-
-    def update_locs(self, model):
-        self.mask = np.logical_or(self.mask, mask)
-
-    def trim_fat(self, model):
-        self.mask = np.any(model, axis=0)
