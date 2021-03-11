@@ -1,11 +1,15 @@
 import numpy as np
 from pfb.operators import PSF2, Dirac
 from pfb.opt import pcg, primal_dual, power_method
-import matplotlib.pyplot as plt
 
 # from numba import njit
 # @njit(nogil=True, fastmath=True, inline='always')
 def hogbom_mfs(ID, PSF):
+    """
+    An attemp at a faster MFS version of Hogbom. 
+    For some reason the jitted version is slower.
+    Parallel peak finding and PSF subtraction still required.
+    """
     gamma = 0.1
     nx, ny = ID.shape
     x = np.zeros((nx, ny), dtype=ID.dtype) 
@@ -23,10 +27,15 @@ def hogbom_mfs(ID, PSF):
 
 
 def resid_func(x, dirty, psfo, mask, beam):
+    """
+    Returns the unattenuated but masked residual_mfs useful for peak finding
+    and the masked residual cube attenuated by the beam pattern which is the
+    data source in the pcg forward step. Masked regions are set to zero. 
+    """
     residual = dirty - psfo.convolve(x)
     residual_mfs = np.sum(residual, axis=0)
     residual = mask(beam(residual))
-    return residual, residual_mfs
+    return residual, mask(residual_mfs)
 
 def spotless(psf, model, residual, mask=None, beam=None, nthreads=1, sig_21=1e-3, sigma_frac=100,
              maxit=10, tol=1e-4, threshold=0.01, positivity=True, gamma=0.9999, tidy=True,
@@ -41,7 +50,6 @@ def spotless(psf, model, residual, mask=None, beam=None, nthreads=1, sig_21=1e-3
     model - current intrinsic model
     residual - apparent residual image i.e. R.H W (V - R A x)
     """
-
 
     if len(residual.shape) > 3:
         raise ValueError("Residual must have shape (nband, nx, ny)")
@@ -90,7 +98,7 @@ def spotless(psf, model, residual, mask=None, beam=None, nthreads=1, sig_21=1e-3
 
     #  preconditioning operator
     def hess(x):  
-        return phi.hdot(mask(beam(psfo.convolve(phi.dot(x))))) + x / (sigma_frac * np.maximum(model, 1e-6))
+        return phi.hdot(mask(beam(psfo.convolve(phi.dot(x))))) + x / (sigma_frac * rmax)
 
     if tidy:
         # spectral norm
@@ -111,31 +119,24 @@ def spotless(psf, model, residual, mask=None, beam=None, nthreads=1, sig_21=1e-3
         # solve for beta updates
         x0 = np.tile(modelu[None], (nband, 1, 1))
         x = pcg(hess, phi.hdot(residual), phi.hdot(x0), 
-                M=lambda x: x * (sigma_frac * np.maximum(model, 1e-6)), tol=cgtol,
+                M=lambda x: x * (sigma_frac * rmax), tol=cgtol,
                 maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
 
         modelp = model.copy()
         model += gamma * x
 
+        weights_21 = np.where(phi.mask, 1, 1e10)  # 1e10 for effective infinity
+
         if tidy:
             beta, betavec = power_method(hess, model.shape, b0=betavec, tol=pmtol, maxit=pmmaxit, verbosity=pmverbose)
-            weights_21 = np.where(phi.mask, 1, 1e10)  # 1e10 for effective infinity
             model, dual = primal_dual(posthess, model, modelp, dual, sig_21, phi, weights_21, beta,
                                       tol=pdtol, maxit=pdmaxit, axis=0,
                                       positivity=positivity, report_freq=100, verbosity=pdverbose)
             
         else:
-            # weights_21 = np.where(phi.mask, 1, 1e10)  # 1e10 for effective infinity
-            # model, dual = primal_dual(posthess, model, modelp, dual, sig_21, phi, weights_21, beta,
-            #                           tol=pdtol, maxit=pdmaxit, axis=0,
-            #                           positivity=positivity, report_freq=100, verbosity=pdverbose)
-            # soft threshold by rms
-            l2_mean = np.mean(model, axis=0)
-            l2_soft = np.maximum(l2_mean - rms, 0.0)
-            soft_mask = l2_mean != 0
-            ratio = np.zeros(soft_mask.shape, dtype=model.dtype)
-            ratio[soft_mask] = l2_soft[soft_mask] / l2_mean[soft_mask]
-            model = model * ratio[None]
+            model, dual = primal_dual(posthess, model, modelp, dual, sig_21, phi, weights_21, beta,
+                                      tol=pdtol, maxit=pdmaxit, axis=0,
+                                      positivity=positivity, report_freq=100, verbosity=pdverbose)
 
         # update Dirac dictionary (remove zero components)
         phi.trim_fat(model)
