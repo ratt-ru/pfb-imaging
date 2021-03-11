@@ -2,6 +2,7 @@ import numpy as np
 from numba import njit, prange
 from ducc0.fft import r2c, c2r, c2c
 from africanus.gps.kernels import exponential_squared as expsq
+from pfb.utils import kron_matvec
 
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
@@ -25,20 +26,6 @@ def make_kernel(nx_psf, ny_psf, sigma0, length_scale):
             m = float(k - (ny_psf//2))
             K[0,j,k] = sigma0**2*np.exp(-(l**2+m**2)/(2*length_scale**2))
     return K
-
-
-def kron_matvec(A, b):
-    D = len(A)
-    N = b.size
-    x = b
-
-    for d in range(D):
-        Gd = A[d].shape[0]
-        NGd = N//Gd
-        X = np.reshape(x, (Gd, NGd))
-        Z = A[d].dot(X).T
-        x = Z.ravel()
-    return x
 
 
 class mock_array(object):
