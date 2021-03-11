@@ -1,8 +1,1 @@
-include pfb/*.py
-include scripts/spi_fitter.py
-include scripts/power_beam_maker.py
-include scripts/image_convolver.py
-include scripts/pfbclean.py
-include scripts/make_mask.py
-include scripts/flag_outliers.py
-include scripts/kgb2col.py 
+include pfb/parser/default_config.yaml
