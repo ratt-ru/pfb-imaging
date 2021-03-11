@@ -11,3 +11,4 @@ from pfb.operators.psi import PSI, DaskPSI
 from pfb.operators.theta import Theta, DaskTheta
 from pfb.operators.psf import PSF, PSF2
 from pfb.operators.dirac import Dirac
+from pfb.operators.gauss import Gauss
