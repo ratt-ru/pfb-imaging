@@ -1,5 +1,7 @@
 import numpy as np
 from numba import njit
+import pyscilog
+log = pyscilog.get_logger('HOGBOM')
 
 def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=10000, report_freq=1000, verbosity=1):
     nband, nx, ny = ID.shape
@@ -22,12 +24,12 @@ def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=10000, report_freq=1000, verbosity=
         k += 1
 
         if not k%report_freq and verbosity > 1:
-            print("         Hogbom - At iteration %i max residual = %f"%(k, IRmax))
+            print("At iteration %i max residual = %f"%(k, IRmax), file=log)
     
     if k >= maxit:
         if verbosity:
-            print("         Hogbom - Maximum iterations reached. Max of residual = %f.  "%(IRmax))
+            print("Maximum iterations reached. Max of residual = %f.  "%(IRmax), file=log)
     else:
         if verbosity:
-            print("         Hogbom - Success, converged after %i iterations"%k)
+            print("Success, converged after %i iterations"%k, file=log)
     return x

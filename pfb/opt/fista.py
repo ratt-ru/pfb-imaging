@@ -1,4 +1,6 @@
 import numpy as np
+import pyscilog
+log = pyscilog.get_logger('FISTA')
 
 def back_track_func(x, xold, gradp, likp, L):
         df = x - xold
@@ -72,7 +74,7 @@ def fista(A, xbar, x0, lam,  L,
         fidupper[k] = flam
         while fidn > flam:
             L *= 2.0
-            print("Step size too large, adjusting L", L)
+            print("Step size too large, adjusting %f"%L, file=log)
 
              # gradient update
             x = y - gradp/L
@@ -90,11 +92,11 @@ def fista(A, xbar, x0, lam,  L,
         y = x +  gamma * (x - xold)
 
         if not k%report_freq:
-            print("At iteration %i: eps = %f, L = %f, lambda = %f"%(k, eps, L, (tp - 1)/t))
+            print("At iteration %i: eps = %f, L = %f, lambda = %f"%(k, eps, L, (tp - 1)/t), file=log)
 
     if k == maxit-1:
-        print("FISTA - Maximum iterations reached. Relative difference between updates = ", eps)
+        print("Maximum iterations reached. Relative difference between updates = %f"%eps, file=log)
     else:
-        print("FISTA - Success, converged after %i iterations"%k)
+        print("Success, converged after %i iterations"%k, file=log)
 
     return x, fidelity, fidupper

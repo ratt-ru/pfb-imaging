@@ -8,6 +8,8 @@ from africanus.gridding.wgridder.dask import dirty as vis2im
 from africanus.gridding.wgridder.dask import model as im2vis
 from africanus.gridding.wgridder.dask import residual as im2residim
 from africanus.gridding.wgridder.dask import hessian
+import pyscilog
+log = pyscilog.get_logger('Gridder')
 
 class Gridder(object):
     def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',
@@ -161,7 +163,7 @@ class Gridder(object):
 
         # compute imaging weights
         if weighting is not None:
-            print("Computing weights")
+            print("Computing weights", file=log)
             if imaging_weight_column is None:
                 self.imaging_weight_column = "IMAGING_WEIGHT_SPECTRUM"
             else:
@@ -268,7 +270,7 @@ class Gridder(object):
 
     def make_residual(self, x):
         # Note deprecated (does not support Jones terms) 
-        print("Making residual")
+        print("Making residual", file=log)
         x = da.from_array(x.astype(self.real_type), chunks=(1, self.nx, self.ny), name=False)
         residuals = []
         for ims in self.ms:
@@ -348,7 +350,7 @@ class Gridder(object):
         return accumulate_dirty(residuals, self.nband, self.band_mapping).astype(self.real_type)
 
     def make_dirty(self):
-        print("Making dirty")
+        print("Making dirty", file=log)
         dirty = da.zeros((self.nband, self.nx, self.ny), 
                          dtype=np.float32,
                          chunks=(1, self.nx, self.ny), name=False)
@@ -369,8 +371,6 @@ class Gridder(object):
             fields = dask.compute(fields)[0]
             spws = dask.compute(spws)[0]
             pols = dask.compute(pols)[0]
-
-            # pprint(self.chunks[ims])
 
             for ds in xds:
                 field = fields[ds.FIELD_ID]
@@ -441,7 +441,7 @@ class Gridder(object):
         return accumulate_dirty(dirties, self.nband, self.band_mapping).astype(self.real_type)
 
     def make_psf(self):
-        print("Making PSF")
+        print("Making PSF", file=log)
         psfs = []
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
@@ -520,7 +520,7 @@ class Gridder(object):
         return accumulate_dirty(psfs, self.nband, self.band_mapping).astype(self.real_type)
 
     def convolve(self, x):
-        print("Applying Hessian")
+        print("Applying Hessian", file=log)
         x = da.from_array(x.astype(self.real_type), chunks=(1, self.nx, self.ny), name=False)
         convolvedims = []
         for ims in self.ms:
@@ -602,7 +602,7 @@ class Gridder(object):
         return accumulate_dirty(convolvedims, self.nband, self.band_mapping).astype(self.real_type)
 
     def write_model(self, x):
-        print("Writing model data")
+        print("Writing model data", file=log)
         x = da.from_array(x.astype(np.float32), chunks=(1, self.nx, self.ny))
         writes  = []
         for ims in self.ms:
@@ -654,7 +654,7 @@ class Gridder(object):
         dask.compute(writes, scheduler='single-threaded')
 
     def write_component_model(self, comps, ref_freq, mask, row_chunks, chan_chunks):
-        print("Writing model data at full freq resolution")
+        print("Writing model data at full freq resolution", file=log)
         order, npix = comps.shape
         comps = da.from_array(comps, chunks=(-1, -1))
         mask = da.from_array(mask.squeeze(), chunks=(-1, -1))

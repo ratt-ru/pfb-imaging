@@ -1,7 +1,10 @@
+import sys
 from multiprocessing import Value
 import numpy as np
 from pfb.opt import power_method, pcg, primal_dual
 from pfb.operators import PSF, DaskPSI
+import pyscilog
+log = pyscilog.get_logger('SARA')
 
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
@@ -62,7 +65,7 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
     
     # l21 weights and dual 
     if weights21 is None:
-        print("     Initialising all l21 weights to unity.")
+        print("Initialising all l21 weights to unity.", file=log)
         weights21 = np.ones((psi.nbasis, psi.nmax), dtype=residual.dtype)
     if dual is None:
         dual = np.zeros((psi.nbasis, nband, psi.nmax), dtype=residual.dtype)
@@ -123,10 +126,10 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
         rms = np.std(residual_mfs)
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
-        print("     SARA - At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i+1, rmax, rms, eps))
+        print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i+1, rmax, rms, eps), file=log)
 
         if eps < tol:
-            print("     SARA - Success, convergence after %i iterations" %(i+1))
+            print("Success, convergence after %i iterations" %(i+1), file=log)
             break
 
         if tidy and i<maxit-1:

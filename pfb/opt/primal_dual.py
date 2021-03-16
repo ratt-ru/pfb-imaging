@@ -1,5 +1,7 @@
 import numpy as np
 from pfb.utils import prox_21
+import pyscilog
+log = pyscilog.get_logger('PD')
 
 def primal_dual(A, xbar, 
                 x0, v0,  # initial guess for primal and dual variables 
@@ -82,13 +84,13 @@ def primal_dual(A, xbar,
             break
 
         if not k%report_freq and verbosity > 1:
-            print("         At iteration %i eps = %f"%(k, eps))
+            print("At iteration %i eps = %f"%(k, eps), file=log)
 
     if k == maxit-1:
         if verbosity:
-            print("         PD - Maximum iterations reached. Relative difference between updates = ", eps)
+            print("Maximum iterations reached. Relative difference between updates = %f"%eps, file=log)
     else:
         if verbosity:
-            print("         PD - Success, converged after %i iterations"%k)
+            print("Success, converged after %i iterations"%k, file=log)
 
     return x, v

@@ -1,6 +1,9 @@
+import sys
 import numpy as np
 from pfb.operators import PSF
 from pfb.opt import hogbom
+import pyscilog
+log = pyscilog.get_logger('CLEAN')
 
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
@@ -62,9 +65,9 @@ def clean(psf, model, residual, mask=None, beam=None, nthreads=0, maxit=10,
         rms = np.std(residual_mfs)
 
         if rmax < threshold*rmax_orig:
-            print("     CLEAN - Success, convergence after %i iterations. Peak of residual is %f, rms is %f"%(i+1, rmax, rms))
+            print("Success, convergence after %i iterations. Peak of residual is %f, rms is %f"%(i+1, rmax, rms), file=log)
             break
         else:
-            print("     CLEAN - At iteration %i peak of residual is %f, rms is %f" % (i+1, rmax, rms))
+            print("At iteration %i peak of residual is %f, rms is %f" % (i+1, rmax, rms), file=log)
     
     return model, residual_mfs

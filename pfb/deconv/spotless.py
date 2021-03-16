@@ -1,16 +1,17 @@
 import numpy as np
 from pfb.operators import PSF2, Dirac
 from pfb.opt import pcg, primal_dual, power_method
+import pyscilog
+log = pyscilog.get_logger('SPOTLESS')
 
 # from numba import njit
 # @njit(nogil=True, fastmath=True, inline='always')
-def hogbom_mfs(ID, PSF):
+def hogbom_mfs(ID, PSF, gamma=0.1):
     """
     An attemp at a faster MFS version of Hogbom. 
     For some reason the jitted version is slower.
     Parallel peak finding and PSF subtraction still required.
     """
-    gamma = 0.1
     nx, ny = ID.shape
     x = np.zeros((nx, ny), dtype=ID.dtype) 
     IR = ID.copy()
@@ -148,9 +149,9 @@ def spotless(psf, model, residual, mask=None, beam=None, nthreads=1, sig_21=1e-3
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
         
         if rmax < threshold or eps < tol:
-            print("     Spotless - Success, convergence after %i iterations"%(i+1))
+            print("Success, convergence after %i iterations"%(i+1), file=log)
             break
         else:
-            print("     Spotless - At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i+1, rmax, rms, eps))
+            print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i+1, rmax, rms, eps), file=log)
     
     return model, residual_mfs

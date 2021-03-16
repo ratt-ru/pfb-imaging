@@ -41,29 +41,6 @@ def prox_21(v, sigma, weights, axis=1):
     ratio[mask] = l2_soft[mask] / l2_norm[mask]
     return v * np.expand_dims(ratio, axis=axis)  # restores axis
 
-def test_convolve(R, psf, args):
-    x = np.random.randn(args.channels_out, args.nx, args.ny)
-
-    res1 = R.convolve(x)
-    res2 = psf.convolve(x)
-
-    max_diff = np.abs(res1 - res2).max()/res1.max()
-
-    print("Max frac diff is %5.5e and precision is %5.5e"%(max_diff, args.precision))
-
-def test_adjoint(R):
-    x = np.random.randn(R.nband, R.nx, R.ny)
-    y = np.random.randn(R.nrow, R.nchan).astype(np.complex128)
-
-    # y.H R x = x.H R.H y
-    lhs = np.vdot(y, R.dot(x))
-    rhs = np.vdot(x, R.hdot(y))
-    print(" Natural = ", (lhs - rhs)/rhs)
-
-    lhs = np.vdot(y, R.udot(x))
-    rhs = np.vdot(x, R.uhdot(y))
-    print(" Uniform = ", (lhs - rhs)/rhs)
-
 def str2bool(v):
     if isinstance(v, bool):
        return v

@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.linalg import norm
-
+import pyscilog
+log = pyscilog.get_logger('PM')
 
 def power_method(A, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_freq=25):
     if b0 is None:
@@ -22,12 +23,12 @@ def power_method(A, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_fr
         k += 1
 
         if not k%report_freq and verbosity > 1:
-            print("         At iteration %i eps = %f"%(k, eps))
+            print("At iteration %i eps = %f"%(k, eps), file=log)
 
     if k == maxit:
         if verbosity:
-            print("         PM - Maximum iterations reached. eps = %f, current beta = %f"%(eps, beta))
+            print("Maximum iterations reached. eps = %f, current beta = %f"%(eps, beta), file=log)
     else:
         if verbosity:
-            print("         PM - Success, converged after %i iterations. beta = %f"%(k, beta))
+            print("Success, converged after %i iterations. beta = %f"%(k, beta), file=log)
     return beta, bp

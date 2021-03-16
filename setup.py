@@ -14,6 +14,7 @@ requirements = [
                 'katbeam',
                 'packratt >= 0.1.3',
                 'pytest',
+                'omegaconf',
             ]
 
 
