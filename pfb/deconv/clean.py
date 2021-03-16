@@ -8,8 +8,9 @@ log = pyscilog.get_logger('CLEAN')
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
 
-def clean(psf, model, residual, mask=None, beam=None, nthreads=0, maxit=10, 
-          gamma=0.1, peak_factor=0.85, threshold=0.1):
+def clean(psf, model, residual, mask=None, beam=None, 
+          nthreads=0, maxit=10, gamma=1.0, peak_factor=0.01, threshold=0.0,
+          hbgamma=0.1, hbpf=0.1, hbmaxit=5000, hbverbose=1):  # Hogbom options
 
     if len(residual.shape) > 3:
         raise ValueError("Residual must have shape (nband, nx, ny)")
@@ -51,11 +52,12 @@ def clean(psf, model, residual, mask=None, beam=None, nthreads=0, maxit=10,
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
     rmax_orig = rmax
+    threshold = np.maximum(peak_factor*rmax, threshold)
     # deconvolve
     for i in range(0, maxit):
-        modelu = hogbom(residual, psf, gamma=gamma, pf=peak_factor)
+        modelu = hogbom(residual, psf, gamma=hbgamma, pf=hbpf, maxit=hbmaxit, verbosity=hbverbose)
 
-        model += modelu
+        model += gamma*modelu
 
         residual = -grad_func(model, dirty, psfo)
 

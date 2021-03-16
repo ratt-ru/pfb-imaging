@@ -9,7 +9,7 @@ from africanus.gridding.wgridder.dask import model as im2vis
 from africanus.gridding.wgridder.dask import residual as im2residim
 from africanus.gridding.wgridder.dask import hessian
 import pyscilog
-log = pyscilog.get_logger('Gridder')
+log = pyscilog.get_logger('GRID')
 
 class Gridder(object):
     def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',

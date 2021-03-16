@@ -1,3 +1,33 @@
+# This was an attempt at getting omegaconf in but that will have to happen at a later stage
+# # load in the default config file
+    # import os, pfb, sys
+    # conf_dir = os.path.dirname(pfb.__file__)
+    # base_conf = OmegaConf.load(conf_dir + '/parser/default_config.yaml')
+
+    # # print help if no cli arguments or if --help
+    # if len(sys.argv)==1 or '--help' in sys.argv:
+    #     print(OmegaConf.to_yaml(base_conf))
+    # else:
+    #     # now get cli args
+    #     cli_conf = OmegaConf.from_cli()
+
+    #     # check if config file in cli conf
+    #     if not OmegaConf.is_none(cli_conf, 'config_file'):
+    #         conf = OmegaConf.load(cli_conf.config_file)
+    #     else:
+    #         conf = OmegaConf.create()
+
+    #     # merge all configs
+    #     conf = OmegaConf.merge(base_conf, conf, cli_conf)
+
+    #     print(OmegaConf.to_yaml(conf))
+
+    # save config to yaml
+    
+
+
+    # quit()
+
 deconv-mode:
   type: str
   help: Deconvolution mode to use

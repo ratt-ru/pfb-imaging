@@ -16,7 +16,7 @@ from omegaconf import OmegaConf
 from pfb.parser import create_parser
 import pyscilog
 pyscilog.init('pfb')
-
+log = pyscilog.get_logger('PFB')
 
 def _main(args, dest=sys.stdout):
     # get max uv coords over all fields
@@ -57,7 +57,7 @@ def _main(args, dest=sys.stdout):
     else:
         cell_rad = cell_N/args.super_resolution_factor
         args.cell_size = cell_rad*60*60*180/np.pi
-        print("Cell size set to %5.5e arcseconds" % args.cell_size)
+        print("Cell size set to %5.5e arcseconds" % args.cell_size, file=dest)
     
     if args.nx is None or args.ny is None:
         fov = args.fov*3600
@@ -251,7 +251,7 @@ def _main(args, dest=sys.stdout):
     rmax = np.abs(residual_mfs).max()
     rms = np.std(residual_mfs)
     redo_dirty = False
-    print("PFB - Peak of initial residual is %f and rms is %f" % (rmax, rms), file=dest)
+    print("Peak of initial residual is %f and rms is %f" % (rmax, rms), file=dest)
     for i in range(0, args.maxit):
         # run minor cycle of choice
         modelp = model.copy()
@@ -274,13 +274,12 @@ def _main(args, dest=sys.stdout):
             if args.reweight_iters is None:
                 reweight_iters = np.arange(args.minormaxit, dtype=np.int)
         elif args.deconv_mode == 'clean':
-            threshold = np.maximum(args.peak_factor*rmax, rms)
             model, residual_mfs_minor = clean(psf, model, residual, mask=mask_array, beam=beam_image,
-                nthreads=args.nthreads, maxit=args.minormaxit,
-                gamma=args.cgamma, peak_factor=args.peak_factor, threshold=threshold)
+                nthreads=args.nthreads, maxit=args.minormaxit, gamma=args.gamma, peak_factor=args.peak_factor,
+                hbgamma=args.hbgamma, hbpf=args.hbpf, hbmaxit=args.hbmaxit, hbverbose=args.hbverbose)
         elif args.deconv_mode == 'spotless':
             model, residual_mfs_minor = spotless(psf, model, residual, mask=mask_array, beam=beam_image,
-                sig_21=args.sig_21, sigma_frac=args.sigma_frac, nthreads=args.nthreads, tidy=args.tidy,
+                sig_21=args.sig_21, sigma_frac=args.sigma_frac, nthreads=args.nthreads, tidy=args.tidy, gamma=args.gamma,
                 maxit=args.minormaxit, tol=args.minortol, threshold=args.peak_factor*rmax, positivity=args.positivity,
                 hbgamma=args.hbgamma, hbpf=args.hbpf, hbmaxit=args.hbmaxit, hbverbose=args.hbverbose, 
                 pdtol=args.pdtol, pdmaxit=args.pdmaxit, pdverbose=args.pdverbose,
@@ -321,13 +320,13 @@ def _main(args, dest=sys.stdout):
         rms = np.std(residual_mfs)
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
-        print("PFB - At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i+1, rmax, rms, eps), file=dest)
+        print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i+1, rmax, rms, eps), file=dest)
 
         if eps < args.tol:
             break
     
     if args.mop_flux:
-        print("PFB - Mopping flux", file=dest)
+        print("Mopping flux", file=dest)
         # extacts flux where model is non-zero
         mask_array2 = np.any(model, axis=0)[None]
         mask2 = lambda x: mask_array2 * x
@@ -351,7 +350,7 @@ def _main(args, dest=sys.stdout):
         rmax = np.abs(residual_mfs).max()
         rms = np.std(residual_mfs)
 
-        print("PFB - After mopping flux peak of residual is %f, rms is %f" % (rmax, rms), file=dest)
+        print("After mopping flux peak of residual is %f, rms is %f" % (rmax, rms), file=dest)
 
     # save model cube and last residual cube
     save_fits(args.outfile + '_model.fits', model, hdr)
@@ -359,11 +358,11 @@ def _main(args, dest=sys.stdout):
 
 
     if args.write_model:
-        print("PFB - Writing model", file=dest)
+        print("Writing model", file=dest)
         R.write_model(model)
 
     if args.make_restored:
-        print("PFB - Making restored", file=dest)
+        print("Making restored", file=dest)
         cpsfo = PSF(cpsf, nthreads=args.nthreads, imsize=residual.shape)
         restored = cpsfo.convolve(model)
 
@@ -381,35 +380,6 @@ def _main(args, dest=sys.stdout):
 
 
 def main():
-    # # load in the default config file
-    # import os, pfb, sys
-    # conf_dir = os.path.dirname(pfb.__file__)
-    # base_conf = OmegaConf.load(conf_dir + '/parser/default_config.yaml')
-
-    # # print help if no cli arguments or if --help
-    # if len(sys.argv)==1 or '--help' in sys.argv:
-    #     print(OmegaConf.to_yaml(base_conf))
-    # else:
-    #     # now get cli args
-    #     cli_conf = OmegaConf.from_cli()
-
-    #     # check if config file in cli conf
-    #     if not OmegaConf.is_none(cli_conf, 'config_file'):
-    #         conf = OmegaConf.load(cli_conf.config_file)
-    #     else:
-    #         conf = OmegaConf.create()
-
-    #     # merge all configs
-    #     conf = OmegaConf.merge(base_conf, conf, cli_conf)
-
-    #     print(OmegaConf.to_yaml(conf))
-
-    # save config to yaml
-    
-
-
-    # quit()
-
     args = create_parser().parse_args()
 
     if args.nthreads:
@@ -424,14 +394,10 @@ def main():
 
     pyscilog.log_to_file(args.outfile + '.log')
     pyscilog.enable_memory_logging(level=3)
-    
-    log = pyscilog.get_logger('main')
-
 
     GD = vars(args)
     print('Input Options:', file=log)
     for key in GD.keys():
-        # print(key, ' = ', GD[key], file=log)
         print('     %25s = %s'%(key, GD[key]), file=log)
     
     _main(args, dest=log)
