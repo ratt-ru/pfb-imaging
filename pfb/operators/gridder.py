@@ -12,21 +12,27 @@ import pyscilog
 log = pyscilog.get_logger('GRID')
 
 class Gridder(object):
-    def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8, do_wstacking=1, Stokes='I',
-                 row_chunks=100000, chan_chunks=32, optimise_chunks=True, epsilon=1e-5, psf_oversize=2.0, weighting=None, robust=None,
-                 data_column='CORRECTED_DATA', weight_column='WEIGHT_SPECTRUM', mueller_column=None,
-                 model_column="MODEL_DATA", flag_column='FLAG', imaging_weight_column=None, real_type='f4'):
+    def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8,
+                 do_wstacking=1, Stokes='I', row_chunks=100000,
+                 chan_chunks=32, optimise_chunks=True, epsilon=1e-5,
+                 psf_oversize=2.0, weighting=None, robust=None,
+                 data_column='CORRECTED_DATA',
+                 weight_column='WEIGHT_SPECTRUM', mueller_column=None,
+                 model_column="MODEL_DATA", flag_column='FLAG',
+                 imaging_weight_column=None, real_type='f4'):
         '''
-        TODO - currently row_chunks and chan_chunks are only used for the compute_weights()
-        and write_component_model() methods. All other methods assume that the data for a
-        single imaging band per ms and spw fit into memory. The optimise_chunks argument
-        is a promise to improve this in the future. 
+        TODO - currently row_chunks and chan_chunks are only used for the
+        compute_weights() and write_component_model() methods. All other
+        methods assume that the data for a single imaging band per ms and
+        spw fit into memory. The optimise_chunks argument is a promise to
+        improve this in the future. 
 
-        TODO - current IO can probably be massively reduced if we optimize for specific
-        Stokes outputs and we optimise the chunking strategy. In particular, we can write
-        out the weights for Stokes I imaging in advance and then only load precomputed
-        scalar weights in the convolve function. Since we currently load in weights, imaging
-        weights and a complex "Mueller" term for all 4 correlations, we can in principle
+        TODO - current IO can probably be massively reduced if we optimize
+        for specific Stokes outputs and we optimise the chunking strategy.
+        In particular, we can write out the weights for Stokes I imaging in
+        advance and then only load precomputed scalar weights in the convolve
+        function. Since we currently load in weights, imaging weights and a
+        complex "Mueller" term for all 4 correlations, we can in principle
         reduce IO and memory footprint by about a factor of 16. 
         '''
         if Stokes != 'I':

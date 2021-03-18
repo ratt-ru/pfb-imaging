@@ -332,7 +332,7 @@ def _main(args, dest=sys.stdout):
         # extacts flux where model is non-zero
         mask_array2 = np.any(model, axis=0)[None]
         mask2 = lambda x: mask_array2 * x
-        psfo = PSF(psf, nthreads=args.nthreads, imsize=residual.shape, mask=mask2, beam=beam)
+        psfo = PSF(psf, nthreads=args.nthreads, imsize=residual.shape)
         def hess(x):  
             return psfo.convolve(x) + 1e-6*x  # vague Gaussian prior on x
         M = lambda x: x/1e-6  # preconditioner
