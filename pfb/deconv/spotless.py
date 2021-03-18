@@ -1,31 +1,34 @@
 import numpy as np
 from pfb.operators import PSF2, Dirac
 from pfb.opt import pcg, primal_dual, power_method
+import numexpr as ne
 import pyscilog
 log = pyscilog.get_logger('SPOTLESS')
 
-# from numba import njit
-# @njit(nogil=True, fastmath=True, inline='always')
-def hogbom_mfs(ID, PSF, gamma=0.1):
-    """
-    An attemp at a faster MFS version of Hogbom. 
-    For some reason the jitted version is slower.
-    Parallel peak finding and PSF subtraction still required.
-    """
+def hogbom(ID, PSF, x, gamma=0.1, pf=0.1, maxit=5000):
     nx, ny = ID.shape
-    x = np.zeros((nx, ny), dtype=ID.dtype) 
     IR = ID.copy()
-    IRsearch = IR**2
-    IRmax = IRsearch.max()
-    for k in range(10000):
-        p, q = np.argwhere(IRsearch == IRmax)[0]
+    IRsearch = IR*IR
+    pq = IRsearch.argmax()
+    p = pq//ny
+    q = pq - p*ny
+    IRmax = np.sqrt(IRsearch[p, q])
+    tol = pf*IRmax
+    k = 0
+    while IRmax > tol and k < maxit:
         xhat = IR[p, q]
         x[p, q] += gamma * xhat
-        IR -= gamma * xhat * PSF[nx-p:2*nx - p, ny-q:2*ny - q]
-        IRsearch = IR**2
-        IRmax = IRsearch.max()
+        # IR -= gamma * xhat * PSF[nx-p:2*nx - p, ny-q:2*ny - q]
+        # IRsearch = IR*IR
+        tmp = PSF[nx-p:2*nx - p, ny-q:2*ny - q]
+        ne.evaluate('IR - gamma * xhat * tmp', out=IR, casting='same_kind')
+        ne.evaluate('IR*IR', out=IRsearch, casting='same_kind')
+        pq = IRsearch.argmax()
+        p = pq//ny
+        q = pq - p*ny
+        IRmax = np.sqrt(IRsearch[p, q])
+        k += 1
     return x, np.std(IR)
-
 
 def resid_func(x, dirty, psfo, mask, beam):
     """
@@ -39,7 +42,7 @@ def resid_func(x, dirty, psfo, mask, beam):
     return residual, mask(residual_mfs)
 
 def spotless(psf, model, residual, mask=None, beam=None, nthreads=1, sig_21=1e-3, sigma_frac=100,
-             maxit=10, tol=1e-4, threshold=0.01, positivity=True, gamma=0.9999, tidy=True,
+             maxit=10, tol=1e-4, peak_factor=0.01, threshold=0.0, positivity=True, gamma=0.9999, tidy=True,
              hbgamma=0.1, hbpf=0.1, hbmaxit=5000, hbverbose=1,  # Hogbom options
              pdtol=1e-4, pdmaxit=250, pdverbose=1,  # primal dual options
              cgtol=1e-4, cgminit=15, cgmaxit=150, cgverbose=1,  # conjugate gradient options
@@ -111,9 +114,10 @@ def spotless(psf, model, residual, mask=None, beam=None, nthreads=1, sig_21=1e-3
         betavec = 1.0
 
     # deconvolve
+    threshold = np.maximum(peak_factor*rmax, threshold)
     for i in range(0, maxit):
         # find point source candidates
-        modelu, rms = hogbom_mfs(residual_mfs, psf_mfs)
+        modelu, rms = hogbom_mfs(residual_mfs, psf_mfs, gamma=hbgamma, pf=hbpf, maxit=hbmaxit)
         
         phi.update_locs(modelu)
 

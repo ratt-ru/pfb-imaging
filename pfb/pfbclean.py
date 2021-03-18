@@ -122,8 +122,6 @@ def _main(args, dest=sys.stdout):
     psf /= wsum
     psf_mfs = np.sum(psf, axis=0)
     
-
-    # TODO - this can be made significantly faster by passing in only a portion of the PSF but how to determine how much?
     # fit restoring psf
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)  #np.rad2deg(cell_rad))
     GaussPars = fitcleanbeam(psf, level=0.5, pixsize=1.0)  #np.rad2deg(cell_rad))
@@ -274,13 +272,17 @@ def _main(args, dest=sys.stdout):
             if args.reweight_iters is None:
                 reweight_iters = np.arange(args.minormaxit, dtype=np.int)
         elif args.deconv_mode == 'clean':
-            model, residual_mfs_minor = clean(psf, model, residual, mask=mask_array, beam=beam_image,
-                nthreads=args.nthreads, maxit=args.minormaxit, gamma=args.gamma, peak_factor=args.peak_factor,
-                hbgamma=args.hbgamma, hbpf=args.hbpf, hbmaxit=args.hbmaxit, hbverbose=args.hbverbose)
+            model, residual_mfs_minor = clean(psf, model, residual, 
+                        mask=mask_array, beam=beam_image,
+                        nthreads=args.nthreads, maxit=args.minormaxit,
+                        gamma=args.gamma, peak_factor=args.peak_factor,
+                        threshold=args.threshold, hbgamma=args.hbgamma,
+                        hbpf=args.hbpf, hbmaxit=args.hbmaxit,
+                        hbverbose=args.hbverbose)
         elif args.deconv_mode == 'spotless':
             model, residual_mfs_minor = spotless(psf, model, residual, mask=mask_array, beam=beam_image,
                 sig_21=args.sig_21, sigma_frac=args.sigma_frac, nthreads=args.nthreads, tidy=args.tidy, gamma=args.gamma,
-                maxit=args.minormaxit, tol=args.minortol, threshold=args.peak_factor*rmax, positivity=args.positivity,
+                maxit=args.minormaxit, tol=args.minortol, threshold=args.threshold, positivity=args.positivity,
                 hbgamma=args.hbgamma, hbpf=args.hbpf, hbmaxit=args.hbmaxit, hbverbose=args.hbverbose, 
                 pdtol=args.pdtol, pdmaxit=args.pdmaxit, pdverbose=args.pdverbose,
                 cgtol=args.cgtol, cgminit=args.cgminit, cgmaxit=args.cgmaxit, cgverbose=args.cgverbose, 

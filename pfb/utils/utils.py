@@ -192,6 +192,24 @@ def fitcleanbeam(psf, level=0.5, pixsize=1.0):
 
     nband, nx, ny = psf.shape
 
+    # # find extent required to capture main lobe
+    # # saves on time to label islands 
+    # psf0 = psf[0]/psf[0].max()  # largest PSF at lowest freq
+    # num_islands = 0
+    # npix = np.minimum(nx, ny)
+    # nbox = np.minimum(12, npix)  # 12 pixel minimum
+    # if npix <= nbox:
+    #     nbox = npix
+    # else:
+    #     while num_islands < 2:
+    #         Ix = slice(nx//2 - nbox//2, nx//2 + nbox//2)
+    #         Iy = slice(ny//2 - nbox//2, ny//2 + nbox//2)
+    #         mask = np.where(psf0[Ix, Iy] > level, 1.0, 0)
+    #         islands, num_islands = label(mask, return_num=True)
+    #         if num_islands < 2:
+    #             nbox *= 2  # double size and try again
+
+
     # coordinates
     x = np.arange(-nx/2, nx/2)
     y = np.arange(-ny/2, ny/2)

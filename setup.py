@@ -15,6 +15,7 @@ requirements = [
                 'packratt >= 0.1.3',
                 'pytest',
                 'omegaconf',
+                'numexpr',
             ]
 
 

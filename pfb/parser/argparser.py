@@ -92,6 +92,8 @@ def create_parser():
                    "iteration")
     p.add_argument("--tol", type=float, default=1e-3,
                    help="Tolerance")
+    p.add_argument("--threshold", type=float, default=0.0,
+                   help="RMS of MFS residual at which to stop.")
     p.add_argument("--minortol", type=float, default=1e-3,
                    help="Tolerance")
     p.add_argument("--report_freq", type=int, default=1,

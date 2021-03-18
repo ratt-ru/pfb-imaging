@@ -1,8 +1,8 @@
 import numpy as np
 from numba import njit
+import numexpr as ne
 import pyscilog
 log = pyscilog.get_logger('HOGBOM')
-
 
 def hogbom(
         ID,
@@ -16,17 +16,27 @@ def hogbom(
     x = np.zeros((nband, nx, ny), dtype=ID.dtype)
     IR = ID.copy()
     IRsearch = np.sum(IR, axis=0)**2
-    IRmax = IRsearch.max()
+    pq = IRsearch.argmax()
+    p = pq//ny
+    q = pq - p*ny
+    IRmax = np.sqrt(IRsearch[p, q])
+
     tol = pf * IRmax
     k = 0
     while IRmax > tol and k < maxit:
-        p, q = np.argwhere(IRsearch == IRmax)[0]
         xhat = IR[:, p, q]
         x[:, p, q] += gamma * xhat
-        IR -= gamma * xhat[:, None, None] * \
-            PSF[:, nx - p:2 * nx - p, ny - q:2 * ny - q]
+        ne.evaluate('IR - gamma * xhat * psf', local_dict={
+                    'IR': IR,
+                    'gamma': gamma,
+                    'xhat': xhat[:, None, None],
+                    'psf':PSF[:, nx - p:2 * nx - p, ny - q:2 * ny - q]},
+                    out=IR, casting='same_kind')
         IRsearch = np.sum(IR, axis=0)**2
-        IRmax = IRsearch.max()
+        pq = IRsearch.argmax()
+        p = pq//ny
+        q = pq - p*ny
+        IRmax = np.sqrt(IRsearch[p, q])
         k += 1
 
         if not k % report_freq and verbosity > 1:
