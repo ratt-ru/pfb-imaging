@@ -13,7 +13,6 @@ from pfb.utils import (set_wcs, load_fits, save_fits, compare_headers,
 from pfb.operators import Gridder, PSF
 from pfb.deconv import sara, clean, spotless
 from pfb.opt import pcg
-from omegaconf import OmegaConf
 from pfb.parser import create_parser
 import pyscilog
 pyscilog.init('pfb')
