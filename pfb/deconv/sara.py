@@ -7,8 +7,16 @@ import pyscilog
 log = pyscilog.get_logger('SARA')
 
 
-def grad_func(x, dirty, psfo):
-    return psfo.convolve(x) - dirty
+def resid_func(x, dirty, psfo, mask, beam):
+    """
+    Returns the unattenuated but masked residual_mfs useful for peak finding
+    and the masked residual cube attenuated by the beam pattern which is the
+    data source in the pcg forward step. Masked regions are set to zero.
+    """
+    residual = dirty - psfo.convolve(mask(beam(x)))
+    residual_mfs = np.sum(residual, axis=0)
+    residual = mask(beam(residual))
+    return residual, mask(residual_mfs)
 
 
 def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
@@ -51,13 +59,15 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
             raise ValueError("Mask has incorrect shape")
 
     # PSF operator
-    psfo = PSF(psf, nthreads=nthreads,
-               imsize=residual.shape, mask=mask, beam=beam)
-    residual = beam(mask(residual))
+    psfo = PSF(psf, nthreads=nthreads, imsize=residual.shape)
     if model.any():
-        dirty = residual + psfo.convolve(model)
+        dirty = residual + psfo.convolve(mask(beam(model)))
     else:
         dirty = residual
+    residual_mfs = np.sum(residual, axis=0)
+    residual = mask(beam(residual))
+    rmax = np.abs(residual_mfs).max()
+    rms = np.std(residual_mfs)
 
     # wavelet dictionary
     if psi_basis is None:
@@ -81,11 +91,6 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
         reweight_iters = list(reweight_iters)
     else:
         reweight_iters = []
-
-    # residual
-    residual_mfs = np.sum(residual, axis=0)
-    rms = np.std(residual_mfs)
-    rmax = np.abs(residual_mfs).max()
 
     #  preconditioning operator
     def hess(x):
@@ -126,10 +131,9 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
             reweight_alpha_percent *= reweight_alpha_ff
 
         # get residual
-        residual = -grad_func(model, dirty, psfo)
+        residual, residual_mfs = resid_func(model, dirty, psfo, mask, beam)
 
         # check stopping criteria
-        residual_mfs = np.sum(residual, axis=0)
         rmax = np.abs(residual_mfs).max()
         rms = np.std(residual_mfs)
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
