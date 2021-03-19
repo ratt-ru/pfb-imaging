@@ -6,49 +6,53 @@ from pfb.operators import PSF, DaskPSI
 import pyscilog
 log = pyscilog.get_logger('SARA')
 
+
 def grad_func(x, dirty, psfo):
     return psfo.convolve(x) - dirty
 
-def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5, 
-         mask=None, beam=None, dual=None, weights21=None, 
+
+def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
+         mask=None, beam=None, dual=None, weights21=None,
          nthreads=1, maxit=10, gamma=0.99,  tol=1e-3,  # options for outer optimisation
          psi_levels=3, psi_basis=None,  # sara dict options
-         reweight_iters=None, reweight_alpha_ff=0.5, reweight_alpha_percent=10,  # reweighting options
+         # reweighting options
+         reweight_iters=None, reweight_alpha_ff=0.5, reweight_alpha_percent=10,
          pdtol=1e-6, pdmaxit=250, pdverbose=1, positivity=True, tidy=True,  # primal dual options
          cgtol=1e-6, cgminit=25, cgmaxit=150, cgverbose=1,  # conjugate gradient options
          pmtol=1e-5, pmmaxit=50, pmverbose=1):  # power method options
-    
+
     if len(residual.shape) > 3:
         raise ValueError("Residual must have shape (nband, nx, ny)")
-    
+
     nband, nx, ny = residual.shape
 
     if beam is None:
-        beam = lambda x: x
+        def beam(x): return x
     else:
         try:
             assert beam.shape == (nband, nx, ny)
-            beam = lambda x: beam * x
+            def beam(x): return beam * x
         except:
             raise ValueError("Beam has incorrect shape")
 
     if mask is None:
-        mask = lambda x: x
+        def mask(x): return x
     else:
         try:
             if mask.ndim == 2:
                 assert mask.shape == (nx, ny)
-                mask = lambda x: mask[None] * x
+                def mask(x): return mask[None] * x
             elif mask.ndim == 3:
                 assert mask.shape == (1, nx, ny)
-                mask = lambda x: mask * x
+                def mask(x): return mask * x
             else:
                 raise ValueError
         except:
             raise ValueError("Mask has incorrect shape")
 
     # PSF operator
-    psfo = PSF(psf, nthreads=nthreads, imsize=residual.shape, mask=mask, beam=beam)
+    psfo = PSF(psf, nthreads=nthreads,
+               imsize=residual.shape, mask=mask, beam=beam)
     residual = beam(mask(residual))
     if model.any():
         dirty = residual + psfo.convolve(model)
@@ -57,13 +61,15 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
 
     # wavelet dictionary
     if psi_basis is None:
-        psi = DaskPSI(imsize=residual.shape, nlevels=psi_levels, nthreads=nthreads)
+        psi = DaskPSI(imsize=residual.shape,
+                      nlevels=psi_levels, nthreads=nthreads)
     else:
         if not isinstance(psi_basis, list):
             psi_basis = [psi_basis]
-        psi = DaskPSI(imsize=residual.shape, nlevels=psi_levels, nthreads=nthreads, bases=psi_basis)
-    
-    # l21 weights and dual 
+        psi = DaskPSI(imsize=residual.shape, nlevels=psi_levels,
+                      nthreads=nthreads, bases=psi_basis)
+
+    # l21 weights and dual
     if weights21 is None:
         print("Initialising all l21 weights to unity.", file=log)
         weights21 = np.ones((psi.nbasis, psi.nmax), dtype=residual.dtype)
@@ -75,31 +81,32 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
         reweight_iters = list(reweight_iters)
     else:
         reweight_iters = []
-    
+
     # residual
     residual_mfs = np.sum(residual, axis=0)
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
-    
+
     #  preconditioning operator
-    def hess(x):  
-        return psfo.convolve(x) + x / (sigma_frac*rmax) 
+    def hess(x):
+        return psfo.convolve(x) + x / (sigma_frac*rmax)
 
     if tidy:
         # spectral norm
         posthess = hess
-        beta, betavec = power_method(hess, residual.shape, tol=pmtol, maxit=pmmaxit, verbosity=pmverbose)
+        beta, betavec = power_method(
+            hess, residual.shape, tol=pmtol, maxit=pmmaxit, verbosity=pmverbose)
     else:
-        posthess = lambda x: x
+        def posthess(x): return x
         beta = 1.0
         betavec = 1.0
 
     # deconvolve
     for i in range(0, maxit):
-        M = lambda x: x * (sigma_frac*rmax)  # preconditioner
+        def M(x): return x * (sigma_frac*rmax)  # preconditioner
         x = pcg(hess, residual, np.zeros(residual.shape, dtype=residual.dtype), M=M, tol=cgtol,
                 maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
-        
+
         # update model
         modelp = model
         model = modelp + gamma * x
@@ -112,27 +119,30 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
             l2_norm = np.linalg.norm(dual, axis=1)
             for m in range(psi.nbasis):
                 indnz = l2_norm[m].nonzero()
-                alpha = np.percentile(l2_norm[m, indnz].flatten(), reweight_alpha_percent)
+                alpha = np.percentile(
+                    l2_norm[m, indnz].flatten(), reweight_alpha_percent)
                 alpha = np.maximum(alpha, 1e-8)  # hardcode minimum
                 weights21[m] = alpha/(l2_norm[m] + alpha)
             reweight_alpha_percent *= reweight_alpha_ff
 
         # get residual
         residual = -grad_func(model, dirty, psfo)
-       
+
         # check stopping criteria
         residual_mfs = np.sum(residual, axis=0)
         rmax = np.abs(residual_mfs).max()
         rms = np.std(residual_mfs)
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
-        print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (i+1, rmax, rms, eps), file=log)
+        print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (
+            i+1, rmax, rms, eps), file=log)
 
         if eps < tol:
-            print("Success, convergence after %i iterations" %(i+1), file=log)
+            print("Success, convergence after %i iterations" % (i+1), file=log)
             break
 
-        if tidy and i<maxit-1:
-            beta, betavec = power_method(hess, residual.shape, b0=betavec, tol=pmtol, maxit=pmmaxit)
+        if tidy and i < maxit-1:
+            beta, betavec = power_method(
+                hess, residual.shape, b0=betavec, tol=pmtol, maxit=pmmaxit)
 
     return model, dual, residual_mfs, weights21

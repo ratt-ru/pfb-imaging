@@ -13,7 +13,7 @@ def primal_dual(
         psi,  # linear operator in dual domain
         weights,  # weights for l1 thresholding
         L,
-        nu=1.0, # spectral norms
+        nu=1.0,  # spectral norms
         sigma=None,  # step size of dual update
         mask=None,  # regions where mask is False will be masked
         tol=1e-5,
@@ -23,7 +23,7 @@ def primal_dual(
         axis=1,
         gamma=1.0,
         verbosity=1):
-    
+
     # initialise
     x = x0.copy()
     v = v0.copy()
@@ -84,7 +84,7 @@ def primal_dual(
     return x, v
 
 
-primal_dual.__doc__= r"""
+primal_dual.__doc__ = r"""
     Algorithm to solve problems of the form
 
     argmin_x (xbar - x).T A (xbar - x)/2 + lam |PSI.H x|_21 s.t. x >= 0

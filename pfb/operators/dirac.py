@@ -1,10 +1,11 @@
 import numpy as np
 
+
 class Dirac(object):
     def __init__(self, nband, nx, ny, mask=None):
         """
         Models image as a sum of Dirac deltas i.e.
-        
+
         x = H beta
 
         where H is a design matrix that maps the Dirac coefficients onto the image cube.

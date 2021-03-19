@@ -17,7 +17,7 @@ def fista(
         tol=1e-3,
         maxit=100,
         report_freq=10):
-        
+
     # nchan, ncomps = x0.shape
 
     # gradient function

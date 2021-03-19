@@ -4,6 +4,7 @@ import numexpr as ne
 import pyscilog
 log = pyscilog.get_logger('HOGBOM')
 
+
 def hogbom(
         ID,
         PSF,
@@ -13,6 +14,9 @@ def hogbom(
         report_freq=1000,
         verbosity=1):
     nband, nx, ny = ID.shape
+    _, nx_psf, ny_psf = PSF.shape
+    nx0 = nx_psf//2
+    ny0 = ny_psf//2
     x = np.zeros((nband, nx, ny), dtype=ID.dtype)
     IR = ID.copy()
     IRsearch = np.sum(IR, axis=0)**2
@@ -20,17 +24,18 @@ def hogbom(
     p = pq//ny
     q = pq - p*ny
     IRmax = np.sqrt(IRsearch[p, q])
-
+    _, nx_psf, ny_psf = PSF.shape
+    wsums = np.amax(PSF.reshape(-1, nx_psf*ny_psf), axis=1)
     tol = pf * IRmax
     k = 0
     while IRmax > tol and k < maxit:
-        xhat = IR[:, p, q]
+        xhat = IR[:, p, q] / wsums
         x[:, p, q] += gamma * xhat
         ne.evaluate('IR - gamma * xhat * psf', local_dict={
                     'IR': IR,
                     'gamma': gamma,
                     'xhat': xhat[:, None, None],
-                    'psf':PSF[:, nx - p:2 * nx - p, ny - q:2 * ny - q]},
+                    'psf': PSF[:, nx0 - p:nx0 + nx - p, ny0 - q:ny0 + ny - q]},
                     out=IR, casting='same_kind')
         IRsearch = np.sum(IR, axis=0)**2
         pq = IRsearch.argmax()

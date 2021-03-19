@@ -34,7 +34,7 @@ def slice_axis(typingctx, array, index, axis, extent):
         raise TypeError("array must be C contiguous")
 
     if (not isinstance(index, types.UniTuple) or
-        not isinstance(index.dtype, types.Integer)):
+            not isinstance(index.dtype, types.Integer)):
         raise TypeError("index is not an Homogenous Tuple of Integers")
 
     if not isinstance(axis, types.Integer):
@@ -67,7 +67,8 @@ def slice_axis(typingctx, array, index, axis, extent):
 
         # Final array indexes. We only know the slicing index at runtime
         # so we need to recreate idx but with zero at the slicing axis
-        indices = cgutils.alloca_once(builder, llvm_intp_t, size=array_type.ndim)
+        indices = cgutils.alloca_once(
+            builder, llvm_intp_t, size=array_type.ndim)
 
         for ax in range(array_type.ndim):
             llvm_ax = context.get_constant(types.intp, ax)

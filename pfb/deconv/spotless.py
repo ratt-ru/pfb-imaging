@@ -1,39 +1,39 @@
 import numpy as np
 from pfb.operators import PSF, Dirac
-from pfb.opt import pcg, primal_dual, power_method
+from pfb.opt import pcg, primal_dual, power_method, hogbom
 import numexpr as ne
 import pyscilog
 log = pyscilog.get_logger('SPOTLESS')
 
 
-def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=5000):
-    nx, ny = ID.shape
-    x = np.zeros((nx, ny), dtype=ID.dtype)
-    IR = ID.copy()
-    IRsearch = IR * IR
-    pq = IRsearch.argmax()
-    p = pq // ny
-    q = pq - p * ny
-    IRmax = np.sqrt(IRsearch[p, q])
-    tol = pf * IRmax
-    k = 0
-    while IRmax > tol and k < maxit:
-        xhat = IR[p, q]
-        x[p, q] += gamma * xhat
-        tmp = PSF[nx - p:2 * nx - p, ny - q:2 * ny - q]
-        ne.evaluate('IR - gamma * xhat * psf', local_dict={
-                    'IR': IR,
-                    'gamma': gamma,
-                    'xhat': xhat,
-                    'psf': PSF[nx - p:2 * nx - p, ny - q:2 * ny - q]},
-                    out=IR, casting='same_kind')
-        ne.evaluate('IR*IR', out=IRsearch, casting='same_kind')
-        pq = IRsearch.argmax()
-        p = pq // ny
-        q = pq - p * ny
-        IRmax = np.sqrt(IRsearch[p, q])
-        k += 1
-    return x, np.std(IR)
+# def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=5000):
+#     nx, ny = ID.shape
+#     x = np.zeros((nx, ny), dtype=ID.dtype)
+#     IR = ID.copy()
+#     IRsearch = IR * IR
+#     pq = IRsearch.argmax()
+#     p = pq // ny
+#     q = pq - p * ny
+#     IRmax = np.sqrt(IRsearch[p, q])
+#     tol = pf * IRmax
+#     k = 0
+#     while IRmax > tol and k < maxit:
+#         xhat = IR[p, q]
+#         x[p, q] += gamma * xhat
+#         tmp = PSF[nx - p:2 * nx - p, ny - q:2 * ny - q]
+#         ne.evaluate('IR - gamma * xhat * psf', local_dict={
+#                     'IR': IR,
+#                     'gamma': gamma,
+#                     'xhat': xhat,
+#                     'psf': PSF[nx - p:2 * nx - p, ny - q:2 * ny - q]},
+#                     out=IR, casting='same_kind')
+#         ne.evaluate('IR*IR', out=IRsearch, casting='same_kind')
+#         pq = IRsearch.argmax()
+#         p = pq // ny
+#         q = pq - p * ny
+#         IRmax = np.sqrt(IRsearch[p, q])
+#         k += 1
+#     return x, np.std(IR)
 
 
 def resid_func(x, dirty, psfo, mask, beam):
@@ -114,10 +114,30 @@ def spotless(psf, model, residual, mask=None, beam=None,
         return phi.hdot(mask(beam(psfo.convolve(mask(beam(phi.dot(x))))))) +\
             x / (sigma_frac * rmax)
 
+    # # test psf undersize for backward step
+    # _, nx_psfo, ny_psfo = psf.shape
+    # nx_psff = int(1.2*nx)
+    # if nx_psff%2:
+    #     nx_psff += 1
+
+    # ny_psff = int(1.2*ny)
+    # if ny_psff%2:
+    #     ny_psff += 1
+
+    # nx_trim = (nx_psfo - nx_psff)//2
+    # ny_trim = (ny_psfo - ny_psff)//2
+    # psf2 = psf[:, nx_trim:-nx_trim, ny_trim:-ny_trim]
+
+    # psfo2 = PSF(psf2, nthreads=nthreads, imsize=residual.shape)
+
+    # def posthess(x):
+    #     return phi.hdot(mask(beam(psfo2.convolve(mask(beam(phi.dot(x))))))) +\
+    #         x / (sigma_frac * rmax)
+
     if tidy:
         # spectral norm
         posthess = hess
-        beta, betavec = power_method(hess, residual.shape, tol=pmtol,
+        beta, betavec = power_method(posthess, residual.shape, tol=pmtol,
                                      maxit=pmmaxit, verbosity=pmverbose)
     else:
         def posthess(x): return x
@@ -128,14 +148,15 @@ def spotless(psf, model, residual, mask=None, beam=None,
     threshold = np.maximum(peak_factor * rmax, threshold)
     for i in range(0, maxit):
         # find point source candidates in the apparent MFS residual
-        modelu, rms = hogbom(mask(residual_mfs), psf_mfs,
-                             gamma=hbgamma, pf=hbpf, maxit=hbmaxit)
+        # modelu, rms = hogbom(mask(residual_mfs), psf_mfs,
+        #                      gamma=hbgamma, pf=hbpf, maxit=hbmaxit)
+        modelu = hogbom(residual, psf, gamma=hbgamma,
+                        pf=hbpf, maxit=hbmaxit, verbosity=hbverbose)
 
         phi.update_locs(modelu)
 
         # solve for beta updates
-        x0 = np.tile(modelu[None], (nband, 1, 1))
-        x = pcg(hess, phi.hdot(residual), phi.hdot(x0),
+        x = pcg(hess, phi.hdot(residual), phi.hdot(modelu),
                 M=lambda x: x * (sigma_frac * rmax), tol=cgtol,
                 maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
 
@@ -145,7 +166,7 @@ def spotless(psf, model, residual, mask=None, beam=None,
         weights_21 = np.where(phi.mask, 1, 1e10)  # 1e10 for effective infinity
 
         if tidy:
-            beta, betavec = power_method(hess, model.shape, b0=betavec,
+            beta, betavec = power_method(posthess, model.shape, b0=betavec,
                                          tol=pmtol, maxit=pmmaxit,
                                          verbosity=pmverbose)
             model, dual = primal_dual(posthess, model, modelp, dual, sig_21,
@@ -170,9 +191,8 @@ def spotless(psf, model, residual, mask=None, beam=None,
         eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
 
         if rmax < threshold or eps < tol:
-            print(
-                "Success, convergence after %i iterations" %
-                (i + 1), file=log)
+            print("Success, convergence after %i iterations" %
+                  (i + 1), file=log)
             break
         else:
             print("At iteration %i peak of residual is %f, rms is %f, current"

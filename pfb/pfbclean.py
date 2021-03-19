@@ -102,26 +102,14 @@ def _main(args, dest=sys.stdout):
     radec = R.radec
 
     # get headers
-    hdr = set_wcs(
-        args.cell_size /
-        3600,
-        args.cell_size /
-        3600,
-        args.nx,
-        args.ny,
-        radec,
-        freq_out)
+    hdr = set_wcs(args.cell_size / 3600, args.cell_size / 3600,
+                  args.nx, args.ny, radec, freq_out)
     hdr_mfs = set_wcs(args.cell_size / 3600, args.cell_size / 3600, args.nx,
                       args.ny, radec, np.mean(freq_out))
     hdr_psf = set_wcs(args.cell_size / 3600, args.cell_size / 3600, R.nx_psf,
                       R.ny_psf, radec, freq_out)
-    hdr_psf_mfs = set_wcs(
-        args.cell_size / 3600,
-        args.cell_size / 3600,
-        R.nx_psf,
-        R.ny_psf,
-        radec,
-        np.mean(freq_out))
+    hdr_psf_mfs = set_wcs(args.cell_size / 3600, args.cell_size / 3600,
+                          R.nx_psf, R.ny_psf, radec, np.mean(freq_out))
 
     # psf
     if args.psf is not None:
@@ -345,8 +333,8 @@ def _main(args, dest=sys.stdout):
             dirty = R.make_dirty() / wsum
 
         # compute in image space
-        residual = dirty - R.convolve(beam(mask(model))) / wsum
-        # residual = R.make_residual(model)/wsum
+        # residual = dirty - R.convolve(beam(mask(model))) / wsum
+        residual = R.make_residual(beam(mask(model)))/wsum
 
         residual_mfs = np.sum(residual, axis=0)
 
@@ -380,8 +368,9 @@ def _main(args, dest=sys.stdout):
         def mask2(x): return mask_array2 * x
         psfo = PSF(psf, nthreads=args.nthreads, imsize=residual.shape)
 
+        # vague Gaussian prior on x
         def hess(x):
-            return psfo.convolve(x) + 1e-6 * x  # vague Gaussian prior on x
+            return mask2(beam(psfo.convolve(mask2(beam(x))))) + 1e-6 * x
 
         def M(x): return x / 1e-6  # preconditioner
         x = pcg(
@@ -398,7 +387,8 @@ def _main(args, dest=sys.stdout):
             verbosity=args.cgverbose)
 
         model += x
-        residual = dirty - R.convolve(beam(mask(model))) / wsum
+        # residual = dirty - R.convolve(beam(mask(model))) / wsum
+        residual = R.make_residual(beam(mask(model)))/wsum
 
         save_fits(args.outfile + '_mopped_model.fits', model, hdr)
         save_fits(args.outfile + '_mopped_residual.fits', residual, hdr)

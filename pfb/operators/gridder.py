@@ -770,8 +770,8 @@ class Gridder(object):
 
                 model_vis = populate_model(vis, model_vis)
 
-                out_ds = ds.assign(**{self.model_column: 
-                                   (("row", "chan", "corr"), model_vis)})
+                out_ds = ds.assign(**{self.model_column:
+                                      (("row", "chan", "corr"), model_vis)})
                 out_data.append(out_ds)
             writes.append(
                 xds_to_table(
@@ -847,8 +847,8 @@ class Gridder(object):
 
                 model_vis = populate_model(vis, model_vis)
 
-                out_ds = ds.assign(**{self.model_column: 
-                                   (("row", "chan", "corr"), model_vis)})
+                out_ds = ds.assign(**{self.model_column:
+                                      (("row", "chan", "corr"), model_vis)})
                 out_data.append(out_ds)
             writes.append(
                 xds_to_table(

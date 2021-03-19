@@ -3,6 +3,7 @@ import pywt
 import dask.array as da
 # from pfb.wavelets.wavelets import wavedecn, waverecn, ravel_coeffs, unravel_coeffs
 
+
 class Theta(object):
     def __init__(self, nband, nx, ny):
         """
@@ -39,14 +40,13 @@ class Theta(object):
             self.iy[b] = iy
             self.sy[b] = sy
             self.ntot.append(y.size)
-        
+
         # get padding info
         self.nmax = np.asarray(self.ntot).max()
         self.dpadding = slice(0, nx*ny)  # Dirac slices/padding
         self.padding = []
         for i in range(self.nbasis):
             self.padding.append(slice(0, self.ntot[i]))
-
 
     def dot(self, coeffs):
         """
@@ -55,7 +55,8 @@ class Theta(object):
         before passing to waverecn.  
         """
         x = np.zeros((2, self.nband, self.nx, self.ny), dtype=self.real_type)
-        x[0] = coeffs[0, :, self.dpadding].reshape(self.nband, self.nx, self.ny)  # Dirac components
+        x[0] = coeffs[0, :, self.dpadding].reshape(
+            self.nband, self.nx, self.ny)  # Dirac components
         alpha = coeffs[1::]  # wavelet coefficients
         for b in range(self.nbasis):
             base = self.bases[b]
@@ -63,7 +64,8 @@ class Theta(object):
                 # unpad
                 a = alpha[b, l, self.padding[b]]
                 # unravel and rec
-                alpha_rec = pywt.unravel_coeffs(a, self.iy[base], self.sy[base])
+                alpha_rec = pywt.unravel_coeffs(
+                    a, self.iy[base], self.sy[base])
                 wave = pywt.waverecn(alpha_rec, base, mode='zero')
 
                 # accumulate
@@ -79,51 +81,60 @@ class Theta(object):
         beta = x[0]
         alpha = x[1]
         coeffs = np.zeros((self.nbasis+1, self.nband, self.nmax))
-        coeffs[0] = np.pad(beta.reshape(self.nband, self.nx*self.ny), ((0,0),(0, self.nmax-self.nx*self.ny)), mode='constant')
+        coeffs[0] = np.pad(beta.reshape(self.nband, self.nx*self.ny),
+                           ((0, 0), (0, self.nmax-self.nx*self.ny)), mode='constant')
         for b in range(self.nbasis):
             base = self.bases[b]
             for l in range(self.nband):
                 # decompose
-                alphal = pywt.wavedecn(alpha[l], base, mode='zero', level=self.nlevels)
+                alphal = pywt.wavedecn(
+                    alpha[l], base, mode='zero', level=self.nlevels)
                 # ravel and pad
                 tmp, _, _ = pywt.ravel_coeffs(alphal)
-                coeffs[b+1, l] = np.pad(tmp/self.sqrtP, (0, self.nmax-self.ntot[b]), mode='constant')
+                coeffs[b+1, l] = np.pad(tmp/self.sqrtP,
+                                        (0, self.nmax-self.ntot[b]), mode='constant')
         return coeffs
+
 
 def _dot_internal(alpha, bases, padding, iy, sy, sqrtP, nx, ny, real_type):
     nbasis, nband, _ = alpha.shape
     # reduction over basis done externally since chunked
     x = np.zeros((nbasis, nband, nx, ny), dtype=real_type)
     for b in range(nbasis):
-            base = bases[b]
-            for l in range(nband):
-                a = alpha[b, l, padding[b]]
-                alpha_rec = pywt.unravel_coeffs(a, iy[base], sy[base], output_format='wavedecn')
-                wave = pywt.waverecn(alpha_rec, base, mode='zero')
+        base = bases[b]
+        for l in range(nband):
+            a = alpha[b, l, padding[b]]
+            alpha_rec = pywt.unravel_coeffs(
+                a, iy[base], sy[base], output_format='wavedecn')
+            wave = pywt.waverecn(alpha_rec, base, mode='zero')
 
-                x[b, l] += wave / sqrtP
+            x[b, l] += wave / sqrtP
     return x
+
 
 def _dot_internal_wrapper(alpha, bases, padding, iy, sy, sqrtP, nx, ny, real_type):
     return _dot_internal(alpha[0], bases, padding, iy, sy, sqrtP, nx, ny, real_type)
+
 
 def _hdot_internal(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_type):
     nband = x.shape[0]
     nbasis = len(bases)
     alpha = np.zeros((nbasis, nband, nmax), dtype=real_type)
     for b in range(nbasis):
-            base = bases[b]
-            for l in range(nband):
-                # decompose
-                alphal = pywt.wavedecn(x[l], base, mode='zero', level=nlevels)
-                # ravel and pad
-                tmp, _, _ = pywt.ravel_coeffs(alphal)
-                alpha[b, l] = np.pad(tmp/sqrtP, (0, nmax-ntot[b]), mode='constant')
+        base = bases[b]
+        for l in range(nband):
+            # decompose
+            alphal = pywt.wavedecn(x[l], base, mode='zero', level=nlevels)
+            # ravel and pad
+            tmp, _, _ = pywt.ravel_coeffs(alphal)
+            alpha[b, l] = np.pad(tmp/sqrtP, (0, nmax-ntot[b]), mode='constant')
 
     return alpha
 
+
 def _hdot_internal_wrapper(x, bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_type):
     return _hdot_internal(x[0][0], bases, ntot, nmax, nlevels, sqrtP, nx, ny, real_type)
+
 
 class DaskTheta(Theta):
     def __init__(self, nband, nx, ny, nthreads=8):
@@ -135,33 +146,36 @@ class DaskTheta(Theta):
         self.padding = da.from_array(padding, chunks=1)
         ntot = np.array(self.ntot, dtype=object)
         self.ntot = da.from_array(ntot, chunks=1)
-        
+
     def dot(self, coeffs):
-        x0 = coeffs[0, :, self.dpadding].reshape(self.nband, self.nx, self.ny)  # Dirac components
-        alpha_dask = da.from_array(coeffs[1::], chunks=(1, self.nband, self.nmax))
+        x0 = coeffs[0, :, self.dpadding].reshape(
+            self.nband, self.nx, self.ny)  # Dirac components
+        alpha_dask = da.from_array(
+            coeffs[1::], chunks=(1, self.nband, self.nmax))
         x1 = da.blockwise(_dot_internal_wrapper, ("basis", "band", "nx", "ny"),
-                         alpha_dask, ("basis", "band", "ntot"),
-                         self.bases, ("basis",),
-                         self.padding, ("basis",),
-                         self.iy, None, #("basis",),
-                         self.sy, None, # ("basis",),
-                         self.sqrtP, None,
-                         self.nx, None,
-                         self.ny, None,
-                         self.real_type, None,
-                         new_axes={"nx": self.nx, "ny": self.ny},
-                         dtype=self.real_type,
-                         align_arrays=False)
+                          alpha_dask, ("basis", "band", "ntot"),
+                          self.bases, ("basis",),
+                          self.padding, ("basis",),
+                          self.iy, None,  # ("basis",),
+                          self.sy, None,  # ("basis",),
+                          self.sqrtP, None,
+                          self.nx, None,
+                          self.ny, None,
+                          self.real_type, None,
+                          new_axes={"nx": self.nx, "ny": self.ny},
+                          dtype=self.real_type,
+                          align_arrays=False)
         x1 = x1.sum(axis=0).compute(shedular='processes')
         return np.concatenate((x0[None], x1[None]), axis=0)
 
     def hdot(self, x):
-        beta = np.pad(x[0].reshape(self.nband, self.nx*self.ny), ((0,0),(0, self.nmax-self.nx*self.ny)), mode='constant')
+        beta = np.pad(x[0].reshape(self.nband, self.nx*self.ny),
+                      ((0, 0), (0, self.nmax-self.nx*self.ny)), mode='constant')
         xdask = da.from_array(x[1], chunks=(self.nband, self.nx, self.ny))
         alpha = da.blockwise(_hdot_internal_wrapper, ("basis", "band", "nmax"),
                              xdask, ("band", "nx", "ny"),
                              self.bases, ("basis", ),
-                             self.ntot,("basis", ),
+                             self.ntot, ("basis", ),
                              self.nmax, None,
                              self.nlevels, None,
                              self.sqrtP, None,
