@@ -3,6 +3,7 @@ import numpy as np
 import dask
 import dask.array as da
 from daskms import xds_from_ms, xds_from_table, xds_to_table, Dataset
+from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
 import zarr
 from africanus.gridding.wgridder.dask import dirty as vis2im
 from africanus.gridding.wgridder.dask import model as im2vis
@@ -20,7 +21,7 @@ class Gridder(object):
                  data_column='CORRECTED_DATA',
                  weight_column='WEIGHT_SPECTRUM', mueller_column=None,
                  model_column="MODEL_DATA", flag_column='FLAG',
-                 imaging_weight_column=None, real_type='f4'):
+                 imaging_weight_column=None, real_type='f4', cdir=None):
         '''
         TODO - currently row_chunks and chan_chunks are only used for the
         compute_weights() and write_component_model() methods. All other
@@ -189,6 +190,24 @@ class Gridder(object):
         else:
             self.imaging_weight_column = None
 
+        # # set cache directory (next to first MS if None)
+        # if cdir is None:
+        #     idx = self.ms[0][::-1].find('/')
+        #     if idx != -1:
+        #         self.cdir = self.ms[0][:-idx] + 'weights.zarr'
+        #     else:
+        #         self.cdir = 'weights.zarr'
+        # else:
+        #     self.cdir = cdir
+
+        # self.store = zarr.DirectoryStore(self.cdir)
+
+        # try:
+        #     xds = xds_from_zarr(self.store)
+        #     self.zarr_exists = True
+        # except:
+        #     self.zarr_exists = False
+
         # # optimise chunking by pre-computing corr to Stokes + weighting
         # if optimise_chunks:
         #     for
@@ -207,7 +226,8 @@ class Gridder(object):
             fields = xds_from_table(ims + "::FIELD", group_cols="__row__")
             spws = xds_from_table(ims + "::SPECTRAL_WINDOW",
                                   group_cols="__row__")
-            pols = xds_from_table(ims + "::POLARIZATION", group_cols="__row__")
+            pols = xds_from_table(ims + "::POLARIZATION",
+                                  group_cols="__row__")
 
             # subtable data
             ddids = dask.compute(ddids)[0]
@@ -492,7 +512,7 @@ class Gridder(object):
                 flag = getattr(ds, self.flag_column).data
                 flagxx = flag[:, :, 0]
                 flagyy = flag[:, :, -1]
-                # ducc0 convention uses mask not flag
+                # ducc0 convention uses uint8 mask not flag
                 flag = ~ (flagxx | flagyy)
 
                 dirty = vis2im(
@@ -547,7 +567,8 @@ class Gridder(object):
                 if not np.array_equal(radec, self.radec):
                     continue
 
-                spw = ds.DATA_DESC_ID  # this is not correct, need to use spw
+                # this is not correct, need to use spw
+                spw = ds.DATA_DESC_ID
 
                 freq_bin_idx = self.freq_bin_idx[ims][spw]
                 freq_bin_counts = self.freq_bin_counts[ims][spw]
@@ -617,10 +638,8 @@ class Gridder(object):
 
     def convolve(self, x):
         print("Applying Hessian", file=log)
-        x = da.from_array(
-            x.astype(
-                self.real_type), chunks=(
-                1, self.nx, self.ny), name=False)
+        x = da.from_array(x.astype(self.real_type),
+                          chunks=(1, self.nx, self.ny), name=False)
         convolvedims = []
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
@@ -668,7 +687,8 @@ class Gridder(object):
                         ds, self.imaging_weight_column).data
                     if len(imaging_weights.shape) < 3:
                         imaging_weights = da.broadcast_to(
-                            imaging_weights[:, None, :], flag.shape, chunks=flag.chunks)
+                            imaging_weights[:, None, :], flag.shape,
+                            chunks=flag.chunks)
 
                     weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
                     weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]

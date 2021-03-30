@@ -81,11 +81,11 @@ def add_beampars(hdr, GaussPar, GaussPars=None):
     """
     Add beam keywords to header.
     GaussPar - MFS beam pars
-    GaussPars - beam pars for cube 
+    GaussPars - beam pars for cube
     """
     hdr['BMAJ'] = GaussPar[0]
     hdr['BMIN'] = GaussPar[1]
-    hdr['PA'] = GaussPar[2]
+    hdr['BPA'] = GaussPar[2]
 
     if GaussPars is not None:
         for i in range(len(GaussPars)):

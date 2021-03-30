@@ -332,8 +332,8 @@ def _main(args, dest=sys.stdout):
             dirty = R.make_dirty() / wsum
 
         # compute in image space
-        # residual = dirty - R.convolve(beam(mask(model))) / wsum
-        residual = R.make_residual(beam(mask(model)))/wsum
+        residual = dirty - R.convolve(beam(mask(model))) / wsum
+        # residual = R.make_residual(beam(mask(model)))/wsum
 
         residual_mfs = np.sum(residual, axis=0)
 
