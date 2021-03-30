@@ -2,9 +2,9 @@
 import numpy as np
 import dask
 import dask.array as da
-from daskms import xds_from_ms, xds_from_table, xds_to_table, Dataset
-from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
-import zarr
+from daskms import xds_from_ms, xds_from_table, xds_to_table
+# from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
+# import zarr
 from africanus.gridding.wgridder.dask import dirty as vis2im
 from africanus.gridding.wgridder.dask import model as im2vis
 from africanus.gridding.wgridder.dask import residual as im2residim
