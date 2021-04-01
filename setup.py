@@ -15,7 +15,7 @@ requirements = [
                 'packratt >= 0.1.3',
                 'pytest >= 6.2.2',
                 'numexpr',
-                'pyscilog',
+                'pyscilog >= 0.1.2',
             ]
 
 
