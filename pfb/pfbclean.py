@@ -9,28 +9,30 @@ pyscilog.init('pfb')
 log = pyscilog.get_logger('PFB')
 
 # parse args so we can limit number of threads before imports
-from pfb.parser import create_parser
-args = create_parser().parse_args()
+if __name__=="__main__":
+    from pfb.parser import create_parser
+    args = create_parser().parse_args()
 
-if not args.nthreads:
-    import multiprocessing
-    args.nthreads = multiprocessing.cpu_count()
+    if not args.nthreads:
+        import multiprocessing
+        args.nthreads = multiprocessing.cpu_count()
 
-os.environ["OMP_NUM_THREADS"] = str(args.nthreads)
-os.environ["OPENBLAS_NUM_THREADS"] = str(args.nthreads)
-os.environ["MKL_NUM_THREADS"] = str(args.nthreads)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(args.nthreads)
-os.environ["NUMEXPR_NUM_THREADS"] = str(args.nthreads)
+    os.environ["OMP_NUM_THREADS"] = str(args.nthreads)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(args.nthreads)
+    os.environ["MKL_NUM_THREADS"] = str(args.nthreads)
+    os.environ["VECLIB_MAXIMUM_THREADS"] = str(args.nthreads)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(args.nthreads)
+
+    import dask
+    from multiprocessing.pool import ThreadPool
+    dask.config.set(pool=ThreadPool(args.nthreads))
 
 import numpy as np
 import numba
 import numexpr
 import dask
-from multiprocessing.pool import ThreadPool
-dask.config.set(pool=ThreadPool(args.nthreads))
 import dask.array as da
 from daskms import xds_from_ms, xds_from_table
-
 from astropy.io import fits
 from pfb.utils import (set_wcs, load_fits, save_fits, compare_headers,
                        data_from_header, fitcleanbeam, Gaussian2D)
@@ -226,8 +228,6 @@ def _main(args, dest=sys.stdout):
     dirty /= wsum
     dirty_mfs = np.sum(dirty, axis=0)
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)
-
-    quit()
 
     # initial model and residual
     if args.x0 is not None:

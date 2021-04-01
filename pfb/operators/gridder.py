@@ -264,10 +264,6 @@ class Gridder(object):
 
         counts = dask.compute(counts)[0]
 
-        print(counts[0].max(), counts[0].min())
-
-        quit()
-
         counts = accumulate_dirty(counts, self.nband, self.band_mapping)
 
         counts = da.from_array(counts, chunks=(1, -1, -1))
