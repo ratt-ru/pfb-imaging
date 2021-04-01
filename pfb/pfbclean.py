@@ -9,7 +9,11 @@ pyscilog.init('pfb')
 log = pyscilog.get_logger('PFB')
 
 # parse args so we can limit number of threads before imports
-if __name__=="__main__":
+
+def main():
+    _main(dest=log)
+
+def _main(dest=sys.stdout):
     from pfb.parser import create_parser
     args = create_parser().parse_args()
 
@@ -23,32 +27,20 @@ if __name__=="__main__":
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(args.nthreads)
     os.environ["NUMEXPR_NUM_THREADS"] = str(args.nthreads)
 
+    import numpy as np
+    import numba
+    import numexpr
     import dask
     from multiprocessing.pool import ThreadPool
     dask.config.set(pool=ThreadPool(args.nthreads))
-
-import numpy as np
-import numba
-import numexpr
-import dask
-import dask.array as da
-from daskms import xds_from_ms, xds_from_table
-from astropy.io import fits
-from pfb.utils import (set_wcs, load_fits, save_fits, compare_headers,
-                       data_from_header, fitcleanbeam, Gaussian2D)
-from pfb.operators import Gridder, PSF
-from pfb.deconv import sara, clean, spotless
-from pfb.opt import pcg
-
-def main():
-    # args = create_parser().parse_args()
-
-    # if args.nthreads:
-    #     from multiprocessing.pool import ThreadPool
-    #     dask.config.set(pool=ThreadPool(args.nthreads))
-    # else:
-    #     import multiprocessing
-    #     args.nthreads = multiprocessing.cpu_count()
+    import dask.array as da
+    from daskms import xds_from_ms, xds_from_table
+    from astropy.io import fits
+    from pfb.utils import (set_wcs, load_fits, save_fits, compare_headers,
+                        data_from_header, fitcleanbeam, Gaussian2D)
+    from pfb.operators import Gridder, PSF
+    from pfb.deconv import sara, clean, spotless
+    from pfb.opt import pcg
 
     if not isinstance(args.ms, list):
         args.ms = [args.ms]
@@ -61,9 +53,6 @@ def main():
     for key in GD.keys():
         print('     %25s = %s' % (key, GD[key]), file=log)
 
-    _main(args, dest=log)
-
-def _main(args, dest=sys.stdout):
     # get max uv coords over all fields
     uvw = []
     u_max = 0.0
