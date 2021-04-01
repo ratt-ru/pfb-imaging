@@ -13,7 +13,7 @@ requirements = [
                 'zarr',
                 'katbeam',
                 'packratt >= 0.1.3',
-                'pytest',
+                'pytest >= 6.2.2',
                 'numexpr',
                 'pyscilog',
             ]

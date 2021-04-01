@@ -3,21 +3,63 @@
 # flake8: noqa
 
 import sys
+import os
+import pyscilog
+pyscilog.init('pfb')
+log = pyscilog.get_logger('PFB')
+
+# parse args so we can limit number of threads before imports
+from pfb.parser import create_parser
+args = create_parser().parse_args()
+
+if not args.nthreads:
+    import multiprocessing
+    args.nthreads = multiprocessing.cpu_count()
+
+os.environ["OMP_NUM_THREADS"] = str(args.nthreads)
+os.environ["OPENBLAS_NUM_THREADS"] = str(args.nthreads)
+os.environ["MKL_NUM_THREADS"] = str(args.nthreads)
+os.environ["VECLIB_MAXIMUM_THREADS"] = str(args.nthreads)
+os.environ["NUMEXPR_NUM_THREADS"] = str(args.nthreads)
+
 import numpy as np
-from daskms import xds_from_ms, xds_from_table
+import numba
+import numexpr
 import dask
+from multiprocessing.pool import ThreadPool
+dask.config.set(pool=ThreadPool(args.nthreads))
 import dask.array as da
+from daskms import xds_from_ms, xds_from_table
+
 from astropy.io import fits
 from pfb.utils import (set_wcs, load_fits, save_fits, compare_headers,
                        data_from_header, fitcleanbeam, Gaussian2D)
 from pfb.operators import Gridder, PSF
 from pfb.deconv import sara, clean, spotless
 from pfb.opt import pcg
-from pfb.parser import create_parser
-import pyscilog
-pyscilog.init('pfb')
-log = pyscilog.get_logger('PFB')
 
+def main():
+    # args = create_parser().parse_args()
+
+    # if args.nthreads:
+    #     from multiprocessing.pool import ThreadPool
+    #     dask.config.set(pool=ThreadPool(args.nthreads))
+    # else:
+    #     import multiprocessing
+    #     args.nthreads = multiprocessing.cpu_count()
+
+    if not isinstance(args.ms, list):
+        args.ms = [args.ms]
+
+    pyscilog.log_to_file(args.outfile + '.log')
+    pyscilog.enable_memory_logging(level=3)
+
+    GD = vars(args)
+    print('Input Options:', file=log)
+    for key in GD.keys():
+        print('     %25s = %s' % (key, GD[key]), file=log)
+
+    _main(args, dest=log)
 
 def _main(args, dest=sys.stdout):
     # get max uv coords over all fields
@@ -184,6 +226,8 @@ def _main(args, dest=sys.stdout):
     dirty /= wsum
     dirty_mfs = np.sum(dirty, axis=0)
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)
+
+    quit()
 
     # initial model and residual
     if args.x0 is not None:
@@ -426,27 +470,3 @@ def _main(args, dest=sys.stdout):
         residual_mfs = np.sum(residual, axis=0)
         save_fits(args.outfile + '_mopped_residual_mfs.fits', residual_mfs,
                   hdr_mfs)
-
-
-def main():
-    args = create_parser().parse_args()
-
-    if args.nthreads:
-        from multiprocessing.pool import ThreadPool
-        dask.config.set(pool=ThreadPool(args.nthreads))
-    else:
-        import multiprocessing
-        args.nthreads = multiprocessing.cpu_count()
-
-    if not isinstance(args.ms, list):
-        args.ms = [args.ms]
-
-    pyscilog.log_to_file(args.outfile + '.log')
-    pyscilog.enable_memory_logging(level=3)
-
-    GD = vars(args)
-    print('Input Options:', file=log)
-    for key in GD.keys():
-        print('     %25s = %s' % (key, GD[key]), file=log)
-
-    _main(args, dest=log)

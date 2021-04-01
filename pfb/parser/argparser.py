@@ -33,9 +33,9 @@ def create_parser():
                    "will be relaxed at the end and a flux mop will be applied"
                    " inside the mask.")
     p.add_argument("--make_restored", type=str2bool, nargs='?', const=True,
-                   default=True, help="Whather to produce a restored image "
+                   default=True, help="Whether to produce a restored image "
                    "or not.")
-    p.add_argument("--deconv_mode", type=str, default='sara',
+    p.add_argument("--deconv_mode", type=str, default='spotless',
                    help="Select minor cycle to use. Current options are "
                    "'spotless' (default), 'sara' or 'clean'")
     p.add_argument("--weighting", type=str, default=None,

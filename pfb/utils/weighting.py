@@ -6,7 +6,7 @@ from africanus.constants import c as lightspeed
 
 def compute_counts(uvw, freqs, fbin_idx, fbin_counts, nx, ny,
                    cell_size_x, cell_size_y, dtype):
-    counts = da.blockwise(compute_counts_wrapper, ('one', 'chan', 'nx', 'ny'),
+    counts = da.blockwise(compute_counts_wrapper, ('row', 'chan', 'nx', 'ny'),
                           uvw, ('row', 'three'),
                           freqs, ('chan',),
                           fbin_idx, ('chan',),
@@ -16,7 +16,7 @@ def compute_counts(uvw, freqs, fbin_idx, fbin_counts, nx, ny,
                           cell_size_x, None,
                           cell_size_y, None,
                           dtype, None,
-                          new_axes={"one": 1, "nx": nx, "ny": ny},
+                          new_axes={"nx": nx, "ny": ny},
                           adjust_chunks={'chan': fbin_idx.chunks[0],
                                          'row': (1,)*len(uvw.chunks[0])},
                           align_arrays=False,
@@ -27,7 +27,7 @@ def compute_counts(uvw, freqs, fbin_idx, fbin_counts, nx, ny,
 
 def compute_counts_wrapper(uvw, freqs, fbin_idx, fbin_counts, nx, ny,
                            cell_size_x, cell_size_y, dtype):
-    return _compute_counts(uvw[0][0], freqs, fbin_idx, fbin_counts,
+    return _compute_counts(uvw[0], freqs, fbin_idx, fbin_counts,
                            nx, ny, cell_size_x, cell_size_y, dtype)
 
 
