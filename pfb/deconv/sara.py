@@ -3,6 +3,7 @@ from multiprocessing import Value
 import numpy as np
 from pfb.opt import power_method, pcg, primal_dual
 from pfb.operators import PSF, DaskPSI
+from pfb.prox import prox_21
 import pyscilog
 log = pyscilog.get_logger('SARA')
 
@@ -99,8 +100,8 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
     if tidy:
         # spectral norm
         posthess = hess
-        beta, betavec = power_method(
-            hess, residual.shape, tol=pmtol, maxit=pmmaxit, verbosity=pmverbose)
+        beta, betavec = power_method(hess, residual.shape, tol=pmtol,
+                                     maxit=pmmaxit, verbosity=pmverbose)
     else:
         def posthess(x): return x
         beta = 1.0
@@ -109,15 +110,16 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
     # deconvolve
     for i in range(0, maxit):
         def M(x): return x * (sigma_frac*rmax)  # preconditioner
-        x = pcg(hess, residual, np.zeros(residual.shape, dtype=residual.dtype), M=M, tol=cgtol,
+        x = pcg(hess, residual, np.zeros_like(residual), M=M, tol=cgtol,
                 maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
 
         # update model
         modelp = model
         model = modelp + gamma * x
-        model, dual = primal_dual(posthess, model, modelp, dual, sig_21, psi, weights21, beta,
-                                  tol=pdtol, maxit=pdmaxit, report_freq=25, mask=mask, verbosity=pdverbose,
-                                  positivity=positivity)
+        model, dual = primal_dual(posthess, model, modelp, dual, sig_21, psi,
+                                  weights21, beta, prox_21, tol=pdtol,
+                                  maxit=pdmaxit, report_freq=25, mask=mask,
+                                  verbosity=pdverbose, positivity=positivity)
 
         # reweighting
         if i in reweight_iters:

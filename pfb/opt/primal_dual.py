@@ -13,6 +13,7 @@ def primal_dual(
         psi,  # linear operator in dual domain
         weights,  # weights for l1 thresholding
         L,
+        prox,  # prox of regulariser
         nu=1.0,  # spectral norms
         sigma=None,  # step size of dual update
         mask=None,  # regions where mask is False will be masked
@@ -47,8 +48,8 @@ def primal_dual(
         vtilde = v + sigma * psi.hdot(xp)
 
         # dual update
-        v = vtilde - sigma * \
-            prox_21(vtilde / sigma, lam / sigma, weights, axis=axis)
+        v = vtilde - sigma * prox(vtilde / sigma, lam / sigma,
+                                  weights, axis=axis)
 
         # primal update
         x = xp - tau * (psi.dot(2 * v - vp) + grad_func(xp))

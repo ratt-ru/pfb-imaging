@@ -1,40 +1,10 @@
 import numpy as np
 from pfb.operators import PSF, Dirac
 from pfb.opt import pcg, primal_dual, power_method, hogbom
+from pfb.prox import prox_21m
 import numexpr as ne
 import pyscilog
 log = pyscilog.get_logger('SPOTLESS')
-
-
-# def hogbom(ID, PSF, gamma=0.1, pf=0.1, maxit=5000):
-#     nx, ny = ID.shape
-#     x = np.zeros((nx, ny), dtype=ID.dtype)
-#     IR = ID.copy()
-#     IRsearch = IR * IR
-#     pq = IRsearch.argmax()
-#     p = pq // ny
-#     q = pq - p * ny
-#     IRmax = np.sqrt(IRsearch[p, q])
-#     tol = pf * IRmax
-#     k = 0
-#     while IRmax > tol and k < maxit:
-#         xhat = IR[p, q]
-#         x[p, q] += gamma * xhat
-#         tmp = PSF[nx - p:2 * nx - p, ny - q:2 * ny - q]
-#         ne.evaluate('IR - gamma * xhat * psf', local_dict={
-#                     'IR': IR,
-#                     'gamma': gamma,
-#                     'xhat': xhat,
-#                     'psf': PSF[nx - p:2 * nx - p, ny - q:2 * ny - q]},
-#                     out=IR, casting='same_kind')
-#         ne.evaluate('IR*IR', out=IRsearch, casting='same_kind')
-#         pq = IRsearch.argmax()
-#         p = pq // ny
-#         q = pq - p * ny
-#         IRmax = np.sqrt(IRsearch[p, q])
-#         k += 1
-#     return x, np.std(IR)
-
 
 def resid_func(x, dirty, psfo, mask, beam):
     """
@@ -147,9 +117,7 @@ def spotless(psf, model, residual, mask=None, beam=None,
     # deconvolve
     threshold = np.maximum(peak_factor * rmax, threshold)
     for i in range(0, maxit):
-        # find point source candidates in the apparent MFS residual
-        # modelu, rms = hogbom(mask(residual_mfs), psf_mfs,
-        #                      gamma=hbgamma, pf=hbpf, maxit=hbmaxit)
+        # find point source candidates
         modelu = hogbom(residual, psf, gamma=hbgamma,
                         pf=hbpf, maxit=hbmaxit, verbosity=hbverbose)
 
@@ -170,14 +138,15 @@ def spotless(psf, model, residual, mask=None, beam=None,
                                          tol=pmtol, maxit=pmmaxit,
                                          verbosity=pmverbose)
             model, dual = primal_dual(posthess, model, modelp, dual, sig_21,
-                                      phi, weights_21, beta, tol=pdtol,
-                                      maxit=pdmaxit, axis=0, positivity=positivity,
-                                      report_freq=100, verbosity=pdverbose)
+                                      phi, weights_21, beta, prox_21m,
+                                      tol=pdtol, maxit=pdmaxit, axis=0,
+                                      positivity=positivity, report_freq=100,
+                                      verbosity=pdverbose)
 
         else:
             model, dual = primal_dual(posthess, model, modelp, dual, sig_21,
-                                      phi, weights_21, beta, tol=pdtol,
-                                      maxit=pdmaxit, axis=0,
+                                      phi, weights_21, beta, prox_21m,
+                                      tol=pdtol, maxit=pdmaxit, axis=0,
                                       positivity=positivity, report_freq=100,
                                       verbosity=pdverbose)
 
