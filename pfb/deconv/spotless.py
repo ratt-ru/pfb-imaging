@@ -8,14 +8,12 @@ log = pyscilog.get_logger('SPOTLESS')
 
 def resid_func(x, dirty, psfo, mask, beam):
     """
-    Returns the unattenuated but masked residual_mfs useful for peak finding
-    and the masked residual cube attenuated by the beam pattern which is the
-    data source in the pcg forward step. Masked regions are set to zero.
+    Returns the unattenuated residual
     """
     residual = dirty - psfo.convolve(mask(beam(x)))
     residual_mfs = np.sum(residual, axis=0)
-    residual = mask(beam(residual))
-    return residual, mask(residual_mfs)
+    residual = residual
+    return residual, residual_mfs
 
 
 def spotless(psf, model, residual, mask=None, beam=None,
@@ -32,6 +30,12 @@ def spotless(psf, model, residual, mask=None, beam=None,
                Shape must be >= residual.shape
     model    - current intrinsic model
     residual - apparent residual image i.e. R.H W (V - R A x)
+
+    Note that peak finding happens in apparent residual because that
+    is where it is easiest to accommodate convolution by the PSF.
+    However, the beam and the mask have to be applied to the residual
+    before we solve for the pre-conditioned updates.
+
     """
 
     if len(residual.shape) > 3:
@@ -118,13 +122,13 @@ def spotless(psf, model, residual, mask=None, beam=None,
     threshold = np.maximum(peak_factor * rmax, threshold)
     for i in range(0, maxit):
         # find point source candidates
-        modelu = hogbom(residual, psf, gamma=hbgamma,
+        modelu = hogbom(mask(residual), psf, gamma=hbgamma,
                         pf=hbpf, maxit=hbmaxit, verbosity=hbverbose)
 
         phi.update_locs(modelu)
 
         # solve for beta updates
-        x = pcg(hess, phi.hdot(residual), phi.hdot(modelu),
+        x = pcg(hess, phi.hdot(mask(beam(residual))), phi.hdot(modelu),
                 M=lambda x: x * (sigma_frac * rmax), tol=cgtol,
                 maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
 
@@ -155,8 +159,8 @@ def spotless(psf, model, residual, mask=None, beam=None,
         residual, residual_mfs = resid_func(model, dirty, psfo, mask, beam)
 
         # check stopping criteria
-        rmax = np.abs(residual_mfs).max()
-        rms = np.std(residual_mfs)
+        rmax = np.abs(mask(residual_mfs)).max()
+        rms = np.std(mask(residual_mfs))
         eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
 
         if rmax < threshold or eps < tol:
