@@ -16,6 +16,7 @@ requirements = [
                 'pytest >= 6.2.2',
                 'numexpr',
                 'pyscilog >= 0.1.2',
+                'Click',
             ]
 
 
