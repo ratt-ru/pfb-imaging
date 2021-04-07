@@ -6,7 +6,7 @@ with open("README.rst", "r") as fh:
 
 
 setup(
-     name='pfb',
+     name='pfb-clean',
      version=pfb.__version__,
      scripts=['scripts/spi_fitter.py',
               'scripts/power_beam_maker.py',
