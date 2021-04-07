@@ -1,92 +1,92 @@
 import click
 
-import argparse
-import dask
-import dask.array as da
-import numpy as np
-from astropy.io import fits
-from africanus.model.spi.dask import fit_spi_components
-from pfb.utils import load_fits, save_fits, convolve2gaussres, data_from_header, set_header_info, str2bool
-from scripts.power_beam_maker import interpolate_beam
+# import argparse
+# import dask
+# import dask.array as da
+# import numpy as np
+# from astropy.io import fits
+# from africanus.model.spi.dask import fit_spi_components
+# from pfb.utils import load_fits, save_fits, convolve2gaussres, data_from_header, set_header_info, str2bool
+# from scripts.power_beam_maker import interpolate_beam
 
-def create_parser():
-    p = argparse.ArgumentParser(description='Spectral index fitting tool.',
-                                formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument('-model', "--model", type=str)
-    p.add_argument('-residual', "--residual", type=str)
-    p.add_argument('-o', '--output-filename', type=str,
-                   help="Path to output directory + prefix. \n"
-                        "Placed next to input model if outfile not provided.")
-    p.add_argument('-pp', '--psf-pars', default=None, nargs='+', type=float,
-                   help="Beam parameters matching FWHM of restoring beam "
-                        "specified as emaj emin pa. \n"
-                        "By default these are taken from the fits header "
-                        "of the residual image.")
-    p.add_argument('-cp', "--circ-psf", type=str2bool, nargs='?', const=True, default=True,
-                   help="Passing this flag will convolve with a circularised "
-                   "beam instead of an elliptical one")
-    p.add_argument('-th', '--threshold', default=10, type=float,
-                   help="Multiple of the rms in the residual to threshold "
-                        "on. \n"
-                        "Only components above threshold*rms will be fit.")
-    p.add_argument('-maxDR', '--maxDR', default=100, type=float,
-                   help="Maximum dynamic range used to determine the "
-                        "threshold above which components need to be fit. \n"
-                        "Only used if residual is not passed in.")
-    p.add_argument('-ncpu', '--ncpu', default=0, type=int,
-                   help="Number of threads to use. \n"
-                        "Default of zero means use all threads")
-    p.add_argument('-pb-min', '--pb-min', type=float, default=0.15,
-                   help="Set image to zero where pb falls below this value")
-    p.add_argument('-products', '--products', default='aeikIcmrb', type=str,
-                   help="Outputs to write. Letter correspond to: \n"
-                   "a - alpha map \n"
-                   "e - alpha error map \n"
-                   "i - I0 map \n"
-                   "k - I0 error map \n"
-                   "I - reconstructed cube form alpha and I0 \n"
-                   "c - restoring beam used for convolution \n"
-                   "m - convolved model \n"
-                   "r - convolved residual \n"
-                   "b - average power beam \n"
-                   "Default is to write all of them")
-    p.add_argument('-pf', "--padding-frac", default=0.5, type=float,
-                   help="Padding factor for FFT's.")
-    p.add_argument('-dc', "--dont-convolve", type=str2bool, nargs='?', const=True, default=False,
-                   help="Passing this flag bypasses the convolution "
-                   "by the clean beam")
-    p.add_argument('-cw', "--channel_weights", default=None, nargs='+', type=float,
-                   help="Per-channel weights to use during fit to frequency axis. \n "
-                   "Only has an effect if no residual is passed in (for now).")
-    p.add_argument('-rf', '--ref-freq', default=None, type=np.float64,
-                   help='Reference frequency where the I0 map is sought. \n'
-                   "Will overwrite in fits headers of output.")
-    p.add_argument('-otype', '--out_dtype', default='f4', type=str,
-                   help="Data type of output. Default is single precision")
-    p.add_argument('-acr', '--add-convolved-residuals', type=str2bool, nargs='?', const=True, default=True,
-                   help='Flag to add in the convolved residuals before fitting components')
-    p.add_argument('-ms', "--ms", nargs="+", type=str,
-                   help="Mesurement sets used to make the image. \n"
-                   "Used to get paralactic angles if doing primary beam correction")
-    p.add_argument('-f', "--field", type=int, default=0,
-                   help="Field ID")
-    p.add_argument('-bm', '--beam-model', default=None, type=str,
-                   help="Fits beam model to use. \n"
-                        "It is assumed that the pattern is path_to_beam/"
-                        "name_corr_re/im.fits. \n"
-                        "Provide only the path up to name "
-                        "e.g. /home/user/beams/meerkat_lband. \n"
-                        "Patterns mathing corr are determined "
-                        "automatically. \n"
-                        "Only real and imaginary beam models currently "
-                        "supported.")
-    p.add_argument('-st', "--sparsify-time", type=int, default=10,
-                   help="Used to select a subset of time ")
-    p.add_argument('-ct', '--corr-type', type=str, default='linear',
-                   help="Correlation typ i.e. linear or circular. ")
-    p.add_argument('-band', "--band", type=str, default='l',
-                   help="Band to use with JimBeam. L or UHF")
-    return p
+# def create_parser():
+#     p = argparse.ArgumentParser(description='Spectral index fitting tool.',
+#                                 formatter_class=argparse.RawTextHelpFormatter)
+#     p.add_argument('-model', "--model", type=str)
+#     p.add_argument('-residual', "--residual", type=str)
+#     p.add_argument('-o', '--output-filename', type=str,
+#                    help="Path to output directory + prefix. \n"
+#                         "Placed next to input model if outfile not provided.")
+#     p.add_argument('-pp', '--psf-pars', default=None, nargs='+', type=float,
+#                    help="Beam parameters matching FWHM of restoring beam "
+#                         "specified as emaj emin pa. \n"
+#                         "By default these are taken from the fits header "
+#                         "of the residual image.")
+#     p.add_argument('-cp', "--circ-psf", type=str2bool, nargs='?', const=True, default=True,
+#                    help="Passing this flag will convolve with a circularised "
+#                    "beam instead of an elliptical one")
+#     p.add_argument('-th', '--threshold', default=10, type=float,
+#                    help="Multiple of the rms in the residual to threshold "
+#                         "on. \n"
+#                         "Only components above threshold*rms will be fit.")
+#     p.add_argument('-maxDR', '--maxDR', default=100, type=float,
+#                    help="Maximum dynamic range used to determine the "
+#                         "threshold above which components need to be fit. \n"
+#                         "Only used if residual is not passed in.")
+#     p.add_argument('-ncpu', '--ncpu', default=0, type=int,
+#                    help="Number of threads to use. \n"
+#                         "Default of zero means use all threads")
+#     p.add_argument('-pb-min', '--pb-min', type=float, default=0.15,
+#                    help="Set image to zero where pb falls below this value")
+#     p.add_argument('-products', '--products', default='aeikIcmrb', type=str,
+#                    help="Outputs to write. Letter correspond to: \n"
+#                    "a - alpha map \n"
+#                    "e - alpha error map \n"
+#                    "i - I0 map \n"
+#                    "k - I0 error map \n"
+#                    "I - reconstructed cube form alpha and I0 \n"
+#                    "c - restoring beam used for convolution \n"
+#                    "m - convolved model \n"
+#                    "r - convolved residual \n"
+#                    "b - average power beam \n"
+#                    "Default is to write all of them")
+#     p.add_argument('-pf', "--padding-frac", default=0.5, type=float,
+#                    help="Padding factor for FFT's.")
+#     p.add_argument('-dc', "--dont-convolve", type=str2bool, nargs='?', const=True, default=False,
+#                    help="Passing this flag bypasses the convolution "
+#                    "by the clean beam")
+#     p.add_argument('-cw', "--channel_weights", default=None, nargs='+', type=float,
+#                    help="Per-channel weights to use during fit to frequency axis. \n "
+#                    "Only has an effect if no residual is passed in (for now).")
+#     p.add_argument('-rf', '--ref-freq', default=None, type=np.float64,
+#                    help='Reference frequency where the I0 map is sought. \n'
+#                    "Will overwrite in fits headers of output.")
+#     p.add_argument('-otype', '--out_dtype', default='f4', type=str,
+#                    help="Data type of output. Default is single precision")
+#     p.add_argument('-acr', '--add-convolved-residuals', type=str2bool, nargs='?', const=True, default=True,
+#                    help='Flag to add in the convolved residuals before fitting components')
+#     p.add_argument('-ms', "--ms", nargs="+", type=str,
+#                    help="Mesurement sets used to make the image. \n"
+#                    "Used to get paralactic angles if doing primary beam correction")
+#     p.add_argument('-f', "--field", type=int, default=0,
+#                    help="Field ID")
+#     p.add_argument('-bm', '--beam-model', default=None, type=str,
+#                    help="Fits beam model to use. \n"
+#                         "It is assumed that the pattern is path_to_beam/"
+#                         "name_corr_re/im.fits. \n"
+#                         "Provide only the path up to name "
+#                         "e.g. /home/user/beams/meerkat_lband. \n"
+#                         "Patterns mathing corr are determined "
+#                         "automatically. \n"
+#                         "Only real and imaginary beam models currently "
+#                         "supported.")
+#     p.add_argument('-st', "--sparsify-time", type=int, default=10,
+#                    help="Used to select a subset of time ")
+#     p.add_argument('-ct', '--corr-type', type=str, default='linear',
+#                    help="Correlation typ i.e. linear or circular. ")
+#     p.add_argument('-band', "--band", type=str, default='l',
+#                    help="Band to use with JimBeam. L or UHF")
+#     return p
 
 @click.command()
 @click.option('-model', "--model", required=True,
@@ -100,11 +100,58 @@ def create_parser():
               help="Beam parameters matching FWHM of restoring beam "
                    "specified as emaj emin pa. \n"
                    "By default these are taken from the fits header "
-                   "of the residual image."
+                   "of the residual image.")
+@click.option('-th', '--threshold', default=10, type=float, show_default=True,
+              help="Multiple of the rms in the residual to threshold on. \n"
+                   "Only components above threshold*rms will be fit.")
+@click.option('-maxdr', '--maxDR', default=100, type=float, show_default=True,
+              help="Maximum dynamic range used to determine the "
+                   "threshold above which components need to be fit. \n"
+                   "Only used if residual is not passed in.")
+@click.option('-nthreads', '--nthreads', default=1, type=int, show_default=True,
+              help="Number of threads to use.")
+@click.option('-pb-min', '--pb-min', type=float, default=0.15,
+              help="Set image to zero where pb falls below this value")
+@click.option('-products', '--products', default='aeikIcmrb', type=str,
+              help="Outputs to write. Letter correspond to: \n"
+              "a - alpha map \n"
+              "e - alpha error map \n"
+              "i - I0 map \n"
+              "k - I0 error map \n"
+              "I - reconstructed cube form alpha and I0 \n"
+              "c - restoring beam used for convolution \n"
+              "m - convolved model \n"
+              "r - convolved residual \n"
+              "b - average power beam \n"
+              "Default is to write all of them")
+@click.option('-pf', "--padding-frac", default=0.5, type=float,
+              show_default=True, help="Padding factor for FFT's.")
+@click.option('-dc', "--dont-convolve", is_flag=True,
+              help="Do not convolve by the clean beam before fitting")
+@click.option('-rf', '--ref-freq', type=float,
+              help='Reference frequency where the I0 map is sought. '
+              "Will overwrite in fits headers of output.")
+@click.option('-otype', '--out_dtype', default='f4', type=str,
+              help="Data type of output. Default is single precision")
+@click.option('-acr', '--add-convolved-residuals', is_flag=True,
+              help='Flag to add in the convolved residuals before '
+              'fitting components')
 def spi_fitter(model,
                residual,
                output_filename,
-               psf_pars):
+               psf_pars,
+               threshold,
+               maxdr,
+               nthreads,
+               pb_min,
+               products,
+               padding_frac,
+               dont_convolve,
+               ref_freq,
+               out_dtype,
+               add_convolved_residuals,
+               ):
+    print(ref_freq)
 #     if args.psf_pars is None:
 #         print("Attempting to take psf_pars from residual fits header")
 #         try:

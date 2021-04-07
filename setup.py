@@ -41,5 +41,5 @@ setup(
                     spi_fitter=pfb.workers.post.spi_fitter:spi_fitter
                     pfbclean=pfb.pfbclean:main
      '''
-     },
+     ,
  )
