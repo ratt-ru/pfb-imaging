@@ -36,7 +36,10 @@ setup(
          "License :: OSI Approved :: MIT License",
          "Operating System :: OS Independent",
      ],
-     entry_points={'console_scripts':
-                    ['pfbclean = pfb.pfbclean:main']
+     entry_points='''
+                    [console_scripts]
+                    spi_fitter=pfb.workers.post.spi_fitter:spi_fitter
+                    pfbclean=pfb.pfbclean:main
+     '''
      },
  )
