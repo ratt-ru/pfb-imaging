@@ -21,7 +21,7 @@ requirements = [
 
 
 setup(
-     name='pfb',
+     name='pfb-clean',
      version=pfb.__version__,
      author="Landman Bester",
      author_email="lbester@ska.ac.za",
