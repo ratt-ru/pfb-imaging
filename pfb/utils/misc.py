@@ -43,7 +43,7 @@ def to4d(data):
         raise ValueError("Only arrays with ndim <= 4 can be broadcast to 4D.")
 
 
-def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True):
+def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     S0, S1, PA = GaussPar
     Smaj = np.maximum(S0, S1)
     Smin = np.minimum(S0, S1)
@@ -56,7 +56,7 @@ def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True):
     A = np.dot(np.dot(R.T, A), R)
     sOut = xin.shape
     # only compute the result out to 5 * emaj
-    extent = (5 * Smaj)**2
+    extent = (nsigma * Smaj)**2
     xflat = xin.squeeze()
     yflat = yin.squeeze()
     ind = np.argwhere(xflat**2 + yflat**2 <= extent).squeeze()
@@ -92,17 +92,13 @@ def give_edges(p, q, nx, ny):
     yu = np.minimum(dyu, ny)
 
     # PSF overlap edges
-
     xlpsf = np.maximum(nx // 2 - p, 0)
     xupsf = np.minimum(3 * nx // 2 - p, nx)
     ylpsf = np.maximum(ny // 2 - q, 0)
     yupsf = np.minimum(3 * ny // 2 - q, ny)
 
-    return slice(
-        xl, xu), slice(
-        yl, yu), slice(
-            xlpsf, xupsf), slice(
-                ylpsf, yupsf)
+    return slice(xl, xu), slice(yl, yu), \
+           slice(xlpsf, xupsf), slice(ylpsf, yupsf)
 
 
 def get_padding_info(nx, ny, pfrac):
@@ -174,78 +170,3 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
                    nthreads=nthreads), axes=ax)[:, unpad_x, unpad_y]
 
     return image, gausskern[:, unpad_x, unpad_y]
-
-
-def fitcleanbeam(psf, level=0.5, pixsize=1.0):
-    """
-    Find the Gaussian that approximates the main lobe of the PSF.
-    """
-    from skimage.morphology import label
-    from scipy.optimize import curve_fit
-
-    nband, nx, ny = psf.shape
-
-    # # find extent required to capture main lobe
-    # # saves on time to label islands
-    # psf0 = psf[0]/psf[0].max()  # largest PSF at lowest freq
-    # num_islands = 0
-    # npix = np.minimum(nx, ny)
-    # nbox = np.minimum(12, npix)  # 12 pixel minimum
-    # if npix <= nbox:
-    #     nbox = npix
-    # else:
-    #     while num_islands < 2:
-    #         Ix = slice(nx//2 - nbox//2, nx//2 + nbox//2)
-    #         Iy = slice(ny//2 - nbox//2, ny//2 + nbox//2)
-    #         mask = np.where(psf0[Ix, Iy] > level, 1.0, 0)
-    #         islands, num_islands = label(mask, return_num=True)
-    #         if num_islands < 2:
-    #             nbox *= 2  # double size and try again
-
-    # coordinates
-    x = np.arange(-nx / 2, nx / 2)
-    y = np.arange(-ny / 2, ny / 2)
-    xx, yy = np.meshgrid(x, y, indexing='ij')
-
-    # model to fit
-    def func(xy, emaj, emin, pa):
-        Smin = np.minimum(emaj, emin)
-        Smaj = np.maximum(emaj, emin)
-
-        A = np.array([[1. / Smin ** 2, 0],
-                      [0, 1. / Smaj ** 2]])
-
-        c, s, t = np.cos, np.sin, np.deg2rad(-pa)
-        R = np.array([[c(t), -s(t)],
-                      [s(t), c(t)]])
-        A = np.dot(np.dot(R.T, A), R)
-        xy = np.array([x.ravel(), y.ravel()])
-        R = np.einsum('nb,bc,cn->n', xy.T, A, xy)
-        # GaussPar should corresponds to FWHM
-        fwhm_conv = 2 * np.sqrt(2 * np.log(2))
-        return np.exp(-fwhm_conv * R)
-
-    Gausspars = ()
-    for v in range(nband):
-        # make sure psf is normalised
-        psfv = psf[v] / psf[v].max()
-        # find regions where psf is non-zero
-        mask = np.where(psfv > level, 1.0, 0)
-
-        # label all islands and find center
-        islands = label(mask)
-        ncenter = islands[nx // 2, ny // 2]
-
-        # select psf main lobe
-        psfv = psfv[islands == ncenter]
-        x = xx[islands == ncenter]
-        y = yy[islands == ncenter]
-        xy = np.vstack((x, y))
-        xdiff = x.max() - x.min()
-        ydiff = y.max() - y.min()
-        emaj0 = np.maximum(xdiff, ydiff)
-        emin0 = np.minimum(xdiff, ydiff)
-        p, _ = curve_fit(func, xy, psfv, p0=(emaj0, emin0, 0.0))
-        Gausspars += ((p[0] * pixsize, p[1] * pixsize, p[2]),)
-
-    return Gausspars

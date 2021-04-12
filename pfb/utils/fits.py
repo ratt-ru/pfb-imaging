@@ -1,7 +1,7 @@
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
-from pfb.utils import to4d
+from pfb.utils.misc import to4d
 
 
 def data_from_header(hdr, axis=3):
@@ -70,7 +70,15 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
 
 
 def compare_headers(hdr1, hdr2):
-    for key in hdr1.keys():
+    '''
+    utility function to ensure that WCS's are compatible
+    '''
+    keys = ['CTYPE1', 'CTYPE2', 'CTYPE3', 'CTYPE4',
+            'NAXIS1', 'NAXIS2', 'NAXIS3', 'NAXIS4',
+            'CDELT1', 'CDELT2', 'CDELT3', 'CDELT4',
+            'CRPIX1', 'CRPIX2', 'CRPIX3', 'CRPIX4',
+            'CUNIT1', 'CUNIT2', 'CUNIT3']
+    for key in keys():
         try:
             assert hdr1[key] == hdr2[key]
         except:

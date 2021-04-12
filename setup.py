@@ -17,6 +17,7 @@ requirements = [
                 'numexpr',
                 'pyscilog >= 0.1.2',
                 'Click',
+                'omegaconf',
             ]
 
 
@@ -38,8 +39,9 @@ setup(
      ],
      entry_points='''
                     [console_scripts]
-                    spi_fitter=pfb.workers.post.spi_fitter:spi_fitter
+                    cli=pfb.workers.main:cli
                     pfbclean=pfb.pfbclean:main
+
      '''
      ,
  )
