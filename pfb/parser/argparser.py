@@ -1,5 +1,5 @@
 import argparse
-from pfb.utils import str2bool
+from pfb.utils.misc import str2bool
 
 
 def create_parser():

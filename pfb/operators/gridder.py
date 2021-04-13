@@ -3,6 +3,7 @@ import numpy as np
 import dask
 import dask.array as da
 from daskms import xds_from_ms, xds_from_table, xds_to_table
+# from dask.distributed import client, LocalCluster
 # from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
 # import zarr
 from africanus.gridding.wgridder.dask import dirty as vis2im
@@ -51,6 +52,8 @@ class Gridder(object):
         self.nx_psf = int(self.psf_oversize * self.nx)
         self.ny_psf = int(self.psf_oversize * self.ny)
         self.real_type = real_type
+
+        # construct the client
 
         if isinstance(ms_name, list):
             self.ms = ms_name
@@ -190,6 +193,10 @@ class Gridder(object):
         else:
             self.imaging_weight_column = None
 
+        # # set up client
+        # cluster = LocalCluster()
+        # self.client = Client()
+
         # # set cache directory (next to first MS if None)
         # if cdir is None:
         #     idx = self.ms[0][::-1].find('/')
@@ -218,7 +225,7 @@ class Gridder(object):
         counts = []
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
-                              chunks={'row': self.row_chunks},
+                              chunks=self.chunks[ims],
                               columns=('UVW'))
 
             # subtables

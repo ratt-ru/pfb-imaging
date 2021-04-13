@@ -2,7 +2,7 @@ import numpy as np
 from numba import njit, prange
 from ducc0.fft import r2c, c2r, c2c
 from africanus.gps.kernels import exponential_squared as expsq
-from pfb.utils import kron_matvec
+from pfb.utils.misc import kron_matvec
 
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift

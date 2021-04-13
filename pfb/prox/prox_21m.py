@@ -12,7 +12,7 @@ def prox_21m(v, sigma, weights, axis=1):
     nband   - number of imaging bands
     ntot    - total number of coefficients for each basis (must be equal)
     """
-    l2_norm = np.mean(v, axis=axis)  # drops axis
+    l2_norm = np.sum(v, axis=axis)  # drops axis
     l2_soft = np.maximum(l2_norm - sigma * weights, 0.0)
     mask = l2_norm != 0
     ratio = np.zeros(mask.shape, dtype=v.dtype)

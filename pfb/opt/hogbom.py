@@ -28,7 +28,8 @@ def hogbom(
     wsums = np.amax(PSF.reshape(-1, nx_psf*ny_psf), axis=1)
     tol = pf * IRmax
     k = 0
-    while IRmax > tol and k < maxit:
+    stall_count = 0
+    while IRmax > tol and k < maxit and stall_count < 5:
         xhat = IR[:, p, q] / wsums
         x[:, p, q] += gamma * xhat
         ne.evaluate('IR - gamma * xhat * psf', local_dict={
@@ -41,16 +42,23 @@ def hogbom(
         pq = IRsearch.argmax()
         p = pq//ny
         q = pq - p*ny
+        IRmaxp = IRmax
         IRmax = np.sqrt(IRsearch[p, q])
         k += 1
+
+        if np.abs(IRmaxp - IRmax) < 1e-5:
+            stall_count += stall_count
 
         if not k % report_freq and verbosity > 1:
             print("At iteration %i max residual = %f" % (k, IRmax), file=log)
 
     if k >= maxit:
         if verbosity:
-            print(
-                "Maximum iterations reached. Max of residual = %f.  " %
+            print("Maximum iterations reached. Max of residual = %f." %
+                (IRmax), file=log)
+    elif stall_count >= 5:
+        if verbosity:
+            print("Stalled. Max of residual = %f." %
                 (IRmax), file=log)
     else:
         if verbosity:

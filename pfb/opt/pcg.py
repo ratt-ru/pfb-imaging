@@ -29,7 +29,8 @@ def pcg(
     k = 0
     x = x0
     eps = 1.0
-    while (eps > tol or k < minit) and k < maxit:
+    stall_count = 0
+    while (eps > tol or k < minit) and k < maxit and stall_count < 5:
         xp = x.copy()
         rp = r.copy()
         Ap = A(p)
@@ -52,16 +53,23 @@ def pcg(
         k += 1
         epsx = np.linalg.norm(x - xp) / np.linalg.norm(x)
         epsn = rnorm / eps0
+        epsp = eps
         eps = np.maximum(epsx, epsn)
+
+        if np.abs(epsp - eps) < tol:
+            stall_count += 1
 
         if not k % report_freq and verbosity > 1:
             print("At iteration %i rnorm = %f" % (k, eps), file=log)
 
     if k >= maxit:
         if verbosity:
-            print(
-                "Max iters reached. Norm of residual = %f.  " %
+            print("Max iters reached. Norm of residual = %f." %
                 (rnorm / eps0), file=log)
+    elif stall_count >= 5:
+        if verbosity:
+            print("Stalled. Norm of residual = %f." % (rnorm / eps0),
+                file=log)
     else:
         if verbosity:
             print("Success, converged after %i iters" % k, file=log)

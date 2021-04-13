@@ -88,35 +88,28 @@ def spotless(psf, model, residual, mask=None, beam=None,
         return phi.hdot(mask(beam(psfo.convolve(mask(beam(phi.dot(x))))))) +\
             x / (sigma_frac * rmax)
 
-    # # test psf undersize for backward step
-    # _, nx_psfo, ny_psfo = psf.shape
-    # nx_psff = int(1.2*nx)
-    # if nx_psff%2:
-    #     nx_psff += 1
+    # test psf undersize for backward step
+    _, nx_psfo, ny_psfo = psf.shape
+    nx_psff = int(1.2*nx)
+    if nx_psff%2:
+        nx_psff += 1
 
-    # ny_psff = int(1.2*ny)
-    # if ny_psff%2:
-    #     ny_psff += 1
+    ny_psff = int(1.2*ny)
+    if ny_psff%2:
+        ny_psff += 1
 
-    # nx_trim = (nx_psfo - nx_psff)//2
-    # ny_trim = (ny_psfo - ny_psff)//2
-    # psf2 = psf[:, nx_trim:-nx_trim, ny_trim:-ny_trim]
+    nx_trim = (nx_psfo - nx_psff)//2
+    ny_trim = (ny_psfo - ny_psff)//2
+    psf2 = psf[:, nx_trim:-nx_trim, ny_trim:-ny_trim]
 
-    # psfo2 = PSF(psf2, nthreads=nthreads, imsize=residual.shape)
+    psfo2 = PSF(psf2, nthreads=nthreads, imsize=residual.shape)
 
-    # def posthess(x):
-    #     return phi.hdot(mask(beam(psfo2.convolve(mask(beam(phi.dot(x))))))) +\
-    #         x / (sigma_frac * rmax)
+    def posthess(x):
+        return phi.hdot(mask(beam(psfo2.convolve(mask(beam(phi.dot(x))))))) +\
+            x / (sigma_frac * rmax)
 
-    if tidy:
-        # spectral norm
-        posthess = hess
-        beta, betavec = power_method(posthess, residual.shape, tol=pmtol,
-                                     maxit=pmmaxit, verbosity=pmverbose)
-    else:
-        def posthess(x): return x
-        beta = 1.0
-        betavec = 1.0
+    beta, betavec = power_method(posthess, residual.shape, tol=pmtol,
+                                    maxit=pmmaxit, verbosity=pmverbose)
 
     # deconvolve
     threshold = np.maximum(peak_factor * rmax, threshold)
@@ -137,22 +130,15 @@ def spotless(psf, model, residual, mask=None, beam=None,
 
         weights_21 = np.where(phi.mask, 1, 1e10)  # 1e10 for effective infinity
 
-        if tidy:
-            beta, betavec = power_method(posthess, model.shape, b0=betavec,
-                                         tol=pmtol, maxit=pmmaxit,
-                                         verbosity=pmverbose)
-            model, dual = primal_dual(posthess, model, modelp, dual, sig_21,
-                                      phi, weights_21, beta, prox_21m,
-                                      tol=pdtol, maxit=pdmaxit, axis=0,
-                                      positivity=positivity, report_freq=100,
-                                      verbosity=pdverbose)
+        beta, betavec = power_method(posthess, model.shape, b0=betavec,
+                                     tol=pmtol, maxit=pmmaxit,
+                                     verbosity=pmverbose)
 
-        else:
-            model, dual = primal_dual(posthess, model, modelp, dual, sig_21,
-                                      phi, weights_21, beta, prox_21m,
-                                      tol=pdtol, maxit=pdmaxit, axis=0,
-                                      positivity=positivity, report_freq=100,
-                                      verbosity=pdverbose)
+        model, dual = primal_dual(posthess, model, modelp, dual, sig_21,
+                                  phi, weights_21, beta, prox_21m,
+                                  tol=pdtol, maxit=pdmaxit, axis=0,
+                                  positivity=positivity, report_freq=100,
+                                  verbosity=pdverbose)
 
         # update Dirac dictionary (remove zero components)
         phi.trim_fat(model)

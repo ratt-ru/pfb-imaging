@@ -1,5 +1,4 @@
 import numpy as np
-from pfb.utils import prox_21
 import pyscilog
 log = pyscilog.get_logger('PD')
 

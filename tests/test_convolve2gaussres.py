@@ -1,7 +1,7 @@
 import numpy as np
 from africanus.model.spi import fit_spi_components
 from numpy.testing._private.utils import assert_allclose
-from pfb.utils import convolve2gaussres, Gaussian2D
+from pfb.utils.misc import convolve2gaussres, Gaussian2D
 import pytest
 
 pmp = pytest.mark.parametrize
