@@ -60,7 +60,7 @@ def primal_dual(
         #     if x.ndim == 3:
         #         x = mask(x)
         #     elif x.ndim == 4:
-        #         raise NotImplementedError("Forgot why we need this. multi_pfb?")
+        #         raise NotImplementedError("Why do we need this again?")
         #         # x[1] = np.where(mask, x[1], 0.0)
 
         # convergence check

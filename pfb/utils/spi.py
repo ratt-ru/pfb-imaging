@@ -2,6 +2,7 @@ import numpy as np
 import dask.array as da
 import sys
 
+
 def fit_spi(image: np.ndarray,
             beam: np.ndarray,
             freqs: np.ndarray,
@@ -47,7 +48,7 @@ def fit_spi(image: np.ndarray,
 
     print("Fitting %i components" % ncomps, file=dest)
     alpha, alpha_err, Iref, i0_err = fit_spi_components(fitcube, weights, freqsdask,
-                                        np.float64(ref_freq), beam=beam_comps).compute()
+                                                        np.float64(ref_freq), beam=beam_comps).compute()
     print("Done. Writing output. \n", file=dest)
 
     alphamap = np.zeros(model[0].shape, dtype=model.dtype)

@@ -98,7 +98,7 @@ def give_edges(p, q, nx, ny):
     yupsf = np.minimum(3 * ny // 2 - q, ny)
 
     return slice(xl, xu), slice(yl, yu), \
-           slice(xlpsf, xupsf), slice(ylpsf, yupsf)
+        slice(xlpsf, xupsf), slice(ylpsf, yupsf)
 
 
 def get_padding_info(nx, ny, pfrac):

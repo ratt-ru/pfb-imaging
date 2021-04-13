@@ -1,5 +1,3 @@
-import sys
-from multiprocessing import Value
 import numpy as np
 from pfb.opt import power_method, pcg, primal_dual
 from pfb.operators import PSF, DaskPSI
@@ -20,15 +18,14 @@ def resid_func(x, dirty, psfo, mask, beam):
     return residual, mask(residual_mfs)
 
 
-def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
-         mask=None, beam=None, dual=None, weights21=None,
-         nthreads=1, maxit=10, gamma=0.99,  tol=1e-3,  # options for outer optimisation
-         psi_levels=3, psi_basis=None,  # sara dict options
-         # reweighting options
-         reweight_iters=None, reweight_alpha_ff=0.5, reweight_alpha_percent=10,
-         pdtol=1e-6, pdmaxit=250, pdverbose=1, positivity=True, tidy=True,  # primal dual options
-         cgtol=1e-6, cgminit=25, cgmaxit=150, cgverbose=1,  # conjugate gradient options
-         pmtol=1e-5, pmmaxit=50, pmverbose=1):  # power method options
+def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5, mask=None,
+         beam=None, dual=None, weights21=None, nthreads=1, maxit=10,
+         gamma=0.99,  tol=1e-3, psi_levels=3, psi_basis=None,
+         reweight_iters=None, reweight_alpha_ff=0.5,
+         reweight_alpha_percent=10,
+         pdtol=1e-6, pdmaxit=250, pdverbose=1, positivity=True, tidy=True,
+         cgtol=1e-6, cgminit=25, cgmaxit=150, cgverbose=1,
+         pmtol=1e-5, pmmaxit=50, pmverbose=1):
 
     if len(residual.shape) > 3:
         raise ValueError("Residual must have shape (nband, nx, ny)")
@@ -41,8 +38,8 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
         try:
             assert beam.shape == (nband, nx, ny)
             def beam(x): return beam * x
-        except:
-            raise ValueError("Beam has incorrect shape")
+        except Exception as e:
+            raise e
 
     if mask is None:
         def mask(x): return x
@@ -55,8 +52,8 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
                 assert mask.shape == (1, nx, ny)
                 def mask(x): return mask * x
             else:
-                raise ValueError
-        except:
+                raise BaseException
+        except BaseException:
             raise ValueError("Mask has incorrect shape")
 
     # PSF operator
@@ -140,11 +137,12 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5,
         rms = np.std(residual_mfs)
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
-        print("At iteration %i peak of residual is %f, rms is %f, current eps is %f" % (
+        print("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
             i+1, rmax, rms, eps), file=log)
 
         if eps < tol:
-            print("Success, convergence after %i iterations" % (i+1), file=log)
+            print("Success, convergence after %i iterations" % (i+1),
+                  file=log)
             break
 
         if tidy and i < maxit-1:

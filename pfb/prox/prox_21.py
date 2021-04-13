@@ -1,5 +1,6 @@
 import numpy as np
 
+
 def prox_21(v, sigma, weights, axis=1):
     """
     Computes weighted version of

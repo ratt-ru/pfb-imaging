@@ -101,7 +101,7 @@ def create_parser():
                    "deconvolution")
     p.add_argument("--beta", type=float, default=None,
                    help="Lipschitz constant of F")
-    p.add_argument("--sig_21", type=float, default=1e-3,
+    p.add_argument("--sig_21", type=float, default=None,
                    help="Initial strength of l21 regulariser."
                    "Initialise to nband x expected rms in MFS dirty if "
                    "uncertain.")

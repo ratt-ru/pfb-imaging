@@ -26,7 +26,7 @@ def fista(
         return np.vdot(xbar - x, diff), -diff
 
     def prox(x):
-        l2_norm = norm(x, axis=0)  # drops freq axis
+        l2_norm = np.linalg.norm(x, axis=0)  # drops freq axis
         # l2_norm = np.mean(x, axis=0)  # drops freq axis
         l2_soft = np.maximum(l2_norm - lam, 0.0)  # norm always +ive
         mask = l2_norm != 0
@@ -43,7 +43,6 @@ def fista(
     eps = 1.0
     k = 0
     fidn, gradn = fprime(x)
-    objective = np.zeros(maxit)
     fidelity = np.zeros(maxit)
     fidupper = np.zeros(maxit)
     for k in range(maxit):
@@ -58,10 +57,10 @@ def fista(
         x = prox(x)
 
         # check convergence criteria
-        normx = norm(x)
+        normx = np.linalg.norm(x)
         if np.isnan(normx) or normx == 0.0:
             normx = 1.0
-        eps = norm(x - xold) / normx
+        eps = np.linalg.norm(x - xold) / normx
         if eps <= tol:
             break
 

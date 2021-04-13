@@ -4,31 +4,31 @@ Can also be used to convolve images to a common resolution
 and/or perform a primary beam correction.
 '''
 
+from pfb.workers.main import cli
 import click
 from omegaconf import OmegaConf
 import pyscilog
 log = pyscilog.get_logger('RESTORE')
-from pfb.workers.main import cli
 
 
 @cli.command()
 @click.option('-model', '--model', required=True,
-             help="Path to model image cube")
+              help="Path to model image cube")
 @click.option('-resid', '--residual', required=False,
-             help="Path to residual image cube")
+              help="Path to residual image cube")
 @click.option('-beam', '--beam', required=False,
-             help="Path to power beam image cube")
+              help="Path to power beam image cube")
 @click.option('-o', '--output-filename',
-             help="Basename (next to input model if not provided).")
+              help="Basename (next to input model if not provided).")
 @click.option('-nthreads', '--nthreads', type=int, default=1,
-             show_default=True, help='Number of threads to use')
+              show_default=True, help='Number of threads to use')
 @click.option('-cr', '--convolve-residuals', is_flag=True,
-             help='Whether to convolve the residuals to a common resolution')
+              help='Whether to convolve the residuals to a common resolution')
 @click.option('-pf', '--padding-frac', type=float,
-             default=0.5, show_default=True,
-             help="Padding fraction for FFTs (half on either side)")
+              default=0.5, show_default=True,
+              help="Padding fraction for FFTs (half on either side)")
 @click.option('-pb-min', '--pb-min', type=float, default=0.1,
-             help="Set image to zero where pb falls below this value")
+              help="Set image to zero where pb falls below this value")
 def restore(**kw):
     args = OmegaConf.create(kw)
 
@@ -81,7 +81,7 @@ def restore(**kw):
     else:
         guassparf += (rhdr['BMAJ'], rhdr['BMIN'], rhdr['BPA'])
 
-    #if args.convolve_residuals:
+    # if args.convolve_residuals:
 
     cellx = np.abs(mhdr['CDELT1'])
     celly = np.abs(mhdr['CDELT2'])

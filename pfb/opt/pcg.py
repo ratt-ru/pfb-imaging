@@ -65,11 +65,11 @@ def pcg(
     if k >= maxit:
         if verbosity:
             print("Max iters reached. Norm of residual = %f." %
-                (rnorm / eps0), file=log)
+                  (rnorm / eps0), file=log)
     elif stall_count >= 5:
         if verbosity:
             print("Stalled. Norm of residual = %f." % (rnorm / eps0),
-                file=log)
+                  file=log)
     else:
         if verbosity:
             print("Success, converged after %i iters" % k, file=log)

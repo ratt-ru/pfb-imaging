@@ -1,5 +1,4 @@
 import numpy as np
-from numba import njit
 import numexpr as ne
 import pyscilog
 log = pyscilog.get_logger('HOGBOM')
@@ -55,11 +54,11 @@ def hogbom(
     if k >= maxit:
         if verbosity:
             print("Maximum iterations reached. Max of residual = %f." %
-                (IRmax), file=log)
+                  (IRmax), file=log)
     elif stall_count >= 5:
         if verbosity:
             print("Stalled. Max of residual = %f." %
-                (IRmax), file=log)
+                  (IRmax), file=log)
     else:
         if verbosity:
             print("Success, converged after %i iterations" % k, file=log)

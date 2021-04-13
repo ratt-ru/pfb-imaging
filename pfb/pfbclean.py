@@ -9,8 +9,10 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('PFB')
 
+
 def main():
     _main(dest=log)
+
 
 def _main(dest=sys.stdout):
     from pfb.parser import create_parser
@@ -30,9 +32,11 @@ def _main(dest=sys.stdout):
     from daskms import xds_from_ms, xds_from_table
     from astropy.io import fits
     from pfb.utils.misc import (set_wcs, load_fits, save_fits,
-            compare_headers, data_from_header, fitcleanbeam, Gaussian2D)
+                                compare_headers, data_from_header, fitcleanbeam, Gaussian2D)
     from pfb.operators import Gridder, PSF
-    from pfb.deconv import sara, clean, spotless
+    from pfb.deconv.sara import sara
+    from pfb.deconv.clean import clean
+    from pfb.deconv.spotless import spotless
     from pfb.opt import pcg
 
     if not isinstance(args.ms, list):

@@ -15,13 +15,15 @@ from africanus.rime import parallactic_angles
 from pfb.utils import load_fits, save_fits, data_from_header
 from daskms import xds_from_ms, xds_from_table
 
+
 @jit(nopython=True, nogil=True, cache=True)
 def _unflagged_counts(flags, time_idx, out):
     for i in range(time_idx.size):
-            ilow = time_idx[i]
-            ihigh = time_idx[i+1]
-            out[i] = np.sum(~flags[ilow:ihigh])
+        ilow = time_idx[i]
+        ihigh = time_idx[i+1]
+        out[i] = np.sum(~flags[ilow:ihigh])
     return out
+
 
 def extract_dde_info(args, freqs):
     """
@@ -40,11 +42,12 @@ def extract_dde_info(args, freqs):
             ant = xds_from_table(ms_name + '::ANTENNA')[0].compute()
             if ant_pos is None:
                 ant_pos = ant['POSITION'].data
-            else: # check all are the same
+            else:  # check all are the same
                 tmp = ant['POSITION']
                 if not np.array_equal(ant_pos, tmp):
-                    raise ValueError("Antenna positions not the same across measurement sets")
-            
+                    raise ValueError(
+                        "Antenna positions not the same across measurement sets")
+
             # get phase center for field
             field = xds_from_table(ms_name + '::FIELD')[0].compute()
             if phase_dir is None:
@@ -52,11 +55,14 @@ def extract_dde_info(args, freqs):
             else:
                 tmp = field['PHASE_DIR'][args.field].data.squeeze()
                 if not np.array_equal(phase_dir, tmp):
-                    raise ValueError('Phase direction not the same across measurement sets')
+                    raise ValueError(
+                        'Phase direction not the same across measurement sets')
 
             # get unique times and count flags
-            xds = xds_from_ms(ms_name, columns=["TIME", "FLAG_ROW"], group_cols=["FIELD_ID"])[args.field]
-            utime, time_idx = np.unique(xds.TIME.data.compute(), return_index=True)
+            xds = xds_from_ms(ms_name, columns=["TIME", "FLAG_ROW"], group_cols=[
+                              "FIELD_ID"])[args.field]
+            utime, time_idx = np.unique(
+                xds.TIME.data.compute(), return_index=True)
             ntime = utime.size
             # extract subset of times
             if args.sparsify_time > 1:
@@ -64,17 +70,18 @@ def extract_dde_info(args, freqs):
                 utime = utime[I]
                 time_idx = time_idx[I]
                 ntime = utime.size
-            
+
             utimes.append(utime)
-        
+
             flags = xds.FLAG_ROW.data.compute()
-            unflag_count = _unflagged_counts(flags.astype(np.int32), time_idx, np.zeros(ntime, dtype=np.int32))
+            unflag_count = _unflagged_counts(flags.astype(
+                np.int32), time_idx, np.zeros(ntime, dtype=np.int32))
             unflag_counts.append(unflag_count)
 
         utimes = np.concatenate(utimes)
         unflag_counts = np.concatenate(unflag_counts)
         ntimes = utimes.size
-        
+
         # compute paralactic angles
         parangles = parallactic_angles(utimes, ant_pos, phase_dir)
 
@@ -94,11 +101,11 @@ def extract_dde_info(args, freqs):
     else:
         ntimes = 1
         nant = 1
-        parangles = np.zeros((ntimes, nant,), dtype=np.float64)    
+        parangles = np.zeros((ntimes, nant,), dtype=np.float64)
         ant_scale = np.ones((nant, nband, 2), dtype=np.float64)
         point_errs = np.zeros((ntimes, nant, nband, 2), dtype=np.float64)
         unflag_counts = np.array([1])
-        
+
         return (parangles, ant_scale, point_errs, unflag_counts, False)
 
 
@@ -114,7 +121,8 @@ def make_power_beam(args, lm_source, freqs, use_dask):
         corr1 = 'LL'
         corr2 = 'RR'
     else:
-        raise KeyError("Unknown corr_type supplied. Only 'linear' or 'circular' supported")
+        raise KeyError(
+            "Unknown corr_type supplied. Only 'linear' or 'circular' supported")
 
     for path in paths:
         if corr1.lower() in path[-10::]:
@@ -133,7 +141,7 @@ def make_power_beam(args, lm_source, freqs, use_dask):
                 corr2_im = load_fits(path)
             else:
                 raise NotImplementedError("Only re/im patterns supported")
-    
+
     # get power beam
     beam_amp = (corr1_re**2 + corr1_im**2 + corr2_re**2 + corr2_im**2)/2.0
 
@@ -174,16 +182,17 @@ def make_power_beam(args, lm_source, freqs, use_dask):
     bfreqs = freq0 + np.arange(1 - refpix, 1 + nchan - refpix) * delta
     if bfreqs[0] > freqs[0] or bfreqs[-1] < freqs[-1]:
         warnings.warn("The supplied beam does not have sufficient "
-                        "bandwidth. Beam frequencies:")
+                      "bandwidth. Beam frequencies:")
         with np.printoptions(precision=2):
             print(bfreqs)
 
     if use_dask:
         return (da.from_array(beam_amp, chunks=beam_amp.shape),
-                da.from_array(beam_extents, chunks=beam_extents.shape), 
+                da.from_array(beam_extents, chunks=beam_extents.shape),
                 da.from_array(bfreqs, bfreqs.shape))
     else:
         return beam_amp, beam_extents, bfreqs
+
 
 def interpolate_beam(ll, mm, freqs, args):
     """
@@ -192,10 +201,12 @@ def interpolate_beam(ll, mm, freqs, args):
     """
     nband = freqs.size
     print("Interpolating beam")
-    parangles, ant_scale, point_errs, unflag_counts, use_dask = extract_dde_info(args, freqs)
+    parangles, ant_scale, point_errs, unflag_counts, use_dask = extract_dde_info(
+        args, freqs)
 
     lm_source = np.vstack((ll.ravel(), mm.ravel())).T
-    beam_amp, beam_extents, bfreqs = make_power_beam(args, lm_source, freqs, use_dask)
+    beam_amp, beam_extents, bfreqs = make_power_beam(
+        args, lm_source, freqs, use_dask)
 
     # interpolate beam
     if use_dask:
@@ -211,14 +222,17 @@ def interpolate_beam(ll, mm, freqs, args):
         for i in range(nchunks):
             ilow = I[i]
             ihigh = I[i+1]
-            part_parangles = da.from_array(parangles[ilow:ihigh], chunks=(1, 1))
-            part_point_errs = da.from_array(point_errs[ilow:ihigh], chunks=(1, 1, freqs.size, 2))
+            part_parangles = da.from_array(
+                parangles[ilow:ihigh], chunks=(1, 1))
+            part_point_errs = da.from_array(
+                point_errs[ilow:ihigh], chunks=(1, 1, freqs.size, 2))
             # interpolate and remove redundant axes
             part_beam_image = beam_cube_dde(beam_amp, beam_extents, bfreqs,
-                                        lm_source, part_parangles, part_point_errs,
-                                        ant_scale, freqs).compute()[:, :, 0, :, 0 , 0]
+                                            lm_source, part_parangles, part_point_errs,
+                                            ant_scale, freqs).compute()[:, :, 0, :, 0, 0]
             # weighted sum over time
-            beam_image += np.sum(part_beam_image * unflag_counts[None, ilow:ihigh, None], axis=1, keepdims=True)
+            beam_image += np.sum(part_beam_image *
+                                 unflag_counts[None, ilow:ihigh, None], axis=1, keepdims=True)
         # normalise by sum of weights
         beam_image /= np.sum(unflag_counts)
         # remove time axis
@@ -226,10 +240,8 @@ def interpolate_beam(ll, mm, freqs, args):
     else:
         from africanus.rime.fast_beam_cubes import beam_cube_dde
         beam_image = beam_cube_dde(beam_amp, beam_extents, bfreqs,
-                                    lm_source, parangles, point_errs,
-                                    ant_scale, freqs).squeeze()
-    
-    
+                                   lm_source, parangles, point_errs,
+                                   ant_scale, freqs).squeeze()
 
     # swap source and freq axes and reshape to image shape
     beam_source = np.transpose(beam_image, axes=(1, 0))
@@ -240,7 +252,7 @@ def create_parser():
     p = argparse.ArgumentParser(description='Beam intrepolation tool.',
                                 formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument('-image', "--image", type=str, required=True)
-    p.add_argument('-ms', "--ms", nargs="+", type=str, 
+    p.add_argument('-ms', "--ms", nargs="+", type=str,
                    help="Mesurement sets used to make the image. \n"
                    "Used to get paralactic angles if doing primary beam correction")
     p.add_argument('-f', "--field", type=int, default=0,
@@ -267,6 +279,7 @@ def create_parser():
                    help="Correlation typ i.e. linear or circular. ")
     return p
 
+
 def main(args):
     # get coord info
     hdr = fits.getheader(args.image)
@@ -281,19 +294,18 @@ def main(args):
     else:
         raise ValueError("Freq axis must be 3rd or 4th")
     freqs, ref_freq = data_from_header(hdr, axis=freq_axis)
-    
+
     xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
-    
+
     # interpolate primary beam to fits header and optionally average over time
     beam_image = interpolate_beam(xx, yy, freqs, args)
-
 
     # save power beam
     save_fits(args.output_filename, beam_image, hdr)
     print("Wrote interpolated beam cube to %s \n" % args.output_filename)
 
-
     return
+
 
 if __name__ == "__main__":
     args = create_parser().parse_args()

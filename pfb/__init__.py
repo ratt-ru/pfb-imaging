@@ -15,6 +15,7 @@ __version__ = '0.0.1'
 
 import os
 
+
 def set_threads(nthreads: int):
     os.environ["OMP_NUM_THREADS"] = str(nthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(nthreads)

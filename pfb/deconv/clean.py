@@ -1,4 +1,3 @@
-import sys
 import numpy as np
 from pfb.operators import PSF
 from pfb.opt import hogbom

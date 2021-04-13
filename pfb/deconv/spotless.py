@@ -1,10 +1,13 @@
 import numpy as np
 from pfb.operators import PSF, Dirac
-from pfb.opt import pcg, primal_dual, power_method, hogbom
+from pfb.opt.primal_dual import primal_dual
+from pfb.opt.pcg import pcg
+from pfb.opt.power_method import power_method
+from pfb.opt.hogbom import hogbom
 from pfb.prox import prox_21m
-import numexpr as ne
 import pyscilog
 log = pyscilog.get_logger('SPOTLESS')
+
 
 def resid_func(x, dirty, psfo, mask, beam):
     """
@@ -68,7 +71,6 @@ def spotless(psf, model, residual, mask=None, beam=None,
             raise ValueError("Mask has incorrect shape")
 
     # PSF operator
-    psf_mfs = np.sum(psf, axis=0)
     psfo = PSF(psf, nthreads=nthreads, imsize=residual.shape)
     if model.any():
         dirty = residual + psfo.convolve(mask(beam(model)))
@@ -91,11 +93,11 @@ def spotless(psf, model, residual, mask=None, beam=None,
     # test psf undersize for backward step
     _, nx_psfo, ny_psfo = psf.shape
     nx_psff = int(1.2*nx)
-    if nx_psff%2:
+    if nx_psff % 2:
         nx_psff += 1
 
     ny_psff = int(1.2*ny)
-    if ny_psff%2:
+    if ny_psff % 2:
         ny_psff += 1
 
     nx_trim = (nx_psfo - nx_psff)//2
@@ -109,7 +111,7 @@ def spotless(psf, model, residual, mask=None, beam=None,
             x / (sigma_frac * rmax)
 
     beta, betavec = power_method(posthess, residual.shape, tol=pmtol,
-                                    maxit=pmmaxit, verbosity=pmverbose)
+                                 maxit=pmmaxit, verbosity=pmverbose)
 
     # deconvolve
     threshold = np.maximum(peak_factor * rmax, threshold)
