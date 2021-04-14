@@ -81,7 +81,7 @@ def compare_headers(hdr1, hdr2):
     for key in keys():
         try:
             assert hdr1[key] == hdr2[key]
-        except:
+        except BaseException:
             raise ValueError("Headers do not match on key %s" % key)
 
 

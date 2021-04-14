@@ -32,8 +32,10 @@ def _main(dest=sys.stdout):
     from daskms import xds_from_ms, xds_from_table
     from astropy.io import fits
     from pfb.utils.misc import (set_wcs, load_fits, save_fits,
-                                compare_headers, data_from_header, fitcleanbeam, Gaussian2D)
-    from pfb.operators import Gridder, PSF
+                                compare_headers, data_from_header,
+                                fitcleanbeam, Gaussian2D)
+    from pfb.operators.gridder import Gridder
+    from pfb.operators.psf import PSF
     from pfb.deconv.sara import sara
     from pfb.deconv.clean import clean
     from pfb.deconv.spotless import spotless

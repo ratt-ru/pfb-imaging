@@ -1,7 +1,10 @@
 import numpy as np
-from pfb.opt import power_method, pcg, primal_dual
-from pfb.operators import PSF, DaskPSI
-from pfb.prox import prox_21
+from pfb.opt.power_method import power_method
+from pfb.opt.pcg import pcg
+from pfb.opt.primal_dual import primal_dual
+from pfb.operators.psi import DaskPSI
+from pfb.operators.psf import PSF
+from pfb.prox.prox_21 import prox_21
 import pyscilog
 log = pyscilog.get_logger('SARA')
 
@@ -20,7 +23,7 @@ def resid_func(x, dirty, psfo, mask, beam):
 
 def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5, mask=None,
          beam=None, dual=None, weights21=None, nthreads=1, maxit=10,
-         gamma=0.99,  tol=1e-3, psi_levels=3, psi_basis=None,
+         gamma=0.99, tol=1e-3, psi_levels=3, psi_basis=None,
          reweight_iters=None, reweight_alpha_ff=0.5,
          reweight_alpha_percent=10,
          pdtol=1e-6, pdmaxit=250, pdverbose=1, positivity=True, tidy=True,

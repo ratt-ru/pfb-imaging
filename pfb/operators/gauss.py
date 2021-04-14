@@ -1,6 +1,6 @@
 import numpy as np
 from numba import njit, prange
-from ducc0.fft import r2c, c2r, c2c
+from ducc0.fft import r2c, c2r
 from africanus.gps.kernels import exponential_squared as expsq
 from pfb.utils.misc import kron_matvec
 
@@ -24,9 +24,9 @@ def make_kernel(nx_psf, ny_psf, sigma0, length_scale):
     K = np.zeros((1, nx_psf, ny_psf), dtype=np.float64)
     for j in range(nx_psf):
         for k in range(ny_psf):
-            l = float(j - (nx_psf//2))
-            m = float(k - (ny_psf//2))
-            K[0, j, k] = sigma0**2*np.exp(-(l**2+m**2)/(2*length_scale**2))
+            l = float(j - (nx_psf // 2))
+            m = float(k - (ny_psf // 2))
+            K[0, j, k] = sigma0**2 * np.exp(-(l**2 + m**2) / (2 * length_scale**2))
     return K
 
 

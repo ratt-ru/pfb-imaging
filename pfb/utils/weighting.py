@@ -60,7 +60,7 @@ def _compute_counts(uvw, freqs, fbin_idx, fbin_counts, nx, ny,
                 chan_normfreq = normfreqs[c]
                 u_tmp = uvw_row[0] * chan_normfreq
                 v_tmp = uvw_row[1] * chan_normfreq
-               # get u index
+                # get u index
                 u_idx = int(np.round((u_tmp + umax)/u_diff))
                 # get v index
                 v_idx = int(np.round((v_tmp + vmax)/v_diff))

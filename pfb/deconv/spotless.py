@@ -1,10 +1,11 @@
 import numpy as np
-from pfb.operators import PSF, Dirac
+from pfb.operators.psf import PSF
+from pfb.operators.dirac import Dirac
 from pfb.opt.primal_dual import primal_dual
 from pfb.opt.pcg import pcg
 from pfb.opt.power_method import power_method
 from pfb.opt.hogbom import hogbom
-from pfb.prox import prox_21m
+from pfb.prox.prox_21m import prox_21m
 import pyscilog
 log = pyscilog.get_logger('SPOTLESS')
 
@@ -92,11 +93,11 @@ def spotless(psf, model, residual, mask=None, beam=None,
 
     # test psf undersize for backward step
     _, nx_psfo, ny_psfo = psf.shape
-    nx_psff = int(1.2*nx)
+    nx_psff = int(1.2 * nx)
     if nx_psff % 2:
         nx_psff += 1
 
-    ny_psff = int(1.2*ny)
+    ny_psff = int(1.2 * ny)
     if ny_psff % 2:
         ny_psff += 1
 

@@ -1,3 +1,4 @@
+# flake8: noqa
 '''
 Utility to create restored images.
 Can also be used to convolve images to a common resolution

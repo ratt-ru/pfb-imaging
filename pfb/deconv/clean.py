@@ -1,6 +1,6 @@
 import numpy as np
-from pfb.operators import PSF
-from pfb.opt import hogbom
+from pfb.operators.psf import PSF
+from pfb.opt.hogbom import hogbom
 import pyscilog
 log = pyscilog.get_logger('CLEAN')
 

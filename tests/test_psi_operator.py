@@ -1,6 +1,6 @@
 import numpy as np
 from numpy.testing import assert_array_almost_equal
-from pfb.prox import prox_21
+from pfb.prox.prox_21 import prox_21
 from pfb.operators import PSI, DaskPSI
 import pywt
 import pytest
