@@ -29,9 +29,6 @@ def hogbom(
     tol = pf * IRmax
     k = 0
     stall_count = 0
-
-
-
     while IRmax > tol and k < maxit and stall_count < 5:
         xhat = IR[:, p, q] / wsums
         x[:, p, q] += gamma * xhat
@@ -50,7 +47,7 @@ def hogbom(
         IRmax = np.sqrt(IRsearch[p, q])
         k += 1
 
-        if np.abs(IRmaxp - IRmax) < 1e-5:
+        if np.abs(IRmaxp - IRmax) / np.abs(IRmaxp) < 1e-3:
             stall_count += stall_count
 
         if not k % report_freq and verbosity > 1:

@@ -6,24 +6,26 @@ from pfb.opt.pcg import pcg
 from pfb.opt.power_method import power_method
 from pfb.opt.hogbom import hogbom
 from pfb.prox.prox_21m import prox_21m
+from skimage.filters import threshold_mean
 import pyscilog
 log = pyscilog.get_logger('SPOTLESS')
 
 
-def resid_func(x, dirty, hessian, mask, beam):
+def resid_func(x, dirty, hessian, mask, beam, wsum):
     """
     Returns the unattenuated residual
     """
-    residual = dirty - hessian(mask(beam(x)))
+    residual = dirty - hessian(mask(beam(x)))/wsum
     residual_mfs = np.sum(residual, axis=0)
     residual = residual
     return residual, residual_mfs
 
 
-def spotless(psf, model, residual, mask=None, beam=None, hessian=None,
+def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
+             wsum=1, adapt_sig21=False,
              nthreads=1, sig_21=1e-3, sigma_frac=100, maxit=10, tol=1e-4,
              peak_factor=0.01, threshold=0.0, positivity=True, gamma=0.9999,
-             tidy=True, hbgamma=0.1, hbpf=0.1, hbmaxit=5000, hbverbose=1,
+             hbgamma=0.1, hbpf=0.1, hbmaxit=5000, hbverbose=1,
              pdtol=1e-4, pdmaxit=250, pdverbose=1,  # primal dual options
              cgtol=1e-4, cgminit=15, cgmaxit=150, cgverbose=1,  # pcg options
              pmtol=1e-4, pmmaxit=50, pmverbose=1):  # power method options
@@ -47,12 +49,14 @@ def spotless(psf, model, residual, mask=None, beam=None, hessian=None,
 
     nband, nx, ny = residual.shape
 
-    if beam is None:
+    if beam_image is None:
         def beam(x): return x
+        def beaminv(x): return x
     else:
         try:
             assert beam.shape == (nband, nx, ny)
-            def beam(x): return beam * x
+            def beam(x): return beam_image * x
+            def beaminv(x): return np.where(beam_image > 0.01,  x / beam_image, x)
         except BaseException:
             raise ValueError("Beam has incorrect shape")
 
@@ -72,34 +76,36 @@ def spotless(psf, model, residual, mask=None, beam=None, hessian=None,
             raise ValueError("Mask has incorrect shape")
 
     # PSF operator
-    psfo = PSF(psf, nthreads=nthreads, imsize=residual.shape)
-    if model.any():
-        dirty = residual + psfo.convolve(mask(beam(model)))
-    else:
-        dirty = residual
-    residual_mfs = np.sum(residual, axis=0)
-    residual = mask(beam(residual))
-    rmax = np.abs(residual_mfs).max()
-    rms = np.std(residual_mfs)
+    psfo = PSF(psf, residual.shape, nthreads=nthreads)
 
     # set up point sources
     phi = Dirac(nband, nx, ny, mask=np.any(model, axis=0))
     dual = np.zeros((nband, nx, ny), dtype=np.float64)
 
+    residual_mfs = np.sum(residual, axis=0)
+    rmax = np.abs(residual_mfs).max()
+    rms = np.std(residual_mfs)
+
     #  preconditioning operator
-    def hess(x):
-        return phi.hdot(mask(beam(psfo.convolve(mask(beam(phi.dot(x))))))) +\
+    def hessb(x):
+        return phi.hdot(mask(beam(psfo.convolveb(mask(beam(phi.dot(x))))))) +\
             x / (sigma_frac * rmax)
 
-    if hessian is None:
-        hessf = hess
-    else:
-        def hessf(x):
-            return phi.hdot(mask(beam(hessian(mask(beam(phi.dot(x))))))) +\
-                        x / (sigma_frac * rmax)
+    def hessf(x):
+        return phi.hdot(mask(beam(psfo.convolve(mask(beam(phi.dot(x))))))) +\
+                    x / (sigma_frac * rmax)
 
-    beta, betavec = power_method(hess, residual.shape, tol=pmtol,
+    beta, betavec = power_method(hessb, residual.shape, tol=pmtol,
                                  maxit=pmmaxit, verbosity=pmverbose)
+
+    if hessian is None:
+        hessian = psf.convolve
+        wsum = 1.0
+
+    if model.any():
+        dirty = residual + hessian(mask(beam(model)))/wsum
+    else:
+        dirty = residual
 
     # deconvolve
     threshold = np.maximum(peak_factor * rmax, threshold)
@@ -110,39 +116,24 @@ def spotless(psf, model, residual, mask=None, beam=None, hessian=None,
 
         phi.update_locs(modelu)
 
-
-        import matplotlib.pyplot as plt
-
-        plt.figure('m')
-        plt.imshow(modelu[0], vmax=0.01)
-
-        plt.figure('r')
-        plt.imshow(residual[0], vmax=0.1*residual.max())
-        plt.show()
-
-
-
         # solve for beta updates
-        x = pcg(hessf, phi.hdot(mask(beam(residual))), phi.hdot(modelu),
+        x = pcg(hessf,
+                phi.hdot(mask(beam(residual))),
+                phi.hdot(beaminv(modelu)),
                 M=lambda x: x * (sigma_frac * rmax), tol=cgtol,
-                maxit=cgmaxit, minit=cgminit, verbosity=cgverbose, backtrack=False)
-
-        plt.figure('r')
-        plt.imshow(x[0], vmax=0.1*residual.max())
-        plt.show()
-
-        quit()
+                maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
 
         modelp = model.copy()
         model += gamma * x
 
-        weights_21 = np.where(phi.mask, 1, 1e10)  # 1e10 for effective infinity
-
-        beta, betavec = power_method(hess, model.shape, b0=betavec,
+        weights_21 = np.where(phi.mask,
+                              sig_21/(sig_21 + np.mean(modelp, axis=0)),
+                              1e10)  # 1e10 for effective infinity
+        beta, betavec = power_method(hessb, model.shape, b0=betavec,
                                      tol=pmtol, maxit=pmmaxit,
                                      verbosity=pmverbose)
 
-        model, dual = primal_dual(hess, model, modelp, dual, sig_21,
+        model, dual = primal_dual(hessb, model, modelp, dual, sig_21,
                                   phi, weights_21, beta, prox_21m,
                                   tol=pdtol, maxit=pdmaxit, axis=0,
                                   positivity=positivity, report_freq=100,
@@ -150,7 +141,7 @@ def spotless(psf, model, residual, mask=None, beam=None, hessian=None,
 
         # update Dirac dictionary (remove zero components)
         phi.trim_fat(model)
-        residual, residual_mfs = resid_func(model, dirty, hessian, mask, beam)
+        residual, residual_mfs = resid_func(model, dirty, hessian, mask, beam, wsum)
 
         # check stopping criteria
         rmax = np.abs(mask(residual_mfs)).max()
@@ -158,11 +149,20 @@ def spotless(psf, model, residual, mask=None, beam=None, hessian=None,
         eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
 
         if rmax < threshold or eps < tol:
-            print("Success, convergence after %i iterations" %
-                  (i + 1), file=log)
+            print("Success, convergence after %i iterations, eps is %f" %
+                  ((i + 1), eps), file=log)
             break
         else:
             print("At iteration %i peak of residual is %f, rms is %f, current"
                   " eps is %f" % (i + 1, rmax, rms, eps), file=log)
+
+        if adapt_sig21:
+            mean_th = threshold_mean(residual_mfs)
+            sig_21 = np.minimum(rms, mean_th)
+
+            print("Threshold set to ", sig_21, rms, mean_th)
+
+
+            quit()
 
     return model, residual_mfs

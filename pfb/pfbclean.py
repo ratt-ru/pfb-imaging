@@ -40,7 +40,7 @@ def _main(dest=sys.stdout):
     from pfb.deconv.sara import sara
     from pfb.deconv.clean import clean
     from pfb.deconv.spotless import spotless
-    from pfb.opt import pcg
+    from pfb.opt.pcg import pcg
 
     if not isinstance(args.ms, list):
         args.ms = [args.ms]
@@ -343,10 +343,10 @@ def _main(dest=sys.stdout):
                 hbverbose=args.hbverbose)
         elif args.deconv_mode == 'spotless':
             model, residual_mfs_minor = spotless(
-                psf, model, residual, mask=mask_array, beam=beam_image,
-                hessian=R.convolve,
+                psf, model, residual, mask=mask_array, beam_image=beam_image,
+                hessian=R.convolve, wsum=wsum, adapt_sig21=args.adapt_sig21,
                 sig_21=args.sig_21, sigma_frac=args.sigma_frac,
-                nthreads=args.nthreads, tidy=args.tidy, gamma=args.gamma,
+                nthreads=args.nthreads, gamma=args.gamma, peak_factor=args.peak_factor,
                 maxit=args.minormaxit, tol=args.minortol,
                 threshold=args.threshold, positivity=args.positivity,
                 hbgamma=args.hbgamma, hbpf=args.hbpf, hbmaxit=args.hbmaxit,
@@ -412,17 +412,15 @@ def _main(dest=sys.stdout):
 
         def M(x): return x / 1e-6  # preconditioner
         x = pcg(
-            hess,
-            mask2(
-                beam(residual)),
-            np.zeros(
-                residual.shape,
-                dtype=residual.dtype),
-            M=M,
-            tol=args.cgtol,
-            maxit=args.cgmaxit,
-            minit=args.cgminit,
-            verbosity=args.cgverbose)
+                hess,
+                mask2(beam(residual)),
+                np.zeros(residual.shape,
+                    dtype=residual.dtype),
+                M=M,
+                tol=args.cgtol,
+                maxit=args.cgmaxit,
+                minit=args.cgminit,
+                verbosity=args.cgverbose)
 
         model += x
         # residual = dirty - R.convolve(beam(mask(model))) / wsum

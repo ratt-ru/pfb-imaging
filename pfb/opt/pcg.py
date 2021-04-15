@@ -56,8 +56,8 @@ def pcg(
         epsp = eps
         eps = np.maximum(epsx, epsn)
 
-        if np.abs(epsp - eps) < tol:
-            stall_count += 1
+        # if np.abs(epsp - eps) < tol:
+        #     stall_count += 1
 
         if not k % report_freq and verbosity > 1:
             print("At iteration %i rnorm = %f" % (k, eps), file=log)

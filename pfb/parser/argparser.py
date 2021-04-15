@@ -105,6 +105,8 @@ def create_parser():
                    help="Initial strength of l21 regulariser."
                    "Initialise to nband x expected rms in MFS dirty if "
                    "uncertain.")
+    p.add_argument('--adapt_sig21', type=str2bool, nargs='?', const=True,
+                   default=False, help="Adaptive sig21")
     p.add_argument("--sigma_frac", type=float, default=0.5,
                    help="Fraction of peak MFS residual to use in "
                    "preconditioner at each iteration.")
