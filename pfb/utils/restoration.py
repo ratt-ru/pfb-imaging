@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Tuple
-from pfb.utils import Gaussian2D, convolve2gaussres
+from pfb.utils.misc import Gaussian2D, convolve2gaussres
 
 
 def restore_image(model: np.ndarray,

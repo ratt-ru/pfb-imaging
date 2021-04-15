@@ -72,17 +72,17 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
 def compare_headers(hdr1, hdr2):
     '''
     utility function to ensure that WCS's are compatible
+    'NAXIS1', 'NAXIS2', 'NAXIS3', 'NAXIS4',
     '''
     keys = ['CTYPE1', 'CTYPE2', 'CTYPE3', 'CTYPE4',
-            'NAXIS1', 'NAXIS2', 'NAXIS3', 'NAXIS4',
             'CDELT1', 'CDELT2', 'CDELT3', 'CDELT4',
             'CRPIX1', 'CRPIX2', 'CRPIX3', 'CRPIX4',
             'CUNIT1', 'CUNIT2', 'CUNIT3']
-    for key in keys():
+    for key in keys:
         try:
             assert hdr1[key] == hdr2[key]
         except BaseException:
-            raise ValueError("Headers do not match on key %s" % key)
+            raise ValueError("Headers do not match on key %s. " % key, hdr1[key], hdr2[key])
 
 
 def add_beampars(hdr, GaussPar, GaussPars=None):

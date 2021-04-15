@@ -22,7 +22,7 @@ def _main(dest=sys.stdout):
         import multiprocessing
         args.nthreads = multiprocessing.cpu_count()
 
-    set_threads(args.nthreads)
+    set_threads(args.nthreads, args.nband)
 
     import numpy as np
     import numba
@@ -31,9 +31,10 @@ def _main(dest=sys.stdout):
     import dask.array as da
     from daskms import xds_from_ms, xds_from_table
     from astropy.io import fits
-    from pfb.utils.misc import (set_wcs, load_fits, save_fits,
-                                compare_headers, data_from_header,
-                                fitcleanbeam, Gaussian2D)
+    from pfb.utils.fits import (set_wcs, load_fits, save_fits,
+                                compare_headers, data_from_header)
+    from pfb.utils.restoration import fitcleanbeam
+    from pfb.utils.misc import Gaussian2D
     from pfb.operators.gridder import Gridder
     from pfb.operators.psf import PSF
     from pfb.deconv.sara import sara
@@ -132,6 +133,9 @@ def _main(dest=sys.stdout):
     freq_out = R.freq_out
     radec = R.radec
 
+    print("PSF size set to (%i, %i, %i)" % (args.nband, R.nx_psf, R.ny_psf),
+          file=dest)
+
     # get headers
     hdr = set_wcs(args.cell_size / 3600, args.cell_size / 3600,
                   args.nx, args.ny, radec, freq_out)
@@ -148,6 +152,7 @@ def _main(dest=sys.stdout):
             compare_headers(hdr_psf, fits.getheader(args.psf))
             psf = load_fits(args.psf, dtype=args.real_type).squeeze()
         except BaseException:
+            raise
             psf = R.make_psf()
             save_fits(args.outfile + '_psf.fits', psf, hdr_psf)
     else:
@@ -180,7 +185,7 @@ def _main(dest=sys.stdout):
     for v in range(args.nband):
         cpsf[v] = Gaussian2D(xx, yy, GaussPars[v], normalise=False)
 
-    from pfb.utils import add_beampars
+    from pfb.utils.fits import add_beampars
     GaussPar = list(GaussPar[0])
     GaussPar[0] *= args.cell_size / 3600
     GaussPar[1] *= args.cell_size / 3600
@@ -207,6 +212,7 @@ def _main(dest=sys.stdout):
             compare_headers(hdr, fits.getheader(args.dirty))
             dirty = load_fits(args.dirty).squeeze()
         except BaseException:
+            raise
             dirty = R.make_dirty()
             save_fits(args.outfile + '_dirty.fits', dirty, hdr)
     else:
@@ -338,6 +344,7 @@ def _main(dest=sys.stdout):
         elif args.deconv_mode == 'spotless':
             model, residual_mfs_minor = spotless(
                 psf, model, residual, mask=mask_array, beam=beam_image,
+                hessian=R.convolve,
                 sig_21=args.sig_21, sigma_frac=args.sigma_frac,
                 nthreads=args.nthreads, tidy=args.tidy, gamma=args.gamma,
                 maxit=args.minormaxit, tol=args.minortol,
@@ -364,8 +371,8 @@ def _main(dest=sys.stdout):
             dirty = R.make_dirty() / wsum
 
         # compute in image space
-        residual = dirty - R.convolve(beam(mask(model))) / wsum
-        # residual = R.make_residual(beam(mask(model)))/wsum
+        # residual = dirty - R.convolve(beam(mask(model))) / wsum
+        residual = R.make_residual(beam(mask(model)))/wsum
 
         residual_mfs = np.sum(residual, axis=0)
 

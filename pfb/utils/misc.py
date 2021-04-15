@@ -76,26 +76,30 @@ def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
                                 dtype=np.float64)
 
 
-def give_edges(p, q, nx, ny):
+def give_edges(p, q, nx, ny, nx_psf, ny_psf):
+    nx0 = nx_psf//2
+    ny0 = ny_psf//2
+
     # image overlap edges
     # left edge for x coordinate
-    dxl = p - nx // 2
+    dxl = p - nx0
     xl = np.maximum(dxl, 0)
+
     # right edge for x coordinate
-    dxu = p + nx // 2
+    dxu = p + nx0
     xu = np.minimum(dxu, nx)
     # left edge for y coordinate
-    dyl = q - ny // 2
+    dyl = q - ny0
     yl = np.maximum(dyl, 0)
     # right edge for y coordinate
-    dyu = q + ny // 2
+    dyu = q + ny0
     yu = np.minimum(dyu, ny)
 
     # PSF overlap edges
-    xlpsf = np.maximum(nx // 2 - p, 0)
-    xupsf = np.minimum(3 * nx // 2 - p, nx)
-    ylpsf = np.maximum(ny // 2 - q, 0)
-    yupsf = np.minimum(3 * ny // 2 - q, ny)
+    xlpsf = np.maximum(nx0 - p , 0)
+    xupsf = np.minimum(nx0 + nx - p, nx_psf)
+    ylpsf = np.maximum(ny0 - q, 0)
+    yupsf = np.minimum(ny0 + ny - q, ny_psf)
 
     return slice(xl, xu), slice(yl, yu), \
         slice(xlpsf, xupsf), slice(ylpsf, yupsf)

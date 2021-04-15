@@ -1,5 +1,6 @@
 import numpy as np
 import numexpr as ne
+from pfb.utils.misc import give_edges
 import pyscilog
 log = pyscilog.get_logger('HOGBOM')
 
@@ -28,15 +29,19 @@ def hogbom(
     tol = pf * IRmax
     k = 0
     stall_count = 0
+
+
+
     while IRmax > tol and k < maxit and stall_count < 5:
         xhat = IR[:, p, q] / wsums
         x[:, p, q] += gamma * xhat
+        Ix, Iy, Px, Py = give_edges(p, q, nx, ny, nx_psf, ny_psf)
         ne.evaluate('IR - gamma * xhat * psf', local_dict={
-                    'IR': IR,
+                    'IR': IR[:, Ix, Iy],
                     'gamma': gamma,
                     'xhat': xhat[:, None, None],
-                    'psf': PSF[:, nx0 - p:nx0 + nx - p, ny0 - q:ny0 + ny - q]},
-                    out=IR, casting='same_kind')
+                    'psf': PSF[:, Px, Py]},
+                    out=IR[:, Ix, Iy], casting='same_kind')
         IRsearch = np.sum(IR, axis=0)**2
         pq = IRsearch.argmax()
         p = pq//ny

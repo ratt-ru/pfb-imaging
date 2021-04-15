@@ -18,6 +18,7 @@ requirements = [
                 'pyscilog >= 0.1.2',
                 'Click',
                 'omegaconf',
+                'bokeh',
             ]
 
 

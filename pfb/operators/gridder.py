@@ -10,6 +10,7 @@ from africanus.gridding.wgridder.dask import dirty as vis2im
 from africanus.gridding.wgridder.dask import model as im2vis
 from africanus.gridding.wgridder.dask import residual as im2residim
 from africanus.gridding.wgridder.dask import hessian
+from africanus.gridding.wgridder.hessian import hessian as hessian_np
 import pyscilog
 log = pyscilog.get_logger('GRID')
 
@@ -50,7 +51,9 @@ class Gridder(object):
         self.chan_chunks = chan_chunks
         self.psf_oversize = psf_oversize
         self.nx_psf = int(self.psf_oversize * self.nx)
+        self.nx_psf += self.nx_psf%2
         self.ny_psf = int(self.psf_oversize * self.ny)
+        self.ny_psf += self.ny_psf%2
         self.real_type = real_type
 
         # construct the client
@@ -63,7 +66,9 @@ class Gridder(object):
         # first pass through data to determine freq_mapping
         self.radec = None
         self.freq = {}
+        self.freq_np = {}
         all_freqs = []
+        self.spws = {}
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
                               chunks={"row": -1},
@@ -85,6 +90,8 @@ class Gridder(object):
             pols = dask.compute(pols)[0]
 
             self.freq[ims] = {}
+            self.freq_np[ims] = {}
+            self.spws[ims] =[]
             for ds in xds:
                 field = fields[ds.FIELD_ID]
                 radec = field.PHASE_DIR.data.squeeze()
@@ -99,7 +106,9 @@ class Gridder(object):
                 spw = spws[ds.DATA_DESC_ID]
                 tmp_freq = spw.CHAN_FREQ.data.squeeze()
                 self.freq[ims][ds.DATA_DESC_ID] = tmp_freq
+                self.freq_np[ims][ds.DATA_DESC_ID] = dask.compute(tmp_freq)[0]
                 all_freqs.append(list([tmp_freq]))
+                self.spws[ims].append(ds.DATA_DESC_ID)
 
         # freq mapping
         all_freqs = dask.compute(all_freqs)
@@ -126,9 +135,13 @@ class Gridder(object):
         self.chunks = {}
         self.freq_bin_idx = {}
         self.freq_bin_counts = {}
+        self.freq_bin_idx_np = {}
+        self.freq_bin_counts_np = {}
         for ims in self.freq:
             self.freq_bin_idx[ims] = {}
             self.freq_bin_counts[ims] = {}
+            self.freq_bin_idx_np[ims] = {}
+            self.freq_bin_counts_np[ims] = {}
             self.band_mapping[ims] = {}
             self.chunks[ims] = []
             for spw in self.freq[ims]:
@@ -147,8 +160,9 @@ class Gridder(object):
                     freq, chunks=tuple(bin_counts))
                 bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
                 self.freq_bin_idx[ims][spw] = da.from_array(bin_idx, chunks=1)
-                self.freq_bin_counts[ims][spw] = da.from_array(
-                    bin_counts, chunks=1)
+                self.freq_bin_counts[ims][spw] = da.from_array(bin_counts, chunks=1)
+                self.freq_bin_idx_np[ims][spw] = bin_idx
+                self.freq_bin_counts_np[ims][spw] = bin_counts
 
         self.data_column = data_column
         self.weight_column = weight_column
@@ -192,10 +206,6 @@ class Gridder(object):
             self.columns += (self.imaging_weight_column,)
         else:
             self.imaging_weight_column = None
-
-        # # set up client
-        # cluster = LocalCluster()
-        # self.client = Client()
 
         # # set cache directory (next to first MS if None)
         # if cdir is None:
@@ -335,7 +345,7 @@ class Gridder(object):
                 out_data.append(out_ds)
             writes.append(xds_to_table(out_data, ims,
                                        columns=[self.imaging_weight_column]))
-        dask.compute(writes, scheduler='single-threaded')
+        dask.compute(writes)
 
     def make_residual(self, x):
         # Note deprecated (does not support Jones terms)
@@ -432,7 +442,7 @@ class Gridder(object):
 
                 residuals.append(residual)
 
-        residuals = dask.compute(residuals, scheduler='single-threaded')[0]
+        residuals = dask.compute(residuals)[0]
 
         return accumulate_dirty(residuals,
                                 self.nband,
@@ -540,7 +550,7 @@ class Gridder(object):
 
                 dirties.append(dirty)
 
-        dirties = dask.compute(dirties, scheduler='single-threaded')[0]
+        dirties = dask.compute(dirties)[0]
 
         return accumulate_dirty(dirties,
                                 self.nband,
@@ -549,6 +559,8 @@ class Gridder(object):
     def make_psf(self):
         print("Making PSF", file=log)
         psfs = []
+        self.stokes_weights = {}
+        self.uvws = {}
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
                               chunks=self.chunks[ims],
@@ -567,6 +579,8 @@ class Gridder(object):
             fields = dask.compute(fields)[0]
             spws = dask.compute(spws)[0]
             pols = dask.compute(pols)[0]
+            self.stokes_weights[ims] = {}
+            self.uvws[ims] = {}
 
             for ds in xds:
                 field = fields[ds.FIELD_ID]
@@ -595,7 +609,7 @@ class Gridder(object):
                         ds, self.imaging_weight_column).data
                     if len(imaging_weights.shape) < 3:
                         imaging_weights = da.broadcast_to(
-                            imaging_weights[:, None, :], data.shape, chunks=data.chunks)
+                            imaging_weights[:, None, :], flag.shape, chunks=flag.chunks)
 
                     weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
                     weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]
@@ -612,12 +626,15 @@ class Gridder(object):
 
                 # weighted sum corr to Stokes I
                 weights = weightsxx + weightsyy
-                data = weights.astype(np.complex64)
 
                 # only keep data where both corrs are unflagged
                 flagxx = flag[:, :, 0]
                 flagyy = flag[:, :, -1]
                 flag = ~ (flagxx | flagyy)  # ducc0 convention
+
+                weights *= flag
+
+                data = weights.astype(np.complex64)
 
                 psf = vis2im(
                     uvw,
@@ -636,6 +653,16 @@ class Gridder(object):
 
                 psfs.append(psf)
 
+                self.stokes_weights[ims][spw] = dask.persist(weights)[0]
+                self.uvws[ims][spw] = dask.persist(uvw)[0]
+
+                # for comparison with numpy implementation
+                # self.stokes_weights[ims][spw] = dask.compute(weights)[0]
+                # self.uvws[ims][spw] = dask.compute(uvw)[0]
+
+        # import pdb
+        # pdb.set_trace()
+
         psfs = dask.compute(psfs)[0]
 
         # LB - this assumes that the beam is normalised to 1 at the center
@@ -647,6 +674,7 @@ class Gridder(object):
         print("Applying Hessian", file=log)
         x = da.from_array(x.astype(self.real_type),
                           chunks=(1, self.nx, self.ny), name=False)
+
         convolvedims = []
         for ims in self.ms:
             xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
@@ -673,61 +701,18 @@ class Gridder(object):
                 if not np.array_equal(radec, self.radec):
                     continue
 
-                spw = ds.DATA_DESC_ID  # is this correct?
-
-                freq_bin_idx = self.freq_bin_idx[ims][spw]
-                freq_bin_counts = self.freq_bin_counts[ims][spw]
-                freq = self.freq[ims][spw]
-
-                uvw = ds.UVW.data
-
-                # only keep data where both corrs are unflagged
-                flag = getattr(ds, self.flag_column).data
-
-                weights = getattr(ds, self.weight_column).data
-                if len(weights.shape) < 3:
-                    weights = da.broadcast_to(
-                        weights[:, None, :], flag.shape, chunks=flag.chunks)
-
-                if self.imaging_weight_column is not None:
-                    imaging_weights = getattr(
-                        ds, self.imaging_weight_column).data
-                    if len(imaging_weights.shape) < 3:
-                        imaging_weights = da.broadcast_to(
-                            imaging_weights[:, None, :], flag.shape,
-                            chunks=flag.chunks)
-
-                    weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
-                    weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]
-                else:
-                    weightsxx = weights[:, :, 0]
-                    weightsyy = weights[:, :, -1]
-
-                # during "convolve" we need to scale the weights by the
-                # Mueller amplitudes squared
-                if self.mueller_column is not None:
-                    mueller = getattr(ds, self.mueller_column).data
-                    weightsxx *= da.absolute(mueller[:, :, 0])**2
-                    weightsyy *= da.absolute(mueller[:, :, -1])**2
-
-                # weighted sum corr to Stokes I
-                weights = weightsxx + weightsyy
-
-                flagxx = flag[:, :, 0]
-                flagyy = flag[:, :, -1]
-                flag = ~ (flagxx | flagyy)  # ducc0 convention
+                spw = ds.DATA_DESC_ID
 
                 bands = self.band_mapping[ims][spw]
                 model = x[list(bands), :, :]
                 convolvedim = hessian(
-                    uvw,
-                    freq,
+                    self.uvws[ims][spw],
+                    self.freq[ims][spw],
                     model,
-                    freq_bin_idx,
-                    freq_bin_counts,
+                    self.freq_bin_idx[ims][spw],
+                    self.freq_bin_counts[ims][spw],
                     self.cell,
-                    weights=weights,
-                    flag=flag.astype(np.uint8),
+                    weights=self.stokes_weights[ims][spw],
                     nthreads=self.nthreads,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking,
@@ -735,12 +720,42 @@ class Gridder(object):
 
                 convolvedims.append(convolvedim)
 
-        convolvedims = dask.compute(
-            convolvedims, scheduler='single-threaded')[0]
+        convolvedims = dask.compute(convolvedims, optimize_graph=False)[0]
 
         return accumulate_dirty(convolvedims,
                                 self.nband,
                                 self.band_mapping).astype(self.real_type)
+
+    # for comparison with dask implementation
+    def convolve_np(self, x):
+        print("Applying Hessian", file=log)
+
+        convolvedims = []
+        for ims in self.ms:
+            for spw in self.spws[ims]:
+                bands = self.band_mapping[ims][spw]
+                model = x[list(bands), :, :]
+                convolvedim = hessian_np(
+                                self.uvws[ims][spw],
+                                self.freq_np[ims][spw],
+                                model,
+                                self.freq_bin_idx_np[ims][spw],
+                                self.freq_bin_counts_np[ims][spw],
+                                self.cell,
+                                weights=self.stokes_weights[ims][spw],
+                                nthreads=self.nthreads,
+                                epsilon=self.epsilon,
+                                do_wstacking=self.do_wstacking,
+                                double_accum=False)
+
+                convolvedims.append(convolvedim)
+
+    #     convolvedims = dask.compute(convolvedims, optimize_graph=False)[0]
+
+    #     return accumulate_dirty(convolvedims,
+    #                             self.nband,
+    #                             self.band_mapping).astype(self.real_type)
+
 
     def write_model(self, x):
         print("Writing model data", file=log)
