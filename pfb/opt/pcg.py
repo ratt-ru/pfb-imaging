@@ -56,20 +56,18 @@ def pcg(
         epsp = eps
         eps = np.maximum(epsx, epsn)
 
-        # if np.abs(epsp - eps) < tol:
-        #     stall_count += 1
+        if np.abs(epsp - eps) < 0.1*tol:
+            stall_count += 1
 
         if not k % report_freq and verbosity > 1:
-            print("At iteration %i rnorm = %f" % (k, eps), file=log)
+            print("At iteration %i eps = %f" % (k, eps), file=log)
 
     if k >= maxit:
         if verbosity:
-            print("Max iters reached. Norm of residual = %f." %
-                  (rnorm / eps0), file=log)
+            print("Max iters reached. eps = %f." % eps, file=log)
     elif stall_count >= 5:
         if verbosity:
-            print("Stalled. Norm of residual = %f." % (rnorm / eps0),
-                  file=log)
+            print("Stalled. eps = %f." % eps, file=log)
     else:
         if verbosity:
             print("Success, converged after %i iters" % k, file=log)

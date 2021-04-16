@@ -5,7 +5,7 @@ Fs = np.fft.fftshift
 
 
 class PSF(object):
-    def __init__(self, psf, imsize, nthreads=1, backward_undersize=1.2):
+    def __init__(self, psf, imsize, nthreads=1, backward_undersize=None):
         self.nthreads = nthreads
         self.nband, nx_psf, ny_psf = psf.shape
         _, nx, ny = imsize
@@ -26,25 +26,33 @@ class PSF(object):
         # LB - failed experiment?
         # self.psfhatinv = 1/(self.psfhat + 1.0)
 
-        # set up for backward step
-        nx_psfb = good_size(int(backward_undersize * nx))
-        ny_psfb = good_size(int(backward_undersize * ny))
-        npad_xlb = (nx_psfb - nx)//2
-        npad_xrb = nx_psfb - nx - npad_xlb
-        npad_ylb = (ny_psfb - ny)//2
-        npad_yrb = ny_psfb - ny - npad_ylb
-        self.paddingb = ((0, 0), (npad_xlb, npad_xrb), (npad_ylb, npad_yrb))
-        self.unpad_xb = slice(npad_xlb, -npad_xrb)
-        self.unpad_yb = slice(npad_ylb, -npad_yrb)
-        self.lastsizeb = ny + np.sum(self.paddingb[-1])
 
-        xlb = (nx_psf - nx_psfb)//2
-        xrb = nx_psf - nx_psfb - xlb
-        ylb = (ny_psf - ny_psfb)//2
-        yrb = ny_psf - ny_psfb - ylb
-        psf_padb = iFs(psf[:, slice(xlb, -xrb), slice(ylb, -yrb)], axes=self.ax)
-        self.psfhatb = r2c(psf_padb, axes=self.ax, forward=True,
-                           nthreads=nthreads, inorm=0)
+        if backward_undersize is not None:
+            # set up for backward step
+            nx_psfb = good_size(int(backward_undersize * nx))
+            ny_psfb = good_size(int(backward_undersize * ny))
+            npad_xlb = (nx_psfb - nx)//2
+            npad_xrb = nx_psfb - nx - npad_xlb
+            npad_ylb = (ny_psfb - ny)//2
+            npad_yrb = ny_psfb - ny - npad_ylb
+            self.paddingb = ((0, 0), (npad_xlb, npad_xrb), (npad_ylb, npad_yrb))
+            self.unpad_xb = slice(npad_xlb, -npad_xrb)
+            self.unpad_yb = slice(npad_ylb, -npad_yrb)
+            self.lastsizeb = ny + np.sum(self.paddingb[-1])
+
+            xlb = (nx_psf - nx_psfb)//2
+            xrb = nx_psf - nx_psfb - xlb
+            ylb = (ny_psf - ny_psfb)//2
+            yrb = ny_psf - ny_psfb - ylb
+            psf_padb = iFs(psf[:, slice(xlb, -xrb), slice(ylb, -yrb)], axes=self.ax)
+            self.psfhatb = r2c(psf_padb, axes=self.ax, forward=True,
+                            nthreads=nthreads, inorm=0)
+        else:
+            self.paddingb = self.padding
+            self.unpad_xb = self.unpad_x
+            self.unpad_yb = self.unpad_y
+            self.lastsizeb = self.lastsize
+            self.psfhatb = self.psfhat
 
 
     def convolve(self, x):

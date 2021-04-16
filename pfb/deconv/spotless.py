@@ -1,4 +1,5 @@
 import numpy as np
+import scipy
 from pfb.operators.psf import PSF
 from pfb.operators.dirac import Dirac
 from pfb.opt.primal_dual import primal_dual
@@ -6,9 +7,28 @@ from pfb.opt.pcg import pcg
 from pfb.opt.power_method import power_method
 from pfb.opt.hogbom import hogbom
 from pfb.prox.prox_21m import prox_21m
+from pfb.utils.fits import save_fits
 from skimage.filters import threshold_mean
 import pyscilog
 log = pyscilog.get_logger('SPOTLESS')
+
+def make_noise_map(restored_image, boxsize):
+    # Modified version of Cyril's magic minimum filter
+    # Plundered from the depths of
+    # https://github.com/cyriltasse/DDFacet/blob/master/SkyModel/MakeMask.py
+    box = (boxsize, boxsize)
+    n = boxsize**2.0
+    x = np.linspace(-10, 10, 1000)
+    f = 0.5 * (1.0 + scipy.special.erf(x / np.sqrt(2.0)))
+    F = 1.0 - (1.0 - f)**n
+    ratio = np.abs(np.interp(0.5, F, x))
+    noise = -scipy.ndimage.filters.minimum_filter(restored_image, box) / ratio
+    negative_mask = noise < 0.0
+    noise[negative_mask] = 1.0e-10
+    median_noise = np.median(noise)
+    median_mask = noise < median_noise
+    noise[median_mask] = median_noise
+    return noise
 
 
 def resid_func(x, dirty, hessian, mask, beam, wsum):
@@ -22,7 +42,7 @@ def resid_func(x, dirty, hessian, mask, beam, wsum):
 
 
 def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
-             wsum=1, adapt_sig21=False,
+             wsum=1, adapt_sig21=False, cpsf=None, hdr=None, hdr_mfs=None, outfile=None,
              nthreads=1, sig_21=1e-3, sigma_frac=100, maxit=10, tol=1e-4,
              peak_factor=0.01, threshold=0.0, positivity=True, gamma=0.9999,
              hbgamma=0.1, hbpf=0.1, hbmaxit=5000, hbverbose=1,
@@ -76,11 +96,19 @@ def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
             raise ValueError("Mask has incorrect shape")
 
     # PSF operator
-    psfo = PSF(psf, residual.shape, nthreads=nthreads)
+    psfo = PSF(psf, residual.shape, nthreads=nthreads, backward_undersize=1.2)
 
     # set up point sources
     phi = Dirac(nband, nx, ny, mask=np.any(model, axis=0))
     dual = np.zeros((nband, nx, ny), dtype=np.float64)
+
+    # clean beam
+    if cpsf is not None:
+        try:
+            assert cpsf.shape == (1,) + psf.shape[1::]
+        except Exception as e:
+            cpsf = cpsf[None, :, :]
+        cpsfo = PSF(cpsf, residual.shape, nthreads=nthreads)
 
     residual_mfs = np.sum(residual, axis=0)
     rmax = np.abs(residual_mfs).max()
@@ -109,6 +137,7 @@ def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
 
     # deconvolve
     threshold = np.maximum(peak_factor * rmax, threshold)
+    alpha = sig_21
     for i in range(0, maxit):
         # find point source candidates
         modelu = hogbom(mask(residual), psf, gamma=hbgamma,
@@ -127,7 +156,7 @@ def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
         model += gamma * x
 
         weights_21 = np.where(phi.mask,
-                              sig_21/(sig_21 + np.mean(modelp, axis=0)),
+                              alpha/(alpha + np.mean(modelp, axis=0)),
                               1e10)  # 1e10 for effective infinity
         beta, betavec = power_method(hessb, model.shape, b0=betavec,
                                      tol=pmtol, maxit=pmmaxit,
@@ -143,6 +172,8 @@ def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
         phi.trim_fat(model)
         residual, residual_mfs = resid_func(model, dirty, hessian, mask, beam, wsum)
 
+        model_mfs = np.mean(model, axis=0)
+
         # check stopping criteria
         rmax = np.abs(mask(residual_mfs)).max()
         rms = np.std(mask(residual_mfs))
@@ -157,12 +188,28 @@ def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
                   " eps is %f" % (i + 1, rmax, rms, eps), file=log)
 
         if adapt_sig21:
-            mean_th = threshold_mean(residual_mfs)
-            sig_21 = np.minimum(rms, mean_th)
+            # sig_21 should be set to the std of the image noise
+            alpha = np.std(residual_mfs)
+            sig_21 = alpha
+            print("alpha set to %f"%(alpha), file=log)
 
-            print("Threshold set to ", sig_21, rms, mean_th)
+        # save current iteration
+        if outfile is not None:
+            assert hdr is not None
+            assert hdr_mfs is not None
+
+            save_fits(outfile + str(i + 1) + '_model_mfs.fits',
+                      model_mfs, hdr_mfs)
+
+            save_fits(outfile + str(i + 1) + '_model.fits',
+                      model, hdr)
+
+            save_fits(outfile + str(i + 1) + '_residual_mfs.fits',
+                      residual_mfs, hdr_mfs)
+
+            save_fits(outfile + str(i + 1) + '_residual.fits',
+                      residual*wsum, hdr)
 
 
-            quit()
 
     return model, residual_mfs

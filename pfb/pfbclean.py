@@ -96,12 +96,13 @@ def _main(dest=sys.stdout):
         print("Cell size set to %5.5e arcseconds" % args.cell_size, file=dest)
 
     if args.nx is None or args.ny is None:
+        from ducc0.fft import good_size
         fov = args.fov * 3600
         npix = int(fov / args.cell_size)
         if npix % 2:
             npix += 1
-        args.nx = npix
-        args.ny = npix
+        args.nx = good_size(npix)
+        args.ny = good_size(npix)
 
     if args.nband is None:
         args.nband = freq.size
@@ -344,7 +345,8 @@ def _main(dest=sys.stdout):
         elif args.deconv_mode == 'spotless':
             model, residual_mfs_minor = spotless(
                 psf, model, residual, mask=mask_array, beam_image=beam_image,
-                hessian=R.convolve, wsum=wsum, adapt_sig21=args.adapt_sig21,
+                hessian=R.convolve, wsum=wsum, adapt_sig21=args.adapt_sig21, cpsf=cpsf_mfs,
+                hdr=hdr, hdr_mfs=hdr_mfs, outfile=args.outfile,
                 sig_21=args.sig_21, sigma_frac=args.sigma_frac,
                 nthreads=args.nthreads, gamma=args.gamma, peak_factor=args.peak_factor,
                 maxit=args.minormaxit, tol=args.minortol,
@@ -379,14 +381,17 @@ def _main(dest=sys.stdout):
         if i in report_iters:
             # save current iteration
             model_mfs = np.mean(model, axis=0)
-            save_fits(args.outfile + str(i + 1) + '_model_mfs.fits',
+            save_fits(args.outfile + '_major' + str(i + 1) + '_model_mfs.fits',
                       model_mfs, hdr_mfs)
 
-            save_fits(args.outfile + str(i + 1) + '_residual_mfs.fits',
+            save_fits(args.outfile + '_major' + str(i + 1) + '_model.fits',
+                      model, hdr)
+
+            save_fits(args.outfile + '_major' + str(i + 1) + '_residual_mfs.fits',
                       residual_mfs, hdr_mfs)
 
-            save_fits(args.outfile + str(i + 1) + '_residual_mfs_minor.fits',
-                      residual_mfs_minor, hdr_mfs)
+            save_fits(args.outfile + '_major' + str(i + 1) + '_residual.fits',
+                      residual*wsum, hdr)
 
         # check stopping criteria
         rmax = np.abs(residual_mfs).max()
@@ -401,21 +406,17 @@ def _main(dest=sys.stdout):
 
     if args.mop_flux:
         print("Mopping flux", file=dest)
-        # extacts flux where model is non-zero
-        mask_array2 = np.any(model, axis=0)[None]
-        def mask2(x): return mask_array2 * x
-        psfo = PSF(psf, nthreads=args.nthreads, imsize=residual.shape)
+        psfo = PSF(psf, residual.shape, nthreads=args.nthreads)
 
         # vague Gaussian prior on x
         def hess(x):
-            return mask2(beam(psfo.convolve(mask2(beam(x))))) + 1e-6 * x
+            return mask(beam(psfo.convolve(mask(beam(x))))) + 1e-6 * x
 
         def M(x): return x / 1e-6  # preconditioner
         x = pcg(
                 hess,
-                mask2(beam(residual)),
-                np.zeros(residual.shape,
-                    dtype=residual.dtype),
+                mask(beam(residual)),
+                np.zeros(residual.shape, dtype=residual.dtype),
                 M=M,
                 tol=args.cgtol,
                 maxit=args.cgmaxit,
@@ -440,17 +441,13 @@ def _main(dest=sys.stdout):
         print("After mopping flux peak of residual is %f, rms is %f" %
               (rmax, rms), file=dest)
 
-    # save model cube and last residual cube
-    save_fits(args.outfile + '_model.fits', model, hdr)
-    save_fits(args.outfile + '_last_residual.fits', residual * wsum, hdr)
-
     if args.write_model:
         print("Writing model", file=dest)
         R.write_model(model)
 
     if args.make_restored:
         print("Making restored", file=dest)
-        cpsfo = PSF(cpsf, nthreads=args.nthreads, imsize=residual.shape)
+        cpsfo = PSF(cpsf, residual.shape, nthreads=args.nthreads)
         restored = cpsfo.convolve(model)
 
         # residual needs to be in Jy/beam before adding to convolved model
@@ -461,5 +458,3 @@ def _main(dest=sys.stdout):
         restored_mfs = np.mean(restored, axis=0)
         save_fits(args.outfile + '_restored_mfs.fits', restored_mfs, hdr_mfs)
         residual_mfs = np.sum(residual, axis=0)
-        save_fits(args.outfile + '_mopped_residual_mfs.fits', residual_mfs,
-                  hdr_mfs)

@@ -32,13 +32,13 @@ def hogbom(
     while IRmax > tol and k < maxit and stall_count < 5:
         xhat = IR[:, p, q] / wsums
         x[:, p, q] += gamma * xhat
-        Ix, Iy, Px, Py = give_edges(p, q, nx, ny, nx_psf, ny_psf)
         ne.evaluate('IR - gamma * xhat * psf', local_dict={
-                    'IR': IR[:, Ix, Iy],
+                    'IR': IR,
                     'gamma': gamma,
                     'xhat': xhat[:, None, None],
-                    'psf': PSF[:, Px, Py]},
-                    out=IR[:, Ix, Iy], casting='same_kind')
+                    'psf': PSF[:, nx0 - p:nx0 + nx - p,
+                                  ny0 - q:ny0 + ny - q]},
+                    out=IR, casting='same_kind')
         IRsearch = np.sum(IR, axis=0)**2
         pq = IRsearch.argmax()
         p = pq//ny
@@ -47,7 +47,7 @@ def hogbom(
         IRmax = np.sqrt(IRsearch[p, q])
         k += 1
 
-        if np.abs(IRmaxp - IRmax) / np.abs(IRmaxp) < 1e-3:
+        if np.abs(IRmaxp - IRmax) / np.abs(IRmaxp) < 5e-3:
             stall_count += stall_count
 
         if not k % report_freq and verbosity > 1:
