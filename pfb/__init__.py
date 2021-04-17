@@ -16,7 +16,7 @@ __version__ = '0.0.1'
 import os
 
 
-def set_threads(nthreads: int, nbands: int):
+def set_threads(nthreads: int, nbands: int, mem_limit: int):
     os.environ["OMP_NUM_THREADS"] = str(nthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(nthreads)
     os.environ["MKL_NUM_THREADS"] = str(nthreads)
@@ -26,5 +26,7 @@ def set_threads(nthreads: int, nbands: int):
     os.environ["NUMEXPR_NUM_THREADS"] = str(nthreads)
     # set up client
     from dask.distributed import Client, LocalCluster
-    cluster = LocalCluster(processes=False, n_workers=nbands, threads_per_worker=nthreads//nbands)
+    cluster = LocalCluster(processes=False, n_workers=nbands,
+                           threads_per_worker=nthreads//nbands,
+                           memory_limit=str(mem_limit)+'GB')
     client = Client(cluster)

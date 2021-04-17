@@ -81,6 +81,8 @@ def create_parser():
     p.add_argument("--epsilon", type=float, default=1e-5,
                    help="Accuracy of the gridder")
     p.add_argument("--nthreads", type=int, default=0)
+    p.add_argument('--mem_limit', type=int, default=0,
+                   help='Memory limit (experimental)')
     p.add_argument("--gamma", type=float, default=1.0,
                    help="Step size of 'primal' update.")
     p.add_argument("--peak_factor", type=float, default=0.025,

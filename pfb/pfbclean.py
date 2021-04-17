@@ -22,7 +22,11 @@ def _main(dest=sys.stdout):
         import multiprocessing
         args.nthreads = multiprocessing.cpu_count()
 
-    set_threads(args.nthreads, args.nband)
+    if not args.mem_limit:
+        import psutil
+        args.mem_limit = int(psutil.virtual_memory()[0]/2e9)  # 50% of memory by default
+
+    set_threads(args.nthreads, args.nband, args.mem_limit)
 
     import numpy as np
     import numba
@@ -440,6 +444,40 @@ def _main(dest=sys.stdout):
 
         print("After mopping flux peak of residual is %f, rms is %f" %
               (rmax, rms), file=dest)
+
+    # if args.interp_model:
+    #     nband = args.nband
+    #     order = args.spectral_poly_order
+    #     phi.trim_fat(model)
+    #     I = np.argwhere(phi.mask).squeeze()
+    #     Ix = I[:, 0]
+    #     Iy = I[:, 1]
+    #     npix = I.shape[0]
+
+    #     # get components
+    #     beta = model[:, Ix, Iy]
+
+    #     # fit integrated polynomial to model components
+    #     # we are given frequencies at bin centers, convert to bin edges
+    #     ref_freq = np.mean(freq_out)
+    #     delta_freq = freq_out[1] - freq_out[0]
+    #     wlow = (freq_out - delta_freq/2.0)/ref_freq
+    #     whigh = (freq_out + delta_freq/2.0)/ref_freq
+    #     wdiff = whigh - wlow
+
+    #     # set design matrix for each component
+    #     Xdesign = np.zeros([freq_out.size, args.spectral_poly_order])
+    #     for i in range(1, args.spectral_poly_order+1):
+    #         Xdesign[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+
+    #     weights = psf_max[:, None]
+    #     dirty_comps = Xdesign.T.dot(weights*beta)
+
+    #     hess_comps = Xdesign.T.dot(weights*Xdesign)
+
+    #     comps = np.linalg.solve(hess_comps, dirty_comps)
+
+    #     np.savez(args.outfile + "spectral_comps", comps=comps, ref_freq=ref_freq, mask=np.any(model, axis=0))
 
     if args.write_model:
         print("Writing model", file=dest)

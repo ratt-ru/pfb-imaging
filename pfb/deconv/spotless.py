@@ -156,7 +156,7 @@ def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
         model += gamma * x
 
         weights_21 = np.where(phi.mask,
-                              alpha/(alpha + np.mean(modelp, axis=0)),
+                              alpha/(alpha + np.abs(np.mean(modelp, axis=0))),
                               1e10)  # 1e10 for effective infinity
         beta, betavec = power_method(hessb, model.shape, b0=betavec,
                                      tol=pmtol, maxit=pmmaxit,
@@ -189,7 +189,20 @@ def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
 
         if adapt_sig21:
             # sig_21 should be set to the std of the image noise
-            alpha = np.std(residual_mfs)
+            from scipy.stats import skew, kurtosis
+            alpha = rms
+            tmp = residual_mfs
+            z = tmp/alpha
+            k = 0
+            while (np.abs(skew(z.ravel(), nan_policy='omit')) > 0.05 or
+                   np.abs(kurtosis(z.ravel(), fisher=True, nan_policy='omit')) > 0.5) and k < 10:
+                # eliminate outliers
+                tmp = np.where(np.abs(z) < 3, residual_mfs, np.nan)
+                alpha = np.nanstd(tmp)
+                z = tmp/alpha
+                print(alpha, skew(z.ravel(), nan_policy='omit'), kurtosis(z.ravel(), fisher=True, nan_policy='omit'))
+                k += 1
+
             sig_21 = alpha
             print("alpha set to %f"%(alpha), file=log)
 
