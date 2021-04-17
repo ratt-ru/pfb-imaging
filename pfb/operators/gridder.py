@@ -442,7 +442,7 @@ class Gridder(object):
 
                 residuals.append(residual)
 
-        residuals = dask.compute(residuals)[0]
+        residuals = dask.compute(residuals, scheduler='single-threaded')[0]
 
         return accumulate_dirty(residuals,
                                 self.nband,
@@ -550,7 +550,7 @@ class Gridder(object):
 
                 dirties.append(dirty)
 
-        dirties = dask.compute(dirties)[0]
+        dirties = dask.compute(dirties, scheduler='single-threaded')[0]
 
         return accumulate_dirty(dirties,
                                 self.nband,
