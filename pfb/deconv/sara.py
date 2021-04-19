@@ -86,7 +86,7 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
         return mask(beam(hessian(mask(beam(x)))))/wsum + x / (sigma_frac*rmax)
 
     def hessb(x):
-        return mask(beam(psf.convolve(mask(beam(x))))) + x / (sigma_frac*rmax)
+        return mask(beam(psfo.convolve(mask(beam(x))))) + x / (sigma_frac*rmax)
 
     beta, betavec = power_method(hessb, residual.shape, tol=pmtol,
                                  maxit=pmmaxit, verbosity=pmverbose)
