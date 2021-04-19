@@ -102,7 +102,7 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
 
     # deconvolve
     if alpha is None:
-        alpha = 0.0004
+        alpha = 0.00005
     for i in range(0, maxit):
         x = pcg(hessf,
                 mask(beam(residual)),
