@@ -5,28 +5,26 @@ from pfb.opt.primal_dual import primal_dual
 from pfb.operators.psi import DaskPSI
 from pfb.operators.psf import PSF
 from pfb.prox.prox_21 import prox_21
+from pfb.utils.fits import save_fits
 import pyscilog
 log = pyscilog.get_logger('SARA')
 
 
-def resid_func(x, dirty, psfo, mask, beam):
+def resid_func(x, dirty, hessian, mask, beam, wsum):
     """
-    Returns the unattenuated but masked residual_mfs useful for peak finding
-    and the masked residual cube attenuated by the beam pattern which is the
-    data source in the pcg forward step. Masked regions are set to zero.
+    Returns the unattenuated residual
     """
-    residual = dirty - psfo.convolve(mask(beam(x)))
+    residual = dirty - hessian(mask(beam(x)))/wsum
     residual_mfs = np.sum(residual, axis=0)
-    residual = mask(beam(residual))
-    return residual, mask(residual_mfs)
+    residual = residual
+    return residual, residual_mfs
 
 
-def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5, mask=None,
-         beam=None, dual=None, weights21=None, nthreads=1, maxit=10,
-         gamma=0.99, tol=1e-3, psi_levels=3, psi_basis=None,
-         reweight_iters=None, reweight_alpha_ff=0.5,
-         reweight_alpha_percent=10,
-         pdtol=1e-6, pdmaxit=250, pdverbose=1, positivity=True, tidy=True,
+def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
+         wsum=1, adapt_sig21=False, hdr=None, hdr_mfs=None, outfile=None,
+         nthreads=1, sig_21=1e-6, sigma_frac=100, maxit=10, tol=1e-3,
+         gamma=0.99,  psi_levels=2, psi_basis=None, alpha=None,
+         pdtol=1e-6, pdmaxit=250, pdverbose=1, positivity=True,
          cgtol=1e-6, cgminit=25, cgmaxit=150, cgverbose=1,
          pmtol=1e-5, pmmaxit=50, pmverbose=1):
 
@@ -35,14 +33,16 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5, mask=None,
 
     nband, nx, ny = residual.shape
 
-    if beam is None:
+    if beam_image is None:
         def beam(x): return x
+        def beaminv(x): return x
     else:
         try:
             assert beam.shape == (nband, nx, ny)
-            def beam(x): return beam * x
-        except Exception as e:
-            raise e
+            def beam(x): return beam_image * x
+            def beaminv(x): return np.where(beam_image > 0.01,  x / beam_image, x)
+        except BaseException:
+            raise ValueError("Beam has incorrect shape")
 
     if mask is None:
         def mask(x): return x
@@ -55,16 +55,13 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5, mask=None,
                 assert mask.shape == (1, nx, ny)
                 def mask(x): return mask * x
             else:
-                raise BaseException
+                raise ValueError
         except BaseException:
             raise ValueError("Mask has incorrect shape")
 
     # PSF operator
-    psfo = PSF(psf, nthreads=nthreads, imsize=residual.shape)
-    if model.any():
-        dirty = residual + psfo.convolve(mask(beam(model)))
-    else:
-        dirty = residual
+    psfo = PSF(psf, residual.shape, nthreads=nthreads)  #, backward_undersize=1.2)
+
     residual_mfs = np.sum(residual, axis=0)
     residual = mask(beam(residual))
     rmax = np.abs(residual_mfs).max()
@@ -81,59 +78,59 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5, mask=None,
                       nthreads=nthreads, bases=psi_basis)
 
     # l21 weights and dual
-    if weights21 is None:
-        print("Initialising all l21 weights to unity.", file=log)
-        weights21 = np.ones((psi.nbasis, psi.nmax), dtype=residual.dtype)
-    if dual is None:
-        dual = np.zeros((psi.nbasis, nband, psi.nmax), dtype=residual.dtype)
-
-    # l21 reweighting
-    if reweight_iters is not None:
-        reweight_iters = list(reweight_iters)
-    else:
-        reweight_iters = []
+    weights21 = np.ones((psi.nbasis, psi.nmax), dtype=residual.dtype)
+    dual = np.zeros((psi.nbasis, nband, psi.nmax), dtype=residual.dtype)
 
     #  preconditioning operator
-    def hess(x):
-        return psfo.convolve(x) + x / (sigma_frac*rmax)
+    def hessf(x):
+        return mask(beam(hessian(mask(beam(x)))))/wsum + x / (sigma_frac*rmax)
 
-    if tidy:
-        # spectral norm
-        posthess = hess
-        beta, betavec = power_method(hess, residual.shape, tol=pmtol,
-                                     maxit=pmmaxit, verbosity=pmverbose)
+    def hessb(x):
+        return mask(beam(psf.convolve(mask(beam(x))))) + x / (sigma_frac*rmax)
+
+    beta, betavec = power_method(hessb, residual.shape, tol=pmtol,
+                                 maxit=pmmaxit, verbosity=pmverbose)
+
+    if hessian is None:
+        hessian = psf.convolve
+        wsum = 1.0
+
+    if model.any():
+        dirty = residual + hessian(mask(beam(model)))/wsum
     else:
-        def posthess(x): return x
-        beta = 1.0
-        betavec = 1.0
+        dirty = residual
 
     # deconvolve
+    if alpha is None:
+        alpha = 0.0004
     for i in range(0, maxit):
-        def M(x): return x * (sigma_frac*rmax)  # preconditioner
-        x = pcg(hess, residual, np.zeros_like(residual), M=M, tol=cgtol,
-                maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
+        x = pcg(hessf,
+                mask(beam(residual)),
+                np.zeros_like(residual),
+                M=lambda x: x * (sigma_frac * rmax),
+                tol=cgtol, maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
 
         # update model
         modelp = model
         model = modelp + gamma * x
-        model, dual = primal_dual(posthess, model, modelp, dual, sig_21, psi,
-                                  weights21, beta, prox_21, tol=pdtol,
-                                  maxit=pdmaxit, report_freq=25, mask=mask,
-                                  verbosity=pdverbose, positivity=positivity)
 
         # reweighting
-        if i in reweight_iters:
-            l2_norm = np.linalg.norm(dual, axis=1)
-            for m in range(psi.nbasis):
-                indnz = l2_norm[m].nonzero()
-                alpha = np.percentile(
-                    l2_norm[m, indnz].flatten(), reweight_alpha_percent)
-                alpha = np.maximum(alpha, 1e-8)  # hardcode minimum
-                weights21[m] = alpha/(l2_norm[m] + alpha)
-            reweight_alpha_percent *= reweight_alpha_ff
+        l2_norm = np.linalg.norm(psi.hdot(model), axis=1)
+        for m in range(psi.nbasis):
+            weights21[m] *= alpha/(alpha + l2_norm[m])
+
+        model, dual = primal_dual(hessb, model, modelp, dual, sig_21, psi,
+                                  weights21, beta, prox_21, tol=pdtol,
+                                  maxit=pdmaxit, report_freq=50, mask=mask,
+                                  verbosity=pdverbose, positivity=positivity)
+
+        # reset weights
+        for m in range(psi.nbasis):
+            weights21[m] = np.where(np.any(dual[m], axis=0), weights21[m], 1.0)
 
         # get residual
-        residual, residual_mfs = resid_func(model, dirty, psfo, mask, beam)
+        residual, residual_mfs = resid_func(model, dirty, hessian, mask, beam, wsum)
+        model_mfs = np.mean(model, axis=0)
 
         # check stopping criteria
         rmax = np.abs(residual_mfs).max()
@@ -141,15 +138,56 @@ def sara(psf, model, residual, sig_21=1e-6, sigma_frac=0.5, mask=None,
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
         print("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
-            i+1, rmax, rms, eps), file=log)
+              i+1, rmax, rms, eps), file=log)
+
+        # rmax can change so we need to redo spectral norm
+        beta, betavec = power_method(hessb, residual.shape, b0=betavec,
+                                     tol=pmtol, maxit=pmmaxit,
+                                     verbosity=pmverbose)
+
+        # save current iteration
+        if outfile is not None:
+            assert hdr is not None
+            assert hdr_mfs is not None
+
+            save_fits(outfile + str(i + 1) + '_model_mfs.fits',
+                      model_mfs, hdr_mfs)
+
+            save_fits(outfile + str(i + 1) + '_model.fits',
+                      model, hdr)
+
+            save_fits(outfile + str(i + 1) + '_update.fits',
+                      x, hdr)
+
+            save_fits(outfile + str(i + 1) + '_residual_mfs.fits',
+                      residual_mfs, hdr_mfs)
+
+            save_fits(outfile + str(i + 1) + '_residual.fits',
+                      residual*wsum, hdr)
+
 
         if eps < tol:
             print("Success, convergence after %i iterations" % (i+1),
                   file=log)
             break
 
-        if tidy and i < maxit-1:
-            beta, betavec = power_method(
-                hess, residual.shape, b0=betavec, tol=pmtol, maxit=pmmaxit)
+        if adapt_sig21:
+            # sig_21 should be set to the std of the image noise
+            from scipy.stats import skew, kurtosis
+            alpha = rms
+            tmp = residual_mfs
+            z = tmp/alpha
+            k = 0
+            while (np.abs(skew(z.ravel(), nan_policy='omit')) > 0.05 or
+                   np.abs(kurtosis(z.ravel(), fisher=True, nan_policy='omit')) > 0.5) and k < 10:
+                # eliminate outliers
+                tmp = np.where(np.abs(z) < 3, residual_mfs, np.nan)
+                alpha = np.nanstd(tmp)
+                z = tmp/alpha
+                print(alpha, skew(z.ravel(), nan_policy='omit'), kurtosis(z.ravel(), fisher=True, nan_policy='omit'))
+                k += 1
 
-    return model, dual, residual_mfs, weights21
+            sig_21 = alpha
+            print("alpha set to %f"%(alpha), file=log)
+
+    return model

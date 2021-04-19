@@ -671,7 +671,7 @@ class Gridder(object):
                                 self.band_mapping).astype(self.real_type)
 
     def convolve(self, x):
-        print("Applying Hessian", file=log)
+        # print("Applying Hessian", file=log)
         x = da.from_array(x.astype(self.real_type),
                           chunks=(1, self.nx, self.ny), name=False)
 

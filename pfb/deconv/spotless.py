@@ -165,7 +165,7 @@ def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
         model, dual = primal_dual(hessb, model, modelp, dual, sig_21,
                                   phi, weights_21, beta, prox_21m,
                                   tol=pdtol, maxit=pdmaxit, axis=0,
-                                  positivity=positivity, report_freq=100,
+                                  positivity=positivity, report_freq=50,
                                   verbosity=pdverbose)
 
         # update Dirac dictionary (remove zero components)
@@ -179,13 +179,35 @@ def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
         rms = np.std(mask(residual_mfs))
         eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
 
+
+        print("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
+                i+1, rmax, rms, eps), file=log)
+
+
+        # save current iteration
+        if outfile is not None:
+            assert hdr is not None
+            assert hdr_mfs is not None
+
+            save_fits(outfile + str(i + 1) + '_model_mfs.fits',
+                      model_mfs, hdr_mfs)
+
+            save_fits(outfile + str(i + 1) + '_model.fits',
+                      model, hdr)
+
+            save_fits(outfile + str(i + 1) + '_update.fits',
+                      x, hdr)
+
+            save_fits(outfile + str(i + 1) + '_residual_mfs.fits',
+                      residual_mfs, hdr_mfs)
+
+            save_fits(outfile + str(i + 1) + '_residual.fits',
+                      residual*wsum, hdr)
+
+
         if rmax < threshold or eps < tol:
-            print("Success, convergence after %i iterations, eps is %f" %
-                  ((i + 1), eps), file=log)
+            print("Success, convergence after %i iterations", file=log)
             break
-        else:
-            print("At iteration %i peak of residual is %f, rms is %f, current"
-                  " eps is %f" % (i + 1, rmax, rms, eps), file=log)
 
         if adapt_sig21:
             # sig_21 should be set to the std of the image noise
@@ -206,23 +228,8 @@ def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
             sig_21 = alpha
             print("alpha set to %f"%(alpha), file=log)
 
-        # save current iteration
-        if outfile is not None:
-            assert hdr is not None
-            assert hdr_mfs is not None
-
-            save_fits(outfile + str(i + 1) + '_model_mfs.fits',
-                      model_mfs, hdr_mfs)
-
-            save_fits(outfile + str(i + 1) + '_model.fits',
-                      model, hdr)
-
-            save_fits(outfile + str(i + 1) + '_residual_mfs.fits',
-                      residual_mfs, hdr_mfs)
-
-            save_fits(outfile + str(i + 1) + '_residual.fits',
-                      residual*wsum, hdr)
 
 
 
-    return model, residual_mfs
+
+    return model

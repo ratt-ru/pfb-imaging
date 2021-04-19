@@ -76,4 +76,4 @@ def clean(psf, model, residual, mask=None, beam=None,
             print("At iteration %i peak of residual is %f, rms is %f" %
                   (i + 1, rmax, rms), file=log)
 
-    return model, residual_mfs
+    return model

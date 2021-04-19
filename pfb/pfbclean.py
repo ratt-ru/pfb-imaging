@@ -289,15 +289,6 @@ def _main(dest=sys.stdout):
         beam_image = None
         def beam(x): return x
 
-    # Reweighting
-    if args.reweight_iters is not None:
-        if not isinstance(args.reweight_iters, list):
-            reweight_iters = [args.reweight_iters]
-        else:
-            reweight_iters = list(args.reweight_iters)
-    else:
-        reweight_iters = np.arange(5, args.minormaxit, dtype=np.int)
-
     # Reporting
     report_iters = list(np.arange(0, args.maxit, args.report_freq))
     if report_iters[-1] != args.maxit - 1:
@@ -313,33 +304,22 @@ def _main(dest=sys.stdout):
         # run minor cycle of choice
         modelp = model.copy()
         if args.deconv_mode == 'sara':
-            # we want to reuse these in subsequent iterations
-            if i == 0:
-                dual = None
-                weights21 = None
-
-            model, dual, residual_mfs_minor, weights21 = sara(
-                psf, model, residual, sig_21=args.sig_21,
-                sigma_frac=args.sigma_frac, mask=mask_array, beam=beam_image,
-                dual=dual, weights21=weights21, nthreads=args.nthreads,
-                maxit=args.minormaxit, gamma=args.gamma, tol=args.minortol,
+            model = sara(
+                psf, model, residual, mask=mask_array, beam_image=beam_image,
+                hessian=R.convolve, wsum=wsum, adapt_sig21=args.adapt_sig21,
+                hdr=hdr, hdr_mfs=hdr_mfs, outfile=args.outfile,
+                nthreads=args.nthreads, sig_21=args.sig_21, sigma_frac=args.sigma_frac,
+                maxit=args.minormaxit, tol=args.minortol, gamma=args.gamma,
                 psi_levels=args.psi_levels, psi_basis=args.psi_basis,
-                reweight_iters=reweight_iters,
-                reweight_alpha_ff=args.reweight_alpha_ff,
-                reweight_alpha_percent=args.reweight_alpha_percent,
                 pdtol=args.pdtol, pdmaxit=args.pdmaxit,
                 pdverbose=args.pdverbose, positivity=args.positivity,
-                tidy=args.tidy, cgtol=args.cgtol, cgminit=args.cgminit,
+                cgtol=args.cgtol, cgminit=args.cgminit,
                 cgmaxit=args.cgmaxit, cgverbose=args.cgverbose,
                 pmtol=args.pmtol, pmmaxit=args.pmmaxit,
                 pmverbose=args.pmverbose)
 
-            # by default do l21 reweighting every iteration from
-            # the second major cycle onwards
-            if args.reweight_iters is None:
-                reweight_iters = np.arange(args.minormaxit, dtype=np.int)
         elif args.deconv_mode == 'clean':
-            model, residual_mfs_minor = clean(
+            model = clean(
                 psf, model, residual, mask=mask_array, beam=beam_image,
                 nthreads=args.nthreads, maxit=args.minormaxit,
                 gamma=args.gamma, peak_factor=args.peak_factor,
@@ -347,7 +327,7 @@ def _main(dest=sys.stdout):
                 hbpf=args.hbpf, hbmaxit=args.hbmaxit,
                 hbverbose=args.hbverbose)
         elif args.deconv_mode == 'spotless':
-            model, residual_mfs_minor = spotless(
+            model = spotless(
                 psf, model, residual, mask=mask_array, beam_image=beam_image,
                 hessian=R.convolve, wsum=wsum, adapt_sig21=args.adapt_sig21, cpsf=cpsf_mfs,
                 hdr=hdr, hdr_mfs=hdr_mfs, outfile=args.outfile,
@@ -410,11 +390,10 @@ def _main(dest=sys.stdout):
 
     if args.mop_flux:
         print("Mopping flux", file=dest)
-        psfo = PSF(psf, residual.shape, nthreads=args.nthreads)
 
         # vague Gaussian prior on x
         def hess(x):
-            return mask(beam(psfo.convolve(mask(beam(x))))) + 1e-6 * x
+            return mask(beam(R.convolve(mask(beam(x)))))/wsum + 1e-6 * x
 
         def M(x): return x / 1e-6  # preconditioner
         x = pcg(
@@ -422,7 +401,7 @@ def _main(dest=sys.stdout):
                 mask(beam(residual)),
                 np.zeros(residual.shape, dtype=residual.dtype),
                 M=M,
-                tol=args.cgtol,
+                tol=0.1*args.cgtol,
                 maxit=args.cgmaxit,
                 minit=args.cgminit,
                 verbosity=args.cgverbose)
