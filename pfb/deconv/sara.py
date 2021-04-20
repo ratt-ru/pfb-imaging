@@ -102,7 +102,7 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
 
     # deconvolve
     if alpha is None:
-        alpha = 0.00005
+        alpha = 0.000065
     for i in range(0, maxit):
         x = pcg(hessf,
                 mask(beam(residual)),
@@ -114,19 +114,19 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
         modelp = model
         model = modelp + gamma * x
 
-        # reweighting
-        l2_norm = np.linalg.norm(psi.hdot(model), axis=1)
-        for m in range(psi.nbasis):
-            weights21[m] *= alpha/(alpha + l2_norm[m])
-
         model, dual = primal_dual(hessb, model, modelp, dual, sig_21, psi,
                                   weights21, beta, prox_21, tol=pdtol,
                                   maxit=pdmaxit, report_freq=50, mask=mask,
                                   verbosity=pdverbose, positivity=positivity)
 
-        # reset weights
+        # reset weights for zeroed components
         for m in range(psi.nbasis):
             weights21[m] = np.where(np.any(dual[m], axis=0), weights21[m], 1.0)
+
+        # reweight
+        l2_norm = np.linalg.norm(psi.hdot(model), axis=1)
+        for m in range(psi.nbasis):
+            weights21[m] *= alpha/(alpha + l2_norm[m])
 
         # get residual
         residual, residual_mfs = resid_func(model, dirty, hessian, mask, beam, wsum)

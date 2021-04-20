@@ -442,7 +442,7 @@ class Gridder(object):
 
                 residuals.append(residual)
 
-        residuals = dask.compute(residuals, scheduler='single-threaded')[0]
+        residuals = dask.compute(residuals)[0]  # , scheduler='single-threaded'
 
         return accumulate_dirty(residuals,
                                 self.nband,
@@ -550,7 +550,7 @@ class Gridder(object):
 
                 dirties.append(dirty)
 
-        dirties = dask.compute(dirties, scheduler='single-threaded')[0]
+        dirties = dask.compute(dirties)[0]  # , scheduler='single-threaded'
 
         return accumulate_dirty(dirties,
                                 self.nband,
@@ -653,7 +653,7 @@ class Gridder(object):
 
                 psfs.append(psf)
 
-                self.stokes_weights[ims][spw] = dask.persist(weights)[0]
+                self.stokes_weights[ims][spw] = dask.persist(weights.rechunk({'row': -1, }))[0]
                 self.uvws[ims][spw] = dask.persist(uvw)[0]
 
                 # for comparison with numpy implementation
