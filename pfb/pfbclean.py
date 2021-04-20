@@ -24,7 +24,7 @@ def _main(dest=sys.stdout):
 
     if not args.mem_limit:
         import psutil
-        args.mem_limit = int(psutil.virtual_memory()[0]/2e9)  # 50% of memory by default
+        args.mem_limit = int(psutil.virtual_memory()[0]/4e9)  # 50% of memory by default
 
     set_threads(args.nthreads, args.nband, args.mem_limit)
 

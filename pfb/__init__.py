@@ -28,7 +28,7 @@ def set_threads(nthreads: int, nbands: int, mem_limit: int):
     from dask.distributed import Client, LocalCluster
     cluster = LocalCluster(processes=False, n_workers=nbands,
                            threads_per_worker=1,
-                           memory_limit=str(mem_limit/nbands)+'GB')
+                           memory_limit=0)  #str(mem_limit/nbands)+'GB')
     client = Client(cluster)
 
 

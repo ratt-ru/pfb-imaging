@@ -653,7 +653,7 @@ class Gridder(object):
 
                 psfs.append(psf)
 
-                self.stokes_weights[ims][spw] = dask.persist(weights.rechunk({'row': -1, }))[0]
+                self.stokes_weights[ims][spw] = dask.persist(weights)[0]
                 self.uvws[ims][spw] = dask.persist(uvw)[0]
 
                 # for comparison with numpy implementation
