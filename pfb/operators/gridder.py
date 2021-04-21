@@ -442,7 +442,7 @@ class Gridder(object):
 
                 residuals.append(residual)
 
-        residuals = dask.compute(residuals)[0]  # , scheduler='single-threaded'
+        residuals = dask.compute(residuals, scheduler='single-threaded')[0]  # , scheduler='single-threaded'
 
         return accumulate_dirty(residuals,
                                 self.nband,
@@ -550,7 +550,7 @@ class Gridder(object):
 
                 dirties.append(dirty)
 
-        dirties = dask.compute(dirties)[0]  # , scheduler='single-threaded'
+        dirties = dask.compute(dirties, scheduler='single-threaded')[0]  # , scheduler='single-threaded'
 
         return accumulate_dirty(dirties,
                                 self.nband,
@@ -663,7 +663,7 @@ class Gridder(object):
         # import pdb
         # pdb.set_trace()
 
-        psfs = dask.compute(psfs)[0]
+        psfs = dask.compute(psfs, scheduler='single-threaded')[0]
 
         # LB - this assumes that the beam is normalised to 1 at the center
         return accumulate_dirty(psfs,
@@ -720,7 +720,7 @@ class Gridder(object):
 
                 convolvedims.append(convolvedim)
 
-        convolvedims = dask.compute(convolvedims, optimize_graph=False)[0]
+        convolvedims = dask.compute(convolvedims, scheduler='single-threaded')[0]
 
         return accumulate_dirty(convolvedims,
                                 self.nband,
