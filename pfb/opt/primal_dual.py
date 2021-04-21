@@ -64,10 +64,6 @@ def primal_dual(
         #         # x[1] = np.where(mask, x[1], 0.0)
 
         # convergence check
-        print(x)
-        print(np.linalg.norm(x))
-        print(np.linalg.norm(xp))
-        print(np.linalg.norm(x-xp))
         eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
         if eps < tol:
             break
