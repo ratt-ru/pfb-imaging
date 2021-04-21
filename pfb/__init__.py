@@ -26,12 +26,9 @@ def set_threads(nthreads: int, nbands: int, mem_limit: int):
     os.environ["NUMEXPR_NUM_THREADS"] = str(nthreads)
     # set up client
     import dask
-    if args.nthreads:
-        from multiprocessing.pool import ThreadPool
-        dask.config.set(pool=ThreadPool(args.nthreads))
-    else:
-        import multiprocessing
-        args.nthreads = multiprocessing.cpu_count()
+    from multiprocessing.pool import ThreadPool
+    dask.config.set(pool=ThreadPool(nthreads))
+
 
     # from dask.distributed import Client, LocalCluster
     # cluster = LocalCluster(processes=False, n_workers=nbands,
