@@ -3,6 +3,21 @@ from ducc0.fft import r2c, c2r
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
+def estimate_data_size(nant, nhr, nsec, nchan, ncorr, nbytes):
+    '''
+    Estimates size of data in GB where:
+
+    nant    - number of antennas
+    nhr     - lebgth of observation in hours
+    nsec    - integration time in seconds
+    nchan   - number of channels
+    ncorr   - number of correlations
+    nbytes  - bytes per item (eg. 8 for complex64)
+    '''
+    nbl = nant * (nant - 1) // 2
+    ntime = nhr * 3600 // nsec
+    return nbl * ntime * nchan * ncorr * nbytes / 1e9
+
 
 def kron_matvec(A, b):
     D = len(A)

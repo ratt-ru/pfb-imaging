@@ -82,11 +82,12 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
     dual = np.zeros((psi.nbasis, nband, psi.nmax), dtype=residual.dtype)
 
     #  preconditioning operator
+    varmap = np.ones(model.shape) * (sigma_frac * rmax)
     def hessf(x):
-        return mask(beam(hessian(mask(beam(x)))))/wsum + x / (sigma_frac*rmax)
+        return mask(beam(hessian(mask(beam(x)))))/wsum + x / varmap
 
     def hessb(x):
-        return mask(beam(psfo.convolve(mask(beam(x))))) + x / (sigma_frac*rmax)
+        return mask(beam(hessian(mask(beam(x)))))/wsum + x / varmap
 
     beta, betavec = power_method(hessb, residual.shape, tol=pmtol,
                                  maxit=pmmaxit, verbosity=pmverbose)
@@ -107,7 +108,7 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
         x = pcg(hessf,
                 mask(beam(residual)),
                 np.zeros_like(residual),
-                M=lambda x: x * (sigma_frac * rmax),
+                M=lambda x: x * varmap,
                 tol=cgtol, maxit=cgmaxit, minit=cgminit, verbosity=cgverbose)
 
         # update model
@@ -137,13 +138,16 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
         rms = np.std(residual_mfs)
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
-        print("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
-              i+1, rmax, rms, eps), file=log)
+        # update variance map (positivity constraint optional)
+        varmap = np.maximum(rmax*sigma_frac, sigma_frac*(rmax + model))
 
-        # rmax can change so we need to redo spectral norm
+        # update spectral norm
         beta, betavec = power_method(hessb, residual.shape, b0=betavec,
                                      tol=pmtol, maxit=pmmaxit,
                                      verbosity=pmverbose)
+
+        print("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
+              i+1, rmax, rms, eps), file=log)
 
         # save current iteration
         if outfile is not None:

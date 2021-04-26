@@ -124,17 +124,7 @@ def create_parser():
                    help="Initial guess in form of fits file")
     p.add_argument("--first_residual", default=None, type=str,
                    help="Residual corresponding to x0")
-    p.add_argument("--reweight_iters", type=int, default=None, nargs='+',
-                   help="Set reweighting iters explicitly. "
-                   "Default is to reweight at 4th, 5th, 6th, 7th, 8th and 9th"
-                   " iterations.")
-    p.add_argument("--reweight_alpha_percent", type=float, default=10,
-                   help="Set alpha as using this percentile of non zero "
-                   "coefficients")
-    p.add_argument("--reweight_alpha_ff", type=float, default=0.5,
-                   help="reweight_alpha_percent will be scaled by this factor"
-                   " after each reweighting step.")
-    p.add_argument("--cgtol", type=float, default=1e-4,
+    p.add_argument("--cgtol", type=float, default=1e-3,
                    help="Tolerance for cg updates")
     p.add_argument("--cgmaxit", type=int, default=150,
                    help="Maximum number of iterations for the cg updates")

@@ -115,13 +115,14 @@ def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
     rms = np.std(residual_mfs)
 
     #  preconditioning operator
+    varmap = np.ones(model.shape) * (sigma_frac * rmax)
     def hessb(x):
         return phi.hdot(mask(beam(psfo.convolveb(mask(beam(phi.dot(x))))))) +\
-            x / (sigma_frac * rmax)
+            x / varmap
 
     def hessf(x):
         return phi.hdot(mask(beam(psfo.convolve(mask(beam(phi.dot(x))))))) +\
-                    x / (sigma_frac * rmax)
+                    x / varmap
 
     beta, betavec = power_method(hessb, residual.shape, tol=pmtol,
                                  maxit=pmmaxit, verbosity=pmverbose)
@@ -179,6 +180,8 @@ def spotless(psf, model, residual, mask=None, beam_image=None, hessian=None,
         rms = np.std(mask(residual_mfs))
         eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
 
+        # update variance map (positivity constraint optional)
+        varmap = np.maximum(rmax*sigma_frac, sigma_frac*(rmax + model))
 
         print("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
                 i+1, rmax, rms, eps), file=log)

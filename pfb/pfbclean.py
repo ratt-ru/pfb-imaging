@@ -24,7 +24,7 @@ def _main(dest=sys.stdout):
 
     if not args.mem_limit:
         import psutil
-        args.mem_limit = int(psutil.virtual_memory()[0]/4e9)  # 50% of memory by default
+        args.mem_limit = int(psutil.virtual_memory()[0]/1e9)  # 100% of memory by default
 
     set_threads(args.nthreads, args.nband, args.mem_limit)
 
@@ -134,7 +134,8 @@ def _main(dest=sys.stdout):
                 weight_column=args.weight_column,
                 imaging_weight_column=args.imaging_weight_column,
                 model_column=args.model_column, flag_column=args.flag_column,
-                weighting=args.weighting, robust=args.robust)
+                weighting=args.weighting, robust=args.robust,
+                mem_limit=int(0.8*args.mem_limit))  # assumes gridding accounts for 80% memory
     freq_out = R.freq_out
     radec = R.radec
 

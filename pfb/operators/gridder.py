@@ -3,9 +3,7 @@ import numpy as np
 import dask
 import dask.array as da
 from daskms import xds_from_ms, xds_from_table, xds_to_table
-# from dask.distributed import client, LocalCluster
-# from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
-# import zarr
+import psutil
 from africanus.gridding.wgridder.dask import dirty as vis2im
 from africanus.gridding.wgridder.dask import model as im2vis
 from africanus.gridding.wgridder.dask import residual as im2residim
@@ -17,13 +15,14 @@ log = pyscilog.get_logger('GRID')
 
 class Gridder(object):
     def __init__(self, ms_name, nx, ny, cell_size, nband=None, nthreads=8,
-                 do_wstacking=1, Stokes='I', row_chunks=100000,
+                 do_wstacking=1, Stokes='I', row_chunks=-1,
                  chan_chunks=32, optimise_chunks=True, epsilon=1e-5,
                  psf_oversize=2.0, weighting=None, robust=None,
                  data_column='CORRECTED_DATA',
                  weight_column='WEIGHT_SPECTRUM', mueller_column=None,
                  model_column="MODEL_DATA", flag_column='FLAG',
-                 imaging_weight_column=None, real_type='f4', cdir=None):
+                 imaging_weight_column=None, real_type='f4', cdir=None,
+                 mem_limit=None):
         '''
         TODO - currently row_chunks and chan_chunks are only used for the
         compute_weights() and write_component_model() methods. All other
@@ -38,6 +37,12 @@ class Gridder(object):
         function. Since we currently load in weights, imaging weights and a
         complex "Mueller" term for all 4 correlations, we can in principle
         reduce IO and memory footprint by about a factor of 16.
+
+        # of GB for 8 hr 8 sec 32k observation
+        64*(64-1) //2 * 8 * 60 * 60 // 8 * 2**15 * 4 * 8 / 1e9 = 7610 GB
+
+        # of GB for 8 hr 8 sec 4k observation
+        64*(64-1) //2 * 8 * 60 * 60 // 8 * 2**15 * 4 * 8 / 1e9 = 951 GB
         '''
         if Stokes != 'I':
             raise NotImplementedError("Only Stokes I currently supported")
@@ -55,8 +60,6 @@ class Gridder(object):
         self.ny_psf = int(self.psf_oversize * self.ny)
         self.ny_psf += self.ny_psf%2
         self.real_type = real_type
-
-        # construct the client
 
         if isinstance(ms_name, list):
             self.ms = ms_name
@@ -92,6 +95,8 @@ class Gridder(object):
             self.freq[ims] = {}
             self.freq_np[ims] = {}
             self.spws[ims] =[]
+            maxchans = 0
+            ncorr = 4  # TODO - get ncorr from ds
             for ds in xds:
                 field = fields[ds.FIELD_ID]
                 radec = field.PHASE_DIR.data.squeeze()
@@ -105,19 +110,82 @@ class Gridder(object):
 
                 spw = spws[ds.DATA_DESC_ID]
                 tmp_freq = spw.CHAN_FREQ.data.squeeze()
+                maxchans = np.maximum(maxchans, tmp_freq.size)
                 self.freq[ims][ds.DATA_DESC_ID] = tmp_freq
                 self.freq_np[ims][ds.DATA_DESC_ID] = dask.compute(tmp_freq)[0]
                 all_freqs.append(list([tmp_freq]))
                 self.spws[ims].append(ds.DATA_DESC_ID)
 
+        # get memory limit in GB
+        max_mem = int(0.8*psutil.virtual_memory()[0]/1e9)  # 80% of memory by default
+        if mem_limit is None:
+            mem_limit = max_mem
+        assert mem_limit <= max_mem
+
+        self.data_column = data_column
+        data_bytes = np.dtype('complex64').itemsize  # assume single precision for now
+        bytes_per_row = maxchans * ncorr * data_bytes
+        memory_per_row = bytes_per_row
+        self.weight_column = weight_column
+        # size of weights does not depend on nchan if reading WEIGHT column
+        if self.weight_column == "WEIGHT":
+            memory_per_row += bytes_per_row//(2*maxchans)  # real valued weights
+        else:
+            memory_per_row += bytes_per_row//2  # real valued weights
+        self.model_column = model_column  # residual uses in place subtraction
+        self.flag_column = flag_column
+        memory_per_row += bytes_per_row//8  # flags treated as uint8
+
+        self.columns = (
+            self.data_column,
+            self.weight_column,
+            self.model_column,
+            self.flag_column,
+            'UVW')
+
+        # TODO - write jones2col if column does not exist
+        self.mueller_column = mueller_column
+        if mueller_column is not None:
+            self.columns += (self.mueller_column,)
+            memory_per_row += bytes_per_row  # complex valued Mueller column
+
+        # check that all measurement sets contain the required columns
+        for ims in self.ms:
+            xds = xds_from_ms(ims)
+
+            for ds in xds:
+                for column in self.columns:
+                    try:
+                        getattr(ds, column)
+                    except BaseException:
+                        raise ValueError(
+                            "No column named %s in %s" %
+                            (column, ims))
+
+        # compute imaging weights
+        if weighting is not None:
+            if imaging_weight_column is None:
+                self.imaging_weight_column = "IMAGING_WEIGHT_SPECTRUM"
+            else:
+                self.imaging_weight_column = imaging_weight_column
+            # this column is always created if asked
+            self.columns += (self.imaging_weight_column,)
+            memory_per_row += bytes_per_row//2  # real valued imaging weights
+        else:
+            self.imaging_weight_column = None
+
         # freq mapping
         all_freqs = dask.compute(all_freqs)
-        ufreqs = np.unique(all_freqs)  # returns ascending sorted
+        ufreqs = np.unique(all_freqs)  # sorted ascending
         self.nchan = ufreqs.size
         if nband is None:
             self.nband = self.nchan
         else:
             self.nband = nband
+
+        # there are nband workers
+        max_row_chunk = mem_limit*1e9/memory_per_row//self.nband
+        print("Maximum row chunks set to %i"%max_row_chunk, file=log)
 
         # bin edges
         fmin = ufreqs[0]
@@ -155,7 +223,7 @@ class Gridder(object):
                 bands, bin_counts = np.unique(band_map, return_counts=True)
                 self.band_mapping[ims][spw] = tuple(bands)
                 self.chunks[ims].append(
-                    {'row': (-1,), 'chan': tuple(bin_counts)})
+                    {'row': (max_row_chunk,), 'chan': tuple(bin_counts)})
                 self.freq[ims][spw] = da.from_array(
                     freq, chunks=tuple(bin_counts))
                 bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
@@ -164,70 +232,10 @@ class Gridder(object):
                 self.freq_bin_idx_np[ims][spw] = bin_idx
                 self.freq_bin_counts_np[ims][spw] = bin_counts
 
-        self.data_column = data_column
-        self.weight_column = weight_column
-        self.model_column = model_column
-        self.flag_column = flag_column
-
-        self.columns = (
-            self.data_column,
-            self.weight_column,
-            self.model_column,
-            self.flag_column,
-            'UVW')
-
-        # TODO - write jones2col if column does not exist
-        self.mueller_column = mueller_column
-        if mueller_column is not None:
-            self.columns += (self.mueller_column,)
-
-        # check that all measurement sets contain the required columns
-        for ims in self.ms:
-            xds = xds_from_ms(ims)
-
-            for ds in xds:
-                for column in self.columns:
-                    try:
-                        getattr(ds, column)
-                    except BaseException:
-                        raise ValueError(
-                            "No column named %s in %s" %
-                            (column, ims))
-
         # compute imaging weights
         if weighting is not None:
             print("Computing weights", file=log)
-            if imaging_weight_column is None:
-                self.imaging_weight_column = "IMAGING_WEIGHT_SPECTRUM"
-            else:
-                self.imaging_weight_column = imaging_weight_column
             self.compute_weights(robust)
-            # this column is always created if asked
-            self.columns += (self.imaging_weight_column,)
-        else:
-            self.imaging_weight_column = None
-
-        # # set cache directory (next to first MS if None)
-        # if cdir is None:
-        #     idx = self.ms[0][::-1].find('/')
-        #     if idx != -1:
-        #         self.cdir = self.ms[0][:-idx] + 'weights.zarr'
-        #     else:
-        #         self.cdir = 'weights.zarr'
-        # else:
-        #     self.cdir = cdir
-
-        # self.store = zarr.DirectoryStore(self.cdir)
-
-        # try:
-        #     xds = xds_from_zarr(self.store)
-        #     self.zarr_exists = True
-        # except:
-        #     self.zarr_exists = False
-
-        # # optimise chunking by pre-computing corr to Stokes + weighting
-        # if optimise_chunks:
-        #     for
 
     def compute_weights(self, robust):
         from pfb.utils.weighting import compute_counts, counts_to_weights
@@ -435,14 +443,14 @@ class Gridder(object):
                     self.cell,
                     weights=weights,
                     flag=flag.astype(np.uint8),
-                    nthreads=self.nthreads,
+                    nthreads=self.nthreads//self.nband,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking,
                     double_accum=True)
 
                 residuals.append(residual)
 
-        residuals = dask.compute(residuals, scheduler='single-threaded')[0]  # , scheduler='single-threaded'
+        residuals = dask.compute(residuals)[0]
 
         return accumulate_dirty(residuals,
                                 self.nband,
@@ -543,14 +551,14 @@ class Gridder(object):
                     self.cell,
                     weights=weights,
                     flag=flag.astype(np.uint8),
-                    nthreads=self.nthreads,
+                    nthreads=self.nthreads//self.nband,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking,
                     double_accum=True)
 
                 dirties.append(dirty)
 
-        dirties = dask.compute(dirties, scheduler='single-threaded')[0]  # , scheduler='single-threaded'
+        dirties = dask.compute(dirties)[0]
 
         return accumulate_dirty(dirties,
                                 self.nband,
@@ -646,15 +654,16 @@ class Gridder(object):
                     self.ny_psf,
                     self.cell,
                     flag=flag.astype(np.uint8),
-                    nthreads=self.nthreads,
+                    nthreads=self.nthreads//self.nband,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking,
                     double_accum=True)
 
                 psfs.append(psf)
 
-                self.stokes_weights[ims][spw] = dask.persist(weights)[0]
-                self.uvws[ims][spw] = dask.persist(uvw)[0]
+                # assumes that stokes weights and uvw fit into memory
+                self.stokes_weights[ims][spw] = dask.persist(weights.rechunk({0:-1}))[0]
+                self.uvws[ims][spw] = dask.persist(uvw.rechunk({0:-1}))[0]
 
                 # for comparison with numpy implementation
                 # self.stokes_weights[ims][spw] = dask.compute(weights)[0]
@@ -663,9 +672,7 @@ class Gridder(object):
         # import pdb
         # pdb.set_trace()
 
-        psfs = dask.compute(psfs, scheduler='single-threaded')[0]
-
-        # LB - this assumes that the beam is normalised to 1 at the center
+        psfs = dask.compute(psfs)[0]
         return accumulate_dirty(psfs,
                                 self.nband,
                                 self.band_mapping).astype(self.real_type)
@@ -713,42 +720,42 @@ class Gridder(object):
                     self.freq_bin_counts[ims][spw],
                     self.cell,
                     weights=self.stokes_weights[ims][spw],
-                    nthreads=self.nthreads,
+                    nthreads=self.nthreads//self.nband,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking,
                     double_accum=True)
 
                 convolvedims.append(convolvedim)
 
-        convolvedims = dask.compute(convolvedims, scheduler='single-threaded')[0]
+        convolvedims = dask.compute(convolvedims)[0]
 
         return accumulate_dirty(convolvedims,
                                 self.nband,
                                 self.band_mapping).astype(self.real_type)
 
-    # for comparison with dask implementation
-    def convolve_np(self, x):
-        print("Applying Hessian", file=log)
+    # # for comparison with dask implementation
+    # def convolve_np(self, x):
+    #     print("Applying Hessian", file=log)
 
-        convolvedims = []
-        for ims in self.ms:
-            for spw in self.spws[ims]:
-                bands = self.band_mapping[ims][spw]
-                model = x[list(bands), :, :]
-                convolvedim = hessian_np(
-                                self.uvws[ims][spw],
-                                self.freq_np[ims][spw],
-                                model,
-                                self.freq_bin_idx_np[ims][spw],
-                                self.freq_bin_counts_np[ims][spw],
-                                self.cell,
-                                weights=self.stokes_weights[ims][spw],
-                                nthreads=self.nthreads,
-                                epsilon=self.epsilon,
-                                do_wstacking=self.do_wstacking,
-                                double_accum=False)
+    #     convolvedims = []
+    #     for ims in self.ms:
+    #         for spw in self.spws[ims]:
+    #             bands = self.band_mapping[ims][spw]
+    #             model = x[list(bands), :, :]
+    #             convolvedim = hessian_np(
+    #                             self.uvws[ims][spw],
+    #                             self.freq_np[ims][spw],
+    #                             model,
+    #                             self.freq_bin_idx_np[ims][spw],
+    #                             self.freq_bin_counts_np[ims][spw],
+    #                             self.cell,
+    #                             weights=self.stokes_weights[ims][spw],
+    #                             nthreads=self.nthreads,
+    #                             epsilon=self.epsilon,
+    #                             do_wstacking=self.do_wstacking,
+    #                             double_accum=False)
 
-                convolvedims.append(convolvedim)
+    #             convolvedims.append(convolvedim)
 
     #     convolvedims = dask.compute(convolvedims, optimize_graph=False)[0]
 
@@ -806,7 +813,7 @@ class Gridder(object):
                     freq_bin_idx,
                     freq_bin_counts,
                     self.cell,
-                    nthreads=self.nthreads,
+                    nthreads=self.nthreads//self.nband,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking)
 
@@ -819,7 +826,7 @@ class Gridder(object):
                 xds_to_table(
                     out_data, ims, columns=[
                         self.model_column]))
-        dask.compute(writes, scheduler='single-threaded')
+        dask.compute(writes)
 
     def write_component_model(
             self,
@@ -883,7 +890,7 @@ class Gridder(object):
                     freq_bin_idx,
                     freq_bin_counts,
                     self.cell,
-                    nthreads=self.nthreads,
+                    nthreads=self.nthreads//self.nband,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking)
 
@@ -896,7 +903,7 @@ class Gridder(object):
                 xds_to_table(
                     out_data, ims, columns=[
                         self.model_column]))
-        dask.compute(writes, scheduler='single-threaded')
+        dask.compute(writes)
 
 
 def populate_model(vis, model_vis):
