@@ -87,6 +87,8 @@ def create_parser():
                    help="Step size of 'primal' update.")
     p.add_argument("--peak_factor", type=float, default=0.025,
                    help="Clean peak factor.")
+    p.add_argument("--init_nnls", type=str2bool, nargs='?', const=True,
+                   default=True, help='Initialise with NNLS.')
     p.add_argument("--maxit", type=int, default=5,
                    help="Number of pfb iterations")
     p.add_argument("--minormaxit", type=int, default=5,

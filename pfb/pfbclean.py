@@ -44,6 +44,7 @@ def _main(dest=sys.stdout):
     from pfb.deconv.sara import sara
     from pfb.deconv.clean import clean
     from pfb.deconv.spotless import spotless
+    from pfb.deconv.nnls import nnls
     from pfb.opt.pcg import pcg
 
     if not isinstance(args.ms, list):
@@ -290,10 +291,15 @@ def _main(dest=sys.stdout):
         beam_image = None
         def beam(x): return x
 
-    # Reporting
-    report_iters = list(np.arange(0, args.maxit, args.report_freq))
-    if report_iters[-1] != args.maxit - 1:
-        report_iters.append(args.maxit - 1)
+    if args.init_nnls:
+        print("Initialising with NNLS", file=log)
+        model = nnls(psf, model, residual, mask=mask_array,
+                     beam_image=beam_image, hdr=hdr,
+                     hdr_mfs=hdr_mfs, outfile=args.outfile,
+                     maxit=1, nthreads=args.nthreads)
+
+        residual = R.make_residual(beam(mask(model)))/wsum
+        residual_mfs = np.sum(residual, axis=0)
 
     # deconvolve
     rmax = np.abs(residual_mfs).max()
@@ -308,7 +314,7 @@ def _main(dest=sys.stdout):
             model = sara(
                 psf, model, residual, mask=mask_array, beam_image=beam_image,
                 hessian=R.convolve, wsum=wsum, adapt_sig21=args.adapt_sig21,
-                hdr=hdr, hdr_mfs=hdr_mfs, outfile=args.outfile,
+                hdr=hdr, hdr_mfs=hdr_mfs, outfile=args.outfile, cpsf=cpsf,
                 nthreads=args.nthreads, sig_21=args.sig_21, sigma_frac=args.sigma_frac,
                 maxit=args.minormaxit, tol=args.minortol, gamma=args.gamma,
                 psi_levels=args.psi_levels, psi_basis=args.psi_basis,
@@ -363,20 +369,19 @@ def _main(dest=sys.stdout):
 
         residual_mfs = np.sum(residual, axis=0)
 
-        if i in report_iters:
-            # save current iteration
-            model_mfs = np.mean(model, axis=0)
-            save_fits(args.outfile + '_major' + str(i + 1) + '_model_mfs.fits',
-                      model_mfs, hdr_mfs)
+        # save current iteration
+        model_mfs = np.mean(model, axis=0)
+        save_fits(args.outfile + '_major' + str(i + 1) + '_model_mfs.fits',
+                    model_mfs, hdr_mfs)
 
-            save_fits(args.outfile + '_major' + str(i + 1) + '_model.fits',
-                      model, hdr)
+        save_fits(args.outfile + '_major' + str(i + 1) + '_model.fits',
+                    model, hdr)
 
-            save_fits(args.outfile + '_major' + str(i + 1) + '_residual_mfs.fits',
-                      residual_mfs, hdr_mfs)
+        save_fits(args.outfile + '_major' + str(i + 1) + '_residual_mfs.fits',
+                    residual_mfs, hdr_mfs)
 
-            save_fits(args.outfile + '_major' + str(i + 1) + '_residual.fits',
-                      residual*wsum, hdr)
+        save_fits(args.outfile + '_major' + str(i + 1) + '_residual.fits',
+                    residual*wsum, hdr)
 
         # check stopping criteria
         rmax = np.abs(residual_mfs).max()

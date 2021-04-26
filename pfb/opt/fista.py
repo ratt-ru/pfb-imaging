@@ -3,38 +3,19 @@ import pyscilog
 log = pyscilog.get_logger('FISTA')
 
 
-def back_track_func(x, xold, gradp, likp, L):
-    df = x - xold
+def back_track_func(x, xp, gradp, likp, L):
+    df = x - xp
     return likp + np.vdot(gradp, df) + L * np.vdot(df, df) / 2
 
 
-def fista(
-        A,
-        xbar,
-        x0,
-        lam,
-        L,
-        tol=1e-3,
-        maxit=100,
-        report_freq=10):
-
-    # nchan, ncomps = x0.shape
-
-    # gradient function
-    def fprime(x):
-        diff = A(xbar - x)
-        return np.vdot(xbar - x, diff), -diff
-
-    def prox(x):
-        l2_norm = np.linalg.norm(x, axis=0)  # drops freq axis
-        # l2_norm = np.mean(x, axis=0)  # drops freq axis
-        l2_soft = np.maximum(l2_norm - lam, 0.0)  # norm always +ive
-        mask = l2_norm != 0
-        ratio = np.zeros(mask.shape, dtype=x.dtype)
-        ratio[mask] = l2_soft[mask] / l2_norm[mask]
-        x *= ratio[None, :]  # restore freq axis
-        x[x < 0] = 0.0  # positivity
-        return x
+def fista(x0,
+          L,       # spectral norm of measurement operator
+          fprime,  # function returning value and gradient
+          prox,    # function implementing prox of regulariser
+          tol=1e-3,
+          maxit=100,
+          report_freq=50,
+          verbosity=1):
 
     # start iterations
     t = 1.0
@@ -42,13 +23,9 @@ def fista(
     y = x0.copy()
     eps = 1.0
     k = 0
-    fidn, gradn = fprime(x)
-    fidelity = np.zeros(maxit)
-    fidupper = np.zeros(maxit)
+    fidp, gradp = fprime(x)
     for k in range(maxit):
-        xold = x.copy()
-        fidp = fidn
-        gradp = gradn
+        xp = x.copy()
 
         # gradient update
         x = y - gradp / L
@@ -56,21 +33,13 @@ def fista(
         # prox w.r.t r(x)
         x = prox(x)
 
-        # check convergence criteria
-        normx = np.linalg.norm(x)
-        if np.isnan(normx) or normx == 0.0:
-            normx = 1.0
-        eps = np.linalg.norm(x - xold) / normx
-        if eps <= tol:
-            break
-
         fidn, gradn = fprime(x)
-        flam = back_track_func(x, xold, gradp, fidp, L)
-        fidelity[k] = fidn
-        fidupper[k] = flam
-        while fidn > flam:
+        # flam = back_track_func(x, xp, gradp, fidp, L)
+        i = 0
+        while fidn > fidp and i < 10:
             L *= 2.0
-            print("Step size too large, adjusting %f" % L, file=log)
+            if verbosity > 1:
+                print("Step size too large, adjusting %f" % L, file=log)
 
             # gradient update
             x = y - gradp / L
@@ -79,27 +48,42 @@ def fista(
             x = prox(x)
 
             fidn, gradn = fprime(x)
-            flam = back_track_func(x, xold, gradp, fidp, L)
+            # flam = back_track_func(x, xp, gradp, fidp, L)
+            i += 1
+
+        if i == 10:
+            if verbosity > 1:
+                print("Stalled", file=log)
+            k = maxit - 1
+            break
 
         # fista update
         tp = t
         t = (1. + np.sqrt(1. + 4 * tp**2)) / 2.
         gamma = (tp - 1) / t
-        y = x + gamma * (x - xold)
+        y = x + gamma * (x - xp)
 
-        if not k % report_freq:
-            print(
-                "At iteration %i: eps = %f, L = %f, lambda = %f" %
-                (k, eps, L, (tp - 1) / t), file=log)
+        # convergence check
+        eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
+        if eps < tol:
+            break
+
+        fidp = fidn
+        gradp = gradn
+
+        if not k % report_freq and verbosity > 1:
+            print("At iteration %i eps = %f" % (k, eps), file=log)
 
     if k == maxit - 1:
-        print(
-            "Max iters reached. Relative difference between updates = %f" %
-            eps, file=log)
+        if verbosity:
+            print("Maximum iterations reached. "
+                  "Relative difference between updates = %f" %
+                  eps, file=log)
     else:
-        print("Success, converged after %i iters" % k, file=log)
+        if verbosity:
+            print("Success, converged after %i iterations" % k, file=log)
 
-    return x, fidelity, fidupper
+    return x
 
 
 fista.__doc__ = r"""
