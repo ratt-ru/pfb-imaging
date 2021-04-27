@@ -62,7 +62,9 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
             raise ValueError("Mask has incorrect shape")
 
     # PSF operator
-    psfo = PSF(psf, residual.shape, nthreads=nthreads)  #, backward_undersize=1.2)
+    psfo = PSF(psf, residual.shape, nthreads=nthreads)
+    _, nx_psf, ny_psf = psf.shape
+    wsums = np.amax(psf.reshape(-1, nx_psf*ny_psf), axis=1)
 
     if cpsf is None:
         raise ValueError
@@ -88,7 +90,7 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
     # this assumes that the model has been initialised using NNLS
     alpha = np.zeros(psi.nbasis)
     sigmas = np.zeros(psi.nbasis)
-    resid_comps = psi.hdot(residual/np.amax(residual.reshape(-1, nx*ny), axis=1)[:, None, None])
+    resid_comps = psi.hdot(residual/wsums[:, None, None])
     l2_norm = np.linalg.norm(psi.hdot(cpsfo.convolve(model)), axis=1)
     for m in range(psi.nbasis):
         alpha[m] = np.std(resid_comps[m])
@@ -168,10 +170,12 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
 
         # reweight
         l2_norm = np.linalg.norm(psi.hdot(model), axis=1)
+        resid_comps = psi.hdot(residual/wsums[:, None, None])
         for m in range(psi.nbasis):
             if adapt_sig21:
+                alpha[m] = np.std(resid_comps[m])
                 _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
-                print('basis %i, sigma %f'%(m, sigmas[m]), file=log)
+                print("Basis %i, alpha %f, sigma %f"%(m, alpha[m], sigmas[m]), file=log)
 
             weights21[m] = alpha[m]/(alpha[m] + l2_norm[m]) * sigmas[m]/sig_21
 

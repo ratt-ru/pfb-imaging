@@ -29,13 +29,13 @@ def create_parser():
     p.add_argument("--spectral_poly_order", type=int, default=4,
                    help="Order of interpolating polynomial")
     p.add_argument("--mop_flux", type=str2bool, nargs='?', const=True,
-                   default=True, help="If True then positivity and sparsity "
+                   default=False, help="If True then positivity and sparsity "
                    "will be relaxed at the end and a flux mop will be applied"
                    " inside the mask.")
     p.add_argument("--make_restored", type=str2bool, nargs='?', const=True,
-                   default=True, help="Whether to produce a restored image "
+                   default=False, help="Whether to produce a restored image "
                    "or not.")
-    p.add_argument("--deconv_mode", type=str, default='spotless',
+    p.add_argument("--deconv_mode", type=str, default='sara',
                    help="Select minor cycle to use. Current options are "
                    "'spotless' (default), 'sara' or 'clean'")
     p.add_argument("--weighting", type=str, default=None,
@@ -87,8 +87,6 @@ def create_parser():
                    help="Step size of 'primal' update.")
     p.add_argument("--peak_factor", type=float, default=0.025,
                    help="Clean peak factor.")
-    p.add_argument("--init_nnls", type=str2bool, nargs='?', const=True,
-                   default=True, help='Initialise with NNLS.')
     p.add_argument("--maxit", type=int, default=5,
                    help="Number of pfb iterations")
     p.add_argument("--minormaxit", type=int, default=5,
@@ -100,20 +98,22 @@ def create_parser():
                    help="RMS of MFS residual at which to stop.")
     p.add_argument("--minortol", type=float, default=1e-3,
                    help="Tolerance")
-    p.add_argument("--report_freq", type=int, default=1,
-                   help="How often to save output images during "
-                   "deconvolution")
-    p.add_argument("--beta", type=float, default=None,
-                   help="Lipschitz constant of F")
+    p.add_argument("--nnlsinit", type=str2bool, nargs='?', const=True,
+                   default=True, help='Initialise with NNLS.')
+    p.add_argument("--nnlsmaxit", type=int, default=3,
+                   help='Number of major iters for NNLS.')
+    p.add_argument("--nnlsgamma", type=float, default=0.95,
+                   help='Major loop gain of NNLS.')
+    p.add_argument("--nnlstol", type=float, default=1e-4,
+                   help='Major loop gain of NNLS.')
     p.add_argument("--sig_21", type=float, default=None,
                    help="Initial strength of l21 regulariser."
                    "Initialise to nband x expected rms in MFS dirty if "
                    "uncertain.")
     p.add_argument('--adapt_sig21', type=str2bool, nargs='?', const=True,
-                   default=False, help="Adaptive sig21")
-    p.add_argument("--sigma_frac", type=float, default=0.5,
-                   help="Fraction of peak MFS residual to use in "
-                   "preconditioner at each iteration.")
+                   default=True, help="Adaptive sig21")
+    p.add_argument("--sigma_frac", type=float, default=10,
+                   help="Affects prior variance of preconditioner.")
     p.add_argument("--positivity", type=str2bool, nargs='?', const=True,
                    default=True, help="Whether to impose a positivity "
                    "constraint or not.")
@@ -159,8 +159,13 @@ def create_parser():
     p.add_argument("--hbverbose", type=int, default=0,
                    help="Verbosity of Hogbom. Set to 2 for debugging or "
                    "zero for silence.")
-    p.add_argument("--tidy", type=str2bool, nargs='?', const=True,
-                   default=True, help="Switch off if you prefer it dirty.")
+    p.add_argument("--ftol", type=float, default=1e-4,
+                   help="Tolerance for primal dual")
+    p.add_argument("--fmaxit", type=int, default=250,
+                   help="Maximum number of iterations for primal dual")
+    p.add_argument("--fverbose", type=int, default=0,
+                   help="Verbosity of primal dual used to solve backward "
+                   "step. Set to 2 for debugging.")
     p.add_argument("--real_type", type=str, default='f4',
                    help="Dtype of real valued images. f4/f8 for single or "
                    "double precision respectively.")

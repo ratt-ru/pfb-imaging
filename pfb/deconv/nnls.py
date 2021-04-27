@@ -28,9 +28,9 @@ def prox(x):
     return x
 
 def nnls(psf, model, residual, mask=None, beam_image=None,
-         hessian=None, wsum=None, gamma=0.95,
+         hessian=None, wsum=None, gamma=0.95, nthreads=1,
+         maxit=1, tol=1e-3,
          hdr=None, hdr_mfs=None, outfile=None,
-         nthreads=1, maxit=1, tol=1e-3,
          pmtol=1e-5, pmmaxit=50, pmverbose=1,
          ftol=1e-5, fmaxit=250, fverbose=3):
 
@@ -121,6 +121,9 @@ def nnls(psf, model, residual, mask=None, beam_image=None,
 
             save_fits(outfile + str(i + 1) + '_NNLS_residual_mfs.fits',
                         residual_mfs, hdr_mfs)
+
+            save_fits(outfile + str(i + 1) + '_NNLS_residual.fits',
+                      residual*wsum, hdr)
 
         if eps < tol:
             print("Success, convergence after %i iterations" % (i+1),

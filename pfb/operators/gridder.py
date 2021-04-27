@@ -184,7 +184,7 @@ class Gridder(object):
             self.nband = nband
 
         # there are nband workers
-        max_row_chunk = mem_limit*1e9/memory_per_row  #//self.nband
+        max_row_chunk = int(mem_limit*1e9/memory_per_row)  #//self.nband
         print("Maximum row chunks set to %i"%max_row_chunk, file=log)
 
         # bin edges

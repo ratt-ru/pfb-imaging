@@ -115,7 +115,7 @@ def _main(dest=sys.stdout):
     print("Image size set to (%i, %i, %i)" % (args.nband, args.nx, args.ny),
           file=dest)
 
-    # mask
+    # init mask
     if args.mask is not None:
         mask_array = load_fits(args.mask, dtype=args.real_type).squeeze()
         if mask_array.shape != (args.nx, args.ny):
@@ -230,37 +230,8 @@ def _main(dest=sys.stdout):
     dirty_mfs = np.sum(dirty, axis=0)
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)
 
-    # initial model and residual
-    if args.x0 is not None:
-        try:
-            compare_headers(hdr, fits.getheader(args.x0))
-            model = load_fits(args.x0, dtype=args.real_type).squeeze()
-            if args.first_residual is not None:
-                try:
-                    compare_headers(hdr, fits.getheader(args.first_residual))
-                    residual = load_fits(args.first_residual,
-                                         dtype=args.real_type).squeeze()
-                except BaseException:
-                    residual = R.make_residual(model)
-                    save_fits(args.outfile + '_first_residual.fits',
-                              residual, hdr)
-            else:
-                residual = R.make_residual(model)
-                save_fits(args.outfile + '_first_residual.fits', residual,
-                          hdr)
-            residual /= wsum
-        except BaseException:
-            model = np.zeros((args.nband, args.nx, args.ny))
-            residual = dirty.copy()
-    else:
-        model = np.zeros((args.nband, args.nx, args.ny))
-        residual = dirty.copy()
-
-    residual_mfs = np.sum(residual, axis=0)
-    save_fits(args.outfile + '_first_residual_mfs.fits', residual_mfs,
-              hdr_mfs)
-
-    # smooth beam
+    # init smooth beam
+    # TODO - add beam interpolation
     if args.beam_model is not None:
         if args.beam_model[-5:] == '.fits':
             beam_image = load_fits(args.beam_model,
@@ -291,15 +262,55 @@ def _main(dest=sys.stdout):
         beam_image = None
         def beam(x): return x
 
-    if args.init_nnls:
-        print("Initialising with NNLS", file=log)
-        model = nnls(psf, model, residual, mask=mask_array,
-                     beam_image=beam_image, hdr=hdr,
-                     hdr_mfs=hdr_mfs, outfile=args.outfile,
-                     maxit=1, nthreads=args.nthreads)
 
-        residual = R.make_residual(beam(mask(model)))/wsum
-        residual_mfs = np.sum(residual, axis=0)
+    # initial model and residual
+    if args.x0 is not None:
+        try:
+            compare_headers(hdr, fits.getheader(args.x0))
+            model = load_fits(args.x0, dtype=args.real_type).squeeze()
+            if args.first_residual is not None:
+                try:
+                    compare_headers(hdr, fits.getheader(args.first_residual))
+                    residual = load_fits(args.first_residual,
+                                         dtype=args.real_type).squeeze()
+                except BaseException:
+                    residual = R.make_residual(beam(mask(model)))
+                    save_fits(args.outfile + '_first_residual.fits',
+                              residual, hdr)
+            else:
+                residual = R.make_residual(beam(mask(model)))
+                save_fits(args.outfile + '_first_residual.fits', residual,
+                          hdr)
+            residual /= wsum
+        except BaseException:  # start from scratch
+            model = np.zeros((args.nband, args.nx, args.ny), dtype=args.real_type)
+            residual = dirty.copy()
+    else:
+        # initialise with NNLS
+        if args.nnlsinit:
+            print("Initialising with NNLS", file=log)
+            model = nnls(psf, np.zeros_like(dirty), dirty,
+                         mask=mask_array, beam_image=beam_image,
+                         hessian=R.convolve, wsum=wsum,
+                         gamma=args.nnlsgamma, nthreads=args.nthreads,
+                         maxit=args.nnlsmaxit, tol=args.nnlstol,
+                         hdr=hdr, hdr_mfs=hdr_mfs, outfile=args.outfile,
+                         pmtol=args.pmtol, pmmaxit=args.pmmaxit, pmverbose=args.pmverbose,
+                         ftol=args.ftol, fmaxit=args.fmaxit, fverbose=args.fverbose)
+
+            residual = R.make_residual(beam(mask(model)))
+            save_fits(args.outfile + '_first_residual.fits', residual,
+                          hdr)
+            residual /= wsum
+            residual_mfs = np.sum(residual, axis=0)
+        else:
+            # start from scratch
+            model = np.zeros((args.nband, args.nx, args.ny))
+            residual = dirty.copy()
+
+    residual_mfs = np.sum(residual, axis=0)
+    save_fits(args.outfile + '_first_residual_mfs.fits', residual_mfs,
+              hdr_mfs)
 
     # deconvolve
     rmax = np.abs(residual_mfs).max()
