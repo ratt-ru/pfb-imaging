@@ -32,7 +32,7 @@ def nnls(psf, model, residual, mask=None, beam_image=None,
          hdr=None, hdr_mfs=None, outfile=None,
          nthreads=1, maxit=1, tol=1e-3,
          pmtol=1e-5, pmmaxit=50, pmverbose=1,
-         ftol=1e-5, fmaxit=250, fverbose=1):
+         ftol=1e-5, fmaxit=250, fverbose=3):
 
     if len(residual.shape) > 3:
         raise ValueError("Residual must have shape (nband, nx, ny)")
@@ -80,6 +80,11 @@ def nnls(psf, model, residual, mask=None, beam_image=None,
 
     beta, betavec = power_method(hess, residual.shape, tol=pmtol,
                                  maxit=pmmaxit, verbosity=pmverbose)
+
+    if model.any():
+        dirty = residual + hessian(mask(beam(model)))/wsum
+    else:
+        dirty = residual
 
     for i in range(maxit):
         fprime = partial(value_and_grad, dirty=residual,
