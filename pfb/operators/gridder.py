@@ -184,7 +184,7 @@ class Gridder(object):
             self.nband = nband
 
         # there are nband workers
-        max_row_chunk = mem_limit*1e9/memory_per_row//self.nband
+        max_row_chunk = mem_limit*1e9/memory_per_row  #//self.nband
         print("Maximum row chunks set to %i"%max_row_chunk, file=log)
 
         # bin edges
@@ -266,7 +266,7 @@ class Gridder(object):
                 if not np.array_equal(radec, self.radec):
                     continue
 
-                spw = ds.DATA_DESC_ID  # not optimal, need to use spw
+                spw = ds.DATA_DESC_ID
 
                 freq_bin_idx = self.freq_bin_idx[ims][spw]
                 freq_bin_counts = self.freq_bin_counts[ims][spw]
@@ -322,7 +322,7 @@ class Gridder(object):
                 if not np.array_equal(radec, self.radec):
                     continue
 
-                spw = ds.DATA_DESC_ID  # this is not correct, need to use spw
+                spw = ds.DATA_DESC_ID
 
                 freq_bin_idx = self.freq_bin_idx[ims][spw]
                 freq_bin_counts = self.freq_bin_counts[ims][spw]
@@ -443,14 +443,14 @@ class Gridder(object):
                     self.cell,
                     weights=weights,
                     flag=flag.astype(np.uint8),
-                    nthreads=self.nthreads//self.nband,
+                    nthreads=self.nthreads,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking,
                     double_accum=True)
 
                 residuals.append(residual)
 
-        residuals = dask.compute(residuals)[0]
+        residuals = dask.compute(residuals, scheduler='single-threaded')[0]
 
         return accumulate_dirty(residuals,
                                 self.nband,
@@ -551,14 +551,14 @@ class Gridder(object):
                     self.cell,
                     weights=weights,
                     flag=flag.astype(np.uint8),
-                    nthreads=self.nthreads//self.nband,
+                    nthreads=self.nthreads,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking,
                     double_accum=True)
 
                 dirties.append(dirty)
 
-        dirties = dask.compute(dirties)[0]
+        dirties = dask.compute(dirties, scheduler='single-threaded')[0]
 
         return accumulate_dirty(dirties,
                                 self.nband,
@@ -654,7 +654,7 @@ class Gridder(object):
                     self.ny_psf,
                     self.cell,
                     flag=flag.astype(np.uint8),
-                    nthreads=self.nthreads//self.nband,
+                    nthreads=self.nthreads,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking,
                     double_accum=True)
@@ -672,7 +672,7 @@ class Gridder(object):
         # import pdb
         # pdb.set_trace()
 
-        psfs = dask.compute(psfs)[0]
+        psfs = dask.compute(psfs, scheduler='single-threaded')[0]
         return accumulate_dirty(psfs,
                                 self.nband,
                                 self.band_mapping).astype(self.real_type)
@@ -813,7 +813,7 @@ class Gridder(object):
                     freq_bin_idx,
                     freq_bin_counts,
                     self.cell,
-                    nthreads=self.nthreads//self.nband,
+                    nthreads=self.nthreads,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking)
 
@@ -826,7 +826,7 @@ class Gridder(object):
                 xds_to_table(
                     out_data, ims, columns=[
                         self.model_column]))
-        dask.compute(writes)
+        dask.compute(writes, scheduler='single-threaded')
 
     def write_component_model(
             self,

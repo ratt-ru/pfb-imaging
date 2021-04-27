@@ -24,16 +24,18 @@ def set_threads(nthreads: int, nbands: int, mem_limit: int):
     os.environ["NUMBA_NUM_THREADS"] = str(nthreads)
     # TODO - does this result in thread over-subscription?
     os.environ["NUMEXPR_NUM_THREADS"] = str(nthreads)
+
+
     # set up client
-    # import dask
-    # from multiprocessing.pool import ThreadPool
-    # dask.config.set(pool=ThreadPool(nthreads))
+    import dask
+    from multiprocessing.pool import ThreadPool
+    dask.config.set(pool=ThreadPool(nthreads))
 
 
-    from dask.distributed import Client, LocalCluster
-    cluster = LocalCluster(processes=False, n_workers=nbands,
-                           threads_per_worker=1,
-                           memory_limit=str(mem_limit/nbands)+'GB')
-    client = Client(cluster)
+    # from dask.distributed import Client, LocalCluster
+    # cluster = LocalCluster(processes=False, n_workers=nbands,
+    #                        threads_per_worker=1,
+    #                        memory_limit=str(mem_limit/nbands)+'GB')
+    # client = Client(cluster)
 
 

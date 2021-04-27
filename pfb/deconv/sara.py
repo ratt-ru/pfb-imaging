@@ -171,7 +171,7 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
         for m in range(psi.nbasis):
             if adapt_sig21:
                 _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
-                print('basis %i, sigma %f'%sigmas[m], file=log)
+                print('basis %i, sigma %f'%(m, sigmas[m]), file=log)
 
             weights21[m] = alpha[m]/(alpha[m] + l2_norm[m]) * sigmas[m]/sig_21
 
