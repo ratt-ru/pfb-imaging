@@ -25,7 +25,7 @@ def resid_func(x, dirty, hessian, mask, beam, wsum):
 def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
          wsum=1, adapt_sig21=True, hdr=None, hdr_mfs=None, outfile=None, cpsf=None,
          nthreads=1, sig_21=1e-6, sigma_frac=100, maxit=10, tol=1e-3,
-         gamma=0.99,  psi_levels=2, psi_basis=None, alpha=None,
+         gamma=0.9,  psi_levels=2, psi_basis=None, alpha=None,
          pdtol=1e-6, pdmaxit=250, pdverbose=1, positivity=True,
          cgtol=1e-6, cgminit=25, cgmaxit=150, cgverbose=1,
          pmtol=1e-5, pmmaxit=50, pmverbose=1):
@@ -37,12 +37,10 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
 
     if beam_image is None:
         def beam(x): return x
-        def beaminv(x): return x
     else:
         try:
             assert beam.shape == (nband, nx, ny)
             def beam(x): return beam_image * x
-            def beaminv(x): return np.where(beam_image > 0.01,  x / beam_image, x)
         except BaseException:
             raise ValueError("Beam has incorrect shape")
 
@@ -110,9 +108,9 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
 
     #  preconditioning operator
     if model.any():
-        varmap = np.maximum(rms, sigma_frac * cpsfo.convolve(model))
+        varmap = np.maximum(rms, cpsfo.convolve(model))
     else:
-        varmap = np.ones(model.shape) * sigma_frac * rms
+        varmap = np.ones(model.shape) * rmax
 
     def hessf(x):
         # return mask(beam(hessian(mask(beam(x)))))/wsum + x / varmap
@@ -158,7 +156,12 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
         # update variance map (positivity constraint optional)
-        varmap = np.maximum(rms, sigma_frac * cpsfo.convolve(model))
+        # posx = np.where(cpsfo.convolve(x) > rms, x, 0.0)
+        convmod_mfs = np.mean(cpsfo.convolve(model + x), axis=0, keepdims=True)
+        varmap = np.maximum(rms, np.tile(convmod_mfs, (nband, 1, 1)))
+        varmap_mfs = np.mean(varmap, axis=0)
+        # penalise negative updates
+        # varmap = np.where(cpsfo.convolve(x) <= rms, rms, varmap)
 
         # update spectral norm
         beta, betavec = power_method(hessb, residual.shape, b0=betavec,
@@ -201,6 +204,9 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
 
             save_fits(outfile + str(i + 1) + '_residual.fits',
                       residual*wsum, hdr)
+
+            save_fits(outfile + str(i + 1) + '_varmap.fits',
+                      varmap_mfs, hdr_mfs)
 
 
         if eps < tol:
