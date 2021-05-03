@@ -53,7 +53,7 @@ def primal_dual(
         # primal update
         x = xp - tau * (psi.dot(2 * v - vp) + grad_func(xp))
         if positivity:
-            x[x < 0] = 0.0
+            x[x < 0.0] = 0.0
 
         # # apply mask
         # if mask is not None:

@@ -67,7 +67,8 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
     if cpsf is None:
         raise ValueError
     else:
-        cpsfo = PSF(cpsf, residual.shape, nthreads=nthreads)
+        cpsfo = PSF(cpsf,
+                    residual.shape, nthreads=nthreads)  # * wsums[:, None, None]
 
     residual_mfs = np.sum(residual, axis=0)
     residual = mask(beam(residual))
@@ -88,7 +89,7 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
     # this assumes that the model has been initialised using NNLS
     alpha = np.zeros(psi.nbasis)
     sigmas = np.zeros(psi.nbasis)
-    resid_comps = psi.hdot(residual/wsums[:, None, None])
+    resid_comps = psi.hdot(residual / wsums[:, None, None])   # / wsums[:, None, None]
     l2_norm = np.linalg.norm(psi.hdot(cpsfo.convolve(model)), axis=1)
     for m in range(psi.nbasis):
         alpha[m] = np.std(resid_comps[m])
@@ -153,12 +154,12 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
         # check stopping criteria
         rmax = np.abs(residual_mfs).max()
         rms = np.std(residual_mfs)
+        # rmss = np.std(residual.reshape(-1, nx*ny), axis=1)
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
         # update variance map (positivity constraint optional)
         # posx = np.where(cpsfo.convolve(x) > rms, x, 0.0)
-        convmod_mfs = np.mean(cpsfo.convolve(model + x), axis=0, keepdims=True)
-        varmap = np.maximum(rms, np.tile(convmod_mfs, (nband, 1, 1)))
+        varmap = np.maximum(sigma_frac*rms, cpsfo.convolve(model + sigma_frac*x))
         varmap_mfs = np.mean(varmap, axis=0)
         # penalise negative updates
         # varmap = np.where(cpsfo.convolve(x) <= rms, rms, varmap)
@@ -172,12 +173,13 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
               i+1, rmax, rms, eps), file=log)
 
         # reweight
+        l2_norm_conv = np.linalg.norm(psi.hdot(cpsfo.convolve(model)), axis=1)
         l2_norm = np.linalg.norm(psi.hdot(model), axis=1)
-        resid_comps = psi.hdot(residual/wsums[:, None, None])
+        resid_comps = psi.hdot(residual / wsums[:, None, None])
         for m in range(psi.nbasis):
             if adapt_sig21:
                 alpha[m] = np.std(resid_comps[m])
-                _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
+                _, sigmas[m] = expon.fit(l2_norm_conv[m], floc=0.0)
                 print("Basis %i, alpha %f, sigma %f"%(m, alpha[m], sigmas[m]), file=log)
 
             weights21[m] = alpha[m]/(alpha[m] + l2_norm[m]) * sigmas[m]/sig_21

@@ -23,13 +23,18 @@ def value_and_grad(x, dirty, psfo, mask, beam):
     attdirty = mask(beam(dirty))
     return np.vdot(x, convmod - 2*attdirty), 2*convmod - 2*attdirty
 
+def value_and_grad_hess(x, dirty, hessian, mask, beam, wsum):
+    convmod = mask(beam(hessian(mask(beam(x)))))/wsum
+    attdirty = mask(beam(dirty))
+    return np.vdot(x, convmod - 2*attdirty), 2*convmod - 2*attdirty
+
 def prox(x):
-    x[x<0] = 0.0
-    return x
+    mask = np.any(x < 0.0, axis=0)
+    return np.where(~mask[None], x, 0.0)
 
 def nnls(psf, model, residual, mask=None, beam_image=None,
          hessian=None, wsum=None, gamma=0.95, nthreads=1,
-         maxit=1, tol=1e-3,
+         maxit=1, tol=1e-3, use_hess=False,
          hdr=None, hdr_mfs=None, outfile=None,
          pmtol=1e-5, pmmaxit=50, pmverbose=1,
          ftol=1e-5, fmaxit=250, fverbose=3):
@@ -75,11 +80,17 @@ def nnls(psf, model, residual, mask=None, beam_image=None,
         hessian = psfo.convolve
         wsum = 1
 
-    def hess(x):
-        return mask(beam(psfo.convolve(mask(beam(x)))))
+
+    if use_hess and hessian is not None:
+        def hess(x):
+            return mask(beam(hessian(mask(beam(x)))))/wsum
+    else:
+        def hess(x):
+            return mask(beam(psfo.convolve(mask(beam(x)))))
 
     beta, betavec = power_method(hess, residual.shape, tol=pmtol,
                                  maxit=pmmaxit, verbosity=pmverbose)
+    beta *= 1.1
 
     if model.any():
         dirty = residual + hessian(mask(beam(model)))/wsum
@@ -87,8 +98,12 @@ def nnls(psf, model, residual, mask=None, beam_image=None,
         dirty = residual
 
     for i in range(maxit):
-        fprime = partial(value_and_grad, dirty=residual,
-                         psfo=psfo, mask=mask, beam=beam)
+        if use_hess and hessian is not None:
+            fprime = partial(value_and_grad_hess, dirty=residual,
+                            hessian=hessian, mask=mask, beam=beam, wsum=wsum)
+        else:
+            fprime = partial(value_and_grad, dirty=residual,
+                             psfo=psfo, mask=mask, beam=beam)
 
         x = fista(np.zeros_like(model), beta,
                   fprime, prox, tol=ftol, maxit=fmaxit,

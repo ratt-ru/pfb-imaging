@@ -100,7 +100,7 @@ def create_parser():
                    help="Tolerance")
     p.add_argument("--nnlsinit", type=str2bool, nargs='?', const=True,
                    default=True, help='Initialise with NNLS.')
-    p.add_argument("--nnlsmaxit", type=int, default=3,
+    p.add_argument("--nnlsmaxit", type=int, default=1,
                    help='Number of major iters for NNLS.')
     p.add_argument("--nnlsgamma", type=float, default=0.95,
                    help='Major loop gain of NNLS.')
