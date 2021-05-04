@@ -189,3 +189,129 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
                    nthreads=nthreads), axes=ax)[:, unpad_x, unpad_y]
 
     return image, gausskern[:, unpad_x, unpad_y]
+
+def chan_to_band_mapping(ms_name, nband=None):
+    '''
+    Construct dictionaries containing per MS and SPW channel to band mapping.
+    Currently assumes we are only imaging field 0 of the first MS.
+
+    Input:
+    ms_name     - list of ms names
+    nband       - number of imaging bands
+
+    Output:
+    freqs           - dict[MS][SPW] chunked dask arrays of the freq to band mapping
+    freq_bin_idx    - dict[MS][SPW] chunked dask arrays of bin starting indices
+    freq_bin_counts - dict[MS][SPW] chunked dask arrays of counts in each bin
+    freq_out        - frequencies of average (LB - should a weighted sum rather be computed?)
+    band_mapping    - dict[MS][SPW] identifying imaging bands going into degridder
+    chan_chunks     - dict[MS][SPW] specifying dask chunking scheme over channel
+    '''
+    from daskms import xds_from_ms, xds_from_table
+    import dask
+    import dask.array as da
+    if not isinstance(ms_name, list):
+        ms_name = [ms_name]
+
+    # first pass through data to determine freq_mapping
+    radec = None
+    freqs = {}
+    all_freqs = []
+    spws = {}
+    for ims in ms_name:
+        xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
+                            chunks={"row": -1},
+                            columns=('TIME'))
+
+        # subtables
+        ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
+        fields = xds_from_table(ims + "::FIELD",
+                                group_cols="__row__")
+        spws_table = xds_from_table(ims + "::SPECTRAL_WINDOW",
+                                group_cols="__row__")
+        pols = xds_from_table(ims + "::POLARIZATION",
+                                group_cols="__row__")
+
+        # subtable data
+        ddids = dask.compute(ddids)[0]
+        fields = dask.compute(fields)[0]
+        spws_table = dask.compute(spws_table)[0]
+        pols = dask.compute(pols)[0]
+
+        freqs[ims] = {}
+        spws[ims] = []
+        for ds in xds:
+            field = fields[ds.FIELD_ID]
+
+            # check fields match
+            if radec is None:
+                radec = field.PHASE_DIR.data.squeeze()
+
+            if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
+                continue
+
+            spw = spws_table[ds.DATA_DESC_ID]
+            tmp_freq = spw.CHAN_FREQ.data.squeeze()
+            freqs[ims][ds.DATA_DESC_ID] = tmp_freq
+            all_freqs.append(list([tmp_freq]))
+            spws[ims].append(ds.DATA_DESC_ID)
+
+
+    # freq mapping
+    all_freqs = dask.compute(all_freqs)
+    ufreqs = np.unique(all_freqs)  # sorted ascending
+    nchan = ufreqs.size
+    if nband is None:
+        nband = nchan
+    else:
+       nband = nband
+
+    # bin edges
+    fmin = ufreqs[0]
+    fmax = ufreqs[-1]
+    fbins = np.linspace(fmin, fmax, nband + 1)
+    freq_out = np.zeros(nband)
+    for band in range(nband):
+        indl = ufreqs >= fbins[band]
+        # inclusive except for the last one
+        indu = ufreqs < fbins[band + 1] + 1e-6
+        freq_out[band] = np.mean(ufreqs[indl & indu])
+
+    # chan <-> band mapping
+    band_mapping = {}
+    chan_chunks = {}
+    freq_bin_idx = {}
+    freq_bin_counts = {}
+    for ims in freqs:
+        freq_bin_idx[ims] = {}
+        freq_bin_counts[ims] = {}
+        band_mapping[ims] = {}
+        chan_chunks[ims] = []
+        for spw in freqs[ims]:
+            freq = np.atleast_1d(dask.compute(freqs[ims][spw])[0])
+            band_map = np.zeros(freq.size, dtype=np.int32)
+            for band in range(nband):
+                indl = freq >= fbins[band]
+                indu = freq < fbins[band + 1] + 1e-6
+                band_map = np.where(indl & indu, band, band_map)
+            # to dask arrays
+            bands, bin_counts = np.unique(band_map, return_counts=True)
+            band_mapping[ims][spw] = tuple(bands)
+            chan_chunks[ims].append({'chan': tuple(bin_counts)})
+            freqs[ims][spw] = da.from_array(freq, chunks=tuple(bin_counts))
+            bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
+            freq_bin_idx[ims][spw] = da.from_array(bin_idx, chunks=1)
+            freq_bin_counts[ims][spw] = da.from_array(bin_counts, chunks=1)
+
+    return freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks
+
+def stitch_images(dirties, nband, band_mapping):
+    _, nx, ny = dirties[0].shape
+    dirty = np.zeros((nband, nx, ny), dtype=dirties[0].dtype)
+    d = 0
+    for ims in band_mapping:
+        for spw in band_mapping[ims]:
+            for b, band in enumerate(band_mapping[ims][spw]):
+                dirty[band] += dirties[d][b]
+            d += 1
+    return dirty
