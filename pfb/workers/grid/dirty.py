@@ -50,6 +50,7 @@ log = pyscilog.get_logger('DIRTY')
               help="Memory limit in GB. Default of 0 means use all available memory")
 @click.option('-otype', '--output-type', default='f4',
               help="Data type of output")
+@click.option('-ha', '--host-address')
 def dirty(ms, **kw):
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
@@ -77,7 +78,7 @@ def dirty(ms, **kw):
     # client has nband workers
     from pfb import set_client
     nband = args.nband
-    set_client(nthreads, nband, mem_limit)
+    gridder_threads = set_client(nthreads, nband, mem_limit, args.host_address)
     # numpy imports have to happen after this step
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
@@ -196,6 +197,7 @@ def dirty(ms, **kw):
     print("Image size set to (%i, %i, %i)" % (nband, nx, ny), file=log)
 
     dirties = []
+    wsum = 0.0
     radec = None  # assumes we are only imaging field 0 of first MS
     for ims in ms:
         xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
@@ -275,6 +277,8 @@ def dirty(ms, **kw):
             # ducc0 uses uint8 mask not flag
             flag = ~ (flagxx | flagyy)
 
+            wsum += da.sum((weights * flag).ravel())
+
             dirty = vis2im(
                 uvw,
                 freqs[ims][spw],
@@ -286,16 +290,25 @@ def dirty(ms, **kw):
                 cell_rad,
                 weights=weights,
                 flag=flag.astype(np.uint8),
-                nthreads=nthreads//nband,
+                nthreads=gridder_threads,
                 epsilon=args.epsilon,
                 do_wstacking=args.wstack,
                 double_accum=args.double_accum)
 
             dirties.append(dirty)
 
-    dirties = dask.compute(dirties)[0]
+
+    dask.visualize(dirties, wsum, filename=args.output_filename + '_graph.pdf')
+    result = dask.compute(dirties, wsum)
+
+    dirties = result[0]
+    wsum = result[1]
 
     dirty = stitch_images(dirties, nband, band_mapping)
 
     hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
     save_fits(args.output_filename + '_dirty.fits', dirty, hdr, dtype=args.output_type)
+
+    hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, np.mean(freq_out))
+    dirty_mfs = np.sum(dirty, axis=0)/wsum
+    save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs, dtype=args.output_type)

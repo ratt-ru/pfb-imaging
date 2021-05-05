@@ -19,6 +19,7 @@ requirements = [
                 'Click',
                 'omegaconf',
                 'bokeh',
+                'graphviz',
             ]
 
 
