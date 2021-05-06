@@ -298,7 +298,7 @@ def dirty(ms, **kw):
             dirties.append(dirty)
 
 
-    dask.visualize(dirties, wsum, filename=args.output_filename + '_graph.pdf')
+    # dask.visualize(dirties, wsum, filename=args.output_filename + '_graph.pdf')
     result = dask.compute(dirties, wsum)
 
     dirties = result[0]
