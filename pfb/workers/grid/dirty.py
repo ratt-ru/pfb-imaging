@@ -158,13 +158,7 @@ def dirty(ms, **kw):
         columns += (args.mueller_column,)
         memory_per_row += bytes_per_row
 
-    #
-    #
-    if args.host_address is not None:
-        max_row_chunk = int(mem_limit*1e9/memory_per_row)
-    else:
-        # there are nband workers sharing memory
-        max_row_chunk = int(mem_limit*1e9/memory_per_row/nband)
+    max_row_chunk = int(mem_limit*1e9/memory_per_row)
     print("Maximum row chunks set to %i"%max_row_chunk, file=log)
 
     chunks = {}
