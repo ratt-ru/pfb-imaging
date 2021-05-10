@@ -50,8 +50,22 @@ log = pyscilog.get_logger('DIRTY')
               help="Memory limit in GB. Default of 0 means use all available memory")
 @click.option('-otype', '--output-type', default='f4',
               help="Data type of output")
-@click.option('-ha', '--host-address')
+@click.option('-ha', '--host-address',
+              help='Address where the distributed client lives. '
+              'Will use a local cluster if no address is provided')
 def dirty(ms, **kw):
+    '''
+    Routine to create a dirty image from a list of measurement sets.
+    The dirty image cube is not normalised by wsum as this destroyes
+    information. The MFS image is written out in units of Jy/beam.
+    The normalisation factors can be obtained by making a psf image
+    using the psf worker (see pfbworkers psf --help).
+
+    If a host address is provided the computation will be distributed
+    first over imaging band and then over rows in case a full imaging
+    band does not fit into memory.
+    Disclaimer - Memory budgeting is still very crude!
+    '''
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
     pyscilog.enable_memory_logging(level=3)
@@ -83,7 +97,8 @@ def dirty(ms, **kw):
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
-    from daskms import xds_from_ms, xds_from_table
+    from daskms import xds_from_storage_ms as xds_from_ms
+    from daskms import xds_from_storage_table as xds_from_table
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import dirty as vis2im
@@ -140,8 +155,13 @@ def dirty(ms, **kw):
         columns += (args.mueller_column,)
         memory_per_row += bytes_per_row
 
-    # there are nband workers
-    max_row_chunk = int(mem_limit*1e9/memory_per_row/nband)
+    # if using distributed scheduler mem_limit is per node
+    # and does not have to be shared amongst workers
+    if gridder_threads != nthreads:
+        max_row_chunk = int(mem_limit*1e9/memory_per_row)
+    else:
+        # there are nband workers sharing memory
+        max_row_chunk = int(mem_limit*1e9/memory_per_row/nband)
     print("Maximum row chunks set to %i"%max_row_chunk, file=log)
 
     chunks = {}
