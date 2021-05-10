@@ -155,9 +155,9 @@ def dirty(ms, **kw):
         columns += (args.mueller_column,)
         memory_per_row += bytes_per_row
 
-    # if using distributed scheduler mem_limit is per node
-    # and does not have to be shared amongst workers
-    if gridder_threads != nthreads:
+    # if using distributed scheduler (i.e. when True) mem_limit is per
+    # node and does not have to be shared amongst workers
+    if gridder_threads == nthreads:
         max_row_chunk = int(mem_limit*1e9/memory_per_row)
     else:
         # there are nband workers sharing memory
