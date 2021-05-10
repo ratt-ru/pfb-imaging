@@ -207,7 +207,8 @@ def chan_to_band_mapping(ms_name, nband=None):
     band_mapping    - dict[MS][SPW] identifying imaging bands going into degridder
     chan_chunks     - dict[MS][SPW] specifying dask chunking scheme over channel
     '''
-    from daskms import xds_from_ms, xds_from_table
+    from daskms import xds_from_storage_ms as xds_from_ms
+    from daskms import xds_from_storage_table as xds_from_table
     import dask
     import dask.array as da
     if not isinstance(ms_name, list):
@@ -219,18 +220,13 @@ def chan_to_band_mapping(ms_name, nband=None):
     all_freqs = []
     spws = {}
     for ims in ms_name:
-        xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
-                            chunks={"row": -1},
-                            columns=('TIME'))
+        xds = xds_from_ms(ims, chunks={"row": -1}, columns=('TIME'))
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
-        fields = xds_from_table(ims + "::FIELD",
-                                group_cols="__row__")
-        spws_table = xds_from_table(ims + "::SPECTRAL_WINDOW",
-                                group_cols="__row__")
-        pols = xds_from_table(ims + "::POLARIZATION",
-                                group_cols="__row__")
+        fields = xds_from_table(ims + "::FIELD")
+        spws_table = xds_from_table(ims + "::SPECTRAL_WINDOW")
+        pols = xds_from_table(ims + "::POLARIZATION")
 
         # subtable data
         ddids = dask.compute(ddids)[0]

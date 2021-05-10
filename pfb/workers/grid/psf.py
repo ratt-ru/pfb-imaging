@@ -53,7 +53,7 @@ log = pyscilog.get_logger('PSF')
 @click.option('-otype', '--output-type', default='f4',
               help="Data type of output")
 @click.option('-ha', '--host-address')
-def dirty(ms, **kw):
+def psf(ms, **kw):
     '''
     Routine to create a psf image from a list of measurement sets.
     The psf image cube is not normalised by wsum as this destroyes
@@ -296,13 +296,12 @@ def dirty(ms, **kw):
 
             psf = vis2im(uvw,
                          freqs[ims][spw],
-                         data,
+                         weights.astype(data_type),
                          freq_bin_idx[ims][spw],
                          freq_bin_counts[ims][spw],
                          nx,
                          ny,
                          cell_rad,
-                         weights=weights,
                          flag=flag.astype(np.uint8),
                          nthreads=gridder_threads,
                          epsilon=args.epsilon,

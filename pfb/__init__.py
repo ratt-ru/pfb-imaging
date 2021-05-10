@@ -51,6 +51,6 @@ def set_client(nthreads: int, nbands: int, mem_limit: int, address):
                                memory_limit=str(mem_limit/nbands)+'GB')
         client = Client(cluster)
         # if using local cluster the gridder needs to split resources across workers
-        return int(nthreads/nband)
+        return int(nthreads/nbands)
 
 
