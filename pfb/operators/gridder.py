@@ -162,18 +162,6 @@ class Gridder(object):
                             "No column named %s in %s" %
                             (column, ims))
 
-        # compute imaging weights
-        if weighting is not None:
-            if imaging_weight_column is None:
-                self.imaging_weight_column = "IMAGING_WEIGHT_SPECTRUM"
-            else:
-                self.imaging_weight_column = imaging_weight_column
-            # this column is always created if asked
-            self.columns += (self.imaging_weight_column,)
-            memory_per_row += bytes_per_row//2  # real valued imaging weights
-        else:
-            self.imaging_weight_column = None
-
         # freq mapping
         all_freqs = dask.compute(all_freqs)
         ufreqs = np.unique(all_freqs)  # sorted ascending
@@ -234,8 +222,17 @@ class Gridder(object):
 
         # compute imaging weights
         if weighting is not None:
+            if imaging_weight_column is None:
+                self.imaging_weight_column = "IMAGING_WEIGHT_SPECTRUM"
+            else:  # this column is always created if asked
+                self.imaging_weight_column = imaging_weight_column
             print("Computing weights", file=log)
             self.compute_weights(robust)
+            self.columns += (self.imaging_weight_column,)
+            memory_per_row += bytes_per_row//2  # real valued imaging weights
+        else:
+            self.imaging_weight_column = None
+
 
     def compute_weights(self, robust):
         from pfb.utils.weighting import compute_counts, counts_to_weights

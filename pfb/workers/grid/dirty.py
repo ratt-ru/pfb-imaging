@@ -63,7 +63,10 @@ def dirty(ms, **kw):
 
     If a host address is provided the computation will be distributed
     first over imaging band and then over rows in case a full imaging
-    band does not fit into memory.
+    band does not fit into memory. When using a distributed scheduler
+    mem_limit is per node, otherwise it should specify the maximum memory
+    we can allocated to the gridder. In the latter case we step through
+    the bands one at a time to minimise memory consumption.
     Disclaimer - Memory budgeting is still very crude!
     '''
     args = OmegaConf.create(kw)
@@ -155,9 +158,9 @@ def dirty(ms, **kw):
         columns += (args.mueller_column,)
         memory_per_row += bytes_per_row
 
-    # if using distributed scheduler (i.e. when True) mem_limit is per
-    # node and does not have to be shared amongst workers
-    if gridder_threads == nthreads:
+    #
+    #
+    if args.host_address is not None:
         max_row_chunk = int(mem_limit*1e9/memory_per_row)
     else:
         # there are nband workers sharing memory
@@ -313,7 +316,7 @@ def dirty(ms, **kw):
             dirties.append(dirty)
 
 
-    # dask.visualize(dirties, wsum, filename=args.output_filename + '_graph.pdf')
+    dask.visualize(dirties, wsum, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
     result = dask.compute(dirties, wsum)
 
     dirties = result[0]

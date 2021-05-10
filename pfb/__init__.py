@@ -43,14 +43,14 @@ def set_client(nthreads: int, nbands: int, mem_limit: int, address):
         from distributed import Client
         client = Client(address)
         # if using distributed client the gridder can use all available threads
-        return nthreads
+        return nthreads-1
     else:
         from dask.distributed import Client, LocalCluster
-        cluster = LocalCluster(processes=False, n_workers=nbands,
+        cluster = LocalCluster(processes=False, n_workers=1,
                                threads_per_worker=1,
-                               memory_limit=str(mem_limit/nbands)+'GB')
+                               memory_limit=str(mem_limit)+'GB')
         client = Client(cluster)
         # if using local cluster the gridder needs to split resources across workers
-        return int(nthreads/nbands)
+        return nthreads
 
 
