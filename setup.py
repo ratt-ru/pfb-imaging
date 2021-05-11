@@ -19,6 +19,7 @@ requirements = [
                 'Click',
                 'omegaconf',
                 'bokeh',
+                'graphviz',
             ]
 
 
@@ -41,6 +42,7 @@ setup(
      entry_points='''
                     [console_scripts]
                     pfbclean=pfb.pfbclean:main
+                    pfbworkers=pfb.workers.main:cli
 
      '''
      ,
