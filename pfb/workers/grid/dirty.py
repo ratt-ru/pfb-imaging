@@ -22,7 +22,7 @@ log = pyscilog.get_logger('DIRTY')
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
               help='Gridder accuracy')
 @click.option('--wstack/--no-wstack', default=True)
-@click.option('--mock', default=False)
+@click.option('--mock/--no-mock', default=False)
 @click.option('--double-accum/--no-double-accum', default=True)
 @click.option('-fc', '--flag-column', default='FLAG',
               help="Column containing data flags."
