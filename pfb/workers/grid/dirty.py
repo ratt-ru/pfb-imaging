@@ -106,6 +106,7 @@ def _dirty(ms, stack, **kw):
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
+    from dask.graph_manipulation import clone
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     import dask.array as da
@@ -257,7 +258,7 @@ def _dirty(ms, stack, **kw):
             # this is not correct, need to use spw
             spw = ds.DATA_DESC_ID
 
-            uvw = ds.UVW.data
+            uvw = clone(ds.UVW.data)
 
             data = getattr(ds, args.data_column).data
             dataxx = data[:, :, 0]
