@@ -23,6 +23,7 @@ log = pyscilog.get_logger('PSF')
               help='Gridder accuracy')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
+@click.option('--mock/--no-mock', default=False)
 @click.option('-fc', '--flag-column', default='FLAG',
               help="Column containing data flags."
               "Must be the same across MSs")
@@ -106,6 +107,7 @@ def _psf(ms, stack, **kw):
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
+    from dask.graph_manipulation import clone
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     import dask.array as da
@@ -256,7 +258,7 @@ def _psf(ms, stack, **kw):
             # this is not correct, need to use spw
             spw = ds.DATA_DESC_ID
 
-            uvw = ds.UVW.data
+            uvw = clone(ds.UVW.data)
 
             data_type = getattr(ds, args.data_column).data.dtype
             data_shape = getattr(ds, args.data_column).data.shape
@@ -315,19 +317,20 @@ def _psf(ms, stack, **kw):
 
 
     # dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
-    psfs = dask.compute(psfs, optimize_graph=False)[0]
+    if not args.mock:
+        psfs = dask.compute(psfs, optimize_graph=False)[0]
 
-    psf = stitch_images(psfs, nband, band_mapping)
+        psf = stitch_images(psfs, nband, band_mapping)
 
-    hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
-    save_fits(args.output_filename + '_psf.fits', psf, hdr,
-              dtype=args.output_type)
+        hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
+        save_fits(args.output_filename + '_psf.fits', psf, hdr,
+                dtype=args.output_type)
 
-    hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
-                      np.mean(freq_out))
-    psf_mfs = np.sum(psf, axis=0)
-    wsum = psf_mfs.max()
-    save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs/wsum, hdr_mfs,
-              dtype=args.output_type)
+        hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
+                        np.mean(freq_out))
+        psf_mfs = np.sum(psf, axis=0)
+        wsum = psf_mfs.max()
+        save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs/wsum, hdr_mfs,
+                dtype=args.output_type)
 
     print("All done here.", file=log)
