@@ -315,7 +315,7 @@ def _psf(ms, stack, **kw):
 
 
     # dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
-    psfs = dask.compute(psfs)[0]
+    psfs = dask.compute(psfs, optimize_graph=False)[0]
 
     psf = stitch_images(psfs, nband, band_mapping)
 
