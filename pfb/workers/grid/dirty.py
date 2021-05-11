@@ -303,7 +303,7 @@ def _dirty(ms, stack, **kw):
             # ducc0 uses uint8 mask not flag
             flag = ~ (flagxx | flagyy)
 
-            wsum += da.sum(weights * flag)
+            # wsum += da.sum(weights * flag)
 
             dirty = vis2im(
                 uvw,
@@ -324,21 +324,22 @@ def _dirty(ms, stack, **kw):
             dirties.append(dirty)
 
 
-    dask.visualize(dirties, wsum, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
+    dask.visualize(dirties, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
 
     if not args.mock:
-        result = dask.compute(dirties, wsum, optimize_graph=False)
+        # result = dask.compute(dirties, wsum, optimize_graph=False)
+        result = dask.compute(dirties, optimize_graph=False)
 
         dirties = result[0]
-        wsum = result[1]
+        # wsum = result[1]
 
         dirty = stitch_images(dirties, nband, band_mapping)
 
         hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
         save_fits(args.output_filename + '_dirty.fits', dirty, hdr, dtype=args.output_type)
 
-        hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, np.mean(freq_out))
-        dirty_mfs = np.sum(dirty, axis=0)/wsum
-        save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs, dtype=args.output_type)
+        # hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, np.mean(freq_out))
+        # dirty_mfs = np.sum(dirty, axis=0)/wsum
+        # save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs, dtype=args.output_type)
 
     print("All done here.", file=log)
