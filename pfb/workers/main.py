@@ -10,3 +10,4 @@ def cli():
 from pfb.workers.post import restore
 from pfb.workers.grid import dirty, psf, dirty_and_psf, weighting
 from pfb.workers.post import spi_fitter
+from pfb.workers.deconv import nnls

@@ -43,7 +43,6 @@ def set_client(nthreads: int, nbands: int, mem_limit: int, address, stack, log):
         print("Initialising distributed client.", file=log)
         client = stack.enter_context(Client(address))
         # if using distributed client the gridder can use all available threads
-        return nthreads-1
     else:
         from dask.distributed import Client, LocalCluster
         print("Initialising client with LocalCluster.", file=log)
@@ -52,7 +51,7 @@ def set_client(nthreads: int, nbands: int, mem_limit: int, address, stack, log):
                                memory_limit=str(mem_limit)+'GB')
         cluster = stack.enter_context(cluster)
         client = stack.enter_context(Client(cluster))
-        # if using local cluster the gridder needs to split resources across workers
-        return nthreads
 
+    # from pfb.scheduling import install_plugin
+    # client.run_on_scheduler(install_plugin)
 
