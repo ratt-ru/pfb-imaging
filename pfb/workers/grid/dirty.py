@@ -1,5 +1,5 @@
 # flake8: noqa
-
+from contextlib import ExitStack
 from pfb.workers.main import cli
 import click
 from omegaconf import OmegaConf
@@ -10,7 +10,6 @@ log = pyscilog.get_logger('DIRTY')
 
 @cli.command()
 @click.argument('ms', nargs=-1)
-              #help="List of paths to measurement sets")
 @click.option('-dc', '--data-column',
               help="Data column to image."
               "Must be the same across MSs")
@@ -65,10 +64,16 @@ def dirty(ms, **kw):
     first over imaging band and then over rows in case a full imaging
     band does not fit into memory. When using a distributed scheduler
     mem_limit is per node, otherwise it should specify the maximum memory
-    we can allocated to the gridder. In the latter case we step through
+    we can allocate to the gridder. In the latter case we step through
     the bands one at a time to minimise memory consumption.
     Disclaimer - Memory budgeting is still very crude!
     '''
+    if not len(ms):
+        raise ValueError("You must specify at least one measurement set")
+    with ExitStack() as stack:
+        return _dirty(ms, stack, **kw)
+
+def _dirty(ms, stack, **kw):
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
     pyscilog.enable_memory_logging(level=3)
@@ -95,7 +100,7 @@ def dirty(ms, **kw):
     # client has nband workers
     from pfb import set_client
     nband = args.nband
-    gridder_threads = set_client(nthreads, nband, mem_limit, args.host_address)
+    gridder_threads = set_client(nthreads, nband, mem_limit, args.host_address, stack)
     # numpy imports have to happen after this step
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
@@ -125,7 +130,8 @@ def dirty(ms, **kw):
 
     # assumes number of correlations are the same across MS/SPW
     xds = xds_from_ms(ms[0], columns=(args.data_column, args.weight_column))
-    ncorr = xds[0].corr.size
+    ncorr = xds[0].dims['corr']
+    nrow = xds[0].dims['row']
     data_bytes = getattr(xds[0], args.data_column).data.itemsize
     bytes_per_row = max_chan_chunk * ncorr * data_bytes
     memory_per_row = bytes_per_row
@@ -157,9 +163,6 @@ def dirty(ms, **kw):
     if args.mueller_column is not None:
         columns += (args.mueller_column,)
         memory_per_row += bytes_per_row
-
-    max_row_chunk = int(mem_limit*1e9/memory_per_row)
-    print("Maximum row chunks set to %i"%max_row_chunk, file=log)
 
     chunks = {}
     for ims in ms:
@@ -199,7 +202,7 @@ def dirty(ms, **kw):
         cell_size = cell_rad * 60 * 60 * 180 / np.pi
         print("Cell size set to %5.5e arcseconds" % cell_size, file=log)
 
-    if args.nx is None or args.ny is None:
+    if args.nx is None:
         fov = args.field_of_view * 3600
         npix = int(fov / cell_size)
         if npix % 2:
@@ -211,6 +214,16 @@ def dirty(ms, **kw):
         ny = args.ny if args.ny is not None else nx
 
     print("Image size set to (%i, %i, %i)" % (nband, nx, ny), file=log)
+
+    # get approx image size
+    # this is not a conservative estimate
+    pixel_bytes = np.dtype(args.output_type).itemsize
+    image_size = nband * nx * ny * pixel_bytes
+
+    # 0.8 here assuming the gridder has about 20% memory overhead
+    max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/memory_per_row)
+    print("Maximum row chunks set to %i for a total of %i chunks" %
+          (max_row_chunk, np.ceil(nrow/max_row_chunk)), file=log)
 
     dirties = []
     wsum = 0.0
@@ -324,3 +337,5 @@ def dirty(ms, **kw):
     hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, np.mean(freq_out))
     dirty_mfs = np.sum(dirty, axis=0)/wsum
     save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs, dtype=args.output_type)
+
+    print("All done here.", file=log)

@@ -14,7 +14,8 @@ __version__ = '0.0.1'
 # to use in the first place
 
 import os
-
+import pyscilog
+log = pyscilog.get_logger('INIT')
 
 def set_threads(nthreads: int, nbands: int, mem_limit: int):
     os.environ["OMP_NUM_THREADS"] = str(nthreads)
@@ -29,7 +30,7 @@ def set_threads(nthreads: int, nbands: int, mem_limit: int):
     dask.config.set(pool=ThreadPool(nthreads))
 
 
-def set_client(nthreads: int, nbands: int, mem_limit: int, address):
+def set_client(nthreads: int, nbands: int, mem_limit: int, address, stack):
     os.environ["OMP_NUM_THREADS"] = str(nthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(nthreads)
     os.environ["MKL_NUM_THREADS"] = str(nthreads)
@@ -41,15 +42,18 @@ def set_client(nthreads: int, nbands: int, mem_limit: int, address):
     # set up client
     if address is not None:
         from distributed import Client
-        client = Client(address)
+        print("Initialising distributed client.", file=log)
+        client = stack.enter_context(Client(address))
         # if using distributed client the gridder can use all available threads
         return nthreads-1
     else:
         from dask.distributed import Client, LocalCluster
+        print("Initialising client with LocalCluster.", file=log)
         cluster = LocalCluster(processes=False, n_workers=1,
                                threads_per_worker=1,
                                memory_limit=str(mem_limit)+'GB')
-        client = Client(cluster)
+        cluster = stack.enter_context(cluster)
+        client = stack.enter_context(Client(cluster))
         # if using local cluster the gridder needs to split resources across workers
         return nthreads
 
