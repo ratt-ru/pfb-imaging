@@ -106,7 +106,8 @@ def _psf(ms, stack, **kw):
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
-    from daskms import xds_from_ms, xds_from_table
+    from daskms import xds_from_storage_ms as xds_from_ms
+    from daskms import xds_from_storage_table as xds_from_table
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import dirty as vis2im
