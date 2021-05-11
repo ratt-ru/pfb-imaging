@@ -52,6 +52,6 @@ def set_client(nthreads: int, nbands: int, mem_limit: int, address, stack, log):
         cluster = stack.enter_context(cluster)
         client = stack.enter_context(Client(cluster))
 
-    # from pfb.scheduling import install_plugin
-    # client.run_on_scheduler(install_plugin)
+    from pfb.scheduling import install_plugin
+    client.run_on_scheduler(install_plugin)
 
