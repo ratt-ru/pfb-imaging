@@ -170,8 +170,7 @@ def _psf(ms, stack, **kw):
     u_max = 0.0
     v_max = 0.0
     for ims in ms:
-        xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
-                          columns=('UVW'), chunks={'row': -1})
+        xds = xds_from_ms(ims, columns=('UVW'), chunks={'row': -1})
 
         for ds in xds:
             uvw = ds.UVW.data
@@ -230,17 +229,13 @@ def _psf(ms, stack, **kw):
     psfs = []
     radec = None  # assumes we are only imaging field 0 of first MS
     for ims in ms:
-        xds = xds_from_ms(ims, group_cols=('FIELD_ID', 'DATA_DESC_ID'),
-                          chunks=chunks[ims],
-                          columns=columns)
+        xds = xds_from_ms(ims, chunks=chunks[ims], columns=columns)
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
-        fields = xds_from_table(ims + "::FIELD", group_cols="__row__")
-        spws = xds_from_table(ims + "::SPECTRAL_WINDOW",
-                                group_cols="__row__")
-        pols = xds_from_table(ims + "::POLARIZATION",
-                                group_cols="__row__")
+        fields = xds_from_table(ims + "::FIELD")
+        spws = xds_from_table(ims + "::SPECTRAL_WINDOW")
+        pols = xds_from_table(ims + "::POLARIZATION")
 
         # subtable data
         ddids = dask.compute(ddids)[0]
@@ -334,3 +329,5 @@ def _psf(ms, stack, **kw):
     wsum = psf_mfs.max()
     save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs/wsum, hdr_mfs,
               dtype=args.output_type)
+
+    print("All done here.", file=log)
