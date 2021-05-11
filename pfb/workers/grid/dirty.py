@@ -22,6 +22,7 @@ log = pyscilog.get_logger('DIRTY')
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
               help='Gridder accuracy')
 @click.option('--wstack/--no-wstack', default=True)
+@click.option('--mock', default=False)
 @click.option('--double-accum/--no-double-accum', default=True)
 @click.option('-fc', '--flag-column', default='FLAG',
               help="Column containing data flags."
@@ -302,7 +303,7 @@ def _dirty(ms, stack, **kw):
             # ducc0 uses uint8 mask not flag
             flag = ~ (flagxx | flagyy)
 
-            wsum += da.sum((weights * flag).ravel())
+            wsum += da.sum(weights * flag)
 
             dirty = vis2im(
                 uvw,
@@ -323,19 +324,21 @@ def _dirty(ms, stack, **kw):
             dirties.append(dirty)
 
 
-    # dask.visualize(dirties, wsum, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
-    result = dask.compute(dirties, wsum, optimize_graph=False)
+    dask.visualize(dirties, wsum, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
 
-    dirties = result[0]
-    wsum = result[1]
+    if not args.mock:
+        result = dask.compute(dirties, wsum, optimize_graph=False)
 
-    dirty = stitch_images(dirties, nband, band_mapping)
+        dirties = result[0]
+        wsum = result[1]
 
-    hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
-    save_fits(args.output_filename + '_dirty.fits', dirty, hdr, dtype=args.output_type)
+        dirty = stitch_images(dirties, nband, band_mapping)
 
-    hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, np.mean(freq_out))
-    dirty_mfs = np.sum(dirty, axis=0)/wsum
-    save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs, dtype=args.output_type)
+        hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
+        save_fits(args.output_filename + '_dirty.fits', dirty, hdr, dtype=args.output_type)
+
+        hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, np.mean(freq_out))
+        dirty_mfs = np.sum(dirty, axis=0)/wsum
+        save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs, dtype=args.output_type)
 
     print("All done here.", file=log)
