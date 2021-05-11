@@ -164,13 +164,6 @@ def _dirty(ms, stack, **kw):
         columns += (args.mueller_column,)
         memory_per_row += bytes_per_row
 
-    chunks = {}
-    for ims in ms:
-        chunks[ims] = []  # xds_from_ms expects a list per ds
-        for spw in freqs[ims]:
-            chunks[ims].append({'row': max_row_chunk,
-                                'chan': chan_chunks[ims][spw]['chan']})
-
     # get max uv coords over all fields
     uvw = []
     u_max = 0.0
@@ -224,6 +217,13 @@ def _dirty(ms, stack, **kw):
     max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/memory_per_row)
     print("Maximum row chunks set to %i for a total of %i chunks" %
           (max_row_chunk, np.ceil(nrow/max_row_chunk)), file=log)
+
+    chunks = {}
+    for ims in ms:
+        chunks[ims] = []  # xds_from_ms expects a list per ds
+        for spw in freqs[ims]:
+            chunks[ims].append({'row': max_row_chunk,
+                                'chan': chan_chunks[ims][spw]['chan']})
 
     dirties = []
     wsum = 0.0
