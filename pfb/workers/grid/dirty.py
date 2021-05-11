@@ -100,7 +100,7 @@ def _dirty(ms, stack, **kw):
     # client has nband workers
     from pfb import set_client
     nband = args.nband
-    gridder_threads = set_client(nthreads, nband, mem_limit, args.host_address, stack)
+    gridder_threads = set_client(nthreads, nband, mem_limit, args.host_address, stack, log)
     # numpy imports have to happen after this step
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping

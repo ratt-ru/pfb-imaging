@@ -14,8 +14,6 @@ __version__ = '0.0.1'
 # to use in the first place
 
 import os
-import pyscilog
-log = pyscilog.get_logger('INIT')
 
 def set_threads(nthreads: int, nbands: int, mem_limit: int):
     os.environ["OMP_NUM_THREADS"] = str(nthreads)
@@ -30,7 +28,7 @@ def set_threads(nthreads: int, nbands: int, mem_limit: int):
     dask.config.set(pool=ThreadPool(nthreads))
 
 
-def set_client(nthreads: int, nbands: int, mem_limit: int, address, stack):
+def set_client(nthreads: int, nbands: int, mem_limit: int, address, stack, log):
     os.environ["OMP_NUM_THREADS"] = str(nthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(nthreads)
     os.environ["MKL_NUM_THREADS"] = str(nthreads)
