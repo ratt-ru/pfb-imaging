@@ -1,4 +1,5 @@
 import numpy as np
+import dask.array as da
 from ducc0.fft import r2c, c2r
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
@@ -311,3 +312,18 @@ def stitch_images(dirties, nband, band_mapping):
                 dirty[band] += dirties[d][b]
             d += 1
     return dirty
+
+def restore_corrs(vis, ncorr):
+    return da.blockwise(_restore_corrs, ('row', 'chan', 'corr'),
+                        vis, ('row', 'chan'),
+                        ncorr, None,
+                        new_axes={"corr": ncorr},
+                        dtype=vis.dtype)
+
+
+def _restore_corrs(vis, ncorr):
+    model_vis = np.zeros(vis.shape+(ncorr,), dtype=vis.dtype)
+    model_vis[:, :, 0] = vis
+    if model_vis.shape[-1] > 1:
+        model_vis[:, :, -1] = vis
+    return model_vis

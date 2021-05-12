@@ -28,7 +28,8 @@ def set_threads(nthreads: int, nbands: int, mem_limit: int):
     dask.config.set(pool=ThreadPool(nthreads))
 
 
-def set_client(nthreads: int, nbands: int, mem_limit: int, address, stack, log):
+def set_client(nthreads: int, mem_limit: int, nworkers: int,
+               nthreads_per_worker: int, address, stack, log):
     os.environ["OMP_NUM_THREADS"] = str(nthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(nthreads)
     os.environ["MKL_NUM_THREADS"] = str(nthreads)
@@ -46,12 +47,11 @@ def set_client(nthreads: int, nbands: int, mem_limit: int, address, stack, log):
     else:
         from dask.distributed import Client, LocalCluster
         print("Initialising client with LocalCluster.", file=log)
-        cluster = LocalCluster(processes=False, n_workers=1,
-                               threads_per_worker=1,
+        cluster = LocalCluster(processes=False, n_workers=nworkers,
+                               threads_per_worker=nthreads_per_worker,
                                memory_limit=str(mem_limit)+'GB')
         cluster = stack.enter_context(cluster)
         client = stack.enter_context(Client(cluster))
 
     from pfb.scheduling import install_plugin
     client.run_on_scheduler(install_plugin)
-

@@ -20,6 +20,7 @@ requirements = [
                 'omegaconf',
                 'bokeh',
                 'graphviz',
+                'dask[distributed]',
             ]
 
 

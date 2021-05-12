@@ -819,10 +819,8 @@ class Gridder(object):
                 out_ds = ds.assign(**{self.model_column:
                                       (("row", "chan", "corr"), model_vis)})
                 out_data.append(out_ds)
-            writes.append(
-                xds_to_table(
-                    out_data, ims, columns=[
-                        self.model_column]))
+            writes.append(xds_to_table(out_data, ims,
+                                       columns=[self.model_column]))
         dask.compute(writes)
 
     def write_component_model(

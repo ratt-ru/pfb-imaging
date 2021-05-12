@@ -44,15 +44,21 @@ log = pyscilog.get_logger('DIRTY')
               help="Number of x pixels")
 @click.option('-ny', '--ny', type=int,
               help="Number of x pixels")
-@click.option('-nthreads', '--nthreads', type=int, default=0,
-              help="Total number of threads to use per worker")
-@click.option('-mem', '--mem-limit', type=int, default=0,
-              help="Memory limit in GB. Default of 0 means use all available memory")
 @click.option('-otype', '--output-type', default='f4',
               help="Data type of output")
 @click.option('-ha', '--host-address',
               help='Address where the distributed client lives. '
               'Will use a local cluster if no address is provided')
+@click.option('-nw', '--nworkers',
+              help='Number of workers for the client.')
+@click.option('-ntpw', '--nthreads-per-worker',
+              help='Number of dask threads per worker.')
+@click.option('-ngt', '--ngridder-threads',
+              help="Total number of threads to use per worker")
+@click.option('-mem', '--mem-limit',
+              help="Memory limit in GB. Default uses all available memory")
+@click.option('-nthreads', '--nthreads',
+              help="Total available threads. Default uses all available threads")
 def dirty(ms, **kw):
     '''
     Routine to create a dirty image from a list of measurement sets.
@@ -61,13 +67,29 @@ def dirty(ms, **kw):
     The normalisation factors can be obtained by making a psf image
     using the psf worker (see pfbworkers psf --help).
 
-    If a host address is provided the computation will be distributed
-    first over imaging band and then over rows in case a full imaging
-    band does not fit into memory. When using a distributed scheduler
-    mem_limit is per node, otherwise it should specify the maximum memory
-    we can allocate to the gridder. In the latter case we step through
-    the bands one at a time to minimise memory consumption.
+    If a host address is provided the computation can be distributed
+    over imaging band and row. When using a distributed scheduler both
+    mem-limit and nthreads is per node and have to be specified.
+
+    When using a local cluster, mem-limit and nthreads refer to the global
+    memory and threads available, respectively. By default the gridder will
+    use all available resources.
+
     Disclaimer - Memory budgeting is still very crude!
+
+    On a local cluster, the default is to use:
+
+        nworkers = nband
+        nthreads-per-worker = 1
+
+    They have to be specified in ~.config/dask/jobqueue.yaml in the
+    distributed case.
+
+    if LocalCluster:
+        ngridder-threads = nthreads//(nworkers*nthreads_per_worker)
+    else:
+        ngridder-threads = nthreads//nthreads-per-worker
+
     '''
     if not len(ms):
         raise ValueError("You must specify at least one measurement set")
@@ -85,24 +107,48 @@ def _dirty(ms, stack, **kw):
         print('     %25s = %s' % (key, kw[key]), file=log)
 
     # number of threads per worker
-    if not args.nthreads:
+    if args.nthreads is None:
+        if args.host_address is not None:
+            raise ValueError("You have to specify nthreads when using a distributed scheduler")
         import multiprocessing
         nthreads = multiprocessing.cpu_count()
     else:
         nthreads = args.nthreads
 
     # configure memory limit
-    if not args.mem_limit:
+    if args.mem_limit is None:
+        if args.host_address is not None:
+            raise ValueError("You have to specify mem-limit when using a distributed scheduler")
         import psutil
         mem_limit = int(psutil.virtual_memory()[0]/1e9)  # 100% of memory by default
     else:
         mem_limit = args.mem_limit
 
-    # client has nband workers
-    from pfb import set_client
     nband = args.nband
-    set_client(nthreads, nband, mem_limit, args.host_address, stack, log)
+    if args.nworkers is None:
+        nworkers = nband
+    else:
+        nworkers = args.nworkers
+
+    if args.nthreads_per_worker is None:
+        nthreads_per_worker = 1
+    else:
+        nthreads_per_worker = args.nthreads_per_worker
+
     # numpy imports have to happen after this step
+    from pfb import set_client
+    set_client(nthreads, mem_limit, nworkers, nthreads_per_worker,
+               args.host_address, stack, log)
+
+    # the number of chunks being read in simultaneously is equal to
+    # the number of dask threads
+    nthreads_dask = nworkers * nthreads_per_worker
+
+    if args.host_address is not None:
+        gridder_nthreads = nthreads//nthreads_per_worker
+    else:
+        gridder_nthreads = nthreads//nthreads_dask
+
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
@@ -118,7 +164,7 @@ def _dirty(ms, stack, **kw):
 
     # chan <-> band mapping
     freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
-        ms, nband=args.nband)
+        ms, nband=nband)
 
     # gridder memory budget
     max_chan_chunk = 0
@@ -213,11 +259,15 @@ def _dirty(ms, stack, **kw):
     # get approx image size
     # this is not a conservative estimate
     pixel_bytes = np.dtype(args.output_type).itemsize
-    image_size = nband * nx * ny * pixel_bytes
 
-    # 0.8 here assuming the gridder has about 20% memory overhead
-    max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/memory_per_row)
-    print("Maximum row chunks set to %i for a total of %i chunks" %
+    # 0.8 assuming the gridder has about 20% memory overhead
+    if args.host_address is None:
+        image_size = nband * nx * ny * pixel_bytes
+        max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_dask))
+    else:
+        image_size = nx * ny * pixel_bytes
+        max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_per_worker))
+    print("Maximum row chunks set to %i for a total of %i chunks per node" %
           (max_row_chunk, np.ceil(nrow/max_row_chunk)), file=log)
 
     chunks = {}
@@ -228,7 +278,6 @@ def _dirty(ms, stack, **kw):
                                 'chan': chan_chunks[ims][spw]['chan']})
 
     dirties = []
-    wsum = 0.0
     radec = None  # assumes we are only imaging field 0 of first MS
     for ims in ms:
         xds = xds_from_ms(ims, chunks=chunks[ims], columns=columns)
@@ -315,7 +364,7 @@ def _dirty(ms, stack, **kw):
                 cell_rad,
                 weights=weights,
                 flag=flag.astype(np.uint8),
-                nthreads=nthreads,
+                nthreads=gridder_nthreads,
                 epsilon=args.epsilon,
                 do_wstacking=args.wstack,
                 double_accum=args.double_accum)

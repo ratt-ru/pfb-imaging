@@ -1,10 +1,10 @@
 import numpy as np
+import dask.array as da
 import pyscilog
 log = pyscilog.get_logger('PCG')
 
 
-def pcg(
-        A,
+def pcg(A,
         b,
         x0,
         M=None,
@@ -72,3 +72,23 @@ def pcg(
         if verbosity:
             print("Success, converged after %i iters" % k, file=log)
     return x
+
+
+# def pcg_dask(A, b, x0, M,
+#              tol=1e-5,
+#              maxit=500,
+#              minit=100,
+#              verbosity=1,
+#              report_freq=10,
+#              backtrack=True):
+
+#     da.blockwise(
+#         pcg, ('band', 'nx', 'ny'),
+#         A, ('band', 'nx', 'ny'),
+#         b, ('band', 'nx', 'ny'),
+#         M, ('band', 'nx', 'ny'),
+#         align_arrays=False,
+#         dtype=b.dtype
+#     )
+
+#     return
