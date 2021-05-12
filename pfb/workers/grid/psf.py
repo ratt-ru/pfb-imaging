@@ -110,6 +110,8 @@ def _psf(ms, stack, **kw):
     from dask.graph_manipulation import clone
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
+    from daskms import Dataset
+    from daskms.experimental.zarr import xds_to_zarr
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import dirty as vis2im
@@ -155,7 +157,7 @@ def _psf(ms, stack, **kw):
     columns = (args.data_column,
                args.weight_column,
                args.flag_column,
-               'UVW')
+               'UVW', 'TIME')
 
     # imaging weights
     if args.imaging_weight_column is not None:
@@ -230,6 +232,7 @@ def _psf(ms, stack, **kw):
 
     psfs = []
     radec = None  # assumes we are only imaging field 0 of first MS
+    out_datasets = []
     for ims in ms:
         xds = xds_from_ms(ims, chunks=chunks[ims], columns=columns)
 
@@ -315,22 +318,31 @@ def _psf(ms, stack, **kw):
 
             psfs.append(psf)
 
+            data_vars = {
+                'FIELD_ID':(('row',), da.full_like(ds.TIME.data, ds.FIELD_ID)),
+                'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data, ds.DATA_DESC_ID)),
+                'WEIGHT':(('row', 'chan'), weights),
+                'UVW':(('row', 'uvw'), uvw)
+            }
 
-    # dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
+            coords = {
+                'chan': (('chan',), freqs[ims][spw])
+            }
+
+            out_ds = Dataset(data_vars, coords)
+
+            out_datasets.append(out_ds)
+
+    writes = xds_to_zarr(out_datasets, args.output_filename, columns='ALL')
+
+    dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
     if not args.mock:
-        psfs = dask.compute(psfs, optimize_graph=False)[0]
+        psfs = dask.compute(psfs, writes, optimize_graph=False)[0]
 
         psf = stitch_images(psfs, nband, band_mapping)
 
         hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
         save_fits(args.output_filename + '_psf.fits', psf, hdr,
-                dtype=args.output_type)
-
-        hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
-                        np.mean(freq_out))
-        psf_mfs = np.sum(psf, axis=0)
-        wsum = psf_mfs.max()
-        save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs/wsum, hdr_mfs,
                 dtype=args.output_type)
 
     print("All done here.", file=log)
