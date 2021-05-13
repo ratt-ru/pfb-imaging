@@ -46,13 +46,21 @@ log = pyscilog.get_logger('PSF')
               help="Number of x pixels")
 @click.option('-ny', '--ny', type=int,
               help="Number of x pixels")
-@click.option('-nthreads', '--nthreads', type=int, default=0,
-              help="Total number of threads to use per worker")
-@click.option('-mem', '--mem-limit', type=int, default=0,
-              help="Memory limit in GB. Default of 0 means use all available memory")
 @click.option('-otype', '--output-type', default='f4',
               help="Data type of output")
-@click.option('-ha', '--host-address')
+@click.option('-ha', '--host-address',
+              help='Address where the distributed client lives. '
+              'Will use a local cluster if no address is provided')
+@click.option('-nw', '--nworkers', type=int,
+              help='Number of workers for the client.')
+@click.option('-ntpw', '--nthreads-per-worker', type=int,
+              help='Number of dask threads per worker.')
+@click.option('-ngt', '--ngridder-threads', type=int,
+              help="Total number of threads to use per worker")
+@click.option('-mem', '--mem-limit', type=float,
+              help="Memory limit in GB. Default uses all available memory")
+@click.option('-nthreads', '--nthreads', type=int,
+              help="Total available threads. Default uses all available threads")
 def psf(ms, **kw):
     '''
     Routine to create a psf image from a list of measurement sets.
@@ -65,10 +73,35 @@ def psf(ms, **kw):
     the image (eg. dirty and model). The size of the PSF output image
     is controlled by the --psf-oversize option.
 
-    If a host address is provided the computation will be distributed
-    first over imaging band and then over rows in case a full imaging
-    band does not fit into memory.
+    The Stokes I weights required to apply the Hessian are also written out
+    to a zarr data set called output-filename.zarr. This data set does not
+    adhere to the MSv2 specs and is only meant to be used to apply the
+    Hessian. In particular, the weights written out are a combination of
+    imaging weights and the "Mueller" weights.
+
+    If a host address is provided the computation can be distributed
+    over imaging band and row. When using a distributed scheduler both
+    mem-limit and nthreads is per node and have to be specified.
+
+    When using a local cluster, mem-limit and nthreads refer to the global
+    memory and threads available, respectively. By default the gridder will
+    use all available resources.
+
     Disclaimer - Memory budgeting is still very crude!
+
+    On a local cluster, the default is to use:
+
+        nworkers = nband
+        nthreads-per-worker = 1
+
+    They have to be specified in ~.config/dask/jobqueue.yaml in the
+    distributed case.
+
+    if LocalCluster:
+        ngridder-threads = nthreads//(nworkers*nthreads_per_worker)
+    else:
+        ngridder-threads = nthreads//nthreads-per-worker
+
     '''
     if not len(ms):
         raise ValueError("You must specify at least one measurement set")
@@ -86,23 +119,51 @@ def _psf(ms, stack, **kw):
         print('     %25s = %s' % (key, kw[key]), file=log)
 
     # number of threads per worker
-    if not args.nthreads:
+    if args.nthreads is None:
+        if args.host_address is not None:
+            raise ValueError("You have to specify nthreads when using a distributed scheduler")
         import multiprocessing
         nthreads = multiprocessing.cpu_count()
     else:
         nthreads = args.nthreads
 
     # configure memory limit
-    if not args.mem_limit:
+    if args.mem_limit is None:
+        if args.host_address is not None:
+            raise ValueError("You have to specify mem-limit when using a distributed scheduler")
         import psutil
         mem_limit = int(psutil.virtual_memory()[0]/1e9)  # 100% of memory by default
     else:
         mem_limit = args.mem_limit
 
-    # client has nband workers
-    from pfb import set_client
     nband = args.nband
-    gridder_threads = set_client(nthreads, nband, mem_limit, args.host_address, stack, log)
+    if args.nworkers is None:
+        nworkers = nband
+    else:
+        nworkers = args.nworkers
+
+    if args.nthreads_per_worker is None:
+        nthreads_per_worker = 1
+    else:
+        nthreads_per_worker = args.nthreads_per_worker
+
+    # numpy imports have to happen after this step
+    from pfb import set_client
+    set_client(nthreads, mem_limit, nworkers, nthreads_per_worker,
+               args.host_address, stack, log)
+
+    # the number of chunks being read in simultaneously is equal to
+    # the number of dask threads
+    nthreads_dask = nworkers * nthreads_per_worker
+
+    if args.host_address is not None:
+        gridder_nthreads = nthreads//nthreads_per_worker
+    else:
+        gridder_nthreads = nthreads//nthreads_dask
+
+    print("Number of threads allocated to each gridding instance %i"%
+          gridder_nthreads, file=log)
+
     # numpy imports have to happen after this step
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
@@ -137,16 +198,12 @@ def _psf(ms, stack, **kw):
     xds = xds_from_ms(ms[0], columns=(args.data_column, args.weight_column))
     ncorr = xds[0].dims['corr']
     nrow = xds[0].dims['row']
+    # we still have to cater for complex valued data because we cast
+    # the weights to complex but we not longer need to factor the
+    # weight column into our memory budget
     data_bytes = getattr(xds[0], args.data_column).data.itemsize
     bytes_per_row = max_chan_chunk * ncorr * data_bytes
     memory_per_row = bytes_per_row
-
-    # real valued weights
-    wdims = getattr(xds[0], args.weight_column).data.ndim
-    if wdims == 2:  # WEIGHT
-        memory_per_row += ncorr * data_bytes / 2
-    else:           # WEIGHT_SPECTRUM
-        memory_per_row += bytes_per_row / 2
 
     # flags (uint8 or bool)
     memory_per_row += bytes_per_row / 8
@@ -154,6 +211,8 @@ def _psf(ms, stack, **kw):
     # UVW (float64)
     memory_per_row += data_bytes * 3
 
+    # data column is not actually read into memory just used to infer
+    # dtype and chunking
     columns = (args.data_column,
                args.weight_column,
                args.flag_column,
@@ -214,13 +273,18 @@ def _psf(ms, stack, **kw):
     print("PSF size set to (%i, %i, %i)" % (nband, nx, ny), file=log)
 
     # get approx image size
-    # this is not a conservative estimate
+    # this is not a conservative estimate when multiple SPW's map to a single
+    # imaging band
     pixel_bytes = np.dtype(args.output_type).itemsize
-    image_size = nband * nx * ny * pixel_bytes
 
-    # 0.8 here assuming the gridder has about 20% memory overhead
-    max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/memory_per_row)
-    print("Maximum row chunks set to %i for a total of %i chunks" %
+    # 0.8 assuming the gridder has about 20% memory overhead
+    if args.host_address is None:  # full image on single node
+        image_size = nband * nx * ny * pixel_bytes
+        max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_dask))
+    else:  # max nthreads_per_workder bands per node
+        image_size = nthreads_per_worker * nx * ny * pixel_bytes
+        max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_per_worker))
+    print("Maximum row chunks set to %i for a total of %i chunks per node" %
           (max_row_chunk, np.ceil(nrow/max_row_chunk)), file=log)
 
     chunks = {}
@@ -311,7 +375,7 @@ def _psf(ms, stack, **kw):
                          ny,
                          cell_rad,
                          flag=flag.astype(np.uint8),
-                         nthreads=gridder_threads,
+                         nthreads=gridder_nthreads,
                          epsilon=args.epsilon,
                          do_wstacking=args.wstack,
                          double_accum=args.double_accum)
@@ -333,7 +397,7 @@ def _psf(ms, stack, **kw):
 
             out_datasets.append(out_ds)
 
-    writes = xds_to_zarr(out_datasets, args.output_filename, columns='ALL')
+    writes = xds_to_zarr(out_datasets, args.output_filename + '.zarr', columns='ALL')
 
     dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
     if not args.mock:
