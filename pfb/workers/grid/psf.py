@@ -399,7 +399,8 @@ def _psf(ms, stack, **kw):
 
     writes = xds_to_zarr(out_datasets, args.output_filename + '.zarr', columns='ALL')
 
-    dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
+    # dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
+
     if not args.mock:
         psfs = dask.compute(psfs, writes, optimize_graph=False)[0]
 
