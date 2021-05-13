@@ -282,7 +282,7 @@ def _predict(ms, stack, **kw):
                                   'UVW': (("row", "three"), uvw)})
             out_data.append(out_ds)
 
-        writes.append(xds_to_table(out_data, ims, columns=None))
+        writes.append(xds_to_table(out_data, ims, columns=[args.model_column]))
 
     # dask.visualize(*writes, filename=args.output_filename + '_graph.pdf',
     #                optimize_graph=False, collapse_outputs=True)
