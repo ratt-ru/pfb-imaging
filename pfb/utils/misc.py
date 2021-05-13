@@ -221,7 +221,7 @@ def chan_to_band_mapping(ms_name, nband=None):
     all_freqs = []
     spws = {}
     for ims in ms_name:
-        xds = xds_from_ms(ims, chunks={"row": -1}, columns=('TIME'))
+        xds = xds_from_ms(ims, chunks={"row": -1}, columns=('TIME',))
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")

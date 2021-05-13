@@ -106,7 +106,6 @@ def _dirty(ms, stack, **kw):
     for key in kw.keys():
         print('     %25s = %s' % (key, kw[key]), file=log)
 
-    # number of threads per worker
     if args.nthreads is None:
         if args.host_address is not None:
             raise ValueError("You have to specify nthreads when using a distributed scheduler")
@@ -115,7 +114,6 @@ def _dirty(ms, stack, **kw):
     else:
         nthreads = args.nthreads
 
-    # configure memory limit
     if args.mem_limit is None:
         if args.host_address is not None:
             raise ValueError("You have to specify mem-limit when using a distributed scheduler")
@@ -268,7 +266,7 @@ def _dirty(ms, stack, **kw):
     if args.host_address is None:  # full image on single node
         image_size = nband * nx * ny * pixel_bytes
         max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_dask))
-    else:  # max nthreads_per_workder bands per node
+    else:  # max nthreads_per_worker bands per node
         image_size = nthreads_per_worker * nx * ny * pixel_bytes
         max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_per_worker))
     print("Maximum row chunks set to %i for a total of %i chunks per node" %
