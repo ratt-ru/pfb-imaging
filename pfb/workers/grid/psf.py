@@ -61,6 +61,8 @@ log = pyscilog.get_logger('PSF')
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
+@click.option('-roc', '--row-out-chunk', type=int, default=10000,
+              help="Size of row chunks for output weights and uvw")
 def psf(ms, **kw):
     '''
     Routine to create a psf image from a list of measurement sets.
@@ -383,10 +385,10 @@ def _psf(ms, stack, **kw):
             psfs.append(psf)
 
             data_vars = {
-                'FIELD_ID':(('row',), da.full_like(ds.TIME.data, ds.FIELD_ID)),
-                'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data, ds.DATA_DESC_ID)),
-                'WEIGHT':(('row', 'chan'), weights),
-                'UVW':(('row', 'uvw'), uvw)
+                'FIELD_ID':(('row',), da.full_like(ds.TIME.data, ds.FIELD_ID, chunks=args.row_out_chunk)),
+                'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data, ds.DATA_DESC_ID, chunks=args.row_out_chunk)),
+                'WEIGHT':(('row', 'chan'), weights.rechunk({0:args.row_out_chunk})),
+                'UVW':(('row', 'uvw'), uvw.rechunk({0:args.row_out_chunk}))
             }
 
             coords = {
@@ -399,7 +401,7 @@ def _psf(ms, stack, **kw):
 
     writes = xds_to_zarr(out_datasets, args.output_filename + '.zarr', columns='ALL')
 
-    # dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
+    dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
 
     if not args.mock:
         psfs = dask.compute(psfs, writes, optimize_graph=False)[0]

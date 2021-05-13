@@ -284,8 +284,8 @@ def _predict(ms, stack, **kw):
 
         writes.append(xds_to_table(out_data, ims, columns=[args.model_column]))
 
-    # dask.visualize(*writes, filename=args.output_filename + '_graph.pdf',
-    #                optimize_graph=False, collapse_outputs=True)
+    dask.visualize(*writes, filename=args.output_filename + '_graph.pdf',
+                   optimize_graph=False, collapse_outputs=True)
 
     if not args.mock:
         dask.compute(writes, optimize_graph=False)

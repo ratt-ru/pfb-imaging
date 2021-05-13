@@ -374,7 +374,7 @@ def _dirty(ms, stack, **kw):
             dirties.append(dirty)
 
 
-    # dask.visualize(dirties, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
+    dask.visualize(dirties, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
 
     if not args.mock:
         # result = dask.compute(dirties, wsum, optimize_graph=False)
