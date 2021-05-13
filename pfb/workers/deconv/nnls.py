@@ -79,6 +79,8 @@ def nnls(**kw):
     psf /= wsum
     psf_mfs = np.sum(psf, axis=0)
 
+    assert (psf_mfs.max() - 1.0) < 1e-4
+
     dirty /= wsum
     dirty_mfs = np.sum(dirty, axis=0)
 
