@@ -16,6 +16,23 @@ log = pyscilog.get_logger('NNLS')
               help="Basename of output.")
 @click.option('-nthreads', '--nthreads', type=int, default=0,
               help="Total number of threads to use per worker")
+@click.option('-ftol', '--fista-tol', type=float, default=1e-4,
+              help="Tolerance for FISTA")
+@click.option('-fmaxit', '--fista-maxit', type=int, default=100,
+              help="Maximum iterations for FISTA")
+@click.option('-fverb', '--fista-verbose', type=int, default=1,
+              help="Verbosity of FISTA (>1 for debugging)")
+@click.option('-frf', '--fista-report-freq', type=int, default=25,
+              help="Report freq for FISTA")
+@click.option('-pmtol', '--pm-tol', type=float, default=1e-4,
+              help="Tolerance for FISTA")
+@click.option('-pmmaxit', '--pm-maxit', type=int, default=100,
+              help="Maximum iterations for FISTA")
+@click.option('-pmverb', '--pm-verbose', type=int, default=1,
+              help="Verbosity of FISTA (>1 for debugging)")
+@click.option('-pmrf', '--pm-report-freq', type=int, default=25,
+              help="Report freq for FISTA")
+# @click.option('-x0')
 def nnls(**kw):
     '''
     Minor cycle implementing non-negative least squares
@@ -70,13 +87,23 @@ def nnls(**kw):
 
     from pfb.opt.power_method import power_method
 
-    beta, betavec = power_method(psfo.convolve, dirty.shape)
+    beta, betavec = power_method(psfo.convolve, dirty.shape,
+                                 tol=args.pm_tol,
+                                 maxit=args.pm_maxit,
+                                 verbosity=args.pm_verbose,
+                                 report_freq=args.pm_report_freq)
 
     fprime = partial(value_and_grad, dirty=dirty, psfo=psfo)
 
     from pfb.opt.fista import fista
 
-    model = fista(np.zeros_like(dirty), beta, fprime, prox)
+    x0 = np.ones_like(dirty) * 1e-8
+
+    model = fista(x0, beta, fprime, prox,
+                  tol=args.fista_tol,
+                  maxit=args.fista_maxit,
+                  verbosity=args.fista_verbose,
+                  report_freq=args.fista_report_freq)
 
     residual, residual_mfs = resid_func(model, dirty, psfo)
 
