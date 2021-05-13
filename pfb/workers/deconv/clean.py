@@ -75,14 +75,12 @@ def clean(**kw):
 
     from pfb.opt.hogbom import hogbom
 
-    x0 = np.ones_like(dirty)
-
     model = hogbom(dirty, psf,
-                  gamma=args.hb_gamma,
-                  pf=args.hb_peak_factor,
-                  maxit=args.hb_maxit,
-                  verbosity=args.hb_verbose,
-                  report_freq=args.hb_report_freq)
+                   gamma=args.hb_gamma,
+                   pf=args.hb_peak_factor,
+                   maxit=args.hb_maxit,
+                   verbosity=args.hb_verbose,
+                   report_freq=args.hb_report_freq)
 
     residual, residual_mfs = resid_func(model, dirty, psfo)
 

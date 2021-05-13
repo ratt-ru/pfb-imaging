@@ -193,8 +193,12 @@ def _predict(ms, stack, **kw):
     memory_per_row = bytes_per_row  # model
     memory_per_row += 3*8  # uvw
 
-    if args.model_column in xds[0].keys() and mstype == 'zarr':
-        model_chunks = getattr(xds[0], args.model_column).data.chunks
+    if mstype == 'zarr':
+        if args.model_column in xds[0].keys():
+            model_chunks = getattr(xds[0], args.model_column).data.chunks
+        else:
+            model_chunks = xds[0].DATA.data.chunks
+            print('Chunking model same as data')
 
     # get approx image size
     # this is not a conservative estimate when multiple SPW's map to a single
