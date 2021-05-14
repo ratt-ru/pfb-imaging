@@ -177,8 +177,9 @@ def _dirty(ms, stack, **kw):
             max_chan_chunk = np.maximum(max_chan_chunk, counts.max())
             max_freq = np.maximum(max_freq, freq.max())
 
-    # assumes number of correlations are the same across MS/SPW
-    xds = xds_from_ms(ms[0], columns=(args.data_column, args.weight_column))
+    # assumes measurement sets have the same columns,
+    # number of correlations etc.
+    xds = xds_from_ms(ms[0])
     ncorr = xds[0].dims['corr']
     nrow = xds[0].dims['row']
     data_bytes = getattr(xds[0], args.data_column).data.itemsize
@@ -195,13 +196,22 @@ def _dirty(ms, stack, **kw):
     # flags (uint8 or bool)
     memory_per_row += bytes_per_row / 8
 
-    # UVW (float64)
-    memory_per_row += data_bytes * 3
+    # UVW
+    memory_per_row += xds[0].UVW.data.itemsize * 3
+
+    # ANTENNA1/2
+    memory_per_row += xds[0].ANTENNA1.data.itemsize * 2
 
     columns = (args.data_column,
                args.weight_column,
                args.flag_column,
-               'UVW')
+               'UVW', 'ANTENNA1',
+               'ANTENNA2')
+
+    # flag row
+    if 'FLAG_ROW' in xds[0]:
+        columns += ('FLAG_ROW',)
+        memory_per_row += xds[0].FLAG_ROW.data.itemsize
 
     # imaging weights
     if args.imaging_weight_column is not None:
@@ -348,12 +358,18 @@ def _dirty(ms, stack, **kw):
             # TODO - turn off this stupid warning
             data = da.where(weights, data / weights, 0.0j)
 
+            # MS may contain auto-correlations
+            if 'FLAG_ROW' in xds[0]:
+                frow = ds.FLAG_ROW.data | (ds.ANTENNA1.data == ds.ANTENNA2.data)
+            else:
+                frow = (ds.ANTENNA1.data == ds.ANTENNA2.data)
+
             # only keep data where both corrs are unflagged
             flag = getattr(ds, args.flag_column).data
             flagxx = flag[:, :, 0]
             flagyy = flag[:, :, -1]
             # ducc0 uses uint8 mask not flag
-            flag = ~ (flagxx | flagyy)
+            mask = ~ da.logical_or((flagxx | flagyy), frow[:, None])
 
             dirty = vis2im(
                 uvw,
@@ -365,7 +381,7 @@ def _dirty(ms, stack, **kw):
                 ny,
                 cell_rad,
                 weights=weights,
-                flag=flag.astype(np.uint8),
+                flag=mask.astype(np.uint8),
                 nthreads=gridder_nthreads,
                 epsilon=args.epsilon,
                 do_wstacking=args.wstack,

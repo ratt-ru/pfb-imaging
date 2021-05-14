@@ -196,8 +196,9 @@ def _psf(ms, stack, **kw):
             max_chan_chunk = np.maximum(max_chan_chunk, counts.max())
             max_freq = np.maximum(max_freq, freq.max())
 
-    # assumes number of correlations are the same across MS/SPW
-    xds = xds_from_ms(ms[0], columns=(args.data_column, args.weight_column))
+    # assumes measurement sets have the same columns,
+    # number of correlations etc.
+    xds = xds_from_ms(ms[0])
     ncorr = xds[0].dims['corr']
     nrow = xds[0].dims['row']
     # we still have to cater for complex valued data because we cast
@@ -210,15 +211,28 @@ def _psf(ms, stack, **kw):
     # flags (uint8 or bool)
     memory_per_row += bytes_per_row / 8
 
-    # UVW (float64)
-    memory_per_row += data_bytes * 3
+    # UVW
+    memory_per_row += xds[0].UVW.data.itemsize * 3
+
+    # ANTENNA1/2
+    memory_per_row += xds[0].ANTENNA1.data.itemsize * 2
+
+    # TIME
+    memory_per_row += xds[0].TIME.data.itemsize
 
     # data column is not actually read into memory just used to infer
     # dtype and chunking
     columns = (args.data_column,
                args.weight_column,
                args.flag_column,
-               'UVW', 'TIME')
+               'UVW', 'ANTENNA1',
+               'ANTENNA2',
+               'TIME')
+
+    # flag row
+    if 'FLAG_ROW' in xds[0]:
+        columns += ('FLAG_ROW',)
+        memory_per_row += xds[0].FLAG_ROW.data.itemsize
 
     # imaging weights
     if args.imaging_weight_column is not None:
@@ -361,12 +375,18 @@ def _psf(ms, stack, **kw):
             # weighted sum corr to Stokes I
             weights = weightsxx + weightsyy
 
+            # MS may contain auto-correlations
+            if 'FLAG_ROW' in xds[0]:
+                frow = ds.FLAG_ROW.data | (ds.ANTENNA1.data == ds.ANTENNA2.data)
+            else:
+                frow = (ds.ANTENNA1.data == ds.ANTENNA2.data)
+
             # only keep data where both corrs are unflagged
             flag = getattr(ds, args.flag_column).data
             flagxx = flag[:, :, 0]
             flagyy = flag[:, :, -1]
             # ducc0 uses uint8 mask not flag
-            flag = ~ (flagxx | flagyy)
+            mask = ~ da.logical_or((flagxx | flagyy), frow[:, None])
 
             psf = vis2im(uvw,
                          freqs[ims][spw],
@@ -376,7 +396,7 @@ def _psf(ms, stack, **kw):
                          nx,
                          ny,
                          cell_rad,
-                         flag=flag.astype(np.uint8),
+                         flag=mask.astype(np.uint8),
                          nthreads=gridder_nthreads,
                          epsilon=args.epsilon,
                          do_wstacking=args.wstack,
@@ -384,27 +404,31 @@ def _psf(ms, stack, **kw):
 
             psfs.append(psf)
 
-            data_vars = {
-                'FIELD_ID':(('row',), da.full_like(ds.TIME.data, ds.FIELD_ID, chunks=args.row_out_chunk)),
-                'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data, ds.DATA_DESC_ID, chunks=args.row_out_chunk)),
-                'WEIGHT':(('row', 'chan'), weights.rechunk({0:args.row_out_chunk})),
-                'UVW':(('row', 'uvw'), uvw.rechunk({0:args.row_out_chunk}))
-            }
+            # data_vars = {
+            #     'FIELD_ID':(('row',), da.full_like(ds.TIME.data,
+            #                 ds.FIELD_ID, chunks=args.row_out_chunk)),
+            #     'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data,
+            #                 ds.DATA_DESC_ID, chunks=args.row_out_chunk)),
+            #     'WEIGHT':(('row', 'chan'), weights.rechunk({0:args.row_out_chunk})),
+            #     'UVW':(('row', 'uvw'), uvw.rechunk({0:args.row_out_chunk}))
+            # }
 
-            coords = {
-                'chan': (('chan',), freqs[ims][spw])
-            }
+            # coords = {
+            #     'chan': (('chan',), freqs[ims][spw])
+            # }
 
-            out_ds = Dataset(data_vars, coords)
+            # out_ds = Dataset(data_vars, coords)
 
-            out_datasets.append(out_ds)
+            # out_datasets.append(out_ds)
 
-    writes = xds_to_zarr(out_datasets, args.output_filename + '.zarr', columns='ALL')
+    # writes = xds_to_zarr(out_datasets, args.output_filename + '.zarr', columns='ALL')
 
-    dask.visualize(psfs, writes, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
+    # dask.visualize(psfs, writes, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
+    dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
 
     if not args.mock:
-        psfs = dask.compute(psfs, writes, optimize_graph=False)[0]
+        # psfs = dask.compute(psfs, writes, optimize_graph=False)[0]
+        psfs = dask.compute(psfs, optimize_graph=False)[0]
 
         psf = stitch_images(psfs, nband, band_mapping)
 
