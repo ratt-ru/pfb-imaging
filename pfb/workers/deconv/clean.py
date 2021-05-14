@@ -51,10 +51,12 @@ def clean(**kw):
         residual_mfs = np.sum(residual, axis=0)
         return residual, residual_mfs
 
+    print("Loading dirty", file=log)
     dirty = load_fits(args.dirty).squeeze()
     nband, nx, ny = dirty.shape
     hdr = fits.getheader(args.dirty)
 
+    print("Loading psf", file=log)
     psf = load_fits(args.psf).squeeze()
     _, nx_psf, ny_psf = psf.shape
     hdr_psf = fits.getheader(args.psf)
@@ -75,6 +77,7 @@ def clean(**kw):
 
     from pfb.opt.hogbom import hogbom
 
+    print("Running Hogbom", file=log)
     model = hogbom(dirty, psf,
                    gamma=args.hb_gamma,
                    pf=args.hb_peak_factor,
@@ -82,11 +85,14 @@ def clean(**kw):
                    verbosity=args.hb_verbose,
                    report_freq=args.hb_report_freq)
 
+    print("Getting residual", file=log)
     residual, residual_mfs = resid_func(model, dirty, psfo)
 
 
     from pfb.utils.fits import save_fits
 
+    print("Saving results", file=log)
     save_fits(args.output_filename + '_model.fits', model, hdr)
     save_fits(args.output_filename + '_residual.fits', residual, hdr)
 
+    print("All done here.", file=log)
