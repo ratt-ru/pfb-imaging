@@ -26,8 +26,6 @@ def _main(dest=sys.stdout):
         import psutil
         args.mem_limit = int(psutil.virtual_memory()[0]/1e9)  # 100% of memory by default
 
-    set_threads(args.nthreads, args.nband, args.mem_limit)
-
     import numpy as np
     import numba
     import numexpr
@@ -230,6 +228,8 @@ def _main(dest=sys.stdout):
     dirty_mfs = np.sum(dirty, axis=0)
     save_fits(args.outfile + '_dirty_mfs.fits', dirty_mfs, hdr_mfs)
 
+
+    quit()
     # initial model and residual
     if args.x0 is not None:
         try:
