@@ -418,7 +418,7 @@ class Gridder(object):
                     self.cell,
                     weights=weights,
                     flag=flag.astype(np.uint8),
-                    nthreads=self.nthreads//self.nband,
+                    nthreads=self.nthreads,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking,
                     double_accum=True)
@@ -526,7 +526,7 @@ class Gridder(object):
                     self.cell,
                     weights=weights,
                     flag=flag.astype(np.uint8),
-                    nthreads=self.nthreads//self.nband,
+                    nthreads=self.nthreads,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking,
                     double_accum=True)
@@ -629,7 +629,7 @@ class Gridder(object):
                     self.ny_psf,
                     self.cell,
                     flag=flag.astype(np.uint8),
-                    nthreads=self.nthreads//self.nband,
+                    nthreads=self.nthreads,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking,
                     double_accum=True)
@@ -788,7 +788,7 @@ class Gridder(object):
                     freq_bin_idx,
                     freq_bin_counts,
                     self.cell,
-                    nthreads=self.nthreads//self.nband,
+                    nthreads=self.nthreads,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking)
 
@@ -863,7 +863,7 @@ class Gridder(object):
                     freq_bin_idx,
                     freq_bin_counts,
                     self.cell,
-                    nthreads=self.nthreads//self.nband,
+                    nthreads=self.nthreads,
                     epsilon=self.epsilon,
                     do_wstacking=self.do_wstacking)
 
@@ -876,7 +876,7 @@ class Gridder(object):
                 xds_to_table(
                     out_data, ims, columns=[
                         self.model_column]))
-        dask.compute(writes)
+        dask.compute(writes, scheduler='single-threaded')
 
 
 def populate_model(vis, model_vis):
