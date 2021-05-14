@@ -124,7 +124,6 @@ class Gridder(object):
         self.columns = (
             self.data_column,
             self.weight_column,
-            self.model_column,
             self.flag_column,
             'UVW')
 
