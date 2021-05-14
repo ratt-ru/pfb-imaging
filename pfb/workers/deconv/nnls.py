@@ -12,6 +12,10 @@ log = pyscilog.get_logger('NNLS')
               help="Path to dirty.")
 @click.option('-p', '--psf',
               help="Path to PSF")
+@click.option('-x0', '--x0',
+              help="Initial model")
+@click.option('-mv', '--min-value', type=float, default=0.0,
+              help="Minimum value below which to threshold")
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nthreads', '--nthreads', type=int, default=0,
@@ -62,7 +66,7 @@ def nnls(**kw):
         return np.vdot(x, model_conv - 2*dirty), 2*(model_conv - dirty)
 
     def prox(x):
-        x[x<1e-4] = 0.0
+        x[x<args.min_value] = 0.0
         return x
 
     dirty = load_fits(args.dirty).squeeze()
@@ -99,7 +103,10 @@ def nnls(**kw):
 
     from pfb.opt.fista import fista
 
-    x0 = np.ones_like(dirty) * 1e-8
+    if args.x0 is None:
+        x0 = np.zeros_like(dirty)
+    else:
+        x0 = load_fits(args.x0, dtype=dirty.dtype).squeeze()
 
     model = fista(x0, beta, fprime, prox,
                   tol=args.fista_tol,
