@@ -145,6 +145,7 @@ def _predict(ms, stack, **kw):
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
+    from dask.distributed import performance_report
     from dask.graph_manipulation import clone
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
@@ -292,7 +293,8 @@ def _predict(ms, stack, **kw):
                    optimize_graph=False, collapse_outputs=True)
 
     if not args.mock:
-        dask.compute(writes, optimize_graph=False)
+        with performance_report(filename=args.output_filename + '_per.html'):
+            dask.compute(writes, optimize_graph=False)
 
     print("All done here.", file=log)
 

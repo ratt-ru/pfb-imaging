@@ -170,6 +170,7 @@ def _psf(ms, stack, **kw):
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
+    from dask.distributed import performance_report
     from dask.graph_manipulation import clone
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
@@ -428,7 +429,8 @@ def _psf(ms, stack, **kw):
 
     if not args.mock:
         # psfs = dask.compute(psfs, writes, optimize_graph=False)[0]
-        psfs = dask.compute(psfs, optimize_graph=False)[0]
+        with performance_report(filename=args.output_filename + '_per.html'):
+            psfs = dask.compute(psfs, optimize_graph=False)[0]
 
         psf = stitch_images(psfs, nband, band_mapping)
 

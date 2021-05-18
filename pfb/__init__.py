@@ -47,9 +47,9 @@ def set_client(nthreads: int, mem_limit: int, nworkers: int,
     else:
         from dask.distributed import Client, LocalCluster
         print("Initialising client with LocalCluster.", file=log)
-        cluster = LocalCluster(processes=False, n_workers=nworkers,
+        cluster = LocalCluster(processes=True, n_workers=nworkers,
                                threads_per_worker=nthreads_per_worker,
-                               memory_limit=str(mem_limit)+'GB')
+                               memory_limit=str(mem_limit/nworkers)+'GB')
         cluster = stack.enter_context(cluster)
         client = stack.enter_context(Client(cluster))
 

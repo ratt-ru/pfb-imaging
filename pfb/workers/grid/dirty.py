@@ -154,6 +154,7 @@ def _dirty(ms, stack, **kw):
     from pfb.utils.misc import chan_to_band_mapping
     import dask
     from dask.graph_manipulation import clone
+    from dask.distributed import performance_report
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     import dask.array as da
@@ -394,7 +395,8 @@ def _dirty(ms, stack, **kw):
 
     if not args.mock:
         # result = dask.compute(dirties, wsum, optimize_graph=False)
-        result = dask.compute(dirties, optimize_graph=False)
+        with performance_report(filename=args.output_filename + '_per.html'):
+            result = dask.compute(dirties, optimize_graph=False)
 
         dirties = result[0]
 
