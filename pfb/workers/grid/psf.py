@@ -293,22 +293,36 @@ def _psf(ms, stack, **kw):
     # this is not a conservative estimate when multiple SPW's map to a single
     # imaging band
     pixel_bytes = np.dtype(args.output_type).itemsize
+    band_size = nx * ny * pixel_bytes
 
-    # 0.8 assuming the gridder has about 20% memory overhead
     if args.host_address is None:  # full image on single node
-        image_size = nband * nx * ny * pixel_bytes
-        max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_dask))
-    else:  # max nthreads_per_workder bands per node
+        image_size = nband * band_size
+        max_mem_data = nrow * memory_per_row
+        mem_after_image = mem_limit*1e9 - nthreads_dask * image_size
+        if mem_after_image < 0:
+            raise RuntimeError("You do not have the memory to process this data. "
+                               "Decrease number of dask threads or image size.")
+        row_chunk = nrow / nthreads_dask
+        # 0.8 assuming the gridder has about 20% memory overhead
+        while row_chunk * memory_per_row * nthreads_dask >= 0.8 * mem_after_image:
+            row_chunk *= 0.9
+
+        # try divide into nearly equal chunks
+        nrow_chunk = int(nrow / row_chunk)
+        row_intervals = np.linspace(0, nrow-1, nrow_chunk)
+        row_chunk = int(np.ceil((row_intervals[1] - row_intervals[0])))
+
+    else:  # max nthreads_per_worker bands per node
         image_size = nthreads_per_worker * nx * ny * pixel_bytes
-        max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_per_worker))
-    print("Maximum row chunks set to %i for a total of %i chunks per node" %
-          (max_row_chunk, np.ceil(nrow/max_row_chunk)), file=log)
+        row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_per_worker))
+    print("nrows = %f, row chunks set to %f for a total of %f chunks per node" %
+          (nrow, row_chunk, nrow_chunk), file=log)
 
     chunks = {}
     for ims in ms:
         chunks[ims] = []  # xds_from_ms expects a list per ds
         for spw in freqs[ims]:
-            chunks[ims].append({'row': max_row_chunk,
+            chunks[ims].append({'row': row_chunk,
                                 'chan': chan_chunks[ims][spw]['chan']})
 
     psfs = []

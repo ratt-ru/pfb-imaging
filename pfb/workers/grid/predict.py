@@ -205,24 +205,39 @@ def _predict(ms, stack, **kw):
     # this is not a conservative estimate when multiple SPW's map to a single
     # imaging band
     pixel_bytes = np.dtype(args.output_type).itemsize
+    band_size = nx * ny * pixel_bytes
 
-    # 0.8 assuming the gridder has about 20% memory overhead
     if args.host_address is None:  # full image on single node
-        image_size = nband * nx * ny * pixel_bytes
-        max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_dask))
+        image_size = nband * band_size
+        max_mem_data = nrow * memory_per_row
+        mem_after_image = mem_limit*1e9 - nthreads_dask * image_size
+        if mem_after_image < 0:
+            raise RuntimeError("You do not have the memory to process this data. "
+                               "Decrease number of dask threads or image size.")
+        row_chunk = nrow / nthreads_dask
+        # 0.8 assuming the gridder has about 20% memory overhead
+        while row_chunk * memory_per_row * nthreads_dask >= 0.8 * mem_after_image:
+            row_chunk *= 0.9
+
+        # try divide into nearly equal chunks
+        nrow_chunk = int(nrow / row_chunk)
+        if nrow_chunk > 1:
+            row_intervals = np.linspace(0, nrow-1, nrow_chunk)
+            row_chunk = int(np.ceil((row_intervals[1] - row_intervals[0])))
+        else:
+            row_chunk = int(row_chunk)
+
     else:  # max nthreads_per_worker bands per node
         image_size = nthreads_per_worker * nx * ny * pixel_bytes
-        max_row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_per_worker))
-    print("Maximum row chunks set to %i for a total of %i chunks per node" %
-          (max_row_chunk, np.ceil(nrow/max_row_chunk)), file=log)
+        row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_per_worker))
 
     if args.row_chunk is not None:
         row_chunk = args.row_chunk
     else:
-        row_chunk = max_row_chunk
+        row_chunk = row_chunk
 
-    print("row chunks set to %i for a total of %i chunks" %
-          (row_chunk, np.ceil(nrow/row_chunk)), file=log)
+    print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
+          (nrow, row_chunk, int(nrow / row_chunk)), file=log)
 
     chunks = {}
     for ims in ms:
