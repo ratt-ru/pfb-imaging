@@ -159,7 +159,7 @@ def _predict(ms, stack, **kw):
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import model as im2vis
     from pfb.utils.fits import load_fits
-    from pfb.utils.misc import restore_corrs
+    from pfb.utils.misc import restore_corrs, plan_row_chunk
     from astropy.io import fits
 
     # always returns 4D
@@ -207,34 +207,20 @@ def _predict(ms, stack, **kw):
     pixel_bytes = np.dtype(args.output_type).itemsize
     band_size = nx * ny * pixel_bytes
 
-    if args.host_address is None:  # full image on single node
-        image_size = nband * band_size
-        max_mem_data = nrow * memory_per_row
-        mem_after_image = mem_limit*1e9 - nthreads_dask * image_size
-        if mem_after_image < 0:
-            raise RuntimeError("You do not have the memory to process this data. "
-                               "Decrease number of dask threads or image size.")
-        row_chunk = nrow / nthreads_dask
-        # 0.8 assuming the gridder has about 20% memory overhead
-        while row_chunk * memory_per_row * nthreads_dask >= 0.8 * mem_after_image:
-            row_chunk *= 0.9
+    if args.host_address is None:
+        # full image on single node
+        row_chunk = plan_row_chunk(mem_limit/nband, band_size, nrow,
+                                   memory_per_row, args.nthreads_per_worker)
 
-        # try divide into nearly equal chunks
-        nrow_chunk = int(nrow / row_chunk)
-        if nrow_chunk > 1:
-            row_intervals = np.linspace(0, nrow-1, nrow_chunk)
-            row_chunk = int(np.ceil((row_intervals[1] - row_intervals[0])))
-        else:
-            row_chunk = int(row_chunk)
-
-    else:  # max nthreads_per_worker bands per node
-        image_size = nthreads_per_worker * nx * ny * pixel_bytes
-        row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_per_worker))
-
-    if args.row_chunk is not None:
-        row_chunk = args.row_chunk
     else:
-        row_chunk = row_chunk
+        # single band per node
+        row_chunk = plan_row_chunk(mem_limit, band_size, nrow,
+                                   memory_per_row, args.nthreads_per_worker)
+
+    if args.row_chunks is not None:
+        row_chunk = int(args.row_chunks)
+        if row_chunk == -1:
+            row_chunk = nrow
 
     print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
           (nrow, row_chunk, int(nrow / row_chunk)), file=log)

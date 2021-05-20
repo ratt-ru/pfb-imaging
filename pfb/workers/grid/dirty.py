@@ -19,6 +19,8 @@ log = pyscilog.get_logger('DIRTY')
 @click.option('-iwc', '--imaging-weight-column',
               help="Column containing/to write imaging weights to."
               "Must be the same across MSs")
+@click.option('-rchunk', '--row-chunks',
+              help="Number of rows in a chunk.")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
               help='Gridder accuracy')
 @click.option('--wstack/--no-wstack', default=True)
@@ -161,7 +163,7 @@ def _dirty(ms, stack, **kw):
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import dirty as vis2im
     from ducc0.fft import good_size
-    from pfb.utils.misc import stitch_images
+    from pfb.utils.misc import stitch_images, plan_row_chunk
     from pfb.utils.fits import set_wcs, save_fits
 
     # chan <-> band mapping
@@ -275,31 +277,23 @@ def _dirty(ms, stack, **kw):
     band_size = nx * ny * pixel_bytes
 
 
-    if args.host_address is None:  # full image on single node
-        image_size = nband * band_size
-        max_mem_data = nrow * memory_per_row
-        mem_after_image = mem_limit*1e9 - nthreads_dask * image_size
-        if mem_after_image < 0:
-            raise RuntimeError("You do not have the memory to process this data. "
-                               "Decrease number of dask threads or image size.")
-        row_chunk = nrow / nthreads_dask
-        # 0.8 assuming the gridder has about 20% memory overhead
-        while row_chunk * memory_per_row * nthreads_dask >= 0.8 * mem_after_image:
-            row_chunk *= 0.9
+    if args.host_address is None:
+        # full image on single node
+        row_chunk = plan_row_chunk(mem_limit/nband, band_size, nrow,
+                                   memory_per_row, args.nthreads_per_worker)
 
-        # try divide into nearly equal chunks
-        nrow_chunk = int(nrow / row_chunk)
-        if nrow_chunk > 1:
-            row_intervals = np.linspace(0, nrow-1, nrow_chunk)
-            row_chunk = int(np.ceil((row_intervals[1] - row_intervals[0])))
-        else:
-            row_chunk = int(row_chunk)
+    else:
+        # single band per node
+        row_chunk = plan_row_chunk(mem_limit, band_size, nrow,
+                                   memory_per_row, args.nthreads_per_worker)
 
-    else:  # max nthreads_per_worker bands per node
-        image_size = nthreads_per_worker * nx * ny * pixel_bytes
-        row_chunk = int(0.8*(mem_limit*1e9 - image_size)/(memory_per_row*nthreads_per_worker))
+    if args.row_chunks is not None:
+        row_chunk = int(args.row_chunks)
+        if row_chunk == -1:
+            row_chunk = nrow
+
     print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
-          (nrow, row_chunk, nrow_chunk), file=log)
+          (nrow, row_chunk, int(nrow / row_chunk)), file=log)
 
     chunks = {}
     for ims in ms:

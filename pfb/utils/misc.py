@@ -1,4 +1,5 @@
 import numpy as np
+import numexpr as ne
 import dask.array as da
 from ducc0.fft import r2c, c2r
 iFs = np.fft.ifftshift
@@ -309,7 +310,11 @@ def stitch_images(dirties, nband, band_mapping):
     for ims in band_mapping:
         for spw in band_mapping[ims]:
             for b, band in enumerate(band_mapping[ims][spw]):
-                dirty[band] += dirties[d][b]
+                ne.evaluate('a + b', local_dict={
+                    'a': dirty[band],
+                    'b': dirties[d][b]},
+                    out=dirty[band], casting='same_kind')
+                # dirty[band] += dirties[d][b]
             d += 1
     return dirty
 
@@ -327,3 +332,25 @@ def _restore_corrs(vis, ncorr):
     if model_vis.shape[-1] > 1:
         model_vis[:, :, -1] = vis
     return model_vis
+
+def plan_row_chunk(mem_limit, image_size, nrow, mem_per_row, nthreads_per_worker, fudge=0.8):
+    '''
+    Plan row chunking on single node assuming all dask threads are executing
+    simultaneously.
+    '''
+    mem_after_image = mem_limit*1e9 - nthreads_per_worker * image_size
+    if mem_after_image < 0:
+        raise RuntimeError("You do not have the memory to process the with this many chunks."
+                            "Decrease number of dask threads or image size.")
+    row_chunk = nrow / nthreads_per_worker
+    # fudge should account for gridder memory overhead
+    while row_chunk * mem_per_row * nthreads_per_worker >= fudge * mem_after_image:
+        row_chunk /= 2  # decrease until problem fits in memory
+    # try divide into nearly equal chunks
+    nrow_chunk = int(nrow / row_chunk)
+    if nrow_chunk > 1:
+        row_intervals = np.linspace(0, nrow-1, nrow_chunk+1)
+        row_chunk = int(np.ceil((row_intervals[1] - row_intervals[0])))
+    else:
+        row_chunk = int(row_chunk)
+    return row_chunk
