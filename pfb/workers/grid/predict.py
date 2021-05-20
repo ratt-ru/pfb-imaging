@@ -223,7 +223,7 @@ def _predict(ms, stack, **kw):
             row_chunk = nrow
 
     print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
-          (nrow, row_chunk, int(nrow / row_chunk)), file=log)
+          (nrow, row_chunk, int(np.ceil(nrow / row_chunk))), file=log)
 
     chunks = {}
     for ims in ms:
@@ -290,8 +290,8 @@ def _predict(ms, stack, **kw):
 
         writes.append(xds_to_table(out_data, ims, columns=[args.model_column]))
 
-    dask.visualize(*writes, filename=args.output_filename + '_graph.pdf',
-                   optimize_graph=False, collapse_outputs=True)
+    # dask.visualize(*writes, filename=args.output_filename + '_graph.pdf',
+    #                optimize_graph=False, collapse_outputs=True)
 
     if not args.mock:
         with performance_report(filename=args.output_filename + '_per.html'):

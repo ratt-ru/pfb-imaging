@@ -311,7 +311,7 @@ def _psf(ms, stack, **kw):
             row_chunk = nrow
 
     print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
-          (nrow, row_chunk, int(nrow / row_chunk)), file=log)
+          (nrow, row_chunk, int(np.ceil(nrow / row_chunk))), file=log)
 
     chunks = {}
     for ims in ms:
@@ -434,7 +434,7 @@ def _psf(ms, stack, **kw):
     # writes = xds_to_zarr(out_datasets, args.output_filename + '.zarr', columns='ALL')
 
     # dask.visualize(psfs, writes, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
-    dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
+    # dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
 
     if not args.mock:
         # psfs = dask.compute(psfs, writes, optimize_graph=False)[0]
