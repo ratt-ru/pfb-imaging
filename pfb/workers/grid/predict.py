@@ -209,13 +209,13 @@ def _predict(ms, stack, **kw):
 
     if args.host_address is None:
         # full image on single node
-        row_chunk = plan_row_chunk(mem_limit/nband, band_size, nrow,
-                                   memory_per_row, args.nthreads_per_worker)
+        row_chunk = plan_row_chunk(mem_limit/nworkers, band_size, nrow,
+                                   memory_per_row, nthreads_per_worker)
 
     else:
         # single band per node
         row_chunk = plan_row_chunk(mem_limit, band_size, nrow,
-                                   memory_per_row, args.nthreads_per_worker)
+                                   memory_per_row, nthreads_per_worker)
 
     if args.row_chunks is not None:
         row_chunk = int(args.row_chunks)
@@ -286,12 +286,13 @@ def _predict(ms, stack, **kw):
 
             out_ds = ds.assign(**{args.model_column: (("row", "chan", "corr"), model_vis),
                                   'UVW': (("row", "three"), uvw)})
+            # out_ds = ds.assign(**{args.model_column: (("row", "chan", "corr"), model_vis)})
             out_data.append(out_ds)
 
         writes.append(xds_to_table(out_data, ims, columns=[args.model_column]))
 
-    # dask.visualize(*writes, filename=args.output_filename + '_graph.pdf',
-    #                optimize_graph=False, collapse_outputs=True)
+    dask.visualize(*writes, filename=args.output_filename + '_graph.pdf',
+                   optimize_graph=False, collapse_outputs=True)
 
     if not args.mock:
         with performance_report(filename=args.output_filename + '_per.html'):

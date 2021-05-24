@@ -5,41 +5,26 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('PSF')
+log = pyscilog.get_logger('IMWEIGHT')
 
 
 @cli.command()
 @click.argument('ms', nargs=-1)
-@click.option('-dc', '--data-column',
-              help="Data column to image."
-              "Must be the same across MSs")
-@click.option('-wc', '--weight-column',
-              help="Column containing natural weights."
-              "Must be the same across MSs")
 @click.option('-iwc', '--imaging-weight-column',
-              help="Column containing/to write imaging weights to."
-              "Must be the same across MSs")
-@click.option('-eps', '--epsilon', type=float, default=1e-5,
-              help='Gridder accuracy')
-@click.option('--wstack/--no-wstack', default=True)
-@click.option('--double-accum/--no-double-accum', default=True)
-@click.option('--mock/--no-mock', default=False)
+              default='IMAGING_WEIGHT_SPECTRUM',
+              help="Column to write imaging weights to.")
 @click.option('-fc', '--flag-column', default='FLAG',
               help="Column containing data flags."
               "Must be the same across MSs")
-@click.option('-muc', '--mueller-column',
-              help="Column containing Mueller terms."
-              "Must be the same across MSs")
-@click.option('-o', '--output-filename', type=str, required=True,
-              help="Basename of output.")
+@click.option('-rb', '--robustness', type=float,
+              help="Robustness factor between -2, and 2. "
+              "None implies uniform weighting.")
 @click.option('-nb', '--nband', type=int, required=True,
               help="Number of imaging bands")
 @click.option('-fov', '--field-of-view', type=float,
               help="Field of view in degrees")
 @click.option('-srf', '--super-resolution-factor', type=float,
               help="Will over-sample Nyquist by this factor at max frequency")
-@click.option('-psfo', '--psf-oversize', type=float, default=2.0,
-              help='Size of the PSF relative to the dirty image.')
 @click.option('-cs', '--cell-size', type=float,
               help='Cell size in arcseconds')
 @click.option('-nx', '--nx', type=int,
@@ -48,6 +33,9 @@ log = pyscilog.get_logger('PSF')
               help="Number of x pixels")
 @click.option('-otype', '--output-type', default='f4',
               help="Data type of output")
+@click.option('--double-accum/--no-double-accum', default=True)
+@click.option('-o', '--output-filename', type=str, required=True,
+              help="Basename of output.")
 @click.option('-ha', '--host-address',
               help='Address where the distributed client lives. '
               'Will use a local cluster if no address is provided')
@@ -55,62 +43,48 @@ log = pyscilog.get_logger('PSF')
               help='Number of workers for the client.')
 @click.option('-ntpw', '--nthreads-per-worker', type=int,
               help='Number of dask threads per worker.')
-@click.option('-ngt', '--ngridder-threads', type=int,
-              help="Total number of threads to use per worker")
 @click.option('-mem', '--mem-limit', type=float,
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
-@click.option('-roc', '--row-out-chunk', type=int, default=10000,
-              help="Size of row chunks for output weights and uvw")
-def psf(ms, **kw):
+def imweight(ms, **kw):
     '''
-    Routine to create a psf image from a list of measurement sets.
-    The psf image cube is not normalised by wsum as this destroyes
-    information. The MFS image is written out in units of Jy/beam
-    and should have a peak of one otherwise something has gone wrong.
+    Routine to compute and write imaging weights to a measurement set-like
+    storage format. The type of weighting to apply is determined by the
+    --robustness parameter. The default of None implies uniform weighting.
+    You don't need this step for natural weighting.
 
-    The --field-of-view and --super-resolution-factor options
-    (equivalently --cell-size, --nx and --ny) pertain to the size of
-    the image (eg. dirty and model). The size of the PSF output image
-    is controlled by the --psf-oversize option.
-
-    The Stokes I weights required to apply the Hessian are also written out
-    to a zarr data set called output-filename.zarr. This data set does not
-    adhere to the MSv2 specs and is only meant to be used to apply the
-    Hessian. In particular, the weights written out are a combination of
-    imaging weights and the "Mueller" weights.
+    Counts (i.e. how many visibilities fall in a grid point) are determined
+    independent of the natural visibility weights and then used to scale the
+    natural weights to a specific robustness value. This implies visibility
+    weights still affect the relative weighting within a cell. In other words,
+    when --robustness==None, you will only have a truly uniformly weighted
+    image if the visibilities all have the same weight to start with.
 
     If a host address is provided the computation can be distributed
     over imaging band and row. When using a distributed scheduler both
     mem-limit and nthreads is per node and have to be specified.
 
     When using a local cluster, mem-limit and nthreads refer to the global
-    memory and threads available, respectively. By default the gridder will
-    use all available resources.
+    memory and threads available, respectively.
 
     Disclaimer - Memory budgeting is still very crude!
 
     On a local cluster, the default is to use:
 
         nworkers = nband
-        nthreads-per-worker = 1
+        nthreads-per-worker = nthreads/nworkers
 
     They have to be specified in ~.config/dask/jobqueue.yaml in the
     distributed case.
-
-    if LocalCluster:
-        ngridder-threads = nthreads//(nworkers*nthreads_per_worker)
-    else:
-        ngridder-threads = nthreads//nthreads-per-worker
 
     '''
     if not len(ms):
         raise ValueError("You must specify at least one measurement set")
     with ExitStack() as stack:
-        return _psf(ms, stack, **kw)
+        return _imweight(ms, stack, **kw)
 
-def _psf(ms, stack, **kw):
+def _imweight(ms, stack, **kw):
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
     pyscilog.enable_memory_logging(level=3)
@@ -120,7 +94,6 @@ def _psf(ms, stack, **kw):
     for key in kw.keys():
         print('     %25s = %s' % (key, kw[key]), file=log)
 
-    # number of threads per worker
     if args.nthreads is None:
         if args.host_address is not None:
             raise ValueError("You have to specify nthreads when using a distributed scheduler")
@@ -129,7 +102,6 @@ def _psf(ms, stack, **kw):
     else:
         nthreads = args.nthreads
 
-    # configure memory limit
     if args.mem_limit is None:
         if args.host_address is not None:
             raise ValueError("You have to specify mem-limit when using a distributed scheduler")
@@ -145,7 +117,7 @@ def _psf(ms, stack, **kw):
         nworkers = args.nworkers
 
     if args.nthreads_per_worker is None:
-        nthreads_per_worker = 1
+        nthreads_per_worker = nthreads//nworkers
     else:
         nthreads_per_worker = args.nthreads_per_worker
 
@@ -158,34 +130,29 @@ def _psf(ms, stack, **kw):
     # the number of dask threads
     nthreads_dask = nworkers * nthreads_per_worker
 
-    if args.host_address is not None:
-        gridder_nthreads = nthreads//nthreads_per_worker
-    else:
-        gridder_nthreads = nthreads//nthreads_dask
-
-    print("Number of threads allocated to each gridding instance %i"%
-          gridder_nthreads, file=log)
-
-    # numpy imports have to happen after this step
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
     from dask.distributed import performance_report
-    from dask.graph_manipulation import clone
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
-    from daskms import Dataset
-    from daskms.experimental.zarr import xds_to_zarr
+    from daskms.utils import dataset_type
+    mstype = dataset_type(ms[0])
+    if mstype == 'casa':
+        from daskms import xds_to_table
+    elif mstype == 'zarr':
+        from daskms.experimental.zarr import xds_to_zarr as xds_to_table
     import dask.array as da
     from africanus.constants import c as lightspeed
-    from africanus.gridding.wgridder.dask import dirty as vis2im
     from ducc0.fft import good_size
-    from pfb.utils.misc import stitch_images, plan_row_chunk
+    from pfb.utils.misc import stitch_images
+    from pfb.utils.misc import restore_corrs, plan_row_chunk, set_image_size
+    from pfb.utils.weighting import counts_to_weights, compute_counts
     from pfb.utils.fits import set_wcs, save_fits
 
     # chan <-> band mapping
     freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
-        ms, nband=args.nband)
+        ms, nband=nband)
 
     # gridder memory budget
     max_chan_chunk = 0
@@ -202,15 +169,12 @@ def _psf(ms, stack, **kw):
     xds = xds_from_ms(ms[0])
     ncorr = xds[0].dims['corr']
     nrow = xds[0].dims['row']
-    # we still have to cater for complex valued data because we cast
-    # the weights to complex but we not longer need to factor the
-    # weight column into our memory budget
-    data_bytes = getattr(xds[0], args.data_column).data.itemsize
-    bytes_per_row = max_chan_chunk * ncorr * data_bytes
-    memory_per_row = bytes_per_row
+
+    # imaging weights
+    memory_per_row = np.dtype(args.output_type).itemsize * max_chan_chunk * ncorr
 
     # flags (uint8 or bool)
-    memory_per_row += bytes_per_row / 8
+    memory_per_row += np.dtype(np.uint8).itemsize * max_chan_chunk * ncorr
 
     # UVW
     memory_per_row += xds[0].UVW.data.itemsize * 3
@@ -218,32 +182,21 @@ def _psf(ms, stack, **kw):
     # ANTENNA1/2
     memory_per_row += xds[0].ANTENNA1.data.itemsize * 2
 
-    # TIME
-    memory_per_row += xds[0].TIME.data.itemsize
-
-    # data column is not actually read into memory just used to infer
-    # dtype and chunking
-    columns = (args.data_column,
-               args.weight_column,
-               args.flag_column,
+    columns = (args.flag_column,
                'UVW', 'ANTENNA1',
-               'ANTENNA2',
-               'TIME')
+               'ANTENNA2')
 
     # flag row
     if 'FLAG_ROW' in xds[0]:
         columns += ('FLAG_ROW',)
         memory_per_row += xds[0].FLAG_ROW.data.itemsize
 
-    # imaging weights
-    if args.imaging_weight_column is not None:
-        columns += (args.imaging_weight_column,)
-        memory_per_row += bytes_per_row / 2
-
-    # Mueller term (complex valued)
-    if args.mueller_column is not None:
-        columns += (args.mueller_column,)
-        memory_per_row += bytes_per_row
+    if mstype == 'zarr':
+        if args.imaging_weight_column in xds[0].keys():
+            iw_chunks = getattr(xds[0], args.imaging_weight_column).data.chunks
+        else:
+            iw_chunks = xds[0].DATA.data.chunks
+            print('Chunking imaging weights same as data')
 
     # get max uv coords over all fields
     uvw = []
@@ -278,7 +231,7 @@ def _psf(ms, stack, **kw):
 
     if args.nx is None:
         fov = args.field_of_view * 3600
-        npix = int(args.psf_oversize * fov / cell_size)
+        npix = int(fov / cell_size)
         if npix % 2:
             npix += 1
         nx = good_size(npix)
@@ -287,7 +240,7 @@ def _psf(ms, stack, **kw):
         nx = args.nx
         ny = args.ny if args.ny is not None else nx
 
-    print("PSF size set to (%i, %i, %i)" % (nband, nx, ny), file=log)
+    print("Image size set to (%i, %i, %i)" % (nband, nx, ny), file=log)
 
     # get approx image size
     # this is not a conservative estimate when multiple SPW's map to a single
@@ -295,11 +248,11 @@ def _psf(ms, stack, **kw):
     pixel_bytes = np.dtype(args.output_type).itemsize
     band_size = nx * ny * pixel_bytes
 
+
     if args.host_address is None:
         # full image on single node
         row_chunk = plan_row_chunk(mem_limit/nworkers, band_size, nrow,
                                    memory_per_row, nthreads_per_worker)
-
     else:
         # single band per node
         row_chunk = plan_row_chunk(mem_limit, band_size, nrow,
@@ -320,9 +273,9 @@ def _psf(ms, stack, **kw):
             chunks[ims].append({'row': row_chunk,
                                 'chan': chan_chunks[ims][spw]['chan']})
 
-    psfs = []
+    # compute counts
+    counts = []
     radec = None  # assumes we are only imaging field 0 of first MS
-    out_datasets = []
     for ims in ms:
         xds = xds_from_ms(ims, chunks=chunks[ims], columns=columns)
 
@@ -348,42 +301,9 @@ def _psf(ms, stack, **kw):
             if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
                 continue
 
-            # this is not correct, need to use spw
-            spw = ds.DATA_DESC_ID
+            spw = ds.DATA_DESC_ID  # not optimal, need to use spw
 
-            uvw = clone(ds.UVW.data)
-
-            data_type = getattr(ds, args.data_column).data.dtype
-            data_shape = getattr(ds, args.data_column).data.shape
-            data_chunks = getattr(ds, args.data_column).data.chunks
-
-            weights = getattr(ds, args.weight_column).data
-            if len(weights.shape) < 3:
-                weights = da.broadcast_to(
-                    weights[:, None, :], data_shape, chunks=data_chunks)
-
-            if args.imaging_weight_column is not None:
-                imaging_weights = getattr(
-                    ds, args.imaging_weight_column).data
-                if len(imaging_weights.shape) < 3:
-                    imaging_weights = da.broadcast_to(
-                        imaging_weights[:, None, :], data_shape, chunks=data_chunks)
-
-                weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
-                weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]
-            else:
-                weightsxx = weights[:, :, 0]
-                weightsyy = weights[:, :, -1]
-
-            # apply adjoint of mueller term.
-            # Phases modify data amplitudes modify weights.
-            if args.mueller_column is not None:
-                mueller = getattr(ds, args.mueller_column).data
-                weightsxx *= da.absolute(mueller[:, :, 0])**2
-                weightsyy *= da.absolute(mueller[:, :, -1])**2
-
-            # weighted sum corr to Stokes I
-            weights = weightsxx + weightsyy
+            uvw = ds.UVW.data
 
             # MS may contain auto-correlations
             if 'FLAG_ROW' in xds[0]:
@@ -395,56 +315,93 @@ def _psf(ms, stack, **kw):
             flag = getattr(ds, args.flag_column).data
             flagxx = flag[:, :, 0]
             flagyy = flag[:, :, -1]
-            # ducc0 uses uint8 mask not flag
-            mask = ~ da.logical_or((flagxx | flagyy), frow[:, None])
+            flag = da.logical_or((flagxx | flagyy), frow[:, None])
 
-            psf = vis2im(uvw,
-                         freqs[ims][spw],
-                         weights.astype(data_type),
-                         freq_bin_idx[ims][spw],
-                         freq_bin_counts[ims][spw],
-                         nx,
-                         ny,
-                         cell_rad,
-                         flag=mask.astype(np.uint8),
-                         nthreads=gridder_nthreads,
-                         epsilon=args.epsilon,
-                         do_wstacking=args.wstack,
-                         double_accum=args.double_accum)
+            count = compute_counts(
+                uvw,
+                freqs[ims][spw],
+                freq_bin_idx[ims][spw],
+                freq_bin_counts[ims][spw],
+                flag,
+                nx,
+                ny,
+                cell_rad,
+                cell_rad,
+                args.output_type if not args.double_accum else np.float64)
 
-            psfs.append(psf)
+            counts.append(count)
 
-            # data_vars = {
-            #     'FIELD_ID':(('row',), da.full_like(ds.TIME.data,
-            #                 ds.FIELD_ID, chunks=args.row_out_chunk)),
-            #     'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data,
-            #                 ds.DATA_DESC_ID, chunks=args.row_out_chunk)),
-            #     'WEIGHT':(('row', 'chan'), weights.rechunk({0:args.row_out_chunk})),
-            #     'UVW':(('row', 'uvw'), uvw.rechunk({0:args.row_out_chunk}))
-            # }
+    dask.visualize(counts, filename=args.output_filename + '_counts_graph.pdf', optimize_graph=False)
+    with performance_report(filename=args.output_filename + '_counts_per.html'):
+            counts = dask.compute(counts, optimize_graph=False)[0]
 
-            # coords = {
-            #     'chan': (('chan',), freqs[ims][spw])
-            # }
+    counts = stitch_images(counts, nband, band_mapping)
 
-            # out_ds = Dataset(data_vars, coords)
+    # save counts grid
+    hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
+    save_fits(args.output_filename + '_counts.fits', counts, hdr, dtype=args.output_type)
 
-            # out_datasets.append(out_ds)
+    counts = da.from_array(counts.astype(args.output_type),
+                           chunks=(1, -1, -1), name=False)
 
-    # writes = xds_to_zarr(out_datasets, args.output_filename + '.zarr', columns='ALL')
+    # convert counts to weights
+    writes = []
+    for ims in ms:
+        xds = xds_from_ms(ims, chunks=chunks[ims], columns=('UVW', args.imaging_weight_column))
 
-    # dask.visualize(psfs, writes, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
-    # dask.visualize(psfs, filename=args.output_filename + '_graph.pdf', optimize_graph=False)
+        # subtables
+        ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
+        fields = xds_from_table(ims + "::FIELD")
+        spws = xds_from_table(ims + "::SPECTRAL_WINDOW")
+        pols = xds_from_table(ims + "::POLARIZATION")
 
-    if not args.mock:
-        # psfs = dask.compute(psfs, writes, optimize_graph=False)[0]
-        with performance_report(filename=args.output_filename + '_per.html'):
-            psfs = dask.compute(psfs, optimize_graph=False)[0]
+        # subtable data
+        ddids = dask.compute(ddids)[0]
+        fields = dask.compute(fields)[0]
+        spws = dask.compute(spws)[0]
+        pols = dask.compute(pols)[0]
 
-        psf = stitch_images(psfs, nband, band_mapping)
+        out_data = []
+        for ds in xds:
+            field = fields[ds.FIELD_ID]
 
-        hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
-        save_fits(args.output_filename + '_psf.fits', psf, hdr,
-                dtype=args.output_type)
+            if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
+                continue
+
+            spw = ds.DATA_DESC_ID  # this is not correct, need to use spw
+
+            uvw = ds.UVW.data
+
+            weights = counts_to_weights(
+                counts,
+                uvw,
+                freqs[ims][spw],
+                freq_bin_idx[ims][spw],
+                freq_bin_counts[ims][spw],
+                nx,
+                ny,
+                cell_rad,
+                cell_rad,
+                np.dtype(args.output_type),
+                args.robustness)
+
+            # hack to get shape and chunking info
+            weights = restore_corrs(weights, ncorr)
+            if mstype == 'zarr':
+                # flag = flag.rechunk(iw_chunks)
+                weights = weights.rechunk(iw_chunks)
+                uvw = uvw.rechunk((iw_chunks[0], 3))
+
+            out_ds = ds.assign(**{args.imaging_weight_column: (("row", "chan", "corr"), weights),
+                                  'UVW': (("row", "three"), uvw)})
+            out_data.append(out_ds)
+        writes.append(xds_to_table(out_data, ims,
+                                   columns=[args.imaging_weight_column]))
+
+    dask.visualize(*writes, filename=args.output_filename + 'weights_graph.pdf',
+                   optimize_graph=False, collapse_outputs=True)
+
+    with performance_report(filename=args.output_filename + 'weights_per.html'):
+        dask.compute(writes, optimize_graph=False)
 
     print("All done here.", file=log)

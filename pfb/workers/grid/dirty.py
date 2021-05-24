@@ -17,7 +17,13 @@ log = pyscilog.get_logger('DIRTY')
               help="Column containing natural weights."
               "Must be the same across MSs")
 @click.option('-iwc', '--imaging-weight-column',
-              help="Column containing/to write imaging weights to."
+              help="Column containing imaging weights. "
+              "Must be the same across MSs")
+@click.option('-fc', '--flag-column', default='FLAG',
+              help="Column containing data flags."
+              "Must be the same across MSs")
+@click.option('-muc', '--mueller-column',
+              help="Column containing Mueller terms."
               "Must be the same across MSs")
 @click.option('-rchunk', '--row-chunks',
               help="Number of rows in a chunk.")
@@ -26,12 +32,6 @@ log = pyscilog.get_logger('DIRTY')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--mock/--no-mock', default=False)
 @click.option('--double-accum/--no-double-accum', default=True)
-@click.option('-fc', '--flag-column', default='FLAG',
-              help="Column containing data flags."
-              "Must be the same across MSs")
-@click.option('-muc', '--mueller-column',
-              help="Column containing Mueller terms."
-              "Must be the same across MSs")
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -197,7 +197,7 @@ def _dirty(ms, stack, **kw):
         memory_per_row += bytes_per_row / 2
 
     # flags (uint8 or bool)
-    memory_per_row += bytes_per_row / 8
+    memory_per_row += np.dtype(np.uint8).itemsize * max_chan_chunk * ncorr
 
     # UVW
     memory_per_row += xds[0].UVW.data.itemsize * 3
@@ -279,13 +279,13 @@ def _dirty(ms, stack, **kw):
 
     if args.host_address is None:
         # full image on single node
-        row_chunk = plan_row_chunk(mem_limit/nband, band_size, nrow,
-                                   memory_per_row, args.nthreads_per_worker)
+        row_chunk = plan_row_chunk(mem_limit/nworkers, band_size, nrow,
+                                   memory_per_row, nthreads_per_worker)
 
     else:
         # single band per node
         row_chunk = plan_row_chunk(mem_limit, band_size, nrow,
-                                   memory_per_row, args.nthreads_per_worker)
+                                   memory_per_row, nthreads_per_worker)
 
     if args.row_chunks is not None:
         row_chunk = int(args.row_chunks)

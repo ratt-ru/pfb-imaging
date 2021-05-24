@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import numexpr as ne
 import dask.array as da
@@ -354,3 +355,51 @@ def plan_row_chunk(mem_limit, image_size, nrow, mem_per_row, nthreads_per_worker
     else:
         row_chunk = int(row_chunk)
     return row_chunk
+
+def set_image_size(ms, max_freq, field_of_view, super_resolution_factor,
+                   nx=None, ny=None, cell_size=None):
+    '''
+    Compute image size. Default estimates it from required field of view
+    and super resolution factor but they can also be specified explicitly.
+    '''
+    from daskms import xds_from_storage_ms as xds_from_ms
+    from daskms import xds_from_storage_table as xds_from_table
+    import dask.array as da
+
+    if not isinstance(ms, list):
+        ms = [ms]
+
+    uvw = []
+    u_max = 0.0
+    v_max = 0.0
+    for ims in ms:
+        xds = xds_from_ms(ims, columns=('UVW'), chunks={'row': -1})
+
+        for ds in xds:
+            uvw = ds.UVW.data
+            u_max = da.maximum(u_max, abs(uvw[:, 0]).max())
+            v_max = da.maximum(v_max, abs(uvw[:, 1]).max())
+            uv_max = da.maximum(u_max, v_max)
+
+    uv_max = uv_max.compute()
+    del uvw
+
+    # image size
+    cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
+
+    if cell_size is not None:
+        cell_rad = cell_size * np.pi / 60 / 60 / 180
+    else:
+        cell_rad = cell_N / super_resolution_factor
+        cell_size = cell_rad * 60 * 60 * 180 / np.pi
+
+    if nx is None:
+        fov = field_of_view * 3600
+        npix = int(fov / cell_size)
+        if npix % 2:
+            npix += 1
+        nx = good_size(npix)
+        ny = good_size(npix)
+    else:
+        ny = ny if ny is not None else nx
+    return nx, ny, cell_rad, cell_N
