@@ -21,6 +21,8 @@ log = pyscilog.get_logger('IMWEIGHT')
               "None implies uniform weighting.")
 @click.option('-nb', '--nband', type=int, required=True,
               help="Number of imaging bands")
+@click.option('-rchunk', '--row-chunks',
+              help="Number of rows in a chunk.")
 @click.option('-fov', '--field-of-view', type=float,
               help="Field of view in degrees")
 @click.option('-srf', '--super-resolution-factor', type=float,
@@ -49,8 +51,8 @@ log = pyscilog.get_logger('IMWEIGHT')
               help="Total available threads. Default uses all available threads")
 def imweight(ms, **kw):
     '''
-    Routine to compute and write imaging weights to a measurement set-like
-    storage format. The type of weighting to apply is determined by the
+    Compute and write imaging weights to a measurement set-like storage format.
+    The type of weighting to apply is determined by the
     --robustness parameter. The default of None implies uniform weighting.
     You don't need this step for natural weighting.
 
@@ -86,49 +88,56 @@ def imweight(ms, **kw):
 
 def _imweight(ms, stack, **kw):
     args = OmegaConf.create(kw)
+    OmegaConf.set_struct(args, True)
     pyscilog.log_to_file(args.output_filename + '.log')
     pyscilog.enable_memory_logging(level=3)
 
-    ms = list(ms)
-    print('Input Options:', file=log)
-    for key in kw.keys():
-        print('     %25s = %s' % (key, kw[key]), file=log)
-
+    # number of threads per worker
     if args.nthreads is None:
         if args.host_address is not None:
             raise ValueError("You have to specify nthreads when using a distributed scheduler")
         import multiprocessing
         nthreads = multiprocessing.cpu_count()
+        args.nthreads = nthreads
     else:
         nthreads = args.nthreads
 
+    # configure memory limit
     if args.mem_limit is None:
         if args.host_address is not None:
             raise ValueError("You have to specify mem-limit when using a distributed scheduler")
         import psutil
         mem_limit = int(psutil.virtual_memory()[0]/1e9)  # 100% of memory by default
+        args.mem_limit = mem_limit
     else:
         mem_limit = args.mem_limit
 
     nband = args.nband
     if args.nworkers is None:
         nworkers = nband
+        args.nworkers = nworkers
     else:
         nworkers = args.nworkers
 
     if args.nthreads_per_worker is None:
         nthreads_per_worker = nthreads//nworkers
+        args.nthreads_per_worker = nthreads_per_worker
     else:
         nthreads_per_worker = args.nthreads_per_worker
+
+    # the number of chunks being read in simultaneously is equal to
+    # the number of dask threads
+    nthreads_dask = nworkers * nthreads_per_worker
+
+    ms = list(ms)
+    print('Input Options:', file=log)
+    for key in kw.keys():
+        print('     %25s = %s' % (key, args[key]), file=log)
 
     # numpy imports have to happen after this step
     from pfb import set_client
     set_client(nthreads, mem_limit, nworkers, nthreads_per_worker,
                args.host_address, stack, log)
-
-    # the number of chunks being read in simultaneously is equal to
-    # the number of dask threads
-    nthreads_dask = nworkers * nthreads_per_worker
 
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
@@ -372,6 +381,7 @@ def _imweight(ms, stack, **kw):
 
             uvw = ds.UVW.data
 
+            # dask-ms.optimization inline-array
             weights = counts_to_weights(
                 counts,
                 uvw,
@@ -398,10 +408,10 @@ def _imweight(ms, stack, **kw):
         writes.append(xds_to_table(out_data, ims,
                                    columns=[args.imaging_weight_column]))
 
-    dask.visualize(*writes, filename=args.output_filename + 'weights_graph.pdf',
+    dask.visualize(*writes, filename=args.output_filename + '_weights_graph.pdf',
                    optimize_graph=False, collapse_outputs=True)
 
-    with performance_report(filename=args.output_filename + 'weights_per.html'):
+    with performance_report(filename=args.output_filename + '_weights_per.html'):
         dask.compute(writes, optimize_graph=False)
 
     print("All done here.", file=log)

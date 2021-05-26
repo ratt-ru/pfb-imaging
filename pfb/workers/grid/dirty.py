@@ -63,7 +63,7 @@ log = pyscilog.get_logger('DIRTY')
               help="Total available threads. Default uses all available threads")
 def dirty(ms, **kw):
     '''
-    Routine to create a dirty image from a list of measurement sets.
+    Create a dirty image from a list of measurement sets.
     The dirty image cube is not normalised by wsum as this destroyes
     information. The MFS image is written out in units of Jy/beam.
     The normalisation factors can be obtained by making a psf image
@@ -100,57 +100,65 @@ def dirty(ms, **kw):
 
 def _dirty(ms, stack, **kw):
     args = OmegaConf.create(kw)
+    OmegaConf.set_struct(args, True)
     pyscilog.log_to_file(args.output_filename + '.log')
     pyscilog.enable_memory_logging(level=3)
 
-    ms = list(ms)
-    print('Input Options:', file=log)
-    for key in kw.keys():
-        print('     %25s = %s' % (key, kw[key]), file=log)
-
+    # number of threads per worker
     if args.nthreads is None:
         if args.host_address is not None:
             raise ValueError("You have to specify nthreads when using a distributed scheduler")
         import multiprocessing
         nthreads = multiprocessing.cpu_count()
+        args.nthreads = nthreads
     else:
         nthreads = args.nthreads
 
+    # configure memory limit
     if args.mem_limit is None:
         if args.host_address is not None:
             raise ValueError("You have to specify mem-limit when using a distributed scheduler")
         import psutil
         mem_limit = int(psutil.virtual_memory()[0]/1e9)  # 100% of memory by default
+        args.mem_limit = mem_limit
     else:
         mem_limit = args.mem_limit
 
     nband = args.nband
     if args.nworkers is None:
         nworkers = nband
+        args.nworkers = nworkers
     else:
         nworkers = args.nworkers
 
     if args.nthreads_per_worker is None:
         nthreads_per_worker = 1
+        args.nthreads_per_worker = nthreads_per_worker
     else:
         nthreads_per_worker = args.nthreads_per_worker
-
-    # numpy imports have to happen after this step
-    from pfb import set_client
-    set_client(nthreads, mem_limit, nworkers, nthreads_per_worker,
-               args.host_address, stack, log)
 
     # the number of chunks being read in simultaneously is equal to
     # the number of dask threads
     nthreads_dask = nworkers * nthreads_per_worker
 
-    if args.host_address is not None:
-        gridder_nthreads = nthreads//nthreads_per_worker
+    if args.ngridder_threads is None:
+        if args.host_address is not None:
+            ngridder_threads = nthreads//nthreads_per_worker
+        else:
+            ngridder_threads = nthreads//nthreads_dask
+        args.ngridder_threads = ngridder_threads
     else:
-        gridder_nthreads = nthreads//nthreads_dask
+        ngridder_threads = args.ngridder_threads
 
-    print("Number of threads allocated to each gridding instance %i"%
-          gridder_nthreads, file=log)
+    ms = list(ms)
+    print('Input Options:', file=log)
+    for key in kw.keys():
+        print('     %25s = %s' % (key, args[key]), file=log)
+
+    # numpy imports have to happen after this step
+    from pfb import set_client
+    set_client(nthreads, mem_limit, nworkers, nthreads_per_worker,
+               args.host_address, stack, log)
 
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
@@ -395,7 +403,7 @@ def _dirty(ms, stack, **kw):
                 cell_rad,
                 weights=weights,
                 flag=mask.astype(np.uint8),
-                nthreads=gridder_nthreads,
+                nthreads=ngridder_threads,
                 epsilon=args.epsilon,
                 do_wstacking=args.wstack,
                 double_accum=args.double_accum)

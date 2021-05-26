@@ -84,7 +84,7 @@ def pcg(A,
 
 #     da.blockwise(
 #         pcg, ('band', 'nx', 'ny'),
-#         A, ('band', 'nx', 'ny'),
+#         A, ('band', 'nx', 'ny'),  -> psf
 #         b, ('band', 'nx', 'ny'),
 #         M, ('band', 'nx', 'ny'),
 #         align_arrays=False,

@@ -347,7 +347,7 @@ def plan_row_chunk(mem_limit, image_size, nrow, mem_per_row, nthreads_per_worker
     # fudge should account for gridder memory overhead
     while row_chunk * mem_per_row * nthreads_per_worker >= fudge * mem_after_image:
         row_chunk /= 2  # decrease until problem fits in memory
-    # try divide into nearly equal chunks
+    # divide into nearly equal chunks
     nrow_chunk = int(nrow / row_chunk)
     if nrow_chunk > 1:
         row_intervals = np.linspace(0, nrow-1, nrow_chunk+1)

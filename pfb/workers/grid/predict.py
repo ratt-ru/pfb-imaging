@@ -47,7 +47,7 @@ log = pyscilog.get_logger('PREDICT')
               help="Total available threads. Default uses all available threads")
 def predict(ms, **kw):
     '''
-    Routine to predict model visibilities to measurement sets.
+    Predict model visibilities to measurement sets.
     Currently only predicts from .fits files
 
     By default the real-type argument specifies the type of the
@@ -90,19 +90,17 @@ def predict(ms, **kw):
 
 def _predict(ms, stack, **kw):
     args = OmegaConf.create(kw)
+    OmegaConf.set_struct(args, True)
     pyscilog.log_to_file(args.output_filename + '.log')
     pyscilog.enable_memory_logging(level=3)
 
-    ms = list(ms)
-    print('Input Options:', file=log)
-    for key in kw.keys():
-        print('     %25s = %s' % (key, kw[key]), file=log)
-
+    # number of threads per worker
     if args.nthreads is None:
         if args.host_address is not None:
             raise ValueError("You have to specify nthreads when using a distributed scheduler")
         import multiprocessing
         nthreads = multiprocessing.cpu_count()
+        args.nthreads = nthreads
     else:
         nthreads = args.nthreads
 
@@ -111,36 +109,45 @@ def _predict(ms, stack, **kw):
             raise ValueError("You have to specify mem-limit when using a distributed scheduler")
         import psutil
         mem_limit = int(psutil.virtual_memory()[0]/1e9)  # 100% of memory by default
+        args.mem_limit = mem_limit
     else:
         mem_limit = args.mem_limit
 
     nband = args.nband
     if args.nworkers is None:
         nworkers = nband
+        args.nworkers = nworkers
     else:
         nworkers = args.nworkers
 
     if args.nthreads_per_worker is None:
         nthreads_per_worker = 1
+        args.nthreads_per_worker = nthreads_per_worker
     else:
         nthreads_per_worker = args.nthreads_per_worker
-
-    # numpy imports have to happen after this step
-    from pfb import set_client
-    set_client(nthreads, mem_limit, nworkers, nthreads_per_worker,
-               args.host_address, stack, log)
 
     # the number of chunks being read in simultaneously is equal to
     # the number of dask threads
     nthreads_dask = nworkers * nthreads_per_worker
 
-    if args.host_address is not None:
-        gridder_nthreads = nthreads//nthreads_per_worker
+    if args.ngridder_threads is None:
+        if args.host_address is not None:
+            ngridder_threads = nthreads//nthreads_per_worker
+        else:
+            ngridder_threads = nthreads//nthreads_dask
+        args.ngridder_threads = ngridder_threads
     else:
-        gridder_nthreads = nthreads//nthreads_dask
+        ngridder_threads = args.ngridder_threads
 
-    print("Number of threads allocated to each gridding instance %i"%
-          gridder_nthreads, file=log)
+    ms = list(ms)
+    print('Input Options:', file=log)
+    for key in kw.keys():
+        print('     %25s = %s' % (key, args[key]), file=log)
+
+    # numpy imports have to happen after this step
+    from pfb import set_client
+    set_client(nthreads, mem_limit, nworkers, nthreads_per_worker,
+               args.host_address, stack, log)
 
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
@@ -275,7 +282,7 @@ def _predict(ms, stack, **kw):
                          freq_bin_idx[ims][spw],
                          freq_bin_counts[ims][spw],
                          cell_rad,
-                         nthreads=nthreads//nband,
+                         nthreads=ngridder_threads,
                          epsilon=args.epsilon,
                          do_wstacking=args.wstack)
 
@@ -291,11 +298,11 @@ def _predict(ms, stack, **kw):
 
         writes.append(xds_to_table(out_data, ims, columns=[args.model_column]))
 
-    dask.visualize(*writes, filename=args.output_filename + '_graph.pdf',
+    dask.visualize(*writes, filename=args.output_filename + '_predict_graph.pdf',
                    optimize_graph=False, collapse_outputs=True)
 
     if not args.mock:
-        with performance_report(filename=args.output_filename + '_per.html'):
+        with performance_report(filename=args.output_filename + '_predict_per.html'):
             dask.compute(writes, optimize_graph=False)
 
     print("All done here.", file=log)
