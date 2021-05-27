@@ -156,18 +156,21 @@ def _clean(stack, **kw):
                args.host_address, stack, log)
 
     import numpy as np
+    import numexpr as ne
+    import dask
     import dask.array as da
+    from dask.distributed import performance_report
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
     from pfb.opt.hogbom import hogbom
     from astropy.io import fits
 
     print("Loading dirty", file=log)
-    dirty = load_fits(args.dirty).squeeze()
+    dirty = load_fits(args.dirty, dtype=args.output_type).squeeze()
     nband, nx, ny = dirty.shape
     hdr = fits.getheader(args.dirty)
 
     print("Loading psf", file=log)
-    psf = load_fits(args.psf).squeeze()
+    psf = load_fits(args.psf, dtype=args.output_type).squeeze()
     _, nx_psf, ny_psf = psf.shape
     hdr_psf = fits.getheader(args.psf)
 
@@ -201,6 +204,7 @@ def _clean(stack, **kw):
 
     # set up Hessian approximation
     if args.weight_table is not None:
+        normfact = wsum
         from africanus.gridding.wgridder.dask import hessian
         from pfb.utils.misc import plan_row_chunk
         from daskms.experimental.zarr import xds_from_zarr
@@ -277,11 +281,44 @@ def _clean(stack, **kw):
                                   epsilon=args.epsilon,
                                   do_wstacking=args.wstack,
                                   double_accum=args.double_accum)
-            return convolvedim.compute()/wsum
+            return convolvedim
     else:
-        from pfb.operators.psf import PSF
-        psfo = PSF(psf, dirty.shape, nthreads=args.nthreads)
-        def convolver(x): return psfo.convolve(x)
+        normfact = 1.0
+        from pfb.operators.psf import hessian
+        from ducc0.fft import r2c, c2r, c2c, good_size
+        iFs = np.fft.ifftshift
+        Fs = np.fft.fftshift
+
+        npad_xl = (nx_psf - nx)//2
+        npad_xr = nx_psf - nx - npad_xl
+        npad_yl = (ny_psf - ny)//2
+        npad_yr = ny_psf - ny - npad_yl
+        padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+        unpad_x = slice(npad_xl, -npad_xr)
+        unpad_y = slice(npad_yl, -npad_yr)
+        lastsize = ny + np.sum(padding[-1])
+        psf_pad = iFs(psf, axes=(1, 2))
+        psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
+                     nthreads=ngridder_threads, inorm=0)
+
+        psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
+
+        def convolver(x):
+            model = da.from_array(x,
+                          chunks=(1, nx, ny), name=False)
+
+
+            convolvedim = hessian(model,
+                                  psfhat,
+                                  padding,
+                                  ngridder_threads,
+                                  unpad_x,
+                                  unpad_y,
+                                  lastsize)
+            return convolvedim
+
+        # psfo = PSF(psf, dirty.shape, nthreads=args.nthreads)
+        # def convolver(x): return psfo.convolve(x)
 
     rms = np.std(dirty_mfs)
     rmax = np.abs(dirty_mfs).max()
@@ -290,6 +327,7 @@ def _clean(stack, **kw):
                 0, rmax, rms), file=log)
 
     residual = dirty.copy()
+    residual_mfs = dirty_mfs.copy()
     model = np.zeros_like(residual)
     for k in range(args.nmiter):
         print("Running Hogbom", file=log)
@@ -302,9 +340,13 @@ def _clean(stack, **kw):
 
         model += x
         print("Getting residual", file=log)
+
         convimage = convolver(model)
-        residual = dirty - convimage
-        residual_mfs = np.sum(residual, axis=0)
+        dask.visualize(convimage, filename=args.output_filename + '_hessian' + str(k) + '_graph.pdf', optimize_graph=False)
+        with performance_report(filename=args.output_filename + '_hessian' + str(k) + '_per.html'):
+            convimage = dask.compute(convimage, optimize_graph=False)[0]
+        ne.evaluate('dirty - convimage/normfact', out=residual, casting='same_kind')
+        ne.evaluate('sum(residual, axis=0)', out=residual_mfs, casting='same_kind')
 
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
@@ -315,6 +357,9 @@ def _clean(stack, **kw):
 
     print("Saving results", file=log)
     save_fits(args.output_filename + '_model.fits', model, hdr)
-    save_fits(args.output_filename + '_residual.fits', residual, hdr)
+    model_mfs = np.mean(model, axis=0)
+    save_fits(args.output_filename + '_model_mfs.fits', model_mfs, hdr_mfs)
+    save_fits(args.output_filename + '_residual.fits', residual*wsums[:, None, None], hdr)
+    save_fits(args.output_filename + '_residual.fits', residual_mfs, hdr_mfs)
 
     print("All done here.", file=log)
