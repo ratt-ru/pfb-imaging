@@ -82,27 +82,35 @@ class PSF(object):
     #     return Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
 
 
-def _hessian(x, psfhat, padding, ngridder_threads, unpad_x, unpad_y, lastsize):
+def _hessian(x, psfhat, padding, nthreads, unpad_x, unpad_y, lastsize):
     xhat = iFs(np.pad(x, padding, mode='constant'), axes=(1, 2))
-    xhat = r2c(xhat, axes=(1, 2), nthreads=ngridder_threads,
+    xhat = r2c(xhat, axes=(1, 2), nthreads=nthreads,
                 forward=True, inorm=0)
     xhat = c2r(xhat * psfhat, axes=(1, 2), forward=False,
-                lastsize=lastsize, inorm=2, nthreads=ngridder_threads)
+                lastsize=lastsize, inorm=2, nthreads=nthreads)
     return Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y]
 
-def hessian_wrapper(x, psfhat, padding, ngridder_threads, unpad_x, unpad_y, lastsize):
-    return _hessian(x, psfhat[0][0], padding, ngridder_threads, unpad_x, unpad_y, lastsize)
+def hessian_wrapper(x, psfhat, padding, nthreads, unpad_x, unpad_y, lastsize):
+    return _hessian(x, psfhat[0][0], padding, nthreads, unpad_x, unpad_y, lastsize)
 
-def hessian(x, psfhat, padding, ngridder_threads, unpad_x, unpad_y, lastsize):
+def hessian(x, psfhat, padding, nthreads, unpad_x, unpad_y, lastsize):
 
     convolvedim = da.blockwise(
         hessian_wrapper, ('nb', 'nx', 'ny'),
         x, ('nb', 'nx', 'ny'),
         psfhat, ('nb', 'nx2', 'ny2'),
         padding, None,
-        ngridder_threads, None,
+        nthreads, None,
         unpad_x, None,
         unpad_y, None,
         lastsize, None,
         dtype=x.dtype)
     return convolvedim
+
+def _hessian_reg(x, psfhat, sigmasq, padding, nthreads, unpad_x, unpad_y, lastsize):
+    xhat = iFs(np.pad(x, padding, mode='constant'), axes=(1, 2))
+    xhat = r2c(xhat, axes=(1, 2), nthreads=nthreads,
+                forward=True, inorm=0)
+    xhat = c2r(xhat * psfhat, axes=(1, 2), forward=False,
+                lastsize=lastsize, inorm=2, nthreads=nthreads)
+    return Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y] + x/sigmasq

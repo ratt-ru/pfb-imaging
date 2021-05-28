@@ -6,7 +6,7 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('CLEAN')
+log = pyscilog.get_logger('FLUXMAOP')
 
 @cli.command()
 @click.option('-d', '--dirty', required=True,
@@ -27,17 +27,6 @@ log = pyscilog.get_logger('CLEAN')
 @click.option('--double-accum/--no-double-accum', default=True)
 @click.option('-nmiter', '--nmiter', type=int, default=5,
               help="Number of major cycles")
-@click.option('-hbg', "--hb-gamma", type=float, default=0.1,
-              help="Minor loop gain of Hogbom")
-@click.option('-hbpf', "--hb-peak-factor", type=float, default=0.1,
-              help="Peak factor of Hogbom")
-@click.option('-hbmaxit', "--hb-maxit", type=int, default=5000,
-              help="Maximum number of iterations for Hogbom")
-@click.option('-hbverb', "--hb-verbose", type=int, default=0,
-              help="Verbosity of Hogbom. Set to 2 for debugging or "
-              "zero for silence.")
-@click.option('-hbrf', "--hb-report-freq", type=int, default=10,
-              help="Report freq for hogbom.")
 @click.option('-ha', '--host-address',
               help='Address where the distributed client lives. '
               'Will use a local cluster if no address is provided')
@@ -51,7 +40,7 @@ log = pyscilog.get_logger('CLEAN')
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
-def clean(**kw):
+def fluxmop(**kw):
     '''
     Single-scale clean.
 
@@ -92,9 +81,9 @@ def clean(**kw):
         ngridder-threads = nthreads//nthreads-per-worker
     '''
     with ExitStack() as stack:
-        return _clean(stack, **kw)
+        return _fluxmop(stack, **kw)
 
-def _clean(stack, **kw):
+def _fluxmop(stack, **kw):
     args = OmegaConf.create(kw)
     OmegaConf.set_struct(args, True)
     pyscilog.log_to_file(args.output_filename + '.log')

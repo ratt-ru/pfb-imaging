@@ -73,22 +73,105 @@ def pcg(A,
             print("Success, converged after %i iters" % k, file=log)
     return x
 
+from pfb.operators.psf import _hessian_reg
+from functools import partial
+def _pcg_psf(psfhat, b, x0,
+             sigma,
+             nthreads,
+             padding,
+             unpad_x,
+             unpad_y,
+             lastsize,
+             tol=1e-5,
+             maxit=500,
+             minit=100,
+             verbosity=1,
+             report_freq=10,
+             backtrack=True):
+    '''
+    A specialised distributed version of pcg when the operator implements
+    convolution with the psf (+ L2 regularisation by sigma**2)
+    '''
+    nband, nx, ny = b.shape
+    model = np.zeros((nband, nx, ny), dtype=b.dtype)
+    sigmasq = sigma**2
+    def M(x): return x * sigmasq
+    for b in range(nband):
+        A = partial(_hessian_reg,
+                    psfhat=psfhat[b:b+1],
+                    sigmasq=sigmasq,
+                    padding=padding,
+                    nthreads=nthreads,
+                    unpad_x=unpad_x,
+                    unpad_y=unpad_y,
+                    lastsize=lastsize)
+        model[b] = pcg(A, b[b:b+1], x0[b:b+1],
+                       M=M, tol=tol, maxit=maxit, minit=minit,
+                       verbosity=verbosity, report_freq=report_freq, backtrack=backtrack)
 
-# def pcg_dask(A, b, x0, M,
-#              tol=1e-5,
-#              maxit=500,
-#              minit=100,
-#              verbosity=1,
-#              report_freq=10,
-#              backtrack=True):
+    return model
 
-#     da.blockwise(
-#         pcg, ('band', 'nx', 'ny'),
-#         A, ('band', 'nx', 'ny'),  -> psf
-#         b, ('band', 'nx', 'ny'),
-#         M, ('band', 'nx', 'ny'),
-#         align_arrays=False,
-#         dtype=b.dtype
-#     )
+def pcg_psf_wrapper(psfhat,
+                    b,
+                    x0,
+                    sigma,
+                    nthreads,
+                    padding,
+                    unpad_x,
+                    unpad_y,
+                    lastsize,
+                    tol,
+                    maxit,
+                    minit,
+                    verbosity,
+                    report_freq,
+                    backtrack):
+    return _pcg_psf(psfhat[0][0],
+                    b,
+                    x0,
+                    sigma,
+                    nthreads,
+                    padding,
+                    unpad_x,
+                    unpad_y,
+                    lastsize,
+                    tol,
+                    maxit,
+                    minit,
+                    verbosity,
+                    report_freq,
+                    backtrack)
 
-#     return
+def pcg_psf(psfhat,
+            b,
+            x0,
+            sigma,
+            nthreads,
+            padding,
+            unpad_x,
+            unpad_y,
+            lastsize,
+            tol,
+            maxit,
+            minit,
+            verbosity,
+            report_freq,
+            backtrack):
+    model = da.blockwise(pcg_psf_wrapper, ('nband', 'nx', 'ny'),
+                         psfhat, ('nband', 'nx_psf', 'ny_psf'),
+                         b, ('nband', 'nx', 'ny'),
+                         x0, ('nband', 'nx', 'ny'),
+                         sigma, None,
+                         nthreads, None,
+                         padding, None,
+                         unpad_x, None,
+                         unpad_y, None,
+                         lastsize, None,
+                         tol, None,
+                         maxit, None,
+                         minit, None,
+                         verbosity, None,
+                         report_freq, None,
+                         backtrack, None,
+                         dtype=b.dtype)
+    return model
