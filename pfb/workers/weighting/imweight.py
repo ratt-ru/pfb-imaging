@@ -356,7 +356,7 @@ def _imweight(ms, stack, **kw):
     # convert counts to weights
     writes = []
     for ims in ms:
-        xds = xds_from_ms(ims, chunks=chunks[ims], columns=('UVW', args.imaging_weight_column))
+        xds = xds_from_ms(ims, chunks=chunks[ims], columns=('UVW'))
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
