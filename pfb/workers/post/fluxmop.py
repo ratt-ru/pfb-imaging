@@ -6,7 +6,7 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('FLUXMAOP')
+log = pyscilog.get_logger('FLUXMOP')
 
 @cli.command()
 @click.option('-d', '--dirty', required=True,
@@ -25,8 +25,15 @@ log = pyscilog.get_logger('FLUXMAOP')
               help='Gridder accuracy')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
-@click.option('-nmiter', '--nmiter', type=int, default=5,
-              help="Number of major cycles")
+@click.option('-cgtol', "--cg-tol", type=float, default=1e-5,
+              help="Tolerance of conjugate gradient")
+@click.option('-cgmaxit', "--cg-maxit", type=int, default=100,
+              help="Maximum number of iterations for conjugate gradient")
+@click.option('-cgverb', "--cg-verbose", type=int, default=0,
+              help="Verbosity of conjugate gradient. "
+              "Set to 2 for debugging or zero for silence.")
+@click.option('-cgrf', "--cg-report-freq", type=int, default=10,
+              help="Report freq for conjugate gradient.")
 @click.option('-ha', '--host-address',
               help='Address where the distributed client lives. '
               'Will use a local cluster if no address is provided')
@@ -42,20 +49,13 @@ log = pyscilog.get_logger('FLUXMAOP')
               help="Total available threads. Default uses all available threads")
 def fluxmop(**kw):
     '''
-    Single-scale clean.
+    Extract flux at model locations.
 
-    If the optional weight-table argument points to a valid weight table
-    (created by the psf worker) the algorithm will approximate gradients using
-    the diagonal Mueller weights assumption (exact for Stokes I imaging) i.e.
+    Will write out the result of solving
 
-    IR = ID - R.H W R x
+    x = (R.H W R + sigma**2 I)^{-1} ID
 
-    otherwise it is a pure image space algorithm i.e.
-
-    IR = ID - PSF.convolve(x)
-
-    The latter is exact in the absence of wide-field effects and is usually
-    much faster.
+    assuming that R.H W R can be approximated as a convolution with the PSF.
 
     If a host address is provided the computation can be distributed
     over imaging band and row. When using a distributed scheduler both
@@ -191,6 +191,12 @@ def _fluxmop(stack, **kw):
     save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
               dtype=args.output_type)
 
+    rms = np.std(dirty_mfs)
+    rmax = np.abs(dirty_mfs).max()
+
+    print("Initial peak residual = %f, rms = %f" % (
+                rmax, rms), file=log)
+
     # set up Hessian approximation
     if args.weight_table is not None:
         normfact = wsum
@@ -271,6 +277,8 @@ def _fluxmop(stack, **kw):
                                   do_wstacking=args.wstack,
                                   double_accum=args.double_accum)
             return convolvedim
+
+        model = np.zeros_like(dirty)
     else:
         normfact = 1.0
         from pfb.operators.psf import hessian
@@ -290,64 +298,32 @@ def _fluxmop(stack, **kw):
                      nthreads=nthreads, inorm=0)
 
         psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
-
-        def convolver(x):
-            model = da.from_array(x,
-                          chunks=(1, nx, ny), name=False)
+        dirty = da.from_array(dirty, chunks=(1, -1, -1))
+        x0 = da.zeros((nband, nx, ny), chunks=(1, -1, -1))
 
 
-            convolvedim = hessian(model,
-                                  psfhat,
-                                  padding,
-                                  ngridder_threads,
-                                  unpad_x,
-                                  unpad_y,
-                                  lastsize)
-            return convolvedim
+        from pfb.opt.pcg import pcg_psf
 
-        # psfo = PSF(psf, dirty.shape, nthreads=args.nthreads)
-        # def convolver(x): return psfo.convolve(x)
-
-    rms = np.std(dirty_mfs)
-    rmax = np.abs(dirty_mfs).max()
-
-    print("Iter %i: peak residual = %f, rms = %f" % (
-                0, rmax, rms), file=log)
-
-    residual = dirty.copy()
-    residual_mfs = dirty_mfs.copy()
-    model = np.zeros_like(residual)
-    for k in range(args.nmiter):
-        print("Running Hogbom", file=log)
-        x = hogbom(residual, psf,
-                   gamma=args.hb_gamma,
-                   pf=args.hb_peak_factor,
-                   maxit=args.hb_maxit,
-                   verbosity=args.hb_verbose,
-                   report_freq=args.hb_report_freq)
-
-        model += x
-        print("Getting residual", file=log)
-
-        convimage = convolver(model)
-        dask.visualize(convimage, filename=args.output_filename + '_hessian' + str(k) + '_graph.pdf', optimize_graph=False)
-        with performance_report(filename=args.output_filename + '_hessian' + str(k) + '_per.html'):
-            convimage = dask.compute(convimage, optimize_graph=False)[0]
-        ne.evaluate('dirty - convimage/normfact', out=residual, casting='same_kind')
-        ne.evaluate('sum(residual, axis=0)', out=residual_mfs, casting='same_kind')
-
-        rms = np.std(residual_mfs)
-        rmax = np.abs(residual_mfs).max()
-
-        print("Iter %i: peak residual = %f, rms = %f" % (
-                k+1, rmax, rms), file=log)
+        model = pcg_psf(psfhat,
+                        dirty,
+                        x0,
+                        1.0,
+                        ngridder_threads,
+                        padding,
+                        unpad_x,
+                        unpad_y,
+                        lastsize,
+                        args.cg_tol,
+                        args.cg_maxit,
+                        10,
+                        args.cg_verbose,
+                        args.cg_report_freq,
+                        backtrack=True).compute()
 
 
     print("Saving results", file=log)
-    save_fits(args.output_filename + '_model.fits', model, hdr)
+    save_fits(args.output_filename + '_model_mopped.fits', model, hdr)
     model_mfs = np.mean(model, axis=0)
-    save_fits(args.output_filename + '_model_mfs.fits', model_mfs, hdr_mfs)
-    save_fits(args.output_filename + '_residual.fits', residual*wsums[:, None, None], hdr)
-    save_fits(args.output_filename + '_residual.fits', residual_mfs, hdr_mfs)
+    save_fits(args.output_filename + '_model_mopped_mfs.fits', model_mfs, hdr_mfs)
 
     print("All done here.", file=log)

@@ -75,7 +75,9 @@ def pcg(A,
 
 from pfb.operators.psf import _hessian_reg
 from functools import partial
-def _pcg_psf(psfhat, b, x0,
+def _pcg_psf(psfhat,
+             b,
+             x0,
              sigma,
              nthreads,
              padding,
@@ -96,16 +98,16 @@ def _pcg_psf(psfhat, b, x0,
     model = np.zeros((nband, nx, ny), dtype=b.dtype)
     sigmasq = sigma**2
     def M(x): return x * sigmasq
-    for b in range(nband):
+    for k in range(nband):
         A = partial(_hessian_reg,
-                    psfhat=psfhat[b:b+1],
+                    psfhat=psfhat[k:k+1],
                     sigmasq=sigmasq,
                     padding=padding,
                     nthreads=nthreads,
                     unpad_x=unpad_x,
                     unpad_y=unpad_y,
                     lastsize=lastsize)
-        model[b] = pcg(A, b[b:b+1], x0[b:b+1],
+        model[k] = pcg(A, b[k:k+1], x0[k:k+1],
                        M=M, tol=tol, maxit=maxit, minit=minit,
                        verbosity=verbosity, report_freq=report_freq, backtrack=backtrack)
 
