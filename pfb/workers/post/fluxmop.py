@@ -9,10 +9,12 @@ pyscilog.init('pfb')
 log = pyscilog.get_logger('FLUXMOP')
 
 @cli.command()
-@click.option('-d', '--dirty', required=True,
+@click.option('-r', '--residual', required=True,
               help="Path to dirty.")
 @click.option('-p', '--psf', required=True,
               help="Path to PSF")
+@click.option('-m', '--model',
+              help="Path to model.")
 @click.option('-wt', '--weight-table',
               help="Path to weight table produced by psf worker")
 @click.option('-o', '--output-filename', type=str, required=True,
@@ -199,6 +201,7 @@ def _fluxmop(stack, **kw):
 
     # set up Hessian approximation
     if args.weight_table is not None:
+        raise NotImplementedError("Nope, not yet!")
         normfact = wsum
         from africanus.gridding.wgridder.dask import hessian
         from pfb.utils.misc import plan_row_chunk

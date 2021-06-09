@@ -43,7 +43,7 @@ setup(
      entry_points='''
                     [console_scripts]
                     pfbclean=pfb.pfbclean:main
-                    pfbworkers=pfb.workers.main:cli
+                    pfb=pfb.workers.main:cli
 
      '''
      ,

@@ -356,50 +356,80 @@ def plan_row_chunk(mem_limit, image_size, nrow, mem_per_row, nthreads_per_worker
         row_chunk = int(row_chunk)
     return row_chunk
 
-def set_image_size(ms, max_freq, field_of_view, super_resolution_factor,
-                   nx=None, ny=None, cell_size=None):
-    '''
-    Compute image size. Default estimates it from required field of view
-    and super resolution factor but they can also be specified explicitly.
-    '''
-    from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms import xds_from_storage_table as xds_from_table
-    import dask.array as da
+def fitcleanbeam(psf: np.ndarray,
+                 level: float = 0.5,
+                 pixsize: float = 1.0):
+    """
+    Find the Gaussian that approximates the main lobe of the PSF.
+    """
+    from skimage.morphology import label
+    from scipy.optimize import curve_fit
 
-    if not isinstance(ms, list):
-        ms = [ms]
+    nband, nx, ny = psf.shape
 
-    uvw = []
-    u_max = 0.0
-    v_max = 0.0
-    for ims in ms:
-        xds = xds_from_ms(ims, columns=('UVW'), chunks={'row': -1})
+    # # find extent required to capture main lobe
+    # # saves on time to label islands
+    # psf0 = psf[0]/psf[0].max()  # largest PSF at lowest freq
+    # num_islands = 0
+    # npix = np.minimum(nx, ny)
+    # nbox = np.minimum(12, npix)  # 12 pixel minimum
+    # if npix <= nbox:
+    #     nbox = npix
+    # else:
+    #     while num_islands < 2:
+    #         Ix = slice(nx//2 - nbox//2, nx//2 + nbox//2)
+    #         Iy = slice(ny//2 - nbox//2, ny//2 + nbox//2)
+    #         mask = np.where(psf0[Ix, Iy] > level, 1.0, 0)
+    #         islands, num_islands = label(mask, return_num=True)
+    #         if num_islands < 2:
+    #             nbox *= 2  # double size and try again
 
-        for ds in xds:
-            uvw = ds.UVW.data
-            u_max = da.maximum(u_max, abs(uvw[:, 0]).max())
-            v_max = da.maximum(v_max, abs(uvw[:, 1]).max())
-            uv_max = da.maximum(u_max, v_max)
+    # coordinates
+    x = np.arange(-nx / 2, nx / 2)
+    y = np.arange(-ny / 2, ny / 2)
+    xx, yy = np.meshgrid(x, y, indexing='ij')
 
-    uv_max = uv_max.compute()
-    del uvw
+    # model to fit
+    def func(xy, emaj, emin, pa):
+        Smin = np.minimum(emaj, emin)
+        Smaj = np.maximum(emaj, emin)
 
-    # image size
-    cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
+        A = np.array([[1. / Smin ** 2, 0],
+                      [0, 1. / Smaj ** 2]])
 
-    if cell_size is not None:
-        cell_rad = cell_size * np.pi / 60 / 60 / 180
-    else:
-        cell_rad = cell_N / super_resolution_factor
-        cell_size = cell_rad * 60 * 60 * 180 / np.pi
+        c, s, t = np.cos, np.sin, np.deg2rad(-pa)
+        R = np.array([[c(t), -s(t)],
+                      [s(t), c(t)]])
+        A = np.dot(np.dot(R.T, A), R)
+        xy = np.array([x.ravel(), y.ravel()])
+        R = np.einsum('nb,bc,cn->n', xy.T, A, xy)
+        # GaussPar should corresponds to FWHM
+        fwhm_conv = 2 * np.sqrt(2 * np.log(2))
+        return np.exp(-fwhm_conv * R)
 
-    if nx is None:
-        fov = field_of_view * 3600
-        npix = int(fov / cell_size)
-        if npix % 2:
-            npix += 1
-        nx = good_size(npix)
-        ny = good_size(npix)
-    else:
-        ny = ny if ny is not None else nx
-    return nx, ny, cell_rad, cell_N
+    Gausspars = ()
+    for v in range(nband):
+        # make sure psf is normalised
+        psfv = psf[v] / psf[v].max()
+        # find regions where psf is non-zero
+        mask = np.where(psfv > level, 1.0, 0)
+
+        # label all islands and find center
+        islands = label(mask)
+        ncenter = islands[nx // 2, ny // 2]
+
+        # select psf main lobe
+        psfv = psfv[islands == ncenter]
+        x = xx[islands == ncenter]
+        y = yy[islands == ncenter]
+        xy = np.vstack((x, y))
+        xdiff = x.max() - x.min()
+        ydiff = y.max() - y.min()
+        emaj0 = np.maximum(xdiff, ydiff)
+        emin0 = np.minimum(xdiff, ydiff)
+        p, _ = curve_fit(func, xy, psfv, p0=(emaj0, emin0, 0.0))
+        Gausspars += ((p[0] * pixsize, p[1] * pixsize, p[2]),)
+
+    return Gausspars
+
+
