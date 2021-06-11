@@ -6,7 +6,7 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('FLUXMOP')
+log = pyscilog.get_logger('FORWARD')
 
 @cli.command()
 @click.option('-r', '--residual', required=True,
@@ -49,7 +49,7 @@ log = pyscilog.get_logger('FLUXMOP')
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
-def fluxmop(**kw):
+def forward(**kw):
     '''
     Extract flux at model locations.
 
@@ -85,7 +85,7 @@ def fluxmop(**kw):
     with ExitStack() as stack:
         return _fluxmop(stack, **kw)
 
-def _fluxmop(stack, **kw):
+def _forward(stack, **kw):
     args = OmegaConf.create(kw)
     OmegaConf.set_struct(args, True)
     pyscilog.log_to_file(args.output_filename + '.log')

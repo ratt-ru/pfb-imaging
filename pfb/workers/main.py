@@ -9,6 +9,6 @@ def cli():
 
 from pfb.workers.post import restore
 from pfb.workers.grid import dirty, psf, predict
-from pfb.workers.post import spi_fitter, fluxmop
-from pfb.workers.deconv import nnls, clean
+from pfb.workers.post import spi_fitter
+from pfb.workers.deconv import nnls, clean, forward
 from pfb.workers.weighting import imweight

@@ -132,7 +132,7 @@ def _restore(stack, **kw):
     psf = load_fits(args.psf, dtype=args.real_type).squeeze()
 
     nband, nx_psf, ny_psf = psf.shape
-    wsums = np.amax(psf.reshape(args.nband, nx_psf ny_psf), axis=1)
+    wsums = np.amax(psf.reshape(args.nband, nx_psf, ny_psf), axis=1)
     wsum = np.sum(wsums)
     psf /= wsum
     psf_mfs = np.sum(psf, axis=0)

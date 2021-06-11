@@ -1,32 +1,10 @@
 # flake8: noqa
 import click
 from omegaconf import OmegaConf
-
-#     p.add_argument('-ms', "--ms", nargs="+", type=str,
-#                    help="Mesurement sets used to make the image. \n"
-#                    "Used to get paralactic angles if doing primary beam correction")
-#     p.add_argument('-f', "--field", type=int, default=0,
-#                    help="Field ID")
-#     p.add_argument('-bm', '--beam-model', default=None, type=str,
-#                    help="Fits beam model to use. \n"
-#                         "It is assumed that the pattern is path_to_beam/"
-#                         "name_corr_re/im.fits. \n"
-#                         "Provide only the path up to name "
-#                         "e.g. /home/user/beams/meerkat_lband. \n"
-#                         "Patterns mathing corr are determined "
-#                         "automatically. \n"
-#                         "Only real and imaginary beam models currently "
-#                         "supported.")
-#     p.add_argument('-st', "--sparsify-time", type=int, default=10,
-#                    help="Used to select a subset of time ")
-#     p.add_argument('-ct', '--corr-type', type=str, default='linear',
-#                    help="Correlation typ i.e. linear or circular. ")
-#     p.add_argument('-band', "--band", type=str, default='l',
-#                    help="Band to use with JimBeam. L or UHF")
-#     return p
-
 from pfb.workers.main import cli
-
+import pyscilog
+pyscilog.init('pfb')
+log = pyscilog.get_logger('SPIFITTER')
 
 @cli.command()
 @click.option('-image', '--image', required=True,
@@ -76,232 +54,326 @@ from pfb.workers.main import cli
 @click.option('-acr', '--add-convolved-residuals', is_flag=True,
               help='Flag to add in the convolved residuals before '
               'fitting components')
+@click.option('-ms', "--ms", nargs="+", type=str,
+                help="Mesurement sets used to make the image. \n"
+                "Used to get paralactic angles if doing primary beam correction")
+@click.option('-f', "--field", type=int, default=0,
+                help="Field ID")
+@click.option('-bm', '--beam-model', default=None, type=str,
+                help="Fits beam model to use. \n"
+                    "It is assumed that the pattern is path_to_beam/"
+                    "name_corr_re/im.fits. \n"
+                    "Provide only the path up to name "
+                    "e.g. /home/user/beams/meerkat_lband. \n"
+                    "Patterns mathing corr are determined "
+                    "automatically. \n"
+                    "Only real and imaginary beam models currently "
+                    "supported.")
+@click.option('-st', "--sparsify-time", type=int, default=10,
+                help="Used to select a subset of time ")
+@click.option('-ct', '--corr-type', type=str, default='linear',
+                help="Correlation typ i.e. linear or circular. ")
+@click.option('-band', "--band", type=str, default='l',
+                help="Band to use with JimBeam. L or UHF")
 def spi_fitter(**kw):
     args = OmegaConf.create(kw)
+    OmegaConf.set_struct(args, True)
+    pyscilog.log_to_file(args.output_filename + '.log')
+    pyscilog.enable_memory_logging(level=3)
 
-    # use all threads if nthreads set to zero
-    if not args.nthreads:
+    if args.nthreads:
+        from multiprocessing.pool import ThreadPool
+        dask.config.set(pool=ThreadPool(args.nthreads))
+    else:
         import multiprocessing
         args.nthreads = multiprocessing.cpu_count()
 
-    from pfb import set_threads
-    set_threads(args.nthreads)
+    print('Input Options:', file=log)
+    for key in kw.keys():
+        print('     %25s = %s' % (key, args[key]), file=log)
 
-    if args.psf_pars is None:
-        print("Attempting to take psf_pars from residual fits header")
-        try:
-            rhdr = fits.getheader(args.residual)
-        except KeyError:
-            raise RuntimeError("Either provide a residual with beam "
-                               "information or pass them in using --psf_pars "
-                               "argument")
-        if 'BMAJ1' in rhdr.keys():
-            emaj = rhdr['BMAJ1']
-            emin = rhdr['BMIN1']
-            pa = rhdr['BPA1']
-            gaussparf = (emaj, emin, pa)
-        elif 'BMAJ' in rhdr.keys():
-            emaj = rhdr['BMAJ']
-            emin = rhdr['BMIN']
-            pa = rhdr['BPA']
-            gaussparf = (emaj, emin, pa)
-    else:
-        gaussparf = tuple(args.psf_pars)
+    # check consistent number of inputs and bands
+    if not isinstance(args.model, list):
+        args.model = list(args.model)
 
-    if args.circ_psf:
-        e = np.maximum(gaussparf[0], gaussparf[1])
-        gaussparf = list(gaussparf)
-        gaussparf[0] = e
-        gaussparf[1] = e
-        gaussparf[2] = 0.0
-        gaussparf = tuple(gaussparf)
+    if len(args.model) > 1:
+        if args.residual is not None:
+            assert len(args.model) == len(args.residual)
 
-    print("Using emaj = %3.2e, emin = %3.2e, PA = %3.2e \n" % gaussparf)
-
-    # load model image
-    model = load_fits(args.model, dtype=args.out_dtype).squeeze()
-    orig_shape = model.shape
-    mhdr = fits.getheader(args.model)
-
-    l_coord, ref_l = data_from_header(mhdr, axis=1)
-    l_coord -= ref_l
-    m_coord, ref_m = data_from_header(mhdr, axis=2)
-    m_coord -= ref_m
-    if mhdr["CTYPE4"].lower() == 'freq':
-        freq_axis = 4
-    elif mhdr["CTYPE3"].lower() == 'freq':
-        freq_axis = 3
-    else:
-        raise ValueError("Freq axis must be 3rd or 4th")
-
-    mfs_shape = list(orig_shape)
-    mfs_shape[0] = 1
-    mfs_shape = tuple(mfs_shape)
-    freqs, ref_freq = data_from_header(mhdr, axis=freq_axis)
-
-    nband = freqs.size
-    if nband < 2:
-        raise ValueError("Can't produce alpha map from a single band image")
-    npix_l = l_coord.size
-    npix_m = m_coord.size
-
-    # update cube psf-pars
-    for i in range(1, nband+1):
-        mhdr['BMAJ' + str(i)] = gaussparf[0]
-        mhdr['BMIN' + str(i)] = gaussparf[1]
-        mhdr['BPA' + str(i)] = gaussparf[2]
-
-    if args.ref_freq is not None and args.ref_freq != ref_freq:
-        ref_freq = args.ref_freq
-        print(
-            'Provided reference frequency does not match that of fits file. Will overwrite.')
-
-    print("Cube frequencies:")
-    with np.printoptions(precision=2):
-        print(freqs)
-    print("Reference frequency is %3.2e Hz \n" % ref_freq)
-
-    # LB - new header for cubes if ref_freqs differ
-    new_hdr = set_header_info(mhdr, ref_freq, freq_axis, args, gaussparf)
-
-    # save next to model if no outfile is provided
-    if args.output_filename is None:
-        # strip .fits from model filename
-        tmp = args.model[::-1]
-        idx = tmp.find('.')
-        outfile = args.model[0:-(idx+1)]
-    else:
-        outfile = args.output_filename
-
-    xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
-
-    # load beam
-    if args.beam_model is not None:
-        # we can pass in either a fits file with the already interpolated beam of we can interpolate from scratch
-        if args.beam_model[-5:] == '.fits':
-            bhdr = fits.getheader(args.beam_model)
-            l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
-            l_coord_beam -= ref_lb
-            if not np.array_equal(l_coord_beam, l_coord):
-                raise ValueError(
-                    "l coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-            m_coord_beam, ref_mb = data_from_header(bhdr, axis=2)
-            m_coord_beam -= ref_mb
-            if not np.array_equal(m_coord_beam, m_coord):
-                raise ValueError(
-                    "m coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-            freqs_beam, _ = data_from_header(bhdr, axis=freq_axis)
-            if not np.array_equal(freqs, freqs_beam):
-                raise ValueError(
-                    "Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-            beam_image = load_fits(
-                args.beam_model, dtype=args.out_dtype).squeeze()
-        elif args.beam_model == "JimBeam":
-            from katbeam import JimBeam
-            if args.band.lower() == 'l':
-                beam = JimBeam('MKAT-AA-L-JIM-2020')
+        if isinstance(args.beam_model, list):
+            try:
+                assert len(args.beam_model) == len(args.model)
+            except Exception as e:
+                raise ValueError("You have to pass in a beam per image if you specify them manually")
+        elif args.beam_model.lower() == 'jimbeam':
+            args.beam_model = [args.beam_model.lower()]*len(args.model)
+            if len(args.band) > 1:
+                try:
+                    assert len(args.band) == len(args.model)
+                except Exception as e:
+                    raise ValueError("Inconsistent input for --band. "
+                                    "You either need to use teh same band for "
+                                    "all images or provide a band per image.")
             else:
-                beam = JimBeam('MKAT-AA-UHF-JIM-2020')
-            beam_image = np.zeros(model.shape, dtype=args.out_dtype)
-            for v in range(freqs.size):
-                beam_image[v] = beam.I(xx, yy, freqs[v])
+                print("Using %s band beam for all images"%args.beam_model[0], file=log)
+                args.band = list(args.band)*len(args.model)
+
+    # get max gausspars
+    gaussparf = None
+    for i in range(len(args.model)):
+        if args.psf_pars is None:
+            try:
+                rhdr = fits.getheader(args.residual[i])
+            except Exception as e:
+                raise e
+
+            if 'BMAJ0' in rhdr.keys():
+                emaj = rhdr['BMAJ0']
+                emin = rhdr['BMIN0']
+                pa = rhdr['BPA0']
+                gausspars = [emaj, emin, pa]
+                freq_idx0 = 0
+            elif 'BMAJ1' in rhdr.keys():
+                emaj = rhdr['BMAJ1']
+                emin = rhdr['BMIN1']
+                pa = rhdr['BPA1']
+                gausspars = [emaj, emin, pa]
+                freq_idx0 = 1
+            elif 'BMAJ' in rhdr.keys():
+                emaj = rhdr['BMAJ']
+                emin = rhdr['BMIN']
+                pa = rhdr['BPA']
+                gausspars = [emaj, emin, pa]
+                freq_idx0 = 0
+            else:
+                raise ValueError("No beam parameters found in residual."
+                                "You will have to provide them manually.")
+
+            if gaussparf is None:
+                gaussparf = gausspars
+            else:
+                # we need to take the max in both directions
+                gaussparf[0] = np.maximum(gaussparf[0], gausspars[0])
+                gaussparf[1] = np.maximum(gaussparf[1], gausspars[1])
+        else:
+            gaussparf = list(args.psf_pars)
+
+        if args.circ_psf:
+            e = np.maximum(gaussparf[0], gaussparf[1])
+            gaussparf[0] = e
+            gaussparf[1] = e
+            gaussparf[2] = 0.0
+
+    gaussparf = tuple(gaussparf)
+    print("Using emaj = %3.2e, emin = %3.2e, PA = %3.2e \n" % gaussparf, file=log)
+
+    # get required data products
+    image_dict = {}
+    for i in range(len(args.model)):
+        image_dict[i] = {}
+
+        # load model image
+        model = load_fits(args.model[i], dtype=args.out_dtype).squeeze()
+        mhdr = fits.getheader(args.model[i])
+
+        if model.ndim < 3:
+            model = model[None, :, :]
+
+        l_coord, ref_l = data_from_header(mhdr, axis=1)
+        l_coord -= ref_l
+        m_coord, ref_m = data_from_header(mhdr, axis=2)
+        m_coord -= ref_m
+        if mhdr["CTYPE4"].lower() == 'freq':
+            freq_axis = 4
+            stokes_axis = 3
+        elif mhdr["CTYPE3"].lower() == 'freq':
+            freq_axis = 3
+            stokes_axis = 4
+        else:
+            raise ValueError("Freq axis must be 3rd or 4th")
+
+        freqs, ref_freq = data_from_header(mhdr, axis=freq_axis)
+
+        image_dict[i]['freqs'] = freqs
+
+        nband = freqs.size
+        npix_l = l_coord.size
+        npix_m = m_coord.size
+
+        xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
+
+        # load beam
+        if args.beam_model is not None:
+            if args.beam_model[i] == "jimbeam":
+                from katbeam import JimBeam
+                if args.band[i].lower() == 'l':
+                    beam = JimBeam('MKAT-AA-L-JIM-2020')
+                elif args.band[i].lower() == 'uhf':
+                    beam = JimBeam('MKAT-AA-UHF-JIM-2020')
+                else:
+                    raise ValueError("Unkown band %s"%args.band[i])
+
+                beam_image = np.zeros(model.shape, dtype=args.out_dtype)
+                for v in range(freqs.size):
+                    beam_image[v] = beam.I(xx, yy, freqs[v])
+            elif args.beam_model[i].endswith('.fits'):  # beam already interpolated
+                bhdr = fits.getheader(args.beam_model)
+                l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
+                l_coord_beam -= ref_lb
+                if not np.array_equal(l_coord_beam, l_coord):
+                    raise ValueError("l coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
+
+                m_coord_beam, ref_mb = data_from_header(bhdr, axis=2)
+                m_coord_beam -= ref_mb
+                if not np.array_equal(m_coord_beam, m_coord):
+                    raise ValueError("m coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
+
+                freqs_beam, _ = data_from_header(bhdr, axis=freq_axis)
+                if not np.array_equal(freqs, freqs_beam):
+                    raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
+
+                beam_image = load_fits(args.beam_model, dtype=args.out_dtype).squeeze()
+
+            else:  # interpolate from scratch
+                beam_image = interpolate_beam(xx, yy, freqs, args)
 
         else:
-            beam_image = interpolate_beam(xx, yy, freqs, args)
+            beam_image = np.ones(model.shape, dtype=args.out_dtype)
 
-        if 'b' in args.products:
-            name = outfile + '.power_beam.fits'
-            save_fits(name, beam_image, mhdr, dtype=args.out_dtype)
-            print("Wrote average power beam to %s \n" % name)
+        image_dict[i]['beam'] = beam_image
 
-    else:
-        beam_image = np.ones(model.shape, dtype=args.out_dtype)
+        if not args.dont_convolve:
+            print("Convolving model %i"%i, file=log)
+            # convolve model to desired resolution
+            model, gausskern = convolve2gaussres(model, xx, yy, gaussparf, args.ncpu, None, args.padding_frac)
 
-    # beam cut off
-    model = np.where(beam_image > args.pb_min, model, 0.0)
+        image_dict[i]['model'] = model
 
-    if not args.dont_convolve:
-        print("Convolving model")
-        # convolve model to desired resolution
-        model, gausskern = convolve2gaussres(
-            model, xx, yy, gaussparf, args.ncpu, None, args.padding_frac)
+        # add in residuals and set threshold
+        if args.residual is not None:
+            resid = load_fits(args.residual[i], dtype=args.out_dtype).squeeze()
+            if resid.ndim < 3:
+                resid = resid[None, :, :]
+            rhdr = fits.getheader(args.residual[i])
+            l_res, ref_lb = data_from_header(rhdr, axis=1)
+            l_res -= ref_lb
+            if not np.array_equal(l_res, l_coord):
+                raise ValueError("l coordinates of residual do not match those of model")
 
-        # save clean beam
-        if 'c' in args.products:
-            name = outfile + '.clean_psf.fits'
-            save_fits(name, gausskern, new_hdr, dtype=args.out_dtype)
-            print("Wrote clean psf to %s \n" % name)
+            m_res, ref_mb = data_from_header(rhdr, axis=2)
+            m_res -= ref_mb
+            if not np.array_equal(m_res, m_coord):
+                raise ValueError("m coordinates of residual do not match those of model")
 
-        # save convolved model
-        if 'm' in args.products:
-            name = outfile + '.convolved_model.fits'
-            save_fits(name, model, new_hdr, dtype=args.out_dtype)
-            print("Wrote convolved model to %s \n" % name)
+            freqs_res, _ = data_from_header(rhdr, axis=freq_axis)
+            if not np.array_equal(freqs, freqs_res):
+                raise ValueError("Freqs of residual do not match those of model")
 
-    # add in residuals and set threshold
-    if args.residual is not None:
-        resid = load_fits(args.residual, dtype=args.out_dtype).squeeze()
-        rhdr = fits.getheader(args.residual)
-        l_res, ref_lb = data_from_header(rhdr, axis=1)
-        l_res -= ref_lb
-        if not np.array_equal(l_res, l_coord):
-            raise ValueError(
-                "l coordinates of residual do not match those of model")
+            # convolve residual to same resolution as model
+            gausspari = ()
+            for b in range(nband):
+                key = 'BMAJ' + str(b)
+                if key in rhdr.keys():
+                    emaj = rhdr[key]
+                    emin = rhdr['BMIN' + str(b)]
+                    pa = rhdr['BPA' + str(b)]
+                    gausspari += ((emaj, emin, pa),)
+                elif 'BMAJ' in rhdr.keys():
+                    emaj = rhdr['BMAJ']
+                    emin = rhdr['BMIN']
+                    pa = rhdr['BPA']
+                    gausspari += ((emaj, emin, pa),)
+                else:
+                    print("Can't find Gausspars in residual header, unable to add residuals back in", file=log)
+                    gausspari = None
+                    break
 
-        m_res, ref_mb = data_from_header(rhdr, axis=2)
-        m_res -= ref_mb
-        if not np.array_equal(m_res, m_coord):
-            raise ValueError(
-                "m coordinates of residual do not match those of model")
+            if gausspari is not None and args.add_convolved_residuals:
+                print("Convolving residuals %i"%i, file=log)
+                resid, _ = convolve2gaussres(resid, xx, yy, gaussparf, args.ncpu, gausspari, args.padding_frac, norm_kernel=False)
+                model += resid
+                print("Convolved residuals added to convolved model %i"%i, file=log)
 
-        freqs_res, _ = data_from_header(rhdr, axis=freq_axis)
-        if not np.array_equal(freqs, freqs_res):
-            raise ValueError("Freqs of residual do not match those of model")
 
-        # convolve residual to same resolution as model
-        gausspari = ()
-        for i in range(1, nband+1):
-            key = 'BMAJ' + str(i)
-            if key in rhdr.keys():
-                emaj = rhdr[key]
-                emin = rhdr['BMIN' + str(i)]
-                pa = rhdr['BPA' + str(i)]
-                gausspari += ((emaj, emin, pa),)
-            else:
-                print(
-                    "Can't find Gausspars in residual header, unable to add residuals back in")
-                gausspari = None
-                break
+            image_dict[i]['resid'] = resid
 
-        if gausspari is not None and args.add_convolved_residuals:
-            print("Convolving residuals")
-            resid, _ = convolve2gaussres(
-                resid, xx, yy, gaussparf, args.ncpu, gausspari, args.padding_frac, norm_kernel=False)
-            model += resid
-            print("Convolved residuals added to convolved model")
+        else:
+            image_dict[i]['resid'] = None
 
-            if 'r' in args.products:
-                name = outfile + '.convolved_residual.fits'
-                save_fits(name, resid, rhdr)
-                print("Wrote convolved residuals to %s" % name)
+    # concatenate images along frequency here
+    freqs = []
+    model = []
+    beam_image = []
+    resid = []
+    for i in image_dict.keys():
+        freqs.append(image_dict[i]['freqs'])
+        model.append(image_dict[i]['model'])
+        beam_image.append(image_dict[i]['beam'])
+        resid.append(image_dict[i]['resid'])
+    freqs = np.concatenate(freqs, axis=0)
+    Isort = np.argsort(freqs)
+    freqs = freqs[Isort]
 
+    model = np.concatenate(model, axis=0)
+    model = model[Isort]
+
+    # create header
+    cell_deg = mhdr['CDELT1']
+    ra = np.deg2rad(mhdr['CRVAL1'])
+    dec = np.deg2rad(mhdr['CRVAL2'])
+    radec = [ra, dec]
+    nband, nx, ny = model.shape
+    hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freqs)
+    for i in range(1, nband+1):
+        hdr['BMAJ' + str(i)] = gaussparf[0]
+        hdr['BMIN' + str(i)] = gaussparf[1]
+        hdr['BPA' + str(i)] = gaussparf[2]
+    if args.ref_freq is None:
+        args.ref_freq = np.mean(freqs)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, args.ref_freq)
+    hdr_mfs['BMAJ'] = gaussparf[0]
+    hdr_mfs['BMIN'] = gaussparf[1]
+    hdr_mfs['BPA'] = gaussparf[2]
+
+    # save convolved model
+    if 'm' in args.products:
+        name = args.output_filename + '.convolved_model.fits'
+        save_fits(name, model, hdr, dtype=args.out_dtype)
+        print("Wrote convolved model to %s" % name, file=log)
+
+    beam_image = np.concatenate(beam_image, axis=0)
+    beam_image = beam_image[Isort]
+
+    if 'b' in args.products:
+        name = args.output_filename + '.power_beam.fits'
+        save_fits(name, beam_image, hdr, dtype=args.out_dtype)
+        print("Wrote average power beam to %s" % name, file=log)
+
+    if resid[0] is not None:
+        resid = np.concatenate(resid, axis=0)
+        resid = resid[Isort]
+
+        if 'r' in args.products:
+            name = args.output_filename + '.convolved_residual.fits'
+            save_fits(name, resid, hdr, dtype=args.out_dtype)
+            print("Wrote convolved residuals to %s" % name, file=log)
+
+        # get threshold
         counts = np.sum(resid != 0)
         rms = np.sqrt(np.sum(resid**2)/counts)
         rms_cube = np.std(resid.reshape(nband, npix_l*npix_m), axis=1).ravel()
         threshold = args.threshold * rms
-        print("Setting cutoff threshold as %i times the rms "
-              "of the residual " % args.threshold)
-        del resid
     else:
         print("No residual provided. Setting  threshold i.t.o dynamic range. "
-              "Max dynamic range is %i " % args.maxDR)
+              "Max dynamic range is %i " % args.maxDR, file=log)
         threshold = model.max()/args.maxDR
         rms_cube = None
 
-    print("Threshold set to %f Jy. \n" % threshold)
+    print("Threshold set to %f Jy. \n" % threshold, file=log)
+
+    # beam cut off
+    beam_min = np.amin(beam_image, axis=0)
+    model = np.where(beam_min[None] > args.pb_min, model, 0.0)
 
     # get pixels above threshold
     minimage = np.amin(model, axis=0)
@@ -309,23 +381,27 @@ def spi_fitter(**kw):
     nanindices = np.argwhere(minimage <= threshold)
     if not maskindices.size:
         raise ValueError("No components found above threshold. "
-                         "Try lowering your threshold."
-                         "Max of convolved model is %3.2e" % model.max())
+                        "Try lowering your threshold."
+                        "Max of convolved model is %3.2e" % model.max())
     fitcube = model[:, maskindices[:, 0], maskindices[:, 1]].T
     beam_comps = beam_image[:, maskindices[:, 0], maskindices[:, 1]].T
 
     # set weights for fit
     if rms_cube is not None:
-        print("Using RMS in each imaging band to determine weights. \n")
+        print("Using RMS in each imaging band to determine weights.", file=log)
         weights = np.where(rms_cube > 0, 1.0/rms_cube**2, 0.0)
         # normalise
         weights /= weights.max()
     else:
         if args.channel_weights is not None:
             weights = np.array(args.channel_weights)
-            print("Using provided channel weights \n")
+            try:
+                assert weights.size == nband
+            except Exception as e:
+                raise ValueError("Inconsistent weighst provided.")
+            print("Using provided channel weights.", file=log)
         else:
-            print("No residual or channel weights provided. Using equal weights. \n")
+            print("No residual or channel weights provided. Using equal weights.", file=log)
             weights = np.ones(nband, dtype=np.float64)
 
     ncomps, _ = fitcube.shape
@@ -336,10 +412,10 @@ def spi_fitter(**kw):
     weights = da.from_array(weights.astype(np.float64), chunks=(nband))
     freqsdask = da.from_array(freqs.astype(np.float64), chunks=(nband))
 
-    print("Fitting %i components" % ncomps)
+    print("Fitting %i components" % ncomps, file=log)
     alpha, alpha_err, Iref, i0_err = fit_spi_components(fitcube, weights, freqsdask,
-                                                        np.float64(ref_freq), beam=beam_comps).compute()
-    print("Done. Writing output. \n")
+                                        np.float64(ref_freq), beam=beam_comps).compute()
+    print("Done. Writing output.", file=log)
 
     alphamap = np.zeros(model[0].shape, dtype=model.dtype)
     alphamap[...] = np.nan
@@ -358,59 +434,32 @@ def spi_fitter(**kw):
         # get the reconstructed cube
         Irec_cube = i0map[None, :, :] * \
             (freqs[:, None, None]/ref_freq)**alphamap[None, :, :]
-        name = outfile + '.Irec_cube.fits'
-        save_fits(name, Irec_cube, mhdr, dtype=args.out_dtype)
-        print("Wrote reconstructed cube to %s" % name)
+        name = args.output_filename + '.Irec_cube.fits'
+        save_fits(name, Irec_cube, hdr, dtype=args.out_dtype)
+        print("Wrote reconstructed cube to %s" % name, file=log)
 
     # save alpha map
     if 'a' in args.products:
-        name = outfile + '.alpha.fits'
-        save_fits(name, alphamap, mhdr, dtype=args.out_dtype)
-        print("Wrote alpha map to %s" % name)
+        name = args.output_filename + '.alpha.fits'
+        save_fits(name, alphamap, hdr_mfs, dtype=args.out_dtype)
+        print("Wrote alpha map to %s" % name, file=log)
 
     # save alpha error map
     if 'e' in args.products:
-        name = outfile + '.alpha_err.fits'
+        name = args.output_filename + '.alpha_err.fits'
         save_fits(name, alpha_err_map, mhdr, dtype=args.out_dtype)
-        print("Wrote alpha error map to %s" % name)
+        print("Wrote alpha error map to %s" % name, file=log)
 
     # save I0 map
     if 'i' in args.products:
-        name = outfile + '.I0.fits'
+        name = args.output_filename + '.I0.fits'
         save_fits(name, i0map, mhdr, dtype=args.out_dtype)
-        print("Wrote I0 map to %s" % name)
+        print("Wrote I0 map to %s" % name, file=log)
 
     # save I0 error map
     if 'k' in args.products:
-        name = outfile + '.I0_err.fits'
+        name = args.output_filename + '.I0_err.fits'
         save_fits(name, i0_err_map, mhdr, dtype=args.out_dtype)
-        print("Wrote I0 error map to %s" % name)
+        print("Wrote I0 error map to %s" % name, file=log)
 
-    print(' \n ')
-
-    print("All done here")
-
-
-# if __name__ == "__main__":
-#     args = create_parser().parse_args()
-
-#     if args.ncpu:
-#         from multiprocessing.pool import ThreadPool
-#         dask.config.set(pool=ThreadPool(args.ncpu))
-#     else:
-#         import multiprocessing
-#         args.ncpu = multiprocessing.cpu_count()
-
-#     print(' \n ')
-#     GD = vars(args)
-#     print('Input Options:')
-#     for key in GD.keys():
-#         print(key, ' = ', GD[key])
-
-#     print(' \n ')
-
-#     print("Using %i threads" % args.ncpu)
-
-#     print(' \n ')
-
-#     main(args)
+    print("All done here", file=log)
