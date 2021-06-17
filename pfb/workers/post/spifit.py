@@ -77,6 +77,12 @@ log = pyscilog.get_logger('SPIFIT')
                 help="Band to use with JimBeam. L or UHF")
 def spifit(**kw):
     args = OmegaConf.create(kw)
+
+    from glob import glob
+    args.image = glob(args.image)
+    if args.residual is not None:
+        args.residual = glob(args.residual)
+
     OmegaConf.set_struct(args, True)
     pyscilog.log_to_file(args.output_filename + '.log')
     pyscilog.enable_memory_logging(level=3)
@@ -98,7 +104,8 @@ def spifit(**kw):
     import numpy as np
     from astropy.io import fits
     from africanus.model.spi.dask import fit_spi_components
-    from pfb.utils import load_fits, save_fits, convolve2gaussres, data_from_header, set_wcs, str2bool
+    from pfb.utils.fits import load_fits, save_fits, data_from_header, set_wcs
+    from pfb.utils.misc import convolve2gaussres
     # from scripts.power_beam_maker import interpolate_beam
 
     # check consistent number of inputs and bands
