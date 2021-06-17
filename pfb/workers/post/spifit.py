@@ -19,6 +19,7 @@ log = pyscilog.get_logger('SPIFIT')
                    "specified as emaj emin pa."
                    "By default these are taken from the fits header "
                    "of the residual image.")
+@click.option('--circ-psf/--no-circ-psf', default=False)
 @click.option('-th', '--threshold', default=10, type=float, show_default=True,
               help="Multiple of the rms in the residual to threshold on."
                    "Only components above threshold*rms will be fit.")
@@ -82,7 +83,6 @@ def spifit(**kw):
     args.image = glob(args.image)
     if args.residual is not None:
         args.residual = glob(args.residual)
-
     OmegaConf.set_struct(args, True)
     pyscilog.log_to_file(args.output_filename + '.log')
     pyscilog.enable_memory_logging(level=3)
@@ -109,34 +109,34 @@ def spifit(**kw):
     # from scripts.power_beam_maker import interpolate_beam
 
     # check consistent number of inputs and bands
-    if not isinstance(args.model, list):
-        args.model = list(args.model)
+    if not isinstance(args.image, list):
+        args.image = list(args.image)
 
-    if len(args.model) > 1:
+    if len(args.image) > 1:
         if args.residual is not None:
-            assert len(args.model) == len(args.residual)
+            assert len(args.image) == len(args.residual)
 
         if isinstance(args.beam_model, list):
             try:
-                assert len(args.beam_model) == len(args.model)
+                assert len(args.beam_model) == len(args.image)
             except Exception as e:
                 raise ValueError("You have to pass in a beam per image if you specify them manually")
         elif args.beam_model.lower() == 'jimbeam':
-            args.beam_model = [args.beam_model.lower()]*len(args.model)
+            args.beam_model = [args.beam_model.lower()]*len(args.image)
             if len(args.band) > 1:
                 try:
-                    assert len(args.band) == len(args.model)
+                    assert len(args.band) == len(args.image)
                 except Exception as e:
                     raise ValueError("Inconsistent input for --band. "
                                     "You either need to use teh same band for "
                                     "all images or provide a band per image.")
             else:
                 print("Using %s band beam for all images"%args.beam_model[0], file=log)
-                args.band = list(args.band)*len(args.model)
+                args.band = list(args.band)*len(args.image)
 
     # get max gausspars
     gaussparf = None
-    for i in range(len(args.model)):
+    for i in range(len(args.image)):
         if args.psf_pars is None:
             try:
                 rhdr = fits.getheader(args.residual[i])
@@ -185,12 +185,12 @@ def spifit(**kw):
 
     # get required data products
     image_dict = {}
-    for i in range(len(args.model)):
+    for i in range(len(args.image)):
         image_dict[i] = {}
 
         # load model image
-        model = load_fits(args.model[i], dtype=args.out_dtype).squeeze()
-        mhdr = fits.getheader(args.model[i])
+        model = load_fits(args.image[i], dtype=args.out_dtype).squeeze()
+        mhdr = fits.getheader(args.image[i])
 
         if model.ndim < 3:
             model = model[None, :, :]
@@ -262,7 +262,7 @@ def spifit(**kw):
         if not args.dont_convolve:
             print("Convolving model %i"%i, file=log)
             # convolve model to desired resolution
-            model, gausskern = convolve2gaussres(model, xx, yy, gaussparf, args.ncpu, None, args.padding_frac)
+            model, gausskern = convolve2gaussres(model, xx, yy, gaussparf, args.nthreads, None, args.padding_frac)
 
         image_dict[i]['model'] = model
 
@@ -282,9 +282,9 @@ def spifit(**kw):
             if not np.array_equal(m_res, m_coord):
                 raise ValueError("m coordinates of residual do not match those of model")
 
-            freqs_res, _ = data_from_header(rhdr, axis=freq_axis)
-            if not np.array_equal(freqs, freqs_res):
-                raise ValueError("Freqs of residual do not match those of model")
+            # freqs_res, _ = data_from_header(rhdr, axis=freq_axis)
+            # if not np.array_equal(freqs, freqs_res):
+            #     raise ValueError("Freqs of residual do not match those of model")
 
             # convolve residual to same resolution as model
             gausspari = ()
@@ -307,7 +307,7 @@ def spifit(**kw):
 
             if gausspari is not None and args.add_convolved_residuals:
                 print("Convolving residuals %i"%i, file=log)
-                resid, _ = convolve2gaussres(resid, xx, yy, gaussparf, args.ncpu, gausspari, args.padding_frac, norm_kernel=False)
+                resid, _ = convolve2gaussres(resid, xx, yy, gaussparf, args.nthreads, gausspari, args.padding_frac, norm_kernel=False)
                 model += resid
                 print("Convolved residuals added to convolved model %i"%i, file=log)
 
@@ -346,8 +346,10 @@ def spifit(**kw):
         hdr['BMIN' + str(i)] = gaussparf[1]
         hdr['BPA' + str(i)] = gaussparf[2]
     if args.ref_freq is None:
-        args.ref_freq = np.mean(freqs)
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, args.ref_freq)
+        ref_freq = np.mean(freqs)
+    else:
+        ref_freq = args.ref_freq
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
     hdr_mfs['BMAJ'] = gaussparf[0]
     hdr_mfs['BMIN'] = gaussparf[1]
     hdr_mfs['BPA'] = gaussparf[2]
@@ -423,9 +425,9 @@ def spifit(**kw):
 
     ncomps, _ = fitcube.shape
     fitcube = da.from_array(fitcube.astype(np.float64),
-                            chunks=(ncomps//args.ncpu, nband))
+                            chunks=(ncomps//args.nthreads, nband))
     beam_comps = da.from_array(beam_comps.astype(np.float64),
-                               chunks=(ncomps//args.ncpu, nband))
+                               chunks=(ncomps//args.nthreads, nband))
     weights = da.from_array(weights.astype(np.float64), chunks=(nband))
     freqsdask = da.from_array(freqs.astype(np.float64), chunks=(nband))
 
