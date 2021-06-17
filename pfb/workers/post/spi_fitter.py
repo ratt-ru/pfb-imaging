@@ -4,27 +4,27 @@ from omegaconf import OmegaConf
 from pfb.workers.main import cli
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('SPIFITTER')
+log = pyscilog.get_logger('SPIFIT')
 
 @cli.command()
 @click.option('-image', '--image', required=True,
               help="Path to model or restored image cube.")
 @click.option('-resid', "--residual", required=False,
               help="Path to residual image cube.")
-@click.option('-o', '--output-filename',
-              help="Path to output directory + prefix. \n"
+@click.option('-o', '--output-filename', required=True,
+              help="Path to output directory + prefix. "
               "Placed next to input model if outfile not provided.")
 @click.option('-pp', '--psf-pars', nargs=3, type=float,
               help="Beam parameters matching FWHM of restoring beam "
-                   "specified as emaj emin pa. \n"
+                   "specified as emaj emin pa."
                    "By default these are taken from the fits header "
                    "of the residual image.")
 @click.option('-th', '--threshold', default=10, type=float, show_default=True,
-              help="Multiple of the rms in the residual to threshold on. \n"
+              help="Multiple of the rms in the residual to threshold on."
                    "Only components above threshold*rms will be fit.")
 @click.option('-maxdr', '--maxDR', default=100, type=float, show_default=True,
               help="Maximum dynamic range used to determine the "
-                   "threshold above which components need to be fit. \n"
+                   "threshold above which components need to be fit. "
                    "Only used if residual is not passed in.")
 @click.option('-nthreads', '--nthreads', default=1, type=int, show_default=True,
               help="Number of threads to use.")
@@ -75,11 +75,13 @@ log = pyscilog.get_logger('SPIFITTER')
                 help="Correlation typ i.e. linear or circular. ")
 @click.option('-band', "--band", type=str, default='l',
                 help="Band to use with JimBeam. L or UHF")
-def spi_fitter(**kw):
+def spifit(**kw):
     args = OmegaConf.create(kw)
     OmegaConf.set_struct(args, True)
     pyscilog.log_to_file(args.output_filename + '.log')
     pyscilog.enable_memory_logging(level=3)
+
+    import dask
 
     if args.nthreads:
         from multiprocessing.pool import ThreadPool
@@ -91,6 +93,13 @@ def spi_fitter(**kw):
     print('Input Options:', file=log)
     for key in kw.keys():
         print('     %25s = %s' % (key, args[key]), file=log)
+
+    import dask.array as da
+    import numpy as np
+    from astropy.io import fits
+    from africanus.model.spi.dask import fit_spi_components
+    from pfb.utils import load_fits, save_fits, convolve2gaussres, data_from_header, set_wcs, str2bool
+    # from scripts.power_beam_maker import interpolate_beam
 
     # check consistent number of inputs and bands
     if not isinstance(args.model, list):
@@ -235,7 +244,8 @@ def spi_fitter(**kw):
                 beam_image = load_fits(args.beam_model, dtype=args.out_dtype).squeeze()
 
             else:  # interpolate from scratch
-                beam_image = interpolate_beam(xx, yy, freqs, args)
+                raise NotImplementedError("Not yet there, sorry")
+                # beam_image = interpolate_beam(xx, yy, freqs, args)
 
         else:
             beam_image = np.ones(model.shape, dtype=args.out_dtype)

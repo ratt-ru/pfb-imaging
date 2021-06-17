@@ -368,10 +368,10 @@ def _dirty(ms, stack, **kw):
             # Phases modify data amplitudes modify weights.
             if args.mueller_column is not None:
                 mueller = getattr(ds, args.mueller_column).data
-                dataxx *= da.exp(-1j * da.angle(mueller[:, :, 0]))
-                datayy *= da.exp(-1j * da.angle(mueller[:, :, -1]))
-                weightsxx *= da.absolute(mueller[:, :, 0])
-                weightsyy *= da.absolute(mueller[:, :, -1])
+                dataxx *= mueller[:, :, 0].conj()
+                datayy *= mueller[:, :, -1].conj()
+                weightsxx *= da.absolute(mueller[:, :, 0])**2
+                weightsyy *= da.absolute(mueller[:, :, -1])**2
 
             # weighted sum corr to Stokes I
             weights = weightsxx + weightsyy
