@@ -9,7 +9,8 @@ log = pyscilog.get_logger('DIRTY')
 
 
 @cli.command()
-@click.argument('ms', nargs=-1)
+@click.option('-ms', '--ms', required=True,
+              help='Path to measurement set.')
 @click.option('-dc', '--data-column',
               help="Data column to image."
               "Must be the same across MSs")
@@ -55,13 +56,13 @@ log = pyscilog.get_logger('DIRTY')
               help='Number of workers for the client.')
 @click.option('-ntpw', '--nthreads-per-worker', type=int,
               help='Number of dask threads per worker.')
-@click.option('-ngt', '--ngridder-threads', type=int,
-              help="Total number of threads to use per worker")
-@click.option('-mem', '--mem-limit', type=float,
+@click.option('-nvt', '--nvthreads', type=int,
+              help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
+@click.option('-mem', '--mem-limit', type=int,
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
-def dirty(ms, **kw):
+def dirty(**kw):
     '''
     Create a dirty image from a list of measurement sets.
     The dirty image cube is not normalised by wsum as this destroyes
@@ -93,78 +94,36 @@ def dirty(ms, **kw):
         ngridder-threads = nthreads//nthreads-per-worker
 
     '''
-    if not len(ms):
-        raise ValueError("You must specify at least one measurement set")
     with ExitStack() as stack:
-        return _dirty(ms, stack, **kw)
+        args = OmegaConf.create(kw)
+        from glob import glob
+        args.ms = glob(args.ms)
+        OmegaConf.set_struct(args, True)
+        pyscilog.log_to_file(args.output_filename + '.log')
+        pyscilog.enable_memory_logging(level=3)
 
-def _dirty(ms, stack, **kw):
+        from pfb import set_client
+        args = set_client(args, stack, log)
+
+        # TODO - prettier config printing
+        print('Input Options:', file=log)
+        for key in args.keys():
+            print('     %25s = %s' % (key, args[key]), file=log)
+
+        return _dirty(**args)
+
+def _dirty(**kw):
     args = OmegaConf.create(kw)
+    from omegaconf import ListConfig
+    if not isinstance(args.ms, list) and not isinstance(args.ms, ListConfig) :
+        args.ms = [args.ms]
     OmegaConf.set_struct(args, True)
-    pyscilog.log_to_file(args.output_filename + '.log')
-    pyscilog.enable_memory_logging(level=3)
-
-    # number of threads per worker
-    if args.nthreads is None:
-        if args.host_address is not None:
-            raise ValueError("You have to specify nthreads when using a distributed scheduler")
-        import multiprocessing
-        nthreads = multiprocessing.cpu_count()
-        args.nthreads = nthreads
-    else:
-        nthreads = args.nthreads
-
-    # configure memory limit
-    if args.mem_limit is None:
-        if args.host_address is not None:
-            raise ValueError("You have to specify mem-limit when using a distributed scheduler")
-        import psutil
-        mem_limit = int(psutil.virtual_memory()[0]/1e9)  # 100% of memory by default
-        args.mem_limit = mem_limit
-    else:
-        mem_limit = args.mem_limit
-
-    nband = args.nband
-    if args.nworkers is None:
-        nworkers = nband
-        args.nworkers = nworkers
-    else:
-        nworkers = args.nworkers
-
-    if args.nthreads_per_worker is None:
-        nthreads_per_worker = 1
-        args.nthreads_per_worker = nthreads_per_worker
-    else:
-        nthreads_per_worker = args.nthreads_per_worker
-
-    # the number of chunks being read in simultaneously is equal to
-    # the number of dask threads
-    nthreads_dask = nworkers * nthreads_per_worker
-
-    if args.ngridder_threads is None:
-        if args.host_address is not None:
-            ngridder_threads = nthreads//nthreads_per_worker
-        else:
-            ngridder_threads = nthreads//nthreads_dask
-        args.ngridder_threads = ngridder_threads
-    else:
-        ngridder_threads = args.ngridder_threads
-
-    ms = list(ms)
-    print('Input Options:', file=log)
-    for key in kw.keys():
-        print('     %25s = %s' % (key, args[key]), file=log)
-
-    # numpy imports have to happen after this step
-    from pfb import set_client
-    set_client(nthreads, mem_limit, nworkers, nthreads_per_worker,
-               args.host_address, stack, log)
 
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
     from dask.graph_manipulation import clone
-    from dask.distributed import performance_report
+    # from dask.distributed import performance_report
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     import dask.array as da
@@ -175,8 +134,10 @@ def _dirty(ms, stack, **kw):
     from pfb.utils.fits import set_wcs, save_fits
 
     # chan <-> band mapping
+    ms = args.ms
+    nband = args.nband
     freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
-        ms, nband=nband)
+        ms, nband=args.nband)
 
     # gridder memory budget
     max_chan_chunk = 0
@@ -270,8 +231,8 @@ def _dirty(ms, stack, **kw):
         npix = int(fov / cell_size)
         if npix % 2:
             npix += 1
-        nx = good_size(npix)
-        ny = good_size(npix)
+        nx = npix
+        ny = npix
     else:
         nx = args.nx
         ny = args.ny if args.ny is not None else nx
@@ -287,13 +248,13 @@ def _dirty(ms, stack, **kw):
 
     if args.host_address is None:
         # full image on single node
-        row_chunk = plan_row_chunk(mem_limit/nworkers, band_size, nrow,
-                                   memory_per_row, nthreads_per_worker)
+        row_chunk = plan_row_chunk(args.mem_limit/args.nworkers, band_size, nrow,
+                                   memory_per_row, args.nthreads_per_worker)
 
     else:
         # single band per node
-        row_chunk = plan_row_chunk(mem_limit, band_size, nrow,
-                                   memory_per_row, nthreads_per_worker)
+        row_chunk = plan_row_chunk(args.mem_limit, band_size, nrow,
+                                   memory_per_row, args.nthreads_per_worker)
 
     if args.row_chunks is not None:
         row_chunk = int(args.row_chunks)
@@ -403,7 +364,7 @@ def _dirty(ms, stack, **kw):
                 cell_rad,
                 weights=weights,
                 flag=mask.astype(np.uint8),
-                nthreads=ngridder_threads,
+                nthreads=args.nvthreads,
                 epsilon=args.epsilon,
                 do_wstacking=args.wstack,
                 double_accum=args.double_accum)
@@ -415,8 +376,8 @@ def _dirty(ms, stack, **kw):
 
     if not args.mock:
         # result = dask.compute(dirties, wsum, optimize_graph=False)
-        with performance_report(filename=args.output_filename + '_per.html'):
-            result = dask.compute(dirties, optimize_graph=False)
+        # with performance_report(filename=args.output_filename + '_per.html'):
+        result = dask.compute(dirties, optimize_graph=False)
 
         dirties = result[0]
 

@@ -113,4 +113,4 @@ def _hessian_reg(x, psfhat, sigmasq, padding, nthreads, unpad_x, unpad_y, lastsi
                 forward=True, inorm=0)
     xhat = c2r(xhat * psfhat, axes=(1, 2), forward=False,
                 lastsize=lastsize, inorm=2, nthreads=nthreads)
-    return Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y] + x/sigmasq
+    return Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y] + x * sigmasq

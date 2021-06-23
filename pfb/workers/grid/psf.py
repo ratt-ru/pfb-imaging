@@ -9,7 +9,8 @@ log = pyscilog.get_logger('PSF')
 
 
 @cli.command()
-@click.argument('ms', nargs=-1)
+@click.option('-ms', '--ms', required=True,
+              help='Path to measurement set.')
 @click.option('-dc', '--data-column',
               help="Data column to image."
               "Must be the same across MSs")
@@ -57,15 +58,15 @@ log = pyscilog.get_logger('PSF')
               help='Number of workers for the client.')
 @click.option('-ntpw', '--nthreads-per-worker', type=int,
               help='Number of dask threads per worker.')
-@click.option('-ngt', '--ngridder-threads', type=int,
-              help="Total number of threads to use per worker")
+@click.option('-nvt', '--nvthreads', type=int,
+              help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
 @click.option('-mem', '--mem-limit', type=float,
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
 @click.option('-roc', '--row-out-chunk', type=int, default=10000,
               help="Size of row chunks for output weights and uvw")
-def psf(ms, **kw):
+def psf(**kw):
     '''
     Create a psf image from a list of measurement setsand write out the
     Mueller weights.
@@ -109,77 +110,35 @@ def psf(ms, **kw):
         ngridder-threads = nthreads//nthreads-per-worker
 
     '''
-    if not len(ms):
-        raise ValueError("You must specify at least one measurement set")
     with ExitStack() as stack:
-        return _psf(ms, stack, **kw)
+        args = OmegaConf.create(kw)
+        from glob import glob
+        args.ms = glob(args.ms)
+        OmegaConf.set_struct(args, True)
+        pyscilog.log_to_file(args.output_filename + '.log')
+        pyscilog.enable_memory_logging(level=3)
 
-def _psf(ms, stack, **kw):
+        from pfb import set_client
+        args = set_client(args, stack, log)
+
+        # TODO - prettier config printing
+        print('Input Options:', file=log)
+        for key in args.keys():
+            print('     %25s = %s' % (key, args[key]), file=log)
+
+        return _psf(**kw)
+
+def _psf(**kw):
     args = OmegaConf.create(kw)
+    from omegaconf import ListConfig
+    if not isinstance(args.ms, list) and not isinstance(args.ms, ListConfig) :
+        args.ms = [args.ms]
     OmegaConf.set_struct(args, True)
-    pyscilog.log_to_file(args.output_filename + '.log')
-    pyscilog.enable_memory_logging(level=3)
-
-    # number of threads per worker
-    if args.nthreads is None:
-        if args.host_address is not None:
-            raise ValueError("You have to specify nthreads when using a distributed scheduler")
-        import multiprocessing
-        nthreads = multiprocessing.cpu_count()
-        args.nthreads = nthreads
-    else:
-        nthreads = args.nthreads
-
-    # configure memory limit
-    if args.mem_limit is None:
-        if args.host_address is not None:
-            raise ValueError("You have to specify mem-limit when using a distributed scheduler")
-        import psutil
-        mem_limit = int(psutil.virtual_memory()[0]/1e9)  # 100% of memory by default
-        args.mem_limit = mem_limit
-    else:
-        mem_limit = args.mem_limit
-
-    nband = args.nband
-    if args.nworkers is None:
-        nworkers = nband
-        args.nworkers = nworkers
-    else:
-        nworkers = args.nworkers
-
-    if args.nthreads_per_worker is None:
-        nthreads_per_worker = 1
-        args.nthreads_per_worker = nthreads_per_worker
-    else:
-        nthreads_per_worker = args.nthreads_per_worker
-
-    # the number of chunks being read in simultaneously is equal to
-    # the number of dask threads
-    nthreads_dask = nworkers * nthreads_per_worker
-
-    if args.ngridder_threads is None:
-        if args.host_address is not None:
-            ngridder_threads = nthreads//nthreads_per_worker
-        else:
-            ngridder_threads = nthreads//nthreads_dask
-        args.ngridder_threads = ngridder_threads
-    else:
-        ngridder_threads = args.ngridder_threads
-
-    ms = list(ms)
-    print('Input Options:', file=log)
-    for key in kw.keys():
-        print('     %25s = %s' % (key, args[key]), file=log)
-
-    # numpy imports have to happen after this step
-    from pfb import set_client
-    set_client(nthreads, mem_limit, nworkers, nthreads_per_worker,
-               args.host_address, stack, log)
 
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
-    from dask.distributed import performance_report
+    # from dask.distributed import performance_report
     from dask.graph_manipulation import clone
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
@@ -193,13 +152,15 @@ def _psf(ms, stack, **kw):
     from pfb.utils.fits import set_wcs, save_fits
 
     # chan <-> band mapping
+    ms = args.ms
+    nband = args.nband
     freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
-        ms, nband=args.nband)
+        ms, nband=nband)
 
     # gridder memory budget
     max_chan_chunk = 0
     max_freq = 0
-    for ims in ms:
+    for ims in args.ms:
         for spw in freqs[ims]:
             counts = freq_bin_counts[ims][spw].compute()
             freq = freqs[ims][spw].compute()
@@ -208,7 +169,7 @@ def _psf(ms, stack, **kw):
 
     # assumes measurement sets have the same columns,
     # number of correlations etc.
-    xds = xds_from_ms(ms[0])
+    xds = xds_from_ms(args.ms[0])
     ncorr = xds[0].dims['corr']
     nrow = xds[0].dims['row']
     # we still have to cater for complex valued data because we cast
@@ -258,7 +219,7 @@ def _psf(ms, stack, **kw):
     uvw = []
     u_max = 0.0
     v_max = 0.0
-    for ims in ms:
+    for ims in args.ms:
         xds = xds_from_ms(ims, columns=('UVW'), chunks={'row': -1})
 
         for ds in xds:
@@ -290,8 +251,8 @@ def _psf(ms, stack, **kw):
         npix = int(args.psf_oversize * fov / cell_size)
         if npix % 2:
             npix += 1
-        nx = good_size(npix)
-        ny = good_size(npix)
+        nx = npix
+        ny = npix
     else:
         nx = args.nx
         ny = args.ny if args.ny is not None else nx
@@ -306,13 +267,13 @@ def _psf(ms, stack, **kw):
 
     if args.host_address is None:
         # full image on single node
-        row_chunk = plan_row_chunk(mem_limit/nworkers, band_size, nrow,
-                                   memory_per_row, nthreads_per_worker)
+        row_chunk = plan_row_chunk(args.mem_limit/args.nworkers, band_size, nrow,
+                                   memory_per_row, args.nthreads_per_worker)
 
     else:
         # single band per node
-        row_chunk = plan_row_chunk(mem_limit, band_size, nrow,
-                                   memory_per_row, nthreads_per_worker)
+        row_chunk = plan_row_chunk(args.mem_limit, band_size, nrow,
+                                   memory_per_row, args.nthreads_per_worker)
 
     if args.row_chunks is not None:
         row_chunk = int(args.row_chunks)
@@ -323,7 +284,7 @@ def _psf(ms, stack, **kw):
           (nrow, row_chunk, int(np.ceil(nrow / row_chunk))), file=log)
 
     chunks = {}
-    for ims in ms:
+    for ims in args.ms:
         chunks[ims] = []  # xds_from_ms expects a list per ds
         for spw in freqs[ims]:
             chunks[ims].append({'row': row_chunk,
@@ -332,7 +293,7 @@ def _psf(ms, stack, **kw):
     psfs = []
     radec = None  # assumes we are only imaging field 0 of first MS
     out_datasets = []
-    for ims in ms:
+    for ims in args.ms:
         xds = xds_from_ms(ims, chunks=chunks[ims], columns=columns)
 
         # subtables
@@ -384,8 +345,7 @@ def _psf(ms, stack, **kw):
                 weightsxx = weights[:, :, 0]
                 weightsyy = weights[:, :, -1]
 
-            # apply adjoint of mueller term.
-            # Phases modify data amplitudes modify weights.
+            # apply mueller term
             if args.mueller_column is not None:
                 mueller = getattr(ds, args.mueller_column).data
                 weightsxx *= da.absolute(mueller[:, :, 0])**2
@@ -416,7 +376,7 @@ def _psf(ms, stack, **kw):
                          ny,
                          cell_rad,
                          flag=mask.astype(np.uint8),
-                         nthreads=ngridder_threads,
+                         nthreads=args.nvthreads,
                          epsilon=args.epsilon,
                          do_wstacking=args.wstack,
                          double_accum=args.double_accum)
@@ -442,13 +402,13 @@ def _psf(ms, stack, **kw):
 
     writes = xds_to_zarr(out_datasets, args.output_filename + '.zarr', columns='ALL')
 
-    dask.visualize(writes, filename=args.output_filename + '_psf_writes_graph.pdf', optimize_graph=False)
-    dask.visualize(psfs, filename=args.output_filename + '_psf_graph.pdf', optimize_graph=False)
+    # dask.visualize(writes, filename=args.output_filename + '_psf_writes_graph.pdf', optimize_graph=False)
+    # dask.visualize(psfs, filename=args.output_filename + '_psf_graph.pdf', optimize_graph=False)
 
     if not args.mock:
         # psfs = dask.compute(psfs, writes, optimize_graph=False)[0]
-        with performance_report(filename=args.output_filename + '_psf_per.html'):
-            psfs = dask.compute(psfs, writes, optimize_graph=False)[0]
+        # with performance_report(filename=args.output_filename + '_psf_per.html'):
+        psfs = dask.compute(psfs, writes, optimize_graph=False)[0]
 
         psf = stitch_images(psfs, nband, band_mapping)
 

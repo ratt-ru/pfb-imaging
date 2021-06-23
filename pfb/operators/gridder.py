@@ -982,7 +982,7 @@ def _sum_weights(weights):
 
 
 
-# LB - to incorporate gains during imaging, should venetually be in africanus
+# LB - to incorporate gains during imaging, should eventually be in africanus
 def _residual_wrapper(uvw, freq, model, vis, freq_bin_idx, freq_bin_counts,
                       cell, weights, mueller, flag, celly, epsilon, nthreads,
                       do_wstacking, double_accum):
@@ -992,7 +992,6 @@ def _residual_wrapper(uvw, freq, model, vis, freq_bin_idx, freq_bin_counts,
                        epsilon, nthreads, do_wstacking, double_accum)
 
 
-@requires_optional('dask.array', dask_import_error)
 def residual(uvw, freq, image, vis, freq_bin_idx, freq_bin_counts, cell,
              weights=None, mueller=None, flag=None, celly=None, epsilon=1e-5,
              nthreads=1, do_wstacking=True, double_accum=False):
@@ -1009,7 +1008,7 @@ def residual(uvw, freq, image, vis, freq_bin_idx, freq_bin_counts, cell,
     else:
         weight_out = ('row', 'chan')
 
-     if mueller is None:
+    if mueller is None:
         mueller_out = None
     else:
         mueller_out = ('row', 'chan')

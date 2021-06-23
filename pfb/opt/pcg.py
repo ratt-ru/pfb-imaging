@@ -1,4 +1,5 @@
 import numpy as np
+from functools import partial
 import dask.array as da
 import pyscilog
 log = pyscilog.get_logger('PCG')
@@ -73,8 +74,7 @@ def pcg(A,
             print("Success, converged after %i iters" % k, file=log)
     return x
 
-from pfb.operators.psf import _hessian_reg
-from functools import partial
+from pfb.operators.psf import _hessian_reg as hessian_psf
 def _pcg_psf(psfhat,
              b,
              x0,
@@ -99,7 +99,7 @@ def _pcg_psf(psfhat,
     sigmasq = sigma**2
     def M(x): return x * sigmasq
     for k in range(nband):
-        A = partial(_hessian_reg,
+        A = partial(hessian_psf,
                     psfhat=psfhat[k:k+1],
                     sigmasq=sigmasq,
                     padding=padding,
@@ -177,3 +177,156 @@ def pcg_psf(psfhat,
                          backtrack, None,
                          dtype=b.dtype)
     return model
+
+
+from pfb.operators.hessian import _hessian_reg as hessian_wgt
+def _pcg_wgt(uvw,
+             weight,
+             b,
+             x0,
+             beam,
+             freq,
+             freq_bin_idx,
+             freq_bin_counts,
+             cell,
+             wstack,
+             epsilon,
+             double_accum,
+             nthreads,
+             sigmainv,
+             wsum,
+             tol=1e-5,
+             maxit=500,
+             minit=100,
+             verbosity=1,
+             report_freq=10,
+             backtrack=True):
+    '''
+    A specialised distributed version of pcg when the operator implements
+    the diagonalised hessian (+ L2 regularisation by sigma**2)
+    '''
+    nband, nx, ny = b.shape
+    model = np.zeros((nband, nx, ny), dtype=b.dtype)
+    sigmainvsq = sigmainv**2
+    def M(x): return x * sigmainvsq
+
+    freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
+    for k in range(nband):
+        indl = freq_bin_idx2[k]
+        indu = freq_bin_idx2[k] + freq_bin_counts[k]
+        A = partial(hessian_wgt,
+                    beam=beam[k],
+                    uvw=uvw,
+                    weight=weight[:, indl:indu],
+                    freq=freq[indl:indu],
+                    cell=cell,
+                    wstack=wstack,
+                    epsilon=epsilon,
+                    double_accum=double_accum,
+                    nthreads=nthreads,
+                    sigmainvsq=sigmainvsq,
+                    wsum=wsum)
+        model[k] = pcg(A,
+                       beam[k] * b[k],
+                       x0[k],
+                       M=M,
+                       tol=tol,
+                       maxit=maxit,
+                       minit=minit,
+                       verbosity=verbosity,
+                       report_freq=report_freq,
+                       backtrack=backtrack)
+
+    return model
+
+def pcg_wgt_wrapper(uvw,
+                    weight,
+                    b,
+                    x0,
+                    beam,
+                    freq,
+                    freq_bin_idx,
+                    freq_bin_counts,
+                    cell,
+                    wstack,
+                    epsilon,
+                    double_accum,
+                    nthreads,
+                    sigmainv,
+                    wsum,
+                    tol=1e-5,
+                    maxit=500,
+                    minit=100,
+                    verbosity=0,
+                    report_freq=10,
+                    backtrack=True):
+    return _pcg_wgt(uvw[0][0],
+                    weight[0],
+                    b,
+                    x0,
+                    beam,
+                    freq,
+                    freq_bin_idx,
+                    freq_bin_counts,
+                    cell,
+                    wstack,
+                    epsilon,
+                    double_accum,
+                    nthreads,
+                    sigmainv,
+                    wsum,
+                    tol,
+                    maxit,
+                    minit,
+                    verbosity,
+                    report_freq,
+                    backtrack)
+
+def pcg_wgt(uvw,
+            weight,
+            b,
+            x0,
+            beam,
+            freq,
+            freq_bin_idx,
+            freq_bin_counts,
+            cell,
+            wstack,
+            epsilon,
+            double_accum,
+            nthreads,
+            sigmainv,
+            wsum,
+            tol,
+            maxit,
+            minit,
+            verbosity,
+            report_freq,
+            backtrack):
+
+
+    return da.blockwise(pcg_wgt_wrapper, ('nchan', 'nx', 'ny'),
+                        uvw, ('nrow', 'three'),
+                        weight, ('nrow', 'nchan'),
+                        b, ('nchan', 'nx', 'ny'),
+                        x0, ('nchan', 'nx', 'ny'),
+                        beam, ('nchan', 'nx', 'ny'),
+                        freq, ('nchan',),
+                        freq_bin_idx, ('nchan',),
+                        freq_bin_counts, ('nchan',),
+                        cell, None,
+                        wstack, None,
+                        epsilon, None,
+                        double_accum, None,
+                        nthreads, None,
+                        sigmainv, None,
+                        wsum, None,
+                        tol, None,
+                        maxit, None,
+                        minit, None,
+                        verbosity, None,
+                        report_freq, None,
+                        backtrack, None,
+                        align_arrays=False,
+                        adjust_chunks={'nchan': b.chunks[0]},
+                        dtype=b.dtype)

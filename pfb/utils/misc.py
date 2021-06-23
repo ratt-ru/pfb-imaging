@@ -214,8 +214,12 @@ def chan_to_band_mapping(ms_name, nband=None):
     from daskms import xds_from_storage_table as xds_from_table
     import dask
     import dask.array as da
-    if not isinstance(ms_name, list):
+
+    from omegaconf import ListConfig
+    if not isinstance(ms_name, list) and not isinstance(ms_name, ListConfig) :
         ms_name = [ms_name]
+
+
 
     # first pass through data to determine freq_mapping
     radec = None

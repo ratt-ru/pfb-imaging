@@ -122,7 +122,7 @@ def _counts_to_weights(counts, uvw, freqs, fbin_idx, fbin_counts, nx, ny,
         for b in range(nband):
             counts_band = counts[b]
             avgW = (counts_band ** 2).sum() / counts_band.sum()
-            ssq = numsqrt**2/avgW
+            ssq = numsqrt * numsqrt/avgW
             counts_band[...] = 1 + counts_band * ssq
 
     normfreqs = freqs / lightspeed
