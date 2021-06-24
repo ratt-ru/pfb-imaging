@@ -51,7 +51,7 @@ def test_beaminmodel():
 
     # model vis
     from ducc0.wgridder import dirty2ms
-    model_vis = np.zeros((nrow, nchan, 4), dtype=np.complex128)
+    model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
         model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], model[c],
                                       pixsize_x=cell_rad, pixsize_y=cell_rad,

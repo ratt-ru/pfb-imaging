@@ -61,7 +61,7 @@ def test_beaminmodel():
     # model vis
     model_att = pbeam * model
     from ducc0.wgridder import dirty2ms
-    model_vis = np.zeros((nrow, nchan, 4), dtype=np.complex128)
+    model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
         model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], model_att[c],
                                       pixsize_x=cell_rad, pixsize_y=cell_rad,
@@ -109,7 +109,7 @@ def test_beaminmodel():
              beam_model='JimBeam', band='L',
              weight_table='/home/landman/Data/pfb-testing/output/test.zarr',
              output_filename='/home/landman/Data/pfb-testing/output/test',
-             nband=nchan, output_type='f4', epsilon=1e-5, sigmainv=1e-6,
+             nband=nchan, output_type='f4', epsilon=1e-5, sigmainv=1e-5,
              wstack=True, double_accum=True, cg_tol=1e-5, cg_minit=10,
              cg_maxit=100, cg_verbose=0, cg_report_freq=10, backtrack=False,
              nworkers=1, nthreads_per_worker=1, nvthreads=8, mem_limit=8,

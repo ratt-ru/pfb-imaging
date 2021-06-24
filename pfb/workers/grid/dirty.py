@@ -326,17 +326,18 @@ def _dirty(**kw):
                 weightsyy = weights[:, :, -1]
 
             # apply adjoint of mueller term.
-            # Phases modify data amplitudes modify weights.
             if args.mueller_column is not None:
                 mueller = getattr(ds, args.mueller_column).data
-                dataxx *= mueller[:, :, 0].conj()
-                datayy *= mueller[:, :, -1].conj()
+                data = (dataxx *  mueller[:, :, 0].conj() * weightsxx +
+                        datayy * mueller[:, :, -1].conj() * weightsyy)
                 weightsxx *= da.absolute(mueller[:, :, 0])**2
                 weightsyy *= da.absolute(mueller[:, :, -1])**2
 
+            else:
+                data = weightsxx * dataxx + weightsyy * datayy
+
             # weighted sum corr to Stokes I
             weights = weightsxx + weightsyy
-            data = (weightsxx * dataxx + weightsyy * datayy)
             # TODO - turn off this stupid warning
             data = da.where(weights, data / weights, 0.0j)
 
