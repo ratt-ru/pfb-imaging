@@ -107,10 +107,10 @@ def hessian(x, psfhat, padding, nthreads, unpad_x, unpad_y, lastsize):
         dtype=x.dtype)
     return convolvedim
 
-def _hessian_reg(x, psfhat, sigmasq, padding, nthreads, unpad_x, unpad_y, lastsize):
+def _hessian_reg(x, psfhat, sigmainvsq, padding, nthreads, unpad_x, unpad_y, lastsize):
     xhat = iFs(np.pad(x, padding, mode='constant'), axes=(1, 2))
     xhat = r2c(xhat, axes=(1, 2), nthreads=nthreads,
                 forward=True, inorm=0)
     xhat = c2r(xhat * psfhat, axes=(1, 2), forward=False,
                 lastsize=lastsize, inorm=2, nthreads=nthreads)
-    return Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y] + x * sigmasq
+    return Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y] + x * sigmainvsq

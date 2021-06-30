@@ -8,11 +8,9 @@ requirements = [
                 'matplotlib',
                 'scikit-image',
                 'codex-africanus[complete] >= 0.2.10',
-                'dask-ms[xarray] >= 0.2.6',
+                'dask[distributed]',
                 'PyWavelets',
-                'zarr',
                 'katbeam',
-                'packratt >= 0.1.3',
                 'pytest >= 6.2.2',
                 'numexpr',
                 'pyscilog >= 0.1.2',
@@ -20,7 +18,14 @@ requirements = [
                 'omegaconf',
                 'bokeh',
                 'graphviz',
-                'dask[distributed]',
+
+                "dask-ms[xarray, zarr]"
+                "@git+https://github.com/ska-sa/dask-ms.git"
+                "@master",
+
+                "packratt"
+                "@git+https://github.com/ratt-ru/packratt.git"
+                "@master",
             ]
 
 

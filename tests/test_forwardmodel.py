@@ -1,5 +1,6 @@
 import packratt
 import pytest
+from pathlib import Path
 
 pmp = pytest.mark.parametrize
 
@@ -7,20 +8,21 @@ pmp = pytest.mark.parametrize
 @pmp('do_gains', (False, True))
 def test_gainsinmodel(do_beam, do_gains, tmp_path_factory):
     if tmp_path_factory is None:
-        test_dir = '/home/landman/Data/pfb-testing/output/'
+        test_dir = Path('/home/landman/Data/pfb-testing/output/')
     else:
         test_dir = tmp_path_factory.mktemp("test_pfb")
 
-    # packratt.get('/test/ms/2020-06-04/elwood/smallest_ms.tar.gz', str(test_dir))
+    packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
     np.random.seed(420)
+    from numpy.testing import assert_allclose
     from pyrap.tables import table
     # ms = table(test_dir + 'smallest_ms.ms_p0', readonly=False)
     # spw = table(test_dir + 'smallest_ms.ms_p0::SPECTRAL_WINDOW')
 
-    ms = table(test_dir + 'test_ascii_1h60.0s.MS', readonly=False)
-    spw = table(test_dir + 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW')
+    ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
+    spw = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW'))
 
     utime = np.unique(ms.getcol('TIME'))
 
@@ -95,6 +97,8 @@ def test_gainsinmodel(do_beam, do_gains, tmp_path_factory):
                                       epsilon=1e-8, do_wstacking=True, nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]
 
+    ms.putcol('MODEL_DATA', model_vis.astype(np.complex64))
+
     if do_gains:
         t = (utime-utime.min())/(utime.max() - utime.min())
         nu = 2.5*(freq/freq0 - 1.0)
@@ -145,22 +149,22 @@ def test_gainsinmodel(do_beam, do_gains, tmp_path_factory):
         mcol = None
 
     from pfb.workers.grid.dirty import _dirty
-    _dirty(ms=test_dir + 'test_ascii_1h60.0s.MS',
+    _dirty(ms=str(test_dir / 'test_ascii_1h60.0s.MS'),
            data_column="DATA", weight_column='WEIGHT', imaging_weight_column=None,
            flag_column='FLAG', mueller_column=mcol,
            row_chunks=None, epsilon=1e-5, wstack=True, mock=False,
-           double_accum=True, output_filename=test_dir + 'test',
+           double_accum=True, output_filename=str(test_dir / 'test'),
            nband=nchan, field_of_view=fov, super_resolution_factor=srf,
            cell_size=None, nx=None, ny=None, output_type='f4', nworkers=1,
            nthreads_per_worker=1, nvthreads=8, mem_limit=8, nthreads=8,
            host_address=None)
 
     from pfb.workers.grid.psf import _psf
-    _psf(ms=test_dir + 'test_ascii_1h60.0s.MS',
+    _psf(ms=str(test_dir / 'test_ascii_1h60.0s.MS'),
          data_column="DATA", weight_column='WEIGHT', imaging_weight_column=None,
          flag_column='FLAG', mueller_column=mcol, row_out_chunk=-1,
          row_chunks=None, epsilon=1e-5, wstack=True, mock=False, psf_oversize=2,
-         double_accum=True, output_filename=test_dir + 'test',
+         double_accum=True, output_filename=str(test_dir / 'test'),
          nband=nchan, field_of_view=fov, super_resolution_factor=srf,
          cell_size=None, nx=None, ny=None, output_type='f4', nworkers=1,
          nthreads_per_worker=1, nvthreads=8, mem_limit=8, nthreads=8,
@@ -170,34 +174,34 @@ def test_gainsinmodel(do_beam, do_gains, tmp_path_factory):
     mask = np.any(model, axis=0)
     from astropy.io import fits
     from pfb.utils.fits import save_fits
-    hdr = fits.getheader(test_dir + 'test' + '_dirty.fits')
-    save_fits(test_dir + 'test' + '_model.fits', model, hdr)
-    save_fits(test_dir + 'test' + '_mask.fits', mask, hdr)
+    hdr = fits.getheader(str(test_dir / 'test_dirty.fits'))
+    save_fits(str(test_dir / 'test_model.fits'), model, hdr)
+    save_fits(str(test_dir / 'test_mask.fits'), mask, hdr)
 
     from pfb.workers.deconv.forward import _forward
-    _forward(residual=test_dir + 'test' + '_dirty.fits',
-             psf=test_dir + 'test' + '_psf.fits',
-             mask=test_dir + 'test' + '_mask.fits',
+    _forward(residual=str(test_dir / 'test_dirty.fits'),
+             psf=str(test_dir / 'test_psf.fits'),
+             mask=str(test_dir / 'test_mask.fits'),
              beam_model=bm, band='L',
-             weight_table=test_dir + 'test' + '.zarr',
-             output_filename=test_dir + 'test',
-             nband=nchan, output_type='f4', epsilon=1e-5, sigmainv=2e-4,
+             weight_table=str(test_dir / 'test.zarr'),
+             output_filename=str(test_dir / 'test'),
+             nband=nchan, output_type='f4', epsilon=1e-5, sigmainv=1e-5,
              wstack=True, double_accum=True, cg_tol=1e-5, cg_minit=10,
              cg_maxit=100, cg_verbose=0, cg_report_freq=10, backtrack=False,
-             nworkers=1, nthreads_per_worker=1, nvthreads=8, mem_limit=8,
-             nthreads=8, host_address=None)
+             nworkers=1, nthreads_per_worker=1, nvthreads=1, mem_limit=8,
+             nthreads=1, host_address=None)
 
     # get inferred model
     from pfb.utils.fits import load_fits
-    model_inferred = load_fits(test_dir + 'test_update.fits').squeeze()
+    model_inferred = load_fits(str(test_dir / 'test_update.fits')).squeeze()
 
     for i in range(nsource):
-        print(model_inferred[:, Ix[i], Iy[i]] - model[:, Ix[i], Iy[i]])
+        if do_beam:
+            beam = pbeam[:, Ix[i], Iy[i]]
+            assert_allclose(beam * (model_inferred[:, Ix[i], Iy[i]] -
+                                    model[:, Ix[i], Iy[i]]), 0.0, atol=1e-4)
+        else:
+            assert_allclose(model_inferred[:, Ix[i], Iy[i]] -
+                            model[:, Ix[i], Iy[i]], 0.0, atol=1e-4)
 
-
-
-
-
-
-
-test_gainsinmodel(1, 1, None)
+test_gainsinmodel(0, 1, None)

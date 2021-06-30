@@ -78,7 +78,7 @@ from pfb.operators.psf import _hessian_reg as hessian_psf
 def _pcg_psf(psfhat,
              b,
              x0,
-             sigma,
+             sigmainv,
              nthreads,
              padding,
              unpad_x,
@@ -96,12 +96,15 @@ def _pcg_psf(psfhat,
     '''
     nband, nx, ny = b.shape
     model = np.zeros((nband, nx, ny), dtype=b.dtype)
-    sigmasq = sigma**2
-    def M(x): return x * sigmasq
+    sigmainvsq = sigmainv**2
+    if sigmainv > 0:
+        def M(x): return x / sigmainvsq
+    else:
+        M = None
     for k in range(nband):
         A = partial(hessian_psf,
                     psfhat=psfhat[k:k+1],
-                    sigmasq=sigmasq,
+                    sigmainvsq=sigmainvsq,
                     padding=padding,
                     nthreads=nthreads,
                     unpad_x=unpad_x,
@@ -208,7 +211,10 @@ def _pcg_wgt(uvw,
     nband, nx, ny = b.shape
     model = np.zeros((nband, nx, ny), dtype=b.dtype)
     sigmainvsq = sigmainv**2
-    def M(x): return x * sigmainvsq
+    if sigmainv > 0:
+        def M(x): return x / sigmainvsq
+    else:
+        M = None
 
     freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
     for k in range(nband):
