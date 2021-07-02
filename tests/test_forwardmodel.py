@@ -6,7 +6,7 @@ pmp = pytest.mark.parametrize
 
 @pmp('do_beam', (False, True))
 @pmp('do_gains', (False, True))
-def test_gainsinmodel(do_beam, do_gains, tmp_path_factory):
+def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
     test_dir = tmp_path_factory.mktemp("test_pfb")
 
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
@@ -179,8 +179,8 @@ def test_gainsinmodel(do_beam, do_gains, tmp_path_factory):
              beam_model=bm, band='L',
              weight_table=str(test_dir / 'test.zarr'),
              output_filename=str(test_dir / 'test'),
-             nband=nchan, output_type='f4', epsilon=1e-5, sigmainv=1e-5,
-             wstack=True, double_accum=True, cg_tol=1e-5, cg_minit=10,
+             nband=nchan, output_type='f4', epsilon=1e-5, sigmainv=0.0,
+             wstack=True, double_accum=True, cg_tol=1e-6, cg_minit=10,
              cg_maxit=100, cg_verbose=0, cg_report_freq=10, backtrack=False,
              nworkers=1, nthreads_per_worker=1, nvthreads=1, mem_limit=8,
              nthreads=1, host_address=None)
