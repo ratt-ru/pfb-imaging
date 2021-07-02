@@ -7,7 +7,6 @@ with open("README.rst", "r") as fh:
 requirements = [
                 'matplotlib',
                 'scikit-image',
-                'codex-africanus[complete] >= 0.2.10',
                 'dask[distributed]',
                 'PyWavelets',
                 'katbeam',
@@ -18,6 +17,10 @@ requirements = [
                 'omegaconf',
                 'bokeh',
                 'graphviz',
+
+                "codex-africanus[complete]"
+                "@git+https://github.com/ska-sa/codex-africanus.git"
+                "@master",
 
                 "dask-ms[xarray, zarr]"
                 "@git+https://github.com/ska-sa/dask-ms.git"
