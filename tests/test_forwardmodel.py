@@ -18,8 +18,6 @@ def test_gainsinmodel(do_beam, do_gains, tmp_path_factory):
     np.random.seed(420)
     from numpy.testing import assert_allclose
     from pyrap.tables import table
-    # ms = table(test_dir + 'smallest_ms.ms_p0', readonly=False)
-    # spw = table(test_dir + 'smallest_ms.ms_p0::SPECTRAL_WINDOW')
 
     ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
     spw = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW'))
@@ -70,7 +68,6 @@ def test_gainsinmodel(do_beam, do_gains, tmp_path_factory):
     I0 = 1.0 + np.abs(np.random.randn(nsource))
     for i in range(nsource):
         model[:, Ix[i], Iy[i]] = I0[i] * (freq/freq0) ** alpha[i]
-
 
     if do_beam:
         # primary beam
@@ -198,10 +195,8 @@ def test_gainsinmodel(do_beam, do_gains, tmp_path_factory):
     for i in range(nsource):
         if do_beam:
             beam = pbeam[:, Ix[i], Iy[i]]
-            assert_allclose(beam * (model_inferred[:, Ix[i], Iy[i]] -
-                                    model[:, Ix[i], Iy[i]]), 0.0, atol=1e-4)
+            assert_allclose(0.0, beam * (model_inferred[:, Ix[i], Iy[i]] -
+                            model[:, Ix[i], Iy[i]]), atol=1e-4)
         else:
-            assert_allclose(model_inferred[:, Ix[i], Iy[i]] -
-                            model[:, Ix[i], Iy[i]], 0.0, atol=1e-4)
-
-test_gainsinmodel(0, 1, None)
+            assert_allclose(0.0, model_inferred[:, Ix[i], Iy[i]] -
+                            model[:, Ix[i], Iy[i]], atol=1e-4)
