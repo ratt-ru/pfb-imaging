@@ -7,10 +7,7 @@ pmp = pytest.mark.parametrize
 @pmp('do_beam', (False, True))
 @pmp('do_gains', (False, True))
 def test_gainsinmodel(do_beam, do_gains, tmp_path_factory):
-    if tmp_path_factory is None:
-        test_dir = Path('/home/landman/Data/pfb-testing/output/')
-    else:
-        test_dir = tmp_path_factory.mktemp("test_pfb")
+    test_dir = tmp_path_factory.mktemp("test_pfb")
 
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
