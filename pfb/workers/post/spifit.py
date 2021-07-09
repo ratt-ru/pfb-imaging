@@ -276,7 +276,7 @@ def _spifit(**kw):
 
                 beam_image = np.zeros(model.shape, dtype=args.out_dtype)
                 for v in range(freqs.size):
-                    beam_image[v] = beam.I(xx, yy, freqs[v])
+                    beam_image[v] = beam.I(xx, yy, freqs[v]/1e6)  # freq in MHz
             elif args.beam_model[i].endswith('.fits'):  # beam already interpolated
                 bhdr = fits.getheader(args.beam_model)
                 l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
