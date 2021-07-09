@@ -1,4 +1,5 @@
 # flake8: noqa
+from contextlib import ExitStack
 import click
 from omegaconf import OmegaConf
 from pfb.workers.main import cli
@@ -27,8 +28,6 @@ log = pyscilog.get_logger('SPIFIT')
               help="Maximum dynamic range used to determine the "
                    "threshold above which components need to be fit. "
                    "Only used if residual is not passed in.")
-@click.option('-nthreads', '--nthreads', default=1, type=int, show_default=True,
-              help="Number of threads to use.")
 @click.option('-pb-min', '--pb-min', type=float, default=0.15,
               help="Set image to zero where pb falls below this value")
 @click.option('-products', '--products', default='aeikIcmrb', type=str,
@@ -76,16 +75,62 @@ log = pyscilog.get_logger('SPIFIT')
                 help="Correlation typ i.e. linear or circular. ")
 @click.option('-band', "--band", type=str, default='l',
                 help="Band to use with JimBeam. L or UHF")
+@click.option('-ha', '--host-address',
+              help='Address where the distributed client lives. '
+              'Will use a local cluster if no address is provided')
+@click.option('-nw', '--nworkers', type=int, default=1,
+              help='Number of workers for the client.')
+@click.option('-ntpw', '--nthreads-per-worker', type=int,
+              help='Number of dask threads per worker.')
+@click.option('-nvt', '--nvthreads', type=int,
+              help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
+@click.option('-mem', '--mem-limit', type=int,
+              help="Memory limit in GB. Default uses all available memory")
+@click.option('-nthreads', '--nthreads', type=int,
+              help="Total available threads. Default uses all available threads")
 def spifit(**kw):
-    args = OmegaConf.create(kw)
+    with ExitStack() as stack:
+        args = OmegaConf.create(kw)
+        from glob import glob
+        image = glob(args.image)
+        # make sure it's not empty
+        try:
+            assert len(image) > 0
+            args.image = image
+        except:
+            raise ValueError(f"No image at {args.image}")
 
-    from glob import glob
-    args.image = glob(args.image)
-    if args.residual is not None:
-        args.residual = glob(args.residual)
+        if args.residual is not None:
+            residual = glob(args.residual)
+            try:
+                assert len(residual) > 0
+                args.residual = residual
+            except:
+                raise ValueError(f"No image at {args.residual}")
+
+        # TODO - this is needed because we usually set the default number of
+        # workers to the number of bands. But in this case we don't know
+        # how many bands we have at the outset
+        args.nband = args.nworkers
+
+        OmegaConf.set_struct(args, True)
+        pyscilog.log_to_file(args.output_filename + '.log')
+        pyscilog.enable_memory_logging(level=3)
+
+        from pfb import set_client
+        args = set_client(args, stack, log)
+
+        # TODO - prettier config printing
+        print('Input Options:', file=log)
+        for key in args.keys():
+            print('     %25s = %s' % (key, args[key]), file=log)
+
+        return _spifit(**args)
+
+
+def _spifit(**kw):
+    args = OmegaConf.create(kw)
     OmegaConf.set_struct(args, True)
-    pyscilog.log_to_file(args.output_filename + '.log')
-    pyscilog.enable_memory_logging(level=3)
 
     import dask
 
