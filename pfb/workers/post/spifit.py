@@ -23,10 +23,12 @@ log = pyscilog.get_logger('SPIFIT')
 @click.option('-th', '--threshold', default=10, type=float, show_default=True,
               help="Multiple of the rms in the residual to threshold on."
                    "Only components above threshold*rms will be fit.")
-@click.option('-maxdr', '--maxDR', default=100, type=float, show_default=True,
+@click.option('-maxdr', '--maxdr', default=100, type=float, show_default=True,
               help="Maximum dynamic range used to determine the "
                    "threshold above which components need to be fit. "
                    "Only used if residual is not passed in.")
+@click.option('-bw', '--band-weights', type=float,
+              help="Per bands weights to use during the fit")
 @click.option('-pb-min', '--pb-min', type=float, default=0.15,
               help="Set image to zero where pb falls below this value")
 @click.option('-products', '--products', default='aeikIcmrb', type=str,
@@ -424,8 +426,8 @@ def _spifit(**kw):
         threshold = args.threshold * rms
     else:
         print("No residual provided. Setting  threshold i.t.o dynamic range. "
-              "Max dynamic range is %i " % args.maxDR, file=log)
-        threshold = model.max()/args.maxDR
+              "Max dynamic range is %i " % args.maxdr, file=log)
+        threshold = model.max()/args.maxdr
         rms_cube = None
 
     print("Threshold set to %f Jy. \n" % threshold, file=log)
@@ -452,8 +454,8 @@ def _spifit(**kw):
         # normalise
         weights /= weights.max()
     else:
-        if args.channel_weights is not None:
-            weights = np.array(args.channel_weights)
+        if args.band_weights is not None:
+            weights = np.array(args.band_weights)
             try:
                 assert weights.size == nband
             except Exception as e:
