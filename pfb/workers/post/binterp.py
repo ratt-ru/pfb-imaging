@@ -173,10 +173,13 @@ def _binterp(**kw):
                 else:
                     outname = image + '.' + args.postfix
 
+                beam_image = np.expand_dims(beam_image, axis=stokes_axis-1)
                 save_fits(args.output_dir + outname, beam_image, mhdr, dtype=args.out_dtype)
 
         else:
             raise NotImplementedError("Not there yet, sorry")
+
+    print("All done here.", file=log)
 
 # @jit(nopython=True, nogil=True, cache=True)
 # def _unflagged_counts(flags, time_idx, out):

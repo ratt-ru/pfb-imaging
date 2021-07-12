@@ -74,12 +74,6 @@ def spifit(**kw):
     """
     Spectral index fitter
 
-    case 1 - model, residual and beam passed in
-             resolution available from residual
-    case 2 - restored and beam passed in
-             resolution available from restored image
-    case 3
-
     """
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
