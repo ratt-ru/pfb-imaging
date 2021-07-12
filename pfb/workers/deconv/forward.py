@@ -92,11 +92,15 @@ def forward(**kw):
     else:
         ngridder-threads = nthreads//nthreads-per-worker
     '''
-    with ExitStack() as stack:
-        args = OmegaConf.create(kw)
-        OmegaConf.set_struct(args, True)
-        pyscilog.log_to_file(args.output_filename + '.log')
+    args = OmegaConf.create(kw)
+    pyscilog.log_to_file(args.output_filename + '.log')
 
+    if args.nworkers is None:
+        args.nworkers = args.nband
+
+    OmegaConf.set_struct(args, True)
+
+    with ExitStack() as stack:
         from pfb import set_client
         args = set_client(args, stack, log)
 

@@ -53,13 +53,10 @@ def set_client(args, stack, log):
     else:
         mem_limit = int(args.mem_limit)
 
-    nband = args.nband
     if args.nworkers is None:
-        nworkers = nband
-        with open_dict(args):
-            args.nworkers = nworkers
+        raise ValueError("You have to specify the number of workers")
     else:
-        nworkers = int(args.nworkers)
+        nworkers = args.nworkers
 
     if args.nthreads_per_worker is None:
         nthreads_per_worker = 1

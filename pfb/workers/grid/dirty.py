@@ -94,14 +94,22 @@ def dirty(**kw):
         ngridder-threads = nthreads//nthreads-per-worker
 
     '''
-    with ExitStack() as stack:
-        args = OmegaConf.create(kw)
-        from glob import glob
-        args.ms = glob(args.ms)
-        OmegaConf.set_struct(args, True)
-        pyscilog.log_to_file(args.output_filename + '.log')
-        pyscilog.enable_memory_logging(level=3)
+    args = OmegaConf.create(kw)
+    pyscilog.log_to_file(args.output_filename + '.log')
+    from glob import glob
+    ms = glob(args.ms)
+    try:
+        assert len(ms) > 0
+        args.ms = ms
+    except:
+        raise ValueError(f"No MS at {args.ms}")
 
+    if args.nworkers is None:
+        args.nworkers = args.nband
+
+    OmegaConf.set_struct(args, True)
+
+    with ExitStack() as stack:
         from pfb import set_client
         args = set_client(args, stack, log)
 

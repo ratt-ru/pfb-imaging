@@ -13,8 +13,7 @@ log = pyscilog.get_logger('SPIFIT')
 @click.option('-resid', "--residual", required=False,
               help="Path to residual image cube.")
 @click.option('-o', '--output-filename', required=True,
-              help="Path to output directory + prefix. "
-              "Placed next to input model if outfile not provided.")
+              help="Path to output directory + prefix.")
 @click.option('-pp', '--psf-pars', nargs=3, type=float,
               help="Beam parameters matching FWHM of restoring beam "
                    "specified as emaj emin pa."
@@ -54,27 +53,10 @@ log = pyscilog.get_logger('SPIFIT')
 @click.option('-acr', '--add-convolved-residuals', is_flag=True,
               help='Flag to add in the convolved residuals before '
               'fitting components')
-@click.option('-ms', "--ms", nargs="+", type=str,
-                help="Mesurement sets used to make the image. \n"
-                "Used to get paralactic angles if doing primary beam correction")
-@click.option('-f', "--field", type=int, default=0,
-                help="Field ID")
-@click.option('-bm', '--beam-model', default=None, type=str,
-                help="Fits beam model to use. \n"
-                    "It is assumed that the pattern is path_to_beam/"
-                    "name_corr_re/im.fits. \n"
-                    "Provide only the path up to name "
-                    "e.g. /home/user/beams/meerkat_lband. \n"
-                    "Patterns mathing corr are determined "
-                    "automatically. \n"
-                    "Only real and imaginary beam models currently "
-                    "supported.")
-@click.option('-st', "--sparsify-time", type=int, default=10,
-                help="Used to select a subset of time ")
-@click.option('-ct', '--corr-type', type=str, default='linear',
-                help="Correlation typ i.e. linear or circular. ")
-@click.option('-band', "--band", type=str, default='l',
-                help="Band to use with JimBeam. L or UHF")
+@click.option('-bm', '--beam-model', default=None,
+              help="Fits power beam model. It is assumed that the beam "
+              "match the fits headers of --image. You can use the binterp "
+              "worker to create compatible beam models")
 @click.option('-ha', '--host-address',
               help='Address where the distributed client lives. '
               'Will use a local cluster if no address is provided')
@@ -89,34 +71,86 @@ log = pyscilog.get_logger('SPIFIT')
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
 def spifit(**kw):
-    with ExitStack() as stack:
-        args = OmegaConf.create(kw)
-        from glob import glob
-        image = glob(args.image)
-        # make sure it's not empty
+    """
+    Spectral index fitter
+
+    case 1 - model, residual and beam passed in
+             resolution available from residual
+    case 2 - restored and beam passed in
+             resolution available from restored image
+    case 3
+
+    """
+    args = OmegaConf.create(kw)
+    pyscilog.log_to_file(args.output_filename + '.log')
+    from glob import glob
+    from omegaconf import ListConfig
+    # image is either a string or a list of strings that we want to glob on
+    if isinstance(args.image, str):
+        image = sorted(glob(args.image))
+    elif isinstance(args.image, list) or isinstance(args.image, ListConfig):
+        image = []
+        for i in len(args.image):
+            image.append(sorted(glob(args.image[i])))
+
+    # make sure it's not empty
+    try:
+        assert len(image) > 0
+        args.image = image
+    except:
+        raise ValueError(f"No image at {args.image}")
+
+    # same goes for the residual except that it may also be None
+    if isinstance(args.residual, str):
+        residual = sorted(glob(args.residual))
+    elif isinstance(args.residual, list) or isinstance(args.residual, ListConfig):
+        residual = []
+        for i in len(args.residual):
+            residual.append(sorted(glob(args.residual[i])))
+
+    if args.residual is not None:
         try:
-            assert len(image) > 0
-            args.image = image
+            assert len(residual) > 0
+            args.residual = residual
         except:
-            raise ValueError(f"No image at {args.image}")
+            raise ValueError(f"No residual at {args.residual}")
+        # we also need the same number of residuals as images
+        try:
+            assert len(args.image) == len(args.residual)
+        except:
+            raise ValueError(f"Number of images and residuals need to "
+                                "match")
+    else:
+        print("No residual passed in!", file=log)
 
-        if args.residual is not None:
-            residual = glob(args.residual)
-            try:
-                assert len(residual) > 0
-                args.residual = residual
-            except:
-                raise ValueError(f"No image at {args.residual}")
+    # and finally the beam model
+    if isinstance(args.beam_model, str):
+        beam_model  = sorted(glob(args.beam_model))
+    elif isinstance(args.beam_model, list) or isinstance(args.beam_model, ListConfig):
+        beam_model = []
+        for i in len(args.beam_model):
+            beam_model.append(sorted(glob(args.beam_model[i])))
 
-        # TODO - this is needed because we usually set the default number of
-        # workers to the number of bands. But in this case we don't know
-        # how many bands we have at the outset
-        args.nband = args.nworkers
+    if args.beam_model is not None:
+        try:
+            assert len(beam_model) > 0
+            args.beam_model = beam_model
+        except:
+            raise ValueError(f"No beam model at {args.beam_model}")
 
-        OmegaConf.set_struct(args, True)
-        pyscilog.log_to_file(args.output_filename + '.log')
-        pyscilog.enable_memory_logging(level=3)
+        try:
+            assert len(args.image) == len(args.beam_model)
+        except:
+            raise ValueError(f"Number of images and beam models need to "
+                                "match")
+    else:
+        print("Not doing any form of primary beam correction", file=log)
 
+    # LB - TODO: can we sort them along freq at this point already?
+
+    OmegaConf.set_struct(args, True)
+
+    with ExitStack() as stack:
         from pfb import set_client
         args = set_client(args, stack, log)
 
@@ -132,78 +166,43 @@ def _spifit(**kw):
     args = OmegaConf.create(kw)
     OmegaConf.set_struct(args, True)
 
-    import dask
-
-    if args.nthreads:
-        from multiprocessing.pool import ThreadPool
-        dask.config.set(pool=ThreadPool(args.nthreads))
-    else:
-        import multiprocessing
-        args.nthreads = multiprocessing.cpu_count()
-
-    print('Input Options:', file=log)
-    for key in kw.keys():
-        print('     %25s = %s' % (key, args[key]), file=log)
-
     import dask.array as da
     import numpy as np
     from astropy.io import fits
     from africanus.model.spi.dask import fit_spi_components
     from pfb.utils.fits import load_fits, save_fits, data_from_header, set_wcs
     from pfb.utils.misc import convolve2gaussres
-    # from scripts.power_beam_maker import interpolate_beam
-
-    # check consistent number of inputs and bands
-    if not isinstance(args.image, list):
-        args.image = list(args.image)
-
-    if len(args.image) > 1:
-        if args.residual is not None:
-            assert len(args.image) == len(args.residual)
-
-        if isinstance(args.beam_model, list):
-            try:
-                assert len(args.beam_model) == len(args.image)
-            except Exception as e:
-                raise ValueError("You have to pass in a beam per image if you specify them manually")
-        elif args.beam_model.lower() == 'jimbeam':
-            args.beam_model = [args.beam_model.lower()]*len(args.image)
-            if len(args.band) > 1:
-                try:
-                    assert len(args.band) == len(args.image)
-                except Exception as e:
-                    raise ValueError("Inconsistent input for --band. "
-                                    "You either need to use teh same band for "
-                                    "all images or provide a band per image.")
-            else:
-                print("Using %s band beam for all images"%args.beam_model[0], file=log)
-                args.band = list(args.band)*len(args.image)
 
     # get max gausspars
     gaussparf = None
-    for i in range(len(args.image)):
-        if args.psf_pars is None:
+    if args.psf_pars is None:
+        if args.residual is None:
+            ppsource = args.image
+        else:
+            ppsource = args.residual
+
+        for image in ppsource:
             try:
-                rhdr = fits.getheader(args.residual[i])
+                pphdr = fits.getheader(image)
             except Exception as e:
                 raise e
 
-            if 'BMAJ0' in rhdr.keys():
-                emaj = rhdr['BMAJ0']
-                emin = rhdr['BMIN0']
-                pa = rhdr['BPA0']
+            if 'BMAJ0' in pphdr.keys():
+                emaj = pphdr['BMAJ0']
+                emin = pphdr['BMIN0']
+                pa = pphdr['BPA0']
                 gausspars = [emaj, emin, pa]
                 freq_idx0 = 0
-            elif 'BMAJ1' in rhdr.keys():
-                emaj = rhdr['BMAJ1']
-                emin = rhdr['BMIN1']
-                pa = rhdr['BPA1']
+            elif 'BMAJ1' in pphdr.keys():
+                emaj = pphdr['BMAJ1']
+                emin = pphdr['BMIN1']
+                pa = pphdr['BPA1']
                 gausspars = [emaj, emin, pa]
                 freq_idx0 = 1
-            elif 'BMAJ' in rhdr.keys():
-                emaj = rhdr['BMAJ']
-                emin = rhdr['BMIN']
-                pa = rhdr['BPA']
+            elif 'BMAJ' in pphdr.keys():
+                emaj = pphdr['BMAJ']
+                emin = pphdr['BMIN']
+                pa = pphdr['BPA']
                 gausspars = [emaj, emin, pa]
                 freq_idx0 = 0
             else:
@@ -216,14 +215,15 @@ def _spifit(**kw):
                 # we need to take the max in both directions
                 gaussparf[0] = np.maximum(gaussparf[0], gausspars[0])
                 gaussparf[1] = np.maximum(gaussparf[1], gausspars[1])
-        else:
-            gaussparf = list(args.psf_pars)
+    else:
+        freq_idx0 = 0  # assumption
+        gaussparf = list(args.psf_pars)
 
-        if args.circ_psf:
-            e = np.maximum(gaussparf[0], gaussparf[1])
-            gaussparf[0] = e
-            gaussparf[1] = e
-            gaussparf[2] = 0.0
+    if args.circ_psf:
+        e = np.maximum(gaussparf[0], gaussparf[1])
+        gaussparf[0] = e
+        gaussparf[1] = e
+        gaussparf[2] = 0.0
 
     gaussparf = tuple(gaussparf)
     print("Using emaj = %3.2e, emin = %3.2e, PA = %3.2e \n" % gaussparf, file=log)
@@ -265,39 +265,30 @@ def _spifit(**kw):
 
         # load beam
         if args.beam_model is not None:
-            if args.beam_model[i] == "jimbeam":
-                from katbeam import JimBeam
-                if args.band[i].lower() == 'l':
-                    beam = JimBeam('MKAT-AA-L-JIM-2020')
-                elif args.band[i].lower() == 'uhf':
-                    beam = JimBeam('MKAT-AA-UHF-JIM-2020')
-                else:
-                    raise ValueError("Unkown band %s"%args.band[i])
+            bhdr = fits.getheader(args.beam_model[i])
+            l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
+            l_coord_beam -= ref_lb
+            if not np.array_equal(l_coord_beam, l_coord):
+                raise ValueError("l coordinates of beam model do not match "
+                                 "those of image. Use binterp to make "
+                                 "compatible beam images")
 
-                beam_image = np.zeros(model.shape, dtype=args.out_dtype)
-                for v in range(freqs.size):
-                    beam_image[v] = beam.I(xx, yy, freqs[v]/1e6)  # freq in MHz
-            elif args.beam_model[i].endswith('.fits'):  # beam already interpolated
-                bhdr = fits.getheader(args.beam_model)
-                l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
-                l_coord_beam -= ref_lb
-                if not np.array_equal(l_coord_beam, l_coord):
-                    raise ValueError("l coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
+            m_coord_beam, ref_mb = data_from_header(bhdr, axis=2)
+            m_coord_beam -= ref_mb
+            if not np.array_equal(m_coord_beam, m_coord):
+                raise ValueError("m coordinates of beam model do not match "
+                                 "those of image. Use binterp to make "
+                                 "compatible beam images")
+            freqs_beam, _ = data_from_header(bhdr, axis=freq_axis)
+            if not np.array_equal(freqs, freqs_beam):
+                raise ValueError("Freq coordinates of beam model do not match "
+                                 "those of image. Use binterp to make "
+                                 "compatible beam images")
+            beam_image = load_fits(args.beam_model[i],
+                                   dtype=args.out_dtype).squeeze()
 
-                m_coord_beam, ref_mb = data_from_header(bhdr, axis=2)
-                m_coord_beam -= ref_mb
-                if not np.array_equal(m_coord_beam, m_coord):
-                    raise ValueError("m coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-                freqs_beam, _ = data_from_header(bhdr, axis=freq_axis)
-                if not np.array_equal(freqs, freqs_beam):
-                    raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-                beam_image = load_fits(args.beam_model, dtype=args.out_dtype).squeeze()
-
-            else:  # interpolate from scratch
-                raise NotImplementedError("Not yet there, sorry")
-                # beam_image = interpolate_beam(xx, yy, freqs, args)
+            if beam_image.ndim < 3:
+                beam_image = beam_image[None, :, :]
 
         else:
             beam_image = np.ones(model.shape, dtype=args.out_dtype)
@@ -307,38 +298,43 @@ def _spifit(**kw):
         if not args.dont_convolve:
             print("Convolving model %i"%i, file=log)
             # convolve model to desired resolution
-            model, gausskern = convolve2gaussres(model, xx, yy, gaussparf, args.nthreads, None, args.padding_frac)
+            model, gausskern = convolve2gaussres(model, xx, yy, gaussparf,
+                                                 args.nthreads, None,
+                                                 args.padding_frac)
 
         image_dict[i]['model'] = model
 
         # add in residuals and set threshold
         if args.residual is not None:
-            resid = load_fits(args.residual[i], dtype=args.out_dtype).squeeze()
-            if resid.ndim < 3:
-                resid = resid[None, :, :]
+            msg = "of residual do not match those of model"
             rhdr = fits.getheader(args.residual[i])
             l_res, ref_lb = data_from_header(rhdr, axis=1)
             l_res -= ref_lb
             if not np.array_equal(l_res, l_coord):
-                raise ValueError("l coordinates of residual do not match those of model")
+                raise ValueError("l coordinates " + msg)
 
             m_res, ref_mb = data_from_header(rhdr, axis=2)
             m_res -= ref_mb
             if not np.array_equal(m_res, m_coord):
-                raise ValueError("m coordinates of residual do not match those of model")
+                raise ValueError("m coordinates " + msg)
 
-            # freqs_res, _ = data_from_header(rhdr, axis=freq_axis)
-            # if not np.array_equal(freqs, freqs_res):
-            #     raise ValueError("Freqs of residual do not match those of model")
+            freqs_res, _ = data_from_header(rhdr, axis=freq_axis)
+            if not np.array_equal(freqs, freqs_res):
+                raise ValueError("Freqs " + msg)
+
+            resid = load_fits(args.residual[i],
+                              dtype=args.out_dtype).squeeze()
+            if resid.ndim < 3:
+                resid = resid[None, :, :]
 
             # convolve residual to same resolution as model
             gausspari = ()
             for b in range(nband):
-                key = 'BMAJ' + str(b)
+                key = 'BMAJ' + str(b + freq_idx0)
                 if key in rhdr.keys():
                     emaj = rhdr[key]
-                    emin = rhdr['BMIN' + str(b)]
-                    pa = rhdr['BPA' + str(b)]
+                    emin = rhdr[key]
+                    pa = rhdr[key]
                     gausspari += ((emaj, emin, pa),)
                 elif 'BMAJ' in rhdr.keys():
                     emaj = rhdr['BMAJ']
@@ -346,15 +342,20 @@ def _spifit(**kw):
                     pa = rhdr['BPA']
                     gausspari += ((emaj, emin, pa),)
                 else:
-                    print("Can't find Gausspars in residual header, unable to add residuals back in", file=log)
+                    print("Can't find Gausspars in residual header, "
+                          "unable to add residuals back in", file=log)
                     gausspari = None
                     break
 
             if gausspari is not None and args.add_convolved_residuals:
                 print("Convolving residuals %i"%i, file=log)
-                resid, _ = convolve2gaussres(resid, xx, yy, gaussparf, args.nthreads, gausspari, args.padding_frac, norm_kernel=False)
+                resid, _ = convolve2gaussres(resid, xx, yy, gaussparf,
+                                             args.nthreads, gausspari,
+                                             args.padding_frac,
+                                             norm_kernel=False)
                 model += resid
-                print("Convolved residuals added to convolved model %i"%i, file=log)
+                print("Convolved residuals added to convolved model %i"%i,
+                      file=log)
 
 
             image_dict[i]['resid'] = resid
