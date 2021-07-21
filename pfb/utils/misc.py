@@ -35,6 +35,24 @@ def kron_matvec(A, b):
         x = Z.ravel()
     return x
 
+@jit(nopython=True, fastmath=True, parallel=False, cache=True, nogil=True)
+def kron_matvec2(A, b):
+    D = len(A)
+    N = b.size
+    x = b
+
+    for d in range(D):
+        Gd = A[d].shape[0]
+        NGd = N//Gd
+        X = np.reshape(x, (Gd, NGd))
+        Z = np.zeros((Gd, NGd), dtype=A[0].dtype)
+        Ad = A[d]
+        for i in range(Gd):
+            for j in range(Gd):
+                for k in range(NGd):
+                    Z[j, k] += Ad[i, j] * X[i, k]
+        x[:] = Z.T.ravel()
+    return x
 
 def str2bool(v):
     if isinstance(v, bool):
