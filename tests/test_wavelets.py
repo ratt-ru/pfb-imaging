@@ -306,10 +306,10 @@ def test_wavedecn_waverecn(data_shape, wavelet, mode, level, complex_data):
 
 #     for d1 in iy[1:]:
 #         print(d1)
-        
+
 #     # for d1, d2 in zip(sy, sy2):
 #     #     assert d1 == d2
-    
+
 #     outrec = pywt.unravel_coeffs(z, iy, sy)
 
 #     from numba.typed import List
@@ -330,4 +330,4 @@ def test_wavedecn_waverecn(data_shape, wavelet, mode, level, complex_data):
 
 
 # if __name__=="__main__":
-#     test_ravel_coeffs(128, 128, 2, 'zero', 'db3')   
+#     test_ravel_coeffs(128, 128, 2, 'zero', 'db3')

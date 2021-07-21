@@ -27,13 +27,13 @@ def upsampling_convolution_valid_sf(input, filter, output, mode):
         j = 0
 
         while j < F // 2:
-            sum_even += filter[j*2] * input[i-j]
-            sum_odd += filter[j*2+1] * input[i-j]
+            sum_even += filter[j * 2] * input[i - j]
+            sum_odd += filter[j * 2 + 1] * input[i - j]
 
             j += 1
 
         output[o] += sum_even
-        output[o+1] += sum_odd
+        output[o + 1] += sum_odd
 
         i += 1
         o += 2
@@ -77,13 +77,16 @@ def downsampling_convolution(input, output, filter, mode, step):
                 k += 1
 
         elif mode is Modes.asymmetric:
-            raise NotImplementedError("asymmetric downsampling not implemented")
+            raise NotImplementedError(
+                "asymmetric downsampling not implemented")
         elif mode is Modes.reflect:
             raise NotImplementedError("reflect downsampling not implemented")
         elif mode is Modes.antireflect:
-            raise NotImplementedError("antireflect downsampling not implemented")
+            raise NotImplementedError(
+                "antireflect downsampling not implemented")
         elif mode is Modes.constant_edge:
-            raise NotImplementedError("constant_edge downsampling not implemented")
+            raise NotImplementedError(
+                "constant_edge downsampling not implemented")
         elif mode is Modes.smooth:
             raise NotImplementedError("smooth downsampling not implemented")
         elif mode is Modes.periodic:
@@ -134,13 +137,16 @@ def downsampling_convolution(input, output, filter, mode, step):
                     k += 1
 
         elif mode is Modes.asymmetric:
-            raise NotImplementedError("asymmetric downsampling not implemented")
+            raise NotImplementedError(
+                "asymmetric downsampling not implemented")
         elif mode is Modes.reflect:
             raise NotImplementedError("reflect downsampling not implemented")
         elif mode is Modes.antireflect:
-            raise NotImplementedError("antireflect downsampling not implemented")
+            raise NotImplementedError(
+                "antireflect downsampling not implemented")
         elif mode is Modes.constant_edge:
-            raise NotImplementedError("constant_edge downsampling not implemented")
+            raise NotImplementedError(
+                "constant_edge downsampling not implemented")
         elif mode is Modes.smooth:
             raise NotImplementedError("smooth downsampling not implemented")
         elif mode is Modes.periodic:
@@ -150,11 +156,9 @@ def downsampling_convolution(input, output, filter, mode, step):
         else:
             raise ValueError("Unknown mode")
 
-
         while j <= i:
             fsum += filter[j] * input[i - j]
             j += 1
-
 
         if mode is Modes.symmetric:
             while j < F:
@@ -173,13 +177,16 @@ def downsampling_convolution(input, output, filter, mode, step):
                     k += 1
 
         elif mode is Modes.asymmetric:
-            raise NotImplementedError("asymmetric downsampling not implemented")
+            raise NotImplementedError(
+                "asymmetric downsampling not implemented")
         elif mode is Modes.reflect:
             raise NotImplementedError("reflect downsampling not implemented")
         elif mode is Modes.antireflect:
-            raise NotImplementedError("antireflect downsampling not implemented")
+            raise NotImplementedError(
+                "antireflect downsampling not implemented")
         elif mode is Modes.constant_edge:
-            raise NotImplementedError("constant_edge downsampling not implemented")
+            raise NotImplementedError(
+                "constant_edge downsampling not implemented")
         elif mode is Modes.smooth:
             raise NotImplementedError("smooth downsampling not implemented")
         elif mode is Modes.periodic:
@@ -216,13 +223,16 @@ def downsampling_convolution(input, output, filter, mode, step):
                     k += 1
 
         elif mode is Modes.asymmetric:
-            raise NotImplementedError("asymmetric downsampling not implemented")
+            raise NotImplementedError(
+                "asymmetric downsampling not implemented")
         elif mode is Modes.reflect:
             raise NotImplementedError("reflect downsampling not implemented")
         elif mode is Modes.antireflect:
-            raise NotImplementedError("antireflect downsampling not implemented")
+            raise NotImplementedError(
+                "antireflect downsampling not implemented")
         elif mode is Modes.constant_edge:
-            raise NotImplementedError("constant_edge downsampling not implemented")
+            raise NotImplementedError(
+                "constant_edge downsampling not implemented")
         elif mode is Modes.smooth:
             raise NotImplementedError("smooth downsampling not implemented")
         elif mode is Modes.periodic:
@@ -231,7 +241,6 @@ def downsampling_convolution(input, output, filter, mode, step):
             j = i - N + 1
         else:
             raise ValueError("Unknown mode")
-
 
         while j < F:
             fsum += filter[j] * input[i - j]

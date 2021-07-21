@@ -1,6 +1,6 @@
 import numpy as np
 from numpy.testing import assert_array_almost_equal
-from pfb.utils import prox_21
+from pfb.prox.prox_21 import prox_21
 from pfb.operators import PSI, DaskPSI
 import pywt
 import pytest
@@ -25,8 +25,8 @@ def test_dask_psi_operator(nx, ny, nband, nlevels):
 
     # take subset and add freq axis
     x = image[None, 0:nx, 0:ny] * nu[:, None, None] ** (-0.7)
-    
-    # initialise serial operator 
+
+    # initialise serial operator
     psi = PSI(imsize=(nband, nx, ny), nlevels=nlevels)
 
     # decompose
@@ -59,7 +59,7 @@ def test_psi(nx, ny, nband, nlevels):
     # take subset and add freq axis
     x = image[None, 0:nx, 0:ny] * nu[:, None, None] ** (-0.7)
 
-    # initialise serial operator 
+    # initialise serial operator
     psi = PSI(imsize=(nband, nx, ny), nlevels=nlevels)
 
     # decompose
@@ -80,8 +80,8 @@ def test_prox(nx, ny, nband, nlevels):
 
     # take subset and add freq axis
     x = image[None, 0:nx, 0:ny] * nu[:, None, None] ** (-0.7)
-    
-    # initialise serial operator 
+
+    # initialise serial operator
     psi = PSI(imsize=(nband, nx, ny), nlevels=nlevels)
     nmax = psi.nmax
     nbasis = psi.nbasis

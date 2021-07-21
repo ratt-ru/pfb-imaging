@@ -1,25 +1,29 @@
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
-from pfb.utils import to4d
+from pfb.utils.misc import to4d
+
 
 def data_from_header(hdr, axis=3):
     npix = hdr['NAXIS' + str(axis)]
     refpix = hdr['CRPIX' + str(axis)]
-    delta = hdr['CDELT' + str(axis)] 
+    delta = hdr['CDELT' + str(axis)]
     ref_val = hdr['CRVAL' + str(axis)]
     return ref_val + np.arange(1 - refpix, 1 + npix - refpix) * delta, ref_val
+
 
 def load_fits(name, dtype=np.float32):
     data = fits.getdata(name)
     data = np.transpose(to4d(data)[:, :, ::-1], axes=(0, 1, 3, 2))
     return np.require(data, dtype=dtype, requirements='C')
 
+
 def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
     hdu = fits.PrimaryHDU(header=hdr)
     data = np.transpose(to4d(data), axes=(0, 1, 3, 2))[:, :, ::-1]
     hdu.data = np.require(data, dtype=dtype, requirements='F')
     hdu.writeto(name, overwrite=overwrite)
+
 
 def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
     """
@@ -30,7 +34,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
     """
 
     w = WCS(naxis=4)
-    w.wcs.ctype = ['RA---SIN','DEC--SIN','FREQ','STOKES']
+    w.wcs.ctype = ['RA---SIN', 'DEC--SIN', 'FREQ', 'STOKES']
     w.wcs.cdelt[0] = -cell_x
     w.wcs.cdelt[1] = cell_y
     w.wcs.cdelt[3] = 1
@@ -41,10 +45,10 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
         ref_freq = freq[0]
     else:
         ref_freq = freq
-    w.wcs.crval = [radec[0]*180.0/np.pi,radec[1]*180.0/np.pi, ref_freq, 1]
-    w.wcs.crpix = [1 + nx//2,1 + ny//2, 1, 1]
+    w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
+    w.wcs.crpix = [1 + nx//2, 1 + ny//2, 1, 1]
 
-    if freq.size > 1:
+    if np.size(freq) > 1:
         w.wcs.crval[2] = freq[0]
         df = freq[1]-freq[0]
         w.wcs.cdelt[2] = df
@@ -64,31 +68,40 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
 
     return header
 
+
 def compare_headers(hdr1, hdr2):
-    for key in hdr1.keys():
+    '''
+    utility function to ensure that WCS's are compatible
+    'NAXIS1', 'NAXIS2', 'NAXIS3', 'NAXIS4',
+    '''
+    keys = ['CTYPE1', 'CTYPE2', 'CTYPE3', 'CTYPE4',
+            'CDELT1', 'CDELT2', 'CDELT3', 'CDELT4',
+            'CRPIX1', 'CRPIX2', 'CRPIX3', 'CRPIX4',
+            'CUNIT1', 'CUNIT2', 'CUNIT3']
+    for key in keys:
         try:
             assert hdr1[key] == hdr2[key]
-        except:
-            raise ValueError("Headers do not match on key %s"%key)
+        except BaseException:
+            raise ValueError("Headers do not match on key %s. " % key, hdr1[key], hdr2[key])
+
 
 def add_beampars(hdr, GaussPar, GaussPars=None):
     """
     Add beam keywords to header.
     GaussPar - MFS beam pars
-    GaussPars - beam pars for cube 
+    GaussPars - beam pars for cube
     """
     hdr['BMAJ'] = GaussPar[0]
     hdr['BMIN'] = GaussPar[1]
-    hdr['PA'] = GaussPar[2]
+    hdr['BPA'] = GaussPar[2]
 
     if GaussPars is not None:
         for i in range(len(GaussPars)):
             hdr['BMAJ' + str(i)] = GaussPars[i][0]
             hdr['BMIN' + str(i)] = GaussPars[i][1]
             hdr['PA' + str(i)] = GaussPars[i][2]
-    
-    return hdr
 
+    return hdr
 
 
 def set_header_info(mhdr, ref_freq, freq_axis, args, beampars):

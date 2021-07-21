@@ -18,25 +18,23 @@ from pfb.wavelets.intrinsics import slice_axis, force_type_contiguity, not_optio
 
 
 BaseWavelet = namedtuple("BaseWavelet", (
-                                "support_width",
-                                "symmetry",
-                                "orthogonal",
-                                "biorthogonal",
-                                "compact_support",
-                                "family_name",
-                                "short_name"))
+    "support_width",
+    "symmetry",
+    "orthogonal",
+    "biorthogonal",
+    "compact_support",
+    "family_name",
+    "short_name"))
 
 
 DiscreteWavelet = namedtuple("DiscreteWavelet",
-                            BaseWavelet._fields + (
-                                "dec_hi",
-                                "dec_lo",
-                                "rec_hi",
-                                "rec_lo",
-                                "vanishing_moments_psi",
-                                "vanishing_moments_phi"))
-
-
+                             BaseWavelet._fields + (
+                                 "dec_hi",
+                                 "dec_lo",
+                                 "rec_hi",
+                                 "rec_lo",
+                                 "vanishing_moments_psi",
+                                 "vanishing_moments_phi"))
 
 
 @register_jitable
@@ -64,7 +62,6 @@ def dwt_max_level(data_length, filter_length):
         return 0
 
     return int(np.floor(np.log2(data_length / (filter_length - 1))))
-
 
 
 @register_jitable
@@ -114,7 +111,7 @@ def discrete_wavelet(wavelet):
             rec_hi = np.where(index % 2, -1, 1) * dec_lo
             dec_hi = np.where(index[::-1] % 2, -1, 1) * rec_lo
 
-            return DiscreteWavelet(support_width=2*order - 1,
+            return DiscreteWavelet(support_width=2 * order - 1,
                                    symmetry="asymmetric",
                                    orthogonal=1,
                                    biorthogonal=1,
@@ -194,7 +191,9 @@ def promote_axis(axis, ndim):
 @numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
 def dwt_axis(data, wavelet, mode, axis):
     def impl(data, wavelet, mode, axis):
-        coeff_len = dwt_coeff_length(data.shape[axis], len(wavelet.dec_hi), mode)
+        coeff_len = dwt_coeff_length(
+            data.shape[axis], len(
+                wavelet.dec_hi), mode)
         out_shape = tuple_setitem(data.shape, axis, coeff_len)
 
         if axis < 0 or axis >= data.ndim:
@@ -267,7 +266,7 @@ def idwt_axis(approx_coeffs, detail_coeffs,
             raise ValueError("approx_coeffs.ndim != detail_coeffs.ndim")
 
     def impl(approx_coeffs, detail_coeffs,
-            wavelet, mode, axis):
+             wavelet, mode, axis):
 
         if have_approx and have_detail:
             coeff_shape = approx_coeffs.shape
@@ -335,7 +334,6 @@ def idwt_axis(approx_coeffs, detail_coeffs,
                 upsampling_convolution_valid_sf(cd_row, wavelet.rec_hi,
                                                 out_row, mode)
 
-
             # Copy back output row if the output space was non-contiguous
             if not initial_out_row.flags.c_contiguous:
                 initial_out_row[:] = out_row
@@ -343,7 +341,6 @@ def idwt_axis(approx_coeffs, detail_coeffs,
         return output
 
     return impl
-
 
 
 @numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
@@ -388,9 +385,11 @@ def dwt(data, wavelet, mode="symmetric", axis=None):
 
     return impl
 
+
 @register_jitable
 def coeff_product(args, repeat=1):
-    # Adapted from https://docs.python.org/3/library/itertools.html#itertools.product
+    # Adapted from
+    # https://docs.python.org/3/library/itertools.html#itertools.product
     pools = List()
 
     for i in range(repeat):
@@ -405,6 +404,7 @@ def coeff_product(args, repeat=1):
         result = List([x + y for x in result for y in pool])
 
     return result
+
 
 @numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
 def idwt(coeffs, wavelet, mode='symmetric', axis=None):
@@ -443,7 +443,6 @@ def idwt(coeffs, wavelet, mode='symmetric', axis=None):
         return coeffs['']
 
     return impl
-
 
 
 @numba.generated_jit(nopython=True, nogil=True, cache=True)
@@ -565,7 +564,7 @@ def waverecn(ca, coeffs, wavelet, mode='symmetric', axis=None):
         return ca
 
     return impl
-    
+
 # @numba.njit(nogil=True, fastmath=True, cache=True)
 # def ravel_coeffs(a_coeffs, coeffs):
 #     ndim = a_coeffs.ndim
@@ -580,7 +579,7 @@ def waverecn(ca, coeffs, wavelet, mode='symmetric', axis=None):
 #         n_coeffs += 1
 #         for k, v in d.items():
 #             arr_size += v.size
-    
+
 #     coeff_arr = np.empty((arr_size, ), dtype=a_coeffs.dtype)
 
 #     a_slice = slice(a_size)
@@ -600,7 +599,7 @@ def waverecn(ca, coeffs, wavelet, mode='symmetric', axis=None):
 #         # new dictionaries for detail coefficient slices and shapes
 #         # coeff_slices.append(Dict())
 #         # coeff_shapes.append(Dict())
-        
+
 #         # sort to make sure key order is consistent across Python versions
 #         keys = sorted(coeff_dict.keys())
 #         for i, key in enumerate(keys):

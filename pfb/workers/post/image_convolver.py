@@ -7,6 +7,7 @@ import numpy as np
 from astropy.io import fits
 from pfb.utils import load_fits, save_fits, convolve2gaussres, data_from_header
 
+
 def create_parser():
     p = argparse.ArgumentParser(description='Simple spectral index fitting'
                                             'tool.',
@@ -36,6 +37,7 @@ def create_parser():
                    help="Padding fraction for FFTs (half on either side)")
     return p
 
+
 def main(args):
     # read coords from fits file
     hdr = fits.getheader(args.image)
@@ -54,7 +56,7 @@ def main(args):
     nchan = freqs.size
     gausspari = ()
     if freqs.size > 1:
-        for i in range(1,nchan+1):
+        for i in range(1, nchan+1):
             key = 'BMAJ' + str(i)
             if key in hdr.keys():
                 emaj = hdr[key]
@@ -66,12 +68,12 @@ def main(args):
             emaj = hdr['BMAJ']
             emin = hdr['BMIN']
             pa = hdr['BPA']
-            # using key of 1 for consistency with fits standard 
-            gausspari = ((emaj, emin, pa),)  
-    
+            # using key of 1 for consistency with fits standard
+            gausspari = ((emaj, emin, pa),)
+
     if len(gausspari) == 0 and args.psf_pars is None:
         raise ValueError("No psf parameters in fits file and none passed in.")
-    
+
     if len(gausspari) == 0:
         print("No psf parameters in fits file. Convolving model to resolution specified by psf-pars.")
         gaussparf = tuple(args.psf_pars)
@@ -85,7 +87,7 @@ def main(args):
         e = (gaussparf[0] + gaussparf[1])/2.0
         gaussparf[0] = e
         gaussparf[1] = e
-    
+
     print("Using emaj = %3.2e, emin = %3.2e, PA = %3.2e \n" % gaussparf)
 
     # update header
@@ -100,12 +102,13 @@ def main(args):
         hdr['BPA'] = gaussparf[2]
 
     # coodinate grid
-    xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij') 
+    xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
 
     # convolve image
     imagei = load_fits(args.image, dtype=np.float32).squeeze()
     print(imagei.shape)
-    image, gausskern = convolve2gaussres(imagei, xx, yy, gaussparf, args.ncpu, gausspari, args.padding_frac)
+    image, gausskern = convolve2gaussres(
+        imagei, xx, yy, gaussparf, args.ncpu, gausspari, args.padding_frac)
 
     # load beam and correct
     if args.beam_model is not None:
@@ -113,16 +116,19 @@ def main(args):
         l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
         l_coord_beam -= ref_lb
         if not np.array_equal(l_coord_beam, l_coord):
-            raise ValueError("l coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
+            raise ValueError(
+                "l coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
 
         m_coord_beam, ref_mb = data_from_header(bhdr, axis=2)
         m_coord_beam -= ref_mb
         if not np.array_equal(m_coord_beam, m_coord):
-            raise ValueError("m coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-        
+            raise ValueError(
+                "m coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
+
         freqs_beam, _ = data_from_header(bhdr, axis=freq_axis)
         if not np.array_equal(freqs, freqs_beam):
-            raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
+            raise ValueError(
+                "Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
 
         beam_image = load_fits(args.beam_model, dtype=np.float32).squeeze()
 
@@ -130,7 +136,7 @@ def main(args):
 
     # save next to model if no outfile is provided
     if args.output_filename is None:
-        # strip .fits from model filename 
+        # strip .fits from model filename
         tmp = args.model[::-1]
         idx = tmp.find('.')
         outfile = args.model[0:-idx]

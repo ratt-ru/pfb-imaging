@@ -1,50 +1,73 @@
-general:
-  _description: Top level arguments
-  deconv-mode:
-    type: str
-    help: Deconvolution mode to use
-    default: sara
-  write-model:
-    type: bool
-    help: Determines if model visibilities should be written
-    default: True
-  interp-model:
-    type: bool
-    help: Determines if the model image should be interpolated along frequency axis
-    default: False
-    spectral:
-      poly-order:
-        type: int
-        help: Order of spectral polynomial to fit
-        default: 3
-      poly-type:
-        type: str
-        help: Which kind of spectral polynomial to fit
-        default: AO
-  mop-flux:
-    type: bool
-    help: Determines if the flux gets mopped at the end of the deconvolution
-    default: True
-  restore:
-    type: bool
-    help: Determines if the model should be restored
-    default: True
-  output-filename:
-    type: str
-    help: The base output filename
-    default: pfb
-  nthreads:
+# This was an attempt at getting omegaconf in but that will have to happen at a later stage
+# # load in the default config file
+    # import os, pfb, sys
+    # conf_dir = os.path.dirname(pfb.__file__)
+    # base_conf = OmegaConf.load(conf_dir + '/parser/default_config.yaml')
+
+    # # print help if no cli arguments or if --help
+    # if len(sys.argv)==1 or '--help' in sys.argv:
+    #     print(OmegaConf.to_yaml(base_conf))
+    # else:
+    #     # now get cli args
+    #     cli_conf = OmegaConf.from_cli()
+
+    #     # check if config file in cli conf
+    #     if not OmegaConf.is_none(cli_conf, 'config_file'):
+    #         conf = OmegaConf.load(cli_conf.config_file)
+    #     else:
+    #         conf = OmegaConf.create()
+
+    #     # merge all configs
+    #     conf = OmegaConf.merge(base_conf, conf, cli_conf)
+
+    #     print(OmegaConf.to_yaml(conf))
+
+    # save config to yaml
+    
+
+
+    # quit()
+
+deconv-mode:
+  type: str
+  help: Deconvolution mode to use
+  default: sara
+write-model:
+  type: bool
+  help: Determines if model visibilities should be written
+  default: True
+interp-model:
+  type: bool
+  help: Determines if the model image should be interpolated along frequency axis
+  default: False
+    order:
     type: int
-    help: Number of threads available (0 -> use all)
-    default: 0
-  report-freq:
-    type: int
-    help: How often to save images
-    default: 1
-  real-type:
-    type: int
-    help: numeric precision (f4|f8)
-    default: f4
+    help: Order of spectral polynomial to fit
+      default: 3
+mop-flux:
+  type: bool
+  help: Determines if the flux gets mopped at the end of the deconvolution
+  default: True
+restore:
+  type: bool
+  help: Determines if the model should be restored
+  default: True
+output-filename:
+  type: str
+  help: The base output filename
+  default: pfb
+nthreads:
+  type: int
+  help: Number of threads available (0 -> use all)
+  default: 0
+report-freq:
+  type: int
+  help: How often to save images
+  default: 1
+real-type:
+  type: int
+  help: numeric precision (f4|f8)
+  default: f4
     
 data:
   _description: data selection
@@ -149,7 +172,7 @@ sara:
     iters:
       type: int
       help: Which minor cycle iterations to do l21 reweighting
-      default: None:
+      default: None
     alpha:
       scale:
         type: float

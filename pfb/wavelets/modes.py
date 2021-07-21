@@ -6,6 +6,7 @@ import numba.core.types as nbtypes
 
 from pfb.wavelets.common import NUMBA_SEQUENCE_TYPES
 
+
 class Modes(Enum):
     zeropad = 0
     symmetric = 1
@@ -71,7 +72,8 @@ def promote_mode(mode, naxis):
 
     if isinstance(mode, nbtypes.misc.UnicodeType):
         def impl(mode, naxis):
-            return numba.typed.List([mode_str_to_enum(mode) for _ in range(naxis)])
+            return numba.typed.List([mode_str_to_enum(mode)
+                                     for _ in range(naxis)])
 
     elif (isinstance(mode, NUMBA_SEQUENCE_TYPES) and
             isinstance(mode.dtype, nbtypes.misc.UnicodeType)):
