@@ -15,12 +15,19 @@ log = pyscilog.get_logger('DIRTY')
               help="Column to write Mueller term to.")
 @click.option('-gt', '--gain-table', required=True,
               help="QuartiCal gain table at the same resolution as MS")
+@click.option('-acol', '--acol',
+              help='Will apply gains to this column if supplied')
+@click.option('-c2', '--compareto',
+              help="Will compare corrupted vis to this column if provided. "
+              "Mainly useful for testing.")
+@click.option('-o', '--output-filename', type=str, required=True,
+              help="Basename of output.")
 @click.option('-ha', '--host-address',
               help='Address where the distributed client lives. '
               'Will use a local cluster if no address is provided')
-@click.option('-nw', '--nworkers', type=int,
+@click.option('-nw', '--nworkers', type=int, default=1,
               help='Number of workers for the client.')
-@click.option('-ntpw', '--nthreads-per-worker', type=int,
+@click.option('-ntpw', '--nthreads-per-worker', type=int, default=1,
               help='Number of dask threads per worker.')
 @click.option('-nvt', '--nvthreads', type=int,
               help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
@@ -41,8 +48,6 @@ def jones2col(**kw):
         args.ms = ms
     except:
         raise ValueError(f"There must be exactly one MS at {args.ms}")
-    if args.nworkers is None:
-        args.nworkers = args.nband
 
     OmegaConf.set_struct(args, True)
 
@@ -64,14 +69,16 @@ def _jones2col(**kw):
         args.ms = [args.ms]
     OmegaConf.set_struct(args, True)
 
+    import numpy as np
     from daskms.experimental.zarr import xds_from_zarr
-    from daskms import xds_from_ms
+    from daskms import xds_from_ms, xds_to_table
     import dask.array as da
+    import dask
     from africanus.calibration.utils import chunkify_rows
     from africanus.calibration.utils.dask import corrupt_vis
 
     # get net gains
-    G = xds_from_zarr(args.gain_table + '::NET')
+    G = xds_from_zarr(args.gain_table + '::G')
 
     # chunking info
     t_chunks = G[0].t_chunk.data
@@ -81,8 +88,8 @@ def _jones2col(**kw):
         utpc = t_chunks[0]
     else:
         utpc = t_chunks[0]
-    times = xds_from_ms(args.ms, columns=['TIME'])[0].get('TIME').data.compute()
-    row_chunks, tbin_idx, tbin_counts = chunkify_rows(times, utimes_per_chunk=utpc)
+    times = xds_from_ms(args.ms[0], columns=['TIME'])[0].get('TIME').data.compute()
+    row_chunks, tbin_idx, tbin_counts = chunkify_rows(times, utimes_per_chunk=utpc, daskify_idx=True)
 
     f_chunks = G[0].f_chunk.data
     if len(f_chunks) > 1:
@@ -90,11 +97,18 @@ def _jones2col(**kw):
         assert (f_chunks == f_chunks[0]).all()
         chan_chunks = f_chunks[0]
     else:
-        chan_chunks = f_chunks[0]
+        if f_chunks[0]:
+            chan_chunks = f_chunks[0]
+        else:
+            chan_chunks = -1
+
+    columns = ('DATA', 'FLAG', 'FLAG_ROW', 'ANTENNA1', 'ANTENNA2')
+    if args.acol is not None:
+        columns += (args.acol,)
 
     # open MS
-    xds = xds_from_ms(args.ms, chunks={'row': row_chunks, 'chan': chan_chunks}
-                      columns=('FLAG', 'ANTENNA1', 'ANTENNA2'),
+    xds = xds_from_ms(args.ms[0], chunks={'row': row_chunks, 'chan': chan_chunks},
+                      columns=columns,
                       group_cols=('FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'))
 
     # Current hack probably only works for single field and DDID
@@ -105,19 +119,53 @@ def _jones2col(**kw):
                             "match those in MS")
 
     # assuming scans are aligned
+    out_data = []
     for g, ds in zip(G, xds):
         try:
             assert g.SCAN_NUMBER == ds.SCAN_NUMBER
         except Exception as e:
             raise ValueError("Scans not aligned")
 
+        nrow = ds.dims['row']
+        nchan = ds.dims['chan']
+        ncorr = ds.dims['corr']
+
         # need to swap axes for africanus
-        gain = da.swapaxes(g.gains.data, (1, 2))
+        jones = da.swapaxes(g.gains.data, 1, 2)
+        flag = ds.FLAG.data
+        frow = ds.FLAG_ROW.data
+        ant1 = ds.ANTENNA1.data
+        ant2 = ds.ANTENNA2.data
+
+        frow = (frow | (ant1 == ant2))
+        flag = (flag[:, :, 0] | flag[:, :, -1])
+        flag = da.logical_or(flag, frow[:, None])
+
+        if args.acol is not None:
+            acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, ncorr)
+        else:
+            acol = da.ones((nrow, nchan, 1, ncorr),
+                           chunks=(row_chunks, chan_chunks, 1, -1),
+                           dtype=jones.dtype)
+
+        cvis = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2, jones, acol)
+
+        # compare where unflagged
+        if args.compareto is not None:
+            flag = flag.compute()
+            vis = ds.get(args.compareto).values[~flag]
+            print("Max abs difference = ", np.abs(cvis.compute()[~flag] - vis).max())
+            quit()
+
+        out_ds = ds.assign(**{args.mueller_column: (("row", "chan", "corr"), cvis)})
+        out_data.append(out_ds)
+
+    writes = xds_to_table(out_data, args.ms[0], columns=[args.mueller_column])
+    dask.compute(writes)
 
 
-        flag = ds.get('FLAG')
-        unitvis = da.ones(flag.shape, chunks=flag.chunks, dtype=gain.dtype)
 
-        cvis = corrupt_vis()
+
+
 
 

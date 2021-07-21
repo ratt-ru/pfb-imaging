@@ -45,7 +45,7 @@ log = pyscilog.get_logger('CLEAN')
               help='Number of workers for the client.')
 @click.option('-ntpw', '--nthreads-per-worker', type=int,
               help='Number of dask threads per worker.')
-@click.option('-ngt', '--ngridder-threads', type=int,
+@click.option('-nvt', '--nvthreads', type=int,
               help="Total number of threads to use per worker")
 @click.option('-mem', '--mem-limit', type=float,
               help="Memory limit in GB. Default uses all available memory")
@@ -87,9 +87,9 @@ def clean(**kw):
     distributed case.
 
     if LocalCluster:
-        ngridder-threads = nthreads//(nworkers*nthreads_per_worker)
+        nvthreads = nthreads//(nworkers*nthreads_per_worker)
     else:
-        ngridder-threads = nthreads//nthreads-per-worker
+        nvthreads = nthreads//nthreads-per-worker
     '''
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
@@ -109,7 +109,7 @@ def clean(**kw):
         for key in args.keys():
             print('     %25s = %s' % (key, args[key]), file=log)
 
-        return _clean(**kw)
+        return _clean(**args)
 
 def _clean(**kw):
     args = OmegaConf.create(kw)
@@ -212,12 +212,14 @@ def _clean(**kw):
 
         if args.host_address is None:
             # nworker bands on single node
-            row_chunk = plan_row_chunk(mem_limit/nworkers, band_size, nrow,
-                                       memory_per_row, nthreads_per_worker)
+            row_chunk = plan_row_chunk(args.mem_limit/args.nworkers,
+                                       band_size, nrow, memory_per_row,
+                                       args.nthreads_per_worker)
         else:
             # single band per node
-            row_chunk = plan_row_chunk(mem_limit, band_size, nrow,
-                                       memory_per_row, nthreads_per_worker)
+            row_chunk = plan_row_chunk(args.mem_limit, band_size, nrow,
+                                       memory_per_row,
+                                       args.nthreads_per_worker)
 
         print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
               (nrow, row_chunk, int(np.ceil(nrow / row_chunk))), file=log)
@@ -236,8 +238,8 @@ def _clean(**kw):
                                   freq_bin_idx,
                                   freq_bin_counts,
                                   cell_rad,
-                                  weights=xds.WEIGHT.data,
-                                  nthreads=ngridder_threads,
+                                  weights=xds.WEIGHT.data.astype(args.output_type),
+                                  nthreads=args.nvthreads,
                                   epsilon=args.epsilon,
                                   do_wstacking=args.wstack,
                                   double_accum=args.double_accum)
@@ -270,7 +272,7 @@ def _clean(**kw):
             convolvedim = hessian(model,
                                   psfhat,
                                   padding,
-                                  ngridder_threads,
+                                  nvthreads,
                                   unpad_x,
                                   unpad_y,
                                   lastsize)

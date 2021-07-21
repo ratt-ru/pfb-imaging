@@ -216,6 +216,7 @@ def _forward(**kw):
 
     # if weight table is provided we use the vis space Hessian approximation
     if args.weight_table is not None:
+        print("Solving for update using vis space approximation", file=log)
         normfact = wsum
         from pfb.utils.misc import plan_row_chunk
         from daskms.experimental.zarr import xds_from_zarr
@@ -282,7 +283,7 @@ def _forward(**kw):
         from pfb.opt.pcg import pcg_wgt
 
         model = pcg_wgt(xds.UVW.data,
-                        xds.WEIGHT.data,
+                        xds.WEIGHT.data.astype(args.output_type),
                         residual,
                         x0,
                         beam_image,
@@ -304,6 +305,7 @@ def _forward(**kw):
                         args.backtrack).compute()
 
     else:  # we use the image space approximation
+        print("Solving for update using image space approximation", file=log)
         normfact = 1.0
         from pfb.operators.psf import hessian
         from ducc0.fft import r2c

@@ -113,7 +113,7 @@ def psf(**kw):
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
     from glob import glob
-    args.ms = glob(args.ms)
+    ms = glob(args.ms)
     try:
         assert len(ms) > 0
         args.ms = ms
@@ -134,7 +134,7 @@ def psf(**kw):
         for key in args.keys():
             print('     %25s = %s' % (key, args[key]), file=log)
 
-        return _psf(**kw)
+        return _psf(**args)
 
 def _psf(**kw):
     args = OmegaConf.create(kw)
@@ -396,7 +396,7 @@ def _psf(**kw):
                             ds.FIELD_ID, chunks=args.row_out_chunk)),
                 'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data,
                             ds.DATA_DESC_ID, chunks=args.row_out_chunk)),
-                'WEIGHT':(('row', 'chan'), weights.rechunk({0:args.row_out_chunk})),
+                'WEIGHT':(('row', 'chan'), weights.rechunk({0:args.row_out_chunk})),  # why no 'f4'?
                 'UVW':(('row', 'uvw'), uvw.rechunk({0:args.row_out_chunk}))
             }
 
