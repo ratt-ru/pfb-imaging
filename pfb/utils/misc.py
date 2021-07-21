@@ -1,6 +1,7 @@
 import sys
 import numpy as np
 import numexpr as ne
+from numba import jit
 import dask.array as da
 from ducc0.fft import r2c, c2r
 iFs = np.fft.ifftshift
