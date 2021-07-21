@@ -12,7 +12,7 @@ def estimate_data_size(nant, nhr, nsec, nchan, ncorr, nbytes):
     Estimates size of data in GB where:
 
     nant    - number of antennas
-    nhr     - lebgth of observation in hours
+    nhr     - length of observation in hours
     nsec    - integration time in seconds
     nchan   - number of channels
     ncorr   - number of correlations
