@@ -17,6 +17,7 @@ requirements = [
                 'omegaconf',
                 'bokeh',
                 'graphviz',
+                'nifty7',
 
                 "codex-africanus[complete]"
                 "@git+https://github.com/ska-sa/codex-africanus.git"

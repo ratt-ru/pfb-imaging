@@ -34,7 +34,7 @@ def kron_matvec(A, b):
         X = np.reshape(x, (Gd, NGd))
         Z = A[d].dot(X).T
         x = Z.ravel()
-    return x
+    return x.reshape(b.shape)
 
 @jit(nopython=True, fastmath=True, parallel=False, cache=True, nogil=True)
 def kron_matvec2(A, b):

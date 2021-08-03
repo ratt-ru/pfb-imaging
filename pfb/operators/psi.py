@@ -23,12 +23,6 @@ class PSI(object):
                 Supports any subset of
                 ['self', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8']
 
-        Returns
-        =======
-        Psi - list of operators performing coeff to image where
-            each entry corresponds to one of the basis elements.
-        Psi_t - list of operators performing image to coeff where
-                each entry corresponds to one of the basis elements.
         """
         self.real_type = np.float64
         if imsize is None:
