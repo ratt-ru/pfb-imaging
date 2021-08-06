@@ -13,7 +13,7 @@ log = pyscilog.get_logger('TRANSCOLS')
               help='Path to measurement set containing cols to transfer.')
 @click.option('-ms2', '--ms2', required=True,
               help='Path to target measurement.')
-@click.option('-cols', '--columns', required=True, type=list,
+@click.option('-cols', '--columns', required=True, type=str,
               help='Comma seperated list of columns to transfer')
 @click.option('-rc', '--row-chunk', type=int, default=10000)
 @click.option('-cc', '--chan-chunk', type=int, default=32)
@@ -79,20 +79,22 @@ def _transcols(**kw):
     from daskms import xds_from_ms, xds_to_table
     import dask
 
+    columns = tuple(args.columns.split(','))
+
     xds1 = xds_from_ms(args.ms1[0],
                        chunks={'row': args.row_chunk,
-                               'chan':, args.chan_chunk},
-                       columns=tuple(args.columns))
+                               'chan': args.chan_chunk},
+                       columns=columns)
     xds2 = xds_from_ms(args.ms2[0],
                        chunks={'row': args.row_chunk,
-                               'chan':, args.chan_chunk})
+                               'chan': args.chan_chunk})
 
     out_data = []
     for ds1, ds2 in zip(xds1, xds2):
-        for column in args.columns:
-            data = ds1.get(column)
+        for column in columns:
+            data = ds1.get(column).data
             out_ds = ds2.assign(**{column: (("row", "chan", "corr"), data)})
             out_data.append(out_ds)
 
-    writes = xds_to_table(out_data, args.ms[0], columns=[args.mueller_column])
+    writes = xds_to_table(out_data, args.ms2[0], columns=columns)
     dask.compute(writes)
