@@ -89,12 +89,13 @@ def _transcols(**kw):
                        chunks={'row': args.row_chunk,
                                'chan': args.chan_chunk})
 
-    out_data = []
+    writes = []
     for ds1, ds2 in zip(xds1, xds2):
+        out_data = []
         for column in columns:
             data = ds1.get(column).data
             out_ds = ds2.assign(**{column: (("row", "chan", "corr"), data)})
             out_data.append(out_ds)
 
-    writes = xds_to_table(out_data, args.ms2[0], columns=columns)
+        writes.append(xds_to_table(out_data, args.ms2[0], columns=columns))
     dask.compute(writes)
