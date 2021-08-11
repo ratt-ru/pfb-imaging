@@ -56,77 +56,78 @@ def _plot1gc(**kw):
     import matplotlib.pyplot as plt
     from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-    G = xds_from_zarr(args.gains)
+    Gs = xds_from_zarr(args.gains)
 
     ncorr = 2
-    for c in range(ncorr):
-        fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
-        for i, ax in enumerate(axs.ravel()):
-            if i < 58:
-                g = G.gains.values[:, :, i, 0, c]
+    for s, G in enumerate(Gs):
+        for c in range(ncorr):
+            fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
+            for i, ax in enumerate(axs.ravel()):
+                if i < 58:
+                    g = G.gains.values[:, :, i, 0, c]
 
-                im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
-                ax.set_title(f"Antenna: {i}")
-                ax.axis('off')
+                    im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
+                    ax.set_title(f"Antenna: {i}")
+                    ax.axis('off')
 
-                divider = make_axes_locatable(ax)
-                cax = divider.append_axes("bottom", size="10%", pad=0.01)
-                cb = fig.colorbar(im, cax=cax, orientation="horizontal")
-                cb.outline.set_visible(False)
-                cb.ax.tick_params(length=0.1, width=0.1, labelsize=0.1, pad=0.1)
-            else:
-                ax.axis('off')
+                    divider = make_axes_locatable(ax)
+                    cax = divider.append_axes("bottom", size="10%", pad=0.01)
+                    cb = fig.colorbar(im, cax=cax, orientation="horizontal")
+                    cb.outline.set_visible(False)
+                    cb.ax.tick_params(length=0.1, width=0.1, labelsize=0.1, pad=0.1)
+                else:
+                    ax.axis('off')
 
-        fig.tight_layout()
+            fig.tight_layout()
 
-        plt.savefig(f"/home/landman/Data/MeerKAT/ESO137/subsets/mad_corr{c}_abs.png",
-                    dpi=500, bbox_inches='tight')
+            plt.savefig(args.output_filename + f"_corr{c}_scan{s}_abs.png",
+                        dpi=500, bbox_inches='tight')
 
-        fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
-        gref = G.gains.values[:, :, 57, 0, c]
-        for i, ax in enumerate(axs.ravel()):
-            if i < 58:
-                g = G.gains.values[:, :, i, 0, c] * gref.conj()
+            fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
+            gref = G.gains.values[:, :, 57, 0, c]
+            for i, ax in enumerate(axs.ravel()):
+                if i < 58:
+                    g = G.gains.values[:, :, i, 0, c] * gref.conj()
 
-                im = ax.imshow(np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1),
-                            cmap='inferno', interpolation=None)
-                ax.set_title(f"Antenna: {i}")
-                ax.axis('off')
+                    im = ax.imshow(np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1),
+                                cmap='inferno', interpolation=None)
+                    ax.set_title(f"Antenna: {i}")
+                    ax.axis('off')
 
-                divider = make_axes_locatable(ax)
-                cax = divider.append_axes("bottom", size="10%", pad=0.01)
-                cb = fig.colorbar(im, cax=cax, orientation="horizontal")
-                cb.outline.set_visible(False)
-                cb.ax.tick_params(length=0.5, width=0.5, labelsize=0.5, pad=0.5)
-            else:
-                ax.axis('off')
+                    divider = make_axes_locatable(ax)
+                    cax = divider.append_axes("bottom", size="10%", pad=0.01)
+                    cb = fig.colorbar(im, cax=cax, orientation="horizontal")
+                    cb.outline.set_visible(False)
+                    cb.ax.tick_params(length=0.5, width=0.5, labelsize=0.5, pad=0.5)
+                else:
+                    ax.axis('off')
 
-        fig.tight_layout()
+            fig.tight_layout()
 
-        plt.savefig(f"/home/landman/Data/MeerKAT/ESO137/subsets/mad_corr{c}_phase.png",
-                    dpi=500, bbox_inches='tight')
+            plt.savefig(args.output_filename + f"_corr{c}_scan{s}_phase.png",
+                        dpi=500, bbox_inches='tight')
 
-        fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
-        for i, ax in enumerate(axs.ravel()):
-            if i < 58:
-                g = G.jhj.values[:, :, i, 0, c]
+            fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
+            for i, ax in enumerate(axs.ravel()):
+                if i < 58:
+                    g = G.jhj.values[:, :, i, 0, c]
 
-                im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
-                ax.set_title(f"Antenna: {i}")
-                ax.axis('off')
+                    im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
+                    ax.set_title(f"Antenna: {i}")
+                    ax.axis('off')
 
-                divider = make_axes_locatable(ax)
-                cax = divider.append_axes("bottom", size="10%", pad=0.01)
-                cb = fig.colorbar(im, cax=cax, orientation="horizontal")
-                cb.outline.set_visible(False)
-                cb.ax.tick_params(length=0.5, width=0.5, labelsize=0.5, pad=0.5)
-            else:
-                ax.axis('off')
+                    divider = make_axes_locatable(ax)
+                    cax = divider.append_axes("bottom", size="10%", pad=0.01)
+                    cb = fig.colorbar(im, cax=cax, orientation="horizontal")
+                    cb.outline.set_visible(False)
+                    cb.ax.tick_params(length=0.5, width=0.5, labelsize=0.5, pad=0.5)
+                else:
+                    ax.axis('off')
 
-        fig.tight_layout()
+            fig.tight_layout()
 
-        plt.savefig(f"/home/landman/Data/MeerKAT/ESO137/subsets/mad_corr{c}_jhj.png",
-                    dpi=500, bbox_inches='tight')
+            plt.savefig(args.output_filename + f"_corr{c}_scan{s}_jhj.png",
+                        dpi=500, bbox_inches='tight')
 
 if __name__=='__main__':
     main()
