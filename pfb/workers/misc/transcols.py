@@ -34,7 +34,7 @@ log = pyscilog.get_logger('TRANSCOLS')
               help="Total available threads. Default uses all available threads")
 def transcols(**kw):
     '''
-    Write product of diagonal Jones matrices to 'Mueller' column
+    Transfer columns from one ms to the other
     '''
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
