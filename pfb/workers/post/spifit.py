@@ -294,11 +294,28 @@ def _spifit(**kw):
         if not args.dont_convolve:
             print("Convolving model %i"%i, file=log)
             # convolve model to desired resolution
-            model, gausskern = convolve2gaussres(model, xx, yy, gaussparf,
-                                                 args.nthreads, None,
-                                                 args.padding_frac)
+            # get initial resolution of model
+            gausspari = ()
+            for b in range(nband):
+                key = 'BMAJ' + str(b + freq_idx0)
+                if key in mhdr.keys():
+                    emaj = mhdr[key]
+                    emin = mhdr[key]
+                    pa = mhdr[key]
+                    gausspari += ((emaj, emin, pa),)
+                elif 'BMAJ' in mhdr.keys():
+                    emaj = mhdr['BMAJ']
+                    emin = mhdr['BMIN']
+                    pa = mhdr['BPA']
+                    gausspari += ((emaj, emin, pa),)
+                else:
+                    gausspari = None
+                    break
 
-        image_dict[i]['model'] = model
+            model, gausskern = convolve2gaussres(model, xx, yy, gaussparf,
+                                                 args.nthreads, gausspari,
+                                                 args.padding_frac,
+                                                 norm_kernel=False if gausspari is None else True)
 
         # add in residuals and set threshold
         if args.residual is not None:
@@ -353,7 +370,7 @@ def _spifit(**kw):
                 print("Convolved residuals added to convolved model %i"%i,
                       file=log)
 
-
+            image_dict[i]['model'] = model
             image_dict[i]['resid'] = resid
 
         else:
