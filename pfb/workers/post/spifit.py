@@ -370,11 +370,12 @@ def _spifit(**kw):
                 print("Convolved residuals added to convolved model %i"%i,
                       file=log)
 
-            image_dict[i]['model'] = model
             image_dict[i]['resid'] = resid
 
         else:
             image_dict[i]['resid'] = None
+
+        image_dict[i]['model'] = model
 
     # concatenate images along frequency here
     freqs = []
