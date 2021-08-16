@@ -58,7 +58,7 @@ def _plot1gc(**kw):
 
     Gs = xds_from_zarr(args.gains)
 
-    ncorr = 2
+    ncorr = 1
     for s, G in enumerate(Gs):
         for c in range(ncorr):
             fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
