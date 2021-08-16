@@ -31,7 +31,7 @@ log = pyscilog.get_logger('SPIFIT')
               help="Per bands weights to use during the fit")
 @click.option('-pb-min', '--pb-min', type=float, default=0.15,
               help="Set image to zero where pb falls below this value")
-@click.option('-products', '--products', default='aeikIcmrb', type=str,
+@click.option('-products', '--products', default='aeikIcmbr', type=str,
               help="Outputs to write. Letter correspond to: \n"
               "a - alpha map \n"
               "e - alpha error map \n"
@@ -41,7 +41,8 @@ log = pyscilog.get_logger('SPIFIT')
               "c - restoring beam used for convolution \n"
               "m - convolved model \n"
               "r - convolved residual \n"
-              "b - average power beam \n"
+              "b - average primary beam image \n"
+              "d - difference image \n"
               "Default is to write all of them")
 @click.option('-pf', "--padding-frac", default=0.5, type=float,
               show_default=True, help="Padding factor for FFT's.")
@@ -540,5 +541,18 @@ def _spifit(**kw):
         name = args.output_filename + '.I0_err.fits'
         save_fits(name, i0_err_map, mhdr, dtype=args.out_dtype)
         print("Wrote I0 error map to %s" % name, file=log)
+
+    if 'd' in args.products:
+
+        Irec_cube = i0map[None, :, :] * \
+            (freqs[:, None, None]/ref_freq)**alphamap[None, :, :]
+        diff = model - beam_image * Irec_cube
+        diff_image = np.zeros(model.shape, dtype=model.dtype)
+        diff_image[...] = np.nan
+        diff_image[:, maskindices[:, 0], maskindices[:, 1]] = diff[:, maskindices[:, 0], maskindices[:, 1]]
+        name = args.output_filename + '.diff.fits'
+        save_fits(name, diff_image, hdr, dtype=args.out_dtype)
+        print("Wrote diff map to %s" % name, file=log)
+
 
     print("All done here", file=log)
