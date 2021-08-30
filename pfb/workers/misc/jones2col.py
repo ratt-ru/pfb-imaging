@@ -5,7 +5,7 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('DIRTY')
+log = pyscilog.get_logger('J2COL')
 
 
 @cli.command()
@@ -89,7 +89,11 @@ def _jones2col(**kw):
     else:
         utpc = t_chunks[0]
     times = xds_from_ms(args.ms[0], columns=['TIME'])[0].get('TIME').data.compute()
-    row_chunks, tbin_idx, tbin_counts = chunkify_rows(times, utimes_per_chunk=utpc, daskify_idx=True)
+    row_chunks, tbin_idx, tbin_counts = chunkify_rows(
+                                        times,
+                                        utimes_per_chunk=utpc)
+    tbin_idx = da.from_array(tbin_idx, chunks=1)
+    tbin_counts = da.from_array(tbin_counts, chunks=1)
 
     f_chunks = G[0].f_chunk.data
     if len(f_chunks) > 1:
