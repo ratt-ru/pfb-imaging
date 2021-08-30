@@ -31,7 +31,7 @@ log = pyscilog.get_logger('SPIFIT')
               help="Per bands weights to use during the fit")
 @click.option('-pb-min', '--pb-min', type=float, default=0.15,
               help="Set image to zero where pb falls below this value")
-@click.option('-products', '--products', default='aeikIcmbr', type=str,
+@click.option('-products', '--products', default='aeikIcmrbd', type=str,
               help="Outputs to write. Letter correspond to: \n"
               "a - alpha map \n"
               "e - alpha error map \n"
@@ -543,7 +543,6 @@ def _spifit(**kw):
         print("Wrote I0 error map to %s" % name, file=log)
 
     if 'd' in args.products:
-
         Irec_cube = i0map[None, :, :] * \
             (freqs[:, None, None]/ref_freq)**alphamap[None, :, :]
         diff = model - beam_image * Irec_cube

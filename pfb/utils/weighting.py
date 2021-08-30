@@ -203,7 +203,7 @@ def robust_reweight_real(residuals, invcov, v=None):
     """
     # elements of Mahalanobis distance (Delta^2_i's)
     N, D = residuals.shape
-    mdist = np.einsum('ab,bc,cd->ad', residuals, invcov, residuals)
+    mdist = np.einsum('ab,bc->ac', residuals, invcov * residuals)
 
     # func to solve for degrees of freedom parameter
     from scipy.special import digamma, polygamma

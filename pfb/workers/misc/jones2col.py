@@ -78,7 +78,7 @@ def _jones2col(**kw):
     from africanus.calibration.utils.dask import corrupt_vis
 
     # get net gains
-    G = xds_from_zarr(args.gain_table + '::G')
+    G = xds_from_zarr(args.gain_table + '::NET')
 
     # chunking info
     t_chunks = G[0].t_chunk.data
