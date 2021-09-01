@@ -20,8 +20,8 @@ requirements = [
                 'nifty7',
 
                 "codex-africanus[complete]"
-                "@git+https://github.com/ska-sa/codex-africanus.git"
-                "@master",
+                "@git+https://github.com/landmanbester/codex-africanus.git"
+                "@calutils",
 
                 "dask-ms[xarray, zarr]"
                 "@git+https://github.com/ska-sa/dask-ms.git"

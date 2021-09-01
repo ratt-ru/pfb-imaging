@@ -77,58 +77,46 @@ def _jones2col(**kw):
     from africanus.calibration.utils import chunkify_rows
     from africanus.calibration.utils.dask import corrupt_vis
 
-    # get net gains
+    # only allowing NET gain
     G = xds_from_zarr(args.gain_table + '::NET')
 
-    # chunking info
-    t_chunks = G[0].t_chunk.data
-    if len(t_chunks) > 1:
-        t_chunks = G[0].t_chunk.data[1:-1] - G[0].t_chunk.data[0:-2]
-        assert (t_chunks == t_chunks[0]).all()
-        utpc = t_chunks[0]
-    else:
-        utpc = t_chunks[0]
-    times = xds_from_ms(args.ms[0], columns=['TIME'])[0].get('TIME').data.compute()
-    row_chunks, tbin_idx, tbin_counts = chunkify_rows(
-                                        times,
-                                        utimes_per_chunk=utpc)
-    tbin_idx = da.from_array(tbin_idx, chunks=1)
-    tbin_counts = da.from_array(tbin_counts, chunks=1)
+    # chunks are computed per dataset to make sure
+    # they match those in the gain table
+    chunks = []
+    for i, gain in enumerate(G):
+        utpc = gain.t_chunk.data[0]  # assume homogeneous chunking
+        time = xds_from_ms(args.ms[0], columns=['TIME'],
+                           group_cols=('FIELD_ID', 'DATA_DESC_ID',
+                           'SCAN_NUMBER'))[i].get('TIME').values
 
-    f_chunks = G[0].f_chunk.data
-    if len(f_chunks) > 1:
-        f_chunks = G[0].f_chunk.data[1:-1] - G[0].f_chunk.data[0:-2]
-        assert (f_chunks == f_chunks[0]).all()
-        chan_chunks = f_chunks[0]
-    else:
-        if f_chunks[0]:
-            chan_chunks = f_chunks[0]
-        else:
+        row_chunks, tbin_idx, tbin_counts = chunkify_rows(
+                                            time,
+                                            utimes_per_chunk=utpc,
+                                            daskify_idx=True)
+
+        chan_chunks = gain.f_chunk.data[0]
+        if chan_chunks == 0:
             chan_chunks = -1
+
+        chunks.append({'row': row_chunks, 'chan':chan_chunks})
 
     columns = ('DATA', 'FLAG', 'FLAG_ROW', 'ANTENNA1', 'ANTENNA2')
     if args.acol is not None:
         columns += (args.acol,)
 
-    # open MS
-    xds = xds_from_ms(args.ms[0], chunks={'row': row_chunks, 'chan': chan_chunks},
+    xds = xds_from_ms(args.ms[0], chunks=chunks,
                       columns=columns,
                       group_cols=('FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'))
 
-    # Current hack probably only works for single field and DDID
-    try:
-        assert len(xds) == len(G)
-    except Exception as e:
-        raise ValueError("Number of datasets in gains do not "
-                            "match those in MS")
-
-    # assuming scans are aligned
     out_data = []
     for g, ds in zip(G, xds):
+        # TODO - we should probably compare field names to be sure
         try:
+            assert g.FIELD_ID == ds.FIELD_ID
+            assert g.DATA_DESC_ID == ds.DATA_DESC_ID
             assert g.SCAN_NUMBER == ds.SCAN_NUMBER
         except Exception as e:
-            raise ValueError("Scans not aligned")
+            raise ValueError("Datasets not aligned")
 
         nrow = ds.dims['row']
         nchan = ds.dims['chan']
@@ -141,18 +129,38 @@ def _jones2col(**kw):
         ant1 = ds.ANTENNA1.data
         ant2 = ds.ANTENNA2.data
 
+        try:
+            assert jones.shape[3] == 1
+        except Exception as e:
+            raise ValueError("Only DI gains currently supported")
+
         frow = (frow | (ant1 == ant2))
         flag = (flag[:, :, 0] | flag[:, :, -1])
         flag = da.logical_or(flag, frow[:, None])
 
+        row_chunks, chan_chunks = flag.chunks
+
         if args.acol is not None:
-            acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, ncorr)
+            if ncorr > 2:
+                assert ncorr == 4
+                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, 2, 2)
+            else:
+                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, ncorr)
         else:
-            acol = da.ones((nrow, nchan, 1, ncorr),
-                           chunks=(row_chunks, chan_chunks, 1, -1),
-                           dtype=jones.dtype)
+            if ncorr > 2:
+                assert ncorr == 4
+                acol = da.ones((nrow, nchan, 1, 2, 2),
+                            chunks=(row_chunks, chan_chunks, 1, -1, -1),
+                            dtype=jones.dtype)
+            else:
+                acol = da.ones((nrow, nchan, 1, ncorr),
+                            chunks=(row_chunks, chan_chunks, 1, -1),
+                            dtype=jones.dtype)
 
         cvis = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2, jones, acol)
+
+        if ncorr == 4:
+            cvis = cvis.reshape(nrow, nchan, ncorr)
 
         # compare where unflagged
         if args.compareto is not None:
