@@ -126,11 +126,15 @@ def _clean(**kw):
 
     print("Loading dirty", file=log)
     dirty = load_fits(args.dirty, dtype=args.output_type).squeeze()
+    if len(dirty.shape) == 2:
+        dirty = dirty[None, :, :]
     nband, nx, ny = dirty.shape
     hdr = fits.getheader(args.dirty)
 
     print("Loading psf", file=log)
     psf = load_fits(args.psf, dtype=args.output_type).squeeze()
+    if len(psf.shape) == 2:
+        psf = psf[None, :, :]
     _, nx_psf, ny_psf = psf.shape
     hdr_psf = fits.getheader(args.psf)
 
@@ -302,12 +306,17 @@ def _clean(**kw):
         model += x
         print("Getting residual", file=log)
 
-        convimage = convolver(model)
-        dask.visualize(convimage, filename=args.output_filename + '_hessian' + str(k) + '_graph.pdf', optimize_graph=False)
-        with performance_report(filename=args.output_filename + '_hessian' + str(k) + '_per.html'):
-            convimage = dask.compute(convimage, optimize_graph=False)[0]
+        convimage = convolver(model).compute()
+        # dask.visualize(convimage, filename=args.output_filename + '_hessian' + str(k) + '_graph.pdf', optimize_graph=False)
+        # with performance_report(filename=args.output_filename + '_hessian' + str(k) + '_per.html'):
+        #     convimage = dask.compute(convimage, optimize_graph=False)[0]
         ne.evaluate('dirty - convimage/normfact', out=residual, casting='same_kind')
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs, casting='same_kind')
+
+        save_fits(args.output_filename + f'_residual_mfs{k}.fits', residual_mfs, hdr_mfs)
+        save_fits(args.output_filename + f'_model_mfs{k}.fits', model, hdr)
+        save_fits(args.output_filename + f'_convim_mfs{k}.fits', convimage/normfact, hdr)
+
 
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()

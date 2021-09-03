@@ -83,16 +83,21 @@ def _jones2col(**kw):
     # chunks are computed per dataset to make sure
     # they match those in the gain table
     chunks = []
+    tbin_idx = []
+    tbin_counts = []
     for i, gain in enumerate(G):
         utpc = gain.t_chunk.data[0]  # assume homogeneous chunking
         time = xds_from_ms(args.ms[0], columns=['TIME'],
                            group_cols=('FIELD_ID', 'DATA_DESC_ID',
                            'SCAN_NUMBER'))[i].get('TIME').values
 
-        row_chunks, tbin_idx, tbin_counts = chunkify_rows(
+        row_chunks, tidx, tcounts = chunkify_rows(
                                             time,
                                             utimes_per_chunk=utpc,
                                             daskify_idx=True)
+
+        tbin_idx.append(tidx)
+        tbin_counts.append(tcounts)
 
         chan_chunks = gain.f_chunk.data[0]
         if chan_chunks == 0:
@@ -109,7 +114,7 @@ def _jones2col(**kw):
                       group_cols=('FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'))
 
     out_data = []
-    for g, ds in zip(G, xds):
+    for tidx, tcounts, g, ds in zip(tbin_idx, tbin_counts, G, xds):
         # TODO - we should probably compare field names to be sure
         try:
             assert g.FIELD_ID == ds.FIELD_ID
@@ -157,7 +162,7 @@ def _jones2col(**kw):
                             chunks=(row_chunks, chan_chunks, 1, -1),
                             dtype=jones.dtype)
 
-        cvis = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2, jones, acol)
+        cvis = corrupt_vis(tidx, tcounts, ant1, ant2, jones, acol)
 
         if ncorr == 4:
             cvis = cvis.reshape(nrow, nchan, ncorr)
@@ -174,6 +179,8 @@ def _jones2col(**kw):
 
     writes = xds_to_table(out_data, args.ms[0], columns=[args.mueller_column])
     dask.compute(writes)
+
+    print("All done here", file=log)
 
 
 

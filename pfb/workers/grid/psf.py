@@ -143,6 +143,7 @@ def _psf(**kw):
         args.ms = [args.ms]
     OmegaConf.set_struct(args, True)
 
+    import os
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
@@ -407,6 +408,11 @@ def _psf(**kw):
             out_ds = Dataset(data_vars, coords)
 
             out_datasets.append(out_ds)
+
+    # remove dataset if it exists
+    if os.path.isdir(args.output_filename + '.zarr'):
+        print(f"Removing existing {args.output_filename}.zarr folder", file=log)
+        os.system(f"rm -r {args.output_filename}.zarr")
 
     writes = xds_to_zarr(out_datasets, args.output_filename + '.zarr', columns='ALL')
 
