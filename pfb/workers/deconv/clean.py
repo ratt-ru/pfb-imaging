@@ -264,7 +264,7 @@ def _clean(**kw):
         lastsize = ny + np.sum(padding[-1])
         psf_pad = iFs(psf, axes=(1, 2))
         psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                     nthreads=nthreads, inorm=0)
+                     nthreads=args.nvthreads, inorm=0)
 
         psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
 
@@ -276,7 +276,7 @@ def _clean(**kw):
             convolvedim = hessian(model,
                                   psfhat,
                                   padding,
-                                  nvthreads,
+                                  args.nvthreads,
                                   unpad_x,
                                   unpad_y,
                                   lastsize)
