@@ -190,6 +190,7 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
     model_inferred = load_fits(str(test_dir / 'test_update.fits')).squeeze()
 
     for i in range(nsource):
+        # LB - only matches in apparent scale?
         if do_beam:
             beam = pbeam[:, Ix[i], Iy[i]]
             assert_allclose(0.0, beam * (model_inferred[:, Ix[i], Iy[i]] -
