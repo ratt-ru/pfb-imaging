@@ -80,15 +80,15 @@ def _jones2col(**kw):
     # only allowing NET gain
     G = xds_from_zarr(args.gain_table + '::NET')
     xds = xds_from_ms(args.ms[0], columns=['TIME'],
-                           group_cols=('FIELD_ID', 'DATA_DESC_ID',
-                           'SCAN_NUMBER'))
+                      group_cols=('FIELD_ID', 'DATA_DESC_ID',
+                      'SCAN_NUMBER'))
 
     # chunks are computed per dataset to make sure
     # they match those in the gain table
     chunks = []
     tbin_idx = []
     tbin_counts = []
-    for i, gain, ds in enumerate(zip(G, xds)):
+    for gain, ds in zip(G, xds):
         try:
             assert gain.gains.shape[3] == 1
         except Exception as e:
