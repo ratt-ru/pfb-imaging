@@ -310,12 +310,17 @@ def _clean(**kw):
         # dask.visualize(convimage, filename=args.output_filename + '_hessian' + str(k) + '_graph.pdf', optimize_graph=False)
         # with performance_report(filename=args.output_filename + '_hessian' + str(k) + '_per.html'):
         #     convimage = dask.compute(convimage, optimize_graph=False)[0]
-        ne.evaluate('dirty - convimage/normfact', out=residual, casting='same_kind')
-        ne.evaluate('sum(residual, axis=0)', out=residual_mfs, casting='same_kind')
+        ne.evaluate('dirty - convimage/normfact', out=residual,
+                    casting='same_kind')
+        ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
+                    casting='same_kind')
 
-        save_fits(args.output_filename + f'_residual_mfs{k}.fits', residual_mfs, hdr_mfs)
-        save_fits(args.output_filename + f'_model_mfs{k}.fits', model, hdr)
-        save_fits(args.output_filename + f'_convim_mfs{k}.fits', convimage/normfact, hdr)
+        save_fits(args.output_filename + f'_residual_mfs{k}.fits',
+                  residual_mfs, hdr_mfs)
+        save_fits(args.output_filename + f'_model_mfs{k}.fits',
+                  np.mean(model, axis=0), hdr_mfs)
+        save_fits(args.output_filename + f'_convim_mfs{k}.fits',
+                  np.sum(convimage/normfact, axis=0), hdr_mfs)
 
 
         rms = np.std(residual_mfs)
