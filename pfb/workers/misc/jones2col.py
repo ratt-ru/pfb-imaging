@@ -20,6 +20,7 @@ log = pyscilog.get_logger('J2COL')
 @click.option('-c2', '--compareto',
               help="Will compare corrupted vis to this column if provided. "
               "Mainly useful for testing.")
+@click.option('-ctol', '--ctol', type=float, default=1e-5)
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-ha', '--host-address',
@@ -172,14 +173,12 @@ def _jones2col(**kw):
 
         # compare where unflagged
         if args.compareto is not None:
-
             if len(jones.shape)  == 5 and ncorr > 2:
                 mode = 'diag'
             else:
                 mode = 'full'
-            print(mode)
             vis = ds.get(args.compareto)
-            flag = compare_vals(cvis, vis, flag, mode)
+            flag = compare_vals(cvis, vis, flag, mode, args.ctol)
 
         out_ds = ds.assign(**{args.mueller_column: (("row", "chan", "corr"), cvis)})
         out_data.append(out_ds)
@@ -189,7 +188,7 @@ def _jones2col(**kw):
 
     print("All done here", file=log)
 
-def compare_vals(vis1, vis2, flag, mode):
+def compare_vals(vis1, vis2, flag, mode, ctol):
     import dask.array as da
 
     flag = da.blockwise(_compare_vals, 'rfc',
@@ -197,16 +196,21 @@ def compare_vals(vis1, vis2, flag, mode):
                         vis2, 'rfc',
                         flag, 'rfc',
                         mode, None,
+                        ctol, None,
                         dtype=bool)
     return flag
 
-def _compare_vals(vis1, vis2, flag, mode):
+def _compare_vals(vis1, vis2, flag, mode, ctol):
     import numpy as np
     # flag off diagonals if only jones is diag
     if mode == 'diag':
         flag[:, :, 1] = True
         flag[:, :, 2] = True
-    assert np.allclose(vis1[~flag] - vis2[~flag], 0.0, rtol=1, atol=1e-5)
+    tmp = vis1[~flag] - vis2[~flag]
+    try:
+        assert np.allclose(tmp, 0.0, rtol=1, atol=ctol)
+    except:
+        print(f"Does not match at required tolerance. Max difference = {np.abs(tmp).max()}")
     return flag
 
 
