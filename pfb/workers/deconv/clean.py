@@ -320,7 +320,7 @@ def _clean(**kw):
         save_fits(args.output_filename + f'_model_mfs{k}.fits',
                   np.mean(model, axis=0), hdr_mfs)
         save_fits(args.output_filename + f'_convim_mfs{k}.fits',
-                  np.sum(convimage/normfact, axis=0), hdr_mfs)
+                  np.sum(convimage, axis=0)/normfact, hdr_mfs)
 
 
         rms = np.std(residual_mfs)

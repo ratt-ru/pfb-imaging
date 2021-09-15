@@ -109,6 +109,8 @@ def _jones2col(**kw):
     columns = ('DATA', 'FLAG', 'FLAG_ROW', 'ANTENNA1', 'ANTENNA2')
     if args.acol is not None:
         columns += (args.acol,)
+    if args.compareto is not None:
+        columns += (args.compareto,)
 
     xds = xds_from_ms(args.ms[0], chunks=chunks,
                       columns=columns,
