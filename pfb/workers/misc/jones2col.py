@@ -107,14 +107,19 @@ def _jones2col(**kw):
         chunks.append({'row': row_chunks, 'chan':fchunks[0]})
 
     columns = ('DATA', 'FLAG', 'FLAG_ROW', 'ANTENNA1', 'ANTENNA2')
+    schema = {}
     if args.acol is not None:
         columns += (args.acol,)
+        schema[args.acol] = {'dims': ('chan', 'corr')}
+
     if args.compareto is not None:
         columns += (args.compareto,)
+        schema[args.compareto] = {'dims': ('chan', 'corr')}
 
     xds = xds_from_ms(args.ms[0], chunks=chunks,
                       columns=columns,
-                      group_cols=('FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'))
+                      group_cols=('FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'),
+                      table_schema=schema)
 
     out_data = []
     for tidx, tcounts, g, ds in zip(tbin_idx, tbin_counts, G, xds):
@@ -137,11 +142,11 @@ def _jones2col(**kw):
         ant1 = ds.ANTENNA1.data
         ant2 = ds.ANTENNA2.data
 
-        frow = (frow | (ant1 == ant2))
-        flag = (flag[:, :, 0] | flag[:, :, -1])
-        flag = da.logical_or(flag, frow[:, None])
+        # frow = (frow | (ant1 == ant2))
+        # flag = (flag[:, :, 0] | flag[:, :, -1])
+        # flag = da.logical_or(flag, frow[:, None])
 
-        row_chunks, chan_chunks = flag.chunks
+        row_chunks, chan_chunks, _ = flag.chunks
 
         if args.acol is not None:
             if ncorr > 2:
@@ -167,22 +172,41 @@ def _jones2col(**kw):
 
         # compare where unflagged
         if args.compareto is not None:
-            flag = flag.compute()
-            vis = ds.get(args.compareto).values[~flag]
-            print("Max abs difference = ", np.abs(cvis.compute()[~flag] - vis).max())
-            quit()
+
+            if len(jones.shape)  == 5 and ncorr > 2:
+                mode = 'diag'
+            else:
+                mode = 'full'
+            print(mode)
+            vis = ds.get(args.compareto)
+            flag = compare_vals(cvis, vis, flag, mode)
 
         out_ds = ds.assign(**{args.mueller_column: (("row", "chan", "corr"), cvis)})
         out_data.append(out_ds)
 
     writes = xds_to_table(out_data, args.ms[0], columns=[args.mueller_column])
-    dask.compute(writes)
+    dask.compute(writes, flag)
 
     print("All done here", file=log)
 
+def compare_vals(vis1, vis2, flag, mode):
+    import dask.array as da
 
+    flag = da.blockwise(_compare_vals, 'rfc',
+                        vis1, 'rfc',
+                        vis2, 'rfc',
+                        flag, 'rfc',
+                        mode, None,
+                        dtype=bool)
+    return flag
 
-
-
+def _compare_vals(vis1, vis2, flag, mode):
+    import numpy as np
+    # flag off diagonals if only jones is diag
+    if mode == 'diag':
+        flag[:, :, 1] = True
+        flag[:, :, 2] = True
+    assert np.allclose(vis1[~flag] - vis2[~flag], 0.0, rtol=1, atol=1e-5)
+    return flag
 
 
