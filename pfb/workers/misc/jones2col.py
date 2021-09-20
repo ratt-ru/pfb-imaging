@@ -107,7 +107,9 @@ def _jones2col(**kw):
 
         chunks.append({'row': row_chunks, 'chan':fchunks[0]})
 
-    columns = ('DATA', 'FLAG', 'FLAG_ROW', 'ANTENNA1', 'ANTENNA2')
+    print(chunks)
+
+    columns = ('FLAG', 'FLAG_ROW', 'ANTENNA1', 'ANTENNA2')
     schema = {}
     schema['FLAG'] = {'dims': ('chan', 'corr')}
     if args.acol is not None:
