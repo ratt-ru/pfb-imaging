@@ -109,6 +109,7 @@ def _jones2col(**kw):
 
     columns = ('DATA', 'FLAG', 'FLAG_ROW', 'ANTENNA1', 'ANTENNA2')
     schema = {}
+    schema['FLAG'] = {'dims': ('chan', 'corr')}
     if args.acol is not None:
         columns += (args.acol,)
         schema[args.acol] = {'dims': ('chan', 'corr')}
@@ -117,12 +118,18 @@ def _jones2col(**kw):
         columns += (args.compareto,)
         schema[args.compareto] = {'dims': ('chan', 'corr')}
 
-    xds = xds_from_ms(args.ms[0], chunks=chunks,
+    xds = xds_from_ms(args.ms[0],
+                      chunks=chunks,
                       columns=columns,
                       group_cols=('FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'),
                       table_schema=schema)
 
+    # print(xds)
+
+    # quit()
+
     out_data = []
+    flags = []
     for tidx, tcounts, g, ds in zip(tbin_idx, tbin_counts, G, xds):
         # TODO - we should probably compare field names to be sure
         try:
@@ -180,11 +187,15 @@ def _jones2col(**kw):
             vis = ds.get(args.compareto)
             flag = compare_vals(cvis, vis, flag, mode, args.ctol)
 
+            flags.append(flag)
+
         out_ds = ds.assign(**{args.mueller_column: (("row", "chan", "corr"), cvis)})
         out_data.append(out_ds)
 
     writes = xds_to_table(out_data, args.ms[0], columns=[args.mueller_column])
-    dask.compute(writes, flag)
+
+    import pdb; pdb.set_trace()
+    dask.compute(writes, flags)
 
     print("All done here", file=log)
 
@@ -207,10 +218,14 @@ def _compare_vals(vis1, vis2, flag, mode, ctol):
         flag[:, :, 1] = True
         flag[:, :, 2] = True
     tmp = vis1[~flag] - vis2[~flag]
+
+    print(np.mean(tmp))
     try:
         assert np.allclose(tmp, 0.0, rtol=1, atol=ctol)
+        print(f"Matches. ", file=log)
     except:
-        print(f"Does not match at required tolerance. Max difference = {np.abs(tmp).max()}")
+        print(f"Does not match at required tolerance. "
+              f"Max difference = {np.abs(tmp).max()}", file=log)
     return flag
 
 

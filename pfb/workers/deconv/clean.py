@@ -310,6 +310,8 @@ def _clean(**kw):
         # dask.visualize(convimage, filename=args.output_filename + '_hessian' + str(k) + '_graph.pdf', optimize_graph=False)
         # with performance_report(filename=args.output_filename + '_hessian' + str(k) + '_per.html'):
         #     convimage = dask.compute(convimage, optimize_graph=False)[0]
+        # R.H W (y - R x)
+        # R.H W y - R.H W R x = ID - Hess(x) \approx ID - PSF * x
         ne.evaluate('dirty - convimage/normfact', out=residual,
                     casting='same_kind')
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
