@@ -96,11 +96,15 @@ def _jones2col(**kw):
         except Exception as e:
             raise ValueError("Only DI gains currently supported")
 
-        gain_chunks.append({gain.GAIN_AXES[0]: gain.GAIN_SPEC[0],
-                            gain.GAIN_AXES[1]: gain.GAIN_SPEC[1],
-                            gain.GAIN_AXES[2]: gain.GAIN_SPEC[2],
-                            gain.GAIN_AXES[3]: gain.GAIN_SPEC[3],
-                            gain.GAIN_AXES[4]: gain.GAIN_SPEC[4]})
+        tmp_dict = {}
+        for name, val in zip(gain.GAIN_AXES, gain.GAIN_SPEC):
+            tmp_dict[name] = val
+        gain_chunks.append(tmp_dict)
+        # gain_chunks.append({gain.GAIN_AXES[0]: gain.GAIN_SPEC[0],
+        #                     gain.GAIN_AXES[1]: gain.GAIN_SPEC[1],
+        #                     gain.GAIN_AXES[2]: gain.GAIN_SPEC[2],
+        #                     gain.GAIN_AXES[3]: gain.GAIN_SPEC[3],
+        #                     gain.GAIN_AXES[4]: gain.GAIN_SPEC[4]})
 
         tchunks, fchunks, _, _, _ = gain.GAIN_SPEC
         time = ds.get('TIME').values
@@ -112,7 +116,7 @@ def _jones2col(**kw):
         tbin_idx.append(tidx)
         tbin_counts.append(tcounts)
 
-        chunks.append({'row': row_chunks, 'chan':fchunks[0]})
+        chunks.append({'row': row_chunks, 'chan': fchunks[0]})
 
 
     columns = ('FLAG', 'FLAG_ROW', 'ANTENNA1', 'ANTENNA2')
@@ -150,18 +154,17 @@ def _jones2col(**kw):
         nchan = ds.dims['chan']
         ncorr = ds.dims['corr']
 
+        assert g.dims['gain_f'] == nchan
+
         # need to swap axes for africanus
-        jones = da.swapaxes(g.gains.data, 1, 2)
+        jones = da.swapaxes(g.gains.data, 1, 2).astype(np.complex128)
         flag = ds.FLAG.data
         frow = ds.FLAG_ROW.data
         ant1 = ds.ANTENNA1.data
         ant2 = ds.ANTENNA2.data
 
         # union along corr
-        flag = np.any(flag, axis=-1)
-
-        # flagged rows and auto-corrs
-        frow = (frow | (ant1 == ant2))
+        flag = da.any(flag, axis=-1)
 
         flag = da.logical_or(flag, frow[:, None])
 
@@ -170,9 +173,9 @@ def _jones2col(**kw):
         if args.acol is not None:
             if ncorr > 2:
                 assert ncorr == 4
-                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, 2, 2)
+                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, 2, 2).astype(np.complex128)
             else:
-                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, ncorr)
+                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, ncorr).astype(np.complex128)
         else:
             if ncorr > 2:
                 assert ncorr == 4
