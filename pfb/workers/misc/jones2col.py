@@ -157,11 +157,15 @@ def _jones2col(**kw):
         ant1 = ds.ANTENNA1.data
         ant2 = ds.ANTENNA2.data
 
-        # frow = (frow | (ant1 == ant2))
-        # flag = (flag[:, :, 0] | flag[:, :, -1])
-        # flag = da.logical_or(flag, frow[:, None])
+        # union along corr
+        flag = np.any(flag, axis=-1)
 
-        row_chunks, chan_chunks, _ = flag.chunks
+        # flagged rows and auto-corrs
+        frow = (frow | (ant1 == ant2))
+
+        flag = da.logical_or(flag, frow[:, None])
+
+        row_chunks, chan_chunks = flag.chunks
 
         if args.acol is not None:
             if ncorr > 2:
@@ -209,30 +213,42 @@ def _jones2col(**kw):
 def compare_vals(vis1, vis2, flag, mode, ctol):
     import dask.array as da
 
-    flag = da.blockwise(_compare_vals, 'rfc',
+    flag = da.blockwise(_compare_vals_wrapper, 'rf',
                         vis1, 'rfc',
                         vis2, 'rfc',
-                        flag, 'rfc',
+                        flag, 'rf',
                         mode, None,
                         ctol, None,
                         dtype=bool)
     return flag
 
-def _compare_vals(vis1, vis2, flag, mode, ctol):
+def _compare_vals_wrapper(vis1, vis2, flag, mode, ctol):
+    return _compare_vals_impl(vis1[0], vis2[0], flag, mode, ctol)
+
+def _compare_vals_impl(vis1, vis2, flag, mode, ctol):
     import numpy as np
     # flag off diagonals if only jones is diag
     if mode == 'diag':
-        flag[:, :, 1] = True
-        flag[:, :, 2] = True
-    tmp = vis1[~flag] - vis2[~flag]
+        if vis1.shape[-1] > 1:
+            use_corrs = (0, -1)
+        else:
+            use_corrs - (0,)
+    else:
+        use_corrs = np.arange(vis1.shape[-1])
 
-    print(np.mean(tmp))
-    try:
-        assert np.allclose(tmp, 0.0, rtol=1, atol=ctol)
-        print(f"Matches. ", file=log)
-    except:
-        print(f"Does not match at required tolerance. "
-              f"Max difference = {np.abs(tmp).max()}", file=log)
+    for c in use_corrs:
+        vis1c = vis1[:, :, c]
+        vis2c = vis2[:, :, c]
+
+        tmp = vis1c[~flag] - vis2c[~flag]
+
+        print(np.mean(np.abs(tmp)))
+        try:
+            assert np.allclose(tmp, 0.0, rtol=1, atol=ctol)
+            print(f"Matches. ", file=log)
+        except:
+            print(f"Does not match at required tolerance. "
+                f"Max difference = {np.abs(tmp).max()}", file=log)
     return flag
 
 
