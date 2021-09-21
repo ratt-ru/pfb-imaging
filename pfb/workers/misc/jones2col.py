@@ -89,13 +89,20 @@ def _jones2col(**kw):
     chunks = []
     tbin_idx = []
     tbin_counts = []
+    gain_chunks = []
     for gain, ds in zip(G, xds):
         try:
             assert gain.gains.shape[3] == 1
         except Exception as e:
             raise ValueError("Only DI gains currently supported")
 
-        tchunks, fchunks, _, _, _ = gain.gains.chunks
+        gain_chunks.append({gain.GAIN_AXES[0]: gain.GAIN_SPEC[0],
+                            gain.GAIN_AXES[1]: gain.GAIN_SPEC[1],
+                            gain.GAIN_AXES[2]: gain.GAIN_SPEC[2],
+                            gain.GAIN_AXES[3]: gain.GAIN_SPEC[3],
+                            gain.GAIN_AXES[4]: gain.GAIN_SPEC[4]})
+
+        tchunks, fchunks, _, _, _ = gain.GAIN_SPEC
         time = ds.get('TIME').values
         row_chunks, tidx, tcounts = chunkify_rows(
                                             time,
@@ -107,7 +114,6 @@ def _jones2col(**kw):
 
         chunks.append({'row': row_chunks, 'chan':fchunks[0]})
 
-    print(chunks)
 
     columns = ('FLAG', 'FLAG_ROW', 'ANTENNA1', 'ANTENNA2')
     schema = {}
@@ -126,9 +132,8 @@ def _jones2col(**kw):
                       group_cols=('FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'),
                       table_schema=schema)
 
-    # print(xds)
-
-    # quit()
+    G = xds_from_zarr(args.gain_table + '::NET',
+                      chunks=gain_chunks)
 
     out_data = []
     flags = []
@@ -196,7 +201,7 @@ def _jones2col(**kw):
 
     writes = xds_to_table(out_data, args.ms[0], columns=[args.mueller_column])
 
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     dask.compute(writes, flags)
 
     print("All done here", file=log)
