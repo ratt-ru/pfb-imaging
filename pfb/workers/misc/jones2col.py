@@ -208,7 +208,7 @@ def _jones2col(**kw):
 
     writes = xds_to_table(out_data, args.ms[0], columns=[args.mueller_column])
 
-    # import pdb; pdb.set_trace()
+    import pdb; pdb.set_trace()
     dask.compute(writes, flags)
 
     print("All done here", file=log)
@@ -245,13 +245,14 @@ def _compare_vals_impl(vis1, vis2, flag, mode, ctol):
 
         tmp = vis1c[~flag] - vis2c[~flag]
 
-        print(np.mean(np.abs(tmp)))
+        # print(np.mean(np.abs(tmp)))
         try:
             assert np.allclose(tmp, 0.0, rtol=1, atol=ctol)
-            print(f"Matches. ", file=log)
+            print(f"Matches with max difference of {np.abs(tmp).max()}",
+                  file=log)
         except:
             print(f"Does not match at required tolerance. "
-                f"Max difference = {np.abs(tmp).max()}", file=log)
+                  f"Max difference = {np.abs(tmp).max()}", file=log)
     return flag
 
 
