@@ -77,6 +77,7 @@ def _jones2col(**kw):
     import dask
     from africanus.calibration.utils import chunkify_rows
     from africanus.calibration.utils.dask import corrupt_vis
+    from pfb.utils.misc import compare_vals
 
     # only allowing NET gain
     G = xds_from_zarr(args.gain_table + '::NET')
@@ -100,11 +101,6 @@ def _jones2col(**kw):
         for name, val in zip(gain.GAIN_AXES, gain.GAIN_SPEC):
             tmp_dict[name] = val
         gain_chunks.append(tmp_dict)
-        # gain_chunks.append({gain.GAIN_AXES[0]: gain.GAIN_SPEC[0],
-        #                     gain.GAIN_AXES[1]: gain.GAIN_SPEC[1],
-        #                     gain.GAIN_AXES[2]: gain.GAIN_SPEC[2],
-        #                     gain.GAIN_AXES[3]: gain.GAIN_SPEC[3],
-        #                     gain.GAIN_AXES[4]: gain.GAIN_SPEC[4]})
 
         tchunks, fchunks, _, _, _ = gain.GAIN_SPEC
         time = ds.get('TIME').values
@@ -136,7 +132,7 @@ def _jones2col(**kw):
                       group_cols=('FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'),
                       table_schema=schema)
 
-    G = xds_from_zarr(args.gain_table + '::NET',
+    G = xds_from_zarr(args.gain_table + '::G',
                       chunks=gain_chunks)
 
     out_data = []
@@ -157,7 +153,7 @@ def _jones2col(**kw):
         assert g.dims['gain_f'] == nchan
 
         # need to swap axes for africanus
-        jones = da.swapaxes(g.gains.data, 1, 2).astype(np.complex128)
+        jones = da.swapaxes(g.gains.data, 1, 2)  #.astype(np.complex128)
         flag = ds.FLAG.data
         frow = ds.FLAG_ROW.data
         ant1 = ds.ANTENNA1.data
@@ -173,9 +169,9 @@ def _jones2col(**kw):
         if args.acol is not None:
             if ncorr > 2:
                 assert ncorr == 4
-                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, 2, 2).astype(np.complex128)
+                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, 2, 2) #.astype(np.complex128)
             else:
-                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, ncorr).astype(np.complex128)
+                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, ncorr) #.astype(np.complex128)
         else:
             if ncorr > 2:
                 assert ncorr == 4
@@ -202,57 +198,13 @@ def _jones2col(**kw):
             flag = compare_vals(cvis, vis, flag, mode, args.ctol)
 
             flags.append(flag)
-
-        out_ds = ds.assign(**{args.mueller_column: (("row", "chan", "corr"), cvis)})
+        oflag = da.broadcast_to(flag[:, :, None], cvis.shape, chunks=cvis.chunks)
+        out_ds = ds.assign(**{args.mueller_column: (("row", "chan", "corr"), cvis),
+                              'FLAG': (("row", "chan", "corr"), oflag)})
         out_data.append(out_ds)
 
     writes = xds_to_table(out_data, args.ms[0], columns=[args.mueller_column])
 
-    import pdb; pdb.set_trace()
     dask.compute(writes, flags)
 
     print("All done here", file=log)
-
-def compare_vals(vis1, vis2, flag, mode, ctol):
-    import dask.array as da
-
-    flag = da.blockwise(_compare_vals_wrapper, 'rf',
-                        vis1, 'rfc',
-                        vis2, 'rfc',
-                        flag, 'rf',
-                        mode, None,
-                        ctol, None,
-                        dtype=bool)
-    return flag
-
-def _compare_vals_wrapper(vis1, vis2, flag, mode, ctol):
-    return _compare_vals_impl(vis1[0], vis2[0], flag, mode, ctol)
-
-def _compare_vals_impl(vis1, vis2, flag, mode, ctol):
-    import numpy as np
-    # flag off diagonals if only jones is diag
-    if mode == 'diag':
-        if vis1.shape[-1] > 1:
-            use_corrs = (0, -1)
-        else:
-            use_corrs - (0,)
-    else:
-        use_corrs = np.arange(vis1.shape[-1])
-
-    for c in use_corrs:
-        vis1c = vis1[:, :, c]
-        vis2c = vis2[:, :, c]
-
-        tmp = vis1c[~flag] - vis2c[~flag]
-
-        # print(np.mean(np.abs(tmp)))
-        try:
-            assert np.allclose(tmp, 0.0, rtol=1, atol=ctol)
-            print(f"Matches with max difference of {np.abs(tmp).max()}",
-                  file=log)
-        except:
-            print(f"Does not match at required tolerance. "
-                  f"Max difference = {np.abs(tmp).max()}", file=log)
-    return flag
-
-

@@ -175,6 +175,11 @@ def _init(**kw):
                args.flag_column,
                'UVW', 'ANTENNA1',
                'ANTENNA2', 'TIME')
+    schema = {}
+    schema[args.data_column] = {'dims': ('chan', 'corr')}\
+    # TODO - this won't work with WEIGHT column
+    schema[args.weight_column] = {'dims': ('chan', 'corr')}
+    schema[args.flag_column] = {'dims': ('chan', 'corr')}
 
     # flag row
     if 'FLAG_ROW' in xds[0]:
@@ -183,10 +188,12 @@ def _init(**kw):
     # imaging weights
     if args.imaging_weight_column is not None:
         columns += (args.imaging_weight_column,)
+        schema[args.imaging_weight_column] = {'dims': ('chan', 'corr')}
 
     # Mueller term (complex valued)
     if args.mueller_column is not None:
         columns += (args.mueller_column,)
+        schema[args.mueller_column] = {'dims': ('chan', 'corr')}
 
     # get max uv coords over all fields
     uvw = []
@@ -289,10 +296,11 @@ def _init(**kw):
             # TODO - need to use spw table
             spw = ds.DATA_DESC_ID
 
-            uvw = clone(ds.UVW.data)
+            # uvw = clone(ds.UVW.data)
 
             if args.products.lower() == 'i':
-                dirty, psf, out_ds = _I(ds, args, uvw, freqs[ims][spw],
+                dirty, psf, out_ds = _I(ds, args,
+                                        freqs[ims][spw],
                                         fbin_idx[ims][spw],
                                         fbin_counts[ims][spw],
                                         nx, ny, nx_psf, ny_psf, cell_rad)
@@ -347,7 +355,7 @@ def _init(**kw):
     print("All done here.", file=log)
 
 
-def _I(ds, args, uvw, freq, fbin_idx, fbin_counts, nx, ny,
+def _I(ds, args, freq, fbin_idx, fbin_counts, nx, ny,
        nx_psf, ny_psf, cell_rad):
     import numpy as np
     import dask.array as da
@@ -362,15 +370,10 @@ def _I(ds, args, uvw, freq, fbin_idx, fbin_counts, nx, ny,
     data_chunks = getattr(ds, args.data_column).data.chunks
 
     weights = getattr(ds, args.weight_column).data
-    if len(weights.shape) < 3:
-        weights = da.broadcast_to(
-            weights[:, None, :], data_shape, chunks=data_chunks)
 
     if args.imaging_weight_column is not None:
         imaging_weights = getattr(
             ds, args.imaging_weight_column).data
-        if len(imaging_weights.shape) < 3:
-            raise ValueError("Imaging weights have incorrect shape")
 
         weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
         weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]
@@ -378,7 +381,7 @@ def _I(ds, args, uvw, freq, fbin_idx, fbin_counts, nx, ny,
         weightsxx = weights[:, :, 0]
         weightsyy = weights[:, :, -1]
 
-    # apply adjoint of mueller term.
+    # adjoint of mueller term
     if args.mueller_column is not None:
         mueller = getattr(ds, args.mueller_column).data
         data = (dataxx *  mueller[:, :, 0].conj() * weightsxx +
@@ -389,7 +392,6 @@ def _I(ds, args, uvw, freq, fbin_idx, fbin_counts, nx, ny,
     else:
         data = weightsxx * dataxx + weightsyy * datayy
 
-    # weighted sum corr to Stokes I
     weights = weightsxx + weightsyy
     # TODO - turn off this stupid warning
     data = da.where(weights, data / weights, 0.0j)
@@ -407,7 +409,7 @@ def _I(ds, args, uvw, freq, fbin_idx, fbin_counts, nx, ny,
     flagyy = flag[:, :, -1]
     # ducc0 uses uint8 mask not flag
     mask = ~ da.logical_or((flagxx | flagyy), frow[:, None])
-
+    uvw = ds.UVW.data
     dirty = vis2im(uvw,
                    freq,
                    data,
@@ -436,6 +438,8 @@ def _I(ds, args, uvw, freq, fbin_idx, fbin_counts, nx, ny,
                  epsilon=args.epsilon,
                  do_wstacking=args.wstack,
                  double_accum=args.double_accum)
+
+    weights = da.where(mask, weights, 0.0)
 
     data_vars = {
                 'FIELD_ID':(('row',), da.full_like(ds.TIME.data,

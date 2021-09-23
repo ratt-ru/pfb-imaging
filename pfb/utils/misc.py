@@ -1,7 +1,7 @@
 import sys
 import numpy as np
 import numexpr as ne
-from numba import jit
+from numba import jit, njit
 import dask.array as da
 from ducc0.fft import r2c, c2r
 iFs = np.fft.ifftshift
@@ -456,3 +456,42 @@ def fitcleanbeam(psf: np.ndarray,
     return Gausspars
 
 
+def compare_vals(vis1, vis2, flag, mode, ctol):
+    flag = da.blockwise(_compare_vals_wrapper, ('r','f'),
+                        vis1, ('r','f','c'),
+                        vis2, ('r','f','c'),
+                        flag, ('r','f'),
+                        mode, None,
+                        ctol, None,
+                        dtype=bool)
+    return flag
+
+def _compare_vals_wrapper(vis1, vis2, flag, mode, ctol):
+    return _compare_vals_impl(vis1[0], vis2[0], flag, mode, ctol)
+
+# @njit(fastmath=True, nogil=True, cache=True)
+def _compare_vals_impl(vis1, vis2, flag, mode, ctol):
+    if mode == 'diag':
+        if vis1.shape[-1] > 1:
+            use_corrs = (0, -1)
+        else:
+            use_corrs = (0,)
+    else:
+        use_corrs = np.arange(vis1.shape[-1])
+
+    for c in use_corrs:
+        vis1c = vis1[:, :, c]
+        vis2c = vis2[:, :, c]
+
+        I1 = np.where(np.abs(vis1c) == 0.0)
+        flag[I1] = True
+
+        I2 = np.where(np.abs(vis2c) == 0.0)
+        flag[I2] = True
+
+        tmp = vis1c[~flag] - vis2c[~flag]
+
+        print("Max diff = ", np.abs(tmp).max())
+        print("Percent mismatch = ", np.sum(tmp > ctol)/tmp.size)
+
+    return flag
