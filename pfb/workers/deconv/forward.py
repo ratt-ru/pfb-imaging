@@ -163,9 +163,6 @@ def _forward(**kw):
 
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
-    save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs,
-              dtype=args.output_type)
-
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
 
@@ -209,7 +206,15 @@ def _forward(**kw):
 
     if args.mask is not None:
         mask = load_fits(args.mask).squeeze()
+        # passing model as mask
+        if len(mask.shape) == 3:
+            x0 = da.from_array(mask, chunks=(1, -1, -1))
+            mask = np.any(mask, axis=0)
+        else:
+            x0 = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=residual.dtype)
+
         assert mask.shape == (nx, ny)
+
         beam_image *= mask[None, :, :]
 
     beam_image = da.from_array(beam_image, chunks=(1, -1, -1))
@@ -218,7 +223,6 @@ def _forward(**kw):
     if args.weight_table is not None:
         print("Solving for update using vis space approximation", file=log)
         normfact = wsum
-        from pfb.utils.misc import plan_row_chunk
         from daskms.experimental.zarr import xds_from_zarr
 
         xds = xds_from_zarr(args.weight_table)[0]
@@ -253,37 +257,19 @@ def _forward(**kw):
 
         max_chan_chunk = bin_counts.max()
         bin_counts = tuple(bin_counts)
-        # the first factor of 3 accounts for the intermediate visibilities
-        # produced in Hessian (i.e. complex data + real weights)
-        memory_per_row = (3 * max_chan_chunk * xds.WEIGHT.data.itemsize +
-                          3 * xds.UVW.data.itemsize)
-
-        # get approx image size
-        pixel_bytes = np.dtype(args.output_type).itemsize
-        band_size = nx * ny * pixel_bytes
-
-        if args.host_address is None:
-            # nworker bands on single node
-            row_chunk = plan_row_chunk(args.mem_limit/args.nworkers, band_size, nrow,
-                                       memory_per_row, args.nthreads_per_worker)
-        else:
-            # single band per node
-            row_chunk = plan_row_chunk(args.mem_limit, band_size, nrow,
-                                       memory_per_row, args.nthreads_per_worker)
-
-        print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
-              (nrow, row_chunk, int(np.ceil(nrow / row_chunk))), file=log)
 
         residual = da.from_array(residual, chunks=(1, -1, -1))
-        x0 = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=residual.dtype)
 
-        xds = xds_from_zarr(args.weight_table, chunks={'row': -1, #row_chunk,
+        xds = xds_from_zarr(args.weight_table, chunks={'row': -1,
                             'chan': bin_counts})[0]
 
         from pfb.opt.pcg import pcg_wgt
 
-        model = pcg_wgt(xds.UVW.data,
-                        xds.WEIGHT.data.astype(args.output_type),
+        uvw = dask.persist(xds.UVW.data)[0]
+        weight = dask.persist(xds.WEIGHT.data.astype(args.output_type))[0]
+
+        model = pcg_wgt(uvw,
+                        weight,
                         residual,
                         x0,
                         beam_image,
@@ -303,6 +289,21 @@ def _forward(**kw):
                         args.cg_verbose,
                         args.cg_report_freq,
                         args.backtrack).compute()
+
+        from africanus.gridding.wgridder.dask import hessian
+
+        model_dask = da.from_array(model, chunks=(1, -1, -1))
+        residual -= hessian(uvw,
+                            freq,
+                            model_dask,
+                            freq_bin_idx,
+                            freq_bin_counts,
+                            cell_rad,
+                            weights=weight,
+                            nthreads=args.nvthreads,
+                            epsilon=args.epsilon,
+                            do_wstacking=args.wstack,
+                            double_accum=args.double_accum).compute()/wsum
 
     else:  # we use the image space approximation
         print("Solving for update using image space approximation", file=log)
@@ -325,7 +326,6 @@ def _forward(**kw):
 
         psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
         residual = da.from_array(residual, chunks=(1, -1, -1))
-        x0 = da.zeros((nband, nx, ny), chunks=(1, -1, -1))
 
 
         from pfb.opt.pcg import pcg_psf
@@ -347,10 +347,23 @@ def _forward(**kw):
                         args.cg_report_freq,
                         args.backtrack).compute()
 
+        model_dask = da.from_array(model, chunks=(1, -1, -1))
+
+        residual -= hessian(model,
+                            psfhat,
+                            padding,
+                            args.nvthreads,
+                            unpad_x,
+                            unpad_y,
+                            lastsize).compute()
+
 
     print("Saving results", file=log)
     save_fits(args.output_filename + '_update.fits', model, hdr)
     model_mfs = np.mean(model, axis=0)
     save_fits(args.output_filename + '_update_mfs.fits', model_mfs, hdr_mfs)
+    save_fits(args.output_filename + '_residual.fits', residual, hdr)
+    residual_mfs = np.sum(residual, axis=0)
+    save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs)
 
     print("All done here.", file=log)

@@ -276,9 +276,9 @@ def _predict(ms, stack, **kw):
 
             bands = band_mapping[ims][spw]
             model = model[list(bands), :, :]
-            vis = im2vis(uvw,
+            vis_I = im2vis(uvw,
                          freqs[ims][spw],
-                         model,
+                         model[0],
                          freq_bin_idx[ims][spw],
                          freq_bin_counts[ims][spw],
                          cell_rad,
@@ -286,7 +286,19 @@ def _predict(ms, stack, **kw):
                          epsilon=args.epsilon,
                          do_wstacking=args.wstack)
 
+            # vis_Q = im2vis(uvw,
+            #              freqs[ims][spw],
+            #              model[1],
+            #              freq_bin_idx[ims][spw],
+            #              freq_bin_counts[ims][spw],
+            #              cell_rad,
+            #              nthreads=ngridder_threads,
+            #              epsilon=args.epsilon,
+            #              do_wstacking=args.wstack)
+
             model_vis = restore_corrs(vis, ncorr)
+
+
             if mstype == 'zarr':
                 model_vis = model_vis.rechunk(model_chunks)
                 uvw = uvw.rechunk((model_chunks[0], 3))

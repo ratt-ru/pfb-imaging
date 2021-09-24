@@ -430,39 +430,49 @@ def _main(dest=sys.stdout):
         print("After mopping flux peak of residual is %f, rms is %f" %
               (rmax, rms), file=dest)
 
-    # if args.interp_model:
-    #     nband = args.nband
-    #     order = args.spectral_poly_order
-    #     phi.trim_fat(model)
-    #     I = np.argwhere(phi.mask).squeeze()
-    #     Ix = I[:, 0]
-    #     Iy = I[:, 1]
-    #     npix = I.shape[0]
+    if args.interp_model:
+        nband = args.nband
+        order = args.spectral_poly_order
+        phi.trim_fat(model)
+        I = np.argwhere(phi.mask).squeeze()
+        Ix = I[:, 0]
+        Iy = I[:, 1]
+        npix = I.shape[0]
 
-    #     # get components
-    #     beta = model[:, Ix, Iy]
+        # get components
+        beta = model[:, Ix, Iy]
 
-    #     # fit integrated polynomial to model components
-    #     # we are given frequencies at bin centers, convert to bin edges
-    #     ref_freq = np.mean(freq_out)
-    #     delta_freq = freq_out[1] - freq_out[0]
-    #     wlow = (freq_out - delta_freq/2.0)/ref_freq
-    #     whigh = (freq_out + delta_freq/2.0)/ref_freq
-    #     wdiff = whigh - wlow
+        # fit integrated polynomial to model components
+        # we are given frequencies at bin centers, convert to bin edges
+        ref_freq = np.mean(freq_out)
+        delta_freq = freq_out[1] - freq_out[0]
+        wlow = (freq_out - delta_freq/2.0)/ref_freq
+        whigh = (freq_out + delta_freq/2.0)/ref_freq
+        wdiff = whigh - wlow
 
-    #     # set design matrix for each component
-    #     Xdesign = np.zeros([freq_out.size, args.spectral_poly_order])
-    #     for i in range(1, args.spectral_poly_order+1):
-    #         Xdesign[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+        # y = X theta = theta0 + theta1 * w + theta2 * w**2 + epsilon,
+        # w_i = nu_i/ref_nu
+        # y_i = y(nu_i)
+        # X_i theta = [1 & w_i & w_i**2] [theta0]
+        #                                [theta1]
+        #                                [   .  ]
 
-    #     weights = psf_max[:, None]
-    #     dirty_comps = Xdesign.T.dot(weights*beta)
+        # X.T y = X.T X theta
+        # (X.T W X)**(-1) X.T W y = theta
 
-    #     hess_comps = Xdesign.T.dot(weights*Xdesign)
+        # set design matrix for each component
+        Xdesign = np.zeros([freq_out.size, args.spectral_poly_order])
+        for i in range(1, args.spectral_poly_order+1):
+            Xdesign[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
 
-    #     comps = np.linalg.solve(hess_comps, dirty_comps)
+        weights = psf_max[:, None]
+        dirty_comps = Xdesign.T.dot(weights*beta)
 
-    #     np.savez(args.outfile + "spectral_comps", comps=comps, ref_freq=ref_freq, mask=np.any(model, axis=0))
+        hess_comps = Xdesign.T.dot(weights*Xdesign)
+
+        comps = np.linalg.solve(hess_comps, dirty_comps)
+
+        np.savez(args.outfile + "spectral_comps", comps=comps, ref_freq=ref_freq, mask=np.any(model, axis=0))
 
     if args.write_model:
         print("Writing model", file=dest)
