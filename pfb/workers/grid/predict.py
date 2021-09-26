@@ -28,6 +28,11 @@ log = pyscilog.get_logger('PREDICT')
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
               help="Number of imaging bands")
+@click.option('-nbo', '--nband-out', type=int,
+              help="Number of imaging bands in output cube. "
+              "Default is same as input but it is possible to increase it to "
+              "improve degridding accuracy. If set to -1 the model will be "
+              "interpolated to the resolution of the MS.")
 @click.option('-otype', '--output-type',
               help="Data type of output")
 @click.option('-rtype', '--real-type', default='f4',
@@ -39,7 +44,7 @@ log = pyscilog.get_logger('PREDICT')
               help='Number of workers for the client.')
 @click.option('-ntpw', '--nthreads-per-worker', type=int,
               help='Number of dask threads per worker.')
-@click.option('-ngt', '--ngridder-threads', type=int,
+@click.option('-nvt', '--nvthreads', type=int,
               help="Total number of threads to use per worker")
 @click.option('-mem', '--mem-limit', type=float,
               help="Memory limit in GB. Default uses all available memory")
@@ -85,69 +90,39 @@ def predict(ms, **kw):
     '''
     if not len(ms):
         raise ValueError("You must specify at least one measurement set")
-    with ExitStack() as stack:
-        return _predict(ms, stack, **kw)
-
-def _predict(ms, stack, **kw):
     args = OmegaConf.create(kw)
-    OmegaConf.set_struct(args, True)
     pyscilog.log_to_file(args.output_filename + '.log')
-    pyscilog.enable_memory_logging(level=3)
 
-    # number of threads per worker
-    if args.nthreads is None:
-        if args.host_address is not None:
-            raise ValueError("You have to specify nthreads when using a distributed scheduler")
-        import multiprocessing
-        nthreads = multiprocessing.cpu_count()
-        args.nthreads = nthreads
-    else:
-        nthreads = args.nthreads
+    from glob import glob
+    ms = glob(args.ms)
+    try:
+        assert len(ms) > 0
+        args.ms = ms
+    except:
+        raise ValueError(f"No MS at {args.ms}")
 
-    if args.mem_limit is None:
-        if args.host_address is not None:
-            raise ValueError("You have to specify mem-limit when using a distributed scheduler")
-        import psutil
-        mem_limit = int(psutil.virtual_memory()[0]/1e9)  # 100% of memory by default
-        args.mem_limit = mem_limit
-    else:
-        mem_limit = args.mem_limit
-
-    nband = args.nband
     if args.nworkers is None:
-        nworkers = nband
-        args.nworkers = nworkers
-    else:
-        nworkers = args.nworkers
+        args.nworkers = args.nband
 
-    if args.nthreads_per_worker is None:
-        nthreads_per_worker = 1
-        args.nthreads_per_worker = nthreads_per_worker
-    else:
-        nthreads_per_worker = args.nthreads_per_worker
+    OmegaConf.set_struct(args, True)
 
-    # the number of chunks being read in simultaneously is equal to
-    # the number of dask threads
-    nthreads_dask = nworkers * nthreads_per_worker
+    with ExitStack() as stack:
+        from pfb import set_client
+        args = set_client(args, stack, log)
 
-    if args.ngridder_threads is None:
-        if args.host_address is not None:
-            ngridder_threads = nthreads//nthreads_per_worker
-        else:
-            ngridder_threads = nthreads//nthreads_dask
-        args.ngridder_threads = ngridder_threads
-    else:
-        ngridder_threads = args.ngridder_threads
+        # TODO - prettier config printing
+        print('Input Options:', file=log)
+        for key in args.keys():
+            print('     %25s = %s' % (key, args[key]), file=log)
 
-    ms = list(ms)
-    print('Input Options:', file=log)
-    for key in kw.keys():
-        print('     %25s = %s' % (key, args[key]), file=log)
+        return _predict(**args)
 
-    # numpy imports have to happen after this step
-    from pfb import set_client
-    set_client(nthreads, mem_limit, nworkers, nthreads_per_worker,
-               args.host_address, stack, log)
+def _predict(**kw):
+    args = OmegaConf.create(kw)
+    from omegaconf import ListConfig
+    if not isinstance(args.ms, list) and not isinstance(args.ms, ListConfig) :
+        args.ms = [args.ms]
+    OmegaConf.set_struct(args, True)
 
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
@@ -239,6 +214,9 @@ def _predict(ms, stack, **kw):
             chunks[ims].append({'row': row_chunk,
                                 'chan': chan_chunks[ims][spw]['chan']})
 
+    # interpolate model
+
+
     model = da.from_array(model.astype(args.real_type),
                           chunks=(1, nx, ny), name=False)
     writes = []
@@ -270,7 +248,8 @@ def _predict(ms, stack, **kw):
             if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
                 continue
 
-            spw = ds.DATA_DESC_ID  # this is not correct, need to use spw
+            # TODO - need to use spw table
+            spw = ds.DATA_DESC_ID
 
             uvw = clone(ds.UVW.data)
 
@@ -282,7 +261,7 @@ def _predict(ms, stack, **kw):
                          freq_bin_idx[ims][spw],
                          freq_bin_counts[ims][spw],
                          cell_rad,
-                         nthreads=ngridder_threads,
+                         nthreads=args.nvthreads,
                          epsilon=args.epsilon,
                          do_wstacking=args.wstack)
 
