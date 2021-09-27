@@ -310,11 +310,6 @@ def _clean(**kw):
         print("Getting residual", file=log)
 
         convimage = convolver(model).compute()
-        # dask.visualize(convimage, filename=args.output_filename + '_hessian' + str(k) + '_graph.pdf', optimize_graph=False)
-        # with performance_report(filename=args.output_filename + '_hessian' + str(k) + '_per.html'):
-        #     convimage = dask.compute(convimage, optimize_graph=False)[0]
-        # R.H W (y - R x)
-        # R.H W y - R.H W R x = ID - Hess(x) \approx ID - PSF * x
         ne.evaluate('dirty - convimage/normfact', out=residual,
                     casting='same_kind')
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
@@ -334,6 +329,10 @@ def _clean(**kw):
         print("Iter %i: peak residual = %f, rms = %f" % (
                 k+1, rmax, rms), file=log)
 
+        if args.threshold is not None:
+            if rmax <= args.threshold:
+                print("Terminating because final threshold has been reached")
+                break
 
     print("Saving results", file=log)
     save_fits(args.output_filename + '_model.fits', model, hdr)
