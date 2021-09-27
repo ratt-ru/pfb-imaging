@@ -27,6 +27,9 @@ log = pyscilog.get_logger('CLEAN')
 @click.option('--double-accum/--no-double-accum', default=True)
 @click.option('-nmiter', '--nmiter', type=int, default=5,
               help="Number of major cycles")
+@click.option('-th', '--threshold', type=float,
+              help='Stop cleaning when the MFS residual reaches '
+              'this threshold.')
 @click.option('-hbg', "--hb-gamma", type=float, default=0.1,
               help="Minor loop gain of Hogbom")
 @click.option('-hbpf', "--hb-peak-factor", type=float, default=0.1,
