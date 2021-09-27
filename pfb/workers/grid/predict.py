@@ -18,8 +18,6 @@ log = pyscilog.get_logger('PREDICT')
               "Must be the same across MSs")
 @click.option('-rchunk', '--row-chunk',
               help="Number of rows in a chunk.")
-@click.option('-cchunk', '--chan-chunks',
-              help="Number of channels in a chunk.")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
               help='Gridder accuracy')
 @click.option('--wstack/--no-wstack', default=True)
@@ -34,7 +32,7 @@ log = pyscilog.get_logger('PREDICT')
               "Default is same as input but it is possible to increase it to "
               "improve degridding accuracy. If set to -1 the model will be "
               "interpolated to the resolution of the MS.")
-@click.option('-spo', '--spectral-poly-order', type=int, default=4,
+@click.option('-spo', '--spectral-poly-order', type=int,
               help='Order of polynomial to fit to freq axis. '
               'Set to zero to turn off interpolation')
 @click.option('-otype', '--output-type',
@@ -57,7 +55,8 @@ log = pyscilog.get_logger('PREDICT')
 def predict(**kw):
     '''
     Predict model visibilities to measurement sets.
-    Currently only predicts from .fits files
+    Currently only predicts from .fits files which can optionally be interpolated
+    along the frequency axis.
 
     By default the real-type argument specifies the type of the
     output unless --output-dtype is explicitly set.
@@ -76,8 +75,6 @@ def predict(**kw):
     memory and threads available, respectively. By default the gridder will
     use all available resources.
 
-    Disclaimer - Memory budgeting is still very crude!
-
     On a local cluster, the default is to use:
 
         nworkers = nband
@@ -90,6 +87,9 @@ def predict(**kw):
         nvthreads = nthreads//(nworkers*nthreads_per_worker)
     else:
         nvthreads = nthreads//nthreads-per-worker
+
+    where nvthreads refers to the number of threads used to scale vertically
+    (eg. the number threads given to each gridder instance).
 
     '''
     args = OmegaConf.create(kw)

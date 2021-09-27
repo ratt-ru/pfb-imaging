@@ -69,11 +69,9 @@ log = pyscilog.get_logger('INIT')
               help="Total available threads. Default uses all available threads")
 def init(**kw):
     '''
-    Create a dirty image from a list of measurement sets.
-    The dirty image cube is not normalised by wsum as this destroyes
-    information. The MFS image is written out in units of Jy/beam.
-    The normalisation factors can be obtained by making a psf image
-    using the psf worker (see pfbworkers psf --help).
+    Create a dirty image, psf and weight table from a list of measurement
+    sets. Image cubes are not normalised by wsum as this destroyes
+    information. MFS images are written out in units of Jy/beam.
 
     If a host address is provided the computation can be distributed
     over imaging band and row. When using a distributed scheduler both
@@ -82,8 +80,6 @@ def init(**kw):
     When using a local cluster, mem-limit and nthreads refer to the global
     memory and threads available, respectively. By default the gridder will
     use all available resources.
-
-    Disclaimer - Memory budgeting is still very crude!
 
     On a local cluster, the default is to use:
 
@@ -94,9 +90,12 @@ def init(**kw):
     distributed case.
 
     if LocalCluster:
-        ngridder-threads = nthreads//(nworkers*nthreads_per_worker)
+        nvthreads = nthreads//(nworkers*nthreads_per_worker)
     else:
-        ngridder-threads = nthreads//nthreads-per-worker
+        nvthreads = nthreads//nthreads-per-worker
+
+    where nvthreads refers to the number of threads used to scale vertically
+    (eg. the number threads given to each gridder instance).
 
     '''
     args = OmegaConf.create(kw)
