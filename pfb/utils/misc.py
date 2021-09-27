@@ -238,8 +238,6 @@ def chan_to_band_mapping(ms_name, nband=None):
     if not isinstance(ms_name, list) and not isinstance(ms_name, ListConfig) :
         ms_name = [ms_name]
 
-
-
     # first pass through data to determine freq_mapping
     radec = None
     freqs = {}
@@ -318,7 +316,7 @@ def chan_to_band_mapping(ms_name, nband=None):
                 band_map = np.where(indl & indu, band, band_map)
             # to dask arrays
             bands, bin_counts = np.unique(band_map, return_counts=True)
-            band_mapping[ims][spw] = tuple(bands)
+            band_mapping[ims][spw] = da.from_array(bands, chunks=1)
             chan_chunks[ims].append({'chan': tuple(bin_counts)})
             freqs[ims][spw] = da.from_array(freq, chunks=tuple(bin_counts))
             bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
@@ -495,3 +493,61 @@ def _compare_vals_impl(vis1, vis2, flag, mode, ctol):
         print("Percent mismatch = ", np.sum(tmp > ctol)/tmp.size)
 
     return flag
+
+
+# utility to produce a model image from fitted components
+def model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
+    '''
+    comps - (nband, ncomps) array of fitted components or model vals per
+            band if no fitting was done
+
+    freq - (nchan) array of output frequencies
+
+    mask - (nx, ny) bool array indicating where model is non-zero.
+           comps need to be aligned with this mask i.e.
+           Ix, Iy = np.where(mask) are the xy locations of non-zero pixels
+           model[:, Ix, Iy] = comps if no fitting was done
+
+    band_mapping - tuple containg the indices of bands mapping to the output.
+                   In the case of a single spectral window we usually have
+                   band_mapping = np.arange(nband).
+
+    ref_freq - reference frequency used during fitting i.e. we made the
+                design matrix using freq/ref_freq as coordinate
+
+    fitted - bool indicating if any fitting actually happened.
+    '''
+    return da.blockwise(_model_from_comps_wrapper, ('out', 'nx', 'ny'),
+                        comps, ('com', 'pix'),
+                        freq, ('chan',),
+                        mask, ('nx', 'ny'),
+                        band_mapping, ('out',),
+                        ref_freq, None,
+                        fitted, None,
+                        align_arrays=False,
+                        dtype=comps.dtype)
+
+
+def _model_from_comps_wrapper(comps, freq, mask, band_mapping, ref_freq, fitted):
+    return _model_from_comps(comps[0][0], freq[0], mask, band_mapping, ref_freq, fitted)
+
+
+def _model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
+    band_mapping -= band_mapping.min()
+    freqo = freq[band_mapping]
+    nband = freqo.size
+    nx, ny = mask.shape
+    model = np.zeros((nband, nx, ny), dtype=comps.dtype)
+    if fitted:
+        order, npix = comps.shape
+        nband = freqo.size
+        nx, ny = mask.shape
+        model = np.zeros((nband, nx, ny), dtype=comps.dtype)
+        w = (freqo / ref_freq).reshape(nband, 1)
+        Xdes = np.tile(w, order) ** np.arange(0, order)
+        beta_rec = Xdes.dot(comps)
+        model[:, mask] = beta_rec
+    else:
+        model[:, mask] = comps[band_mapping]
+
+    return model

@@ -9,13 +9,14 @@ log = pyscilog.get_logger('PREDICT')
 
 
 @cli.command()
-@click.argument('ms', nargs=-1)
+@click.option('-ms', '--ms', required=True,
+              help='Path to measurement set.')
 @click.option('-m', '--model', required=True,
               help='Path to model.fits')
 @click.option('-mc', '--model-column', default='MODEL_DATA',
               help="Model column to write visibilities to."
               "Must be the same across MSs")
-@click.option('-rchunk', '--row-chunks',
+@click.option('-rchunk', '--row-chunk',
               help="Number of rows in a chunk.")
 @click.option('-cchunk', '--chan-chunks',
               help="Number of channels in a chunk.")
@@ -33,6 +34,9 @@ log = pyscilog.get_logger('PREDICT')
               "Default is same as input but it is possible to increase it to "
               "improve degridding accuracy. If set to -1 the model will be "
               "interpolated to the resolution of the MS.")
+@click.option('-spo', '--spectral-poly-order', type=int, default=4,
+              help='Order of polynomial to fit to freq axis. '
+              'Set to zero to turn off interpolation')
 @click.option('-otype', '--output-type',
               help="Data type of output")
 @click.option('-rtype', '--real-type', default='f4',
@@ -50,7 +54,7 @@ log = pyscilog.get_logger('PREDICT')
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
-def predict(ms, **kw):
+def predict(**kw):
     '''
     Predict model visibilities to measurement sets.
     Currently only predicts from .fits files
@@ -83,13 +87,11 @@ def predict(ms, **kw):
     distributed case.
 
     if LocalCluster:
-        ngridder-threads = nthreads//(nworkers*nthreads_per_worker)
+        nvthreads = nthreads//(nworkers*nthreads_per_worker)
     else:
-        ngridder-threads = nthreads//nthreads-per-worker
+        nvthreads = nthreads//nthreads-per-worker
 
     '''
-    if not len(ms):
-        raise ValueError("You must specify at least one measurement set")
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
 
@@ -132,7 +134,7 @@ def _predict(**kw):
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms.utils import dataset_type
-    mstype = dataset_type(ms[0])
+    mstype = dataset_type(args.ms[0])
     if mstype == 'casa':
         from daskms import xds_to_table
     elif mstype == 'zarr':
@@ -140,8 +142,8 @@ def _predict(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import model as im2vis
-    from pfb.utils.fits import load_fits
-    from pfb.utils.misc import restore_corrs, plan_row_chunk
+    from pfb.utils.fits import load_fits, data_from_header
+    from pfb.utils.misc import restore_corrs, model_from_comps
     from astropy.io import fits
 
     # always returns 4D
@@ -151,17 +153,17 @@ def _predict(**kw):
     hdr = fits.getheader(args.model)
     cell_d = np.abs(hdr['CDELT1'])
     cell_rad = np.deg2rad(cell_d)
+    mfreqs, ref_freq = data_from_header(hdr, axis=3)
+
+    if args.nband_out is None:
+        nband_out = nband
+    else:
+        nband_out = args.nband_out
 
     # chan <-> band mapping
+    ms = args.ms
     freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
-        ms, nband=nband)
-
-    # degridder memory budget
-    max_chan_chunk = 0
-    for ims in ms:
-        for spw in freqs[ims]:
-            counts = freq_bin_counts[ims][spw].compute()
-            max_chan_chunk = np.maximum(max_chan_chunk, counts.max())
+        ms, nband=nband_out)
 
     # assumes number of correlations are the same across MS/SPW
     xds = xds_from_ms(ms[0])
@@ -171,41 +173,22 @@ def _predict(**kw):
         output_type = np.dtype(args.output_type)
     else:
         output_type = np.result_type(np.dtype(args.real_type), np.complex64)
-    data_bytes = output_type.itemsize
-    bytes_per_row = max_chan_chunk * ncorr * data_bytes
-    memory_per_row = bytes_per_row  # model
-    memory_per_row += 3*8  # uvw
 
     if mstype == 'zarr':
         if args.model_column in xds[0].keys():
             model_chunks = getattr(xds[0], args.model_column).data.chunks
         else:
             model_chunks = xds[0].DATA.data.chunks
-            print('Chunking model same as data')
+            print('Chunking model same as data', file=log)
 
-    # get approx image size
-    # this is not a conservative estimate when multiple SPW's map to a single
-    # imaging band
-    pixel_bytes = np.dtype(args.output_type).itemsize
-    band_size = nx * ny * pixel_bytes
 
-    if args.host_address is None:
-        # full image on single node
-        row_chunk = plan_row_chunk(mem_limit/nworkers, band_size, nrow,
-                                   memory_per_row, nthreads_per_worker)
-
+    if args.row_chunk in [0, -1, None]:
+        row_chunk = nrow
     else:
-        # single band per node
-        row_chunk = plan_row_chunk(mem_limit, band_size, nrow,
-                                   memory_per_row, nthreads_per_worker)
+        row_chunk = args.row_chunk
 
-    if args.row_chunks is not None:
-        row_chunk = int(args.row_chunks)
-        if row_chunk == -1:
-            row_chunk = nrow
-
-    print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
-          (nrow, row_chunk, int(np.ceil(nrow / row_chunk))), file=log)
+    print(f"nrows = {nrow}, row chunks set to {row_chunk} for a total of "
+          f"{int(np.ceil(nrow / row_chunk))} chunks", file=log)
 
     chunks = {}
     for ims in ms:
@@ -215,10 +198,53 @@ def _predict(**kw):
                                 'chan': chan_chunks[ims][spw]['chan']})
 
     # interpolate model
+    mask = np.any(model, axis=0)
+    Ix, Iy = np.where(mask)
+    ncomps = Ix.size
 
+    # components excluding zeros
+    beta = model[:, Ix, Iy]
+    if args.spectral_poly_order:
+        print("Fitting integrated polynomial", file=log)
+        order = args.spectral_poly_order
+        if order > mfreqs.size:
+            raise ValueError("spectral-poly-order can't be larger than nband")
 
-    model = da.from_array(model.astype(args.real_type),
-                          chunks=(1, nx, ny), name=False)
+        # we are given frequencies at bin centers, convert to bin edges
+        delta_freq = mfreqs[1] - mfreqs[0]
+        wlow = (mfreqs - delta_freq/2.0)/ref_freq
+        whigh = (mfreqs + delta_freq/2.0)/ref_freq
+        wdiff = whigh - wlow
+
+        # set design matrix for each component
+        Xfit = np.zeros([mfreqs.size, order])
+        for i in range(1, order+1):
+            Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+
+        # get wsum per band
+        wsums = np.zeros((mfreqs.size,1))
+        try:
+            for i in range(mfreqs.size):
+                wsums[i] = hdr[f'WSUM{i}']
+        except Exception as e:
+            print("Can't find WSUMS in header, using unity weights", file=log)
+            wsums = np.ones(mfreqs.size)
+
+        dirty_comps = Xfit.T.dot(wsums*beta)
+
+        hess_comps = Xfit.T.dot(wsums*Xfit)
+
+        comps = np.linalg.solve(hess_comps, dirty_comps)
+        freq_fitted = True
+    else:
+        print("Not fitting frequency axis", file=log)
+        comps = beta
+        freq_fitted = False
+
+    mask = da.from_array(mask, chunks=(nx, ny), name=False)
+    comps = da.from_array(comps.astype(args.real_type),
+                          chunks=(-1, ncomps), name=False)
+    freq_out = da.from_array(freq_out, chunks=1)
     writes = []
     radec = None  # assumes we are only imaging field 0 of first MS
     for ims in ms:
@@ -251,19 +277,20 @@ def _predict(**kw):
             # TODO - need to use spw table
             spw = ds.DATA_DESC_ID
 
-            uvw = clone(ds.UVW.data)
+            model = model_from_comps(comps, freq_out, mask,
+                                     band_mapping[ims][spw],
+                                     ref_freq, freq_fitted)
 
-            bands = band_mapping[ims][spw]
-            model = model[list(bands), :, :]
+            uvw = ds.UVW.data
             vis_I = im2vis(uvw,
-                         freqs[ims][spw],
-                         model[0],
-                         freq_bin_idx[ims][spw],
-                         freq_bin_counts[ims][spw],
-                         cell_rad,
-                         nthreads=args.nvthreads,
-                         epsilon=args.epsilon,
-                         do_wstacking=args.wstack)
+                           freqs[ims][spw],
+                           model,
+                           freq_bin_idx[ims][spw],
+                           freq_bin_counts[ims][spw],
+                           cell_rad,
+                           nthreads=args.nvthreads,
+                           epsilon=args.epsilon,
+                           do_wstacking=args.wstack)
 
             # vis_Q = im2vis(uvw,
             #              freqs[ims][spw],
@@ -275,7 +302,7 @@ def _predict(**kw):
             #              epsilon=args.epsilon,
             #              do_wstacking=args.wstack)
 
-            model_vis = restore_corrs(vis, ncorr)
+            model_vis = restore_corrs(vis_I, ncorr)
 
 
             if mstype == 'zarr':

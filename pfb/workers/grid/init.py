@@ -220,11 +220,11 @@ def _init(**kw):
         if cell_N / cell_rad < 1:
             raise ValueError("Requested cell size too small. "
                              "Super resolution factor = ", cell_N / cell_rad)
-        print("Super resolution factor = %f" % (cell_N / cell_rad), file=log)
+        print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
     else:
         cell_rad = cell_N / args.super_resolution_factor
         cell_size = cell_rad * 60 * 60 * 180 / np.pi
-        print("Cell size set to %5.5e arcseconds" % cell_size, file=log)
+        print(f"Cell size set to {cell_size} arcseconds", file=log)
 
     if args.nx is None:
         fov = args.field_of_view * 3600
@@ -237,7 +237,7 @@ def _init(**kw):
         nx = args.nx
         ny = args.ny if args.ny is not None else nx
 
-    print("Image size set to (%i, %i, %i)" % (nband, nx, ny), file=log)
+    print(f"Image size set to ({nband}, {nx}, {ny})", file=log)
 
     nx_psf = int(args.psf_oversize * nx)
     if nx_psf % 2:
@@ -247,15 +247,15 @@ def _init(**kw):
     if ny_psf % 2:
         ny_psf += 1
 
-    print("PSF size set to (%i, %i, %i)" % (nband, nx_psf, ny_psf), file=log)
+    print(f"PSF size set to ({nband}, {nx_psf}, {ny_psf})", file=log)
 
     if args.row_chunk in [0, -1, None]:
         row_chunk = nrow
     else:
         row_chunk = args.row_chunk
 
-    print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
-          (nrow, row_chunk, int(np.ceil(nrow / row_chunk))), file=log)
+    print(f"nrows = {nrow}, row chunks set to {row_chunk} for a total of "
+          f"{int(np.ceil(nrow / row_chunk))} chunks", file=log)
 
     chunks = {}
     for ims in ms:
@@ -326,7 +326,7 @@ def _init(**kw):
     psfs = result[1]
 
     psf = stitch_images(psfs, nband, band_mapping)
-
+    wsums = np.amax(psf, axis=(1, 2))
     psf_mfs = np.sum(psf, axis=0)
     wsum = psf_mfs.max()
     psf_mfs /= wsum
@@ -335,6 +335,8 @@ def _init(**kw):
 
     # save dirty
     hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
+    for i, w in enumerate(wsums):
+        hdr[f'WSUM{i}'] = w
     save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
               dtype=args.output_type)
     hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
@@ -345,6 +347,8 @@ def _init(**kw):
     # save psf
     hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf,
                   radec, freq_out)
+    for i, w in enumerate(wsums):
+        hdr[f'WSUM{i}'] = w
     save_fits(args.output_filename + '_psf.fits', psf, hdr,
               dtype=args.output_type)
     hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf,
