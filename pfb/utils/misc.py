@@ -281,7 +281,7 @@ def chan_to_band_mapping(ms_name, nband=None):
     all_freqs = dask.compute(all_freqs)
     ufreqs = np.unique(all_freqs)  # sorted ascending
     nchan = ufreqs.size
-    if nband is None:
+    if nband in [None, -1]:
         nband = nchan
     else:
        nband = nband
@@ -533,7 +533,6 @@ def _model_from_comps_wrapper(comps, freq, mask, band_mapping, ref_freq, fitted)
 
 
 def _model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
-    band_mapping -= band_mapping.min()
     freqo = freq[band_mapping]
     nband = freqo.size
     nx, ny = mask.shape

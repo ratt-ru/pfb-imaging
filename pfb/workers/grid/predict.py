@@ -137,8 +137,9 @@ def _predict(**kw):
     mstype = dataset_type(args.ms[0])
     if mstype == 'casa':
         from daskms import xds_to_table
-    elif mstype == 'zarr':
-        from daskms.experimental.zarr import xds_to_zarr as xds_to_table
+    else:
+        raise ValueError("predict currently only supports measurement sets")
+        # from daskms.experimental.zarr import xds_to_zarr as xds_to_table
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import model as im2vis
@@ -165,37 +166,48 @@ def _predict(**kw):
     freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
         ms, nband=nband_out)
 
-    # assumes number of correlations are the same across MS/SPW
-    xds = xds_from_ms(ms[0])
-    ncorr = xds[0].dims['corr']
-    nrow = xds[0].dims['row']
     if args.output_type is not None:
         output_type = np.dtype(args.output_type)
     else:
         output_type = np.result_type(np.dtype(args.real_type), np.complex64)
 
-    if mstype == 'zarr':
-        if args.model_column in xds[0].keys():
-            model_chunks = getattr(xds[0], args.model_column).data.chunks
-        else:
-            model_chunks = xds[0].DATA.data.chunks
-            print('Chunking model same as data', file=log)
+    # if mstype == 'zarr':
+    #     if args.model_column in xds[0].keys():
+    #         model_chunks = getattr(xds[0], args.model_column).data.chunks
+    #     else:
+    #         model_chunks = xds[0].DATA.data.chunks
+    #         print('Chunking model same as data', file=log)
 
 
-    if args.row_chunk in [0, -1, None]:
-        row_chunk = nrow
-    else:
-        row_chunk = args.row_chunk
+    row_chunks = {}
+    ncorr = None
+    for ims in ms:
+        xds = xds_from_ms(ims)
+        row_chunks[ims] = {}
 
-    print(f"nrows = {nrow}, row chunks set to {row_chunk} for a total of "
-          f"{int(np.ceil(nrow / row_chunk))} chunks", file=log)
+        for ds in xds:
+            spw = ds.DATA_DESC_ID
+
+            if ncorr is None:
+                ncorr = ds.dims['corr']
+            else:
+                try:
+                    assert ncorr == ds.dims['corr']
+                except Exception as e:
+                    raise ValueError("All data sets must have the same number of correlations")
+
+            if args.row_chunk in [0, -1, None]:
+                row_chunks[ims][spw] = ds.dims['row']
+
+            else:
+                row_chunks[ims][spw] = args.row_chunk
 
     chunks = {}
     for ims in ms:
         chunks[ims] = []  # xds_from_ms expects a list per ds
         for spw in freqs[ims]:
-            chunks[ims].append({'row': row_chunk,
-                                'chan': chan_chunks[ims][spw]['chan']})
+            chunks[ims].append({'row': row_chunks[ims][spw],
+                                'chan': chan_chunks[ims][spw]['chan']})  # LB - why this funny list[dict] structure?
 
     # interpolate model
     mask = np.any(model, axis=0)
@@ -205,8 +217,8 @@ def _predict(**kw):
     # components excluding zeros
     beta = model[:, Ix, Iy]
     if args.spectral_poly_order:
-        print("Fitting integrated polynomial", file=log)
         order = args.spectral_poly_order
+        print(f"Fitting integrated polynomial of order {order}", file=log)
         if order > mfreqs.size:
             raise ValueError("spectral-poly-order can't be larger than nband")
 
@@ -241,10 +253,11 @@ def _predict(**kw):
         comps = beta
         freq_fitted = False
 
+    print("Computing model visibilities", file=log)
     mask = da.from_array(mask, chunks=(nx, ny), name=False)
     comps = da.from_array(comps.astype(args.real_type),
                           chunks=(-1, ncomps), name=False)
-    freq_out = da.from_array(freq_out, chunks=1)
+    freq_out = da.from_array(freq_out, chunks=-1, name=False)
     writes = []
     radec = None  # assumes we are only imaging field 0 of first MS
     for ims in ms:
@@ -271,6 +284,7 @@ def _predict(**kw):
             if radec is None:
                 radec = field.PHASE_DIR.data.squeeze()
 
+            # TODO - rephase if fields don't match, requires PB model
             if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
                 continue
 
@@ -305,23 +319,25 @@ def _predict(**kw):
             model_vis = restore_corrs(vis_I, ncorr)
 
 
-            if mstype == 'zarr':
-                model_vis = model_vis.rechunk(model_chunks)
-                uvw = uvw.rechunk((model_chunks[0], 3))
+            # if mstype == 'zarr':
+            #     model_vis = model_vis.rechunk(model_chunks)
+            #     uvw = uvw.rechunk((model_chunks[0], 3))
 
-            out_ds = ds.assign(**{args.model_column: (("row", "chan", "corr"), model_vis),
-                                  'UVW': (("row", "three"), uvw)})
-            # out_ds = ds.assign(**{args.model_column: (("row", "chan", "corr"), model_vis)})
+            # out_ds = ds.assign(**{args.model_column: (("row", "chan", "corr"), model_vis),
+            #                       'UVW': (("row", "three"), uvw)})
+            out_ds = ds.assign(**{args.model_column: (("row", "chan", "corr"), model_vis)})
             out_data.append(out_ds)
 
         writes.append(xds_to_table(out_data, ims, columns=[args.model_column]))
 
-    dask.visualize(*writes, filename=args.output_filename + '_predict_graph.pdf',
-                   optimize_graph=False, collapse_outputs=True)
+    # dask.visualize(*writes, filename=args.output_filename + '_predict_graph.pdf',
+    #                optimize_graph=False, collapse_outputs=True)
 
-    if not args.mock:
-        with performance_report(filename=args.output_filename + '_predict_per.html'):
-            dask.compute(writes, optimize_graph=False)
+    # if not args.mock:
+    #     with performance_report(filename=args.output_filename + '_predict_per.html'):
+    #         dask.compute(writes, optimize_graph=False)
+
+    dask.compute(writes, optimize_graph=False)
 
     print("All done here.", file=log)
 
