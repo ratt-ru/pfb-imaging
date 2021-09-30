@@ -36,6 +36,7 @@ log = pyscilog.get_logger('INIT')
               help='Gridder accuracy')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
+@click.option('--flipv/--no-flipv', default=True)
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -146,6 +147,7 @@ def _init(**kw):
     from ducc0.fft import good_size
     from pfb.utils.misc import stitch_images, plan_row_chunk
     from pfb.utils.fits import set_wcs, save_fits
+    from pfb.utils.stokes import single_stokes
 
     # chan <-> band mapping
     ms = args.ms
@@ -263,9 +265,9 @@ def _init(**kw):
             chunks[ims].append({'row': row_chunk,
                                 'chan': chan_chunks[ims][spw]['chan']})
 
-    dirties = []
-    psfs = []
-    out_datasets = []
+    dirties = {}
+    psfs = {}
+    out_datasets = {}
     radec = None  # assumes we are only imaging field 0 of first MS
     for ims in ms:
         xds = xds_from_ms(ims, chunks=chunks[ims], columns=columns)
@@ -282,6 +284,16 @@ def _init(**kw):
         spws = dask.compute(spws)[0]
         pols = dask.compute(pols)[0]
 
+
+        corr_type = set(tuple(pols[0].CORR_TYPE.data.squeeze()))
+        if corr_type.issubset(set([9, 10, 11, 12])):
+            pol_type = 'linear'
+        elif corr_type.issubset(set([5, 6, 7, 8])):
+            pol_type = 'circular'
+        else:
+            raise ValueError(f"Cannot determine polarisation type "
+                             f"from correlations {pols[0].CORR_TYPE.data}")
+
         for ds in xds:
             field = fields[ds.FIELD_ID]
 
@@ -295,317 +307,222 @@ def _init(**kw):
             # TODO - need to use spw table
             spw = ds.DATA_DESC_ID
 
-            # uvw = clone(ds.UVW.data)
+            # MS may contain auto-correlations
+            if 'FLAG_ROW' in ds:
+                frow = ds.FLAG_ROW.data | (ds.ANTENNA1.data == ds.ANTENNA2.data)
+            else:
+                frow = (ds.ANTENNA1.data == ds.ANTENNA2.data)
 
-            if args.products.lower() == 'i':
-                dirty, psf, out_ds = _I(ds, args,
+            if 'I' in args.products.upper():
+                # I always has the same pattern
+                idx0 = 0
+                idxf = -1
+                sign = 1.0  # sign to use in sum
+                csign = 1.0  # used to negate complex vals
+                dirty_I, psf_I, out_ds_I = single_stokes(
+                                        ds,
+                                        args.data_column,
+                                        args.weight_column,
+                                        args.imaging_weight_column,
+                                        args.mueller_column,
+                                        args.flag_column,
+                                        frow,
+                                        pol_type,
+                                        args.row_out_chunk,
+                                        args.nvthreads,
+                                        args.epsilon,
+                                        args.wstack,
+                                        args.double_accum,
+                                        args.flipv,
                                         freqs[ims][spw],
                                         fbin_idx[ims][spw],
                                         fbin_counts[ims][spw],
-                                        nx, ny, nx_psf, ny_psf, cell_rad)
-                dirties.append(dirty)
-                psfs.append(psf)
-                out_datasets.append(out_ds)
+                                        nx, ny, nx_psf, ny_psf, cell_rad,
+                                        idx0, idxf, sign, csign)
+                dirties.setdefault('I', [])
+                psfs.setdefault('I', [])
+                out_datasets.setdefault('I', [])
+                dirties['I'].append(dirty_I)
+                psfs['I'].append(psf_I)
+                out_datasets['I'].append(out_ds_I)
+
+            if 'Q' in args.products.upper():
+                if pol_type.lower() == 'linear':
+                    idx0 = 0
+                    idxf = -1
+                    sign = -1.0
+                    csign = 1.0
+                elif pol_type.lower() == 'circular':
+                    idx0 = 1
+                    idxf = 2
+                    sign = 1.0
+                    csign = 1.0
+                dirty_Q, psf_Q, out_ds_Q = single_stokes(
+                                        ds,
+                                        args.data_column,
+                                        args.weight_column,
+                                        args.imaging_weight_column,
+                                        args.mueller_column,
+                                        args.flag_column,
+                                        frow,
+                                        pol_type,
+                                        args.row_out_chunk,
+                                        args.nvthreads,
+                                        args.epsilon,
+                                        args.wstack,
+                                        args.double_accum,
+                                        args.flipv,
+                                        freqs[ims][spw],
+                                        fbin_idx[ims][spw],
+                                        fbin_counts[ims][spw],
+                                        nx, ny, nx_psf, ny_psf, cell_rad,
+                                        idx0, idxf, sign, csign)
+                dirties.setdefault('Q', [])
+                psfs.setdefault('Q', [])
+                out_datasets.setdefault('Q', [])
+                dirties['Q'].append(dirty_Q)
+                psfs['Q'].append(psf_Q)
+                out_datasets['Q'].append(out_ds_Q)
+
+            if 'U' in args.products.upper():
+                if pol_type.lower() == 'linear':
+                    idx0 = 1
+                    idxf = 2
+                    sign = 1.0
+                    csign = 1
+                elif pol_type.lower() == 'circular':
+                    idx0 = 1
+                    idxf = 2
+                    sign = -1
+                    csign = 1.0j
+
+                dirty_U, psf_U, out_ds_U = single_stokes(
+                                        ds,
+                                        args.data_column,
+                                        args.weight_column,
+                                        args.imaging_weight_column,
+                                        args.mueller_column,
+                                        args.flag_column,
+                                        frow,
+                                        pol_type,
+                                        args.row_out_chunk,
+                                        args.nvthreads,
+                                        args.epsilon,
+                                        args.wstack,
+                                        args.double_accum,
+                                        args.flipv,
+                                        freqs[ims][spw],
+                                        fbin_idx[ims][spw],
+                                        fbin_counts[ims][spw],
+                                        nx, ny, nx_psf, ny_psf, cell_rad,
+                                        idx0, idxf, sign, csign)
+                dirties.setdefault('U', [])
+                psfs.setdefault('U', [])
+                out_datasets.setdefault('U', [])
+                dirties['U'].append(dirty_U)
+                psfs['U'].append(psf_U)
+                out_datasets['U'].append(out_ds_U)
+
+            if 'V' in args.products.upper():
+                if pol_type.lower() == 'linear':
+                    idx0 = 1
+                    idxf = 2
+                    sign = -1.0
+                    csign = 1.0j
+                elif pol_type.lower() == 'circular':
+                    idx0 = 0
+                    idxf = -1
+                    sign = -1.0
+                    csign = 1.0
+                dirty_V, psf_V, out_ds_V = single_stokes(
+                                        ds,
+                                        args.data_column,
+                                        args.weight_column,
+                                        args.imaging_weight_column,
+                                        args.mueller_column,
+                                        args.flag_column,
+                                        frow,
+                                        pol_type,
+                                        args.row_out_chunk,
+                                        args.nvthreads,
+                                        args.epsilon,
+                                        args.wstack,
+                                        args.double_accum,
+                                        args.flipv,
+                                        freqs[ims][spw],
+                                        fbin_idx[ims][spw],
+                                        fbin_counts[ims][spw],
+                                        nx, ny, nx_psf, ny_psf, cell_rad,
+                                        idx0, idxf, sign, csign)
+                dirties.setdefault('V', [])
+                psfs.setdefault('V', [])
+                out_datasets.setdefault('V', [])
+                dirties['V'].append(dirty_U)
+                psfs['V'].append(psf_U)
+                out_datasets['V'].append(out_ds_V)
             else:
                 raise NotImplementedError("Sorry, not yet")
 
-    # remove dataset if it exists
-    if os.path.isdir(args.output_filename + '.zarr'):
-        print(f"Removing existing {args.output_filename}.zarr folder", file=log)
-        os.system(f"rm -r {args.output_filename}.zarr")
-
-    writes = xds_to_zarr(out_datasets, args.output_filename + '.zarr', columns='ALL')
+    writes = {}
+    if 'i' in args.products.lower():
+        if os.path.isdir(args.output_filename + '_I.zarr'):
+            print(f"Removing existing {args.output_filename}_I.zarr folder", file=log)
+            os.system(f"rm -r {args.output_filename}_I.zarr")
+        writes['I'] = xds_to_zarr(out_datasets['I'], args.output_filename + '_I.zarr', columns='ALL')
+    if 'q' in args.products.lower():
+        if os.path.isdir(args.output_filename + '_Q.zarr'):
+            print(f"Removing existing {args.output_filename}_Q.zarr folder", file=log)
+            os.system(f"rm -r {args.output_filename}_Q.zarr")
+        writes['Q'] = xds_to_zarr(out_datasets['Q'], args.output_filename + '_Q.zarr', columns='ALL')
+    if 'u' in args.products.lower():
+        if os.path.isdir(args.output_filename + '_U.zarr'):
+            print(f"Removing existing {args.output_filename}_U.zarr folder", file=log)
+            os.system(f"rm -r {args.output_filename}_U.zarr")
+        writes['U'] = xds_to_zarr(out_datasets['U'], args.output_filename + '_U.zarr', columns='ALL')
+    if 'v' in args.products.lower():
+        if os.path.isdir(args.output_filename + '_V.zarr'):
+            print(f"Removing existing {args.output_filename}_V.zarr folder", file=log)
+            os.system(f"rm -r {args.output_filename}_V.zarr")
+        writes['V'] = xds_to_zarr(out_datasets['V'], args.output_filename + '_V.zarr', columns='ALL')
 
     result = dask.compute(dirties, psfs, writes, optimize_graph=False)
 
     dirties = result[0]
-
-    dirty = stitch_images(dirties, nband, band_mapping)
-
     psfs = result[1]
 
-    psf = stitch_images(psfs, nband, band_mapping)
-    wsums = np.amax(psf, axis=(1, 2))
-    psf_mfs = np.sum(psf, axis=0)
-    wsum = psf_mfs.max()
-    psf_mfs /= wsum
+    dirty = np.zeros((len(args.products), nband, nx, ny), dtype=args.output_type)
+    dirty_mfs = np.zeros((len(args.products), 1, nx, ny), dtype=args.output_type)
+    psf = np.zeros((len(args.products), nband, nx_psf, ny_psf), dtype=args.output_type)
+    psf_mfs = np.zeros((len(args.products), 1, nx_psf, ny_psf), dtype=args.output_type)
 
-    dirty_mfs = np.sum(dirty, axis=0)/wsum
-
-    # save dirty
+    # create output header
     hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
-    for i, w in enumerate(wsums):
-        hdr[f'WSUM{i}'] = w
+    hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
+                      np.mean(freq_out))
+    hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec, freq_out)
+    hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
+                          np.mean(freq_out))
+
+    # iterator defines Stokes <-> index convention
+    for i, c in enumerate(sorted(args.products.upper())):
+        dirty[i] = stitch_images(dirties[c], nband, band_mapping)
+        psf[i] = stitch_images(psfs[c], nband, band_mapping)
+        wsums = np.amax(psf[i], axis=(1, 2))
+        wsum = np.sum(wsums)
+        for b, w in enumerate(wsums):
+            hdr[f'WSUM{c}{b}'] = w
+            hdr_psf[f'WSUM{c}{b}'] = w
+        dirty_mfs[i] =  np.sum(dirty[i], axis=0)/wsum
+        psf_mfs[i] =  np.sum(psf[i], axis=0)/wsum
+
+
     save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
               dtype=args.output_type)
-    hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
-                      freq_out[0])
     save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
               dtype=args.output_type)
-
-    # save psf
-    hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf,
-                  radec, freq_out)
-    for i, w in enumerate(wsums):
-        hdr[f'WSUM{i}'] = w
-    save_fits(args.output_filename + '_psf.fits', psf, hdr,
+    save_fits(args.output_filename + '_psf.fits', psf, hdr_psf,
               dtype=args.output_type)
-    hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf,
-                      radec, freq_out[0])
-    save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_mfs,
+    save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs,
               dtype=args.output_type)
 
     print("All done here.", file=log)
-
-
-def _I(ds, args, freq, fbin_idx, fbin_counts, nx, ny,
-       nx_psf, ny_psf, cell_rad):
-    import numpy as np
-    import dask.array as da
-    from xarray import Dataset
-    from africanus.gridding.wgridder.dask import dirty as vis2im
-    data = getattr(ds, args.data_column).data
-    dataxx = data[:, :, 0]
-    datayy = data[:, :, -1]
-
-    data_type = getattr(ds, args.data_column).data.dtype
-    data_shape = getattr(ds, args.data_column).data.shape
-    data_chunks = getattr(ds, args.data_column).data.chunks
-
-    weights = getattr(ds, args.weight_column).data
-
-    if args.imaging_weight_column is not None:
-        imaging_weights = getattr(
-            ds, args.imaging_weight_column).data
-
-        weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
-        weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]
-    else:
-        weightsxx = weights[:, :, 0]
-        weightsyy = weights[:, :, -1]
-
-    # adjoint of mueller term
-    if args.mueller_column is not None:
-        mueller = getattr(ds, args.mueller_column).data
-        data = (dataxx *  mueller[:, :, 0].conj() * weightsxx +
-                datayy * mueller[:, :, -1].conj() * weightsyy)
-        weightsxx *= da.absolute(mueller[:, :, 0])**2
-        weightsyy *= da.absolute(mueller[:, :, -1])**2
-
-    else:
-        data = weightsxx * dataxx + weightsyy * datayy
-
-    weights = weightsxx + weightsyy
-    # TODO - turn off this stupid warning
-    data = da.where(weights, data / weights, 0.0j)
-    real_type = data.real.dtype
-
-    # MS may contain auto-correlations
-    if 'FLAG_ROW' in ds:
-        frow = ds.FLAG_ROW.data | (ds.ANTENNA1.data == ds.ANTENNA2.data)
-    else:
-        frow = (ds.ANTENNA1.data == ds.ANTENNA2.data)
-
-    # only keep data where both corrs are unflagged
-    flag = getattr(ds, args.flag_column).data
-    flagxx = flag[:, :, 0]
-    flagyy = flag[:, :, -1]
-    # ducc0 uses uint8 mask not flag
-    mask = ~ da.logical_or((flagxx | flagyy), frow[:, None])
-    uvw = ds.UVW.data
-    dirty = vis2im(uvw,
-                   freq,
-                   data,
-                   fbin_idx,
-                   fbin_counts,
-                   nx,
-                   ny,
-                   cell_rad,
-                   weights=weights,
-                   flag=mask.astype(np.uint8),
-                   nthreads=args.nvthreads,
-                   epsilon=args.epsilon,
-                   do_wstacking=args.wstack,
-                   double_accum=args.double_accum)
-
-    psf = vis2im(uvw,
-                 freq,
-                 weights.astype(data_type),
-                 fbin_idx,
-                 fbin_counts,
-                 nx_psf,
-                 ny_psf,
-                 cell_rad,
-                 flag=mask.astype(np.uint8),
-                 nthreads=args.nvthreads,
-                 epsilon=args.epsilon,
-                 do_wstacking=args.wstack,
-                 double_accum=args.double_accum)
-
-    weights = da.where(mask, weights, 0.0)
-
-    data_vars = {
-                'FIELD_ID':(('row',), da.full_like(ds.TIME.data,
-                            ds.FIELD_ID, chunks=args.row_out_chunk)),
-                'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data,
-                            ds.DATA_DESC_ID, chunks=args.row_out_chunk)),
-                'WEIGHT':(('row', 'chan'), weights.rechunk({0:args.row_out_chunk})),  # why no 'f4'?
-                'UVW':(('row', 'uvw'), uvw.rechunk({0:args.row_out_chunk}))
-            }
-
-    coords = {
-        'chan': (('chan',), freq)
-    }
-
-    out_ds = Dataset(data_vars, coords)
-
-    return dirty, psf, out_ds
-
-def _Q(ds, args, uvw, freq, fbin_idx, fbin_counts, nx, ny, cell_rad):
-    data = getattr(ds, args.data_column).data
-    dataxx = data[:, :, 0]
-    datayy = data[:, :, -1]
-
-    weights = getattr(ds, args.weight_column).data
-    if len(weights.shape) < 3:
-        weights = da.broadcast_to(
-            weights[:, None, :], data.shape, chunks=data.chunks)
-
-    if args.imaging_weight_column is not None:
-        imaging_weights = getattr(
-            ds, args.imaging_weight_column).data
-        if len(imaging_weights.shape) < 3:
-            imaging_weights = da.broadcast_to(
-                imaging_weights[:, None, :], data.shape, chunks=data.chunks)
-
-        weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
-        weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]
-    else:
-        weightsxx = weights[:, :, 0]
-        weightsyy = weights[:, :, -1]
-
-    # apply adjoint of mueller term.
-    if args.mueller_column is not None:
-        mueller = getattr(ds, args.mueller_column).data
-        data = (dataxx *  mueller[:, :, 0].conj() * weightsxx -
-                datayy * mueller[:, :, -1].conj() * weightsyy)
-        weightsxx *= da.absolute(mueller[:, :, 0])**2
-        weightsyy *= da.absolute(mueller[:, :, -1])**2
-
-    else:
-        data = weightsxx * dataxx - weightsyy * datayy
-
-    # weighted sum corr to Stokes I
-    weights = weightsxx + weightsyy
-    # TODO - turn off this stupid warning
-    data = da.where(weights, data / weights, 0.0j)
-
-    # MS may contain auto-correlations
-    if 'FLAG_ROW' in ds:
-        frow = ds.FLAG_ROW.data | (ds.ANTENNA1.data == ds.ANTENNA2.data)
-    else:
-        frow = (ds.ANTENNA1.data == ds.ANTENNA2.data)
-
-    # only keep data where both corrs are unflagged
-    flag = getattr(ds, args.flag_column).data
-    flagxx = flag[:, :, 0]
-    flagyy = flag[:, :, -1]
-    # ducc0 uses uint8 mask not flag
-    mask = ~ da.logical_or((flagxx | flagyy), frow[:, None])
-
-    dirty = vis2im(uvw,
-                   freq,
-                   data,
-                   fbin_idx,
-                   fbin_counts,
-                   nx,
-                   ny,
-                   cell_rad,
-                   weights=weights,
-                   flag=mask.astype(np.uint8),
-                   nthreads=args.nvthreads,
-                   epsilon=args.epsilon,
-                   do_wstacking=args.wstack,
-                   double_accum=args.double_accum)
-
-    return dirty
-
-def _IQ(ds, args, uvw, freq, fbin_idx, fbin_counts, nx, ny, cell_rad):
-    data = getattr(ds, args.data_column).data
-    dataxx = data[:, :, 0]
-    datayy = data[:, :, -1]
-
-    weights = getattr(ds, args.weight_column).data
-    if len(weights.shape) < 3:
-        weights = da.broadcast_to(
-            weights[:, None, :], data.shape, chunks=data.chunks)
-
-    if args.imaging_weight_column is not None:
-        imaging_weights = getattr(
-            ds, args.imaging_weight_column).data
-        if len(imaging_weights.shape) < 3:
-            imaging_weights = da.broadcast_to(
-                imaging_weights[:, None, :], data.shape, chunks=data.chunks)
-
-        weightsxx = imaging_weights[:, :, 0] * weights[:, :, 0]
-        weightsyy = imaging_weights[:, :, -1] * weights[:, :, -1]
-    else:
-        weightsxx = weights[:, :, 0]
-        weightsyy = weights[:, :, -1]
-
-    # apply adjoint of mueller term.
-    if args.mueller_column is not None:
-        mueller = getattr(ds, args.mueller_column).data
-        dataxx *= mueller[:, :, 0].conj() * weightsxx
-        datayy *= mueller[:, :, -1].conj() * weightsyy
-        weightsxx *= da.absolute(mueller[:, :, 0])**2
-        weightsyy *= da.absolute(mueller[:, :, -1])**2
-
-    else:
-        dataxx *= weightsxx
-        datayy *= weightsyy
-
-    # MS may contain auto-correlations
-    if 'FLAG_ROW' in ds:
-        frow = ds.FLAG_ROW.data | (ds.ANTENNA1.data == ds.ANTENNA2.data)
-    else:
-        frow = (ds.ANTENNA1.data == ds.ANTENNA2.data)
-
-    # only keep data where both corrs are unflagged
-    flag = getattr(ds, args.flag_column).data
-    flagxx = flag[:, :, 0]
-    flagyy = flag[:, :, -1]
-    # ducc0 uses uint8 mask not flag
-    mask = (~ da.logical_or((flagxx | flagyy), frow[:, None])).astype(np.uint8)
-
-    dirtyxx = vis2im(uvw,
-                     freq,
-                     dataxx,
-                     fbin_idx,
-                     fbin_counts,
-                     nx,
-                     ny,
-                     cell_rad,
-                     weights=weightsxx,
-                     flag=mask,
-                     nthreads=args.nvthreads,
-                     epsilon=args.epsilon,
-                     do_wstacking=args.wstack,
-                     double_accum=args.double_accum)
-
-    dirtyyy = vis2im(uvw,
-                     freq,
-                     datayy,
-                     fbin_idx,
-                     fbin_counts,
-                     nx,
-                     ny,
-                     cell_rad,
-                     weights=weightsyy,
-                     flag=mask,
-                     nthreads=args.nvthreads,
-                     epsilon=args.epsilon,
-                     do_wstacking=args.wstack,
-                     double_accum=args.double_accum)
-
-    return dirty

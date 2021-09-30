@@ -498,8 +498,8 @@ def _compare_vals_impl(vis1, vis2, flag, mode, ctol):
 # utility to produce a model image from fitted components
 def model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
     '''
-    comps - (nband, ncomps) array of fitted components or model vals per
-            band if no fitting was done
+    comps - (order/nband, ncomps) array of fitted components or model vals
+            per band if no fitting was done.
 
     freq - (nchan) array of output frequencies
 
