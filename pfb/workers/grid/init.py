@@ -313,37 +313,66 @@ def _init(**kw):
             else:
                 frow = (ds.ANTENNA1.data == ds.ANTENNA2.data)
 
+            data = getattr(ds, args.data_column).data
+
+            if args.weight_column is not None:
+                weight = getattr(ds, args.weight_column).data
+            else:
+                weight = None
+
+            if args.imaging_weight_column is not None:
+                imaging_weight = getattr(ds, args.imaging_weight_column).data
+            else:
+                imaging_weight = None
+
+            # adjoint of mueller term
+            if args.mueller_column is not None:
+                mueller = getattr(ds, args.mueller_column).data
+            else:
+                mueller = None
+
+            if args.flag_column is not None:
+                flag = getattr(ds, args.flag_column).data
+            else:
+                flag = None
+
+            uvw = dask.persist(ds.UVW.data)[0]
+            frow = dask.persist(frow)
+
             if 'I' in args.products.upper():
                 # I always has the same pattern
                 idx0 = 0
                 idxf = -1
                 sign = 1.0  # sign to use in sum
                 csign = 1.0  # used to negate complex vals
-                dirty_I, psf_I, out_ds_I = single_stokes(
-                                        ds,
-                                        args.data_column,
-                                        args.weight_column,
-                                        args.imaging_weight_column,
-                                        args.mueller_column,
-                                        args.flag_column,
-                                        frow,
-                                        pol_type,
-                                        args.row_out_chunk,
-                                        args.nvthreads,
-                                        args.epsilon,
-                                        args.wstack,
-                                        args.double_accum,
-                                        args.flipv,
-                                        freqs[ims][spw],
-                                        fbin_idx[ims][spw],
-                                        fbin_counts[ims][spw],
-                                        nx, ny, nx_psf, ny_psf, cell_rad,
-                                        idx0, idxf, sign, csign)
-                dirties.setdefault('I', [])
-                psfs.setdefault('I', [])
+                # dirty_I, psf_I, out_ds_I = single_stokes(
+                out_ds_I = single_stokes(data,
+                                         weight,
+                                         imaging_weight,
+                                         mueller,
+                                         flag,
+                                         frow,
+                                         uvw,
+                                         ds.TIME.data,
+                                         ds.FIELD_ID,
+                                         ds.DATA_DESC_ID,
+                                         pol_type,
+                                         args.row_out_chunk,
+                                         args.nvthreads,
+                                         args.epsilon,
+                                         args.wstack,
+                                         args.double_accum,
+                                         args.flipv,
+                                         freqs[ims][spw],
+                                         fbin_idx[ims][spw],
+                                         fbin_counts[ims][spw],
+                                         nx, ny, nx_psf, ny_psf, cell_rad,
+                                         idx0, idxf, sign, csign)
+                # dirties.setdefault('I', [])
+                # psfs.setdefault('I', [])
                 out_datasets.setdefault('I', [])
-                dirties['I'].append(dirty_I)
-                psfs['I'].append(psf_I)
+                # dirties['I'].append(dirty_I)
+                # psfs['I'].append(psf_I)
                 out_datasets['I'].append(out_ds_I)
 
             if 'Q' in args.products.upper():
@@ -357,31 +386,34 @@ def _init(**kw):
                     idxf = 2
                     sign = 1.0
                     csign = 1.0
-                dirty_Q, psf_Q, out_ds_Q = single_stokes(
-                                        ds,
-                                        args.data_column,
-                                        args.weight_column,
-                                        args.imaging_weight_column,
-                                        args.mueller_column,
-                                        args.flag_column,
-                                        frow,
-                                        pol_type,
-                                        args.row_out_chunk,
-                                        args.nvthreads,
-                                        args.epsilon,
-                                        args.wstack,
-                                        args.double_accum,
-                                        args.flipv,
-                                        freqs[ims][spw],
-                                        fbin_idx[ims][spw],
-                                        fbin_counts[ims][spw],
-                                        nx, ny, nx_psf, ny_psf, cell_rad,
-                                        idx0, idxf, sign, csign)
-                dirties.setdefault('Q', [])
-                psfs.setdefault('Q', [])
+                # dirty_Q, psf_Q, out_ds_Q = single_stokes(
+                out_ds_Q = single_stokes(data,
+                                         weight,
+                                         imaging_weight,
+                                         mueller,
+                                         flag,
+                                         frow,
+                                         uvw,
+                                         ds.TIME.data,
+                                         ds.FIELD_ID,
+                                         ds.DATA_DESC_ID,
+                                         pol_type,
+                                         args.row_out_chunk,
+                                         args.nvthreads,
+                                         args.epsilon,
+                                         args.wstack,
+                                         args.double_accum,
+                                         args.flipv,
+                                         freqs[ims][spw],
+                                         fbin_idx[ims][spw],
+                                         fbin_counts[ims][spw],
+                                         nx, ny, nx_psf, ny_psf, cell_rad,
+                                         idx0, idxf, sign, csign)
+                # dirties.setdefault('Q', [])
+                # psfs.setdefault('Q', [])
                 out_datasets.setdefault('Q', [])
-                dirties['Q'].append(dirty_Q)
-                psfs['Q'].append(psf_Q)
+                # dirties['Q'].append(dirty_Q)
+                # psfs['Q'].append(psf_Q)
                 out_datasets['Q'].append(out_ds_Q)
 
             if 'U' in args.products.upper():
@@ -396,31 +428,34 @@ def _init(**kw):
                     sign = -1
                     csign = 1.0j
 
-                dirty_U, psf_U, out_ds_U = single_stokes(
-                                        ds,
-                                        args.data_column,
-                                        args.weight_column,
-                                        args.imaging_weight_column,
-                                        args.mueller_column,
-                                        args.flag_column,
-                                        frow,
-                                        pol_type,
-                                        args.row_out_chunk,
-                                        args.nvthreads,
-                                        args.epsilon,
-                                        args.wstack,
-                                        args.double_accum,
-                                        args.flipv,
-                                        freqs[ims][spw],
-                                        fbin_idx[ims][spw],
-                                        fbin_counts[ims][spw],
-                                        nx, ny, nx_psf, ny_psf, cell_rad,
-                                        idx0, idxf, sign, csign)
-                dirties.setdefault('U', [])
-                psfs.setdefault('U', [])
+                # dirty_U, psf_U, out_ds_U = single_stokes(
+                out_ds_U = single_stokes(data,
+                                         weight,
+                                         imaging_weight,
+                                         mueller,
+                                         flag,
+                                         frow,
+                                         uvw,
+                                         ds.TIME.data,
+                                         ds.FIELD_ID,
+                                         ds.DATA_DESC_ID,
+                                         pol_type,
+                                         args.row_out_chunk,
+                                         args.nvthreads,
+                                         args.epsilon,
+                                         args.wstack,
+                                         args.double_accum,
+                                         args.flipv,
+                                         freqs[ims][spw],
+                                         fbin_idx[ims][spw],
+                                         fbin_counts[ims][spw],
+                                         nx, ny, nx_psf, ny_psf, cell_rad,
+                                         idx0, idxf, sign, csign)
+                # dirties.setdefault('U', [])
+                # psfs.setdefault('U', [])
                 out_datasets.setdefault('U', [])
-                dirties['U'].append(dirty_U)
-                psfs['U'].append(psf_U)
+                # dirties['U'].append(dirty_U)
+                # psfs['U'].append(psf_U)
                 out_datasets['U'].append(out_ds_U)
 
             if 'V' in args.products.upper():
@@ -434,31 +469,34 @@ def _init(**kw):
                     idxf = -1
                     sign = -1.0
                     csign = 1.0
-                dirty_V, psf_V, out_ds_V = single_stokes(
-                                        ds,
-                                        args.data_column,
-                                        args.weight_column,
-                                        args.imaging_weight_column,
-                                        args.mueller_column,
-                                        args.flag_column,
-                                        frow,
-                                        pol_type,
-                                        args.row_out_chunk,
-                                        args.nvthreads,
-                                        args.epsilon,
-                                        args.wstack,
-                                        args.double_accum,
-                                        args.flipv,
-                                        freqs[ims][spw],
-                                        fbin_idx[ims][spw],
-                                        fbin_counts[ims][spw],
-                                        nx, ny, nx_psf, ny_psf, cell_rad,
-                                        idx0, idxf, sign, csign)
-                dirties.setdefault('V', [])
-                psfs.setdefault('V', [])
+                # dirty_V, psf_V, out_ds_V = single_stokes(
+                out_ds_V = single_stokes(data,
+                                         weight,
+                                         imaging_weight,
+                                         mueller,
+                                         flag,
+                                         frow,
+                                         uvw,
+                                         ds.TIME.data,
+                                         ds.FIELD_ID,
+                                         ds.DATA_DESC_ID,
+                                         pol_type,
+                                         args.row_out_chunk,
+                                         args.nvthreads,
+                                         args.epsilon,
+                                         args.wstack,
+                                         args.double_accum,
+                                         args.flipv,
+                                         freqs[ims][spw],
+                                         fbin_idx[ims][spw],
+                                         fbin_counts[ims][spw],
+                                         nx, ny, nx_psf, ny_psf, cell_rad,
+                                         idx0, idxf, sign, csign)
+                # dirties.setdefault('V', [])
+                # psfs.setdefault('V', [])
                 out_datasets.setdefault('V', [])
-                dirties['V'].append(dirty_U)
-                psfs['V'].append(psf_U)
+                # dirties['V'].append(dirty_U)
+                # psfs['V'].append(psf_U)
                 out_datasets['V'].append(out_ds_V)
             else:
                 raise NotImplementedError("Sorry, not yet")
@@ -485,44 +523,50 @@ def _init(**kw):
             os.system(f"rm -r {args.output_filename}_V.zarr")
         writes['V'] = xds_to_zarr(out_datasets['V'], args.output_filename + '_V.zarr', columns='ALL')
 
-    result = dask.compute(dirties, psfs, writes, optimize_graph=False)
-
-    dirties = result[0]
-    psfs = result[1]
-
-    dirty = np.zeros((len(args.products), nband, nx, ny), dtype=args.output_type)
-    dirty_mfs = np.zeros((len(args.products), 1, nx, ny), dtype=args.output_type)
-    psf = np.zeros((len(args.products), nband, nx_psf, ny_psf), dtype=args.output_type)
-    psf_mfs = np.zeros((len(args.products), 1, nx_psf, ny_psf), dtype=args.output_type)
-
-    # create output header
-    hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
-    hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
-                      np.mean(freq_out))
-    hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec, freq_out)
-    hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
-                          np.mean(freq_out))
-
-    # iterator defines Stokes <-> index convention
-    for i, c in enumerate(sorted(args.products.upper())):
-        dirty[i] = stitch_images(dirties[c], nband, band_mapping)
-        psf[i] = stitch_images(psfs[c], nband, band_mapping)
-        wsums = np.amax(psf[i], axis=(1, 2))
-        wsum = np.sum(wsums)
-        for b, w in enumerate(wsums):
-            hdr[f'WSUM{c}{b}'] = w
-            hdr_psf[f'WSUM{c}{b}'] = w
-        dirty_mfs[i] =  np.sum(dirty[i], axis=0)/wsum
-        psf_mfs[i] =  np.sum(psf[i], axis=0)/wsum
+    # dask.visualize(dirties['I'], filename=args.output_filename + '_dirties_graph.pdf', optimize_graph=False)
+    # dask.visualize(psfs['I'], filename=args.output_filename + '_psfs_graph.pdf', optimize_graph=False)
+    dask.visualize(writes['I'], filename=args.output_filename + '_writes_graph.pdf', optimize_graph=False)
 
 
-    save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
-              dtype=args.output_type)
-    save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
-              dtype=args.output_type)
-    save_fits(args.output_filename + '_psf.fits', psf, hdr_psf,
-              dtype=args.output_type)
-    save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs,
-              dtype=args.output_type)
+    # result = dask.compute(dirties, psfs, writes, optimize_graph=True)
+    result = dask.compute(writes, optimize_graph=True)
+
+    # dirties = result[0]
+    # psfs = result[1]
+
+    # dirty = np.zeros((len(args.products), nband, nx, ny), dtype=args.output_type)
+    # dirty_mfs = np.zeros((len(args.products), 1, nx, ny), dtype=args.output_type)
+    # psf = np.zeros((len(args.products), nband, nx_psf, ny_psf), dtype=args.output_type)
+    # psf_mfs = np.zeros((len(args.products), 1, nx_psf, ny_psf), dtype=args.output_type)
+
+    # # create output header
+    # hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
+    # hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
+    #                   np.mean(freq_out))
+    # hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec, freq_out)
+    # hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
+    #                       np.mean(freq_out))
+
+    # # iterator defines Stokes <-> index convention
+    # for i, c in enumerate(sorted(args.products.upper())):
+    #     dirty[i] = stitch_images(dirties[c], nband, band_mapping)
+    #     psf[i] = stitch_images(psfs[c], nband, band_mapping)
+    #     wsums = np.amax(psf[i], axis=(1, 2))
+    #     wsum = np.sum(wsums)
+    #     for b, w in enumerate(wsums):
+    #         hdr[f'WSUM{c}{b}'] = w
+    #         hdr_psf[f'WSUM{c}{b}'] = w
+    #     dirty_mfs[i] =  np.sum(dirty[i], axis=0)/wsum
+    #     psf_mfs[i] =  np.sum(psf[i], axis=0)/wsum
+
+
+    # save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
+    #           dtype=args.output_type)
+    # save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
+    #           dtype=args.output_type)
+    # save_fits(args.output_filename + '_psf.fits', psf, hdr_psf,
+    #           dtype=args.output_type)
+    # save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs,
+    #           dtype=args.output_type)
 
     print("All done here.", file=log)

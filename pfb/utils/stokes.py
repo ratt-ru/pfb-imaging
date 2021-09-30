@@ -1,60 +1,34 @@
 import numpy as np
 import numexpr as ne
+import dask
 import dask.array as da
 from xarray import Dataset
 from africanus.gridding.wgridder.dask import dirty as vis2im
 
-def single_stokes(ds, data_column, weight_column, imaging_weight_column,
-                  mueller_column, flag_column,
-                  frow, pol_type, row_out_chunk, nvthreads, epsilon, wstack,
+def single_stokes(data, weight, imaging_weight, mueller, flag, frow, uvw,
+                  time, fid, ddid,
+                  pol_type, row_out_chunk, nvthreads, epsilon, wstack,
                   double_accum, flipv, freq, fbin_idx, fbin_counts, nx, ny,
                   nx_psf, ny_psf, cell_rad, idx0, idxf, sign, csign):
 
-    data = getattr(ds, data_column).data
-    dataxx = data[:, :, idx0]
-    datayy = data[:, :, idxf]
-
-    data_type = getattr(ds, data_column).data.dtype
-    data_shape = getattr(ds, data_column).data.shape
-    data_chunks = getattr(ds, data_column).data.chunks
-
-    weight = getattr(ds, weight_column).data
-
-    if imaging_weight_column is not None:
-        imaging_weight = getattr(ds, imaging_weight_column).data
-    else:
-        imaging_weight = None
-
-    # adjoint of mueller term
-    if mueller_column is not None:
-        mueller = getattr(ds, mueller_column).data
-    else:
-        mueller = None
-
+    data_type = data.dtype
+    data_shape = data.shape
+    data_chunks = data.chunks
     real_type = data.real.dtype
 
-    dw = weight_data(data, weight, imaging_weight, mueller, idx0, idxf, sign, csign)
-    data = dw[0]
-    weight = dw[1]
-
-    # only keep data where both corrs are unflagged
-    flag = getattr(ds, flag_column).data
-    flagxx = flag[:, :, idx0]
-    flagyy = flag[:, :, idxf]
-    # ducc0 uses uint8 mask not flag
-    mask = ~ da.logical_or((flagxx | flagyy), frow[:, None])
-    uvw = ds.UVW.data
+    dw = weight_data(data, weight, imaging_weight, mueller, flag, # frow,
+                     idx0, idxf, sign, csign)
 
     dirty = vis2im(uvw,
                    freq,
-                   data,
+                   dw[0],
                    fbin_idx,
                    fbin_counts,
                    nx,
                    ny,
                    cell_rad,
-                   weights=weight.astype(real_type),
-                   flag=mask.astype(np.uint8),
+                   weights=dw[1].astype(real_type),
+                   # flag=mask.astype(np.uint8),
                    nthreads=nvthreads,
                    epsilon=epsilon,
                    do_wstacking=wstack,
@@ -62,27 +36,27 @@ def single_stokes(ds, data_column, weight_column, imaging_weight_column,
 
     psf = vis2im(uvw,
                  freq,
-                 weight,
+                 dw[1],
                  fbin_idx,
                  fbin_counts,
                  nx_psf,
                  ny_psf,
                  cell_rad,
-                 flag=mask.astype(np.uint8),
+                 # flag=mask.astype(np.uint8),
                  nthreads=nvthreads,
                  epsilon=epsilon,
                  do_wstacking=wstack,
                  double_accum=double_accum)
 
-    weight = da.where(mask, weight, 0.0)
-
     data_vars = {
-                'FIELD_ID':(('row',), da.full_like(ds.TIME.data,
-                            ds.FIELD_ID, chunks=row_out_chunk)),
-                'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data,
-                            ds.DATA_DESC_ID, chunks=row_out_chunk)),
-                'WEIGHT':(('row', 'chan'), weight.rechunk({0:row_out_chunk})),  # why no 'f4'?
-                'UVW':(('row', 'uvw'), uvw.rechunk({0:row_out_chunk}))
+                'FIELD_ID':(('row',), da.full_like(time,
+                            fid, chunks=row_out_chunk)),
+                'DATA_DESC_ID':(('row',), da.full_like(time,
+                            ddid, chunks=row_out_chunk)),
+                'WEIGHT':(('row', 'chan'), dw[1].rechunk({0:row_out_chunk})),  # why no 'f4'?
+                'UVW':(('row', 'uvw'), uvw.rechunk({0:row_out_chunk})),
+                'DIRTY':(('band', 'nx', 'ny'), dirty),
+                'PSF':(('band', 'nx_psf', 'ny_psf'), psf)
             }
 
     coords = {
@@ -91,9 +65,10 @@ def single_stokes(ds, data_column, weight_column, imaging_weight_column,
 
     out_ds = Dataset(data_vars, coords)
 
-    return dirty, psf, out_ds
+    return out_ds
 
-def weight_data(data, weight, imaging_weight, mueller, idx0, idxf, sign, csign):
+def weight_data(data, weight, imaging_weight, mueller, flag, # frow,
+                idx0, idxf, sign, csign):
     if weight is not None:
         wout = ('row', 'chan', 'corr')
     else:
@@ -109,12 +84,25 @@ def weight_data(data, weight, imaging_weight, mueller, idx0, idxf, sign, csign):
     else:
         mout = None
 
+    if flag is not None:
+        fout = ('row', 'chan', 'corr')
+    else:
+        fout = None
+
+    # if frow is not None:
+    #     frout = ('row',)
+    # else:
+    #     frout = None
+
+    # import pdb; pdb.set_trace()
 
     return da.blockwise(_weight_data_wrapper, ('2', 'row', 'chan'),
                         data, ('row', 'chan', 'corr'),
                         weight, wout,
                         imaging_weight, iwout,
                         mueller, mout,
+                        flag, fout,
+                        # frow, frout,
                         idx0, None,
                         idxf, None,
                         sign, None,
@@ -122,7 +110,8 @@ def weight_data(data, weight, imaging_weight, mueller, idx0, idxf, sign, csign):
                         new_axes={'2': 2},
                         dtype=data.dtype)
 
-def _weight_data_wrapper(data, weight, imaging_weight, mueller, idx0, idxf, sign, csign):
+def _weight_data_wrapper(data, weight, imaging_weight, mueller, flag, # frow,
+                         idx0, idxf, sign, csign):
     if weight is not None:
         wout = weight[0]
     else:
@@ -137,9 +126,19 @@ def _weight_data_wrapper(data, weight, imaging_weight, mueller, idx0, idxf, sign
         mout = mueller[0]
     else:
         mout = None
-    return _weight_data_impl(data[0], wout, iwout, mout, idx0, idxf, sign, csign)
 
-def _weight_data_impl(data, weight, imaging_weight, mueller, idx0, idxf, sign, csign):
+    if flag is not None:
+        fout = flag[0]
+    else:
+        fout = None
+
+
+    return _weight_data_impl(data[0], wout, iwout, mout, fout, # frow,
+                             idx0, idxf, sign, csign)
+
+def _weight_data_impl(data, weight, imaging_weight, mueller, flag, # frow,
+                      idx0, idxf, sign, csign):
+
 
     if weight is not None:
         weightxx = weight[:, :, idx0]
@@ -157,8 +156,8 @@ def _weight_data_impl(data, weight, imaging_weight, mueller, idx0, idxf, sign, c
         #                        'i':imaging_weight[:, :, idxf],
         #                        'w':weightyy},
         #                        casting='same_kind')
-        weightxx *= imaging_weight[:, :, idx0]
-        weightyy *= imaging_weight[:, :, idxf]
+        weightxx = weightxx * imaging_weight[:, :, idx0]
+        weightyy = weightyy * imaging_weight[:, :, idxf]
 
     if mueller is not None:
         # d = ne.evaluate('(dxx * conj(mxx) * wxx + s * dyy * conj(myy) * wyy) * c', local_dict={
@@ -178,8 +177,8 @@ def _weight_data_impl(data, weight, imaging_weight, mueller, idx0, idxf, sign, c
         #             'myy': mueller[:, :, idxf]}, out= weightyy, casting='same_kind')
         data = (data[:, :, idx0] * mueller[:, :, idx0].conj() * weightxx +
                 sign * data[:, :, idxf] * mueller[:, :, idxf].conj() * weightyy) * csign
-        weightxx *= np.absolute(mueller[:, :, idx0])**2
-        weightyy *= np.absolute(mueller[:, :, idxf])**2
+        weightxx = weightxx * np.absolute(mueller[:, :, idx0])**2
+        weightyy = weightyy * np.absolute(mueller[:, :, idxf])**2
 
     else:
         # d = ne.evaluate('(dxx * wxx + s * dyy * wyy) * c', local_dict={
@@ -194,6 +193,13 @@ def _weight_data_impl(data, weight, imaging_weight, mueller, idx0, idxf, sign, c
 
     # w = ne.evaluate('weightxx + weightyy', casting='same_kind')
     weight = weightxx + weightyy
+
+    if flag is not None:
+        flag = flag[:, :, idx0] | flag[:, :, idxf]
+        # if frow is not None:
+        #     flag = da.logical_or(flag, frow[:, None])
+
+    weight[flag] = 0
 
     idx = weight != 0
     data[idx] = data[idx] / weight[idx]
