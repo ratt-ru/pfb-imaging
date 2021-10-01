@@ -68,6 +68,8 @@ log = pyscilog.get_logger('INIT')
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
+@click.option('-scheduler', '--scheduler', default='distributed',
+              help="Total available threads. Default uses all available threads")
 def init(**kw):
     '''
     Create a dirty image, psf and weight table from a list of measurement
@@ -110,13 +112,16 @@ def init(**kw):
         raise ValueError(f"No MS at {args.ms}")
 
     if args.nworkers is None:
-        args.nworkers = args.nband
+        if args.scheduler=='distributed':
+            args.nworkers = args.nband
+        else:
+            args.nworkers = 1
 
     OmegaConf.set_struct(args, True)
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log)
+        args = set_client(args, stack, log, scheduler=args.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -133,11 +138,13 @@ def _init(**kw):
     OmegaConf.set_struct(args, True)
 
     import os
+    from pathlib import Path
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
     from dask.graph_manipulation import clone
-    # from dask.distributed import performance_report
+    from dask.distributed import performance_report
+    from dask.diagnostics import ProgressBar
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms.experimental.zarr import xds_to_zarr
@@ -351,7 +358,7 @@ def _init(**kw):
                 flag = None
 
             uvw = dask.persist(ds.UVW.data)[0]
-            frow = dask.persist(frow)
+            frow = dask.persist(frow)[0]
 
             if 'I' in args.products.upper():
                 # I always has the same pattern
@@ -539,11 +546,25 @@ def _init(**kw):
 
     # dask.visualize(dirties['I'], filename=args.output_filename + '_dirties_graph.pdf', optimize_graph=False)
     # dask.visualize(psfs['I'], filename=args.output_filename + '_psfs_graph.pdf', optimize_graph=False)
-    dask.visualize(writes['I'], filename=args.output_filename + '_writes_graph.pdf', optimize_graph=False)
+    # dask.visualize(writes['I'], filename=args.output_filename + '_writes_graph.pdf', optimize_graph=False)
+
+    def compute_context(args):
+        if args.scheduler == "distributed":
+            root_path = Path(args.output_filename).absolute()
+            report_path = root_path / Path("dask_report.html.pfb")
+            return performance_report(filename=str(report_path))
+        else:
+            return ProgressBar()
 
 
     # result = dask.compute(dirties, psfs, writes, optimize_graph=True)
-    result = dask.compute(writes, optimize_graph=False)
+    with compute_context(args):
+
+        dask.compute(writes,
+                     optimize_graph=False,
+                     scheduler=args.scheduler)
+
+    # result = dask.compute(writes, optimize_graph=False, scheduler=args.scheduler)
 
     # dirties = result[0]
     # psfs = result[1]
