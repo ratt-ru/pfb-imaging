@@ -561,7 +561,7 @@ def _init(**kw):
     with compute_context(args):
 
         dask.compute(writes,
-                     optimize_graph=False,
+                     optimize_graph=True,
                      scheduler=args.scheduler)
 
     # result = dask.compute(writes, optimize_graph=False, scheduler=args.scheduler)
