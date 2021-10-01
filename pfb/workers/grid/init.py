@@ -292,7 +292,8 @@ def _init(**kw):
     out_datasets = {}
     radec = None  # assumes we are only imaging field 0 of first MS
     for ims in ms:
-        xds = xds_from_ms(ims, chunks=chunks[ims], columns=columns)
+        xds = xds_from_ms(ims, chunks=chunks[ims], columns=columns,
+                          table_schema=schema)
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
@@ -357,8 +358,8 @@ def _init(**kw):
             else:
                 flag = None
 
-            uvw = dask.persist(ds.UVW.data)[0]
-            frow = dask.persist(frow)[0]
+            uvw = ds.UVW.data
+            frow = frow
 
             if 'I' in args.products.upper():
                 # I always has the same pattern
@@ -546,13 +547,12 @@ def _init(**kw):
 
     # dask.visualize(dirties['I'], filename=args.output_filename + '_dirties_graph.pdf', optimize_graph=False)
     # dask.visualize(psfs['I'], filename=args.output_filename + '_psfs_graph.pdf', optimize_graph=False)
-    # dask.visualize(writes['I'], filename=args.output_filename + '_writes_graph.pdf', optimize_graph=False)
+    dask.visualize(writes['I'], color="order", cmap="autumn", node_attr={"penwidth": "4"},
+                   filename=args.output_filename + '_writes_graph.pdf', optimize_graph=False)
 
     def compute_context(args):
         if args.scheduler == "distributed":
-            root_path = Path(args.output_filename).absolute()
-            report_path = root_path / Path("dask_report.html.pfb")
-            return performance_report(filename=str(report_path))
+            return performance_report(filename=args.output_filename + "_dask_report.html.pfb")
         else:
             return ProgressBar()
 

@@ -48,6 +48,10 @@ def single_stokes(data, weight, imaging_weight, mueller, flag, frow, uvw,
                  do_wstacking=wstack,
                  double_accum=double_accum)
 
+    from daskms.optimisation import inlined_array
+    dirty = inlined_array(dirty, uvw)
+    psf = inlined_array(psf, uvw)
+
     data_vars = {
                 'FIELD_ID':(('row',), da.full_like(time,
                             fid, chunks=row_out_chunk)),
