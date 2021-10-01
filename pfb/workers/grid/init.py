@@ -250,19 +250,34 @@ def _init(**kw):
 
     print(f"PSF size set to ({nband}, {nx_psf}, {ny_psf})", file=log)
 
-    if args.row_chunk in [0, -1, None]:
-        row_chunk = nrow
-    else:
-        row_chunk = args.row_chunk
+    row_chunks = {}
+    ncorr = None
+    for ims in ms:
+        xds = xds_from_ms(ims)
+        row_chunks[ims] = {}
 
-    print(f"nrows = {nrow}, row chunks set to {row_chunk} for a total of "
-          f"{int(np.ceil(nrow / row_chunk))} chunks", file=log)
+        for ds in xds:
+            spw = ds.DATA_DESC_ID
+
+            if ncorr is None:
+                ncorr = ds.dims['corr']
+            else:
+                try:
+                    assert ncorr == ds.dims['corr']
+                except Exception as e:
+                    raise ValueError("All data sets must have the same number of correlations")
+
+            if args.row_chunk in [0, -1, None]:
+                row_chunks[ims][spw] = ds.dims['row']
+
+            else:
+                row_chunks[ims][spw] = args.row_chunk
 
     chunks = {}
     for ims in ms:
         chunks[ims] = []  # xds_from_ms expects a list per ds
         for spw in freqs[ims]:
-            chunks[ims].append({'row': row_chunk,
+            chunks[ims].append({'row': row_chunks[ims][spw],
                                 'chan': chan_chunks[ims][spw]['chan']})
 
     dirties = {}
@@ -325,7 +340,6 @@ def _init(**kw):
             else:
                 imaging_weight = None
 
-            # adjoint of mueller term
             if args.mueller_column is not None:
                 mueller = getattr(ds, args.mueller_column).data
             else:
