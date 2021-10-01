@@ -529,7 +529,7 @@ def _init(**kw):
 
 
     # result = dask.compute(dirties, psfs, writes, optimize_graph=True)
-    result = dask.compute(writes, optimize_graph=True)
+    result = dask.compute(writes, optimize_graph=False)
 
     # dirties = result[0]
     # psfs = result[1]
