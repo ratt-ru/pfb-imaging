@@ -37,6 +37,8 @@ log = pyscilog.get_logger('INIT')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
 @click.option('--flipv/--no-flipv', default=True)
+@click.option('--fits-mfs/--no-fits-mfs', default=True)
+@click.option('--no-fits-cubes/--fits-cubes', default=True)
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -72,9 +74,11 @@ log = pyscilog.get_logger('INIT')
               help="Total available threads. Default uses all available threads")
 def init(**kw):
     '''
-    Create a dirty image, psf and weight table from a list of measurement
+    Create a dirty image, psf and weights from a list of measurement
     sets. Image cubes are not normalised by wsum as this destroyes
     information. MFS images are written out in units of Jy/beam.
+    By default only the MFS images are converted to fits files.
+    Set the --fits-cubes flag to also produce fits cubes.
 
     If a host address is provided the computation can be distributed
     over imaging band and row. When using a distributed scheduler both
@@ -284,7 +288,7 @@ def _init(**kw):
     for ims in ms:
         chunks[ims] = []  # xds_from_ms expects a list per ds
         for spw in freqs[ims]:
-            chunks[ims].append({'row': row_chunks[ims][spw],
+            chunks[ims].append({'row': (row_chunks[ims][spw],),
                                 'chan': chan_chunks[ims][spw]['chan']})
 
     dirties = {}
@@ -367,7 +371,6 @@ def _init(**kw):
                 idxf = -1
                 sign = 1.0  # sign to use in sum
                 csign = 1.0  # used to negate complex vals
-                # dirty_I, psf_I, out_ds_I = single_stokes(
                 out_ds_I = single_stokes(data,
                                          weight,
                                          imaging_weight,
@@ -388,13 +391,11 @@ def _init(**kw):
                                          freqs[ims][spw],
                                          fbin_idx[ims][spw],
                                          fbin_counts[ims][spw],
+                                         band_mapping[ims][spw],
+                                         freq_out,
                                          nx, ny, nx_psf, ny_psf, cell_rad,
-                                         idx0, idxf, sign, csign)
-                # dirties.setdefault('I', [])
-                # psfs.setdefault('I', [])
+                                         radec, idx0, idxf, sign, csign)
                 out_datasets.setdefault('I', [])
-                # dirties['I'].append(dirty_I)
-                # psfs['I'].append(psf_I)
                 out_datasets['I'].append(out_ds_I)
 
             if 'Q' in args.products.upper():
@@ -408,7 +409,6 @@ def _init(**kw):
                     idxf = 2
                     sign = 1.0
                     csign = 1.0
-                # dirty_Q, psf_Q, out_ds_Q = single_stokes(
                 out_ds_Q = single_stokes(data,
                                          weight,
                                          imaging_weight,
@@ -429,13 +429,11 @@ def _init(**kw):
                                          freqs[ims][spw],
                                          fbin_idx[ims][spw],
                                          fbin_counts[ims][spw],
+                                         band_mapping[ims][spw],
+                                         freq_out,
                                          nx, ny, nx_psf, ny_psf, cell_rad,
-                                         idx0, idxf, sign, csign)
-                # dirties.setdefault('Q', [])
-                # psfs.setdefault('Q', [])
+                                         radec, idx0, idxf, sign, csign)
                 out_datasets.setdefault('Q', [])
-                # dirties['Q'].append(dirty_Q)
-                # psfs['Q'].append(psf_Q)
                 out_datasets['Q'].append(out_ds_Q)
 
             if 'U' in args.products.upper():
@@ -449,8 +447,6 @@ def _init(**kw):
                     idxf = 2
                     sign = -1
                     csign = 1.0j
-
-                # dirty_U, psf_U, out_ds_U = single_stokes(
                 out_ds_U = single_stokes(data,
                                          weight,
                                          imaging_weight,
@@ -471,13 +467,11 @@ def _init(**kw):
                                          freqs[ims][spw],
                                          fbin_idx[ims][spw],
                                          fbin_counts[ims][spw],
+                                         band_mapping[ims][spw],
+                                         freq_out,
                                          nx, ny, nx_psf, ny_psf, cell_rad,
-                                         idx0, idxf, sign, csign)
-                # dirties.setdefault('U', [])
-                # psfs.setdefault('U', [])
+                                         radec, idx0, idxf, sign, csign)
                 out_datasets.setdefault('U', [])
-                # dirties['U'].append(dirty_U)
-                # psfs['U'].append(psf_U)
                 out_datasets['U'].append(out_ds_U)
 
             if 'V' in args.products.upper():
@@ -491,7 +485,6 @@ def _init(**kw):
                     idxf = -1
                     sign = -1.0
                     csign = 1.0
-                # dirty_V, psf_V, out_ds_V = single_stokes(
                 out_ds_V = single_stokes(data,
                                          weight,
                                          imaging_weight,
@@ -512,43 +505,26 @@ def _init(**kw):
                                          freqs[ims][spw],
                                          fbin_idx[ims][spw],
                                          fbin_counts[ims][spw],
+                                         band_mapping[ims][spw],
+                                         freq_out,
                                          nx, ny, nx_psf, ny_psf, cell_rad,
-                                         idx0, idxf, sign, csign)
-                # dirties.setdefault('V', [])
-                # psfs.setdefault('V', [])
+                                         radec, idx0, idxf, sign, csign)
                 out_datasets.setdefault('V', [])
-                # dirties['V'].append(dirty_U)
-                # psfs['V'].append(psf_U)
                 out_datasets['V'].append(out_ds_V)
             else:
                 raise NotImplementedError("Sorry, not yet")
 
     writes = {}
-    if 'i' in args.products.lower():
-        if os.path.isdir(args.output_filename + '_I.zarr'):
-            print(f"Removing existing {args.output_filename}_I.zarr folder", file=log)
-            os.system(f"rm -r {args.output_filename}_I.zarr")
-        writes['I'] = xds_to_zarr(out_datasets['I'], args.output_filename + '_I.zarr', columns='ALL')
-    if 'q' in args.products.lower():
-        if os.path.isdir(args.output_filename + '_Q.zarr'):
-            print(f"Removing existing {args.output_filename}_Q.zarr folder", file=log)
-            os.system(f"rm -r {args.output_filename}_Q.zarr")
-        writes['Q'] = xds_to_zarr(out_datasets['Q'], args.output_filename + '_Q.zarr', columns='ALL')
-    if 'u' in args.products.lower():
-        if os.path.isdir(args.output_filename + '_U.zarr'):
-            print(f"Removing existing {args.output_filename}_U.zarr folder", file=log)
-            os.system(f"rm -r {args.output_filename}_U.zarr")
-        writes['U'] = xds_to_zarr(out_datasets['U'], args.output_filename + '_U.zarr', columns='ALL')
-    if 'v' in args.products.lower():
-        if os.path.isdir(args.output_filename + '_V.zarr'):
-            print(f"Removing existing {args.output_filename}_V.zarr folder", file=log)
-            os.system(f"rm -r {args.output_filename}_V.zarr")
-        writes['V'] = xds_to_zarr(out_datasets['V'], args.output_filename + '_V.zarr', columns='ALL')
+    for p in args.products.upper():
+        if os.path.isdir(args.output_filename + f'_{p}.zarr'):
+            print(f"Removing existing {args.output_filename}_{p}.zarr folder",
+                  file=log)
+            os.system(f"rm -r {args.output_filename}_{p}.zarr")
+        writes[p] = xds_to_zarr(out_datasets[p], args.output_filename +
+                                f'_{p}.zarr', columns='ALL')
 
-    # dask.visualize(dirties['I'], filename=args.output_filename + '_dirties_graph.pdf', optimize_graph=False)
-    # dask.visualize(psfs['I'], filename=args.output_filename + '_psfs_graph.pdf', optimize_graph=False)
-    dask.visualize(writes['I'], color="order", cmap="autumn", node_attr={"penwidth": "4"},
-                   filename=args.output_filename + '_writes_graph.pdf', optimize_graph=False)
+    # dask.visualize(writes['I'], color="order", cmap="autumn", node_attr={"penwidth": "4"},
+    #                filename=args.output_filename + '_writes_graph.pdf', optimize_graph=False)
 
     def compute_context(args):
         if args.scheduler == "distributed":
@@ -556,52 +532,58 @@ def _init(**kw):
         else:
             return ProgressBar()
 
-
-    # result = dask.compute(dirties, psfs, writes, optimize_graph=True)
     with compute_context(args):
-
         dask.compute(writes,
                      optimize_graph=True,
                      scheduler=args.scheduler)
 
-    # result = dask.compute(writes, optimize_graph=False, scheduler=args.scheduler)
+    # convert to fits files
+    if args.fits_mfs or not args.no_fits_cubes:
+        from daskms.experimental.zarr import xds_from_zarr
 
-    # dirties = result[0]
-    # psfs = result[1]
+        dirty = np.zeros((len(args.products), nband, nx, ny), dtype=args.output_type)
+        psf = np.zeros((len(args.products), nband, nx_psf, ny_psf), dtype=args.output_type)
 
-    # dirty = np.zeros((len(args.products), nband, nx, ny), dtype=args.output_type)
-    # dirty_mfs = np.zeros((len(args.products), 1, nx, ny), dtype=args.output_type)
-    # psf = np.zeros((len(args.products), nband, nx_psf, ny_psf), dtype=args.output_type)
-    # psf_mfs = np.zeros((len(args.products), 1, nx_psf, ny_psf), dtype=args.output_type)
+        hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
+        hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
+                        np.mean(freq_out))
+        hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec, freq_out)
+        hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
+                            np.mean(freq_out))
 
-    # # create output header
-    # hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
-    # hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
-    #                   np.mean(freq_out))
-    # hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec, freq_out)
-    # hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
-    #                       np.mean(freq_out))
+        for i, p in enumerate(sorted(args.products.upper())):
+            xds = xds_from_zarr(args.output_filename + f'_{p}.zarr')
 
-    # # iterator defines Stokes <-> index convention
-    # for i, c in enumerate(sorted(args.products.upper())):
-    #     dirty[i] = stitch_images(dirties[c], nband, band_mapping)
-    #     psf[i] = stitch_images(psfs[c], nband, band_mapping)
-    #     wsums = np.amax(psf[i], axis=(1, 2))
-    #     wsum = np.sum(wsums)
-    #     for b, w in enumerate(wsums):
-    #         hdr[f'WSUM{c}{b}'] = w
-    #         hdr_psf[f'WSUM{c}{b}'] = w
-    #     dirty_mfs[i] =  np.sum(dirty[i], axis=0)/wsum
-    #     psf_mfs[i] =  np.sum(psf[i], axis=0)/wsum
+            # TODO - add logic to select which spw and scan to reduce over
+            dirties = []
+            psfs = []
+            for ds in xds:
+                dirties.append(ds.DIRTY.values)
+                psfs.append(ds.PSF.values)
 
+            dirty[i] = stitch_images(dirties, nband, band_mapping)
+            psf[i] = stitch_images(psfs, nband, band_mapping)
 
-    # save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
-    #           dtype=args.output_type)
-    # save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
-    #           dtype=args.output_type)
-    # save_fits(args.output_filename + '_psf.fits', psf, hdr_psf,
-    #           dtype=args.output_type)
-    # save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs,
-    #           dtype=args.output_type)
+            wsums = np.amax(psf[i], axis=(1, 2))
+            wsum = np.sum(wsums)
+            for b, w in enumerate(wsums):
+                hdr[f'WSUM{p}{b}'] = w
+                hdr_psf[f'WSUM{p}{b}'] = w
+
+            dirty_mfs = np.sum(dirty, axis=0)/wsum
+            psf_mfs = np.sum(psf, axis=0)/wsum
+
+        if args.fits_mfs:
+            save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
+                      dtype=args.output_type)
+            save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs,
+                      dtype=args.output_type)
+
+        if not args.no_fits_cubes:
+            save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
+                      dtype=args.output_type)
+            save_fits(args.output_filename + '_psf.fits', psf, hdr_psf,
+                      dtype=args.output_type)
+
 
     print("All done here.", file=log)

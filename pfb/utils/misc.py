@@ -291,11 +291,20 @@ def chan_to_band_mapping(ms_name, nband=None):
     fmax = ufreqs[-1]
     fbins = np.linspace(fmin, fmax, nband + 1)
     freq_out = np.zeros(nband)
+    chan_count = 0
     for band in range(nband):
         indl = ufreqs >= fbins[band]
         # inclusive except for the last one
-        indu = ufreqs < fbins[band + 1] + 1e-6
-        freq_out[band] = np.mean(ufreqs[indl & indu])
+        if band == nband-1:
+            indu = ufreqs <= fbins[band + 1]
+        else:
+            indu = ufreqs < fbins[band + 1]
+        freq_out[band] = np.mean(ufreqs[indl&indu])
+        chan_count += ufreqs[indl&indu].size
+
+    if chan_count < nchan:
+        raise RuntimeError("Something has gone wrong with the chan <-> band "
+                           "mapping. This is probably a bug.")
 
     # chan <-> band mapping
     band_mapping = {}
@@ -312,7 +321,10 @@ def chan_to_band_mapping(ms_name, nband=None):
             band_map = np.zeros(freq.size, dtype=np.int32)
             for band in range(nband):
                 indl = freq >= fbins[band]
-                indu = freq < fbins[band + 1] + 1e-6
+                if band == nband-1:
+                    indu = freq <= fbins[band + 1]
+                else:
+                    indu = freq < fbins[band + 1]
                 band_map = np.where(indl & indu, band, band_map)
             # to dask arrays
             bands, bin_counts = np.unique(band_map, return_counts=True)

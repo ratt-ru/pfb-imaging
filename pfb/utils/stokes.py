@@ -4,20 +4,48 @@ import dask
 import dask.array as da
 from xarray import Dataset
 from africanus.gridding.wgridder.dask import dirty as vis2im
+from daskms.optimisation import inlined_array
 
-def single_stokes(data, weight, imaging_weight, mueller, flag, frow, uvw,
-                  time, fid, ddid,
-                  pol_type, row_out_chunk, nvthreads, epsilon, wstack,
-                  double_accum, flipv, freq, fbin_idx, fbin_counts, nx, ny,
-                  nx_psf, ny_psf, cell_rad, idx0, idxf, sign, csign):
+def single_stokes(data,
+                  weight,
+                  imaging_weight,
+                  mueller,
+                  flag,
+                  frow,
+                  uvw,
+                  time,
+                  fid,
+                  ddid,
+                  pol_type,
+                  row_out_chunk,
+                  nvthreads,
+                  epsilon,
+                  wstack,
+                  double_accum,
+                  flipv,
+                  freq,
+                  fbin_idx,
+                  fbin_counts,
+                  band_mapping,
+                  freq_out,
+                  nx, ny,
+                  nx_psf, ny_psf,
+                  cell_rad,
+                  radec,
+                  idx0,
+                  idxf,
+                  sign,
+                  csign):
 
     data_type = data.dtype
     data_shape = data.shape
     data_chunks = data.chunks
     real_type = data.real.dtype
 
-    dw = weight_data(data, weight, imaging_weight, mueller, flag, # frow,
+    dw = weight_data(data, weight, imaging_weight, mueller, flag, frow,
                      idx0, idxf, sign, csign)
+
+    dw = inlined_array(dw, frow)
 
     dirty = vis2im(uvw,
                    freq,
@@ -48,9 +76,9 @@ def single_stokes(data, weight, imaging_weight, mueller, flag, frow, uvw,
                  do_wstacking=wstack,
                  double_accum=double_accum)
 
-    from daskms.optimisation import inlined_array
     dirty = inlined_array(dirty, uvw)
     psf = inlined_array(psf, uvw)
+    wsum = da.max(psf, axis=(1, 2))
 
     data_vars = {
                 'FIELD_ID':(('row',), da.full_like(time,
@@ -60,18 +88,31 @@ def single_stokes(data, weight, imaging_weight, mueller, flag, frow, uvw,
                 'WEIGHT':(('row', 'chan'), dw[1].rechunk({0:row_out_chunk})),  # why no 'f4'?
                 'UVW':(('row', 'uvw'), uvw.rechunk({0:row_out_chunk})),
                 'DIRTY':(('band', 'nx', 'ny'), dirty),
-                'PSF':(('band', 'nx_psf', 'ny_psf'), psf)
+                'PSF':(('band', 'nx_psf', 'ny_psf'), psf),
+                'WSUM': (('band',), wsum)
             }
 
+
+    freq_out = da.from_array(freq_out, chunks=1)
+
     coords = {
-        'chan': (('chan',), freq)
+        'chan': (('chan',), freq),
+        'band': (('band',), freq_out[band_mapping]),
+
+
     }
 
-    out_ds = Dataset(data_vars, coords)
+    attrs = {
+        'cell_rad': cell_rad,
+        'ra' : radec[0],
+        'dec': radec[1]
+    }
+
+    out_ds = Dataset(data_vars, coords, attrs=attrs)
 
     return out_ds
 
-def weight_data(data, weight, imaging_weight, mueller, flag, # frow,
+def weight_data(data, weight, imaging_weight, mueller, flag, frow,
                 idx0, idxf, sign, csign):
     if weight is not None:
         wout = ('row', 'chan', 'corr')
@@ -93,10 +134,10 @@ def weight_data(data, weight, imaging_weight, mueller, flag, # frow,
     else:
         fout = None
 
-    # if frow is not None:
-    #     frout = ('row',)
-    # else:
-    #     frout = None
+    if frow is not None:
+        frout = ('row',)
+    else:
+        frout = None
 
     # import pdb; pdb.set_trace()
 
@@ -106,7 +147,7 @@ def weight_data(data, weight, imaging_weight, mueller, flag, # frow,
                         imaging_weight, iwout,
                         mueller, mout,
                         flag, fout,
-                        # frow, frout,
+                        frow, frout,
                         idx0, None,
                         idxf, None,
                         sign, None,
@@ -114,7 +155,7 @@ def weight_data(data, weight, imaging_weight, mueller, flag, # frow,
                         new_axes={'2': 2},
                         dtype=data.dtype)
 
-def _weight_data_wrapper(data, weight, imaging_weight, mueller, flag, # frow,
+def _weight_data_wrapper(data, weight, imaging_weight, mueller, flag, frow,
                          idx0, idxf, sign, csign):
     if weight is not None:
         wout = weight[0]
@@ -137,10 +178,10 @@ def _weight_data_wrapper(data, weight, imaging_weight, mueller, flag, # frow,
         fout = None
 
 
-    return _weight_data_impl(data[0], wout, iwout, mout, fout, # frow,
+    return _weight_data_impl(data[0], wout, iwout, mout, fout, frow,
                              idx0, idxf, sign, csign)
 
-def _weight_data_impl(data, weight, imaging_weight, mueller, flag, # frow,
+def _weight_data_impl(data, weight, imaging_weight, mueller, flag, frow,
                       idx0, idxf, sign, csign):
 
 
@@ -200,8 +241,8 @@ def _weight_data_impl(data, weight, imaging_weight, mueller, flag, # frow,
 
     if flag is not None:
         flag = flag[:, :, idx0] | flag[:, :, idxf]
-        # if frow is not None:
-        #     flag = da.logical_or(flag, frow[:, None])
+        if frow is not None:
+            flag = da.logical_or(flag, frow[:, None])
 
     weight[flag] = 0
 
