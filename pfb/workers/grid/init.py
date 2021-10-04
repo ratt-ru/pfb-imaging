@@ -570,8 +570,8 @@ def _init(**kw):
                 hdr[f'WSUM{p}{b}'] = w
                 hdr_psf[f'WSUM{p}{b}'] = w
 
-            dirty_mfs = np.sum(dirty, axis=0)/wsum
-            psf_mfs = np.sum(psf, axis=0)/wsum
+            dirty_mfs = np.sum(dirty, axis=1, keepdims=True)/wsum
+            psf_mfs = np.sum(psf, axis=1, keepdims=True)/wsum
 
         if args.fits_mfs:
             save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
