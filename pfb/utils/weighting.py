@@ -148,81 +148,81 @@ def _counts_to_weights(counts, uvw, freqs, fbin_idx, fbin_counts, nx, ny,
                     weights[r, c] = 1.0/counts[b, u_idx, v_idx]
     return weights
 
-def robust_reweight(residuals, weights, v=None):
-    """
-    Find the robust weights corresponding to a soln that generated residuals
+# def robust_reweight(residuals, weights, v=None):
+#     """
+#     Find the robust weights corresponding to a soln that generated residuals
 
-    residuals   - residuals i.e. (data - model) (nrow, nchan, ncorr)
-    weights     - inverse of data covariance (nrow, nchan, ncorr)
-    v           - initial guess for degrees for freedom parameter (float)
-    corrs       - which correlation axes to compute new weights for
-                  Default is for LL and RR (or XX and YY)
+#     residuals   - residuals i.e. (data - model) (nrow, nchan, ncorr)
+#     weights     - inverse of data covariance (nrow, nchan, ncorr)
+#     v           - initial guess for degrees for freedom parameter (float)
+#     corrs       - which correlation axes to compute new weights for
+#                   Default is for LL and RR (or XX and YY)
 
-    Correlation axis not currently supported
-    """
-    # elements of Mahalanobis distance (Delta^2_i's)
-    nrow, nchan = residuals.shape
-    ressq = (weights * residuals.conj()*residuals).real
+#     Correlation axis not currently supported
+#     """
+#     # elements of Mahalanobis distance (Delta^2_i's)
+#     nrow, nchan = residuals.shape
+#     ressq = (weights * residuals.conj()*residuals).real
 
-    # func to solve for degrees of freedom parameter
-    from scipy.special import digamma, polygamma
-    def func(v, N, ressq):
-        # expectation values
-        tmp = v+ressq
-        Etau = (v + 1)/tmp
-        Elogtau = digamma(v + 1) - np.log(tmp)
+#     # func to solve for degrees of freedom parameter
+#     from scipy.special import digamma, polygamma
+#     def func(v, N, ressq):
+#         # expectation values
+#         tmp = v+ressq
+#         Etau = (v + 1)/tmp
+#         Elogtau = digamma(v + 1) - np.log(tmp)
 
-        # derivatives of expectation value terms
-        dEtau = 1.0/tmp - (v+1)/tmp**2
-        dElogtau = polygamma(1, v + 1) - 1.0/(v + ressq)
-        return (N*np.log(v) - N*digamma(v) + np.sum(Elogtau) - np.sum(Etau),
-                N/v - N*polygamma(1, v) + np.sum(dElogtau) - np.sum(dEtau)
+#         # derivatives of expectation value terms
+#         dEtau = 1.0/tmp - (v+1)/tmp**2
+#         dElogtau = polygamma(1, v + 1) - 1.0/(v + ressq)
+#         return (N*np.log(v) - N*digamma(v) + np.sum(Elogtau) - np.sum(Etau),
+#                 N/v - N*polygamma(1, v) + np.sum(dElogtau) - np.sum(dEtau)
 
-    if v is None:
-        v = 11.0
-    v, f, d = fmin_l_bfgs_b(func, v, args=(nrow, ressq), pgtol=1e-2,
-                            approx_grad=False, bounds=[(1e-3, 30)])
-    Etau = (v + 1.0)/(v + ressq)  # used as new weights
-    Lambda = np.mean(ressq*Etau, axis=0)
-    return v, np.sqrt(Etau / Lambda[None, :])
+#     if v is None:
+#         v = 11.0
+#     v, f, d = fmin_l_bfgs_b(func, v, args=(nrow, ressq), pgtol=1e-2,
+#                             approx_grad=False, bounds=[(1e-3, 30)])
+#     Etau = (v + 1.0)/(v + ressq)  # used as new weights
+#     Lambda = np.mean(ressq*Etau, axis=0)
+#     return v, np.sqrt(Etau / Lambda[None, :])
 
-def robust_reweight_real(residuals, invcov, v=None):
-    """
-    Find the robust weights corresponding to a soln that generated residuals
+# def robust_reweight_real(residuals, invcov, v=None):
+#     """
+#     Find the robust weights corresponding to a soln that generated residuals
 
-    residuals   - residuals i.e. (data - model) (N, D) where N is the number
-                  of weights we are solving for (i.e. the number of degrees of
-                  freedom we are allocating for the weights) and D the
-                  number of data point for each weight.
-    invcov     - inverse of data covariance. In principle we should have
-                 (N, D, D) to capture the covariance between the data but we
-                 will assume that the data is conditionally independent and
-                 use a diagonal approximation which is (N, D).
-    v           - initial guess for degrees for freedom parameter (float)
+#     residuals   - residuals i.e. (data - model) (N, D) where N is the number
+#                   of weights we are solving for (i.e. the number of degrees of
+#                   freedom we are allocating for the weights) and D the
+#                   number of data point for each weight.
+#     invcov     - inverse of data covariance. In principle we should have
+#                  (N, D, D) to capture the covariance between the data but we
+#                  will assume that the data is conditionally independent and
+#                  use a diagonal approximation which is (N, D).
+#     v           - initial guess for degrees for freedom parameter (float)
 
-    """
-    # elements of Mahalanobis distance (Delta^2_i's)
-    N, D = residuals.shape
-    mdist = np.einsum('ab,bc->ac', residuals, invcov * residuals)
+#     """
+#     # elements of Mahalanobis distance (Delta^2_i's)
+#     N, D = residuals.shape
+#     mdist = np.einsum('ab,bc->ac', residuals, invcov * residuals)
 
-    # func to solve for degrees of freedom parameter
-    from scipy.special import digamma, polygamma
-    def func(v, N, D, mdist, wgt):
-        # expectation values
-        tmp = v + mdist
-        Etau = (v + D)/tmp
-        Elogtau = digamma((v + D)/2.0) - np.log(tmp/2.0)
+#     # func to solve for degrees of freedom parameter
+#     from scipy.special import digamma, polygamma
+#     def func(v, N, D, mdist, wgt):
+#         # expectation values
+#         tmp = v + mdist
+#         Etau = (v + D)/tmp
+#         Elogtau = digamma((v + D)/2.0) - np.log(tmp/2.0)
 
-        # derivatives of expectation value terms
-        dEtau = 1.0/tmp - (v+D)/tmp**2
-        dElogtau = polygamma(1, (v + D)/2.0)/2.0 - 1.0/tmp
-        return (N*np.log(v) - N*digamma(v) + np.sum(Elogtau) - np.sum(Etau),
-                N/v - N*polygamma(1, v) + np.sum(dElogtau) - np.sum(dEtau)
+#         # derivatives of expectation value terms
+#         dEtau = 1.0/tmp - (v+D)/tmp**2
+#         dElogtau = polygamma(1, (v + D)/2.0)/2.0 - 1.0/tmp
+#         return (N*np.log(v) - N*digamma(v) + np.sum(Elogtau) - np.sum(Etau),
+#                 N/v - N*polygamma(1, v) + np.sum(dElogtau) - np.sum(dEtau)
 
-    if v is None:
-        v = 11.0
-    v, f, d = fmin_l_bfgs_b(func, v, args=(N, D, ressq, weights), pgtol=1e-2,
-                            approx_grad=False, bounds=[(1e-3, 30)])
-    Etau = (v + 1.0)/(v + ressq)  # used as new weights
-    Lambda = np.mean(ressq*Etau, axis=0)
-    return v, np.sqrt(Etau / Lambda[None, :])
+#     if v is None:
+#         v = 11.0
+#     v, f, d = fmin_l_bfgs_b(func, v, args=(N, D, ressq, weights), pgtol=1e-2,
+#                             approx_grad=False, bounds=[(1e-3, 30)])
+#     Etau = (v + 1.0)/(v + ressq)  # used as new weights
+#     Lambda = np.mean(ressq*Etau, axis=0)
+#     return v, np.sqrt(Etau / Lambda[None, :])

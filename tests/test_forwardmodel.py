@@ -114,9 +114,9 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
         for p in range(nant):
             for c in [0, -1]:  # for now only diagonal
                 xi_amp = np.random.randn(ntime, nchan)
-                amp = np.exp(-nu[None, :]**2 + kron_matvec(L, xi_amp).reshape(ntime, nchan))
+                amp = np.exp(-nu[None, :]**2 + kron_matvec(L, xi_amp))
                 xi_phase = np.random.randn(ntime, nchan)
-                phase = kron_matvec(L, xi_phase).reshape(ntime, nchan)
+                phase = kron_matvec(L, xi_phase)
                 jones[:, p, :, 0, c] = amp * np.exp(1.0j * phase)
 
         # corrupted vis

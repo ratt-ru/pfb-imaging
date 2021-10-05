@@ -82,8 +82,11 @@ def set_client(args, stack, log, scheduler='distributed'):
     os.environ["MKL_NUM_THREADS"] = str(args.nvthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(args.nvthreads)
     os.environ["NUMBA_NUM_THREADS"] = str(args.nvthreads)
-    # TODO - does this result in thread over-subscription?
-    os.environ["NUMEXPR_NUM_THREADS"] = str(args.nvthreads)
+    # avoids numexpr error, probably don't want more than 10 vthreads for ne anyway
+    import numexpr as ne
+    max_cores = ne.detect_number_of_cores()
+    ne_threads = min(max_cores, args.nvthreads)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
     if scheduler=='distributed':
         # set up client
