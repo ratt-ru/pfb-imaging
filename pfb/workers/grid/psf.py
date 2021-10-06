@@ -397,8 +397,6 @@ def _psf(**kw):
                             ds.FIELD_ID, chunks=args.row_out_chunk)),
                 'DATA_DESC_ID':(('row',), da.full_like(ds.TIME.data,
                             ds.DATA_DESC_ID, chunks=args.row_out_chunk)),
-                # 'SCAN_NUMBER':(('row',), da.full_like(ds.TIME.data,
-                #             ds.SCAN_NUMBER, chunks=args.row_out_chunk)),
                 'WEIGHT':(('row', 'chan'), weights.rechunk({0:args.row_out_chunk})),  # why no 'f4'?
                 'UVW':(('row', 'uvw'), uvw.rechunk({0:args.row_out_chunk}))
             }
