@@ -70,8 +70,10 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
         # primary beam
         from katbeam import JimBeam
         beam = JimBeam('MKAT-AA-L-JIM-2020')
-        l_coord = -np.arange(-(nx//2), nx//2) * cell_size
-        m_coord = np.arange(-(ny//2), ny//2) * cell_size
+        refpix = 1 + nx//2
+        l_coord = -np.arange(1 - refpix, 1 + npix - refpix) * cell_size
+        refpix = ny//2
+        m_coord = np.arange(1 - refpix, 1 + npix - refpix) * cell_size
         xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
         pbeam = np.zeros((nchan, nx, ny), dtype=np.float64)
         for i in range(nchan):
