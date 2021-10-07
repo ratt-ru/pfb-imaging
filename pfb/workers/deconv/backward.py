@@ -6,12 +6,12 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('FORWARD')
+log = pyscilog.get_logger('BACWARD')
 
 @cli.command()
-@click.option('-r', '--residual', required=True,
+@click.option('-m', '--model', required=True,
               help="Path to residual.fits")
-@click.option('-p', '--psf', required=True,
+@click.option('-u', '--update', required=True,
               help="Path to PSF.fits")
 @click.option('-mask', '--mask',
               help="Path to mask.fits.")
@@ -33,19 +33,15 @@ log = pyscilog.get_logger('FORWARD')
               help='Standard deviation of assumed GRF prior.')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
-@click.option('-cgtol', "--cg-tol", type=float, default=1e-5,
+@click.option('-pdtol', "--pd-tol", type=float, default=1e-5,
               help="Tolerance of conjugate gradient")
-@click.option('-cgminit', "--cg-minit", type=int, default=10,
-              help="Minimum number of iterations for conjugate gradient")
-@click.option('-cgmaxit', "--cg-maxit", type=int, default=100,
+@click.option('-pdmaxit', "--pd-maxit", type=int, default=100,
               help="Maximum number of iterations for conjugate gradient")
-@click.option('-cgverb', "--cg-verbose", type=int, default=0,
+@click.option('-pdverb', "--pd-verbose", type=int, default=0,
               help="Verbosity of conjugate gradient. "
               "Set to 2 for debugging or zero for silence.")
-@click.option('-cgrf', "--cg-report-freq", type=int, default=10,
+@click.option('-pdrf', "--pd-report-freq", type=int, default=10,
               help="Report freq for conjugate gradient.")
-@click.option('--backtrack/--no-backtrack', default=True,
-              help="Backtracking during cg iterations.")
 @click.option('-ha', '--host-address',
               help='Address where the distributed client lives. '
               'Will use a local cluster if no address is provided')
@@ -59,15 +55,13 @@ log = pyscilog.get_logger('FORWARD')
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
-def forward(**kw):
+def backward(**kw):
     '''
-    Extract flux at model locations.
+    Backward step using primal dual i.e. solves
 
-    Will write out the result of solving
+    argmin_x \| Phi.H x\|_{2,1} + (x - v)^dagger U (x - v)
 
-    x = (R.H W R + sigmainv**2 I)^{-1} ID
-
-    assuming that R.H W R can be approximated as a convolution with the PSF.
+    where U is the preconditioner used during the forward step.
 
     If a host address is provided the computation can be distributed
     over imaging band and row. When using a distributed scheduler both
@@ -86,9 +80,9 @@ def forward(**kw):
     distributed case.
 
     if LocalCluster:
-        nvthreads = nthreads//(nworkers*nthreads_per_worker)
+        ngridder-threads = nthreads//(nworkers*nthreads_per_worker)
     else:
-        nvthreads = nthreads//nthreads-per-worker
+        ngridder-threads = nthreads//nthreads-per-worker
     '''
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
@@ -107,9 +101,9 @@ def forward(**kw):
         for key in args.keys():
             print('     %25s = %s' % (key, args[key]), file=log)
 
-        return _forward(**args)
+        return _backward(**args)
 
-def _forward(**kw):
+def _backward(**kw):
     args = OmegaConf.create(kw)
     OmegaConf.set_struct(args, True)
 

@@ -94,8 +94,6 @@ def psf(**kw):
     memory and threads available, respectively. By default the gridder will
     use all available resources.
 
-    Disclaimer - Memory budgeting is still very crude!
-
     On a local cluster, the default is to use:
 
         nworkers = nband
