@@ -534,7 +534,7 @@ def _init(**kw):
 
     with compute_context(args):
         dask.compute(writes,
-                     optimize_graph=True,
+                     optimize_graph=False,
                      scheduler=args.scheduler)
 
     # convert to fits files
