@@ -80,9 +80,12 @@ def backward(**kw):
     distributed case.
 
     if LocalCluster:
-        ngridder-threads = nthreads//(nworkers*nthreads_per_worker)
+        nvthreads = nthreads//(nworkers*nthreads_per_worker)
     else:
-        ngridder-threads = nthreads//nthreads-per-worker
+        nvthreads = nthreads//nthreads-per-worker
+
+    where nvthreads refers to the number of threads used to scale vertically
+    (eg. the number threads given to each gridder instance).
     '''
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')

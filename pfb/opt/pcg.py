@@ -183,11 +183,14 @@ def pcg_psf(psfhat,
 
 
 from pfb.operators.hessian import _hessian_reg as hessian_wgt
+from pfb.operators.psi import coef2im, im2coef
+import pywt
 def _pcg_wgt(uvw,
              weight,
              b,
              x0,
              beam,
+             mask,
              freq,
              freq_bin_idx,
              freq_bin_counts,
@@ -198,6 +201,8 @@ def _pcg_wgt(uvw,
              nthreads,
              sigmainv,
              wsum,
+             nlevels,
+             bases,
              tol=1e-5,
              maxit=500,
              minit=100,
@@ -211,10 +216,40 @@ def _pcg_wgt(uvw,
     nband, nx, ny = b.shape
     model = np.zeros((nband, nx, ny), dtype=b.dtype)
     sigmainvsq = sigmainv**2
+    # PCG preconditioner
     if sigmainv > 0:
         def M(x): return x / sigmainvsq
     else:
         M = None
+
+    # wavelet setup
+    nbasis = len(bases)
+
+    # do a mock decomposition to get max coeff size
+    alpha0 = {}
+    ntots = []
+    iys = {}
+    sys = {}
+    for base in bases:
+        if base == 'self':
+            y, iy, sy = x0[0].ravel(), 0, 0
+        else:
+            alpha = pywt.wavedecn(x0[0], base, mode='zero', level=nlevels)
+            y, iy, sy = pywt.ravel_coeffs(alpha)
+        iys[base] = iy
+        sys[base] = sy
+        ntots.append(y.size)
+
+        alpha0[base][l] = y
+
+    # initialise alpha0 correctly
+    # modify blockwise to out dims of alpha
+
+    # get padding info
+    nmax = np.asarray(ntots).max()
+    padding = []
+    for i in range(nbasis):
+        padding.append(slice(0, ntots[i]))
 
     freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
     for k in range(nband):
@@ -222,6 +257,7 @@ def _pcg_wgt(uvw,
         indu = freq_bin_idx2[k] + freq_bin_counts[k]
         A = partial(hessian_wgt,
                     beam=beam[k],
+                    pmask=mask,
                     uvw=uvw,
                     weight=weight[:, indl:indu],
                     freq=freq[indl:indu],
@@ -231,7 +267,18 @@ def _pcg_wgt(uvw,
                     double_accum=double_accum,
                     nthreads=nthreads,
                     sigmainvsq=sigmainvsq,
-                    wsum=wsum)
+                    wsum=wsum,
+                    bases=bases,
+                    padding=padding,
+                    iy=iys,
+                    sy=sys,
+                    ntot=ntots,
+                    nmax=nmax,
+                    nlevels=nlevels,
+                    nx=nx,
+                    ny=ny)
+
+
         model[k] = pcg(A,
                        beam[k] * b[k],
                        x0[k],
@@ -250,6 +297,7 @@ def pcg_wgt_wrapper(uvw,
                     b,
                     x0,
                     beam,
+                    mask,
                     freq,
                     freq_bin_idx,
                     freq_bin_counts,
@@ -260,6 +308,8 @@ def pcg_wgt_wrapper(uvw,
                     nthreads,
                     sigmainv,
                     wsum,
+                    nlevels,
+                    bases,
                     tol=1e-5,
                     maxit=500,
                     minit=100,
@@ -271,6 +321,7 @@ def pcg_wgt_wrapper(uvw,
                     b,
                     x0,
                     beam,
+                    mask,
                     freq,
                     freq_bin_idx,
                     freq_bin_counts,
@@ -281,6 +332,8 @@ def pcg_wgt_wrapper(uvw,
                     nthreads,
                     sigmainv,
                     wsum,
+                    nlevels,
+                    bases,
                     tol,
                     maxit,
                     minit,
@@ -293,6 +346,7 @@ def pcg_wgt(uvw,
             b,
             x0,
             beam,
+            mask,
             freq,
             freq_bin_idx,
             freq_bin_counts,
@@ -303,6 +357,8 @@ def pcg_wgt(uvw,
             nthreads,
             sigmainv,
             wsum,
+            nlevels,
+            bases,
             tol,
             maxit,
             minit,
@@ -317,6 +373,7 @@ def pcg_wgt(uvw,
                         b, ('nchan', 'nx', 'ny'),
                         x0, ('nchan', 'nx', 'ny'),
                         beam, ('nchan', 'nx', 'ny'),
+                        mask, ('nx', 'ny'),
                         freq, ('nchan',),
                         freq_bin_idx, ('nchan',),
                         freq_bin_counts, ('nchan',),
@@ -327,6 +384,8 @@ def pcg_wgt(uvw,
                         nthreads, None,
                         sigmainv, None,
                         wsum, None,
+                        nlevels, None,
+                        bases, None,
                         tol, None,
                         maxit, None,
                         minit, None,

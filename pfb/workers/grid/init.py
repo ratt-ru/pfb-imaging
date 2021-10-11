@@ -27,7 +27,8 @@ log = pyscilog.get_logger('INIT')
               help="Column containing Mueller terms."
               "Must be the same across MSs")
 @click.option('-p', '--products', default='I',
-              help='Imaging products. Currently supports I')
+              help='Stokes products. '
+              'Currently supports I, Q, U, and V.')
 @click.option('-rchunk', '--row-chunk', type=int, default=-1,
               help="Number of rows in a chunk.")
 @click.option('-rochunk', '--row-out-chunk', type=int, default=10000,
@@ -511,8 +512,7 @@ def _init(**kw):
                                          radec, idx0, idxf, sign, csign)
                 out_datasets.setdefault('V', [])
                 out_datasets['V'].append(out_ds_V)
-            else:
-                raise NotImplementedError("Sorry, not yet")
+
 
     writes = {}
     for p in args.products.upper():

@@ -2,16 +2,18 @@
 import numpy as np
 import dask.array as da
 from ducc0.wgridder import ms2dirty, dirty2ms
+from pfb.operators.psi import im2coef, coef2im
 
 
-# Tikhonov regularised Hessian
-def _hessian_reg(x, beam, uvw, weight, freq, cell, wstack, epsilon,
-                 double_accum, nthreads, sigmainvsq, wsum):
+def _hessian_reg(alpha, beam, pmask, uvw, weight, freq, cell, wstack, epsilon,
+                 double_accum, nthreads, sigmainvsq, wsum, bases, padding, iy, sy,
+                 ntot, nmax, nlevels, nx, ny):
     """
-    beam * x is equivalent to mask(beam(x))
+    Tikhonov regularised Hessian of wavelet coeffs
     """
 
-    nx, ny = x.shape
+    x = coef2im(alpha, pmask, bases, padding, iy, sy, nx, ny)
+
     mvis = dirty2ms(uvw=uvw,
                     freq=freq,
                     dirty=beam * x,
@@ -33,6 +35,8 @@ def _hessian_reg(x, beam, uvw, weight, freq, cell, wstack, epsilon,
                   epsilon=epsilon,
                   nthreads=nthreads,
                   do_wstacking=wstack,
-                  double_precision_accumulation=double_accum)
+                  double_precision_accumulation=double_accum)/wsum
 
-    return beam * im / wsum + x * sigmainvsq
+    alpha_rec = im2coef(beam*im, pmask, bases, ntot, nmax, nlevels)
+
+    return alpha_rec + alpha * sigmainvsq

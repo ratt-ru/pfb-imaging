@@ -25,6 +25,11 @@ log = pyscilog.get_logger('FORWARD')
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
               help="Number of imaging bands")
+@click.option('-bases', '--bases', default='self',
+              help='Wavelet bases to use. Give as str separated by | eg.'
+              '-bases self|db1|db2|db3|db4')
+@click.option('-nlevels', '--nlevels', default=3,
+              help='Number of wavelet decomposition levels')
 @click.option('-otype', '--output-type', default='f4',
               help="Data type of output")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
@@ -89,6 +94,10 @@ def forward(**kw):
         nvthreads = nthreads//(nworkers*nthreads_per_worker)
     else:
         nvthreads = nthreads//nthreads-per-worker
+
+    where nvthreads refers to the number of threads used to scale vertically
+    (eg. the number threads given to each gridder instance).
+
     '''
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
@@ -213,7 +222,9 @@ def _forward(**kw):
 
         assert mask.shape == (nx, ny)
 
-        beam_image *= mask[None, :, :]
+    else:
+        mask = da.ones((nx, ny), chunks=(-1, -1), dtype=residual.dtype)
+        x0 = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=residual.dtype)
 
     beam_image = da.from_array(beam_image, chunks=(1, -1, -1))
 
@@ -271,6 +282,7 @@ def _forward(**kw):
                         residual,
                         x0,
                         beam_image,
+                        mask,
                         freq,
                         freq_bin_idx,
                         freq_bin_counts,
@@ -281,6 +293,8 @@ def _forward(**kw):
                         args.nvthreads,
                         args.sigmainv,
                         wsum,
+                        args.nlevels,
+                        args.bases.split('|'),
                         args.cg_tol,
                         args.cg_maxit,
                         args.cg_minit,
