@@ -511,8 +511,6 @@ def _init(**kw):
                                          radec, idx0, idxf, sign, csign)
                 out_datasets.setdefault('V', [])
                 out_datasets['V'].append(out_ds_V)
-            else:
-                raise NotImplementedError("Sorry, not yet")
 
     writes = {}
     for p in args.products.upper():
