@@ -5,9 +5,24 @@ from ducc0.wgridder import ms2dirty, dirty2ms
 from pfb.operators.psi import im2coef, coef2im
 
 
-def _hessian_reg(alpha, beam, pmask, uvw, weight, freq, cell, wstack, epsilon,
-                 double_accum, nthreads, sigmainvsq, wsum, bases, padding, iy, sy,
-                 ntot, nmax, nlevels, nx, ny):
+def _hessian_reg(alpha, beam, uvw, weight, freq,
+                 cell=None,
+                 wstack=None,
+                 epsilon=None,
+                 double_accum=None,
+                 nthreads=None,
+                 sigmainv=None,
+                 wsum=None,
+                 pmask=None,
+                 padding=None,
+                 bases=None,
+                 iy=None,
+                 sy=None,
+                 ntot=None,
+                 nmax=None,
+                 nlevels=None,
+                 nx=None,
+                 ny=None):
     """
     Tikhonov regularised Hessian of wavelet coeffs
     """
@@ -39,4 +54,4 @@ def _hessian_reg(alpha, beam, pmask, uvw, weight, freq, cell, wstack, epsilon,
 
     alpha_rec = im2coef(beam*im, pmask, bases, ntot, nmax, nlevels)
 
-    return alpha_rec + alpha * sigmainvsq
+    return alpha_rec + alpha * sigmainv**2

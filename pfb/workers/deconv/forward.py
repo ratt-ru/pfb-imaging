@@ -15,6 +15,8 @@ log = pyscilog.get_logger('FORWARD')
               help="Path to PSF.fits")
 @click.option('-mask', '--mask',
               help="Path to mask.fits.")
+@click.option('-pmask', '--point-mask',
+              help="Path to point source mask.fits.")
 @click.option('-bm', '--beam-model',
               help="Path to beam_model.fits or JimBeam.")
 @click.option('-band', '--band', default='L',
@@ -129,7 +131,9 @@ def _forward(**kw):
     from dask.distributed import performance_report
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
     from pfb.opt.hogbom import hogbom
+    from pfb.operators.psi import im2coef, coef2im
     from astropy.io import fits
+    import pywt
 
     print("Loading residual", file=log)
     residual = load_fits(args.residual, dtype=args.output_type).squeeze()
@@ -213,20 +217,78 @@ def _forward(**kw):
 
     if args.mask is not None:
         mask = load_fits(args.mask).squeeze()
-        # passing model as mask
-        if len(mask.shape) == 3:
-            x0 = da.from_array(mask, chunks=(1, -1, -1))
-            mask = np.any(mask, axis=0)
-        else:
-            x0 = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=residual.dtype)
-
         assert mask.shape == (nx, ny)
-
     else:
-        mask = da.ones((nx, ny), chunks=(-1, -1), dtype=residual.dtype)
-        x0 = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=residual.dtype)
+        mask = np.ones((nx, ny), dtype=residual.dtype)
 
-    beam_image = da.from_array(beam_image, chunks=(1, -1, -1))
+    # incorporate mask in beam
+    beam_image *= mask[None, :, :]
+
+    if args.point_mask is not None:
+        pmask = load_fits(args.point_mask).squeeze()
+        # passing model as mask
+        if len(pmask.shape) == 3:
+            x0 = pmask
+            pmask = np.any(pmask, axis=0)
+        else:
+            x0 = np.zeros((nband, nx, ny), dtype=residual.dtype)
+
+        assert pmask.shape == (nx, ny)
+    else:
+        pmask = np.ones((nx, ny), dtype=residual.dtype)
+        x0 = np.zeros((nband, nx, ny), dtype=residual.dtype)
+
+
+    # wavelet setup
+    bases = args.bases.split('|')
+    ntots = []
+    iys = {}
+    sys = {}
+    for base in bases:
+        if base == 'self':
+            y, iy, sy = x0[0].ravel(), 0, 0
+        else:
+            alpha = pywt.wavedecn(x0[0], base, mode='zero', level=args.nlevels)
+            y, iy, sy = pywt.ravel_coeffs(alpha)
+        iys[base] = iy
+        sys[base] = sy
+        ntots.append(y.size)
+
+    # get padding info
+    nmax = np.asarray(ntots).max()
+    padding = []
+    nbasis = len(ntots)
+    for i in range(nbasis):
+        padding.append(slice(0, ntots[i]))
+
+    alpha0 = np.zeros((nband, nbasis, nmax), dtype=x0.dtype)
+    alpha_resid = np.zeros((nband, nbasis, nmax), dtype=x0.dtype)
+    for l in range(nband):
+        alpha_resid[l] = im2coef(beam_image[l] * residual[l],
+                            pmask, bases, ntots, nmax, args.nlevels)
+        alpha0[l] = im2coef(x0[l],
+                            pmask, bases, ntots, nmax, args.nlevels)
+
+
+    waveopts = {}
+    waveopts['bases'] = bases
+    waveopts['pmask'] = pmask
+    waveopts['iy'] = iys
+    waveopts['sy'] = sys
+    waveopts['ntot'] = ntots
+    waveopts['nmax'] = nmax
+    waveopts['nlevels'] = args.nlevels
+    waveopts['nx'] = nx
+    waveopts['ny'] = ny
+    waveopts['padding'] = padding
+
+    cgopts = {}
+    cgopts['tol'] = args.cg_tol
+    cgopts['maxit'] = args.cg_maxit
+    cgopts['minit'] = args.cg_minit
+    cgopts['verbosity'] = args.cg_verbose
+    cgopts['report_freq'] = args.cg_report_freq
+    cgopts['backtrack'] = args.backtrack
 
     # if weight table is provided we use the vis space Hessian approximation
     if args.weight_table is not None:
@@ -276,31 +338,34 @@ def _forward(**kw):
 
         uvw = dask.persist(xds.UVW.data)[0]
         weight = dask.persist(xds.WEIGHT.data.astype(args.output_type))[0]
+        alpha0 = da.from_array(alpha0, chunks=(1, -1, -1))
+        alpha_resid = da.from_array(alpha_resid, chunks=(1, -1, -1))
+        beam_image = da.from_array(beam_image, chunks=(1, -1, -1))
 
-        model = pcg_wgt(uvw,
+        gridopts = {}
+        gridopts['cell'] = cell_rad
+        gridopts['wstack'] = args.wstack
+        gridopts['epsilon'] = args.epsilon
+        gridopts['double_accum'] = args.double_accum
+        gridopts['nthreads'] = args.nvthreads
+        gridopts['sigmainv'] = args.sigmainv
+        gridopts['wsum'] = wsum
+
+        alpha = pcg_wgt(uvw,
                         weight,
-                        residual,
-                        x0,
+                        alpha_resid,
+                        alpha0,
                         beam_image,
-                        mask,
                         freq,
                         freq_bin_idx,
                         freq_bin_counts,
-                        cell_rad,
-                        args.wstack,
-                        args.epsilon,
-                        args.double_accum,
-                        args.nvthreads,
-                        args.sigmainv,
-                        wsum,
-                        args.nlevels,
-                        args.bases.split('|'),
-                        args.cg_tol,
-                        args.cg_maxit,
-                        args.cg_minit,
-                        args.cg_verbose,
-                        args.cg_report_freq,
-                        args.backtrack).compute()
+                        gridopts,
+                        waveopts,
+                        cgopts).compute()
+
+        model = np.zeros((nband, nx, ny), dtype=args.output_type)
+        for l in range(nband):
+            model[l] = coef2im(alpha[l], pmask, bases, padding, iys, sys, nx, ny)
 
         from africanus.gridding.wgridder.dask import hessian
 

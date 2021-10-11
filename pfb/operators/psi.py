@@ -215,13 +215,6 @@ def coef2im(alpha, pmask, bases, padding, iy, sy, nx, ny):
     '''
     Per band coefficients to image
     '''
-    print(alpha)
-    print(pmask)
-    print(bases)
-    print(padding)
-    print(iy)
-    print(sy)
-    print(nx, ny)
     nbasis = len(bases)
     x = np.zeros((nx, ny), dtype=alpha.dtype)
     for b, base in enumerate(bases):
