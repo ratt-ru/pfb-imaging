@@ -11,7 +11,7 @@ log = pyscilog.get_logger('NOISE')
 @cli.command()
 @click.option('-ms', '--ms', required=True,
               help='Path to measurement set.')
-@click.option('-ocol', '--output-column',
+@click.option('-ocol', '--output-column', default='NOISE',
               help='Column to write noise realisation to')
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
@@ -27,6 +27,8 @@ log = pyscilog.get_logger('NOISE')
 @click.option('-mem', '--mem-limit', type=int,
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
+              help="Total available threads. Default uses all available threads")
+@click.option('-scheduler', '--scheduler', default='distributed',
               help="Total available threads. Default uses all available threads")
 def sim_noise(**kw):
     '''
@@ -46,7 +48,7 @@ def sim_noise(**kw):
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log)
+        args = set_client(args, stack, log, scheduler=args.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
