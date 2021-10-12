@@ -66,6 +66,8 @@ def _sim_noise(**kw):
 
     import numpy as np
     from daskms import xds_from_ms, xds_to_table
+    from dask.diagnostics import ProgressBar
+    from dask.distributed import performance_report
     import dask.array as da
     import dask
 
