@@ -89,6 +89,17 @@ def _sim_noise(**kw):
         out_data.append(out_ds)
 
     writes = xds_to_table(out_data, args.ms[0], columns=[args.output_column])
-    dask.compute(writes)
+
+
+    def compute_context(args):
+        if args.scheduler == "distributed":
+            return performance_report(filename=args.output_filename + "_dask_report.html.pfb")
+        else:
+            return ProgressBar()
+
+    with compute_context(args):
+        dask.compute(writes,
+                     optimize_graph=False,
+                     scheduler=args.scheduler)
 
     print("All done here", file=log)
