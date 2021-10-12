@@ -396,6 +396,7 @@ def _init(**kw):
                                          freq_out,
                                          nx, ny, nx_psf, ny_psf, cell_rad,
                                          radec, idx0, idxf, sign, csign)
+
                 out_datasets.setdefault('I', [])
                 out_datasets['I'].append(out_ds_I)
 
@@ -515,6 +516,7 @@ def _init(**kw):
 
 
     writes = {}
+    wlist = []  # for visualisation
     for p in args.products.upper():
         if os.path.isdir(args.output_filename + f'_{p}.zarr'):
             print(f"Removing existing {args.output_filename}_{p}.zarr folder",
@@ -522,12 +524,14 @@ def _init(**kw):
             os.system(f"rm -r {args.output_filename}_{p}.zarr")
         writes[p] = xds_to_zarr(out_datasets[p], args.output_filename +
                                 f'_{p}.zarr', columns='ALL')
+        wlist.append(writes[p])
 
-    dask.visualize(writes, color="order", cmap="autumn",
+
+    dask.visualize(*wlist, color="order", cmap="autumn",
                    node_attr={"penwidth": "4"},
                    filename=args.output_filename + '_writes_ordered_graph.pdf',
                    optimize_graph=False)
-    dask.visualize(writes['I'], filename=args.output_filename +
+    dask.visualize(*wlist, filename=args.output_filename +
                    '_writes_graph.pdf', optimize_graph=False)
     dask.visualize(writes['I'], color="order", cmap="autumn",
                    node_attr={"penwidth": "4"},
