@@ -354,7 +354,7 @@ def _init(**kw):
                 imaging_weight = None
 
             if args.mueller_column is not None:
-                mueller = getattr(ds, args.mueller_column).data
+                mueller = getattr(ds, args.mueller_column).data.astype(data.dtype)
             else:
                 mueller = None
 

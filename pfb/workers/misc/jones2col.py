@@ -157,7 +157,7 @@ def _jones2col(**kw):
         assert g.dims['gain_f'] == nchan
 
         # need to swap axes for africanus
-        jones = da.swapaxes(g.gains.data, 1, 2)  #.astype(np.complex128)
+        jones = da.swapaxes(g.gains.data, 1, 2)
         flag = ds.FLAG.data
         frow = ds.FLAG_ROW.data
         ant1 = ds.ANTENNA1.data
@@ -173,19 +173,19 @@ def _jones2col(**kw):
         if args.acol is not None:
             if ncorr > 2:
                 assert ncorr == 4
-                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, 2, 2) #.astype(np.complex128)
+                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, 2, 2)
             else:
-                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, ncorr) #.astype(np.complex128)
+                acol = ds.get(args.acol).data.reshape(nrow, nchan, 1, ncorr)
         else:
             if ncorr > 2:
                 assert ncorr == 4
                 acol = da.ones((nrow, nchan, 1, 2, 2),
-                            chunks=(row_chunks, chan_chunks, 1, -1, -1),
-                            dtype=jones.dtype)
+                               chunks=(row_chunks, chan_chunks, 1, -1, -1),
+                               dtype=jones.dtype)
             else:
                 acol = da.ones((nrow, nchan, 1, ncorr),
-                            chunks=(row_chunks, chan_chunks, 1, -1),
-                            dtype=jones.dtype)
+                               chunks=(row_chunks, chan_chunks, 1, -1),
+                               dtype=jones.dtype)
 
         cvis = corrupt_vis(tidx, tcounts, ant1, ant2, jones, acol)
 
