@@ -132,7 +132,7 @@ def _jones2col(**kw):
                       group_cols=('FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'),
                       table_schema=schema)
 
-    G = xds_from_zarr(args.gain_table + '::G',
+    G = xds_from_zarr(args.gain_table + '::NET',
                       chunks=gain_chunks)
 
     out_data = []
