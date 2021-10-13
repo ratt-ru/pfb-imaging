@@ -36,6 +36,8 @@ log = pyscilog.get_logger('J2COL')
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
+@click.option('-scheduler', '--scheduler', default='distributed',
+              help="Total available threads. Default uses all available threads")
 def jones2col(**kw):
     '''
     Write product of diagonal Jones matrices to 'Mueller' column
@@ -54,7 +56,7 @@ def jones2col(**kw):
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log)
+        args = set_client(args, stack, log, scheduler=args.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -75,6 +77,8 @@ def _jones2col(**kw):
     from daskms import xds_from_ms, xds_to_table
     import dask.array as da
     import dask
+    from dask.distributed import performance_report
+    from dask.diagnostics import ProgressBar
     from africanus.calibration.utils import chunkify_rows
     from africanus.calibration.utils.dask import corrupt_vis
     from pfb.utils.misc import compare_vals
@@ -205,6 +209,16 @@ def _jones2col(**kw):
 
     writes = xds_to_table(out_data, args.ms[0], columns=[args.mueller_column])
 
-    dask.compute(writes, flags)
+
+    def compute_context(args):
+        if args.scheduler == "distributed":
+            return performance_report(filename=args.output_filename + "_dask_report.html.pfb")
+        else:
+            return ProgressBar()
+
+    with compute_context(args):
+        dask.compute(writes, flags,
+                     optimize_graph=False,
+                     scheduler=args.scheduler)
 
     print("All done here", file=log)
