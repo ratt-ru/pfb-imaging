@@ -30,7 +30,7 @@ log = pyscilog.get_logger('BACWARD')
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
               help='Gridder accuracy')
 @click.option('-sinv', '--sigmainv', type=float, default=1.0,
-              help='Standard deviation of assumed GRF prior.')
+              help='Inverse standard deviation of assumed GRF prior.')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
 @click.option('-pdtol', "--pd-tol", type=float, default=1e-5,
@@ -201,18 +201,68 @@ def _backward(**kw):
 
     if args.mask is not None:
         mask = load_fits(args.mask).squeeze()
-        # passing model as mask
-        if len(mask.shape) == 3:
-            x0 = da.from_array(mask, chunks=(1, -1, -1))
-            mask = np.any(mask, axis=0)
-        else:
-            x0 = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=residual.dtype)
-
         assert mask.shape == (nx, ny)
+    else:
+        mask = np.ones((nx, ny), dtype=residual.dtype)
 
-        beam_image *= mask[None, :, :]
+    # incorporate mask in beam
+    beam_image *= mask[None, :, :]
 
-    beam_image = da.from_array(beam_image, chunks=(1, -1, -1))
+    if args.point_mask is not None:
+        pmask = load_fits(args.point_mask).squeeze()
+        # passing model as mask
+        if len(pmask.shape) == 3:
+            x0 = pmask
+            pmask = np.any(pmask, axis=0)
+        else:
+            x0 = np.zeros((nband, nx, ny), dtype=residual.dtype)
+
+        assert pmask.shape == (nx, ny)
+    else:
+        pmask = np.ones((nx, ny), dtype=residual.dtype)
+        x0 = np.zeros((nband, nx, ny), dtype=residual.dtype)
+
+    # wavelet setup
+    bases = args.bases.split('|')
+    ntots = []
+    iys = {}
+    sys = {}
+    for base in bases:
+        if base == 'self':
+            y, iy, sy = x0[0].ravel(), 0, 0
+        else:
+            alpha = pywt.wavedecn(x0[0], base, mode='zero', level=args.nlevels)
+            y, iy, sy = pywt.ravel_coeffs(alpha)
+        iys[base] = iy
+        sys[base] = sy
+        ntots.append(y.size)
+
+    # get padding info
+    nmax = np.asarray(ntots).max()
+    padding = []
+    nbasis = len(ntots)
+    for i in range(nbasis):
+        padding.append(slice(0, ntots[i]))
+
+    alpha0 = np.zeros((nband, nbasis, nmax), dtype=x0.dtype)
+    alpha_resid = np.zeros((nband, nbasis, nmax), dtype=x0.dtype)
+    for l in range(nband):
+        alpha_resid[l] = im2coef(beam_image[l] * residual[l],
+                            pmask, bases, ntots, nmax, args.nlevels)
+        alpha0[l] = im2coef(x0[l],
+                            pmask, bases, ntots, nmax, args.nlevels)
+
+    waveopts = {}
+    waveopts['bases'] = bases
+    waveopts['pmask'] = pmask
+    waveopts['iy'] = iys
+    waveopts['sy'] = sys
+    waveopts['ntot'] = ntots
+    waveopts['nmax'] = nmax
+    waveopts['nlevels'] = args.nlevels
+    waveopts['nx'] = nx
+    waveopts['ny'] = ny
+    waveopts['padding'] = padding
 
     # if weight table is provided we use the vis space Hessian approximation
     if args.weight_table is not None:

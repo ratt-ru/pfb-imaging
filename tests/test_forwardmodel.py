@@ -177,7 +177,8 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
     from pfb.workers.deconv.forward import _forward
     _forward(residual=str(test_dir / 'test_dirty.fits'),
              psf=str(test_dir / 'test_psf.fits'),
-             pmask=str(test_dir / 'test_mask.fits'),
+             mask=None,
+             point_mask=str(test_dir / 'test_mask.fits'),
              beam_model=bm, band='L',
              weight_table=str(test_dir / 'test.zarr'),
              output_filename=str(test_dir / 'test'),
@@ -185,7 +186,7 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
              wstack=True, double_accum=True, cg_tol=1e-6, cg_minit=10,
              cg_maxit=100, cg_verbose=0, cg_report_freq=10, backtrack=False,
              nworkers=1, nthreads_per_worker=1, nvthreads=1, mem_limit=8,
-             nthreads=1, host_address=None, bases='self')
+             nthreads=1, host_address=None, bases='self', nlevels=3)
 
     # get inferred model
     from pfb.utils.fits import load_fits
