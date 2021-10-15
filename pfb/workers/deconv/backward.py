@@ -264,20 +264,22 @@ def _backward(**kw):
     waveopts['ny'] = ny
     waveopts['padding'] = padding
 
-    # if weight table is provided we use the vis space Hessian approximation
+    # set up Hessian approximation
     if args.weight_table is not None:
-        print("Solving for update using vis space approximation", file=log)
         normfact = wsum
+        from africanus.gridding.wgridder.dask import hessian
+        from pfb.operators.hessian import _hessian_reg
+        from pfb.utils.misc import plan_row_chunk
         from daskms.experimental.zarr import xds_from_zarr
 
         xds = xds_from_zarr(args.weight_table)[0]
         nrow = xds.row.size
-        freq = xds.chan.data
-        nchan = freq.size
+        freqs = xds.chan.data
+        nchan = freqs.size
 
         # bin edges
-        fmin = freq.min()
-        fmax = freq.max()
+        fmin = freqs.min()
+        fmax = freqs.max()
         fbins = np.linspace(fmin, fmax, nband + 1)
 
         # chan <-> band mapping
@@ -285,73 +287,40 @@ def _backward(**kw):
         chan_chunks = {}
         freq_bin_idx = {}
         freq_bin_counts = {}
-        band_map = np.zeros(freq.size, dtype=np.int32)
+        band_map = np.zeros(freqs.size, dtype=np.int32)
         for band in range(nband):
-            indl = freq >= fbins[band]
-            indu = freq < fbins[band + 1] + 1e-6
+            indl = freqs >= fbins[band]
+            indu = freqs < fbins[band + 1] + 1e-6
             band_map = np.where(indl & indu, band, band_map)
 
         # to dask arrays
         bands, bin_counts = np.unique(band_map, return_counts=True)
         band_mapping = tuple(bands)
         chan_chunks = {'chan': tuple(bin_counts)}
-        freq = da.from_array(freq, chunks=tuple(bin_counts))
+        freqs = da.from_array(freqs, chunks=tuple(bin_counts))
         bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
         freq_bin_idx = da.from_array(bin_idx, chunks=1)
         freq_bin_counts = da.from_array(bin_counts, chunks=1)
 
-        max_chan_chunk = bin_counts.max()
-        bin_counts = tuple(bin_counts)
+        def convolver(x):
+            model = da.from_array(x, chunks=(1, nx, ny), name=False)
 
-        residual = da.from_array(residual, chunks=(1, -1, -1))
+            xds = xds_from_zarr(args.weight_table, chunks={'row': -1,
+                                'chan': bin_counts})[0]
 
-        xds = xds_from_zarr(args.weight_table, chunks={'row': -1,
-                            'chan': bin_counts})[0]
-
-        from pfb.opt.pcg import pcg_wgt
-
-        uvw = dask.persist(xds.UVW.data)[0]
-        weight = dask.persist(xds.WEIGHT.data.astype(args.output_type))[0]
-
-        model = pcg_wgt(uvw,
-                        weight,
-                        residual,
-                        x0,
-                        beam_image,
-                        freq,
-                        freq_bin_idx,
-                        freq_bin_counts,
-                        cell_rad,
-                        args.wstack,
-                        args.epsilon,
-                        args.double_accum,
-                        args.nvthreads,
-                        args.sigmainv,
-                        wsum,
-                        args.cg_tol,
-                        args.cg_maxit,
-                        args.cg_minit,
-                        args.cg_verbose,
-                        args.cg_report_freq,
-                        args.backtrack).compute()
-
-        from africanus.gridding.wgridder.dask import hessian
-
-        model_dask = da.from_array(model, chunks=(1, -1, -1))
-        residual -= hessian(uvw,
-                            freq,
-                            model_dask,
-                            freq_bin_idx,
-                            freq_bin_counts,
-                            cell_rad,
-                            weights=weight,
-                            nthreads=args.nvthreads,
-                            epsilon=args.epsilon,
-                            do_wstacking=args.wstack,
-                            double_accum=args.double_accum).compute()/wsum
-
-    else:  # we use the image space approximation
-        print("Solving for update using image space approximation", file=log)
+            convolvedim = hessian(xds.UVW.data,
+                                  freqs,
+                                  model,
+                                  freq_bin_idx,
+                                  freq_bin_counts,
+                                  cell_rad,
+                                  weights=xds.WEIGHT.data.astype(args.output_type),
+                                  nthreads=args.nvthreads,
+                                  epsilon=args.epsilon,
+                                  do_wstacking=args.wstack,
+                                  double_accum=args.double_accum)
+            return convolvedim
+    else:
         normfact = 1.0
         from pfb.operators.psf import hessian
         from ducc0.fft import r2c
@@ -367,40 +336,22 @@ def _backward(**kw):
         lastsize = ny + np.sum(padding[-1])
         psf_pad = iFs(psf, axes=(1, 2))
         psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                     nthreads=nthreads, inorm=0)
+                     nthreads=args.nvthreads, inorm=0)
 
         psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
-        residual = da.from_array(residual, chunks=(1, -1, -1))
+
+        def convolver(x):
+            model = da.from_array(x,
+                          chunks=(1, nx, ny), name=False)
 
 
-        from pfb.opt.pcg import pcg_psf
-
-        model = pcg_psf(psfhat,
-                        residual,
-                        x0,
-                        beam_image,
-                        args.sigmainv,
-                        args.nvthreads,
-                        padding,
-                        unpad_x,
-                        unpad_y,
-                        lastsize,
-                        args.cg_tol,
-                        args.cg_maxit,
-                        args.cg_minit,
-                        args.cg_verbose,
-                        args.cg_report_freq,
-                        args.backtrack).compute()
-
-        model_dask = da.from_array(model, chunks=(1, -1, -1))
-
-        residual -= hessian(model,
-                            psfhat,
-                            padding,
-                            args.nvthreads,
-                            unpad_x,
-                            unpad_y,
-                            lastsize).compute()
+            return hessian(model,
+                           psfhat,
+                           padding,
+                           args.nvthreads,
+                           unpad_x,
+                           unpad_y,
+                           lastsize)
 
 
     print("Saving results", file=log)

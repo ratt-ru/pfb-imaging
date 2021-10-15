@@ -37,9 +37,11 @@ log = pyscilog.get_logger('INIT')
               help='Gridder accuracy')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
-@click.option('--flipv/--no-flipv', default=True)
 @click.option('--fits-mfs/--no-fits-mfs', default=True)
 @click.option('--no-fits-cubes/--fits-cubes', default=True)
+@click.option('--psf/--no-psf', default=True)
+@click.option('--dirty/--no-dirty', default=True)
+@click.option('--weights/--no-weights', default=True)
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -366,36 +368,49 @@ def _init(**kw):
             uvw = ds.UVW.data
             frow = frow
 
+            universal_opts = {
+                'data':data,
+                'weight':weight,
+                'imaging_weight':imaging_weight,
+                'mueller':mueller,
+                'flag':flag,
+                'frow':frow,
+                'uvw':uvw,
+                'time':ds.TIME.data,
+                'fid':ds.FIELD_ID,
+                'ddid':ds.DATA_DESC_ID,
+                'row_out_chunk':args.row_out_chunk,
+                'nthreads':args.nvthreads,
+                'epsilon':args.epsilon,
+                'wstack':args.wstack,
+                'double_accum':args.double_accum,
+                'freq':freqs[ims][spw],
+                'fbin_idx':fbin_idx[ims][spw],
+                'fbin_counts':fbin_counts[ims][spw],
+                'band_mapping':band_mapping[ims][spw],
+                'freq_out':freq_out,
+                'nx':nx,
+                'ny':ny,
+                'nx_psf':nx_psf,
+                'ny_psf':ny_psf,
+                'cell_rad':cell_rad,
+                'radec':radec,
+                'do_dirty':args.dirty,
+                'do_psf':args.psf,
+                'do_weights':args.weights
+            }
+
             if 'I' in args.products.upper():
                 # I always has the same pattern
                 idx0 = 0
                 idxf = -1
                 sign = 1.0  # sign to use in sum
                 csign = 1.0  # used to negate complex vals
-                out_ds_I = single_stokes(data,
-                                         weight,
-                                         imaging_weight,
-                                         mueller,
-                                         flag,
-                                         frow,
-                                         uvw,
-                                         ds.TIME.data,
-                                         ds.FIELD_ID,
-                                         ds.DATA_DESC_ID,
-                                         pol_type,
-                                         args.row_out_chunk,
-                                         args.nvthreads,
-                                         args.epsilon,
-                                         args.wstack,
-                                         args.double_accum,
-                                         args.flipv,
-                                         freqs[ims][spw],
-                                         fbin_idx[ims][spw],
-                                         fbin_counts[ims][spw],
-                                         band_mapping[ims][spw],
-                                         freq_out,
-                                         nx, ny, nx_psf, ny_psf, cell_rad,
-                                         radec, idx0, idxf, sign, csign)
+                out_ds_I = single_stokes(idx0=idx0,
+                                         idxf=idxf,
+                                         sign=sign,
+                                         csign=csign,
+                                         **universal_opts)
 
                 out_datasets.setdefault('I', [])
                 out_datasets['I'].append(out_ds_I)
@@ -411,30 +426,11 @@ def _init(**kw):
                     idxf = 2
                     sign = 1.0
                     csign = 1.0
-                out_ds_Q = single_stokes(data,
-                                         weight,
-                                         imaging_weight,
-                                         mueller,
-                                         flag,
-                                         frow,
-                                         uvw,
-                                         ds.TIME.data,
-                                         ds.FIELD_ID,
-                                         ds.DATA_DESC_ID,
-                                         pol_type,
-                                         args.row_out_chunk,
-                                         args.nvthreads,
-                                         args.epsilon,
-                                         args.wstack,
-                                         args.double_accum,
-                                         args.flipv,
-                                         freqs[ims][spw],
-                                         fbin_idx[ims][spw],
-                                         fbin_counts[ims][spw],
-                                         band_mapping[ims][spw],
-                                         freq_out,
-                                         nx, ny, nx_psf, ny_psf, cell_rad,
-                                         radec, idx0, idxf, sign, csign)
+                out_ds_Q = single_stokes(idx0=idx0,
+                                         idxf=idxf,
+                                         sign=sign,
+                                         csign=csign,
+                                         **universal_opts)
                 out_datasets.setdefault('Q', [])
                 out_datasets['Q'].append(out_ds_Q)
 
@@ -449,30 +445,11 @@ def _init(**kw):
                     idxf = 2
                     sign = -1
                     csign = 1.0j
-                out_ds_U = single_stokes(data,
-                                         weight,
-                                         imaging_weight,
-                                         mueller,
-                                         flag,
-                                         frow,
-                                         uvw,
-                                         ds.TIME.data,
-                                         ds.FIELD_ID,
-                                         ds.DATA_DESC_ID,
-                                         pol_type,
-                                         args.row_out_chunk,
-                                         args.nvthreads,
-                                         args.epsilon,
-                                         args.wstack,
-                                         args.double_accum,
-                                         args.flipv,
-                                         freqs[ims][spw],
-                                         fbin_idx[ims][spw],
-                                         fbin_counts[ims][spw],
-                                         band_mapping[ims][spw],
-                                         freq_out,
-                                         nx, ny, nx_psf, ny_psf, cell_rad,
-                                         radec, idx0, idxf, sign, csign)
+                out_ds_U = single_stokes(idx0=idx0,
+                                         idxf=idxf,
+                                         sign=sign,
+                                         csign=csign,
+                                         **universal_opts)
                 out_datasets.setdefault('U', [])
                 out_datasets['U'].append(out_ds_U)
 
@@ -487,33 +464,13 @@ def _init(**kw):
                     idxf = -1
                     sign = -1.0
                     csign = 1.0
-                out_ds_V = single_stokes(data,
-                                         weight,
-                                         imaging_weight,
-                                         mueller,
-                                         flag,
-                                         frow,
-                                         uvw,
-                                         ds.TIME.data,
-                                         ds.FIELD_ID,
-                                         ds.DATA_DESC_ID,
-                                         pol_type,
-                                         args.row_out_chunk,
-                                         args.nvthreads,
-                                         args.epsilon,
-                                         args.wstack,
-                                         args.double_accum,
-                                         args.flipv,
-                                         freqs[ims][spw],
-                                         fbin_idx[ims][spw],
-                                         fbin_counts[ims][spw],
-                                         band_mapping[ims][spw],
-                                         freq_out,
-                                         nx, ny, nx_psf, ny_psf, cell_rad,
-                                         radec, idx0, idxf, sign, csign)
+                out_ds_V = single_stokes(idx0=idx0,
+                                         idxf=idxf,
+                                         sign=sign,
+                                         csign=csign,
+                                         **universal_opts)
                 out_datasets.setdefault('V', [])
                 out_datasets['V'].append(out_ds_V)
-
 
     writes = {}
     wlist = []  # for visualisation
@@ -555,49 +512,77 @@ def _init(**kw):
     if args.fits_mfs or not args.no_fits_cubes:
         from daskms.experimental.zarr import xds_from_zarr
 
-        dirty = np.zeros((len(args.products), nband, nx, ny), dtype=args.output_type)
-        psf = np.zeros((len(args.products), nband, nx_psf, ny_psf), dtype=args.output_type)
+        if args.dirty:
+            print("Saving dirty as fits", file=log)
+            dirty = np.zeros((len(args.products), nband, nx, ny), dtype=args.output_type)
 
-        hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
-        hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
-                        np.mean(freq_out))
-        hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec, freq_out)
-        hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
+            hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
+            hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
                             np.mean(freq_out))
 
-        for i, p in enumerate(sorted(args.products.upper())):
-            xds = xds_from_zarr(args.output_filename + f'_{p}.zarr')
+            for i, p in enumerate(sorted(args.products.upper())):
+                xds = xds_from_zarr(args.output_filename + f'_{p}.zarr')
 
-            # TODO - add logic to select which spw and scan to reduce over
-            dirties = []
-            psfs = []
-            for ds in xds:
-                dirties.append(ds.DIRTY.values)
-                psfs.append(ds.PSF.values)
+                # TODO - add logic to select which spw and scan to reduce over
+                dirties = []
+                wsums = np.zeros(nband)
+                for ds in xds:
+                    dirties.append(ds.DIRTY.values)
+                    wsums += ds.WSUM.values
 
-            dirty[i] = stitch_images(dirties, nband, band_mapping)
-            psf[i] = stitch_images(psfs, nband, band_mapping)
+                dirty[i] = stitch_images(dirties, nband, band_mapping)
 
-            wsums = np.amax(psf[i], axis=(1, 2))
-            wsum = np.sum(wsums)
-            for b, w in enumerate(wsums):
-                hdr[f'WSUM{p}{b}'] = w
-                hdr_psf[f'WSUM{p}{b}'] = w
+                for b, w in enumerate(wsums):
+                    hdr[f'WSUM{p}{b}'] = w
+                wsum = np.sum(wsums)
+                hdr_mfs[f'WSUM{p}'] = wsum
 
-            dirty_mfs = np.sum(dirty, axis=1, keepdims=True)/wsum
-            psf_mfs = np.sum(psf, axis=1, keepdims=True)/wsum
+                dirty_mfs = np.sum(dirty, axis=1, keepdims=True)/wsum
 
-        if args.fits_mfs:
-            save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
-                      dtype=args.output_type)
-            save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs,
-                      dtype=args.output_type)
+            if args.fits_mfs:
+                save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
+                        dtype=args.output_type)
 
-        if not args.no_fits_cubes:
-            save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
-                      dtype=args.output_type)
-            save_fits(args.output_filename + '_psf.fits', psf, hdr_psf,
-                      dtype=args.output_type)
+            if not args.no_fits_cubes:
+                save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
+                        dtype=args.output_type)
+
+        if args.psf:
+            print("Saving PSF as fits", file=log)
+            psf = np.zeros((len(args.products), nband, nx_psf, ny_psf),
+                           dtype=args.output_type)
+
+            hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec, freq_out)
+            hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
+                                np.mean(freq_out))
+
+            for i, p in enumerate(sorted(args.products.upper())):
+                xds = xds_from_zarr(args.output_filename + f'_{p}.zarr')
+
+                # TODO - add logic to select which spw and scan to reduce over
+                psfs = []
+                wsums = np.zeros(nband)
+                for ds in xds:
+                    psfs.append(ds.PSF.values)
+                    wsums += ds.WSUM.values
+
+                psf[i] = stitch_images(psfs, nband, band_mapping)
+
+                for b, w in enumerate(wsums):
+                    hdr_psf[f'WSUM{p}{b}'] = w
+                wsum = np.sum(wsums)
+                hdr_psf_mfs[f'WSUM{p}'] = wsum
+
+                psf_mfs = np.sum(psf, axis=1, keepdims=True)/wsum
+
+            if args.fits_mfs:
+                save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs,
+                        dtype=args.output_type)
+
+            if not args.no_fits_cubes:
+                save_fits(args.output_filename + '_psf.fits', psf, hdr_psf,
+                        dtype=args.output_type)
+
 
 
     print("All done here.", file=log)

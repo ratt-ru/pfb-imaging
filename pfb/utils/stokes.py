@@ -4,38 +4,44 @@ import dask
 import dask.array as da
 from xarray import Dataset
 from africanus.gridding.wgridder.dask import dirty as vis2im
+from pfb.utils.weighting import compute_wsum
 from daskms.optimisation import inlined_array
 
-def single_stokes(data,
-                  weight,
-                  imaging_weight,
-                  mueller,
-                  flag,
-                  frow,
-                  uvw,
-                  time,
-                  fid,
-                  ddid,
-                  pol_type,
-                  row_out_chunk,
-                  nvthreads,
-                  epsilon,
-                  wstack,
-                  double_accum,
-                  flipv,
-                  freq,
-                  fbin_idx,
-                  fbin_counts,
-                  band_mapping,
-                  freq_out,
-                  nx, ny,
-                  nx_psf, ny_psf,
-                  cell_rad,
-                  radec,
-                  idx0,
-                  idxf,
-                  sign,
-                  csign):
+def single_stokes(data=None,
+                  weight=None,
+                  imaging_weight=None,
+                  mueller=None,
+                  flag=None,
+                  frow=None,
+                  uvw=None,
+                  time=None,
+                  fid=None,
+                  ddid=None,
+                  row_out_chunk=None,
+                  nthreads=None,
+                  epsilon=None,
+                  wstack=None,
+                  double_accum=None,
+                  flipv=None,
+                  freq=None,
+                  fbin_idx=None,
+                  fbin_counts=None,
+                  band_mapping=None,
+                  freq_out=None,
+                  nx=None,
+                  ny=None,
+                  nx_psf=None,
+                  ny_psf=None,
+                  cell_rad=None,
+                  radec=None,
+                  idx0=None,
+                  idxf=None,
+                  sign=None,
+                  csign=None,
+                  do_dirty=True,
+                  do_psf=True,
+                  do_weights=True,
+                  check_wsum=True):
 
     data_type = data.dtype
     data_shape = data.shape
@@ -47,59 +53,83 @@ def single_stokes(data,
 
     dw = inlined_array(dw, frow)
 
-    dirty = vis2im(uvw,
-                   freq,
-                   dw[0],
-                   fbin_idx,
-                   fbin_counts,
-                   nx,
-                   ny,
-                   cell_rad,
-                   weights=dw[1].astype(real_type),
-                   # flag=mask.astype(np.uint8),
-                   nthreads=nvthreads,
-                   epsilon=epsilon,
-                   do_wstacking=wstack,
-                   double_accum=double_accum)
-
-    psf = vis2im(uvw,
-                 freq,
-                 dw[1],
-                 fbin_idx,
-                 fbin_counts,
-                 nx_psf,
-                 ny_psf,
-                 cell_rad,
-                 # flag=mask.astype(np.uint8),
-                 nthreads=nvthreads,
-                 epsilon=epsilon,
-                 do_wstacking=wstack,
-                 double_accum=double_accum)
-
-    dirty = inlined_array(dirty, uvw)
-    psf = inlined_array(psf, uvw)
-    wsum = da.max(psf, axis=(1, 2))
+    w = dw[1].astype(real_type)
 
     data_vars = {
                 'FIELD_ID':(('row',), da.full_like(time,
                             fid, chunks=row_out_chunk)),
                 'DATA_DESC_ID':(('row',), da.full_like(time,
                             ddid, chunks=row_out_chunk)),
-                'WEIGHT':(('row', 'chan'), dw[1].rechunk({0:row_out_chunk})),  # why no 'f4'?
                 'UVW':(('row', 'uvw'), uvw.rechunk({0:row_out_chunk})),
-                'DIRTY':(('band', 'nx', 'ny'), dirty),
-                'PSF':(('band', 'nx_psf', 'ny_psf'), psf),
-                'WSUM': (('band',), wsum)
+                'FBIN_IDX':(('band',), fbin_idx),
+                'FBIN_COUNTS':(('band',), fbin_counts)
             }
 
+    if do_dirty:
+        dirty = vis2im(uvw,
+                       freq,
+                       dw[0],
+                       fbin_idx,
+                       fbin_counts,
+                       nx,
+                       ny,
+                       cell_rad,
+                       weights=w,
+                       # flag=mask.astype(np.uint8),
+                       nthreads=nthreads,
+                       epsilon=epsilon,
+                       do_wstacking=wstack,
+                       double_accum=double_accum)
+        dirty = inlined_array(dirty, uvw)
+        data_vars['DIRTY'] = (('band', 'nx', 'ny'), dirty)
+
+    if do_psf:
+        psf = vis2im(uvw,
+                    freq,
+                    dw[1],
+                    fbin_idx,
+                    fbin_counts,
+                    nx_psf,
+                    ny_psf,
+                    cell_rad,
+                    # flag=mask.astype(np.uint8),
+                    nthreads=nthreads,
+                    epsilon=epsilon,
+                    do_wstacking=wstack,
+                    double_accum=double_accum)
+        psf = inlined_array(psf, uvw)
+        wsum = da.max(psf, axis=(1, 2))
+        data_vars['PSF'] = (('band', 'nx_psf', 'ny_psf'), psf)
+        data_vars['WSUM'] = (('band',), wsum)
+
+
+    if 'WSUM' not in data_vars.keys() or check_wsum:
+        wsum2 = compute_wsum(w, fbin_idx, fbin_counts)
+        # if check_wsum:
+        #     try:
+        #         assert np.allclose(wsum, wsum2, atol=epsilon)
+        #     except Exception as e:
+        #         print(wsum.compute())
+        #         print(wsum2.compute())
+
+        #         quit()
+        #         raise RuntimeError("The peak of the PSF does not match "
+        #                            "the sum of the weights in each "
+        #                            "imaging band to within the gridding "
+        #                            "precision. You may need to enable "
+        #                            "double accumulation.")
+        if 'WSUM' not in data_vars.keys():
+            data_vars['WSUM'] = (('band',), wsum2)
+
+    if do_weights:
+        # TODO - BDA weights
+        data_vars['WEIGHT'] = (('row', 'chan'), w.rechunk({0:row_out_chunk}))
 
     freq_out = da.from_array(freq_out, chunks=1)
 
     coords = {
         'chan': (('chan',), freq),
         'band': (('band',), freq_out[band_mapping]),
-
-
     }
 
     attrs = {
@@ -138,8 +168,6 @@ def weight_data(data, weight, imaging_weight, mueller, flag, frow,
         frout = ('row',)
     else:
         frout = None
-
-    # import pdb; pdb.set_trace()
 
     return da.blockwise(_weight_data_wrapper, ('2', 'row', 'chan'),
                         data, ('row', 'chan', 'corr'),

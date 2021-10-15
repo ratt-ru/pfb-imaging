@@ -206,37 +206,11 @@ def _clean(**kw):
         freq_bin_idx = da.from_array(bin_idx, chunks=1)
         freq_bin_counts = da.from_array(bin_counts, chunks=1)
 
-        max_chan_chunk = bin_counts.max()
-        bin_counts = tuple(bin_counts)
-        # the first factor of 3 accounts for the intermediate visibilities
-        # produced in Hessian (i.e. complex data + real weights)
-        memory_per_row = (3 * max_chan_chunk * xds.WEIGHT.data.itemsize +
-                          3 * xds.UVW.data.itemsize)
-
-        # get approx image size
-        pixel_bytes = np.dtype(args.output_type).itemsize
-        band_size = nx * ny * pixel_bytes
-
-        if args.host_address is None:
-            # nworker bands on single node
-            row_chunk = plan_row_chunk(args.mem_limit/args.nworkers,
-                                       band_size, nrow, memory_per_row,
-                                       args.nthreads_per_worker)
-        else:
-            # single band per node
-            row_chunk = plan_row_chunk(args.mem_limit, band_size, nrow,
-                                       memory_per_row,
-                                       args.nthreads_per_worker)
-
-        print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
-              (nrow, row_chunk, int(np.ceil(nrow / row_chunk))), file=log)
-
-
         def convolver(x):
             model = da.from_array(x,
                           chunks=(1, nx, ny), name=False)
 
-            xds = xds_from_zarr(args.weight_table, chunks={'row': row_chunk,
+            xds = xds_from_zarr(args.weight_table, chunks={'row': -1,
                                 'chan': bin_counts})[0]
 
             convolvedim = hessian(xds.UVW.data,

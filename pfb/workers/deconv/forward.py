@@ -9,10 +9,12 @@ pyscilog.init('pfb')
 log = pyscilog.get_logger('FORWARD')
 
 @cli.command()
-@click.option('-r', '--residual', required=True,
-              help="Path to residual.fits")
-@click.option('-p', '--psf', required=True,
-              help="Path to PSF.fits")
+@click.option('-xds', '--xds', type=str, required=True,
+              help="Path to xarray dataset containing")
+@click.option('-o', '--output-filename', type=str, required=True,
+              help="Basename of output.")
+@click.option('-nb', '--nband', type=int, required=True,
+              help="Number of imaging bands")
 @click.option('-mask', '--mask',
               help="Path to mask.fits.")
 @click.option('-pmask', '--point-mask',
@@ -21,12 +23,6 @@ log = pyscilog.get_logger('FORWARD')
               help="Path to beam_model.fits or JimBeam.")
 @click.option('-band', '--band', default='L',
               help='L or UHF band when using JimBeam.')
-@click.option('-wt', '--weight-table',
-              help="Path to weight table produced by psf worker")
-@click.option('-o', '--output-filename', type=str, required=True,
-              help="Basename of output.")
-@click.option('-nb', '--nband', type=int, required=True,
-              help="Number of imaging bands")
 @click.option('-bases', '--bases', default='self',
               help='Wavelet bases to use. Give as str separated by | eg.'
               '-bases self|db1|db2|db3|db4')
@@ -129,11 +125,14 @@ def _forward(**kw):
     import dask
     import dask.array as da
     from dask.distributed import performance_report
+    from daskms.experimental.zarr import xds_from_zarr
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
     from pfb.opt.hogbom import hogbom
     from pfb.operators.psi import im2coef, coef2im
     from astropy.io import fits
     import pywt
+
+    xds = xds_from_zarr(args.weight_table)
 
     print("Loading residual", file=log)
     residual = load_fits(args.residual, dtype=args.output_type).squeeze()
@@ -294,7 +293,7 @@ def _forward(**kw):
     if args.weight_table is not None:
         print("Solving for update using vis space approximation", file=log)
         normfact = wsum
-        from daskms.experimental.zarr import xds_from_zarr
+
 
         xds = xds_from_zarr(args.weight_table)[0]
         nrow = xds.row.size

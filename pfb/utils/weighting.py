@@ -148,6 +148,48 @@ def _counts_to_weights(counts, uvw, freqs, fbin_idx, fbin_counts, nx, ny,
                     weights[r, c] = 1.0/counts[b, u_idx, v_idx]
     return weights
 
+
+def _compute_wsum_impl(weight, freq_bin_idx, freq_bin_counts):
+    nband = freq_bin_idx.size
+    # we always do this in double precision as a check
+    # the additional axis is to allow chunking over row
+    wsum = np.zeros((1, nband), dtype=np.float64)
+    # this is required when chunking over row
+    freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
+    print(freq_bin_idx2)
+
+    quit()
+    for b in range(nband):
+        flow = freq_bin_idx2[b]
+        fhigh = freq_bin_idx2[b] + freq_bin_counts[b]
+        print(flow)
+        print(fhigh)
+        w = weight[:, flow:fhigh].astype(np.float64)
+        wsum[0, b] = np.sum(w)
+    return wsum
+
+def _compute_wsum(weight, freq_bin_idx, freq_bin_counts):
+    print(weight[0].shape)
+    print(freq_bin_idx)
+    print(freq_bin_counts)
+    quit()
+    return _compute_wsum_impl(weight[0], freq_bin_idx, freq_bin_counts)
+
+def compute_wsum(weight, freq_bin_idx, freq_bin_counts):
+    wsum = da.blockwise(_compute_wsum, ('chan',),
+                        weight, ('row', 'chan'),
+                        freq_bin_idx, ('chan',),
+                        freq_bin_counts, ('chan',),
+                        align_arrays=False,
+                        adjust_chunks={'chan': freq_bin_idx.chunks[0]},
+                        dtype=np.float64)
+
+    print(wsum.compute())
+
+    quit()
+
+    return wsum.sum(axis=0)
+
 # def robust_reweight(residuals, weights, v=None):
 #     """
 #     Find the robust weights corresponding to a soln that generated residuals
