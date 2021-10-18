@@ -497,13 +497,9 @@ def _init(**kw):
     dask.visualize(writes['I'], filename=args.output_filename +
                    '_writes_I_graph.pdf', optimize_graph=False)
 
-    def compute_context(args):
-        if args.scheduler == "distributed":
-            return performance_report(filename=args.output_filename + "_dask_report.html.pfb")
-        else:
-            return ProgressBar()
+    from pfb.utils.misc import compute_context
 
-    with compute_context(args):
+    with compute_context(args.scheduler, args.output_filename):
         dask.compute(writes,
                      optimize_graph=False,
                      scheduler=args.scheduler)

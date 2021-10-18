@@ -3,9 +3,17 @@ import numpy as np
 import numexpr as ne
 from numba import jit, njit
 import dask.array as da
+from dask.distributed import performance_report
+from dask.diagnostics import ProgressBar
 from ducc0.fft import r2c, c2r
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
+
+def compute_context(scheduler, output_filename):
+    if scheduler == "distributed":
+        return performance_report(filename=output_filename + "_dask_report.html.pfb")
+    else:
+        return ProgressBar()
 
 def estimate_data_size(nant, nhr, nsec, nchan, ncorr, nbytes):
     '''

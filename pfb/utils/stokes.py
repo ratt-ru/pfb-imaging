@@ -41,7 +41,7 @@ def single_stokes(data=None,
                   do_dirty=True,
                   do_psf=True,
                   do_weights=True,
-                  check_wsum=True):
+                  check_wsum=False):
 
     data_type = data.dtype
     data_shape = data.shape
@@ -61,6 +61,7 @@ def single_stokes(data=None,
                 'DATA_DESC_ID':(('row',), da.full_like(time,
                             ddid, chunks=row_out_chunk)),
                 'UVW':(('row', 'uvw'), uvw.rechunk({0:row_out_chunk})),
+                'FREQ': (('chan',), freq),
                 'FBIN_IDX':(('band',), fbin_idx),
                 'FBIN_COUNTS':(('band',), fbin_counts)
             }
@@ -122,10 +123,14 @@ def single_stokes(data=None,
             data_vars['WSUM'] = (('band',), wsum2)
 
     if do_weights:
+        # uvw_scale = nu_out/nu  (nrow, 3) + nchan -> (nrow, 3*nchan)
+        # exp(-2\pi i nu/c (ul + vm + w(n-1)))
+
+        # grad F = R.H W (V - Rx) = R.H W V - R.H W R x = ID - hess(x)
         # TODO - BDA weights
         data_vars['WEIGHT'] = (('row', 'chan'), w.rechunk({0:row_out_chunk}))
 
-    freq_out = da.from_array(freq_out, chunks=1)
+    freq_out = da.from_array(freq_out, chunks=1, name=False)
 
     coords = {
         'chan': (('chan',), freq),

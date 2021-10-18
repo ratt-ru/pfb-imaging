@@ -15,12 +15,12 @@ log = pyscilog.get_logger('FORWARD')
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
               help="Number of imaging bands")
+@click.option('-rchunk', '--row-chunk', type=int, default=-1,
+              help="Number of rows in a chunk.")
 @click.option('-mask', '--mask',
               help="Path to mask.fits.")
 @click.option('-pmask', '--point-mask',
               help="Path to point source mask.fits.")
-@click.option('-bm', '--beam-model',
-              help="Path to beam_model.fits or JimBeam.")
 @click.option('-band', '--band', default='L',
               help='L or UHF band when using JimBeam.')
 @click.option('-bases', '--bases', default='self',
@@ -36,6 +36,8 @@ log = pyscilog.get_logger('FORWARD')
               help='Standard deviation of assumed GRF prior.')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
+@click.option('--use-beam/--no-use-beam', default=False)
+@click.option('--use-psf/--no-use-psf', default=False)
 @click.option('-cgtol', "--cg-tol", type=float, default=1e-5,
               help="Tolerance of conjugate gradient")
 @click.option('-cgminit', "--cg-minit", type=int, default=10,
@@ -61,6 +63,8 @@ log = pyscilog.get_logger('FORWARD')
 @click.option('-mem', '--mem-limit', type=float,
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
+              help="Total available threads. Default uses all available threads")
+@click.option('-scheduler', '--scheduler', default='distributed',
               help="Total available threads. Default uses all available threads")
 def forward(**kw):
     '''
@@ -132,122 +136,83 @@ def _forward(**kw):
     from astropy.io import fits
     import pywt
 
-    xds = xds_from_zarr(args.weight_table)
+    xds = xds_from_zarr(args.xds, chunks={'row':args.row_chunk})
 
     print("Loading residual", file=log)
-    residual = load_fits(args.residual, dtype=args.output_type).squeeze()
+    residual = xds[0].DIRTY.data
     nband, nx, ny = residual.shape
-    hdr = fits.getheader(args.residual)
 
-    print("Loading psf", file=log)
-    psf = load_fits(args.psf, dtype=args.output_type).squeeze()
-    _, nx_psf, ny_psf = psf.shape
-    hdr_psf = fits.getheader(args.psf)
-
-    wsums = np.amax(psf.reshape(-1, nx_psf*ny_psf), axis=1)
-    wsum = np.sum(wsums)
-
-    psf /= wsum
-    psf_mfs = np.sum(psf, axis=0)
-
-    assert (psf_mfs.max() - 1.0) < 1e-4
+    wsums = xds[0].WSUM.data
+    wsum = da.sum(wsums).compute()
 
     residual /= wsum
-    residual_mfs = np.sum(residual, axis=0)
 
-    # get info required to set WCS
-    ra = np.deg2rad(hdr['CRVAL1'])
-    dec = np.deg2rad(hdr['CRVAL2'])
-    radec = [ra, dec]
-
-    cell_deg = np.abs(hdr['CDELT1'])
-    if cell_deg != np.abs(hdr['CDELT2']):
-        raise NotImplementedError('cell sizes have to be equal')
-    cell_rad = np.deg2rad(cell_deg)
-
-    l_coord, ref_l = data_from_header(hdr, axis=1)
-    l_coord -= ref_l
-    m_coord, ref_m = data_from_header(hdr, axis=2)
-    m_coord -= ref_m
-    freq_out, ref_freq = data_from_header(hdr, axis=3)
-
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-
-    rms = np.std(residual_mfs)
+    residual_mfs = residual.sum(axis=0).compute()
+    rms = da.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
 
     print("Initial peak residual = %f, rms = %f" % (rmax, rms), file=log)
 
-    # load beam
-    if args.beam_model is not None:
-        if args.beam_model.endswith('.fits'):  # beam already interpolated
-            bhdr = fits.getheader(args.beam_model)
-            l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
-            l_coord_beam -= ref_lb
-            if not np.array_equal(l_coord_beam, l_coord):
-                raise ValueError("l coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-            m_coord_beam, ref_mb = data_from_header(bhdr, axis=2)
-            m_coord_beam -= ref_mb
-            if not np.array_equal(m_coord_beam, m_coord):
-                raise ValueError("m coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-            freq_beam, _ = data_from_header(bhdr, axis=freq_axis)
-            if not np.array_equal(freq_out, freq_beam):
-                raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-            beam_image = load_fits(args.beam_model, dtype=args.output_type).squeeze()
-        elif args.beam_model.lower() == "jimbeam":
-            from katbeam import JimBeam
-            if args.band.lower() == 'l':
-                beam = JimBeam('MKAT-AA-L-JIM-2020')
-            elif args.band.lower() == 'uhf':
-                beam = JimBeam('MKAT-AA-UHF-JIM-2020')
-            else:
-                raise ValueError("Unkown band %s"%args.band[i])
-
-            xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
-            beam_image = np.zeros(residual.shape, dtype=args.output_type)
-            for v in range(freq_out.size):
-                # freq must be in MHz
-                beam_image[v] = beam.I(xx, yy, freq_out[v]/1e6).astype(args.output_type)
+    # try getting interpolated beam model
+    if args.use_beam:
+        print("Initialising beam model", file=log)
+        try:
+            beam_image = xds.BEAM.data
+            assert beam_image.shape == (nband, nx, ny)
+        except Exception as e:
+            print(f"Could not initialise beam model due to \n {e}. "
+                  f"Using identity", file=log)
+            beam_image = da.ones((nband, nx, ny), chunks=(1, -1, -1),
+                              dtype=args.output_type)
     else:
-        beam_image = np.ones((nband, nx, ny), dtype=args.output_type)
+        beam_image = da.ones((nband, nx, ny), chunks=(1, -1, -1),
+                              dtype=args.output_type)
 
     if args.mask is not None:
+        print("Initialising mask", file=log)
         mask = load_fits(args.mask).squeeze()
         assert mask.shape == (nx, ny)
+        mask = da.from_array(mask, chunks=(-1, -1), name=False)
     else:
-        mask = np.ones((nx, ny), dtype=residual.dtype)
+        mask = da.ones((nx, ny), chunks=(-1, -1), dtype=residual.dtype)
 
+    # TODO - there must be a way to avoid multiplying by the beam
+    # inside the hessian operator if neither mask nor beam is used.
     # incorporate mask in beam
     beam_image *= mask[None, :, :]
 
     if args.point_mask is not None:
+        print("Initialising point source mask", file=log)
         pmask = load_fits(args.point_mask).squeeze()
         # passing model as mask
         if len(pmask.shape) == 3:
-            x0 = pmask
+            print("Detected third axis on pmask. "
+                  "Initialising pmask from model.", file=log)
+            x0 = da.from_array(pmask, chunks=(1, -1, -1),
+                               dtype=residual.dtype, name=False)
             pmask = np.any(pmask, axis=0)
         else:
-            x0 = np.zeros((nband, nx, ny), dtype=residual.dtype)
+            x0 = da.zeros((nband, nx, ny), dtype=residual.dtype)
 
         assert pmask.shape == (nx, ny)
     else:
         pmask = np.ones((nx, ny), dtype=residual.dtype)
-        x0 = np.zeros((nband, nx, ny), dtype=residual.dtype)
+        x0 = da.zeros((nband, nx, ny), dtype=residual.dtype)
 
 
     # wavelet setup
+    print("Setting up wavelets", file=log)
     bases = args.bases.split('|')
     ntots = []
     iys = {}
     sys = {}
+    tmp = x0[0].compute()
     for base in bases:
         if base == 'self':
             y, iy, sy = x0[0].ravel(), 0, 0
         else:
-            alpha = pywt.wavedecn(x0[0], base, mode='zero', level=args.nlevels)
+            alpha = pywt.wavedecn(tmp, base, mode='zero',
+                                  level=args.nlevels)
             y, iy, sy = pywt.ravel_coeffs(alpha)
         iys[base] = iy
         sys[base] = sy
@@ -260,10 +225,11 @@ def _forward(**kw):
     for i in range(nbasis):
         padding.append(slice(0, ntots[i]))
 
+    print("Initialising starting values", file=log)
     alpha0 = np.zeros((nband, nbasis, nmax), dtype=x0.dtype)
     alpha_resid = np.zeros((nband, nbasis, nmax), dtype=x0.dtype)
     for l in range(nband):
-        alpha_resid[l] = im2coef(beam_image[l] * residual[l],
+        alpha_resid[l] = im2coef((beam_image[l] * residual[l]).compute(),
                             pmask, bases, ntots, nmax, args.nlevels)
         alpha0[l] = im2coef(x0[l],
                             pmask, bases, ntots, nmax, args.nlevels)
@@ -289,100 +255,17 @@ def _forward(**kw):
     cgopts['report_freq'] = args.cg_report_freq
     cgopts['backtrack'] = args.backtrack
 
-    # if weight table is provided we use the vis space Hessian approximation
-    if args.weight_table is not None:
-        print("Solving for update using vis space approximation", file=log)
-        normfact = wsum
-
-
-        xds = xds_from_zarr(args.weight_table)[0]
-        nrow = xds.row.size
-        freq = xds.chan.data
-        nchan = freq.size
-
-        # bin edges
-        fmin = freq.min()
-        fmax = freq.max()
-        fbins = np.linspace(fmin, fmax, nband + 1)
-
-        # chan <-> band mapping
-        band_mapping = {}
-        chan_chunks = {}
-        freq_bin_idx = {}
-        freq_bin_counts = {}
-        band_map = np.zeros(freq.size, dtype=np.int32)
-        for band in range(nband):
-            indl = freq >= fbins[band]
-            indu = freq < fbins[band + 1] + 1e-6
-            band_map = np.where(indl & indu, band, band_map)
-
-        # to dask arrays
-        bands, bin_counts = np.unique(band_map, return_counts=True)
-        band_mapping = tuple(bands)
-        chan_chunks = {'chan': tuple(bin_counts)}
-        freq = da.from_array(freq, chunks=tuple(bin_counts))
-        bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
-        freq_bin_idx = da.from_array(bin_idx, chunks=1)
-        freq_bin_counts = da.from_array(bin_counts, chunks=1)
-
-        max_chan_chunk = bin_counts.max()
-        bin_counts = tuple(bin_counts)
-
-        residual = da.from_array(residual, chunks=(1, -1, -1))
-
-        xds = xds_from_zarr(args.weight_table, chunks={'row': -1,
-                            'chan': bin_counts})[0]
-
-        from pfb.opt.pcg import pcg_wgt
-
-        uvw = dask.persist(xds.UVW.data)[0]
-        weight = dask.persist(xds.WEIGHT.data.astype(args.output_type))[0]
-        alpha0 = da.from_array(alpha0, chunks=(1, -1, -1))
-        alpha_resid = da.from_array(alpha_resid, chunks=(1, -1, -1))
-        beam_image = da.from_array(beam_image, chunks=(1, -1, -1))
-
-        gridopts = {}
-        gridopts['cell'] = cell_rad
-        gridopts['wstack'] = args.wstack
-        gridopts['epsilon'] = args.epsilon
-        gridopts['double_accum'] = args.double_accum
-        gridopts['nthreads'] = args.nvthreads
-        gridopts['sigmainv'] = args.sigmainv
-        gridopts['wsum'] = wsum
-
-        alpha = pcg_wgt(uvw,
-                        weight,
-                        alpha_resid,
-                        alpha0,
-                        beam_image,
-                        freq,
-                        freq_bin_idx,
-                        freq_bin_counts,
-                        gridopts,
-                        waveopts,
-                        cgopts).compute()
-
-        model = np.zeros((nband, nx, ny), dtype=args.output_type)
-        for l in range(nband):
-            model[l] = coef2im(alpha[l], pmask, bases, padding, iys, sys, nx, ny)
-
-        from africanus.gridding.wgridder.dask import hessian
-
-        model_dask = da.from_array(model, chunks=(1, -1, -1))
-        residual -= hessian(uvw,
-                            freq,
-                            model_dask,
-                            freq_bin_idx,
-                            freq_bin_counts,
-                            cell_rad,
-                            weights=weight,
-                            nthreads=args.nvthreads,
-                            epsilon=args.epsilon,
-                            do_wstacking=args.wstack,
-                            double_accum=args.double_accum).compute()/wsum
-
-    else:  # we use the image space approximation
+    if args.use_psf:
         print("Solving for update using image space approximation", file=log)
+        print("Initialising psf", file=log)
+        psf = xds[0].PSF.data
+        _, nx_psf, ny_psf = psf.shape
+        wsum = np.sum(wsums)
+
+        psf /= wsum
+        psf_mfs = da.sum(psf, axis=0).compute()
+
+        assert (psf_mfs.max() - 1.0) < 1e-4
         normfact = 1.0
         from pfb.operators.psf import hessian
         from ducc0.fft import r2c
@@ -396,12 +279,11 @@ def _forward(**kw):
         unpad_x = slice(npad_xl, -npad_xr)
         unpad_y = slice(npad_yl, -npad_yr)
         lastsize = ny + np.sum(padding[-1])
-        psf_pad = iFs(psf, axes=(1, 2))
+        psf_pad = iFs(psf.compute(), axes=(1, 2))
         psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
                      nthreads=nthreads, inorm=0)
 
-        psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
-        residual = da.from_array(residual, chunks=(1, -1, -1))
+        psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name=False)
 
 
         from pfb.opt.pcg import pcg_psf
@@ -423,7 +305,7 @@ def _forward(**kw):
                         args.cg_report_freq,
                         args.backtrack).compute()
 
-        model_dask = da.from_array(model, chunks=(1, -1, -1))
+        model_dask = da.from_array(model, chunks=(1, -1, -1), name=False)
 
         residual -= hessian(model,
                             psfhat,
@@ -432,7 +314,89 @@ def _forward(**kw):
                             unpad_x,
                             unpad_y,
                             lastsize).compute()
+    else:
+        print("Solving for update using vis space approximation", file=log)
+        from pfb.opt.pcg import pcg_wgt
+        normfact = wsum
+        freq = xds[0].FREQ.data
+        nchan = freq.size
+        freq_bin_idx = xds[0].FBIN_IDX.data
+        freq_bin_counts = xds[0].FBIN_COUNTS.data
+        cell_rad = xds[0].cell_rad
 
+        uvw = xds[0].UVW.data
+        weight = xds[0].WEIGHT.data
+        alpha0 = da.from_array(alpha0, chunks=(1, -1, -1), name=False)
+        alpha_resid = da.from_array(alpha_resid, chunks=(1, -1, -1),
+                                    name=False)
+
+        gridopts = {}
+        gridopts['cell'] = cell_rad
+        gridopts['wstack'] = args.wstack
+        gridopts['epsilon'] = args.epsilon
+        gridopts['double_accum'] = args.double_accum
+        gridopts['nthreads'] = args.nvthreads
+        gridopts['sigmainv'] = args.sigmainv
+        gridopts['wsum'] = wsum
+
+        alpha = pcg_wgt(uvw,
+                        weight,
+                        alpha_resid,
+                        alpha0,
+                        beam_image,
+                        freq,
+                        freq_bin_idx,
+                        freq_bin_counts,
+                        gridopts,
+                        waveopts,
+                        cgopts)
+
+        from pfb.utils.misc import compute_context
+        with compute_context(args.scheduler, args.output_filename + '_alpha'):
+            alpha = dask.compute(alpha,
+                                 optimize_graph=False,
+                                 scheduler=args.scheduler)[0]
+
+        print("Converting solution to model image", file=log)
+        model = np.zeros((nband, nx, ny), dtype=args.output_type)
+        for l in range(nband):
+            model[l] = coef2im(alpha[l], pmask, bases, padding, iys, sys, nx, ny)
+
+        from africanus.gridding.wgridder.dask import hessian
+
+        model_dask = da.from_array(model, chunks=(1, -1, -1), name=False)
+        print("Computing residual", file=log)
+        residual -= hessian(uvw,
+                            freq,
+                            model_dask,
+                            freq_bin_idx,
+                            freq_bin_counts,
+                            cell_rad,
+                            weights=weight,
+                            nthreads=args.nvthreads,
+                            epsilon=args.epsilon,
+                            do_wstacking=args.wstack,
+                            double_accum=args.double_accum)/wsum
+
+        with compute_context(args.scheduler, args.output_filename + '_residual'):
+            residual = dask.compute(residual,
+                                    optimize_graph=False,
+                                    scheduler=args.scheduler)[0]
+
+
+    # construct a header from xds attrs
+    ra = xds[0].ra
+    dec = xds[0].dec
+    radec = [ra, dec]
+
+    cell_rad = xds[0].cell_rad
+    cell_deg = np.rad2deg(cell_rad)
+
+    freq_out = xds[0].band.values
+    hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
+    ref_freq = np.mean(freq_out)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+    # TODO - add wsum info
 
     print("Saving results", file=log)
     save_fits(args.output_filename + '_update.fits', model, hdr)
