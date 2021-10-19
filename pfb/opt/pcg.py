@@ -74,140 +74,107 @@ def pcg(A,
             print("Success, converged after %i iters" % k, file=log)
     return x
 
-from pfb.operators.psf import _hessian_reg as hessian_psf
-def _pcg_psf(psfhat,
-             b,
-             x0,
-             sigmainv,
-             nthreads,
-             padding,
-             unpad_x,
-             unpad_y,
-             lastsize,
-             tol=1e-5,
-             maxit=500,
-             minit=100,
-             verbosity=1,
-             report_freq=10,
-             backtrack=True):
+from pfb.operators.hessian import _hessian_reg_psf as hessian_psf
+def _pcg_psf_impl(psfhat,
+                  b,
+                  x0,
+                  beam,
+                  hessopts,
+                  waveopts,
+                  tol=1e-5,
+                  maxit=500,
+                  minit=100,
+                  verbosity=1,
+                  report_freq=10,
+                  backtrack=True):
     '''
     A specialised distributed version of pcg when the operator implements
     convolution with the psf (+ L2 regularisation by sigma**2)
     '''
-    nband, nx, ny = b.shape
-    model = np.zeros((nband, nx, ny), dtype=b.dtype)
-    sigmainvsq = sigmainv**2
-    if sigmainv > 0:
+    nband, nbasis, nmax = b.shape
+    model = np.zeros((nband, nbasis, nmax), dtype=b.dtype)
+    sigmainvsq = hessopts['sigmainv']**2
+    # PCG preconditioner
+    if sigmainvsq > 0:
         def M(x): return x / sigmainvsq
     else:
         M = None
+
     for k in range(nband):
         A = partial(hessian_psf,
-                    psfhat=psfhat[k:k+1],
-                    sigmainvsq=sigmainvsq,
-                    padding=padding,
-                    nthreads=nthreads,
-                    unpad_x=unpad_x,
-                    unpad_y=unpad_y,
-                    lastsize=lastsize)
-        model[k] = pcg(A, b[k:k+1], x0[k:k+1],
+                    psfhat=psfhat[k],
+                    beam=beam[k],
+                    **hessopts,
+                    **waveopts)
+        model[k] = pcg(A, b[k], x0[k],
                        M=M, tol=tol, maxit=maxit, minit=minit,
-                       verbosity=verbosity, report_freq=report_freq, backtrack=backtrack)
+                       verbosity=verbosity, report_freq=report_freq,
+                       backtrack=backtrack)
 
     return model
 
-def pcg_psf_wrapper(psfhat,
-                    b,
-                    x0,
-                    sigma,
-                    nthreads,
-                    padding,
-                    unpad_x,
-                    unpad_y,
-                    lastsize,
-                    tol,
-                    maxit,
-                    minit,
-                    verbosity,
-                    report_freq,
-                    backtrack):
-    return _pcg_psf(psfhat[0][0],
-                    b,
-                    x0,
-                    sigma,
-                    nthreads,
-                    padding,
-                    unpad_x,
-                    unpad_y,
-                    lastsize,
-                    tol,
-                    maxit,
-                    minit,
-                    verbosity,
-                    report_freq,
-                    backtrack)
+def _pcg_psf(psfhat,
+             b,
+             x0,
+             beam,
+             hessopts,
+             waveopts,
+             cgopts):
+    return _pcg_psf_impl(psfhat[0][0],
+                         b,
+                         x0,
+                         beam[0][0],
+                         hessopts,
+                         waveopts,
+                         **cgopts)
 
 def pcg_psf(psfhat,
             b,
             x0,
-            sigma,
-            nthreads,
-            padding,
-            unpad_x,
-            unpad_y,
-            lastsize,
-            tol,
-            maxit,
-            minit,
-            verbosity,
-            report_freq,
-            backtrack):
-    model = da.blockwise(pcg_psf_wrapper, ('nband', 'nx', 'ny'),
+            beam,
+            hessopts,
+            waveopts,
+            cgopts):
+
+    # print(hessopts)
+
+    # quit()
+    model = da.blockwise(_pcg_psf, ('nband', 'nbasis', 'nmax'),
                          psfhat, ('nband', 'nx_psf', 'ny_psf'),
-                         b, ('nband', 'nx', 'ny'),
-                         x0, ('nband', 'nx', 'ny'),
-                         sigma, None,
-                         nthreads, None,
-                         padding, None,
-                         unpad_x, None,
-                         unpad_y, None,
-                         lastsize, None,
-                         tol, None,
-                         maxit, None,
-                         minit, None,
-                         verbosity, None,
-                         report_freq, None,
-                         backtrack, None,
+                         b, ('nband', 'nbasis', 'nmax'),
+                         x0, ('nband', 'nbasis', 'nmax'),
+                         beam, ('nband', 'nx', 'ny'),
+                         hessopts, None,
+                         waveopts, None,
+                         cgopts, None,
                          dtype=b.dtype)
     return model
 
 
-from pfb.operators.hessian import _hessian_reg as hessian_wgt
-from pfb.operators.psi import coef2im, im2coef
-import pywt
-def _pcg_wgt(uvw,
-             weight,
-             b,
-             x0,
-             beam,
-             freq,
-             freq_bin_idx,
-             freq_bin_counts,
-             gridopts,
-             waveopts,
-             tol=1e-5,
-             maxit=500,
-             minit=100,
-             verbosity=1,
-             report_freq=10,
-             backtrack=True):
+from pfb.operators.hessian import _hessian_reg_wgt as hessian_wgt
+def _pcg_wgt_impl(uvw,
+                  weight,
+                  b,
+                  x0,
+                  beam,
+                  freq,
+                  freq_bin_idx,
+                  freq_bin_counts,
+                  hessopts,
+                  waveopts,
+                  tol=1e-5,
+                  maxit=500,
+                  minit=100,
+                  verbosity=1,
+                  report_freq=10,
+                  backtrack=True):
     '''
     A specialised distributed version of pcg when the operator implements
     the diagonalised hessian (+ L2 regularisation by sigma**2)
     '''
     nband, nbasis, nmax = b.shape
     model = np.zeros((nband, nbasis, nmax), dtype=b.dtype)
-    sigmainvsq = gridopts['sigmainv']**2
+    sigmainvsq = hessopts['sigmainv']**2
     # PCG preconditioner
     if sigmainvsq > 0:
         def M(x): return x / sigmainvsq
@@ -223,7 +190,7 @@ def _pcg_wgt(uvw,
                     uvw=uvw,
                     weight=weight[:, indl:indu],
                     freq=freq[indl:indu],
-                    **gridopts,
+                    **hessopts,
                     **waveopts)
 
 
@@ -240,28 +207,28 @@ def _pcg_wgt(uvw,
 
     return model
 
-def pcg_wgt_wrapper(uvw,
-                    weight,
-                    b,
-                    x0,
-                    beam,
-                    freq,
-                    freq_bin_idx,
-                    freq_bin_counts,
-                    gridopts,
-                    waveopts,
-                    cgopts):
-    return _pcg_wgt(uvw[0][0],
-                    weight[0],
-                    b,
-                    x0,
-                    beam[0][0],
-                    freq,
-                    freq_bin_idx,
-                    freq_bin_counts,
-                    gridopts,
-                    waveopts,
-                    **cgopts)
+def _pcg_wgt(uvw,
+            weight,
+            b,
+            x0,
+            beam,
+            freq,
+            freq_bin_idx,
+            freq_bin_counts,
+            hessopts,
+            waveopts,
+            cgopts):
+    return _pcg_wgt_impl(uvw[0][0],
+                         weight[0],
+                         b,
+                         x0,
+                         beam[0][0],
+                         freq,
+                         freq_bin_idx,
+                         freq_bin_counts,
+                         hessopts,
+                         waveopts,
+                         **cgopts)
 
 def pcg_wgt(uvw,
             weight,
@@ -271,12 +238,12 @@ def pcg_wgt(uvw,
             freq,
             freq_bin_idx,
             freq_bin_counts,
-            gridopts,
+            hessopts,
             waveopts,
             cgopts):
 
 
-    return da.blockwise(pcg_wgt_wrapper, ('nchan', 'nbasis', 'nmax'),
+    return da.blockwise(_pcg_wgt, ('nchan', 'nbasis', 'nmax'),
                         uvw, ('nrow', 'three'),
                         weight, ('nrow', 'nchan'),
                         b, ('nchan', 'nbasis', 'nmax'),
@@ -285,7 +252,7 @@ def pcg_wgt(uvw,
                         freq, ('nchan',),
                         freq_bin_idx, ('nchan',),
                         freq_bin_counts, ('nchan',),
-                        gridopts, None,
+                        hessopts, None,
                         waveopts, None,
                         cgopts, None,
                         align_arrays=False,

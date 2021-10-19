@@ -36,8 +36,8 @@ log = pyscilog.get_logger('FORWARD')
               help='Standard deviation of assumed GRF prior.')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
-@click.option('--use-beam/--no-use-beam', default=False)
-@click.option('--use-psf/--no-use-psf', default=False)
+@click.option('--no-use-beam/--use-beam', default=True)
+@click.option('--no-use-psf/--use-psf', default=True)
 @click.option('-cgtol', "--cg-tol", type=float, default=1e-5,
               help="Tolerance of conjugate gradient")
 @click.option('-cgminit', "--cg-minit", type=int, default=10,
@@ -133,16 +133,20 @@ def _forward(**kw):
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
     from pfb.opt.hogbom import hogbom
     from pfb.operators.psi import im2coef, coef2im
+    from africanus.gridding.wgridder.dask import hessian
     from astropy.io import fits
     import pywt
+    from pfb.utils.misc import compute_context
 
-    xds = xds_from_zarr(args.xds, chunks={'row':args.row_chunk})
+    # TODO - how to deal with multiple datasets (eg. if we want to
+    # partition by field, spw or scan)?
+    xds = xds_from_zarr(args.xds, chunks={'row':args.row_chunk})[0]
 
     print("Loading residual", file=log)
-    residual = xds[0].DIRTY.data
+    residual = xds.DIRTY.data
     nband, nx, ny = residual.shape
 
-    wsums = xds[0].WSUM.data
+    wsums = xds.WSUM.data
     wsum = da.sum(wsums).compute()
 
     residual /= wsum
@@ -154,7 +158,7 @@ def _forward(**kw):
     print("Initial peak residual = %f, rms = %f" % (rmax, rms), file=log)
 
     # try getting interpolated beam model
-    if args.use_beam:
+    if not args.no_use_beam:
         print("Initialising beam model", file=log)
         try:
             beam_image = xds.BEAM.data
@@ -231,9 +235,12 @@ def _forward(**kw):
     for l in range(nband):
         alpha_resid[l] = im2coef((beam_image[l] * residual[l]).compute(),
                             pmask, bases, ntots, nmax, args.nlevels)
-        alpha0[l] = im2coef(x0[l],
+        alpha0[l] = im2coef(x0[l].compute(),
                             pmask, bases, ntots, nmax, args.nlevels)
 
+    alpha0 = da.from_array(alpha0, chunks=(1, -1, -1), name=False)
+    alpha_resid = da.from_array(alpha_resid, chunks=(1, -1, -1),
+                                name=False)
 
     waveopts = {}
     waveopts['bases'] = bases
@@ -255,144 +262,116 @@ def _forward(**kw):
     cgopts['report_freq'] = args.cg_report_freq
     cgopts['backtrack'] = args.backtrack
 
-    if args.use_psf:
-        print("Solving for update using image space approximation", file=log)
+    if not args.no_use_psf:
         print("Initialising psf", file=log)
-        psf = xds[0].PSF.data
+        from ducc0.fft import r2c
+        from pfb.opt.pcg import pcg_psf
+        normfact = 1.0
+
+        psf = xds.PSF.data
         _, nx_psf, ny_psf = psf.shape
-        wsum = np.sum(wsums)
 
         psf /= wsum
         psf_mfs = da.sum(psf, axis=0).compute()
+        assert (psf_mfs.max() - 1.0) < args.epsilon
 
-        assert (psf_mfs.max() - 1.0) < 1e-4
-        normfact = 1.0
-        from pfb.operators.psf import hessian
-        from ducc0.fft import r2c
         iFs = np.fft.ifftshift
 
         npad_xl = (nx_psf - nx)//2
         npad_xr = nx_psf - nx - npad_xl
         npad_yl = (ny_psf - ny)//2
         npad_yr = ny_psf - ny - npad_yl
-        padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+        padding_psf = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
         unpad_x = slice(npad_xl, -npad_xr)
         unpad_y = slice(npad_yl, -npad_yr)
-        lastsize = ny + np.sum(padding[-1])
+        lastsize = ny + np.sum(padding_psf[-1])
         psf_pad = iFs(psf.compute(), axes=(1, 2))
         psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                     nthreads=nthreads, inorm=0)
+                     nthreads=args.nthreads, inorm=0)
 
         psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name=False)
 
+        hessopts = {}
+        hessopts['padding_psf'] = padding_psf[1:]
+        hessopts['unpad_x'] = unpad_x
+        hessopts['unpad_y'] = unpad_y
+        hessopts['lastsize'] = lastsize
+        hessopts['nthreads'] = args.nvthreads
+        hessopts['sigmainv'] = args.sigmainv
 
-        from pfb.opt.pcg import pcg_psf
-
-        model = pcg_psf(psfhat,
-                        residual,
-                        x0,
+        print("Solving for update using image space approximation", file=log)
+        alpha = pcg_psf(psfhat,
+                        alpha_resid,
+                        alpha0,
                         beam_image,
-                        args.sigmainv,
-                        args.nvthreads,
-                        padding,
-                        unpad_x,
-                        unpad_y,
-                        lastsize,
-                        args.cg_tol,
-                        args.cg_maxit,
-                        args.cg_minit,
-                        args.cg_verbose,
-                        args.cg_report_freq,
-                        args.backtrack).compute()
-
-        model_dask = da.from_array(model, chunks=(1, -1, -1), name=False)
-
-        residual -= hessian(model,
-                            psfhat,
-                            padding,
-                            args.nvthreads,
-                            unpad_x,
-                            unpad_y,
-                            lastsize).compute()
+                        hessopts,
+                        waveopts,
+                        cgopts)
     else:
         print("Solving for update using vis space approximation", file=log)
         from pfb.opt.pcg import pcg_wgt
         normfact = wsum
-        freq = xds[0].FREQ.data
-        nchan = freq.size
-        freq_bin_idx = xds[0].FBIN_IDX.data
-        freq_bin_counts = xds[0].FBIN_COUNTS.data
-        cell_rad = xds[0].cell_rad
 
-        uvw = xds[0].UVW.data
-        weight = xds[0].WEIGHT.data
-        alpha0 = da.from_array(alpha0, chunks=(1, -1, -1), name=False)
-        alpha_resid = da.from_array(alpha_resid, chunks=(1, -1, -1),
-                                    name=False)
+        hessopts = {}
+        hessopts['cell'] = xds.cell_rad
+        hessopts['wstack'] = args.wstack
+        hessopts['epsilon'] = args.epsilon
+        hessopts['double_accum'] = args.double_accum
+        hessopts['nthreads'] = args.nvthreads
+        hessopts['sigmainv'] = args.sigmainv
+        hessopts['wsum'] = wsum
 
-        gridopts = {}
-        gridopts['cell'] = cell_rad
-        gridopts['wstack'] = args.wstack
-        gridopts['epsilon'] = args.epsilon
-        gridopts['double_accum'] = args.double_accum
-        gridopts['nthreads'] = args.nvthreads
-        gridopts['sigmainv'] = args.sigmainv
-        gridopts['wsum'] = wsum
-
-        alpha = pcg_wgt(uvw,
-                        weight,
+        alpha = pcg_wgt(xds.UVW.data,
+                        xds.WEIGHT.data,
                         alpha_resid,
                         alpha0,
                         beam_image,
-                        freq,
-                        freq_bin_idx,
-                        freq_bin_counts,
-                        gridopts,
+                        xds.FREQ.data,
+                        xds.FBIN_IDX.data,
+                        xds.FBIN_COUNTS.data,
+                        hessopts,
                         waveopts,
                         cgopts)
 
-        from pfb.utils.misc import compute_context
-        with compute_context(args.scheduler, args.output_filename + '_alpha'):
-            alpha = dask.compute(alpha,
-                                 optimize_graph=False,
-                                 scheduler=args.scheduler)[0]
+    with compute_context(args.scheduler, args.output_filename + '_alpha'):
+        alpha = dask.compute(alpha,
+                             optimize_graph=False,
+                             scheduler=args.scheduler)[0]
 
-        print("Converting solution to model image", file=log)
-        model = np.zeros((nband, nx, ny), dtype=args.output_type)
-        for l in range(nband):
-            model[l] = coef2im(alpha[l], pmask, bases, padding, iys, sys, nx, ny)
+    print("Converting solution to model image", file=log)
+    model = np.zeros((nband, nx, ny), dtype=args.output_type)
+    for l in range(nband):
+        model[l] = coef2im(alpha[l], pmask, bases, padding, iys, sys, nx, ny)
 
-        from africanus.gridding.wgridder.dask import hessian
+    model_dask = da.from_array(model, chunks=(1, -1, -1), name=False)
+    print("Computing residual", file=log)
+    residual -= hessian(xds.UVW.data,
+                        xds.FREQ.data,
+                        model_dask,
+                        xds.FBIN_IDX.data,
+                        xds.FBIN_COUNTS.data,
+                        xds.cell_rad,
+                        weights=xds.WEIGHT.data,
+                        nthreads=args.nvthreads,
+                        epsilon=args.epsilon,
+                        do_wstacking=args.wstack,
+                        double_accum=args.double_accum)/wsum
 
-        model_dask = da.from_array(model, chunks=(1, -1, -1), name=False)
-        print("Computing residual", file=log)
-        residual -= hessian(uvw,
-                            freq,
-                            model_dask,
-                            freq_bin_idx,
-                            freq_bin_counts,
-                            cell_rad,
-                            weights=weight,
-                            nthreads=args.nvthreads,
-                            epsilon=args.epsilon,
-                            do_wstacking=args.wstack,
-                            double_accum=args.double_accum)/wsum
-
-        with compute_context(args.scheduler, args.output_filename + '_residual'):
-            residual = dask.compute(residual,
-                                    optimize_graph=False,
-                                    scheduler=args.scheduler)[0]
+    with compute_context(args.scheduler, args.output_filename + '_residual'):
+        residual = dask.compute(residual,
+                                optimize_graph=False,
+                                scheduler=args.scheduler)[0]
 
 
     # construct a header from xds attrs
-    ra = xds[0].ra
-    dec = xds[0].dec
+    ra = xds.ra
+    dec = xds.dec
     radec = [ra, dec]
 
-    cell_rad = xds[0].cell_rad
+    cell_rad = xds.cell_rad
     cell_deg = np.rad2deg(cell_rad)
 
-    freq_out = xds[0].band.values
+    freq_out = xds.band.values
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
