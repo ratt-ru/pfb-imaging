@@ -6,42 +6,55 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('BACWARD')
+log = pyscilog.get_logger('BACKWARD')
 
 @cli.command()
-@click.option('-m', '--model', required=True,
-              help="Path to residual.fits")
-@click.option('-u', '--update', required=True,
-              help="Path to PSF.fits")
-@click.option('-mask', '--mask',
-              help="Path to mask.fits.")
-@click.option('-bm', '--beam-model',
-              help="Path to beam_model.fits or JimBeam.")
-@click.option('-band', '--band', default='L',
-              help='L or UHF band when using JimBeam.')
-@click.option('-wt', '--weight-table',
-              help="Path to weight table produced by psf worker")
+@click.option('-xds', '--xds', type=str, required=True,
+              help="Path to xarray dataset containing data products")
+@click.option('-m', '--model', type=str,
+              help='Path to model.fits')
+@click.option('-u', '--update', type=str,
+              help='Path to update.fits')
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
               help="Number of imaging bands")
+@click.option('-rchunk', '--row-chunk', type=int, default=-1,
+              help="Number of rows in a chunk.")
+@click.option('-mask', '--mask',
+              help="Path to mask.fits.")
+@click.option('-pmask', '--point-mask',
+              help="Path to point source mask.fits.")
+@click.option('-band', '--band', default='L',
+              help='L or UHF band when using JimBeam.')
+@click.option('-bases', '--bases', default='self',
+              help='Wavelet bases to use. Give as str separated by | eg.'
+              '-bases self|db1|db2|db3|db4')
+@click.option('-nlevels', '--nlevels', default=3,
+              help='Number of wavelet decomposition levels')
 @click.option('-otype', '--output-type', default='f4',
               help="Data type of output")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
               help='Gridder accuracy')
 @click.option('-sinv', '--sigmainv', type=float, default=1.0,
-              help='Inverse standard deviation of assumed GRF prior.')
+              help='Standard deviation of assumed GRF prior.')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
-@click.option('-pdtol', "--pd-tol", type=float, default=1e-5,
+@click.option('--no-use-beam/--use-beam', default=True)
+@click.option('--no-use-psf/--use-psf', default=True)
+@click.option('-cgtol', "--cg-tol", type=float, default=1e-5,
               help="Tolerance of conjugate gradient")
-@click.option('-pdmaxit', "--pd-maxit", type=int, default=100,
+@click.option('-cgminit', "--cg-minit", type=int, default=10,
+              help="Minimum number of iterations for conjugate gradient")
+@click.option('-cgmaxit', "--cg-maxit", type=int, default=100,
               help="Maximum number of iterations for conjugate gradient")
-@click.option('-pdverb', "--pd-verbose", type=int, default=0,
+@click.option('-cgverb', "--cg-verbose", type=int, default=0,
               help="Verbosity of conjugate gradient. "
               "Set to 2 for debugging or zero for silence.")
-@click.option('-pdrf', "--pd-report-freq", type=int, default=10,
+@click.option('-cgrf', "--cg-report-freq", type=int, default=10,
               help="Report freq for conjugate gradient.")
+@click.option('--backtrack/--no-backtrack', default=True,
+              help="Backtracking during cg iterations.")
 @click.option('-ha', '--host-address',
               help='Address where the distributed client lives. '
               'Will use a local cluster if no address is provided')
@@ -55,21 +68,21 @@ log = pyscilog.get_logger('BACWARD')
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
+@click.option('-scheduler', '--scheduler', default='distributed',
+              help="Total available threads. Default uses all available threads")
 def backward(**kw):
     '''
-    Backward step using primal dual i.e. solves
+    Solves
 
-    argmin_x \| Phi.H x\|_{2,1} + (x - v)^dagger U (x - v)
-
-    where U is the preconditioner used during the forward step.
+    argmin_x r(x) + (v - x).H U (v - x)
 
     If a host address is provided the computation can be distributed
     over imaging band and row. When using a distributed scheduler both
     mem-limit and nthreads is per node and have to be specified.
 
     When using a local cluster, mem-limit and nthreads refer to the global
-    memory and threads available, respectively. By default the gridder will
-    use all available resources.
+    memory and threads available, respectively. By default we will use all
+    available resources.
 
     On a local cluster, the default is to use:
 
@@ -86,6 +99,7 @@ def backward(**kw):
 
     where nvthreads refers to the number of threads used to scale vertically
     (eg. the number threads given to each gridder instance).
+
     '''
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
@@ -115,123 +129,86 @@ def _backward(**kw):
     import dask
     import dask.array as da
     from dask.distributed import performance_report
+    from daskms.experimental.zarr import xds_from_zarr
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
     from pfb.opt.hogbom import hogbom
+    from pfb.operators.psi import im2coef, coef2im
+    from africanus.gridding.wgridder.dask import hessian
     from astropy.io import fits
+    import pywt
+    from pfb.utils.misc import compute_context
 
-    print("Loading residual", file=log)
-    residual = load_fits(args.residual, dtype=args.output_type).squeeze()
-    nband, nx, ny = residual.shape
-    hdr = fits.getheader(args.residual)
+    # TODO - how to deal with multiple datasets (eg. if we want to
+    # partition by field, spw or scan)?
+    xds = xds_from_zarr(args.xds, chunks={'row':args.row_chunk})[0]
 
-    print("Loading psf", file=log)
-    psf = load_fits(args.psf, dtype=args.output_type).squeeze()
-    _, nx_psf, ny_psf = psf.shape
-    hdr_psf = fits.getheader(args.psf)
+    nband = xds.dims['nband']
+    nx = xds.dims['nx']
+    ny = xds.dims['ny']
 
-    wsums = np.amax(psf.reshape(-1, nx_psf*ny_psf), axis=1)
-    wsum = np.sum(wsums)
+    wsums = xds.WSUM.data
+    wsum = da.sum(wsums).compute()
 
-    psf /= wsum
-    psf_mfs = np.sum(psf, axis=0)
-
-    assert (psf_mfs.max() - 1.0) < 1e-4
-
-    residual /= wsum
-    residual_mfs = np.sum(residual, axis=0)
-
-    # get info required to set WCS
-    ra = np.deg2rad(hdr['CRVAL1'])
-    dec = np.deg2rad(hdr['CRVAL2'])
-    radec = [ra, dec]
-
-    cell_deg = np.abs(hdr['CDELT1'])
-    if cell_deg != np.abs(hdr['CDELT2']):
-        raise NotImplementedError('cell sizes have to be equal')
-    cell_rad = np.deg2rad(cell_deg)
-
-    l_coord, ref_l = data_from_header(hdr, axis=1)
-    l_coord -= ref_l
-    m_coord, ref_m = data_from_header(hdr, axis=2)
-    m_coord -= ref_m
-    freq_out, ref_freq = data_from_header(hdr, axis=3)
-
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-
-    rms = np.std(residual_mfs)
-    rmax = np.abs(residual_mfs).max()
-
-    print("Initial peak residual = %f, rms = %f" % (rmax, rms), file=log)
-
-    # load beam
-    if args.beam_model is not None:
-        if args.beam_model.endswith('.fits'):  # beam already interpolated
-            bhdr = fits.getheader(args.beam_model)
-            l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
-            l_coord_beam -= ref_lb
-            if not np.array_equal(l_coord_beam, l_coord):
-                raise ValueError("l coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-            m_coord_beam, ref_mb = data_from_header(bhdr, axis=2)
-            m_coord_beam -= ref_mb
-            if not np.array_equal(m_coord_beam, m_coord):
-                raise ValueError("m coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-            freq_beam, _ = data_from_header(bhdr, axis=freq_axis)
-            if not np.array_equal(freq_out, freq_beam):
-                raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-            beam_image = load_fits(args.beam_model, dtype=args.output_type).squeeze()
-        elif args.beam_model.lower() == "jimbeam":
-            from katbeam import JimBeam
-            if args.band.lower() == 'l':
-                beam = JimBeam('MKAT-AA-L-JIM-2020')
-            elif args.band.lower() == 'uhf':
-                beam = JimBeam('MKAT-AA-UHF-JIM-2020')
-            else:
-                raise ValueError("Unkown band %s"%args.band[i])
-
-            xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
-            beam_image = np.zeros(residual.shape, dtype=args.output_type)
-            for v in range(freq_out.size):
-                # freq must be in MHz
-                beam_image[v] = beam.I(xx, yy, freq_out[v]/1e6).astype(args.output_type)
+    # try getting interpolated beam model
+    if not args.no_use_beam:
+        print("Initialising beam model", file=log)
+        try:
+            beam_image = xds.BEAM.data
+            assert beam_image.shape == (nband, nx, ny)
+        except Exception as e:
+            print(f"Could not initialise beam model due to \n {e}. "
+                  f"Using identity", file=log)
+            beam_image = da.ones((nband, nx, ny), chunks=(1, -1, -1),
+                              dtype=args.output_type)
     else:
-        beam_image = np.ones((nband, nx, ny), dtype=args.output_type)
+        beam_image = da.ones((nband, nx, ny), chunks=(1, -1, -1),
+                              dtype=args.output_type)
 
     if args.mask is not None:
+        print("Initialising mask", file=log)
         mask = load_fits(args.mask).squeeze()
         assert mask.shape == (nx, ny)
+        mask = da.from_array(mask, chunks=(-1, -1), name=False)
     else:
-        mask = np.ones((nx, ny), dtype=residual.dtype)
+        mask = da.ones((nx, ny), chunks=(-1, -1), dtype=residual.dtype)
 
+    # TODO - there must be a way to avoid multiplying by the beam
+    # inside the hessian operator if neither mask nor beam is used.
     # incorporate mask in beam
     beam_image *= mask[None, :, :]
 
     if args.point_mask is not None:
+        print("Initialising point source mask", file=log)
         pmask = load_fits(args.point_mask).squeeze()
         # passing model as mask
         if len(pmask.shape) == 3:
-            x0 = pmask
+            print("Detected third axis on pmask. "
+                  "Initialising pmask from model.", file=log)
+            x0 = da.from_array(pmask, chunks=(1, -1, -1),
+                               dtype=residual.dtype, name=False)
             pmask = np.any(pmask, axis=0)
         else:
-            x0 = np.zeros((nband, nx, ny), dtype=residual.dtype)
+            x0 = da.zeros((nband, nx, ny), dtype=residual.dtype)
 
         assert pmask.shape == (nx, ny)
     else:
         pmask = np.ones((nx, ny), dtype=residual.dtype)
-        x0 = np.zeros((nband, nx, ny), dtype=residual.dtype)
+        x0 = da.zeros((nband, nx, ny), dtype=residual.dtype)
+
 
     # wavelet setup
+    print("Setting up wavelets", file=log)
     bases = args.bases.split('|')
     ntots = []
     iys = {}
     sys = {}
+    tmp = x0[0].compute()
     for base in bases:
         if base == 'self':
             y, iy, sy = x0[0].ravel(), 0, 0
         else:
-            alpha = pywt.wavedecn(x0[0], base, mode='zero', level=args.nlevels)
+            alpha = pywt.wavedecn(tmp, base, mode='zero',
+                                  level=args.nlevels)
             y, iy, sy = pywt.ravel_coeffs(alpha)
         iys[base] = iy
         sys[base] = sy
@@ -244,13 +221,18 @@ def _backward(**kw):
     for i in range(nbasis):
         padding.append(slice(0, ntots[i]))
 
+    print("Initialising starting values", file=log)
     alpha0 = np.zeros((nband, nbasis, nmax), dtype=x0.dtype)
     alpha_resid = np.zeros((nband, nbasis, nmax), dtype=x0.dtype)
     for l in range(nband):
-        alpha_resid[l] = im2coef(beam_image[l] * residual[l],
+        alpha_resid[l] = im2coef((beam_image[l] * residual[l]).compute(),
                             pmask, bases, ntots, nmax, args.nlevels)
-        alpha0[l] = im2coef(x0[l],
+        alpha0[l] = im2coef(x0[l].compute(),
                             pmask, bases, ntots, nmax, args.nlevels)
+
+    alpha0 = da.from_array(alpha0, chunks=(1, -1, -1), name=False)
+    alpha_resid = da.from_array(alpha_resid, chunks=(1, -1, -1),
+                                name=False)
 
     waveopts = {}
     waveopts['bases'] = bases
@@ -264,49 +246,73 @@ def _backward(**kw):
     waveopts['ny'] = ny
     waveopts['padding'] = padding
 
-    # set up Hessian approximation
-    if args.weight_table is not None:
-        normfact = wsum
-        from africanus.gridding.wgridder.dask import hessian
-        from pfb.operators.hessian import _hessian_reg
-        from pfb.utils.misc import plan_row_chunk
-        from daskms.experimental.zarr import xds_from_zarr
+    if not args.no_use_psf:
+        print("Initialising psf", file=log)
+        from ducc0.fft import r2c
+        from pfb.opt.pcg import pcg_psf
+        normfact = 1.0
 
-        xds = xds_from_zarr(args.weight_table)[0]
-        nrow = xds.row.size
-        freqs = xds.chan.data
-        nchan = freqs.size
+        psf = xds.PSF.data
+        _, nx_psf, ny_psf = psf.shape
 
-        # bin edges
-        fmin = freqs.min()
-        fmax = freqs.max()
-        fbins = np.linspace(fmin, fmax, nband + 1)
+        psf /= wsum
+        psf_mfs = da.sum(psf, axis=0).compute()
+        assert (psf_mfs.max() - 1.0) < args.epsilon
 
-        # chan <-> band mapping
-        band_mapping = {}
-        chan_chunks = {}
-        freq_bin_idx = {}
-        freq_bin_counts = {}
-        band_map = np.zeros(freqs.size, dtype=np.int32)
-        for band in range(nband):
-            indl = freqs >= fbins[band]
-            indu = freqs < fbins[band + 1] + 1e-6
-            band_map = np.where(indl & indu, band, band_map)
+        iFs = np.fft.ifftshift
 
-        # to dask arrays
-        bands, bin_counts = np.unique(band_map, return_counts=True)
-        band_mapping = tuple(bands)
-        chan_chunks = {'chan': tuple(bin_counts)}
-        freqs = da.from_array(freqs, chunks=tuple(bin_counts))
-        bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
-        freq_bin_idx = da.from_array(bin_idx, chunks=1)
-        freq_bin_counts = da.from_array(bin_counts, chunks=1)
+        npad_xl = (nx_psf - nx)//2
+        npad_xr = nx_psf - nx - npad_xl
+        npad_yl = (ny_psf - ny)//2
+        npad_yr = ny_psf - ny - npad_yl
+        padding_psf = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+        unpad_x = slice(npad_xl, -npad_xr)
+        unpad_y = slice(npad_yl, -npad_yr)
+        lastsize = ny + np.sum(padding_psf[-1])
+        psf_pad = iFs(psf.compute(), axes=(1, 2))
+        psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
+                     nthreads=args.nthreads, inorm=0)
+
+        psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name=False)
+
+        hessopts = {}
+        hessopts['padding_psf'] = padding_psf[1:]
+        hessopts['unpad_x'] = unpad_x
+        hessopts['unpad_y'] = unpad_y
+        hessopts['lastsize'] = lastsize
+        hessopts['nthreads'] = args.nvthreads
+        hessopts['sigmainv'] = args.sigmainv
 
         def convolver(x):
-            model = da.from_array(x, chunks=(1, nx, ny), name=False)
+            model = da.from_array(x,
+                          chunks=(1, nx, ny), name=False)
 
-            xds = xds_from_zarr(args.weight_table, chunks={'row': -1,
-                                'chan': bin_counts})[0]
+
+            convolvedim = hessian(model,
+                                  psfhat,
+                                  padding_psf,
+                                  args.nvthreads,
+                                  unpad_x,
+                                  unpad_y,
+                                  lastsize)
+            return convolvedim
+    else:
+        print("Solving for update using vis space approximation", file=log)
+        from pfb.opt.pcg import pcg_wgt
+        normfact = wsum
+
+        hessopts = {}
+        hessopts['cell'] = xds.cell_rad
+        hessopts['wstack'] = args.wstack
+        hessopts['epsilon'] = args.epsilon
+        hessopts['double_accum'] = args.double_accum
+        hessopts['nthreads'] = args.nvthreads
+        hessopts['sigmainv'] = args.sigmainv
+        hessopts['wsum'] = wsum
+
+        def convolver(x):
+            model = da.from_array(x,
+                          chunks=(1, nx, ny), name=False)
 
             convolvedim = hessian(xds.UVW.data,
                                   freqs,
@@ -320,39 +326,50 @@ def _backward(**kw):
                                   do_wstacking=args.wstack,
                                   double_accum=args.double_accum)
             return convolvedim
-    else:
-        normfact = 1.0
-        from pfb.operators.psf import hessian
-        from ducc0.fft import r2c
-        iFs = np.fft.ifftshift
 
-        npad_xl = (nx_psf - nx)//2
-        npad_xr = nx_psf - nx - npad_xl
-        npad_yl = (ny_psf - ny)//2
-        npad_yr = ny_psf - ny - npad_yl
-        padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
-        unpad_x = slice(npad_xl, -npad_xr)
-        unpad_y = slice(npad_yl, -npad_yr)
-        lastsize = ny + np.sum(padding[-1])
-        psf_pad = iFs(psf, axes=(1, 2))
-        psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                     nthreads=args.nvthreads, inorm=0)
+    with compute_context(args.scheduler, args.output_filename + '_alpha'):
+        alpha = dask.compute(alpha,
+                             optimize_graph=False,
+                             scheduler=args.scheduler)[0]
 
-        psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
+    print("Converting solution to model image", file=log)
+    model = np.zeros((nband, nx, ny), dtype=args.output_type)
+    for l in range(nband):
+        model[l] = coef2im(alpha[l], pmask, bases, padding, iys, sys, nx, ny)
 
-        def convolver(x):
-            model = da.from_array(x,
-                          chunks=(1, nx, ny), name=False)
+    model_dask = da.from_array(model, chunks=(1, -1, -1), name=False)
+    print("Computing residual", file=log)
+    residual -= hessian(xds.UVW.data,
+                        xds.FREQ.data,
+                        model_dask,
+                        xds.FBIN_IDX.data,
+                        xds.FBIN_COUNTS.data,
+                        xds.cell_rad,
+                        weights=xds.WEIGHT.data,
+                        nthreads=args.nvthreads,
+                        epsilon=args.epsilon,
+                        do_wstacking=args.wstack,
+                        double_accum=args.double_accum)/wsum
+
+    with compute_context(args.scheduler, args.output_filename + '_residual'):
+        residual = dask.compute(residual,
+                                optimize_graph=False,
+                                scheduler=args.scheduler)[0]
 
 
-            return hessian(model,
-                           psfhat,
-                           padding,
-                           args.nvthreads,
-                           unpad_x,
-                           unpad_y,
-                           lastsize)
+    # construct a header from xds attrs
+    ra = xds.ra
+    dec = xds.dec
+    radec = [ra, dec]
 
+    cell_rad = xds.cell_rad
+    cell_deg = np.rad2deg(cell_rad)
+
+    freq_out = xds.band.values
+    hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
+    ref_freq = np.mean(freq_out)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+    # TODO - add wsum info
 
     print("Saving results", file=log)
     save_fits(args.output_filename + '_update.fits', model, hdr)

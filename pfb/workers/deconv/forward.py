@@ -10,7 +10,7 @@ log = pyscilog.get_logger('FORWARD')
 
 @cli.command()
 @click.option('-xds', '--xds', type=str, required=True,
-              help="Path to xarray dataset containing")
+              help="Path to xarray dataset containing data products")
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
