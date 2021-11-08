@@ -31,8 +31,8 @@ log = pyscilog.get_logger('GRID')
               help='Stokes products separated by |.'
               'Currently supports I, Q, U, and V eg. '
               'I|Q will produce I and Q products.')
-@click.option('-rchunk', '--row-chunk', type=int, default=-1,
-              help="Number of rows in a chunk.")
+@click.option('-utpc', '--utimes-per-chunk', type=int, default=-1,
+              help="Number of unique times in a chunk.")
 @click.option('-rochunk', '--row-out-chunk', type=int, default=10000,
               help="Size of row chunks for output weights and uvw")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
@@ -174,8 +174,9 @@ def _grid(**kw):
     from daskms.experimental.zarr import xds_to_zarr
     import dask.array as da
     from africanus.constants import c as lightspeed
+    from africanus.calibration.utils import chunkify_rows
     from ducc0.fft import good_size
-    from pfb.utils.misc import stitch_images, plan_row_chunk
+    from pfb.utils.misc import stitch_images
     from pfb.utils.fits import set_wcs, save_fits
     from pfb.utils.stokes import single_stokes
 
@@ -198,26 +199,22 @@ def _grid(**kw):
         raise NotImplementedError("Grouping by scan is currently mandatory")
 
     # chan <-> band mapping
-    ms = args.ms
     nband = args.nband
     freqs, fbin_idx, fbin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
-        ms, nband=args.nband, group_by=group_by)
+        args.ms, nband=args.nband, group_by=group_by)
 
     # gridder memory budget (TODO)
     max_chan_chunk = 0
     max_freq = 0
-    for ims in ms:
-        for spw in freqs[ims]:
-            counts = fbin_counts[ims][spw].compute()
-            freq = freqs[ims][spw].compute()
+    for ms in args.ms:
+        for spw in freqs[ms]:
+            counts = fbin_counts[ms][spw].compute()
+            freq = freqs[ms][spw].compute()
             max_chan_chunk = np.maximum(max_chan_chunk, counts.max())
             max_freq = np.maximum(max_freq, freq.max())
 
-    # assumes measurement sets have the same columns,
-    # number of correlations etc.
-    xds = xds_from_ms(ms[0])
-    ncorr = xds[0].dims['corr']
-    nrow = xds[0].dims['row']
+    # assumes measurement sets have the same columns
+    xds = xds_from_ms(args.ms[0])
 
     columns = (args.data_column,
                args.weight_column,
@@ -239,17 +236,13 @@ def _grid(**kw):
         columns += (args.imaging_weight_column,)
         schema[args.imaging_weight_column] = {'dims': ('chan', 'corr')}
 
-    # # Mueller term (complex valued)
-    # if args.mueller_column is not None:
-    #     columns += (args.mueller_column,)
-    #     schema[args.mueller_column] = {'dims': ('chan', 'corr')}
-
     # get max uv coords over all datasets
     uvw = []
     u_max = 0.0
     v_max = 0.0
-    for ims in ms:
-        xds = xds_from_ms(ims, columns=('UVW'), chunks={'row': -1})
+    for ms in args.ms:
+        xds = xds_from_ms(ms, columns=('UVW'), chunks={'row': -1},
+                          group_cols=group_by)
 
         for ds in xds:
             uvw = ds.UVW.data
@@ -298,15 +291,20 @@ def _grid(**kw):
 
     print(f"PSF size set to ({nband}, {nx_psf}, {ny_psf})", file=log)
 
-    row_chunks = {}
+    ms_chunks = {}
+    gain_chunks = {}
+    tbin_idx = {}
+    tbin_counts = {}
     ncorr = None
-    for ims in ms:
-        xds = xds_from_ms(ims, group_cols=group_by)
-        row_chunks[ims] = {}
+    for ims, ms in enumerate(args.ms):
+        xds = xds_from_ms(ms, columns=['TIME'], group_cols=group_by)
+        ms_chunks[ms] = []  # daskms expects a list per ds
+        gain_chunks[ms] = []
+        if args.gain_table is not None:
+            G = xds_from_zarr(args.gain_table[ims])
 
-        for ds in xds:
+        for ids, ds in enumerate(xds):
             idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
-            spw = ds.DATA_DESC_ID
 
             if ncorr is None:
                 ncorr = ds.dims['corr']
@@ -315,26 +313,47 @@ def _grid(**kw):
                     assert ncorr == ds.dims['corr']
                 except Exception as e:
                     raise ValueError("All data sets must have the same number of correlations")
-
-            if args.row_chunk in [0, -1, None]:
-                row_chunks[ims][idt] = (ds.dims['row'],)
+            time = ds.TIME.values
+            if args.utimes_per_chunk in [0, -1, None]:
+                utpc = np.unique(time).size
             else:
-                row_chunks[ims][idt] = (args.row_chunk,)
+                utpc = args.utimes_per_chunk
 
-    chunks = {}
-    for ims in ms:
-        chunks[ims] = []  # xds_from_ms expects a list per ds
-        for idt in freqs[ims]:
-            chunks[ims].append({'row': row_chunks[ims][idt],
-                                'chan': chan_chunks[ims][idt]})
+            rchunks, tidx, tcounts = chunkify_rows(time,
+                                                   utimes_per_chunk=utpc,
+                                                   daskify_idx=True)
 
-    dirties = {}
-    psfs = {}
+            tbin_idx[ms][idt] = tidx
+            tbin_counts[ms][idt] = tcounts
+
+            ms_chunks[ms].append({'row': rchunks,
+                                  'chan': chan_chunks[ms][idt]})
+
+            if args.gain_table is not None:
+                gain = G[ids]  # TODO - how to make sure they are aligned?
+                tmp_dict = {}
+                for name, val in zip(gain.GAIN_AXES, gain.GAIN_SPEC):
+                    if name == 'gain_t':
+                        tmp_dict[name] = tbin_counts
+                    elif name == 'gain_f':
+                        tmp_dict[name] = chan_chunks[ms][idt]
+                    elif name == 'dir':
+                        if val > 1:
+                            raise ValueError("Only DI gains currently supported")
+                        tmp_dict[name] = val
+                    else:
+                        tmp_dict[name] = val
+                gain_chunks[ms].append(tmp_dict)
+
     out_datasets = {}
     radec = None  # assumes we are only imaging field 0 of first MS
-    for ims in ms:
-        xds = xds_from_ms(ims, chunks=chunks[ims], columns=columns,
+    for ims, ms in enumerate(args.ms):
+        xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
                           table_schema=schema, group_cols=group_by)
+
+        if args.gain_table is not None:
+            G = xds_from_zarr(args.gain_table[ims] + '::NET',
+                              chunks=gain_chunks[ms])
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
@@ -358,8 +377,12 @@ def _grid(**kw):
             raise ValueError(f"Cannot determine polarisation type "
                              f"from correlations {pols[0].CORR_TYPE.data}")
 
-        for ds in xds:
+        for ids, ds in enumerate(xds):
             idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
+            nrow = ds.dims['row']
+            nchan = ds.dims['chan']
+            ncorr = ds.dims['corr']
+
             field = fields[ds.FIELD_ID]
 
             # check fields match
@@ -367,10 +390,8 @@ def _grid(**kw):
                 radec = field.PHASE_DIR.data.squeeze()
 
             if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
+                # TODO - phase shift visibilities
                 continue
-
-            # TODO - need to use spw table
-            spw = ds.DATA_DESC_ID
 
             # MS may contain auto-correlations
             if 'FLAG_ROW' in ds:
@@ -390,10 +411,10 @@ def _grid(**kw):
             else:
                 imaging_weight = None
 
-            # if args.mueller_column is not None:
-            #     mueller = getattr(ds, args.mueller_column).data.astype(data.dtype)
-            # else:
-            #     mueller = None
+            if args.gain_table is not None:
+                jones = G[ids]
+            else:
+                jones = None
 
             if args.flag_column is not None:
                 flag = getattr(ds, args.flag_column).data
@@ -407,7 +428,9 @@ def _grid(**kw):
                 'data':data,
                 'weight':weight,
                 'imaging_weight':imaging_weight,
-                'mueller':None,
+                'ant1':ds.ANTENNA1.data,
+                'ant2':ds.ANTENNA2.data,
+                'jones':jones,
                 'flag':flag,
                 'frow':frow,
                 'uvw':uvw,
@@ -420,11 +443,13 @@ def _grid(**kw):
                 'epsilon':args.epsilon,
                 'wstack':args.wstack,
                 'double_accum':args.double_accum,
-                'freq':freqs[ims][idt],
-                'fbin_idx':fbin_idx[ims][idt],
-                'fbin_counts':fbin_counts[ims][idt],
-                'band_mapping':band_mapping[ims][idt],
+                'freq':freqs[ms][idt],
+                'fbin_idx':fbin_idx[ms][idt],
+                'fbin_counts':fbin_counts[ms][idt],
+                'band_mapping':band_mapping[ms][idt],
                 'freq_out':freq_out,
+                'tbin_idx':tbin_idx[ms][idt],
+                'tbin_counts':tbin_counts[ms][idt],
                 'nx':nx,
                 'ny':ny,
                 'nx_psf':nx_psf,

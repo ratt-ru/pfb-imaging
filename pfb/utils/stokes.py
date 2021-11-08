@@ -10,7 +10,9 @@ from daskms.optimisation import inlined_array
 def single_stokes(data=None,
                   weight=None,
                   imaging_weight=None,
-                  mueller=None,
+                  ant1=None,
+                  ant2=None,
+                  jones=None,
                   flag=None,
                   frow=None,
                   uvw=None,
@@ -29,6 +31,8 @@ def single_stokes(data=None,
                   fbin_counts=None,
                   band_mapping=None,
                   freq_out=None,
+                  tbin_idx=None,
+                  tbin_counts=None,
                   nx=None,
                   ny=None,
                   nx_psf=None,
@@ -48,6 +52,19 @@ def single_stokes(data=None,
     data_shape = data.shape
     data_chunks = data.chunks
     real_type = data.real.dtype
+
+    # compute the mueller term
+    nrow, nchan, ncorr = data.shape
+    if ncorr > 2:
+        acol = da.ones((nrow, nchan, 1, 2, 2),
+                       chunks=(data_chunks[0], data_chunks[1], 1, 2, 2),
+                       dtype=data_type)
+    else:
+        acol = da.ones((nrow, nchan, 1, ncorr),
+                       chunks=(data_chunks[0], data_chunks[1], 1, ncorr),
+                       dtype=data_type)
+
+    mueller = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2, jones, acol)
 
     dw = weight_data(data, weight, imaging_weight, mueller, flag, frow,
                      idx0, idxf, sign, csign)
@@ -240,22 +257,8 @@ def _weight_data_impl(data, weight, imaging_weight, mueller, flag, frow,
         weightxx = weightxx * imaging_weight[:, :, idx0]
         weightyy = weightyy * imaging_weight[:, :, idxf]
 
-    if mueller is not None:
-        # d = ne.evaluate('(dxx * conj(mxx) * wxx + s * dyy * conj(myy) * wyy) * c', local_dict={
-        #                    'dxx': data[:, :, idx0],
-        #                    'mxx': mueller[:, :, idx0],
-        #                    'wxx': weightxx,
-        #                    's': sign,
-        #                    'dyy': data[:, :, idxf],
-        #                    'myy': mueller[:, :, idxf],
-        #                    'wyy': weightyy,
-        #                    'c': csign}, casting='same_kind')
-        # ne.evaluate('wxx * abs(mxx).real**2', local_dict={
-        #             'wxx': weightxx,
-        #             'mxx': mueller[:, :, idx0]}, out= weightxx, casting='same_kind')
-        # ne.evaluate('wyy * abs(myy).real**2', local_dict={
-        #             'wyy': weightyy,
-        #             'myy': mueller[:, :, idxf]}, out= weightyy, casting='same_kind')
+    if jones is not None:
+        # apply adjoint of Mueller term to weighted data
         data = (data[:, :, idx0] * mueller[:, :, idx0].conj() * weightxx +
                 sign * data[:, :, idxf] * mueller[:, :, idxf].conj() * weightyy) * csign
         weightxx = weightxx * np.absolute(mueller[:, :, idx0])**2
