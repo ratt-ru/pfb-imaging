@@ -5,7 +5,7 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('INIT')
+log = pyscilog.get_logger('GRID')
 
 
 @cli.command()
@@ -80,7 +80,7 @@ log = pyscilog.get_logger('INIT')
               help="Total available threads. Default uses all available threads")
 @click.option('-scheduler', '--scheduler', default='distributed',
               help="Total available threads. Default uses all available threads")
-def init(**kw):
+def grid(**kw):
     '''
     Create a dirty image, psf and weights from a list of measurement
     sets. Image cubes are not normalised by wsum as this destroyes
@@ -152,9 +152,9 @@ def init(**kw):
         for key in args.keys():
             print('     %25s = %s' % (key, args[key]), file=log)
 
-        return _init(**args)
+        return _grid(**args)
 
-def _init(**kw):
+def _grid(**kw):
     args = OmegaConf.create(kw)
     from omegaconf import ListConfig
     if not isinstance(args.ms, list) and not isinstance(args.ms, ListConfig) :

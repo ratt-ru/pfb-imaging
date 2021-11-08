@@ -5,7 +5,7 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('PREDICT')
+log = pyscilog.get_logger('DEGRID')
 
 
 @cli.command()
@@ -52,7 +52,7 @@ log = pyscilog.get_logger('PREDICT')
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
-def predict(**kw):
+def degrid(**kw):
     '''
     Predict model visibilities to measurement sets.
     Currently only predicts from .fits files which can optionally be interpolated
@@ -117,9 +117,9 @@ def predict(**kw):
         for key in args.keys():
             print('     %25s = %s' % (key, args[key]), file=log)
 
-        return _predict(**args)
+        return _degrid(**args)
 
-def _predict(**kw):
+def _degrid(**kw):
     args = OmegaConf.create(kw)
     from omegaconf import ListConfig
     if not isinstance(args.ms, list) and not isinstance(args.ms, ListConfig) :
