@@ -4,6 +4,7 @@ import dask
 import dask.array as da
 from xarray import Dataset
 from africanus.gridding.wgridder.dask import dirty as vis2im
+from africanus.calibration.utils.dask import corrupt_vis
 from pfb.utils.weighting import compute_wsum
 from daskms.optimisation import inlined_array
 
@@ -64,6 +65,7 @@ def single_stokes(data=None,
                        chunks=(data_chunks[0], data_chunks[1], 1, ncorr),
                        dtype=data_type)
 
+    jones = da.swapaxes(jones, 1, 2)
     mueller = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2, jones, acol)
 
     dw = weight_data(data, weight, imaging_weight, mueller, flag, frow,
