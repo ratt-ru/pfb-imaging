@@ -8,7 +8,7 @@ def cli():
 
 
 from pfb.workers.post import restore
-from pfb.workers.grid import dirty, psf, predict, residual, init
+from pfb.workers.grid import dirty, psf, degrid, residual, init
 from pfb.workers.post import spifit, binterp
 from pfb.workers.deconv import nnls, clean, forward
 from pfb.workers.weighting import imweight

@@ -11,10 +11,10 @@ log = pyscilog.get_logger('INIT')
 @cli.command()
 @click.option('-ms', '--ms', required=True,
               help='Path to measurement set.')
-@click.option('-dc', '--data-column',
+@click.option('-dc', '--data-column', default='DATA',
               help="Data or residual column to image."
               "Must be the same across MSs")
-@click.option('-wc', '--weight-column',
+@click.option('-wc', '--weight-column', default='WEIGHT_SPECTRUM',
               help="Column containing natural weights."
               "Must be the same across MSs")
 @click.option('-iwc', '--imaging-weight-column',
@@ -23,18 +23,23 @@ log = pyscilog.get_logger('INIT')
 @click.option('-fc', '--flag-column', default='FLAG',
               help="Column containing data flags."
               "Must be the same across MSs")
-@click.option('-muc', '--mueller-column',
-              help="Column containing Mueller terms."
-              "Must be the same across MSs")
+@click.option('-gt', '--gain-table',
+              help="Path to Quartical gain table containing NET gains."
+              "There must be a table for each MS and glob(ms) and glob(gt) "
+              "should match up.")
 @click.option('-p', '--products', default='I',
-              help='Stokes products. '
-              'Currently supports I, Q, U, and V.')
+              help='Stokes products separated by |.'
+              'Currently supports I, Q, U, and V eg. '
+              'I|Q will produce I and Q products.')
 @click.option('-rchunk', '--row-chunk', type=int, default=-1,
               help="Number of rows in a chunk.")
 @click.option('-rochunk', '--row-out-chunk', type=int, default=10000,
               help="Size of row chunks for output weights and uvw")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
               help='Gridder accuracy')
+@click.option('--group-by-field/--no-group-by-field', default=True)
+@click.option('--group-by-ddid/--no-group-by-ddid', default=True)
+@click.option('--group-by-scan/--no-group-by-scan', default=True)
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
 @click.option('--fits-mfs/--no-fits-mfs', default=True)
@@ -124,6 +129,18 @@ def init(**kw):
         else:
             args.nworkers = 1
 
+    if args.gain_table is not None:
+        gt = glob(args.gain_table)
+        try:
+            assert len(gt) > 0
+            args.gain_table = gt
+        except Exception as e:
+            raise ValueError(f"No gain table at {args.gain_table}")
+
+    # Stokes products are separated by '|' because click doesn't
+    # like arbitrary number of inputs
+    args.products = args.products.upper().split('|')
+
     OmegaConf.set_struct(args, True)
 
     with ExitStack() as stack:
@@ -157,17 +174,34 @@ def _init(**kw):
     from daskms.experimental.zarr import xds_to_zarr
     import dask.array as da
     from africanus.constants import c as lightspeed
-    from africanus.gridding.wgridder.dask import dirty as vis2im
     from ducc0.fft import good_size
     from pfb.utils.misc import stitch_images, plan_row_chunk
     from pfb.utils.fits import set_wcs, save_fits
     from pfb.utils.stokes import single_stokes
 
+    # TODO - optional grouping. We need to construct an identifier between
+    # dataset and field/spw/scan identifiers
+    group_by = []
+    if args.group_by_field:
+        group_by.append('FIELD_ID')
+    else:
+        raise NotImplementedError("Grouping by field is currently mandatory")
+
+    if args.group_by_ddid:
+        group_by.append('DATA_DESC_ID')
+    else:
+        raise NotImplementedError("Grouping by DDID is currently mandatory")
+
+    if args.group_by_scan:
+        group_by.append('SCAN_NUMBER')
+    else:
+        raise NotImplementedError("Grouping by scan is currently mandatory")
+
     # chan <-> band mapping
     ms = args.ms
     nband = args.nband
     freqs, fbin_idx, fbin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
-        ms, nband=args.nband)
+        ms, nband=args.nband, group_by=group_by)
 
     # gridder memory budget (TODO)
     max_chan_chunk = 0
@@ -205,12 +239,12 @@ def _init(**kw):
         columns += (args.imaging_weight_column,)
         schema[args.imaging_weight_column] = {'dims': ('chan', 'corr')}
 
-    # Mueller term (complex valued)
-    if args.mueller_column is not None:
-        columns += (args.mueller_column,)
-        schema[args.mueller_column] = {'dims': ('chan', 'corr')}
+    # # Mueller term (complex valued)
+    # if args.mueller_column is not None:
+    #     columns += (args.mueller_column,)
+    #     schema[args.mueller_column] = {'dims': ('chan', 'corr')}
 
-    # get max uv coords over all fields
+    # get max uv coords over all datasets
     uvw = []
     u_max = 0.0
     v_max = 0.0
@@ -267,10 +301,11 @@ def _init(**kw):
     row_chunks = {}
     ncorr = None
     for ims in ms:
-        xds = xds_from_ms(ims)
+        xds = xds_from_ms(ims, group_cols=group_by)
         row_chunks[ims] = {}
 
         for ds in xds:
+            idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
             spw = ds.DATA_DESC_ID
 
             if ncorr is None:
@@ -282,17 +317,16 @@ def _init(**kw):
                     raise ValueError("All data sets must have the same number of correlations")
 
             if args.row_chunk in [0, -1, None]:
-                row_chunks[ims][spw] = ds.dims['row']
-
+                row_chunks[ims][idt] = (ds.dims['row'],)
             else:
-                row_chunks[ims][spw] = args.row_chunk
+                row_chunks[ims][idt] = (args.row_chunk,)
 
     chunks = {}
     for ims in ms:
         chunks[ims] = []  # xds_from_ms expects a list per ds
-        for spw in freqs[ims]:
-            chunks[ims].append({'row': (row_chunks[ims][spw],),
-                                'chan': chan_chunks[ims][spw]['chan']})
+        for idt in freqs[ims]:
+            chunks[ims].append({'row': row_chunks[ims][idt],
+                                'chan': chan_chunks[ims][idt]})
 
     dirties = {}
     psfs = {}
@@ -300,7 +334,7 @@ def _init(**kw):
     radec = None  # assumes we are only imaging field 0 of first MS
     for ims in ms:
         xds = xds_from_ms(ims, chunks=chunks[ims], columns=columns,
-                          table_schema=schema)
+                          table_schema=schema, group_cols=group_by)
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
@@ -325,6 +359,7 @@ def _init(**kw):
                              f"from correlations {pols[0].CORR_TYPE.data}")
 
         for ds in xds:
+            idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
             field = fields[ds.FIELD_ID]
 
             # check fields match
@@ -355,10 +390,10 @@ def _init(**kw):
             else:
                 imaging_weight = None
 
-            if args.mueller_column is not None:
-                mueller = getattr(ds, args.mueller_column).data.astype(data.dtype)
-            else:
-                mueller = None
+            # if args.mueller_column is not None:
+            #     mueller = getattr(ds, args.mueller_column).data.astype(data.dtype)
+            # else:
+            #     mueller = None
 
             if args.flag_column is not None:
                 flag = getattr(ds, args.flag_column).data
@@ -372,7 +407,7 @@ def _init(**kw):
                 'data':data,
                 'weight':weight,
                 'imaging_weight':imaging_weight,
-                'mueller':mueller,
+                'mueller':None,
                 'flag':flag,
                 'frow':frow,
                 'uvw':uvw,
@@ -384,10 +419,10 @@ def _init(**kw):
                 'epsilon':args.epsilon,
                 'wstack':args.wstack,
                 'double_accum':args.double_accum,
-                'freq':freqs[ims][spw],
-                'fbin_idx':fbin_idx[ims][spw],
-                'fbin_counts':fbin_counts[ims][spw],
-                'band_mapping':band_mapping[ims][spw],
+                'freq':freqs[ims][idt],
+                'fbin_idx':fbin_idx[ims][idt],
+                'fbin_counts':fbin_counts[ims][idt],
+                'band_mapping':band_mapping[ims][idt],
                 'freq_out':freq_out,
                 'nx':nx,
                 'ny':ny,
@@ -400,7 +435,7 @@ def _init(**kw):
                 'do_weights':args.weights
             }
 
-            if 'I' in args.products.upper():
+            if 'I' in args.products:
                 # I always has the same pattern
                 idx0 = 0
                 idxf = -1
@@ -415,7 +450,7 @@ def _init(**kw):
                 out_datasets.setdefault('I', [])
                 out_datasets['I'].append(out_ds_I)
 
-            if 'Q' in args.products.upper():
+            if 'Q' in args.products:
                 if pol_type.lower() == 'linear':
                     idx0 = 0
                     idxf = -1
@@ -434,7 +469,7 @@ def _init(**kw):
                 out_datasets.setdefault('Q', [])
                 out_datasets['Q'].append(out_ds_Q)
 
-            if 'U' in args.products.upper():
+            if 'U' in args.products:
                 if pol_type.lower() == 'linear':
                     idx0 = 1
                     idxf = 2
@@ -453,7 +488,7 @@ def _init(**kw):
                 out_datasets.setdefault('U', [])
                 out_datasets['U'].append(out_ds_U)
 
-            if 'V' in args.products.upper():
+            if 'V' in args.products:
                 if pol_type.lower() == 'linear':
                     idx0 = 1
                     idxf = 2
@@ -474,7 +509,7 @@ def _init(**kw):
 
     writes = {}
     wlist = []  # for visualisation
-    for p in args.products.upper():
+    for p in args.products:
         if os.path.isdir(args.output_filename + f'_{p}.zarr'):
             print(f"Removing existing {args.output_filename}_{p}.zarr folder",
                   file=log)
@@ -516,7 +551,7 @@ def _init(**kw):
             hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
                             np.mean(freq_out))
 
-            for i, p in enumerate(sorted(args.products.upper())):
+            for i, p in enumerate(sorted(args.products)):
                 xds = xds_from_zarr(args.output_filename + f'_{p}.zarr')
 
                 # TODO - add logic to select which spw and scan to reduce over
@@ -552,7 +587,7 @@ def _init(**kw):
             hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
                                 np.mean(freq_out))
 
-            for i, p in enumerate(sorted(args.products.upper())):
+            for i, p in enumerate(sorted(args.products)):
                 xds = xds_from_zarr(args.output_filename + f'_{p}.zarr')
 
                 # TODO - add logic to select which spw and scan to reduce over

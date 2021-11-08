@@ -9,6 +9,59 @@ from ducc0.fft import r2c, c2r
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
+
+def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
+    nband, nx, ny = model
+    mask = np.any(model, axis=0)
+    # components excluding zeros
+    beta = model[:, mask]
+    if spectral_poly_order > infreqs.size:
+        raise ValueError("spectral-poly-order can't be larger than nband")
+
+    # we are given frequencies at bin centers, convert to bin edges
+    delta_freq = infreqs[1] - infreqs[0]
+    wlow = (infreqs - delta_freq/2.0)/ref_freq
+    whigh = (infreqs + delta_freq/2.0)/ref_freq
+    wdiff = whigh - wlow
+
+    # set design matrix for each component
+    # look at Offringa and Smirnov 1706.06786
+    Xfit = np.zeros([nband, order])
+    for i in range(1, order+1):
+        Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+
+    # we want to fit a function modeli = Xfit comps
+    # where Xfit is the design matrix corresponding to an integrated
+    # polynomial model. The normal equations tells us
+    # comps = (Xfit.T wsums Xfit)**{-1} Xfit.T wsums modeli
+    # (Xfit.T wsums Xfit) == hesscomps
+    # Xfit.T wsums modeli == dirty_comps
+
+    dirty_comps = Xfit.T.dot(wsums*beta)
+
+    hess_comps = Xfit.T.dot(wsums*Xfit)
+
+    comps = np.linalg.solve(hess_comps, dirty_comps)
+
+    # now we want to evaluate the unintegrated polynomial coefficients
+    # the corresponding design matrix is constructed for a polynomial of
+    # the form
+    # modeli = comps[0]*1 + comps[1] * w + comps[2] w**2 + ...
+    # where w = outfreqs/ref_freq
+    w = outfreqs/ref_freq
+    # nchan = outfreqs
+    # Xeval = np.zeros((nchan, order))
+    # for c in range(nchan):
+    #     Xeval[:, c] = w**c
+    Xeval = np.tile(w, order)**np.arange(order)
+
+    betaout = Xeval.dot(comps)
+
+    modelout = np.zeros((nchan, nx, ny))
+    modelout[:, mask] = betaout
+
+    return modelout
+
 def compute_context(scheduler, output_filename):
     if scheduler == "distributed":
         return performance_report(filename=output_filename + "_dask_report.html.pfb")
@@ -220,7 +273,8 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
 
     return image, gausskern[:, unpad_x, unpad_y]
 
-def chan_to_band_mapping(ms_name, nband=None):
+def chan_to_band_mapping(ms_name, nband=None,
+                         group_by=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']):
     '''
     Construct dictionaries containing per MS and SPW channel to band mapping.
     Currently assumes we are only imaging field 0 of the first MS.
@@ -228,17 +282,20 @@ def chan_to_band_mapping(ms_name, nband=None):
     Input:
     ms_name     - list of ms names
     nband       - number of imaging bands
+    group_by    - dataset grouping
 
     Output:
-    freqs           - dict[MS][SPW] chunked dask arrays of the freq to band mapping
-    freq_bin_idx    - dict[MS][SPW] chunked dask arrays of bin starting indices
-    freq_bin_counts - dict[MS][SPW] chunked dask arrays of counts in each bin
-    freq_out        - frequencies of average (LB - should a weighted sum rather be computed?)
-    band_mapping    - dict[MS][SPW] identifying imaging bands going into degridder
-    chan_chunks     - dict[MS][SPW] specifying dask chunking scheme over channel
+    freqs           - dict[MS][IDENTITY] chunked dask arrays of the freq to band mapping
+    freq_bin_idx    - dict[MS][IDENTITY] chunked dask arrays of bin starting indices
+    freq_bin_counts - dict[MS][IDENTITY] chunked dask arrays of counts in each bin
+    freq_out        - frequencies of average
+    band_mapping    - dict[MS][IDENTITY] identifying imaging bands going into degridder
+    chan_chunks     - dict[MS][IDENTITY] specifies dask chunking scheme over channel
+
+    where IDENTITY is constructed from the FIELD/DDID and SCAN ID's.
     '''
-    from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms import xds_from_storage_table as xds_from_table
+    from daskms import xds_from_ms
+    from daskms import xds_from_table
     import dask
     import dask.array as da
 
@@ -250,9 +307,9 @@ def chan_to_band_mapping(ms_name, nband=None):
     radec = None
     freqs = {}
     all_freqs = []
-    spws = {}
     for ims in ms_name:
-        xds = xds_from_ms(ims, chunks={"row": -1}, columns=('TIME',))
+        xds = xds_from_ms(ims, chunks={"row": -1}, columns=('TIME',),
+                          group_cols=group_by)
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
@@ -267,8 +324,8 @@ def chan_to_band_mapping(ms_name, nband=None):
         pols = dask.compute(pols)[0]
 
         freqs[ims] = {}
-        spws[ims] = []
         for ds in xds:
+            identity = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
             field = fields[ds.FIELD_ID]
 
             # check fields match
@@ -280,9 +337,8 @@ def chan_to_band_mapping(ms_name, nband=None):
 
             spw = spws_table[ds.DATA_DESC_ID]
             tmp_freq = spw.CHAN_FREQ.data.squeeze()
-            freqs[ims][ds.DATA_DESC_ID] = tmp_freq
+            freqs[ims][identity] = tmp_freq
             all_freqs.append(list([tmp_freq]))
-            spws[ims].append(ds.DATA_DESC_ID)
 
 
     # freq mapping
@@ -323,9 +379,9 @@ def chan_to_band_mapping(ms_name, nband=None):
         freq_bin_idx[ims] = {}
         freq_bin_counts[ims] = {}
         band_mapping[ims] = {}
-        chan_chunks[ims] = []
-        for spw in freqs[ims]:
-            freq = np.atleast_1d(dask.compute(freqs[ims][spw])[0])
+        chan_chunks[ims] = {}
+        for idt in freqs[ims]:
+            freq = np.atleast_1d(dask.compute(freqs[ims][idt])[0])
             band_map = np.zeros(freq.size, dtype=np.int32)
             for band in range(nband):
                 indl = freq >= fbins[band]
@@ -336,12 +392,12 @@ def chan_to_band_mapping(ms_name, nband=None):
                 band_map = np.where(indl & indu, band, band_map)
             # to dask arrays
             bands, bin_counts = np.unique(band_map, return_counts=True)
-            band_mapping[ims][spw] = da.from_array(bands, chunks=1)
-            chan_chunks[ims].append({'chan': tuple(bin_counts)})
-            freqs[ims][spw] = da.from_array(freq, chunks=tuple(bin_counts))
+            band_mapping[ims][idt] = da.from_array(bands, chunks=1)
+            chan_chunks[ims][idt] = tuple(bin_counts)
+            freqs[ims][idt] = da.from_array(freq, chunks=tuple(bin_counts))
             bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
-            freq_bin_idx[ims][spw] = da.from_array(bin_idx, chunks=1)
-            freq_bin_counts[ims][spw] = da.from_array(bin_counts, chunks=1)
+            freq_bin_idx[ims][idt] = da.from_array(bin_idx, chunks=1)
+            freq_bin_counts[ims][idt] = da.from_array(bin_counts, chunks=1)
 
     return freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks
 
@@ -350,8 +406,8 @@ def stitch_images(dirties, nband, band_mapping):
     dirty = np.zeros((nband, nx, ny), dtype=dirties[0].dtype)
     d = 0
     for ims in band_mapping:
-        for spw in band_mapping[ims]:
-            for b, band in enumerate(band_mapping[ims][spw]):
+        for idt in band_mapping[ims]:
+            for b, band in enumerate(band_mapping[ims][idt]):
                 ne.evaluate('a + b', local_dict={
                     'a': dirty[band],
                     'b': dirties[d][b]},
