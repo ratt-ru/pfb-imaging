@@ -297,7 +297,7 @@ def _grid(**kw):
     tbin_counts = {}
     ncorr = None
     for ims, ms in enumerate(args.ms):
-        xds = xds_from_ms(ms, columns=['TIME'], group_cols=group_by)
+        xds = xds_from_ms(ms, group_cols=group_by)
         ms_chunks[ms] = []  # daskms expects a list per ds
         gain_chunks[ms] = []
         if args.gain_table is not None:
