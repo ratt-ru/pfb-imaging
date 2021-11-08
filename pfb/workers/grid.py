@@ -414,6 +414,7 @@ def _init(**kw):
                 'time':ds.TIME.data,
                 'fid':ds.FIELD_ID,
                 'ddid':ds.DATA_DESC_ID,
+                'scanid':ds.SCAN_NUMBER,
                 'row_out_chunk':args.row_out_chunk,
                 'nthreads':args.nvthreads,
                 'epsilon':args.epsilon,
