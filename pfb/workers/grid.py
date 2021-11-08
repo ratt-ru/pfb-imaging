@@ -171,7 +171,7 @@ def _grid(**kw):
     from dask.diagnostics import ProgressBar
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
-    from daskms.experimental.zarr import xds_to_zarr
+    from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.calibration.utils import chunkify_rows
@@ -301,7 +301,7 @@ def _grid(**kw):
         ms_chunks[ms] = []  # daskms expects a list per ds
         gain_chunks[ms] = []
         if args.gain_table is not None:
-            G = xds_from_zarr(args.gain_table[ims])
+            G = xds_from_zarr(args.gain_table[ims].rstrip('/') + '::NET')
 
         for ids, ds in enumerate(xds):
             idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
@@ -352,7 +352,7 @@ def _grid(**kw):
                           table_schema=schema, group_cols=group_by)
 
         if args.gain_table is not None:
-            G = xds_from_zarr(args.gain_table[ims] + '::NET',
+            G = xds_from_zarr(args.gain_table[ims].rstrip('/') + '::NET',
                               chunks=gain_chunks[ms])
 
         # subtables
@@ -567,8 +567,6 @@ def _grid(**kw):
 
     # convert to fits files
     if args.fits_mfs or not args.no_fits_cubes:
-        from daskms.experimental.zarr import xds_from_zarr
-
         if args.dirty:
             print("Saving dirty as fits", file=log)
             dirty = np.zeros((len(args.products), nband, nx, ny), dtype=args.output_type)
