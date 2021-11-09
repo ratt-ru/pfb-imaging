@@ -416,7 +416,7 @@ def _grid(**kw):
                 imaging_weight = None
 
             if args.gain_table is not None:
-                jones = G[ids]
+                jones = G[ids].gains.data
             else:
                 jones = None
 
@@ -434,7 +434,7 @@ def _grid(**kw):
                 'imaging_weight':imaging_weight,
                 'ant1':ds.ANTENNA1.data,
                 'ant2':ds.ANTENNA2.data,
-                'jones':jones.gains.data,
+                'jones':jones,
                 'flag':flag,
                 'frow':frow,
                 'uvw':uvw,

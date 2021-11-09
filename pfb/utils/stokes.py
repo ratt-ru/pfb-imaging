@@ -56,18 +56,21 @@ def single_stokes(data=None,
 
     # compute the mueller term
     nrow, nchan, ncorr = data.shape
-    if ncorr > 2:
-        acol = da.ones((nrow, nchan, 1, 2, 2),
-                       chunks=(data_chunks[0], data_chunks[1], 1, 2, 2),
-                       dtype=data_type)
-    else:
-        acol = da.ones((nrow, nchan, 1, ncorr),
-                       chunks=(data_chunks[0], data_chunks[1], 1, ncorr),
-                       dtype=data_type)
+    if jones is not None:
+        if ncorr > 2:
+            acol = da.ones((nrow, nchan, 1, 2, 2),
+                        chunks=(data_chunks[0], data_chunks[1], 1, 2, 2),
+                        dtype=data_type)
+        else:
+            acol = da.ones((nrow, nchan, 1, ncorr),
+                        chunks=(data_chunks[0], data_chunks[1], 1, ncorr),
+                        dtype=data_type)
 
-    jones = da.swapaxes(jones, 1, 2)
-    mueller = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2,
-                          jones, acol).reshape(nrow, nchan, ncorr)
+        jones = da.swapaxes(jones, 1, 2)
+        mueller = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2,
+                            jones, acol).reshape(nrow, nchan, ncorr)
+    else:
+        mueller = None
 
     dw = weight_data(data, weight, imaging_weight, mueller, flag, frow,
                      idx0, idxf, sign, csign)
