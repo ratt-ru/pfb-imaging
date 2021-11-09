@@ -66,7 +66,8 @@ def single_stokes(data=None,
                        dtype=data_type)
 
     jones = da.swapaxes(jones, 1, 2)
-    mueller = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2, jones, acol)
+    mueller = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2,
+                          jones, acol).reshape(nrow, nchan, ncorr)
 
     dw = weight_data(data, weight, imaging_weight, mueller, flag, frow,
                      idx0, idxf, sign, csign)
@@ -259,7 +260,7 @@ def _weight_data_impl(data, weight, imaging_weight, mueller, flag, frow,
         weightxx = weightxx * imaging_weight[:, :, idx0]
         weightyy = weightyy * imaging_weight[:, :, idxf]
 
-    if jones is not None:
+    if mueller is not None:
         # apply adjoint of Mueller term to weighted data
         data = (data[:, :, idx0] * mueller[:, :, idx0].conj() * weightxx +
                 sign * data[:, :, idxf] * mueller[:, :, idxf].conj() * weightyy) * csign

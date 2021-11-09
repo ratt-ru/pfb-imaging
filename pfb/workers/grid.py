@@ -300,6 +300,8 @@ def _grid(**kw):
         xds = xds_from_ms(ms, group_cols=group_by)
         ms_chunks[ms] = []  # daskms expects a list per ds
         gain_chunks[ms] = []
+        tbin_idx[ms] = {}
+        tbin_counts[ms] = {}
         if args.gain_table is not None:
             G = xds_from_zarr(args.gain_table[ims].rstrip('/') + '::NET')
 
@@ -334,11 +336,13 @@ def _grid(**kw):
                 tmp_dict = {}
                 for name, val in zip(gain.GAIN_AXES, gain.GAIN_SPEC):
                     if name == 'gain_t':
-                        tmp_dict[name] = tbin_counts
+                        tmp_dict[name] = (utpc,)
                     elif name == 'gain_f':
                         tmp_dict[name] = chan_chunks[ms][idt]
                     elif name == 'dir':
-                        if val > 1:
+                        if len(val) > 1:
+                            raise ValueError("Only DI gains currently supported")
+                        if val[0] > 1:
                             raise ValueError("Only DI gains currently supported")
                         tmp_dict[name] = val
                     else:
@@ -356,10 +360,10 @@ def _grid(**kw):
                               chunks=gain_chunks[ms])
 
         # subtables
-        ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
-        fields = xds_from_table(ims + "::FIELD")
-        spws = xds_from_table(ims + "::SPECTRAL_WINDOW")
-        pols = xds_from_table(ims + "::POLARIZATION")
+        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")
+        fields = xds_from_table(ms + "::FIELD")
+        spws = xds_from_table(ms + "::SPECTRAL_WINDOW")
+        pols = xds_from_table(ms + "::POLARIZATION")
 
         # subtable data
         ddids = dask.compute(ddids)[0]
@@ -430,7 +434,7 @@ def _grid(**kw):
                 'imaging_weight':imaging_weight,
                 'ant1':ds.ANTENNA1.data,
                 'ant2':ds.ANTENNA2.data,
-                'jones':jones,
+                'jones':jones.gains.data,
                 'flag':flag,
                 'frow':frow,
                 'uvw':uvw,
@@ -545,18 +549,18 @@ def _grid(**kw):
         wlist.append(writes[p])
 
 
-    dask.visualize(*wlist, color="order", cmap="autumn",
-                   node_attr={"penwidth": "4"},
-                   filename=args.output_filename + '_writes_ordered_graph.pdf',
-                   optimize_graph=False)
-    dask.visualize(*wlist, filename=args.output_filename +
-                   '_writes_graph.pdf', optimize_graph=False)
-    dask.visualize(writes['I'], color="order", cmap="autumn",
-                   node_attr={"penwidth": "4"},
-                   filename=args.output_filename + '_writes_I_ordered_graph.pdf',
-                   optimize_graph=False)
-    dask.visualize(writes['I'], filename=args.output_filename +
-                   '_writes_I_graph.pdf', optimize_graph=False)
+    # dask.visualize(*wlist, color="order", cmap="autumn",
+    #                node_attr={"penwidth": "4"},
+    #                filename=args.output_filename + '_writes_ordered_graph.pdf',
+    #                optimize_graph=False)
+    # dask.visualize(*wlist, filename=args.output_filename +
+    #                '_writes_graph.pdf', optimize_graph=False)
+    # dask.visualize(writes['I'], color="order", cmap="autumn",
+    #                node_attr={"penwidth": "4"},
+    #                filename=args.output_filename + '_writes_I_ordered_graph.pdf',
+    #                optimize_graph=False)
+    # dask.visualize(writes['I'], filename=args.output_filename +
+    #                '_writes_I_graph.pdf', optimize_graph=False)
 
     from pfb.utils.misc import compute_context
 
