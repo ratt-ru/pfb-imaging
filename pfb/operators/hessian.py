@@ -8,6 +8,38 @@ iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
 
+def hessian_xds(alpha, xdss,
+                cell=None,
+                wstack=None,
+                epsilon=None,
+                double_accum=None,
+                nthreads=None,
+                sigmainv=None,
+                wsum=None,
+                pmask=None,
+                padding=None,
+                bases=None,
+                iy=None,
+                sy=None,
+                ntot=None,
+                nmax=None,
+                nlevels=None,
+                nx=None,
+                ny=None):
+
+    hesses = []
+
+    for xds in xdss:
+        wgt = xds.WEIGHT.data
+        uvw = xds.UVW.data
+        freq = xds.FREQ.data
+        beam = xds.BEAM.data
+
+        hesses.append(hessian_reg(alpha, beam, uvw, weight, freq))
+
+    return da.stack(hesses).sum(axis=0) + alpha * sigmainv**2
+
+
 def _hessian_reg_wgt(alpha, beam, uvw, weight, freq,
                      cell=None,
                      wstack=None,
