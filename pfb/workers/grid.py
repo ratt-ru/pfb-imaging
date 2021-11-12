@@ -564,8 +564,6 @@ def _grid(**kw):
     dask.visualize(writes, filename=args.output_filename +
                    '_writes_I_graph.pdf', optimize_graph=False)
 
-    quit()
-
     from pfb.utils.misc import compute_context
 
     with compute_context(args.scheduler, args.output_filename):
