@@ -21,8 +21,6 @@ log = pyscilog.get_logger('FORWARD')
               help="Path to mask.fits.")
 @click.option('-pmask', '--point-mask',
               help="Path to point source mask.fits.")
-@click.option('-band', '--band', default='L',
-              help='L or UHF band when using JimBeam.')
 @click.option('-bases', '--bases', default='self',
               help='Wavelet bases to use. Give as str separated by | eg.'
               '-bases self|db1|db2|db3|db4')
@@ -33,10 +31,10 @@ log = pyscilog.get_logger('FORWARD')
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
               help='Gridder accuracy')
 @click.option('-sinv', '--sigmainv', type=float, default=1.0,
-              help='Standard deviation of assumed GRF prior.')
+              help='Standard deviation of assumed GRF prior.'
+              'Set it to rms/nband if uncertain')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
-@click.option('--no-use-beam/--use-beam', default=True)
 @click.option('--no-use-psf/--use-psf', default=True)
 @click.option('-cgtol', "--cg-tol", type=float, default=1e-5,
               help="Tolerance of conjugate gradient")
@@ -68,13 +66,14 @@ log = pyscilog.get_logger('FORWARD')
               help="Total available threads. Default uses all available threads")
 def forward(**kw):
     '''
-    Extract flux at model locations.
+    Forward step aka flux mop.
 
-    Will write out the result of solving
+    Solves
 
     x = (R.H W R + sigmainv**2 I)^{-1} ID
 
-    assuming that R.H W R can be approximated as a convolution with the PSF.
+    with a suitable approximation to R.H W R (eg. convolution with the PSF,
+    BDA'd weights or none).
 
     If a host address is provided the computation can be distributed
     over imaging band and row. When using a distributed scheduler both
@@ -131,6 +130,7 @@ def _forward(**kw):
     from daskms.experimental.zarr import xds_from_zarr
     from pfb.utils.fits import load_fits, set_wcs, save_fits
     from pfb.operators.psi import im2coef, coef2im
+    from pfb.opt.pcg import pcg
     from astropy.io import fits
     import pywt
 
@@ -183,17 +183,9 @@ def _forward(**kw):
         padding.append(slice(0, ntots[i]))
 
     print("Initialising starting values", file=log)
-    alpha0 = np.zeros((nband, nbasis, nmax), dtype=x0.dtype)
-    alpha_resid = np.zeros((nband, nbasis, nmax), dtype=x0.dtype)
-    for l in range(nband):
-        alpha_resid[l] = im2coef((beam_image[l] * residual[l]).compute(),
-                            pmask, bases, ntots, nmax, args.nlevels)
-        alpha0[l] = im2coef(x0[l].compute(),
-                            pmask, bases, ntots, nmax, args.nlevels)
-
-    alpha0 = da.from_array(alpha0, chunks=(1, -1, -1), name=False)
-    alpha_resid = da.from_array(alpha_resid, chunks=(1, -1, -1),
-                                name=False)
+    alpha_resid = im2coef(beam_image * residual,
+                          pmask, bases, ntots, nmax, args.nlevels)
+    alpha0 = im2coef(x0, pmask, bases, ntots, nmax, args.nlevels)
 
     waveopts = {}
     waveopts['bases'] = bases
@@ -207,18 +199,9 @@ def _forward(**kw):
     waveopts['ny'] = ny
     waveopts['padding'] = padding
 
-    cgopts = {}
-    cgopts['tol'] = args.cg_tol
-    cgopts['maxit'] = args.cg_maxit
-    cgopts['minit'] = args.cg_minit
-    cgopts['verbosity'] = args.cg_verbose
-    cgopts['report_freq'] = args.cg_report_freq
-    cgopts['backtrack'] = args.backtrack
-
     if not args.no_use_psf:
         print("Initialising psf", file=log)
         from ducc0.fft import r2c
-        from pfb.opt.pcg import pcg_psf
         normfact = 1.0
 
         psf = xds.PSF.data
@@ -282,7 +265,26 @@ def _forward(**kw):
         hess = partial(hessian_wgt_xds, xdss=xds, waveopts=waveopts,
                        hessopts=hessopts, sigmainv=args.sigmainv)
 
+    x = np.random.randn(nband, nbasis, nmax)
+
+    res = hess(x)
+
+    print(res)
+
+    quit()
+
+    cgopts = {}
+    cgopts['tol'] = args.cg_tol
+    cgopts['maxit'] = args.cg_maxit
+    cgopts['minit'] = args.cg_minit
+    cgopts['verbosity'] = args.cg_verbose
+    cgopts['report_freq'] = args.cg_report_freq
+    cgopts['backtrack'] = args.backtrack
+
+
+
     # run pcg for update
+    # model = pcg()
 
 
     print("Converting solution to model image", file=log)

@@ -13,7 +13,20 @@ def hessian_wgt_xds(alpha, xdss, waveopts, hessopts,
     '''
     Vis space Hessian reduction over dataset
     '''
-    hesses = []
+    pmask = waveopts['pmask']
+    padding = waveopts['padding']
+    iy = waveopts['iy']
+    sy = waveopts['sy']
+    nx = waveopts['nx']
+    ny = waveopts['ny']
+    ntot = waveopts['ntot']
+    nmax = waveopts['nmax']
+    nlevels = waveopts['nlevels']
+
+    # coeff to image
+    x = coef2im(alpha, pmask, bases, padding, iy, sy, nx, ny)
+
+    convims = []
     wsum = 0
     for xds in xdss:
         wgt = xds.WEIGHT.data
@@ -26,35 +39,31 @@ def hessian_wgt_xds(alpha, xdss, waveopts, hessopts,
 
         convim = hessian_wgt(uvw, weight, alpha, beam, freq, fbin_idx,
                              fbin_counts, waveopts, hessopts)
-        hesses.append(convim)
-    hess = da.stack(hesses).sum(axis=0)/wsum
-    if compute:
-        return hess.compute() + alpha * sigmainv**2
-    else:
-        return hess + alpha * sigmainv**2
+        convims.append(convim)
 
-def _hessian_wgt_impl(uvw, weight, alpha, beam, freq, fbin_idx, fbin_counts,
+    # LB - it's not this simple when there are multiple spw's and fields
+    # to consider
+    convim = da.stack(hesses).sum(axis=0)/wsum
+
+    alpha_rec = im2coeff(convim, pmask, bases, ntot, nmax, nlevels)
+
+    if compute:
+        return alpha_rec.compute() + alpha * sigmainv**2
+    else:
+        return alpha_rec + alpha * sigmainv**2
+
+def _hessian_wgt_impl(uvw, weight, x, beam, freq, fbin_idx, fbin_counts,
                       cell=None,
                       wstack=None,
                       epsilon=None,
                       double_accum=None,
-                      nthreads=None,
-                      pmask=None,
-                      padding=None,
-                      bases=None,
-                      iy=None,
-                      sy=None,
-                      ntot=None,
-                      nlevels=None):
+                      nthreads=None):
     """
     Tikhonov regularised Hessian of coeffs
     """
     nband, nx, ny = beam.shape
-    nmax = alpha.shape[-1]
-    alpha_rec = np.zeros_like(alpha)  # no chunking over row for now
     fbin_idx2 = fbin_idx - fbin_idx.min()  # adjust for freq chunking
     for b in range(nband):
-        x = coef2im(alpha[b], pmask, bases, padding, iy, sy, nx, ny)
 
         flow = fbin_idx2[b]
         fhigh = fbin_idx2[b] + fbin_counts[b]
@@ -81,30 +90,25 @@ def _hessian_wgt_impl(uvw, weight, alpha, beam, freq, fbin_idx, fbin_counts,
                       do_wstacking=wstack,
                       double_precision_accumulation=double_accum)
 
-        alpha_rec[b] = im2coef(beam[b]*im, pmask, bases, ntot, nmax, nlevels)
-
-    return alpha_rec
+    return im
 
 
-def _hessian_wgt(uvw, weight, alpha, beam, freq, fbin_idx, fbin_counts,
-                 waveopts, hessopts):
-    return _hessian_wgt_impl(uvw[0], weight[0], alpha, beam[0][0], freq,
-                             fbin_idx, fbin_counts, **waveopts, **hessopts)
+def _hessian_wgt(uvw, weight, x, beam, freq, fbin_idx, fbin_counts, hessopts):
+    return _hessian_wgt_impl(uvw[0][0], weight[0], x, beam, freq,
+                             fbin_idx, fbin_counts, **hessopts)
 
-def hessian_wgt(uvw, weight, alpha, beam, freq, fbin_idx, fbin_counts,
-                waveopts, hessopts):
-    return da.blockwise(_hessian_wgt, ('chan', 'basis', 'nmax')
+def hessian_wgt(uvw, weight, x, beam, freq, fbin_idx, fbin_counts, hessopts):
+    return da.blockwise(_hessian_wgt, ('chan', 'nx', 'ny')
 ,                       uvw, ("row", 'three'),
                         weight, ('row', 'chan'),
-                        alpha, ('chan', 'basis', 'nmax'),
+                        x, ('chan', 'nx', 'ny'),
                         beam, ('chan', 'nx', 'ny'),
                         freq, ('chan'),
                         fbin_idx, ('chan'),
                         fbin_counts, ('chan'),
-                        waveopts, None,
                         hessopts, None,
                         align_arrays=False,
-                        adjust_chunks={'chan': beam.chunks[0]},
+                        adjust_chunks={'chan': x.chunks[0]},
                         dtype=alpha.dtype)
 
 

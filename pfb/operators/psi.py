@@ -231,21 +231,22 @@ def _coef2im_impl(alpha, pmask, bases, padding, iy, sy, nx, ny):
             x[l] += wave
     return x
 
+def _coef2im(alpha, pmask, bases, padding, iy, sy, nx, ny):
+    return _coef2im_impl(alpha[0][0], pmask, bases[0], padding[0],
+                         iy, sy, nx, ny)
+
 def coef2im(alpha, pmask, bases, padding, iy, sy, nx, ny):
 
-    return da.blockwise(_dot_internal_wrapper, ("band", "nx", "ny"),
+    return da.blockwise(_coef2im, ("band", "nx", "ny"),
                          alpha, ("band", "basis", "ntot"),
                          pmask, ("nx", "ny"),
                          bases, ("basis",),
                          padding, ("basis",),
-                         iy, None,  # ("basis",),
-                         sy, None,  # ("basis",),
-                         sqrtP, None,
+                         iy, None,
+                         sy, None,
                          nx, None,
-                         f.ny, None,
-                         self.real_type, None,
-                         new_axes={"nx": self.nx, "ny": self.ny},
-                         dtype=self.real_type,
+                         ny, None,
+                         dtype=alpha.dtype,
                          align_arrays=False)
 
 def _im2coef_impl(x, pmask, bases, ntot, nmax, nlevels):
@@ -268,3 +269,17 @@ def _im2coef_impl(x, pmask, bases, ntot, nmax, nlevels):
                 alpha[l, b] = np.pad(alpha_tmp, (0, nmax-ntot[b]), mode='constant')
 
     return alpha
+
+def _im2coef(x, pmask, bases, ntot, nmax, nlevels):
+    return _im2coef_impl(x[0][0], pmask[0][0], bases, ntot, nmax, nlevels)
+
+
+def im2coef(x, pmask, bases, ntot, nmax, nlevels):
+    return da.blockwise(_im2coef, ("band", "basis", "ntot"),
+                        x, ("band", "nx", "ny"),
+                        pmask, ("nx", "ny"),
+                        bases, ("basis",),
+                        ntot, ("basis",),
+                        nmax, None,
+                        nlevels, None,
+                        dtype=x.dtype)
