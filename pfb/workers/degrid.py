@@ -16,10 +16,13 @@ log = pyscilog.get_logger('DEGRID')
 @click.option('-mc', '--model-column', default='MODEL_DATA',
               help="Model column to write visibilities to."
               "Must be the same across MSs")
-@click.option('-rchunk', '--row-chunk',
+@click.option('-rchunk', '--row-chunk', type=int, default=-1,
               help="Number of rows in a chunk.")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
               help='Gridder accuracy')
+@click.option('--group-by-field/--no-group-by-field', default=True)
+@click.option('--group-by-ddid/--no-group-by-ddid', default=True)
+@click.option('--group-by-scan/--no-group-by-scan', default=True)
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--mock/--no-mock', default=False)
 @click.option('--double-accum/--no-double-accum', default=True)
@@ -51,6 +54,8 @@ log = pyscilog.get_logger('DEGRID')
 @click.option('-mem', '--mem-limit', type=float,
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
+              help="Total available threads. Default uses all available threads")
+@click.option('-scheduler', '--scheduler', default='distributed',
               help="Total available threads. Default uses all available threads")
 def degrid(**kw):
     '''
@@ -161,10 +166,27 @@ def _degrid(**kw):
     else:
         nband_out = args.nband_out
 
+    # TODO - optional grouping. We need to construct an identifier between
+    # dataset and field/spw/scan identifiers
+    group_by = []
+    if args.group_by_field:
+        group_by.append('FIELD_ID')
+    else:
+        raise NotImplementedError("Grouping by field is currently mandatory")
+
+    if args.group_by_ddid:
+        group_by.append('DATA_DESC_ID')
+    else:
+        raise NotImplementedError("Grouping by DDID is currently mandatory")
+
+    if args.group_by_scan:
+        group_by.append('SCAN_NUMBER')
+    else:
+        raise NotImplementedError("Grouping by scan is currently mandatory")
+
     # chan <-> band mapping
-    ms = args.ms
     freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
-        ms, nband=nband_out)
+        args.ms, nband=nband_out, group_by=group_by)
 
     if args.output_type is not None:
         output_type = np.dtype(args.output_type)
@@ -179,14 +201,16 @@ def _degrid(**kw):
     #         print('Chunking model same as data', file=log)
 
 
-    row_chunks = {}
+
+
+    ms_chunks = {}
     ncorr = None
-    for ims in ms:
-        xds = xds_from_ms(ims)
-        row_chunks[ims] = {}
+    for ms in args.ms:
+        xds = xds_from_ms(ms, group_cols=group_by)
+        ms_chunks[ms] = []  # daskms expects a list per ds
 
         for ds in xds:
-            spw = ds.DATA_DESC_ID
+            idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
 
             if ncorr is None:
                 ncorr = ds.dims['corr']
@@ -197,17 +221,12 @@ def _degrid(**kw):
                     raise ValueError("All data sets must have the same number of correlations")
 
             if args.row_chunk in [0, -1, None]:
-                row_chunks[ims][spw] = ds.dims['row']
-
+                rchunks = ds.dims['row']
             else:
-                row_chunks[ims][spw] = args.row_chunk
+                rchunks = args.row_chunk
 
-    chunks = {}
-    for ims in ms:
-        chunks[ims] = []  # xds_from_ms expects a list per ds
-        for spw in freqs[ims]:
-            chunks[ims].append({'row': row_chunks[ims][spw],
-                                'chan': chan_chunks[ims][spw]['chan']})  # LB - why this funny list[dict] structure?
+            ms_chunks[ms].append({'row': rchunks,
+                                  'chan': chan_chunks[ms][idt]})
 
     # interpolate model
     mask = np.any(model, axis=0)
@@ -240,7 +259,7 @@ def _degrid(**kw):
                 wsums[i] = hdr[f'WSUM{i}']
         except Exception as e:
             print("Can't find WSUMS in header, using unity weights", file=log)
-            wsums = np.ones(mfreqs.size)
+            wsums = np.ones((mfreqs.size,1))
 
         dirty_comps = Xfit.T.dot(wsums*beta)
 
@@ -260,14 +279,15 @@ def _degrid(**kw):
     freq_out = da.from_array(freq_out, chunks=-1, name=False)
     writes = []
     radec = None  # assumes we are only imaging field 0 of first MS
-    for ims in ms:
-        xds = xds_from_ms(ims, chunks=chunks[ims], columns=('UVW'))
+    for ms in args.ms:
+        xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=('UVW'),
+                          group_cols=group_by)
 
         # subtables
-        ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
-        fields = xds_from_table(ims + "::FIELD")
-        spws = xds_from_table(ims + "::SPECTRAL_WINDOW")
-        pols = xds_from_table(ims + "::POLARIZATION")
+        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")
+        fields = xds_from_table(ms + "::FIELD")
+        spws = xds_from_table(ms + "::SPECTRAL_WINDOW")
+        pols = xds_from_table(ms + "::POLARIZATION")
 
         # subtable data
         ddids = dask.compute(ddids)[0]
@@ -288,35 +308,36 @@ def _degrid(**kw):
             if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
                 continue
 
-            # TODO - need to use spw table
-            spw = ds.DATA_DESC_ID
+            idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
 
             model = model_from_comps(comps, freq_out, mask,
-                                     band_mapping[ims][spw],
+                                     band_mapping[ms][idt],
                                      ref_freq, freq_fitted)
 
             uvw = ds.UVW.data
             vis_I = im2vis(uvw,
-                           freqs[ims][spw],
+                           freqs[ms][idt],
                            model,
-                           freq_bin_idx[ims][spw],
-                           freq_bin_counts[ims][spw],
+                           freq_bin_idx[ms][idt],
+                           freq_bin_counts[ms][idt],
                            cell_rad,
                            nthreads=args.nvthreads,
                            epsilon=args.epsilon,
                            do_wstacking=args.wstack)
 
             # vis_Q = im2vis(uvw,
-            #              freqs[ims][spw],
+            #              freqs[ms][idt],
             #              model[1],
-            #              freq_bin_idx[ims][spw],
-            #              freq_bin_counts[ims][spw],
+            #              freq_bin_idx[ms][idt],
+            #              freq_bin_counts[ms][idt],
             #              cell_rad,
             #              nthreads=ngridder_threads,
             #              epsilon=args.epsilon,
             #              do_wstacking=args.wstack)
 
             model_vis = restore_corrs(vis_I, ncorr)
+
+            model_vis = model_vis.rechunk({1: -1})
 
 
             # if mstype == 'zarr':
@@ -328,16 +349,20 @@ def _degrid(**kw):
             out_ds = ds.assign(**{args.model_column: (("row", "chan", "corr"), model_vis)})
             out_data.append(out_ds)
 
-        writes.append(xds_to_table(out_data, ims, columns=[args.model_column]))
+        writes.append(xds_to_table(out_data, ms, columns=[args.model_column]))
 
-    # dask.visualize(*writes, filename=args.output_filename + '_predict_graph.pdf',
-    #                optimize_graph=False, collapse_outputs=True)
+    dask.visualize(*writes, filename=args.output_filename + '_predict_graph.pdf',
+                   optimize_graph=False, collapse_outputs=True)
 
     # if not args.mock:
     #     with performance_report(filename=args.output_filename + '_predict_per.html'):
     #         dask.compute(writes, optimize_graph=False)
 
-    dask.compute(writes, optimize_graph=False)
+    from pfb.utils.misc import compute_context
+    with compute_context(args.scheduler, args.output_filename):
+        dask.compute(writes,
+                     optimize_graph=False,
+                     scheduler=args.scheduler)
 
     print("All done here.", file=log)
 

@@ -64,7 +64,7 @@ def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
 
 def compute_context(scheduler, output_filename):
     if scheduler == "distributed":
-        return performance_report(filename=output_filename + "_dask_report.html.pfb")
+        return performance_report(filename=output_filename + "_dask_report.html")
     else:
         return ProgressBar()
 

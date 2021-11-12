@@ -220,7 +220,7 @@ def _grid(**kw):
                args.weight_column,
                args.flag_column,
                'UVW', 'ANTENNA1',
-               'ANTENNA2', 'TIME')
+               'ANTENNA2', 'TIME', 'INTERVAL')
     schema = {}
     schema[args.data_column] = {'dims': ('chan', 'corr')}\
     # TODO - this won't work with WEIGHT column
@@ -368,7 +368,7 @@ def _grid(**kw):
         # subtable data
         ddids = dask.compute(ddids)[0]
         fields = dask.compute(fields)[0]
-        spws = dask.compute(spws)[0]
+        # spws = dask.compute(spws)[0]
         pols = dask.compute(pols)[0]
 
 
@@ -396,6 +396,10 @@ def _grid(**kw):
             if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
                 # TODO - phase shift visibilities
                 continue
+
+            spw = spws[ds.DATA_DESC_ID]
+            chan_width = spw.CHAN_WIDTH.data.squeeze().rechunk(freqs[ms][idt].chunks)
+            # chan_width = da.from_array(chan_width, chunks=freqs[ms][idt].chunks)
 
             # MS may contain auto-correlations
             if 'FLAG_ROW' in ds:
@@ -426,7 +430,11 @@ def _grid(**kw):
                 flag = None
 
             uvw = ds.UVW.data
-            frow = frow
+
+            # this early compute is required because inlining
+            # weight_data w.r.t. frow doesn't seem to work otherwise
+            frow = frow.compute()
+            frow = da.from_array(frow, chunks=data.chunks[0])
 
             universal_opts = {
                 'data':data,
@@ -439,6 +447,7 @@ def _grid(**kw):
                 'frow':frow,
                 'uvw':uvw,
                 'time':ds.TIME.data,
+                'interval':ds.INTERVAL.data,
                 'fid':ds.FIELD_ID,
                 'ddid':ds.DATA_DESC_ID,
                 'scanid':ds.SCAN_NUMBER,
@@ -448,12 +457,14 @@ def _grid(**kw):
                 'wstack':args.wstack,
                 'double_accum':args.double_accum,
                 'freq':freqs[ms][idt],
+                'chan_width': chan_width,
                 'fbin_idx':fbin_idx[ms][idt],
                 'fbin_counts':fbin_counts[ms][idt],
                 'band_mapping':band_mapping[ms][idt],
                 'freq_out':freq_out,
                 'tbin_idx':tbin_idx[ms][idt],
                 'tbin_counts':tbin_counts[ms][idt],
+                'nband':nband,
                 'nx':nx,
                 'ny':ny,
                 'nx_psf':nx_psf,
@@ -538,7 +549,6 @@ def _grid(**kw):
                 out_datasets['V'].append(out_ds_V)
 
     writes = {}
-    wlist = []  # for visualisation
     for p in args.products:
         if os.path.isdir(args.output_filename + f'_{p}.zarr'):
             print(f"Removing existing {args.output_filename}_{p}.zarr folder",
@@ -546,21 +556,13 @@ def _grid(**kw):
             os.system(f"rm -r {args.output_filename}_{p}.zarr")
         writes[p] = xds_to_zarr(out_datasets[p], args.output_filename +
                                 f'_{p}.zarr', columns='ALL')
-        wlist.append(writes[p])
 
-
-    # dask.visualize(*wlist, color="order", cmap="autumn",
-    #                node_attr={"penwidth": "4"},
-    #                filename=args.output_filename + '_writes_ordered_graph.pdf',
-    #                optimize_graph=False)
-    # dask.visualize(*wlist, filename=args.output_filename +
-    #                '_writes_graph.pdf', optimize_graph=False)
-    # dask.visualize(writes['I'], color="order", cmap="autumn",
-    #                node_attr={"penwidth": "4"},
-    #                filename=args.output_filename + '_writes_I_ordered_graph.pdf',
-    #                optimize_graph=False)
-    # dask.visualize(writes['I'], filename=args.output_filename +
-    #                '_writes_I_graph.pdf', optimize_graph=False)
+    dask.visualize(writes, color="order", cmap="autumn",
+                   node_attr={"penwidth": "4"},
+                   filename=args.output_filename + '_writes_I_ordered_graph.pdf',
+                   optimize_graph=False)
+    dask.visualize(writes, filename=args.output_filename +
+                   '_writes_I_graph.pdf', optimize_graph=False)
 
     from pfb.utils.misc import compute_context
 

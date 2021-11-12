@@ -128,14 +128,14 @@ def _clean(**kw):
     from astropy.io import fits
 
     print("Loading dirty", file=log)
-    dirty = load_fits(args.dirty, dtype=args.output_type).squeeze()
+    dirty = load_fits(args.dirty, dtype=args.output_type).squeeze()[0]
     if len(dirty.shape) == 2:
         dirty = dirty[None, :, :]
     nband, nx, ny = dirty.shape
     hdr = fits.getheader(args.dirty)
 
     print("Loading psf", file=log)
-    psf = load_fits(args.psf, dtype=args.output_type).squeeze()
+    psf = load_fits(args.psf, dtype=args.output_type).squeeze()[0]
     if len(psf.shape) == 2:
         psf = psf[None, :, :]
     _, nx_psf, ny_psf = psf.shape
@@ -171,53 +171,26 @@ def _clean(**kw):
 
     # set up Hessian approximation
     if args.weight_table is not None:
-        normfact = wsum
         from africanus.gridding.wgridder.dask import hessian
         from pfb.utils.misc import plan_row_chunk
         from daskms.experimental.zarr import xds_from_zarr
 
         xds = xds_from_zarr(args.weight_table)[0]
         nrow = xds.row.size
-        freqs = xds.chan.data
-        nchan = freqs.size
+        freqs = xds.FREQ.data
+        fbin_idx = xds.FBIN_IDX.data
+        fbin_counts = xds.FBIN_COUNTS.data
 
-        # bin edges
-        fmin = freqs.min()
-        fmax = freqs.max()
-        fbins = np.linspace(fmin, fmax, nband + 1)
-
-        # chan <-> band mapping
-        band_mapping = {}
-        chan_chunks = {}
-        freq_bin_idx = {}
-        freq_bin_counts = {}
-        band_map = np.zeros(freqs.size, dtype=np.int32)
-        for band in range(nband):
-            indl = freqs >= fbins[band]
-            indu = freqs < fbins[band + 1] + 1e-6
-            band_map = np.where(indl & indu, band, band_map)
-
-        # to dask arrays
-        bands, bin_counts = np.unique(band_map, return_counts=True)
-        band_mapping = tuple(bands)
-        chan_chunks = {'chan': tuple(bin_counts)}
-        freqs = da.from_array(freqs, chunks=tuple(bin_counts))
-        bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
-        freq_bin_idx = da.from_array(bin_idx, chunks=1)
-        freq_bin_counts = da.from_array(bin_counts, chunks=1)
 
         def convolver(x):
             model = da.from_array(x,
                           chunks=(1, nx, ny), name=False)
 
-            xds = xds_from_zarr(args.weight_table, chunks={'row': -1,
-                                'chan': bin_counts})[0]
-
             convolvedim = hessian(xds.UVW.data,
                                   freqs,
                                   model,
-                                  freq_bin_idx,
-                                  freq_bin_counts,
+                                  fbin_idx,
+                                  fbin_counts,
                                   cell_rad,
                                   weights=xds.WEIGHT.data.astype(args.output_type),
                                   nthreads=args.nvthreads,

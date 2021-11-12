@@ -128,62 +128,16 @@ def _forward(**kw):
     import numexpr as ne
     import dask
     import dask.array as da
-    from dask.distributed import performance_report
     from daskms.experimental.zarr import xds_from_zarr
-    from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
-    from pfb.opt.hogbom import hogbom
+    from pfb.utils.fits import load_fits, set_wcs, save_fits
     from pfb.operators.psi import im2coef, coef2im
-    from africanus.gridding.wgridder.dask import hessian
     from astropy.io import fits
     import pywt
-    from pfb.utils.misc import compute_context
 
-    # TODO - how to deal with multiple datasets (eg. if we want to
-    # partition by field, spw or scan)?
     xds = xds_from_zarr(args.xds, chunks={'row':args.row_chunk})[0]
-
-    print("Loading residual", file=log)
-    residual = xds.DIRTY.data
-    nband, nx, ny = residual.shape
-
-    wsums = xds.WSUM.data
-    wsum = da.sum(wsums).compute()
-
-    residual /= wsum
-
-    residual_mfs = residual.sum(axis=0).compute()
-    rms = da.std(residual_mfs)
-    rmax = np.abs(residual_mfs).max()
-
-    print("Initial peak residual = %f, rms = %f" % (rmax, rms), file=log)
-
-    # try getting interpolated beam model
-    if not args.no_use_beam:
-        print("Initialising beam model", file=log)
-        try:
-            beam_image = xds.BEAM.data
-            assert beam_image.shape == (nband, nx, ny)
-        except Exception as e:
-            print(f"Could not initialise beam model due to \n {e}. "
-                  f"Using identity", file=log)
-            beam_image = da.ones((nband, nx, ny), chunks=(1, -1, -1),
-                              dtype=args.output_type)
-    else:
-        beam_image = da.ones((nband, nx, ny), chunks=(1, -1, -1),
-                              dtype=args.output_type)
-
-    if args.mask is not None:
-        print("Initialising mask", file=log)
-        mask = load_fits(args.mask).squeeze()
-        assert mask.shape == (nx, ny)
-        mask = da.from_array(mask, chunks=(-1, -1), name=False)
-    else:
-        mask = da.ones((nx, ny), chunks=(-1, -1), dtype=residual.dtype)
-
-    # TODO - there must be a way to avoid multiplying by the beam
-    # inside the hessian operator if neither mask nor beam is used.
-    # incorporate mask in beam
-    beam_image *= mask[None, :, :]
+    nband = xds[0].nband
+    nx = xds[0].nx
+    ny = xds[0].ny
 
     if args.point_mask is not None:
         print("Initialising point source mask", file=log)
@@ -203,9 +157,8 @@ def _forward(**kw):
         pmask = np.ones((nx, ny), dtype=residual.dtype)
         x0 = da.zeros((nband, nx, ny), dtype=residual.dtype)
 
-
-    # wavelet setup
-    print("Setting up wavelets", file=log)
+    # dictionary setup
+    print("Setting up dictionary", file=log)
     bases = args.bases.split('|')
     ntots = []
     iys = {}
@@ -300,17 +253,24 @@ def _forward(**kw):
         hessopts['sigmainv'] = args.sigmainv
 
         print("Solving for update using image space approximation", file=log)
-        alpha = pcg_psf(psfhat,
-                        alpha_resid,
-                        alpha0,
-                        beam_image,
-                        hessopts,
-                        waveopts,
-                        cgopts)
+        def convolver(x):
+            model = da.from_array(x,
+                                  chunks=(1, nx, ny),
+                                  name=False)
+
+
+            convolvedim = hessian(model,
+                                  psfhat,
+                                  padding,
+                                  args.nvthreads,
+                                  unpad_x,
+                                  unpad_y,
+                                  lastsize)
+            return convolvedim
+
     else:
         print("Solving for update using vis space approximation", file=log)
-        from pfb.opt.pcg import pcg_wgt
-        normfact = wsum
+        from pfb.operators.hessian import hessian_wgt_xds
 
         hessopts = {}
         hessopts['cell'] = xds.cell_rad
@@ -318,25 +278,12 @@ def _forward(**kw):
         hessopts['epsilon'] = args.epsilon
         hessopts['double_accum'] = args.double_accum
         hessopts['nthreads'] = args.nvthreads
-        hessopts['sigmainv'] = args.sigmainv
-        hessopts['wsum'] = wsum
 
-        alpha = pcg_wgt(xds.UVW.data,
-                        xds.WEIGHT.data,
-                        alpha_resid,
-                        alpha0,
-                        beam_image,
-                        xds.FREQ.data,
-                        xds.FBIN_IDX.data,
-                        xds.FBIN_COUNTS.data,
-                        hessopts,
-                        waveopts,
-                        cgopts)
+        hess = partial(hessian_wgt_xds, xdss=xds, waveopts=waveopts,
+                       hessopts=hessopts, sigmainv=args.sigmainv)
 
-    with compute_context(args.scheduler, args.output_filename + '_alpha'):
-        alpha = dask.compute(alpha,
-                             optimize_graph=False,
-                             scheduler=args.scheduler)[0]
+    # run pcg for update
+
 
     print("Converting solution to model image", file=log)
     model = np.zeros((nband, nx, ny), dtype=args.output_type)

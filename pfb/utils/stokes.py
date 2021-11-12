@@ -1,10 +1,12 @@
 import numpy as np
 import numexpr as ne
 import dask
+from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
 from africanus.gridding.wgridder.dask import dirty as vis2im
 from africanus.calibration.utils.dask import corrupt_vis
+from africanus.averaging.bda_avg import bda
 from pfb.utils.weighting import compute_wsum
 from daskms.optimisation import inlined_array
 
@@ -18,6 +20,7 @@ def single_stokes(data=None,
                   frow=None,
                   uvw=None,
                   time=None,
+                  interval=None,
                   fid=None,
                   ddid=None,
                   scanid=None,
@@ -28,12 +31,14 @@ def single_stokes(data=None,
                   double_accum=None,
                   flipv=None,
                   freq=None,
+                  chan_width=None,
                   fbin_idx=None,
                   fbin_counts=None,
                   band_mapping=None,
                   freq_out=None,
                   tbin_idx=None,
                   tbin_counts=None,
+                  nband=None,
                   nx=None,
                   ny=None,
                   nx_psf=None,
@@ -47,7 +52,8 @@ def single_stokes(data=None,
                   do_dirty=True,
                   do_psf=True,
                   do_weights=True,
-                  check_wsum=False):
+                  check_wsum=False,
+                  bda_weights=False):
 
     data_type = data.dtype
     data_shape = data.shape
@@ -68,14 +74,16 @@ def single_stokes(data=None,
 
         jones = da.swapaxes(jones, 1, 2)
         mueller = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2,
-                            jones, acol).reshape(nrow, nchan, ncorr)
+                              jones, acol).reshape(nrow, nchan, ncorr)
+
+        mueller = inlined_array(mueller, [ant1, ant2])
     else:
         mueller = None
 
     dw = weight_data(data, weight, imaging_weight, mueller, flag, frow,
                      idx0, idxf, sign, csign)
 
-    dw = inlined_array(dw, frow)
+    # dw = inlined_array(dw, [frow, ant1, ant2])
 
     w = dw[1].astype(real_type)
 
@@ -86,7 +94,6 @@ def single_stokes(data=None,
                             ddid, chunks=row_out_chunk)),
                 'SCAN_NUMBER':(('row',), da.full_like(time,
                             scanid, chunks=row_out_chunk)),
-                'UVW':(('row', 'uvw'), uvw.rechunk({0:row_out_chunk})),
                 'FREQ': (('chan',), freq),
                 'FBIN_IDX':(('band',), fbin_idx),
                 'FBIN_COUNTS':(('band',), fbin_counts)
@@ -107,7 +114,7 @@ def single_stokes(data=None,
                        epsilon=epsilon,
                        do_wstacking=wstack,
                        double_accum=double_accum)
-        dirty = inlined_array(dirty, uvw)
+        dirty = inlined_array(dirty, [uvw, freq, fbin_idx, fbin_counts])
         data_vars['DIRTY'] = (('band', 'nx', 'ny'), dirty)
 
     if do_psf:
@@ -124,14 +131,14 @@ def single_stokes(data=None,
                     epsilon=epsilon,
                     do_wstacking=wstack,
                     double_accum=double_accum)
-        psf = inlined_array(psf, uvw)
+        psf = inlined_array(psf, [uvw, freq, fbin_idx, fbin_counts])
         wsum = da.max(psf, axis=(1, 2))
         data_vars['PSF'] = (('band', 'nx_psf', 'ny_psf'), psf)
         data_vars['WSUM'] = (('band',), wsum)
 
 
-    if 'WSUM' not in data_vars.keys() or check_wsum:
-        wsum2 = compute_wsum(w, fbin_idx, fbin_counts)
+    # if 'WSUM' not in data_vars.keys() or check_wsum:
+        # wsum2 = compute_wsum(w, fbin_idx, fbin_counts)
         # if check_wsum:
         #     try:
         #         assert np.allclose(wsum, wsum2, atol=epsilon)
@@ -145,16 +152,49 @@ def single_stokes(data=None,
         #                            "imaging band to within the gridding "
         #                            "precision. You may need to enable "
         #                            "double accumulation.")
-        if 'WSUM' not in data_vars.keys():
-            data_vars['WSUM'] = (('band',), wsum2)
+        # if 'WSUM' not in data_vars.keys():
+        #     data_vars['WSUM'] = (('band',), wsum2)
 
     if do_weights:
-        # uvw_scale = nu_out/nu  (nrow, 3) + nchan -> (nrow, 3*nchan)
-        # exp(-2\pi i nu/c (ul + vm + w(n-1)))
+        # TODO - BDA over frequency
+        if bda_weights:
+            raise NotImplementedError("BDA not working yet")
+            from africanus.averaging import bda
+            w_avs = []
+            uvw = uvw.compute()
+            t = time.compute()
+            a1 = ant1.compute()
+            a2 = ant2.compute()
+            intv = interval.compute()
+            fr = frow.compute()[:, None, None]
 
-        # grad F = R.H W (V - Rx) = R.H W V - R.H W R x = ID - hess(x)
-        # TODO - BDA weights
-        data_vars['WEIGHT'] = (('row', 'chan'), w.rechunk({0:row_out_chunk}))
+            for b in range(nband):
+                wspec = w.blocks[0, b].compute()[:, :, None]
+                nu = freq.blocks[b].compute()
+                cw = chan_width.blocks[b].compute()
+                f = flag.blocks[0, b].compute()
+                f = np.logical_or(f, fr)
+                f = f[:, :, idx0] | f[:, :, idxf]
+                res = bda(t, intv, a1, a2, uvw=uvw, flag=f[:, :, None],
+                          weight_spectrum=wspec, chan_freq=nu, chan_width=cw,
+                          decorrelation=0.95, min_nchan=nu.size)
+                w_avs.append(res.weight_spectrum.reshape(-1, nu.size, 1).squeeze())
+                if b == 0:
+                    uvw_avs = res.uvw.reshape(-1, nu.size, 3)[:, 0, :]
+            # LB - why inconsistent number of rows
+            w = np.concatenate(w_avs, axis=1)
+            w = da.from_array(w, chunks=(row_out_chunk, tuple(fbin_counts.compute())))
+            uvw = da.from_array(uvw_avs, chunks=(row_out_chunk, 3))
+            data_vars['UVW'] = (('row', 'uvw'), uvw)
+        else:
+            w = w.rechunk({0:row_out_chunk})
+
+        data_vars['WEIGHT'] = (('row', 'chan'), w)
+
+    if 'UVW' not in data_vars.keys():
+        data_vars['UVW'] = (('row', 'uvw'), uvw.rechunk({0:row_out_chunk}))
+
+    # TODO - interpolate beam
 
     freq_out = da.from_array(freq_out, chunks=1, name=False)
 
@@ -166,7 +206,10 @@ def single_stokes(data=None,
     attrs = {
         'cell_rad': cell_rad,
         'ra' : radec[0],
-        'dec': radec[1]
+        'dec': radec[1],
+        'nx': nx,
+        'ny': ny,
+        'nband': nband  # global nband
     }
 
     out_ds = Dataset(data_vars, coords, attrs=attrs)
@@ -196,9 +239,11 @@ def weight_data(data, weight, imaging_weight, mueller, flag, frow,
         fout = None
 
     if frow is not None:
+        frow = clone(frow)
         frout = ('row',)
     else:
         frout = None
+
 
     return da.blockwise(_weight_data_wrapper, ('2', 'row', 'chan'),
                         data, ('row', 'chan', 'corr'),
