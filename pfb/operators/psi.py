@@ -211,40 +211,60 @@ class DaskPSI(PSI):
         return alpha.compute()
 
 
-def coef2im(alpha, pmask, bases, padding, iy, sy, nx, ny):
+def _coef2im_impl(alpha, pmask, bases, padding, iy, sy, nx, ny):
     '''
     Per band coefficients to image
     '''
-    nbasis = len(bases)
-    x = np.zeros((nx, ny), dtype=alpha.dtype)
-    for b, base in enumerate(bases):
-        a = alpha[b, padding[b]]
-        if base == 'self':
-            wave = pmask*a.reshape(nx, ny)
-        else:
-            alpha_rec = pywt.unravel_coeffs(
-                a, iy[base], sy[base], output_format='wavedecn')
-            wave = pywt.waverecn(alpha_rec, base, mode='zero')
+    nband, nbasis, _ = alpha.shape
+    # not chunking over basis
+    x = np.zeros((nband, nx, ny), dtype=alpha.dtype)
+    for l in range(nband):
+        for b, base in enumerate(bases):
+            a = alpha[l, b, padding[b]]
+            if base == 'self':
+                wave = pmask*a.reshape(nx, ny)
+            else:
+                alpha_rec = pywt.unravel_coeffs(
+                    a, iy[base], sy[base], output_format='wavedecn')
+                wave = pywt.waverecn(alpha_rec, base, mode='zero')
 
-        x += wave
+            x[l] += wave
     return x
 
+def coef2im(alpha, pmask, bases, padding, iy, sy, nx, ny):
 
-def im2coef(x, pmask, bases, ntot, nmax, nlevels):
+    return da.blockwise(_dot_internal_wrapper, ("band", "nx", "ny"),
+                         alpha, ("band", "basis", "ntot"),
+                         pmask, ("nx", "ny"),
+                         bases, ("basis",),
+                         padding, ("basis",),
+                         iy, None,  # ("basis",),
+                         sy, None,  # ("basis",),
+                         sqrtP, None,
+                         nx, None,
+                         f.ny, None,
+                         self.real_type, None,
+                         new_axes={"nx": self.nx, "ny": self.ny},
+                         dtype=self.real_type,
+                         align_arrays=False)
+
+def _im2coef_impl(x, pmask, bases, ntot, nmax, nlevels):
     '''
     Per band image to coefficients
     '''
     nbasis = len(bases)
-    alpha = np.zeros((nbasis, nmax), dtype=x.dtype)
-    for b, base in enumerate(bases):
-        if base == 'self':
-            # ravel and pad
-            alpha[b] = np.pad((pmask*x).ravel(), (0, nmax-ntot[b]), mode='constant')
-        else:
-            # decompose
-            alpha_tmp = pywt.wavedecn(x, base, mode='zero', level=nlevels)
-            # ravel and pad
-            alpha_tmp, _, _ = pywt.ravel_coeffs(alpha_tmp)
-            alpha[b] = np.pad(alpha_tmp, (0, nmax-ntot[b]), mode='constant')
+    nband, _, _ = x.shape
+    alpha = np.zeros((nband, nbasis, nmax), dtype=x.dtype)
+    for l in range(nband):
+        for b, base in enumerate(bases):
+            if base == 'self':
+                # ravel and pad
+                alpha[l, b] = np.pad((pmask*x).ravel(), (0, nmax-ntot[b]), mode='constant')
+            else:
+                # decompose
+                alpha_tmp = pywt.wavedecn(x, base, mode='zero', level=nlevels)
+                # ravel and pad
+                alpha_tmp, _, _ = pywt.ravel_coeffs(alpha_tmp)
+                alpha[l, b] = np.pad(alpha_tmp, (0, nmax-ntot[b]), mode='constant')
 
     return alpha

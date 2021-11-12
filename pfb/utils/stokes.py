@@ -8,6 +8,7 @@ from africanus.gridding.wgridder.dask import dirty as vis2im
 from africanus.calibration.utils.dask import corrupt_vis
 from africanus.averaging.bda_avg import bda
 from pfb.utils.weighting import compute_wsum
+# from pfb.utils.corrupt_vis import corrupt_vis
 from daskms.optimisation import inlined_array
 
 def single_stokes(data=None,
@@ -75,15 +76,17 @@ def single_stokes(data=None,
         jones = da.swapaxes(jones, 1, 2)
         mueller = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2,
                               jones, acol).reshape(nrow, nchan, ncorr)
-
-        mueller = inlined_array(mueller, [ant1, ant2])
+        mueller = inlined_array(mueller, [tbin_idx, tbin_counts, ant1, ant2])
     else:
         mueller = None
 
+    # this trick is required because inlined_array doesn't seem to work
+    # on frow (even after precomputing it)
+    frow = da.stack([clone(frow) for _ in range(fbin_idx.size)], axis=1)
     dw = weight_data(data, weight, imaging_weight, mueller, flag, frow,
                      idx0, idxf, sign, csign)
 
-    # dw = inlined_array(dw, [frow, ant1, ant2])
+    # dw = inlined_array(dw, frow)
 
     w = dw[1].astype(real_type)
 
@@ -239,8 +242,7 @@ def weight_data(data, weight, imaging_weight, mueller, flag, frow,
         fout = None
 
     if frow is not None:
-        frow = clone(frow)
-        frout = ('row',)
+        frout = ('row', 'chan')
     else:
         frout = None
 
@@ -256,6 +258,7 @@ def weight_data(data, weight, imaging_weight, mueller, flag, frow,
                         idxf, None,
                         sign, None,
                         csign, None,
+                        align_arrays=False,
                         new_axes={'2': 2},
                         dtype=data.dtype)
 
@@ -332,7 +335,7 @@ def _weight_data_impl(data, weight, imaging_weight, mueller, flag, frow,
     if flag is not None:
         flag = flag[:, :, idx0] | flag[:, :, idxf]
         if frow is not None:
-            flag = da.logical_or(flag, frow[:, None])
+            flag = da.logical_or(flag, frow)
 
     weight[flag] = 0
 
