@@ -260,10 +260,10 @@ def _im2coef_impl(x, pmask, bases, ntot, nmax, nlevels):
         for b, base in enumerate(bases):
             if base == 'self':
                 # ravel and pad
-                alpha[l, b] = np.pad((pmask*x).ravel(), (0, nmax-ntot[b]), mode='constant')
+                alpha[l, b] = np.pad((pmask*x[l]).ravel(), (0, nmax-ntot[b]), mode='constant')
             else:
                 # decompose
-                alpha_tmp = pywt.wavedecn(x, base, mode='zero', level=nlevels)
+                alpha_tmp = pywt.wavedecn(x[l], base, mode='zero', level=nlevels)
                 # ravel and pad
                 alpha_tmp, _, _ = pywt.ravel_coeffs(alpha_tmp)
                 alpha[l, b] = np.pad(alpha_tmp, (0, nmax-ntot[b]), mode='constant')
@@ -275,11 +275,12 @@ def _im2coef(x, pmask, bases, ntot, nmax, nlevels):
 
 
 def im2coef(x, pmask, bases, ntot, nmax, nlevels):
-    return da.blockwise(_im2coef, ("band", "basis", "ntot"),
+    return da.blockwise(_im2coef, ("band", "basis", "nmax"),
                         x, ("band", "nx", "ny"),
                         pmask, ("nx", "ny"),
                         bases, ("basis",),
                         ntot, ("basis",),
                         nmax, None,
                         nlevels, None,
+                        new_axes={'nmax':nmax},
                         dtype=x.dtype)

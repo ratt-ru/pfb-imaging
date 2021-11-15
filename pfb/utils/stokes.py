@@ -53,6 +53,7 @@ def single_stokes(data=None,
                   do_dirty=True,
                   do_psf=True,
                   do_weights=True,
+                  do_beam=False,
                   check_wsum=False,
                   bda_weights=False):
 
@@ -118,7 +119,7 @@ def single_stokes(data=None,
                        do_wstacking=wstack,
                        double_accum=double_accum)
         dirty = inlined_array(dirty, [uvw, freq, fbin_idx, fbin_counts])
-        data_vars['DIRTY'] = (('band', 'nx', 'ny'), dirty)
+        data_vars['DIRTY'] = (('band', 'x', 'y'), dirty)
 
     if do_psf:
         psf = vis2im(uvw,
@@ -136,7 +137,7 @@ def single_stokes(data=None,
                     double_accum=double_accum)
         psf = inlined_array(psf, [uvw, freq, fbin_idx, fbin_counts])
         wsum = da.max(psf, axis=(1, 2))
-        data_vars['PSF'] = (('band', 'nx_psf', 'ny_psf'), psf)
+        data_vars['PSF'] = (('band', 'x_psf', 'y_psf'), psf)
         data_vars['WSUM'] = (('band',), wsum)
 
 
@@ -184,7 +185,7 @@ def single_stokes(data=None,
                 w_avs.append(res.weight_spectrum.reshape(-1, nu.size, 1).squeeze())
                 if b == 0:
                     uvw_avs = res.uvw.reshape(-1, nu.size, 3)[:, 0, :]
-            # LB - why inconsistent number of rows
+            # LB - why inconsistent number of rows? Baseline speed?
             w = np.concatenate(w_avs, axis=1)
             w = da.from_array(w, chunks=(row_out_chunk, tuple(fbin_counts.compute())))
             uvw = da.from_array(uvw_avs, chunks=(row_out_chunk, 3))
@@ -198,6 +199,14 @@ def single_stokes(data=None,
         data_vars['UVW'] = (('row', 'uvw'), uvw.rechunk({0:row_out_chunk}))
 
     # TODO - interpolate beam
+    if do_beam:
+        from pfb.utils.beam import katbeam
+        beam = katbeam(freq_out, nx, ny, np.rad2deg(cell_rad))
+    else:
+        beam = da.ones((nband, nx, ny), chunks=(1, nx, ny), dtype=real_type)
+
+    data_vars['BEAM'] = (('band', 'x', 'y'), beam)
+
 
     freq_out = da.from_array(freq_out, chunks=1, name=False)
 

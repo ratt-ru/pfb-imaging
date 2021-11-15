@@ -134,10 +134,20 @@ def _forward(**kw):
     from astropy.io import fits
     import pywt
 
-    xds = xds_from_zarr(args.xds, chunks={'row':args.row_chunk})[0]
+    xds = xds_from_zarr(args.xds, chunks={'row':args.row_chunk})
     nband = xds[0].nband
     nx = xds[0].nx
     ny = xds[0].ny
+
+    # stitch residuals after beam application
+    residual = []
+    wsum = 0
+    for ds in xds:
+        d = ds.DIRTY.data
+        b = ds.BEAM.data
+        wsum += ds.WSUM.data.sum()
+        residual.append(d * b)
+    residual = da.stack(residual).sum(axis=0)/wsum
 
     if args.point_mask is not None:
         print("Initialising point source mask", file=log)
@@ -148,13 +158,13 @@ def _forward(**kw):
                   "Initialising pmask from model.", file=log)
             x0 = da.from_array(pmask, chunks=(1, -1, -1),
                                dtype=residual.dtype, name=False)
-            pmask = np.any(pmask, axis=0)
+            pmask = da.any(pmask, axis=0)
         else:
             x0 = da.zeros((nband, nx, ny), dtype=residual.dtype)
 
         assert pmask.shape == (nx, ny)
     else:
-        pmask = np.ones((nx, ny), dtype=residual.dtype)
+        pmask = da.ones((nx, ny), dtype=residual.dtype)
         x0 = da.zeros((nband, nx, ny), dtype=residual.dtype)
 
     # dictionary setup
@@ -182,22 +192,17 @@ def _forward(**kw):
     for i in range(nbasis):
         padding.append(slice(0, ntots[i]))
 
-    print("Initialising starting values", file=log)
-    alpha_resid = im2coef(beam_image * residual,
-                          pmask, bases, ntots, nmax, args.nlevels)
-    alpha0 = im2coef(x0, pmask, bases, ntots, nmax, args.nlevels)
-
     waveopts = {}
-    waveopts['bases'] = bases
+    waveopts['bases'] = da.from_array(np.array(bases, dtype=object), chunks=-1)
     waveopts['pmask'] = pmask
     waveopts['iy'] = iys
     waveopts['sy'] = sys
-    waveopts['ntot'] = ntots
+    waveopts['ntot'] = da.from_array(np.array(ntots, dtype=object), chunks=-1)
     waveopts['nmax'] = nmax
     waveopts['nlevels'] = args.nlevels
     waveopts['nx'] = nx
     waveopts['ny'] = ny
-    waveopts['padding'] = padding
+    waveopts['padding'] = da.from_array(np.array(padding, dtype=object), chunks=-1)
 
     if not args.no_use_psf:
         print("Initialising psf", file=log)
@@ -253,25 +258,39 @@ def _forward(**kw):
 
     else:
         print("Solving for update using vis space approximation", file=log)
-        from pfb.operators.hessian import hessian_wgt_xds
+        from pfb.operators.hessian import hessian_wgt_alpha_xds
 
         hessopts = {}
-        hessopts['cell'] = xds.cell_rad
+        hessopts['cell'] = xds[0].cell_rad
         hessopts['wstack'] = args.wstack
         hessopts['epsilon'] = args.epsilon
         hessopts['double_accum'] = args.double_accum
         hessopts['nthreads'] = args.nvthreads
+        wsum = wsum.compute()
 
-        hess = partial(hessian_wgt_xds, xdss=xds, waveopts=waveopts,
-                       hessopts=hessopts, sigmainv=args.sigmainv)
+        hess = partial(hessian_wgt_alpha_xds, xdss=xds, waveopts=waveopts,
+                       hessopts=hessopts, sigmainv=args.sigmainv, wsum=wsum, compute=True)
 
-    x = np.random.randn(nband, nbasis, nmax)
+    # import pdb; pdb.set_trace()
+    # x = np.random.randn(nband, nbasis, nmax)
+    # res = hess(x)
+    # dask.visualize(hessian_wgt_xds, color="order", cmap="autumn",
+    #                node_attr={"penwidth": "4"},
+    #                filename=args.output_filename + '_hess_I_ordered_graph.pdf',
+    #                optimize_graph=False)
+    # dask.visualize(res, filename=args.output_filename +
+    #                '_hess_I_graph.pdf', optimize_graph=False)
 
-    res = hess(x)
+    # quit()
 
-    print(res)
+    # print(res)
 
-    quit()
+    print("Initialising starting values", file=log)
+    alpha_resid = im2coef(residual,  # beam alreadt applied
+                          pmask, waveopts['bases'], waveopts['ntot'],
+                          nmax, args.nlevels).compute()
+    alpha0 = im2coef(x0, pmask, waveopts['bases'], waveopts['ntot'],
+                     nmax, args.nlevels).compute()
 
     cgopts = {}
     cgopts['tol'] = args.cg_tol
@@ -281,46 +300,30 @@ def _forward(**kw):
     cgopts['report_freq'] = args.cg_report_freq
     cgopts['backtrack'] = args.backtrack
 
-
-
     # run pcg for update
-    # model = pcg()
+    print("Solving for update", file=log)
+    alpha = pcg(hess, alpha_resid, alpha0, **cgopts)
 
+    print("Getting residual", file=log)
+    model = coef2im(da.from_array(alpha, chunks=(1, -1, -1), name=False),
+                    pmask, waveopts['bases'], waveopts['padding'],
+                    iys, sys, nx, ny)
 
-    print("Converting solution to model image", file=log)
-    model = np.zeros((nband, nx, ny), dtype=args.output_type)
-    for l in range(nband):
-        model[l] = coef2im(alpha[l], pmask, bases, padding, iys, sys, nx, ny)
+    from pfb.operators.hessian import hessian_wgt_xds
+    residual -= hessian_wgt_xds(model, xds, hessopts, wsum, 0.0, compute=False)
 
-    model_dask = da.from_array(model, chunks=(1, -1, -1), name=False)
-    print("Computing residual", file=log)
-    residual -= hessian(xds.UVW.data,
-                        xds.FREQ.data,
-                        model_dask,
-                        xds.FBIN_IDX.data,
-                        xds.FBIN_COUNTS.data,
-                        xds.cell_rad,
-                        weights=xds.WEIGHT.data,
-                        nthreads=args.nvthreads,
-                        epsilon=args.epsilon,
-                        do_wstacking=args.wstack,
-                        double_accum=args.double_accum)/wsum
-
-    with compute_context(args.scheduler, args.output_filename + '_residual'):
-        residual = dask.compute(residual,
-                                optimize_graph=False,
-                                scheduler=args.scheduler)[0]
-
+    residual = dask.compute(residual,
+                            optimize_graph=False)[0]
 
     # construct a header from xds attrs
-    ra = xds.ra
-    dec = xds.dec
+    ra = xds[0].ra
+    dec = xds[0].dec
     radec = [ra, dec]
 
-    cell_rad = xds.cell_rad
+    cell_rad = xds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
 
-    freq_out = xds.band.values
+    freq_out = np.unique(np.concatenate([ds.band.values for ds in xds], axis=0))
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)

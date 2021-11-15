@@ -113,148 +113,148 @@ def _pcg_psf_impl(psfhat,
 
     return model
 
-def _pcg_psf(psfhat,
-             b,
-             x0,
-             beam,
-             hessopts,
-             waveopts,
-             cgopts):
-    return _pcg_psf_impl(psfhat[0][0],
-                         b,
-                         x0,
-                         beam[0][0],
-                         hessopts,
-                         waveopts,
-                         **cgopts)
+# def _pcg_psf(psfhat,
+#              b,
+#              x0,
+#              beam,
+#              hessopts,
+#              waveopts,
+#              cgopts):
+#     return _pcg_psf_impl(psfhat[0][0],
+#                          b,
+#                          x0,
+#                          beam[0][0],
+#                          hessopts,
+#                          waveopts,
+#                          **cgopts)
 
-def pcg_psf(psfhat,
-            b,
-            x0,
-            beam,
-            hessopts,
-            waveopts,
-            cgopts):
+# def pcg_psf(psfhat,
+#             b,
+#             x0,
+#             beam,
+#             hessopts,
+#             waveopts,
+#             cgopts):
 
-    # print(hessopts)
+#     # print(hessopts)
 
-    # quit()
-    model = da.blockwise(_pcg_psf, ('nband', 'nbasis', 'nmax'),
-                         psfhat, ('nband', 'nx_psf', 'ny_psf'),
-                         b, ('nband', 'nbasis', 'nmax'),
-                         x0, ('nband', 'nbasis', 'nmax'),
-                         beam, ('nband', 'nx', 'ny'),
-                         hessopts, None,
-                         waveopts, None,
-                         cgopts, None,
-                         dtype=b.dtype)
-    return model
-
-
-from pfb.operators.hessian import _hessian_reg_wgt as hessian_wgt
-def _pcg_wgt_impl(uvw,
-                  weight,
-                  b,
-                  x0,
-                  beam,
-                  freq,
-                  freq_bin_idx,
-                  freq_bin_counts,
-                  hessopts,
-                  waveopts,
-                  tol=1e-5,
-                  maxit=500,
-                  minit=100,
-                  verbosity=1,
-                  report_freq=10,
-                  backtrack=True):
-    '''
-    A specialised distributed version of pcg when the operator implements
-    the diagonalised hessian (+ L2 regularisation by sigma**2)
-    '''
-    nband, nbasis, nmax = b.shape
-    model = np.zeros((nband, nbasis, nmax), dtype=b.dtype)
-    sigmainvsq = hessopts['sigmainv']**2
-    # PCG preconditioner
-    if sigmainvsq > 0:
-        def M(x): return x / sigmainvsq
-    else:
-        M = None
-
-    freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
-    for k in range(nband):
-        indl = freq_bin_idx2[k]
-        indu = freq_bin_idx2[k] + freq_bin_counts[k]
-        A = partial(hessian_wgt,
-                    beam=beam[k],
-                    uvw=uvw,
-                    weight=weight[:, indl:indu],
-                    freq=freq[indl:indu],
-                    **hessopts,
-                    **waveopts)
+#     # quit()
+#     model = da.blockwise(_pcg_psf, ('nband', 'nbasis', 'nmax'),
+#                          psfhat, ('nband', 'nx_psf', 'ny_psf'),
+#                          b, ('nband', 'nbasis', 'nmax'),
+#                          x0, ('nband', 'nbasis', 'nmax'),
+#                          beam, ('nband', 'nx', 'ny'),
+#                          hessopts, None,
+#                          waveopts, None,
+#                          cgopts, None,
+#                          dtype=b.dtype)
+#     return model
 
 
-        model[k] = pcg(A,
-                       b[k],
-                       x0[k],
-                       M=M,
-                       tol=tol,
-                       maxit=maxit,
-                       minit=minit,
-                       verbosity=verbosity,
-                       report_freq=report_freq,
-                       backtrack=backtrack)
+# from pfb.operators.hessian import _hessian_reg_wgt as hessian_wgt
+# def _pcg_wgt_impl(uvw,
+#                   weight,
+#                   b,
+#                   x0,
+#                   beam,
+#                   freq,
+#                   freq_bin_idx,
+#                   freq_bin_counts,
+#                   hessopts,
+#                   waveopts,
+#                   tol=1e-5,
+#                   maxit=500,
+#                   minit=100,
+#                   verbosity=1,
+#                   report_freq=10,
+#                   backtrack=True):
+#     '''
+#     A specialised distributed version of pcg when the operator implements
+#     the diagonalised hessian (+ L2 regularisation by sigma**2)
+#     '''
+#     nband, nbasis, nmax = b.shape
+#     model = np.zeros((nband, nbasis, nmax), dtype=b.dtype)
+#     sigmainvsq = hessopts['sigmainv']**2
+#     # PCG preconditioner
+#     if sigmainvsq > 0:
+#         def M(x): return x / sigmainvsq
+#     else:
+#         M = None
 
-    return model
-
-def _pcg_wgt(uvw,
-            weight,
-            b,
-            x0,
-            beam,
-            freq,
-            freq_bin_idx,
-            freq_bin_counts,
-            hessopts,
-            waveopts,
-            cgopts):
-    return _pcg_wgt_impl(uvw[0][0],
-                         weight[0],
-                         b,
-                         x0,
-                         beam[0][0],
-                         freq,
-                         freq_bin_idx,
-                         freq_bin_counts,
-                         hessopts,
-                         waveopts,
-                         **cgopts)
-
-def pcg_wgt(uvw,
-            weight,
-            b,
-            x0,
-            beam,
-            freq,
-            freq_bin_idx,
-            freq_bin_counts,
-            hessopts,
-            waveopts,
-            cgopts):
+#     freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
+#     for k in range(nband):
+#         indl = freq_bin_idx2[k]
+#         indu = freq_bin_idx2[k] + freq_bin_counts[k]
+#         A = partial(hessian_wgt,
+#                     beam=beam[k],
+#                     uvw=uvw,
+#                     weight=weight[:, indl:indu],
+#                     freq=freq[indl:indu],
+#                     **hessopts,
+#                     **waveopts)
 
 
-    return da.blockwise(_pcg_wgt, ('nchan', 'nbasis', 'nmax'),
-                        uvw, ('nrow', 'three'),
-                        weight, ('nrow', 'nchan'),
-                        b, ('nchan', 'nbasis', 'nmax'),
-                        x0, ('nchan', 'nbasis', 'nmax'),
-                        beam, ('nchan', 'nx', 'ny'),
-                        freq, ('nchan',),
-                        freq_bin_idx, ('nchan',),
-                        freq_bin_counts, ('nchan',),
-                        hessopts, None,
-                        waveopts, None,
-                        cgopts, None,
-                        align_arrays=False,
-                        adjust_chunks={'nchan': b.chunks[0]},
-                        dtype=b.dtype)
+#         model[k] = pcg(A,
+#                        b[k],
+#                        x0[k],
+#                        M=M,
+#                        tol=tol,
+#                        maxit=maxit,
+#                        minit=minit,
+#                        verbosity=verbosity,
+#                        report_freq=report_freq,
+#                        backtrack=backtrack)
+
+#     return model
+
+# def _pcg_wgt(uvw,
+#             weight,
+#             b,
+#             x0,
+#             beam,
+#             freq,
+#             freq_bin_idx,
+#             freq_bin_counts,
+#             hessopts,
+#             waveopts,
+#             cgopts):
+#     return _pcg_wgt_impl(uvw[0][0],
+#                          weight[0],
+#                          b,
+#                          x0,
+#                          beam[0][0],
+#                          freq,
+#                          freq_bin_idx,
+#                          freq_bin_counts,
+#                          hessopts,
+#                          waveopts,
+#                          **cgopts)
+
+# def pcg_wgt(uvw,
+#             weight,
+#             b,
+#             x0,
+#             beam,
+#             freq,
+#             freq_bin_idx,
+#             freq_bin_counts,
+#             hessopts,
+#             waveopts,
+#             cgopts):
+
+
+#     return da.blockwise(_pcg_wgt, ('nchan', 'nbasis', 'nmax'),
+#                         uvw, ('nrow', 'three'),
+#                         weight, ('nrow', 'nchan'),
+#                         b, ('nchan', 'nbasis', 'nmax'),
+#                         x0, ('nchan', 'nbasis', 'nmax'),
+#                         beam, ('nchan', 'nx', 'ny'),
+#                         freq, ('nchan',),
+#                         freq_bin_idx, ('nchan',),
+#                         freq_bin_counts, ('nchan',),
+#                         hessopts, None,
+#                         waveopts, None,
+#                         cgopts, None,
+#                         align_arrays=False,
+#                         adjust_chunks={'nchan': b.chunks[0]},
+#                         dtype=b.dtype)
