@@ -269,19 +269,19 @@ def _forward(**kw):
         wsum = wsum.compute()
 
         hess = partial(hessian_wgt_alpha_xds, xdss=xds, waveopts=waveopts,
-                       hessopts=hessopts, sigmainv=args.sigmainv, wsum=wsum, compute=True)
+                       hessopts=hessopts, sigmainv=args.sigmainv, wsum=wsum, compute=False)
 
     # import pdb; pdb.set_trace()
-    # x = np.random.randn(nband, nbasis, nmax)
-    # res = hess(x)
-    # dask.visualize(hessian_wgt_xds, color="order", cmap="autumn",
+    x = np.random.randn(nband, nbasis, nmax).astype(np.float32)
+    res = hess(x)
+    # dask.visualize(hess, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
     #                filename=args.output_filename + '_hess_I_ordered_graph.pdf',
     #                optimize_graph=False)
-    # dask.visualize(res, filename=args.output_filename +
-    #                '_hess_I_graph.pdf', optimize_graph=False)
+    dask.visualize(res, filename=args.output_filename +
+                   '_hess_I_graph.pdf', optimize_graph=False)
 
-    # quit()
+    quit()
 
     # print(res)
 

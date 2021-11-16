@@ -74,7 +74,7 @@ def pcg(A,
             print("Success, converged after %i iters" % k, file=log)
     return x
 
-from pfb.operators.hessian import _hessian_reg_psf as hessian_psf
+from pfb.operators.hessian import _hessian_psf_impl as hessian_psf
 def _pcg_psf_impl(psfhat,
                   b,
                   x0,

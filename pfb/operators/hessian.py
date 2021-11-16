@@ -32,12 +32,14 @@ def hessian_wgt_xds(x, xdss, hessopts, wsum, sigmainv, compute=True):
     # LB - it's not this simple when there are multiple spw's to consider
     convim = da.stack(convims).sum(axis=0)/wsum
 
-    if compute:
-        return (convim + x * sigmainv**2).compute()
-    else:
-        return convim + x * sigmainv**2
+    if sigmainv:
+        convim += x * sigmainv**2
 
-# @dask.delayed
+    if compute:
+        return convim.compute()
+    else:
+        return convim
+
 def hessian_wgt_alpha_xds(alpha, xdss, waveopts, hessopts, wsum,
                           sigmainv, compute=True):
     '''
@@ -58,7 +60,7 @@ def hessian_wgt_alpha_xds(alpha, xdss, waveopts, hessopts, wsum,
 
     # coeff to image
     x = coef2im(alpha, pmask, bases, padding, iy, sy, nx, ny)
-    x = inlined_array(x, pmask)
+    x = inlined_array(x, [pmask, alpha, bases, padding])
 
     convims = []
     for xds in xdss:
@@ -75,17 +77,21 @@ def hessian_wgt_alpha_xds(alpha, xdss, waveopts, hessopts, wsum,
 
         convims.append(convim)
 
-    # LB - it's not this simple when there are multiple spw's to consider
+    # LB - it's not this simple when there are multiple spw's mapping to
+    # different imaging bands
     convim = da.stack(convims).sum(axis=0)/wsum
 
 
     alpha_rec = im2coef(convim, pmask, bases, ntot, nmax, nlevels)
-    alpha_rec = inlined_array(alpha_rec, pmask)
+    alpha_rec = inlined_array(alpha_rec, [pmask, bases, ntot])
+
+    if sigmainv:
+        alpha_rec += alpha * sigmainv**2
 
     if compute:
-        return (alpha_rec + alpha * sigmainv**2).compute()
+        return alpha_rec.compute()
     else:
-        return alpha_rec + alpha * sigmainv**2
+        return alpha_rec
 
 def _hessian_wgt_impl(uvw, weight, freq, x, beam, fbin_idx, fbin_counts,
                       cell=None,
@@ -151,36 +157,61 @@ def hessian_wgt(uvw, weight, freq, x, beam, fbin_idx, fbin_counts, hessopts):
                         dtype=x.dtype)
 
 
-def _hessian_reg_psf(alpha, beam, psfhat,
-                     nthreads=None,
-                     sigmainv=None,
-                     pmask=None,
-                     padding_psf=None,
-                     unpad_x=None,
-                     unpad_y=None,
-                     lastsize=None,
-                     padding=None,
-                     bases=None,
-                     iy=None,
-                     sy=None,
-                     ntot=None,
-                     nmax=None,
-                     nlevels=None,
-                     nx=None,
-                     ny=None):
+def hessian_psf_xds(x, xdss, hessopts, wsum, sigmainv, compute=True):
+    '''
+    Vis space Hessian reduction over dataset
+    '''
+
+    convims = []
+    for xds in xdss:
+        psf = xds.PSF.data
+        beam = xds.BEAM.data
+
+        convim = hessian_psf(uvw, wgt, freq, x, beam, fbin_idx,
+                             fbin_counts, hessopts)
+
+        convims.append(convim)
+
+    # LB - it's not this simple when there are multiple spw's to consider
+    convim = da.stack(convims).sum(axis=0)/wsum
+
+    if sigmainv:
+        convim += x * sigmainv**2
+
+    if compute:
+        return convim.compute()
+    else:
+        return convim
+
+def _hessian_psf_impl(x, beam, psfhat,
+                      nthreads=None,
+                      padding_psf=None,
+                      unpad_x=None,
+                      unpad_y=None,
+                      lastsize=None):
     """
     Tikhonov regularised Hessian of coeffs
     """
+    nband, nx, ny = x.shape
+    convim = np.zeros_like(x)
+    for b in range(nband):
+        xhat = iFs(np.pad(beam[l]*x[l], padding_psf, mode='constant'), axes=(0, 1))
+        xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
+                    forward=True, inorm=0)
+        xhat = c2r(xhat * psfhat[l], axes=(0, 1), forward=False,
+                    lastsize=lastsize, inorm=2, nthreads=nthreads)
+        convim[l] = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
 
-    x = coef2im(alpha, pmask, bases, padding, iy, sy, nx, ny)
+    return convim
 
-    xhat = iFs(np.pad(beam*x, padding_psf, mode='constant'), axes=(0, 1))
-    xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
-                forward=True, inorm=0)
-    xhat = c2r(xhat * psfhat, axes=(0, 1), forward=False,
-                lastsize=lastsize, inorm=2, nthreads=nthreads)
-    im = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
+def _hessian_psf(x, beam, psfhat, hessopts):
+    return _hessian_psf_impl(x, beam, psfhat, **hessopts)
 
-    alpha_rec = im2coef(beam*im, pmask, bases, ntot, nmax, nlevels)
-
-    return alpha_rec + alpha * sigmainv**2
+def hessian_psf(x, beam, psfhat, hessopts):
+    return da.blockwise(_hessian_psf_impl, ('nband', 'nx', 'ny'),
+                        x, ('nband', 'nx', 'ny'),
+                        beam, ('nband', 'nx', 'ny'),
+                        psfhat, ('nband', 'nx', 'ny'),
+                        hessopts, None,
+                        align_arrays=False,
+                        dtype=x.dtype)
