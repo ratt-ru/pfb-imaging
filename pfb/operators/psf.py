@@ -82,35 +82,34 @@ class PSF(object):
     #     return Fs(xhat, axes=self.ax)[:, self.unpad_x, self.unpad_y]
 
 
-def _hessian(x, psfhat, padding, nthreads, unpad_x, unpad_y, lastsize):
-    xhat = iFs(np.pad(x, padding, mode='constant'), axes=(1, 2))
-    xhat = r2c(xhat, axes=(1, 2), nthreads=nthreads,
-                forward=True, inorm=0)
-    xhat = c2r(xhat * psfhat, axes=(1, 2), forward=False,
-                lastsize=lastsize, inorm=2, nthreads=nthreads)
-    return Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y]
+def _psf_convolve_impl(x, psfhat,
+                      nthreads=None,
+                      padding_psf=None,
+                      unpad_x=None,
+                      unpad_y=None,
+                      lastsize=None):
+    """
+    Tikhonov regularised Hessian of coeffs
+    """
+    nband, nx, ny = x.shape
+    convim = np.zeros_like(x)
+    for b in range(nband):
+        xhat = iFs(np.pad(x[l], padding_psf, mode='constant'), axes=(0, 1))
+        xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
+                    forward=True, inorm=0)
+        xhat = c2r(xhat * psfhat[l], axes=(0, 1), forward=False,
+                    lastsize=lastsize, inorm=2, nthreads=nthreads)
+        convim[l] = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
 
-def hessian_wrapper(x, psfhat, padding, nthreads, unpad_x, unpad_y, lastsize):
-    return _hessian(x, psfhat[0][0], padding, nthreads, unpad_x, unpad_y, lastsize)
+    return convim
 
-def hessian(x, psfhat, padding, nthreads, unpad_x, unpad_y, lastsize):
+def _psf_convolve(x, psfhat, psfopts):
+    return _psf_convolve_impl(x, psfhat, **psfopts)
 
-    convolvedim = da.blockwise(
-        hessian_wrapper, ('nb', 'nx', 'ny'),
-        x, ('nb', 'nx', 'ny'),
-        psfhat, ('nb', 'nx2', 'ny2'),
-        padding, None,
-        nthreads, None,
-        unpad_x, None,
-        unpad_y, None,
-        lastsize, None,
-        dtype=x.dtype)
-    return convolvedim
-
-def _hessian_reg(x, psfhat, sigmainvsq, padding, nthreads, unpad_x, unpad_y, lastsize):
-    xhat = iFs(np.pad(x, padding, mode='constant'), axes=(1, 2))
-    xhat = r2c(xhat, axes=(1, 2), nthreads=nthreads,
-                forward=True, inorm=0)
-    xhat = c2r(xhat * psfhat, axes=(1, 2), forward=False,
-                lastsize=lastsize, inorm=2, nthreads=nthreads)
-    return Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y] + x * sigmainvsq
+def psf_convolve(x, psfhat, psfopts):
+    return da.blockwise(_psf_convolve, ('nband', 'nx', 'ny'),
+                        x, ('nband', 'nx', 'ny'),
+                        psfhat, ('nband', 'nx', 'ny'),
+                        psfopts, None,
+                        align_arrays=False,
+                        dtype=x.dtype)

@@ -272,16 +272,16 @@ def _forward(**kw):
                        hessopts=hessopts, sigmainv=args.sigmainv, wsum=wsum, compute=False)
 
     # import pdb; pdb.set_trace()
-    x = np.random.randn(nband, nbasis, nmax).astype(np.float32)
-    res = hess(x)
-    # dask.visualize(hess, color="order", cmap="autumn",
+    # x = np.random.randn(nband, nbasis, nmax).astype(np.float32)
+    # res = hess(x)
+    # dask.visualize(res, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
     #                filename=args.output_filename + '_hess_I_ordered_graph.pdf',
     #                optimize_graph=False)
-    dask.visualize(res, filename=args.output_filename +
-                   '_hess_I_graph.pdf', optimize_graph=False)
+    # dask.visualize(res, filename=args.output_filename +
+    #                '_hess_I_graph.pdf', optimize_graph=False)
 
-    quit()
+    # quit()
 
     # print(res)
 

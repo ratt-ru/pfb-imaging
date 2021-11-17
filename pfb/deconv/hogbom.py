@@ -24,7 +24,6 @@ def hogbom(
     p = pq//ny
     q = pq - p*ny
     IRmax = np.sqrt(IRsearch[p, q])
-    _, nx_psf, ny_psf = PSF.shape
     wsums = np.amax(PSF.reshape(-1, nx_psf*ny_psf), axis=1)
     tol = pf * IRmax
     k = 0
