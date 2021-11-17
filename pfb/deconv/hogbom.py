@@ -63,7 +63,7 @@ def hogbom(
     else:
         if verbosity:
             print("Success, converged after %i iterations" % k, file=log)
-    return x
+    return x, IR
 
 
 import jax.numpy as jnp

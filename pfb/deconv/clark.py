@@ -2,17 +2,18 @@ import numpy as np
 import numexpr as ne
 from functools import partial
 import numba
+import dask.array as da
 import pyscilog
 log = pyscilog.get_logger('CLARK')
 
-@numba.jit(nopython=True, nogil=True, cache=True, inline='always')
+@numba.jit(parallel=True, nopython=True, nogil=True, cache=True, inline='always')
 def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     '''
     Subtract psf centered at location of xhat
     '''
     # loop over active indices
     nband = xhat.size
-    for b in numba.prange(nband):
+    for b in range(nband):
         for i in range(Ip.size):
             pp = nxo2 - Ip[i]
             qq = nyo2 - Iq[i]
@@ -20,7 +21,7 @@ def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     return A
 
 @numba.jit(nopython=True, nogil=True, cache=True)
-def subminor(A, psf, Ip, Iq, model, gamma=0.05, th=0.0, maxit=10000):
+def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     """
     Run subminor loop in active set
 
@@ -51,7 +52,7 @@ def subminor(A, psf, Ip, Iq, model, gamma=0.05, th=0.0, maxit=10000):
     k = 0
     while Amax > th and k < maxit:
         xhat = A[:, pq]
-        model[:, p, q] += gamma * xhat
+        model[:, p, q] += gamma * xhat/wsums
         Idelp = p - Ip
         Idelq = q - Iq
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
@@ -71,8 +72,8 @@ def clark(ID,
           psfo=None,
           gamma=0.05,
           pf=0.05,
-          maxit=10,
-          subpf=0.75,
+          maxit=50,
+          subpf=0.5,
           submaxit=1000,
           report_freq=1,
           verbosity=1,
@@ -80,6 +81,10 @@ def clark(ID,
     nband, nx, ny = ID.shape
     # initialise the PSF operator if not passed in
     _, nx_psf, ny_psf = PSF.shape
+    wsums = np.amax(PSF, axis=(1,2))
+    wsum = wsums.sum()
+    ID /= wsum
+    PSF /= wsum
     wsums = np.amax(PSF, axis=(1,2))
     if psfo is None:
         print("Setting up PSF operator", file=log)
@@ -117,7 +122,7 @@ def clark(ID,
         subth = subpf * IRmax
         Ip, Iq = np.where(IRsearch > subth**2)
         # run substep in active set
-        model = subminor(IR[:, Ip, Iq], PSF, Ip, Iq, model,
+        model = subminor(IR[:, Ip, Iq], PSF, Ip, Iq, model, wsums,
                          gamma=gamma,
                          th=subth,
                          maxit=submaxit)
@@ -147,4 +152,4 @@ def clark(ID,
     else:
         if verbosity:
             print("Success, converged after %i iterations" % k, file=log)
-    return x
+    return model, IR

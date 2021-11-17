@@ -84,7 +84,7 @@ class PSF(object):
 
 def _psf_convolve_impl(x, psfhat,
                       nthreads=None,
-                      padding_psf=None,
+                      padding=None,
                       unpad_x=None,
                       unpad_y=None,
                       lastsize=None):
@@ -94,12 +94,12 @@ def _psf_convolve_impl(x, psfhat,
     nband, nx, ny = x.shape
     convim = np.zeros_like(x)
     for b in range(nband):
-        xhat = iFs(np.pad(x[l], padding_psf, mode='constant'), axes=(0, 1))
+        xhat = iFs(np.pad(x[b], padding, mode='constant'), axes=(0, 1))
         xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
                     forward=True, inorm=0)
-        xhat = c2r(xhat * psfhat[l], axes=(0, 1), forward=False,
+        xhat = c2r(xhat * psfhat[b], axes=(0, 1), forward=False,
                     lastsize=lastsize, inorm=2, nthreads=nthreads)
-        convim[l] = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
+        convim[b] = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
 
     return convim
 
@@ -107,6 +107,8 @@ def _psf_convolve(x, psfhat, psfopts):
     return _psf_convolve_impl(x, psfhat, **psfopts)
 
 def psf_convolve(x, psfhat, psfopts):
+    if not isinstance(x, da.Array):
+        x = da.from_array(x, chunks=(1, -1, -1), name=False)
     return da.blockwise(_psf_convolve, ('nband', 'nx', 'ny'),
                         x, ('nband', 'nx', 'ny'),
                         psfhat, ('nband', 'nx', 'ny'),
