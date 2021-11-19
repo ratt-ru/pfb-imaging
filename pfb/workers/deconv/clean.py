@@ -9,11 +9,7 @@ pyscilog.init('pfb')
 log = pyscilog.get_logger('CLEAN')
 
 @cli.command()
-@click.option('-d', '--dirty', required=True,
-              help="Path to dirty.")
-@click.option('-p', '--psf', required=True,
-              help="Path to PSF")
-@click.option('-wt', '--weight-table',
+@click.option('-xds', '--xds', required=True,
               help="Path to weight table produced by psf worker")
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
@@ -21,26 +17,33 @@ log = pyscilog.get_logger('CLEAN')
               help="Number of imaging bands")
 @click.option('-otype', '--output-type', default='f4',
               help="Data type of output")
+@click.option('-rchunk', '--row-chunk', type=int, default=-1,
+              help="Number of rows in a chunk.")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
               help='Gridder accuracy')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
+@click.option('--use-clark/--no-use-clark', default=True)
 @click.option('-nmiter', '--nmiter', type=int, default=5,
               help="Number of major cycles")
 @click.option('-th', '--threshold', type=float,
               help='Stop cleaning when the MFS residual reaches '
               'this threshold.')
-@click.option('-hbg', "--hb-gamma", type=float, default=0.1,
-              help="Minor loop gain of Hogbom")
-@click.option('-hbpf', "--hb-peak-factor", type=float, default=0.1,
-              help="Peak factor of Hogbom")
-@click.option('-hbmaxit', "--hb-maxit", type=int, default=5000,
-              help="Maximum number of iterations for Hogbom")
-@click.option('-hbverb', "--hb-verbose", type=int, default=0,
-              help="Verbosity of Hogbom. Set to 2 for debugging or "
+@click.option('-gamma', "--gamma", type=float, default=0.05,
+              help="Minor loop gain of Hogbom/Clark")
+@click.option('-pf', "--peak-factor", type=float, default=0.05,
+              help="Peak factor of Hogbom/Clark")
+@click.option('-spf', "--sub-peak-factor", type=float, default=0.5,
+              help="Peak factor in sub-minor loop of Clark")
+@click.option('-maxit', "--maxit", type=int, default=50,
+              help="Maximum number of iterations for Hogbom/Clark")
+@click.option('-smaxit', "--sub-maxit", type=int, default=5000,
+              help="Maximum number of sub-minor iterations for Clark")
+@click.option('-verb', "--verbose", type=int, default=0,
+              help="Verbosity of Hogbom/Clark. Set to 2 for debugging or "
               "zero for silence.")
-@click.option('-hbrf', "--hb-report-freq", type=int, default=10,
-              help="Report freq for hogbom.")
+@click.option('-rf', "--report-freq", type=int, default=10,
+              help="Report freq for Hogbom/Clark.")
 @click.option('-ha', '--host-address',
               help='Address where the distributed client lives. '
               'Will use a local cluster if no address is provided')
@@ -124,83 +127,48 @@ def _clean(**kw):
     import dask.array as da
     from dask.distributed import performance_report
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
-    from pfb.opt.hogbom import hogbom
-    from astropy.io import fits
+    from pfb.deconv.hogbom import hogbom
+    from pfb.deconv.clark import clark
+    from daskms.experimental.zarr import xds_from_zarr
 
-    print("Loading dirty", file=log)
-    dirty = load_fits(args.dirty, dtype=args.output_type).squeeze()[0]
-    if len(dirty.shape) == 2:
-        dirty = dirty[None, :, :]
-    nband, nx, ny = dirty.shape
-    hdr = fits.getheader(args.dirty)
+    xds = xds_from_zarr(args.xds, chunks={'row':args.row_chunk})
+    nband = xds[0].nband
+    nx = xds[0].nx
+    ny = xds[0].ny
 
-    print("Loading psf", file=log)
-    psf = load_fits(args.psf, dtype=args.output_type).squeeze()[0]
-    if len(psf.shape) == 2:
-        psf = psf[None, :, :]
-    _, nx_psf, ny_psf = psf.shape
-    hdr_psf = fits.getheader(args.psf)
-
-    wsums = np.amax(psf.reshape(-1, nx_psf*ny_psf), axis=1)
-    wsum = np.sum(wsums)
-
-    psf /= wsum
+    # stitch dirty/psf in apparent scale
+    dirty = []
+    psf = []
+    wsum = 0
+    for ds in xds:
+        d = ds.DIRTY.data
+        p = ds.PSF.data
+        wsum += ds.WSUM.data.sum()
+        dirty.append(d)
+        psf.append(p)
+    dirty = (da.stack(dirty).sum(axis=0)/wsum).compute()
+    psf = (da.stack(psf).sum(axis=0)/wsum).compute()
     psf_mfs = np.sum(psf, axis=0)
-
-    assert (psf_mfs.max() - 1.0) < 1e-4
-
-    dirty /= wsum
+    nx_psf, ny_psf = psf_mfs.shape
     dirty_mfs = np.sum(dirty, axis=0)
+    assert (psf_mfs.max() - 1.0) < 2*args.epsilon
 
-    # get info required to set WCS
-    ra = np.deg2rad(hdr['CRVAL1'])
-    dec = np.deg2rad(hdr['CRVAL2'])
-    radec = [ra, dec]
+    # set up Hessian
+    from pfb.operators.hessian import hessian_wgt_xds
+    hessopts = {}
+    hessopts['cell'] = xds[0].cell_rad
+    hessopts['wstack'] = args.wstack
+    hessopts['epsilon'] = args.epsilon
+    hessopts['double_accum'] = args.double_accum
+    hessopts['nthreads'] = args.nvthreads
+    wsum = wsum.compute()
+    # always clean in apparent scale
+    hess = partial(hessian_wgt_xds, xdss=xds, hessopts=hessopts,
+                   wsum=wsum, sigmainv=0, compute=True, use_beam=False)
 
-    cell_deg = np.abs(hdr['CDELT1'])
-    if cell_deg != np.abs(hdr['CDELT2']):
-        raise NotImplementedError('cell sizes have to be equal')
-    cell_rad = np.deg2rad(cell_deg)
-
-    freq_out, ref_freq = data_from_header(hdr, axis=3)
-
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-
-    save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
-              dtype=args.output_type)
-
-    # set up Hessian approximation
-    if args.weight_table is not None:
-        from africanus.gridding.wgridder.dask import hessian
-        from pfb.utils.misc import plan_row_chunk
-        from daskms.experimental.zarr import xds_from_zarr
-
-        xds = xds_from_zarr(args.weight_table)[0]
-        nrow = xds.row.size
-        freqs = xds.FREQ.data
-        fbin_idx = xds.FBIN_IDX.data
-        fbin_counts = xds.FBIN_COUNTS.data
-
-
-        def convolver(x):
-            model = da.from_array(x,
-                          chunks=(1, nx, ny), name=False)
-
-            convolvedim = hessian(xds.UVW.data,
-                                  freqs,
-                                  model,
-                                  fbin_idx,
-                                  fbin_counts,
-                                  cell_rad,
-                                  weights=xds.WEIGHT.data.astype(args.output_type),
-                                  nthreads=args.nvthreads,
-                                  epsilon=args.epsilon,
-                                  do_wstacking=args.wstack,
-                                  double_accum=args.double_accum)
-            return convolvedim
-    else:
-        normfact = 1.0
-        from pfb.operators.psf import hessian
+    # to set up psf convolve when using Clark
+    if True:  # args.use_clark:
+        from pfb.operators.psf import psf_convolve
         from ducc0.fft import r2c
         iFs = np.fft.ifftshift
 
@@ -217,47 +185,72 @@ def _clean(**kw):
                      nthreads=args.nvthreads, inorm=0)
 
         psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
+        psfopts = {}
+        psfopts['padding'] = padding[1:]
+        psfopts['unpad_x'] = unpad_x
+        psfopts['unpad_y'] = unpad_y
+        psfopts['lastsize'] = lastsize
+        psfopts['nthreads'] = args.nvthreads
+        psfo = partial(psf_convolve, psfhat=psfhat, psfopts=psfopts)
 
-        def convolver(x):
-            model = da.from_array(x,
-                          chunks=(1, nx, ny), name=False)
+    # construct a header from xds attrs
+    ra = xds[0].ra
+    dec = xds[0].dec
+    radec = [ra, dec]
 
+    cell_rad = xds[0].cell_rad
+    cell_deg = np.rad2deg(cell_rad)
 
-            convolvedim = hessian(model,
-                                  psfhat,
-                                  padding,
-                                  args.nvthreads,
-                                  unpad_x,
-                                  unpad_y,
-                                  lastsize)
-            return convolvedim
-
-        # psfo = PSF(psf, dirty.shape, nthreads=args.nthreads)
-        # def convolver(x): return psfo.convolve(x)
+    freq_out = np.unique(np.concatenate([ds.band.values for ds in xds]))
+    hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
+    ref_freq = np.mean(freq_out)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+    # TODO - add wsum info
 
     rms = np.std(dirty_mfs)
     rmax = np.abs(dirty_mfs).max()
 
-    print("Iter %i: peak residual = %f, rms = %f" % (
-                0, rmax, rms), file=log)
+    print("Iter %i: peak residual = %f, rms = %f" % (0, rmax, rms), file=log)
 
     residual = dirty.copy()
     residual_mfs = dirty_mfs.copy()
     model = np.zeros_like(residual)
     for k in range(args.nmiter):
-        print("Running Hogbom", file=log)
-        x = hogbom(residual, psf,
-                   gamma=args.hb_gamma,
-                   pf=args.hb_peak_factor,
-                   maxit=args.hb_maxit,
-                   verbosity=args.hb_verbose,
-                   report_freq=args.hb_report_freq)
+        if args.use_clark:
+            print("Running Clark", file=log)
+            x = clark(residual, psf, psfo=psfo,
+                      gamma=args.gamma,
+                      pf=args.peak_factor,
+                      maxit=args.maxit,
+                      subpf=args.sub_peak_factor,
+                      submaxit=args.sub_maxit,
+                      verbosity=args.verbose,
+                      report_freq=args.report_freq)
+        else:
+            print("Running Hogbom", file=log)
+            x = hogbom(residual, psf,
+                       gamma=args.gamma,
+                       pf=args.peak_factor,
+                       maxit=args.maxit,
+                       verbosity=args.verbose,
+                       report_freq=args.report_freq)
+
+        res1 = psfo(x).compute()
+        res2 = hess(x)
+
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(nrows=1, ncols=2)
+        ax[0].imshow(res1[0])
+        ax[1].imshow(res2[0])
+
+        plt.show()
+
+        quit()
 
         model += x
         print("Getting residual", file=log)
-
-        convimage = convolver(model).compute()
-        ne.evaluate('dirty - convimage/normfact', out=residual,
+        convimage = psfo(x).compute()
+        ne.evaluate('residual - convimage', out=residual,
                     casting='same_kind')
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
@@ -267,7 +260,7 @@ def _clean(**kw):
         save_fits(args.output_filename + f'_model_mfs{k}.fits',
                   np.mean(model, axis=0), hdr_mfs)
         save_fits(args.output_filename + f'_convim_mfs{k}.fits',
-                  np.sum(convimage, axis=0)/normfact, hdr_mfs)
+                  np.sum(convimage, axis=0), hdr_mfs)
 
 
         rms = np.std(residual_mfs)
@@ -285,7 +278,7 @@ def _clean(**kw):
     save_fits(args.output_filename + '_model.fits', model, hdr)
     model_mfs = np.mean(model, axis=0)
     save_fits(args.output_filename + '_model_mfs.fits', model_mfs, hdr_mfs)
-    save_fits(args.output_filename + '_residual.fits', residual*wsums[:, None, None], hdr)
-    save_fits(args.output_filename + '_residual.fits', residual_mfs, hdr_mfs)
+    save_fits(args.output_filename + '_residual.fits', residual, hdr)
+    save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs)
 
     print("All done here.", file=log)

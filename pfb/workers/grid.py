@@ -557,12 +557,12 @@ def _grid(**kw):
         writes[p] = xds_to_zarr(out_datasets[p], args.output_filename +
                                 f'_{p}.zarr', columns='ALL')
 
-    dask.visualize(writes, color="order", cmap="autumn",
-                   node_attr={"penwidth": "4"},
-                   filename=args.output_filename + '_writes_I_ordered_graph.pdf',
-                   optimize_graph=False)
-    dask.visualize(writes, filename=args.output_filename +
-                   '_writes_I_graph.pdf', optimize_graph=False)
+    # dask.visualize(writes, color="order", cmap="autumn",
+    #                node_attr={"penwidth": "4"},
+    #                filename=args.output_filename + '_writes_I_ordered_graph.pdf',
+    #                optimize_graph=False)
+    # dask.visualize(writes, filename=args.output_filename +
+    #                '_writes_I_graph.pdf', optimize_graph=False)
 
     from pfb.utils.misc import compute_context
 

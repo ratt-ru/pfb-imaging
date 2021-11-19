@@ -24,7 +24,7 @@ def hogbom(
     p = pq//ny
     q = pq - p*ny
     IRmax = np.sqrt(IRsearch[p, q])
-    wsums = np.amax(PSF.reshape(-1, nx_psf*ny_psf), axis=1)
+    wsums = np.amax(PSF, axis=(1,2))
     tol = pf * IRmax
     k = 0
     stall_count = 0
@@ -63,7 +63,7 @@ def hogbom(
     else:
         if verbosity:
             print("Success, converged after %i iterations" % k, file=log)
-    return x, IR
+    return x
 
 
 import jax.numpy as jnp
