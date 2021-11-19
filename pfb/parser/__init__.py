@@ -6,4 +6,3 @@ email  - lbester@ska.ac.za
 date   - 31/03/2020
 """
 
-from pfb.parser.argparser import create_parser

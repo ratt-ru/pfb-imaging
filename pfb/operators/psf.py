@@ -1,9 +1,55 @@
 import numpy as np
 import dask.array as da
+from daskms.optimisation import inlined_array
 from ducc0.fft import r2c, c2r, c2c, good_size
 from pfb.operators.psi import im2coef, coef2im
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
+
+
+def psf_convolve_alpha_xds(alpha, xdss, psfopts, waveopts, wsum, sigmainv, compute=True):
+    '''
+    Image space Hessian reduction over dataset
+    '''
+    pmask = waveopts['pmask']
+    bases = waveopts['bases']
+    padding = waveopts['padding']
+    iy = waveopts['iy']
+    sy = waveopts['sy']
+    nx = waveopts['nx']
+    ny = waveopts['ny']
+    ntot = waveopts['ntot']
+    nmax = waveopts['nmax']
+    nlevels = waveopts['nlevels']
+
+    if not isinstance(alpha, da.Array):
+        alpha = da.from_array(alpha, chunks=(1, -1, -1), name=False)
+
+    # coeff to image
+    x = coef2im(alpha, pmask, bases, padding, iy, sy, nx, ny)
+    x = inlined_array(x, [pmask, alpha, bases, padding])
+
+    convims = []
+    for xds in xdss:
+        psfhat = xds.PSFHAT.data
+        beam = xds.BEAM.data
+        convim = psf_convolve(x, psfhat, beam, psfopts)
+        convims.append(convim)
+
+    # LB - it's not this simple when there are multiple spw's to consider
+    convim = da.stack(convims).sum(axis=0)/wsum
+
+    alpha_rec = im2coef(convim, pmask, bases, ntot, nmax, nlevels)
+    alpha_rec = inlined_array(alpha_rec, [pmask, bases, ntot])
+
+    if sigmainv:
+        alpha_rec += alpha * sigmainv**2
+
+    if compute:
+        return alpha_rec.compute()
+    else:
+        return alpha_rec
+
 
 def psf_convolve_xds(x, xdss, psfopts, wsum, sigmainv, compute=True):
     '''
@@ -11,7 +57,7 @@ def psf_convolve_xds(x, xdss, psfopts, wsum, sigmainv, compute=True):
     '''
     convims = []
     for xds in xdss:
-        psf = xds.PSF.data
+        psfhat = xds.PSFHAT.data
         beam = xds.BEAM.data
 
         convim = psf_convolve(x, psfhat, beam, psfopts)
@@ -51,7 +97,7 @@ def _psf_convolve_impl(x, psfhat, beam,
     return convim
 
 def _psf_convolve(x, psfhat, beam, psfopts):
-    return _psf_convolve_impl(x, psfhat, **psfopts)
+    return _psf_convolve_impl(x, psfhat, beam, **psfopts)
 
 def psf_convolve(x, psfhat, beam, psfopts):
     if not isinstance(x, da.Array):

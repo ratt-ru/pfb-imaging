@@ -6,7 +6,7 @@ from daskms.optimisation import inlined_array
 from ducc0.wgridder import ms2dirty, dirty2ms
 from pfb.operators.psi import im2coef, coef2im
 
-def hessian_wgt_xds(x, xdss, hessopts, wsum, sigmainv, compute=True, use_beam=True):
+def hessian_xds(x, xdss, hessopts, wsum, sigmainv, compute=True, use_beam=True):
     '''
     Vis space Hessian reduction over dataset
     '''
@@ -26,7 +26,7 @@ def hessian_wgt_xds(x, xdss, hessopts, wsum, sigmainv, compute=True, use_beam=Tr
             # unnecessary beam application
             beam = da.ones_like(x)
 
-        convim = hessian_wgt(uvw, wgt, freq, x, beam, fbin_idx,
+        convim = hessian(uvw, wgt, freq, x, beam, fbin_idx,
                              fbin_counts, hessopts)
         convim = inlined_array(convim, uvw)
 
@@ -43,7 +43,7 @@ def hessian_wgt_xds(x, xdss, hessopts, wsum, sigmainv, compute=True, use_beam=Tr
     else:
         return convim
 
-def hessian_wgt_alpha_xds(alpha, xdss, waveopts, hessopts, wsum,
+def hessian_alpha_xds(alpha, xdss, waveopts, hessopts, wsum,
                           sigmainv, compute=True):
     '''
     Vis space Hessian reduction over dataset
@@ -75,8 +75,8 @@ def hessian_wgt_alpha_xds(alpha, xdss, waveopts, hessopts, wsum,
         fbin_counts = xds.FBIN_COUNTS.data
         beam = xds.BEAM.data
 
-        convim = hessian_wgt(uvw, wgt, freq, x, beam, fbin_idx,
-                             fbin_counts, hessopts)
+        convim = hessian(uvw, wgt, freq, x, beam, fbin_idx,
+                         fbin_counts, hessopts)
         convim = inlined_array(convim, uvw)
 
         convims.append(convim)
@@ -84,7 +84,6 @@ def hessian_wgt_alpha_xds(alpha, xdss, waveopts, hessopts, wsum,
     # LB - it's not this simple when there are multiple spw's mapping to
     # different imaging bands
     convim = da.stack(convims).sum(axis=0)/wsum
-
 
     alpha_rec = im2coef(convim, pmask, bases, ntot, nmax, nlevels)
     alpha_rec = inlined_array(alpha_rec, [pmask, bases, ntot])
@@ -97,12 +96,12 @@ def hessian_wgt_alpha_xds(alpha, xdss, waveopts, hessopts, wsum,
     else:
         return alpha_rec
 
-def _hessian_wgt_impl(uvw, weight, freq, x, beam, fbin_idx, fbin_counts,
-                      cell=None,
-                      wstack=None,
-                      epsilon=None,
-                      double_accum=None,
-                      nthreads=None):
+def _hessian_impl(uvw, weight, freq, x, beam, fbin_idx, fbin_counts,
+                  cell=None,
+                  wstack=None,
+                  epsilon=None,
+                  double_accum=None,
+                  nthreads=None):
     nband, nx, ny = beam.shape
     convim = np.zeros((nband, nx, ny), dtype=x.dtype)  # no row chunking
     fbin_idx2 = fbin_idx - fbin_idx.min()  # adjust for freq chunking
@@ -138,14 +137,14 @@ def _hessian_wgt_impl(uvw, weight, freq, x, beam, fbin_idx, fbin_counts,
     return convim
 
 
-def _hessian_wgt(uvw, weight, freq, x, beam, fbin_idx, fbin_counts, hessopts):
-    return _hessian_wgt_impl(uvw[0][0], weight[0], freq, x, beam,
+def _hessian(uvw, weight, freq, x, beam, fbin_idx, fbin_counts, hessopts):
+    return _hessian_impl(uvw[0][0], weight[0], freq, x, beam,
                              fbin_idx, fbin_counts, **hessopts)
 
-def hessian_wgt(uvw, weight, freq, x, beam, fbin_idx, fbin_counts, hessopts):
+def hessian(uvw, weight, freq, x, beam, fbin_idx, fbin_counts, hessopts):
 
-    return da.blockwise(_hessian_wgt, ('chan', 'nx', 'ny')
-,                       uvw, ("row", 'three'),
+    return da.blockwise(_hessian, ('chan', 'nx', 'ny'),
+                        uvw, ("row", 'three'),
                         weight, ('row', 'chan'),
                         freq, ('chan',),
                         x, ('chan', 'nx', 'ny'),

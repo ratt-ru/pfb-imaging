@@ -204,17 +204,22 @@ def _forward(**kw):
     waveopts['ny'] = ny
     waveopts['padding'] = da.from_array(np.array(padding, dtype=object), chunks=-1)
 
+    hessopts = {}
+    hessopts['cell'] = xds[0].cell_rad
+    hessopts['wstack'] = args.wstack
+    hessopts['epsilon'] = args.epsilon
+    hessopts['double_accum'] = args.double_accum
+    hessopts['nthreads'] = args.nvthreads
+    wsum = wsum.compute()
+
     if not args.no_use_psf:
         print("Initialising psf", file=log)
+        from pfb.operators.psf import psf_convolve_alpha_xds
         from ducc0.fft import r2c
         normfact = 1.0
 
-        psf = xds.PSF.data
+        psf = xds[0].PSF.data
         _, nx_psf, ny_psf = psf.shape
-
-        psf /= wsum
-        psf_mfs = da.sum(psf, axis=0).compute()
-        assert (psf_mfs.max() - 1.0) < args.epsilon
 
         iFs = np.fft.ifftshift
 
@@ -226,52 +231,35 @@ def _forward(**kw):
         unpad_x = slice(npad_xl, -npad_xr)
         unpad_y = slice(npad_yl, -npad_yr)
         lastsize = ny + np.sum(padding_psf[-1])
-        psf_pad = iFs(psf.compute(), axes=(1, 2))
-        psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                     nthreads=args.nthreads, inorm=0)
 
-        psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name=False)
+        # add psfhat to Dataset
+        for i, ds in enumerate(xds):
+            psf_pad = iFs(ds.PSF.data.compute(), axes=(1, 2))
+            psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
+                         nthreads=args.nthreads, inorm=0)
 
-        hessopts = {}
-        hessopts['padding_psf'] = padding_psf[1:]
-        hessopts['unpad_x'] = unpad_x
-        hessopts['unpad_y'] = unpad_y
-        hessopts['lastsize'] = lastsize
-        hessopts['nthreads'] = args.nvthreads
-        hessopts['sigmainv'] = args.sigmainv
+            psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name=False)
+            ds = ds.assign({'PSFHAT':(('nband', 'x_psf', 'y_psfo2'), psfhat)})
+            xds[i] = ds
 
-        print("Solving for update using image space approximation", file=log)
-        def convolver(x):
-            model = da.from_array(x,
-                                  chunks=(1, nx, ny),
-                                  name=False)
+        psfopts = {}
+        psfopts['padding'] = padding_psf[1:]
+        psfopts['unpad_x'] = unpad_x
+        psfopts['unpad_y'] = unpad_y
+        psfopts['lastsize'] = lastsize
+        psfopts['nthreads'] = args.nvthreads
 
-
-            convolvedim = hessian(model,
-                                  psfhat,
-                                  padding,
-                                  args.nvthreads,
-                                  unpad_x,
-                                  unpad_y,
-                                  lastsize)
-            return convolvedim
+        hess = partial(psf_convolve_alpha_xds, xdss=xds, waveopts=waveopts,
+                       psfopts=psfopts, sigmainv=args.sigmainv, wsum=wsum, compute=True)
 
     else:
         print("Solving for update using vis space approximation", file=log)
-        from pfb.operators.hessian import hessian_wgt_alpha_xds
+        from pfb.operators.hessian import hessian_alpha_xds
 
-        hessopts = {}
-        hessopts['cell'] = xds[0].cell_rad
-        hessopts['wstack'] = args.wstack
-        hessopts['epsilon'] = args.epsilon
-        hessopts['double_accum'] = args.double_accum
-        hessopts['nthreads'] = args.nvthreads
-        wsum = wsum.compute()
+        hess = partial(hessian_alpha_xds, xdss=xds, waveopts=waveopts,
+                       hessopts=hessopts, sigmainv=args.sigmainv, wsum=wsum, compute=True)
 
-        hess = partial(hessian_wgt_alpha_xds, xdss=xds, waveopts=waveopts,
-                       hessopts=hessopts, sigmainv=args.sigmainv, wsum=wsum, compute=False)
-
-    # import pdb; pdb.set_trace()
+    # # import pdb; pdb.set_trace()
     # x = np.random.randn(nband, nbasis, nmax).astype(np.float32)
     # res = hess(x)
     # dask.visualize(res, color="order", cmap="autumn",
@@ -280,6 +268,9 @@ def _forward(**kw):
     #                optimize_graph=False)
     # dask.visualize(res, filename=args.output_filename +
     #                '_hess_I_graph.pdf', optimize_graph=False)
+
+    # import pdb; pdb.set_trace()
+    # print(res)
 
     # quit()
 
@@ -309,11 +300,13 @@ def _forward(**kw):
                     pmask, waveopts['bases'], waveopts['padding'],
                     iys, sys, nx, ny)
 
-    from pfb.operators.hessian import hessian_wgt_xds
-    residual -= hessian_wgt_xds(model, xds, hessopts, wsum, 0.0, compute=False)
+    # from pfb.operators.hessian import hessian_xds
+    # residual -= hessian_xds(model, xds, hessopts, wsum, 0.0, compute=True)
+    from pfb.operators.psf import psf_convolve_xds
+    residual -= psf_convolve_xds(model, xds, psfopts, wsum, 0.0, compute=True)
 
-    residual = dask.compute(residual,
-                            optimize_graph=False)[0]
+    # residual = dask.compute(residual,
+    #                         optimize_graph=False)[0]
 
     # construct a header from xds attrs
     ra = xds[0].ra
