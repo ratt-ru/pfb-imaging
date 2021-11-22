@@ -157,8 +157,8 @@ def _forward(**kw):
             print("Detected third axis on pmask. "
                   "Initialising pmask from model.", file=log)
             x0 = da.from_array(pmask, chunks=(1, -1, -1),
-                               dtype=residual.dtype, name=False)
-            pmask = da.any(pmask, axis=0)
+                               name=False)
+            pmask = da.any(pmask, axis=0).astype(residual.dtype)
         else:
             x0 = da.zeros((nband, nx, ny), dtype=residual.dtype)
 
@@ -293,6 +293,7 @@ def _forward(**kw):
 
     # run pcg for update
     print("Solving for update", file=log)
+    # import pdb; pdb.set_trace()
     alpha = pcg(hess, alpha_resid, alpha0, **cgopts)
 
     print("Getting residual", file=log)

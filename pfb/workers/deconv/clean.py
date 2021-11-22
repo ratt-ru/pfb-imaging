@@ -10,7 +10,7 @@ log = pyscilog.get_logger('CLEAN')
 
 @cli.command()
 @click.option('-xds', '--xds', required=True,
-              help="Path to weight table produced by psf worker")
+              help="Path to xarray dataset containing data products")
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -143,6 +143,7 @@ def _clean(**kw):
     for ds in xds:
         d = ds.DIRTY.data
         p = ds.PSF.data
+        beam = ds.BEAM.data
         wsum += ds.WSUM.data.sum()
         dirty.append(d)
         psf.append(p)
@@ -154,7 +155,7 @@ def _clean(**kw):
     assert (psf_mfs.max() - 1.0) < 2*args.epsilon
 
     # set up Hessian
-    from pfb.operators.hessian import hessian_wgt_xds
+    from pfb.operators.hessian import hessian_xds
     hessopts = {}
     hessopts['cell'] = xds[0].cell_rad
     hessopts['wstack'] = args.wstack
@@ -163,11 +164,11 @@ def _clean(**kw):
     hessopts['nthreads'] = args.nvthreads
     wsum = wsum.compute()
     # always clean in apparent scale
-    hess = partial(hessian_wgt_xds, xdss=xds, hessopts=hessopts,
+    hess = partial(hessian_xds, xdss=xds, hessopts=hessopts,
                    wsum=wsum, sigmainv=0, compute=True, use_beam=False)
 
     # to set up psf convolve when using Clark
-    if True:  # args.use_clark:
+    if True:  #args.use_clark:
         from pfb.operators.psf import psf_convolve
         from ducc0.fft import r2c
         iFs = np.fft.ifftshift
@@ -191,7 +192,7 @@ def _clean(**kw):
         psfopts['unpad_y'] = unpad_y
         psfopts['lastsize'] = lastsize
         psfopts['nthreads'] = args.nvthreads
-        psfo = partial(psf_convolve, psfhat=psfhat, psfopts=psfopts)
+        psfo = partial(psf_convolve, psfhat=psfhat, beam=beam, psfopts=psfopts)
 
     # construct a header from xds attrs
     ra = xds[0].ra
@@ -235,17 +236,17 @@ def _clean(**kw):
                        verbosity=args.verbose,
                        report_freq=args.report_freq)
 
-        res1 = psfo(x).compute()
-        res2 = hess(x)
+        # res1 = psfo(x).compute()
+        # res2 = hess(x)
 
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(nrows=1, ncols=2)
-        ax[0].imshow(res1[0])
-        ax[1].imshow(res2[0])
+        # import matplotlib.pyplot as plt
+        # fig, ax = plt.subplots(nrows=1, ncols=2)
+        # ax[0].imshow(res1[0])
+        # ax[1].imshow(res2[0])
 
-        plt.show()
+        # plt.show()
 
-        quit()
+        # quit()
 
         model += x
         print("Getting residual", file=log)
