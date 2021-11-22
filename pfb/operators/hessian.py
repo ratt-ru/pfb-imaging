@@ -6,28 +6,28 @@ from daskms.optimisation import inlined_array
 from ducc0.wgridder import ms2dirty, dirty2ms
 from pfb.operators.psi import im2coef, coef2im
 
-def hessian_xds(x, xdss, hessopts, wsum, sigmainv, compute=True, use_beam=True):
+def hessian_xds(x, xds, hessopts, wsum, sigmainv, compute=True, use_beam=True):
     '''
     Vis space Hessian reduction over dataset
     '''
     if not isinstance(x, da.Array):
         x = da.from_array(x, chunks=(1, -1, -1), name=False)
     convims = []
-    for xds in xdss:
-        wgt = xds.WEIGHT.data
-        uvw = xds.UVW.data
-        freq = xds.FREQ.data
-        fbin_idx = xds.FBIN_IDX.data
-        fbin_counts = xds.FBIN_COUNTS.data
+    for ds in xds:
+        wgt = ds.WEIGHT.data
+        uvw = ds.UVW.data
+        freq = ds.FREQ.data
+        fbin_idx = ds.FBIN_IDX.data
+        fbin_counts = ds.FBIN_COUNTS.data
         if use_beam:
-            beam = xds.BEAM.data
+            beam = ds.BEAM.data
         else:
             # TODO - separate implementation without
             # unnecessary beam application
             beam = da.ones_like(x)
 
         convim = hessian(uvw, wgt, freq, x, beam, fbin_idx,
-                             fbin_counts, hessopts)
+                         fbin_counts, hessopts)
         convim = inlined_array(convim, uvw)
 
         convims.append(convim)
@@ -43,7 +43,7 @@ def hessian_xds(x, xdss, hessopts, wsum, sigmainv, compute=True, use_beam=True):
     else:
         return convim
 
-def hessian_alpha_xds(alpha, xdss, waveopts, hessopts, wsum,
+def hessian_alpha_xds(alpha, xds, waveopts, hessopts, wsum,
                           sigmainv, compute=True):
     '''
     Vis space Hessian reduction over dataset
@@ -67,13 +67,13 @@ def hessian_alpha_xds(alpha, xdss, waveopts, hessopts, wsum,
     x = inlined_array(x, [pmask, alpha, bases, padding])
 
     convims = []
-    for xds in xdss:
-        wgt = xds.WEIGHT.data
-        uvw = xds.UVW.data
-        freq = xds.FREQ.data
-        fbin_idx = xds.FBIN_IDX.data
-        fbin_counts = xds.FBIN_COUNTS.data
-        beam = xds.BEAM.data
+    for ds in xds:
+        wgt = ds.WEIGHT.data
+        uvw = ds.UVW.data
+        freq = ds.FREQ.data
+        fbin_idx = ds.FBIN_IDX.data
+        fbin_counts = ds.FBIN_COUNTS.data
+        beam = ds.BEAM.data
 
         convim = hessian(uvw, wgt, freq, x, beam, fbin_idx,
                          fbin_counts, hessopts)
@@ -112,7 +112,6 @@ def _hessian_impl(uvw, weight, freq, x, beam, fbin_idx, fbin_counts,
         mvis = dirty2ms(uvw=uvw,
                         freq=freq[flow:fhigh],
                         dirty=beam[b] * x[b],
-                        wgt=weight[:, flow:fhigh],
                         pixsize_x=cell,
                         pixsize_y=cell,
                         epsilon=epsilon,

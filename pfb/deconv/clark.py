@@ -13,14 +13,14 @@ def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     '''
     # loop over active indices
     nband = xhat.size
-    for b in range(nband):
+    for b in numba.prange(nband):
         for i in range(Ip.size):
             pp = nxo2 - Ip[i]
             qq = nyo2 - Iq[i]
             A[b, i] -= xhat[b] * psf[b, pp, qq]
     return A
 
-@numba.jit(nopython=True, nogil=True, cache=True)
+@numba.jit(parallel=True, nopython=True, nogil=True, cache=True)
 def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     """
     Run subminor loop in active set

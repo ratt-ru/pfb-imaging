@@ -31,9 +31,9 @@ log = pyscilog.get_logger('CLEAN')
               'this threshold.')
 @click.option('-gamma', "--gamma", type=float, default=0.05,
               help="Minor loop gain of Hogbom/Clark")
-@click.option('-pf', "--peak-factor", type=float, default=0.05,
+@click.option('-pf', "--peak-factor", type=float, default=0.15,
               help="Peak factor of Hogbom/Clark")
-@click.option('-spf', "--sub-peak-factor", type=float, default=0.5,
+@click.option('-spf', "--sub-peak-factor", type=float, default=0.75,
               help="Peak factor in sub-minor loop of Clark")
 @click.option('-maxit', "--maxit", type=int, default=50,
               help="Maximum number of iterations for Hogbom/Clark")
@@ -164,11 +164,11 @@ def _clean(**kw):
     hessopts['nthreads'] = args.nvthreads
     wsum = wsum.compute()
     # always clean in apparent scale
-    hess = partial(hessian_xds, xdss=xds, hessopts=hessopts,
+    hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
                    wsum=wsum, sigmainv=0, compute=True, use_beam=False)
 
     # to set up psf convolve when using Clark
-    if True:  #args.use_clark:
+    if args.use_clark:
         from pfb.operators.psf import psf_convolve
         from ducc0.fft import r2c
         iFs = np.fft.ifftshift
@@ -236,21 +236,9 @@ def _clean(**kw):
                        verbosity=args.verbose,
                        report_freq=args.report_freq)
 
-        # res1 = psfo(x).compute()
-        # res2 = hess(x)
-
-        # import matplotlib.pyplot as plt
-        # fig, ax = plt.subplots(nrows=1, ncols=2)
-        # ax[0].imshow(res1[0])
-        # ax[1].imshow(res2[0])
-
-        # plt.show()
-
-        # quit()
-
         model += x
         print("Getting residual", file=log)
-        convimage = psfo(x).compute()
+        convimage = hess(x)
         ne.evaluate('residual - convimage', out=residual,
                     casting='same_kind')
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
@@ -272,7 +260,8 @@ def _clean(**kw):
 
         if args.threshold is not None:
             if rmax <= args.threshold:
-                print("Terminating because final threshold has been reached")
+                print("Terminating because final threshold has been reached",
+                      file=log)
                 break
 
     print("Saving results", file=log)

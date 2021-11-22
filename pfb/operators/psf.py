@@ -7,7 +7,7 @@ iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
 
-def psf_convolve_alpha_xds(alpha, xdss, psfopts, waveopts, wsum, sigmainv, compute=True):
+def psf_convolve_alpha_xds(alpha, xds, psfopts, waveopts, wsum, sigmainv, compute=True):
     '''
     Image space Hessian reduction over dataset
     '''
@@ -30,9 +30,9 @@ def psf_convolve_alpha_xds(alpha, xdss, psfopts, waveopts, wsum, sigmainv, compu
     x = inlined_array(x, [pmask, alpha, bases, padding])
 
     convims = []
-    for xds in xdss:
-        psfhat = xds.PSFHAT.data
-        beam = xds.BEAM.data
+    for ds in xds:
+        psfhat = ds.PSFHAT.data
+        beam = ds.BEAM.data
         convim = psf_convolve(x, psfhat, beam, psfopts)
         convims.append(convim)
 
@@ -51,14 +51,14 @@ def psf_convolve_alpha_xds(alpha, xdss, psfopts, waveopts, wsum, sigmainv, compu
         return alpha_rec
 
 
-def psf_convolve_xds(x, xdss, psfopts, wsum, sigmainv, compute=True):
+def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, compute=True):
     '''
     Image space Hessian reduction over dataset
     '''
     convims = []
-    for xds in xdss:
-        psfhat = xds.PSFHAT.data
-        beam = xds.BEAM.data
+    for ds in xds:
+        psfhat = ds.PSFHAT.data
+        beam = ds.BEAM.data
 
         convim = psf_convolve(x, psfhat, beam, psfopts)
 

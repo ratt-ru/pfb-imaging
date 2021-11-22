@@ -239,7 +239,7 @@ def _forward(**kw):
                          nthreads=args.nthreads, inorm=0)
 
             psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name=False)
-            ds = ds.assign({'PSFHAT':(('nband', 'x_psf', 'y_psfo2'), psfhat)})
+            ds = ds.assign({'PSFHAT':(('band', 'x_psf', 'y_psfo2'), psfhat)})
             xds[i] = ds
 
         psfopts = {}
@@ -249,14 +249,14 @@ def _forward(**kw):
         psfopts['lastsize'] = lastsize
         psfopts['nthreads'] = args.nvthreads
 
-        hess = partial(psf_convolve_alpha_xds, xdss=xds, waveopts=waveopts,
+        hess = partial(psf_convolve_alpha_xds, xds=xds, waveopts=waveopts,
                        psfopts=psfopts, sigmainv=args.sigmainv, wsum=wsum, compute=True)
 
     else:
         print("Solving for update using vis space approximation", file=log)
         from pfb.operators.hessian import hessian_alpha_xds
 
-        hess = partial(hessian_alpha_xds, xdss=xds, waveopts=waveopts,
+        hess = partial(hessian_alpha_xds, xds=xds, waveopts=waveopts,
                        hessopts=hessopts, sigmainv=args.sigmainv, wsum=wsum, compute=True)
 
     # # import pdb; pdb.set_trace()
@@ -269,12 +269,6 @@ def _forward(**kw):
     # dask.visualize(res, filename=args.output_filename +
     #                '_hess_I_graph.pdf', optimize_graph=False)
 
-    # import pdb; pdb.set_trace()
-    # print(res)
-
-    # quit()
-
-    # print(res)
 
     print("Initialising starting values", file=log)
     alpha_resid = im2coef(residual,  # beam alreadt applied
