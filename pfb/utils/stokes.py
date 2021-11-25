@@ -213,6 +213,7 @@ def single_stokes(data=None,
     coords = {
         'chan': (('chan',), freq),
         'band': (('band',), freq_out[band_mapping]),
+        'band_id': (('band',), band_mapping)
     }
 
     attrs = {

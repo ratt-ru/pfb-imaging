@@ -141,9 +141,11 @@ def _clean(**kw):
     psf = []
     wsum = 0
     for ds in xds:
-        d = ds.DIRTY.data
+        if 'RESIDUAL' in ds:
+            d = ds.RESIDUAL.data
+        else:
+            d = ds.DIRTY.data
         p = ds.PSF.data
-        beam = ds.BEAM.data
         wsum += ds.WSUM.data.sum()
         dirty.append(d)
         psf.append(p)
@@ -192,7 +194,7 @@ def _clean(**kw):
         psfopts['unpad_y'] = unpad_y
         psfopts['lastsize'] = lastsize
         psfopts['nthreads'] = args.nvthreads
-        psfo = partial(psf_convolve, psfhat=psfhat, beam=beam, psfopts=psfopts)
+        psfo = partial(psf_convolve, psfhat=psfhat, beam=None, psfopts=psfopts)
 
     # construct a header from xds attrs
     ra = xds[0].ra

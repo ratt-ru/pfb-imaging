@@ -51,14 +51,26 @@ def psf_convolve_alpha_xds(alpha, xds, psfopts, waveopts, wsum, sigmainv, comput
         return alpha_rec
 
 
-def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, compute=True):
+def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, mask,
+                     compute=True, use_beam=True):
     '''
     Image space Hessian reduction over dataset
     '''
+    if not isinstance(x, da.Array):
+        x = da.from_array(x, chunks=(1, -1, -1), name=False)
+
+    if not isinstance(mask, da.Array):
+        mask = da.from_array(mask, chunks=(1, -1, -1), name=False)
+
     convims = []
     for ds in xds:
         psfhat = ds.PSFHAT.data
-        beam = ds.BEAM.data
+        if use_beam:
+            beam = ds.BEAM.data * mask
+        else:
+            # TODO - separate implementation without
+            # unnecessary beam application
+            beam = mask
 
         convim = psf_convolve(x, psfhat, beam, psfopts)
 
@@ -87,12 +99,15 @@ def _psf_convolve_impl(x, psfhat, beam,
     nband, nx, ny = x.shape
     convim = np.zeros_like(x)
     for b in range(nband):
-        xhat = iFs(np.pad(x[b], padding, mode='constant'), axes=(0, 1))
+        xhat = [x[b] if beam is None else x[b] * beam[b]]
+        xhat = iFs(np.pad(x[b]*beam[b], padding, mode='constant'), axes=(0, 1))
         xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
                     forward=True, inorm=0)
         xhat = c2r(xhat * psfhat[b], axes=(0, 1), forward=False,
                     lastsize=lastsize, inorm=2, nthreads=nthreads)
         convim[b] = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
+        if beam is not None:
+            convim[b] *= beam[b]
 
     return convim
 
@@ -102,10 +117,14 @@ def _psf_convolve(x, psfhat, beam, psfopts):
 def psf_convolve(x, psfhat, beam, psfopts):
     if not isinstance(x, da.Array):
         x = da.from_array(x, chunks=(1, -1, -1), name=False)
+    if beam is None:
+        bout = None
+    else:
+        bout = ('nband', 'nx', 'ny')
     return da.blockwise(_psf_convolve, ('nband', 'nx', 'ny'),
                         x, ('nband', 'nx', 'ny'),
                         psfhat, ('nband', 'nx', 'ny'),
-                        beam, ('nband', 'nx', 'ny'),
+                        beam, bout,
                         psfopts, None,
                         align_arrays=False,
                         dtype=x.dtype)

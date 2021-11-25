@@ -6,12 +6,17 @@ from daskms.optimisation import inlined_array
 from ducc0.wgridder import ms2dirty, dirty2ms
 from pfb.operators.psi import im2coef, coef2im
 
-def hessian_xds(x, xds, hessopts, wsum, sigmainv, compute=True, use_beam=True):
+def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
+                compute=True, use_beam=True):
     '''
     Vis space Hessian reduction over dataset
     '''
     if not isinstance(x, da.Array):
         x = da.from_array(x, chunks=(1, -1, -1), name=False)
+
+    if not isinstance(mask, da.Array):
+        mask = da.from_array(mask, chunks=(1, -1, -1), name=False)
+
     convims = []
     for ds in xds:
         wgt = ds.WEIGHT.data
@@ -20,11 +25,11 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, compute=True, use_beam=True):
         fbin_idx = ds.FBIN_IDX.data
         fbin_counts = ds.FBIN_COUNTS.data
         if use_beam:
-            beam = ds.BEAM.data
+            beam = ds.BEAM.data * mask
         else:
             # TODO - separate implementation without
             # unnecessary beam application
-            beam = da.ones_like(x)
+            beam = mask
 
         convim = hessian(uvw, wgt, freq, x, beam, fbin_idx,
                          fbin_counts, hessopts)
@@ -111,7 +116,7 @@ def _hessian_impl(uvw, weight, freq, x, beam, fbin_idx, fbin_counts,
 
         mvis = dirty2ms(uvw=uvw,
                         freq=freq[flow:fhigh],
-                        dirty=beam[b] * x[b],
+                        dirty=[x[b] if beam is None else x[b] * beam[b]],
                         pixsize_x=cell,
                         pixsize_y=cell,
                         epsilon=epsilon,
@@ -131,7 +136,8 @@ def _hessian_impl(uvw, weight, freq, x, beam, fbin_idx, fbin_counts,
                              do_wstacking=wstack,
                              double_precision_accumulation=double_accum)
 
-        convim[b] *= beam[b]
+        if beam is not None:
+            convim[b] *= beam[b]
 
     return convim
 
@@ -141,13 +147,16 @@ def _hessian(uvw, weight, freq, x, beam, fbin_idx, fbin_counts, hessopts):
                              fbin_idx, fbin_counts, **hessopts)
 
 def hessian(uvw, weight, freq, x, beam, fbin_idx, fbin_counts, hessopts):
-
+    if beam is None:
+        bout = None
+    else:
+        bout = ('chan', 'nx', 'ny')
     return da.blockwise(_hessian, ('chan', 'nx', 'ny'),
                         uvw, ("row", 'three'),
                         weight, ('row', 'chan'),
                         freq, ('chan',),
                         x, ('chan', 'nx', 'ny'),
-                        beam, ('chan', 'nx', 'ny'),
+                        beam, bout,
                         fbin_idx, ('chan',),
                         fbin_counts, ('chan',),
                         hessopts, None,

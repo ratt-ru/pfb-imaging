@@ -19,13 +19,6 @@ log = pyscilog.get_logger('FORWARD')
               help="Number of rows in a chunk.")
 @click.option('-mask', '--mask',
               help="Path to mask.fits.")
-@click.option('-pmask', '--point-mask',
-              help="Path to point source mask.fits.")
-@click.option('-bases', '--bases', default='self',
-              help='Wavelet bases to use. Give as str separated by | eg.'
-              '-bases self|db1|db2|db3|db4')
-@click.option('-nlevels', '--nlevels', default=3,
-              help='Number of wavelet decomposition levels')
 @click.option('-otype', '--output-type', default='f4',
               help="Data type of output")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
@@ -35,7 +28,7 @@ log = pyscilog.get_logger('FORWARD')
               'Set it to rms/nband if uncertain')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
-@click.option('--no-use-psf/--use-psf', default=True)
+@click.option('--use-psf/--no-use-psf', default=True)
 @click.option('-cgtol', "--cg-tol", type=float, default=1e-5,
               help="Tolerance of conjugate gradient")
 @click.option('-cgminit', "--cg-minit", type=int, default=10,
@@ -70,10 +63,11 @@ def forward(**kw):
 
     Solves
 
-    x = (R.H W R + sigmainv**2 I)^{-1} ID
+    x = (A.H R.H W R A + sigmainv**2 I)^{-1} ID
 
     with a suitable approximation to R.H W R (eg. convolution with the PSF,
-    BDA'd weights or none).
+    BDA'd weights or none). Here A is the combination of mask and an
+    average beam pattern.
 
     If a host address is provided the computation can be distributed
     over imaging band and row. When using a distributed scheduler both
@@ -127,9 +121,10 @@ def _forward(**kw):
     import numexpr as ne
     import dask
     import dask.array as da
-    from daskms.experimental.zarr import xds_from_zarr
+    from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.utils.fits import load_fits, set_wcs, save_fits
     from pfb.operators.psi import im2coef, coef2im
+    from pfb.operators.hessian import hessian_xds
     from pfb.opt.pcg import pcg
     from astropy.io import fits
     import pywt
@@ -143,66 +138,32 @@ def _forward(**kw):
     residual = []
     wsum = 0
     for ds in xds:
-        d = ds.DIRTY.data
+        if 'RESIDUAL' in ds:
+            d = ds.RESIDUAL.data
+        else:
+            d = ds.DIRTY.data
         b = ds.BEAM.data
         wsum += ds.WSUM.data.sum()
         residual.append(d * b)
     residual = da.stack(residual).sum(axis=0)/wsum
+    residual = residual.compute()
 
-    if args.point_mask is not None:
-        print("Initialising point source mask", file=log)
-        pmask = load_fits(args.point_mask).squeeze()
+    if args.mask is not None:
+        print("Initialising mask", file=log)
+        mask = load_fits(args.mask).squeeze()
         # passing model as mask
-        if len(pmask.shape) == 3:
-            print("Detected third axis on pmask. "
-                  "Initialising pmask from model.", file=log)
-            x0 = da.from_array(pmask, chunks=(1, -1, -1),
-                               name=False)
-            pmask = da.any(pmask, axis=0).astype(residual.dtype)
+        if len(mask.shape) == 3:
+            print("Detected third axis on mask. "
+                  "Initialising mask from model.", file=log)
+            x0 = mask.copy()
+            mask = np.any(mask, axis=0)[None].astype(residual.dtype)
         else:
-            x0 = da.zeros((nband, nx, ny), dtype=residual.dtype)
+            x0 = np.zeros((nband, nx, ny), dtype=residual.dtype)
 
-        assert pmask.shape == (nx, ny)
+        assert mask.shape == (1, nx, ny)
     else:
-        pmask = da.ones((nx, ny), dtype=residual.dtype)
-        x0 = da.zeros((nband, nx, ny), dtype=residual.dtype)
-
-    # dictionary setup
-    print("Setting up dictionary", file=log)
-    bases = args.bases.split('|')
-    ntots = []
-    iys = {}
-    sys = {}
-    tmp = x0[0].compute()
-    for base in bases:
-        if base == 'self':
-            y, iy, sy = x0[0].ravel(), 0, 0
-        else:
-            alpha = pywt.wavedecn(tmp, base, mode='zero',
-                                  level=args.nlevels)
-            y, iy, sy = pywt.ravel_coeffs(alpha)
-        iys[base] = iy
-        sys[base] = sy
-        ntots.append(y.size)
-
-    # get padding info
-    nmax = np.asarray(ntots).max()
-    padding = []
-    nbasis = len(ntots)
-    for i in range(nbasis):
-        padding.append(slice(0, ntots[i]))
-
-    waveopts = {}
-    waveopts['bases'] = da.from_array(np.array(bases, dtype=object), chunks=-1)
-    waveopts['pmask'] = pmask
-    waveopts['iy'] = iys
-    waveopts['sy'] = sys
-    waveopts['ntot'] = da.from_array(np.array(ntots, dtype=object), chunks=-1)
-    waveopts['nmax'] = nmax
-    waveopts['nlevels'] = args.nlevels
-    waveopts['nx'] = nx
-    waveopts['ny'] = ny
-    waveopts['padding'] = da.from_array(np.array(padding, dtype=object), chunks=-1)
+        mask = np.ones((1, nx, ny), dtype=residual.dtype)
+        x0 = np.zeros((nband, nx, ny), dtype=residual.dtype)
 
     hessopts = {}
     hessopts['cell'] = xds[0].cell_rad
@@ -212,9 +173,9 @@ def _forward(**kw):
     hessopts['nthreads'] = args.nvthreads
     wsum = wsum.compute()
 
-    if not args.no_use_psf:
+    if args.use_psf:
         print("Initialising psf", file=log)
-        from pfb.operators.psf import psf_convolve_alpha_xds
+        from pfb.operators.psf import psf_convolve_xds
         from ducc0.fft import r2c
         normfact = 1.0
 
@@ -227,37 +188,43 @@ def _forward(**kw):
         npad_xr = nx_psf - nx - npad_xl
         npad_yl = (ny_psf - ny)//2
         npad_yr = ny_psf - ny - npad_yl
-        padding_psf = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+        padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
         unpad_x = slice(npad_xl, -npad_xr)
         unpad_y = slice(npad_yl, -npad_yr)
-        lastsize = ny + np.sum(padding_psf[-1])
+        lastsize = ny + np.sum(padding[-1])
 
         # add psfhat to Dataset
         for i, ds in enumerate(xds):
-            psf_pad = iFs(ds.PSF.data.compute(), axes=(1, 2))
-            psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                         nthreads=args.nthreads, inorm=0)
+            if 'PSFHAT' not in ds:
+                psf_pad = iFs(ds.PSF.data.compute(), axes=(1, 2))
+                psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
+                            nthreads=args.nthreads, inorm=0)
 
-            psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name=False)
-            ds = ds.assign({'PSFHAT':(('band', 'x_psf', 'y_psfo2'), psfhat)})
-            xds[i] = ds
+                psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name=False)
+                ds = ds.assign({'PSFHAT':(('band', 'x_psf', 'y_psfo2'), psfhat)})
+                xds[i] = ds
+
+        # LB - this rechunking of the data is really very annoying.
+        # Why is it necessary again?
+        # # update dataset on disk
+        # xds_to_zarr(xds, args.xds, columns=['PSFHAT']).compute()
 
         psfopts = {}
-        psfopts['padding'] = padding_psf[1:]
+        psfopts['padding'] = padding[1:]
         psfopts['unpad_x'] = unpad_x
         psfopts['unpad_y'] = unpad_y
         psfopts['lastsize'] = lastsize
         psfopts['nthreads'] = args.nvthreads
 
-        hess = partial(psf_convolve_alpha_xds, xds=xds, waveopts=waveopts,
-                       psfopts=psfopts, sigmainv=args.sigmainv, wsum=wsum, compute=True)
+        hess = partial(psf_convolve_xds, xds=xds, psfopts=psfopts,
+                       sigmainv=args.sigmainv, wsum=wsum, mask=mask,
+                       compute=True)
 
     else:
         print("Solving for update using vis space approximation", file=log)
-        from pfb.operators.hessian import hessian_alpha_xds
-
-        hess = partial(hessian_alpha_xds, xds=xds, waveopts=waveopts,
-                       hessopts=hessopts, sigmainv=args.sigmainv, wsum=wsum, compute=True)
+        hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
+                       sigmainv=args.sigmainv, wsum=wsum, mask=mask,
+                       compute=True)
 
     # # import pdb; pdb.set_trace()
     # x = np.random.randn(nband, nbasis, nmax).astype(np.float32)
@@ -269,14 +236,6 @@ def _forward(**kw):
     # dask.visualize(res, filename=args.output_filename +
     #                '_hess_I_graph.pdf', optimize_graph=False)
 
-
-    print("Initialising starting values", file=log)
-    alpha_resid = im2coef(residual,  # beam alreadt applied
-                          pmask, waveopts['bases'], waveopts['ntot'],
-                          nmax, args.nlevels).compute()
-    alpha0 = im2coef(x0, pmask, waveopts['bases'], waveopts['ntot'],
-                     nmax, args.nlevels).compute()
-
     cgopts = {}
     cgopts['tol'] = args.cg_tol
     cgopts['maxit'] = args.cg_maxit
@@ -285,23 +244,10 @@ def _forward(**kw):
     cgopts['report_freq'] = args.cg_report_freq
     cgopts['backtrack'] = args.backtrack
 
-    # run pcg for update
     print("Solving for update", file=log)
-    # import pdb; pdb.set_trace()
-    alpha = pcg(hess, alpha_resid, alpha0, **cgopts)
-
-    print("Getting residual", file=log)
-    model = coef2im(da.from_array(alpha, chunks=(1, -1, -1), name=False),
-                    pmask, waveopts['bases'], waveopts['padding'],
-                    iys, sys, nx, ny)
-
-    # from pfb.operators.hessian import hessian_xds
-    # residual -= hessian_xds(model, xds, hessopts, wsum, 0.0, compute=True)
-    from pfb.operators.psf import psf_convolve_xds
-    residual -= psf_convolve_xds(model, xds, psfopts, wsum, 0.0, compute=True)
-
-    # residual = dask.compute(residual,
-    #                         optimize_graph=False)[0]
+    update = pcg(hess, mask * residual, x0, **cgopts)
+    residual -= hessian_xds(update, xds, hessopts, wsum, 0.0,
+                            mask=mask, compute=True)
 
     # construct a header from xds attrs
     ra = xds[0].ra
@@ -318,8 +264,8 @@ def _forward(**kw):
     # TODO - add wsum info
 
     print("Saving results", file=log)
-    save_fits(args.output_filename + '_update.fits', model, hdr)
-    model_mfs = np.mean(model, axis=0)
+    save_fits(args.output_filename + '_update.fits', update, hdr)
+    update_mfs = np.mean(update, axis=0)
     save_fits(args.output_filename + '_update_mfs.fits', model_mfs, hdr_mfs)
     save_fits(args.output_filename + '_residual.fits', residual, hdr)
     residual_mfs = np.sum(residual, axis=0)

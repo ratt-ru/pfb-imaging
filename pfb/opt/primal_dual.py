@@ -10,6 +10,7 @@ def primal_dual(
         v0,  # initial guess for primal and dual variables
         lam,  # regulariser strength,
         psi,  # linear operator in dual domain
+        psiH,  # adjoint of psi
         weights,  # weights for l1 thresholding
         L,
         prox,  # prox of regulariser
@@ -44,24 +45,16 @@ def primal_dual(
         vp = v.copy()
 
         # tmp prox variable
-        vtilde = v + sigma * psi.hdot(xp)
+        vtilde = v + sigma * psiH(xp)
 
         # dual update
         v = vtilde - sigma * prox(vtilde / sigma, lam / sigma,
                                   weights, axis=axis)
 
         # primal update
-        x = xp - tau * (psi.dot(2 * v - vp) + grad_func(xp))
+        x = xp - tau * (psi(2 * v - vp) + grad_func(xp))
         if positivity:
             x[x < 0] = 0.0
-
-        # # apply mask
-        # if mask is not None:
-        #     if x.ndim == 3:
-        #         x = mask(x)
-        #     elif x.ndim == 4:
-        #         raise NotImplementedError("Why do we need this again?")
-        #         # x[1] = np.where(mask, x[1], 0.0)
 
         # convergence check
         eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
