@@ -10,7 +10,9 @@ log = pyscilog.get_logger('FORWARD')
 
 @cli.command()
 @click.option('-xds', '--xds', type=str, required=True,
-              help="Path to xarray dataset containing data products")
+              help="Path to xarray dataset containing data products.")
+@click.option('-mds', '--mds', type=str,
+              help="Path to xarray dataset containing model products.")
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -104,7 +106,7 @@ def forward(**kw):
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log)
+        args = set_client(args, stack, log, scheduler=args.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -118,7 +120,7 @@ def _forward(**kw):
     OmegaConf.set_struct(args, True)
 
     import numpy as np
-    import numexpr as ne
+    import xarray
     import dask
     import dask.array as da
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
@@ -246,10 +248,26 @@ def _forward(**kw):
 
     print("Solving for update", file=log)
     update = pcg(hess, mask * residual, x0, **cgopts)
-    residual -= hessian_xds(update, xds, hessopts, wsum, 0.0,
-                            mask=mask, compute=True)
 
-    # construct a header from xds attrs
+    print("Writing update.", file=log)
+    if args.mds is not None:
+        mds_name = args.mds
+        # only one mds (for now)
+        try:
+            mds = xds_from_zarr(mds_name, chunks={'band': 1})[0]
+        except Exception as e:
+            print(f'{args.mds} not found or invalid', file=log)
+            raise e
+    else:
+        mds_name = args.output_filename + '.mds.zarr'
+        print(f"Model dataset not passed in. Initialising as {mds_name}.",
+              file=log)
+        # may not exist yet
+        mds = xarray.Dataset()
+
+    mds = mds.assign(**{'UPDATE': (('band', 'x', 'y'),
+                     da.from_array(update, chunks=(1, -1, -1)))})
+
     ra = xds[0].ra
     dec = xds[0].dec
     radec = [ra, dec]
@@ -258,6 +276,31 @@ def _forward(**kw):
     cell_deg = np.rad2deg(cell_rad)
 
     freq_out = np.unique(np.concatenate([ds.band.values for ds in xds], axis=0))
+
+    if 'ra' not in mds.attrs:
+        mds = mds.assign_attrs({'ra': ra})
+
+    if 'dec' not in mds.attrs:
+        mds = mds.assign_attrs({'dec': dec})
+
+    if 'cell_rad' not in mds.attrs:
+        mds = mds.assign_attrs({'cell_rad': cell_rad})
+
+    if 'nband' not in mds.attrs:
+        mds = mds.assign_attrs({'nband': nband})
+
+    if 'nx' not in mds.attrs:
+        mds = mds.assign_attrs({'nx': nx})
+
+    if 'ny' not in mds.attrs:
+        mds = mds.assign_attrs({'ny': ny})
+
+    if 'band' not in mds.coords:
+        mds = mds.assign_coords({'band': da.from_array(freq_out, chunks=1)})
+
+    dask.compute(xds_to_zarr(mds, mds_name, columns='all'))
+
+    # construct a header from xds attrs
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
@@ -266,9 +309,6 @@ def _forward(**kw):
     print("Saving results", file=log)
     save_fits(args.output_filename + '_update.fits', update, hdr)
     update_mfs = np.mean(update, axis=0)
-    save_fits(args.output_filename + '_update_mfs.fits', model_mfs, hdr_mfs)
-    save_fits(args.output_filename + '_residual.fits', residual, hdr)
-    residual_mfs = np.sum(residual, axis=0)
-    save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs)
+    save_fits(args.output_filename + '_update_mfs.fits', update_mfs, hdr_mfs)
 
     print("All done here.", file=log)

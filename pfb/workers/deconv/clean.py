@@ -57,6 +57,8 @@ log = pyscilog.get_logger('CLEAN')
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
+@click.option('-scheduler', '--scheduler', default='distributed',
+              help="Total available threads. Default uses all available threads")
 def clean(**kw):
     '''
     Single-scale clean.
@@ -108,7 +110,7 @@ def clean(**kw):
     with ExitStack() as stack:
         # numpy imports have to happen after this step
         from pfb import set_client
-        set_client(args, stack, log)
+        set_client(args, stack, log, scheduler=args.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -167,7 +169,8 @@ def _clean(**kw):
     wsum = wsum.compute()
     # always clean in apparent scale
     hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
-                   wsum=wsum, sigmainv=0, compute=True, use_beam=False)
+                   wsum=wsum, sigmainv=0, mask=np.ones_like(dirty_mfs),
+                   compute=True, use_beam=False)
 
     # to set up psf convolve when using Clark
     if args.use_clark:

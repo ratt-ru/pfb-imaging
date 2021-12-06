@@ -15,6 +15,9 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
         x = da.from_array(x, chunks=(1, -1, -1), name=False)
 
     if not isinstance(mask, da.Array):
+        if len(mask.shape) == 2:
+            mask = mask[None]
+
         mask = da.from_array(mask, chunks=(1, -1, -1), name=False)
 
     convims = []
@@ -113,10 +116,9 @@ def _hessian_impl(uvw, weight, freq, x, beam, fbin_idx, fbin_counts,
     for b in range(nband):
         flow = fbin_idx2[b]
         fhigh = fbin_idx2[b] + fbin_counts[b]
-
         mvis = dirty2ms(uvw=uvw,
                         freq=freq[flow:fhigh],
-                        dirty=[x[b] if beam is None else x[b] * beam[b]],
+                        dirty=x[b] if beam is None else x[b] * beam[b],
                         pixsize_x=cell,
                         pixsize_y=cell,
                         epsilon=epsilon,

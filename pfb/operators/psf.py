@@ -99,8 +99,8 @@ def _psf_convolve_impl(x, psfhat, beam,
     nband, nx, ny = x.shape
     convim = np.zeros_like(x)
     for b in range(nband):
-        xhat = [x[b] if beam is None else x[b] * beam[b]]
-        xhat = iFs(np.pad(x[b]*beam[b], padding, mode='constant'), axes=(0, 1))
+        xhat = x[b] if beam is None else x[b] * beam[b]
+        xhat = iFs(np.pad(x[b], padding, mode='constant'), axes=(0, 1))
         xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
                     forward=True, inorm=0)
         xhat = c2r(xhat * psfhat[b], axes=(0, 1), forward=False,

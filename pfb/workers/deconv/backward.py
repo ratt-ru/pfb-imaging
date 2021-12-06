@@ -11,9 +11,7 @@ log = pyscilog.get_logger('BACKWARD')
 @cli.command()
 @click.option('-xds', '--xds', type=str, required=True,
               help="Path to xarray dataset containing data products")
-@click.option('-u', '--update', type=str, required=True,
-              help='Path to update.fits')
-@click.option('-mds', '--mds', type=str,
+@click.option('-mds', '--mds', type=str, required=True,
               help="Path to xarray dataset containing model, dual and "
               "weights from previous iteration.")
 @click.option('-o', '--output-filename', type=str, required=True,
@@ -123,7 +121,7 @@ def backward(**kw):
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log)
+        args = set_client(args, stack, log, scheduler=args.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -160,7 +158,15 @@ def _backward(**kw):
         # always only one mds
         mds = xds_from_zarr(args.mds, chunks={'band': 1})[0]
     except Exception as e:
-        mds = xarray.Dataset()
+        raise ValueError(f"You have to pass in a valid model dataset. "
+                         f"No model found at {args.mds}", file=log)
+
+    if 'UPDATE' in mds:
+        update = mds.UPDATE.values
+        assert upadte.shape == (nband, nx, ny)
+    else:
+        raise ValueError("No update found in model dataset. "
+                         "Use forward worker to populate it. ", file=log)
 
     if 'MODEL' in mds:
         model = mds.MODEL.values
@@ -168,7 +174,6 @@ def _backward(**kw):
     else:
         model = np.zeros((nband, nx, ny), dtype=xds[0].DIRTY.dtype)
 
-    update = load_fits(args.update).squeeze()
     data = model + update
 
     if args.mask is not None:
@@ -323,7 +328,8 @@ def _backward(**kw):
                   'DUAL': (('band', 'basis', 'coef'), dual),
                   'WEIGHT': (('basis', 'coef'), weight)})
 
-    xds_to_zarr(mds, args.mds, columns=['MODEL','DUAL','WEIGHT']).compute()
+    dask.compute(xds_to_zarr(mds, args.mds,
+                             columns=['MODEL','DUAL','WEIGHT']))
 
     # compute apparent residual per dataset
     from pfb.operators.hessian import hessian
@@ -343,6 +349,7 @@ def _backward(**kw):
         dsw = dsw.assign(**{'RESIDUAL': (('band', 'x', 'y'), residual)})
         writes.append(dsw)
 
+    dask.compute(writes)
 
     # construct a header from xds attrs
     ra = xds.ra
