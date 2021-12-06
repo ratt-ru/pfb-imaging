@@ -120,7 +120,7 @@ def _forward(**kw):
     OmegaConf.set_struct(args, True)
 
     import numpy as np
-    import xarray
+    import xarray as xr
     import dask
     import dask.array as da
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
@@ -254,7 +254,9 @@ def _forward(**kw):
         mds_name = args.mds
         # only one mds (for now)
         try:
-            mds = xds_from_zarr(mds_name, chunks={'band': 1})[0]
+            mds = xr.open_dataset(mds_name,
+                                  chunks={'band': 1, 'x': -1, 'y': -1},
+                                  engine='zarr')
         except Exception as e:
             print(f'{args.mds} not found or invalid', file=log)
             raise e
@@ -263,7 +265,7 @@ def _forward(**kw):
         print(f"Model dataset not passed in. Initialising as {mds_name}.",
               file=log)
         # may not exist yet
-        mds = xarray.Dataset()
+        mds = xr.Dataset()
 
     mds = mds.assign(**{'UPDATE': (('band', 'x', 'y'),
                      da.from_array(update, chunks=(1, -1, -1)))})
@@ -298,7 +300,7 @@ def _forward(**kw):
     if 'band' not in mds.coords:
         mds = mds.assign_coords({'band': da.from_array(freq_out, chunks=1)})
 
-    dask.compute(xds_to_zarr(mds, mds_name, columns='all'))
+    mds.to_zarr(mds_name, mode='w')
 
     # construct a header from xds attrs
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)

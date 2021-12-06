@@ -110,7 +110,7 @@ def _hessian_impl(uvw, weight, freq, x, beam, fbin_idx, fbin_counts,
                   epsilon=None,
                   double_accum=None,
                   nthreads=None):
-    nband, nx, ny = beam.shape
+    nband, nx, ny = x.shape
     convim = np.zeros((nband, nx, ny), dtype=x.dtype)  # no row chunking
     fbin_idx2 = fbin_idx - fbin_idx.min()  # adjust for freq chunking
     for b in range(nband):

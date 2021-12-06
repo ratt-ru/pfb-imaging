@@ -21,7 +21,6 @@ def primal_dual(
         maxit=1000,
         positivity=True,
         report_freq=10,
-        axis=1,
         gamma=1.0,
         verbosity=1):
 
@@ -49,7 +48,7 @@ def primal_dual(
 
         # dual update
         v = vtilde - sigma * prox(vtilde / sigma, lam / sigma,
-                                  weights, axis=axis)
+                                  weights)
 
         # primal update
         x = xp - tau * (psi(2 * v - vp) + grad_func(xp))

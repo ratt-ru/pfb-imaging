@@ -92,12 +92,6 @@ def single_stokes(data=None,
     w = dw[1].astype(real_type)
 
     data_vars = {
-                'FIELD_ID':(('row',), da.full_like(time,
-                            fid, chunks=row_out_chunk)),
-                'DATA_DESC_ID':(('row',), da.full_like(time,
-                            ddid, chunks=row_out_chunk)),
-                'SCAN_NUMBER':(('row',), da.full_like(time,
-                            scanid, chunks=row_out_chunk)),
                 'FREQ': (('chan',), freq),
                 'FBIN_IDX':(('band',), fbin_idx),
                 'FBIN_COUNTS':(('band',), fbin_counts)
@@ -222,7 +216,10 @@ def single_stokes(data=None,
         'dec': radec[1],
         'nx': nx,
         'ny': ny,
-        'nband': nband  # global nband
+        'nband': nband,  # global nband
+        'fieldid': fid,
+        'ddid': ddid,
+        'scanid': scanid
     }
 
     out_ds = Dataset(data_vars, coords, attrs=attrs)

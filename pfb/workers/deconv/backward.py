@@ -8,7 +8,7 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('BACKWARD')
 
-@cli.command()
+@cli.command(context_settings={'show_default': True})
 @click.option('-xds', '--xds', type=str, required=True,
               help="Path to xarray dataset containing data products")
 @click.option('-mds', '--mds', type=str, required=True,
@@ -40,7 +40,7 @@ log = pyscilog.get_logger('BACKWARD')
               'for preconditioning.')
 @click.option('-sig21', '--sigma21', type=float, default=1e-3,
               help='Sparsity threshold level.')
-@click.option('-niter', '--niter', dtype=int, default=10,
+@click.option('-niter', '--niter', type=int, default=10,
               help='Number of reweighting iterations. '
               'Reweighting will take place after every primal dual run.')
 @click.option('--wstack/--no-wstack', default=True)
@@ -50,21 +50,21 @@ log = pyscilog.get_logger('BACKWARD')
 @click.option('-pdtol', "--pd-tol", type=float, default=1e-5,
               help="Tolerance of conjugate gradient")
 @click.option('-pdmaxit', "--pd-maxit", type=int, default=100,
-              help="Maximum number of iterations for conjugate gradient")
-@click.option('-pdverb', "--pd-verbose", type=int, default=0,
-              help="Verbosity of conjugate gradient. "
+              help="Maximum number of iterations for primal dual")
+@click.option('-pdverb', "--pd-verbose", type=int, default=1,
+              help="Verbosity of primal dual. "
               "Set to 2 for debugging or zero for silence.")
 @click.option('-pdrf', "--pd-report-freq", type=int, default=10,
-              help="Report freq for conjugate gradient.")
+              help="Report freq for primal dual.")
 @click.option('-pmtol', "--pm-tol", type=float, default=1e-5,
-              help="Tolerance of conjugate gradient")
+              help="Tolerance of power method")
 @click.option('-pmmaxit', "--pm-maxit", type=int, default=100,
-              help="Maximum number of iterations for conjugate gradient")
-@click.option('-pmverb', "--pm-verbose", type=int, default=0,
-              help="Verbosity of conjugate gradient. "
+              help="Maximum number of iterations for power method")
+@click.option('-pmverb', "--pm-verbose", type=int, default=1,
+              help="Verbosity of power method. "
               "Set to 2 for debugging or zero for silence.")
 @click.option('-pmrf', "--pm-report-freq", type=int, default=10,
-              help="Report freq for conjugate gradient.")
+              help="Report freq for power method.")
 @click.option('-ha', '--host-address',
               help='Address where the distributed client lives. '
               'Will use a local cluster if no address is provided')
@@ -137,12 +137,14 @@ def _backward(**kw):
     import numpy as np
     import dask
     import dask.array as da
-    import xarray
+    import xarray as xr
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
     from pfb.operators.psi import im2coef, coef2im
     from pfb.operators.hessian import hessian_xds
     from pfb.opt.primal_dual import primal_dual
+    from pfb.opt.power_method import power_method
+    from pfb.prox.prox_21m import prox_21m
     from astropy.io import fits
     import pywt
 
@@ -152,18 +154,21 @@ def _backward(**kw):
     ny = xds[0].ny
     wsum = 0.0
     for ds in xds:
-        wsum += ds.WSUM.values
+        wsum += ds.WSUM.values.sum()
 
     try:
         # always only one mds
-        mds = xds_from_zarr(args.mds, chunks={'band': 1})[0]
+        mds = xr.open_dataset(args.mds,
+                                  chunks={'band': 1, 'x': -1, 'y': -1},
+                                  engine='zarr')
     except Exception as e:
-        raise ValueError(f"You have to pass in a valid model dataset. "
-                         f"No model found at {args.mds}", file=log)
+        print(f"You have to pass in a valid model dataset. "
+              f"No model found at {args.mds}", file=log)
+        raise e
 
     if 'UPDATE' in mds:
         update = mds.UPDATE.values
-        assert upadte.shape == (nband, nx, ny)
+        assert update.shape == (nband, nx, ny)
     else:
         raise ValueError("No update found in model dataset. "
                          "Use forward worker to populate it. ", file=log)
@@ -179,8 +184,15 @@ def _backward(**kw):
     if args.mask is not None:
         print("Initialising mask", file=log)
         mask = load_fits(args.mask).squeeze()
+        # could be using a model to initialise mask
+        if len(mask.shape) == 3:
+            mask = np.any(mask, axis=0)[None]
+        elif len(mask.shape) == 2:
+            mask = np.where(mask, 1.0, 0.0)
+        else:
+            raise ValueError("Incorrect number of dimensions for mask")
         assert mask.shape == (nx, ny)
-        mask = mask[None].astype(model)
+        mask = mask[None].astype(model.dtype)
     else:
         mask = np.ones((1, nx, ny), dtype=model.dtype)
 
@@ -206,9 +218,9 @@ def _backward(**kw):
     sys = {}
     for base in bases:
         if base == 'self':
-            y, iy, sy = x0[0].ravel(), 0, 0
+            y, iy, sy = model[0].ravel(), 0, 0
         else:
-            alpha = pywt.wavedecn(pmask, base, mode='zero',
+            alpha = pywt.wavedecn(model[0], base, mode='zero',
                                   level=args.nlevels)
             y, iy, sy = pywt.ravel_coeffs(alpha)
         iys[base] = iy
@@ -227,10 +239,10 @@ def _backward(**kw):
     bases = da.from_array(np.array(bases, dtype=object), chunks=-1)
     ntots = da.from_array(np.array(ntots, dtype=object), chunks=-1)
     padding = da.from_array(np.array(padding, dtype=object), chunks=-1)
-    psi = partial(im2coef, pmask=pmask, bases=bases, ntot=ntots, nmax=nmax,
-                  nlevels=args.nlevels)
-    psiH = partial(coef2im, pmask=pmask, bases=bases, padding=padding,
-                   iy=iys, sy=sys, nx=nx, ny=ny)
+    psiH = partial(im2coef, pmask=pmask, bases=bases, ntot=ntots, nmax=nmax,
+                   nlevels=args.nlevels)
+    psi = partial(coef2im, pmask=pmask, bases=bases, padding=padding,
+                  iy=iys, sy=sys, nx=nx, ny=ny)
 
     hessopts = {}
     hessopts['cell'] = xds[0].cell_rad
@@ -239,7 +251,7 @@ def _backward(**kw):
     hessopts['double_accum'] = args.double_accum
     hessopts['nthreads'] = args.nvthreads
 
-    if not args.no_use_psf:
+    if args.use_psf:
         print("Initialising psf", file=log)
         from pfb.operators.psf import psf_convolve_xds
         from ducc0.fft import r2c
@@ -287,12 +299,12 @@ def _backward(**kw):
                        compute=True)
 
     if args.hessnorm is None:
-        from pfb.opt.power_method import power_method
-        L = power_method(hess, (nband, nx, ny), tol=args.pm_tol,
+        print("Finding spectral norm of Hessian approximation", file=log)
+        hessnorm, _ = power_method(hess, (nband, nx, ny), tol=args.pm_tol,
                          maxit=args.pm_maxit, verbosity=args.pm_verbose,
                          report_freq=args.pm_report_freq)
     else:
-        L = args.hessnorm
+        hessnorm = args.hessnorm
 
     if 'DUAL' in mds:
         dual = mds.DUAL.values
@@ -306,10 +318,19 @@ def _backward(**kw):
     else:
         weight = np.ones((nbasis, nmax), dtype=model.dtype)
 
+    # psisq = lambda x: psi(psiH(x))
+
+    # psinorm = power_method(psisq, (nband, nx, ny), tol=args.pm_tol,
+    #                        maxit=args.pm_maxit, verbosity=args.pm_verbose,
+    #                        report_freq=args.pm_report_freq)
+
+    # quit()
 
     for i in range(args.niter):
+        # prox = partial(prox_21m, sigma=args.sigma21, weight=weight, axis=0)
         model, dual = primal_dual(hess, data, model, dual, args.sigma21,
-                                  psi, psiH, weight, L, prox,
+                                  psi, psiH, weight, hessnorm, prox_21m,
+                                  nu=nbasis,
                                   tol=args.pd_tol, maxit=args.pd_maxit,
                                   verbosity=args.pd_verbose,
                                   report_freq=args.pd_report_freq)
@@ -324,12 +345,15 @@ def _backward(**kw):
         #     weights21[m] = alpha[m]/(alpha[m] + l2_norm[m]) * sigmas[m]/sig_21
 
 
-    mds.assign(**{'MODEL': (('band', 'x', 'y'), model),
-                  'DUAL': (('band', 'basis', 'coef'), dual),
-                  'WEIGHT': (('basis', 'coef'), weight)})
+    model = da.from_array(model, chunks=(1, -1, -1), name=False)
+    dual = da.from_array(dual, chunks=(1, -1, -1), name=False)
+    weight = da.from_array(weight, chunks=(-1, -1), name=False)
 
-    dask.compute(xds_to_zarr(mds, args.mds,
-                             columns=['MODEL','DUAL','WEIGHT']))
+    mds = mds.assign(**{'MODEL': (('band', 'x', 'y'), model),
+                     'DUAL': (('band', 'basis', 'coef'), dual),
+                     'WEIGHT': (('basis', 'coef'), weight)})
+
+    mds.to_zarr(args.mds, mode='w')
 
     # compute apparent residual per dataset
     from pfb.operators.hessian import hessian
@@ -343,32 +367,35 @@ def _backward(**kw):
         freq = ds.FREQ.data
         fbin_idx = ds.FBIN_IDX.data
         fbin_counts = ds.FBIN_COUNTS.data
+        beam = ds.BEAM.data
+        band_id = ds.band_id.data
+        # we only want to apply the beam once here
         residual = (dirty -
-                    hessian(uvw, weight, freq, beam * model, None,
+                    hessian(uvw, wgt, freq, beam * model[band_id], None,
                     fbin_idx, fbin_counts, hessopts))
         dsw = dsw.assign(**{'RESIDUAL': (('band', 'x', 'y'), residual)})
-        writes.append(dsw)
+        writes.append(xds_to_zarr(dsw, args.xds, columns='RESIDUAL'))
 
     dask.compute(writes)
 
     # construct a header from xds attrs
-    ra = xds.ra
-    dec = xds.dec
+    ra = mds.ra
+    dec = mds.dec
     radec = [ra, dec]
 
-    cell_rad = xds.cell_rad
+    cell_rad = mds.cell_rad
     cell_deg = np.rad2deg(cell_rad)
 
-    freq_out = xds.band.values
+    freq_out = mds.band.values
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
     # TODO - add wsum info
 
     print("Saving results", file=log)
-    save_fits(args.output_filename + '_update.fits', model, hdr)
+    save_fits(args.output_filename + '_model.fits', model, hdr)
     model_mfs = np.mean(model, axis=0)
-    save_fits(args.output_filename + '_update_mfs.fits', model_mfs, hdr_mfs)
+    save_fits(args.output_filename + '_model_mfs.fits', model_mfs, hdr_mfs)
     save_fits(args.output_filename + '_residual.fits', residual, hdr)
     residual_mfs = np.sum(residual, axis=0)
     save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs)
