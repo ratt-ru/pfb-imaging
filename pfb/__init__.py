@@ -51,7 +51,9 @@ def set_client(args, stack, log, scheduler='distributed'):
     nthreads_dask = nworkers * nthreads_per_worker
 
     if args.nvthreads is None:
-        if args.host_address is not None:
+        if args.scheduler == 'single-threaded':
+            nvthreads = nthreads
+        elif args.host_address is not None:
             nvthreads = nthreads//nthreads_per_worker
         else:
             nvthreads = nthreads//nthreads_dask
@@ -77,19 +79,22 @@ def set_client(args, stack, log, scheduler='distributed'):
             client = stack.enter_context(Client(address))
         else:
             if nthreads_dask * args.nvthreads > args.nthreads:
-                print("Warning - you are attempting to use more threads than available. "
-                    "This may lead to suboptimal performance.", file=log)
+                print("Warning - you are attempting to use more threads than "
+                      "available. This may lead to suboptimal performance.",
+                      file=log)
             from dask.distributed import Client, LocalCluster
             print("Initialising client with LocalCluster.", file=log)
             cluster = LocalCluster(processes=True, n_workers=nworkers,
-                                threads_per_worker=nthreads_per_worker,
-                                memory_limit=str(mem_limit/nworkers)+'GB')
+                                   threads_per_worker=nthreads_per_worker,
+                                   memory_limit=str(mem_limit/nworkers)+'GB')
             cluster = stack.enter_context(cluster)
             client = stack.enter_context(Client(cluster))
 
         from pfb.scheduling import install_plugin
         client.run_on_scheduler(install_plugin)
-
+    elif scheduler=='single-threaded':
+        import dask
+        dask.config.set(scheduler=scheduler)
 
     # return updated args
     return args

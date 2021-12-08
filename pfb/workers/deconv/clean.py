@@ -11,6 +11,8 @@ log = pyscilog.get_logger('CLEAN')
 @cli.command()
 @click.option('-xds', '--xds', required=True,
               help="Path to xarray dataset containing data products")
+@click.option('-mds', '--mds', type=str,
+              help="Path to xarray dataset containing model products.")
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -24,6 +26,9 @@ log = pyscilog.get_logger('CLEAN')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
 @click.option('--use-clark/--no-use-clark', default=True)
+@click.option('--update-mask/--no-upadte-mask', default=True)
+@click.option('--fits-mfs/--no-fits-mfs', default=True)
+@click.option('--no-fits-cubes/--fits-cubes', default=True)
 @click.option('-nmiter', '--nmiter', type=int, default=5,
               help="Number of major cycles")
 @click.option('-th', '--threshold', type=float,
@@ -63,18 +68,43 @@ def clean(**kw):
     '''
     Single-scale clean.
 
-    If the optional weight-table argument points to a valid weight table
-    (created by the psf worker) the algorithm will approximate gradients using
-    the diagonal Mueller weights assumption (exact for Stokes I imaging) i.e.
+    The algorithm always acts on the average apparent dirty image and PSF
+    provided by xds. This means there is only ever a single dirty image
+    and PSF and the algorithm only provides an approximate apparent model
+    that is compatible with them. The intrinsic model can be obtained using
+    the forward worker.
 
-    IR = ID - R.H W R x
+    Two variants of single scale clean are currently implemented viz.
+    Hogbom and Clark.
 
-    otherwise it is a pure image space algorithm i.e.
+    Hogbom is the vanilla clean implementation, the full PSF will be
+    subtracted at every iteration.
 
-    IR = ID - PSF.convolve(x)
+    Clark clean defines an adaptive mask that changes between iterations.
+    The mask is defined by all pixels that are above sub-peak-factor * Imax
+    where Imax is the current maximum in the MFS residual. A sub-minor cycle
+    is performed only within this mask i.e. peak finding and PSF subtraction
+    is confined to the mask until the residual within the mask decreases to
+    sub-peak-factor * Imax. At the end of the sub-minor cycle an approximate
+    residual is computed as
 
-    The latter is exact in the absence of wide-field effects and is usually
-    much faster.
+    IR -= PSF.convolve(model)
+
+    with no mask in place. The mask is then recomputed and the sub-minor cycle
+    repeated until the residual reaches peak-factor * Imax0 where Imax0 is the
+    peak in the residual at the outset of the minor cycle.
+
+    At the end of each minor cycle we recompute the residual using
+
+    IR = R.H W (V - R x) = ID - R.H W R x
+
+    where ID is the dirty image, R and R.H are degridding and gridding
+    operators respectively and W are the effective weights i.e. the weights
+    after image weighting, applying calibration solutions and taking the
+    weighted sum over correlations. This is usually called a major cycle
+    but we get away from explicitly loading in the visibilities by writing
+    the residual in terms of the dirty image and an application of the
+    Hessian.
 
     If a host address is provided the computation can be distributed
     over imaging band and row. When using a distributed scheduler both
@@ -84,7 +114,9 @@ def clean(**kw):
     memory and threads available, respectively. By default the gridder will
     use all available resources.
 
-    Disclaimer - Memory budgeting is still very crude!
+    When using a local cluster, mem-limit and nthreads refer to the global
+    memory and threads available, respectively. By default the gridder will
+    use all available resources.
 
     On a local cluster, the default is to use:
 
@@ -98,6 +130,10 @@ def clean(**kw):
         nvthreads = nthreads//(nworkers*nthreads_per_worker)
     else:
         nvthreads = nthreads//nthreads-per-worker
+
+    where nvthreads refers to the number of threads used to scale vertically
+    (eg. the number threads given to each gridder instance).
+
     '''
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
@@ -124,6 +160,7 @@ def _clean(**kw):
     OmegaConf.set_struct(args, True)
 
     import numpy as np
+    import xarray as xr
     import numexpr as ne
     import dask
     import dask.array as da
@@ -157,6 +194,22 @@ def _clean(**kw):
     nx_psf, ny_psf = psf_mfs.shape
     dirty_mfs = np.sum(dirty, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*args.epsilon
+
+    if args.mds is not None:
+        mds_name = args.mds
+        # only one mds (for now)
+        try:
+            mds = xr.open_zarr(mds_name,
+                               chunks={'band': 1, 'x': -1, 'y': -1})
+        except Exception as e:
+            print(f'{args.mds} not found or invalid', file=log)
+            raise e
+    else:
+        mds_name = args.output_filename + '.mds.zarr'
+        print(f"Model dataset not passed in. Initialising as {mds_name}.",
+              file=log)
+        # may not exist yet
+        mds = xr.Dataset()
 
     # set up Hessian
     from pfb.operators.hessian import hessian_xds
@@ -199,20 +252,6 @@ def _clean(**kw):
         psfopts['nthreads'] = args.nvthreads
         psfo = partial(psf_convolve, psfhat=psfhat, beam=None, psfopts=psfopts)
 
-    # construct a header from xds attrs
-    ra = xds[0].ra
-    dec = xds[0].dec
-    radec = [ra, dec]
-
-    cell_rad = xds[0].cell_rad
-    cell_deg = np.rad2deg(cell_rad)
-
-    freq_out = np.unique(np.concatenate([ds.band.values for ds in xds]))
-    hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
-    ref_freq = np.mean(freq_out)
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-    # TODO - add wsum info
-
     rms = np.std(dirty_mfs)
     rmax = np.abs(dirty_mfs).max()
 
@@ -249,13 +288,12 @@ def _clean(**kw):
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
 
-        save_fits(args.output_filename + f'_residual_mfs{k}.fits',
-                  residual_mfs, hdr_mfs)
-        save_fits(args.output_filename + f'_model_mfs{k}.fits',
-                  np.mean(model, axis=0), hdr_mfs)
-        save_fits(args.output_filename + f'_convim_mfs{k}.fits',
-                  np.sum(convimage, axis=0), hdr_mfs)
-
+        # save_fits(args.output_filename + f'_residual_mfs{k}.fits',
+        #           residual_mfs, hdr_mfs)
+        # save_fits(args.output_filename + f'_model_mfs{k}.fits',
+        #           np.mean(model, axis=0), hdr_mfs)
+        # save_fits(args.output_filename + f'_convim_mfs{k}.fits',
+        #           np.sum(convimage, axis=0), hdr_mfs)
 
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
@@ -270,10 +308,47 @@ def _clean(**kw):
                 break
 
     print("Saving results", file=log)
-    save_fits(args.output_filename + '_model.fits', model, hdr)
-    model_mfs = np.mean(model, axis=0)
-    save_fits(args.output_filename + '_model_mfs.fits', model_mfs, hdr_mfs)
-    save_fits(args.output_filename + '_residual.fits', residual, hdr)
-    save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs)
+    if args.update_mask:
+        try:
+            mask = mds.MASK.values
+        except:
+            mask = np.zeros((nx, ny))
+        mask = np.logical_or(mask, np.any(model, axis=0)).astype(args.output_type)
+        mds = mds.assign(**{
+                'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
+        })
+
+
+    mds = mds.assign(**{
+            'CLEAN_MODEL': (('band', 'x', 'y'), model),
+            'CLEAN_RESIDUAL': (('band', 'x', 'y'), residual),
+
+    })
+
+    mds.to_zarr(mds_name, mode='a')
+
+    if args.fits_mfs or not args.no_fits_cubes:
+        print("Writing fits files", file=log)
+        # construct a header from xds attrs
+        ra = xds[0].ra
+        dec = xds[0].dec
+        radec = [ra, dec]
+
+        cell_rad = xds[0].cell_rad
+        cell_deg = np.rad2deg(cell_rad)
+
+        freq_out = np.unique(np.concatenate([ds.band.values for ds in xds]))
+        hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
+        ref_freq = np.mean(freq_out)
+        hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+
+        model_mfs = np.mean(model, axis=0)
+
+        save_fits(args.output_filename + '_model_mfs.fits', model_mfs, hdr_mfs)
+        save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs)
+
+        if not args.no_fits_cubes:
+            save_fits(args.output_filename + '_residual.fits', residual, hdr)
+            save_fits(args.output_filename + '_model.fits', model, hdr)
 
     print("All done here.", file=log)

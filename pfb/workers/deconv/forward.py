@@ -19,8 +19,6 @@ log = pyscilog.get_logger('FORWARD')
               help="Number of imaging bands")
 @click.option('-rchunk', '--row-chunk', type=int, default=-1,
               help="Number of rows in a chunk.")
-@click.option('-mask', '--mask',
-              help="Path to mask.fits.")
 @click.option('-otype', '--output-type', default='f4',
               help="Data type of output")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
@@ -31,6 +29,8 @@ log = pyscilog.get_logger('FORWARD')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
 @click.option('--use-psf/--no-use-psf', default=True)
+@click.option('--fits-mfs/--no-fits-mfs', default=True)
+@click.option('--no-fits-cubes/--fits-cubes', default=True)
 @click.option('-cgtol', "--cg-tol", type=float, default=1e-5,
               help="Tolerance of conjugate gradient")
 @click.option('-cgminit', "--cg-minit", type=int, default=10,
@@ -150,22 +150,33 @@ def _forward(**kw):
     residual = da.stack(residual).sum(axis=0)/wsum
     residual = residual.compute()
 
-    if args.mask is not None:
-        print("Initialising mask", file=log)
-        mask = load_fits(args.mask).squeeze()
-        # passing model as mask
-        if len(mask.shape) == 3:
-            print("Detected third axis on mask. "
-                  "Initialising mask from model.", file=log)
-            x0 = mask.copy()
-            mask = np.any(mask, axis=0)[None].astype(residual.dtype)
-        else:
-            x0 = np.zeros((nband, nx, ny), dtype=residual.dtype)
-
-        assert mask.shape == (1, nx, ny)
+    if args.mds is not None:
+        mds_name = args.mds
+        # only one mds (for now)
+        try:
+            mds = xr.open_zarr(mds_name,
+                               chunks={'band': 1, 'x': -1, 'y': -1})
+        except Exception as e:
+            print(f'{args.mds} not found or invalid', file=log)
+            raise e
     else:
-        mask = np.ones((1, nx, ny), dtype=residual.dtype)
-        x0 = np.zeros((nband, nx, ny), dtype=residual.dtype)
+        mds_name = args.output_filename + '.mds.zarr'
+        print(f"Model dataset not passed in. Initialising as {mds_name}.",
+              file=log)
+        # may not exist yet
+        mds = xr.Dataset()
+
+    try:
+        mask = mds.MASK.values[None]
+    except:
+        print("No mask provided", file=log)
+        mask = np.zeros((1, nx, ny), dtype=args.output_type)
+
+    try:
+        x0 = mds.CLEAN_MODEL.values
+    except:
+        print("Initialising model as all zeros", file=log)
+        x0 = np.zeros((nband, nx, ny), dtype=args.output_type)
 
     hessopts = {}
     hessopts['cell'] = xds[0].cell_rad
@@ -250,23 +261,6 @@ def _forward(**kw):
     update = pcg(hess, mask * residual, x0, **cgopts)
 
     print("Writing update.", file=log)
-    if args.mds is not None:
-        mds_name = args.mds
-        # only one mds (for now)
-        try:
-            mds = xr.open_dataset(mds_name,
-                                  chunks={'band': 1, 'x': -1, 'y': -1},
-                                  engine='zarr')
-        except Exception as e:
-            print(f'{args.mds} not found or invalid', file=log)
-            raise e
-    else:
-        mds_name = args.output_filename + '.mds.zarr'
-        print(f"Model dataset not passed in. Initialising as {mds_name}.",
-              file=log)
-        # may not exist yet
-        mds = xr.Dataset()
-
     mds = mds.assign(**{'UPDATE': (('band', 'x', 'y'),
                      da.from_array(update, chunks=(1, -1, -1)))})
 
@@ -302,15 +296,17 @@ def _forward(**kw):
 
     mds.to_zarr(mds_name, mode='a')
 
-    # construct a header from xds attrs
-    hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
-    ref_freq = np.mean(freq_out)
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-    # TODO - add wsum info
+    if args.fits_mfs or not args.no_fits_cubes:
+        print("Writing fits files", file=log)
+        # construct a header from xds attrs
+        ref_freq = np.mean(freq_out)
+        hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
-    print("Saving results", file=log)
-    save_fits(args.output_filename + '_update.fits', update, hdr)
-    update_mfs = np.mean(update, axis=0)
-    save_fits(args.output_filename + '_update_mfs.fits', update_mfs, hdr_mfs)
+        update_mfs = np.mean(update, axis=0)
+        save_fits(args.output_filename + '_update_mfs.fits', update_mfs, hdr_mfs)
+
+        if not args.no_fits_cubes:
+            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
+            save_fits(args.output_filename + '_update.fits', update, hdr)
 
     print("All done here.", file=log)
