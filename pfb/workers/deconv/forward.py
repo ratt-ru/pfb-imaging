@@ -300,7 +300,7 @@ def _forward(**kw):
     if 'band' not in mds.coords:
         mds = mds.assign_coords({'band': da.from_array(freq_out, chunks=1)})
 
-    mds.to_zarr(mds_name, mode='w')
+    mds.to_zarr(mds_name, mode='a')
 
     # construct a header from xds attrs
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)

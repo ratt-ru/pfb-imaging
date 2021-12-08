@@ -55,6 +55,8 @@ def primal_dual(
         if positivity:
             x[x < 0] = 0.0
 
+        # if mask is not None:
+
         # convergence check
         eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
         if eps < tol:

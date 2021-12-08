@@ -158,9 +158,8 @@ def _backward(**kw):
 
     try:
         # always only one mds
-        mds = xr.open_dataset(args.mds,
-                                  chunks={'band': 1, 'x': -1, 'y': -1},
-                                  engine='zarr')
+        mds = xr.open_zarr(args.mds,
+                           chunks={'band': 1, 'x': -1, 'y': -1})
     except Exception as e:
         print(f"You have to pass in a valid model dataset. "
               f"No model found at {args.mds}", file=log)
@@ -186,7 +185,7 @@ def _backward(**kw):
         mask = load_fits(args.mask).squeeze()
         # could be using a model to initialise mask
         if len(mask.shape) == 3:
-            mask = np.any(mask, axis=0)[None]
+            mask = np.any(mask, axis=0)
         elif len(mask.shape) == 2:
             mask = np.where(mask, 1.0, 0.0)
         else:
@@ -293,7 +292,6 @@ def _backward(**kw):
                        compute=True)
 
     else:
-        print("Solving for update using vis space approximation", file=log)
         hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
                        sigmainv=args.sigmainv, wsum=wsum, mask=mask,
                        compute=True)
@@ -326,6 +324,9 @@ def _backward(**kw):
 
     # quit()
 
+    # import pdb; pdb.set_trace()
+
+    print("Solving for model", file=log)
     for i in range(args.niter):
         # prox = partial(prox_21m, sigma=args.sigma21, weight=weight, axis=0)
         model, dual = primal_dual(hess, data, model, dual, args.sigma21,
@@ -349,11 +350,15 @@ def _backward(**kw):
     dual = da.from_array(dual, chunks=(1, -1, -1), name=False)
     weight = da.from_array(weight, chunks=(-1, -1), name=False)
 
-    mds = mds.assign(**{'MODEL': (('band', 'x', 'y'), model),
+    mds = mds.assign(**{
+                     #'UPDATE': (('band', 'x', 'y'), update),
+                     'MODEL': (('band', 'x', 'y'), model),
                      'DUAL': (('band', 'basis', 'coef'), dual),
                      'WEIGHT': (('basis', 'coef'), weight)})
 
-    mds.to_zarr(args.mds, mode='w')
+    mds.to_zarr(args.mds, mode='a')
+
+
 
     # compute apparent residual per dataset
     from pfb.operators.hessian import hessian
@@ -377,6 +382,15 @@ def _backward(**kw):
         writes.append(xds_to_zarr(dsw, args.xds, columns='RESIDUAL'))
 
     dask.compute(writes)
+
+    xds = xds_from_zarr(args.xds, chunks={'band': 1})
+    residual = []
+    wsum = 0
+    for ds in xds:
+        wsum += ds.WSUM.data.sum()
+        residual.append(ds.RESIDUAL.data)
+    residual = da.stack(residual).sum(axis=0)/wsum
+    residual = residual.compute()
 
     # construct a header from xds attrs
     ra = mds.ra
