@@ -216,6 +216,8 @@ def single_stokes(data=None,
         'dec': radec[1],
         'nx': nx,
         'ny': ny,
+        'nx_psf': nx_psf,
+        'ny_psf': ny_psf,
         'nband': nband,  # global nband
         'fieldid': fid,
         'ddid': ddid,

@@ -174,24 +174,25 @@ def _clean(**kw):
     nband = xds[0].nband
     nx = xds[0].nx
     ny = xds[0].ny
+    nx_psf = xds[0].nx_psf
+    ny_psf = xds[0].ny_psf
 
     # stitch dirty/psf in apparent scale
-    dirty = []
-    psf = []
+    dirty = np.zeros((nband, nx, ny), dtype=args.output_type)
+    psf = np.zeros((nband, nx_psf, ny_psf), dtype=args.output_type)
     wsum = 0
     for ds in xds:
         if 'RESIDUAL' in ds:
-            d = ds.RESIDUAL.data
+            d = ds.RESIDUAL.values
         else:
-            d = ds.DIRTY.data
-        p = ds.PSF.data
-        wsum += ds.WSUM.data.sum()
-        dirty.append(d)
-        psf.append(p)
-    dirty = (da.stack(dirty).sum(axis=0)/wsum).compute()
-    psf = (da.stack(psf).sum(axis=0)/wsum).compute()
+            d = ds.DIRTY.values
+        band_id = ds.band_id.values
+        dirty[band_id] += d
+        psf[band_id] += ds.PSF.values
+        wsum += ds.WSUM.values.sum()
+    dirty /= wsum
+    psf /= wsum
     psf_mfs = np.sum(psf, axis=0)
-    nx_psf, ny_psf = psf_mfs.shape
     dirty_mfs = np.sum(dirty, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*args.epsilon
 
@@ -219,7 +220,6 @@ def _clean(**kw):
     hessopts['epsilon'] = args.epsilon
     hessopts['double_accum'] = args.double_accum
     hessopts['nthreads'] = args.nvthreads
-    wsum = wsum.compute()
     # always clean in apparent scale
     hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
                    wsum=wsum, sigmainv=0, mask=np.ones_like(dirty_mfs),
@@ -314,6 +314,8 @@ def _clean(**kw):
         except:
             mask = np.zeros((nx, ny))
         mask = np.logical_or(mask, np.any(model, axis=0)).astype(args.output_type)
+        from scipy import ndimage
+        mask = ndimage.binary_dilation(mask)
         mds = mds.assign(**{
                 'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
         })
@@ -321,8 +323,7 @@ def _clean(**kw):
 
     mds = mds.assign(**{
             'CLEAN_MODEL': (('band', 'x', 'y'), model),
-            'CLEAN_RESIDUAL': (('band', 'x', 'y'), residual),
-
+            'CLEAN_RESIDUAL': (('band', 'x', 'y'), residual)
     })
 
     mds.to_zarr(mds_name, mode='a')
@@ -338,7 +339,6 @@ def _clean(**kw):
         cell_deg = np.rad2deg(cell_rad)
 
         freq_out = np.unique(np.concatenate([ds.band.values for ds in xds]))
-        hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
         ref_freq = np.mean(freq_out)
         hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
@@ -348,7 +348,11 @@ def _clean(**kw):
         save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs)
 
         if not args.no_fits_cubes:
-            save_fits(args.output_filename + '_residual.fits', residual, hdr)
+            # need residual in Jy/beam
+            wsums = np.amax(psf, axes=(1,2))
+            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
+            save_fits(args.output_filename + '_residual.fits',
+                      residual/wsums[:, None, None], hdr)
             save_fits(args.output_filename + '_model.fits', model, hdr)
 
     print("All done here.", file=log)

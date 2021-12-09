@@ -20,10 +20,6 @@ log = pyscilog.get_logger('BACKWARD')
               help="Number of imaging bands")
 @click.option('-rchunk', '--row-chunk', type=int, default=-1,
               help="Number of rows in a chunk.")
-@click.option('-mask', '--mask',
-              help="Path to mask.fits.")
-@click.option('-pmask', '--point-mask',
-              help="Path to point source mask.fits.")
 @click.option('-bases', '--bases', default='self',
               help='Wavelet bases to use. Give as str separated by | eg.'
               '-bases self|db1|db2|db3|db4')
@@ -47,6 +43,9 @@ log = pyscilog.get_logger('BACKWARD')
 @click.option('--double-accum/--no-double-accum', default=True)
 @click.option('--use-beam/--no-use-beam', default=True)
 @click.option('--use-psf/--no-use-psf', default=True)
+@click.option('--fits-mfs/--no-fits-mfs', default=True)
+@click.option('--no-fits-cubes/--fits-cubes', default=True)
+@click.option('--positivity/--no-positivity', default=True)
 @click.option('-pdtol', "--pd-tol", type=float, default=1e-5,
               help="Tolerance of conjugate gradient")
 @click.option('-pdmaxit', "--pd-maxit", type=int, default=100,
@@ -180,34 +179,11 @@ def _backward(**kw):
 
     data = model + update
 
-    if args.mask is not None:
-        print("Initialising mask", file=log)
-        mask = load_fits(args.mask).squeeze()
-        # could be using a model to initialise mask
-        if len(mask.shape) == 3:
-            mask = np.any(mask, axis=0)
-        elif len(mask.shape) == 2:
-            mask = np.where(mask, 1.0, 0.0)
-        else:
-            raise ValueError("Incorrect number of dimensions for mask")
-        assert mask.shape == (nx, ny)
-        mask = mask[None].astype(model.dtype)
-    else:
-        mask = np.ones((1, nx, ny), dtype=model.dtype)
-
-    if args.point_mask is not None:
-        print("Initialising point source mask", file=log)
-        pmask = load_fits(args.point_mask).squeeze()
-        # passing model as mask
-        if len(pmask.shape) == 3:
-            print("Detected third axis on pmask. "
-                  "Initialising pmask from model.", file=log)
-            pmask = np.any(pmask, axis=0).astype(model.dtype)
-
-        assert pmask.shape == (nx, ny)
-    else:
-        pmask = np.ones((nx, ny), dtype=model.dtype)
-
+    try:
+        mask = mds.MASK.values[None]
+    except:
+        print("No mask provided", file=log)
+        mask = np.zeros((1, nx, ny), dtype=args.output_type)
 
     # dictionary setup
     print("Setting up dictionary", file=log)
@@ -238,10 +214,19 @@ def _backward(**kw):
     bases = da.from_array(np.array(bases, dtype=object), chunks=-1)
     ntots = da.from_array(np.array(ntots, dtype=object), chunks=-1)
     padding = da.from_array(np.array(padding, dtype=object), chunks=-1)
-    psiH = partial(im2coef, pmask=pmask, bases=bases, ntot=ntots, nmax=nmax,
+    psiH = partial(im2coef, bases=bases, ntot=ntots, nmax=nmax,
                    nlevels=args.nlevels)
-    psi = partial(coef2im, pmask=pmask, bases=bases, padding=padding,
+    psi = partial(coef2im, bases=bases, padding=padding,
                   iy=iys, sy=sys, nx=nx, ny=ny)
+
+    # we set the alphas used for reweightingusing the
+    # current clean residuals when available
+    alpha = np.ones(nbasis)
+    if 'CLEAN_RESIDUAL' in mds:
+        cresid = mds.CLEAN_RESIDUAL.values
+        resid_comps = psiH(cresid)
+        for m in range(nbasis):
+            alpha[m] = np.std(resid_comps[m])
 
     hessopts = {}
     hessopts['cell'] = xds[0].cell_rad
@@ -316,50 +301,44 @@ def _backward(**kw):
     else:
         weight = np.ones((nbasis, nmax), dtype=model.dtype)
 
-    # psisq = lambda x: psi(psiH(x))
-
-    # psinorm = power_method(psisq, (nband, nx, ny), tol=args.pm_tol,
-    #                        maxit=args.pm_maxit, verbosity=args.pm_verbose,
-    #                        report_freq=args.pm_report_freq)
-
-    # quit()
-
-    # import pdb; pdb.set_trace()
-
     print("Solving for model", file=log)
     for i in range(args.niter):
         # prox = partial(prox_21m, sigma=args.sigma21, weight=weight, axis=0)
         model, dual = primal_dual(hess, data, model, dual, args.sigma21,
                                   psi, psiH, weight, hessnorm, prox_21m,
-                                  nu=nbasis,
+                                  nu=nbasis, positivity=args.positivity,
                                   tol=args.pd_tol, maxit=args.pd_maxit,
                                   verbosity=args.pd_verbose,
                                   report_freq=args.pd_report_freq)
 
-        # # reweight
-        # l2_norm = np.linalg.norm(psi.hdot(model), axis=1)
-        # for m in range(psi.nbasis):
-        #     if adapt_sig21:
-        #         _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
-        #         print('basis %i, sigma %f'%sigmas[m], file=log)
+        # reweight
+        l2_norm = np.linalg.norm(psiH(model), axis=0)
+        for m in range(nbasis):
+            # if adapt_sig21:
+            #     _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
+            #     print('basis %i, sigma %f'%sigmas[m], file=log)
 
-        #     weights21[m] = alpha[m]/(alpha[m] + l2_norm[m]) * sigmas[m]/sig_21
+            weight[m] = alpha[m]/(alpha[m] + l2_norm[m])
 
-
+    print("Saving results", file=log)
+    mask = np.any(model, axis=0).astype(args.output_type)
+    mask = da.from_array(mask, chunks=(-1, -1))
     model = da.from_array(model, chunks=(1, -1, -1), name=False)
     dual = da.from_array(dual, chunks=(1, -1, -1), name=False)
     weight = da.from_array(weight, chunks=(-1, -1), name=False)
 
     mds = mds.assign(**{
-                     #'UPDATE': (('band', 'x', 'y'), update),
+                     'MASK': (('x', 'y'), mask),
                      'MODEL': (('band', 'x', 'y'), model),
                      'DUAL': (('band', 'basis', 'coef'), dual),
                      'WEIGHT': (('basis', 'coef'), weight)})
 
     mds.to_zarr(args.mds, mode='a')
 
+    # # debugging
+    # model = da.from_array(update, chunks=(1, -1, -1))
 
-
+    print("Computing residual", file=log)
     # compute apparent residual per dataset
     from pfb.operators.hessian import hessian
     # Required because of https://github.com/ska-sa/dask-ms/issues/171
@@ -375,6 +354,7 @@ def _backward(**kw):
         beam = ds.BEAM.data
         band_id = ds.band_id.data
         # we only want to apply the beam once here
+        # import pdb; pdb.set_trace()
         residual = (dirty -
                     hessian(uvw, wgt, freq, beam * model[band_id], None,
                     fbin_idx, fbin_counts, hessopts))
@@ -383,35 +363,41 @@ def _backward(**kw):
 
     dask.compute(writes)
 
-    xds = xds_from_zarr(args.xds, chunks={'band': 1})
-    residual = []
-    wsum = 0
-    for ds in xds:
-        wsum += ds.WSUM.data.sum()
-        residual.append(ds.RESIDUAL.data)
-    residual = da.stack(residual).sum(axis=0)/wsum
-    residual = residual.compute()
+    if args.fits_mfs or not args.no_fits_cubes:
+        print("Writing fits files", file=log)
+        xds = xds_from_zarr(args.xds, chunks={'band': 1})
+        residual = np.zeros((nband, nx, ny), dtype=args.output_type)
+        wsums = np.zeros(nband)
+        for ds in xds:
+            band_id = ds.band_id.values
+            wsums[band_id] += ds.WSUM.values
+            residual[band_id] += ds.RESIDUAL.values
+        wsum = np.sum(wsums)
+        residual /= wsum
 
-    # construct a header from xds attrs
-    ra = mds.ra
-    dec = mds.dec
-    radec = [ra, dec]
+        # construct a header from xds attrs
+        ra = mds.ra
+        dec = mds.dec
+        radec = [ra, dec]
 
-    cell_rad = mds.cell_rad
-    cell_deg = np.rad2deg(cell_rad)
+        cell_rad = mds.cell_rad
+        cell_deg = np.rad2deg(cell_rad)
 
-    freq_out = mds.band.values
-    hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
-    ref_freq = np.mean(freq_out)
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-    # TODO - add wsum info
+        freq_out = mds.band.values
+        ref_freq = np.mean(freq_out)
+        hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
-    print("Saving results", file=log)
-    save_fits(args.output_filename + '_model.fits', model, hdr)
-    model_mfs = np.mean(model, axis=0)
-    save_fits(args.output_filename + '_model_mfs.fits', model_mfs, hdr_mfs)
-    save_fits(args.output_filename + '_residual.fits', residual, hdr)
-    residual_mfs = np.sum(residual, axis=0)
-    save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs)
+        model_mfs = np.mean(model, axis=0)
+        save_fits(args.output_filename + '_model_mfs.fits', model_mfs, hdr_mfs)
+        residual_mfs = np.sum(residual, axis=0)
+        save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs)
+
+        if not args.no_fits_cubes:
+            # need residual in Jy/beam
+            wsums = np.amax(psf, axes=(1,2))
+            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
+            save_fits(args.output_filename + '_model.fits', model, hdr)
+            save_fits(args.output_filename + '_residual.fits',
+                      residual/wsums[:, None, None], hdr)
 
     print("All done here.", file=log)
