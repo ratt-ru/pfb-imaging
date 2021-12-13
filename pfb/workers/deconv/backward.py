@@ -144,6 +144,7 @@ def _backward(**kw):
     from pfb.opt.primal_dual import primal_dual
     from pfb.opt.power_method import power_method
     from pfb.prox.prox_21m import prox_21m
+    from pfb.prox.prox_21 import prox_21
     from astropy.io import fits
     import pywt
 
@@ -180,10 +181,10 @@ def _backward(**kw):
     data = model + update
 
     try:
-        mask = mds.MASK.values[None]
+        mask = mds.MASK.values[None].astype(args.output_type)
     except:
         print("No mask provided", file=log)
-        mask = np.zeros((1, nx, ny), dtype=args.output_type)
+        mask = np.ones((1, nx, ny), dtype=args.output_type)
 
     # dictionary setup
     print("Setting up dictionary", file=log)
@@ -221,7 +222,7 @@ def _backward(**kw):
 
     # we set the alphas used for reweightingusing the
     # current clean residuals when available
-    alpha = np.ones(nbasis)
+    alpha = np.ones(nbasis) * 1e-3
     if 'CLEAN_RESIDUAL' in mds:
         cresid = mds.CLEAN_RESIDUAL.values
         resid_comps = psiH(cresid)
@@ -305,20 +306,20 @@ def _backward(**kw):
     for i in range(args.niter):
         # prox = partial(prox_21m, sigma=args.sigma21, weight=weight, axis=0)
         model, dual = primal_dual(hess, data, model, dual, args.sigma21,
-                                  psi, psiH, weight, hessnorm, prox_21m,
+                                  psi, psiH, weight, hessnorm, prox_21,
                                   nu=nbasis, positivity=args.positivity,
                                   tol=args.pd_tol, maxit=args.pd_maxit,
                                   verbosity=args.pd_verbose,
                                   report_freq=args.pd_report_freq)
 
-        # reweight
-        l2_norm = np.linalg.norm(psiH(model), axis=0)
-        for m in range(nbasis):
-            # if adapt_sig21:
-            #     _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
-            #     print('basis %i, sigma %f'%sigmas[m], file=log)
+        # # reweight
+        # l2_norm = np.linalg.norm(psiH(model), axis=0)
+        # for m in range(nbasis):
+        #     # if adapt_sig21:
+        #     #     _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
+        #     #     print('basis %i, sigma %f'%sigmas[m], file=log)
 
-            weight[m] = alpha[m]/(alpha[m] + l2_norm[m])
+        #     weight[m] = alpha[m]/(alpha[m] + l2_norm[m])
 
     print("Saving results", file=log)
     mask = np.any(model, axis=0).astype(args.output_type)

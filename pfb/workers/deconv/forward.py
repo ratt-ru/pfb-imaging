@@ -170,12 +170,12 @@ def _forward(**kw):
         mask = mds.MASK.values[None]
     except:
         print("No mask provided", file=log)
-        mask = np.zeros((1, nx, ny), dtype=args.output_type)
+        mask = np.ones((1, nx, ny), dtype=args.output_type)
 
     try:
         x0 = mds.CLEAN_MODEL.values
     except:
-        print("Initialising model as all zeros", file=log)
+        print("Initialising model to all zeros", file=log)
         x0 = np.zeros((nband, nx, ny), dtype=args.output_type)
 
     hessopts = {}

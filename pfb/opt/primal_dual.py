@@ -12,9 +12,9 @@ def primal_dual(
         psi,  # linear operator in dual domain
         psiH,  # adjoint of psi
         weights,  # weights for l1 thresholding
-        L,
+        L,  # spectral norm of Hessian
         prox,  # prox of regulariser
-        nu=1.0,  # spectral norms
+        nu=1.0,  # spectral norm of dictionary
         sigma=None,  # step size of dual update
         mask=None,  # regions where mask is False will be masked
         tol=1e-5,

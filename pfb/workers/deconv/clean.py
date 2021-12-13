@@ -309,13 +309,12 @@ def _clean(**kw):
 
     print("Saving results", file=log)
     if args.update_mask:
-        try:
-            mask = mds.MASK.values
-        except:
-            mask = np.zeros((nx, ny))
-        mask = np.logical_or(mask, np.any(model, axis=0)).astype(args.output_type)
         from scipy import ndimage
+        mask = np.any(model, axis=0)
         mask = ndimage.binary_dilation(mask)
+        mask = ndimage.binary_closing(mask)
+        if 'MASK' in mds:
+            mask = np.logical_or(mask, mds.MASK.values)
         mds = mds.assign(**{
                 'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
         })

@@ -1,16 +1,16 @@
 import numpy as np
 
 
-def prox_21(v, sigma, weights, axis=1):
+def prox_21(v, sigma, weights, axis=0):
     """
     Computes weighted version of
 
     prox_{sigma * || . ||_{21}}(v)
 
-    Assumed that v has shape nbasis x nband x ntot where
+    Assumed that v has shape (nband, nbasis, ntot) where
 
-    nbasis  - number of orthogonal bases
     nband   - number of imaging bands
+    nbasis  - number of orthogonal bases
     ntot    - total number of coefficients for each basis (must be equal)
     """
     l2_norm = np.linalg.norm(v, axis=axis)  # drops axis

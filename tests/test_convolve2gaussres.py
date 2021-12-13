@@ -28,9 +28,7 @@ def test_convolve2gaussres(nx, ny, nband, alpha):
 
     conv_model, _ = convolve2gaussres(restored, xx, yy, Gausspari[0], 8, gausspari=Gausspari)
 
-    I = np.argwhere(conv_model[-1] > 0.05).squeeze()
-    Ix = I[:, 0]
-    Iy = I[:, 1]
+    Ix, Iy = np.where(conv_model[-1] > 0.05)
 
     comps = conv_model[:, Ix, Iy]
     weights = np.ones((nband))

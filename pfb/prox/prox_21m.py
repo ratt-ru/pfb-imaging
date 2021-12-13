@@ -14,7 +14,7 @@ def prox_21m(v, sigma, weight, axis=0):
     ntot    - total number of coefficients for each basis (must be equal)
     """
     l2_norm = np.mean(v, axis=axis)  # drops axis
-    l2_soft = np.maximum(l2_norm - sigma * weight, 0.0) * np.sign(l2_norm)
+    l2_soft = np.maximum(np.abs(l2_norm - sigma * weight), 0.0) * np.sign(l2_norm)
     mask = l2_norm != 0
     ratio = np.zeros(mask.shape, dtype=v.dtype)
     ratio[mask] = l2_soft[mask] / l2_norm[mask]
