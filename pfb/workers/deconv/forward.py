@@ -13,6 +13,8 @@ log = pyscilog.get_logger('FORWARD')
               help="Path to xarray dataset containing data products.")
 @click.option('-mds', '--mds', type=str,
               help="Path to xarray dataset containing model products.")
+@click.option('-rname', '--residual-name', default='RESIDUAL',
+              help='Name of residual to use in xds')
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -31,6 +33,7 @@ log = pyscilog.get_logger('FORWARD')
 @click.option('--use-psf/--no-use-psf', default=True)
 @click.option('--fits-mfs/--no-fits-mfs', default=True)
 @click.option('--no-fits-cubes/--fits-cubes', default=True)
+@click.option('--do-residual/--no-do-residual', default=True)
 @click.option('-cgtol', "--cg-tol", type=float, default=1e-5,
               help="Tolerance of conjugate gradient")
 @click.option('-cgminit', "--cg-minit", type=int, default=10,
@@ -137,22 +140,23 @@ def _forward(**kw):
     ny = xds[0].ny
 
     # stitch residuals after beam application
-    residual = []
+    if args.residual_name in xds[0]:
+        rname = args.residual_name
+    else:
+        rname = 'DIRTY'
+    print(f'Using {rname} as residual', file=log)
+    residual = np.zeros((nband, nx, ny), dtype=args.output_type)
     wsum = 0
     for ds in xds:
-        if 'RESIDUAL' in ds:
-            d = ds.RESIDUAL.data
-        else:
-            d = ds.DIRTY.data
-        b = ds.BEAM.data
-        wsum += ds.WSUM.data.sum()
-        residual.append(d * b)
-    residual = da.stack(residual).sum(axis=0)/wsum
-    residual = residual.compute()
+        d = ds.get(rname).values
+        b = ds.BEAM.values
+        band_id = ds.band_id.values
+        residual[band_id] += d * b
+        wsum += ds.WSUM.values.sum()
+    residual /= wsum
 
     if args.mds is not None:
         mds_name = args.mds
-        # only one mds (for now)
         try:
             mds = xr.open_zarr(mds_name,
                                chunks={'band': 1, 'x': -1, 'y': -1})
@@ -296,6 +300,30 @@ def _forward(**kw):
 
     mds.to_zarr(mds_name, mode='a')
 
+    if args.do_residual:
+        print("Computing residual", file=log)
+        from pfb.operators.hessian import hessian
+        # Required because of https://github.com/ska-sa/dask-ms/issues/171
+        xdsw = xds_from_zarr(args.xds, chunks={'band': 1}, columns='DIRTY')
+        writes = []
+        for ds, dsw in zip(xds, xdsw):
+            dirty = ds.DIRTY.data
+            wgt = ds.WEIGHT.data
+            uvw = ds.UVW.data
+            freq = ds.FREQ.data
+            fbin_idx = ds.FBIN_IDX.data
+            fbin_counts = ds.FBIN_COUNTS.data
+            beam = ds.BEAM.data
+            band_id = ds.band_id.data
+            # we only want to apply the beam once here
+            residual = (dirty -
+                        hessian(uvw, wgt, freq, beam * model[band_id], None,
+                        fbin_idx, fbin_counts, hessopts))
+            dsw = dsw.assign(**{'FORWARD_RESIDUAL': (('band', 'x', 'y'), residual)})
+            writes.append(xds_to_zarr(dsw, args.xds, columns='RESIDUAL'))
+
+        dask.compute(writes)
+
     if args.fits_mfs or not args.no_fits_cubes:
         print("Writing fits files", file=log)
         # construct a header from xds attrs
@@ -305,8 +333,29 @@ def _forward(**kw):
         update_mfs = np.mean(update, axis=0)
         save_fits(args.output_filename + '_update_mfs.fits', update_mfs, hdr_mfs)
 
+        if args.do_residual:
+            xds = xds_from_zarr(args.xds, chunks={'band': 1})
+            residual = np.zeros((nband, nx, ny), dtype=args.output_type)
+            wsums = np.zeros(nband)
+            for ds in xds:
+                band_id = ds.band_id.values
+                wsums[band_id] += ds.WSUM.values
+                residual[band_id] += ds.RESIDUAL.values
+            wsum = np.sum(wsums)
+            residual /= wsum
+
+            residual_mfs = np.sum(residual, axis=0)
+            save_fits(args.output_filename + '_forward_residual_mfs.fits',
+                      residual_mfs, hdr_mfs)
+
         if not args.no_fits_cubes:
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
             save_fits(args.output_filename + '_update.fits', update, hdr)
+
+            if args.do_residual:
+                fmask = wsums > 0
+                residual[fmask] /= wsums[fmask, None, None]
+                save_fits(args.output_filename + '_forward_residual.fits',
+                          residual, hdr)
 
     print("All done here.", file=log)

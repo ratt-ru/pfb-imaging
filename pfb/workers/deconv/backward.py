@@ -14,6 +14,8 @@ log = pyscilog.get_logger('BACKWARD')
 @click.option('-mds', '--mds', type=str, required=True,
               help="Path to xarray dataset containing model, dual and "
               "weights from previous iteration.")
+@click.option('-mname', '--model-name', default='MODEL',
+              help='Name of model in mds.')
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -172,10 +174,12 @@ def _backward(**kw):
         raise ValueError("No update found in model dataset. "
                          "Use forward worker to populate it. ", file=log)
 
-    if 'MODEL' in mds:
-        model = mds.MODEL.values
+    if args.model_name  in mds:
+        model = mds.get(args.model_name).values
         assert model.shape == (nband, nx, ny)
+        print(f"Initialising model from {args.model_name} in mds", file=log)
     else:
+        print('Initialising model to zeros', file=log)
         model = np.zeros((nband, nx, ny), dtype=xds[0].DIRTY.dtype)
 
     data = model + update
@@ -220,14 +224,14 @@ def _backward(**kw):
     psi = partial(coef2im, bases=bases, padding=padding,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
-    # we set the alphas used for reweightingusing the
+    # we set the alphas used for reweighting using the
     # current clean residuals when available
     alpha = np.ones(nbasis) * 1e-3
     if 'CLEAN_RESIDUAL' in mds:
         cresid = mds.CLEAN_RESIDUAL.values
         resid_comps = psiH(cresid)
         for m in range(nbasis):
-            alpha[m] = np.std(resid_comps[m])
+            alpha[m] = np.std(resid_comps[:, m])
 
     hessopts = {}
     hessopts['cell'] = xds[0].cell_rad
@@ -302,6 +306,7 @@ def _backward(**kw):
     else:
         weight = np.ones((nbasis, nmax), dtype=model.dtype)
 
+    modelp = model.copy()
     print("Solving for model", file=log)
     for i in range(args.niter):
         # prox = partial(prox_21m, sigma=args.sigma21, weight=weight, axis=0)
@@ -321,16 +326,26 @@ def _backward(**kw):
 
         #     weight[m] = alpha[m]/(alpha[m] + l2_norm[m])
 
+    # import matplotlib.pyplot as plt
+    # for b in range(nband):
+    #     plt.imshow(model[b], vmax=0.2*model[b].max())
+    #     plt.colorbar()
+    #     plt.show()
+
+    # quit()
+
     print("Saving results", file=log)
     mask = np.any(model, axis=0).astype(args.output_type)
     mask = da.from_array(mask, chunks=(-1, -1))
     model = da.from_array(model, chunks=(1, -1, -1), name=False)
+    modelp = da.from_array(modelp, chunks=(1, -1, -1), name=False)
     dual = da.from_array(dual, chunks=(1, -1, -1), name=False)
     weight = da.from_array(weight, chunks=(-1, -1), name=False)
 
     mds = mds.assign(**{
                      'MASK': (('x', 'y'), mask),
                      'MODEL': (('band', 'x', 'y'), model),
+                     'MODELP': (('band', 'x', 'y'), modelp),
                      'DUAL': (('band', 'basis', 'coef'), dual),
                      'WEIGHT': (('basis', 'coef'), weight)})
 
@@ -397,8 +412,10 @@ def _backward(**kw):
             # need residual in Jy/beam
             wsums = np.amax(psf, axes=(1,2))
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
+            fmask = wsums > 0
+            residual[fmask] /= wsums[fmask, None, None]
             save_fits(args.output_filename + '_model.fits', model, hdr)
             save_fits(args.output_filename + '_residual.fits',
-                      residual/wsums[:, None, None], hdr)
+                      residual, hdr)
 
     print("All done here.", file=log)

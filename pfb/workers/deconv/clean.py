@@ -13,6 +13,8 @@ log = pyscilog.get_logger('CLEAN')
               help="Path to xarray dataset containing data products")
 @click.option('-mds', '--mds', type=str,
               help="Path to xarray dataset containing model products.")
+@click.option('-rname', '--residual-name', default='RESIDUAL',
+              help='Name of residual to use in xds')
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -178,14 +180,16 @@ def _clean(**kw):
     ny_psf = xds[0].ny_psf
 
     # stitch dirty/psf in apparent scale
+    if args.residual_name in xds[0]:
+        rname = args.residual_name
+    else:
+        rname = 'DIRTY'
+    print(f'Using {rname} as residual', file=log)
     dirty = np.zeros((nband, nx, ny), dtype=args.output_type)
     psf = np.zeros((nband, nx_psf, ny_psf), dtype=args.output_type)
     wsum = 0
     for ds in xds:
-        if 'RESIDUAL' in ds:
-            d = ds.RESIDUAL.values
-        else:
-            d = ds.DIRTY.values
+        d = ds.get(rname).values
         band_id = ds.band_id.values
         dirty[band_id] += d
         psf[band_id] += ds.PSF.values
@@ -343,15 +347,17 @@ def _clean(**kw):
 
         model_mfs = np.mean(model, axis=0)
 
-        save_fits(args.output_filename + '_model_mfs.fits', model_mfs, hdr_mfs)
-        save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs)
+        save_fits(args.output_filename + '_clean_model_mfs.fits', model_mfs, hdr_mfs)
+        save_fits(args.output_filename + '_clean_residual_mfs.fits', residual_mfs, hdr_mfs)
 
         if not args.no_fits_cubes:
             # need residual in Jy/beam
             wsums = np.amax(psf, axes=(1,2))
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
-            save_fits(args.output_filename + '_residual.fits',
-                      residual/wsums[:, None, None], hdr)
-            save_fits(args.output_filename + '_model.fits', model, hdr)
+            fmask = wsums > 0
+            residual[fmask] /= wsums[fmask, None, None]
+            save_fits(args.output_filename + '_clean_residual.fits',
+                      residual, hdr)
+            save_fits(args.output_filename + '_clean_model.fits', model, hdr)
 
     print("All done here.", file=log)

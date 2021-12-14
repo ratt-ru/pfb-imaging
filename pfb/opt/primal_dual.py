@@ -23,7 +23,6 @@ def primal_dual(
         report_freq=10,
         gamma=1.0,
         verbosity=1):
-
     # initialise
     x = x0.copy()
     v = v0.copy()
@@ -32,10 +31,10 @@ def primal_dual(
     def grad_func(x): return -A(xbar - x) / gamma
 
     if sigma is None:
-        sigma = L / 2.0
+        sigma = L / (2.0 * gamma)
 
     # stepsize control
-    tau = 0.9 / (L / 2.0 + sigma * nu**2)
+    tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
 
     # start iterations
     eps = 1.0
