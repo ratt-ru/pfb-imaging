@@ -626,3 +626,26 @@ def _model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
         model[:, mask] = comps[band_mapping]
 
     return model
+
+
+def init_mask(mask, mds, output_type, log):
+    if mask is not None:
+        print("No mask provided", file=log)
+        mask = np.ones((1, nx, ny), dtype=output_type)
+    elif mask.endswith('.fits'):
+        try:
+            mask = load_fits(mask, dtype=output_type).squeeze()
+            assert mask.shape == (nx, ny)
+            mask = mask[None]
+        except Exception as e:
+            print(f"No mask found at {mask}", file=log)
+            raise e
+    elif mask.lower() == 'mds':
+        try:
+            mask = mds.MASK.values[None].astype(output_type)
+        except:
+            print(f"No mask in mds", file=log)
+            raise e
+    else:
+        raise ValueError(f'Unsupported masking option {mask}')
+    return mask

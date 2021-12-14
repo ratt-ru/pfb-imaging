@@ -8,7 +8,7 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('CLEAN')
 
-@cli.command()
+@cli.command(context_settings={'show_default': True})
 @click.option('-xds', '--xds', required=True,
               help="Path to xarray dataset containing data products")
 @click.option('-mds', '--mds', type=str,

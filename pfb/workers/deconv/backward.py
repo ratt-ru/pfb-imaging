@@ -16,6 +16,9 @@ log = pyscilog.get_logger('BACKWARD')
               "weights from previous iteration.")
 @click.option('-mname', '--model-name', default='MODEL',
               help='Name of model in mds.')
+@click.option('-mask', '--mask', default=None,
+              help="Either path to mask.fits or set to mds to use "
+              "the mask contained in the mds.")
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -184,11 +187,8 @@ def _backward(**kw):
 
     data = model + update
 
-    try:
-        mask = mds.MASK.values[None].astype(args.output_type)
-    except:
-        print("No mask provided", file=log)
-        mask = np.ones((1, nx, ny), dtype=args.output_type)
+    from pfb.utils.misc import init_mask
+    mask = init_mask(args.mask, mds, args.output_type, log)
 
     # dictionary setup
     print("Setting up dictionary", file=log)

@@ -8,13 +8,16 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('FORWARD')
 
-@cli.command()
+@cli.command(context_settings={'show_default': True})
 @click.option('-xds', '--xds', type=str, required=True,
               help="Path to xarray dataset containing data products.")
 @click.option('-mds', '--mds', type=str,
               help="Path to xarray dataset containing model products.")
 @click.option('-rname', '--residual-name', default='RESIDUAL',
               help='Name of residual to use in xds')
+@click.option('-mask', '--mask', default=None,
+              help="Either path to mask.fits or set to mds to use "
+              "the mask contained in the mds.")
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -170,11 +173,8 @@ def _forward(**kw):
         # may not exist yet
         mds = xr.Dataset()
 
-    try:
-        mask = mds.MASK.values[None]
-    except:
-        print("No mask provided", file=log)
-        mask = np.ones((1, nx, ny), dtype=args.output_type)
+    from pfb.utils.misc import init_mask
+    mask = init_mask(args.mask, mds, args.output_type, log)
 
     try:
         x0 = mds.CLEAN_MODEL.values

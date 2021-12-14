@@ -8,7 +8,7 @@ pyscilog.init('pfb')
 log = pyscilog.get_logger('GRID')
 
 
-@cli.command()
+@cli.command(context_settings={'show_default': True})
 @click.option('-ms', '--ms', required=True,
               help='Path to measurement set.')
 @click.option('-dc', '--data-column', default='DATA',
