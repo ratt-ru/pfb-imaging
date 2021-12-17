@@ -629,20 +629,22 @@ def _model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
 
 
 def init_mask(mask, mds, output_type, log):
-    if mask is not None:
+    if mask is None:
         print("No mask provided", file=log)
-        mask = np.ones((1, nx, ny), dtype=output_type)
+        mask = np.ones((1, mds.nx, mds.ny), dtype=output_type)
     elif mask.endswith('.fits'):
         try:
             mask = load_fits(mask, dtype=output_type).squeeze()
-            assert mask.shape == (nx, ny)
+            assert mask.shape == (mds.nx, mds.ny)
             mask = mask[None]
+            print('Using provided fits mask', file=log)
         except Exception as e:
             print(f"No mask found at {mask}", file=log)
             raise e
     elif mask.lower() == 'mds':
         try:
             mask = mds.MASK.values[None].astype(output_type)
+            print('Using mask in mds', file=log)
         except:
             print(f"No mask in mds", file=log)
             raise e

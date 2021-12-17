@@ -172,6 +172,10 @@ def _forward(**kw):
               file=log)
         # may not exist yet
         mds = xr.Dataset()
+        mds = mds.assign_attrs({'nband': nband})
+        mds = mds.assign_attrs({'nx': nx})
+        mds = mds.assign_attrs({'ny': ny})
+
 
     from pfb.utils.misc import init_mask
     mask = init_mask(args.mask, mds, args.output_type, log)
@@ -188,7 +192,6 @@ def _forward(**kw):
     hessopts['epsilon'] = args.epsilon
     hessopts['double_accum'] = args.double_accum
     hessopts['nthreads'] = args.nvthreads
-    wsum = wsum.compute()
 
     if args.use_psf:
         print("Initialising psf", file=log)
@@ -265,8 +268,9 @@ def _forward(**kw):
     update = pcg(hess, mask * residual, x0, **cgopts)
 
     print("Writing update.", file=log)
+    update = da.from_array(update, chunks=(1, -1, -1))
     mds = mds.assign(**{'UPDATE': (('band', 'x', 'y'),
-                     da.from_array(update, chunks=(1, -1, -1)))})
+                     update)})
 
     ra = xds[0].ra
     dec = xds[0].dec
@@ -307,7 +311,7 @@ def _forward(**kw):
         xdsw = xds_from_zarr(args.xds, chunks={'band': 1}, columns='DIRTY')
         writes = []
         for ds, dsw in zip(xds, xdsw):
-            dirty = ds.DIRTY.data
+            dirty = ds.get(rname).data
             wgt = ds.WEIGHT.data
             uvw = ds.UVW.data
             freq = ds.FREQ.data
@@ -317,7 +321,7 @@ def _forward(**kw):
             band_id = ds.band_id.data
             # we only want to apply the beam once here
             residual = (dirty -
-                        hessian(uvw, wgt, freq, beam * model[band_id], None,
+                        hessian(uvw, wgt, freq, beam * update[band_id], None,
                         fbin_idx, fbin_counts, hessopts))
             dsw = dsw.assign(**{'FORWARD_RESIDUAL': (('band', 'x', 'y'), residual)})
             writes.append(xds_to_zarr(dsw, args.xds, columns='RESIDUAL'))
@@ -340,7 +344,7 @@ def _forward(**kw):
             for ds in xds:
                 band_id = ds.band_id.values
                 wsums[band_id] += ds.WSUM.values
-                residual[band_id] += ds.RESIDUAL.values
+                residual[band_id] += ds.FORWARD_RESIDUAL.values
             wsum = np.sum(wsums)
             residual /= wsum
 

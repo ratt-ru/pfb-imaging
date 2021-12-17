@@ -226,7 +226,7 @@ def _backward(**kw):
 
     # we set the alphas used for reweighting using the
     # current clean residuals when available
-    alpha = np.ones(nbasis) * 1e-3
+    alpha = np.ones(nbasis) * 1e-5
     if 'CLEAN_RESIDUAL' in mds:
         cresid = mds.CLEAN_RESIDUAL.values
         resid_comps = psiH(cresid)
@@ -317,14 +317,14 @@ def _backward(**kw):
                                   verbosity=args.pd_verbose,
                                   report_freq=args.pd_report_freq)
 
-        # # reweight
-        # l2_norm = np.linalg.norm(psiH(model), axis=0)
-        # for m in range(nbasis):
-        #     # if adapt_sig21:
-        #     #     _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
-        #     #     print('basis %i, sigma %f'%sigmas[m], file=log)
+        # reweight
+        l2_norm = np.linalg.norm(psiH(model), axis=0)
+        for m in range(nbasis):
+            # if adapt_sig21:
+            #     _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
+            #     print('basis %i, sigma %f'%sigmas[m], file=log)
 
-        #     weight[m] = alpha[m]/(alpha[m] + l2_norm[m])
+            weight[m] = alpha[m]/(alpha[m] + l2_norm[m])
 
     # import matplotlib.pyplot as plt
     # for b in range(nband):
@@ -370,7 +370,6 @@ def _backward(**kw):
         beam = ds.BEAM.data
         band_id = ds.band_id.data
         # we only want to apply the beam once here
-        # import pdb; pdb.set_trace()
         residual = (dirty -
                     hessian(uvw, wgt, freq, beam * model[band_id], None,
                     fbin_idx, fbin_counts, hessopts))

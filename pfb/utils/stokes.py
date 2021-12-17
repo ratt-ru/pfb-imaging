@@ -1,5 +1,6 @@
 import numpy as np
 import numexpr as ne
+from numba import generated_jit
 import dask
 from dask.graph_manipulation import clone
 import dask.array as da
@@ -354,3 +355,30 @@ def _weight_data_impl(data, weight, imaging_weight, mueller, flag, frow,
     # weight -> complex (use blocker?)
     return np.concatenate([data[None], weight[None]])
 
+from pfb.utils.symbolic import stokes_vis
+from africanus.calibration.utils import check_type
+@generated_jit(nopython=True, nogil=True, cache=True)
+def _I(data, weight, jones, flag, tbin_idx, tbin_counts, ant1, ant2, pol='linear'):
+    mode = check_type(jones, data)
+    vis_func, wgt_func = mueller_vis('I', mode=mode, pol=pol)
+
+    def _I_impl(data, weight, jones, flag, tbin_idx, tbin_counts, ant1, ant2, pol=pol):
+        # for dask arrays we need to adjust the chunks to
+        # start counting from zero
+        tbin_idx -= tbin_idx.min()
+        nt = np.shape(time_bin_indices)[0]
+        nrow, nchan, ncorr = data.shape
+        vis = np.zeros((nrow, nchan), dtype=data.dtype)
+        wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
+        for t in range(nt):
+            for row in range(tbin_idx[t],
+                                tbin_idx[t] + tbin_counts[t]):
+                p = int(ant1[row])
+                q = int(ant2[row])
+                gp = jones[t, p]
+                gq = jones[t, q]
+                for chan in range(nchan):
+                    vis[row, chan] = vis_func(data[row, chan], weight[row, chan], gp[chan], gq[chan])
+                    wgt[row, chan] = wgt_func(weight[row, chan], gp[chan], gq[chan])
+        return vis, wgt
+    return _I_impl
