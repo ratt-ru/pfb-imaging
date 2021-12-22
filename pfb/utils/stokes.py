@@ -1,164 +1,136 @@
 import numpy as np
 import numexpr as ne
 from numba import generated_jit
+from numba.types import literal
 import dask
 from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
-from africanus.gridding.wgridder.dask import dirty as vis2im
-from africanus.calibration.utils.dask import corrupt_vis
+from pfb.operators.gridder import vis2im
 from africanus.averaging.bda_avg import bda
-from pfb.utils.weighting import compute_wsum
-# from pfb.utils.corrupt_vis import corrupt_vis
+from pfb.utils.misc import coerce_literal
 from daskms.optimisation import inlined_array
+from operator import getitem
 
-def single_stokes(data=None,
-                  weight=None,
-                  imaging_weight=None,
-                  ant1=None,
-                  ant2=None,
+def single_stokes(ds=None,
                   jones=None,
-                  flag=None,
-                  frow=None,
-                  uvw=None,
-                  time=None,
-                  interval=None,
-                  fid=None,
-                  ddid=None,
-                  scanid=None,
-                  row_out_chunk=None,
-                  nthreads=None,
-                  epsilon=None,
-                  wstack=None,
-                  double_accum=None,
-                  flipv=None,
+                  args=None,
                   freq=None,
-                  chan_width=None,
-                  fbin_idx=None,
-                  fbin_counts=None,
-                  band_mapping=None,
                   freq_out=None,
+                  chan_width=None,
+                  bandid=None,
                   tbin_idx=None,
                   tbin_counts=None,
-                  nband=None,
                   nx=None,
                   ny=None,
                   nx_psf=None,
                   ny_psf=None,
                   cell_rad=None,
                   radec=None,
-                  idx0=None,
-                  idxf=None,
-                  sign=None,
-                  csign=None,
-                  do_dirty=True,
-                  do_psf=True,
-                  do_weights=True,
                   do_beam=False,
-                  check_wsum=False,
                   bda_weights=False):
 
-    data_type = data.dtype
-    data_shape = data.shape
-    data_chunks = data.chunks
-    real_type = data.real.dtype
+    if args.precision.lower() == 'single':
+        real_type = np.float32
+        complex_type = np.complex64
+    elif args.precision.lower() == 'double':
+        real_type = np.float64
+        complex_type = np.complex128
 
-    # compute the mueller term
-    nrow, nchan, ncorr = data.shape
-    if jones is not None:
-        if ncorr > 2:
-            acol = da.ones((nrow, nchan, 1, 2, 2),
-                        chunks=(data_chunks[0], data_chunks[1], 1, 2, 2),
-                        dtype=data_type)
-        else:
-            acol = da.ones((nrow, nchan, 1, ncorr),
-                        chunks=(data_chunks[0], data_chunks[1], 1, ncorr),
-                        dtype=data_type)
+    data = getattr(ds, args.data_column).data
+    nrow, nchan, _ = data.shape
 
-        jones = da.swapaxes(jones, 1, 2)
-        mueller = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2,
-                              jones, acol).reshape(nrow, nchan, ncorr)
-        mueller = inlined_array(mueller, [tbin_idx, tbin_counts, ant1, ant2])
+    ant1 = ds.ANTENNA1.data
+    ant2 = ds.ANTENNA2.data
+
+    # MS may contain auto-correlations
+    if 'FLAG_ROW' in ds:
+        frow = ds.FLAG_ROW.data | (ant1 == ant2)
     else:
-        mueller = None
+        frow = (ant1 == ant2)
 
-    # this trick is required because inlined_array doesn't seem to work
-    # on frow (even after precomputing it)
-    frow = da.stack([clone(frow) for _ in range(fbin_idx.size)], axis=1)
-    dw = weight_data(data, weight, imaging_weight, mueller, flag, frow,
-                     idx0, idxf, sign, csign)
+    if args.weight_column is not None:
+        weight = getattr(ds, args.weight_column).data
+    else:
+        weight = da.ones_like(data, dtype=real_type)
 
-    # dw = inlined_array(dw, frow)
+    if args.imaging_weight_column is not None:
+        weight *= getattr(ds, args.imaging_weight_column).data
 
-    w = dw[1].astype(real_type)
+    if data.dtype != complex_type:
+        data = data.astype(complex_type)
 
-    data_vars = {
-                'FREQ': (('chan',), freq),
-                'FBIN_IDX':(('band',), fbin_idx),
-                'FBIN_COUNTS':(('band',), fbin_counts)
-            }
+    if weight.dtype != real_type:
+        weight = weight.astype(real_type)
 
-    if do_dirty:
-        dirty = vis2im(uvw,
-                       freq,
-                       dw[0],
-                       fbin_idx,
-                       fbin_counts,
-                       nx,
-                       ny,
-                       cell_rad,
-                       weights=w,
-                       # flag=mask.astype(np.uint8),
-                       nthreads=nthreads,
-                       epsilon=epsilon,
-                       do_wstacking=wstack,
-                       double_accum=double_accum)
-        dirty = inlined_array(dirty, [uvw, freq, fbin_idx, fbin_counts])
-        data_vars['DIRTY'] = (('band', 'x', 'y'), dirty)
+    if jones is None:
+        # TODO - remove unnecessary jones multiplies
+        ntime = tbin_idx.size
+        nant = da.maximum(ant1.max(), ant2.max()).compute() + 1
+        jones = da.ones((ntime, nant, nchan, 1, 2),
+                        chunks=(tbin_idx.chunks[0][0], -1, -1, 1, 2),
+                        dtype=complex_type)
+    elif jones.dtype != complex_type:
+        jones = jones.astype(complex_type)
 
-    if do_psf:
-        psf = vis2im(uvw,
-                    freq,
-                    dw[1],
-                    fbin_idx,
-                    fbin_counts,
-                    nx_psf,
-                    ny_psf,
-                    cell_rad,
-                    # flag=mask.astype(np.uint8),
-                    nthreads=nthreads,
-                    epsilon=epsilon,
-                    do_wstacking=wstack,
-                    double_accum=double_accum)
-        psf = inlined_array(psf, [uvw, freq, fbin_idx, fbin_counts])
-        wsum = da.max(psf, axis=(1, 2))
-        data_vars['PSF'] = (('band', 'x_psf', 'y_psf'), psf)
-        data_vars['WSUM'] = (('band',), wsum)
+    vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts,
+                           ant1, ant2, pol='linear', product=args.product)
 
+    if args.flag_column is not None:
+        flag = getattr(ds, args.flag_column).data
+        flag = da.any(flag, axis=2)
+        flag = da.logical_or(flag, frow[:, None])
+    else:
+        flag = da.broadcast_to(frow[:, None], (nrow, nchan))
 
-    # if 'WSUM' not in data_vars.keys() or check_wsum:
-        # wsum2 = compute_wsum(w, fbin_idx, fbin_counts)
-        # if check_wsum:
-        #     try:
-        #         assert np.allclose(wsum, wsum2, atol=epsilon)
-        #     except Exception as e:
-        #         print(wsum.compute())
-        #         print(wsum2.compute())
+    mask = ~flag
+    uvw = ds.UVW.data
 
-        #         quit()
-        #         raise RuntimeError("The peak of the PSF does not match "
-        #                            "the sum of the weights in each "
-        #                            "imaging band to within the gridding "
-        #                            "precision. You may need to enable "
-        #                            "double accumulation.")
-        # if 'WSUM' not in data_vars.keys():
-        #     data_vars['WSUM'] = (('band',), wsum2)
+    data_vars = {'FREQ': (('chan',), freq)}
 
-    if do_weights:
+    if args.dirty:
+        dirty = vis2im(uvw=uvw,
+                       freq=freq,
+                       vis=vis,
+                       nx=nx,
+                       ny=ny,
+                       cellx=cell_rad,
+                       celly=cell_rad,
+                       nthreads=args.nvthreads,
+                       epsilon=args.epsilon,
+                       precision=args.precision,
+                       mask=mask,
+                       do_wgridding=args.wstack,
+                       double_precision_accumulation=args.double_accum)
+        # dirty = inlined_array(dirty, [uvw, freq])
+        data_vars['DIRTY'] = (('x', 'y'), dirty)
+
+    if args.psf:
+        psf = vis2im(uvw=uvw,
+                     freq=freq,
+                     vis=wgt.astype(complex_type),
+                     nx=nx_psf,
+                     ny=ny_psf,
+                     cellx=cell_rad,
+                     celly=cell_rad,
+                     nthreads=args.nvthreads,
+                     epsilon=args.epsilon,
+                     precision=args.precision,
+                     mask=mask,
+                     do_wgridding=args.wstack,
+                     double_precision_accumulation=args.double_accum)
+        # psf = inlined_array(psf, [uvw, freq])
+        wsum = da.max(psf)
+        data_vars['PSF'] = (('x_psf', 'y_psf'), psf)
+    else:
+        wsum = da.sum(wgt)
+
+    if args.weights:
         # TODO - BDA over frequency
         if bda_weights:
             raise NotImplementedError("BDA not working yet")
-            from africanus.averaging import bda
+            from africanus.averaging.dask import bda
+
             w_avs = []
             uvw = uvw.compute()
             t = time.compute()
@@ -167,49 +139,37 @@ def single_stokes(data=None,
             intv = interval.compute()
             fr = frow.compute()[:, None, None]
 
-            for b in range(nband):
-                wspec = w.blocks[0, b].compute()[:, :, None]
-                nu = freq.blocks[b].compute()
-                cw = chan_width.blocks[b].compute()
-                f = flag.blocks[0, b].compute()
-                f = np.logical_or(f, fr)
-                f = f[:, :, idx0] | f[:, :, idxf]
-                res = bda(t, intv, a1, a2, uvw=uvw, flag=f[:, :, None],
-                          weight_spectrum=wspec, chan_freq=nu, chan_width=cw,
-                          decorrelation=0.95, min_nchan=nu.size)
-                w_avs.append(res.weight_spectrum.reshape(-1, nu.size, 1).squeeze())
-                if b == 0:
-                    uvw_avs = res.uvw.reshape(-1, nu.size, 3)[:, 0, :]
-            # LB - why inconsistent number of rows? Baseline speed?
-            w = np.concatenate(w_avs, axis=1)
-            w = da.from_array(w, chunks=(row_out_chunk, tuple(fbin_counts.compute())))
-            uvw = da.from_array(uvw_avs, chunks=(row_out_chunk, 3))
-            data_vars['UVW'] = (('row', 'uvw'), uvw)
-        else:
-            w = w.rechunk({0:row_out_chunk})
+            res = bda(ds.TIME.data,
+                      ds.INTERVAL.data,
+                      ant1, ant2,
+                      uvw=uvw,
+                      flag=f[:, :, None],
+                      weight_spectrum=wgt[:, :, None],
+                      chan_freq=freq,
+                      chan_width=chan_width,
+                      decorrelation=0.95,
+                      min_nchan=freq.size)
 
-        data_vars['WEIGHT'] = (('row', 'chan'), w)
+            uvw = res.uvw.reshape(-1, nchan, 3)[:, 0, :]
+            wgt = res.weight_spectrum.reshape(-1, nchan).squeeze()
+            data_vars['UVW'] = (('row', 'uvw'), uvw)
+
+        wgt = wgt.rechunk({0:args.row_out_chunk})
+        data_vars['WEIGHT'] = (('row', 'chan'), wgt)
 
     if 'UVW' not in data_vars.keys():
-        data_vars['UVW'] = (('row', 'uvw'), uvw.rechunk({0:row_out_chunk}))
+        data_vars['UVW'] = (('row', 'uvw'),
+                             uvw.rechunk({0:args.row_out_chunk}))
 
     # TODO - interpolate beam
     if do_beam:
         from pfb.utils.beam import katbeam
         beam = katbeam(freq_out, nx, ny, np.rad2deg(cell_rad))
     else:
-        beam = da.ones((nband, nx, ny), chunks=(1, nx, ny), dtype=real_type)
+        beam = da.ones((nx, ny), chunks=(nx, ny), dtype=real_type)
 
-    data_vars['BEAM'] = (('band', 'x', 'y'), beam)
-
-
-    freq_out = da.from_array(freq_out, chunks=1, name=False)
-
-    coords = {
-        'chan': (('chan',), freq),
-        'band': (('band',), freq_out[band_mapping]),
-        'band_id': (('band',), band_mapping)
-    }
+    data_vars['BEAM'] = (('x', 'y'), beam)
+    # data_vars['WSUM'] = (('1'), da.array((wsum,)))
 
     attrs = {
         'cell_rad': cell_rad,
@@ -219,166 +179,142 @@ def single_stokes(data=None,
         'ny': ny,
         'nx_psf': nx_psf,
         'ny_psf': ny_psf,
-        'nband': nband,  # global nband
-        'fieldid': fid,
-        'ddid': ddid,
-        'scanid': scanid
+        'fieldid': ds.FIELD_ID,
+        'ddid': ds.DATA_DESC_ID,
+        'scanid': ds.SCAN_NUMBER,
+        'bandid': bandid,
+        'freq_out': freq_out
     }
 
-    out_ds = Dataset(data_vars, coords, attrs=attrs)
+    out_ds = Dataset(data_vars) #, attrs=attrs)
+
+    # import pdb; pdb.set_trace()
 
     return out_ds
 
-def weight_data(data, weight, imaging_weight, mueller, flag, frow,
-                idx0, idxf, sign, csign):
-    if weight is not None:
-        wout = ('row', 'chan', 'corr')
-    else:
-        wout = None
 
-    if imaging_weight is not None:
-        iwout = ('row', 'chan', 'corr')
-    else:
-        iwout = None
+def weight_data(data, weight, jones, tbin_idx, tbin_counts,
+                ant1, ant2, pol='linear', product='I'):
+    # data are not necessarily 2x2 so we need separate labels
+    # for jones correlations and data/weight correlations
+    if len(jones.shape) == 5:
+        jout = 'rafdx'
+    elif len(jones.shape) == 6:
+        jout = 'rafdxx'
+        # TODO - how do we know if we should return
+        # jones[0][0] or jones[0][0][0] in function wrapper?
+        # Not required with delayed
+        raise NotImplementedError("Not yet implemented")
+    res = da.blockwise(_weight_data, 'rf',
+                       data, 'rfc',
+                       weight, 'rfc',
+                       jones, jout,
+                       tbin_idx, 'r',
+                       tbin_counts, 'r',
+                       ant1, 'r',
+                       ant2, 'r',
+                       pol, None,
+                       product, None,
+                       align_arrays=False,
+                       meta=np.empty((0, 0), dtype=np.object))
 
-    if mueller is not None:
-        mout = ('row', 'chan', 'corr')
-    else:
-        mout = None
+    vis = da.blockwise(getitem, 'rf', res, 'rf', 0, None, dtype=data.dtype)
+    wgt = da.blockwise(getitem, 'rf', res, 'rf', 1, None, dtype=weight.dtype)
 
-    if flag is not None:
-        fout = ('row', 'chan', 'corr')
-    else:
-        fout = None
+    return vis, wgt
 
-    if frow is not None:
-        frout = ('row', 'chan')
-    else:
-        frout = None
+def _weight_data(data, weight, jones, tbin_idx, tbin_counts,
+                      ant1, ant2, pol, product):
+    return data[0], weight[0], jones[0][0], tbin_idx, tbin_counts, ant1, ant2, pol, product
 
+@generated_jit()  #nopython=True, nogil=True, cache=True)
+def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
+                      ant1, ant2, pol, product):
 
-    return da.blockwise(_weight_data_wrapper, ('2', 'row', 'chan'),
-                        data, ('row', 'chan', 'corr'),
-                        weight, wout,
-                        imaging_weight, iwout,
-                        mueller, mout,
-                        flag, fout,
-                        frow, frout,
-                        idx0, None,
-                        idxf, None,
-                        sign, None,
-                        csign, None,
-                        align_arrays=False,
-                        new_axes={'2': 2},
-                        dtype=data.dtype)
+    coerce_literal(_weight_data, ["pol", "product"])
 
-def _weight_data_wrapper(data, weight, imaging_weight, mueller, flag, frow,
-                         idx0, idxf, sign, csign):
-    if weight is not None:
-        wout = weight[0]
-    else:
-        wout = None
+    vis_func, wgt_func = stokes_funcs(data, jones, product,
+                                      mode=mode, pol=pol)
 
-    if imaging_weight is not None:
-        iwout = imaging_weight[0]
-    else:
-        iwout = None
-
-    if mueller is not None:
-        mout = mueller[0]
-    else:
-        mout = None
-
-    if flag is not None:
-        fout = flag[0]
-    else:
-        fout = None
-
-
-    return _weight_data_impl(data[0], wout, iwout, mout, fout, frow,
-                             idx0, idxf, sign, csign)
-
-def _weight_data_impl(data, weight, imaging_weight, mueller, flag, frow,
-                      idx0, idxf, sign, csign):
-
-
-    if weight is not None:
-        weightxx = weight[:, :, idx0]
-        weightyy = weight[:, :, idxf]
-    else:
-        weightxx = 1.0
-        weightyy = 1.0
-
-    if imaging_weight is not None:
-        # weightxx = ne.evaluate('i * w', local_dict={
-        #                        'i':imaging_weight[:, :, idx0],
-        #                        'w':weightxx},
-        #                        casting='same_kind')
-        # weightyy = ne.evaluate('i * w', local_dict={
-        #                        'i':imaging_weight[:, :, idxf],
-        #                        'w':weightyy},
-        #                        casting='same_kind')
-        weightxx = weightxx * imaging_weight[:, :, idx0]
-        weightyy = weightyy * imaging_weight[:, :, idxf]
-
-    if mueller is not None:
-        # apply adjoint of Mueller term to weighted data
-        data = (data[:, :, idx0] * mueller[:, :, idx0].conj() * weightxx +
-                sign * data[:, :, idxf] * mueller[:, :, idxf].conj() * weightyy) * csign
-        weightxx = weightxx * np.absolute(mueller[:, :, idx0])**2
-        weightyy = weightyy * np.absolute(mueller[:, :, idxf])**2
-
-    else:
-        # d = ne.evaluate('(dxx * wxx + s * dyy * wyy) * c', local_dict={
-        #                    'dxx': data[:, :, idx0],
-        #                    'wxx': weightxx,
-        #                    's': sign,
-        #                    'dyy': data[:, :, idxf],
-        #                    'wyy': weightyy,
-        #                    'c': csign}, casting='same_kind')
-        data = (data[:, :, idx0] * weightxx +
-                sign * data[:, :, idxf] * weightyy) * csign
-
-    # w = ne.evaluate('weightxx + weightyy', casting='same_kind')
-    weight = weightxx + weightyy
-
-    if flag is not None:
-        flag = flag[:, :, idx0] | flag[:, :, idxf]
-        if frow is not None:
-            flag = da.logical_or(flag, frow)
-
-    weight[flag] = 0
-
-    idx = weight != 0
-    data[idx] = data[idx] / weight[idx]
-
-    # weight -> complex (use blocker?)
-    return np.concatenate([data[None], weight[None]])
-
-from pfb.utils.symbolic import stokes_vis
-from africanus.calibration.utils import check_type
-@generated_jit(nopython=True, nogil=True, cache=True)
-def _I(data, weight, jones, flag, tbin_idx, tbin_counts, ant1, ant2, pol='linear'):
-    mode = check_type(jones, data)
-    vis_func, wgt_func = mueller_vis('I', mode=mode, pol=pol)
-
-    def _I_impl(data, weight, jones, flag, tbin_idx, tbin_counts, ant1, ant2, pol=pol):
+    def _impl(data, weight, jones, tbin_idx, tbin_counts,
+              ant1, ant2, pol, product):
         # for dask arrays we need to adjust the chunks to
         # start counting from zero
         tbin_idx -= tbin_idx.min()
-        nt = np.shape(time_bin_indices)[0]
+        nt = np.shape(tbin_idx)[0]
         nrow, nchan, ncorr = data.shape
         vis = np.zeros((nrow, nchan), dtype=data.dtype)
         wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
         for t in range(nt):
             for row in range(tbin_idx[t],
-                                tbin_idx[t] + tbin_counts[t]):
+                             tbin_idx[t] + tbin_counts[t]):
                 p = int(ant1[row])
                 q = int(ant2[row])
-                gp = jones[t, p]
-                gq = jones[t, q]
+                gp = jones[t, p, :, 0]
+                gq = jones[t, q, :, 0]
                 for chan in range(nchan):
-                    vis[row, chan] = vis_func(data[row, chan], weight[row, chan], gp[chan], gq[chan])
-                    wgt[row, chan] = wgt_func(weight[row, chan], gp[chan], gq[chan])
+                    vis[row, chan] = vis_func(data[row, chan],
+                                              weight[row, chan],
+                                              gp[chan], gq[chan])
+                    wgt[row, chan] = wgt_func(weight[row, chan],
+                                              gp[chan], gq[chan])
         return vis, wgt
-    return _I_impl
+    return _impl
+
+
+def stokes_funcs(data, jones, product, mode, pol):
+    if pol != literal('linear'):
+        raise NotImplementedError("Only linear polarisation yet supported")
+    # The expressions for DIAG_DIAG and DIAG mode are essentially the same
+    if jones.shape == 5:
+        # diagonal products have identical weights
+        @njit(nogil=True, fastmath=True, inline='always')
+        def wfunc(gp, gq, W):
+            gp00 = gp[0]
+            gp11 = gp[1]
+            gq00 = gq[0]
+            gq11 = gq[1]
+            W0 = W[0]
+            W3 = W[-1]
+            return (W0*gp00*gq00*conjugate(gp00)*conjugate(gq00) +
+                    W3*gp11*gq11*conjugate(gp11)*conjugate(gq11))
+
+        if product == literal('I'):
+            @njit(nogil=True, fastmath=True, inline='always')
+            def vfunc(gp, gq, W, V):
+                gp00 = gp[0]
+                gp11 = gp[1]
+                gq00 = gq[0]
+                gq11 = gq[1]
+                W0 = W[0]
+                W3 = W[-1]
+                v00 = V[0]
+                v11 = V[-1]
+                return (W0*gq00*v00*conjugate(gp00) +
+                        W3*gq11*v11*conjugate(gp11))
+
+        elif product == literal('Q'):
+            @njit(nogil=True, fastmath=True, inline='always')
+            def vfunc(gp, gq, W, V):
+                gp00 = gp[0]
+                gp11 = gp[1]
+                gq00 = gq[0]
+                gq11 = gq[1]
+                W0 = W[0]
+                W3 = W[-1]
+                v00 = V[0]
+                v11 = V[-1]
+                return (W0*gq00*v00*conjugate(gp00) -
+                        W3*gq11*v11*conjugate(gp11))
+
+        else:
+            raise ValueError("The requested product is not available from input data")
+
+        return vfunc, wfunc
+
+    # Full mode
+    elif jones.shape == 6:
+        raise NotImplementedError("Full polarisation imaging not yet supported")
+
+    else:
+        raise ValueError("jones array has an unsupported number of dimensions")

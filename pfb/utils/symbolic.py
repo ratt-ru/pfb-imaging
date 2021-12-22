@@ -1,5 +1,6 @@
 import numpy as np
-import numba
+from numba import njit, literally
+from numba.types import literal
 import sympy as sm
 from sympy.physics.quantum import TensorProduct
 from sympy.utilities.lambdify import lambdify
@@ -30,142 +31,167 @@ def stokes_vis(product, mode, pol='linear'):
     Vpq = sm.Matrix([[v0], [v1], [v2], [v3]])
 
     # Stokes to corr operator
-    if pol == 'linear':
+    if True: #pol == 'linear':
         T = sm.Matrix([[1.0, 1.0, 0, 0],
                         [0, 0, 1.0, -1.0j],
                         [0, 0, 1.0, 1.0j],
                         [1, -1, 0, 0]])
     else:
+
         raise NotImplementedError('Sorry, no circular pol')
 
     # corr weights
     M = T.H * Mpq.H * W * Mpq * T
-    V = T.H * Mpq.H * Sigmainv * Vpq
+    V = T.H * Mpq.H * W * Vpq
+
+    wparams = (gp00, gp10, gp01, gp11, gq00, gq10, gq01, gq11, w0, w1, w2, w3)
+    vparams = (gp00, gp10, gp01, gp11, gq00, gq10, gq01, gq11, w0, w1, w2, w3, v0, v1, v2, v3)
+    if product == literal('I'):
+        wfunc = lambdify(wparams, M[0, 0], 'numpy')
+        vfunc = lambdify(vparams, V[0], 'numpy')
+        # wfunc = njit(nogil=True, cache=True, fastmath=True)(lambdify(wparams, M[0, 0], 'numpy'))
+        # vfunc = njit(nogil=True, cache=True, fastmath=True)(lambdify(vparams, V[0], 'numpy'))
+
+    elif product == literal('Q'):
+        wfunc = lambdify(wparams, M[1, 1], 'numpy')
+        vfunc = lambdify(vparams, V[1], 'numpy')
+        # wfunc = njit(nogil=True, cache=True, fastmath=True)(lambdify(wparams, M[1, 1], 'numpy'))
+        # vfunc = njit(nogil=True, cache=True, fastmath=True)(lambdify(vparams, V[1], 'numpy'))
+
+    elif product == literal('U'):
+        wfunc = lambdify(wparams, M[1, 1], 'numpy')
+        vfunc = lambdify(vparams, V[1], 'numpy')
+        # wfunc = njit(nogil=True, cache=True, fastmath=True)(lambdify(wparams, M[2, 2], 'numpy'))
+        # vfunc = njit(nogil=True, cache=True, fastmath=True)(lambdify(vparams, V[2], 'numpy'))
+
+    elif product == literal('V'):
+        wfunc = lambdify(wparams, M[1, 1], 'numpy')
+        vfunc = lambdify(vparams, V[1], 'numpy')
+        # wfunc = njit(nogil=True, cache=True, fastmath=True)(lambdify(wparams, M[3, 3], 'numpy'))
+        # vfunc = njit(nogil=True, cache=True, fastmath=True)(lambdify(vparams, V[3], 'numpy'))
+    else:
+        raise ValueError(f'Unknown product {product}')
 
     if mode == DIAG_DIAG:
-        M = M.subs(gp01, 0)
-        M = M.subs(gp10, 0)
-        M = M.subs(gq01, 0)
-        M = M.subs(gq10, 0)
-        V = V.subs(gp01, 0)
-        V = V.subs(gp10, 0)
-        V = V.subs(gq01, 0)
-        V = V.subs(gq10, 0)
-        V = V.subs(v1, 0)
-        V = V.subs(v2, 0)
-        wparams = (gp00, gp11, gq00, gq11, w0, w3)
-        vparams = (gp00, gp11, gq00, gq11, w0, w3, v0, v3)
-        if product == 'I':
-            wfunc = lambdify(wparams, M[0, 0], 'numpy')
-            vfunc = lambdify(vparams, V[0], 'numpy')
+        # M = M.subs(gp01, 0)
+        # M = M.subs(gp10, 0)
+        # M = M.subs(gq01, 0)
+        # M = M.subs(gq10, 0)
+        # V = V.subs(gp01, 0)
+        # V = V.subs(gp10, 0)
+        # V = V.subs(gq01, 0)
+        # V = V.subs(gq10, 0)
+        # V = V.subs(v1, 0)
+        # V = V.subs(v2, 0)
+        # wparams = (gp00, gp11, gq00, gq11, w0, w3)
+        # vparams = (gp00, gp11, gq00, gq11, w0, w3, v0, v3)
+        # if product == literal('I'):
+        #     wfunc = lambdify(wparams, M[0, 0], 'numpy')
+        #     vfunc = lambdify(vparams, V[0], 'numpy')
 
-        elif product == 'Q':
-            wfunc = lambdify(wparams, M[1, 1], 'numpy')
-            vfunc = lambdify(vparams, V[1], 'numpy')
+        # elif product == 'Q':
+        #     wfunc = lambdify(wparams, M[1, 1], 'numpy')
+        #     vfunc = lambdify(vparams, V[1], 'numpy')
 
-        elif product == 'U':
-            wfunc = lambdify(wparams, M[2, 2], 'numpy')
-            vfunc = lambdify(vparams, V[2], 'numpy')
+        # elif product == 'U':
+        #     wfunc = lambdify(wparams, M[2, 2], 'numpy')
+        #     vfunc = lambdify(vparams, V[2], 'numpy')
 
-        elif product == 'V':
-            wfunc = lambdify(wparams, M[3, 3], 'numpy')
-            vfunc = lambdify(vparams, V[3], 'numpy')
-        else:
-            raise ValueError(f'Unknown product {product}')
+        # elif product == 'V':
+        #     wfunc = lambdify(wparams, M[3, 3], 'numpy')
+        #     vfunc = lambdify(vparams, V[3], 'numpy')
+        # else:
+        #     raise ValueError(f'Unknown product {product}')
 
-        @numba.njit()
+        # @jit(nogil=True, cache=True, fastmath=True)
         def wgt_func(wgt, gp, gq):
-            return wfunc(gp[0], gp[1],
-                         gq[0], gq[1],
-                         wgt[0], wgt[1])
+            return wfunc(gp[0], 0j, 0j, gp[1],
+                         gq[0], 0j, 0j, gq[1],
+                         wgt[0], 0, 0, wgt[1]).real
 
-        @numba.njit()
+        # @jit(nogil=True, cache=True, fastmath=True)
         def vis_func(data, wgt, gp, gq):
-            return vfunc(gp[0], gp[1],
-                         gq[0], gq[1],
-                         wgt[0], wgt[1],
-                         data[0], data[1])
-
-        return vis_func, weight_func
+            return vfunc(gp[0], 0j, 0j, gp[1],
+                         gq[0], 0j, 0j, gq[1],
+                         wgt[0], 0, 0, wgt[1],
+                         data[0], 0j, 0j, data[1])
 
     elif mode == DIAG:
-        M = M.subs(gp01, 0)
-        M = M.subs(gp10, 0)
-        M = M.subs(gq01, 0)
-        M = M.subs(gq10, 0)
-        V = V.subs(gp01, 0)
-        V = V.subs(gp10, 0)
-        V = V.subs(gq01, 0)
-        V = V.subs(gq10, 0)
-        wparams = (gp00, gp11, gq00, gq11, w0, w1, w2, w3)
-        vparams = (gp00, gp11, gq00, gq11, w0, w1, w2, w3, v0, v1, v2, v3)
-        if product == 'I':
-            wfunc = lambdify(wparams, M[0, 0], 'numpy')
-            vfunc = lambdify(vparams, V[0], 'numpy')
+        # M = M.subs(gp01, 0)
+        # M = M.subs(gp10, 0)
+        # M = M.subs(gq01, 0)
+        # M = M.subs(gq10, 0)
+        # V = V.subs(gp01, 0)
+        # V = V.subs(gp10, 0)
+        # V = V.subs(gq01, 0)
+        # V = V.subs(gq10, 0)
+        # wparams = (gp00, gp11, gq00, gq11, w0, w1, w2, w3)
+        # vparams = (gp00, gp11, gq00, gq11, w0, w1, w2, w3, v0, v1, v2, v3)
+        # if product == literal('I'):
+        #     wfunc = lambdify(wparams, M[0, 0], 'numpy')
+        #     vfunc = lambdify(vparams, V[0], 'numpy')
 
-        elif product == 'Q':
-            wfunc = lambdify(wparams, M[1, 1], 'numpy')
-            vfunc = lambdify(vparams, V[1], 'numpy')
+        # elif product == 'Q':
+        #     wfunc = lambdify(wparams, M[1, 1], 'numpy')
+        #     vfunc = lambdify(vparams, V[1], 'numpy')
 
-        elif product == 'U':
-            wfunc = lambdify(wparams, M[2, 2], 'numpy')
-            vfunc = lambdify(vparams, V[2], 'numpy')
+        # elif product == 'U':
+        #     wfunc = lambdify(wparams, M[2, 2], 'numpy')
+        #     vfunc = lambdify(vparams, V[2], 'numpy')
 
-        elif product == 'V':
-            wfunc = lambdify(wparams, M[3, 3], 'numpy')
-            vfunc = lambdify(vparams, V[3], 'numpy')
-        else:
-            raise ValueError(f'Unknown product {product}')
+        # elif product == 'V':
+        #     wfunc = lambdify(wparams, M[3, 3], 'numpy')
+        #     vfunc = lambdify(vparams, V[3], 'numpy')
+        # else:
+        #     raise ValueError(f'Unknown product {product}')
 
-        @numba.njit()
+        @jit(nogil=True, cache=True, fastmath=True)
         def wgt_func(wgt, gp, gq):
-            return wfunc(gp[0], gp[1],
-                         gq[0], gq[1],
-                         wgt[0], wgt[1], wgt[2], wgt[3])
+            return wfunc(gp[0], 0j, 0j, gp[1],
+                         gq[0], 0j, 0j, gq[1],
+                         wgt[0], wgt[1], wgt[2], wgt[3]).real
 
-        @numba.njit()
+        @jit(nogil=True, cache=True, fastmath=True)
         def vis_func(data, wgt, gp, gq):
-            return vfunc(gp[0], gp[1],
-                         gq[0], gq[1],
+            return vfunc(gp[0], 0j, 0j, gp[1],
+                         gq[0], 0j, 0j, gq[1],
                          wgt[0], wgt[1], wgt[2], wgt[3],
                          data[0], data[1], data[2], data[3])
 
-        return vis_func, weight_func
-
     elif mode == FULL:
-        wparams = (gp00, gp10, gp01, gp11, gq00, gq10, gq01, gq11, w0, w1, w2, w3)
-        vparams = (gp00, gp10, gp01, gp11, gq00, gq10, gq01, gq11, w0, w1, w2, w3, v0, v1, v2, v3)
-        if product == 'I':
-            wfunc = lambdify(wparams, M[0, 0], 'numpy')
-            vfunc = lambdify(vparams, V[0], 'numpy')
+        # wparams = (gp00, gp10, gp01, gp11, gq00, gq10, gq01, gq11, w0, w1, w2, w3)
+        # vparams = (gp00, gp10, gp01, gp11, gq00, gq10, gq01, gq11, w0, w1, w2, w3, v0, v1, v2, v3)
+        # if product == 'I':
+        #     wfunc = lambdify(wparams, M[0, 0], 'numpy')
+        #     vfunc = lambdify(vparams, V[0], 'numpy')
 
-        elif product == 'Q':
-            wfunc = lambdify(wparams, M[1, 1], 'numpy')
-            vfunc = lambdify(vparams, V[1], 'numpy')
+        # elif product == 'Q':
+        #     wfunc = lambdify(wparams, M[1, 1], 'numpy')
+        #     vfunc = lambdify(vparams, V[1], 'numpy')
 
-        elif product == 'U':
-            wfunc = lambdify(wparams, M[2, 2], 'numpy')
-            vfunc = lambdify(vparams, V[2], 'numpy')
+        # elif product == 'U':
+        #     wfunc = lambdify(wparams, M[2, 2], 'numpy')
+        #     vfunc = lambdify(vparams, V[2], 'numpy')
 
-        elif product == 'V':
-            wfunc = lambdify(wparams, M[3, 3], 'numpy')
-            vfunc = lambdify(vparams, V[3], 'numpy')
-        else:
-            raise ValueError(f'Unknown product {product}')
+        # elif product == 'V':
+        #     wfunc = lambdify(wparams, M[3, 3], 'numpy')
+        #     vfunc = lambdify(vparams, V[3], 'numpy')
+        # else:
+        #     raise ValueError(f'Unknown product {product}')
 
-        @numba.njit()
+        @jit(nogil=True, cache=True, fastmath=True)
         def wgt_func(wgt, gp, gq):
             return wfunc(gp[0, 0], gp[1, 0], gp[0, 1], gp[1, 1],
                          gq[0, 0], gq[1, 0], gq[0, 1], gq[1, 1],
-                         wgt[0], wgt[1], wgt[2], wgt[3])
+                         wgt[0], wgt[1], wgt[2], wgt[3]).real
 
-        @numba.njit()
+        @jit(nogil=True, cache=True, fastmath=True)
         def vis_func(data, wgt, gp, gq):
             return vfunc(gp[0, 0], gp[1, 0], gp[0, 1], gp[1, 1],
                          gq[0, 0], gq[1, 0], gq[0, 1], gq[1, 1],
                          wgt[0], wgt[1], wgt[2], wgt[3],
                          data[0], data[1], data[2], data[3])
 
-        return vis_func, weight_func
+    return vfunc, wfunc
 
 

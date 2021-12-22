@@ -18,6 +18,7 @@ requirements = [
                 'bokeh',
                 'graphviz',
                 'nifty7',
+                'sympy',
 
                 "codex-africanus[complete]"
                 "@git+https://github.com/landmanbester/codex-africanus.git"

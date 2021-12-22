@@ -27,16 +27,17 @@ log = pyscilog.get_logger('GRID')
               help="Path to Quartical gain table containing NET gains."
               "There must be a table for each MS and glob(ms) and glob(gt) "
               "should match up.")
-@click.option('-p', '--products', default='I',
-              help='Stokes products separated by |.'
-              'Currently supports I, Q, U, and V eg. '
-              'I|Q will produce I and Q products.')
+@click.option('-p', '--product', default='I',
+              help='Currently supports I, Q, U, and V. '
+              'Only single Stokes products currently supported.')
 @click.option('-utpc', '--utimes-per-chunk', type=int, default=-1,
               help="Number of unique times in a chunk.")
 @click.option('-rochunk', '--row-out-chunk', type=int, default=10000,
               help="Size of row chunks for output weights and uvw")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
               help='Gridder accuracy')
+@click.option('-precision', '--precision', default='single',
+              help='Either single or double')
 @click.option('--group-by-field/--no-group-by-field', default=True)
 @click.option('--group-by-ddid/--no-group-by-ddid', default=True)
 @click.option('--group-by-scan/--no-group-by-scan', default=True)
@@ -47,6 +48,8 @@ log = pyscilog.get_logger('GRID')
 @click.option('--psf/--no-psf', default=True)
 @click.option('--dirty/--no-dirty', default=True)
 @click.option('--weights/--no-weights', default=True)
+@click.option('--bda-weights/--no-bda-weights', default=False)
+@click.option('--do-beam/--no-do-beam', default=False)
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
@@ -135,11 +138,10 @@ def grid(**kw):
             assert len(gt) > 0
             args.gain_table = gt
         except Exception as e:
-            raise ValueError(f"No gain table at {args.gain_table}")
+            raise ValueError(f"No gain table  at {args.gain_table}")
 
-    # Stokes products are separated by '|' because click doesn't
-    # like arbitrary number of inputs
-    args.products = args.products.upper().split('|')
+    if args.product not in ["I", "Q", "U", "V"]:
+        raise NotImplementedError(f"Product {args.product} not yet supported")
 
     OmegaConf.set_struct(args, True)
 
@@ -157,7 +159,7 @@ def grid(**kw):
 def _grid(**kw):
     args = OmegaConf.create(kw)
     from omegaconf import ListConfig
-    if not isinstance(args.ms, list) and not isinstance(args.ms, ListConfig) :
+    if not isinstance(args.ms, list) and not isinstance(args.ms, ListConfig):
         args.ms = [args.ms]
     OmegaConf.set_struct(args, True)
 
@@ -167,8 +169,6 @@ def _grid(**kw):
     from pfb.utils.misc import chan_to_band_mapping
     import dask
     from dask.graph_manipulation import clone
-    from dask.distributed import performance_report
-    from dask.diagnostics import ProgressBar
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
@@ -180,7 +180,8 @@ def _grid(**kw):
     from pfb.utils.fits import set_wcs, save_fits
     from pfb.utils.stokes import single_stokes
 
-    # TODO - optional grouping. We need to construct an identifier between
+    # TODO - optional grouping.
+    # We need to construct an identifier between
     # dataset and field/spw/scan identifiers
     group_by = []
     if args.group_by_field:
@@ -271,6 +272,7 @@ def _grid(**kw):
     if args.nx is None:
         fov = args.field_of_view * 3600
         npix = int(fov / cell_size)
+        npix = good_size(npix)
         if npix % 2:
             npix += 1
         nx = npix
@@ -281,11 +283,11 @@ def _grid(**kw):
 
     print(f"Image size set to ({nband}, {nx}, {ny})", file=log)
 
-    nx_psf = int(args.psf_oversize * nx)
+    nx_psf = good_size(int(args.psf_oversize * nx))
     if nx_psf % 2:
         nx_psf += 1
 
-    ny_psf = int(args.psf_oversize * ny)
+    ny_psf = good_size(int(args.psf_oversize * ny))
     if ny_psf % 2:
         ny_psf += 1
 
@@ -349,7 +351,7 @@ def _grid(**kw):
                         tmp_dict[name] = val
                 gain_chunks[ms].append(tmp_dict)
 
-    out_datasets = {}
+    out_datasets = []
     radec = None  # assumes we are only imaging field 0 of first MS
     for ims, ms in enumerate(args.ms):
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
@@ -399,163 +401,43 @@ def _grid(**kw):
 
             spw = spws[ds.DATA_DESC_ID]
             chan_width = spw.CHAN_WIDTH.data.squeeze().rechunk(freqs[ms][idt].chunks)
-            # chan_width = da.from_array(chan_width, chunks=freqs[ms][idt].chunks)
-
-            # MS may contain auto-correlations
-            if 'FLAG_ROW' in ds:
-                frow = ds.FLAG_ROW.data | (ds.ANTENNA1.data == ds.ANTENNA2.data)
-            else:
-                frow = (ds.ANTENNA1.data == ds.ANTENNA2.data)
-
-            data = getattr(ds, args.data_column).data
-
-            if args.weight_column is not None:
-                weight = getattr(ds, args.weight_column).data
-            else:
-                weight = None
-
-            if args.imaging_weight_column is not None:
-                imaging_weight = getattr(ds, args.imaging_weight_column).data
-            else:
-                imaging_weight = None
-
-            if args.gain_table is not None:
-                jones = G[ids].gains.data
-            else:
-                jones = None
-
-            if args.flag_column is not None:
-                flag = getattr(ds, args.flag_column).data
-            else:
-                flag = None
-
-            uvw = ds.UVW.data
-
-            # this early compute is required because inlining
-            # weight_data w.r.t. frow doesn't seem to work otherwise
-            frow = frow.compute()
-            frow = da.from_array(frow, chunks=data.chunks[0])
 
             universal_opts = {
-                'data':data,
-                'weight':weight,
-                'imaging_weight':imaging_weight,
-                'ant1':ds.ANTENNA1.data,
-                'ant2':ds.ANTENNA2.data,
-                'jones':jones,
-                'flag':flag,
-                'frow':frow,
-                'uvw':uvw,
-                'time':ds.TIME.data,
-                'interval':ds.INTERVAL.data,
-                'fid':ds.FIELD_ID,
-                'ddid':ds.DATA_DESC_ID,
-                'scanid':ds.SCAN_NUMBER,
-                'row_out_chunk':args.row_out_chunk,
-                'nthreads':args.nvthreads,
-                'epsilon':args.epsilon,
-                'wstack':args.wstack,
-                'double_accum':args.double_accum,
-                'freq':freqs[ms][idt],
-                'chan_width': chan_width,
-                'fbin_idx':fbin_idx[ms][idt],
-                'fbin_counts':fbin_counts[ms][idt],
-                'band_mapping':band_mapping[ms][idt],
-                'freq_out':freq_out,
                 'tbin_idx':tbin_idx[ms][idt],
                 'tbin_counts':tbin_counts[ms][idt],
-                'nband':nband,
                 'nx':nx,
                 'ny':ny,
                 'nx_psf':nx_psf,
                 'ny_psf':ny_psf,
                 'cell_rad':cell_rad,
-                'radec':radec,
-                'do_dirty':args.dirty,
-                'do_psf':args.psf,
-                'do_weights':args.weights
+                'radec':radec
             }
 
-            if 'I' in args.products:
-                # I always has the same pattern
-                idx0 = 0
-                idxf = -1
-                sign = 1.0  # sign to use in sum
-                csign = 1.0  # used to negate complex vals
-                out_ds_I = single_stokes(idx0=idx0,
-                                         idxf=idxf,
-                                         sign=sign,
-                                         csign=csign,
-                                         **universal_opts)
+            nband = fbin_idx[ms][idt].size
+            for b, band_id in enumerate(band_mapping[ms][idt].compute()):
+                f0 = fbin_idx[ms][idt][b].compute()
+                ff = f0 + fbin_counts[ms][idt][b].compute()
+                Inu = slice(f0, ff)
 
-                out_datasets.setdefault('I', [])
-                out_datasets['I'].append(out_ds_I)
+                subds = ds[{'chan': Inu}]
+                if args.gain_table is not None:
+                    # Only DI gains currently supported
+                    jones = G[ids][{'gain_f': Inu}].gains.data
+                else:
+                    jones = None
 
-            if 'Q' in args.products:
-                if pol_type.lower() == 'linear':
-                    idx0 = 0
-                    idxf = -1
-                    sign = -1.0
-                    csign = 1.0
-                elif pol_type.lower() == 'circular':
-                    idx0 = 1
-                    idxf = 2
-                    sign = 1.0
-                    csign = 1.0
-                out_ds_Q = single_stokes(idx0=idx0,
-                                         idxf=idxf,
-                                         sign=sign,
-                                         csign=csign,
-                                         **universal_opts)
-                out_datasets.setdefault('Q', [])
-                out_datasets['Q'].append(out_ds_Q)
+                out_ds = single_stokes(ds=subds,
+                                       jones=jones,
+                                       args=args,
+                                       freq=freqs[ms][idt][Inu],
+                                       freq_out=freq_out[band_id],
+                                       chan_width=chan_width[Inu],
+                                       bandid=band_id,
+                                       **universal_opts)
+                out_datasets.append(out_ds)
 
-            if 'U' in args.products:
-                if pol_type.lower() == 'linear':
-                    idx0 = 1
-                    idxf = 2
-                    sign = 1.0
-                    csign = 1
-                elif pol_type.lower() == 'circular':
-                    idx0 = 1
-                    idxf = 2
-                    sign = -1
-                    csign = 1.0j
-                out_ds_U = single_stokes(idx0=idx0,
-                                         idxf=idxf,
-                                         sign=sign,
-                                         csign=csign,
-                                         **universal_opts)
-                out_datasets.setdefault('U', [])
-                out_datasets['U'].append(out_ds_U)
-
-            if 'V' in args.products:
-                if pol_type.lower() == 'linear':
-                    idx0 = 1
-                    idxf = 2
-                    sign = -1.0
-                    csign = 1.0j
-                elif pol_type.lower() == 'circular':
-                    idx0 = 0
-                    idxf = -1
-                    sign = -1.0
-                    csign = 1.0
-                out_ds_V = single_stokes(idx0=idx0,
-                                         idxf=idxf,
-                                         sign=sign,
-                                         csign=csign,
-                                         **universal_opts)
-                out_datasets.setdefault('V', [])
-                out_datasets['V'].append(out_ds_V)
-
-    writes = {}
-    for p in args.products:
-        if os.path.isdir(args.output_filename + f'_{p}.zarr'):
-            print(f"Removing existing {args.output_filename}_{p}.zarr folder",
-                  file=log)
-            os.system(f"rm -r {args.output_filename}_{p}.zarr")
-        writes[p] = xds_to_zarr(out_datasets[p], args.output_filename +
-                                f'_{p}.zarr', columns='ALL')
+    writes = xds_to_zarr(out_datasets, args.output_filename + '.zarr',
+                         columns='ALL')
 
     # dask.visualize(writes, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
@@ -566,83 +448,85 @@ def _grid(**kw):
 
     from pfb.utils.misc import compute_context
 
-    with compute_context(args.scheduler, args.output_filename):
-        dask.compute(writes,
-                     optimize_graph=False,
-                     scheduler=args.scheduler)
+    # with compute_context(args.scheduler, args.output_filename):
+    #     dask.compute(writes,
+    #                  optimize_graph=False,
+    #                  scheduler=args.scheduler)
 
-    # convert to fits files
-    if args.fits_mfs or not args.no_fits_cubes:
-        if args.dirty:
-            print("Saving dirty as fits", file=log)
-            dirty = np.zeros((len(args.products), nband, nx, ny), dtype=args.output_type)
+    dask.compute(writes)
 
-            hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
-            hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
-                            np.mean(freq_out))
+    # # convert to fits files
+    # if args.fits_mfs or not args.no_fits_cubes:
+    #     if args.dirty:
+    #         print("Saving dirty as fits", file=log)
+    #         dirty = np.zeros((len(args.products), nband, nx, ny), dtype=args.output_type)
 
-            for i, p in enumerate(sorted(args.products)):
-                xds = xds_from_zarr(args.output_filename + f'_{p}.zarr')
+    #         hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
+    #         hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
+    #                         np.mean(freq_out))
 
-                # TODO - add logic to select which spw and scan to reduce over
-                dirties = []
-                wsums = np.zeros(nband)
-                for ds in xds:
-                    dirties.append(ds.DIRTY.values)
-                    wsums += ds.WSUM.values
+    #         for i, p in enumerate(sorted(args.products)):
+    #             xds = xds_from_zarr(args.output_filename + f'_{p}.zarr')
 
-                dirty[i] = stitch_images(dirties, nband, band_mapping)
+    #             # TODO - add logic to select which spw and scan to reduce over
+    #             dirties = []
+    #             wsums = np.zeros(nband)
+    #             for ds in xds:
+    #                 dirties.append(ds.DIRTY.values)
+    #                 wsums += ds.WSUM.values
 
-                for b, w in enumerate(wsums):
-                    hdr[f'WSUM{p}{b}'] = w
-                wsum = np.sum(wsums)
-                hdr_mfs[f'WSUM{p}'] = wsum
+    #             dirty[i] = stitch_images(dirties, nband, band_mapping)
 
-                dirty_mfs = np.sum(dirty, axis=1, keepdims=True)/wsum
+    #             for b, w in enumerate(wsums):
+    #                 hdr[f'WSUM{p}{b}'] = w
+    #             wsum = np.sum(wsums)
+    #             hdr_mfs[f'WSUM{p}'] = wsum
 
-            if args.fits_mfs:
-                save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
-                        dtype=args.output_type)
+    #             dirty_mfs = np.sum(dirty, axis=1, keepdims=True)/wsum
 
-            if not args.no_fits_cubes:
-                save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
-                        dtype=args.output_type)
+    #         if args.fits_mfs:
+    #             save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
+    #                     dtype=args.output_type)
 
-        if args.psf:
-            print("Saving PSF as fits", file=log)
-            psf = np.zeros((len(args.products), nband, nx_psf, ny_psf),
-                           dtype=args.output_type)
+    #         if not args.no_fits_cubes:
+    #             save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
+    #                     dtype=args.output_type)
 
-            hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec, freq_out)
-            hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
-                                np.mean(freq_out))
+    #     if args.psf:
+    #         print("Saving PSF as fits", file=log)
+    #         psf = np.zeros((len(args.products), nband, nx_psf, ny_psf),
+    #                        dtype=args.output_type)
 
-            for i, p in enumerate(sorted(args.products)):
-                xds = xds_from_zarr(args.output_filename + f'_{p}.zarr')
+    #         hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec, freq_out)
+    #         hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
+    #                             np.mean(freq_out))
 
-                # TODO - add logic to select which spw and scan to reduce over
-                psfs = []
-                wsums = np.zeros(nband)
-                for ds in xds:
-                    psfs.append(ds.PSF.values)
-                    wsums += ds.WSUM.values
+    #         for i, p in enumerate(sorted(args.products)):
+    #             xds = xds_from_zarr(args.output_filename + f'_{p}.zarr')
 
-                psf[i] = stitch_images(psfs, nband, band_mapping)
+    #             # TODO - add logic to select which spw and scan to reduce over
+    #             psfs = []
+    #             wsums = np.zeros(nband)
+    #             for ds in xds:
+    #                 psfs.append(ds.PSF.values)
+    #                 wsums += ds.WSUM.values
 
-                for b, w in enumerate(wsums):
-                    hdr_psf[f'WSUM{p}{b}'] = w
-                wsum = np.sum(wsums)
-                hdr_psf_mfs[f'WSUM{p}'] = wsum
+    #             psf[i] = stitch_images(psfs, nband, band_mapping)
 
-                psf_mfs = np.sum(psf, axis=1, keepdims=True)/wsum
+    #             for b, w in enumerate(wsums):
+    #                 hdr_psf[f'WSUM{p}{b}'] = w
+    #             wsum = np.sum(wsums)
+    #             hdr_psf_mfs[f'WSUM{p}'] = wsum
 
-            if args.fits_mfs:
-                save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs,
-                        dtype=args.output_type)
+    #             psf_mfs = np.sum(psf, axis=1, keepdims=True)/wsum
 
-            if not args.no_fits_cubes:
-                save_fits(args.output_filename + '_psf.fits', psf, hdr_psf,
-                        dtype=args.output_type)
+    #         if args.fits_mfs:
+    #             save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs,
+    #                     dtype=args.output_type)
+
+    #         if not args.no_fits_cubes:
+    #             save_fits(args.output_filename + '_psf.fits', psf, hdr_psf,
+    #                     dtype=args.output_type)
 
 
 
