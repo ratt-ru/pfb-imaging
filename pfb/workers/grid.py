@@ -436,7 +436,7 @@ def _grid(**kw):
                                        **universal_opts)
                 out_datasets.append(out_ds)
 
-    writes = xds_to_zarr(out_datasets, args.output_filename + '.zarr',
+    writes = xds_to_zarr(out_datasets, args.output_filename + '.xds.zarr',
                          columns='ALL')
 
     # dask.visualize(writes, color="order", cmap="autumn",
@@ -455,79 +455,73 @@ def _grid(**kw):
 
     dask.compute(writes)
 
-    # # convert to fits files
-    # if args.fits_mfs or not args.no_fits_cubes:
-    #     if args.dirty:
-    #         print("Saving dirty as fits", file=log)
-    #         dirty = np.zeros((len(args.products), nband, nx, ny), dtype=args.output_type)
+    # convert to fits files
+    #
+    if args.fits_mfs or not args.no_fits_cubes:
+        if args.dirty:
+            print("Saving dirty as fits", file=log)
+            dirty = np.zeros((nband, nx, ny), dtype=np.float32)
+            wsums = np.zeros(nband, dtype=np.float32)
 
-    #         hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
-    #         hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
-    #                         np.mean(freq_out))
+            hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
+            hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
+                            np.mean(freq_out))
 
-    #         for i, p in enumerate(sorted(args.products)):
-    #             xds = xds_from_zarr(args.output_filename + f'_{p}.zarr')
+            xds = xds_from_zarr(args.output_filename + '.xds.zarr')
 
-    #             # TODO - add logic to select which spw and scan to reduce over
-    #             dirties = []
-    #             wsums = np.zeros(nband)
-    #             for ds in xds:
-    #                 dirties.append(ds.DIRTY.values)
-    #                 wsums += ds.WSUM.values
+            for ds in xds:
+                b = ds.bandid
+                dirty[b] += ds.DIRTY.values
+                wsums[b] += ds.WSUM.values
 
-    #             dirty[i] = stitch_images(dirties, nband, band_mapping)
+            for b, w in enumerate(wsums):
+                hdr[f'WSUM{b}'] = w
+            wsum = np.sum(wsums)
+            hdr_mfs[f'WSUM'] = wsum
 
-    #             for b, w in enumerate(wsums):
-    #                 hdr[f'WSUM{p}{b}'] = w
-    #             wsum = np.sum(wsums)
-    #             hdr_mfs[f'WSUM{p}'] = wsum
+            dirty_mfs = np.sum(dirty, axis=0, keepdims=True)/wsum
 
-    #             dirty_mfs = np.sum(dirty, axis=1, keepdims=True)/wsum
+            if args.fits_mfs:
+                save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
+                        dtype=np.float32)
 
-    #         if args.fits_mfs:
-    #             save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
-    #                     dtype=args.output_type)
+            if not args.no_fits_cubes:
+                fmask = wsums > 0
+                dirty[fmask] /= wsums[fmask, None, None]
+                save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
+                        dtype=np.float32)
 
-    #         if not args.no_fits_cubes:
-    #             save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
-    #                     dtype=args.output_type)
+        if args.psf:
+            print("Saving PSF as fits", file=log)
+            psf = np.zeros((nband, nx_psf, ny_psf),
+                           dtype=np.float32)
 
-    #     if args.psf:
-    #         print("Saving PSF as fits", file=log)
-    #         psf = np.zeros((len(args.products), nband, nx_psf, ny_psf),
-    #                        dtype=args.output_type)
+            hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec, freq_out)
+            hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
+                                np.mean(freq_out))
 
-    #         hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec, freq_out)
-    #         hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
-    #                             np.mean(freq_out))
+            xds = xds_from_zarr(args.output_filename + f'.xds.zarr')
 
-    #         for i, p in enumerate(sorted(args.products)):
-    #             xds = xds_from_zarr(args.output_filename + f'_{p}.zarr')
+            # TODO - add logic to select which spw and scan to reduce over
+            for ds in xds:
+                b = ds.bandid
+                psf[b] += ds.PSF.values
 
-    #             # TODO - add logic to select which spw and scan to reduce over
-    #             psfs = []
-    #             wsums = np.zeros(nband)
-    #             for ds in xds:
-    #                 psfs.append(ds.PSF.values)
-    #                 wsums += ds.WSUM.values
+            for b, w in enumerate(wsums):
+                hdr_psf[f'WSUM{b}'] = w
+            wsum = np.sum(wsums)
+            hdr_psf_mfs[f'WSUM'] = wsum
 
-    #             psf[i] = stitch_images(psfs, nband, band_mapping)
+            psf_mfs = np.sum(psf, axis=0, keepdims=True)/wsum
 
-    #             for b, w in enumerate(wsums):
-    #                 hdr_psf[f'WSUM{p}{b}'] = w
-    #             wsum = np.sum(wsums)
-    #             hdr_psf_mfs[f'WSUM{p}'] = wsum
+            if args.fits_mfs:
+                save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs,
+                          dtype=np.float32)
 
-    #             psf_mfs = np.sum(psf, axis=1, keepdims=True)/wsum
-
-    #         if args.fits_mfs:
-    #             save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs,
-    #                     dtype=args.output_type)
-
-    #         if not args.no_fits_cubes:
-    #             save_fits(args.output_filename + '_psf.fits', psf, hdr_psf,
-    #                     dtype=args.output_type)
-
-
+            if not args.no_fits_cubes:
+                fmask = wsums > 0
+                psf[fmask] /= wsums[fmask, None, None]
+                save_fits(args.output_filename + '_psf.fits', psf, hdr_psf,
+                        dtype=np.float32)
 
     print("All done here.", file=log)

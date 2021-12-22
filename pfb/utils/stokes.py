@@ -1,6 +1,6 @@
 import numpy as np
 import numexpr as ne
-from numba import generated_jit
+from numba import generated_jit, njit
 from numba.types import literal
 import dask
 from dask.graph_manipulation import clone
@@ -169,7 +169,7 @@ def single_stokes(ds=None,
         beam = da.ones((nx, ny), chunks=(nx, ny), dtype=real_type)
 
     data_vars['BEAM'] = (('x', 'y'), beam)
-    # data_vars['WSUM'] = (('1'), da.array((wsum,)))
+    data_vars['WSUM'] = (('1'), da.array((wsum,)))
 
     attrs = {
         'cell_rad': cell_rad,
@@ -182,11 +182,11 @@ def single_stokes(ds=None,
         'fieldid': ds.FIELD_ID,
         'ddid': ds.DATA_DESC_ID,
         'scanid': ds.SCAN_NUMBER,
-        'bandid': bandid,
+        'bandid': int(bandid),
         'freq_out': freq_out
     }
 
-    out_ds = Dataset(data_vars) #, attrs=attrs)
+    out_ds = Dataset(data_vars, attrs=attrs)
 
     # import pdb; pdb.set_trace()
 
@@ -197,9 +197,9 @@ def weight_data(data, weight, jones, tbin_idx, tbin_counts,
                 ant1, ant2, pol='linear', product='I'):
     # data are not necessarily 2x2 so we need separate labels
     # for jones correlations and data/weight correlations
-    if len(jones.shape) == 5:
+    if jones.ndim == 5:
         jout = 'rafdx'
-    elif len(jones.shape) == 6:
+    elif jones.ndim == 6:
         jout = 'rafdxx'
         # TODO - how do we know if we should return
         # jones[0][0] or jones[0][0][0] in function wrapper?
@@ -221,20 +221,21 @@ def weight_data(data, weight, jones, tbin_idx, tbin_counts,
     vis = da.blockwise(getitem, 'rf', res, 'rf', 0, None, dtype=data.dtype)
     wgt = da.blockwise(getitem, 'rf', res, 'rf', 1, None, dtype=weight.dtype)
 
+
     return vis, wgt
 
 def _weight_data(data, weight, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product):
-    return data[0], weight[0], jones[0][0], tbin_idx, tbin_counts, ant1, ant2, pol, product
+    return _weight_data_impl(data[0], weight[0], jones[0][0][0],
+                             tbin_idx, tbin_counts, ant1, ant2, pol, product)
 
-@generated_jit()  #nopython=True, nogil=True, cache=True)
+@generated_jit(nopython=True, nogil=True, cache=True)
 def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product):
 
-    coerce_literal(_weight_data, ["pol", "product"])
+    coerce_literal(_weight_data, ["product", "pol"])
 
-    vis_func, wgt_func = stokes_funcs(data, jones, product,
-                                      mode=mode, pol=pol)
+    vis_func, wgt_func = stokes_funcs(data, jones, product, pol=pol)
 
     def _impl(data, weight, jones, tbin_idx, tbin_counts,
               ant1, ant2, pol, product):
@@ -245,6 +246,7 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
         nrow, nchan, ncorr = data.shape
         vis = np.zeros((nrow, nchan), dtype=data.dtype)
         wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
+
         for t in range(nt):
             for row in range(tbin_idx[t],
                              tbin_idx[t] + tbin_counts[t]):
@@ -253,21 +255,21 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                 gp = jones[t, p, :, 0]
                 gq = jones[t, q, :, 0]
                 for chan in range(nchan):
-                    vis[row, chan] = vis_func(data[row, chan],
+                    vis[row, chan] = vis_func(gp[chan], gq[chan],
                                               weight[row, chan],
-                                              gp[chan], gq[chan])
-                    wgt[row, chan] = wgt_func(weight[row, chan],
-                                              gp[chan], gq[chan])
+                                              data[row, chan])
+                    wgt[row, chan] = wgt_func(gp[chan], gq[chan],
+                                              weight[row, chan])
         return vis, wgt
     return _impl
 
 
-def stokes_funcs(data, jones, product, mode, pol):
+def stokes_funcs(data, jones, product, pol):
     if pol != literal('linear'):
-        raise NotImplementedError("Only linear polarisation yet supported")
+        raise NotImplementedError("Circular polarisation not yet supported")
     # The expressions for DIAG_DIAG and DIAG mode are essentially the same
-    if jones.shape == 5:
-        # diagonal products have identical weights
+    if jones.ndim == 5:
+        # I and Q have identical weights
         @njit(nogil=True, fastmath=True, inline='always')
         def wfunc(gp, gq, W):
             gp00 = gp[0]
@@ -276,8 +278,8 @@ def stokes_funcs(data, jones, product, mode, pol):
             gq11 = gq[1]
             W0 = W[0]
             W3 = W[-1]
-            return (W0*gp00*gq00*conjugate(gp00)*conjugate(gq00) +
-                    W3*gp11*gq11*conjugate(gp11)*conjugate(gq11))
+            return np.real(W0*gp00*gq00*np.conjugate(gp00)*np.conjugate(gq00) +
+                    W3*gp11*gq11*np.conjugate(gp11)*np.conjugate(gq11))
 
         if product == literal('I'):
             @njit(nogil=True, fastmath=True, inline='always')
@@ -290,8 +292,8 @@ def stokes_funcs(data, jones, product, mode, pol):
                 W3 = W[-1]
                 v00 = V[0]
                 v11 = V[-1]
-                return (W0*gq00*v00*conjugate(gp00) +
-                        W3*gq11*v11*conjugate(gp11))
+                return (W0*gq00*v00*np.conjugate(gp00) +
+                        W3*gq11*v11*np.conjugate(gp11))
 
         elif product == literal('Q'):
             @njit(nogil=True, fastmath=True, inline='always')
@@ -304,8 +306,8 @@ def stokes_funcs(data, jones, product, mode, pol):
                 W3 = W[-1]
                 v00 = V[0]
                 v11 = V[-1]
-                return (W0*gq00*v00*conjugate(gp00) -
-                        W3*gq11*v11*conjugate(gp11))
+                return (W0*gq00*v00*np.conjugate(gp00) -
+                        W3*gq11*v11*np.conjugate(gp11))
 
         else:
             raise ValueError("The requested product is not available from input data")
@@ -313,7 +315,7 @@ def stokes_funcs(data, jones, product, mode, pol):
         return vfunc, wfunc
 
     # Full mode
-    elif jones.shape == 6:
+    elif jones.ndim == 6:
         raise NotImplementedError("Full polarisation imaging not yet supported")
 
     else:

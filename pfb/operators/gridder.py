@@ -42,12 +42,6 @@ def vis2im(uvw=None,
     else:
         mask_out = None
 
-    print("Before blockwise:")
-    print(uvw.shape)
-    print(freq.shape)
-    print(vis.shape)
-    print(mask.shape)
-
     return da.blockwise(_vis2im, 'xy',
                         uvw, 'r3',
                         freq, 'f',
@@ -151,13 +145,6 @@ def _vis2im_impl(uvw,
     if mask is not None:
         mask = np.require(mask, dtype=np.uint8)
 
-    print("After blockwise:")
-    print(uvw.shape)
-    print(freq.shape)
-    print(vis.shape)
-    print(mask.shape)
-
-    quit()
     return vis2dirty(uvw=uvw,
                      freq=freq,
                      vis=vis,
