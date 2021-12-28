@@ -1,54 +1,10 @@
 import numpy as np
 import dask.array as da
 from daskms.optimisation import inlined_array
+from uuid import uuid4
 from ducc0.fft import r2c, c2r, c2c, good_size
-from pfb.operators.psi import im2coef, coef2im
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
-
-
-def psf_convolve_alpha_xds(alpha, xds, psfopts, waveopts, wsum, sigmainv, compute=True):
-    '''
-    Image space Hessian reduction over dataset
-    '''
-    pmask = waveopts['pmask']
-    bases = waveopts['bases']
-    padding = waveopts['padding']
-    iy = waveopts['iy']
-    sy = waveopts['sy']
-    nx = waveopts['nx']
-    ny = waveopts['ny']
-    ntot = waveopts['ntot']
-    nmax = waveopts['nmax']
-    nlevels = waveopts['nlevels']
-
-    if not isinstance(alpha, da.Array):
-        alpha = da.from_array(alpha, chunks=(1, -1, -1), name=False)
-
-    # coeff to image
-    x = coef2im(alpha, pmask, bases, padding, iy, sy, nx, ny)
-    x = inlined_array(x, [pmask, alpha, bases, padding])
-
-    convims = []
-    for ds in xds:
-        psfhat = ds.PSFHAT.data
-        beam = ds.BEAM.data
-        convim = psf_convolve(x, psfhat, beam, psfopts)
-        convims.append(convim)
-
-    # LB - it's not this simple when there are multiple spw's to consider
-    convim = da.stack(convims).sum(axis=0)/wsum
-
-    alpha_rec = im2coef(convim, pmask, bases, ntot, nmax, nlevels)
-    alpha_rec = inlined_array(alpha_rec, [pmask, bases, ntot])
-
-    if sigmainv:
-        alpha_rec += alpha * sigmainv**2
-
-    if compute:
-        return alpha_rec.compute()
-    else:
-        return alpha_rec
 
 
 def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, mask,
@@ -60,11 +16,19 @@ def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, mask,
         x = da.from_array(x, chunks=(1, -1, -1), name=False)
 
     if not isinstance(mask, da.Array):
-        mask = da.from_array(mask, chunks=(1, -1, -1), name=False)
+        mask = da.from_array(mask, chunks=(-1, -1), name=False)
 
-    convims = []
+    assert mask.ndim==2
+
+    nband, nx, ny = x.shape
+
+    convims = [da.zeros((nx, ny),
+               chunks=(-1, -1), name="zeros-" + uuid4().hex)
+               for _ in range(nband)]
+
     for ds in xds:
         psfhat = ds.PSFHAT.data
+        b = ds.bandid
         if use_beam:
             beam = ds.BEAM.data * mask
         else:
@@ -72,12 +36,11 @@ def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, mask,
             # unnecessary beam application
             beam = mask
 
-        convim = psf_convolve(x, psfhat, beam, psfopts)
+        convim = psf_convolve(x[b], psfhat, beam, psfopts)
 
-        convims.append(convim)
+        convims[b] += convim
 
-    # LB - it's not this simple when there are multiple spw's to consider
-    convim = da.stack(convims).sum(axis=0)/wsum
+    convim = da.stack(convims)/wsum
 
     if sigmainv:
         convim += x * sigmainv**2
@@ -96,18 +59,17 @@ def _psf_convolve_impl(x, psfhat, beam,
     """
     Tikhonov regularised Hessian of coeffs
     """
-    nband, nx, ny = x.shape
-    convim = np.zeros_like(x)
-    for b in range(nband):
-        xhat = x[b] if beam is None else x[b] * beam[b]
-        xhat = iFs(np.pad(x[b], padding, mode='constant'), axes=(0, 1))
-        xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
-                    forward=True, inorm=0)
-        xhat = c2r(xhat * psfhat[b], axes=(0, 1), forward=False,
-                    lastsize=lastsize, inorm=2, nthreads=nthreads)
-        convim[b] = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
-        if beam is not None:
-            convim[b] *= beam[b]
+    nx, ny = x.shape
+    xhat = x if beam is None else x * beam
+    xhat = iFs(np.pad(x, padding, mode='constant'), axes=(0, 1))
+    xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
+                forward=True, inorm=0)
+    xhat = c2r(xhat * psfhat, axes=(0, 1), forward=False,
+               lastsize=lastsize, inorm=2, nthreads=nthreads)
+    convim = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
+
+    if beam is not None:
+        convim *= beam
 
     return convim
 
@@ -116,14 +78,14 @@ def _psf_convolve(x, psfhat, beam, psfopts):
 
 def psf_convolve(x, psfhat, beam, psfopts):
     if not isinstance(x, da.Array):
-        x = da.from_array(x, chunks=(1, -1, -1), name=False)
+        x = da.from_array(x, chunks=(-1, -1), name=False)
     if beam is None:
         bout = None
     else:
-        bout = ('nband', 'nx', 'ny')
-    return da.blockwise(_psf_convolve, ('nband', 'nx', 'ny'),
-                        x, ('nband', 'nx', 'ny'),
-                        psfhat, ('nband', 'nx', 'ny'),
+        bout = ('nx', 'ny')
+    return da.blockwise(_psf_convolve, ('nx', 'ny'),
+                        x, ('nx', 'ny'),
+                        psfhat, ('nx', 'ny'),
                         beam, bout,
                         psfopts, None,
                         align_arrays=False,

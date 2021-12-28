@@ -34,9 +34,9 @@ log = pyscilog.get_logger('GRID')
               help="Number of unique times in a chunk.")
 @click.option('-rochunk', '--row-out-chunk', type=int, default=10000,
               help="Size of row chunks for output weights and uvw")
-@click.option('-eps', '--epsilon', type=float, default=1e-5,
+@click.option('-eps', '--epsilon', type=float, default=1e-7,
               help='Gridder accuracy')
-@click.option('-precision', '--precision', default='single',
+@click.option('-precision', '--precision', default='double',
               help='Either single or double')
 @click.option('--group-by-field/--no-group-by-field', default=True)
 @click.option('--group-by-ddid/--no-group-by-ddid', default=True)
@@ -66,8 +66,6 @@ log = pyscilog.get_logger('GRID')
               help="Number of x pixels")
 @click.option('-ny', '--ny', type=int,
               help="Number of x pixels")
-@click.option('-otype', '--output-type', default='f4',
-              help="Data type of output")
 @click.option('-ha', '--host-address',
               help='Address where the distributed client lives. '
               'Will use a local cluster if no address is provided')
@@ -76,13 +74,15 @@ log = pyscilog.get_logger('GRID')
 @click.option('-ntpw', '--nthreads-per-worker', type=int,
               help='Number of dask threads per worker.')
 @click.option('-nvt', '--nvthreads', type=int,
-              help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
+              help="Total number of threads to use for vertical scaling "
+                   "(eg. gridder, fft's etc.)")
 @click.option('-mem', '--mem-limit', type=int,
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
-              help="Total available threads. Default uses all available threads")
+              help="Total available threads. "
+              "Default uses all available threads")
 @click.option('-scheduler', '--scheduler', default='distributed',
-              help="Total available threads. Default uses all available threads")
+              help="distributed or single-threaded (for debugging)")
 def grid(**kw):
     '''
     Create a dirty image, psf and weights from a list of measurement
@@ -179,6 +179,8 @@ def _grid(**kw):
     from pfb.utils.misc import stitch_images
     from pfb.utils.fits import set_wcs, save_fits
     from pfb.utils.stokes import single_stokes
+    from pfb.utils.misc import compute_context
+    import xarray as xr
 
     # TODO - optional grouping.
     # We need to construct an identifier between
@@ -201,8 +203,8 @@ def _grid(**kw):
 
     # chan <-> band mapping
     nband = args.nband
-    freqs, fbin_idx, fbin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
-        args.ms, nband=args.nband, group_by=group_by)
+    freqs, fbin_idx, fbin_counts, freq_out, band_mapping, chan_chunks = \
+        chan_to_band_mapping(args.ms, nband=args.nband, group_by=group_by)
 
     # gridder memory budget (TODO)
     max_chan_chunk = 0
@@ -216,7 +218,6 @@ def _grid(**kw):
 
     # assumes measurement sets have the same columns
     xds = xds_from_ms(args.ms[0])
-
     columns = (args.data_column,
                args.weight_column,
                args.flag_column,
@@ -308,7 +309,10 @@ def _grid(**kw):
             G = xds_from_zarr(args.gain_table[ims].rstrip('/') + '::NET')
 
         for ids, ds in enumerate(xds):
-            idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
+            fid = ds.FIELD_ID
+            ddid = ds.DATA_DESC_ID
+            scanid = ds.SCAN_NUMBER
+            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
 
             if ncorr is None:
                 ncorr = ds.dims['corr']
@@ -316,7 +320,8 @@ def _grid(**kw):
                 try:
                     assert ncorr == ds.dims['corr']
                 except Exception as e:
-                    raise ValueError("All data sets must have the same number of correlations")
+                    raise ValueError("All data sets must have the same "
+                                     "number of correlations")
             time = ds.TIME.values
             if args.utimes_per_chunk in [0, -1, None]:
                 utpc = np.unique(time).size
@@ -343,9 +348,9 @@ def _grid(**kw):
                         tmp_dict[name] = chan_chunks[ms][idt]
                     elif name == 'dir':
                         if len(val) > 1:
-                            raise ValueError("Only DI gains currently supported")
+                            raise ValueError("DD gains not supported yet")
                         if val[0] > 1:
-                            raise ValueError("Only DI gains currently supported")
+                            raise ValueError("DD gains not supported yet")
                         tmp_dict[name] = val
                     else:
                         tmp_dict[name] = val
@@ -384,12 +389,15 @@ def _grid(**kw):
                              f"from correlations {pols[0].CORR_TYPE.data}")
 
         for ids, ds in enumerate(xds):
-            idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
+            fid = ds.FIELD_ID
+            ddid = ds.DATA_DESC_ID
+            scanid = ds.SCAN_NUMBER
+            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
             nrow = ds.dims['row']
             nchan = ds.dims['chan']
             ncorr = ds.dims['corr']
 
-            field = fields[ds.FIELD_ID]
+            field = fields[fid]
 
             # check fields match
             if radec is None:
@@ -399,8 +407,9 @@ def _grid(**kw):
                 # TODO - phase shift visibilities
                 continue
 
-            spw = spws[ds.DATA_DESC_ID]
-            chan_width = spw.CHAN_WIDTH.data.squeeze().rechunk(freqs[ms][idt].chunks)
+            spw = spws[ddid]
+            chan_width = spw.CHAN_WIDTH.data.squeeze()
+            chan_width = chan_width.rechunk(freqs[ms][idt].chunks)
 
             universal_opts = {
                 'tbin_idx':tbin_idx[ms][idt],
@@ -436,7 +445,8 @@ def _grid(**kw):
                                        **universal_opts)
                 out_datasets.append(out_ds)
 
-    writes = xds_to_zarr(out_datasets, args.output_filename + '.xds.zarr',
+    writes = xds_to_zarr(out_datasets, args.output_filename +
+                         f'_{args.product.upper()}.xds.zarr',
                          columns='ALL')
 
     # dask.visualize(writes, color="order", cmap="autumn",
@@ -446,28 +456,41 @@ def _grid(**kw):
     # dask.visualize(writes, filename=args.output_filename +
     #                '_writes_I_graph.pdf', optimize_graph=False)
 
-    from pfb.utils.misc import compute_context
+    with compute_context(args.scheduler, args.output_filename):
+        dask.compute(writes,
+                     optimize_graph=False,
+                     scheduler=args.scheduler)
 
-    # with compute_context(args.scheduler, args.output_filename):
-    #     dask.compute(writes,
-    #                  optimize_graph=False,
-    #                  scheduler=args.scheduler)
-
-    dask.compute(writes)
+    print("Initialising model", file=log)
+    # TODO - allow non-zero input model
+    attrs = {'nband': nband,
+             'nx': nx,
+             'ny': ny,
+             'ra': radec[0],
+             'dec': radec[1],
+             'cell_rad': cell_rad}
+    coords = {'freq': freq_out}
+    real_type = np.float64 if args.precision=='double' else np.float32
+    model = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
+    data_vars = {'MODEL': (('band', 'x', 'y'), model)}
+    mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
+    mds_name = f'{args.output_filename}_{args.product.upper()}.mds.zarr'
+    dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
 
     # convert to fits files
-    #
     if args.fits_mfs or not args.no_fits_cubes:
         if args.dirty:
             print("Saving dirty as fits", file=log)
             dirty = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband, dtype=np.float32)
 
-            hdr = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec, freq_out)
-            hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx, ny, radec,
-                            np.mean(freq_out))
+            hdr = set_wcs(cell_size / 3600, cell_size / 3600,
+                          nx, ny, radec, freq_out)
+            hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600,
+                              nx, ny, radec, np.mean(freq_out))
 
-            xds = xds_from_zarr(args.output_filename + '.xds.zarr')
+            xds = xds_from_zarr(args.output_filename +
+                                f'_{args.product.upper()}.xds.zarr')
 
             for ds in xds:
                 b = ds.bandid
@@ -482,30 +505,35 @@ def _grid(**kw):
             dirty_mfs = np.sum(dirty, axis=0, keepdims=True)/wsum
 
             if args.fits_mfs:
-                save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
-                        dtype=np.float32)
+                save_fits(args.output_filename +
+                          f'_{args.product.upper()}_dirty_mfs.fits',
+                          dirty_mfs, hdr_mfs, dtype=np.float32)
 
             if not args.no_fits_cubes:
                 fmask = wsums > 0
                 dirty[fmask] /= wsums[fmask, None, None]
-                save_fits(args.output_filename + '_dirty.fits', dirty, hdr,
+                save_fits(args.output_filename +
+                          f'_{args.product.upper()}_dirty.fits', dirty, hdr,
                         dtype=np.float32)
 
         if args.psf:
             print("Saving PSF as fits", file=log)
-            psf = np.zeros((nband, nx_psf, ny_psf),
-                           dtype=np.float32)
+            psf = np.zeros((nband, nx_psf, ny_psf), dtype=np.float32)
+            wsums = np.zeros(nband, dtype=np.float32)
 
-            hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec, freq_out)
-            hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf, ny_psf, radec,
-                                np.mean(freq_out))
+            hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf,
+                              ny_psf, radec, freq_out)
+            hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf,
+                                  ny_psf, radec, np.mean(freq_out))
 
-            xds = xds_from_zarr(args.output_filename + f'.xds.zarr')
+            xds = xds_from_zarr(args.output_filename +
+                                f'_{args.product.upper()}.xds.zarr')
 
             # TODO - add logic to select which spw and scan to reduce over
             for ds in xds:
                 b = ds.bandid
                 psf[b] += ds.PSF.values
+                wsums[b] += ds.WSUM.values
 
             for b, w in enumerate(wsums):
                 hdr_psf[f'WSUM{b}'] = w
@@ -515,13 +543,15 @@ def _grid(**kw):
             psf_mfs = np.sum(psf, axis=0, keepdims=True)/wsum
 
             if args.fits_mfs:
-                save_fits(args.output_filename + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs,
-                          dtype=np.float32)
+                save_fits(args.output_filename +
+                          f'_{args.product.upper()}_psf_mfs.fits', psf_mfs,
+                          hdr_psf_mfs, dtype=np.float32)
 
             if not args.no_fits_cubes:
                 fmask = wsums > 0
                 psf[fmask] /= wsums[fmask, None, None]
-                save_fits(args.output_filename + '_psf.fits', psf, hdr_psf,
+                save_fits(args.output_filename +
+                          f'_{args.product.upper()}_psf.fits', psf, hdr_psf,
                         dtype=np.float32)
 
     print("All done here.", file=log)

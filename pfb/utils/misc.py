@@ -2,12 +2,15 @@ import sys
 import numpy as np
 import numexpr as ne
 from numba import jit, njit
+import dask
 import dask.array as da
 from dask.distributed import performance_report
 from dask.diagnostics import ProgressBar
 from ducc0.fft import r2c, c2r
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
+from numba.core.extending import SentryLiteralArgs
+import inspect
 
 
 def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
@@ -401,6 +404,7 @@ def chan_to_band_mapping(ms_name, nband=None,
 
     return freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks
 
+
 def stitch_images(dirties, nband, band_mapping):
     _, nx, ny = dirties[0].shape
     dirty = np.zeros((nband, nx, ny), dtype=dirties[0].dtype)
@@ -530,47 +534,6 @@ def fitcleanbeam(psf: np.ndarray,
     return Gausspars
 
 
-def compare_vals(vis1, vis2, flag, mode, ctol):
-    flag = da.blockwise(_compare_vals_wrapper, ('r','f'),
-                        vis1, ('r','f','c'),
-                        vis2, ('r','f','c'),
-                        flag, ('r','f'),
-                        mode, None,
-                        ctol, None,
-                        dtype=bool)
-    return flag
-
-def _compare_vals_wrapper(vis1, vis2, flag, mode, ctol):
-    return _compare_vals_impl(vis1[0], vis2[0], flag, mode, ctol)
-
-# @njit(fastmath=True, nogil=True, cache=True)
-def _compare_vals_impl(vis1, vis2, flag, mode, ctol):
-    if mode == 'diag':
-        if vis1.shape[-1] > 1:
-            use_corrs = (0, -1)
-        else:
-            use_corrs = (0,)
-    else:
-        use_corrs = np.arange(vis1.shape[-1])
-
-    for c in use_corrs:
-        vis1c = vis1[:, :, c]
-        vis2c = vis2[:, :, c]
-
-        I1 = np.where(np.abs(vis1c) == 0.0)
-        flag[I1] = True
-
-        I2 = np.where(np.abs(vis2c) == 0.0)
-        flag[I2] = True
-
-        tmp = vis1c[~flag] - vis2c[~flag]
-
-        print("Max diff = ", np.abs(tmp).max())
-        print("Percent mismatch = ", np.sum(tmp > ctol)/tmp.size)
-
-    return flag
-
-
 # utility to produce a model image from fitted components
 def model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
     '''
@@ -631,19 +594,18 @@ def _model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
 def init_mask(mask, mds, output_type, log):
     if mask is None:
         print("No mask provided", file=log)
-        mask = np.ones((1, mds.nx, mds.ny), dtype=output_type)
+        mask = np.ones((mds.nx, mds.ny), dtype=output_type)
     elif mask.endswith('.fits'):
         try:
             mask = load_fits(mask, dtype=output_type).squeeze()
             assert mask.shape == (mds.nx, mds.ny)
-            mask = mask[None]
             print('Using provided fits mask', file=log)
         except Exception as e:
             print(f"No mask found at {mask}", file=log)
             raise e
     elif mask.lower() == 'mds':
         try:
-            mask = mds.MASK.values[None].astype(output_type)
+            mask = mds.MASK.values.astype(output_type)
             print('Using mask in mds', file=log)
         except:
             print(f"No mask in mds", file=log)
@@ -651,10 +613,6 @@ def init_mask(mask, mds, output_type, log):
     else:
         raise ValueError(f'Unsupported masking option {mask}')
     return mask
-
-
-from numba.core.extending import SentryLiteralArgs
-import inspect
 
 
 def coerce_literal(func, literals):

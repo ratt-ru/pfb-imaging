@@ -9,24 +9,21 @@ pyscilog.init('pfb')
 log = pyscilog.get_logger('FORWARD')
 
 @cli.command(context_settings={'show_default': True})
-@click.option('-xds', '--xds', type=str, required=True,
-              help="Path to xarray dataset containing data products.")
-@click.option('-mds', '--mds', type=str,
-              help="Path to xarray dataset containing model products.")
+@click.option('-o', '--output-filename', type=str, required=True,
+              help="Basename of output.")
 @click.option('-rname', '--residual-name', default='RESIDUAL',
               help='Name of residual to use in xds')
 @click.option('-mask', '--mask', default=None,
               help="Either path to mask.fits or set to mds to use "
               "the mask contained in the mds.")
-@click.option('-o', '--output-filename', type=str, required=True,
-              help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
               help="Number of imaging bands")
+@click.option('-p', '--product', default='I',
+              help='Currently supports I, Q, U, and V. '
+              'Only single Stokes products currently supported.')
 @click.option('-rchunk', '--row-chunk', type=int, default=-1,
               help="Number of rows in a chunk.")
-@click.option('-otype', '--output-type', default='f4',
-              help="Data type of output")
-@click.option('-eps', '--epsilon', type=float, default=1e-5,
+@click.option('-eps', '--epsilon', type=float, default=1e-7,
               help='Gridder accuracy')
 @click.option('-sinv', '--sigmainv', type=float, default=1.0,
               help='Standard deviation of assumed GRF prior.'
@@ -137,10 +134,18 @@ def _forward(**kw):
     from astropy.io import fits
     import pywt
 
-    xds = xds_from_zarr(args.xds, chunks={'row':args.row_chunk})
-    nband = xds[0].nband
-    nx = xds[0].nx
-    ny = xds[0].ny
+    xds_name = f'{args.output_filename}_{args.product.upper()}.xds.zarr'
+    mds_name = f'{args.output_filename}_{args.product.upper()}.mds.zarr'
+
+    xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
+    # only a single mds (for now)
+    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    nband = mds.nband
+    nx = mds.nx
+    ny = mds.ny
+    for ds in xds:
+        assert ds.nx == nx
+        assert ds.ny == ny
 
     # stitch residuals after beam application
     if args.residual_name in xds[0]:
@@ -148,43 +153,25 @@ def _forward(**kw):
     else:
         rname = 'DIRTY'
     print(f'Using {rname} as residual', file=log)
-    residual = np.zeros((nband, nx, ny), dtype=args.output_type)
+    output_type = np.float64
+    residual = np.zeros((nband, nx, ny), dtype=output_type)
     wsum = 0
     for ds in xds:
-        d = ds.get(rname).values
-        b = ds.BEAM.values
-        band_id = ds.band_id.values
-        residual[band_id] += d * b
-        wsum += ds.WSUM.values.sum()
+        dirty = ds.get(rname).values
+        beam = ds.BEAM.values
+        b = ds.bandid
+        residual[b] += dirty * beam
+        wsum += ds.WSUM.values[0]
     residual /= wsum
 
-    if args.mds is not None:
-        mds_name = args.mds
-        try:
-            mds = xr.open_zarr(mds_name,
-                               chunks={'band': 1, 'x': -1, 'y': -1})
-        except Exception as e:
-            print(f'{args.mds} not found or invalid', file=log)
-            raise e
-    else:
-        mds_name = args.output_filename + '.mds.zarr'
-        print(f"Model dataset not passed in. Initialising as {mds_name}.",
-              file=log)
-        # may not exist yet
-        mds = xr.Dataset()
-        mds = mds.assign_attrs({'nband': nband})
-        mds = mds.assign_attrs({'nx': nx})
-        mds = mds.assign_attrs({'ny': ny})
-
-
     from pfb.utils.misc import init_mask
-    mask = init_mask(args.mask, mds, args.output_type, log)
+    mask = init_mask(args.mask, mds, output_type, log)
 
     try:
         x0 = mds.CLEAN_MODEL.values
     except:
         print("Initialising model to all zeros", file=log)
-        x0 = np.zeros((nband, nx, ny), dtype=args.output_type)
+        x0 = np.zeros((nband, nx, ny), dtype=output_type)
 
     hessopts = {}
     hessopts['cell'] = xds[0].cell_rad
@@ -194,60 +181,38 @@ def _forward(**kw):
     hessopts['nthreads'] = args.nvthreads
 
     if args.use_psf:
-        print("Initialising psf", file=log)
         from pfb.operators.psf import psf_convolve_xds
-        from ducc0.fft import r2c
-        normfact = 1.0
 
-        psf = xds[0].PSF.data
-        _, nx_psf, ny_psf = psf.shape
-
-        iFs = np.fft.ifftshift
-
+        nx_psf, ny_psf = xds[0].nx_psf, xds[0].ny_psf
         npad_xl = (nx_psf - nx)//2
         npad_xr = nx_psf - nx - npad_xl
         npad_yl = (ny_psf - ny)//2
         npad_yr = ny_psf - ny - npad_yl
-        padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+        padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
         unpad_x = slice(npad_xl, -npad_xr)
         unpad_y = slice(npad_yl, -npad_yr)
         lastsize = ny + np.sum(padding[-1])
 
-        # add psfhat to Dataset
-        for i, ds in enumerate(xds):
-            if 'PSFHAT' not in ds:
-                psf_pad = iFs(ds.PSF.data.compute(), axes=(1, 2))
-                psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                            nthreads=args.nthreads, inorm=0)
-
-                psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name=False)
-                ds = ds.assign({'PSFHAT':(('band', 'x_psf', 'y_psfo2'), psfhat)})
-                xds[i] = ds
-
-        # LB - this rechunking of the data is really very annoying.
-        # Why is it necessary again?
-        # # update dataset on disk
-        # xds_to_zarr(xds, args.xds, columns=['PSFHAT']).compute()
-
         psfopts = {}
-        psfopts['padding'] = padding[1:]
+        psfopts['padding'] = padding
         psfopts['unpad_x'] = unpad_x
         psfopts['unpad_y'] = unpad_y
         psfopts['lastsize'] = lastsize
         psfopts['nthreads'] = args.nvthreads
 
         hess = partial(psf_convolve_xds, xds=xds, psfopts=psfopts,
-                       sigmainv=args.sigmainv, wsum=wsum, mask=mask,
+                       wsum=wsum, sigmainv=args.sigmainv, mask=mask,
                        compute=True)
 
     else:
         print("Solving for update using vis space approximation", file=log)
-        hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
-                       sigmainv=args.sigmainv, wsum=wsum, mask=mask,
-                       compute=True)
+
+    hess2 = partial(hessian_xds, xds=xds, hessopts=hessopts,
+                    wsum=wsum, sigmainv=args.sigmainv, mask=mask,
+                    compute=True)
 
     # # import pdb; pdb.set_trace()
-    # x = np.random.randn(nband, nbasis, nmax).astype(np.float32)
+    x = np.random.randn(nband, nx, ny).astype(np.float32)
     # res = hess(x)
     # dask.visualize(res, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
@@ -255,6 +220,27 @@ def _forward(**kw):
     #                optimize_graph=False)
     # dask.visualize(res, filename=args.output_filename +
     #                '_hess_I_graph.pdf', optimize_graph=False)
+
+    res1 = hess(x)
+    res2 = hess2(x)
+
+    import matplotlib.pyplot as plt
+
+    for b in range(nband):
+        print(np.abs(res1[b] - res2[b]).max())
+        plt.figure('psf')
+        plt.imshow(res1[b])
+        plt.colorbar()
+
+        plt.figure('wgt')
+        plt.imshow(res2[b])
+        plt.colorbar()
+
+        plt.show()
+
+    import pdb; pdb.set_trace()
+
+    quit()
 
     cgopts = {}
     cgopts['tol'] = args.cg_tol
@@ -271,66 +257,38 @@ def _forward(**kw):
     update = da.from_array(update, chunks=(1, -1, -1))
     mds = mds.assign(**{'UPDATE': (('band', 'x', 'y'),
                      update)})
-
-    ra = xds[0].ra
-    dec = xds[0].dec
-    radec = [ra, dec]
-
-    cell_rad = xds[0].cell_rad
-    cell_deg = np.rad2deg(cell_rad)
-
-    freq_out = np.unique(np.concatenate([ds.band.values for ds in xds], axis=0))
-
-    if 'ra' not in mds.attrs:
-        mds = mds.assign_attrs({'ra': ra})
-
-    if 'dec' not in mds.attrs:
-        mds = mds.assign_attrs({'dec': dec})
-
-    if 'cell_rad' not in mds.attrs:
-        mds = mds.assign_attrs({'cell_rad': cell_rad})
-
-    if 'nband' not in mds.attrs:
-        mds = mds.assign_attrs({'nband': nband})
-
-    if 'nx' not in mds.attrs:
-        mds = mds.assign_attrs({'nx': nx})
-
-    if 'ny' not in mds.attrs:
-        mds = mds.assign_attrs({'ny': ny})
-
-    if 'band' not in mds.coords:
-        mds = mds.assign_coords({'band': da.from_array(freq_out, chunks=1)})
-
-    mds.to_zarr(mds_name, mode='a')
+    dask.compute(xds_to_zarr(mds, mds_name, columns='UPDATE'))
 
     if args.do_residual:
         print("Computing residual", file=log)
         from pfb.operators.hessian import hessian
         # Required because of https://github.com/ska-sa/dask-ms/issues/171
-        xdsw = xds_from_zarr(args.xds, chunks={'band': 1}, columns='DIRTY')
+        xdsw = xds_from_zarr(xds_name, columns='DIRTY')
         writes = []
         for ds, dsw in zip(xds, xdsw):
             dirty = ds.get(rname).data
             wgt = ds.WEIGHT.data
             uvw = ds.UVW.data
             freq = ds.FREQ.data
-            fbin_idx = ds.FBIN_IDX.data
-            fbin_counts = ds.FBIN_COUNTS.data
             beam = ds.BEAM.data
-            band_id = ds.band_id.data
+            b = ds.bandid
             # we only want to apply the beam once here
             residual = (dirty -
-                        hessian(uvw, wgt, freq, beam * update[band_id], None,
-                        fbin_idx, fbin_counts, hessopts))
-            dsw = dsw.assign(**{'FORWARD_RESIDUAL': (('band', 'x', 'y'), residual)})
-            writes.append(xds_to_zarr(dsw, args.xds, columns='RESIDUAL'))
+                        hessian(uvw, wgt, freq, beam * update[b], None,
+                                hessopts))
+            dsw = dsw.assign(**{'FORWARD_RESIDUAL': (('x', 'y'),
+                                                      residual)})
+            writes.append(xds_to_zarr(dsw, xds_name, columns='FORWARD_RESIDUAL'))
 
         dask.compute(writes)
 
     if args.fits_mfs or not args.no_fits_cubes:
         print("Writing fits files", file=log)
         # construct a header from xds attrs
+        radec = [xds[0].ra, xds[0].dec]
+        cell_rad = xds[0].cell_rad
+        cell_deg = np.rad2deg(cell_rad)
+        freq_out = mds.freq.data
         ref_freq = np.mean(freq_out)
         hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
@@ -338,13 +296,14 @@ def _forward(**kw):
         save_fits(args.output_filename + '_update_mfs.fits', update_mfs, hdr_mfs)
 
         if args.do_residual:
-            xds = xds_from_zarr(args.xds, chunks={'band': 1})
-            residual = np.zeros((nband, nx, ny), dtype=args.output_type)
+            xds = xds_from_zarr(xds_name)
+            import pdb; pdb.set_trace()
+            residual = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband)
             for ds in xds:
-                band_id = ds.band_id.values
-                wsums[band_id] += ds.WSUM.values
-                residual[band_id] += ds.FORWARD_RESIDUAL.values
+                b = ds.bandid
+                wsums[b] += ds.WSUM.values
+                residual[b] += ds.FORWARD_RESIDUAL.values.astype(np.float32)
             wsum = np.sum(wsums)
             residual /= wsum
 

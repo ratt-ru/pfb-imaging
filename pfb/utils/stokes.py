@@ -7,10 +7,14 @@ from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
+from pfb.operators.fft import fft2d
 from africanus.averaging.bda_avg import bda
 from pfb.utils.misc import coerce_literal
 from daskms.optimisation import inlined_array
 from operator import getitem
+iFs = np.fft.ifftshift
+Fs = np.fft.fftshift
+
 
 def single_stokes(ds=None,
                   jones=None,
@@ -67,11 +71,14 @@ def single_stokes(ds=None,
         # TODO - remove unnecessary jones multiplies
         ntime = tbin_idx.size
         nant = da.maximum(ant1.max(), ant2.max()).compute() + 1
-        jones = da.ones((ntime, nant, nchan, 1, 2),
+        jones = da.ones((ntime, nchan, nant, 1, 2),
                         chunks=(tbin_idx.chunks[0][0], -1, -1, 1, 2),
                         dtype=complex_type)
     elif jones.dtype != complex_type:
         jones = jones.astype(complex_type)
+
+    # qcal has chan and ant axes reversed compared to pfb implementation
+    jones = da.swapaxes(jones, 1, 2)
 
     vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts,
                            ant1, ant2, pol='linear', product=args.product)
@@ -122,10 +129,16 @@ def single_stokes(ds=None,
         # psf = inlined_array(psf, [uvw, freq])
         wsum = da.max(psf)
         data_vars['PSF'] = (('x_psf', 'y_psf'), psf)
+
+        # get FT of psf
+        psfhat = fft2d(psf, nthreads=args.nvthreads)
+        data_vars['PSFHAT'] = (('x_psf', 'yo2'), psfhat)
+
     else:
-        wsum = da.sum(wgt)
+        wsum = da.sum(wgt[mask])
 
     if args.weights:
+        wgt = da.where(mask, wgt, 0.0)
         # TODO - BDA over frequency
         if bda_weights:
             raise NotImplementedError("BDA not working yet")
@@ -152,6 +165,8 @@ def single_stokes(ds=None,
 
             uvw = res.uvw.reshape(-1, nchan, 3)[:, 0, :]
             wgt = res.weight_spectrum.reshape(-1, nchan).squeeze()
+
+            uvw = uvw.rechunk({0:args.row_out_chunk})
             data_vars['UVW'] = (('row', 'uvw'), uvw)
 
         wgt = wgt.rechunk({0:args.row_out_chunk})
@@ -179,6 +194,7 @@ def single_stokes(ds=None,
         'ny': ny,
         'nx_psf': nx_psf,
         'ny_psf': ny_psf,
+        'ny_psfo2': psfhat.shape[-1],
         'fieldid': ds.FIELD_ID,
         'ddid': ds.DATA_DESC_ID,
         'scanid': ds.SCAN_NUMBER,
@@ -187,8 +203,6 @@ def single_stokes(ds=None,
     }
 
     out_ds = Dataset(data_vars, attrs=attrs)
-
-    # import pdb; pdb.set_trace()
 
     return out_ds
 
@@ -255,11 +269,13 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                 gp = jones[t, p, :, 0]
                 gq = jones[t, q, :, 0]
                 for chan in range(nchan):
+                    wval = wgt_func(gp[chan], gq[chan],
+                                    weight[row, chan])
+                    wgt[row, chan] = wval
                     vis[row, chan] = vis_func(gp[chan], gq[chan],
                                               weight[row, chan],
-                                              data[row, chan])
-                    wgt[row, chan] = wgt_func(gp[chan], gq[chan],
-                                              weight[row, chan])
+                                              data[row, chan])/wval
+
         return vis, wgt
     return _impl
 

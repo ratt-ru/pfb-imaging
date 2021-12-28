@@ -57,11 +57,11 @@ def pcg(A,
         epsp = eps
         eps = np.maximum(epsx, epsn)
 
-        if np.abs(epsp - eps) < 0.01*tol:
+        if np.abs(epsp - eps) < 1e-3*tol:
             stall_count += 1
 
         if not k % report_freq and verbosity > 1:
-            print("At iteration %i eps = %f" % (k, eps), file=log)
+            print(f"At iteration {k} epsx = {epsx}, epsn = {epsn}", file=log)
 
     if k >= maxit:
         if verbosity:
