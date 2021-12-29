@@ -24,8 +24,8 @@ log = pyscilog.get_logger('BACKWARD')
 @click.option('-rchunk', '--row-chunk', type=int, default=-1,
               help="Number of rows in a chunk.")
 @click.option('-bases', '--bases', default='self',
-              help='Wavelet bases to use. Give as str separated by | eg.'
-              '-bases self|db1|db2|db3|db4')
+              help='Wavelet bases to use. Give as comma separated str'
+              '-bases self,db1,db2,db3,db4')
 @click.option('-nlevels', '--nlevels', default=3,
               help='Number of wavelet decomposition levels')
 @click.option('-hessnorm', '--hessnorm', type=float,
@@ -151,8 +151,10 @@ def _backward(**kw):
     from astropy.io import fits
     import pywt
 
-    xds_name = f'{args.output_filename}_{args.product.upper()}.xds.zarr'
-    mds_name = f'{args.output_filename}_{args.product.upper()}.mds.zarr'
+    basename = f'{args.output_filename}_{args.product.upper()}'
+
+    xds_name = f'{basename}.xds.zarr'
+    mds_name = f'{basename}.mds.zarr'
 
     xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
     # daskms bug?
@@ -189,7 +191,7 @@ def _backward(**kw):
 
     # dictionary setup
     print("Setting up dictionary", file=log)
-    bases = args.bases.split('|')
+    bases = args.bases.split(',')
     ntots = []
     iys = {}
     sys = {}
@@ -350,15 +352,13 @@ def _backward(**kw):
         wgt = ds.WEIGHT.data
         uvw = ds.UVW.data
         freq = ds.FREQ.data
-        fbin_idx = ds.FBIN_IDX.data
-        fbin_counts = ds.FBIN_COUNTS.data
         beam = ds.BEAM.data
-        band_id = ds.band_id.data
+        b = ds.bandid
         # we only want to apply the beam once here
         residual = (dirty -
-                    hessian(beam * model[band_id], uvw, wgt, freq, None,
-                    fbin_idx, fbin_counts, hessopts))
-        dsw = dsw.assign(**{'RESIDUAL': (('band', 'x', 'y'), residual)})
+                    hessian(beam * model[b], uvw, wgt, freq, None,
+                    hessopts))
+        dsw = dsw.assign(**{'RESIDUAL': (('x', 'y'), residual)})
         writes.append(dsw)
 
     dask.compute(xds_to_zarr(writes, xds_name, columns='RESIDUAL'))
@@ -369,9 +369,9 @@ def _backward(**kw):
         residual = np.zeros((nband, nx, ny), dtype=args.output_type)
         wsums = np.zeros(nband)
         for ds in xds:
-            band_id = ds.band_id.values
-            wsums[band_id] += ds.WSUM.values
-            residual[band_id] += ds.RESIDUAL.values
+            b = ds.bandid
+            wsums[b] += ds.WSUM.values[0]
+            residual[b] += ds.RESIDUAL.values
         wsum = np.sum(wsums)
         residual /= wsum
 
@@ -388,9 +388,9 @@ def _backward(**kw):
         hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
         model_mfs = np.mean(model, axis=0)
-        save_fits(args.output_filename + '_model_mfs.fits', model_mfs, hdr_mfs)
+        save_fits(f'{basename}_model_mfs.fits', model_mfs, hdr_mfs)
         residual_mfs = np.sum(residual, axis=0)
-        save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs)
+        save_fits(f'{basename}_residual_mfs.fits', residual_mfs, hdr_mfs)
 
         if not args.no_fits_cubes:
             # need residual in Jy/beam
@@ -398,8 +398,8 @@ def _backward(**kw):
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
             fmask = wsums > 0
             residual[fmask] /= wsums[fmask, None, None]
-            save_fits(args.output_filename + '_model.fits', model, hdr)
-            save_fits(args.output_filename + '_residual.fits',
+            save_fits(f'{basename}_model.fits', model, hdr)
+            save_fits(f'{basename}_residual.fits',
                       residual, hdr)
 
     print("All done here.", file=log)
