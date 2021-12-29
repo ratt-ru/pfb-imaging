@@ -351,8 +351,8 @@ def _degrid(**kw):
 
         writes.append(xds_to_table(out_data, ms, columns=[args.model_column]))
 
-    dask.visualize(*writes, filename=args.output_filename + '_predict_graph.pdf',
-                   optimize_graph=False, collapse_outputs=True)
+    # dask.visualize(*writes, filename=args.output_filename + '_predict_graph.pdf',
+    #                optimize_graph=False, collapse_outputs=True)
 
     # if not args.mock:
     #     with performance_report(filename=args.output_filename + '_predict_per.html'):

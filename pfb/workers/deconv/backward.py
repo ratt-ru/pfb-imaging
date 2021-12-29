@@ -9,11 +9,6 @@ pyscilog.init('pfb')
 log = pyscilog.get_logger('BACKWARD')
 
 @cli.command(context_settings={'show_default': True})
-@click.option('-xds', '--xds', type=str, required=True,
-              help="Path to xarray dataset containing data products")
-@click.option('-mds', '--mds', type=str, required=True,
-              help="Path to xarray dataset containing model, dual and "
-              "weights from previous iteration.")
 @click.option('-mname', '--model-name', default='MODEL',
               help='Name of model in mds.')
 @click.option('-mask', '--mask', default=None,
@@ -23,6 +18,9 @@ log = pyscilog.get_logger('BACKWARD')
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
               help="Number of imaging bands")
+@click.option('-p', '--product', default='I',
+              help='Currently supports I, Q, U, and V. '
+              'Only single Stokes products currently supported.')
 @click.option('-rchunk', '--row-chunk', type=int, default=-1,
               help="Number of rows in a chunk.")
 @click.option('-bases', '--bases', default='self',
@@ -51,18 +49,18 @@ log = pyscilog.get_logger('BACKWARD')
 @click.option('--fits-mfs/--no-fits-mfs', default=True)
 @click.option('--no-fits-cubes/--fits-cubes', default=True)
 @click.option('--positivity/--no-positivity', default=True)
-@click.option('-pdtol', "--pd-tol", type=float, default=1e-5,
+@click.option('-pdtol', "--pd-tol", type=float, default=1e-3,
               help="Tolerance of conjugate gradient")
 @click.option('-pdmaxit', "--pd-maxit", type=int, default=100,
               help="Maximum number of iterations for primal dual")
 @click.option('-pdverb', "--pd-verbose", type=int, default=1,
               help="Verbosity of primal dual. "
               "Set to 2 for debugging or zero for silence.")
-@click.option('-pdrf', "--pd-report-freq", type=int, default=10,
+@click.option('-pdrf', "--pd-report-freq", type=int, default=5,
               help="Report freq for primal dual.")
-@click.option('-pmtol', "--pm-tol", type=float, default=1e-5,
+@click.option('-pmtol', "--pm-tol", type=float, default=1e-4,
               help="Tolerance of power method")
-@click.option('-pmmaxit', "--pm-maxit", type=int, default=100,
+@click.option('-pmmaxit', "--pm-maxit", type=int, default=50,
               help="Maximum number of iterations for power method")
 @click.option('-pmverb', "--pm-verbose", type=int, default=1,
               help="Verbosity of power method. "
@@ -153,22 +151,21 @@ def _backward(**kw):
     from astropy.io import fits
     import pywt
 
-    xds = xds_from_zarr(args.xds, chunks={'row':args.row_chunk})
-    nband = xds[0].nband
-    nx = xds[0].nx
-    ny = xds[0].ny
-    wsum = 0.0
-    for ds in xds:
-        wsum += ds.WSUM.values.sum()
+    xds_name = f'{args.output_filename}_{args.product.upper()}.xds.zarr'
+    mds_name = f'{args.output_filename}_{args.product.upper()}.mds.zarr'
 
-    try:
-        # always only one mds
-        mds = xr.open_zarr(args.mds,
-                           chunks={'band': 1, 'x': -1, 'y': -1})
-    except Exception as e:
-        print(f"You have to pass in a valid model dataset. "
-              f"No model found at {args.mds}", file=log)
-        raise e
+    xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
+    # daskms bug?
+    for i, ds in enumerate(xds):
+        xds[i] = ds.chunk({'row':-1})
+    # only a single mds (for now)
+    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    nband = mds.nband
+    nx = mds.nx
+    ny = mds.ny
+    for ds in xds:
+        assert ds.nx == nx
+        assert ds.ny == ny
 
     if 'UPDATE' in mds:
         update = mds.UPDATE.values
@@ -233,6 +230,10 @@ def _backward(**kw):
         for m in range(nbasis):
             alpha[m] = np.std(resid_comps[:, m])
 
+    wsum = 0.0
+    for ds in xds:
+        wsum += ds.WSUM.values[0]
+
     hessopts = {}
     hessopts['cell'] = xds[0].cell_rad
     hessopts['wstack'] = args.wstack
@@ -241,50 +242,34 @@ def _backward(**kw):
     hessopts['nthreads'] = args.nvthreads
 
     if args.use_psf:
-        print("Initialising psf", file=log)
         from pfb.operators.psf import psf_convolve_xds
-        from ducc0.fft import r2c
-        normfact = 1.0
 
-        psf = xds[0].PSF.data
-        _, nx_psf, ny_psf = psf.shape
-
-        iFs = np.fft.ifftshift
-
+        nx_psf, ny_psf = xds[0].nx_psf, xds[0].ny_psf
         npad_xl = (nx_psf - nx)//2
         npad_xr = nx_psf - nx - npad_xl
         npad_yl = (ny_psf - ny)//2
         npad_yr = ny_psf - ny - npad_yl
-        padding_psf = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+        padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
         unpad_x = slice(npad_xl, -npad_xr)
         unpad_y = slice(npad_yl, -npad_yr)
-        lastsize = ny + np.sum(padding_psf[-1])
-
-        # add psfhat to Dataset
-        for i, ds in enumerate(xds):
-            psf_pad = iFs(ds.PSF.data.compute(), axes=(1, 2))
-            psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                         nthreads=args.nthreads, inorm=0)
-
-            psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name=False)
-            ds = ds.assign({'PSFHAT':(('band', 'x_psf', 'y_psfo2'), psfhat)})
-            xds[i] = ds
+        lastsize = ny + np.sum(padding[-1])
 
         psfopts = {}
-        psfopts['padding'] = padding_psf[1:]
+        psfopts['padding'] = padding
         psfopts['unpad_x'] = unpad_x
         psfopts['unpad_y'] = unpad_y
         psfopts['lastsize'] = lastsize
         psfopts['nthreads'] = args.nvthreads
 
         hess = partial(psf_convolve_xds, xds=xds, psfopts=psfopts,
-                       sigmainv=args.sigmainv, wsum=wsum, mask=mask,
+                       wsum=wsum, sigmainv=args.sigmainv, mask=mask,
                        compute=True)
 
     else:
+        print("Solving for update using vis space approximation", file=log)
         hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
-                       sigmainv=args.sigmainv, wsum=wsum, mask=mask,
-                       compute=True)
+                        wsum=wsum, sigmainv=args.sigmainv, mask=mask,
+                        compute=True)
 
     if args.hessnorm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
@@ -371,12 +356,12 @@ def _backward(**kw):
         band_id = ds.band_id.data
         # we only want to apply the beam once here
         residual = (dirty -
-                    hessian(uvw, wgt, freq, beam * model[band_id], None,
+                    hessian(beam * model[band_id], uvw, wgt, freq, None,
                     fbin_idx, fbin_counts, hessopts))
         dsw = dsw.assign(**{'RESIDUAL': (('band', 'x', 'y'), residual)})
-        writes.append(xds_to_zarr(dsw, args.xds, columns='RESIDUAL'))
+        writes.append(dsw)
 
-    dask.compute(writes)
+    dask.compute(xds_to_zarr(writes, args.xds, columns='RESIDUAL'))
 
     if args.fits_mfs or not args.no_fits_cubes:
         print("Writing fits files", file=log)

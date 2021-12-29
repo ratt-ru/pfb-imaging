@@ -138,6 +138,9 @@ def _forward(**kw):
     mds_name = f'{args.output_filename}_{args.product.upper()}.mds.zarr'
 
     xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
+    # daskms bug?
+    for i, ds in enumerate(xds):
+        xds[i] = ds.chunk({'row':-1})
     # only a single mds (for now)
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
     nband = mds.nband
@@ -206,13 +209,12 @@ def _forward(**kw):
 
     else:
         print("Solving for update using vis space approximation", file=log)
-
-    hess2 = partial(hessian_xds, xds=xds, hessopts=hessopts,
-                    wsum=wsum, sigmainv=args.sigmainv, mask=mask,
-                    compute=True)
+        hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
+                        wsum=wsum, sigmainv=args.sigmainv, mask=mask,
+                        compute=True)
 
     # # import pdb; pdb.set_trace()
-    x = np.random.randn(nband, nx, ny).astype(np.float32)
+    # x = np.random.randn(nband, nx, ny)  #.astype(np.float32)
     # res = hess(x)
     # dask.visualize(res, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
@@ -220,27 +222,6 @@ def _forward(**kw):
     #                optimize_graph=False)
     # dask.visualize(res, filename=args.output_filename +
     #                '_hess_I_graph.pdf', optimize_graph=False)
-
-    res1 = hess(x)
-    res2 = hess2(x)
-
-    import matplotlib.pyplot as plt
-
-    for b in range(nband):
-        print(np.abs(res1[b] - res2[b]).max())
-        plt.figure('psf')
-        plt.imshow(res1[b])
-        plt.colorbar()
-
-        plt.figure('wgt')
-        plt.imshow(res2[b])
-        plt.colorbar()
-
-        plt.show()
-
-    import pdb; pdb.set_trace()
-
-    quit()
 
     cgopts = {}
     cgopts['tol'] = args.cg_tol
@@ -274,13 +255,14 @@ def _forward(**kw):
             b = ds.bandid
             # we only want to apply the beam once here
             residual = (dirty -
-                        hessian(uvw, wgt, freq, beam * update[b], None,
+                        hessian(beam * update[b], uvw, wgt, freq, None,
                                 hessopts))
             dsw = dsw.assign(**{'FORWARD_RESIDUAL': (('x', 'y'),
                                                       residual)})
-            writes.append(xds_to_zarr(dsw, xds_name, columns='FORWARD_RESIDUAL'))
 
-        dask.compute(writes)
+            writes.append(dsw)
+
+        dask.compute(xds_to_zarr(writes, xds_name, columns='FORWARD_RESIDUAL'))
 
     if args.fits_mfs or not args.no_fits_cubes:
         print("Writing fits files", file=log)
@@ -297,7 +279,6 @@ def _forward(**kw):
 
         if args.do_residual:
             xds = xds_from_zarr(xds_name)
-            import pdb; pdb.set_trace()
             residual = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband)
             for ds in xds:

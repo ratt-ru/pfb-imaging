@@ -40,13 +40,13 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
             # unnecessary beam application
             beam = mask
 
-        convim = hessian(uvw, wgt, freq, x[b], beam, hessopts)
+        convim = hessian(x[b], uvw, wgt, freq, beam, hessopts)
 
-        convim = inlined_array(convim, uvw)
+        # convim = inlined_array(convim, uvw)
 
         convims[b] += convim
 
-    convim = da.stack(convims, axis=0)/wsum
+    convim = da.stack(convims)/wsum
 
     if sigmainv:
         convim += x * sigmainv**2
@@ -57,7 +57,7 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
         return convim
 
 
-def _hessian_impl(uvw, weight, freq, x, beam,
+def _hessian_impl(x, uvw, weight, freq, beam,
                   cell=None,
                   wstack=None,
                   epsilon=None,
@@ -92,20 +92,20 @@ def _hessian_impl(uvw, weight, freq, x, beam,
     return convim
 
 
-def _hessian(uvw, weight, freq, x, beam, hessopts):
-    return _hessian_impl(uvw[0][0], weight[0][0], freq[0], x, beam,
+def _hessian(x, uvw, weight, freq, beam, hessopts):
+    return _hessian_impl(x, uvw[0][0], weight[0][0], freq[0], beam,
                          **hessopts)
 
-def hessian(uvw, weight, freq, x, beam, hessopts):
+def hessian(x, uvw, weight, freq, beam, hessopts):
     if beam is None:
         bout = None
     else:
         bout = ('nx', 'ny')
     return da.blockwise(_hessian, ('nx', 'ny'),
+                        x, ('nx', 'ny'),
                         uvw, ('row', 'three'),
                         weight, ('row', 'chan'),
                         freq, ('chan',),
-                        x, ('nx', 'ny'),
                         beam, bout,
                         hessopts, None,
                         dtype=x.dtype)

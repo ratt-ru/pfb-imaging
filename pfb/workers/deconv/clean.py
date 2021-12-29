@@ -9,16 +9,15 @@ pyscilog.init('pfb')
 log = pyscilog.get_logger('CLEAN')
 
 @cli.command(context_settings={'show_default': True})
-@click.option('-xds', '--xds', required=True,
-              help="Path to xarray dataset containing data products")
-@click.option('-mds', '--mds', type=str,
-              help="Path to xarray dataset containing model products.")
 @click.option('-rname', '--residual-name', default='RESIDUAL',
               help='Name of residual to use in xds')
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
               help="Number of imaging bands")
+@click.option('-p', '--product', default='I',
+              help='Currently supports I, Q, U, and V. '
+              'Only single Stokes products currently supported.')
 @click.option('-otype', '--output-type', default='f4',
               help="Data type of output")
 @click.option('-rchunk', '--row-chunk', type=int, default=-1,
@@ -173,12 +172,21 @@ def _clean(**kw):
     from pfb.deconv.clark import clark
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
 
-    xds = xds_from_zarr(args.xds, chunks={'row':args.row_chunk})
-    nband = xds[0].nband
-    nx = xds[0].nx
-    ny = xds[0].ny
-    nx_psf = xds[0].nx_psf
-    ny_psf = xds[0].ny_psf
+    xds_name = f'{args.output_filename}_{args.product.upper()}.xds.zarr'
+    mds_name = f'{args.output_filename}_{args.product.upper()}.mds.zarr'
+
+    xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
+    # daskms bug?
+    for i, ds in enumerate(xds):
+        xds[i] = ds.chunk({'row':-1})
+    # only a single mds (for now)
+    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    nband = mds.nband
+    nx = mds.nx
+    ny = mds.ny
+    for ds in xds:
+        assert ds.nx == nx
+        assert ds.ny == ny
 
     # stitch dirty/psf in apparent scale
     if args.residual_name in xds[0]:
@@ -200,22 +208,6 @@ def _clean(**kw):
     psf_mfs = np.sum(psf, axis=0)
     dirty_mfs = np.sum(dirty, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*args.epsilon
-
-    if args.mds is not None:
-        mds_name = args.mds
-        # only one mds (for now)
-        try:
-            mds = xr.open_zarr(mds_name,
-                               chunks={'band': 1, 'x': -1, 'y': -1})
-        except Exception as e:
-            print(f'{args.mds} not found or invalid', file=log)
-            raise e
-    else:
-        mds_name = args.output_filename + '.mds.zarr'
-        print(f"Model dataset not passed in. Initialising as {mds_name}.",
-              file=log)
-        # may not exist yet
-        mds = xr.Dataset()
 
     # set up Hessian
     from pfb.operators.hessian import hessian_xds
@@ -319,6 +311,7 @@ def _clean(**kw):
         mask = np.any(model, axis=0)
         mask = ndimage.binary_dilation(mask)
         mask = ndimage.binary_closing(mask)
+        mask = ndimage.binary_erosion(mask)
         if 'MASK' in mds:
             mask = np.logical_or(mask, mds.MASK.values)
         mds = mds.assign(**{
@@ -331,13 +324,13 @@ def _clean(**kw):
             'CLEAN_MODEL': (('band', 'x', 'y'), model)
     })
 
-    mds.to_zarr(mds_name, mode='a')
+    xds_to_zarr(mds, mds_name, columns='ALL')
 
     if args.do_residual:
         print("Computing residual", file=log)
         from pfb.operators.hessian import hessian
         # Required because of https://github.com/ska-sa/dask-ms/issues/171
-        xdsw = xds_from_zarr(args.xds, chunks={'band': 1}, columns='DIRTY')
+        xdsw = xds_from_zarr(xds_name, chunks={'band': 1}, columns='DIRTY')
         writes = []
         for ds, dsw in zip(xds, xdsw):
             dirty = ds.get(rname).data
@@ -353,9 +346,9 @@ def _clean(**kw):
                         hessian(uvw, wgt, freq, model[band_id], None,
                         fbin_idx, fbin_counts, hessopts))
             dsw = dsw.assign(**{'CLEAN_RESIDUAL': (('band', 'x', 'y'), residual)})
-            writes.append(xds_to_zarr(dsw, args.xds, columns='RESIDUAL'))
+            writes.append(dsw)
 
-        dask.compute(writes)
+        dask.compute(xds_to_zarr(writes, xds_name, columns='CLEAN_RESIDUAL'))
 
     if args.fits_mfs or not args.no_fits_cubes:
         print("Writing fits files", file=log)
@@ -376,7 +369,7 @@ def _clean(**kw):
         save_fits(args.output_filename + '_clean_model_mfs.fits', model_mfs, hdr_mfs)
 
         if args.do_residual:
-            xds = xds_from_zarr(args.xds, chunks={'band': 1})
+            xds = xds_from_zarr(xds_name, chunks={'band': 1})
             residual = np.zeros((nband, nx, ny), dtype=args.output_type)
             wsums = np.zeros(nband)
             for ds in xds:
