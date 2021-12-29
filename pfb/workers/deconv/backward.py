@@ -343,7 +343,7 @@ def _backward(**kw):
     # compute apparent residual per dataset
     from pfb.operators.hessian import hessian
     # Required because of https://github.com/ska-sa/dask-ms/issues/171
-    xdsw = xds_from_zarr(xds_name, chunks={'band': 1}, columns='DIRTY')
+    xdsw = xds_from_zarr(xds_name, columns='DIRTY')
     writes = []
     for ds, dsw in zip(xds, xdsw):
         dirty = ds.DIRTY.data
@@ -365,7 +365,7 @@ def _backward(**kw):
 
     if args.fits_mfs or not args.no_fits_cubes:
         print("Writing fits files", file=log)
-        xds = xds_from_zarr(xds_name, chunks={'band': 1})
+        xds = xds_from_zarr(xds_name)
         residual = np.zeros((nband, nx, ny), dtype=args.output_type)
         wsums = np.zeros(nband)
         for ds in xds:
