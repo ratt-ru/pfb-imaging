@@ -472,7 +472,8 @@ def _grid(**kw):
     coords = {'freq': freq_out}
     real_type = np.float64 if args.precision=='double' else np.float32
     model = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
-    data_vars = {'MODEL': (('band', 'x', 'y'), model)}
+    data_vars = {'MODEL': (('band', 'x', 'y'), model),
+                 'MASK': (('x', 'y'), np.zeros((nx, ny), dtype=bool))}
     mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
     mds_name = f'{args.output_filename}_{args.product.upper()}.mds.zarr'
     dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))

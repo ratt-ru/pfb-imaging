@@ -226,7 +226,7 @@ def _backward(**kw):
     # we set the alphas used for reweighting using the
     # current clean residuals when available
     alpha = np.ones(nbasis) * 1e-5
-    if 'CLEAN_RESIDUAL' in mds:
+    if 'CLEAN_RESIDUAL' in xds[0]:
         cresid = mds.CLEAN_RESIDUAL.values
         resid_comps = psiH(cresid)
         for m in range(nbasis):

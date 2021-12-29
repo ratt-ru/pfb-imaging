@@ -18,8 +18,6 @@ log = pyscilog.get_logger('CLEAN')
 @click.option('-p', '--product', default='I',
               help='Currently supports I, Q, U, and V. '
               'Only single Stokes products currently supported.')
-@click.option('-otype', '--output-type', default='f4',
-              help="Data type of output")
 @click.option('-rchunk', '--row-chunk', type=int, default=-1,
               help="Number of rows in a chunk.")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
@@ -172,8 +170,10 @@ def _clean(**kw):
     from pfb.deconv.clark import clark
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
 
-    xds_name = f'{args.output_filename}_{args.product.upper()}.xds.zarr'
-    mds_name = f'{args.output_filename}_{args.product.upper()}.mds.zarr'
+    basename = f'{args.output_filename}_{args.product.upper()}'
+
+    xds_name = f'{basename}.xds.zarr'
+    mds_name = f'{basename}.mds.zarr'
 
     xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
     # daskms bug?
@@ -184,6 +184,8 @@ def _clean(**kw):
     nband = mds.nband
     nx = mds.nx
     ny = mds.ny
+    nx_psf = xds[0].nx_psf
+    ny_psf = xds[0].ny_psf
     for ds in xds:
         assert ds.nx == nx
         assert ds.ny == ny
@@ -194,15 +196,15 @@ def _clean(**kw):
     else:
         rname = 'DIRTY'
     print(f'Using {rname} as residual', file=log)
-    dirty = np.zeros((nband, nx, ny), dtype=args.output_type)
-    psf = np.zeros((nband, nx_psf, ny_psf), dtype=args.output_type)
+    output_type = np.float64
+    dirty = np.zeros((nband, nx, ny), dtype=output_type)
+    psf = np.zeros((nband, nx_psf, ny_psf), dtype=output_type)
     wsum = 0
     for ds in xds:
-        d = ds.get(rname).values
-        band_id = ds.band_id.values
-        dirty[band_id] += d
-        psf[band_id] += ds.PSF.values
-        wsum += ds.WSUM.values.sum()
+        b = ds.bandid
+        dirty[b] += ds.get(rname).values
+        psf[b] += ds.PSF.values
+        wsum += ds.WSUM.values[0]
     dirty /= wsum
     psf /= wsum
     psf_mfs = np.sum(psf, axis=0)
@@ -307,11 +309,11 @@ def _clean(**kw):
 
     print("Saving results", file=log)
     if args.update_mask:
-        from scipy import ndimage
-        mask = np.any(model, axis=0)
-        mask = ndimage.binary_dilation(mask)
-        mask = ndimage.binary_closing(mask)
-        mask = ndimage.binary_erosion(mask)
+        # from scipy import ndimage
+        # mask = np.any(model, axis=0)
+        # mask = ndimage.binary_dilation(mask)
+        # mask = ndimage.binary_closing(mask)
+        # mask = ndimage.binary_erosion(mask)
         if 'MASK' in mds:
             mask = np.logical_or(mask, mds.MASK.values)
         mds = mds.assign(**{
@@ -337,15 +339,13 @@ def _clean(**kw):
             wgt = ds.WEIGHT.data
             uvw = ds.UVW.data
             freq = ds.FREQ.data
-            fbin_idx = ds.FBIN_IDX.data
-            fbin_counts = ds.FBIN_COUNTS.data
             beam = ds.BEAM.data
-            band_id = ds.band_id.data
+            b = ds.bandid
             # we only want to apply the beam once here
             residual = (dirty -
-                        hessian(uvw, wgt, freq, model[band_id], None,
-                        fbin_idx, fbin_counts, hessopts))
-            dsw = dsw.assign(**{'CLEAN_RESIDUAL': (('band', 'x', 'y'), residual)})
+                        hessian(model[b], uvw, wgt, freq, None,
+                        hessopts))
+            dsw = dsw.assign(**{'CLEAN_RESIDUAL': (('x', 'y'), residual)})
             writes.append(dsw)
 
         dask.compute(xds_to_zarr(writes, xds_name, columns='CLEAN_RESIDUAL'))
@@ -356,42 +356,40 @@ def _clean(**kw):
         ra = xds[0].ra
         dec = xds[0].dec
         radec = [ra, dec]
-
         cell_rad = xds[0].cell_rad
         cell_deg = np.rad2deg(cell_rad)
-
-        freq_out = np.unique(np.concatenate([ds.band.values for ds in xds]))
+        freq_out = mds.freq.data
         ref_freq = np.mean(freq_out)
         hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
         model_mfs = np.mean(model, axis=0)
 
-        save_fits(args.output_filename + '_clean_model_mfs.fits', model_mfs, hdr_mfs)
+        save_fits(f'{basename}_clean_model_mfs.fits', model_mfs, hdr_mfs)
 
         if args.do_residual:
             xds = xds_from_zarr(xds_name, chunks={'band': 1})
-            residual = np.zeros((nband, nx, ny), dtype=args.output_type)
+            residual = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband)
             for ds in xds:
-                band_id = ds.band_id.values
-                wsums[band_id] += ds.WSUM.values
-                residual[band_id] += ds.CLEAN_RESIDUAL.values
+                b = ds.bandid
+                wsums[b] += ds.WSUM.values[0]
+                residual[b] += ds.CLEAN_RESIDUAL.values
             wsum = np.sum(wsums)
             residual /= wsum
 
             residual_mfs = np.sum(residual, axis=0)
-            save_fits(args.output_filename + '_clean_residual_mfs.fits',
+            save_fits(f'{basename}_clean_residual_mfs.fits',
                       residual_mfs, hdr_mfs)
 
         if not args.no_fits_cubes:
             # need residual in Jy/beam
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
-            save_fits(args.output_filename + '_clean_model.fits', model, hdr)
+            save_fits(f'{basename}_clean_model.fits', model, hdr)
 
             if args.do_residual:
                 fmask = wsums > 0
                 residual[fmask] /= wsums[fmask, None, None]
-                save_fits(args.output_filename + '_clean_residual.fits',
-                        residual, hdr)
+                save_fits(f'{basename}_clean_residual.fits',
+                          residual, hdr)
 
     print("All done here.", file=log)
