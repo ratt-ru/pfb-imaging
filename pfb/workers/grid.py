@@ -14,7 +14,7 @@ log = pyscilog.get_logger('GRID')
 @click.option('-dc', '--data-column', default='DATA',
               help="Data or residual column to image."
               "Must be the same across MSs")
-@click.option('-wc', '--weight-column', default='WEIGHT_SPECTRUM',
+@click.option('-wc', '--weight-column', default=None,
               help="Column containing natural weights."
               "Must be the same across MSs")
 @click.option('-iwc', '--imaging-weight-column',
@@ -161,6 +161,8 @@ def _grid(**kw):
     from omegaconf import ListConfig
     if not isinstance(args.ms, list) and not isinstance(args.ms, ListConfig):
         args.ms = [args.ms]
+    if not isinstance(args.gain_table, list) and not isinstance(args.gain_table, ListConfig):
+        args.gain_table = [args.gain_table]
     OmegaConf.set_struct(args, True)
 
     import os
@@ -219,15 +221,21 @@ def _grid(**kw):
     # assumes measurement sets have the same columns
     xds = xds_from_ms(args.ms[0])
     columns = (args.data_column,
-               args.weight_column,
                args.flag_column,
                'UVW', 'ANTENNA1',
                'ANTENNA2', 'TIME', 'INTERVAL')
     schema = {}
-    schema[args.data_column] = {'dims': ('chan', 'corr')}\
-    # TODO - this won't work with WEIGHT column
-    schema[args.weight_column] = {'dims': ('chan', 'corr')}
+    schema[args.data_column] = {'dims': ('chan', 'corr')}
     schema[args.flag_column] = {'dims': ('chan', 'corr')}
+
+    # only WEIGHT column gets special treatment
+    # any other column must have channel axis
+    if args.weight_column is not None:
+        columns += (args.weight_column,)
+        if args.weight_column == 'WEIGHT':
+            schema[args.weight_column] = {'dims': ('corr')}
+        else:
+            schema[args.weight_column] = {'dims': ('chan', 'corr')}
 
     # flag row
     if 'FLAG_ROW' in xds[0]:
@@ -305,7 +313,7 @@ def _grid(**kw):
         gain_chunks[ms] = []
         tbin_idx[ms] = {}
         tbin_counts[ms] = {}
-        if args.gain_table is not None:
+        if args.gain_table[ims] is not None:
             G = xds_from_zarr(args.gain_table[ims].rstrip('/') + '::NET')
 
         for ids, ds in enumerate(xds):
@@ -338,7 +346,7 @@ def _grid(**kw):
             ms_chunks[ms].append({'row': rchunks,
                                   'chan': chan_chunks[ms][idt]})
 
-            if args.gain_table is not None:
+            if args.gain_table[ims] is not None:
                 gain = G[ids]  # TODO - how to make sure they are aligned?
                 tmp_dict = {}
                 for name, val in zip(gain.GAIN_AXES, gain.GAIN_SPEC):
@@ -362,7 +370,7 @@ def _grid(**kw):
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
                           table_schema=schema, group_cols=group_by)
 
-        if args.gain_table is not None:
+        if args.gain_table[ims] is not None:
             G = xds_from_zarr(args.gain_table[ims].rstrip('/') + '::NET',
                               chunks=gain_chunks[ms])
 
@@ -429,7 +437,7 @@ def _grid(**kw):
                 Inu = slice(f0, ff)
 
                 subds = ds[{'chan': Inu}]
-                if args.gain_table is not None:
+                if args.gain_table[ims] is not None:
                     # Only DI gains currently supported
                     jones = G[ids][{'gain_f': Inu}].gains.data
                 else:

@@ -194,13 +194,14 @@ def single_stokes(ds=None,
         'ny': ny,
         'nx_psf': nx_psf,
         'ny_psf': ny_psf,
-        'ny_psfo2': psfhat.shape[-1],
         'fieldid': ds.FIELD_ID,
         'ddid': ds.DATA_DESC_ID,
         'scanid': ds.SCAN_NUMBER,
         'bandid': int(bandid),
         'freq_out': freq_out
     }
+    if args.psf:
+        attrs['ny_psfo2'] = psfhat.shape[-1]
 
     out_ds = Dataset(data_vars, attrs=attrs)
 
