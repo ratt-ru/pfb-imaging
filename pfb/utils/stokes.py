@@ -217,7 +217,7 @@ def weight_data(data, weight, jones, tbin_idx, tbin_counts,
     elif jones.ndim == 6:
         jout = 'rafdxx'
         # TODO - how do we know if we should return
-        # jones[0][0] or jones[0][0][0] in function wrapper?
+        # jones[0][0][0] or jones[0][0][0][0] in function wrapper?
         # Not required with delayed
         raise NotImplementedError("Not yet implemented")
     res = da.blockwise(_weight_data, 'rf',
@@ -275,7 +275,7 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                     wgt[row, chan] = wval
                     vis[row, chan] = vis_func(gp[chan], gq[chan],
                                               weight[row, chan],
-                                              data[row, chan]) #/wval
+                                              data[row, chan])  #/wval
 
         return vis, wgt
     return _impl

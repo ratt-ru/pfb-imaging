@@ -212,8 +212,8 @@ def _forward(**kw):
     else:
         print("Solving for update using vis space approximation", file=log)
         hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
-                        wsum=wsum, sigmainv=args.sigmainv, mask=mask,
-                        compute=True)
+                       wsum=wsum, sigmainv=args.sigmainv, mask=mask,
+                       compute=True)
 
     # # import pdb; pdb.set_trace()
     # x = np.random.randn(nband, nx, ny)  #.astype(np.float32)

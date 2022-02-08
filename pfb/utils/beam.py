@@ -21,7 +21,6 @@ def katbeam(freq, nx, ny, cell_deg, beam_dtype=np.float32):
                         nx, None,
                         ny, None,
                         cell_deg, None,
-                        dtype, None,
-                        btype=None,
+                        beam_dtype, None,
                         new_axes={"nx": nx, "ny": ny},
                         dtype=beam_dtype)

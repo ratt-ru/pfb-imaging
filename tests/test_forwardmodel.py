@@ -10,7 +10,7 @@ pmp = pytest.mark.parametrize
 
 @pmp('do_beam', (False, True))
 @pmp('do_gains', (False, True))
-def test_forwardmodel(do_beam, do_gains):# tmp_path_factory):
+def test_forwardmodel(do_beam, do_gains, epsilon=1e-10):# tmp_path_factory):
     #test_dir = tmp_path_factory.mktemp("test_pfb")
     test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
@@ -95,7 +95,7 @@ def test_forwardmodel(do_beam, do_gains):# tmp_path_factory):
     for c in range(nchan):
         model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], model_att[c],
                                       pixsize_x=cell_rad, pixsize_y=cell_rad,
-                                      epsilon=1e-8, do_wstacking=True, nthreads=8)
+                                      epsilon=epsilon, do_wstacking=True, nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]
 
     ms.putcol('MODEL_DATA', model_vis.astype(np.complex64))
@@ -179,7 +179,7 @@ def test_forwardmodel(do_beam, do_gains):# tmp_path_factory):
     _grid(ms=str(test_dir / 'test_ascii_1h60.0s.MS'),
           data_column="DATA", weight_column=None, imaging_weight_column=None,
           flag_column='FLAG', gain_table=gain_path, product='I',
-          utimes_per_chunk=-1, row_out_chunk=10000, epsilon=1e-10,
+          utimes_per_chunk=-1, row_out_chunk=10000, epsilon=epsilon,
           precision='double', group_by_field=True, group_by_scan=True,
           group_by_ddid=True, wstack=True, double_accum=True,
           fits_mfs=True, no_fits_cubes=True, psf=True, dirty=True,
@@ -204,7 +204,7 @@ def test_forwardmodel(do_beam, do_gains):# tmp_path_factory):
     from pfb.workers.deconv.forward import _forward
     _forward(output_filename=outname, residual_name='DIRTY',
              mask='mds', nband=nchan, product='I', row_chunk=-1,
-             epsilon=1e-10, sigmainv=0.0, wstack=True, double_accum=True,
+             epsilon=epsilon, sigmainv=0.0, wstack=True, double_accum=True,
              use_psf=False, fits_mfs=True, no_fits_cubes=True,
              do_residual=False, cg_tol=1e-10, cg_minit=0,
              cg_maxit=100, cg_verbose=2, cg_report_freq=1, backtrack=False,
@@ -219,7 +219,7 @@ def test_forwardmodel(do_beam, do_gains):# tmp_path_factory):
 
     for i in range(nsource):
         # LB - only matches in apparent scale?
-        print(np.abs(model_inferred[:, Ix[i], Iy[i]] - model[:, Ix[i], Iy[i]]))
+        print(np.abs(model_inferred[:, Ix[i], Iy[i]]/model[:, Ix[i], Iy[i]]))
         # if do_beam:
         #     beam = pbeam[:, Ix[i], Iy[i]]
         #     assert_allclose(0.0, beam * (model_inferred[:, Ix[i], Iy[i]] -
