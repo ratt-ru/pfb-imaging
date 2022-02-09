@@ -30,9 +30,7 @@ def single_stokes(ds=None,
                   nx_psf=None,
                   ny_psf=None,
                   cell_rad=None,
-                  radec=None,
-                  do_beam=False,
-                  bda_weights=False):
+                  radec=None):
 
     if args.precision.lower() == 'single':
         real_type = np.float32
@@ -140,7 +138,7 @@ def single_stokes(ds=None,
     if args.weights:
         wgt = da.where(mask, wgt, 0.0)
         # TODO - BDA over frequency
-        if bda_weights:
+        if args.bda_weights:
             raise NotImplementedError("BDA not working yet")
             from africanus.averaging.dask import bda
 
@@ -177,9 +175,14 @@ def single_stokes(ds=None,
                              uvw.rechunk({0:args.row_out_chunk}))
 
     # TODO - interpolate beam
-    if do_beam:
-        from pfb.utils.beam import katbeam
-        beam = katbeam(freq_out, nx, ny, np.rad2deg(cell_rad))
+    if args.do_beam:
+        print("Estimating primary beam using L band JimBeam")
+        from pfb.utils.beam import _katbeam_impl
+        beam = _katbeam_impl(freq_out, nx, ny, np.rad2deg(cell_rad),
+                             real_type)
+        if beam.ndim > 2:
+            beam = np.squeeze(beam)
+        beam = da.from_array(beam, chunks=(nx, ny))
     else:
         beam = da.ones((nx, ny), chunks=(nx, ny), dtype=real_type)
 

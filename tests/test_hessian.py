@@ -8,11 +8,12 @@ import dask.array as da
 from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
-@pmp('do_beam', (False, True))
+@pmp('do_beam', (False, True,))
 @pmp('do_gains', (False, True))
-def test_residual(do_beam, do_gains, epsilon=1e-10, wstack=True):# tmp_path_factory):
-    #test_dir = tmp_path_factory.mktemp("test_pfb")
-    test_dir = Path('/home/landman/data/')
+@pmp('wstack', (False, True))
+def test_residual(do_beam, do_gains, wstack, tmp_path_factory):
+    test_dir = tmp_path_factory.mktemp("test_pfb")
+    # test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
@@ -65,17 +66,23 @@ def test_residual(do_beam, do_gains, epsilon=1e-10, wstack=True):# tmp_path_fact
 
     # model
     model = np.zeros((nchan, nx, ny), dtype=np.float64)
-    model[:, nx//2, ny//2] = 1.0
+    nsource = 10
+    Ix = np.random.randint(0, npix, nsource)
+    Iy = np.random.randint(0, npix, nsource)
+    alpha = -0.7 + 0.1 * np.random.randn(nsource)
+    I0 = 1.0 + np.abs(np.random.randn(nsource))
+    for i in range(nsource):
+        model[:, Ix[i], Iy[i]] = I0[i] * (freq/freq0) ** alpha[i]
 
     # TODO - interpolate beam
-    beam = np.ones((nchan, nx, ny), dtype=float)
     if do_beam:
-        from pfb.utils.beam import katbeam
-        for c in range(nchan):
-            beam[c] *= katbeam(freq[c], nx, ny, np.rad2deg(cell_rad),
-                               np.float64)
+        from pfb.utils.beam import _katbeam_impl
+        beam = _katbeam_impl(freq, nx, ny, np.rad2deg(cell_rad), np.float64)
+    else:
+        beam = np.ones((nchan, nx, ny), dtype=float)
 
     # model vis
+    epsilon = 1e-10
     from ducc0.wgridder import dirty2ms
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
@@ -171,29 +178,24 @@ def test_residual(do_beam, do_gains, epsilon=1e-10, wstack=True):# tmp_path_fact
           weights=True, bda_weights=False, do_beam=do_beam,
           output_filename=outname, nband=nchan,
           field_of_view=fov, super_resolution_factor=srf,
-          psf_oversize=1, cell_size=float(cell_size), nx=nx, ny=ny, nworkers=1,
+          psf_oversize=2, cell_size=float(cell_size), nx=nx, ny=ny, nworkers=1,
           nthreads_per_worker=1, nvthreads=8, mem_limit=8, nthreads=8,
           host_address=None, scheduler='single-threaded')
 
-    # dirty and psf should be the same and we should have
-    # ID - hess(model) == 0
     basename = f'{outname}_I'
     xds_name = f'{basename}.xds.zarr'
     xds = xds_from_zarr(xds_name, chunks={'band':1, 'row':-1})
-    # daskms bug?
+    # required because of https://github.com/ska-sa/dask-ms/issues/181
     for i, ds in enumerate(xds):
         xds[i] = ds.chunk({'row':-1})
 
     wsum = 0.0
     ID = np.zeros((nchan, nx, ny), dtype=float)
-    PSF = np.zeros((nchan, nx, ny), dtype=float)
     for ds in xds:
         b = ds.bandid
         wsum += ds.WSUM.values
         ID[b] += ds.DIRTY.values
-        PSF[b] += ds.PSF.values
     ID /= wsum
-    PSF /= wsum
 
     from pfb.operators.hessian import hessian_xds
     hessopts = {}
@@ -205,7 +207,40 @@ def test_residual(do_beam, do_gains, epsilon=1e-10, wstack=True):# tmp_path_fact
     Iconv = hessian_xds(model, xds, hessopts, wsum, 0.0, np.ones((nx, ny)),
                         compute=True, use_beam=do_beam)
 
-    assert_allclose(beam*ID, Iconv, atol=10*epsilon, rtol=1.0)
-    assert_allclose(beam*PSF, Iconv, atol=10*epsilon, rtol=1.0)
+    # TODO - why doesn't the beam work when wstack is False below?
+    # if wstack:
+    #     from pfb.operators.hessian import hessian_xds
+    #     hessopts = {}
+    #     hessopts['cell'] = cell_rad
+    #     hessopts['wstack'] = wstack
+    #     hessopts['epsilon'] = epsilon
+    #     hessopts['double_accum'] = True
+    #     hessopts['nthreads'] = 8
+    #     Iconv = hessian_xds(model, xds, hessopts, wsum, 0.0, np.ones((nx, ny)),
+    #                         compute=True, use_beam=do_beam)
+    # else:
+    #     from pfb.operators.psf import psf_convolve_xds
+    #     nx_psf, ny_psf = xds[0].nx_psf, xds[0].ny_psf
+    #     npad_xl = (nx_psf - nx)//2
+    #     npad_xr = nx_psf - nx - npad_xl
+    #     npad_yl = (ny_psf - ny)//2
+    #     npad_yr = ny_psf - ny - npad_yl
+    #     padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
+    #     unpad_x = slice(npad_xl, -npad_xr)
+    #     unpad_y = slice(npad_yl, -npad_yr)
+    #     lastsize = ny + np.sum(padding[-1])
 
-test_residual(True, True)
+    #     psfopts = {}
+    #     psfopts['padding'] = padding
+    #     psfopts['unpad_x'] = unpad_x
+    #     psfopts['unpad_y'] = unpad_y
+    #     psfopts['lastsize'] = lastsize
+    #     psfopts['nthreads'] = 8
+
+    #     Iconv = psf_convolve_xds(model, xds, psfopts, wsum, 0.0, np.ones((nx, ny)),
+    #                              compute=True, use_beam=do_beam)
+
+    # we should have ID == hess(model)
+    assert_allclose(beam*ID, Iconv, atol=10*epsilon, rtol=1.0)
+
+#test_residual(True, False, False)

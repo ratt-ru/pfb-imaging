@@ -140,7 +140,7 @@ def _forward(**kw):
     mds_name = f'{basename}.mds.zarr'
 
     xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
-    # daskms bug?
+    # required because of https://github.com/ska-sa/dask-ms/issues/181
     for i, ds in enumerate(xds):
         xds[i] = ds.chunk({'row':-1})
     # only a single mds (for now)
