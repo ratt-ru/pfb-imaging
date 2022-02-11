@@ -2,7 +2,7 @@ import numpy as np
 from functools import partial
 import dask.array as da
 from numpy.testing import assert_array_almost_equal
-from pfb.prox.prox_21 import prox_21, prox_21m
+from pfb.prox.prox_21 import prox_21
 from pfb.operators.psi import im2coef, coef2im
 import pywt
 import pytest
