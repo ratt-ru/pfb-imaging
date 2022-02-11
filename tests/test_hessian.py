@@ -181,7 +181,7 @@ def test_hessian(do_beam, do_gains, wstack, tmp_path_factory):
           utimes_per_chunk=-1, row_out_chunk=10000, epsilon=epsilon,
           precision='double', group_by_field=True, group_by_scan=True,
           group_by_ddid=True, wstack=wstack, double_accum=True,
-          fits_mfs=False, no_fits_cubes=True, psf=True, dirty=True,
+          fits_mfs=False, no_fits_cubes=True, psf=False, dirty=True,
           weights=True, bda_weights=False, do_beam=do_beam,
           output_filename=outname, nband=nchan,
           field_of_view=fov, super_resolution_factor=srf,

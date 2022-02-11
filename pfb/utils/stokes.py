@@ -181,7 +181,7 @@ def single_stokes(ds=None,
 
     # TODO - interpolate beam
     if args.do_beam:
-        print("Estimating primary beam using L band JimBeam")
+        # print("Estimating primary beam using L band JimBeam")
         from pfb.utils.beam import _katbeam_impl
         beam = _katbeam_impl(freq_out, nx, ny, np.rad2deg(cell_rad),
                              real_type)
