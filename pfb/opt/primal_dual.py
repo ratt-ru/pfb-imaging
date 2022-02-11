@@ -10,20 +10,19 @@ def primal_dual(
         v0,  # initial guess for primal and dual variables
         lam,  # regulariser strength,
         psi,  # linear operator in dual domain
+        psiH,  # adjoint of psi
         weights,  # weights for l1 thresholding
-        L,
+        L,  # spectral norm of Hessian
         prox,  # prox of regulariser
-        nu=1.0,  # spectral norms
+        nu=1.0,  # spectral norm of dictionary
         sigma=None,  # step size of dual update
         mask=None,  # regions where mask is False will be masked
         tol=1e-5,
         maxit=1000,
         positivity=True,
         report_freq=10,
-        axis=1,
         gamma=1.0,
         verbosity=1):
-
     # initialise
     x = x0.copy()
     v = v0.copy()
@@ -32,10 +31,10 @@ def primal_dual(
     def grad_func(x): return -A(xbar - x) / gamma
 
     if sigma is None:
-        sigma = L / 2.0
+        sigma = L / (2.0 * gamma)
 
     # stepsize control
-    tau = 0.9 / (L / 2.0 + sigma * nu**2)
+    tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
 
     # start iterations
     eps = 1.0
@@ -44,24 +43,16 @@ def primal_dual(
         vp = v.copy()
 
         # tmp prox variable
-        vtilde = v + sigma * psi.hdot(xp)
+        vtilde = v + sigma * psiH(xp)
 
         # dual update
         v = vtilde - sigma * prox(vtilde / sigma, lam / sigma,
-                                  weights, axis=axis)
+                                  weights)
 
         # primal update
-        x = xp - tau * (psi.dot(2 * v - vp) + grad_func(xp))
+        x = xp - tau * (psi(2 * v - vp) + grad_func(xp))
         if positivity:
             x[x < 0] = 0.0
-
-        # # apply mask
-        # if mask is not None:
-        #     if x.ndim == 3:
-        #         x = mask(x)
-        #     elif x.ndim == 4:
-        #         raise NotImplementedError("Why do we need this again?")
-        #         # x[1] = np.where(mask, x[1], 0.0)
 
         # convergence check
         eps = np.linalg.norm(x - xp) / np.linalg.norm(x)

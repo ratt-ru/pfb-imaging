@@ -8,31 +8,32 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('FORWARD')
 
-@cli.command()
-@click.option('-r', '--residual', required=True,
-              help="Path to residual.fits")
-@click.option('-p', '--psf', required=True,
-              help="Path to PSF.fits")
-@click.option('-mask', '--mask',
-              help="Path to mask.fits.")
-@click.option('-bm', '--beam-model',
-              help="Path to beam_model.fits or JimBeam.")
-@click.option('-band', '--band', default='L',
-              help='L or UHF band when using JimBeam.')
-@click.option('-wt', '--weight-table',
-              help="Path to weight table produced by psf worker")
+@cli.command(context_settings={'show_default': True})
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
+@click.option('-rname', '--residual-name', default='RESIDUAL',
+              help='Name of residual to use in xds')
+@click.option('-mask', '--mask', default=None,
+              help="Either path to mask.fits or set to mds to use "
+              "the mask contained in the mds.")
 @click.option('-nb', '--nband', type=int, required=True,
               help="Number of imaging bands")
-@click.option('-otype', '--output-type', default='f4',
-              help="Data type of output")
-@click.option('-eps', '--epsilon', type=float, default=1e-5,
+@click.option('-p', '--product', default='I',
+              help='Currently supports I, Q, U, and V. '
+              'Only single Stokes products currently supported.')
+@click.option('-rchunk', '--row-chunk', type=int, default=-1,
+              help="Number of rows in a chunk.")
+@click.option('-eps', '--epsilon', type=float, default=1e-7,
               help='Gridder accuracy')
 @click.option('-sinv', '--sigmainv', type=float, default=1.0,
-              help='Standard deviation of assumed GRF prior.')
+              help='Standard deviation of assumed GRF prior.'
+              'Set it to rms/nband if uncertain')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
+@click.option('--use-psf/--no-use-psf', default=True)
+@click.option('--fits-mfs/--no-fits-mfs', default=True)
+@click.option('--no-fits-cubes/--fits-cubes', default=True)
+@click.option('--do-residual/--no-do-residual', default=True)
 @click.option('-cgtol', "--cg-tol", type=float, default=1e-5,
               help="Tolerance of conjugate gradient")
 @click.option('-cgminit', "--cg-minit", type=int, default=10,
@@ -59,15 +60,19 @@ log = pyscilog.get_logger('FORWARD')
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
+@click.option('-scheduler', '--scheduler', default='distributed',
+              help="Total available threads. Default uses all available threads")
 def forward(**kw):
     '''
-    Extract flux at model locations.
+    Forward step aka flux mop.
 
-    Will write out the result of solving
+    Solves
 
-    x = (R.H W R + sigmainv**2 I)^{-1} ID
+    x = (A.H R.H W R A + sigmainv**2 I)^{-1} ID
 
-    assuming that R.H W R can be approximated as a convolution with the PSF.
+    with a suitable approximation to R.H W R (eg. convolution with the PSF,
+    BDA'd weights or none). Here A is the combination of mask and an
+    average beam pattern.
 
     If a host address is provided the computation can be distributed
     over imaging band and row. When using a distributed scheduler both
@@ -76,8 +81,6 @@ def forward(**kw):
     When using a local cluster, mem-limit and nthreads refer to the global
     memory and threads available, respectively. By default the gridder will
     use all available resources.
-
-    Disclaimer - Memory budgeting is still very crude!
 
     On a local cluster, the default is to use:
 
@@ -88,9 +91,13 @@ def forward(**kw):
     distributed case.
 
     if LocalCluster:
-        ngridder-threads = nthreads//(nworkers*nthreads_per_worker)
+        nvthreads = nthreads//(nworkers*nthreads_per_worker)
     else:
-        ngridder-threads = nthreads//nthreads-per-worker
+        nvthreads = nthreads//nthreads-per-worker
+
+    where nvthreads refers to the number of threads used to scale vertically
+    (eg. the number threads given to each gridder instance).
+
     '''
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
@@ -102,7 +109,7 @@ def forward(**kw):
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log)
+        args = set_client(args, stack, log, scheduler=args.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -116,241 +123,185 @@ def _forward(**kw):
     OmegaConf.set_struct(args, True)
 
     import numpy as np
-    import numexpr as ne
+    import xarray as xr
     import dask
     import dask.array as da
-    from dask.distributed import performance_report
-    from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
-    from pfb.opt.hogbom import hogbom
+    from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
+    from pfb.utils.fits import load_fits, set_wcs, save_fits
+    from pfb.operators.psi import im2coef, coef2im
+    from pfb.operators.hessian import hessian_xds
+    from pfb.opt.pcg import pcg
     from astropy.io import fits
+    import pywt
 
-    print("Loading residual", file=log)
-    residual = load_fits(args.residual, dtype=args.output_type).squeeze()
-    nband, nx, ny = residual.shape
-    hdr = fits.getheader(args.residual)
+    basename = f'{args.output_filename}_{args.product.upper()}'
 
-    print("Loading psf", file=log)
-    psf = load_fits(args.psf, dtype=args.output_type).squeeze()
-    _, nx_psf, ny_psf = psf.shape
-    hdr_psf = fits.getheader(args.psf)
+    xds_name = f'{basename}.xds.zarr'
+    mds_name = f'{basename}.mds.zarr'
 
-    wsums = np.amax(psf.reshape(-1, nx_psf*ny_psf), axis=1)
-    wsum = np.sum(wsums)
+    xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
+    # required because of https://github.com/ska-sa/dask-ms/issues/181
+    for i, ds in enumerate(xds):
+        xds[i] = ds.chunk({'row':-1})
+    # only a single mds (for now)
+    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    nband = mds.nband
+    nx = mds.nx
+    ny = mds.ny
+    for ds in xds:
+        assert ds.nx == nx
+        assert ds.ny == ny
 
-    psf /= wsum
-    psf_mfs = np.sum(psf, axis=0)
-
-    assert (psf_mfs.max() - 1.0) < 1e-4
-
-    residual /= wsum
-    residual_mfs = np.sum(residual, axis=0)
-
-    # get info required to set WCS
-    ra = np.deg2rad(hdr['CRVAL1'])
-    dec = np.deg2rad(hdr['CRVAL2'])
-    radec = [ra, dec]
-
-    cell_deg = np.abs(hdr['CDELT1'])
-    if cell_deg != np.abs(hdr['CDELT2']):
-        raise NotImplementedError('cell sizes have to be equal')
-    cell_rad = np.deg2rad(cell_deg)
-
-    l_coord, ref_l = data_from_header(hdr, axis=1)
-    l_coord -= ref_l
-    m_coord, ref_m = data_from_header(hdr, axis=2)
-    m_coord -= ref_m
-    freq_out, ref_freq = data_from_header(hdr, axis=3)
-
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-
-    save_fits(args.output_filename + '_residual_mfs.fits', residual_mfs, hdr_mfs,
-              dtype=args.output_type)
-
-    rms = np.std(residual_mfs)
-    rmax = np.abs(residual_mfs).max()
-
-    print("Initial peak residual = %f, rms = %f" % (rmax, rms), file=log)
-
-    # load beam
-    if args.beam_model is not None:
-        if args.beam_model.endswith('.fits'):  # beam already interpolated
-            bhdr = fits.getheader(args.beam_model)
-            l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
-            l_coord_beam -= ref_lb
-            if not np.array_equal(l_coord_beam, l_coord):
-                raise ValueError("l coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-            m_coord_beam, ref_mb = data_from_header(bhdr, axis=2)
-            m_coord_beam -= ref_mb
-            if not np.array_equal(m_coord_beam, m_coord):
-                raise ValueError("m coordinates of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-            freq_beam, _ = data_from_header(bhdr, axis=freq_axis)
-            if not np.array_equal(freq_out, freq_beam):
-                raise ValueError("Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
-
-            beam_image = load_fits(args.beam_model, dtype=args.output_type).squeeze()
-        elif args.beam_model.lower() == "jimbeam":
-            from katbeam import JimBeam
-            if args.band.lower() == 'l':
-                beam = JimBeam('MKAT-AA-L-JIM-2020')
-            elif args.band.lower() == 'uhf':
-                beam = JimBeam('MKAT-AA-UHF-JIM-2020')
-            else:
-                raise ValueError("Unkown band %s"%args.band[i])
-
-            xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
-            beam_image = np.zeros(residual.shape, dtype=args.output_type)
-            for v in range(freq_out.size):
-                # freq must be in MHz
-                beam_image[v] = beam.I(xx, yy, freq_out[v]/1e6).astype(args.output_type)
+    # stitch residuals after beam application
+    if args.residual_name in xds[0]:
+        rname = args.residual_name
     else:
-        beam_image = np.ones((nband, nx, ny), dtype=args.output_type)
+        rname = 'DIRTY'
+    print(f'Using {rname} as residual', file=log)
+    output_type = np.float64
+    residual = np.zeros((nband, nx, ny), dtype=output_type)
+    wsum = 0
+    for ds in xds:
+        dirty = ds.get(rname).values
+        beam = ds.BEAM.values
+        b = ds.bandid
+        residual[b] += dirty * beam
+        wsum += ds.WSUM.values[0]
+    residual /= wsum
 
-    if args.mask is not None:
-        mask = load_fits(args.mask).squeeze()
-        assert mask.shape == (nx, ny)
-        beam_image *= mask[None, :, :]
+    from pfb.utils.misc import init_mask
+    mask = init_mask(args.mask, mds, output_type, log)
 
-    beam_image = da.from_array(beam_image, chunks=(1, -1, -1))
+    try:
+        x0 = mds.CLEAN_MODEL.values
+    except:
+        print("Initialising model to all zeros", file=log)
+        x0 = np.zeros((nband, nx, ny), dtype=output_type)
 
-    # if weight table is provided we use the vis space Hessian approximation
-    if args.weight_table is not None:
-        print("Solving for update using vis space approximation", file=log)
-        normfact = wsum
-        from pfb.utils.misc import plan_row_chunk
-        from daskms.experimental.zarr import xds_from_zarr
+    hessopts = {}
+    hessopts['cell'] = xds[0].cell_rad
+    hessopts['wstack'] = args.wstack
+    hessopts['epsilon'] = args.epsilon
+    hessopts['double_accum'] = args.double_accum
+    hessopts['nthreads'] = args.nvthreads
 
-        xds = xds_from_zarr(args.weight_table)[0]
-        nrow = xds.row.size
-        freq = xds.chan.data
-        nchan = freq.size
+    if args.use_psf:
+        from pfb.operators.psf import psf_convolve_xds
 
-        # bin edges
-        fmin = freq.min()
-        fmax = freq.max()
-        fbins = np.linspace(fmin, fmax, nband + 1)
-
-        # chan <-> band mapping
-        band_mapping = {}
-        chan_chunks = {}
-        freq_bin_idx = {}
-        freq_bin_counts = {}
-        band_map = np.zeros(freq.size, dtype=np.int32)
-        for band in range(nband):
-            indl = freq >= fbins[band]
-            indu = freq < fbins[band + 1] + 1e-6
-            band_map = np.where(indl & indu, band, band_map)
-
-        # to dask arrays
-        bands, bin_counts = np.unique(band_map, return_counts=True)
-        band_mapping = tuple(bands)
-        chan_chunks = {'chan': tuple(bin_counts)}
-        freq = da.from_array(freq, chunks=tuple(bin_counts))
-        bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
-        freq_bin_idx = da.from_array(bin_idx, chunks=1)
-        freq_bin_counts = da.from_array(bin_counts, chunks=1)
-
-        max_chan_chunk = bin_counts.max()
-        bin_counts = tuple(bin_counts)
-        # the first factor of 3 accounts for the intermediate visibilities
-        # produced in Hessian (i.e. complex data + real weights)
-        memory_per_row = (3 * max_chan_chunk * xds.WEIGHT.data.itemsize +
-                          3 * xds.UVW.data.itemsize)
-
-        # get approx image size
-        pixel_bytes = np.dtype(args.output_type).itemsize
-        band_size = nx * ny * pixel_bytes
-
-        if args.host_address is None:
-            # nworker bands on single node
-            row_chunk = plan_row_chunk(args.mem_limit/args.nworkers, band_size, nrow,
-                                       memory_per_row, args.nthreads_per_worker)
-        else:
-            # single band per node
-            row_chunk = plan_row_chunk(args.mem_limit, band_size, nrow,
-                                       memory_per_row, args.nthreads_per_worker)
-
-        print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
-              (nrow, row_chunk, int(np.ceil(nrow / row_chunk))), file=log)
-
-        residual = da.from_array(residual, chunks=(1, -1, -1))
-        x0 = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=residual.dtype)
-
-        xds = xds_from_zarr(args.weight_table, chunks={'row': -1, #row_chunk,
-                            'chan': bin_counts})[0]
-
-        from pfb.opt.pcg import pcg_wgt
-
-        model = pcg_wgt(xds.UVW.data,
-                        xds.WEIGHT.data.astype(args.output_type),
-                        residual,
-                        x0,
-                        beam_image,
-                        freq,
-                        freq_bin_idx,
-                        freq_bin_counts,
-                        cell_rad,
-                        args.wstack,
-                        args.epsilon,
-                        args.double_accum,
-                        args.nvthreads,
-                        args.sigmainv,
-                        wsum,
-                        args.cg_tol,
-                        args.cg_maxit,
-                        args.cg_minit,
-                        args.cg_verbose,
-                        args.cg_report_freq,
-                        args.backtrack).compute()
-
-    else:  # we use the image space approximation
-        print("Solving for update using image space approximation", file=log)
-        normfact = 1.0
-        from pfb.operators.psf import hessian
-        from ducc0.fft import r2c
-        iFs = np.fft.ifftshift
-
+        nx_psf, ny_psf = xds[0].nx_psf, xds[0].ny_psf
         npad_xl = (nx_psf - nx)//2
         npad_xr = nx_psf - nx - npad_xl
         npad_yl = (ny_psf - ny)//2
         npad_yr = ny_psf - ny - npad_yl
-        padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+        padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
         unpad_x = slice(npad_xl, -npad_xr)
         unpad_y = slice(npad_yl, -npad_yr)
         lastsize = ny + np.sum(padding[-1])
-        psf_pad = iFs(psf, axes=(1, 2))
-        psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                     nthreads=nthreads, inorm=0)
 
-        psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
-        residual = da.from_array(residual, chunks=(1, -1, -1))
-        x0 = da.zeros((nband, nx, ny), chunks=(1, -1, -1))
+        psfopts = {}
+        psfopts['padding'] = padding
+        psfopts['unpad_x'] = unpad_x
+        psfopts['unpad_y'] = unpad_y
+        psfopts['lastsize'] = lastsize
+        psfopts['nthreads'] = args.nvthreads
 
+        hess = partial(psf_convolve_xds, xds=xds, psfopts=psfopts,
+                       wsum=wsum, sigmainv=args.sigmainv, mask=mask,
+                       compute=True)
 
-        from pfb.opt.pcg import pcg_psf
+    else:
+        print("Solving for update using vis space approximation", file=log)
+        hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
+                       wsum=wsum, sigmainv=args.sigmainv, mask=mask,
+                       compute=True)
 
-        model = pcg_psf(psfhat,
-                        residual,
-                        x0,
-                        beam_image,
-                        args.sigmainv,
-                        args.nvthreads,
-                        padding,
-                        unpad_x,
-                        unpad_y,
-                        lastsize,
-                        args.cg_tol,
-                        args.cg_maxit,
-                        args.cg_minit,
-                        args.cg_verbose,
-                        args.cg_report_freq,
-                        args.backtrack).compute()
+    # # import pdb; pdb.set_trace()
+    # x = np.random.randn(nband, nx, ny)  #.astype(np.float32)
+    # res = hess(x)
+    # dask.visualize(res, color="order", cmap="autumn",
+    #                node_attr={"penwidth": "4"},
+    #                filename=args.output_filename + '_hess_I_ordered_graph.pdf',
+    #                optimize_graph=False)
+    # dask.visualize(res, filename=args.output_filename +
+    #                '_hess_I_graph.pdf', optimize_graph=False)
 
+    cgopts = {}
+    cgopts['tol'] = args.cg_tol
+    cgopts['maxit'] = args.cg_maxit
+    cgopts['minit'] = args.cg_minit
+    cgopts['verbosity'] = args.cg_verbose
+    cgopts['report_freq'] = args.cg_report_freq
+    cgopts['backtrack'] = args.backtrack
 
-    print("Saving results", file=log)
-    save_fits(args.output_filename + '_update.fits', model, hdr)
-    model_mfs = np.mean(model, axis=0)
-    save_fits(args.output_filename + '_update_mfs.fits', model_mfs, hdr_mfs)
+    print("Solving for update", file=log)
+    update = pcg(hess, mask * residual, x0, **cgopts)
+
+    print("Writing update.", file=log)
+    update = da.from_array(update, chunks=(1, -1, -1))
+    mds = mds.assign(**{'UPDATE': (('band', 'x', 'y'),
+                     update)})
+    dask.compute(xds_to_zarr(mds, mds_name, columns='UPDATE'))
+
+    if args.do_residual:
+        print("Computing residual", file=log)
+        from pfb.operators.hessian import hessian
+        # Required because of https://github.com/ska-sa/dask-ms/issues/171
+        xdsw = xds_from_zarr(xds_name, columns='DIRTY')
+        writes = []
+        for ds, dsw in zip(xds, xdsw):
+            dirty = ds.get(rname).data
+            wgt = ds.WEIGHT.data
+            uvw = ds.UVW.data
+            freq = ds.FREQ.data
+            beam = ds.BEAM.data
+            b = ds.bandid
+            # we only want to apply the beam once here
+            residual = (dirty -
+                        hessian(beam * update[b], uvw, wgt, freq, None,
+                                hessopts))
+            dsw = dsw.assign(**{'FORWARD_RESIDUAL': (('x', 'y'),
+                                                      residual)})
+
+            writes.append(dsw)
+
+        dask.compute(xds_to_zarr(writes, xds_name, columns='FORWARD_RESIDUAL'))
+
+    if args.fits_mfs or not args.no_fits_cubes:
+        print("Writing fits files", file=log)
+        # construct a header from xds attrs
+        radec = [xds[0].ra, xds[0].dec]
+        cell_rad = xds[0].cell_rad
+        cell_deg = np.rad2deg(cell_rad)
+        freq_out = mds.freq.data
+        ref_freq = np.mean(freq_out)
+        hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+
+        update_mfs = np.mean(update, axis=0)
+        save_fits(f'{basename}_update_mfs.fits', update_mfs, hdr_mfs)
+
+        if args.do_residual:
+            xds = xds_from_zarr(xds_name)
+            residual = np.zeros((nband, nx, ny), dtype=np.float32)
+            wsums = np.zeros(nband)
+            for ds in xds:
+                b = ds.bandid
+                wsums[b] += ds.WSUM.values
+                residual[b] += ds.FORWARD_RESIDUAL.values.astype(np.float32)
+            wsum = np.sum(wsums)
+            residual /= wsum
+
+            residual_mfs = np.sum(residual, axis=0)
+            save_fits(f'{basename}_forward_residual_mfs.fits',
+                      residual_mfs, hdr_mfs)
+
+        if not args.no_fits_cubes:
+            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
+            save_fits(f'{basename}_update.fits', update, hdr)
+
+            if args.do_residual:
+                fmask = wsums > 0
+                residual[fmask] /= wsums[fmask, None, None]
+                save_fits(f'{basename}_forward_residual.fits',
+                          residual, hdr)
 
     print("All done here.", file=log)

@@ -8,36 +8,47 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('CLEAN')
 
-@cli.command()
-@click.option('-d', '--dirty', required=True,
-              help="Path to dirty.")
-@click.option('-p', '--psf', required=True,
-              help="Path to PSF")
-@click.option('-wt', '--weight-table',
-              help="Path to weight table produced by psf worker")
+@cli.command(context_settings={'show_default': True})
+@click.option('-rname', '--residual-name', default='RESIDUAL',
+              help='Name of residual to use in xds')
 @click.option('-o', '--output-filename', type=str, required=True,
               help="Basename of output.")
 @click.option('-nb', '--nband', type=int, required=True,
               help="Number of imaging bands")
-@click.option('-otype', '--output-type', default='f4',
-              help="Data type of output")
+@click.option('-p', '--product', default='I',
+              help='Currently supports I, Q, U, and V. '
+              'Only single Stokes products currently supported.')
+@click.option('-rchunk', '--row-chunk', type=int, default=-1,
+              help="Number of rows in a chunk.")
 @click.option('-eps', '--epsilon', type=float, default=1e-5,
               help='Gridder accuracy')
 @click.option('--wstack/--no-wstack', default=True)
 @click.option('--double-accum/--no-double-accum', default=True)
+@click.option('--use-clark/--no-use-clark', default=True)
+@click.option('--update-mask/--no-upadte-mask', default=True)
+@click.option('--fits-mfs/--no-fits-mfs', default=True)
+@click.option('--no-fits-cubes/--fits-cubes', default=True)
+@click.option('--do-residual/--no-do-residual', default=True)
 @click.option('-nmiter', '--nmiter', type=int, default=5,
               help="Number of major cycles")
-@click.option('-hbg', "--hb-gamma", type=float, default=0.1,
-              help="Minor loop gain of Hogbom")
-@click.option('-hbpf', "--hb-peak-factor", type=float, default=0.1,
-              help="Peak factor of Hogbom")
-@click.option('-hbmaxit', "--hb-maxit", type=int, default=5000,
-              help="Maximum number of iterations for Hogbom")
-@click.option('-hbverb', "--hb-verbose", type=int, default=0,
-              help="Verbosity of Hogbom. Set to 2 for debugging or "
+@click.option('-th', '--threshold', type=float,
+              help='Stop cleaning when the MFS residual reaches '
+              'this threshold.')
+@click.option('-gamma', "--gamma", type=float, default=0.05,
+              help="Minor loop gain of Hogbom/Clark")
+@click.option('-pf', "--peak-factor", type=float, default=0.15,
+              help="Peak factor of Hogbom/Clark")
+@click.option('-spf', "--sub-peak-factor", type=float, default=0.75,
+              help="Peak factor in sub-minor loop of Clark")
+@click.option('-maxit', "--maxit", type=int, default=50,
+              help="Maximum number of iterations for Hogbom/Clark")
+@click.option('-smaxit', "--sub-maxit", type=int, default=5000,
+              help="Maximum number of sub-minor iterations for Clark")
+@click.option('-verb', "--verbose", type=int, default=0,
+              help="Verbosity of Hogbom/Clark. Set to 2 for debugging or "
               "zero for silence.")
-@click.option('-hbrf', "--hb-report-freq", type=int, default=10,
-              help="Report freq for hogbom.")
+@click.option('-rf', "--report-freq", type=int, default=10,
+              help="Report freq for Hogbom/Clark.")
 @click.option('-ha', '--host-address',
               help='Address where the distributed client lives. '
               'Will use a local cluster if no address is provided')
@@ -51,22 +62,49 @@ log = pyscilog.get_logger('CLEAN')
               help="Memory limit in GB. Default uses all available memory")
 @click.option('-nthreads', '--nthreads', type=int,
               help="Total available threads. Default uses all available threads")
+@click.option('-scheduler', '--scheduler', default='distributed',
+              help="Total available threads. Default uses all available threads")
 def clean(**kw):
     '''
     Single-scale clean.
 
-    If the optional weight-table argument points to a valid weight table
-    (created by the psf worker) the algorithm will approximate gradients using
-    the diagonal Mueller weights assumption (exact for Stokes I imaging) i.e.
+    The algorithm always acts on the average apparent dirty image and PSF
+    provided by xds. This means there is only ever a single dirty image
+    and PSF and the algorithm only provides an approximate apparent model
+    that is compatible with them. The intrinsic model can be obtained using
+    the forward worker.
 
-    IR = ID - R.H W R x
+    Two variants of single scale clean are currently implemented viz.
+    Hogbom and Clark.
 
-    otherwise it is a pure image space algorithm i.e.
+    Hogbom is the vanilla clean implementation, the full PSF will be
+    subtracted at every iteration.
 
-    IR = ID - PSF.convolve(x)
+    Clark clean defines an adaptive mask that changes between iterations.
+    The mask is defined by all pixels that are above sub-peak-factor * Imax
+    where Imax is the current maximum in the MFS residual. A sub-minor cycle
+    is performed only within this mask i.e. peak finding and PSF subtraction
+    is confined to the mask until the residual within the mask decreases to
+    sub-peak-factor * Imax. At the end of the sub-minor cycle an approximate
+    residual is computed as
 
-    The latter is exact in the absence of wide-field effects and is usually
-    much faster.
+    IR -= PSF.convolve(model)
+
+    with no mask in place. The mask is then recomputed and the sub-minor cycle
+    repeated until the residual reaches peak-factor * Imax0 where Imax0 is the
+    peak in the residual at the outset of the minor cycle.
+
+    At the end of each minor cycle we recompute the residual using
+
+    IR = R.H W (V - R x) = ID - R.H W R x
+
+    where ID is the dirty image, R and R.H are degridding and gridding
+    operators respectively and W are the effective weights i.e. the weights
+    after image weighting, applying calibration solutions and taking the
+    weighted sum over correlations. This is usually called a major cycle
+    but we get away from explicitly loading in the visibilities by writing
+    the residual in terms of the dirty image and an application of the
+    Hessian.
 
     If a host address is provided the computation can be distributed
     over imaging band and row. When using a distributed scheduler both
@@ -76,7 +114,9 @@ def clean(**kw):
     memory and threads available, respectively. By default the gridder will
     use all available resources.
 
-    Disclaimer - Memory budgeting is still very crude!
+    When using a local cluster, mem-limit and nthreads refer to the global
+    memory and threads available, respectively. By default the gridder will
+    use all available resources.
 
     On a local cluster, the default is to use:
 
@@ -90,6 +130,10 @@ def clean(**kw):
         nvthreads = nthreads//(nworkers*nthreads_per_worker)
     else:
         nvthreads = nthreads//nthreads-per-worker
+
+    where nvthreads refers to the number of threads used to scale vertically
+    (eg. the number threads given to each gridder instance).
+
     '''
     args = OmegaConf.create(kw)
     pyscilog.log_to_file(args.output_filename + '.log')
@@ -102,7 +146,7 @@ def clean(**kw):
     with ExitStack() as stack:
         # numpy imports have to happen after this step
         from pfb import set_client
-        set_client(args, stack, log)
+        set_client(args, stack, log, scheduler=args.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -116,137 +160,73 @@ def _clean(**kw):
     OmegaConf.set_struct(args, True)
 
     import numpy as np
+    import xarray as xr
     import numexpr as ne
     import dask
     import dask.array as da
     from dask.distributed import performance_report
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
-    from pfb.opt.hogbom import hogbom
-    from astropy.io import fits
+    from pfb.deconv.hogbom import hogbom
+    from pfb.deconv.clark import clark
+    from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
 
-    print("Loading dirty", file=log)
-    dirty = load_fits(args.dirty, dtype=args.output_type).squeeze()
-    nband, nx, ny = dirty.shape
-    hdr = fits.getheader(args.dirty)
+    basename = f'{args.output_filename}_{args.product.upper()}'
 
-    print("Loading psf", file=log)
-    psf = load_fits(args.psf, dtype=args.output_type).squeeze()
-    _, nx_psf, ny_psf = psf.shape
-    hdr_psf = fits.getheader(args.psf)
+    xds_name = f'{basename}.xds.zarr'
+    mds_name = f'{basename}.mds.zarr'
 
-    wsums = np.amax(psf.reshape(-1, nx_psf*ny_psf), axis=1)
-    wsum = np.sum(wsums)
+    xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
+    # daskms bug?
+    for i, ds in enumerate(xds):
+        xds[i] = ds.chunk({'row':-1})
+    # only a single mds (for now)
+    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    nband = mds.nband
+    nx = mds.nx
+    ny = mds.ny
+    nx_psf = xds[0].nx_psf
+    ny_psf = xds[0].ny_psf
+    for ds in xds:
+        assert ds.nx == nx
+        assert ds.ny == ny
 
+    # stitch dirty/psf in apparent scale
+    if args.residual_name in xds[0]:
+        rname = args.residual_name
+    else:
+        rname = 'DIRTY'
+    print(f'Using {rname} as residual', file=log)
+    output_type = np.float64
+    dirty = np.zeros((nband, nx, ny), dtype=output_type)
+    psf = np.zeros((nband, nx_psf, ny_psf), dtype=output_type)
+    wsum = 0
+    for ds in xds:
+        b = ds.bandid
+        dirty[b] += ds.get(rname).values
+        psf[b] += ds.PSF.values
+        wsum += ds.WSUM.values[0]
+    dirty /= wsum
     psf /= wsum
     psf_mfs = np.sum(psf, axis=0)
-
-    assert (psf_mfs.max() - 1.0) < 1e-4
-
-    dirty /= wsum
     dirty_mfs = np.sum(dirty, axis=0)
+    assert (psf_mfs.max() - 1.0) < 2*args.epsilon
 
-    # get info required to set WCS
-    ra = np.deg2rad(hdr['CRVAL1'])
-    dec = np.deg2rad(hdr['CRVAL2'])
-    radec = [ra, dec]
+    # set up Hessian
+    from pfb.operators.hessian import hessian_xds
+    hessopts = {}
+    hessopts['cell'] = xds[0].cell_rad
+    hessopts['wstack'] = args.wstack
+    hessopts['epsilon'] = args.epsilon
+    hessopts['double_accum'] = args.double_accum
+    hessopts['nthreads'] = args.nvthreads
+    # always clean in apparent scale
+    hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
+                   wsum=wsum, sigmainv=0, mask=np.ones_like(dirty_mfs),
+                   compute=True, use_beam=False)
 
-    cell_deg = np.abs(hdr['CDELT1'])
-    if cell_deg != np.abs(hdr['CDELT2']):
-        raise NotImplementedError('cell sizes have to be equal')
-    cell_rad = np.deg2rad(cell_deg)
-
-    freq_out, ref_freq = data_from_header(hdr, axis=3)
-
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-
-    save_fits(args.output_filename + '_dirty_mfs.fits', dirty_mfs, hdr_mfs,
-              dtype=args.output_type)
-
-    # set up Hessian approximation
-    if args.weight_table is not None:
-        normfact = wsum
-        from africanus.gridding.wgridder.dask import hessian
-        from pfb.utils.misc import plan_row_chunk
-        from daskms.experimental.zarr import xds_from_zarr
-
-        xds = xds_from_zarr(args.weight_table)[0]
-        nrow = xds.row.size
-        freqs = xds.chan.data
-        nchan = freqs.size
-
-        # bin edges
-        fmin = freqs.min()
-        fmax = freqs.max()
-        fbins = np.linspace(fmin, fmax, nband + 1)
-
-        # chan <-> band mapping
-        band_mapping = {}
-        chan_chunks = {}
-        freq_bin_idx = {}
-        freq_bin_counts = {}
-        band_map = np.zeros(freqs.size, dtype=np.int32)
-        for band in range(nband):
-            indl = freqs >= fbins[band]
-            indu = freqs < fbins[band + 1] + 1e-6
-            band_map = np.where(indl & indu, band, band_map)
-
-        # to dask arrays
-        bands, bin_counts = np.unique(band_map, return_counts=True)
-        band_mapping = tuple(bands)
-        chan_chunks = {'chan': tuple(bin_counts)}
-        freqs = da.from_array(freqs, chunks=tuple(bin_counts))
-        bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
-        freq_bin_idx = da.from_array(bin_idx, chunks=1)
-        freq_bin_counts = da.from_array(bin_counts, chunks=1)
-
-        max_chan_chunk = bin_counts.max()
-        bin_counts = tuple(bin_counts)
-        # the first factor of 3 accounts for the intermediate visibilities
-        # produced in Hessian (i.e. complex data + real weights)
-        memory_per_row = (3 * max_chan_chunk * xds.WEIGHT.data.itemsize +
-                          3 * xds.UVW.data.itemsize)
-
-        # get approx image size
-        pixel_bytes = np.dtype(args.output_type).itemsize
-        band_size = nx * ny * pixel_bytes
-
-        if args.host_address is None:
-            # nworker bands on single node
-            row_chunk = plan_row_chunk(args.mem_limit/args.nworkers,
-                                       band_size, nrow, memory_per_row,
-                                       args.nthreads_per_worker)
-        else:
-            # single band per node
-            row_chunk = plan_row_chunk(args.mem_limit, band_size, nrow,
-                                       memory_per_row,
-                                       args.nthreads_per_worker)
-
-        print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
-              (nrow, row_chunk, int(np.ceil(nrow / row_chunk))), file=log)
-
-
-        def convolver(x):
-            model = da.from_array(x,
-                          chunks=(1, nx, ny), name=False)
-
-            xds = xds_from_zarr(args.weight_table, chunks={'row': row_chunk,
-                                'chan': bin_counts})[0]
-
-            convolvedim = hessian(xds.UVW.data,
-                                  freqs,
-                                  model,
-                                  freq_bin_idx,
-                                  freq_bin_counts,
-                                  cell_rad,
-                                  weights=xds.WEIGHT.data.astype(args.output_type),
-                                  nthreads=args.nvthreads,
-                                  epsilon=args.epsilon,
-                                  do_wstacking=args.wstack,
-                                  double_accum=args.double_accum)
-            return convolvedim
-    else:
-        normfact = 1.0
-        from pfb.operators.psf import hessian
+    # to set up psf convolve when using Clark
+    if args.use_clark:
+        from pfb.operators.psf import psf_convolve
         from ducc0.fft import r2c
         iFs = np.fft.ifftshift
 
@@ -260,54 +240,60 @@ def _clean(**kw):
         lastsize = ny + np.sum(padding[-1])
         psf_pad = iFs(psf, axes=(1, 2))
         psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                     nthreads=nthreads, inorm=0)
+                     nthreads=args.nvthreads, inorm=0)
 
         psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
-
-        def convolver(x):
-            model = da.from_array(x,
-                          chunks=(1, nx, ny), name=False)
-
-
-            convolvedim = hessian(model,
-                                  psfhat,
-                                  padding,
-                                  nvthreads,
-                                  unpad_x,
-                                  unpad_y,
-                                  lastsize)
-            return convolvedim
-
-        # psfo = PSF(psf, dirty.shape, nthreads=args.nthreads)
-        # def convolver(x): return psfo.convolve(x)
+        psfopts = {}
+        psfopts['padding'] = padding[1:]
+        psfopts['unpad_x'] = unpad_x
+        psfopts['unpad_y'] = unpad_y
+        psfopts['lastsize'] = lastsize
+        psfopts['nthreads'] = args.nvthreads
+        psfo = partial(psf_convolve, psfhat=psfhat, beam=None, psfopts=psfopts)
 
     rms = np.std(dirty_mfs)
     rmax = np.abs(dirty_mfs).max()
 
-    print("Iter %i: peak residual = %f, rms = %f" % (
-                0, rmax, rms), file=log)
+    print("Iter %i: peak residual = %f, rms = %f" % (0, rmax, rms), file=log)
 
     residual = dirty.copy()
     residual_mfs = dirty_mfs.copy()
     model = np.zeros_like(residual)
     for k in range(args.nmiter):
-        print("Running Hogbom", file=log)
-        x = hogbom(residual, psf,
-                   gamma=args.hb_gamma,
-                   pf=args.hb_peak_factor,
-                   maxit=args.hb_maxit,
-                   verbosity=args.hb_verbose,
-                   report_freq=args.hb_report_freq)
+        if args.use_clark:
+            print("Running Clark", file=log)
+            x = clark(residual, psf, psfo=psfo,
+                      gamma=args.gamma,
+                      pf=args.peak_factor,
+                      maxit=args.maxit,
+                      subpf=args.sub_peak_factor,
+                      submaxit=args.sub_maxit,
+                      verbosity=args.verbose,
+                      report_freq=args.report_freq)
+        else:
+            print("Running Hogbom", file=log)
+            x = hogbom(residual, psf,
+                       gamma=args.gamma,
+                       pf=args.peak_factor,
+                       maxit=args.maxit,
+                       verbosity=args.verbose,
+                       report_freq=args.report_freq)
 
         model += x
-        print("Getting residual", file=log)
 
-        convimage = convolver(model)
-        dask.visualize(convimage, filename=args.output_filename + '_hessian' + str(k) + '_graph.pdf', optimize_graph=False)
-        with performance_report(filename=args.output_filename + '_hessian' + str(k) + '_per.html'):
-            convimage = dask.compute(convimage, optimize_graph=False)[0]
-        ne.evaluate('dirty - convimage/normfact', out=residual, casting='same_kind')
-        ne.evaluate('sum(residual, axis=0)', out=residual_mfs, casting='same_kind')
+        print("Getting residual", file=log)
+        convimage = hess(x)
+        ne.evaluate('residual - convimage', out=residual,
+                    casting='same_kind')
+        ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
+                    casting='same_kind')
+
+        # save_fits(args.output_filename + f'_residual_mfs{k}.fits',
+        #           residual_mfs, hdr_mfs)
+        # save_fits(args.output_filename + f'_model_mfs{k}.fits',
+        #           np.mean(model, axis=0), hdr_mfs)
+        # save_fits(args.output_filename + f'_convim_mfs{k}.fits',
+        #           np.sum(convimage, axis=0), hdr_mfs)
 
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
@@ -315,12 +301,95 @@ def _clean(**kw):
         print("Iter %i: peak residual = %f, rms = %f" % (
                 k+1, rmax, rms), file=log)
 
+        if args.threshold is not None:
+            if rmax <= args.threshold:
+                print("Terminating because final threshold has been reached",
+                      file=log)
+                break
 
     print("Saving results", file=log)
-    save_fits(args.output_filename + '_model.fits', model, hdr)
-    model_mfs = np.mean(model, axis=0)
-    save_fits(args.output_filename + '_model_mfs.fits', model_mfs, hdr_mfs)
-    save_fits(args.output_filename + '_residual.fits', residual*wsums[:, None, None], hdr)
-    save_fits(args.output_filename + '_residual.fits', residual_mfs, hdr_mfs)
+    if args.update_mask:
+        # from scipy import ndimage
+        # mask = np.any(model, axis=0)
+        # mask = ndimage.binary_dilation(mask)
+        # mask = ndimage.binary_closing(mask)
+        # mask = ndimage.binary_erosion(mask)
+        if 'MASK' in mds:
+            mask = np.logical_or(mask, mds.MASK.values)
+        mds = mds.assign(**{
+                'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
+        })
+
+
+    model = da.from_array(model, chunks=(1, -1, -1))
+    mds = mds.assign(**{
+            'CLEAN_MODEL': (('band', 'x', 'y'), model)
+    })
+
+    xds_to_zarr(mds, mds_name, columns='ALL')
+
+    if args.do_residual:
+        print("Computing residual", file=log)
+        from pfb.operators.hessian import hessian
+        # Required because of https://github.com/ska-sa/dask-ms/issues/171
+        xdsw = xds_from_zarr(xds_name, chunks={'band': 1}, columns='DIRTY')
+        writes = []
+        for ds, dsw in zip(xds, xdsw):
+            dirty = ds.get(rname).data
+            wgt = ds.WEIGHT.data
+            uvw = ds.UVW.data
+            freq = ds.FREQ.data
+            beam = ds.BEAM.data
+            b = ds.bandid
+            # we only want to apply the beam once here
+            residual = (dirty -
+                        hessian(model[b], uvw, wgt, freq, None,
+                        hessopts))
+            dsw = dsw.assign(**{'CLEAN_RESIDUAL': (('x', 'y'), residual)})
+            writes.append(dsw)
+
+        dask.compute(xds_to_zarr(writes, xds_name, columns='CLEAN_RESIDUAL'))
+
+    if args.fits_mfs or not args.no_fits_cubes:
+        print("Writing fits files", file=log)
+        # construct a header from xds attrs
+        ra = xds[0].ra
+        dec = xds[0].dec
+        radec = [ra, dec]
+        cell_rad = xds[0].cell_rad
+        cell_deg = np.rad2deg(cell_rad)
+        freq_out = mds.freq.data
+        ref_freq = np.mean(freq_out)
+        hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+
+        model_mfs = np.mean(model, axis=0)
+
+        save_fits(f'{basename}_clean_model_mfs.fits', model_mfs, hdr_mfs)
+
+        if args.do_residual:
+            xds = xds_from_zarr(xds_name, chunks={'band': 1})
+            residual = np.zeros((nband, nx, ny), dtype=np.float32)
+            wsums = np.zeros(nband)
+            for ds in xds:
+                b = ds.bandid
+                wsums[b] += ds.WSUM.values[0]
+                residual[b] += ds.CLEAN_RESIDUAL.values
+            wsum = np.sum(wsums)
+            residual /= wsum
+
+            residual_mfs = np.sum(residual, axis=0)
+            save_fits(f'{basename}_clean_residual_mfs.fits',
+                      residual_mfs, hdr_mfs)
+
+        if not args.no_fits_cubes:
+            # need residual in Jy/beam
+            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
+            save_fits(f'{basename}_clean_model.fits', model, hdr)
+
+            if args.do_residual:
+                fmask = wsums > 0
+                residual[fmask] /= wsums[fmask, None, None]
+                save_fits(f'{basename}_clean_residual.fits',
+                          residual, hdr)
 
     print("All done here.", file=log)

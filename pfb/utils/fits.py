@@ -46,7 +46,8 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
     else:
         ref_freq = freq
     w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
-    w.wcs.crpix = [1 + nx//2, 1 + ny//2, 1, 1]
+    # LB - y axis treated differently because of stupid fits convention
+    w.wcs.crpix = [1 + nx//2, ny//2, 1, 1]
 
     if np.size(freq) > 1:
         w.wcs.crval[2] = freq[0]

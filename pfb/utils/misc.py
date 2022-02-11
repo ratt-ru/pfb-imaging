@@ -1,11 +1,75 @@
 import sys
 import numpy as np
 import numexpr as ne
-from numba import jit
+from numba import jit, njit
+import dask
 import dask.array as da
+from dask.distributed import performance_report
+from dask.diagnostics import ProgressBar
 from ducc0.fft import r2c, c2r
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
+from numba.core.extending import SentryLiteralArgs
+import inspect
+
+
+def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
+    nband, nx, ny = model
+    mask = np.any(model, axis=0)
+    # components excluding zeros
+    beta = model[:, mask]
+    if spectral_poly_order > infreqs.size:
+        raise ValueError("spectral-poly-order can't be larger than nband")
+
+    # we are given frequencies at bin centers, convert to bin edges
+    delta_freq = infreqs[1] - infreqs[0]
+    wlow = (infreqs - delta_freq/2.0)/ref_freq
+    whigh = (infreqs + delta_freq/2.0)/ref_freq
+    wdiff = whigh - wlow
+
+    # set design matrix for each component
+    # look at Offringa and Smirnov 1706.06786
+    Xfit = np.zeros([nband, order])
+    for i in range(1, order+1):
+        Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+
+    # we want to fit a function modeli = Xfit comps
+    # where Xfit is the design matrix corresponding to an integrated
+    # polynomial model. The normal equations tells us
+    # comps = (Xfit.T wsums Xfit)**{-1} Xfit.T wsums modeli
+    # (Xfit.T wsums Xfit) == hesscomps
+    # Xfit.T wsums modeli == dirty_comps
+
+    dirty_comps = Xfit.T.dot(wsums*beta)
+
+    hess_comps = Xfit.T.dot(wsums*Xfit)
+
+    comps = np.linalg.solve(hess_comps, dirty_comps)
+
+    # now we want to evaluate the unintegrated polynomial coefficients
+    # the corresponding design matrix is constructed for a polynomial of
+    # the form
+    # modeli = comps[0]*1 + comps[1] * w + comps[2] w**2 + ...
+    # where w = outfreqs/ref_freq
+    w = outfreqs/ref_freq
+    # nchan = outfreqs
+    # Xeval = np.zeros((nchan, order))
+    # for c in range(nchan):
+    #     Xeval[:, c] = w**c
+    Xeval = np.tile(w, order)**np.arange(order)
+
+    betaout = Xeval.dot(comps)
+
+    modelout = np.zeros((nchan, nx, ny))
+    modelout[:, mask] = betaout
+
+    return modelout
+
+def compute_context(scheduler, output_filename):
+    if scheduler == "distributed":
+        return performance_report(filename=output_filename + "_dask_report.html")
+    else:
+        return ProgressBar()
 
 def estimate_data_size(nant, nhr, nsec, nchan, ncorr, nbytes):
     '''
@@ -34,7 +98,7 @@ def kron_matvec(A, b):
         X = np.reshape(x, (Gd, NGd))
         Z = A[d].dot(X).T
         x = Z.ravel()
-    return x
+    return x.reshape(b.shape)
 
 @jit(nopython=True, fastmath=True, parallel=False, cache=True, nogil=True)
 def kron_matvec2(A, b):
@@ -212,7 +276,8 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
 
     return image, gausskern[:, unpad_x, unpad_y]
 
-def chan_to_band_mapping(ms_name, nband=None):
+def chan_to_band_mapping(ms_name, nband=None,
+                         group_by=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']):
     '''
     Construct dictionaries containing per MS and SPW channel to band mapping.
     Currently assumes we are only imaging field 0 of the first MS.
@@ -220,17 +285,20 @@ def chan_to_band_mapping(ms_name, nband=None):
     Input:
     ms_name     - list of ms names
     nband       - number of imaging bands
+    group_by    - dataset grouping
 
     Output:
-    freqs           - dict[MS][SPW] chunked dask arrays of the freq to band mapping
-    freq_bin_idx    - dict[MS][SPW] chunked dask arrays of bin starting indices
-    freq_bin_counts - dict[MS][SPW] chunked dask arrays of counts in each bin
-    freq_out        - frequencies of average (LB - should a weighted sum rather be computed?)
-    band_mapping    - dict[MS][SPW] identifying imaging bands going into degridder
-    chan_chunks     - dict[MS][SPW] specifying dask chunking scheme over channel
+    freqs           - dict[MS][IDENTITY] chunked dask arrays of the freq to band mapping
+    freq_bin_idx    - dict[MS][IDENTITY] chunked dask arrays of bin starting indices
+    freq_bin_counts - dict[MS][IDENTITY] chunked dask arrays of counts in each bin
+    freq_out        - frequencies of average
+    band_mapping    - dict[MS][IDENTITY] identifying imaging bands going into degridder
+    chan_chunks     - dict[MS][IDENTITY] specifies dask chunking scheme over channel
+
+    where IDENTITY is constructed from the FIELD/DDID and SCAN ID's.
     '''
-    from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms import xds_from_storage_table as xds_from_table
+    from daskms import xds_from_ms
+    from daskms import xds_from_table
     import dask
     import dask.array as da
 
@@ -238,15 +306,13 @@ def chan_to_band_mapping(ms_name, nband=None):
     if not isinstance(ms_name, list) and not isinstance(ms_name, ListConfig) :
         ms_name = [ms_name]
 
-
-
     # first pass through data to determine freq_mapping
     radec = None
     freqs = {}
     all_freqs = []
-    spws = {}
     for ims in ms_name:
-        xds = xds_from_ms(ims, chunks={"row": -1}, columns=('TIME',))
+        xds = xds_from_ms(ims, chunks={"row": -1}, columns=('TIME',),
+                          group_cols=group_by)
 
         # subtables
         ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
@@ -261,8 +327,8 @@ def chan_to_band_mapping(ms_name, nband=None):
         pols = dask.compute(pols)[0]
 
         freqs[ims] = {}
-        spws[ims] = []
         for ds in xds:
+            identity = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
             field = fields[ds.FIELD_ID]
 
             # check fields match
@@ -274,16 +340,15 @@ def chan_to_band_mapping(ms_name, nband=None):
 
             spw = spws_table[ds.DATA_DESC_ID]
             tmp_freq = spw.CHAN_FREQ.data.squeeze()
-            freqs[ims][ds.DATA_DESC_ID] = tmp_freq
+            freqs[ims][identity] = tmp_freq
             all_freqs.append(list([tmp_freq]))
-            spws[ims].append(ds.DATA_DESC_ID)
 
 
     # freq mapping
     all_freqs = dask.compute(all_freqs)
     ufreqs = np.unique(all_freqs)  # sorted ascending
     nchan = ufreqs.size
-    if nband is None:
+    if nband in [None, -1]:
         nband = nchan
     else:
        nband = nband
@@ -293,11 +358,20 @@ def chan_to_band_mapping(ms_name, nband=None):
     fmax = ufreqs[-1]
     fbins = np.linspace(fmin, fmax, nband + 1)
     freq_out = np.zeros(nband)
+    chan_count = 0
     for band in range(nband):
         indl = ufreqs >= fbins[band]
         # inclusive except for the last one
-        indu = ufreqs < fbins[band + 1] + 1e-6
-        freq_out[band] = np.mean(ufreqs[indl & indu])
+        if band == nband-1:
+            indu = ufreqs <= fbins[band + 1]
+        else:
+            indu = ufreqs < fbins[band + 1]
+        freq_out[band] = np.mean(ufreqs[indl&indu])
+        chan_count += ufreqs[indl&indu].size
+
+    if chan_count < nchan:
+        raise RuntimeError("Something has gone wrong with the chan <-> band "
+                           "mapping. This is probably a bug.")
 
     # chan <-> band mapping
     band_mapping = {}
@@ -308,32 +382,36 @@ def chan_to_band_mapping(ms_name, nband=None):
         freq_bin_idx[ims] = {}
         freq_bin_counts[ims] = {}
         band_mapping[ims] = {}
-        chan_chunks[ims] = []
-        for spw in freqs[ims]:
-            freq = np.atleast_1d(dask.compute(freqs[ims][spw])[0])
+        chan_chunks[ims] = {}
+        for idt in freqs[ims]:
+            freq = np.atleast_1d(dask.compute(freqs[ims][idt])[0])
             band_map = np.zeros(freq.size, dtype=np.int32)
             for band in range(nband):
                 indl = freq >= fbins[band]
-                indu = freq < fbins[band + 1] + 1e-6
+                if band == nband-1:
+                    indu = freq <= fbins[band + 1]
+                else:
+                    indu = freq < fbins[band + 1]
                 band_map = np.where(indl & indu, band, band_map)
             # to dask arrays
             bands, bin_counts = np.unique(band_map, return_counts=True)
-            band_mapping[ims][spw] = tuple(bands)
-            chan_chunks[ims].append({'chan': tuple(bin_counts)})
-            freqs[ims][spw] = da.from_array(freq, chunks=tuple(bin_counts))
+            band_mapping[ims][idt] = da.from_array(bands, chunks=1)
+            chan_chunks[ims][idt] = tuple(bin_counts)
+            freqs[ims][idt] = da.from_array(freq, chunks=tuple(bin_counts))
             bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
-            freq_bin_idx[ims][spw] = da.from_array(bin_idx, chunks=1)
-            freq_bin_counts[ims][spw] = da.from_array(bin_counts, chunks=1)
+            freq_bin_idx[ims][idt] = da.from_array(bin_idx, chunks=1)
+            freq_bin_counts[ims][idt] = da.from_array(bin_counts, chunks=1)
 
     return freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks
+
 
 def stitch_images(dirties, nband, band_mapping):
     _, nx, ny = dirties[0].shape
     dirty = np.zeros((nband, nx, ny), dtype=dirties[0].dtype)
     d = 0
     for ims in band_mapping:
-        for spw in band_mapping[ims]:
-            for b, band in enumerate(band_mapping[ims][spw]):
+        for idt in band_mapping[ims]:
+            for b, band in enumerate(band_mapping[ims][idt]):
                 ne.evaluate('a + b', local_dict={
                     'a': dirty[band],
                     'b': dirties[d][b]},
@@ -456,3 +534,88 @@ def fitcleanbeam(psf: np.ndarray,
     return Gausspars
 
 
+# utility to produce a model image from fitted components
+def model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
+    '''
+    comps - (order/nband, ncomps) array of fitted components or model vals
+            per band if no fitting was done.
+
+    freq - (nchan) array of output frequencies
+
+    mask - (nx, ny) bool array indicating where model is non-zero.
+           comps need to be aligned with this mask i.e.
+           Ix, Iy = np.where(mask) are the xy locations of non-zero pixels
+           model[:, Ix, Iy] = comps if no fitting was done
+
+    band_mapping - tuple containg the indices of bands mapping to the output.
+                   In the case of a single spectral window we usually have
+                   band_mapping = np.arange(nband).
+
+    ref_freq - reference frequency used during fitting i.e. we made the
+                design matrix using freq/ref_freq as coordinate
+
+    fitted - bool indicating if any fitting actually happened.
+    '''
+    return da.blockwise(_model_from_comps_wrapper, ('out', 'nx', 'ny'),
+                        comps, ('com', 'pix'),
+                        freq, ('chan',),
+                        mask, ('nx', 'ny'),
+                        band_mapping, ('out',),
+                        ref_freq, None,
+                        fitted, None,
+                        align_arrays=False,
+                        dtype=comps.dtype)
+
+
+def _model_from_comps_wrapper(comps, freq, mask, band_mapping, ref_freq, fitted):
+    return _model_from_comps(comps[0][0], freq[0], mask, band_mapping, ref_freq, fitted)
+
+
+def _model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
+    freqo = freq[band_mapping]
+    nband = freqo.size
+    nx, ny = mask.shape
+    model = np.zeros((nband, nx, ny), dtype=comps.dtype)
+    if fitted:
+        order, npix = comps.shape
+        nband = freqo.size
+        nx, ny = mask.shape
+        model = np.zeros((nband, nx, ny), dtype=comps.dtype)
+        w = (freqo / ref_freq).reshape(nband, 1)
+        Xdes = np.tile(w, order) ** np.arange(0, order)
+        beta_rec = Xdes.dot(comps)
+        model[:, mask] = beta_rec
+    else:
+        model[:, mask] = comps[band_mapping]
+
+    return model
+
+
+def init_mask(mask, mds, output_type, log):
+    if mask is None:
+        print("No mask provided", file=log)
+        mask = np.ones((mds.nx, mds.ny), dtype=output_type)
+    elif mask.endswith('.fits'):
+        try:
+            mask = load_fits(mask, dtype=output_type).squeeze()
+            assert mask.shape == (mds.nx, mds.ny)
+            print('Using provided fits mask', file=log)
+        except Exception as e:
+            print(f"No mask found at {mask}", file=log)
+            raise e
+    elif mask.lower() == 'mds':
+        try:
+            mask = mds.MASK.values.astype(output_type)
+            print('Using mask in mds', file=log)
+        except:
+            print(f"No mask in mds", file=log)
+            raise e
+    else:
+        raise ValueError(f'Unsupported masking option {mask}')
+    return mask
+
+
+def coerce_literal(func, literals):
+    func_locals = inspect.stack()[1].frame.f_locals  # One frame up.
+    arg_types = [func_locals[k] for k in inspect.signature(func).parameters]
+    SentryLiteralArgs(literals).for_function(func).bind(*arg_types)

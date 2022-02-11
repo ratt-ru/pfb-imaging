@@ -17,10 +17,12 @@ requirements = [
                 'omegaconf',
                 'bokeh',
                 'graphviz',
+                'nifty7',
+                'sympy',
 
                 "codex-africanus[complete]"
-                "@git+https://github.com/ska-sa/codex-africanus.git"
-                "@master",
+                "@git+https://github.com/landmanbester/codex-africanus.git"
+                "@calutils",
 
                 "dask-ms[xarray, zarr]"
                 "@git+https://github.com/ska-sa/dask-ms.git"
@@ -50,7 +52,6 @@ setup(
      ],
      entry_points='''
                     [console_scripts]
-                    pfbclean=pfb.pfbclean:main
                     pfb=pfb.workers.main:cli
 
      '''

@@ -10,7 +10,8 @@ pmp = pytest.mark.parametrize
 
 @pmp('do_beam', (False, True,))
 @pmp('do_gains', (False, True))
-def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
+@pmp('wstack', (False, True))
+def test_hessian(do_beam, do_gains, wstack, tmp_path_factory):
     test_dir = tmp_path_factory.mktemp("test_pfb")
     # test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
@@ -51,8 +52,7 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
     print("Cell size set to %5.5e arcseconds" % cell_size)
 
     from ducc0.fft import good_size
-    # the test will fail in intrinsic if sources fall near beam sidelobes
-    fov = 1.0
+    fov = 2.0
     npix = good_size(int(fov / cell_deg))
     while npix % 2:
         npix += 1
@@ -81,8 +81,7 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
         beam = np.ones((nchan, nx, ny), dtype=float)
 
     # model vis
-    epsilon = 1e-7  # tests take too long if smaller
-    wstack = True
+    epsilon = 1e-10
     from ducc0.wgridder import dirty2ms
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
@@ -190,34 +189,74 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
           nthreads_per_worker=1, nvthreads=8, mem_limit=8, nthreads=8,
           host_address=None, scheduler='single-threaded')
 
-    # place mask in mds
-    mask = np.any(model, axis=0)
     basename = f'{outname}_I'
+    xds_name = f'{basename}.xds.zarr'
+    xds = xds_from_zarr(xds_name, chunks={'band':1, 'row':-1})
+    # required because of https://github.com/ska-sa/dask-ms/issues/181
+    for i, ds in enumerate(xds):
+        xds[i] = ds.chunk({'row':-1})
+
+    wsum = 0.0
+    ID = np.zeros((nchan, nx, ny), dtype=float)
+    for ds in xds:
+        b = ds.bandid
+        wsum += ds.WSUM.values
+        ID[b] += ds.DIRTY.values
+    ID /= wsum
+
     mds_name = f'{basename}.mds.zarr'
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    mask = np.any(model, axis=0)
     mds = mds.assign(**{
-                'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
+                'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1))),
+                'MODEL': (('band', 'x', 'y'), da.from_array(model, chunks=(1, -1, -1)))
         })
     dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
+    from pfb.operators.hessian import hessian_xds
+    hessopts = {}
+    hessopts['cell'] = cell_rad
+    hessopts['wstack'] = wstack
+    hessopts['epsilon'] = epsilon
+    hessopts['double_accum'] = True
+    hessopts['nthreads'] = 8
+    Iconv = hessian_xds(model, xds, hessopts, wsum, 0.0, np.ones((nx, ny)),
+                        compute=True, use_beam=do_beam)
 
-    from pfb.workers.deconv.forward import _forward
-    _forward(output_filename=outname, residual_name='DIRTY',
-             mask='mds', nband=nchan, product='I', row_chunk=-1,
-             epsilon=epsilon, sigmainv=0.0, wstack=wstack, double_accum=True,
-             use_psf=False, fits_mfs=False, no_fits_cubes=True,
-             do_residual=False, cg_tol=epsilon, cg_minit=0,
-             cg_maxit=100, cg_verbose=2, cg_report_freq=1, backtrack=False,
-             nworkers=1, nthreads_per_worker=1, nvthreads=8, mem_limit=8, nthreads=8,
-             host_address=None, scheduler='single-threaded')
+    # TODO - why doesn't the beam work when wstack is False below?
+    # if wstack:
+    #     from pfb.operators.hessian import hessian_xds
+    #     hessopts = {}
+    #     hessopts['cell'] = cell_rad
+    #     hessopts['wstack'] = wstack
+    #     hessopts['epsilon'] = epsilon
+    #     hessopts['double_accum'] = True
+    #     hessopts['nthreads'] = 8
+    #     Iconv = hessian_xds(model, xds, hessopts, wsum, 0.0, np.ones((nx, ny)),
+    #                         compute=True, use_beam=do_beam)
+    # else:
+    #     from pfb.operators.psf import psf_convolve_xds
+    #     nx_psf, ny_psf = xds[0].nx_psf, xds[0].ny_psf
+    #     npad_xl = (nx_psf - nx)//2
+    #     npad_xr = nx_psf - nx - npad_xl
+    #     npad_yl = (ny_psf - ny)//2
+    #     npad_yr = ny_psf - ny - npad_yl
+    #     padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
+    #     unpad_x = slice(npad_xl, -npad_xr)
+    #     unpad_y = slice(npad_yl, -npad_yr)
+    #     lastsize = ny + np.sum(padding[-1])
 
-    # get inferred model
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    model_inferred = mds.UPDATE.values
+    #     psfopts = {}
+    #     psfopts['padding'] = padding
+    #     psfopts['unpad_x'] = unpad_x
+    #     psfopts['unpad_y'] = unpad_y
+    #     psfopts['lastsize'] = lastsize
+    #     psfopts['nthreads'] = 8
 
-    for i in range(nsource):
-        assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -
-                        model[:, Ix[i], Iy[i]], 1.0, atol=10*epsilon)
+    #     Iconv = psf_convolve_xds(model, xds, psfopts, wsum, 0.0, np.ones((nx, ny)),
+    #                              compute=True, use_beam=do_beam)
 
+    # we should have ID == hess(model)
+    assert_allclose(1.0 + beam*ID - Iconv, 1.0, atol=10*epsilon)
 
-# test_forwardmodel(True, True)
+# test_hessian(False, False, True)
