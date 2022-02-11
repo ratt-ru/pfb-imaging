@@ -11,7 +11,7 @@ pmp = pytest.mark.parametrize
 @pmp('do_beam', (False, True,))
 @pmp('do_gains', (False, True))
 @pmp('wstack', (False, True))
-def test_residual(do_beam, do_gains, wstack, tmp_path_factory):
+def test_hessian(do_beam, do_gains, wstack, tmp_path_factory):
     test_dir = tmp_path_factory.mktemp("test_pfb")
     # test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
@@ -28,7 +28,6 @@ def test_residual(do_beam, do_gains, wstack, tmp_path_factory):
 
     freq = spw.getcol('CHAN_FREQ').squeeze()
     freq0 = np.mean(freq)
-
 
     ntime = utime.size
     nchan = freq.size
@@ -91,6 +90,14 @@ def test_residual(do_beam, do_gains, wstack, tmp_path_factory):
                                     epsilon=epsilon, do_wstacking=wstack, nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]
 
+    desc = ms.getcoldesc('DATA')
+    desc['name'] = 'DATA2'
+    desc['valueType'] = 'dcomplex'
+    desc['comment'] = desc['comment'].replace(" ", "_")
+    dminfo = ms.getdminfo('DATA')
+    dminfo["NAME"] =  "{}-{}".format(dminfo["NAME"], 'DATA2')
+    ms.addcols(desc, dminfo)
+
     if do_gains:
         t = (utime-utime.min())/(utime.max() - utime.min())
         nu = 2.5*(freq/freq0 - 1.0)
@@ -129,7 +136,7 @@ def test_residual(do_beam, do_gains, wstack, tmp_path_factory):
         from africanus.calibration.utils import corrupt_vis
         vis = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2,
                           np.swapaxes(jones, 1, 2), model_vis).reshape(nrow, nchan, ncorr)
-        ms.putcol('DATA', vis.astype(np.complex64))
+        ms.putcol('DATA2', vis)
 
         # cast gain to QuartiCal format
         g = da.from_array(jones)
@@ -163,13 +170,13 @@ def test_residual(do_beam, do_gains, wstack, tmp_path_factory):
         dask.compute(xds_to_zarr(net_xds_list, out_path))
 
     else:
-        ms.putcol('DATA', model_vis.astype(np.complex64))
+        ms.putcol('DATA2', model_vis)
         gain_path = None
 
     from pfb.workers.grid import _grid
     outname = str(test_dir / 'test')
     _grid(ms=str(test_dir / 'test_ascii_1h60.0s.MS'),
-          data_column="DATA", weight_column=None, imaging_weight_column=None,
+          data_column="DATA2", weight_column=None, imaging_weight_column=None,
           flag_column='FLAG', gain_table=gain_path, product='I',
           utimes_per_chunk=-1, row_out_chunk=10000, epsilon=epsilon,
           precision='double', group_by_field=True, group_by_scan=True,
@@ -196,6 +203,15 @@ def test_residual(do_beam, do_gains, wstack, tmp_path_factory):
         wsum += ds.WSUM.values
         ID[b] += ds.DIRTY.values
     ID /= wsum
+
+    mds_name = f'{basename}.mds.zarr'
+    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    mask = np.any(model, axis=0)
+    mds = mds.assign(**{
+                'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1))),
+                'MODEL': (('band', 'x', 'y'), da.from_array(model, chunks=(1, -1, -1)))
+        })
+    dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
     from pfb.operators.hessian import hessian_xds
     hessopts = {}
@@ -241,6 +257,6 @@ def test_residual(do_beam, do_gains, wstack, tmp_path_factory):
     #                              compute=True, use_beam=do_beam)
 
     # we should have ID == hess(model)
-    assert_allclose(beam*ID, Iconv, atol=10*epsilon, rtol=1.0)
+    assert_allclose(1.0 + beam*ID - Iconv, 1.0, atol=10*epsilon)
 
-#test_residual(True, False, False)
+# test_hessian(False, False, True)

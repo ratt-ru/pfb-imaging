@@ -110,6 +110,9 @@ def single_stokes(ds=None,
         # dirty = inlined_array(dirty, [uvw, freq])
         data_vars['DIRTY'] = (('x', 'y'), dirty)
 
+        # from ducc0.wgridder.experimental import vis2dirty
+        # import pdb; pdb.set_trace()
+
     if args.psf:
         psf = vis2im(uvw=uvw,
                      freq=freq,
@@ -169,6 +172,8 @@ def single_stokes(ds=None,
 
         wgt = wgt.rechunk({0:args.row_out_chunk})
         data_vars['WEIGHT'] = (('row', 'chan'), wgt)
+        vis = vis.rechunk({0:args.row_out_chunk})
+        data_vars['VIS'] = (('row', 'chan'), vis)
 
     if 'UVW' not in data_vars.keys():
         data_vars['UVW'] = (('row', 'uvw'),

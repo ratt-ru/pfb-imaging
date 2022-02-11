@@ -83,8 +83,8 @@ def _hessian_impl(x, uvw, weight, freq, beam,
                       pixsize_y=cell,
                       epsilon=epsilon,
                       nthreads=nthreads,
-                      do_wstacking=wstack,
-                      double_precision_accumulation=double_accum)
+                      do_wstacking=wstack) #,
+                      # double_precision_accumulation=double_accum)
 
     if beam is not None:
         convim *= beam

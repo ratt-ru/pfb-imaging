@@ -23,7 +23,7 @@ def vis2im(uvw=None,
            flip_v=False,
            x0=0, y0=0,
            precision='single',
-           divide_by_n=False,
+           divide_by_n=True,
            sigma_min=1.1, sigma_max=2.6,
            double_precision_accumulation=True):
 
