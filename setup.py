@@ -38,7 +38,7 @@ setup(
      name='pfb-clean',
      version=pfb.__version__,
      author="Landman Bester",
-     author_email="lbester@ska.ac.za",
+     author_email="lbester@sarao.ac.za",
      description="Pre-conditioned forward-backward CLEAN algorithm",
      long_description=long_description,
      long_description_content_type="text/markdown",
@@ -50,10 +50,11 @@ setup(
          "License :: OSI Approved :: MIT License",
          "Operating System :: OS Independent",
      ],
-     entry_points='''
-                    [console_scripts]
-                    pfb=pfb.workers.main:cli
+     entry_points={'console_scripts':[
+        'pfb = pfb.workers.main:cli'
+        ]
+     }
 
-     '''
+
      ,
  )
