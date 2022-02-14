@@ -35,6 +35,7 @@ inputs:
   product:
     dtype: str
     abbreviation: p
+    default: I
     info: "Path to Quartical gain table containing NET gains.\
           There must be a table for each MS and glob(ms) and glob(gt) \
           should match up."
@@ -75,16 +76,16 @@ inputs:
     info: "Perform w-correction via improved w-stacking"
   double_accum:
     dtype: bool
-    default: True
+    default: true
     info: "Accumulate onto grid using double precision. \
-          Only has an effect when using single precision."
+          Only has an affect when using single precision."
   fits_mfs:
     dtype: bool
-    default: True
+    default: true
     info: "Output MFS fits files"
   fits_cubes:
     dtype: bool
-    default: False
+    default: false
     info: "Output fits cubes"
   psf:
     dtype: bool
@@ -132,22 +133,20 @@ inputs:
     info: 'Will over-sample Nyquist by this factor at max frequency'
   psf_oversize:
     dtype: float
+    default: 2.0
     abbreviation: psfo
     info: 'Size of PSF relative to dirty image'
   cell_size:
     dtype: float
-    default: None
     info: 'Cell size in arc-seconds'
   nx:
     dtype: int
-    default: None
     info: 'Number of x pixels'
   ny:
     dtype: int
-    default: None
     info: 'Number of y pixels'
 
-  _include: /home/landman/software/pfb-clean/pfb/parser/dist.yaml
+  _include: (pfb.parser)dist.yml
 
 outputs:
   log:
@@ -162,9 +161,9 @@ outputs:
   fits_mfs:
     dtype: File
     implicit: '{current.output_filename}_{current.product}_MFS.fits'
-    must_exist: False
+    must_exist: false
   fits_cubes:
     dtype: File
     implicit: '{current.output_filename}_{current.product}.fits'
-    must_exist: False
+    must_exist: false
 

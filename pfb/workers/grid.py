@@ -11,81 +11,7 @@ from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 @cli.command(context_settings={'show_default': True})
-@clickify.clickify_parameters(schema.grid)
-# @click.option('-ms', '--ms', required=True,
-#               help='Path to measurement set.')
-# @click.option('-dc', '--data-column', default='DATA',
-#               help="Data or residual column to image."
-#               "Must be the same across MSs")
-# @click.option('-wc', '--weight-column', default=None,
-#               help="Column containing natural weights."
-#               "Must be the same across MSs")
-# @click.option('-iwc', '--imaging-weight-column',
-#               help="Column containing imaging weights. "
-#               "Must be the same across MSs")
-# @click.option('-fc', '--flag-column', default='FLAG',
-#               help="Column containing data flags."
-#               "Must be the same across MSs")
-# @click.option('-gt', '--gain-table',
-#               help="Path to Quartical gain table containing NET gains."
-#               "There must be a table for each MS and glob(ms) and glob(gt) "
-#               "should match up.")
-# @click.option('-p', '--product', default='I',
-#               help='Currently supports I, Q, U, and V. '
-#               'Only single Stokes products currently supported.')
-# @click.option('-utpc', '--utimes-per-chunk', type=int, default=-1,
-#               help="Number of unique times in a chunk.")
-# @click.option('-rochunk', '--row-out-chunk', type=int, default=10000,
-#               help="Size of row chunks for output weights and uvw")
-# @click.option('-eps', '--epsilon', type=float, default=1e-7,
-#               help='Gridder accuracy')
-# @click.option('-precision', '--precision', default='double',
-#               help='Either single or double')
-# @click.option('--group-by-field/--no-group-by-field', default=True)
-# @click.option('--group-by-ddid/--no-group-by-ddid', default=True)
-# @click.option('--group-by-scan/--no-group-by-scan', default=True)
-# @click.option('--wstack/--no-wstack', default=True)
-# @click.option('--double-accum/--no-double-accum', default=True)
-# @click.option('--fits-mfs/--no-fits-mfs', default=True)
-# @click.option('--no-fits-cubes/--fits-cubes', default=True)
-# @click.option('--psf/--no-psf', default=True)
-# @click.option('--dirty/--no-dirty', default=True)
-# @click.option('--weights/--no-weights', default=True)
-# @click.option('--bda-weights/--no-bda-weights', default=False)
-# @click.option('--do-beam/--no-do-beam', default=False)
-# @click.option('-o', '--output-filename', type=str, required=True,
-#               help="Basename of output.")
-# @click.option('-nb', '--nband', type=int, required=True,
-#               help="Number of imaging bands")
-# @click.option('-fov', '--field-of-view', type=float,
-#               help="Field of view in degrees")
-# @click.option('-srf', '--super-resolution-factor', type=float,
-#               help="Will over-sample Nyquist by this factor at max frequency")
-# @click.option('-psfo', '--psf-oversize', type=float, default=2.0,
-#               help='Size of the PSF relative to the dirty image.')
-# @click.option('-cs', '--cell-size', type=float,
-#               help='Cell size in arcseconds')
-# @click.option('-nx', '--nx', type=int,
-#               help="Number of x pixels")
-# @click.option('-ny', '--ny', type=int,
-#               help="Number of x pixels")
-# @click.option('-ha', '--host-address',
-#               help='Address where the distributed client lives. '
-#               'Will use a local cluster if no address is provided')
-# @click.option('-nw', '--nworkers', type=int,
-#               help='Number of workers for the client.')
-# @click.option('-ntpw', '--nthreads-per-worker', type=int,
-#               help='Number of dask threads per worker.')
-# @click.option('-nvt', '--nvthreads', type=int,
-#               help="Total number of threads to use for vertical scaling "
-#                    "(eg. gridder, fft's etc.)")
-# @click.option('-mem', '--mem-limit', type=int,
-#               help="Memory limit in GB. Default uses all available memory")
-# @click.option('-nthreads', '--nthreads', type=int,
-#               help="Total available threads. "
-#               "Default uses all available threads")
-# @click.option('-scheduler', '--scheduler', default='distributed',
-#               help="distributed or single-threaded (for debugging)")
+@clickify_parameters(schema.grid)
 def grid(**kw):
     '''
     Create a dirty image, psf and weights from a list of measurement
@@ -490,7 +416,7 @@ def _grid(**kw):
     dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
 
     # convert to fits files
-    if args.fits_mfs or not args.no_fits_cubes:
+    if args.fits_mfs or args.fits_cubes:
         if args.dirty:
             print("Saving dirty as fits", file=log)
             dirty = np.zeros((nband, nx, ny), dtype=np.float32)
@@ -521,7 +447,7 @@ def _grid(**kw):
                           f'_{args.product.upper()}_dirty_mfs.fits',
                           dirty_mfs, hdr_mfs, dtype=np.float32)
 
-            if not args.no_fits_cubes:
+            if args.fits_cubes:
                 fmask = wsums > 0
                 dirty[fmask] /= wsums[fmask, None, None]
                 save_fits(args.output_filename +
@@ -559,7 +485,7 @@ def _grid(**kw):
                           f'_{args.product.upper()}_psf_mfs.fits', psf_mfs,
                           hdr_psf_mfs, dtype=np.float32)
 
-            if not args.no_fits_cubes:
+            if not args.fits_cubes:
                 fmask = wsums > 0
                 psf[fmask] /= wsums[fmask, None, None]
                 save_fits(args.output_filename +

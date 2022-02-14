@@ -17,3 +17,7 @@ nthreads:
 mem_limit:
   dtype: int
   info: 'Memory limit. Will use all available resources by default'
+scheduler:
+  dtype: str
+  default: single-threaded
+  info: distributed or single-threaded

@@ -138,10 +138,10 @@ def single_stokes(ds=None,
     else:
         wsum = da.sum(wgt[mask])
 
-    if args.weights:
+    if args.weight:
         wgt = da.where(mask, wgt, 0.0)
         # TODO - BDA over frequency
-        if args.bda_weights:
+        if args.bda_decorr < 1:
             raise NotImplementedError("BDA not working yet")
             from africanus.averaging.dask import bda
 
@@ -172,15 +172,18 @@ def single_stokes(ds=None,
 
         wgt = wgt.rechunk({0:args.row_out_chunk})
         data_vars['WEIGHT'] = (('row', 'chan'), wgt)
-        vis = vis.rechunk({0:args.row_out_chunk})
-        data_vars['VIS'] = (('row', 'chan'), vis)
+
 
     if 'UVW' not in data_vars.keys():
         data_vars['UVW'] = (('row', 'uvw'),
                              uvw.rechunk({0:args.row_out_chunk}))
 
+    if args.vis:
+        vis = vis.rechunk({0:args.row_out_chunk})
+        data_vars['VIS'] = (('row', 'chan'), vis)
+
     # TODO - interpolate beam
-    if args.do_beam:
+    if args.beam_model is not None:
         # print("Estimating primary beam using L band JimBeam")
         from pfb.utils.beam import _katbeam_impl
         beam = _katbeam_impl(freq_out, nx, ny, np.rad2deg(cell_rad),
