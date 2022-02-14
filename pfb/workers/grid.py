@@ -7,7 +7,7 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('GRID')
 
-from scabha import clickify
+from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 @cli.command(context_settings={'show_default': True})

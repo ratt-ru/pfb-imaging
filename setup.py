@@ -34,7 +34,7 @@ requirements = [
 
                 "scabha"
                 "@git+https://github.com/caracal-pipeline/scabha2"
-                #"@master#egg=scabha-0.4.0",
+                "@master",
             ]
 
 

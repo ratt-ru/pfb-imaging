@@ -35,9 +35,9 @@ inputs:
   product:
     dtype: str
     abbreviation: p
-    info: "Path to Quartical gain table containing NET gains."
-          "There must be a table for each MS and glob(ms) and glob(gt) "
-          "should match up."
+    info: "Path to Quartical gain table containing NET gains.\
+          There must be a table for each MS and glob(ms) and glob(gt) \
+          should match up."
   utimes_per_chunk:
     dtype: int
     info: 'Unique times per row chunk'
@@ -76,8 +76,8 @@ inputs:
   double_accum:
     dtype: bool
     default: True
-    info: "Accumulate onto grid using double precision."
-          "Only has an effect when using single precision."
+    info: "Accumulate onto grid using double precision. \
+          Only has an effect when using single precision."
   fits_mfs:
     dtype: bool
     default: True
@@ -147,7 +147,7 @@ inputs:
     default: None
     info: 'Number of y pixels'
 
-  _include: dist.yaml
+  _include: /home/landman/software/pfb-clean/pfb/parser/dist.yaml
 
 outputs:
   log:

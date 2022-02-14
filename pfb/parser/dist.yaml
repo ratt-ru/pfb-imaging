@@ -1,22 +1,19 @@
-inputs:
-  host_address:
-    dtype: str
-    info: 'Address where the distributed client lives. '
-          'Will use a local cluster if no address is provided'
-  nworkers:
-    dtype: int
-    default: 1
-    info: 'Number of worker processes'
-  nthreads_per_worker:
-    dtype: int
-    info: 'Number of threads per worker process'
-  nvthreads:
-    dtype: int
-    info: 'Number of threads used to scale vertically (eg. for FFT's)'
-  nthreads:
-    dtype: int
-    info: 'Total number of threads to use between all processes. '
-          'Will use all available resources by default'
-  mem_linit:
-    dtype: int
-    info: 'Memory limit. Will use all available resources by default'
+host_address:
+  dtype: str
+  info: 'Address where the distributed client lives. Will use a local cluster if no address is provided'
+nworkers:
+  dtype: int
+  default: 1
+  info: 'Number of worker processes'
+nthreads_per_worker:
+  dtype: int
+  info: 'Number of threads per worker process'
+nvthreads:
+  dtype: int
+  info: 'Number of threads used to scale vertically (eg. for FFTs)'
+nthreads:
+  dtype: int
+  info: 'Total number of threads to use between all processes. Will use all available resources by default'
+mem_limit:
+  dtype: int
+  info: 'Memory limit. Will use all available resources by default'
