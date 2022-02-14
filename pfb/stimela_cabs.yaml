@@ -1,0 +1,8 @@
+
+cabs:
+  'pfb.grid':
+    command: (pfb.workers.grid)grid
+
+    _include: (pfb.parser)grid.yaml
+
+
