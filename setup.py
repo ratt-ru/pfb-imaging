@@ -31,6 +31,10 @@ requirements = [
                 "packratt"
                 "@git+https://github.com/ratt-ru/packratt.git"
                 "@master",
+
+                "scabha"
+                "@git+https://github.com/ratt-ru/scabha.git"
+                "@master"
             ]
 
 

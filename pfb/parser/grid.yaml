@@ -1,0 +1,170 @@
+inputs:
+  ms:
+    dtype: MS
+    required: true
+    info: 'Path to measurement set.'
+    metavar: MS
+    abbreviation: ms
+  data_column:
+    dtype: str
+    required: true
+    abbreviation: dc
+    info: 'Data column to image. Must be the same across MSs'
+    metavar: COLUMN
+  weight_column:
+    dtype: str
+    abbreviation: wc
+    info: 'Column containing natural weights. Must be the same across MSs'
+    metavar: COLUMN
+  imaging_weight_column:
+    dtype: str
+    abbreviation: iwc
+    info: 'Column containing imaging weights. Must be the same across MSs'
+    metavar: COLUMN
+  flag_column:
+    dtype: str
+    default: FLAG
+    abbreviation: fc
+    info: 'Column containing data flags. Must be the same across MSs'
+    metavar: COLUMN
+  gain_table:
+    dtype: str
+    abbreviation: gt
+    info: 'Column containing Mueller terms. Must be the same across MSs'
+    metavar: COLUMN
+  product:
+    dtype: str
+    abbreviation: p
+    info: "Path to Quartical gain table containing NET gains."
+          "There must be a table for each MS and glob(ms) and glob(gt) "
+          "should match up."
+  utimes_per_chunk:
+    dtype: int
+    info: 'Unique times per row chunk'
+    abbreviation: utpc
+    default: -1
+  row_out_chunk:
+    dtype: int
+    info: 'Number of rows in a chunk in output dataset'
+    abbreviation: roc
+    default: 10000
+  epsilon:
+    dtype: float
+    default: 1e-7
+    info: 'Gridder accuracy'
+    abbreviation: eps
+  precision:
+    dtype: str
+    default: double
+    info: '"single" or "double"'
+  group_by_field:
+    dtype: bool
+    default: True
+    info: "Split data by field"
+  group_by_ddid:
+    dtype: bool
+    default: True
+    info: "Split data by DDID"
+  group_by_scan:
+    dtype: bool
+    default: True
+    info: "Split data by scan"
+  wstack:
+    dtype: bool
+    default: true
+    info: "Perform w-correction via improved w-stacking"
+  double_accum:
+    dtype: bool
+    default: True
+    info: "Accumulate onto grid using double precision."
+          "Only has an effect when using single precision."
+  fits_mfs:
+    dtype: bool
+    default: True
+    info: "Output MFS fits files"
+  fits_cubes:
+    dtype: bool
+    default: False
+    info: "Output fits cubes"
+  psf:
+    dtype: bool
+    default: true
+    info: "Compute the PSF"
+  dirty:
+    dtype: bool
+    default: true
+    info: "Compute the dirty image"
+  weight:
+    dtype: bool
+    default: true
+    info: "Compute the weights associated with chosen product"
+  vis:
+    dtype: bool
+    default: true
+    info: "Compute the visibilities associated with chosen product"
+  bda_decorr:
+    dtype: float
+    default: 1.0
+    info: "BDA decorrelation factor. Only has an effect if less than one"
+  beam_model:
+    dtype: str
+    default: None
+    info: "Beam model to use. Currently only JimBeam supported"
+  output_filename:
+    dtype: str
+    required: true
+    info: 'Basename of output'
+    metavar: BASENAME
+    abbreviation: o
+  nband:
+    dtype: int
+    required: true
+    abbreviation: nb
+    info: 'Number of imaging bands'
+  field_of_view:
+    dtype: float
+    abbreviation: fov
+    info: 'Field of view in degrees'
+    metavar: DEG
+  super_resolution_factor:
+    dtype: float
+    abbreviation: srf
+    info: 'Will over-sample Nyquist by this factor at max frequency'
+  psf_oversize:
+    dtype: float
+    abbreviation: psfo
+    info: 'Size of PSF relative to dirty image'
+  cell_size:
+    dtype: float
+    default: None
+    info: 'Cell size in arc-seconds'
+  nx:
+    dtype: int
+    default: None
+    info: 'Number of x pixels'
+  ny:
+    dtype: int
+    default: None
+    info: 'Number of y pixels'
+
+  _include: dist.yaml
+
+outputs:
+  log:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}.log'
+  mds:
+    dtype: Dir
+    implicit: '{current.output_filename}_{current.product}.mds.zarr'
+  xds:
+    dtype: Dir
+    implicit: '{current.output_filename}_{current.product}.xds.zarr'
+  fits_mfs:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}_MFS.fits'
+    must_exist: False
+  fits_cubes:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}.fits'
+    must_exist: False
+
