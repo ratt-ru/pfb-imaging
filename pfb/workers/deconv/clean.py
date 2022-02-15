@@ -8,62 +8,11 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('CLEAN')
 
+from scabha.schema_utils import clickify_parameters
+from pfb.parser.schemas import schema
+
 @cli.command(context_settings={'show_default': True})
-@click.option('-rname', '--residual-name', default='RESIDUAL',
-              help='Name of residual to use in xds')
-@click.option('-o', '--output-filename', type=str, required=True,
-              help="Basename of output.")
-@click.option('-nb', '--nband', type=int, required=True,
-              help="Number of imaging bands")
-@click.option('-p', '--product', default='I',
-              help='Currently supports I, Q, U, and V. '
-              'Only single Stokes products currently supported.')
-@click.option('-rchunk', '--row-chunk', type=int, default=-1,
-              help="Number of rows in a chunk.")
-@click.option('-eps', '--epsilon', type=float, default=1e-5,
-              help='Gridder accuracy')
-@click.option('--wstack/--no-wstack', default=True)
-@click.option('--double-accum/--no-double-accum', default=True)
-@click.option('--use-clark/--no-use-clark', default=True)
-@click.option('--update-mask/--no-upadte-mask', default=True)
-@click.option('--fits-mfs/--no-fits-mfs', default=True)
-@click.option('--no-fits-cubes/--fits-cubes', default=True)
-@click.option('--do-residual/--no-do-residual', default=True)
-@click.option('-nmiter', '--nmiter', type=int, default=5,
-              help="Number of major cycles")
-@click.option('-th', '--threshold', type=float,
-              help='Stop cleaning when the MFS residual reaches '
-              'this threshold.')
-@click.option('-gamma', "--gamma", type=float, default=0.05,
-              help="Minor loop gain of Hogbom/Clark")
-@click.option('-pf', "--peak-factor", type=float, default=0.15,
-              help="Peak factor of Hogbom/Clark")
-@click.option('-spf', "--sub-peak-factor", type=float, default=0.75,
-              help="Peak factor in sub-minor loop of Clark")
-@click.option('-maxit', "--maxit", type=int, default=50,
-              help="Maximum number of iterations for Hogbom/Clark")
-@click.option('-smaxit', "--sub-maxit", type=int, default=5000,
-              help="Maximum number of sub-minor iterations for Clark")
-@click.option('-verb', "--verbose", type=int, default=0,
-              help="Verbosity of Hogbom/Clark. Set to 2 for debugging or "
-              "zero for silence.")
-@click.option('-rf', "--report-freq", type=int, default=10,
-              help="Report freq for Hogbom/Clark.")
-@click.option('-ha', '--host-address',
-              help='Address where the distributed client lives. '
-              'Will use a local cluster if no address is provided')
-@click.option('-nw', '--nworkers', type=int,
-              help='Number of workers for the client.')
-@click.option('-ntpw', '--nthreads-per-worker', type=int,
-              help='Number of dask threads per worker.')
-@click.option('-nvt', '--nvthreads', type=int,
-              help="Total number of threads to use per worker")
-@click.option('-mem', '--mem-limit', type=float,
-              help="Memory limit in GB. Default uses all available memory")
-@click.option('-nthreads', '--nthreads', type=int,
-              help="Total available threads. Default uses all available threads")
-@click.option('-scheduler', '--scheduler', default='distributed',
-              help="Total available threads. Default uses all available threads")
+@clickify_parameters(schema.clean)
 def clean(**kw):
     '''
     Single-scale clean.
@@ -265,7 +214,7 @@ def _clean(**kw):
             x = clark(residual, psf, psfo=psfo,
                       gamma=args.gamma,
                       pf=args.peak_factor,
-                      maxit=args.maxit,
+                      maxit=args.clark_maxit,
                       subpf=args.sub_peak_factor,
                       submaxit=args.sub_maxit,
                       verbosity=args.verbose,
@@ -275,7 +224,7 @@ def _clean(**kw):
             x = hogbom(residual, psf,
                        gamma=args.gamma,
                        pf=args.peak_factor,
-                       maxit=args.maxit,
+                       maxit=args.hogbom_maxit,
                        verbosity=args.verbose,
                        report_freq=args.report_freq)
 
@@ -350,7 +299,7 @@ def _clean(**kw):
 
         dask.compute(xds_to_zarr(writes, xds_name, columns='CLEAN_RESIDUAL'))
 
-    if args.fits_mfs or not args.no_fits_cubes:
+    if args.fits_mfs or args.fits_cubes:
         print("Writing fits files", file=log)
         # construct a header from xds attrs
         ra = xds[0].ra
@@ -381,7 +330,7 @@ def _clean(**kw):
             save_fits(f'{basename}_clean_residual_mfs.fits',
                       residual_mfs, hdr_mfs)
 
-        if not args.no_fits_cubes:
+        if args.fits_cubes:
             # need residual in Jy/beam
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
             save_fits(f'{basename}_clean_model.fits', model, hdr)
