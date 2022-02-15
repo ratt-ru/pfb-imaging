@@ -8,80 +8,84 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('BACKWARD')
 
+from scabha.schema_utils import clickify_parameters
+from pfb.parser.schemas import schema
+
 @cli.command(context_settings={'show_default': True})
-@click.option('-mname', '--model-name', default='MODEL',
-              help='Name of model in mds.')
-@click.option('-mask', '--mask', default=None,
-              help="Either path to mask.fits or set to mds to use "
-              "the mask contained in the mds.")
-@click.option('-o', '--output-filename', type=str, required=True,
-              help="Basename of output.")
-@click.option('-nb', '--nband', type=int, required=True,
-              help="Number of imaging bands")
-@click.option('-p', '--product', default='I',
-              help='Currently supports I, Q, U, and V. '
-              'Only single Stokes products currently supported.')
-@click.option('-rchunk', '--row-chunk', type=int, default=-1,
-              help="Number of rows in a chunk.")
-@click.option('-bases', '--bases', default='self',
-              help='Wavelet bases to use. Give as comma separated str'
-              '-bases self,db1,db2,db3,db4')
-@click.option('-nlevels', '--nlevels', default=3,
-              help='Number of wavelet decomposition levels')
-@click.option('-hessnorm', '--hessnorm', type=float,
-              help="Spectral norm of Hessian approximation")
-@click.option('-otype', '--output-type', default='f4',
-              help="Data type of output")
-@click.option('-eps', '--epsilon', type=float, default=1e-5,
-              help='Gridder accuracy')
-@click.option('-sinv', '--sigmainv', type=float, default=1e-3,
-              help='Standard deviation of assumed GRF prior used '
-              'for preconditioning.')
-@click.option('-sig21', '--sigma21', type=float, default=1e-3,
-              help='Sparsity threshold level.')
-@click.option('-niter', '--niter', type=int, default=10,
-              help='Number of reweighting iterations. '
-              'Reweighting will take place after every primal dual run.')
-@click.option('--wstack/--no-wstack', default=True)
-@click.option('--double-accum/--no-double-accum', default=True)
-@click.option('--use-beam/--no-use-beam', default=True)
-@click.option('--use-psf/--no-use-psf', default=True)
-@click.option('--fits-mfs/--no-fits-mfs', default=True)
-@click.option('--no-fits-cubes/--fits-cubes', default=True)
-@click.option('--positivity/--no-positivity', default=True)
-@click.option('-pdtol', "--pd-tol", type=float, default=1e-3,
-              help="Tolerance of conjugate gradient")
-@click.option('-pdmaxit', "--pd-maxit", type=int, default=100,
-              help="Maximum number of iterations for primal dual")
-@click.option('-pdverb', "--pd-verbose", type=int, default=1,
-              help="Verbosity of primal dual. "
-              "Set to 2 for debugging or zero for silence.")
-@click.option('-pdrf', "--pd-report-freq", type=int, default=5,
-              help="Report freq for primal dual.")
-@click.option('-pmtol', "--pm-tol", type=float, default=1e-4,
-              help="Tolerance of power method")
-@click.option('-pmmaxit', "--pm-maxit", type=int, default=50,
-              help="Maximum number of iterations for power method")
-@click.option('-pmverb', "--pm-verbose", type=int, default=1,
-              help="Verbosity of power method. "
-              "Set to 2 for debugging or zero for silence.")
-@click.option('-pmrf', "--pm-report-freq", type=int, default=10,
-              help="Report freq for power method.")
-@click.option('-ha', '--host-address',
-              help='Address where the distributed client lives. '
-              'Will use a local cluster if no address is provided')
-@click.option('-nw', '--nworkers', type=int,
-              help='Number of workers for the client.')
-@click.option('-ntpw', '--nthreads-per-worker', type=int,
-              help='Number of dask threads per worker.')
-@click.option('-nvt', '--nvthreads', type=int,
-              help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
-@click.option('-mem', '--mem-limit', type=float,
-              help="Memory limit in GB. Default uses all available memory")
-@click.option('-nthreads', '--nthreads', type=int,
-              help="Total available threads. Default uses all available threads")
-@click.option('-scheduler', '--scheduler', default='distributed',
-              help="Total available threads. Default uses all available threads")
+@clickify_parameters(schema.backward)
+# @click.option('-mname', '--model-name', default='MODEL',
+#               help='Name of model in mds.')
+# @click.option('-mask', '--mask', default=None,
+#               help="Either path to mask.fits or set to mds to use "
+#               "the mask contained in the mds.")
+# @click.option('-o', '--output-filename', type=str, required=True,
+#               help="Basename of output.")
+# @click.option('-nb', '--nband', type=int, required=True,
+#               help="Number of imaging bands")
+# @click.option('-p', '--product', default='I',
+#               help='Currently supports I, Q, U, and V. '
+#               'Only single Stokes products currently supported.')
+# @click.option('-rchunk', '--row-chunk', type=int, default=-1,
+#               help="Number of rows in a chunk.")
+# @click.option('-bases', '--bases', default='self',
+#               help='Wavelet bases to use. Give as comma separated str eg. '
+#               '-bases self,db1,db2,db3,db4')
+# @click.option('-nlevels', '--nlevels', default=3,
+#               help='Number of wavelet decomposition levels')
+# @click.option('-hessnorm', '--hessnorm', type=float,
+#               help="Spectral norm of Hessian approximation")
+# @click.option('-otype', '--output-type', default='f4',
+#               help="Data type of output")
+# @click.option('-eps', '--epsilon', type=float, default=1e-5,
+#               help='Gridder accuracy')
+# @click.option('-sinv', '--sigmainv', type=float, default=1e-3,
+#               help='Standard deviation of assumed GRF prior used '
+#               'for preconditioning.')
+# @click.option('-sig21', '--sigma21', type=float, default=1e-3,
+#               help='Sparsity threshold level.')
+# @click.option('-niter', '--niter', type=int, default=10,
+#               help='Number of reweighting iterations. '
+#               'Reweighting will take place after every primal dual run.')
+# @click.option('--wstack/--no-wstack', default=True)
+# @click.option('--double-accum/--no-double-accum', default=True)
+# @click.option('--use-beam/--no-use-beam', default=True)
+# @click.option('--use-psf/--no-use-psf', default=True)
+# @click.option('--fits-mfs/--no-fits-mfs', default=True)
+# @click.option('--no-fits-cubes/--fits-cubes', default=True)
+# @click.option('--positivity/--no-positivity', default=True)
+# @click.option('-pdtol', "--pd-tol", type=float, default=1e-3,
+#               help="Tolerance of conjugate gradient")
+# @click.option('-pdmaxit', "--pd-maxit", type=int, default=100,
+#               help="Maximum number of iterations for primal dual")
+# @click.option('-pdverb', "--pd-verbose", type=int, default=1,
+#               help="Verbosity of primal dual. "
+#               "Set to 2 for debugging or zero for silence.")
+# @click.option('-pdrf', "--pd-report-freq", type=int, default=5,
+#               help="Report freq for primal dual.")
+# @click.option('-pmtol', "--pm-tol", type=float, default=1e-4,
+#               help="Tolerance of power method")
+# @click.option('-pmmaxit', "--pm-maxit", type=int, default=50,
+#               help="Maximum number of iterations for power method")
+# @click.option('-pmverb', "--pm-verbose", type=int, default=1,
+#               help="Verbosity of power method. "
+#               "Set to 2 for debugging or zero for silence.")
+# @click.option('-pmrf', "--pm-report-freq", type=int, default=10,
+#               help="Report freq for power method.")
+# @click.option('-ha', '--host-address',
+#               help='Address where the distributed client lives. '
+#               'Will use a local cluster if no address is provided')
+# @click.option('-nw', '--nworkers', type=int,
+#               help='Number of workers for the client.')
+# @click.option('-ntpw', '--nthreads-per-worker', type=int,
+#               help='Number of dask threads per worker.')
+# @click.option('-nvt', '--nvthreads', type=int,
+#               help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
+# @click.option('-mem', '--mem-limit', type=float,
+#               help="Memory limit in GB. Default uses all available memory")
+# @click.option('-nthreads', '--nthreads', type=int,
+#               help="Total available threads. Default uses all available threads")
+# @click.option('-scheduler', '--scheduler', default='distributed',
+#               help="Total available threads. Default uses all available threads")
 def backward(**kw):
     '''
     Solves
@@ -114,7 +118,7 @@ def backward(**kw):
 
     '''
     args = OmegaConf.create(kw)
-    pyscilog.log_to_file(args.output_filename + '.log')
+    pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
 
     if args.nworkers is None:
         args.nworkers = args.nband
@@ -176,7 +180,7 @@ def _backward(**kw):
         raise ValueError("No update found in model dataset. "
                          "Use forward worker to populate it. ", file=log)
 
-    if args.model_name  in mds:
+    if args.model_name in mds:
         model = mds.get(args.model_name).values
         assert model.shape == (nband, nx, ny)
         print(f"Initialising model from {args.model_name} in mds", file=log)
@@ -187,7 +191,7 @@ def _backward(**kw):
     data = model + update
 
     from pfb.utils.misc import init_mask
-    mask = init_mask(args.mask, mds, args.output_type, log)
+    mask = init_mask(args.mask, mds, xds[0].DIRTY.dtype, log)
 
     # dictionary setup
     print("Setting up dictionary", file=log)
@@ -313,16 +317,8 @@ def _backward(**kw):
 
             weight[m] = alpha[m]/(alpha[m] + l2_norm[m])
 
-    # import matplotlib.pyplot as plt
-    # for b in range(nband):
-    #     plt.imshow(model[b], vmax=0.2*model[b].max())
-    #     plt.colorbar()
-    #     plt.show()
-
-    # quit()
-
     print("Saving results", file=log)
-    mask = np.any(model, axis=0).astype(args.output_type)
+    mask = np.any(model, axis=0).astype(bool)
     mask = da.from_array(mask, chunks=(-1, -1))
     model = da.from_array(model, chunks=(1, -1, -1), name=False)
     modelp = da.from_array(modelp, chunks=(1, -1, -1), name=False)
@@ -363,10 +359,10 @@ def _backward(**kw):
 
     dask.compute(xds_to_zarr(writes, xds_name, columns='RESIDUAL'))
 
-    if args.fits_mfs or not args.no_fits_cubes:
+    if args.fits_mfs or args.fits_cubes:
         print("Writing fits files", file=log)
         xds = xds_from_zarr(xds_name)
-        residual = np.zeros((nband, nx, ny), dtype=args.output_type)
+        residual = np.zeros((nband, nx, ny), dtype=xds[0].DIRTY.dtype)
         wsums = np.zeros(nband)
         for ds in xds:
             b = ds.bandid
@@ -392,7 +388,7 @@ def _backward(**kw):
         residual_mfs = np.sum(residual, axis=0)
         save_fits(f'{basename}_residual_mfs.fits', residual_mfs, hdr_mfs)
 
-        if not args.no_fits_cubes:
+        if args.fits_cubes:
             # need residual in Jy/beam
             wsums = np.amax(psf, axes=(1,2))
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)

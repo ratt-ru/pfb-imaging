@@ -1,0 +1,114 @@
+inputs:
+  model_name:
+    dtype: str
+    abbreviation: mname
+    default: MODEL
+    info: 'Name of residual in xds'
+  mask:
+    dtype: str
+    abbreviation: mask
+    info: 'Either path to mask.fits or set to mds to use \
+          the mask contained in the mds.'
+  nband:
+    dtype: int
+    required: true
+    abbreviation: nb
+    info: 'Number of imaging bands'
+  output_filename:
+    dtype: str
+    required: true
+    info: 'Basename of output'
+    metavar: BASENAME
+    abbreviation: o
+  product:
+    dtype: str
+    abbreviation: p
+    default: I
+    info: 'Imaging products to produce. Options are I, Q, U, V. \
+          Only single Stokes products are currently supported'
+  row_chunk:
+    dtype: int
+    info: 'Number of rows in a chunk in output dataset'
+    abbreviation: rc
+    default: -1
+  sigmainv:
+    dtype: float
+    info: 'Standard deviation of assumed GRF prior'
+    default: 1e-5
+    abbreviation: sinv
+  bases:
+    dtype: str
+    info: 'Wavelet bases to use. Give as comma separated str eg. '
+    default: 'self,db1,db2'
+    abbreviation: bases
+  nlevels:
+    dtype: int
+    info: 'Wavelet decomposition level'
+    default: 3
+    abbreviation: nlevels
+  hessnorm:
+    dtype: float
+    info: 'Spectral norm of th ehessian approximation'
+    abbreviation: hessnorm
+  sigma21:
+    dtype: float
+    info: 'Wavelet thresholding level'
+    default: 1e-4
+    abbreviation: sig21
+  positivity:
+    dtype: bool
+    info: Apply positivity constraint
+    default: True
+  niter:
+    dtype: int
+    default: 5
+    info: Number of iterations. L21 reweighting will take place after every iteration
+    abbreviation: niter
+  use_psf:
+    dtype: bool
+    default: true
+    info: 'Whether to approximate the Hessian as a convolution by the PSF'
+  fits_mfs:
+    dtype: bool
+    default: true
+    info: "Output MFS fits files"
+  fits_cubes:
+    dtype: bool
+    default: false
+    info: "Output fits cubes"
+  do_residual:
+    dtype: bool
+    default: false
+    info: 'Whether to make the residual at the end the forward step'
+  _include:
+    - (pfb.parser)gridding.yml
+    - (pfb.parser)pdopts.yml
+    - (pfb.parser)pmopts.yml
+    - (pfb.parser)dist.yml
+
+outputs:
+  log:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}.log'
+  mds:
+    dtype: Dir
+    implicit: '{current.output_filename}_{current.product}.mds.zarr'
+  xds:
+    dtype: Dir
+    implicit: '{current.output_filename}_{current.product}.xds.zarr'
+  update_mfs:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}_update_mfs.fits'
+    must_exist: false
+  residual_mfs:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}_forward_residual_mfs.fits'
+    must_exist: false
+  update_cube:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}_update.fits'
+    must_exist: false
+  residual_cube:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}_forward_residual.fits'
+    must_exist: false

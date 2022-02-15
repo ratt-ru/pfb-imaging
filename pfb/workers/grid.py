@@ -46,7 +46,7 @@ def grid(**kw):
 
     '''
     args = OmegaConf.create(kw)
-    pyscilog.log_to_file(args.output_filename + '.log')
+    pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
     from glob import glob
     ms = glob(args.ms)
     try:

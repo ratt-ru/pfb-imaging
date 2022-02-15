@@ -51,7 +51,7 @@ def forward(**kw):
 
     '''
     args = OmegaConf.create(kw)
-    pyscilog.log_to_file(args.output_filename + '.log')
+    pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
 
     if args.nworkers is None:
         args.nworkers = args.nband
