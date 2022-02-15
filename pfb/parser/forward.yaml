@@ -14,6 +14,12 @@ inputs:
     required: true
     abbreviation: nb
     info: 'Number of imaging bands'
+  output_filename:
+    dtype: str
+    required: true
+    info: 'Basename of output'
+    metavar: BASENAME
+    abbreviation: o
   product:
     dtype: str
     abbreviation: p
@@ -61,11 +67,19 @@ outputs:
   xds:
     dtype: Dir
     implicit: '{current.output_filename}_{current.product}.xds.zarr'
-  fits_mfs:
+  update_mfs:
     dtype: File
     implicit: '{current.output_filename}_{current.product}_update_mfs.fits'
     must_exist: false
-  fits_cubes:
+  residual_mfs:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}_forward_residual_mfs.fits'
+    must_exist: false
+  update_cube:
     dtype: File
     implicit: '{current.output_filename}_{current.product}_update.fits'
+    must_exist: false
+  residual_cube:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}_forward_residual.fits'
     must_exist: false

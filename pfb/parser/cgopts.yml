@@ -24,3 +24,7 @@ cg_report_freq:
   default: 100
   info: 'Report frequency of conjugate gradient algorithm'
   abbreviation: cgrf
+backtrack:
+  dtype: bool
+  default: true
+  info: 'Ensure residual decreases at every iteration'

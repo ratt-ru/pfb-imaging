@@ -217,7 +217,7 @@ def _forward(**kw):
 
         dask.compute(xds_to_zarr(writes, xds_name, columns='FORWARD_RESIDUAL'))
 
-    if args.fits_mfs or not args.no_fits_cubes:
+    if args.fits_mfs or args.fits_cubes:
         print("Writing fits files", file=log)
         # construct a header from xds attrs
         radec = [xds[0].ra, xds[0].dec]
@@ -245,7 +245,7 @@ def _forward(**kw):
             save_fits(f'{basename}_forward_residual_mfs.fits',
                       residual_mfs, hdr_mfs)
 
-        if not args.no_fits_cubes:
+        if args.fits_cubes:
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
             save_fits(f'{basename}_update.fits', update, hdr)
 

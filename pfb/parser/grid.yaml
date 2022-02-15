@@ -146,12 +146,20 @@ outputs:
   xds:
     dtype: Dir
     implicit: '{current.output_filename}_{current.product}.xds.zarr'
-  fits_mfs:
+  dirty_mfs:
     dtype: File
-    implicit: '{current.output_filename}_{current.product}_mfs.fits'
+    implicit: '{current.output_filename}_{current.product}_dirty_mfs.fits'
     must_exist: false
-  fits_cubes:
+  psf_mfs:
     dtype: File
-    implicit: '{current.output_filename}_{current.product}.fits'
+    implicit: '{current.output_filename}_{current.product}_psf_mfs.fits'
+    must_exist: false
+  dirty_cube:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}_dirty.fits'
+    must_exist: false
+  psf_cube:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}_psf.fits'
     must_exist: false
 
