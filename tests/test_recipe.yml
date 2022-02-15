@@ -1,0 +1,42 @@
+_include:
+  - (pfb)stimela_cabs.yaml
+
+opts:
+  log:
+    dir: logs
+    nest: 2
+
+
+test_recipe:
+  name: "PFB sample recipe"
+  info: "just a demo recipe"
+
+  inputs:
+    ms:
+      dtype: MS
+      required: true
+    output_filename:
+      dtype: str
+      required: true
+
+  # an alias is a recipe parameter that maps to parameters of step(s)
+  aliases:
+    data_column: [grid.data_column, dirty2.data_column]
+
+
+  steps:
+    grid:
+      cab: pfb.grid
+      params:
+        # an alternate way to achieve aliasing is via {}-substitutions
+        # this is more flexible, but doesn't do proper type checking up front
+        ms: '{recipe.ms}'
+        output_filename: '{recipe.output_filename}'
+        nband: 3
+
+    forward:
+      cab: pfb.forward
+      params:
+        ms: '{recipe.ms}'
+        output_filename: '{recipe.output_filename}'
+        nband: 4

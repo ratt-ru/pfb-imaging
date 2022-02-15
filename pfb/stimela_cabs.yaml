@@ -3,6 +3,11 @@ cabs:
   'pfb.grid':
     command: (pfb.workers.grid)grid
 
-    _include: (pfb.parser)grid.yaml
+    _include:
+      - (pfb.parser)grid.yaml
+
+  'pfb.forward':
+    command: (pfb.workers.deconv.forward)forward
+      - (pfb.parser)forward.yaml
 
 

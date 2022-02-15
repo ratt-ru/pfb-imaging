@@ -8,60 +8,11 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('FORWARD')
 
+from scabha.schema_utils import clickify_parameters
+from pfb.parser.schemas import schema
+
 @cli.command(context_settings={'show_default': True})
-@click.option('-o', '--output-filename', type=str, required=True,
-              help="Basename of output.")
-@click.option('-rname', '--residual-name', default='RESIDUAL',
-              help='Name of residual to use in xds')
-@click.option('-mask', '--mask', default=None,
-              help="Either path to mask.fits or set to mds to use "
-              "the mask contained in the mds.")
-@click.option('-nb', '--nband', type=int, required=True,
-              help="Number of imaging bands")
-@click.option('-p', '--product', default='I',
-              help='Currently supports I, Q, U, and V. '
-              'Only single Stokes products currently supported.')
-@click.option('-rchunk', '--row-chunk', type=int, default=-1,
-              help="Number of rows in a chunk.")
-@click.option('-eps', '--epsilon', type=float, default=1e-7,
-              help='Gridder accuracy')
-@click.option('-sinv', '--sigmainv', type=float, default=1.0,
-              help='Standard deviation of assumed GRF prior.'
-              'Set it to rms/nband if uncertain')
-@click.option('--wstack/--no-wstack', default=True)
-@click.option('--double-accum/--no-double-accum', default=True)
-@click.option('--use-psf/--no-use-psf', default=True)
-@click.option('--fits-mfs/--no-fits-mfs', default=True)
-@click.option('--no-fits-cubes/--fits-cubes', default=True)
-@click.option('--do-residual/--no-do-residual', default=True)
-@click.option('-cgtol', "--cg-tol", type=float, default=1e-5,
-              help="Tolerance of conjugate gradient")
-@click.option('-cgminit', "--cg-minit", type=int, default=10,
-              help="Minimum number of iterations for conjugate gradient")
-@click.option('-cgmaxit', "--cg-maxit", type=int, default=100,
-              help="Maximum number of iterations for conjugate gradient")
-@click.option('-cgverb', "--cg-verbose", type=int, default=0,
-              help="Verbosity of conjugate gradient. "
-              "Set to 2 for debugging or zero for silence.")
-@click.option('-cgrf', "--cg-report-freq", type=int, default=10,
-              help="Report freq for conjugate gradient.")
-@click.option('--backtrack/--no-backtrack', default=True,
-              help="Backtracking during cg iterations.")
-@click.option('-ha', '--host-address',
-              help='Address where the distributed client lives. '
-              'Will use a local cluster if no address is provided')
-@click.option('-nw', '--nworkers', type=int,
-              help='Number of workers for the client.')
-@click.option('-ntpw', '--nthreads-per-worker', type=int,
-              help='Number of dask threads per worker.')
-@click.option('-nvt', '--nvthreads', type=int,
-              help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
-@click.option('-mem', '--mem-limit', type=float,
-              help="Memory limit in GB. Default uses all available memory")
-@click.option('-nthreads', '--nthreads', type=int,
-              help="Total available threads. Default uses all available threads")
-@click.option('-scheduler', '--scheduler', default='distributed',
-              help="Total available threads. Default uses all available threads")
+@clickify_parameters(schema.forward)
 def forward(**kw):
     '''
     Forward step aka flux mop.

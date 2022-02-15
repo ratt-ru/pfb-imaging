@@ -30,15 +30,15 @@ inputs:
   gain_table:
     dtype: str
     abbreviation: gt
-    info: 'Column containing Mueller terms. Must be the same across MSs'
-    metavar: COLUMN
+    info: "Path to Quartical gain table containing NET gains.\
+          There must be a table for each MS and glob(ms) and glob(gt) \
+          should match up."
   product:
     dtype: str
     abbreviation: p
     default: I
-    info: "Path to Quartical gain table containing NET gains.\
-          There must be a table for each MS and glob(ms) and glob(gt) \
-          should match up."
+    info: 'Imaging products to produce. Options are I, Q, U, V. \
+          Only single Stokes products are currently supported'
   utimes_per_chunk:
     dtype: int
     info: 'Unique times per row chunk'
@@ -49,15 +49,6 @@ inputs:
     info: 'Number of rows in a chunk in output dataset'
     abbreviation: roc
     default: 10000
-  epsilon:
-    dtype: float
-    default: 1e-7
-    info: 'Gridder accuracy'
-    abbreviation: eps
-  precision:
-    dtype: str
-    default: double
-    info: '"single" or "double"'
   group_by_field:
     dtype: bool
     default: True
@@ -70,15 +61,10 @@ inputs:
     dtype: bool
     default: True
     info: "Split data by scan"
-  wstack:
-    dtype: bool
-    default: true
-    info: "Perform w-correction via improved w-stacking"
-  double_accum:
-    dtype: bool
-    default: true
-    info: "Accumulate onto grid using double precision. \
-          Only has an affect when using single precision."
+  precision:
+    dtype: str
+    default: double
+    info: '"single" or "double"'
   fits_mfs:
     dtype: bool
     default: true
@@ -146,7 +132,9 @@ inputs:
     dtype: int
     info: 'Number of y pixels'
 
-  _include: (pfb.parser)dist.yml
+  _include:
+    - (pfb.parser)gridding.yml
+    - (pfb.parser)dist.yml
 
 outputs:
   log:
@@ -160,7 +148,7 @@ outputs:
     implicit: '{current.output_filename}_{current.product}.xds.zarr'
   fits_mfs:
     dtype: File
-    implicit: '{current.output_filename}_{current.product}_MFS.fits'
+    implicit: '{current.output_filename}_{current.product}_mfs.fits'
     must_exist: false
   fits_cubes:
     dtype: File

@@ -1,0 +1,71 @@
+inputs:
+  residual_name:
+    dtype: str
+    abbreviation: rname
+    default: RESIDUAL
+    info: 'Name of residual in xds'
+  mask:
+    dtype: str
+    abbreviation: mask
+    info: 'Either path to mask.fits or set to mds to use \
+          the mask contained in the mds.'
+  nband:
+    dtype: int
+    required: true
+    abbreviation: nb
+    info: 'Number of imaging bands'
+  product:
+    dtype: str
+    abbreviation: p
+    default: I
+    info: 'Imaging products to produce. Options are I, Q, U, V. \
+          Only single Stokes products are currently supported'
+  row_chunk:
+    dtype: int
+    info: 'Number of rows in a chunk in output dataset'
+    abbreviation: rc
+    default: -1
+  sigmainv:
+    dtype: float
+    info: 'Standard deviation of assumed GRF prior'
+    default: 1e-5
+    abbreviation: sinv
+  use_psf:
+    dtype: bool
+    default: true
+    info: 'Whether to approximate the Hessian as a convolution by the PSF'
+  fits_mfs:
+    dtype: bool
+    default: true
+    info: "Output MFS fits files"
+  fits_cubes:
+    dtype: bool
+    default: false
+    info: "Output fits cubes"
+  do_residual:
+    dtype: bool
+    default: false
+    info: 'Whether to make the residual at the end the forward step'
+  _include:
+    - (pfb.parser)gridding.yml
+    - (pfb.parser)cgopts.yml
+    - (pfb.parser)dist.yml
+
+outputs:
+  log:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}.log'
+  mds:
+    dtype: Dir
+    implicit: '{current.output_filename}_{current.product}.mds.zarr'
+  xds:
+    dtype: Dir
+    implicit: '{current.output_filename}_{current.product}.xds.zarr'
+  fits_mfs:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}_update_mfs.fits'
+    must_exist: false
+  fits_cubes:
+    dtype: File
+    implicit: '{current.output_filename}_{current.product}_update.fits'
+    must_exist: false
