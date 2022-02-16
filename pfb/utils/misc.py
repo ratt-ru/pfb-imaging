@@ -404,22 +404,6 @@ def chan_to_band_mapping(ms_name, nband=None,
 
     return freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks
 
-
-def stitch_images(dirties, nband, band_mapping):
-    _, nx, ny = dirties[0].shape
-    dirty = np.zeros((nband, nx, ny), dtype=dirties[0].dtype)
-    d = 0
-    for ims in band_mapping:
-        for idt in band_mapping[ims]:
-            for b, band in enumerate(band_mapping[ims][idt]):
-                ne.evaluate('a + b', local_dict={
-                    'a': dirty[band],
-                    'b': dirties[d][b]},
-                    out=dirty[band], casting='same_kind')
-                # dirty[band] += dirties[d][b]
-            d += 1
-    return dirty
-
 def restore_corrs(vis, ncorr):
     return da.blockwise(_restore_corrs, ('row', 'chan', 'corr'),
                         vis, ('row', 'chan'),

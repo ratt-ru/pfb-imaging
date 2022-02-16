@@ -7,51 +7,21 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('IMWEIGHT')
 
+from scabha.schema_utils import clickify_parameters
+from pfb.parser.schemas import schema
 
 @cli.command()
-@click.argument('ms', nargs=-1)
-@click.option('-iwc', '--imaging-weight-column',
-              default='IMAGING_WEIGHT_SPECTRUM',
-              help="Column to write imaging weights to.")
-@click.option('-fc', '--flag-column', default='FLAG',
-              help="Column containing data flags."
-              "Must be the same across MSs")
-@click.option('-rb', '--robustness', type=float,
-              help="Robustness factor between -2, and 2. "
-              "None implies uniform weighting.")
-@click.option('-nb', '--nband', type=int, required=True,
-              help="Number of imaging bands")
-@click.option('-rchunk', '--row-chunks',
-              help="Number of rows in a chunk.")
-@click.option('-fov', '--field-of-view', type=float,
-              help="Field of view in degrees")
-@click.option('-srf', '--super-resolution-factor', type=float,
-              help="Will over-sample Nyquist by this factor at max frequency")
-@click.option('-cs', '--cell-size', type=float,
-              help='Cell size in arcseconds')
-@click.option('-nx', '--nx', type=int,
-              help="Number of x pixels")
-@click.option('-ny', '--ny', type=int,
-              help="Number of x pixels")
-@click.option('-otype', '--output-type', default='f4',
-              help="Data type of output")
-@click.option('--double-accum/--no-double-accum', default=True)
-@click.option('-o', '--output-filename', type=str, required=True,
-              help="Basename of output.")
-@click.option('-ha', '--host-address',
-              help='Address where the distributed client lives. '
-              'Will use a local cluster if no address is provided')
-@click.option('-nw', '--nworkers', type=int,
-              help='Number of workers for the client.')
-@click.option('-ntpw', '--nthreads-per-worker', type=int,
-              help='Number of dask threads per worker.')
-@click.option('-mem', '--mem-limit', type=float,
-              help="Memory limit in GB. Default uses all available memory")
-@click.option('-nthreads', '--nthreads', type=int,
-              help="Total available threads. Default uses all available threads")
-def imweight(ms, **kw):
+@clickify_parameters(schema.imweight)
+def imweight(**kw):
     '''
-    Compute and write imaging weights to a measurement set-like storage format.
+    This worker has two modes depending on whether a measurement set of a xds
+    is supplied. When a measurement set is supplied it will compute and write
+    imaging weights to a measurement set-like storage format. When an xds is
+    supplied it will update the imaging weights in the xds and also optionally
+    recompute the dirty image and PSF contained in the xds. The latter mode
+    is useful if eg. gain solutions remain unchanged but we want to change
+    just the imaging weights.
+
     The type of weighting to apply is determined by the
     --robustness parameter. The default of None implies uniform weighting.
     You don't need this step for natural weighting.
@@ -81,77 +51,56 @@ def imweight(ms, **kw):
     distributed case.
 
     '''
-    if not len(ms):
-        raise ValueError("You must specify at least one measurement set")
-    with ExitStack() as stack:
-        return _imweight(ms, stack, **kw)
-
-def _imweight(ms, stack, **kw):
     args = OmegaConf.create(kw)
-    OmegaConf.set_struct(args, True)
-    pyscilog.log_to_file(args.output_filename + '.log')
-    pyscilog.enable_memory_logging(level=3)
-
-    # number of threads per worker
-    if args.nthreads is None:
-        if args.host_address is not None:
-            raise ValueError("You have to specify nthreads when using a distributed scheduler")
-        import multiprocessing
-        nthreads = multiprocessing.cpu_count()
-        args.nthreads = nthreads
+    pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
+    from glob import glob
+    if args.ms is not None:
+        args.ms = glob(args.ms)
+        try:
+            assert len(args.ms) > 0
+        except:
+            raise ValueError(f"No MS at {args.ms}")
+        mode = 'ms'
+    elif args.xds is not None:
+        if mode == 'ms':
+            raise ValueError("You cannot supply both an ms or an xds")
+        mode = 'xds'
     else:
-        nthreads = args.nthreads
+        raise ValueError("You must supply either an ms or an xds")
 
-    # configure memory limit
-    if args.mem_limit is None:
-        if args.host_address is not None:
-            raise ValueError("You have to specify mem-limit when using a distributed scheduler")
-        import psutil
-        mem_limit = int(psutil.virtual_memory()[0]/1e9)  # 100% of memory by default
-        args.mem_limit = mem_limit
-    else:
-        mem_limit = args.mem_limit
-
-    nband = args.nband
     if args.nworkers is None:
-        nworkers = nband
-        args.nworkers = nworkers
-    else:
-        nworkers = args.nworkers
+        if args.scheduler=='distributed':
+            args.nworkers = args.nband
+        else:
+            args.nworkers = 1
+    OmegaConf.set_struct(args, True)
 
-    if args.nthreads_per_worker is None:
-        nthreads_per_worker = nthreads//nworkers
-        args.nthreads_per_worker = nthreads_per_worker
-    else:
-        nthreads_per_worker = args.nthreads_per_worker
+    with ExitStack() as stack:
+        from pfb import set_client
+        args = set_client(args, stack, log, scheduler=args.scheduler)
 
-    # the number of chunks being read in simultaneously is equal to
-    # the number of dask threads
-    nthreads_dask = nworkers * nthreads_per_worker
+        # TODO - prettier config printing
+        print('Input Options:', file=log)
+        for key in args.keys():
+            print('     %25s = %s' % (key, args[key]), file=log)
 
-    ms = list(ms)
-    print('Input Options:', file=log)
-    for key in kw.keys():
-        print('     %25s = %s' % (key, args[key]), file=log)
+        if mode == 'ms':
+            return _imweight_ms(**args)
+        else:
+            return _imweight_xds(**args)
 
-    # numpy imports have to happen after this step
-    from pfb import set_client
-    set_client(nthreads, mem_limit, nworkers, nthreads_per_worker,
-               args.host_address, stack, log)
+def _imweight_ms(**kw):
+    args = OmegaConf.create(kw)
+    from omegaconf import ListConfig
+    if not isinstance(args.ms, list) and not isinstance(args.ms, ListConfig):
+        args.ms = [args.ms]
 
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
     from dask.distributed import performance_report
-    from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms import xds_from_storage_table as xds_from_table
-    from daskms.utils import dataset_type
-    mstype = dataset_type(ms[0])
-    if mstype == 'casa':
-        from daskms import xds_to_table
-    elif mstype == 'zarr':
-        from daskms.experimental.zarr import xds_to_zarr as xds_to_table
     import dask.array as da
+    from daskms import xds_to_table
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
     from pfb.utils.misc import stitch_images
@@ -159,60 +108,75 @@ def _imweight(ms, stack, **kw):
     from pfb.utils.weighting import counts_to_weights, compute_counts
     from pfb.utils.fits import set_wcs, save_fits
 
-    # chan <-> band mapping
-    freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
-        ms, nband=nband)
+    # TODO - optional grouping.
+    # We need to construct an identifier between
+    # dataset and field/spw/scan identifiers
+    group_by = []
+    if args.group_by_field:
+        group_by.append('FIELD_ID')
+    else:
+        raise NotImplementedError("Grouping by field is currently mandatory")
 
-    # gridder memory budget
+    if args.group_by_ddid:
+        group_by.append('DATA_DESC_ID')
+    else:
+        raise NotImplementedError("Grouping by DDID is currently mandatory")
+
+    if args.group_by_scan:
+        group_by.append('SCAN_NUMBER')
+    else:
+        raise NotImplementedError("Grouping by scan is currently mandatory")
+
+    # chan <-> band mapping
+    nband = args.nband
+    freqs, fbin_idx, fbin_counts, freq_out, band_mapping, chan_chunks = \
+        chan_to_band_mapping(args.ms, nband=args.nband, group_by=group_by)
+
+    # gridder memory budget (TODO)
     max_chan_chunk = 0
     max_freq = 0
-    for ims in ms:
-        for spw in freqs[ims]:
-            counts = freq_bin_counts[ims][spw].compute()
-            freq = freqs[ims][spw].compute()
+    for ms in args.ms:
+        for spw in freqs[ms]:
+            counts = fbin_counts[ms][spw].compute()
+            freq = freqs[ms][spw].compute()
             max_chan_chunk = np.maximum(max_chan_chunk, counts.max())
             max_freq = np.maximum(max_freq, freq.max())
 
-    # assumes measurement sets have the same columns,
-    # number of correlations etc.
-    xds = xds_from_ms(ms[0])
-    ncorr = xds[0].dims['corr']
-    nrow = xds[0].dims['row']
-
-    # imaging weights
-    memory_per_row = np.dtype(args.output_type).itemsize * max_chan_chunk * ncorr
-
-    # flags (uint8 or bool)
-    memory_per_row += np.dtype(np.uint8).itemsize * max_chan_chunk * ncorr
-
-    # UVW
-    memory_per_row += xds[0].UVW.data.itemsize * 3
-
-    # ANTENNA1/2
-    memory_per_row += xds[0].ANTENNA1.data.itemsize * 2
-
-    columns = (args.flag_column,
+    # assumes measurement sets have the same columns
+    xds = xds_from_ms(args.ms[0])
+    columns = (args.data_column,
+               args.flag_column,
                'UVW', 'ANTENNA1',
-               'ANTENNA2')
+               'ANTENNA2', 'TIME', 'INTERVAL')
+    schema = {}
+    schema[args.data_column] = {'dims': ('chan', 'corr')}
+    schema[args.flag_column] = {'dims': ('chan', 'corr')}
+
+    # only WEIGHT column gets special treatment
+    # any other column must have channel axis
+    if args.weight_column is not None:
+        columns += (args.weight_column,)
+        if args.weight_column == 'WEIGHT':
+            schema[args.weight_column] = {'dims': ('corr')}
+        else:
+            schema[args.weight_column] = {'dims': ('chan', 'corr')}
 
     # flag row
     if 'FLAG_ROW' in xds[0]:
         columns += ('FLAG_ROW',)
-        memory_per_row += xds[0].FLAG_ROW.data.itemsize
 
-    if mstype == 'zarr':
-        if args.imaging_weight_column in xds[0].keys():
-            iw_chunks = getattr(xds[0], args.imaging_weight_column).data.chunks
-        else:
-            iw_chunks = xds[0].DATA.data.chunks
-            print('Chunking imaging weights same as data')
+    # imaging weights
+    if args.imaging_weight_column is not None:
+        columns += (args.imaging_weight_column,)
+        schema[args.imaging_weight_column] = {'dims': ('chan', 'corr')}
 
-    # get max uv coords over all fields
+    # get max uv coords over all datasets
     uvw = []
     u_max = 0.0
     v_max = 0.0
-    for ims in ms:
-        xds = xds_from_ms(ims, columns=('UVW'), chunks={'row': -1})
+    for ms in args.ms:
+        xds = xds_from_ms(ms, columns=('UVW'), chunks={'row': -1},
+                          group_cols=group_by)
 
         for ds in xds:
             uvw = ds.UVW.data
@@ -232,55 +196,28 @@ def _imweight(ms, stack, **kw):
         if cell_N / cell_rad < 1:
             raise ValueError("Requested cell size too small. "
                              "Super resolution factor = ", cell_N / cell_rad)
-        print("Super resolution factor = %f" % (cell_N / cell_rad), file=log)
+        print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
     else:
         cell_rad = cell_N / args.super_resolution_factor
         cell_size = cell_rad * 60 * 60 * 180 / np.pi
-        print("Cell size set to %5.5e arcseconds" % cell_size, file=log)
+        print(f"Cell size set to {cell_size} arcseconds", file=log)
 
     if args.nx is None:
         fov = args.field_of_view * 3600
         npix = int(fov / cell_size)
-        if npix % 2:
+        npix = good_size(npix)
+        while npix % 2:
             npix += 1
-        nx = good_size(npix)
-        ny = good_size(npix)
+            npix = good_size(npix)
+        nx = npix
+        ny = npix
     else:
         nx = args.nx
         ny = args.ny if args.ny is not None else nx
 
-    print("Image size set to (%i, %i, %i)" % (nband, nx, ny), file=log)
-
-    # get approx image size
-    # this is not a conservative estimate when multiple SPW's map to a single
-    # imaging band
-    pixel_bytes = np.dtype(args.output_type).itemsize
-    band_size = nx * ny * pixel_bytes
+    print(f"Image size set to ({nband}, {nx}, {ny})", file=log)
 
 
-    if args.host_address is None:
-        # full image on single node
-        row_chunk = plan_row_chunk(mem_limit/nworkers, band_size, nrow,
-                                   memory_per_row, nthreads_per_worker)
-    else:
-        # single band per node
-        row_chunk = plan_row_chunk(mem_limit, band_size, nrow,
-                                   memory_per_row, nthreads_per_worker)
-
-    if args.row_chunks is not None:
-        row_chunk = int(args.row_chunks)
-        if row_chunk == -1:
-            row_chunk = nrow
-
-    print("nrows = %i, row chunks set to %i for a total of %i chunks per node" %
-          (nrow, row_chunk, int(np.ceil(nrow / row_chunk))), file=log)
-
-    chunks = {}
-    for ims in ms:
-        chunks[ims] = []  # xds_from_ms expects a list per ds
-        for spw in freqs[ims]:
-            chunks[ims].append({'row': row_chunk,
-                                'chan': chan_chunks[ims][spw]['chan']})
 
     # compute counts
     counts = []
@@ -408,10 +345,8 @@ def _imweight(ms, stack, **kw):
         writes.append(xds_to_table(out_data, ims,
                                    columns=[args.imaging_weight_column]))
 
-    dask.visualize(*writes, filename=args.output_filename + '_weights_graph.pdf',
-                   optimize_graph=False, collapse_outputs=True)
-
-    with performance_report(filename=args.output_filename + '_weights_per.html'):
-        dask.compute(writes, optimize_graph=False)
-
     print("All done here.", file=log)
+
+
+def _imweight_xds(**kw):
+    args = OmegaConf.create(kw)

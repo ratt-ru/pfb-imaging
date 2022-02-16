@@ -1,5 +1,5 @@
 _include:
-  - stimela_cabs.yaml
+  - (pfb)stimela_cabs.yaml
 
 opts:
   log:
@@ -15,14 +15,6 @@ test_recipe:
       dtype: MS
       required: true
       abbreviation: ms
-    output_filename:
-      dtype: str
-      required: true
-      abbreviation: o
-    nband:
-      dtype: int
-      required: true
-      abbreviation: nband
     data_column:
       dtype: str
       default: DATA
@@ -50,9 +42,6 @@ test_recipe:
       abbreviation: srf
       default: 2.0
       info: 'Will over-sample Nyquist by this factor at max frequency'
-    nthreads:
-      dtype: int
-      abbreviation: nthreads
     sigmainv:
       dtype: float
       abbreviation: sinv
@@ -68,6 +57,7 @@ test_recipe:
     output_filename: [grid.output_filename, forward.output_filename, backward.output_filename]
     nband: [grid.nband, forward.nband, backward.nband]
     nthreads: [grid.nthreads, forward.nthreads, backward.nthreads]
+    product: [grid.product, forward.product, backward.product]
 
   steps:
     grid:
@@ -79,7 +69,7 @@ test_recipe:
         weight_column: '{recipe.weight_column}'
         flag_column: '{recipe.flag_column}'
         ms: '{recipe.ms}'
-        gain_table: '{recipe.gain_table}'
+        # gain_table: '{recipe.gain_table}'
         field_of_view: '{recipe.field_of_view}'
         super_resolution_factor: '{recipe.super_resolution_factor}'
 

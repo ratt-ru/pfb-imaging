@@ -107,7 +107,6 @@ def _grid(**kw):
     from africanus.constants import c as lightspeed
     from africanus.calibration.utils import chunkify_rows
     from ducc0.fft import good_size
-    from pfb.utils.misc import stitch_images
     from pfb.utils.fits import set_wcs, save_fits
     from pfb.utils.stokes import single_stokes
     from pfb.utils.misc import compute_context
@@ -211,8 +210,9 @@ def _grid(**kw):
         fov = args.field_of_view * 3600
         npix = int(fov / cell_size)
         npix = good_size(npix)
-        if npix % 2:
+        while npix % 2:
             npix += 1
+            npix = good_size(npix)
         nx = npix
         ny = npix
     else:
