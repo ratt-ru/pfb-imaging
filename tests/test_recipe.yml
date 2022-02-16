@@ -1,11 +1,10 @@
 _include:
-  - (pfb)stimela_cabs.yaml
+  - stimela_cabs.yaml
 
 opts:
   log:
     dir: logs
     nest: 2
-
 
 test_recipe:
   name: "PFB sample recipe"
@@ -15,14 +14,60 @@ test_recipe:
     ms:
       dtype: MS
       required: true
+      abbreviation: ms
     output_filename:
       dtype: str
       required: true
+      abbreviation: o
+    nband:
+      dtype: int
+      required: true
+      abbreviation: nband
+    data_column:
+      dtype: str
+      default: DATA
+      abbreviation: dc
+    weight_column:
+      dtype: str
+      default: WEIGHT_SPECTRUM
+      abbreviation: wc
+    flag_column:
+      dtype: str
+      default: FLAG
+      abbreviation: fc
+    gain_table:
+      dtype: str
+      metavar: QCAL_TABLE
+      abbreviation: gt
+    field_of_view:
+      dtype: float
+      abbreviation: fov
+      required: true
+      info: 'Field of view in degrees'
+      metavar: DEG
+    super_resolution_factor:
+      dtype: float
+      abbreviation: srf
+      default: 2.0
+      info: 'Will over-sample Nyquist by this factor at max frequency'
+    nthreads:
+      dtype: int
+      abbreviation: nthreads
+    sigmainv:
+      dtype: float
+      abbreviation: sinv
+      default: 1e-5
+      info: 'Variance of assume GRF'
+    sigma21:
+      dtype: float
+      info: 'Wavelet thresholding level'
+      default: 1e-4
 
   # an alias is a recipe parameter that maps to parameters of step(s)
   aliases:
-    data_column: [grid.data_column, dirty2.data_column]
-
+    output_filename: [grid.output_filename, forward.output_filename, backward.output_filename]
+    nband: [grid.nband, forward.nband, backward.nband]
+    nthreads: [grid.nthreads, forward.nthreads, backward.nthreads]
 
   steps:
     grid:
@@ -30,13 +75,22 @@ test_recipe:
       params:
         # an alternate way to achieve aliasing is via {}-substitutions
         # this is more flexible, but doesn't do proper type checking up front
+        data_column: '{recipe.data_column}'
+        weight_column: '{recipe.weight_column}'
+        flag_column: '{recipe.flag_column}'
         ms: '{recipe.ms}'
-        output_filename: '{recipe.output_filename}'
-        nband: 3
+        gain_table: '{recipe.gain_table}'
+        field_of_view: '{recipe.field_of_view}'
+        super_resolution_factor: '{recipe.super_resolution_factor}'
 
     forward:
       cab: pfb.forward
       params:
-        ms: '{recipe.ms}'
-        output_filename: '{recipe.output_filename}'
-        nband: 4
+        sigmainv: '{recipe.sigmainv}'
+
+    backward:
+      cab: pfb.backward
+      params:
+        sigmainv: '{recipe.sigmainv}'
+        sigma21: '{recipe.sigma21}'
+

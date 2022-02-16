@@ -87,7 +87,7 @@ inputs:
     info: "Compute the weights associated with chosen product"
   vis:
     dtype: bool
-    default: true
+    default: false
     info: "Compute the visibilities associated with chosen product"
   bda_decorr:
     dtype: float

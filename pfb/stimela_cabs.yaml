@@ -8,6 +8,20 @@ cabs:
 
   'pfb.forward':
     command: (pfb.workers.deconv.forward)forward
+
+    _include:
       - (pfb.parser)forward.yaml
+
+  'pfb.backward':
+    command: (pfb.workers.deconv.backward)backward
+
+    _include:
+      - (pfb.parser)backward.yaml
+
+  'pfb.clean':
+    command: (pfb.workers.deconv.clean)clean
+
+    _include:
+      - (pfb.parser)clean.yaml
 
 
