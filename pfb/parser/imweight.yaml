@@ -5,12 +5,6 @@ inputs:
     info: 'Path to measurement set.'
     metavar: MS
     abbreviation: ms
-  data_column:
-    dtype: str
-    required: true
-    abbreviation: dc
-    info: 'Data column to image. Must be the same across MSs'
-    metavar: COLUMN
   weight_column:
     dtype: str
     abbreviation: wc
@@ -27,76 +21,10 @@ inputs:
     abbreviation: fc
     info: 'Column containing data flags. Must be the same across MSs'
     metavar: COLUMN
-  gain_table:
-    dtype: str
-    abbreviation: gt
-    info: "Path to Quartical gain table containing NET gains.\
-          There must be a table for each MS and glob(ms) and glob(gt) \
-          should match up."
-  product:
-    dtype: str
-    abbreviation: p
-    default: I
-    info: 'Imaging products to produce. Options are I, Q, U, V. \
-          Only single Stokes products are currently supported'
-  utimes_per_chunk:
-    dtype: int
-    info: 'Unique times per row chunk'
-    abbreviation: utpc
-    default: -1
-  row_out_chunk:
-    dtype: int
-    info: 'Number of rows in a chunk in output dataset'
-    abbreviation: roc
-    default: 10000
-  group_by_field:
-    dtype: bool
-    default: True
-    info: "Split data by field"
-  group_by_ddid:
-    dtype: bool
-    default: True
-    info: "Split data by DDID"
-  group_by_scan:
-    dtype: bool
-    default: True
-    info: "Split data by scan"
   precision:
     dtype: str
     default: double
     info: '"single" or "double"'
-  fits_mfs:
-    dtype: bool
-    default: true
-    info: "Output MFS fits files"
-  fits_cubes:
-    dtype: bool
-    default: false
-    info: "Output fits cubes"
-  psf:
-    dtype: bool
-    default: true
-    info: "Compute the PSF"
-  dirty:
-    dtype: bool
-    default: true
-    info: "Compute the dirty image"
-  weight:
-    dtype: bool
-    default: true
-    info: "Compute the weights associated with chosen product"
-  vis:
-    dtype: bool
-    default: false
-    info: "Compute the visibilities associated with chosen product"
-  bda_decorr:
-    dtype: float
-    default: 1.0
-    info: "BDA decorrelation factor. Only has an effect if less than one"
-  beam_model:
-    dtype: str
-    default: None
-    info: "Beam model to use. Currently only JimBeam supported"
   output_filename:
     dtype: str
     required: true
@@ -131,7 +59,6 @@ inputs:
   ny:
     dtype: int
     info: 'Number of y pixels'
-
   _include:
     - (pfb.parser)gridding.yml
     - (pfb.parser)dist.yml
@@ -141,10 +68,10 @@ outputs:
     dtype: File
     implicit: '{current.output_filename}_{current.product}.log'
   mds:
-    dtype: Directory
+    dtype: Dir
     implicit: '{current.output_filename}_{current.product}.mds.zarr'
   xds:
-    dtype: Directory
+    dtype: Dir
     implicit: '{current.output_filename}_{current.product}.xds.zarr'
   dirty_mfs:
     dtype: File
@@ -162,4 +89,3 @@ outputs:
     dtype: File
     implicit: '{current.output_filename}_{current.product}_psf.fits'
     must_exist: false
-
