@@ -13,7 +13,33 @@ from pfb.parser.schemas import schema
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.forward)
-def forward(**kw):
+def forward(residual_name='RESIDUAL',
+            mask=None,
+            nband=None,
+            output_filename=None,
+            product='I',
+            row_chunk=-1,
+            sigmainv=1e-5,
+            use_psf=True,
+            fits_mfs=True,
+            fits_cubes=False,
+            do_residual=False,
+            cg_tol=1e-5,
+            cg_maxit=250,
+            cg_minit=10,
+            cg_verbose=1,
+            cg_report_freq=100,
+            backtrack=True,
+            host_address=None,
+            nworkers=1,
+            nthreads_per_worker=1,
+            nvthreads=None,
+            nthreads=None,
+            mem_limit=None,
+            scheduler='single-threaded',
+            epsilon=1e-7,
+            wstack=True,
+            double_accum=True):
     '''
     Forward step aka flux mop.
 
@@ -50,7 +76,7 @@ def forward(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
-    args = OmegaConf.create(kw)
+    args = OmegaConf.create(locals())
     pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
 
     if args.nworkers is None:

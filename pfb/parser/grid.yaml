@@ -137,29 +137,30 @@ inputs:
     - (pfb.parser)dist.yml
 
 outputs:
-  log:
-    dtype: File
-    implicit: '{current.output_filename}_{current.product}.log'
-  mds:
-    dtype: Directory
-    implicit: '{current.output_filename}_{current.product}.mds.zarr'
-  xds:
-    dtype: Directory
-    implicit: '{current.output_filename}_{current.product}.xds.zarr'
-  dirty_mfs:
-    dtype: File
-    implicit: '{current.output_filename}_{current.product}_dirty_mfs.fits'
-    must_exist: false
-  psf_mfs:
-    dtype: File
-    implicit: '{current.output_filename}_{current.product}_psf_mfs.fits'
-    must_exist: false
-  dirty_cube:
-    dtype: File
-    implicit: '{current.output_filename}_{current.product}_dirty.fits'
-    must_exist: false
-  psf_cube:
-    dtype: File
-    implicit: '{current.output_filename}_{current.product}_psf.fits'
-    must_exist: false
+    {}
+  # log:
+  #   dtype: File
+  #   implicit: '{current.output_filename}_{current.product}.log'
+  # mds:
+  #   dtype: Directory
+  #   implicit: '{current.output_filename}_{current.product}.mds.zarr'
+  # xds:
+  #   dtype: Directory
+  #   implicit: '{current.output_filename}_{current.product}.xds.zarr'
+  # dirty_mfs:
+  #   dtype: File
+  #   implicit: '{current.output_filename}_{current.product}_dirty_mfs.fits'
+  #   must_exist: false
+  # psf_mfs:
+  #   dtype: File
+  #   implicit: '{current.output_filename}_{current.product}_psf_mfs.fits'
+  #   must_exist: false
+  # dirty_cube:
+  #   dtype: File
+  #   implicit: '{current.output_filename}_{current.product}_dirty.fits'
+  #   must_exist: false
+  # psf_cube:
+  #   dtype: File
+  #   implicit: '{current.output_filename}_{current.product}_psf.fits'
+  #   must_exist: false
 

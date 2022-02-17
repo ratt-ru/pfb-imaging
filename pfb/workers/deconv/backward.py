@@ -13,80 +13,41 @@ from pfb.parser.schemas import schema
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.backward)
-# @click.option('-mname', '--model-name', default='MODEL',
-#               help='Name of model in mds.')
-# @click.option('-mask', '--mask', default=None,
-#               help="Either path to mask.fits or set to mds to use "
-#               "the mask contained in the mds.")
-# @click.option('-o', '--output-filename', type=str, required=True,
-#               help="Basename of output.")
-# @click.option('-nb', '--nband', type=int, required=True,
-#               help="Number of imaging bands")
-# @click.option('-p', '--product', default='I',
-#               help='Currently supports I, Q, U, and V. '
-#               'Only single Stokes products currently supported.')
-# @click.option('-rchunk', '--row-chunk', type=int, default=-1,
-#               help="Number of rows in a chunk.")
-# @click.option('-bases', '--bases', default='self',
-#               help='Wavelet bases to use. Give as comma separated str eg. '
-#               '-bases self,db1,db2,db3,db4')
-# @click.option('-nlevels', '--nlevels', default=3,
-#               help='Number of wavelet decomposition levels')
-# @click.option('-hessnorm', '--hessnorm', type=float,
-#               help="Spectral norm of Hessian approximation")
-# @click.option('-otype', '--output-type', default='f4',
-#               help="Data type of output")
-# @click.option('-eps', '--epsilon', type=float, default=1e-5,
-#               help='Gridder accuracy')
-# @click.option('-sinv', '--sigmainv', type=float, default=1e-3,
-#               help='Standard deviation of assumed GRF prior used '
-#               'for preconditioning.')
-# @click.option('-sig21', '--sigma21', type=float, default=1e-3,
-#               help='Sparsity threshold level.')
-# @click.option('-niter', '--niter', type=int, default=10,
-#               help='Number of reweighting iterations. '
-#               'Reweighting will take place after every primal dual run.')
-# @click.option('--wstack/--no-wstack', default=True)
-# @click.option('--double-accum/--no-double-accum', default=True)
-# @click.option('--use-beam/--no-use-beam', default=True)
-# @click.option('--use-psf/--no-use-psf', default=True)
-# @click.option('--fits-mfs/--no-fits-mfs', default=True)
-# @click.option('--no-fits-cubes/--fits-cubes', default=True)
-# @click.option('--positivity/--no-positivity', default=True)
-# @click.option('-pdtol', "--pd-tol", type=float, default=1e-3,
-#               help="Tolerance of conjugate gradient")
-# @click.option('-pdmaxit', "--pd-maxit", type=int, default=100,
-#               help="Maximum number of iterations for primal dual")
-# @click.option('-pdverb', "--pd-verbose", type=int, default=1,
-#               help="Verbosity of primal dual. "
-#               "Set to 2 for debugging or zero for silence.")
-# @click.option('-pdrf', "--pd-report-freq", type=int, default=5,
-#               help="Report freq for primal dual.")
-# @click.option('-pmtol', "--pm-tol", type=float, default=1e-4,
-#               help="Tolerance of power method")
-# @click.option('-pmmaxit', "--pm-maxit", type=int, default=50,
-#               help="Maximum number of iterations for power method")
-# @click.option('-pmverb', "--pm-verbose", type=int, default=1,
-#               help="Verbosity of power method. "
-#               "Set to 2 for debugging or zero for silence.")
-# @click.option('-pmrf', "--pm-report-freq", type=int, default=10,
-#               help="Report freq for power method.")
-# @click.option('-ha', '--host-address',
-#               help='Address where the distributed client lives. '
-#               'Will use a local cluster if no address is provided')
-# @click.option('-nw', '--nworkers', type=int,
-#               help='Number of workers for the client.')
-# @click.option('-ntpw', '--nthreads-per-worker', type=int,
-#               help='Number of dask threads per worker.')
-# @click.option('-nvt', '--nvthreads', type=int,
-#               help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
-# @click.option('-mem', '--mem-limit', type=float,
-#               help="Memory limit in GB. Default uses all available memory")
-# @click.option('-nthreads', '--nthreads', type=int,
-#               help="Total available threads. Default uses all available threads")
-# @click.option('-scheduler', '--scheduler', default='distributed',
-#               help="Total available threads. Default uses all available threads")
-def backward(**kw):
+def backward(model_name='MODEL',
+             mask=None,
+             nband=None,
+             output_filename=None,
+             product='I',
+             row_chunk=-1,
+             sigmainv=1e-5,
+             sigma21=1e-3,
+             positivity=True,
+             bases='self,db1,db2',
+             nlevels=3,
+             hessnorm=None,
+             niter=5,
+             use_psf=True,
+             fits_mfs=True,
+             fits_cubes=False,
+             do_residual=True,
+             pd_tol=1e-5,
+             pd_maxit=100,
+             pd_verbose=1,
+             pd_report_freq=25,
+             pm_tol=1e-5,
+             pm_maxit=50,
+             pm_verbose=1,
+             pm_report_freq=50,
+             host_address=None,
+             nworkers=1,
+             nthreads_per_worker=1,
+             nvthreads=None,
+             nthreads=None,
+             mem_limit=None,
+             scheduler='single-threaded',
+             epsilon=1e-7,
+             wstack=True,
+             double_accum=True):
     '''
     Solves
 
@@ -117,7 +78,7 @@ def backward(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
-    args = OmegaConf.create(kw)
+    args = OmegaConf.create(locals())
     pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
 
     if args.nworkers is None:

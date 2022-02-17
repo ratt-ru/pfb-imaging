@@ -27,10 +27,6 @@ test_recipe:
       dtype: str
       default: FLAG
       abbreviation: fc
-    gain_table:
-      dtype: str
-      metavar: QCAL_TABLE
-      abbreviation: gt
     field_of_view:
       dtype: float
       abbreviation: fov
@@ -51,6 +47,14 @@ test_recipe:
       dtype: float
       info: 'Wavelet thresholding level'
       default: 1e-4
+    pd_maxit:
+      dtype: int
+      info: Max primal dual iterations
+      default: 50
+    niter:
+      dtype: int
+      info: "Max backward steps per pfb iteration"
+      default: 1
 
   # an alias is a recipe parameter that maps to parameters of step(s)
   aliases:
@@ -69,7 +73,6 @@ test_recipe:
         weight_column: '{recipe.weight_column}'
         flag_column: '{recipe.flag_column}'
         ms: '{recipe.ms}'
-        # gain_table: '{recipe.gain_table}'
         field_of_view: '{recipe.field_of_view}'
         super_resolution_factor: '{recipe.super_resolution_factor}'
 
@@ -81,6 +84,8 @@ test_recipe:
     backward:
       cab: pfb.backward
       params:
+        niter: '{recipe.niter}'
+        pd_maxit: '{recipe.pd_maxit}'
         sigmainv: '{recipe.sigmainv}'
         sigma21: '{recipe.sigma21}'
 

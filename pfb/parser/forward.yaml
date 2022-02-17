@@ -58,28 +58,30 @@ inputs:
     - (pfb.parser)dist.yml
 
 outputs:
-  log:
-    dtype: File
-    implicit: '{current.output_filename}_{current.product}.log'
-  mds:
-    dtype: Dir
-    implicit: '{current.output_filename}_{current.product}.mds.zarr'
-  xds:
-    dtype: Dir
-    implicit: '{current.output_filename}_{current.product}.xds.zarr'
-  update_mfs:
-    dtype: File
-    implicit: '{current.output_filename}_{current.product}_update_mfs.fits'
-    must_exist: false
-  residual_mfs:
-    dtype: File
-    implicit: '{current.output_filename}_{current.product}_forward_residual_mfs.fits'
-    must_exist: false
-  update_cube:
-    dtype: File
-    implicit: '{current.output_filename}_{current.product}_update.fits'
-    must_exist: false
-  residual_cube:
-    dtype: File
-    implicit: '{current.output_filename}_{current.product}_forward_residual.fits'
-    must_exist: false
+  {}
+
+  # log:
+  #   dtype: File
+  #   implicit: '{current.output_filename}_{current.product}.log'
+  # mds:
+  #   dtype: Directory
+  #   implicit: '{current.output_filename}_{current.product}.mds.zarr'
+  # xds:
+  #   dtype: Directory
+  #   implicit: '{current.output_filename}_{current.product}.xds.zarr'
+  # update_mfs:
+  #   dtype: File
+  #   implicit: '{current.output_filename}_{current.product}_update_mfs.fits'
+  #   must_exist: false
+  # residual_mfs:
+  #   dtype: File
+  #   implicit: '{current.output_filename}_{current.product}_forward_residual_mfs.fits'
+  #   must_exist: false
+  # update_cube:
+  #   dtype: File
+  #   implicit: '{current.output_filename}_{current.product}_update.fits'
+  #   must_exist: false
+  # residual_cube:
+  #   dtype: File
+  #   implicit: '{current.output_filename}_{current.product}_forward_residual.fits'
+  #   must_exist: false

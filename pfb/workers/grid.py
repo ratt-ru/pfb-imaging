@@ -12,7 +12,45 @@ from pfb.parser.schemas import schema
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.grid)
-def grid(**kw):
+def grid(ms=None,
+         data_column='DATA',
+         weight_column='WEIGHT_SPECTRUM',
+         imaging_weight_column=None,
+         flag_column='FLAG',
+         gain_table=None,
+         product='I',
+         utimes_per_chunk=-1,
+         row_out_chunk=-1,
+         group_by_field=True,
+         group_by_ddid=True,
+         group_by_scan=True,
+         precision='double',
+         fits_mfs=True,
+         fits_cubes=False,
+         psf=True,
+         dirty=True,
+         weight=True,
+         vis=True,
+         bda_decorr=1.0,
+         beam_model=None,
+         output_filename=None,
+         nband=None,
+         field_of_view=None,
+         super_resolution_factor=2.0,
+         psf_oversize=2.0,
+         cell_size=None,
+         nx=None,
+         ny=None,
+         host_address=None,
+         nworkers=1,
+         nthreads_per_worker=1,
+         nvthreads=None,
+         nthreads=None,
+         mem_limit=None,
+         scheduler='single-threaded',
+         epsilon=1e-7,
+         wstack=True,
+         double_accum=True):
     '''
     Create a dirty image, psf and weights from a list of measurement
     sets. Image cubes are not normalised by wsum as this destroyes
@@ -45,7 +83,7 @@ def grid(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
-    args = OmegaConf.create(kw)
+    args = OmegaConf.create(locals())
     pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
     from glob import glob
     ms = glob(args.ms)
