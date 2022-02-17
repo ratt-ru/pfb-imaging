@@ -7,7 +7,6 @@ from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
-from pfb.operators.fft import fft2d
 from africanus.averaging.bda_avg import bda
 from pfb.utils.misc import coerce_literal
 from daskms.optimisation import inlined_array
@@ -56,9 +55,6 @@ def single_stokes(ds=None,
     else:
         weight = da.ones_like(data, dtype=real_type)
 
-    if args.imaging_weight_column is not None:
-        weight *= getattr(ds, args.imaging_weight_column).data
-
     if data.dtype != complex_type:
         data = data.astype(complex_type)
 
@@ -93,94 +89,104 @@ def single_stokes(ds=None,
 
     data_vars = {'FREQ': (('chan',), freq)}
 
-    if args.dirty:
-        dirty = vis2im(uvw=uvw,
-                       freq=freq,
-                       vis=vis,
-                       nx=nx,
-                       ny=ny,
-                       cellx=cell_rad,
-                       celly=cell_rad,
-                       nthreads=args.nvthreads,
-                       epsilon=args.epsilon,
-                       precision=args.precision,
-                       mask=mask,
-                       do_wgridding=args.wstack,
-                       double_precision_accumulation=args.double_accum)
-        # dirty = inlined_array(dirty, [uvw, freq])
-        data_vars['DIRTY'] = (('x', 'y'), dirty)
+    wsum = da.sum(wgt[mask])
+    data_vars['WSUM'] = (('1'), da.array((wsum,)))
 
-        # from ducc0.wgridder.experimental import vis2dirty
-        # import pdb; pdb.set_trace()
+    wgt = wgt.rechunk({0:args.row_out_chunk})
+    data_vars['WEIGHT'] = (('row', 'chan'), wgt)
 
-    if args.psf:
-        psf = vis2im(uvw=uvw,
-                     freq=freq,
-                     vis=wgt.astype(complex_type),
-                     nx=nx_psf,
-                     ny=ny_psf,
-                     cellx=cell_rad,
-                     celly=cell_rad,
-                     nthreads=args.nvthreads,
-                     epsilon=args.epsilon,
-                     precision=args.precision,
-                     mask=mask,
-                     do_wgridding=args.wstack,
-                     double_precision_accumulation=args.double_accum)
-        # psf = inlined_array(psf, [uvw, freq])
-        wsum = da.max(psf)
-        data_vars['PSF'] = (('x_psf', 'y_psf'), psf)
+    uvw = uvw.rechunk({0:args.row_out_chunk})
+    data_vars['UVW'] = (('row', 'uvw'), uvw)
 
-        # get FT of psf
-        psfhat = fft2d(psf, nthreads=args.nvthreads)
-        data_vars['PSFHAT'] = (('x_psf', 'yo2'), psfhat)
+    vis = vis.rechunk({0:args.row_out_chunk})
+    data_vars['VIS'] = (('row', 'chan'), vis)
 
-    else:
-        wsum = da.sum(wgt[mask])
+    # MASK = ~FLAG.astype(np.uint8) for wgridder convention
+    mask = mask.rechunk({0:args.row_out_chunk})
+    data_vars['MASK'] = (('row', 'chan'), mask.astype(np.uint8))
 
-    if args.weight:
-        wgt = da.where(mask, wgt, 0.0)
-        # TODO - BDA over frequency
-        if args.bda_decorr < 1:
-            raise NotImplementedError("BDA not working yet")
-            from africanus.averaging.dask import bda
+    # if args.dirty:
+    #     dirty = vis2im(uvw=uvw,
+    #                    freq=freq,
+    #                    vis=vis,
+    #                    nx=nx,
+    #                    ny=ny,
+    #                    cellx=cell_rad,
+    #                    celly=cell_rad,
+    #                    nthreads=args.nvthreads,
+    #                    epsilon=args.epsilon,
+    #                    precision=args.precision,
+    #                    mask=mask,
+    #                    do_wgridding=args.wstack,
+    #                    double_precision_accumulation=args.double_accum)
+    #     # dirty = inlined_array(dirty, [uvw, freq])
+    #     data_vars['DIRTY'] = (('x', 'y'), dirty)
 
-            w_avs = []
-            uvw = uvw.compute()
-            t = time.compute()
-            a1 = ant1.compute()
-            a2 = ant2.compute()
-            intv = interval.compute()
-            fr = frow.compute()[:, None, None]
+    #     # from ducc0.wgridder.experimental import vis2dirty
+    #     # import pdb; pdb.set_trace()
 
-            res = bda(ds.TIME.data,
-                      ds.INTERVAL.data,
-                      ant1, ant2,
-                      uvw=uvw,
-                      flag=f[:, :, None],
-                      weight_spectrum=wgt[:, :, None],
-                      chan_freq=freq,
-                      chan_width=chan_width,
-                      decorrelation=0.95,
-                      min_nchan=freq.size)
+    # if args.psf:
+    #     psf = vis2im(uvw=uvw,
+    #                  freq=freq,
+    #                  vis=wgt.astype(complex_type),
+    #                  nx=nx_psf,
+    #                  ny=ny_psf,
+    #                  cellx=cell_rad,
+    #                  celly=cell_rad,
+    #                  nthreads=args.nvthreads,
+    #                  epsilon=args.epsilon,
+    #                  precision=args.precision,
+    #                  mask=mask,
+    #                  do_wgridding=args.wstack,
+    #                  double_precision_accumulation=args.double_accum)
+    #     # psf = inlined_array(psf, [uvw, freq])
+    #     wsum = da.max(psf)
+    #     data_vars['PSF'] = (('x_psf', 'y_psf'), psf)
 
-            uvw = res.uvw.reshape(-1, nchan, 3)[:, 0, :]
-            wgt = res.weight_spectrum.reshape(-1, nchan).squeeze()
+    #     # get FT of psf
+    #     psfhat = fft2d(psf, nthreads=args.nvthreads)
+    #     data_vars['PSFHAT'] = (('x_psf', 'yo2'), psfhat)
 
-            uvw = uvw.rechunk({0:args.row_out_chunk})
-            data_vars['UVW'] = (('row', 'uvw'), uvw)
+    # else:
+    #     wsum = da.sum(wgt[mask])
 
-        wgt = wgt.rechunk({0:args.row_out_chunk})
-        data_vars['WEIGHT'] = (('row', 'chan'), wgt)
+    # if args.weight:
+    #     wgt = da.where(mask, wgt, 0.0)
+    #     # TODO - BDA over frequency
+    #     if args.bda_decorr < 1:
+    #         raise NotImplementedError("BDA not working yet")
+    #         from africanus.averaging.dask import bda
+
+    #         w_avs = []
+    #         uvw = uvw.compute()
+    #         t = time.compute()
+    #         a1 = ant1.compute()
+    #         a2 = ant2.compute()
+    #         intv = interval.compute()
+    #         fr = frow.compute()[:, None, None]
+
+    #         res = bda(ds.TIME.data,
+    #                   ds.INTERVAL.data,
+    #                   ant1, ant2,
+    #                   uvw=uvw,
+    #                   flag=f[:, :, None],
+    #                   weight_spectrum=wgt[:, :, None],
+    #                   chan_freq=freq,
+    #                   chan_width=chan_width,
+    #                   decorrelation=0.95,
+    #                   min_nchan=freq.size)
+
+    #         uvw = res.uvw.reshape(-1, nchan, 3)[:, 0, :]
+    #         wgt = res.weight_spectrum.reshape(-1, nchan).squeeze()
+
+    #         uvw = uvw.rechunk({0:args.row_out_chunk})
+    #         data_vars['UVW'] = (('row', 'uvw'), uvw)
+
+    #     wgt = wgt.rechunk({0:args.row_out_chunk})
+    #     data_vars['WEIGHT'] = (('row', 'chan'), wgt)
 
 
-    if 'UVW' not in data_vars.keys():
-        data_vars['UVW'] = (('row', 'uvw'),
-                             uvw.rechunk({0:args.row_out_chunk}))
 
-    if args.vis:
-        vis = vis.rechunk({0:args.row_out_chunk})
-        data_vars['VIS'] = (('row', 'chan'), vis)
 
     # TODO - interpolate beam
     if args.beam_model is not None:
@@ -195,7 +201,6 @@ def single_stokes(ds=None,
         beam = da.ones((nx, ny), chunks=(nx, ny), dtype=real_type)
 
     data_vars['BEAM'] = (('x', 'y'), beam)
-    data_vars['WSUM'] = (('1'), da.array((wsum,)))
 
     attrs = {
         'cell_rad': cell_rad,
@@ -211,8 +216,8 @@ def single_stokes(ds=None,
         'bandid': int(bandid),
         'freq_out': freq_out
     }
-    if args.psf:
-        attrs['ny_psfo2'] = psfhat.shape[-1]
+    # if args.psf:
+    #     attrs['ny_psfo2'] = psfhat.shape[-1]
 
     out_ds = Dataset(data_vars, attrs=attrs)
 

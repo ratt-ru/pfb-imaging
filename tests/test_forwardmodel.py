@@ -174,9 +174,9 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
         ms.putcol('DATA2', model_vis)
         gain_path = None
 
-    from pfb.workers.grid import _grid
+    from pfb.workers.init import _init
     outname = str(test_dir / 'test')
-    _grid(ms=str(test_dir / 'test_ascii_1h60.0s.MS'),
+    _init(ms=str(test_dir / 'test_ascii_1h60.0s.MS'),
           data_column="DATA2", weight_column=None, imaging_weight_column=None,
           flag_column='FLAG', gain_table=gain_path, product='I',
           utimes_per_chunk=-1, row_out_chunk=10000, epsilon=epsilon,

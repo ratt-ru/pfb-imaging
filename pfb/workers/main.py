@@ -8,7 +8,7 @@ def cli():
 
 
 from pfb.workers.post import restore
-from pfb.workers import grid, degrid
+from pfb.workers import init, grid, degrid
 from pfb.workers.post import spifit, binterp
 from pfb.workers.deconv import nnls, clean, forward, backward
 from pfb.workers.weighting import imweight

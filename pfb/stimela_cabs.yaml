@@ -1,5 +1,11 @@
 
 cabs:
+  'pfb.init':
+    command: (pfb.workers.init)init
+
+    _include:
+      - (pfb.parser)init.yaml
+
   'pfb.grid':
     command: (pfb.workers.grid)grid
 
