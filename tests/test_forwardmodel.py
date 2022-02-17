@@ -182,8 +182,9 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
           utimes_per_chunk=-1, row_out_chunk=10000, epsilon=epsilon,
           precision='double', group_by_field=True, group_by_scan=True,
           group_by_ddid=True, wstack=wstack, double_accum=True,
-          fits_mfs=False, no_fits_cubes=True, psf=False, dirty=True,
-          weights=True, bda_weights=False, do_beam=do_beam,
+          fits_mfs=False, fits_cubes=True, dirty=True, psf=False,
+          weight=True, vis=False, bda_decorr=1.0,
+          beam_model=1 if do_beam else None,
           output_filename=outname, nband=nchan,
           field_of_view=fov, super_resolution_factor=srf,
           psf_oversize=2, cell_size=float(cell_size), nx=nx, ny=ny, nworkers=1,
@@ -205,7 +206,7 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
     _forward(output_filename=outname, residual_name='DIRTY',
              mask='mds', nband=nchan, product='I', row_chunk=-1,
              epsilon=epsilon, sigmainv=0.0, wstack=wstack, double_accum=True,
-             use_psf=False, fits_mfs=False, no_fits_cubes=True,
+             use_psf=False, fits_mfs=False, fits_cubes=True,
              do_residual=False, cg_tol=epsilon, cg_minit=0,
              cg_maxit=100, cg_verbose=2, cg_report_freq=1, backtrack=False,
              nworkers=1, nthreads_per_worker=1, nvthreads=8, mem_limit=8, nthreads=8,
@@ -220,4 +221,4 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
                         model[:, Ix[i], Iy[i]], 1.0, atol=10*epsilon)
 
 
-# test_forwardmodel(True, True)
+# test_forwardmodel(False, False)

@@ -19,7 +19,7 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
     if not isinstance(mask, da.Array):
         mask = da.from_array(mask, chunks=(-1, -1), name=False)
 
-    assert len(mask.shape) == 2
+    assert mask.ndim == 2
 
     nband, nx, ny = x.shape
 

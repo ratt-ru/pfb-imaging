@@ -181,8 +181,9 @@ def test_hessian(do_beam, do_gains, wstack, tmp_path_factory):
           utimes_per_chunk=-1, row_out_chunk=10000, epsilon=epsilon,
           precision='double', group_by_field=True, group_by_scan=True,
           group_by_ddid=True, wstack=wstack, double_accum=True,
-          fits_mfs=False, no_fits_cubes=True, psf=False, dirty=True,
-          weights=True, bda_weights=False, do_beam=do_beam,
+          fits_mfs=False, fits_cubes=True, dirty=True, psf=not wstack,
+          weight=wstack, vis=False, bda_decorr=1.0,
+          beam_model=1 if do_beam else None,
           output_filename=outname, nband=nchan,
           field_of_view=fov, super_resolution_factor=srf,
           psf_oversize=2, cell_size=float(cell_size), nx=nx, ny=ny, nworkers=1,
@@ -213,50 +214,40 @@ def test_hessian(do_beam, do_gains, wstack, tmp_path_factory):
         })
     dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
-    from pfb.operators.hessian import hessian_xds
-    hessopts = {}
-    hessopts['cell'] = cell_rad
-    hessopts['wstack'] = wstack
-    hessopts['epsilon'] = epsilon
-    hessopts['double_accum'] = True
-    hessopts['nthreads'] = 8
-    Iconv = hessian_xds(model, xds, hessopts, wsum, 0.0, np.ones((nx, ny)),
-                        compute=True, use_beam=do_beam)
+    # test against hessian with w-term and against psf convolve without
+    if wstack:
+        from pfb.operators.hessian import hessian_xds
+        hessopts = {}
+        hessopts['cell'] = cell_rad
+        hessopts['wstack'] = wstack
+        hessopts['epsilon'] = epsilon
+        hessopts['double_accum'] = True
+        hessopts['nthreads'] = 8
+        Iconv = hessian_xds(model, xds, hessopts, wsum, 0.0, np.ones((nx, ny)),
+                            compute=True, use_beam=do_beam)
+    else:
+        from pfb.operators.psf import psf_convolve_xds
+        nx_psf, ny_psf = xds[0].nx_psf, xds[0].ny_psf
+        npad_xl = (nx_psf - nx)//2
+        npad_xr = nx_psf - nx - npad_xl
+        npad_yl = (ny_psf - ny)//2
+        npad_yr = ny_psf - ny - npad_yl
+        padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
+        unpad_x = slice(npad_xl, -npad_xr)
+        unpad_y = slice(npad_yl, -npad_yr)
+        lastsize = ny + np.sum(padding[-1])
 
-    # TODO - why doesn't the beam work when wstack is False below?
-    # if wstack:
-    #     from pfb.operators.hessian import hessian_xds
-    #     hessopts = {}
-    #     hessopts['cell'] = cell_rad
-    #     hessopts['wstack'] = wstack
-    #     hessopts['epsilon'] = epsilon
-    #     hessopts['double_accum'] = True
-    #     hessopts['nthreads'] = 8
-    #     Iconv = hessian_xds(model, xds, hessopts, wsum, 0.0, np.ones((nx, ny)),
-    #                         compute=True, use_beam=do_beam)
-    # else:
-    #     from pfb.operators.psf import psf_convolve_xds
-    #     nx_psf, ny_psf = xds[0].nx_psf, xds[0].ny_psf
-    #     npad_xl = (nx_psf - nx)//2
-    #     npad_xr = nx_psf - nx - npad_xl
-    #     npad_yl = (ny_psf - ny)//2
-    #     npad_yr = ny_psf - ny - npad_yl
-    #     padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
-    #     unpad_x = slice(npad_xl, -npad_xr)
-    #     unpad_y = slice(npad_yl, -npad_yr)
-    #     lastsize = ny + np.sum(padding[-1])
+        psfopts = {}
+        psfopts['padding'] = padding
+        psfopts['unpad_x'] = unpad_x
+        psfopts['unpad_y'] = unpad_y
+        psfopts['lastsize'] = lastsize
+        psfopts['nthreads'] = 8
 
-    #     psfopts = {}
-    #     psfopts['padding'] = padding
-    #     psfopts['unpad_x'] = unpad_x
-    #     psfopts['unpad_y'] = unpad_y
-    #     psfopts['lastsize'] = lastsize
-    #     psfopts['nthreads'] = 8
-
-    #     Iconv = psf_convolve_xds(model, xds, psfopts, wsum, 0.0, np.ones((nx, ny)),
-    #                              compute=True, use_beam=do_beam)
+        Iconv = psf_convolve_xds(model, xds, psfopts, wsum, 0.0, np.ones((nx, ny)),
+                                 compute=True, use_beam=do_beam)
 
     # we should have ID == hess(model)
+    # add one for rtol
     assert_allclose(1.0 + beam*ID - Iconv, 1.0, atol=10*epsilon)
 
-# test_hessian(False, False, True)

@@ -61,7 +61,7 @@ def _psf_convolve_impl(x, psfhat, beam,
     """
     nx, ny = x.shape
     xhat = x if beam is None else x * beam
-    xhat = iFs(np.pad(x, padding, mode='constant'), axes=(0, 1))
+    xhat = iFs(np.pad(xhat, padding, mode='constant'), axes=(0, 1))
     xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
                 forward=True, inorm=0)
     xhat = c2r(xhat * psfhat, axes=(0, 1), forward=False,
