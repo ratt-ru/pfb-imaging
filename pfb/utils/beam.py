@@ -27,3 +27,19 @@ def katbeam(freq, nx, ny, cell_deg, beam_dtype=np.float32):
                         beam_dtype, None,
                         new_axes={"nx": nx, "ny": ny},
                         dtype=beam_dtype)
+
+def beam2obj(bvals, l, m):
+    return da.blockwise(_beam2obj, ('x',),
+                        bvals, ('l','m'),
+                        l, ('l',),
+                        m, ('m',),
+                        dtype=object,
+                        new_axes={'x': 1})
+
+def _beam2obj(bvals, l, m):
+    return _beam2obj_impl(bvals[0][0], l[0], m[0])
+
+from scipy.interpolate import RectBivariateSpline
+def _beam2obj_impl(bvals, l, m):
+    bo = RectBivariateSpline(l, m, bvals)
+    return np.array([bo], dtype=object)

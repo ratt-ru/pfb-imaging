@@ -79,7 +79,7 @@ inputs:
     required: true
     abbreviation: nb
     info: 'Number of imaging bands'
-  field_of_view:
+  max_field_of_view:
     dtype: float
     abbreviation: fov
     info: 'Field of view in degrees'

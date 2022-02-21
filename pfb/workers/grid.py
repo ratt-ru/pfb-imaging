@@ -132,7 +132,7 @@ def _grid(**kw):
     uv_max = uv_max.compute()
     max_freq = max_freq.compute()
 
-    # image size
+    # max cell size
     cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
 
     if args.cell_size is not None:

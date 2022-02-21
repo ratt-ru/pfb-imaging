@@ -28,7 +28,7 @@ def init(ms=None,
          beam_model=None,
          output_filename=None,
          nband=None,
-         field_of_view=None,
+         max_field_of_view=None,
          super_resolution_factor=2.0,
          psf_oversize=2.0,
          cell_size=None,
@@ -177,6 +177,21 @@ def _init(**kw):
             max_chan_chunk = np.maximum(max_chan_chunk, counts.max())
             max_freq = np.maximum(max_freq, freq.max())
 
+    # we need the Nyquist limit for setting up the beam interpolation
+    # get max uv coords over all datasets
+    uvw = []
+    u_max = 0.0
+    v_max = 0.0
+    for ds in xds:
+        uvw = ds.UVW.data
+        u_max = da.maximum(u_max, abs(uvw[:, 0]).max())
+        v_max = da.maximum(v_max, abs(uvw[:, 1]).max())
+        uv_max = da.maximum(u_max, v_max)
+
+    uv_max = uv_max.compute()
+    # approx max cell size
+    cell_rad = 1.0 / (2 * uv_max * max_freq / lightspeed)
+
     # assumes measurement sets have the same columns
     xds = xds_from_ms(args.ms[0])
     columns = (args.data_column,
@@ -199,63 +214,6 @@ def _init(**kw):
     # flag row
     if 'FLAG_ROW' in xds[0]:
         columns += ('FLAG_ROW',)
-
-    # get max uv coords over all datasets
-    uvw = []
-    u_max = 0.0
-    v_max = 0.0
-    for ms in args.ms:
-        xds = xds_from_ms(ms, columns=('UVW'), chunks={'row': -1},
-                          group_cols=group_by)
-
-        for ds in xds:
-            uvw = ds.UVW.data
-            u_max = da.maximum(u_max, abs(uvw[:, 0]).max())
-            v_max = da.maximum(v_max, abs(uvw[:, 1]).max())
-            uv_max = da.maximum(u_max, v_max)
-
-    uv_max = uv_max.compute()
-    del uvw
-
-    # image size
-    cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
-
-    if args.cell_size is not None:
-        cell_size = args.cell_size
-        cell_rad = cell_size * np.pi / 60 / 60 / 180
-        if cell_N / cell_rad < 1:
-            raise ValueError("Requested cell size too small. "
-                             "Super resolution factor = ", cell_N / cell_rad)
-        print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
-    else:
-        cell_rad = cell_N / args.super_resolution_factor
-        cell_size = cell_rad * 60 * 60 * 180 / np.pi
-        print(f"Cell size set to {cell_size} arcseconds", file=log)
-
-    if args.nx is None:
-        fov = args.field_of_view * 3600
-        npix = int(fov / cell_size)
-        npix = good_size(npix)
-        while npix % 2:
-            npix += 1
-            npix = good_size(npix)
-        nx = npix
-        ny = npix
-    else:
-        nx = args.nx
-        ny = args.ny if args.ny is not None else nx
-
-    print(f"Image size set to ({nband}, {nx}, {ny})", file=log)
-
-    nx_psf = good_size(int(args.psf_oversize * nx))
-    if nx_psf % 2:
-        nx_psf += 1
-
-    ny_psf = good_size(int(args.psf_oversize * ny))
-    if ny_psf % 2:
-        ny_psf += 1
-
-    print(f"PSF size set to ({nband}, {nx_psf}, {ny_psf})", file=log)
 
     ms_chunks = {}
     gain_chunks = {}
@@ -377,10 +335,6 @@ def _init(**kw):
             universal_opts = {
                 'tbin_idx':tbin_idx[ms][idt],
                 'tbin_counts':tbin_counts[ms][idt],
-                'nx':nx,
-                'ny':ny,
-                'nx_psf':nx_psf,
-                'ny_psf':ny_psf,
                 'cell_rad':cell_rad,
                 'radec':radec
             }

@@ -22,13 +22,9 @@ def single_stokes(ds=None,
                   freq_out=None,
                   chan_width=None,
                   bandid=None,
+                  cell_rad=None,
                   tbin_idx=None,
                   tbin_counts=None,
-                  nx=None,
-                  ny=None,
-                  nx_psf=None,
-                  ny_psf=None,
-                  cell_rad=None,
                   radec=None):
 
     if args.precision.lower() == 'single':
@@ -105,51 +101,6 @@ def single_stokes(ds=None,
     mask = mask.rechunk({0:args.row_out_chunk})
     data_vars['MASK'] = (('row', 'chan'), mask.astype(np.uint8))
 
-    # if args.dirty:
-    #     dirty = vis2im(uvw=uvw,
-    #                    freq=freq,
-    #                    vis=vis,
-    #                    nx=nx,
-    #                    ny=ny,
-    #                    cellx=cell_rad,
-    #                    celly=cell_rad,
-    #                    nthreads=args.nvthreads,
-    #                    epsilon=args.epsilon,
-    #                    precision=args.precision,
-    #                    mask=mask,
-    #                    do_wgridding=args.wstack,
-    #                    double_precision_accumulation=args.double_accum)
-    #     # dirty = inlined_array(dirty, [uvw, freq])
-    #     data_vars['DIRTY'] = (('x', 'y'), dirty)
-
-    #     # from ducc0.wgridder.experimental import vis2dirty
-    #     # import pdb; pdb.set_trace()
-
-    # if args.psf:
-    #     psf = vis2im(uvw=uvw,
-    #                  freq=freq,
-    #                  vis=wgt.astype(complex_type),
-    #                  nx=nx_psf,
-    #                  ny=ny_psf,
-    #                  cellx=cell_rad,
-    #                  celly=cell_rad,
-    #                  nthreads=args.nvthreads,
-    #                  epsilon=args.epsilon,
-    #                  precision=args.precision,
-    #                  mask=mask,
-    #                  do_wgridding=args.wstack,
-    #                  double_precision_accumulation=args.double_accum)
-    #     # psf = inlined_array(psf, [uvw, freq])
-    #     wsum = da.max(psf)
-    #     data_vars['PSF'] = (('x_psf', 'y_psf'), psf)
-
-    #     # get FT of psf
-    #     psfhat = fft2d(psf, nthreads=args.nvthreads)
-    #     data_vars['PSFHAT'] = (('x_psf', 'yo2'), psfhat)
-
-    # else:
-    #     wsum = da.sum(wgt[mask])
-
     # if args.weight:
     #     wgt = da.where(mask, wgt, 0.0)
     #     # TODO - BDA over frequency
@@ -186,38 +137,36 @@ def single_stokes(ds=None,
     #     data_vars['WEIGHT'] = (('row', 'chan'), wgt)
 
 
-
-
-    # TODO - interpolate beam
+    # TODO - interpolate beam in time and freq
+    npix = int(np.deg2rad(args.max_field_of_view)/cell_rad)
+    x = -(npix//2) + da.arange(npix)
     if args.beam_model is not None:
         # print("Estimating primary beam using L band JimBeam")
         from pfb.utils.beam import _katbeam_impl
-        beam = _katbeam_impl(freq_out, nx, ny, np.rad2deg(cell_rad),
+        beam = _katbeam_impl(freq_out, npix, npix, np.rad2deg(cell_rad),
                              real_type)
         if beam.ndim > 2:
             beam = np.squeeze(beam)
         beam = da.from_array(beam, chunks=(nx, ny))
+        from pfb.utils.beam import beam2obj
+        beam = beam2obj(beam, x, x)
     else:
-        beam = da.ones((nx, ny), chunks=(nx, ny), dtype=real_type)
+        def Ifunc(x, y):
+            return da.ones((x.size, x.size), dtype=real_type)
+        beam = np.array([Ifunc], dtype=object)
+        beam = da.from_array(beam, chunks=1)
 
-    data_vars['BEAM'] = (('x', 'y'), beam)
+    data_vars['BEAM'] = (('1'), beam)
 
     attrs = {
-        'cell_rad': cell_rad,
         'ra' : radec[0],
         'dec': radec[1],
-        'nx': nx,
-        'ny': ny,
-        'nx_psf': nx_psf,
-        'ny_psf': ny_psf,
         'fieldid': ds.FIELD_ID,
         'ddid': ds.DATA_DESC_ID,
         'scanid': ds.SCAN_NUMBER,
         'bandid': int(bandid),
         'freq_out': freq_out
     }
-    # if args.psf:
-    #     attrs['ny_psfo2'] = psfhat.shape[-1]
 
     out_ds = Dataset(data_vars, attrs=attrs)
 
