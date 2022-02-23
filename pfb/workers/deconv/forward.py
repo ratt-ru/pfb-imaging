@@ -11,35 +11,14 @@ log = pyscilog.get_logger('FORWARD')
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
+# create default parameters from schema
+defaults = {}
+for key in schema.forward["inputs"].keys():
+    defaults[key] = schema.forward["inputs"][key]["default"]
+
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.forward)
-def forward(residual_name='RESIDUAL',
-            mask=None,
-            nband=None,
-            output_filename=None,
-            product='I',
-            row_chunk=-1,
-            sigmainv=1e-5,
-            use_psf=True,
-            fits_mfs=True,
-            fits_cubes=False,
-            do_residual=False,
-            cg_tol=1e-5,
-            cg_maxit=250,
-            cg_minit=10,
-            cg_verbose=1,
-            cg_report_freq=100,
-            backtrack=True,
-            host_address=None,
-            nworkers=1,
-            nthreads_per_worker=1,
-            nvthreads=None,
-            nthreads=None,
-            mem_limit=None,
-            scheduler='single-threaded',
-            epsilon=1e-7,
-            wstack=True,
-            double_accum=True):
+def forward(**defaults):
     '''
     Forward step aka flux mop.
 

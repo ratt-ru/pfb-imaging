@@ -5,14 +5,26 @@ inputs:
     info: 'Path to measurement set.'
     metavar: MS
     abbreviation: ms
-  data_column:
+  output_filename:
     dtype: str
     required: true
+    info: 'Basename of output'
+    metavar: BASENAME
+    abbreviation: o
+  nband:
+    dtype: int
+    required: true
+    abbreviation: nb
+    info: 'Number of imaging bands'
+  data_column:
+    dtype: str
+    default: DATA
     abbreviation: dc
     info: 'Data column to image. Must be the same across MSs'
     metavar: COLUMN
   weight_column:
     dtype: str
+    default: WEIGHT_SPECTRUM
     abbreviation: wc
     info: 'Column containing natural weights. Must be the same across MSs'
     metavar: COLUMN
@@ -66,45 +78,15 @@ inputs:
     info: "BDA decorrelation factor. Only has an effect if less than one"
   beam_model:
     dtype: str
-    default: None
     info: "Beam model to use. Currently only JimBeam supported"
-  output_filename:
-    dtype: str
-    required: true
-    info: 'Basename of output'
-    metavar: BASENAME
-    abbreviation: o
-  nband:
-    dtype: int
-    required: true
-    abbreviation: nb
-    info: 'Number of imaging bands'
   max_field_of_view:
     dtype: float
     abbreviation: fov
+    default: 3.0
     info: 'Field of view in degrees'
     metavar: DEG
-  super_resolution_factor:
-    dtype: float
-    abbreviation: srf
-    info: 'Will over-sample Nyquist by this factor at max frequency'
-  psf_oversize:
-    dtype: float
-    default: 2.0
-    abbreviation: psfo
-    info: 'Size of PSF relative to dirty image'
-  cell_size:
-    dtype: float
-    info: 'Cell size in arc-seconds'
-  nx:
-    dtype: int
-    info: 'Number of x pixels'
-  ny:
-    dtype: int
-    info: 'Number of y pixels'
 
   _include:
-    - (pfb.parser)gridding.yml
     - (pfb.parser)dist.yml
 
 outputs:

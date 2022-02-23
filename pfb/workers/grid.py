@@ -10,35 +10,14 @@ log = pyscilog.get_logger('GRID')
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
+# create default parameters from schema
+defaults = {}
+for key in schema.grid["inputs"].keys():
+    defaults[key] = schema.grid["inputs"][key]["default"]
+
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.grid)
-def grid(output_filename=None,
-         nband=None,
-         robustness=0,
-         imaging_weight_column='IMWEIGHT',
-         product='I',
-         row_chunk=-1,
-         fits_mfs=True,
-         fits_cubes=False,
-         psf=True,
-         psf_oversize=2.0,
-         dirty=True,
-         field_of_view=None,
-         super_resolution_factor=2.0,
-         cell_size=None,
-         nx=None,
-         ny=None,
-         epsilon=1e-7,
-         precision='double',
-         wstack=True,
-         double_accum=True,
-         host_address=None,
-         nworkers=1,
-         nthreads_per_worker=1,
-         nvthreads=None,
-         nthreads=None,
-         mem_limit=None,
-         scheduler='single-threaded'):
+def grid(**defaults):
     '''
     Compute imaging weights and create a dirty image, psf from xds.
     By default only the MFS images are converted to fits files.
@@ -113,6 +92,7 @@ def _grid(**kw):
     basename = f'{args.output_filename}_{args.product.upper()}'
 
     xds_name = f'{basename}.xds.zarr'
+    dds_name = f'{basename}.dds.zarr'
     mds_name = f'{basename}.mds.zarr'
 
     xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
@@ -161,7 +141,8 @@ def _grid(**kw):
         ny = args.ny if args.ny is not None else nx
 
     nband = args.nband
-    print(f"Image size set to ({nband}, {nx}, {ny})", file=log)
+    if args.dirty:
+        print(f"Image size set to ({nband}, {nx}, {ny})", file=log)
 
     nx_psf = good_size(int(args.psf_oversize * nx))
     while nx_psf % 2:
@@ -173,7 +154,8 @@ def _grid(**kw):
         ny_psf += 1
         ny_psf = good_size(ny_psf)
 
-    print(f"PSF size set to ({nband}, {nx_psf}, {ny_psf})", file=log)
+    if args.psf:
+        print(f"PSF size set to ({nband}, {nx_psf}, {ny_psf})", file=log)
 
     writes = []
     freq_out = []

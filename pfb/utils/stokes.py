@@ -14,6 +14,10 @@ from operator import getitem
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
+# identity beam function needs to be top level
+# for pickleability
+def Ifunc(x, y, dtype):
+    return np.ones((x.size, x.size), dtype=dtype)
 
 def single_stokes(ds=None,
                   jones=None,
@@ -147,12 +151,10 @@ def single_stokes(ds=None,
                              real_type)
         if beam.ndim > 2:
             beam = np.squeeze(beam)
-        beam = da.from_array(beam, chunks=(nx, ny))
+        beam = da.from_array(beam, chunks=(npix, npix))
         from pfb.utils.beam import beam2obj
         beam = beam2obj(beam, x, x)
     else:
-        def Ifunc(x, y):
-            return da.ones((x.size, x.size), dtype=real_type)
         beam = np.array([Ifunc], dtype=object)
         beam = da.from_array(beam, chunks=1)
 

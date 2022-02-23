@@ -10,40 +10,14 @@ log = pyscilog.get_logger('INIT')
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
+# create default parameters from schema
+defaults = {}
+for key in schema.init["inputs"].keys():
+    defaults[key] = schema.init["inputs"][key]["default"]
+
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.init)
-def init(ms=None,
-         data_column='DATA',
-         weight_column='WEIGHT_SPECTRUM',
-         flag_column='FLAG',
-         gain_table=None,
-         product='I',
-         utimes_per_chunk=-1,
-         row_out_chunk=-1,
-         group_by_field=True,
-         group_by_ddid=True,
-         group_by_scan=True,
-         precision='double',
-         bda_decorr=1.0,
-         beam_model=None,
-         output_filename=None,
-         nband=None,
-         max_field_of_view=None,
-         super_resolution_factor=2.0,
-         psf_oversize=2.0,
-         cell_size=None,
-         nx=None,
-         ny=None,
-         host_address=None,
-         nworkers=1,
-         nthreads_per_worker=1,
-         nvthreads=None,
-         nthreads=None,
-         mem_limit=None,
-         scheduler='single-threaded',
-         epsilon=1e-7,
-         wstack=True,
-         double_accum=True):
+def init(**defaults):
     '''
     Create a dirty image, psf and weights from a list of measurement
     sets. Image cubes are not normalised by wsum as this destroyes
@@ -182,18 +156,19 @@ def _init(**kw):
     uvw = []
     u_max = 0.0
     v_max = 0.0
-    for ds in xds:
-        uvw = ds.UVW.data
-        u_max = da.maximum(u_max, abs(uvw[:, 0]).max())
-        v_max = da.maximum(v_max, abs(uvw[:, 1]).max())
-        uv_max = da.maximum(u_max, v_max)
+    for ms in args.ms:
+        xds = xds_from_ms(ms, columns='UVW', group_cols=group_by)
+        for ds in xds:
+            uvw = ds.UVW.data
+            u_max = da.maximum(u_max, abs(uvw[:, 0]).max())
+            v_max = da.maximum(v_max, abs(uvw[:, 1]).max())
+            uv_max = da.maximum(u_max, v_max)
 
     uv_max = uv_max.compute()
     # approx max cell size
     cell_rad = 1.0 / (2 * uv_max * max_freq / lightspeed)
 
     # assumes measurement sets have the same columns
-    xds = xds_from_ms(args.ms[0])
     columns = (args.data_column,
                args.flag_column,
                'UVW', 'ANTENNA1',
@@ -221,7 +196,7 @@ def _init(**kw):
     tbin_counts = {}
     ncorr = None
     for ims, ms in enumerate(args.ms):
-        xds = xds_from_ms(ms, group_cols=group_by)
+        xds = xds_from_ms(ms, group_cols=group_by, columns=('TIME', 'FLAG'))
         ms_chunks[ms] = []  # daskms expects a list per ds
         gain_chunks[ms] = []
         tbin_idx[ms] = {}

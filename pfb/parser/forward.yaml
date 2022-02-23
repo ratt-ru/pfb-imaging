@@ -1,4 +1,15 @@
 inputs:
+  output_filename:
+    dtype: str
+    required: true
+    info: 'Basename of output'
+    metavar: BASENAME
+    abbreviation: o
+  nband:
+    dtype: int
+    required: true
+    abbreviation: nb
+    info: 'Number of imaging bands'
   residual_name:
     dtype: str
     abbreviation: rname
@@ -9,17 +20,6 @@ inputs:
     abbreviation: mask
     info: 'Either path to mask.fits or set to mds to use \
           the mask contained in the mds.'
-  nband:
-    dtype: int
-    required: true
-    abbreviation: nb
-    info: 'Number of imaging bands'
-  output_filename:
-    dtype: str
-    required: true
-    info: 'Basename of output'
-    metavar: BASENAME
-    abbreviation: o
   product:
     dtype: str
     abbreviation: p

@@ -18,8 +18,7 @@ inputs:
     metavar: COLUMN
   robustness:
     dtype: float
-    default: 0.0
-    abbreviation: r
+    abbreviation: rob
     info: 'Robustness factor for Briggs weighting. None means natural.'
   product:
     dtype: str
@@ -27,6 +26,10 @@ inputs:
     default: I
     info: 'Imaging products to produce. Options are I, Q, U, V. \
           Only single Stokes products are currently supported'
+  overwrite:
+    dtype: bool
+    default: false
+    info: 'Allow overwirite of dds'
   row_chunk:
     dtype: int
     info: 'Number of rows in a chunk in output dataset'

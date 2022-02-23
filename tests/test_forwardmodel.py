@@ -10,9 +10,9 @@ pmp = pytest.mark.parametrize
 
 @pmp('do_beam', (False, True,))
 @pmp('do_gains', (False, True))
-def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
-    test_dir = tmp_path_factory.mktemp("test_pfb")
-    # test_dir = Path('/home/landman/data/')
+def test_forwardmodel(do_beam, do_gains):  #, tmp_path_factory):
+    # test_dir = tmp_path_factory.mktemp("test_pfb")
+    test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
@@ -174,51 +174,68 @@ def test_forwardmodel(do_beam, do_gains, tmp_path_factory):
         ms.putcol('DATA2', model_vis)
         gain_path = None
 
-    from pfb.workers.init import _init
+    # set defaults from schema
+    from pfb.parser.schemas import schema
+    init_args = {}
+    for key in schema.init["inputs"].keys():
+        init_args[key] = schema.init["inputs"][key]["default"]
+    # overwrite defaults
     outname = str(test_dir / 'test')
-    _init(ms=str(test_dir / 'test_ascii_1h60.0s.MS'),
-          data_column="DATA2", weight_column=None, imaging_weight_column=None,
-          flag_column='FLAG', gain_table=gain_path, product='I',
-          utimes_per_chunk=-1, row_out_chunk=10000, epsilon=epsilon,
-          precision='double', group_by_field=True, group_by_scan=True,
-          group_by_ddid=True, wstack=wstack, double_accum=True,
-          fits_mfs=False, fits_cubes=True, dirty=True, psf=False,
-          weight=True, vis=False, bda_decorr=1.0,
-          beam_model=1 if do_beam else None,
-          output_filename=outname, nband=nchan,
-          field_of_view=fov, super_resolution_factor=srf,
-          psf_oversize=2, cell_size=float(cell_size), nx=nx, ny=ny, nworkers=1,
-          nthreads_per_worker=1, nvthreads=8, mem_limit=8, nthreads=8,
-          host_address=None, scheduler='single-threaded')
+    init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+    init_args["output_filename"] = outname
+    init_args["nband"] = nchan
+    init_args["data_column"] = "DATA2"
+    init_args["weight_column"] = None
+    init_args["flag_column"] = 'FLAG'
+    init_args["gain_table"] = gain_path
+    init_args["beam_model"] = 1 if do_beam else None
+    init_args["max_field_of_view"] = fov
+    from pfb.workers.init import _init
+    _init(**init_args)
 
-    # place mask in mds
-    mask = np.any(model, axis=0)
-    basename = f'{outname}_I'
-    mds_name = f'{basename}.mds.zarr'
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    mds = mds.assign(**{
-                'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
-        })
-    dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
+    # grid data to produce dirty image
+    grid_args = {}
+    for key in schema.grid["inputs"].keys():
+        grid_args[key] = schema.grid["inputs"][key]["default"]
+    # overwrite defaults
+    grid_args["output_filename"] = outname
+    grid_args["nband"] = nchan
+    grid_args["field_of_view"] = fov
+    grid_args["fits_mfs"] = False
+    grid_args["psf"] = False
+    grid_args["nthreads"] = 8  # has to be set when calling _grid
+    grid_args["nvthreads"] = 8
+    from pfb.workers.grid import _grid
+    _grid(**grid_args)
 
+    # # place mask in mds
+    # mask = np.any(model, axis=0)
+    # basename = f'{outname}_I'
+    # mds_name = f'{basename}.mds.zarr'
+    # mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    # mds = mds.assign(**{
+    #             'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
+    #     })
+    # dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
+
+
+    # grid data to produce dirty image
+    forward_args = {}
+    for key in schema.forward["inputs"].keys():
+        forward_args[key] = schema.forward["inputs"][key]["default"]
+    forward_args["output_filename"] = outname
+    forward_args["nband"] = nchan
 
     from pfb.workers.deconv.forward import _forward
-    _forward(output_filename=outname, residual_name='DIRTY',
-             mask='mds', nband=nchan, product='I', row_chunk=-1,
-             epsilon=epsilon, sigmainv=0.0, wstack=wstack, double_accum=True,
-             use_psf=False, fits_mfs=False, fits_cubes=True,
-             do_residual=False, cg_tol=epsilon, cg_minit=0,
-             cg_maxit=100, cg_verbose=2, cg_report_freq=1, backtrack=False,
-             nworkers=1, nthreads_per_worker=1, nvthreads=8, mem_limit=8, nthreads=8,
-             host_address=None, scheduler='single-threaded')
+    _forward(**forward_args)
 
-    # get inferred model
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    model_inferred = mds.UPDATE.values
+    # # get inferred model
+    # mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    # model_inferred = mds.UPDATE.values
 
-    for i in range(nsource):
-        assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -
-                        model[:, Ix[i], Iy[i]], 1.0, atol=10*epsilon)
+    # for i in range(nsource):
+    #     assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -
+    #                     model[:, Ix[i], Iy[i]], 1.0, atol=10*epsilon)
 
 
-# test_forwardmodel(False, False)
+test_forwardmodel(False, False)

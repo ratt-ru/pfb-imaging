@@ -19,5 +19,5 @@ mem_limit:
   info: 'Memory limit. Will use all available resources by default'
 scheduler:
   dtype: str
-  default: single-threaded
+  default: sync
   info: distributed or single-threaded
