@@ -17,7 +17,7 @@ for key in schema.grid["inputs"].keys():
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.grid)
-def grid(**defaults):
+def grid(**kw):
     '''
     Compute imaging weights and create a dirty image, psf from xds.
     By default only the MFS images are converted to fits files.
@@ -48,7 +48,8 @@ def grid(**defaults):
     (eg. the number threads given to each gridder instance).
 
     '''
-    args = OmegaConf.create(locals())
+    defaults.update(kw)
+    args = OmegaConf.create(defaults)
     pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
 
     if args.nworkers is None:
@@ -77,6 +78,7 @@ def _grid(**kw):
     args = OmegaConf.create(kw)
     OmegaConf.set_struct(args, True)
 
+    import os
     import numpy as np
     import dask
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
@@ -87,15 +89,24 @@ def _grid(**kw):
     from pfb.utils.misc import compute_context
     from pfb.operators.gridder import vis2im
     from pfb.operators.fft import fft2d
+    from pfb.utils.weighting import compute_counts, counts_to_weights
     import xarray as xr
+    from uuid import uuid4
 
     basename = f'{args.output_filename}_{args.product.upper()}'
 
     xds_name = f'{basename}.xds.zarr'
-    dds_name = f'{basename}.dds.zarr'
-    mds_name = f'{basename}.mds.zarr'
+    dds_name = f'{basename}{args.postfix}.dds.zarr'
+    mds_name = f'{basename}{args.postfix}.mds.zarr'
 
-    xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
+    # necessary to exclude imaging weight column if changing from Briggs
+    # to natural for example
+    columns = ('UVW', 'WEIGHT', 'VIS', 'WSUM', 'MASK', 'FREQ')
+    if args.robustness is not None:
+        columns += (args.imaging_weight_column,)
+
+    xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk},
+                        columns=columns)
 
     # get max uv coords over all datasets
     uvw = []
@@ -157,37 +168,104 @@ def _grid(**kw):
     if args.psf:
         print(f"PSF size set to ({nband}, {nx_psf}, {ny_psf})", file=log)
 
+    if os.path.isdir(dds_name):
+        if args.overwrite:
+            print(f'Removing {dds_name}', file=log)
+            import shutil
+            shutil.rmtree(dds_name)
+        else:
+            raise RuntimeError(f'Not overwriting {dds_name}, directory exists. '
+                               f'Set overwrite flag or specify a different '
+                               'postfix to create a new data set')
+
+    print(f'Data products will be stored in {dds_name}.', file=log)
+
+    # LB - what is the point of specifying name here?
+    if args.robustness is not None:
+        counts = [da.zeros((nx, ny), chunks=(-1, -1),
+                        name="zeros-"+uuid4().hex) for _ in range(nband)]
+        # first loop over data to compute counts
+        for ds in xds:
+            uvw = ds.UVW.data
+            freqs = ds.FREQ.data
+            mask = ds.MASK.data
+            wgt = ds.WEIGHT.data
+            bandid = ds.bandid
+            count = compute_counts(
+                        uvw,
+                        freqs,
+                        mask,
+                        nx,
+                        ny,
+                        cell_rad,
+                        cell_rad,
+                        wgt.dtype)
+
+            counts[bandid] += count
+
+        # now convert counts to imaging weights
+        # required because of https://github.com/ska-sa/dask-ms/issues/171
+        xdsw = xds_from_zarr(xds_name, columns=columns)
+        writes = []
+        for ds, dsw in zip(xds, xdsw):
+            uvw = ds.UVW.data
+            freqs = ds.FREQ.data
+            bandid = ds.bandid
+            imweight = counts_to_weights(counts[bandid],
+                                         uvw,
+                                         freqs,
+                                         nx, ny,
+                                         cell_rad, cell_rad,
+                                         args.robustness)
+            imweight = imweight.rechunk({0:dsw.chunks['row']})
+            out_ds = dsw.assign(**{args.imaging_weight_column: (('row', 'chan'),
+                                                                imweight)})
+            writes.append(out_ds)
+
+        # calculating imaging weights
+        dask.compute(xds_to_zarr(writes, xds_name,
+                                 columns=args.imaging_weight_column))
+        # need to reload to get imaging weights
+        xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk},
+                            columns=columns)
+
     writes = []
     freq_out = []
-    # Required because of https://github.com/ska-sa/dask-ms/issues/171
-    xdsw = xds_from_zarr(xds_name, columns='WSUM')
-    for ds, dsw in zip(xds, xdsw):
+    for ds in xds:
         uvw = ds.UVW.data
         freq = ds.FREQ.data
         vis = ds.VIS.data
         wgt = ds.WEIGHT.data
+        wsum = ds.WSUM.data
+        try:
+            imwgt = ds.get(args.imaging_weight_column).data
+        except Exception as e:
+            imwgt = None
         mask = ds.MASK.data
+        dvars = {}
         if args.dirty:
             dirty = vis2im(uvw=uvw,
-                       freq=freq,
-                       vis=vis,
-                       nx=nx,
-                       ny=ny,
-                       cellx=cell_rad,
-                       celly=cell_rad,
-                       nthreads=args.nvthreads,
-                       epsilon=args.epsilon,
-                       precision=args.precision,
-                       mask=mask,
-                       do_wgridding=args.wstack,
-                       double_precision_accumulation=args.double_accum)
+                           freq=freq,
+                           vis=vis,
+                           wgt=imwgt,
+                           nx=nx,
+                           ny=ny,
+                           cellx=cell_rad,
+                           celly=cell_rad,
+                           nthreads=args.nvthreads,
+                           epsilon=args.epsilon,
+                           precision=args.precision,
+                           mask=mask,
+                           do_wgridding=args.wstack,
+                           double_precision_accumulation=args.double_accum)
             # dirty = inlined_array(dirty, [uvw, freq])
-            dsw = dsw.assign(**{'DIRTY': (('x', 'y'), dirty)})
+            dvars['DIRTY'] = (('x', 'y'), dirty)
 
         if args.psf:
             psf = vis2im(uvw=uvw,
                          freq=freq,
                          vis=wgt.astype(vis.dtype),
+                         wgt=imwgt,
                          nx=nx_psf,
                          ny=ny_psf,
                          cellx=cell_rad,
@@ -201,15 +279,37 @@ def _grid(**kw):
             # psf = inlined_array(psf, [uvw, freq])
             # get FT of psf
             psfhat = fft2d(psf, nthreads=args.nvthreads)
-            dsw = dsw.assign(**{'PSF': (('x_psf', 'y_psf'), psf),
-                              'PSFHAT': (('x_psf', 'yo2'), psfhat)})
+            dvars['PSF'] = (('x_psf', 'y_psf'), psf)
+            dvars['PSFHAT'] = (('x_psf', 'yo2'), psfhat)
 
-        writes.append(dsw)
+        if args.weight:
+            # TODO - BDA
+            # combine weights
+            if imwgt is not None:
+                wgt *= imwgt
+            dvars['WEIGHT'] = (('row', 'chan'), wgt)
+
+        dvars['WSUM'] = (('1',), wsum)
+
+        attrs = {
+            'nx': nx,
+            'ny': ny,
+            'ra': xds[0].ra,
+            'dec': xds[0].dec,
+            'cell_rad': cell_rad,
+            'bandid': ds.bandid,
+            'freq_out': ds.freq_out,
+            'robustness': args.robustness
+        }
+
+        out_ds = xr.Dataset(dvars, attrs=attrs)
+        writes.append(out_ds)
         freq_out.append(ds.freq_out)
 
-    dask.compute(xds_to_zarr(writes, xds_name, columns='ALL'))
+    print("Computing image space data products", file=log)
+    dask.compute(xds_to_zarr(writes, dds_name, columns='ALL'))
 
-    print("Initialising model", file=log)
+    print("Initialising model ds", file=log)
     # TODO - allow non-zero input model
     attrs = {'nband': nband,
              'nx': nx,
@@ -221,16 +321,17 @@ def _grid(**kw):
     coords = {'freq': freq_out}
     real_type = np.float64 if args.precision=='double' else np.float32
     model = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
+    mask = da.zeros((nx, ny), chunks=(-1, -1), dtype=bool)
     data_vars = {'MODEL': (('band', 'x', 'y'), model),
-                 'MASK': (('x', 'y'), np.zeros((nx, ny), dtype=bool))}
+                 'MASK': (('x', 'y'), mask)}
     mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
     mds_name = f'{args.output_filename}_{args.product.upper()}.mds.zarr'
     dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
 
     # convert to fits files
-    radec = (xds[0].ra, xds[0].dec)
     if args.fits_mfs or args.fits_cubes:
-        xds = xds_from_zarr(xds_name)
+        xds = xds_from_zarr(dds_name)
+        radec = (xds[0].ra, xds[0].dec)
         if args.dirty:
             print("Saving dirty as fits", file=log)
             dirty = np.zeros((nband, nx, ny), dtype=np.float32)

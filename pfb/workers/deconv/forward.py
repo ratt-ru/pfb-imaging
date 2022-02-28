@@ -93,13 +93,11 @@ def _forward(**kw):
     basename = f'{args.output_filename}_{args.product.upper()}'
 
     xds_name = f'{basename}.xds.zarr'
-    mds_name = f'{basename}.mds.zarr'
+    dds_name = f'{basename}{args.postfix}.dds.zarr'
+    mds_name = f'{basename}{args.postfix}.mds.zarr'
 
     xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
-    # required because of https://github.com/ska-sa/dask-ms/issues/181
-    for i, ds in enumerate(xds):
-        xds[i] = ds.chunk({'row':-1})
-    # only a single mds (for now)
+    dds = xds_from_zarr(dds_name, chunks={'row':args.row_chunk})
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
     nband = mds.nband
     nx = mds.nx

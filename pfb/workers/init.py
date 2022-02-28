@@ -17,11 +17,10 @@ for key in schema.init["inputs"].keys():
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.init)
-def init(**defaults):
+def init(**kw):
     '''
     Create a dirty image, psf and weights from a list of measurement
-    sets. Image cubes are not normalised by wsum as this destroyes
-    information. MFS images are written out in units of Jy/beam.
+    sets. MFS images are written out in units of Jy/beam.
     By default only the MFS images are converted to fits files.
     Set the --fits-cubes flag to also produce fits cubes.
 
@@ -30,8 +29,8 @@ def init(**defaults):
     mem-limit and nthreads is per node and have to be specified.
 
     When using a local cluster, mem-limit and nthreads refer to the global
-    memory and threads available, respectively. By default the gridder will
-    use all available resources.
+    memory and threads available, respectively. All available resources
+    are used by default.
 
     On a local cluster, the default is to use:
 
@@ -50,7 +49,8 @@ def init(**defaults):
     (eg. the number threads given to each gridder instance).
 
     '''
-    args = OmegaConf.create(locals())
+    defaults.update(kw)
+    args = OmegaConf.create(defaults)
     pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
     from glob import glob
     ms = glob(args.ms)
@@ -314,7 +314,6 @@ def _init(**kw):
                 'radec':radec
             }
 
-            nband = fbin_idx[ms][idt].size
             for b, band_id in enumerate(band_mapping[ms][idt].compute()):
                 f0 = fbin_idx[ms][idt][b].compute()
                 ff = f0 + fbin_counts[ms][idt][b].compute()
@@ -353,20 +352,4 @@ def _init(**kw):
                      optimize_graph=False,
                      scheduler=args.scheduler)
 
-    # print("Initialising model", file=log)
-    # # TODO - allow non-zero input model
-    # attrs = {'nband': nband,
-    #          'nx': nx,
-    #          'ny': ny,
-    #          'ra': radec[0],
-    #          'dec': radec[1],
-    #          'cell_rad': cell_rad}
-    # coords = {'freq': freq_out}
-    # real_type = np.float64 if args.precision=='double' else np.float32
-    # model = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
-    # data_vars = {'MODEL': (('band', 'x', 'y'), model),
-    #              'MASK': (('x', 'y'), np.zeros((nx, ny), dtype=bool))}
-    # mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
-    # mds_name = f'{args.output_filename}_{args.product.upper()}.mds.zarr'
-    # dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
     print("All done here.", file=log)

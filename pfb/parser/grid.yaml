@@ -10,6 +10,16 @@ inputs:
     required: true
     abbreviation: nb
     info: 'Number of imaging bands'
+  postfix:
+    dtype: str
+    default: ''
+    info: 'Can be used to specify a custom name for the image space data \
+          products'
+  overwrite:
+    dtype: bool
+    default: false
+    info: 'Allow overwriting of image space data products. \
+           Specify postfix to create a new data set.'
   imaging_weight_column:
     dtype: str
     default: IMWEIGHT
@@ -26,10 +36,6 @@ inputs:
     default: I
     info: 'Imaging products to produce. Options are I, Q, U, V. \
           Only single Stokes products are currently supported'
-  overwrite:
-    dtype: bool
-    default: false
-    info: 'Allow overwirite of dds'
   row_chunk:
     dtype: int
     info: 'Number of rows in a chunk in output dataset'
@@ -56,6 +62,10 @@ inputs:
     dtype: bool
     default: true
     info: "Compute the dirty image"
+  weight:
+    dtype: bool
+    default: true
+    info: "Compute effectve image space weights"
   field_of_view:
     dtype: float
     abbreviation: fov

@@ -23,8 +23,9 @@ if schema is None:
 
     structured = OmegaConf.structured(_CabInputsOutputs)
 
-    schema = OmegaConf.create(configuratt.load_nested(files, structured=structured, 
-                                    config_class="PfbCleanCabs"))
+    schema = OmegaConf.create(configuratt.load_nested(files,
+                                                      structured=structured,
+                                                      config_class="PfbCleanCabs"))
 
 
 

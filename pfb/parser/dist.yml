@@ -20,4 +20,4 @@ mem_limit:
 scheduler:
   dtype: str
   default: sync
-  info: distributed or single-threaded
+  info: distributed or single-threaded/sync
