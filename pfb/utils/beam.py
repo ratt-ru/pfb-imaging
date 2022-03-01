@@ -3,6 +3,9 @@ from functools import partial
 from katbeam import JimBeam
 import dask.array as da
 
+def Id_beam(l, m):
+    return np.ones(l.shape, dtype=float)
+
 def _interp_beam_impl(freq, nx, ny, cell_deg, btype):
     '''
     A function that returns an object array containing a function
@@ -15,16 +18,7 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype):
     ll, mm = np.meshgrid(l, m, indexing='ij')
 
     if btype is None:
-        def beam(l, m):
-            if len(np.shape(l)) < 2 and len(np.shape(m)) < 2:
-                return np.ones((np.size(l), np.size(m)), dtype=float)
-            elif l.ndim == 2:
-                assert l.shape == m.shape
-                return np.ones(l.shape, dtype=float)
-            else:
-                raise ValueError(f"Incorrect number of dimensions for coordinates. "
-                                 f"Can be 2D at maximum")
-
+        beam = Id_beam
     else:
         btype = btype.lower()
         btype = btype.replace('-', '_')

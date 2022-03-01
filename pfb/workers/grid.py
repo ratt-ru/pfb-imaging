@@ -90,6 +90,7 @@ def _grid(**kw):
     from pfb.operators.gridder import vis2im
     from pfb.operators.fft import fft2d
     from pfb.utils.weighting import compute_counts, counts_to_weights
+    from pfb.utils.beam import eval_beam
     import xarray as xr
     from uuid import uuid4
 
@@ -289,16 +290,23 @@ def _grid(**kw):
                 wgt *= imwgt
             dvars['WEIGHT'] = (('row', 'chan'), wgt)
 
+        dvars['FREQ'] = (('chan',), freq)
+        dvars['UVW'] = (('row', 'three'), uvw)
         dvars['WSUM'] = (('1',), wsum)
 
         # evaluate beam at x and y coords
+        l = (-(nx//2) + da.arange(nx)) * cell_rad
+        m = (-(ny//2) + da.arange(ny)) * cell_rad
+        ll, mm = da.meshgrid(l, m, indexing='ij')
+        bvals = eval_beam(ds.BEAM.data, ll, mm)
 
-        import pdb; pdb.set_trace()
-
+        dvars['BEAM'] = (('x', 'y'), bvals)
 
         attrs = {
             'nx': nx,
             'ny': ny,
+            'nx_psf': nx_psf,
+            'ny_psf': ny_psf,
             'ra': xds[0].ra,
             'dec': xds[0].dec,
             'cell_rad': cell_rad,

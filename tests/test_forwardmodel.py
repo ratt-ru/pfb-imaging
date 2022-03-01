@@ -205,6 +205,7 @@ def test_forwardmodel(do_beam, do_gains):  #, tmp_path_factory):
     grid_args["psf"] = False
     grid_args["nthreads"] = 8  # has to be set when calling _grid
     grid_args["nvthreads"] = 8
+    grid_args["overwrite"] = True
     from pfb.workers.grid import _grid
     _grid(**grid_args)
 
@@ -225,6 +226,10 @@ def test_forwardmodel(do_beam, do_gains):  #, tmp_path_factory):
         forward_args[key] = schema.forward["inputs"][key]["default"]
     forward_args["output_filename"] = outname
     forward_args["nband"] = nchan
+    forward_args["mask"] = 'mds'
+    forward_args["use_psf"] = False
+    forward_args["nthreads"] = 8  # has to be set when calling _forward
+    forward_args["nvthreads"] = 8
 
     from pfb.workers.deconv.forward import _forward
     _forward(**forward_args)

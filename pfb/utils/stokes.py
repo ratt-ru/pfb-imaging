@@ -1,18 +1,14 @@
 import numpy as np
-import numexpr as ne
 from numba import generated_jit, njit
 from numba.types import literal
-import dask
 from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
-from africanus.averaging.bda_avg import bda
 from pfb.utils.misc import coerce_literal
 from daskms.optimisation import inlined_array
 from operator import getitem
-iFs = np.fft.ifftshift
-Fs = np.fft.fftshift
+from pfb.utils.beam import interp_beam
 
 def single_stokes(ds=None,
                   jones=None,
@@ -138,19 +134,7 @@ def single_stokes(ds=None,
 
     # TODO - interpolate beam in time and freq
     npix = int(np.deg2rad(args.max_field_of_view)/cell_rad)
-    x = -(npix//2) + da.arange(npix)
-    if args.beam_model is not None:
-        # print("Estimating primary beam using L band JimBeam")
-        from pfb.utils.beam import _katbeam_impl
-        bvals = _katbeam_impl(freq_out, npix, npix, np.rad2deg(cell_rad),
-                             real_type)
-        if bvals.ndim > 2:
-            bvals = da.squeeze(bvals)
-        bvals = da.from_array(bvals, chunks=(npix, npix))
-        beam = beam2obj(beam, x, x)
-    else:
-        beam = np.array([Ifunc], dtype=object)
-        beam = da.from_array(beam, chunks=1)
+    beam = interp_beam(freq_out, npix, npix, np.rad2deg(cell_rad), args.beam_model)
 
     data_vars['BEAM'] = (('1'), beam)
 
