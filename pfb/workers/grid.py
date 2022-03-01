@@ -101,7 +101,7 @@ def _grid(**kw):
 
     # necessary to exclude imaging weight column if changing from Briggs
     # to natural for example
-    columns = ('UVW', 'WEIGHT', 'VIS', 'WSUM', 'MASK', 'FREQ')
+    columns = ('UVW', 'WEIGHT', 'VIS', 'WSUM', 'MASK', 'FREQ', 'BEAM')
     if args.robustness is not None:
         columns += (args.imaging_weight_column,)
 
@@ -290,6 +290,11 @@ def _grid(**kw):
             dvars['WEIGHT'] = (('row', 'chan'), wgt)
 
         dvars['WSUM'] = (('1',), wsum)
+
+        # evaluate beam at x and y coords
+
+        import pdb; pdb.set_trace()
+
 
         attrs = {
             'nx': nx,

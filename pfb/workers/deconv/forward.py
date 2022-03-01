@@ -18,7 +18,7 @@ for key in schema.forward["inputs"].keys():
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.forward)
-def forward(**defaults):
+def forward(**kw):
     '''
     Forward step aka flux mop.
 
@@ -55,7 +55,8 @@ def forward(**defaults):
     (eg. the number threads given to each gridder instance).
 
     '''
-    args = OmegaConf.create(locals())
+    defaults.update(kw)
+    args = OmegaConf.create(defaults)
     pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
 
     if args.nworkers is None:
@@ -92,30 +93,28 @@ def _forward(**kw):
 
     basename = f'{args.output_filename}_{args.product.upper()}'
 
-    xds_name = f'{basename}.xds.zarr'
     dds_name = f'{basename}{args.postfix}.dds.zarr'
     mds_name = f'{basename}{args.postfix}.mds.zarr'
 
-    xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
     dds = xds_from_zarr(dds_name, chunks={'row':args.row_chunk})
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
     nband = mds.nband
     nx = mds.nx
     ny = mds.ny
-    for ds in xds:
+    for ds in dds:
         assert ds.nx == nx
         assert ds.ny == ny
 
     # stitch residuals after beam application
-    if args.residual_name in xds[0]:
+    if args.residual_name in dds[0]:
         rname = args.residual_name
     else:
         rname = 'DIRTY'
     print(f'Using {rname} as residual', file=log)
-    output_type = np.float64
+    output_type = dds[0].DIRTY.dtype
     residual = np.zeros((nband, nx, ny), dtype=output_type)
     wsum = 0
-    for ds in xds:
+    for ds in dds:
         dirty = ds.get(rname).values
         beam = ds.BEAM.values
         b = ds.bandid
@@ -133,7 +132,7 @@ def _forward(**kw):
         x0 = np.zeros((nband, nx, ny), dtype=output_type)
 
     hessopts = {}
-    hessopts['cell'] = xds[0].cell_rad
+    hessopts['cell'] = dds[0].cell_rad
     hessopts['wstack'] = args.wstack
     hessopts['epsilon'] = args.epsilon
     hessopts['double_accum'] = args.double_accum
@@ -142,7 +141,7 @@ def _forward(**kw):
     if args.use_psf:
         from pfb.operators.psf import psf_convolve_xds
 
-        nx_psf, ny_psf = xds[0].nx_psf, xds[0].ny_psf
+        nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
         npad_xl = (nx_psf - nx)//2
         npad_xr = nx_psf - nx - npad_xl
         npad_yl = (ny_psf - ny)//2
@@ -159,13 +158,13 @@ def _forward(**kw):
         psfopts['lastsize'] = lastsize
         psfopts['nthreads'] = args.nvthreads
 
-        hess = partial(psf_convolve_xds, xds=xds, psfopts=psfopts,
+        hess = partial(psf_convolve_xds, xds=dds, psfopts=psfopts,
                        wsum=wsum, sigmainv=args.sigmainv, mask=mask,
                        compute=True)
 
     else:
         print("Solving for update using vis space approximation", file=log)
-        hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
+        hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
                        wsum=wsum, sigmainv=args.sigmainv, mask=mask,
                        compute=True)
 
@@ -200,9 +199,9 @@ def _forward(**kw):
         print("Computing residual", file=log)
         from pfb.operators.hessian import hessian
         # Required because of https://github.com/ska-sa/dask-ms/issues/171
-        xdsw = xds_from_zarr(xds_name, columns='DIRTY')
+        ddsw = xds_from_zarr(dds_name, columns='DIRTY')
         writes = []
-        for ds, dsw in zip(xds, xdsw):
+        for ds, dsw in zip(dds, ddsw):
             dirty = ds.get(rname).data
             wgt = ds.WEIGHT.data
             uvw = ds.UVW.data
@@ -218,13 +217,13 @@ def _forward(**kw):
 
             writes.append(dsw)
 
-        dask.compute(xds_to_zarr(writes, xds_name, columns='FORWARD_RESIDUAL'))
+        dask.compute(xds_to_zarr(writes, dds_name, columns='FORWARD_RESIDUAL'))
 
     if args.fits_mfs or args.fits_cubes:
         print("Writing fits files", file=log)
         # construct a header from xds attrs
-        radec = [xds[0].ra, xds[0].dec]
-        cell_rad = xds[0].cell_rad
+        radec = [dds[0].ra, dds[0].dec]
+        cell_rad = dds[0].cell_rad
         cell_deg = np.rad2deg(cell_rad)
         freq_out = mds.freq.data
         ref_freq = np.mean(freq_out)
@@ -234,10 +233,10 @@ def _forward(**kw):
         save_fits(f'{basename}_update_mfs.fits', update_mfs, hdr_mfs)
 
         if args.do_residual:
-            xds = xds_from_zarr(xds_name)
+            dds = xds_from_zarr(dds_name)
             residual = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband)
-            for ds in xds:
+            for ds in dds:
                 b = ds.bandid
                 wsums[b] += ds.WSUM.values
                 residual[b] += ds.FORWARD_RESIDUAL.values.astype(np.float32)

@@ -208,15 +208,15 @@ def test_forwardmodel(do_beam, do_gains):  #, tmp_path_factory):
     from pfb.workers.grid import _grid
     _grid(**grid_args)
 
-    # # place mask in mds
-    # mask = np.any(model, axis=0)
-    # basename = f'{outname}_I'
-    # mds_name = f'{basename}.mds.zarr'
-    # mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    # mds = mds.assign(**{
-    #             'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
-    #     })
-    # dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
+    # place mask in mds
+    mask = np.any(model, axis=0)
+    basename = f'{outname}_I'
+    mds_name = f'{basename}.mds.zarr'
+    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    mds = mds.assign(**{
+                'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
+        })
+    dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
 
     # grid data to produce dirty image
@@ -229,13 +229,13 @@ def test_forwardmodel(do_beam, do_gains):  #, tmp_path_factory):
     from pfb.workers.deconv.forward import _forward
     _forward(**forward_args)
 
-    # # get inferred model
-    # mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    # model_inferred = mds.UPDATE.values
+    # get inferred model
+    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    model_inferred = mds.UPDATE.values
 
-    # for i in range(nsource):
-    #     assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -
-    #                     model[:, Ix[i], Iy[i]], 1.0, atol=10*epsilon)
+    for i in range(nsource):
+        assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -
+                        model[:, Ix[i], Iy[i]], 1.0, atol=10*epsilon)
 
 
 test_forwardmodel(False, False)

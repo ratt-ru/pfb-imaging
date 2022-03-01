@@ -14,11 +14,6 @@ from operator import getitem
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
-# identity beam function needs to be top level
-# for pickleability
-def Ifunc(x, y, dtype):
-    return np.ones((x.size, x.size), dtype=dtype)
-
 def single_stokes(ds=None,
                   jones=None,
                   args=None,
@@ -147,12 +142,11 @@ def single_stokes(ds=None,
     if args.beam_model is not None:
         # print("Estimating primary beam using L band JimBeam")
         from pfb.utils.beam import _katbeam_impl
-        beam = _katbeam_impl(freq_out, npix, npix, np.rad2deg(cell_rad),
+        bvals = _katbeam_impl(freq_out, npix, npix, np.rad2deg(cell_rad),
                              real_type)
-        if beam.ndim > 2:
-            beam = np.squeeze(beam)
-        beam = da.from_array(beam, chunks=(npix, npix))
-        from pfb.utils.beam import beam2obj
+        if bvals.ndim > 2:
+            bvals = da.squeeze(bvals)
+        bvals = da.from_array(bvals, chunks=(npix, npix))
         beam = beam2obj(beam, x, x)
     else:
         beam = np.array([Ifunc], dtype=object)
