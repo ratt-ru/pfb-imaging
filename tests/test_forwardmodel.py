@@ -10,7 +10,9 @@ pmp = pytest.mark.parametrize
 
 @pmp('beam_model', (None, 'kbl',))
 @pmp('do_gains', (False, True))
-def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
+@pmp('wstack', (False, True))
+@pmp('robustness', (None, 0.0))
+def test_forwardmodel(beam_model, do_gains, wstack, robustness, tmp_path_factory):
     test_dir = tmp_path_factory.mktemp("test_pfb")
     # test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
@@ -88,7 +90,6 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
 
     # model vis
     epsilon = 1e-7  # tests take too long if smaller
-    wstack = True
     from ducc0.wgridder import dirty2ms
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
@@ -180,6 +181,8 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
         ms.putcol('DATA2', model_vis)
         gain_path = None
 
+
+    postfix = ""
     # set defaults from schema
     from pfb.parser.schemas import schema
     init_args = {}
@@ -205,20 +208,23 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
         grid_args[key] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
     grid_args["output_filename"] = outname
+    grid_args["postfix"] = postfix
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
-    grid_args["fits_mfs"] = False
-    grid_args["psf"] = False
+    grid_args["fits_mfs"] = True
+    grid_args["psf"] = not wstack
     grid_args["nthreads"] = 8  # has to be set when calling _grid
     grid_args["nvthreads"] = 8
     grid_args["overwrite"] = True
+    grid_args["robustness"] = robustness
+    grid_args["wstack"] = wstack
     from pfb.workers.grid import _grid
     _grid(**grid_args)
 
     # place mask in mds
     mask = np.any(model, axis=0)
     basename = f'{outname}_I'
-    mds_name = f'{basename}.mds.zarr'
+    mds_name = f'{basename}{postfix}.mds.zarr'
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
     mds = mds.assign(**{
                 'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
@@ -231,12 +237,15 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
     for key in schema.forward["inputs"].keys():
         forward_args[key] = schema.forward["inputs"][key]["default"]
     forward_args["output_filename"] = outname
+    forward_args["postfix"] = postfix
     forward_args["nband"] = nchan
     forward_args["mask"] = 'mds'
     forward_args["use_psf"] = False
     forward_args["nthreads"] = 8  # has to be set when calling _forward
     forward_args["nvthreads"] = 8
-    forward_args["cg_tol"] = epsilon
+    forward_args["cg_tol"] = 0.5*epsilon
+    forward_args["wstack"] = wstack
+    forward_args["use_psf"] = not wstack
     from pfb.workers.deconv.forward import _forward
     _forward(**forward_args)
 
@@ -249,4 +258,4 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
                         model[:, Ix[i], Iy[i]], 1.0, atol=10*epsilon)
 
 
-# test_forwardmodel('kbl', False)
+# test_forwardmodel(None, False, False, None)

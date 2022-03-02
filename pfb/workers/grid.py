@@ -50,7 +50,7 @@ def grid(**kw):
     '''
     defaults.update(kw)
     args = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
+    pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
 
     if args.nworkers is None:
         if args.scheduler=='distributed':
@@ -230,6 +230,14 @@ def _grid(**kw):
         xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk},
                             columns=columns)
 
+    # check if model exists
+    try:
+        mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+        model = mds.MODEL.data
+    except:
+        print("No mds found", file=log)
+        model = None
+
     writes = []
     freq_out = []
     for ds in xds:
@@ -292,7 +300,7 @@ def _grid(**kw):
 
         dvars['FREQ'] = (('chan',), freq)
         dvars['UVW'] = (('row', 'three'), uvw)
-        dvars['WSUM'] = (('1',), wsum)
+        dvars['WSUM'] = (('1',), da.atleast_1d(wgt.sum()))
 
         # evaluate beam at x and y coords
         cell_deg = np.rad2deg(cell_rad)
@@ -302,6 +310,22 @@ def _grid(**kw):
         bvals = eval_beam(ds.BEAM.data, ll, mm)
 
         dvars['BEAM'] = (('x', 'y'), bvals)
+
+        if args.residual:
+            if model is not None:
+                from pfb.operators import hessian
+                hessopts = {
+                    'cell': cell_rad,
+                    'wstack': args.wstack,
+                    'epsilon': args.epsilon,
+                    'double_accum': args.double_accum,
+                    'nthreads': args.nvthreads
+                }
+                # we only want to apply the beam once here
+                residual = dirty - hessian(bvals * model[ds.bandid], uvw, wgt,
+                                           freq, None, hessopts)
+
+                dvars['RESIDUAL'] = (('x', 'y'), residual)
 
         attrs = {
             'nx': nx,
@@ -323,24 +347,24 @@ def _grid(**kw):
     print("Computing image space data products", file=log)
     dask.compute(xds_to_zarr(writes, dds_name, columns='ALL'))
 
-    print("Initialising model ds", file=log)
-    # TODO - allow non-zero input model
-    attrs = {'nband': nband,
-             'nx': nx,
-             'ny': ny,
-             'ra': xds[0].ra,
-             'dec': xds[0].dec,
-             'cell_rad': cell_rad}
-    freq_out = np.sort(np.stack(freq_out))
-    coords = {'freq': freq_out}
-    real_type = np.float64 if args.precision=='double' else np.float32
-    model = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
-    mask = da.zeros((nx, ny), chunks=(-1, -1), dtype=bool)
-    data_vars = {'MODEL': (('band', 'x', 'y'), model),
-                 'MASK': (('x', 'y'), mask)}
-    mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
-    mds_name = f'{args.output_filename}_{args.product.upper()}.mds.zarr'
-    dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
+    if model is None:
+        print("Initialising model ds", file=log)
+        # TODO - allow non-zero input model
+        attrs = {'nband': nband,
+                'nx': nx,
+                'ny': ny,
+                'ra': xds[0].ra,
+                'dec': xds[0].dec,
+                'cell_rad': cell_rad}
+        freq_out = np.sort(np.stack(freq_out))
+        coords = {'freq': freq_out}
+        real_type = np.float64 if args.precision=='double' else np.float32
+        model = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
+        mask = da.zeros((nx, ny), chunks=(-1, -1), dtype=bool)
+        data_vars = {'MODEL': (('band', 'x', 'y'), model),
+                    'MASK': (('x', 'y'), mask)}
+        mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
+        dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
 
     # convert to fits files
     if args.fits_mfs or args.fits_cubes:
@@ -369,15 +393,13 @@ def _grid(**kw):
             dirty_mfs = np.sum(dirty, axis=0, keepdims=True)/wsum
 
             if args.fits_mfs:
-                save_fits(args.output_filename +
-                          f'_{args.product.upper()}_dirty_mfs.fits',
+                save_fits(f'{basename}{args.postfix}_dirty_mfs.fits',
                           dirty_mfs, hdr_mfs, dtype=np.float32)
 
             if args.fits_cubes:
                 fmask = wsums > 0
                 dirty[fmask] /= wsums[fmask, None, None]
-                save_fits(args.output_filename +
-                          f'_{args.product.upper()}_dirty.fits', dirty, hdr,
+                save_fits(f'{basename}{args.postfix}_dirty.fits', dirty, hdr,
                         dtype=np.float32)
 
         if args.psf:
@@ -403,15 +425,13 @@ def _grid(**kw):
             psf_mfs = np.sum(psf, axis=0, keepdims=True)/wsum
 
             if args.fits_mfs:
-                save_fits(args.output_filename +
-                          f'_{args.product.upper()}_psf_mfs.fits', psf_mfs,
+                save_fits(f'{basename}{args.postfix}_psf_mfs.fits', psf_mfs,
                           hdr_psf_mfs, dtype=np.float32)
 
             if args.fits_cubes:
                 fmask = wsums > 0
                 psf[fmask] /= wsums[fmask, None, None]
-                save_fits(args.output_filename +
-                          f'_{args.product.upper()}_psf.fits', psf, hdr_psf,
+                save_fits(f'{basename}{args.postfix}_psf.fits', psf, hdr_psf,
                         dtype=np.float32)
 
     print("All done here.", file=log)

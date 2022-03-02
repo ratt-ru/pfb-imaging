@@ -230,7 +230,7 @@ def _forward(**kw):
         hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
         update_mfs = np.mean(update, axis=0)
-        save_fits(f'{basename}_update_mfs.fits', update_mfs, hdr_mfs)
+        save_fits(f'{basename}{args.postfix}_update_mfs.fits', update_mfs, hdr_mfs)
 
         if args.do_residual:
             dds = xds_from_zarr(dds_name)
@@ -244,17 +244,17 @@ def _forward(**kw):
             residual /= wsum
 
             residual_mfs = np.sum(residual, axis=0)
-            save_fits(f'{basename}_forward_residual_mfs.fits',
+            save_fits(f'{basename}{args.postfix}_forward_residual_mfs.fits',
                       residual_mfs, hdr_mfs)
 
         if args.fits_cubes:
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
-            save_fits(f'{basename}_update.fits', update, hdr)
+            save_fits(f'{basename}{args.postfix}_update.fits', update, hdr)
 
             if args.do_residual:
                 fmask = wsums > 0
                 residual[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}_forward_residual.fits',
+                save_fits(f'{basename}{args.postfix}_forward_residual.fits',
                           residual, hdr)
 
     print("All done here.", file=log)

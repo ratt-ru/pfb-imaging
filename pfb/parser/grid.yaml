@@ -62,6 +62,10 @@ inputs:
     dtype: bool
     default: true
     info: "Compute the dirty image"
+  residual:
+    dtype: bool
+    default: true
+    info: "Compute the residual image"
   weight:
     dtype: bool
     default: true
