@@ -8,11 +8,11 @@ import dask.array as da
 from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
-@pmp('do_beam', (False, True,))
+@pmp('beam_model', (None, 'kbl',))
 @pmp('do_gains', (False, True))
-def test_forwardmodel(do_beam, do_gains):  #, tmp_path_factory):
-    # test_dir = tmp_path_factory.mktemp("test_pfb")
-    test_dir = Path('/home/landman/data/')
+def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
+    test_dir = tmp_path_factory.mktemp("test_pfb")
+    # test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
@@ -74,11 +74,17 @@ def test_forwardmodel(do_beam, do_gains):  #, tmp_path_factory):
         model[:, Ix[i], Iy[i]] = I0[i] * (freq/freq0) ** alpha[i]
 
     # TODO - interpolate beam
-    if do_beam:
-        from pfb.utils.beam import _katbeam_impl
-        beam = _katbeam_impl(freq, nx, ny, np.rad2deg(cell_rad), np.float64)
-    else:
+    if beam_model is None:
         beam = np.ones((nchan, nx, ny), dtype=float)
+    elif beam_model == 'kbl':
+        from katbeam import JimBeam
+        beamo = JimBeam('MKAT-AA-L-JIM-2020').I
+        l = (-(nx//2) + np.arange(nx)) * cell_deg
+        m = (-(ny//2) + np.arange(ny)) * cell_deg
+        ll, mm = np.meshgrid(l, m, indexing='ij')
+        beam = np.zeros((nchan, nx, ny), dtype=float)
+        for c in range(nchan):
+            beam[c] = beamo(ll, mm, freq[c]/1e6)
 
     # model vis
     epsilon = 1e-7  # tests take too long if smaller
@@ -188,7 +194,7 @@ def test_forwardmodel(do_beam, do_gains):  #, tmp_path_factory):
     init_args["weight_column"] = None
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = gain_path
-    init_args["beam_model"] = 1 if do_beam else None
+    init_args["beam_model"] = beam_model
     init_args["max_field_of_view"] = fov
     from pfb.workers.init import _init
     _init(**init_args)
@@ -230,7 +236,7 @@ def test_forwardmodel(do_beam, do_gains):  #, tmp_path_factory):
     forward_args["use_psf"] = False
     forward_args["nthreads"] = 8  # has to be set when calling _forward
     forward_args["nvthreads"] = 8
-
+    forward_args["cg_tol"] = epsilon
     from pfb.workers.deconv.forward import _forward
     _forward(**forward_args)
 
@@ -243,4 +249,4 @@ def test_forwardmodel(do_beam, do_gains):  #, tmp_path_factory):
                         model[:, Ix[i], Iy[i]], 1.0, atol=10*epsilon)
 
 
-test_forwardmodel(False, False)
+# test_forwardmodel('kbl', False)

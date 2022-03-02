@@ -295,8 +295,9 @@ def _grid(**kw):
         dvars['WSUM'] = (('1',), wsum)
 
         # evaluate beam at x and y coords
-        l = (-(nx//2) + da.arange(nx)) * cell_rad
-        m = (-(ny//2) + da.arange(ny)) * cell_rad
+        cell_deg = np.rad2deg(cell_rad)
+        l = (-(nx//2) + da.arange(nx)) * cell_deg
+        m = (-(ny//2) + da.arange(ny)) * cell_deg
         ll, mm = da.meshgrid(l, m, indexing='ij')
         bvals = eval_beam(ds.BEAM.data, ll, mm)
 

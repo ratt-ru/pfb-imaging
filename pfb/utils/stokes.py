@@ -134,7 +134,7 @@ def single_stokes(ds=None,
 
     # TODO - interpolate beam in time and freq
     npix = int(np.deg2rad(args.max_field_of_view)/cell_rad)
-    beam = interp_beam(freq_out, npix, npix, np.rad2deg(cell_rad), args.beam_model)
+    beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), args.beam_model)
 
     data_vars['BEAM'] = (('1'), beam)
 
