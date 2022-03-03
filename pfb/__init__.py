@@ -92,7 +92,7 @@ def set_client(args, stack, log, scheduler='distributed'):
 
         from pfb.scheduling import install_plugin
         client.run_on_scheduler(install_plugin)
-    elif scheduler=='single-threaded':
+    elif scheduler in ['sync', 'single-threaded']:
         import dask
         dask.config.set(scheduler=scheduler)
 

@@ -176,7 +176,7 @@ def weight_data(data, weight, jones, tbin_idx, tbin_counts,
                        pol, None,
                        product, None,
                        align_arrays=False,
-                       meta=np.empty((0, 0), dtype=np.object))
+                       meta=np.empty((0, 0), dtype=object))
 
     vis = da.blockwise(getitem, 'rf', res, 'rf', 0, None, dtype=data.dtype)
     wgt = da.blockwise(getitem, 'rf', res, 'rf', 1, None, dtype=weight.dtype)
