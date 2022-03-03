@@ -11,7 +11,8 @@ from uuid import uuid4
 def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
                 compute=True, use_beam=True):
     '''
-    Vis space Hessian reduction over dataset
+    Vis space Hessian reduction over dataset.
+    Hessian will be applied to x
     '''
     if not isinstance(x, da.Array):
         x = da.from_array(x, chunks=(1, -1, -1), name=False)

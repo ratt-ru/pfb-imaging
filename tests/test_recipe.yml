@@ -38,34 +38,16 @@ test_recipe:
       abbreviation: srf
       default: 2.0
       info: 'Will over-sample Nyquist by this factor at max frequency'
-    sigmainv:
-      dtype: float
-      abbreviation: sinv
-      default: 1e-5
-      info: 'Variance of assume GRF'
-    sigma21:
-      dtype: float
-      info: 'Wavelet thresholding level'
-      default: 1e-4
-    pd_maxit:
-      dtype: int
-      info: Max primal dual iterations
-      default: 50
-    niter:
-      dtype: int
-      info: "Max backward steps per pfb iteration"
-      default: 1
 
   # an alias is a recipe parameter that maps to parameters of step(s)
   aliases:
-    output_filename: [grid.output_filename, forward.output_filename, backward.output_filename]
-    nband: [grid.nband, forward.nband, backward.nband]
-    nthreads: [grid.nthreads, forward.nthreads, backward.nthreads]
-    product: [grid.product, forward.product, backward.product]
+    output_filename: [grid.output_filename, init.output_filename]
+    nband: [grid.nband, init.nband]
+    nthreads: [grid.nthreads, init.nthreads]
 
   steps:
-    grid:
-      cab: pfb.grid
+    init:
+      cab: pfb.init
       params:
         # an alternate way to achieve aliasing is via {}-substitutions
         # this is more flexible, but doesn't do proper type checking up front
@@ -73,19 +55,12 @@ test_recipe:
         weight_column: '{recipe.weight_column}'
         flag_column: '{recipe.flag_column}'
         ms: '{recipe.ms}'
+        max_field_of_view: '{recipe.field_of_view}'
+
+    grid:
+      cab: pfb.grid
+      params:
         field_of_view: '{recipe.field_of_view}'
         super_resolution_factor: '{recipe.super_resolution_factor}'
-
-    forward:
-      cab: pfb.forward
-      params:
-        sigmainv: '{recipe.sigmainv}'
-
-    backward:
-      cab: pfb.backward
-      params:
-        niter: '{recipe.niter}'
-        pd_maxit: '{recipe.pd_maxit}'
-        sigmainv: '{recipe.sigmainv}'
-        sigma21: '{recipe.sigma21}'
+        robustness: -1
 

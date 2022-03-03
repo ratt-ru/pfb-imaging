@@ -11,43 +11,14 @@ log = pyscilog.get_logger('BACKWARD')
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
+# create default parameters from schema
+defaults = {}
+for key in schema.backward["inputs"].keys():
+    defaults[key] = schema.backward["inputs"][key]["default"]
+
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.backward)
-def backward(model_name='MODEL',
-             mask=None,
-             nband=None,
-             output_filename=None,
-             product='I',
-             row_chunk=-1,
-             sigmainv=1e-5,
-             sigma21=1e-3,
-             positivity=True,
-             bases='self,db1,db2',
-             nlevels=3,
-             hessnorm=None,
-             niter=5,
-             use_psf=True,
-             fits_mfs=True,
-             fits_cubes=False,
-             do_residual=True,
-             pd_tol=1e-5,
-             pd_maxit=100,
-             pd_verbose=1,
-             pd_report_freq=25,
-             pm_tol=1e-5,
-             pm_maxit=50,
-             pm_verbose=1,
-             pm_report_freq=50,
-             host_address=None,
-             nworkers=1,
-             nthreads_per_worker=1,
-             nvthreads=None,
-             nthreads=None,
-             mem_limit=None,
-             scheduler='single-threaded',
-             epsilon=1e-7,
-             wstack=True,
-             double_accum=True):
+def backward(**kw):
     '''
     Solves
 
@@ -78,8 +49,9 @@ def backward(model_name='MODEL',
     (eg. the number threads given to each gridder instance).
 
     '''
-    args = OmegaConf.create(locals())
-    pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
+    defaults.update(kw)
+    args = OmegaConf.create(defaults)
+    pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
 
     if args.nworkers is None:
         args.nworkers = args.nband
@@ -118,19 +90,16 @@ def _backward(**kw):
 
     basename = f'{args.output_filename}_{args.product.upper()}'
 
-    xds_name = f'{basename}.xds.zarr'
-    mds_name = f'{basename}.mds.zarr'
+    dds_name = f'{basename}{args.postfix}.dds.zarr'
+    mds_name = f'{basename}{args.postfix}.mds.zarr'
 
-    xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
-    # daskms bug?
-    for i, ds in enumerate(xds):
-        xds[i] = ds.chunk({'row':-1})
+    dds = xds_from_zarr(dds_name, chunks={'row':args.row_chunk})
     # only a single mds (for now)
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
     nband = mds.nband
     nx = mds.nx
     ny = mds.ny
-    for ds in xds:
+    for ds in dds:
         assert ds.nx == nx
         assert ds.ny == ny
 
@@ -152,7 +121,7 @@ def _backward(**kw):
     data = model + update
 
     from pfb.utils.misc import init_mask
-    mask = init_mask(args.mask, mds, xds[0].DIRTY.dtype, log)
+    mask = init_mask(args.mask, mds, dds[0].DIRTY.dtype, log)
 
     # dictionary setup
     print("Setting up dictionary", file=log)
@@ -188,21 +157,52 @@ def _backward(**kw):
     psi = partial(coef2im, bases=bases, padding=padding,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
+    # residual from last iteration can be useful for setting
+    # hyper-parameters
+    residual = np.zeros((nband, nx, ny), dtype=output_type)
+    wsum = 0
+    for ds in dds:
+        b = ds.bandid
+        try:
+            dirty = ds.FORWARD_RESIDUAL.values
+            beam = ds.BEAM.values
+            residual[b] += dirty * beam
+        except:
+            pass
+        wsum += ds.WSUM.values[0]
+    residual /= wsum
+    if residual.any():
+        have_resid = True
+    else:
+        have_resid = False
+
     # we set the alphas used for reweighting using the
     # current clean residuals when available
-    alpha = np.ones(nbasis) * 1e-5
-    if 'CLEAN_RESIDUAL' in xds[0]:
-        cresid = mds.CLEAN_RESIDUAL.values
-        resid_comps = psiH(cresid)
-        for m in range(nbasis):
-            alpha[m] = np.std(resid_comps[:, m])
+    if args.alpha is None:
+        alpha = np.ones(nbasis) * 1e-5
+        if have_resid:
+            resid_comps = psiH(cresid)
+            for m in range(nbasis):
+                alpha[m] = np.std(resid_comps[:, m])
+        else:
+            print("No residual in dds and alpha was not provided, "
+                  "setting alpha to 1e-5.", file=log)
+    else:
+        alpha = args.alpha
 
-    wsum = 0.0
-    for ds in xds:
-        wsum += ds.WSUM.values[0]
+    if args.sigma21 is None:
+        sigma21 = 1e-4
+        if have_resid:
+            resid_mfs = np.sum(residual, axis=0)
+            sigma21 = np.std(resid_mfs)
+        else:
+            print("No residual in dds and sigma21 was not provided, "
+                  "setting sigma21 to 1e-4.", file=log)
+    else:
+        sigma21 = args.sigma21
 
     hessopts = {}
-    hessopts['cell'] = xds[0].cell_rad
+    hessopts['cell'] = dds[0].cell_rad
     hessopts['wstack'] = args.wstack
     hessopts['epsilon'] = args.epsilon
     hessopts['double_accum'] = args.double_accum
@@ -211,7 +211,7 @@ def _backward(**kw):
     if args.use_psf:
         from pfb.operators.psf import psf_convolve_xds
 
-        nx_psf, ny_psf = xds[0].nx_psf, xds[0].ny_psf
+        nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
         npad_xl = (nx_psf - nx)//2
         npad_xr = nx_psf - nx - npad_xl
         npad_yl = (ny_psf - ny)//2
@@ -228,13 +228,13 @@ def _backward(**kw):
         psfopts['lastsize'] = lastsize
         psfopts['nthreads'] = args.nvthreads
 
-        hess = partial(psf_convolve_xds, xds=xds, psfopts=psfopts,
+        hess = partial(psf_convolve_xds, xds=dds, psfopts=psfopts,
                        wsum=wsum, sigmainv=args.sigmainv, mask=mask,
                        compute=True)
 
     else:
         print("Solving for update using vis space approximation", file=log)
-        hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
+        hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
                         wsum=wsum, sigmainv=args.sigmainv, mask=mask,
                         compute=True)
 
@@ -262,7 +262,7 @@ def _backward(**kw):
     print("Solving for model", file=log)
     for i in range(args.niter):
         # prox = partial(prox_21m, sigma=args.sigma21, weight=weight, axis=0)
-        model, dual = primal_dual(hess, data, model, dual, args.sigma21,
+        model, dual = primal_dual(hess, data, model, dual, sigma21,
                                   psi, psiH, weight, hessnorm, prox_21,
                                   nu=nbasis, positivity=args.positivity,
                                   tol=args.pd_tol, maxit=args.pd_maxit,
@@ -302,9 +302,9 @@ def _backward(**kw):
     # compute apparent residual per dataset
     from pfb.operators.hessian import hessian
     # Required because of https://github.com/ska-sa/dask-ms/issues/171
-    xdsw = xds_from_zarr(xds_name, columns='DIRTY')
+    ddsw = xds_from_zarr(dds_name, columns='DIRTY')
     writes = []
-    for ds, dsw in zip(xds, xdsw):
+    for ds, dsw in zip(dds, ddsw):
         dirty = ds.DIRTY.data
         wgt = ds.WEIGHT.data
         uvw = ds.UVW.data
@@ -318,14 +318,14 @@ def _backward(**kw):
         dsw = dsw.assign(**{'RESIDUAL': (('x', 'y'), residual)})
         writes.append(dsw)
 
-    dask.compute(xds_to_zarr(writes, xds_name, columns='RESIDUAL'))
+    dask.compute(xds_to_zarr(writes, dds_name, columns='RESIDUAL'))
 
     if args.fits_mfs or args.fits_cubes:
         print("Writing fits files", file=log)
-        xds = xds_from_zarr(xds_name)
-        residual = np.zeros((nband, nx, ny), dtype=xds[0].DIRTY.dtype)
+        dds = xds_from_zarr(dds_name)
+        residual = np.zeros((nband, nx, ny), dtype=dds[0].DIRTY.dtype)
         wsums = np.zeros(nband)
-        for ds in xds:
+        for ds in dds:
             b = ds.bandid
             wsums[b] += ds.WSUM.values[0]
             residual[b] += ds.RESIDUAL.values

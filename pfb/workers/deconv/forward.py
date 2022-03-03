@@ -57,7 +57,7 @@ def forward(**kw):
     '''
     defaults.update(kw)
     args = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
+    pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
 
     if args.nworkers is None:
         args.nworkers = args.nband

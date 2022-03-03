@@ -11,6 +11,11 @@ log = pyscilog.get_logger('CLEAN')
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
+# create default parameters from schema
+defaults = {}
+for key in schema.clean["inputs"].keys():
+    defaults[key] = schema.clean["inputs"][key]["default"]
+
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.clean)
 def clean(**kw):
@@ -84,8 +89,9 @@ def clean(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
-    args = OmegaConf.create(kw)
-    pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
+    defaults.update(kw)
+    args = OmegaConf.create(defaults)
+    pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
 
     if args.nworkers is None:
         args.nworkers = args.nband
@@ -121,35 +127,32 @@ def _clean(**kw):
 
     basename = f'{args.output_filename}_{args.product.upper()}'
 
-    xds_name = f'{basename}.xds.zarr'
-    mds_name = f'{basename}.mds.zarr'
+    dds_name = f'{basename}{args.postfix}.dds.zarr'
+    mds_name = f'{basename}{args.postfix}.mds.zarr'
 
-    xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk})
-    # daskms bug?
-    for i, ds in enumerate(xds):
-        xds[i] = ds.chunk({'row':-1})
+    dds = xds_from_zarr(dds_name, chunks={'row':args.row_chunk})
     # only a single mds (for now)
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
     nband = mds.nband
     nx = mds.nx
     ny = mds.ny
-    nx_psf = xds[0].nx_psf
-    ny_psf = xds[0].ny_psf
+    nx_psf = dds[0].nx_psf
+    ny_psf = dds[0].ny_psf
     for ds in xds:
         assert ds.nx == nx
         assert ds.ny == ny
 
     # stitch dirty/psf in apparent scale
-    if args.residual_name in xds[0]:
+    if args.residual_name in dds[0]:
         rname = args.residual_name
     else:
         rname = 'DIRTY'
     print(f'Using {rname} as residual', file=log)
-    output_type = np.float64
+    output_type = dds[0].DIRTY.dtype
     dirty = np.zeros((nband, nx, ny), dtype=output_type)
     psf = np.zeros((nband, nx_psf, ny_psf), dtype=output_type)
     wsum = 0
-    for ds in xds:
+    for ds in dds:
         b = ds.bandid
         dirty[b] += ds.get(rname).values
         psf[b] += ds.PSF.values
@@ -163,13 +166,14 @@ def _clean(**kw):
     # set up Hessian
     from pfb.operators.hessian import hessian_xds
     hessopts = {}
-    hessopts['cell'] = xds[0].cell_rad
+    hessopts['cell'] = dds[0].cell_rad
     hessopts['wstack'] = args.wstack
     hessopts['epsilon'] = args.epsilon
     hessopts['double_accum'] = args.double_accum
     hessopts['nthreads'] = args.nvthreads
     # always clean in apparent scale
-    hess = partial(hessian_xds, xds=xds, hessopts=hessopts,
+    # we do not want to use the mask here
+    hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
                    wsum=wsum, sigmainv=0, mask=np.ones_like(dirty_mfs),
                    compute=True, use_beam=False)
 
@@ -281,9 +285,9 @@ def _clean(**kw):
         print("Computing residual", file=log)
         from pfb.operators.hessian import hessian
         # Required because of https://github.com/ska-sa/dask-ms/issues/171
-        xdsw = xds_from_zarr(xds_name, chunks={'band': 1}, columns='DIRTY')
+        ddsw = xds_from_zarr(dds_name, chunks={'band': 1}, columns='DIRTY')
         writes = []
-        for ds, dsw in zip(xds, xdsw):
+        for ds, dsw in zip(dds, ddsw):
             dirty = ds.get(rname).data
             wgt = ds.WEIGHT.data
             uvw = ds.UVW.data
@@ -297,15 +301,15 @@ def _clean(**kw):
             dsw = dsw.assign(**{'CLEAN_RESIDUAL': (('x', 'y'), residual)})
             writes.append(dsw)
 
-        dask.compute(xds_to_zarr(writes, xds_name, columns='CLEAN_RESIDUAL'))
+        dask.compute(xds_to_zarr(writes, dds_name, columns='CLEAN_RESIDUAL'))
 
     if args.fits_mfs or args.fits_cubes:
         print("Writing fits files", file=log)
         # construct a header from xds attrs
-        ra = xds[0].ra
-        dec = xds[0].dec
+        ra = dds[0].ra
+        dec = dds[0].dec
         radec = [ra, dec]
-        cell_rad = xds[0].cell_rad
+        cell_rad = dds[0].cell_rad
         cell_deg = np.rad2deg(cell_rad)
         freq_out = mds.freq.data
         ref_freq = np.mean(freq_out)
@@ -316,10 +320,10 @@ def _clean(**kw):
         save_fits(f'{basename}_clean_model_mfs.fits', model_mfs, hdr_mfs)
 
         if args.do_residual:
-            xds = xds_from_zarr(xds_name, chunks={'band': 1})
+            dds = xds_from_zarr(dds_name, chunks={'band': 1})
             residual = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband)
-            for ds in xds:
+            for ds in dds:
                 b = ds.bandid
                 wsums[b] += ds.WSUM.values[0]
                 residual[b] += ds.CLEAN_RESIDUAL.values
