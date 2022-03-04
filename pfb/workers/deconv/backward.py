@@ -49,6 +49,7 @@ def backward(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
+    # defaults.update(kw['nworkers'])
     defaults.update(kw)
     args = OmegaConf.create(defaults)
     pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
@@ -110,13 +111,14 @@ def _backward(**kw):
         raise ValueError("No update found in model dataset. "
                          "Use forward worker to populate it. ", file=log)
 
+    output_type = dds[0].DIRTY.dtype
     if args.model_name in mds:
         model = mds.get(args.model_name).values
         assert model.shape == (nband, nx, ny)
         print(f"Initialising model from {args.model_name} in mds", file=log)
     else:
         print('Initialising model to zeros', file=log)
-        model = np.zeros((nband, nx, ny), dtype=xds[0].DIRTY.dtype)
+        model = np.zeros((nband, nx, ny), dtype=output_type)
 
     data = model + update
 
@@ -188,7 +190,7 @@ def _backward(**kw):
             print("No residual in dds and alpha was not provided, "
                   "setting alpha to 1e-5.", file=log)
     else:
-        alpha = args.alpha
+        alpha = np.ones(nbasis) * args.alpha
 
     if args.sigma21 is None:
         sigma21 = 1e-4
@@ -278,6 +280,9 @@ def _backward(**kw):
 
             weight[m] = alpha[m]/(alpha[m] + l2_norm[m])
 
+    if args.niter==0:
+        model = data
+
     print("Saving results", file=log)
     mask = np.any(model, axis=0).astype(bool)
     mask = da.from_array(mask, chunks=(-1, -1))
@@ -295,30 +300,28 @@ def _backward(**kw):
 
     dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
-    # # debugging
-    # model = da.from_array(update, chunks=(1, -1, -1))
+    if args.do_residual:
+        print("Computing residual", file=log)
+        # compute apparent residual per dataset
+        from pfb.operators.hessian import hessian
+        # Required because of https://github.com/ska-sa/dask-ms/issues/171
+        ddsw = xds_from_zarr(dds_name, columns='DIRTY')
+        writes = []
+        for ds, dsw in zip(dds, ddsw):
+            dirty = ds.DIRTY.data
+            wgt = ds.WEIGHT.data
+            uvw = ds.UVW.data
+            freq = ds.FREQ.data
+            beam = ds.BEAM.data
+            b = ds.bandid
+            # we only want to apply the beam once here
+            residual = (dirty -
+                        hessian(beam * model[b], uvw, wgt, freq, None,
+                        hessopts))
+            dsw = dsw.assign(**{'RESIDUAL': (('x', 'y'), residual)})
+            writes.append(dsw)
 
-    print("Computing residual", file=log)
-    # compute apparent residual per dataset
-    from pfb.operators.hessian import hessian
-    # Required because of https://github.com/ska-sa/dask-ms/issues/171
-    ddsw = xds_from_zarr(dds_name, columns='DIRTY')
-    writes = []
-    for ds, dsw in zip(dds, ddsw):
-        dirty = ds.DIRTY.data
-        wgt = ds.WEIGHT.data
-        uvw = ds.UVW.data
-        freq = ds.FREQ.data
-        beam = ds.BEAM.data
-        b = ds.bandid
-        # we only want to apply the beam once here
-        residual = (dirty -
-                    hessian(beam * model[b], uvw, wgt, freq, None,
-                    hessopts))
-        dsw = dsw.assign(**{'RESIDUAL': (('x', 'y'), residual)})
-        writes.append(dsw)
-
-    dask.compute(xds_to_zarr(writes, dds_name, columns='RESIDUAL'))
+        dask.compute(xds_to_zarr(writes, dds_name, columns='RESIDUAL'))
 
     if args.fits_mfs or args.fits_cubes:
         print("Writing fits files", file=log)

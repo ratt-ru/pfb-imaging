@@ -26,6 +26,11 @@ inputs:
     abbreviation: iwc
     info: 'Column containing imaging weights. Must be the same across MSs'
     metavar: COLUMN
+  model_name:
+    dtype: str
+    default: MODEL
+    abbreviation: mname
+    info: 'Name of model in mds to use for residual computation'
   robustness:
     dtype: float
     abbreviation: rob

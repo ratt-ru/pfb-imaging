@@ -89,6 +89,7 @@ def clean(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
+    # defaults.update(kw['nworkers'])
     defaults.update(kw)
     args = OmegaConf.create(defaults)
     pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
@@ -129,18 +130,6 @@ def _clean(**kw):
 
     dds_name = f'{basename}{args.postfix}.dds.zarr'
     mds_name = f'{basename}{args.postfix}.mds.zarr'
-
-    dds = xds_from_zarr(dds_name, chunks={'row':args.row_chunk})
-    # only a single mds (for now)
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    nband = mds.nband
-    nx = mds.nx
-    ny = mds.ny
-    nx_psf = dds[0].nx_psf
-    ny_psf = dds[0].ny_psf
-    for ds in xds:
-        assert ds.nx == nx
-        assert ds.ny == ny
 
     # stitch dirty/psf in apparent scale
     if args.residual_name in dds[0]:
@@ -262,8 +251,8 @@ def _clean(**kw):
 
     print("Saving results", file=log)
     if args.update_mask:
+        mask = np.any(model, axis=0)
         # from scipy import ndimage
-        # mask = np.any(model, axis=0)
         # mask = ndimage.binary_dilation(mask)
         # mask = ndimage.binary_closing(mask)
         # mask = ndimage.binary_erosion(mask)
@@ -279,7 +268,7 @@ def _clean(**kw):
             'CLEAN_MODEL': (('band', 'x', 'y'), model)
     })
 
-    xds_to_zarr(mds, mds_name, columns='ALL')
+    dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
     if args.do_residual:
         print("Computing residual", file=log)

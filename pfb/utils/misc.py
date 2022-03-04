@@ -274,7 +274,7 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
     image = Fs(c2r(imhat, axes=ax, forward=False, lastsize=lastsize, inorm=2,
                    nthreads=nthreads), axes=ax)[:, unpad_x, unpad_y]
 
-    return image, gausskern[:, unpad_x, unpad_y]
+    return image
 
 def chan_to_band_mapping(ms_name, nband=None,
                          group_by=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']):
@@ -419,28 +419,6 @@ def _restore_corrs(vis, ncorr):
         model_vis[:, :, -1] = vis
     return model_vis
 
-def plan_row_chunk(mem_limit, image_size, nrow, mem_per_row, nthreads_per_worker, fudge=0.8):
-    '''
-    Plan row chunking on single node assuming all dask threads are executing
-    simultaneously.
-    '''
-    mem_after_image = mem_limit*1e9 - nthreads_per_worker * image_size
-    if mem_after_image < 0:
-        raise RuntimeError("You do not have the memory to process the with this many chunks."
-                            "Decrease number of dask threads or image size.")
-    row_chunk = nrow / nthreads_per_worker
-    # fudge should account for gridder memory overhead
-    while row_chunk * mem_per_row * nthreads_per_worker >= fudge * mem_after_image:
-        row_chunk /= 2  # decrease until problem fits in memory
-    # divide into nearly equal chunks
-    nrow_chunk = int(nrow / row_chunk)
-    if nrow_chunk > 1:
-        row_intervals = np.linspace(0, nrow-1, nrow_chunk+1)
-        row_chunk = int(np.ceil((row_intervals[1] - row_intervals[0])))
-    else:
-        row_chunk = int(row_chunk)
-    return row_chunk
-
 def fitcleanbeam(psf: np.ndarray,
                  level: float = 0.5,
                  pixsize: float = 1.0):
@@ -486,7 +464,6 @@ def fitcleanbeam(psf: np.ndarray,
         R = np.array([[c(t), -s(t)],
                       [s(t), c(t)]])
         A = np.dot(np.dot(R.T, A), R)
-        xy = np.array([x.ravel(), y.ravel()])
         R = np.einsum('nb,bc,cn->n', xy.T, A, xy)
         # GaussPar should corresponds to FWHM
         fwhm_conv = 2 * np.sqrt(2 * np.log(2))

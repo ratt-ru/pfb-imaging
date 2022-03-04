@@ -30,4 +30,10 @@ cabs:
     _include:
       - (pfb.parser)clean.yaml
 
+  'pfb.restore':
+    command: (pfb.workers.post.restore)restore
+
+    _include:
+      - (pfb.parser)restore.yaml
+
 

@@ -48,6 +48,7 @@ def grid(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
+    # defaults.update(kw['nworkers'])
     defaults.update(kw)
     args = OmegaConf.create(defaults)
     pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
@@ -233,9 +234,11 @@ def _grid(**kw):
     # check if model exists
     try:
         mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-        model = mds.MODEL.data
+        model = mds.get(args.model_name).data
+        print(f"Using {args.model_name} for residual compuation. ", file=log)
     except:
-        print("No mds found", file=log)
+        if args.residual:
+            print("Cannot compute residual without a model. ", file=log)
         model = None
 
     writes = []
@@ -312,8 +315,8 @@ def _grid(**kw):
         dvars['BEAM'] = (('x', 'y'), bvals)
 
         if args.residual:
-            if model is not None:
-                from pfb.operators import hessian
+            if model is not None and model.any():
+                from pfb.operators.hessian import hessian
                 hessopts = {
                     'cell': cell_rad,
                     'wstack': args.wstack,
@@ -326,6 +329,7 @@ def _grid(**kw):
                                            freq, None, hessopts)
 
                 dvars['RESIDUAL'] = (('x', 'y'), residual)
+
 
         attrs = {
             'nx': nx,

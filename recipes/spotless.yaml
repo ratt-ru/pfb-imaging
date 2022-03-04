@@ -45,15 +45,15 @@ spotless_recipe:
               grid_bm1.output_filename, grid_bz.output_filename, grid_bp1.output_filename, grid_nat.output_filename,
               clean_bm1.output_filename, clean_bz.output_filename, clean_bp1.output_filename, clean_nat.output_filename,
               forward_bm1.output_filename, forward_bz.output_filename, forward_bp1.output_filename, forward_nat.output_filename,
-              backward_bp1.output_filename, backward_nat.output_filename]
+              backward_bm1.output_filename, backward_bz.output_filename, backward_bp1.output_filename, backward_nat.output_filename]
     nband: [init.nband, grid_bm1.nband, grid_bz.nband, grid_bp1.nband, grid_nat.nband,
             clean_bm1.nband, clean_bz.nband, clean_bp1.nband, clean_nat.nband,
             forward_bm1.nband, forward_bz.nband, forward_bp1.nband, forward_nat.nband,
-            backward_bp1.nband, backward_nat.nband]
+            backward_bm1.nband, backward_bz.nband, backward_bp1.nband, backward_nat.nband]
     nthreads: [init.nthreads, grid_bm1.nthreads, grid_bz.nthreads, grid_bp1.nthreads, grid_nat.nthreads,
                clean_bm1.nthreads, clean_bz.nthreads, clean_bp1.nthreads, clean_nat.nthreads,
                forward_bm1.nthreads, forward_bz.nthreads, forward_bp1.nthreads, forward_nat.nthreads,
-               backward_bp1.nthreads, backward_nat.nthreads]
+               backward_bm1.nthreads, backward_bz.nthreads, backward_bp1.nthreads, backward_nat.nthreads]
 
   steps:
     init:
@@ -71,6 +71,8 @@ spotless_recipe:
         field_of_view: '{recipe.field_of_view}'
         super_resolution_factor: '{recipe.super_resolution_factor}'
         robustness: -1
+        overwrite: true
+        residual: false
 
     clean_bm1:
       cab: pfb.clean
@@ -90,12 +92,26 @@ spotless_recipe:
         residual_name: DIRTY
         mask: mds
 
+    backward_bm1:
+      cab: pfb.backward
+      params:
+        mask: mds
+        niter: 0
+        pd_maxit: 50
+        sigmainv: 1e-5
+        sigma21: 1e-3
+        alpha: 1e-3
+        hessnorm: 1
+        bases: self
+        do_residual: false
+
     grid_bz:
       cab: pfb.grid
       params:
         field_of_view: '{recipe.field_of_view}'
         super_resolution_factor: '{recipe.super_resolution_factor}'
         robustness: 0
+        overwrite: true
 
     clean_bz:
       cab: pfb.clean
@@ -111,8 +127,8 @@ spotless_recipe:
     forward_bz:
       cab: pfb.forward
       params:
-        sigmainv: 1e-5
         residual_name: RESIDUAL
+        sigmainv: 1e-5
         mask: mds
 
     grid_bp1:
@@ -121,7 +137,7 @@ spotless_recipe:
         field_of_view: '{recipe.field_of_view}'
         super_resolution_factor: '{recipe.super_resolution_factor}'
         robustness: 1
-
+        overwrite: true
 
     clean_bp1:
       cab: pfb.clean
@@ -155,6 +171,7 @@ spotless_recipe:
       params:
         field_of_view: '{recipe.field_of_view}'
         super_resolution_factor: '{recipe.super_resolution_factor}'
+        overwrite: true
 
 
     clean_nat:

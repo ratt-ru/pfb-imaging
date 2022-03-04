@@ -7,40 +7,16 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('RESTORE')
 
+from scabha.schema_utils import clickify_parameters
+from pfb.parser.schemas import schema
+
+# create default parameters from schema
+defaults = {}
+for key in schema.restore["inputs"].keys():
+    defaults[key] = schema.restore["inputs"][key]["default"]
 
 @cli.command()
-@click.option('-m', '--model', required=True,
-              help="Path to model image cube")
-@click.option('-r', '--residual', required=True,
-              help="Path to residual image cube")
-@click.option('-p', '--psf', required=True,
-              help="Path to PSF cube")
-@click.option('-beam', '--beam', required=False,
-              help="Path to power beam image cube")
-@click.option('-o', '--output-filename', required=True,
-              help="Basename of output.")
-@click.option('-nthreads', '--nthreads', type=int, default=1,
-              show_default=True, help='Number of threads to use')
-@click.option('-cr', '--convolve-residuals', is_flag=True,
-              help='Whether to convolve the residuals to a common resolution')
-@click.option('-pf', '--padding-frac', type=float,
-              default=0.5, show_default=True,
-              help="Padding fraction for FFTs (half on either side)")
-@click.option('-pb-min', '--pb-min', type=float, default=0.1,
-              help="Set image to zero where pb falls below this value")
-@click.option('-ha', '--host-address',
-              help='Address where the distributed client lives. '
-              'Will use a local cluster if no address is provided')
-@click.option('-nw', '--nworkers', type=int,
-              help='Number of workers for the client.')
-@click.option('-ntpw', '--nthreads-per-worker', type=int,
-              help='Number of dask threads per worker.')
-@click.option('-ngt', '--ngridder-threads', type=int,
-              help="Total number of threads to use per worker")
-@click.option('-mem', '--mem-limit', type=float,
-              help="Memory limit in GB. Default uses all available memory")
-@click.option('-nthreads', '--nthreads', type=int,
-              help="Total available threads. Default uses all available threads")
+@clickify_parameters(schema.restore)
 def restore(**kw):
     '''
     Create restored images.
@@ -48,104 +24,89 @@ def restore(**kw):
     Can also be used to convolve images to a common resolution
     and/or perform a primary beam correction.
     '''
-    with ExitStack() as stack:
-        return _restore(stack, **kw)
+    # defaults.update(kw['nworkers'])
+    defaults.update(kw)
+    args = OmegaConf.create(defaults)
+    pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
+    if args.nworkers is None:
+        args.nworkers = args.nband
 
-def _restore(stack, **kw):
+    OmegaConf.set_struct(args, True)
+
+    with ExitStack() as stack:
+        # numpy imports have to happen after this step
+        from pfb import set_client
+        set_client(args, stack, log, scheduler=args.scheduler)
+
+        # TODO - prettier config printing
+        print('Input Options:', file=log)
+        for key in args.keys():
+            print('     %25s = %s' % (key, args[key]), file=log)
+
+        return _restore(**args)
+
+def _restore(**kw):
     args = OmegaConf.create(kw)
     OmegaConf.set_struct(args, True)
-    pyscilog.log_to_file(args.output_filename + '.log')
-    pyscilog.enable_memory_logging(level=3)
 
-    # number of threads per worker
-    if args.nthreads is None:
-        if args.host_address is not None:
-            raise ValueError("You have to specify nthreads when using a distributed scheduler")
-        import multiprocessing
-        nthreads = multiprocessing.cpu_count()
-        args.nthreads = nthreads
-    else:
-        nthreads = args.nthreads
-
-    # configure memory limit
-    if args.mem_limit is None:
-        if args.host_address is not None:
-            raise ValueError("You have to specify mem-limit when using a distributed scheduler")
-        import psutil
-        mem_limit = int(psutil.virtual_memory()[0]/1e9)  # 100% of memory by default
-        args.mem_limit = mem_limit
-    else:
-        mem_limit = args.mem_limit
-
-    nband = args.nband
-    if args.nworkers is None:
-        nworkers = nband
-        args.nworkers = nworkers
-    else:
-        nworkers = args.nworkers
-
-    if args.nthreads_per_worker is None:
-        nthreads_per_worker = 1
-        args.nthreads_per_worker = nthreads_per_worker
-    else:
-        nthreads_per_worker = args.nthreads_per_worker
-
-    # the number of chunks being read in simultaneously is equal to
-    # the number of dask threads
-    nthreads_dask = nworkers * nthreads_per_worker
-
-    if args.ngridder_threads is None:
-        if args.host_address is not None:
-            ngridder_threads = nthreads//nthreads_per_worker
-        else:
-            ngridder_threads = nthreads//nthreads_dask
-        args.ngridder_threads = ngridder_threads
-    else:
-        ngridder_threads = args.ngridder_threads
-
-    ms = list(ms)
-    print('Input Options:', file=log)
-    for key in kw.keys():
-        print('     %25s = %s' % (key, args[key]), file=log)
-
-    # numpy imports have to happen after this step
-    from pfb import set_client
-    set_client(nthreads, mem_limit, nworkers, nthreads_per_worker,
-               args.host_address, stack, log)
 
     import numpy as np
-    from astropy.io import fits
-    mhdr = fits.getheader(args.model)
+    from daskms.experimental.zarr import xds_from_zarr
+    from pfb.utils.fits import save_fits, add_beampars, set_wcs
+    from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres
 
-    from pfb.utils.fits import load_fits
-    model = load_fits(args.model).squeeze()  # drop Stokes axis
+    basename = f'{args.output_filename}_{args.product.upper()}'
 
-    # check images compatible
-    rhdr = fits.getheader(args.residual)
+    dds_name = f'{basename}{args.postfix}.dds.zarr'
+    mds_name = f'{basename}{args.postfix}.mds.zarr'
 
-    from pfb.utils.fits import compare_headers
-    compare_headers(mhdr, rhdr)
-    residual = load_fits(args.residual).squeeze()
 
-    # fit restoring psf
-    from pfb.utils.misc import fitcleanbeam
-    psf = load_fits(args.psf, dtype=args.real_type).squeeze()
 
-    nband, nx_psf, ny_psf = psf.shape
-    wsums = np.amax(psf.reshape(args.nband, nx_psf, ny_psf), axis=1)
-    wsum = np.sum(wsums)
+    dds = xds_from_zarr(dds_name)
+    # only a single mds (for now)
+    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    nband = mds.nband
+    nx = mds.nx
+    ny = mds.ny
+    cell_rad = mds.cell_rad
+    cell_deg = np.rad2deg(cell_rad)
+    freq = mds.freq.data
+    nx_psf = dds[0].nx_psf
+    ny_psf = dds[0].ny_psf
+    for ds in dds:
+        assert ds.nx == nx
+        assert ds.ny == ny
+
+    output_type = dds[0].RESIDUAL.dtype
+    residual = np.zeros((nband, nx, ny), dtype=output_type)
+    psf = np.zeros((nband, nx_psf, ny_psf), dtype=output_type)
+    wsums = np.zeros(nband)
+    for ds in dds:
+        b = ds.bandid
+        residual[b] += ds.RESIDUAL.values
+        psf[b] += ds.PSF.values
+        wsums[b] += ds.WSUM.values[0]
+    wsum = wsums.sum()
+    residual /= wsum
     psf /= wsum
     psf_mfs = np.sum(psf, axis=0)
+    residual_mfs = np.sum(residual, axis=0)
+    fmask = wsums > 0
+    residual[fmask] /= wsums[fmask, None, None]/wsum
+    psf[fmask] /= wsums[fmask, None, None]/wsum
+    # sanity check
+    assert (psf_mfs.max() - 1.0) < 2e-7
+    assert ((np.amax(psf, axis=(1,2)) - 1.0) < 2e-7).all()
 
     # fit restoring psf
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)
-    GaussPars = fitcleanbeam(psf, level=0.5, pixsize=1.0)
+    GaussPars = fitcleanbeam(psf, level=0.5, pixsize=1.0)  # pixel units
 
-    cpsf_mfs = np.zeros(psf_mfs.shape, dtype=args.real_type)
-    cpsf = np.zeros(psf.shape, dtype=args.real_type)
+    cpsf_mfs = np.zeros(residual_mfs.shape, dtype=output_type)
+    cpsf = np.zeros(residual.shape, dtype=output_type)
 
-    lpsf = np.arange(-R.nx_psf / 2, R.nx_psf / 2)
-    mpsf = np.arange(-R.ny_psf / 2, R.ny_psf / 2)
+    lpsf = -(nx//2) + np.arange(nx)
+    mpsf = -(ny//2) + np.arange(ny)
     xx, yy = np.meshgrid(lpsf, mpsf, indexing='ij')
 
     cpsf_mfs = Gaussian2D(xx, yy, GaussPar[0], normalise=False)
@@ -153,34 +114,55 @@ def _restore(stack, **kw):
     for v in range(args.nband):
         cpsf[v] = Gaussian2D(xx, yy, GaussPars[v], normalise=False)
 
-    from pfb.utils.fits import add_beampars
+    model = mds.MODEL.values
+    model_mfs = np.mean(model, axis=0)
+
+    image_mfs = convolve2gaussres(model_mfs[None], xx, yy,
+                                  GaussPar[0], args.nthreads,
+                                  norm_kernel=False)[0]  # peak of kernel set to unity
+    image_mfs += residual_mfs
+    image = np.zeros_like(model)
+    for b in range(nband):
+        image[b:b+1] = convolve2gaussres(model[b:b+1], xx, yy,
+                                         GaussPars[b], args.nthreads,
+                                         norm_kernel=False)  # peak of kernel set to unity
+        image[b] += residual[b]
+
+    # convert pixel units to deg
     GaussPar = list(GaussPar[0])
-    GaussPar[0] *= args.cell_size / 3600
-    GaussPar[1] *= args.cell_size / 3600
+    GaussPar[0] *= cell_deg
+    GaussPar[1] *= cell_deg
     GaussPar = tuple(GaussPar)
-    hdr_psf_mfs = add_beampars(hdr_psf_mfs, GaussPar)
 
-    save_fits(args.outfile + '_cpsf_mfs.fits', cpsf_mfs, hdr_psf_mfs)
-    save_fits(args.outfile + '_psf_mfs.fits', psf_mfs, hdr_psf_mfs)
+    # init fits headers
+    radec = (mds.ra, mds.dec)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, np.mean(freq))
+    hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq)
 
-    if args.beam is not None:
-        bhdr = fits.getheader(args.beam)
-        compare_headers(mhdr, bhdr)
-        beam = load_fits(args.beam).squeeze()
-        model = np.where(beam > args.pb_min, model/beam, 0.0)
+    if 'm' in args.outputs:
+        save_fits(f'{basename}{args.postfix}.model_mfs.fits', model_mfs, hdr_mfs)
 
-    nband, nx, ny = model.shape
-    guassparf = ()
-    if nband > 1:
-        for b in range(nband):
-            guassparf += (rhdr['BMAJ'+str(b)], rhdr['BMIN'+str(b)],
-                          rhdr['BPA'+str(b)])
-    else:
-        guassparf += (rhdr['BMAJ'], rhdr['BMIN'], rhdr['BPA'])
+    if 'M' in args.outputs:
+        save_fits(f'{basename}{args.postfix}.model.fits', model, hdr)
 
-    # if args.convolve_residuals:
+    # model does not get resolution info
+    hdr_mfs = add_beampars(hdr_mfs, GaussPar)
+    hdr = add_beampars(hdr, GaussPar, GaussPars)
 
-    cellx = np.abs(mhdr['CDELT1'])
-    celly = np.abs(mhdr['CDELT2'])
+    if 'r' in args.outputs:
+        save_fits(f'{basename}{args.postfix}.residual_mfs.fits', residual_mfs, hdr_mfs)
 
-    from pfb.utils.restoration import restore_image
+    if 'R' in args.outputs:
+        save_fits(f'{basename}{args.postfix}.residual.fits', model, hdr)
+
+    if 'i' in args.outputs:
+        save_fits(f'{basename}{args.postfix}.image_mfs.fits', image_mfs, hdr_mfs)
+
+    if 'I' in args.outputs:
+        save_fits(f'{basename}{args.postfix}.image.fits', image, hdr)
+
+    if 'c' in args.outputs:
+        save_fits(f'{basename}{args.postfix}.cpsf_mfs.fits', cpsf_mfs, hdr_mfs)
+
+    if 'C' in args.outputs:
+        save_fits(f'{basename}{args.postfix}.cpsf.fits', cpsf, hdr)

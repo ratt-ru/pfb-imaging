@@ -83,7 +83,7 @@ inputs:
     abbreviation: spf
   hogbom_maxit:
     dtype: int
-    default: 2500
+    default: 5000
     info: 'Maximum number of peak finding iterations between major cycles'
     abbreviation: hmaxit
   clark_maxit:
