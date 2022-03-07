@@ -86,7 +86,7 @@ def set_client(args, stack, log, scheduler='distributed'):
             print("Initialising client with LocalCluster.", file=log)
             cluster = LocalCluster(processes=True, n_workers=nworkers,
                                    threads_per_worker=nthreads_per_worker,
-                                   memory_limit=str(mem_limit/nworkers)+'GB')
+                                   memory_limit=0)  # str(mem_limit/nworkers)+'GB'
             cluster = stack.enter_context(cluster)
             client = stack.enter_context(Client(cluster))
 

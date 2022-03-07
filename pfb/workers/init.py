@@ -240,7 +240,12 @@ def _init(**kw):
                 tmp_dict = {}
                 for name, val in zip(gain.GAIN_AXES, gain.GAIN_SPEC):
                     if name == 'gain_t':
-                        tmp_dict[name] = (utpc,)
+                        ntimes = gain.gain_t.size
+                        nchunksm1 = ntimes//utpc
+                        rem = ntimes - nchunksm1*utpc
+                        tmp_dict[name] = (utpc,)*nchunksm1
+                        if rem:
+                            tmp_dict[name] += (rem,)
                     elif name == 'gain_f':
                         tmp_dict[name] = chan_chunks[ms][idt]
                     elif name == 'dir':
@@ -251,6 +256,7 @@ def _init(**kw):
                         tmp_dict[name] = val
                     else:
                         tmp_dict[name] = val
+
                 gain_chunks[ms].append(tmp_dict)
 
     out_datasets = []

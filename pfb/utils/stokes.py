@@ -41,6 +41,8 @@ def single_stokes(ds=None,
     else:
         frow = (ant1 == ant2)
 
+    frow = inlined_array(frow, [ant1, ant2])
+
     if args.weight_column is not None:
         weight = getattr(ds, args.weight_column).data
     else:
@@ -68,6 +70,9 @@ def single_stokes(ds=None,
     vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts,
                            ant1, ant2, pol='linear', product=args.product)
 
+    vis = inlined_array(vis, [ant1, ant2, tbin_idx, tbin_counts, jones])
+    wgt = inlined_array(wgt, [ant1, ant2, tbin_idx, tbin_counts, jones])
+
     if args.flag_column is not None:
         flag = getattr(ds, args.flag_column).data
         flag = da.any(flag, axis=2)
@@ -76,6 +81,7 @@ def single_stokes(ds=None,
         flag = da.broadcast_to(frow[:, None], (nrow, nchan))
 
     mask = ~flag
+    mask = inlined_array(mask, [frow])
     uvw = ds.UVW.data
 
     data_vars = {'FREQ': (('chan',), freq)}
@@ -83,17 +89,17 @@ def single_stokes(ds=None,
     wsum = da.sum(wgt[mask])
     data_vars['WSUM'] = (('1'), da.array((wsum,)))
 
-    wgt = wgt.rechunk({0:args.row_out_chunk})
+    # wgt = wgt.rechunk({0:args.row_out_chunk})
     data_vars['WEIGHT'] = (('row', 'chan'), wgt)
 
-    uvw = uvw.rechunk({0:args.row_out_chunk})
+    # uvw = uvw.rechunk({0:args.row_out_chunk})
     data_vars['UVW'] = (('row', 'uvw'), uvw)
 
-    vis = vis.rechunk({0:args.row_out_chunk})
+    # vis = vis.rechunk({0:args.row_out_chunk})
     data_vars['VIS'] = (('row', 'chan'), vis)
 
     # MASK = ~FLAG.astype(np.uint8) for wgridder convention
-    mask = mask.rechunk({0:args.row_out_chunk})
+    # mask = mask.rechunk({0:args.row_out_chunk})
     data_vars['MASK'] = (('row', 'chan'), mask.astype(np.uint8))
 
     # if args.weight:
