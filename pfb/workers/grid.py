@@ -94,6 +94,7 @@ def _grid(**kw):
     from pfb.utils.beam import eval_beam
     import xarray as xr
     from uuid import uuid4
+    from daskms.optimisation import inlined_array
 
     basename = f'{args.output_filename}_{args.product.upper()}'
 
@@ -184,52 +185,77 @@ def _grid(**kw):
 
     # LB - what is the point of specifying name here?
     if args.robustness is not None:
-        counts = [da.zeros((nx, ny), chunks=(-1, -1),
-                        name="zeros-"+uuid4().hex) for _ in range(nband)]
-        # first loop over data to compute counts
-        for ds in xds:
-            uvw = ds.UVW.data
-            freqs = ds.FREQ.data
-            mask = ds.MASK.data
-            wgt = ds.WEIGHT.data
-            bandid = ds.bandid
-            count = compute_counts(
-                        uvw,
-                        freqs,
-                        mask,
-                        nx,
-                        ny,
-                        cell_rad,
-                        cell_rad,
-                        wgt.dtype)
+        if os.path.isdir(f'{basename}_counts.zarr'):
+            counts_ds = xr.open_dataset(f'{basename}_counts.zarr', chunks={'band':1, 'x':-1, 'y':-1}, engine='zarr')
+            print(f'Found cached counts array at {basename}_counts.zarr',
+                  file=log)
+            counts = counts_ds.COUNTS.data
+        else:
+            counts = [da.zeros((nx, ny), chunks=(-1, -1),
+                            name="zeros-"+uuid4().hex) for _ in range(nband)]
+            # first loop over data to compute counts
+            for ds in xds:
+                uvw = ds.UVW.data
+                freq = ds.FREQ.data
+                mask = ds.MASK.data
+                wgt = ds.WEIGHT.data
+                bandid = ds.bandid
+                count = compute_counts(
+                            uvw,
+                            freq,
+                            mask,
+                            nx,
+                            ny,
+                            cell_rad,
+                            cell_rad,
+                            wgt.dtype)
 
-            counts[bandid] += count
+                counts[bandid] += count
+            counts = da.stack(counts, axis=0)
+            counts = counts.rechunk({0:1, 1:-1, 2:-1})
+            # cache counts
+            count_ds = xr.Dataset({'COUNTS': (('band', 'x', 'y'), counts)})
+            count_ds.to_zarr(f'{basename}_counts.zarr', mode='w')
 
-        # now convert counts to imaging weights
-        # required because of https://github.com/ska-sa/dask-ms/issues/171
-        xdsw = xds_from_zarr(xds_name, columns=columns)
-        writes = []
-        for ds, dsw in zip(xds, xdsw):
-            uvw = ds.UVW.data
-            freqs = ds.FREQ.data
-            bandid = ds.bandid
-            imweight = counts_to_weights(counts[bandid],
-                                         uvw,
-                                         freqs,
-                                         nx, ny,
-                                         cell_rad, cell_rad,
-                                         args.robustness)
-            imweight = imweight.rechunk({0:dsw.chunks['row']})
-            out_ds = dsw.assign(**{args.imaging_weight_column: (('row', 'chan'),
-                                                                imweight)})
-            writes.append(out_ds)
 
+        # we can always do this on the fly given counts
+        # # now convert counts to imaging weights
+        # # required because of https://github.com/ska-sa/dask-ms/issues/171
+        # xdsw = xds_from_zarr(xds_name, columns=columns)
+        # writes = []
+        # for ds, dsw in zip(xds, xdsw):
+        #     uvw = ds.UVW.data
+        #     freqs = ds.FREQ.data
+        #     bandid = ds.bandid
+        #     imweight = counts_to_weights(counts[bandid],
+        #                                  uvw,
+        #                                  freqs,
+        #                                  nx, ny,
+        #                                  cell_rad, cell_rad,
+        #                                  args.robustness)
+        #     assert ds.fieldid == dsw.fieldid
+        #     assert ds.ddid == dsw.ddid
+        #     assert ds.scanid == dsw.scanid
+        #     assert ds.bandid == dsw.bandid
+        #     assert ds.dims['row'] == dsw.dims['row']
+        #     assert ds.dims['row'] == np.sum(dsw.chunks['row'])
+        #     imweight = imweight.rechunk({0:dsw.chunks['row']})
+        #     out_ds = dsw.assign(**{args.imaging_weight_column: (('row', 'chan'),
+        #                                                         imweight)})
+        #     writes.append(out_ds)
+
+        # dask.visualize(writes, color="order", cmap="autumn",
+        #            node_attr={"penwidth": "4"},
+        #            filename=f'{basename}_weight_ordered_graph.pdf',
+        #            optimize_graph=False)
+        # dask.visualize(writes, filename=f'{basename}_weight_graph.pdf',
+        #             optimize_graph=False)
         # calculating imaging weights
-        dask.compute(xds_to_zarr(writes, xds_name,
-                                 columns=args.imaging_weight_column))
-        # need to reload to get imaging weights
-        xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk},
-                            columns=columns)
+        # dask.compute(xds_to_zarr(writes, xds_name,
+        #                          columns=args.imaging_weight_column))
+        # # need to reload to get imaging weights
+        # xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk},
+        #                     columns=columns)
 
     # check if model exists
     try:
@@ -249,9 +275,14 @@ def _grid(**kw):
         vis = ds.VIS.data
         wgt = ds.WEIGHT.data
         wsum = ds.WSUM.data
-        try:
-            imwgt = ds.get(args.imaging_weight_column).data
-        except Exception as e:
+        if args.robustness is not None:
+            imwgt = counts_to_weights(counts[ds.bandid],
+                                      uvw,
+                                      freq,
+                                      nx, ny,
+                                      cell_rad, cell_rad,
+                                      args.robustness)
+        else:
             imwgt = None
         mask = ds.MASK.data
         dvars = {}
@@ -270,7 +301,7 @@ def _grid(**kw):
                            mask=mask,
                            do_wgridding=args.wstack,
                            double_precision_accumulation=args.double_accum)
-            # dirty = inlined_array(dirty, [uvw, freq])
+            dirty = inlined_array(dirty, [uvw, freq])
             dvars['DIRTY'] = (('x', 'y'), dirty)
 
         if args.psf:
@@ -288,7 +319,7 @@ def _grid(**kw):
                          mask=mask,
                          do_wgridding=args.wstack,
                          double_precision_accumulation=args.double_accum)
-            # psf = inlined_array(psf, [uvw, freq])
+            psf = inlined_array(psf, [uvw, freq])
             # get FT of psf
             psfhat = fft2d(psf, nthreads=args.nvthreads)
             dvars['PSF'] = (('x_psf', 'y_psf'), psf)
@@ -299,10 +330,11 @@ def _grid(**kw):
             # combine weights
             if imwgt is not None:
                 wgt *= imwgt
+            wgt = wgt.rechunk({0:100000, 1:-1})
             dvars['WEIGHT'] = (('row', 'chan'), wgt)
 
         dvars['FREQ'] = (('chan',), freq)
-        dvars['UVW'] = (('row', 'three'), uvw)
+        dvars['UVW'] = (('row', 'three'), uvw.rechunk({0:100000, 1:-1}))
         dvars['WSUM'] = (('1',), da.atleast_1d(wgt.sum()))
 
         # evaluate beam at x and y coords
@@ -327,7 +359,7 @@ def _grid(**kw):
                 # we only want to apply the beam once here
                 residual = dirty - hessian(bvals * model[ds.bandid], uvw, wgt,
                                            freq, None, hessopts)
-
+                residual = inlined_array(residual, [uvw, freq])
                 dvars['RESIDUAL'] = (('x', 'y'), residual)
 
 
@@ -347,6 +379,13 @@ def _grid(**kw):
         out_ds = xr.Dataset(dvars, attrs=attrs)
         writes.append(out_ds)
         freq_out.append(ds.freq_out)
+
+    # dask.visualize(writes, color="order", cmap="autumn",
+    #                node_attr={"penwidth": "4"},
+    #                filename=f'{basename}_grid_ordered_graph.pdf',
+    #                optimize_graph=False)
+    # dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
+    #                optimize_graph=False)
 
     print("Computing image space data products", file=log)
     dask.compute(xds_to_zarr(writes, dds_name, columns='ALL'))
