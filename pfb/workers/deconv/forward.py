@@ -113,15 +113,13 @@ def _forward(**kw):
         rname = 'DIRTY'
     print(f'Using {rname} as residual', file=log)
     output_type = dds[0].DIRTY.dtype
-    residual = np.zeros((nband, nx, ny), dtype=output_type)
+    residual = [da.zeros((nx, ny), chunks=(-1, -1)) for _ in range(nband)]
     wsum = 0
     for ds in dds:
-        dirty = ds.get(rname).values
-        beam = ds.BEAM.values
         b = ds.bandid
-        residual[b] += dirty * beam
+        residual[b] += ds.get(rname).data * ds.BEAM.data
         wsum += ds.WSUM.values[0]
-    residual /= wsum
+    residual = (da.stack(residual)/wsum).compute()
 
     from pfb.utils.misc import init_mask
     mask = init_mask(opts.mask, mds, output_type, log)

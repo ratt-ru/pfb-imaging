@@ -95,7 +95,10 @@ def clean(**kw):
     pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
 
     if opts.nworkers is None:
-        opts.nworkers = opts.nband
+        if opts.scheduler=='distributed':
+            opts.nworkers = opts.nband
+        else:
+            opts.nworkers = 1
 
     OmegaConf.set_struct(opts, True)
 
@@ -149,16 +152,18 @@ def _clean(**kw):
         rname = 'DIRTY'
     print(f'Using {rname} as residual', file=log)
     output_type = dds[0].DIRTY.dtype
-    dirty = np.zeros((nband, nx, ny), dtype=output_type)
-    psf = np.zeros((nband, nx_psf, ny_psf), dtype=output_type)
+    # dirty = np.zeros((nband, nx, ny), dtype=output_type)
+    dirty = [da.zeros((nx, ny), chunks=(-1, -1)) for _ in range(nband)]
+    psf = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1)) for _ in range(nband)]
+    # psf = np.zeros((nband, nx_psf, ny_psf), dtype=output_type)
     wsum = 0
     for ds in dds:
         b = ds.bandid
-        dirty[b] += ds.get(rname).values
-        psf[b] += ds.PSF.values
+        dirty[b] += ds.get(rname).data
+        psf[b] += ds.PSF.data
         wsum += ds.WSUM.values[0]
-    dirty /= wsum
-    psf /= wsum
+    dirty = (da.stack(dirty)/wsum).compute()
+    psf = (da.stack(psf)/wsum).compute()
     psf_mfs = np.sum(psf, axis=0)
     dirty_mfs = np.sum(dirty, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
@@ -321,14 +326,14 @@ def _clean(**kw):
 
         if opts.do_residual:
             dds = xds_from_zarr(dds_name, chunks={'band': 1})
-            residual = np.zeros((nband, nx, ny), dtype=np.float32)
+            residual = [da.zeros((nx, ny), chunks=(-1, -1)) for _ in range(nband)]
             wsums = np.zeros(nband)
             for ds in dds:
                 b = ds.bandid
                 wsums[b] += ds.WSUM.values[0]
-                residual[b] += ds.CLEAN_RESIDUAL.values
+                residual[b] += ds.CLEAN_RESIDUAL.data
             wsum = np.sum(wsums)
-            residual /= wsum
+            residual = (da.stack(residual)/wsum).compute()
 
             residual_mfs = np.sum(residual, axis=0)
             save_fits(f'{basename}_clean_residual_mfs.fits',
