@@ -14,7 +14,7 @@ log = pyscilog.get_logger('SPIFIT')
               help="Path to residual image cube.")
 @click.option('-o', '--output-filename', required=True,
               help="Path to output directory + prefix.")
-@click.option('-pp', '--psf-pars', nopts=3, type=float,
+@click.option('-pp', '--psf-pars', nargs=3, type=float,
               help="Beam parameters matching FWHM of restoring beam "
                    "specified as emaj emin pa."
                    "By default these are taken from the fits header "

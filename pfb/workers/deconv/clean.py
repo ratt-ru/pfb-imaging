@@ -131,6 +131,17 @@ def _clean(**kw):
     dds_name = f'{basename}{opts.postfix}.dds.zarr'
     mds_name = f'{basename}{opts.postfix}.mds.zarr'
 
+    dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk})
+    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+    nband = mds.nband
+    nx = mds.nx
+    ny = mds.ny
+    for ds in dds:
+        assert ds.nx == nx
+        assert ds.ny == ny
+
+    nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
+
     # stitch dirty/psf in apparent scale
     if opts.residual_name in dds[0]:
         rname = opts.residual_name

@@ -335,7 +335,8 @@ def _grid(**kw):
 
         dvars['FREQ'] = (('chan',), freq)
         dvars['UVW'] = (('row', 'three'), uvw.rechunk({0:100000, 1:-1}))
-        dvars['WSUM'] = (('1',), da.atleast_1d(wgt.sum()))
+        dvars['WSUM'] = (('scalar',), da.atleast_1d(wgt.sum()))
+        dvars['MASK'] = (('row', 'chan'), mask.rechunk({0:100000, 1:-1}))
 
         # evaluate beam at x and y coords
         cell_deg = np.rad2deg(cell_rad)

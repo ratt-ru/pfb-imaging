@@ -4,7 +4,6 @@ host_address:
   abbreviation: ha
 nworkers:
   dtype: int
-  default: 1
   info: 'Number of worker processes'
   abbreviation: nw
 nthreads_per_worker:

@@ -16,7 +16,7 @@ def create_parser():
     p.add_argument('-o', '--output-filename', type=str,
                    help="Path to output directory. \n"
                         "Placed next to input model if outfile not provided.")
-    p.add_argument('-pp', '--psf-pars', default=None, nopts='+', type=float,
+    p.add_argument('-pp', '--psf-pars', default=None, nargs='+', type=float,
                    help="Beam parameters matching FWHM of restoring beam "
                         "specified as emaj emin pa. \n"
                         "By default these are taken from the fits header "
