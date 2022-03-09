@@ -118,6 +118,8 @@ def _init(**kw):
     from pfb.utils.misc import compute_context
     import xarray as xr
 
+    basename = f'{args.output_filename}_{args.product}'
+
     # TODO - optional grouping.
     # We need to construct an identifier between
     # dataset and field/spw/scan identifiers
@@ -343,8 +345,7 @@ def _init(**kw):
                                        **universal_opts)
                 out_datasets.append(out_ds)
 
-    writes = xds_to_zarr(out_datasets, args.output_filename +
-                         f'_{args.product.upper()}.xds.zarr',
+    writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',
                          columns='ALL')
 
     # dask.visualize(writes, color="order", cmap="autumn",
@@ -353,6 +354,8 @@ def _init(**kw):
     #                optimize_graph=False)
     # dask.visualize(writes, filename=args.output_filename +
     #                '_writes_I_graph.pdf', optimize_graph=False)
+
+    Isort =
 
     with compute_context(args.scheduler, args.output_filename):
         dask.compute(writes,
