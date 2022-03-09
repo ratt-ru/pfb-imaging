@@ -41,8 +41,8 @@ def nnls(**kw):
     '''
     Minor cycle implementing non-negative least squares
     '''
-    args = OmegaConf.create(kw)
-    pyscilog.log_to_file(args.output_filename + '.log')
+    opts = OmegaConf.create(kw)
+    pyscilog.log_to_file(opts.output_filename + '.log')
     pyscilog.enable_memory_logging(level=3)
 
     print('Input Options:', file=log)
@@ -66,16 +66,16 @@ def nnls(**kw):
         return np.vdot(x, model_conv - 2*dirty), 2*(model_conv - dirty)
 
     def prox(x):
-        x[x<args.min_value] = 0.0
+        x[x<opts.min_value] = 0.0
         return x
 
-    dirty = load_fits(args.dirty).squeeze()
+    dirty = load_fits(opts.dirty).squeeze()
     nband, nx, ny = dirty.shape
-    hdr = fits.getheader(args.dirty)
+    hdr = fits.getheader(opts.dirty)
 
-    psf = load_fits(args.psf).squeeze()
+    psf = load_fits(opts.psf).squeeze()
     _, nx_psf, ny_psf = psf.shape
-    hdr_psf = fits.getheader(args.psf)
+    hdr_psf = fits.getheader(opts.psf)
 
     wsums = np.amax(psf.reshape(-1, nx_psf*ny_psf), axis=1)
     wsum = np.sum(wsums)
@@ -89,36 +89,36 @@ def nnls(**kw):
     dirty_mfs = np.sum(dirty, axis=0)
 
     from pfb.operators.psf import PSF
-    psfo = PSF(psf, dirty.shape, nthreads=args.nthreads)
+    psfo = PSF(psf, dirty.shape, nthreads=opts.nthreads)
 
     from pfb.opt.power_method import power_method
 
     beta, betavec = power_method(psfo.convolve, dirty.shape,
-                                 tol=args.pm_tol,
-                                 maxit=args.pm_maxit,
-                                 verbosity=args.pm_verbose,
-                                 report_freq=args.pm_report_freq)
+                                 tol=opts.pm_tol,
+                                 maxit=opts.pm_maxit,
+                                 verbosity=opts.pm_verbose,
+                                 report_freq=opts.pm_report_freq)
 
     fprime = partial(value_and_grad, dirty=dirty, psfo=psfo)
 
     from pfb.opt.fista import fista
 
-    if args.x0 is None:
+    if opts.x0 is None:
         x0 = np.zeros_like(dirty)
     else:
-        x0 = load_fits(args.x0, dtype=dirty.dtype).squeeze()
+        x0 = load_fits(opts.x0, dtype=dirty.dtype).squeeze()
 
     model = fista(x0, beta, fprime, prox,
-                  tol=args.fista_tol,
-                  maxit=args.fista_maxit,
-                  verbosity=args.fista_verbose,
-                  report_freq=args.fista_report_freq)
+                  tol=opts.fista_tol,
+                  maxit=opts.fista_maxit,
+                  verbosity=opts.fista_verbose,
+                  report_freq=opts.fista_report_freq)
 
     residual, residual_mfs = resid_func(model, dirty, psfo)
 
 
     from pfb.utils.fits import save_fits
 
-    save_fits(args.output_filename + '_model.fits', model, hdr)
-    save_fits(args.output_filename + '_residual.fits', residual, hdr)
+    save_fits(opts.output_filename + '_model.fits', model, hdr)
+    save_fits(opts.output_filename + '_residual.fits', residual, hdr)
 

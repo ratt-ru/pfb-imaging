@@ -51,54 +51,54 @@ def init(**kw):
     '''
     # defaults.update(kw['nworkers'])
     defaults.update(kw)
-    args = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{args.output_filename}_{args.product}.log')
+    opts = OmegaConf.create(defaults)
+    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}.log')
     from glob import glob
-    ms = glob(args.ms)
+    ms = glob(opts.ms)
     try:
         assert len(ms) > 0
-        args.ms = ms
+        opts.ms = ms
     except:
-        raise ValueError(f"No MS at {args.ms}")
+        raise ValueError(f"No MS at {opts.ms}")
 
-    if args.nworkers is None:
-        if args.scheduler=='distributed':
-            args.nworkers = args.nband
+    if opts.nworkers is None:
+        if opts.scheduler=='distributed':
+            opts.nworkers = opts.nband
         else:
-            args.nworkers = 1
+            opts.nworkers = 1
 
-    if args.gain_table is not None:
-        gt = glob(args.gain_table)
+    if opts.gain_table is not None:
+        gt = glob(opts.gain_table)
         try:
             assert len(gt) > 0
-            args.gain_table = gt
+            opts.gain_table = gt
         except Exception as e:
-            raise ValueError(f"No gain table  at {args.gain_table}")
+            raise ValueError(f"No gain table  at {opts.gain_table}")
 
-    if args.product not in ["I", "Q", "U", "V"]:
-        raise NotImplementedError(f"Product {args.product} not yet supported")
+    if opts.product not in ["I", "Q", "U", "V"]:
+        raise NotImplementedError(f"Product {opts.product} not yet supported")
 
-    OmegaConf.set_struct(args, True)
+    OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log, scheduler=args.scheduler)
+        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
-        for key in args.keys():
-            print('     %25s = %s' % (key, args[key]), file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _init(**args)
+        return _init(**opts)
 
 def _init(**kw):
-    args = OmegaConf.create(kw)
+    opts = OmegaConf.create(kw)
     from omegaconf import ListConfig
-    if not isinstance(args.ms, list) and not isinstance(args.ms, ListConfig):
-        args.ms = [args.ms]
-    if not isinstance(args.gain_table, list) and not isinstance(args.gain_table, ListConfig):
-        args.gain_table = [args.gain_table]
-    OmegaConf.set_struct(args, True)
+    if not isinstance(opts.ms, list) and not isinstance(opts.ms, ListConfig):
+        opts.ms = [opts.ms]
+    if not isinstance(opts.gain_table, list) and not isinstance(opts.gain_table, ListConfig):
+        opts.gain_table = [opts.gain_table]
+    OmegaConf.set_struct(opts, True)
 
     import os
     from pathlib import Path
@@ -118,36 +118,36 @@ def _init(**kw):
     from pfb.utils.misc import compute_context
     import xarray as xr
 
-    basename = f'{args.output_filename}_{args.product}'
+    basename = f'{opts.output_filename}_{opts.product}'
 
     # TODO - optional grouping.
     # We need to construct an identifier between
     # dataset and field/spw/scan identifiers
     group_by = []
-    if args.group_by_field:
+    if opts.group_by_field:
         group_by.append('FIELD_ID')
     else:
         raise NotImplementedError("Grouping by field is currently mandatory")
 
-    if args.group_by_ddid:
+    if opts.group_by_ddid:
         group_by.append('DATA_DESC_ID')
     else:
         raise NotImplementedError("Grouping by DDID is currently mandatory")
 
-    if args.group_by_scan:
+    if opts.group_by_scan:
         group_by.append('SCAN_NUMBER')
     else:
         raise NotImplementedError("Grouping by scan is currently mandatory")
 
     # chan <-> band mapping
-    nband = args.nband
+    nband = opts.nband
     freqs, fbin_idx, fbin_counts, freq_out, band_mapping, chan_chunks = \
-        chan_to_band_mapping(args.ms, nband=args.nband, group_by=group_by)
+        chan_to_band_mapping(opts.ms, nband=opts.nband, group_by=group_by)
 
     # gridder memory budget (TODO)
     max_chan_chunk = 0
     max_freq = 0
-    for ms in args.ms:
+    for ms in opts.ms:
         for spw in freqs[ms]:
             counts = fbin_counts[ms][spw].compute()
             freq = freqs[ms][spw].compute()
@@ -159,7 +159,7 @@ def _init(**kw):
     uvw = []
     u_max = 0.0
     v_max = 0.0
-    for ms in args.ms:
+    for ms in opts.ms:
         xds = xds_from_ms(ms, columns='UVW', group_cols=group_by)
         for ds in xds:
             uvw = ds.UVW.data
@@ -172,22 +172,22 @@ def _init(**kw):
     cell_rad = 1.0 / (2 * uv_max * max_freq / lightspeed)
 
     # assumes measurement sets have the same columns
-    columns = (args.data_column,
-               args.flag_column,
+    columns = (opts.data_column,
+               opts.flag_column,
                'UVW', 'ANTENNA1',
                'ANTENNA2', 'TIME', 'INTERVAL')
     schema = {}
-    schema[args.data_column] = {'dims': ('chan', 'corr')}
-    schema[args.flag_column] = {'dims': ('chan', 'corr')}
+    schema[opts.data_column] = {'dims': ('chan', 'corr')}
+    schema[opts.flag_column] = {'dims': ('chan', 'corr')}
 
     # only WEIGHT column gets special treatment
     # any other column must have channel axis
-    if args.weight_column is not None:
-        columns += (args.weight_column,)
-        if args.weight_column == 'WEIGHT':
-            schema[args.weight_column] = {'dims': ('corr')}
+    if opts.weight_column is not None:
+        columns += (opts.weight_column,)
+        if opts.weight_column == 'WEIGHT':
+            schema[opts.weight_column] = {'dims': ('corr')}
         else:
-            schema[args.weight_column] = {'dims': ('chan', 'corr')}
+            schema[opts.weight_column] = {'dims': ('chan', 'corr')}
 
     # flag row
     if 'FLAG_ROW' in xds[0]:
@@ -198,14 +198,14 @@ def _init(**kw):
     tbin_idx = {}
     tbin_counts = {}
     ncorr = None
-    for ims, ms in enumerate(args.ms):
+    for ims, ms in enumerate(opts.ms):
         xds = xds_from_ms(ms, group_cols=group_by, columns=('TIME', 'FLAG'))
         ms_chunks[ms] = []  # daskms expects a list per ds
         gain_chunks[ms] = []
         tbin_idx[ms] = {}
         tbin_counts[ms] = {}
-        if args.gain_table[ims] is not None:
-            G = xds_from_zarr(args.gain_table[ims].rstrip('/') + '::NET')
+        if opts.gain_table[ims] is not None:
+            G = xds_from_zarr(opts.gain_table[ims].rstrip('/') + '::NET')
 
         for ids, ds in enumerate(xds):
             fid = ds.FIELD_ID
@@ -222,10 +222,10 @@ def _init(**kw):
                     raise ValueError("All data sets must have the same "
                                      "number of correlations")
             time = ds.TIME.values
-            if args.utimes_per_chunk in [0, -1, None]:
+            if opts.utimes_per_chunk in [0, -1, None]:
                 utpc = np.unique(time).size
             else:
-                utpc = args.utimes_per_chunk
+                utpc = opts.utimes_per_chunk
 
             rchunks, tidx, tcounts = chunkify_rows(time,
                                                    utimes_per_chunk=utpc,
@@ -237,7 +237,7 @@ def _init(**kw):
             ms_chunks[ms].append({'row': rchunks,
                                   'chan': chan_chunks[ms][idt]})
 
-            if args.gain_table[ims] is not None:
+            if opts.gain_table[ims] is not None:
                 gain = G[ids]  # TODO - how to make sure they are aligned?
                 tmp_dict = {}
                 for name, val in zip(gain.GAIN_AXES, gain.GAIN_SPEC):
@@ -263,12 +263,12 @@ def _init(**kw):
 
     out_datasets = []
     radec = None  # assumes we are only imaging field 0 of first MS
-    for ims, ms in enumerate(args.ms):
+    for ims, ms in enumerate(opts.ms):
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
                           table_schema=schema, group_cols=group_by)
 
-        if args.gain_table[ims] is not None:
-            G = xds_from_zarr(args.gain_table[ims].rstrip('/') + '::NET',
+        if opts.gain_table[ims] is not None:
+            G = xds_from_zarr(opts.gain_table[ims].rstrip('/') + '::NET',
                               chunks=gain_chunks[ms])
 
         # subtables
@@ -329,7 +329,7 @@ def _init(**kw):
                 Inu = slice(f0, ff)
 
                 subds = ds[{'chan': Inu}]
-                if args.gain_table[ims] is not None:
+                if opts.gain_table[ims] is not None:
                     # Only DI gains currently supported
                     jones = G[ids][{'gain_f': Inu}].gains.data
                 else:
@@ -337,7 +337,7 @@ def _init(**kw):
 
                 out_ds = single_stokes(ds=subds,
                                        jones=jones,
-                                       args=args,
+                                       opts=opts,
                                        freq=freqs[ms][idt][Inu],
                                        freq_out=freq_out[band_id],
                                        chan_width=chan_width[Inu],
@@ -350,16 +350,14 @@ def _init(**kw):
 
     # dask.visualize(writes, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
-    #                filename=args.output_filename + '_writes_I_ordered_graph.pdf',
+    #                filename=opts.output_filename + '_writes_I_ordered_graph.pdf',
     #                optimize_graph=False)
-    # dask.visualize(writes, filename=args.output_filename +
+    # dask.visualize(writes, filename=opts.output_filename +
     #                '_writes_I_graph.pdf', optimize_graph=False)
 
-    Isort =
-
-    with compute_context(args.scheduler, args.output_filename):
+    with compute_context(opts.scheduler, opts.output_filename):
         dask.compute(writes,
                      optimize_graph=False,
-                     scheduler=args.scheduler)
+                     scheduler=opts.scheduler)
 
     print("All done here.", file=log)

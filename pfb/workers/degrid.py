@@ -97,39 +97,39 @@ def degrid(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
-    args = OmegaConf.create(kw)
-    pyscilog.log_to_file(args.output_filename + '.log')
+    opts = OmegaConf.create(kw)
+    pyscilog.log_to_file(opts.output_filename + '.log')
 
     from glob import glob
-    ms = glob(args.ms)
+    ms = glob(opts.ms)
     try:
         assert len(ms) > 0
-        args.ms = ms
+        opts.ms = ms
     except:
-        raise ValueError(f"No MS at {args.ms}")
+        raise ValueError(f"No MS at {opts.ms}")
 
-    if args.nworkers is None:
-        args.nworkers = args.nband
+    if opts.nworkers is None:
+        opts.nworkers = opts.nband
 
-    OmegaConf.set_struct(args, True)
+    OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log)
+        opts = set_client(opts, stack, log)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
-        for key in args.keys():
-            print('     %25s = %s' % (key, args[key]), file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _degrid(**args)
+        return _degrid(**opts)
 
 def _degrid(**kw):
-    args = OmegaConf.create(kw)
+    opts = OmegaConf.create(kw)
     from omegaconf import ListConfig
-    if not isinstance(args.ms, list) and not isinstance(args.ms, ListConfig) :
-        args.ms = [args.ms]
-    OmegaConf.set_struct(args, True)
+    if not isinstance(opts.ms, list) and not isinstance(opts.ms, ListConfig) :
+        opts.ms = [opts.ms]
+    OmegaConf.set_struct(opts, True)
 
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
@@ -139,7 +139,7 @@ def _degrid(**kw):
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms.utils import dataset_type
-    mstype = dataset_type(args.ms[0])
+    mstype = dataset_type(opts.ms[0])
     if mstype == 'casa':
         from daskms import xds_to_table
     else:
@@ -154,48 +154,48 @@ def _degrid(**kw):
 
     # always returns 4D
     # gridder expects freq axis
-    model = np.atleast_3d(load_fits(args.model).squeeze())
+    model = np.atleast_3d(load_fits(opts.model).squeeze())
     nband, nx, ny = model.shape
-    hdr = fits.getheader(args.model)
+    hdr = fits.getheader(opts.model)
     cell_d = np.abs(hdr['CDELT1'])
     cell_rad = np.deg2rad(cell_d)
     mfreqs, ref_freq = data_from_header(hdr, axis=3)
 
-    if args.nband_out is None:
+    if opts.nband_out is None:
         nband_out = nband
     else:
-        nband_out = args.nband_out
+        nband_out = opts.nband_out
 
     # TODO - optional grouping. We need to construct an identifier between
     # dataset and field/spw/scan identifiers
     group_by = []
-    if args.group_by_field:
+    if opts.group_by_field:
         group_by.append('FIELD_ID')
     else:
         raise NotImplementedError("Grouping by field is currently mandatory")
 
-    if args.group_by_ddid:
+    if opts.group_by_ddid:
         group_by.append('DATA_DESC_ID')
     else:
         raise NotImplementedError("Grouping by DDID is currently mandatory")
 
-    if args.group_by_scan:
+    if opts.group_by_scan:
         group_by.append('SCAN_NUMBER')
     else:
         raise NotImplementedError("Grouping by scan is currently mandatory")
 
     # chan <-> band mapping
     freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
-        args.ms, nband=nband_out, group_by=group_by)
+        opts.ms, nband=nband_out, group_by=group_by)
 
-    if args.output_type is not None:
-        output_type = np.dtype(args.output_type)
+    if opts.output_type is not None:
+        output_type = np.dtype(opts.output_type)
     else:
-        output_type = np.result_type(np.dtype(args.real_type), np.complex64)
+        output_type = np.result_type(np.dtype(opts.real_type), np.complex64)
 
     # if mstype == 'zarr':
-    #     if args.model_column in xds[0].keys():
-    #         model_chunks = getattr(xds[0], args.model_column).data.chunks
+    #     if opts.model_column in xds[0].keys():
+    #         model_chunks = getattr(xds[0], opts.model_column).data.chunks
     #     else:
     #         model_chunks = xds[0].DATA.data.chunks
     #         print('Chunking model same as data', file=log)
@@ -205,7 +205,7 @@ def _degrid(**kw):
 
     ms_chunks = {}
     ncorr = None
-    for ms in args.ms:
+    for ms in opts.ms:
         xds = xds_from_ms(ms, group_cols=group_by)
         ms_chunks[ms] = []  # daskms expects a list per ds
 
@@ -220,10 +220,10 @@ def _degrid(**kw):
                 except Exception as e:
                     raise ValueError("All data sets must have the same number of correlations")
 
-            if args.row_chunk in [0, -1, None]:
+            if opts.row_chunk in [0, -1, None]:
                 rchunks = ds.dims['row']
             else:
-                rchunks = args.row_chunk
+                rchunks = opts.row_chunk
 
             ms_chunks[ms].append({'row': rchunks,
                                   'chan': chan_chunks[ms][idt]})
@@ -235,8 +235,8 @@ def _degrid(**kw):
 
     # components excluding zeros
     beta = model[:, Ix, Iy]
-    if args.spectral_poly_order:
-        order = args.spectral_poly_order
+    if opts.spectral_poly_order:
+        order = opts.spectral_poly_order
         print(f"Fitting integrated polynomial of order {order}", file=log)
         if order > mfreqs.size:
             raise ValueError("spectral-poly-order can't be larger than nband")
@@ -274,12 +274,12 @@ def _degrid(**kw):
 
     print("Computing model visibilities", file=log)
     mask = da.from_array(mask, chunks=(nx, ny), name=False)
-    comps = da.from_array(comps.astype(args.real_type),
+    comps = da.from_array(comps.astype(opts.real_type),
                           chunks=(-1, ncomps), name=False)
     freq_out = da.from_array(freq_out, chunks=-1, name=False)
     writes = []
     radec = None  # assumes we are only imaging field 0 of first MS
-    for ms in args.ms:
+    for ms in opts.ms:
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=('UVW'),
                           group_cols=group_by)
 
@@ -321,9 +321,9 @@ def _degrid(**kw):
                            freq_bin_idx[ms][idt],
                            freq_bin_counts[ms][idt],
                            cell_rad,
-                           nthreads=args.nvthreads,
-                           epsilon=args.epsilon,
-                           do_wstacking=args.wstack)
+                           nthreads=opts.nvthreads,
+                           epsilon=opts.epsilon,
+                           do_wstacking=opts.wstack)
 
             # vis_Q = im2vis(uvw,
             #              freqs[ms][idt],
@@ -332,8 +332,8 @@ def _degrid(**kw):
             #              freq_bin_counts[ms][idt],
             #              cell_rad,
             #              nthreads=ngridder_threads,
-            #              epsilon=args.epsilon,
-            #              do_wstacking=args.wstack)
+            #              epsilon=opts.epsilon,
+            #              do_wstacking=opts.wstack)
 
             model_vis = restore_corrs(vis_I, ncorr)
 
@@ -344,25 +344,25 @@ def _degrid(**kw):
             #     model_vis = model_vis.rechunk(model_chunks)
             #     uvw = uvw.rechunk((model_chunks[0], 3))
 
-            # out_ds = ds.assign(**{args.model_column: (("row", "chan", "corr"), model_vis),
+            # out_ds = ds.assign(**{opts.model_column: (("row", "chan", "corr"), model_vis),
             #                       'UVW': (("row", "three"), uvw)})
-            out_ds = ds.assign(**{args.model_column: (("row", "chan", "corr"), model_vis)})
+            out_ds = ds.assign(**{opts.model_column: (("row", "chan", "corr"), model_vis)})
             out_data.append(out_ds)
 
-        writes.append(xds_to_table(out_data, ms, columns=[args.model_column]))
+        writes.append(xds_to_table(out_data, ms, columns=[opts.model_column]))
 
-    # dask.visualize(*writes, filename=args.output_filename + '_predict_graph.pdf',
+    # dask.visualize(*writes, filename=opts.output_filename + '_predict_graph.pdf',
     #                optimize_graph=False, collapse_outputs=True)
 
-    # if not args.mock:
-    #     with performance_report(filename=args.output_filename + '_predict_per.html'):
+    # if not opts.mock:
+    #     with performance_report(filename=opts.output_filename + '_predict_per.html'):
     #         dask.compute(writes, optimize_graph=False)
 
     from pfb.utils.misc import compute_context
-    with compute_context(args.scheduler, args.output_filename):
+    with compute_context(opts.scheduler, opts.output_filename):
         dask.compute(writes,
                      optimize_graph=False,
-                     scheduler=args.scheduler)
+                     scheduler=opts.scheduler)
 
     print("All done here.", file=log)
 

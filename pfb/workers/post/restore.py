@@ -26,28 +26,28 @@ def restore(**kw):
     '''
     # defaults.update(kw['nworkers'])
     defaults.update(kw)
-    args = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
-    if args.nworkers is None:
-        args.nworkers = args.nband
+    opts = OmegaConf.create(defaults)
+    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
+    if opts.nworkers is None:
+        opts.nworkers = opts.nband
 
-    OmegaConf.set_struct(args, True)
+    OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
         # numpy imports have to happen after this step
         from pfb import set_client
-        set_client(args, stack, log, scheduler=args.scheduler)
+        set_client(opts, stack, log, scheduler=opts.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
-        for key in args.keys():
-            print('     %25s = %s' % (key, args[key]), file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _restore(**args)
+        return _restore(**opts)
 
 def _restore(**kw):
-    args = OmegaConf.create(kw)
-    OmegaConf.set_struct(args, True)
+    opts = OmegaConf.create(kw)
+    OmegaConf.set_struct(opts, True)
 
 
     import numpy as np
@@ -55,10 +55,10 @@ def _restore(**kw):
     from pfb.utils.fits import save_fits, add_beampars, set_wcs
     from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres
 
-    basename = f'{args.output_filename}_{args.product.upper()}'
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}{args.postfix}.dds.zarr'
-    mds_name = f'{basename}{args.postfix}.mds.zarr'
+    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    mds_name = f'{basename}{opts.postfix}.mds.zarr'
 
 
 
@@ -111,20 +111,20 @@ def _restore(**kw):
 
     cpsf_mfs = Gaussian2D(xx, yy, GaussPar[0], normalise=False)
 
-    for v in range(args.nband):
+    for v in range(opts.nband):
         cpsf[v] = Gaussian2D(xx, yy, GaussPars[v], normalise=False)
 
     model = mds.MODEL.values
     model_mfs = np.mean(model, axis=0)
 
     image_mfs = convolve2gaussres(model_mfs[None], xx, yy,
-                                  GaussPar[0], args.nthreads,
+                                  GaussPar[0], opts.nthreads,
                                   norm_kernel=False)[0]  # peak of kernel set to unity
     image_mfs += residual_mfs
     image = np.zeros_like(model)
     for b in range(nband):
         image[b:b+1] = convolve2gaussres(model[b:b+1], xx, yy,
-                                         GaussPars[b], args.nthreads,
+                                         GaussPars[b], opts.nthreads,
                                          norm_kernel=False)  # peak of kernel set to unity
         image[b] += residual[b]
 
@@ -139,30 +139,30 @@ def _restore(**kw):
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, np.mean(freq))
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq)
 
-    if 'm' in args.outputs:
-        save_fits(f'{basename}{args.postfix}.model_mfs.fits', model_mfs, hdr_mfs)
+    if 'm' in opts.outputs:
+        save_fits(f'{basename}{opts.postfix}.model_mfs.fits', model_mfs, hdr_mfs)
 
-    if 'M' in args.outputs:
-        save_fits(f'{basename}{args.postfix}.model.fits', model, hdr)
+    if 'M' in opts.outputs:
+        save_fits(f'{basename}{opts.postfix}.model.fits', model, hdr)
 
     # model does not get resolution info
     hdr_mfs = add_beampars(hdr_mfs, GaussPar)
     hdr = add_beampars(hdr, GaussPar, GaussPars)
 
-    if 'r' in args.outputs:
-        save_fits(f'{basename}{args.postfix}.residual_mfs.fits', residual_mfs, hdr_mfs)
+    if 'r' in opts.outputs:
+        save_fits(f'{basename}{opts.postfix}.residual_mfs.fits', residual_mfs, hdr_mfs)
 
-    if 'R' in args.outputs:
-        save_fits(f'{basename}{args.postfix}.residual.fits', model, hdr)
+    if 'R' in opts.outputs:
+        save_fits(f'{basename}{opts.postfix}.residual.fits', model, hdr)
 
-    if 'i' in args.outputs:
-        save_fits(f'{basename}{args.postfix}.image_mfs.fits', image_mfs, hdr_mfs)
+    if 'i' in opts.outputs:
+        save_fits(f'{basename}{opts.postfix}.image_mfs.fits', image_mfs, hdr_mfs)
 
-    if 'I' in args.outputs:
-        save_fits(f'{basename}{args.postfix}.image.fits', image, hdr)
+    if 'I' in opts.outputs:
+        save_fits(f'{basename}{opts.postfix}.image.fits', image, hdr)
 
-    if 'c' in args.outputs:
-        save_fits(f'{basename}{args.postfix}.cpsf_mfs.fits', cpsf_mfs, hdr_mfs)
+    if 'c' in opts.outputs:
+        save_fits(f'{basename}{opts.postfix}.cpsf_mfs.fits', cpsf_mfs, hdr_mfs)
 
-    if 'C' in args.outputs:
-        save_fits(f'{basename}{args.postfix}.cpsf.fits', cpsf, hdr)
+    if 'C' in opts.outputs:
+        save_fits(f'{basename}{opts.postfix}.cpsf.fits', cpsf, hdr)

@@ -55,69 +55,69 @@ def binterp(**kw):
     Interpolate beams and stack cubes one MS and one spectral window at a time.
 
     """
-    args = OmegaConf.create(kw)
+    opts = OmegaConf.create(kw)
     from glob import glob
-    image = sorted(glob(args.image))
+    image = sorted(glob(opts.image))
     try:
         assert len(image) > 0
-        args.image = image
+        opts.image = image
     except:
-        raise ValueError(f"No image at {args.image}")
+        raise ValueError(f"No image at {opts.image}")
 
-    if args.output_dir is None:
-        args.output_dir = os.path.dirname(args.image[0])
+    if opts.output_dir is None:
+        opts.output_dir = os.path.dirname(opts.image[0])
 
-    pyscilog.log_to_file(args.output_dir +
-                         args.postfix.strip('fits') + 'log')
+    pyscilog.log_to_file(opts.output_dir +
+                         opts.postfix.strip('fits') + 'log')
 
-    if args.ms is not None:
-        ms = glob(args.ms)
+    if opts.ms is not None:
+        ms = glob(opts.ms)
         try:
             assert len(ms) == 1
-            args.ms = ms[0]
+            opts.ms = ms[0]
         except:
-            raise ValueError(f"There must be exactly one MS matching {args.ms} if provided")
+            raise ValueError(f"There must be exactly one MS matching {opts.ms} if provided")
 
-    if not isinstance(args.beam_model, str):
+    if not isinstance(opts.beam_model, str):
         raise ValueError("Only string beam patterns allowed")
     else:
         # we are either using JimBeam or globbing for beam patterns
-        if args.beam_model.lower() == 'jimbeam':
-            args.beam_model = args.beam_model.lower()
-            band = args.band.lower()
+        if opts.beam_model.lower() == 'jimbeam':
+            opts.beam_model = opts.beam_model.lower()
+            band = opts.band.lower()
             if band != 'l' and band != 'uhf':
                 raise ValueError("Only l or uhf band supported with "
                                  "JimBeam")
             else:
-                print("Using %s band beam model"%args.band,
+                print("Using %s band beam model"%opts.band,
                 file=log)
-        elif args.beam_model.lower().endswith('.fits'):
-            beam_model  = glob(args.beam_model)
+        elif opts.beam_model.lower().endswith('.fits'):
+            beam_model  = glob(opts.beam_model)
             try:
                 assert len(beam_model) > 0
             except:
-                raise ValueError(f"No beam model at {args.beam_model}")
+                raise ValueError(f"No beam model at {opts.beam_model}")
         else:
             raise ValueError("Unknown beam model provided. "
                              "Either use JimBeam or pass in the fits beam "
                              "patterns")
 
-    OmegaConf.set_struct(args, True)
+    OmegaConf.set_struct(opts, True)
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log)
+        opts = set_client(opts, stack, log)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
-        for key in args.keys():
-            print('     %25s = %s' % (key, args[key]), file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _binterp(**args)
+        return _binterp(**opts)
 
 
 def _binterp(**kw):
-    args = OmegaConf.create(kw)
-    OmegaConf.set_struct(args, True)
+    opts = OmegaConf.create(kw)
+    OmegaConf.set_struct(opts, True)
 
 
     from pfb.utils.fits import save_fits
@@ -132,9 +132,9 @@ def _binterp(**kw):
     from daskms import xds_from_ms, xds_from_table
 
 
-    if args.ms is None:
-        if args.beam_model.lower() == 'jimbeam':
-            for image in args.image:
+    if opts.ms is None:
+        if opts.beam_model.lower() == 'jimbeam':
+            for image in opts.image:
                 mhdr = fits.getheader(image)
                 l_coord, ref_l = data_from_header(mhdr, axis=1)
                 l_coord -= ref_l
@@ -152,29 +152,29 @@ def _binterp(**kw):
                 freq, ref_freq = data_from_header(mhdr, axis=freq_axis)
 
                 from katbeam import JimBeam
-                if args.band.lower() == 'l':
+                if opts.band.lower() == 'l':
                     beam = JimBeam('MKAT-AA-L-JIM-2020')
-                elif args.band.lower() == 'uhf':
+                elif opts.band.lower() == 'uhf':
                     beam = JimBeam('MKAT-AA-UHF-JIM-2020')
                 else:
-                    raise ValueError("Unkown band %s"%args.band[i])
+                    raise ValueError("Unkown band %s"%opts.band[i])
 
                 xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
                 beam_image = np.zeros((freq.size, l_coord.size, m_coord.size),
-                                      dtype=args.out_dtype)
+                                      dtype=opts.out_dtype)
                 for v in range(freq.size):
                     # freq must be in MHz
-                    beam_image[v] = beam.I(xx, yy, freq[v]/1e6).astype(args.out_dtype)
+                    beam_image[v] = beam.I(xx, yy, freq[v]/1e6).astype(opts.out_dtype)
 
-                if args.output_dir in image:
-                    idx = len(args.output_dir)
+                if opts.output_dir in image:
+                    idx = len(opts.output_dir)
                     iname = image[idx::]
-                    outname = iname + '.' + args.postfix
+                    outname = iname + '.' + opts.postfix
                 else:
-                    outname = image + '.' + args.postfix
+                    outname = image + '.' + opts.postfix
 
                 beam_image = np.expand_dims(beam_image, axis=3 - stokes_axis + 1)
-                save_fits(args.output_dir + outname, beam_image, mhdr, dtype=args.out_dtype)
+                save_fits(opts.output_dir + outname, beam_image, mhdr, dtype=opts.out_dtype)
 
         else:
             raise NotImplementedError("Not there yet, sorry")
@@ -190,19 +190,19 @@ def _binterp(**kw):
 #     return out
 
 
-# def extract_dde_info(args, freqs):
+# def extract_dde_info(opts, freqs):
 #     """
 #     Computes paralactic angles, antenna scaling and pointing information
 #     required for beam interpolation.
 #     """
 #     # get ms info required to compute paralactic angles and weighted sum
 #     nband = freqs.size
-#     if args.ms is not None:
+#     if opts.ms is not None:
 #         utimes = []
 #         unflag_counts = []
 #         ant_pos = None
 #         phase_dir = None
-#         for ms_name in args.ms:
+#         for ms_name in opts.ms:
 #             # get antenna positions
 #             ant = xds_from_table(ms_name + '::ANTENNA')[0].compute()
 #             if ant_pos is None:
@@ -216,22 +216,22 @@ def _binterp(**kw):
 #             # get phase center for field
 #             field = xds_from_table(ms_name + '::FIELD')[0].compute()
 #             if phase_dir is None:
-#                 phase_dir = field['PHASE_DIR'][args.field].data.squeeze()
+#                 phase_dir = field['PHASE_DIR'][opts.field].data.squeeze()
 #             else:
-#                 tmp = field['PHASE_DIR'][args.field].data.squeeze()
+#                 tmp = field['PHASE_DIR'][opts.field].data.squeeze()
 #                 if not np.array_equal(phase_dir, tmp):
 #                     raise ValueError(
 #                         'Phase direction not the same across measurement sets')
 
 #             # get unique times and count flags
 #             xds = xds_from_ms(ms_name, columns=["TIME", "FLAG_ROW"], group_cols=[
-#                               "FIELD_ID"])[args.field]
+#                               "FIELD_ID"])[opts.field]
 #             utime, time_idx = np.unique(
 #                 xds.TIME.data.compute(), return_index=True)
 #             ntime = utime.size
 #             # extract subset of times
-#             if args.sparsify_time > 1:
-#                 I = np.arange(0, ntime, args.sparsify_time)
+#             if opts.sparsify_time > 1:
+#                 I = np.arange(0, ntime, opts.sparsify_time)
 #                 utime = utime[I]
 #                 time_idx = time_idx[I]
 #                 ntime = utime.size
@@ -274,15 +274,15 @@ def _binterp(**kw):
 #         return (parangles, ant_scale, point_errs, unflag_counts, False)
 
 
-# def make_power_beam(args, lm_source, freqs, use_dask):
-#     print("Loading fits beam patterns from %s" % args.beam_model)
+# def make_power_beam(opts, lm_source, freqs, use_dask):
+#     print("Loading fits beam patterns from %s" % opts.beam_model)
 #     from glob import glob
-#     paths = glob(args.beam_model + '**_**.fits')
+#     paths = glob(opts.beam_model + '**_**.fits')
 #     beam_hdr = None
-#     if args.corr_type == 'linear':
+#     if opts.corr_type == 'linear':
 #         corr1 = 'XX'
 #         corr2 = 'YY'
-#     elif args.corr_type == 'circular':
+#     elif opts.corr_type == 'circular':
 #         corr1 = 'LL'
 #         corr2 = 'RR'
 #     else:
@@ -359,7 +359,7 @@ def _binterp(**kw):
 #         return beam_amp, beam_extents, bfreqs
 
 
-# def interpolate_beam(ll, mm, freqs, args):
+# def interpolate_beam(ll, mm, freqs, opts):
 #     """
 #     Interpolate beam to image coordinates and optionally compute average
 #     over time if MS is provoded
@@ -367,11 +367,11 @@ def _binterp(**kw):
 #     nband = freqs.size
 #     print("Interpolating beam")
 #     parangles, ant_scale, point_errs, unflag_counts, use_dask = extract_dde_info(
-#         args, freqs)
+#         opts, freqs)
 
 #     lm_source = np.vstack((ll.ravel(), mm.ravel())).T
 #     beam_amp, beam_extents, bfreqs = make_power_beam(
-#         args, lm_source, freqs, use_dask)
+#         opts, lm_source, freqs, use_dask)
 
 #     # interpolate beam
 #     if use_dask:
@@ -380,7 +380,7 @@ def _binterp(**kw):
 #         freqs = da.from_array(freqs, chunks=freqs.shape)
 #         # compute ncpu images at a time to avoid memory errors
 #         ntimes = parangles.shape[0]
-#         I = np.arange(0, ntimes, args.ncpu)
+#         I = np.arange(0, ntimes, opts.ncpu)
 #         nchunks = I.size
 #         I = np.append(I, ntimes)
 #         beam_image = np.zeros((ll.size, 1, nband), dtype=beam_amp.dtype)
@@ -413,9 +413,9 @@ def _binterp(**kw):
 #     return beam_source.squeeze().reshape((freqs.size, *ll.shape))
 
 
-# def main(args):
+# def main(opts):
 #     # get coord info
-#     hdr = fits.getheader(args.image)
+#     hdr = fits.getheader(opts.image)
 #     l_coord, ref_l = data_from_header(hdr, axis=1)
 #     l_coord -= ref_l
 #     m_coord, ref_m = data_from_header(hdr, axis=2)
@@ -431,10 +431,10 @@ def _binterp(**kw):
 #     xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
 
 #     # interpolate primary beam to fits header and optionally average over time
-#     beam_image = interpolate_beam(xx, yy, freqs, args)
+#     beam_image = interpolate_beam(xx, yy, freqs, opts)
 
 #     # save power beam
-#     save_fits(args.output_filename, beam_image, hdr)
-#     print("Wrote interpolated beam cube to %s \n" % args.output_filename)
+#     save_fits(opts.output_filename, beam_image, hdr)
+#     print("Wrote interpolated beam cube to %s \n" % opts.output_filename)
 
 #     return

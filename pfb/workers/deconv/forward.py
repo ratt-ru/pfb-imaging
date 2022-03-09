@@ -57,28 +57,28 @@ def forward(**kw):
     '''
     # defaults.update(kw['nworkers'])
     defaults.update(kw)
-    args = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
+    opts = OmegaConf.create(defaults)
+    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
 
-    if args.nworkers is None:
-        args.nworkers = args.nband
+    if opts.nworkers is None:
+        opts.nworkers = opts.nband
 
-    OmegaConf.set_struct(args, True)
+    OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log, scheduler=args.scheduler)
+        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
-        for key in args.keys():
-            print('     %25s = %s' % (key, args[key]), file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _forward(**args)
+        return _forward(**opts)
 
 def _forward(**kw):
-    args = OmegaConf.create(kw)
-    OmegaConf.set_struct(args, True)
+    opts = OmegaConf.create(kw)
+    OmegaConf.set_struct(opts, True)
 
     import numpy as np
     import xarray as xr
@@ -92,12 +92,12 @@ def _forward(**kw):
     from astropy.io import fits
     import pywt
 
-    basename = f'{args.output_filename}_{args.product.upper()}'
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}{args.postfix}.dds.zarr'
-    mds_name = f'{basename}{args.postfix}.mds.zarr'
+    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    mds_name = f'{basename}{opts.postfix}.mds.zarr'
 
-    dds = xds_from_zarr(dds_name, chunks={'row':args.row_chunk})
+    dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk})
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
     nband = mds.nband
     nx = mds.nx
@@ -107,8 +107,8 @@ def _forward(**kw):
         assert ds.ny == ny
 
     # stitch residuals after beam application
-    if args.residual_name in dds[0]:
-        rname = args.residual_name
+    if opts.residual_name in dds[0]:
+        rname = opts.residual_name
     else:
         rname = 'DIRTY'
     print(f'Using {rname} as residual', file=log)
@@ -124,7 +124,7 @@ def _forward(**kw):
     residual /= wsum
 
     from pfb.utils.misc import init_mask
-    mask = init_mask(args.mask, mds, output_type, log)
+    mask = init_mask(opts.mask, mds, output_type, log)
 
     try:
         x0 = mds.CLEAN_MODEL.values
@@ -134,12 +134,12 @@ def _forward(**kw):
 
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
-    hessopts['wstack'] = args.wstack
-    hessopts['epsilon'] = args.epsilon
-    hessopts['double_accum'] = args.double_accum
-    hessopts['nthreads'] = args.nvthreads
+    hessopts['wstack'] = opts.wstack
+    hessopts['epsilon'] = opts.epsilon
+    hessopts['double_accum'] = opts.double_accum
+    hessopts['nthreads'] = opts.nvthreads
 
-    if args.use_psf:
+    if opts.use_psf:
         from pfb.operators.psf import psf_convolve_xds
 
         nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
@@ -157,16 +157,16 @@ def _forward(**kw):
         psfopts['unpad_x'] = unpad_x
         psfopts['unpad_y'] = unpad_y
         psfopts['lastsize'] = lastsize
-        psfopts['nthreads'] = args.nvthreads
+        psfopts['nthreads'] = opts.nvthreads
 
         hess = partial(psf_convolve_xds, xds=dds, psfopts=psfopts,
-                       wsum=wsum, sigmainv=args.sigmainv, mask=mask,
+                       wsum=wsum, sigmainv=opts.sigmainv, mask=mask,
                        compute=True)
 
     else:
         print("Solving for update using vis space approximation", file=log)
         hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
-                       wsum=wsum, sigmainv=args.sigmainv, mask=mask,
+                       wsum=wsum, sigmainv=opts.sigmainv, mask=mask,
                        compute=True)
 
     # # import pdb; pdb.set_trace()
@@ -174,18 +174,18 @@ def _forward(**kw):
     # res = hess(x)
     # dask.visualize(res, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
-    #                filename=args.output_filename + '_hess_I_ordered_graph.pdf',
+    #                filename=opts.output_filename + '_hess_I_ordered_graph.pdf',
     #                optimize_graph=False)
-    # dask.visualize(res, filename=args.output_filename +
+    # dask.visualize(res, filename=opts.output_filename +
     #                '_hess_I_graph.pdf', optimize_graph=False)
 
     cgopts = {}
-    cgopts['tol'] = args.cg_tol
-    cgopts['maxit'] = args.cg_maxit
-    cgopts['minit'] = args.cg_minit
-    cgopts['verbosity'] = args.cg_verbose
-    cgopts['report_freq'] = args.cg_report_freq
-    cgopts['backtrack'] = args.backtrack
+    cgopts['tol'] = opts.cg_tol
+    cgopts['maxit'] = opts.cg_maxit
+    cgopts['minit'] = opts.cg_minit
+    cgopts['verbosity'] = opts.cg_verbose
+    cgopts['report_freq'] = opts.cg_report_freq
+    cgopts['backtrack'] = opts.backtrack
 
     print("Solving for update", file=log)
     update = pcg(hess, mask * residual, x0, **cgopts)
@@ -196,7 +196,7 @@ def _forward(**kw):
                      update)})
     dask.compute(xds_to_zarr(mds, mds_name, columns='UPDATE'))
 
-    if args.do_residual:
+    if opts.do_residual:
         print("Computing residual", file=log)
         from pfb.operators.hessian import hessian
         # Required because of https://github.com/ska-sa/dask-ms/issues/171
@@ -220,7 +220,7 @@ def _forward(**kw):
 
         dask.compute(xds_to_zarr(writes, dds_name, columns='FORWARD_RESIDUAL'))
 
-    if args.fits_mfs or args.fits_cubes:
+    if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)
         # construct a header from xds attrs
         radec = [dds[0].ra, dds[0].dec]
@@ -231,9 +231,9 @@ def _forward(**kw):
         hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
         update_mfs = np.mean(update, axis=0)
-        save_fits(f'{basename}{args.postfix}_update_mfs.fits', update_mfs, hdr_mfs)
+        save_fits(f'{basename}{opts.postfix}_update_mfs.fits', update_mfs, hdr_mfs)
 
-        if args.do_residual:
+        if opts.do_residual:
             dds = xds_from_zarr(dds_name)
             residual = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband)
@@ -245,17 +245,17 @@ def _forward(**kw):
             residual /= wsum
 
             residual_mfs = np.sum(residual, axis=0)
-            save_fits(f'{basename}{args.postfix}_forward_residual_mfs.fits',
+            save_fits(f'{basename}{opts.postfix}_forward_residual_mfs.fits',
                       residual_mfs, hdr_mfs)
 
-        if args.fits_cubes:
+        if opts.fits_cubes:
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
-            save_fits(f'{basename}{args.postfix}_update.fits', update, hdr)
+            save_fits(f'{basename}{opts.postfix}_update.fits', update, hdr)
 
-            if args.do_residual:
+            if opts.do_residual:
                 fmask = wsums > 0
                 residual[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}{args.postfix}_forward_residual.fits',
+                save_fits(f'{basename}{opts.postfix}_forward_residual.fits',
                           residual, hdr)
 
     print("All done here.", file=log)

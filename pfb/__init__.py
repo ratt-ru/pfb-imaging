@@ -9,76 +9,76 @@ __version__ = '0.0.1'
 
 import os
 
-def set_client(args, stack, log, scheduler='distributed'):
+def set_client(opts, stack, log, scheduler='distributed'):
 
     from omegaconf import open_dict
     # number of threads per worker
-    if args.nthreads is None:
-        if args.host_address is not None:
+    if opts.nthreads is None:
+        if opts.host_address is not None:
             raise ValueError("You have to specify nthreads when using a distributed scheduler")
         import multiprocessing
         nthreads = multiprocessing.cpu_count()
-        with open_dict(args):
-            args.nthreads = nthreads
+        with open_dict(opts):
+            opts.nthreads = nthreads
     else:
-        nthreads = int(args.nthreads)
+        nthreads = int(opts.nthreads)
 
     # configure memory limit
-    if args.mem_limit is None:
-        if args.host_address is not None:
+    if opts.mem_limit is None:
+        if opts.host_address is not None:
             raise ValueError("You have to specify mem-limit when using a distributed scheduler")
         import psutil
         mem_limit = int(psutil.virtual_memory()[1]/1e9)  # all available memory by default
-        with open_dict(args):
-            args.mem_limit = mem_limit
+        with open_dict(opts):
+            opts.mem_limit = mem_limit
     else:
-        mem_limit = int(args.mem_limit)
+        mem_limit = int(opts.mem_limit)
 
-    if args.nworkers is None:
+    if opts.nworkers is None:
         raise ValueError("You have to specify the number of workers")
     else:
-        nworkers = args.nworkers
+        nworkers = opts.nworkers
 
-    if args.nthreads_per_worker is None:
+    if opts.nthreads_per_worker is None:
         nthreads_per_worker = 1
-        with open_dict(args):
-            args.nthreads_per_worker = nthreads_per_worker
+        with open_dict(opts):
+            opts.nthreads_per_worker = nthreads_per_worker
     else:
-        nthreads_per_worker = int(args.nthreads_per_worker)
+        nthreads_per_worker = int(opts.nthreads_per_worker)
 
     # the number of chunks being read in simultaneously is equal to
     # the number of dask threads
     nthreads_dask = nworkers * nthreads_per_worker
 
-    if args.nvthreads is None:
-        if args.scheduler == 'single-threaded':
+    if opts.nvthreads is None:
+        if opts.scheduler == 'single-threaded':
             nvthreads = nthreads
-        elif args.host_address is not None:
+        elif opts.host_address is not None:
             nvthreads = nthreads//nthreads_per_worker
         else:
             nvthreads = nthreads//nthreads_dask
-        with open_dict(args):
-            args.nvthreads = nvthreads
+        with open_dict(opts):
+            opts.nvthreads = nvthreads
 
-    os.environ["OMP_NUM_THREADS"] = str(args.nvthreads)
-    os.environ["OPENBLAS_NUM_THREADS"] = str(args.nvthreads)
-    os.environ["MKL_NUM_THREADS"] = str(args.nvthreads)
-    os.environ["VECLIB_MAXIMUM_THREADS"] = str(args.nvthreads)
-    os.environ["NUMBA_NUM_THREADS"] = str(args.nvthreads)
+    os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
+    os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
+    os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
+    os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
     # avoids numexpr error, probably don't want more than 10 vthreads for ne anyway
     import numexpr as ne
     max_cores = ne.detect_number_of_cores()
-    ne_threads = min(max_cores, args.nvthreads)
+    ne_threads = min(max_cores, opts.nvthreads)
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
     if scheduler=='distributed':
         # set up client
-        if args.host_address is not None:
+        if opts.host_address is not None:
             from distributed import Client
             print("Initialising distributed client.", file=log)
             client = stack.enter_context(Client(address))
         else:
-            if nthreads_dask * args.nvthreads > args.nthreads:
+            if nthreads_dask * opts.nvthreads > opts.nthreads:
                 print("Warning - you are attempting to use more threads than "
                       "available. This may lead to suboptimal performance.",
                       file=log)
@@ -96,8 +96,8 @@ def set_client(args, stack, log, scheduler='distributed'):
         import dask
         dask.config.set(scheduler=scheduler)
 
-    # return updated args
-    return args
+    # return updated opts
+    return opts
 
 
 def logo():

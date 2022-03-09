@@ -51,28 +51,28 @@ def backward(**kw):
     '''
     # defaults.update(kw['nworkers'])
     defaults.update(kw)
-    args = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
+    opts = OmegaConf.create(defaults)
+    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
 
-    if args.nworkers is None:
-        args.nworkers = args.nband
+    if opts.nworkers is None:
+        opts.nworkers = opts.nband
 
-    OmegaConf.set_struct(args, True)
+    OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log, scheduler=args.scheduler)
+        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
-        for key in args.keys():
-            print('     %25s = %s' % (key, args[key]), file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _backward(**args)
+        return _backward(**opts)
 
 def _backward(**kw):
-    args = OmegaConf.create(kw)
-    OmegaConf.set_struct(args, True)
+    opts = OmegaConf.create(kw)
+    OmegaConf.set_struct(opts, True)
 
     import numpy as np
     import dask
@@ -89,12 +89,12 @@ def _backward(**kw):
     from astropy.io import fits
     import pywt
 
-    basename = f'{args.output_filename}_{args.product.upper()}'
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}{args.postfix}.dds.zarr'
-    mds_name = f'{basename}{args.postfix}.mds.zarr'
+    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    mds_name = f'{basename}{opts.postfix}.mds.zarr'
 
-    dds = xds_from_zarr(dds_name, chunks={'row':args.row_chunk})
+    dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk})
     # only a single mds (for now)
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
     nband = mds.nband
@@ -112,10 +112,10 @@ def _backward(**kw):
                          "Use forward worker to populate it. ", file=log)
 
     output_type = dds[0].DIRTY.dtype
-    if args.model_name in mds:
-        model = mds.get(args.model_name).values
+    if opts.model_name in mds:
+        model = mds.get(opts.model_name).values
         assert model.shape == (nband, nx, ny)
-        print(f"Initialising model from {args.model_name} in mds", file=log)
+        print(f"Initialising model from {opts.model_name} in mds", file=log)
     else:
         print('Initialising model to zeros', file=log)
         model = np.zeros((nband, nx, ny), dtype=output_type)
@@ -123,11 +123,11 @@ def _backward(**kw):
     data = model + update
 
     from pfb.utils.misc import init_mask
-    mask = init_mask(args.mask, mds, dds[0].DIRTY.dtype, log)
+    mask = init_mask(opts.mask, mds, dds[0].DIRTY.dtype, log)
 
     # dictionary setup
     print("Setting up dictionary", file=log)
-    bases = args.bases.split(',')
+    bases = opts.bases.split(',')
     ntots = []
     iys = {}
     sys = {}
@@ -136,7 +136,7 @@ def _backward(**kw):
             y, iy, sy = model[0].ravel(), 0, 0
         else:
             alpha = pywt.wavedecn(model[0], base, mode='zero',
-                                  level=args.nlevels)
+                                  level=opts.nlevels)
             y, iy, sy = pywt.ravel_coeffs(alpha)
         iys[base] = iy
         sys[base] = sy
@@ -155,7 +155,7 @@ def _backward(**kw):
     ntots = da.from_array(np.array(ntots, dtype=object), chunks=-1)
     padding = da.from_array(np.array(padding, dtype=object), chunks=-1)
     psiH = partial(im2coef, bases=bases, ntot=ntots, nmax=nmax,
-                   nlevels=args.nlevels)
+                   nlevels=opts.nlevels)
     psi = partial(coef2im, bases=bases, padding=padding,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
@@ -180,7 +180,7 @@ def _backward(**kw):
 
     # we set the alphas used for reweighting using the
     # current clean residuals when available
-    if args.alpha is None:
+    if opts.alpha is None:
         alpha = np.ones(nbasis) * 1e-5
         if have_resid:
             resid_comps = psiH(cresid)
@@ -190,9 +190,9 @@ def _backward(**kw):
             print("No residual in dds and alpha was not provided, "
                   "setting alpha to 1e-5.", file=log)
     else:
-        alpha = np.ones(nbasis) * args.alpha
+        alpha = np.ones(nbasis) * opts.alpha
 
-    if args.sigma21 is None:
+    if opts.sigma21 is None:
         sigma21 = 1e-4
         if have_resid:
             resid_mfs = np.sum(residual, axis=0)
@@ -201,16 +201,16 @@ def _backward(**kw):
             print("No residual in dds and sigma21 was not provided, "
                   "setting sigma21 to 1e-4.", file=log)
     else:
-        sigma21 = args.sigma21
+        sigma21 = opts.sigma21
 
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
-    hessopts['wstack'] = args.wstack
-    hessopts['epsilon'] = args.epsilon
-    hessopts['double_accum'] = args.double_accum
-    hessopts['nthreads'] = args.nvthreads
+    hessopts['wstack'] = opts.wstack
+    hessopts['epsilon'] = opts.epsilon
+    hessopts['double_accum'] = opts.double_accum
+    hessopts['nthreads'] = opts.nvthreads
 
-    if args.use_psf:
+    if opts.use_psf:
         from pfb.operators.psf import psf_convolve_xds
 
         nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
@@ -228,25 +228,25 @@ def _backward(**kw):
         psfopts['unpad_x'] = unpad_x
         psfopts['unpad_y'] = unpad_y
         psfopts['lastsize'] = lastsize
-        psfopts['nthreads'] = args.nvthreads
+        psfopts['nthreads'] = opts.nvthreads
 
         hess = partial(psf_convolve_xds, xds=dds, psfopts=psfopts,
-                       wsum=wsum, sigmainv=args.sigmainv, mask=mask,
+                       wsum=wsum, sigmainv=opts.sigmainv, mask=mask,
                        compute=True)
 
     else:
         print("Solving for update using vis space approximation", file=log)
         hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
-                        wsum=wsum, sigmainv=args.sigmainv, mask=mask,
+                        wsum=wsum, sigmainv=opts.sigmainv, mask=mask,
                         compute=True)
 
-    if args.hessnorm is None:
+    if opts.hessnorm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
-        hessnorm, _ = power_method(hess, (nband, nx, ny), tol=args.pm_tol,
-                         maxit=args.pm_maxit, verbosity=args.pm_verbose,
-                         report_freq=args.pm_report_freq)
+        hessnorm, _ = power_method(hess, (nband, nx, ny), tol=opts.pm_tol,
+                         maxit=opts.pm_maxit, verbosity=opts.pm_verbose,
+                         report_freq=opts.pm_report_freq)
     else:
-        hessnorm = args.hessnorm
+        hessnorm = opts.hessnorm
 
     if 'DUAL' in mds:
         dual = mds.DUAL.values
@@ -262,14 +262,14 @@ def _backward(**kw):
 
     modelp = model.copy()
     print("Solving for model", file=log)
-    for i in range(args.niter):
-        # prox = partial(prox_21m, sigma=args.sigma21, weight=weight, axis=0)
+    for i in range(opts.niter):
+        # prox = partial(prox_21m, sigma=opts.sigma21, weight=weight, axis=0)
         model, dual = primal_dual(hess, data, model, dual, sigma21,
                                   psi, psiH, weight, hessnorm, prox_21,
-                                  nu=nbasis, positivity=args.positivity,
-                                  tol=args.pd_tol, maxit=args.pd_maxit,
-                                  verbosity=args.pd_verbose,
-                                  report_freq=args.pd_report_freq)
+                                  nu=nbasis, positivity=opts.positivity,
+                                  tol=opts.pd_tol, maxit=opts.pd_maxit,
+                                  verbosity=opts.pd_verbose,
+                                  report_freq=opts.pd_report_freq)
 
         # reweight
         l2_norm = np.linalg.norm(psiH(model), axis=0)
@@ -280,7 +280,7 @@ def _backward(**kw):
 
             weight[m] = alpha[m]/(alpha[m] + l2_norm[m])
 
-    if args.niter==0:
+    if opts.niter==0:
         model = data
 
     print("Saving results", file=log)
@@ -300,7 +300,7 @@ def _backward(**kw):
 
     dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
-    if args.do_residual:
+    if opts.do_residual:
         print("Computing residual", file=log)
         # compute apparent residual per dataset
         from pfb.operators.hessian import hessian
@@ -323,7 +323,7 @@ def _backward(**kw):
 
         dask.compute(xds_to_zarr(writes, dds_name, columns='RESIDUAL'))
 
-    if args.fits_mfs or args.fits_cubes:
+    if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)
         dds = xds_from_zarr(dds_name)
         residual = np.zeros((nband, nx, ny), dtype=dds[0].DIRTY.dtype)
@@ -352,7 +352,7 @@ def _backward(**kw):
         residual_mfs = np.sum(residual, axis=0)
         save_fits(f'{basename}_residual_mfs.fits', residual_mfs, hdr_mfs)
 
-        if args.fits_cubes:
+        if opts.fits_cubes:
             # need residual in Jy/beam
             wsums = np.amax(psf, axes=(1,2))
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)

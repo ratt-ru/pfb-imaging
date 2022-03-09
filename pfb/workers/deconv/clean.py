@@ -91,29 +91,29 @@ def clean(**kw):
     '''
     # defaults.update(kw['nworkers'])
     defaults.update(kw)
-    args = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
+    opts = OmegaConf.create(defaults)
+    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
 
-    if args.nworkers is None:
-        args.nworkers = args.nband
+    if opts.nworkers is None:
+        opts.nworkers = opts.nband
 
-    OmegaConf.set_struct(args, True)
+    OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
         # numpy imports have to happen after this step
         from pfb import set_client
-        set_client(args, stack, log, scheduler=args.scheduler)
+        set_client(opts, stack, log, scheduler=opts.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
-        for key in args.keys():
-            print('     %25s = %s' % (key, args[key]), file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _clean(**args)
+        return _clean(**opts)
 
 def _clean(**kw):
-    args = OmegaConf.create(kw)
-    OmegaConf.set_struct(args, True)
+    opts = OmegaConf.create(kw)
+    OmegaConf.set_struct(opts, True)
 
     import numpy as np
     import xarray as xr
@@ -126,14 +126,14 @@ def _clean(**kw):
     from pfb.deconv.clark import clark
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
 
-    basename = f'{args.output_filename}_{args.product.upper()}'
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}{args.postfix}.dds.zarr'
-    mds_name = f'{basename}{args.postfix}.mds.zarr'
+    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    mds_name = f'{basename}{opts.postfix}.mds.zarr'
 
     # stitch dirty/psf in apparent scale
-    if args.residual_name in dds[0]:
-        rname = args.residual_name
+    if opts.residual_name in dds[0]:
+        rname = opts.residual_name
     else:
         rname = 'DIRTY'
     print(f'Using {rname} as residual', file=log)
@@ -150,16 +150,16 @@ def _clean(**kw):
     psf /= wsum
     psf_mfs = np.sum(psf, axis=0)
     dirty_mfs = np.sum(dirty, axis=0)
-    assert (psf_mfs.max() - 1.0) < 2*args.epsilon
+    assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
 
     # set up Hessian
     from pfb.operators.hessian import hessian_xds
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
-    hessopts['wstack'] = args.wstack
-    hessopts['epsilon'] = args.epsilon
-    hessopts['double_accum'] = args.double_accum
-    hessopts['nthreads'] = args.nvthreads
+    hessopts['wstack'] = opts.wstack
+    hessopts['epsilon'] = opts.epsilon
+    hessopts['double_accum'] = opts.double_accum
+    hessopts['nthreads'] = opts.nvthreads
     # always clean in apparent scale
     # we do not want to use the mask here
     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
@@ -167,7 +167,7 @@ def _clean(**kw):
                    compute=True, use_beam=False)
 
     # to set up psf convolve when using Clark
-    if args.use_clark:
+    if opts.use_clark:
         from pfb.operators.psf import psf_convolve
         from ducc0.fft import r2c
         iFs = np.fft.ifftshift
@@ -182,7 +182,7 @@ def _clean(**kw):
         lastsize = ny + np.sum(padding[-1])
         psf_pad = iFs(psf, axes=(1, 2))
         psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                     nthreads=args.nvthreads, inorm=0)
+                     nthreads=opts.nvthreads, inorm=0)
 
         psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
         psfopts = {}
@@ -190,7 +190,7 @@ def _clean(**kw):
         psfopts['unpad_x'] = unpad_x
         psfopts['unpad_y'] = unpad_y
         psfopts['lastsize'] = lastsize
-        psfopts['nthreads'] = args.nvthreads
+        psfopts['nthreads'] = opts.nvthreads
         psfo = partial(psf_convolve, psfhat=psfhat, beam=None, psfopts=psfopts)
 
     rms = np.std(dirty_mfs)
@@ -201,25 +201,25 @@ def _clean(**kw):
     residual = dirty.copy()
     residual_mfs = dirty_mfs.copy()
     model = np.zeros_like(residual)
-    for k in range(args.nmiter):
-        if args.use_clark:
+    for k in range(opts.nmiter):
+        if opts.use_clark:
             print("Running Clark", file=log)
             x = clark(residual, psf, psfo=psfo,
-                      gamma=args.gamma,
-                      pf=args.peak_factor,
-                      maxit=args.clark_maxit,
-                      subpf=args.sub_peak_factor,
-                      submaxit=args.sub_maxit,
-                      verbosity=args.verbose,
-                      report_freq=args.report_freq)
+                      gamma=opts.gamma,
+                      pf=opts.peak_factor,
+                      maxit=opts.clark_maxit,
+                      subpf=opts.sub_peak_factor,
+                      submaxit=opts.sub_maxit,
+                      verbosity=opts.verbose,
+                      report_freq=opts.report_freq)
         else:
             print("Running Hogbom", file=log)
             x = hogbom(residual, psf,
-                       gamma=args.gamma,
-                       pf=args.peak_factor,
-                       maxit=args.hogbom_maxit,
-                       verbosity=args.verbose,
-                       report_freq=args.report_freq)
+                       gamma=opts.gamma,
+                       pf=opts.peak_factor,
+                       maxit=opts.hogbom_maxit,
+                       verbosity=opts.verbose,
+                       report_freq=opts.report_freq)
 
         model += x
 
@@ -230,11 +230,11 @@ def _clean(**kw):
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
 
-        # save_fits(args.output_filename + f'_residual_mfs{k}.fits',
+        # save_fits(opts.output_filename + f'_residual_mfs{k}.fits',
         #           residual_mfs, hdr_mfs)
-        # save_fits(args.output_filename + f'_model_mfs{k}.fits',
+        # save_fits(opts.output_filename + f'_model_mfs{k}.fits',
         #           np.mean(model, axis=0), hdr_mfs)
-        # save_fits(args.output_filename + f'_convim_mfs{k}.fits',
+        # save_fits(opts.output_filename + f'_convim_mfs{k}.fits',
         #           np.sum(convimage, axis=0), hdr_mfs)
 
         rms = np.std(residual_mfs)
@@ -243,14 +243,14 @@ def _clean(**kw):
         print("Iter %i: peak residual = %f, rms = %f" % (
                 k+1, rmax, rms), file=log)
 
-        if args.threshold is not None:
-            if rmax <= args.threshold:
+        if opts.threshold is not None:
+            if rmax <= opts.threshold:
                 print("Terminating because final threshold has been reached",
                       file=log)
                 break
 
     print("Saving results", file=log)
-    if args.update_mask:
+    if opts.update_mask:
         mask = np.any(model, axis=0)
         # from scipy import ndimage
         # mask = ndimage.binary_dilation(mask)
@@ -270,7 +270,7 @@ def _clean(**kw):
 
     dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
-    if args.do_residual:
+    if opts.do_residual:
         print("Computing residual", file=log)
         from pfb.operators.hessian import hessian
         # Required because of https://github.com/ska-sa/dask-ms/issues/171
@@ -292,7 +292,7 @@ def _clean(**kw):
 
         dask.compute(xds_to_zarr(writes, dds_name, columns='CLEAN_RESIDUAL'))
 
-    if args.fits_mfs or args.fits_cubes:
+    if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)
         # construct a header from xds attrs
         ra = dds[0].ra
@@ -308,7 +308,7 @@ def _clean(**kw):
 
         save_fits(f'{basename}_clean_model_mfs.fits', model_mfs, hdr_mfs)
 
-        if args.do_residual:
+        if opts.do_residual:
             dds = xds_from_zarr(dds_name, chunks={'band': 1})
             residual = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband)
@@ -323,12 +323,12 @@ def _clean(**kw):
             save_fits(f'{basename}_clean_residual_mfs.fits',
                       residual_mfs, hdr_mfs)
 
-        if args.fits_cubes:
+        if opts.fits_cubes:
             # need residual in Jy/beam
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
             save_fits(f'{basename}_clean_model.fits', model, hdr)
 
-            if args.do_residual:
+            if opts.do_residual:
                 fmask = wsums > 0
                 residual[fmask] /= wsums[fmask, None, None]
                 save_fits(f'{basename}_clean_residual.fits',

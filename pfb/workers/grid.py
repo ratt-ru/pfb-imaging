@@ -50,34 +50,34 @@ def grid(**kw):
     '''
     # defaults.update(kw['nworkers'])
     defaults.update(kw)
-    args = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{args.output_filename}_{args.product}{args.postfix}.log')
+    opts = OmegaConf.create(defaults)
+    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
 
-    if args.nworkers is None:
-        if args.scheduler=='distributed':
-            args.nworkers = args.nband
+    if opts.nworkers is None:
+        if opts.scheduler=='distributed':
+            opts.nworkers = opts.nband
         else:
-            args.nworkers = 1
+            opts.nworkers = 1
 
-    if args.product not in ["I", "Q", "U", "V"]:
-        raise NotImplementedError(f"Product {args.product} not yet supported")
+    if opts.product not in ["I", "Q", "U", "V"]:
+        raise NotImplementedError(f"Product {opts.product} not yet supported")
 
-    OmegaConf.set_struct(args, True)
+    OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log, scheduler=args.scheduler)
+        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
-        for key in args.keys():
-            print('     %25s = %s' % (key, args[key]), file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _grid(**args)
+        return _grid(**opts)
 
 def _grid(**kw):
-    args = OmegaConf.create(kw)
-    OmegaConf.set_struct(args, True)
+    opts = OmegaConf.create(kw)
+    OmegaConf.set_struct(opts, True)
 
     import os
     import numpy as np
@@ -96,19 +96,19 @@ def _grid(**kw):
     from uuid import uuid4
     from daskms.optimisation import inlined_array
 
-    basename = f'{args.output_filename}_{args.product.upper()}'
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     xds_name = f'{basename}.xds.zarr'
-    dds_name = f'{basename}{args.postfix}.dds.zarr'
-    mds_name = f'{basename}{args.postfix}.mds.zarr'
+    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    mds_name = f'{basename}{opts.postfix}.mds.zarr'
 
     # necessary to exclude imaging weight column if changing from Briggs
     # to natural for example
     columns = ('UVW', 'WEIGHT', 'VIS', 'WSUM', 'MASK', 'FREQ', 'BEAM')
-    if args.robustness is not None:
-        columns += (args.imaging_weight_column,)
+    if opts.robustness is not None:
+        columns += (opts.imaging_weight_column,)
 
-    xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk},
+    xds = xds_from_zarr(xds_name, chunks={'row':opts.row_chunk},
                         columns=columns)
 
     # get max uv coords over all datasets
@@ -129,20 +129,20 @@ def _grid(**kw):
     # max cell size
     cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
 
-    if args.cell_size is not None:
-        cell_size = args.cell_size
+    if opts.cell_size is not None:
+        cell_size = opts.cell_size
         cell_rad = cell_size * np.pi / 60 / 60 / 180
         if cell_N / cell_rad < 1:
             raise ValueError("Requested cell size too small. "
                              "Super resolution factor = ", cell_N / cell_rad)
         print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
     else:
-        cell_rad = cell_N / args.super_resolution_factor
+        cell_rad = cell_N / opts.super_resolution_factor
         cell_size = cell_rad * 60 * 60 * 180 / np.pi
         print(f"Cell size set to {cell_size} arcseconds", file=log)
 
-    if args.nx is None:
-        fov = args.field_of_view * 3600
+    if opts.nx is None:
+        fov = opts.field_of_view * 3600
         npix = int(fov / cell_size)
         npix = good_size(npix)
         while npix % 2:
@@ -151,28 +151,28 @@ def _grid(**kw):
         nx = npix
         ny = npix
     else:
-        nx = args.nx
-        ny = args.ny if args.ny is not None else nx
+        nx = opts.nx
+        ny = opts.ny if opts.ny is not None else nx
 
-    nband = args.nband
-    if args.dirty:
+    nband = opts.nband
+    if opts.dirty:
         print(f"Image size set to ({nband}, {nx}, {ny})", file=log)
 
-    nx_psf = good_size(int(args.psf_oversize * nx))
+    nx_psf = good_size(int(opts.psf_oversize * nx))
     while nx_psf % 2:
         nx_psf += 1
         nx_psf = good_size(nx_psf)
 
-    ny_psf = good_size(int(args.psf_oversize * ny))
+    ny_psf = good_size(int(opts.psf_oversize * ny))
     while ny_psf % 2:
         ny_psf += 1
         ny_psf = good_size(ny_psf)
 
-    if args.psf:
+    if opts.psf:
         print(f"PSF size set to ({nband}, {nx_psf}, {ny_psf})", file=log)
 
     if os.path.isdir(dds_name):
-        if args.overwrite:
+        if opts.overwrite:
             print(f'Removing {dds_name}', file=log)
             import shutil
             shutil.rmtree(dds_name)
@@ -184,7 +184,7 @@ def _grid(**kw):
     print(f'Data products will be stored in {dds_name}.', file=log)
 
     # LB - what is the point of specifying name here?
-    if args.robustness is not None:
+    if opts.robustness is not None:
         if os.path.isdir(f'{basename}_counts.zarr'):
             counts_ds = xr.open_dataset(f'{basename}_counts.zarr', chunks={'band':1, 'x':-1, 'y':-1}, engine='zarr')
             print(f'Found cached counts array at {basename}_counts.zarr',
@@ -232,7 +232,7 @@ def _grid(**kw):
         #                                  freqs,
         #                                  nx, ny,
         #                                  cell_rad, cell_rad,
-        #                                  args.robustness)
+        #                                  opts.robustness)
         #     assert ds.fieldid == dsw.fieldid
         #     assert ds.ddid == dsw.ddid
         #     assert ds.scanid == dsw.scanid
@@ -240,7 +240,7 @@ def _grid(**kw):
         #     assert ds.dims['row'] == dsw.dims['row']
         #     assert ds.dims['row'] == np.sum(dsw.chunks['row'])
         #     imweight = imweight.rechunk({0:dsw.chunks['row']})
-        #     out_ds = dsw.assign(**{args.imaging_weight_column: (('row', 'chan'),
+        #     out_ds = dsw.assign(**{opts.imaging_weight_column: (('row', 'chan'),
         #                                                         imweight)})
         #     writes.append(out_ds)
 
@@ -252,18 +252,18 @@ def _grid(**kw):
         #             optimize_graph=False)
         # calculating imaging weights
         # dask.compute(xds_to_zarr(writes, xds_name,
-        #                          columns=args.imaging_weight_column))
+        #                          columns=opts.imaging_weight_column))
         # # need to reload to get imaging weights
-        # xds = xds_from_zarr(xds_name, chunks={'row':args.row_chunk},
+        # xds = xds_from_zarr(xds_name, chunks={'row':opts.row_chunk},
         #                     columns=columns)
 
     # check if model exists
     try:
         mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-        model = mds.get(args.model_name).data
-        print(f"Using {args.model_name} for residual compuation. ", file=log)
+        model = mds.get(opts.model_name).data
+        print(f"Using {opts.model_name} for residual compuation. ", file=log)
     except:
-        if args.residual:
+        if opts.residual:
             print("Cannot compute residual without a model. ", file=log)
         model = None
 
@@ -275,18 +275,18 @@ def _grid(**kw):
         vis = ds.VIS.data
         wgt = ds.WEIGHT.data
         wsum = ds.WSUM.data
-        if args.robustness is not None:
+        if opts.robustness is not None:
             imwgt = counts_to_weights(counts[ds.bandid],
                                       uvw,
                                       freq,
                                       nx, ny,
                                       cell_rad, cell_rad,
-                                      args.robustness)
+                                      opts.robustness)
         else:
             imwgt = None
         mask = ds.MASK.data
         dvars = {}
-        if args.dirty:
+        if opts.dirty:
             dirty = vis2im(uvw=uvw,
                            freq=freq,
                            vis=vis,
@@ -295,16 +295,16 @@ def _grid(**kw):
                            ny=ny,
                            cellx=cell_rad,
                            celly=cell_rad,
-                           nthreads=args.nvthreads,
-                           epsilon=args.epsilon,
-                           precision=args.precision,
+                           nthreads=opts.nvthreads,
+                           epsilon=opts.epsilon,
+                           precision=opts.precision,
                            mask=mask,
-                           do_wgridding=args.wstack,
-                           double_precision_accumulation=args.double_accum)
+                           do_wgridding=opts.wstack,
+                           double_precision_accumulation=opts.double_accum)
             dirty = inlined_array(dirty, [uvw, freq])
             dvars['DIRTY'] = (('x', 'y'), dirty)
 
-        if args.psf:
+        if opts.psf:
             psf = vis2im(uvw=uvw,
                          freq=freq,
                          vis=wgt.astype(vis.dtype),
@@ -313,19 +313,19 @@ def _grid(**kw):
                          ny=ny_psf,
                          cellx=cell_rad,
                          celly=cell_rad,
-                         nthreads=args.nvthreads,
-                         epsilon=args.epsilon,
-                         precision=args.precision,
+                         nthreads=opts.nvthreads,
+                         epsilon=opts.epsilon,
+                         precision=opts.precision,
                          mask=mask,
-                         do_wgridding=args.wstack,
-                         double_precision_accumulation=args.double_accum)
+                         do_wgridding=opts.wstack,
+                         double_precision_accumulation=opts.double_accum)
             psf = inlined_array(psf, [uvw, freq])
             # get FT of psf
-            psfhat = fft2d(psf, nthreads=args.nvthreads)
+            psfhat = fft2d(psf, nthreads=opts.nvthreads)
             dvars['PSF'] = (('x_psf', 'y_psf'), psf)
             dvars['PSFHAT'] = (('x_psf', 'yo2'), psfhat)
 
-        if args.weight:
+        if opts.weight:
             # TODO - BDA
             # combine weights
             if imwgt is not None:
@@ -346,15 +346,15 @@ def _grid(**kw):
 
         dvars['BEAM'] = (('x', 'y'), bvals)
 
-        if args.residual:
+        if opts.residual:
             if model is not None and model.any():
                 from pfb.operators.hessian import hessian
                 hessopts = {
                     'cell': cell_rad,
-                    'wstack': args.wstack,
-                    'epsilon': args.epsilon,
-                    'double_accum': args.double_accum,
-                    'nthreads': args.nvthreads
+                    'wstack': opts.wstack,
+                    'epsilon': opts.epsilon,
+                    'double_accum': opts.double_accum,
+                    'nthreads': opts.nvthreads
                 }
                 # we only want to apply the beam once here
                 residual = dirty - hessian(bvals * model[ds.bandid], uvw, wgt,
@@ -373,7 +373,7 @@ def _grid(**kw):
             'cell_rad': cell_rad,
             'bandid': ds.bandid,
             'freq_out': ds.freq_out,
-            'robustness': args.robustness
+            'robustness': opts.robustness
         }
 
         out_ds = xr.Dataset(dvars, attrs=attrs)
@@ -401,7 +401,7 @@ def _grid(**kw):
                 'cell_rad': cell_rad}
         freq_out = np.sort(np.stack(freq_out))
         coords = {'freq': freq_out}
-        real_type = np.float64 if args.precision=='double' else np.float32
+        real_type = np.float64 if opts.precision=='double' else np.float32
         model = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
         mask = da.zeros((nx, ny), chunks=(-1, -1), dtype=bool)
         data_vars = {'MODEL': (('band', 'x', 'y'), model),
@@ -410,10 +410,10 @@ def _grid(**kw):
         dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
 
     # convert to fits files
-    if args.fits_mfs or args.fits_cubes:
+    if opts.fits_mfs or opts.fits_cubes:
         xds = xds_from_zarr(dds_name)
         radec = (xds[0].ra, xds[0].dec)
-        if args.dirty:
+        if opts.dirty:
             print("Saving dirty as fits", file=log)
             dirty = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband, dtype=np.float32)
@@ -435,17 +435,17 @@ def _grid(**kw):
 
             dirty_mfs = np.sum(dirty, axis=0, keepdims=True)/wsum
 
-            if args.fits_mfs:
-                save_fits(f'{basename}{args.postfix}_dirty_mfs.fits',
+            if opts.fits_mfs:
+                save_fits(f'{basename}{opts.postfix}_dirty_mfs.fits',
                           dirty_mfs, hdr_mfs, dtype=np.float32)
 
-            if args.fits_cubes:
+            if opts.fits_cubes:
                 fmask = wsums > 0
                 dirty[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}{args.postfix}_dirty.fits', dirty, hdr,
+                save_fits(f'{basename}{opts.postfix}_dirty.fits', dirty, hdr,
                         dtype=np.float32)
 
-        if args.psf:
+        if opts.psf:
             print("Saving PSF as fits", file=log)
             psf = np.zeros((nband, nx_psf, ny_psf), dtype=np.float32)
             wsums = np.zeros(nband, dtype=np.float32)
@@ -467,14 +467,14 @@ def _grid(**kw):
 
             psf_mfs = np.sum(psf, axis=0, keepdims=True)/wsum
 
-            if args.fits_mfs:
-                save_fits(f'{basename}{args.postfix}_psf_mfs.fits', psf_mfs,
+            if opts.fits_mfs:
+                save_fits(f'{basename}{opts.postfix}_psf_mfs.fits', psf_mfs,
                           hdr_psf_mfs, dtype=np.float32)
 
-            if args.fits_cubes:
+            if opts.fits_cubes:
                 fmask = wsums > 0
                 psf[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}{args.postfix}_psf.fits', psf, hdr_psf,
+                save_fits(f'{basename}{opts.postfix}_psf.fits', psf, hdr_psf,
                         dtype=np.float32)
 
     print("All done here.", file=log)
