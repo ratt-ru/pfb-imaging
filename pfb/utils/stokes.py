@@ -87,7 +87,7 @@ def single_stokes(ds=None,
     data_vars = {'FREQ': (('chan',), freq)}
 
     wsum = da.sum(wgt[mask])
-    data_vars['WSUM'] = (('1'), da.array((wsum,)))
+    data_vars['WSUM'] = (('scalar'), da.array((wsum,)))
 
     # wgt = wgt.rechunk({0:opts.row_out_chunk})
     data_vars['WEIGHT'] = (('row', 'chan'), wgt)
@@ -142,7 +142,7 @@ def single_stokes(ds=None,
     npix = int(np.deg2rad(opts.max_field_of_view)/cell_rad)
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
 
-    data_vars['BEAM'] = (('1'), beam)
+    data_vars['BEAM'] = (('scalar'), beam)
 
     attrs = {
         'ra' : radec[0],
