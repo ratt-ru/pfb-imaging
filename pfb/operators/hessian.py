@@ -31,7 +31,7 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
 
     for ds in xds:
         wgt = ds.WEIGHT.data
-        mask = ds.MASK.data
+        vis_mask = ds.MASK.data
         uvw = ds.UVW.data
         freq = ds.FREQ.data
         b = ds.bandid
@@ -42,7 +42,7 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
             # unnecessary beam application
             beam = mask
 
-        convim = hessian(x[b], uvw, wgt, mask, freq, beam, hessopts)
+        convim = hessian(x[b], uvw, wgt, vis_mask, freq, beam, hessopts)
 
         # convim = inlined_array(convim, uvw)
 
@@ -59,7 +59,7 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
         return convim
 
 
-def _hessian_impl(x, uvw, weight, mask, freq, beam,
+def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
                   cell=None,
                   wstack=None,
                   epsilon=None,
@@ -68,7 +68,7 @@ def _hessian_impl(x, uvw, weight, mask, freq, beam,
     nx, ny = x.shape
     mvis = dirty2ms(uvw=uvw,
                     freq=freq,
-                    mask=mask,
+                    mask=vis_mask,
                     dirty=x if beam is None else x * beam,
                     pixsize_x=cell,
                     pixsize_y=cell,
@@ -80,7 +80,7 @@ def _hessian_impl(x, uvw, weight, mask, freq, beam,
                       freq=freq,
                       ms=mvis,
                       wgt=weight,
-                      mask=mask,
+                      mask=vis_mask,
                       npix_x=nx,
                       npix_y=ny,
                       pixsize_x=cell,
@@ -96,11 +96,11 @@ def _hessian_impl(x, uvw, weight, mask, freq, beam,
     return convim
 
 
-def _hessian(x, uvw, weight, mask, freq, beam, hessopts):
-    return _hessian_impl(x, uvw[0][0], weight[0][0], mask[0][0], freq[0],
+def _hessian(x, uvw, weight, vis_mask, freq, beam, hessopts):
+    return _hessian_impl(x, uvw[0][0], weight[0][0], vis_mask[0][0], freq[0],
                          beam, **hessopts)
 
-def hessian(x, uvw, weight, freq, beam, hessopts):
+def hessian(x, uvw, weight, vis_mask, freq, beam, hessopts):
     if beam is None:
         bout = None
     else:
@@ -109,7 +109,7 @@ def hessian(x, uvw, weight, freq, beam, hessopts):
                         x, ('nx', 'ny'),
                         uvw, ('row', 'three'),
                         weight, ('row', 'chan'),
-                        mask, ('row', 'chan'),
+                        vis_mask, ('row', 'chan'),
                         freq, ('chan',),
                         beam, bout,
                         hessopts, None,
