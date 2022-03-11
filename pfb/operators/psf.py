@@ -134,7 +134,9 @@ def psf_convolve_cube(x, psfhat, beam, psfopts,
                           beam, bout,
                           psfopts, None,
                           align_arrays=False,
-                          dtype=x.dtype)/wsum
+                          dtype=x.dtype)
+    convim /= wsum
+
     if sigmainv:
         convim += x * sigmainv**2
 

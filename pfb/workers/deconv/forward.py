@@ -61,7 +61,10 @@ def forward(**kw):
     pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
 
     if opts.nworkers is None:
-        opts.nworkers = opts.nband
+        if opts.scheduler=='distributed':
+            opts.nworkers = opts.nband
+        else:
+            opts.nworkers = 1
 
     OmegaConf.set_struct(opts, True)
 

@@ -592,12 +592,11 @@ def setup_image_data(dds, opts):
     else:
         rname = 'DIRTY'
     nx, ny = dds[0].DIRTY.shape
-    nx_psf, ny_psf = dds[0].PSFHAT.shape
     residual = [da.zeros((nx, ny), chunks=(-1, -1),
                          dtype=real_type) for _ in range(nband)]
     wsums = [da.zeros(1, dtype=real_type) for _ in range(nband)]
     if opts.mean_ds and opts.use_psf:
-        nx_psf, nyo2_psf = dds[0].PSFHAT.shape
+        nx_psf, ny_psf = dds[0].PSFHAT.shape
         psfhat = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1),
                            dtype=complex_type) for _ in range(nband)]
         mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
@@ -620,7 +619,8 @@ def setup_image_data(dds, opts):
             b = ds.bandid
             residual[b] += ds.get(rname).data * ds.BEAM.data
             wsums[b] += ds.WSUM.data[0]
-        wsums = da.stack(wsums).sum()
+        wsum = da.stack(wsums).sum()
+        residual = da.stack(residual)/wsum
         residual, wsum = dask.compute(residual, wsum)
         psfhat = None
         mean_beam = None
