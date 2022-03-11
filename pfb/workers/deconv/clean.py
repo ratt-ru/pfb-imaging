@@ -287,11 +287,11 @@ def _clean(**kw):
             uvw = ds.UVW.data
             freq = ds.FREQ.data
             beam = ds.BEAM.data
+            vis_mask = ds.MASK.data
             b = ds.bandid
-            # we only want to apply the beam once here
-            residual = (dirty -
-                        hessian(model[b], uvw, wgt, freq, None,
-                        hessopts))
+            # no beam application for apparent scale
+            residual = (dirty - hessian(model[b], uvw, wgt, vis_mask, freq,
+                                        None, hessopts))
             dsw = dsw.assign(**{'CLEAN_RESIDUAL': (('x', 'y'), residual)})
             writes.append(dsw)
 

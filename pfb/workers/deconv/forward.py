@@ -213,11 +213,11 @@ def _forward(**kw):
             uvw = ds.UVW.data
             freq = ds.FREQ.data
             beam = ds.BEAM.data
+            vis_mask = ds.MASK.data
             b = ds.bandid
             # we only want to apply the beam once here
-            residual = (dirty -
-                        hessian(beam * update[b], uvw, wgt, freq, None,
-                                hessopts))
+            residual = (dirty - hessian(beam * update[b], uvw, wgt, vis_mask,
+                                        freq, None, hessopts))
             dsw = dsw.assign(**{'FORWARD_RESIDUAL': (('x', 'y'),
                                                       residual)})
 

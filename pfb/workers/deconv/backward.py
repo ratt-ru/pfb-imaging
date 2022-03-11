@@ -310,11 +310,12 @@ def _backward(**kw):
             uvw = ds.UVW.data
             freq = ds.FREQ.data
             beam = ds.BEAM.data
+            vis_mask = dds.MASK.data
             b = ds.bandid
             # we only want to apply the beam once here
             residual = (dirty -
-                        hessian(beam * model[b], uvw, wgt, freq, None,
-                        hessopts))
+                        hessian(beam * model[b], uvw, wgt, vis_mask, freq,
+                                None, hessopts))
             dsw = dsw.assign(**{'RESIDUAL': (('x', 'y'), residual)})
             writes.append(dsw)
 
