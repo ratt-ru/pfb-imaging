@@ -80,6 +80,7 @@ def _backward(**kw):
     import xarray as xr
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
+    from pfb.utils.misc import setup_image_data, init_mask
     from pfb.operators.psi import im2coef, coef2im
     from pfb.operators.hessian import hessian_xds
     from pfb.opt.primal_dual import primal_dual
@@ -111,14 +112,15 @@ def _backward(**kw):
         raise ValueError("No update found in model dataset. "
                          "Use forward worker to populate it. ", file=log)
 
-    output_type = dds[0].DIRTY.dtype
+    real_type = dds[0].DIRTY.dtype
+    complex_type = np.result_type(real_type, np.complex64)
     if opts.model_name in mds:
         model = mds.get(opts.model_name).values
         assert model.shape == (nband, nx, ny)
         print(f"Initialising model from {opts.model_name} in mds", file=log)
     else:
         print('Initialising model to zeros', file=log)
-        model = np.zeros((nband, nx, ny), dtype=output_type)
+        model = np.zeros((nband, nx, ny), dtype=real_type)
 
     data = model + update
 
@@ -159,24 +161,9 @@ def _backward(**kw):
     psi = partial(coef2im, bases=bases, padding=padding,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
-    # residual from last iteration can be useful for setting
+    # residual after forward iteration can be useful for setting
     # hyper-parameters
-    residual = np.zeros((nband, nx, ny), dtype=output_type)
-    wsum = 0
-    for ds in dds:
-        b = ds.bandid
-        try:
-            dirty = ds.FORWARD_RESIDUAL.values
-            beam = ds.BEAM.values
-            residual[b] += dirty * beam
-        except:
-            pass
-        wsum += ds.WSUM.values[0]
-    residual /= wsum
-    if residual.any():
-        have_resid = True
-    else:
-        have_resid = False
+    residual, wsum, psfhat, mean_beam = setup_image_data(dds, opts)
 
     # we set the alphas used for reweighting using the
     # current clean residuals when available

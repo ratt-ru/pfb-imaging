@@ -580,3 +580,48 @@ def coerce_literal(func, literals):
     func_locals = inspect.stack()[1].frame.f_locals  # One frame up.
     arg_types = [func_locals[k] for k in inspect.signature(func).parameters]
     SentryLiteralArgs(literals).for_function(func).bind(*arg_types)
+    return
+
+
+def setup_image_data(dds, opts):
+    nband = opts.nband
+    real_type = dds[0].DIRTY.dtype
+    complex_type = np.result_type(real_type, np.complex64)
+    if opts.residual_name in dds[0]:
+        rname = opts.residual_name
+    else:
+        rname = 'DIRTY'
+    nx, ny = dds[0].DIRTY.shape
+    nx_psf, ny_psf = dds[0].PSFHAT.shape
+    residual = [da.zeros((nx, ny), chunks=(-1, -1),
+                         dtype=real_type) for _ in range(nband)]
+    wsums = [da.zeros(1, dtype=real_type) for _ in range(nband)]
+    if opts.mean_ds and opts.use_psf:
+        nx_psf, nyo2_psf = dds[0].PSFHAT.shape
+        psfhat = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1),
+                           dtype=complex_type) for _ in range(nband)]
+        mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
+                              dtype=real_type) for _ in range(nband)]
+        for ds in dds:
+            b = ds.bandid
+            residual[b] += ds.get(rname).data * ds.BEAM.data
+            psfhat[b] += ds.PSFHAT.data
+            mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
+            wsums[b] += ds.WSUM.data[0]
+        wsums = da.stack(wsums).squeeze()
+        wsum = wsums.sum()
+        residual = da.stack(residual)/wsum
+        psfhat = da.stack(psfhat)/wsum
+        mean_beam = da.stack(mean_beam)/wsums[:, None, None]
+        residual, psfhat, mean_beam, wsum = dask.compute(residual, psfhat,
+                                                         mean_beam, wsum)
+    else:
+        for ds in dds:
+            b = ds.bandid
+            residual[b] += ds.get(rname).data * ds.BEAM.data
+            wsums[b] += ds.WSUM.data[0]
+        wsums = da.stack(wsums).sum()
+        residual, wsum = dask.compute(residual, wsum)
+        psfhat = None
+        mean_beam = None
+    return residual, wsum, psfhat, mean_beam

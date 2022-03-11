@@ -23,24 +23,25 @@ def fft2d(x, nthreads=1):
                         dtype=da.result_type(x, np.complex64))
 
 
-def _fftband_impl(x, nthreads):
-    nb, nx, nyp = x.shape[-1]//2 + 1
-    xhat = np.zeros((nb, nx, nyp), dtype=np.result_type(x, np.float64))
-    for b in range(x.shape[0]):
+def _fft_cube_impl(x, nthreads):
+    nb, nx, ny = x.shape
+    nyp = x.shape[-1]//2 + 1
+    xhat = np.zeros((nb, nx, nyp), dtype=np.result_type(x, np.complex64))
+    for b in range(nb):
         xhat[b] = r2c(iFs(x[b], axes=(0, 1)), axes=(0, 1), nthreads=nthreads,
                       forward=True, inorm=0)
     return xhat
 
-def _fftband(x, nthreads):
-    return _fftband_impl(x[0], nthreads)
+def _fft_cube(x, nthreads):
+    return _fft_cube_impl(x, nthreads)
 
-def fftband(x, nthreads=1):
+def fft_cube(x, nthreads=1):
     if not isinstance(x, da.Array):
         x = da.from_array(x, chunks=(1, -1, -1), name=False)
     nyp = x.shape[-1]//2 + 1
-    return da.blockwise(_fft2d, ('nb', 'nx', 'nyo2'),
+    return da.blockwise(_fft_cube, ('nb', 'nx', 'ny'),
                         x, ('nb', 'nx', 'ny'),
                         nthreads, None,
                         align_arrays=False,
-                        new_axes={'nyo2':nyp},
+                        adjust_chunks={'ny': nyp},
                         dtype=da.result_type(x, np.complex64))

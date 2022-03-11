@@ -86,6 +86,7 @@ def _forward(**kw):
     import dask.array as da
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.utils.fits import load_fits, set_wcs, save_fits
+    from pfb.utils.misc import setup_image_data, init_mask
     from pfb.operators.psi import im2coef, coef2im
     from pfb.operators.hessian import hessian_xds
     from pfb.opt.pcg import pcg
@@ -112,23 +113,18 @@ def _forward(**kw):
     else:
         rname = 'DIRTY'
     print(f'Using {rname} as residual', file=log)
-    output_type = dds[0].DIRTY.dtype
-    residual = [da.zeros((nx, ny), chunks=(-1, -1)) for _ in range(nband)]
-    wsum = 0
-    for ds in dds:
-        b = ds.bandid
-        residual[b] += ds.get(rname).data * ds.BEAM.data
-        wsum += ds.WSUM.values[0]
-    residual = (da.stack(residual)/wsum).compute()
+    real_type = dds[0].DIRTY.dtype
+    complex_type = np.result_type(real_type, np.complex64)
+    residual, wsum, psfhat, mean_beam = setup_image_data(dds, opts)
 
-    from pfb.utils.misc import init_mask
-    mask = init_mask(opts.mask, mds, output_type, log)
+    mask = init_mask(opts.mask, mds, real_type, log)
 
     try:
+        print("Initialising update using CLEAN_MODEL in mds", file=log)
         x0 = mds.CLEAN_MODEL.values
     except:
-        print("Initialising model to all zeros", file=log)
-        x0 = np.zeros((nband, nx, ny), dtype=output_type)
+        print("Initialising update to all zeros", file=log)
+        x0 = np.zeros((nband, nx, ny), dtype=real_type)
 
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
@@ -138,8 +134,7 @@ def _forward(**kw):
     hessopts['nthreads'] = opts.nvthreads
 
     if opts.use_psf:
-        from pfb.operators.psf import psf_convolve_xds
-
+        print("Solving for update using vis space approximation", file=log)
         nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
         npad_xl = (nx_psf - nx)//2
         npad_xr = nx_psf - nx - npad_xl
@@ -157,10 +152,18 @@ def _forward(**kw):
         psfopts['lastsize'] = lastsize
         psfopts['nthreads'] = opts.nvthreads
 
-        hess = partial(psf_convolve_xds, xds=dds, psfopts=psfopts,
-                       wsum=wsum, sigmainv=opts.sigmainv, mask=mask,
-                       compute=True)
-
+        if opts.mean_ds:
+            print("Using mean-ds approximation", file=log)
+            from pfb.operators.psf import psf_convolve_cube
+            hess = partial(psf_convolve_cube, psfhat=psfhat,
+                           beam=mean_beam * mask[None],
+                           psfopts=psfopts, wsum=wsum,
+                           sigmainv=opts.sigmainv, compute=True)
+        else:
+            from pfb.operators.psf import psf_convolve_xds
+            hess = partial(psf_convolve_xds, xds=dds, psfopts=psfopts,
+                           wsum=wsum, sigmainv=opts.sigmainv, mask=mask,
+                           compute=True)
     else:
         print("Solving for update using vis space approximation", file=log)
         hess = partial(hessian_xds, xds=dds, hessopts=hessopts,

@@ -184,8 +184,8 @@ def _clean(**kw):
 
     # to set up psf convolve when using Clark
     if opts.use_clark:
-        from pfb.operators.psf import psf_convolve_band
-        from pfb.operators.fft import fftband
+        from pfb.operators.psf import psf_convolve_cube
+        from pfb.operators.fft import fft_cube
         from ducc0.fft import r2c
         iFs = np.fft.ifftshift
 
@@ -197,19 +197,17 @@ def _clean(**kw):
         unpad_x = slice(npad_xl, -npad_xr)
         unpad_y = slice(npad_yl, -npad_yr)
         lastsize = ny + np.sum(padding[-1])
-        # psf_pad = iFs(psf, axes=(1, 2))
-        # psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-        #              nthreads=opts.nvthreads, inorm=0)
-        # psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
 
-        psfhat = fftband(psf, nthreads=opts.nvthreads)
+        # precompute so we don;t need to repeat on each hessian call
+        psfhat = fft_cube(psf, nthreads=opts.nvthreads).compute()
+        psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
         psfopts = {}
-        psfopts['padding'] = padding[1:]
+        psfopts['padding'] = padding
         psfopts['unpad_x'] = unpad_x
         psfopts['unpad_y'] = unpad_y
         psfopts['lastsize'] = lastsize
         psfopts['nthreads'] = opts.nvthreads
-        psfo = partial(psf_convolve, psfhat=psfhat, beam=None, psfopts=psfopts)
+        psfo = partial(psf_convolve_cube, psfhat=psfhat, beam=None, psfopts=psfopts)
 
     rms = np.std(dirty_mfs)
     rmax = np.abs(dirty_mfs).max()

@@ -45,6 +45,11 @@ inputs:
     dtype: bool
     default: true
     info: 'Whether to approximate the Hessian as a convolution by the PSF'
+  mean_ds:
+    dtype: bool
+    default: false
+    info: "Pre-combine datasets for image space hessian"
+    abbreviation: mean_ds
   fits_mfs:
     dtype: bool
     default: true
