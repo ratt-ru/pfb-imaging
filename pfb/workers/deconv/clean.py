@@ -184,7 +184,8 @@ def _clean(**kw):
 
     # to set up psf convolve when using Clark
     if opts.use_clark:
-        from pfb.operators.psf import psf_convolve
+        from pfb.operators.psf import psf_convolve_band
+        from pfb.operators.fft import fftband
         from ducc0.fft import r2c
         iFs = np.fft.ifftshift
 
@@ -196,11 +197,12 @@ def _clean(**kw):
         unpad_x = slice(npad_xl, -npad_xr)
         unpad_y = slice(npad_yl, -npad_yr)
         lastsize = ny + np.sum(padding[-1])
-        psf_pad = iFs(psf, axes=(1, 2))
-        psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                     nthreads=opts.nvthreads, inorm=0)
+        # psf_pad = iFs(psf, axes=(1, 2))
+        # psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
+        #              nthreads=opts.nvthreads, inorm=0)
+        # psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
 
-        psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
+        psfhat = fftband(psf, nthreads=opts.nvthreads)
         psfopts = {}
         psfopts['padding'] = padding[1:]
         psfopts['unpad_x'] = unpad_x
