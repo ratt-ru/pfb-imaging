@@ -49,7 +49,7 @@ inputs:
     dtype: bool
     default: false
     info: "Pre-combine datasets for image space hessian"
-    abbreviation: mean_ds
+    abbreviation: mean-ds
   fits_mfs:
     dtype: bool
     default: true

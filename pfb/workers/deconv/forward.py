@@ -118,7 +118,7 @@ def _forward(**kw):
     print(f'Using {rname} as residual', file=log)
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
-    residual, wsum, psfhat, mean_beam = setup_image_data(dds, opts)
+    residual, wsum, _, psfhat, mean_beam = setup_image_data(dds, opts, rname, log=log)
 
     mask = init_mask(opts.mask, mds, real_type, log)
 
@@ -137,7 +137,7 @@ def _forward(**kw):
     hessopts['nthreads'] = opts.nvthreads
 
     if opts.use_psf:
-        print("Solving for update using vis space approximation", file=log)
+        print("Solving for update using image space approximation", file=log)
         nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
         npad_xl = (nx_psf - nx)//2
         npad_xr = nx_psf - nx - npad_xl
@@ -158,10 +158,11 @@ def _forward(**kw):
         if opts.mean_ds:
             print("Using mean-ds approximation", file=log)
             from pfb.operators.psf import psf_convolve_cube
+            # the PSF is normalised so we don't need to pass wsum
             hess = partial(psf_convolve_cube, psfhat=psfhat,
                            beam=mean_beam * mask[None],
-                           psfopts=psfopts, wsum=wsum,
-                           sigmainv=opts.sigmainv, compute=True)
+                           psfopts=psfopts, sigmainv=opts.sigmainv,
+                           compute=True)
         else:
             from pfb.operators.psf import psf_convolve_xds
             hess = partial(psf_convolve_xds, xds=dds, psfopts=psfopts,

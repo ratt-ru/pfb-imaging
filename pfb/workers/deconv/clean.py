@@ -116,6 +116,8 @@ def clean(**kw):
 
 def _clean(**kw):
     opts = OmegaConf.create(kw)
+    # always combine over ds during cleaning
+    opts['mean_ds'] = True
     OmegaConf.set_struct(opts, True)
 
     import numpy as np
@@ -152,18 +154,7 @@ def _clean(**kw):
         rname = 'DIRTY'
     print(f'Using {rname} as residual', file=log)
     output_type = dds[0].DIRTY.dtype
-    # dirty = np.zeros((nband, nx, ny), dtype=output_type)
-    dirty = [da.zeros((nx, ny), chunks=(-1, -1)) for _ in range(nband)]
-    psf = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1)) for _ in range(nband)]
-    # psf = np.zeros((nband, nx_psf, ny_psf), dtype=output_type)
-    wsum = 0
-    for ds in dds:
-        b = ds.bandid
-        dirty[b] += ds.get(rname).data
-        psf[b] += ds.PSF.data
-        wsum += ds.WSUM.values[0]
-    dirty = (da.stack(dirty)/wsum).compute()
-    psf = (da.stack(psf)/wsum).compute()
+    residual, wsum, psf, psfhat, _ = setup_image_data(dds, opts, rname, apparent=True, log=log)
     psf_mfs = np.sum(psf, axis=0)
     dirty_mfs = np.sum(dirty, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
@@ -198,9 +189,7 @@ def _clean(**kw):
         unpad_y = slice(npad_yl, -npad_yr)
         lastsize = ny + np.sum(padding[-1])
 
-        # precompute so we don;t need to repeat on each hessian call
-        psfhat = fft_cube(psf, nthreads=opts.nvthreads).compute()
-        psfhat = da.from_array(psfhat, chunks=(1, -1, -1))
+        # precompute so we don't need to repeat on each hessian call
         psfopts = {}
         psfopts['padding'] = padding
         psfopts['unpad_x'] = unpad_x

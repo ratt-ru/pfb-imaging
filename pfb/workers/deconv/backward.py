@@ -163,7 +163,7 @@ def _backward(**kw):
 
     # residual after forward iteration can be useful for setting
     # hyper-parameters
-    residual, wsum, psfhat, mean_beam = setup_image_data(dds, opts)
+    residual, wsum, _, psfhat, mean_beam = setup_image_data(dds, opts, 'FORWARD_RESIDUAL', log=log)
 
     # we set the alphas used for reweighting using the
     # current clean residuals when available
@@ -217,9 +217,19 @@ def _backward(**kw):
         psfopts['lastsize'] = lastsize
         psfopts['nthreads'] = opts.nvthreads
 
-        hess = partial(psf_convolve_xds, xds=dds, psfopts=psfopts,
-                       wsum=wsum, sigmainv=opts.sigmainv, mask=mask,
-                       compute=True)
+        if opts.mean_ds:
+            print("Using mean-ds approximation", file=log)
+            from pfb.operators.psf import psf_convolve_cube
+            # the PSF is normalised so we don't need to pass wsum
+            hess = partial(psf_convolve_cube, psfhat=psfhat,
+                           beam=mean_beam * mask[None],
+                           psfopts=psfopts, sigmainv=opts.sigmainv,
+                           compute=True)
+        else:
+            from pfb.operators.psf import psf_convolve_xds
+            hess = partial(psf_convolve_xds, xds=dds, psfopts=psfopts,
+                           wsum=wsum, sigmainv=opts.sigmainv, mask=mask,
+                           compute=True)
 
     else:
         print("Solving for update using vis space approximation", file=log)

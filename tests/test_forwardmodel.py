@@ -12,9 +12,10 @@ pmp = pytest.mark.parametrize
 @pmp('do_gains', (False, True))
 @pmp('wstack', (False, True))
 @pmp('robustness', (None, 0.0))
-def test_forwardmodel(beam_model, do_gains, wstack, robustness):  #, tmp_path_factory):
-    # test_dir = tmp_path_factory.mktemp("test_pfb")
-    test_dir = Path('/home/landman/data/')
+@pmp('mean_ds', (True, False))
+def test_forwardmodel(beam_model, do_gains, wstack, robustness, mean_ds, tmp_path_factory):
+    test_dir = tmp_path_factory.mktemp("test_pfb")
+    # test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
@@ -246,7 +247,7 @@ def test_forwardmodel(beam_model, do_gains, wstack, robustness):  #, tmp_path_fa
     forward_args["cg_tol"] = 0.5*epsilon
     forward_args["wstack"] = wstack
     forward_args["use_psf"] = not wstack
-    forward_args["mean_ds"] = True
+    forward_args["mean_ds"] = mean_ds
     from pfb.workers.deconv.forward import _forward
     _forward(**forward_args)
 
@@ -259,4 +260,4 @@ def test_forwardmodel(beam_model, do_gains, wstack, robustness):  #, tmp_path_fa
                         model[:, Ix[i], Iy[i]], 1.0, atol=10*epsilon)
 
 
-test_forwardmodel(None, False, False, None)
+# test_forwardmodel(None, False, False, None)
