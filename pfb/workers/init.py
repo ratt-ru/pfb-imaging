@@ -355,9 +355,11 @@ def _init(**kw):
     # dask.visualize(writes, filename=opts.output_filename +
     #                '_writes_I_graph.pdf', optimize_graph=False)
 
-    with compute_context(opts.scheduler, opts.output_filename):
-        dask.compute(writes,
-                     optimize_graph=False,
-                     scheduler=opts.scheduler)
+    # with compute_context(opts.scheduler, opts.output_filename):
+    #     dask.compute(writes,
+    #                  optimize_graph=False,
+    #                  scheduler=opts.scheduler)
+
+    dask.compute(writes)
 
     print("All done here.", file=log)

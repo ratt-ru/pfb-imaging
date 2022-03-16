@@ -328,14 +328,6 @@ def _backward(**kw):
     if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)
         dds = xds_from_zarr(dds_name)
-        residual = np.zeros((nband, nx, ny), dtype=dds[0].DIRTY.dtype)
-        wsums = np.zeros(nband)
-        for ds in dds:
-            b = ds.bandid
-            wsums[b] += ds.WSUM.values[0]
-            residual[b] += ds.RESIDUAL.values
-        wsum = np.sum(wsums)
-        residual /= wsum
 
         # construct a header from xds attrs
         ra = mds.ra
@@ -351,17 +343,28 @@ def _backward(**kw):
 
         model_mfs = np.mean(model, axis=0)
         save_fits(f'{basename}_model_mfs.fits', model_mfs, hdr_mfs)
-        residual_mfs = np.sum(residual, axis=0)
-        save_fits(f'{basename}_residual_mfs.fits', residual_mfs, hdr_mfs)
+
+        if opts.do_residual:
+            residual = np.zeros((nband, nx, ny), dtype=dds[0].DIRTY.dtype)
+            wsums = np.zeros(nband)
+            for ds in dds:
+                b = ds.bandid
+                wsums[b] += ds.WSUM.values[0]
+                residual[b] += ds.RESIDUAL.values
+            wsum = np.sum(wsums)
+            residual /= wsum
+            residual_mfs = np.sum(residual, axis=0)
+            save_fits(f'{basename}_residual_mfs.fits', residual_mfs, hdr_mfs)
 
         if opts.fits_cubes:
             # need residual in Jy/beam
             wsums = np.amax(psf, axes=(1,2))
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
-            fmask = wsums > 0
-            residual[fmask] /= wsums[fmask, None, None]
             save_fits(f'{basename}_model.fits', model, hdr)
-            save_fits(f'{basename}_residual.fits',
-                      residual, hdr)
+            if opts.do_residual:
+                fmask = wsums > 0
+                residual[fmask] /= wsums[fmask, None, None]
+                save_fits(f'{basename}_residual.fits',
+                        residual, hdr)
 
     print("All done here.", file=log)

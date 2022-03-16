@@ -607,7 +607,7 @@ def setup_image_data(dds, opts, rname, apparent=False, log=None):
                 try:
                     residual[b] += ds.get(rname).data
                 except:
-                    print(f"Cold not find {rname} in dds", file=log)
+                    print(f"Could not find {rname} in dds", file=log)
             else:
                 try:
                     residual[b] += ds.get(rname).data * ds.BEAM.data

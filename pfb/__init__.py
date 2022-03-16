@@ -48,15 +48,19 @@ def set_client(opts, stack, log, scheduler='distributed'):
 
     # the number of chunks being read in simultaneously is equal to
     # the number of dask threads
-    nthreads_dask = nworkers * nthreads_per_worker
+    if opts.scheduler == 'threads':
+        # if using threads we use one dask thread per band
+        nthreads_dask = max(opts.nthreads//opts.nband, 1)
+    else:
+        nthreads_dask = nworkers * nthreads_per_worker
 
     if opts.nvthreads is None:
         if opts.scheduler == 'single-threaded':
             nvthreads = nthreads
         elif opts.host_address is not None:
-            nvthreads = nthreads//nthreads_per_worker
+            nvthreads = max(nthreads//nthreads_per_worker, 1)
         else:
-            nvthreads = nthreads//nthreads_dask
+            nvthreads = max(nthreads//nthreads_dask, 1)
         with open_dict(opts):
             opts.nvthreads = nvthreads
 
@@ -95,8 +99,12 @@ def set_client(opts, stack, log, scheduler='distributed'):
     elif scheduler in ['sync', 'single-threaded']:
         import dask
         dask.config.set(scheduler=scheduler)
+    elif scheduler=='threads':
+        import dask
+        from multiprocessing.pool import ThreadPool
+        dask.config.set(pool=ThreadPool(nthreads_dask))
     else:
-        dask.config.set(pool=ThreadPool(opts.nthreads))
+        raise ValueError(f"Unknown scheduler option {opts.scheduler}")
 
     # return updated opts
     return opts
