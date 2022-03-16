@@ -3,6 +3,8 @@ import dask.array as da
 from daskms.optimisation import inlined_array
 from uuid import uuid4
 from ducc0.fft import r2c, c2r, c2c, good_size
+from uuid import uuid4
+import gc
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
@@ -95,6 +97,7 @@ def _psf_convolve_cube_impl(x, psfhat, beam,
                             unpad_x=None,
                             unpad_y=None,
                             lastsize=None):
+    gc.collect()
     nb, nx, ny = x.shape
     convim = np.zeros((nb, nx, ny), dtype=x.dtype)
     for b in range(nb):
@@ -117,16 +120,19 @@ def _psf_convolve_cube(x, psfhat, beam, psfopts):
 def psf_convolve_cube(x, psfhat, beam, psfopts,
                       wsum=1, sigmainv=None, compute=True):
     if not isinstance(x, da.Array):
-        x = da.from_array(x, chunks=(1, -1, -1), name=False)
+        x = da.from_array(x, chunks=(1, -1, -1),
+                          name="x-" + uuid4().hex)
     if not isinstance(psfhat, da.Array):
-        psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name=False)
+        psfhat = da.from_array(psfhat, chunks=(1, -1, -1),
+                               name="psfhat-" + uuid4().hex)
 
     if beam is None:
         bout = None
     else:
         bout = ('nb', 'nx', 'ny')
         if not isinstance(beam, da.Array):
-            beam = da.from_array(beam, chunks=(1, -1, -1), name=False)
+            beam = da.from_array(beam, chunks=(1, -1, -1),
+                                 name="beam-" + uuid4().hex)
 
     convim = da.blockwise(_psf_convolve_cube, ('nb', 'nx', 'ny'),
                           x, ('nb', 'nx', 'ny'),

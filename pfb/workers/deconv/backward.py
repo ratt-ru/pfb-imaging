@@ -55,7 +55,10 @@ def backward(**kw):
     pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
 
     if opts.nworkers is None:
-        opts.nworkers = opts.nband
+        if opts.scheduler=='distributed':
+            opts.nworkers = opts.nband
+        else:
+            opts.nworkers = 1
 
     OmegaConf.set_struct(opts, True)
 
@@ -110,7 +113,7 @@ def _backward(**kw):
         assert update.shape == (nband, nx, ny)
     else:
         raise ValueError("No update found in model dataset. "
-                         "Use forward worker to populate it. ", file=log)
+                         "Use forward worker to populate it. ")
 
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
@@ -163,6 +166,7 @@ def _backward(**kw):
 
     # residual after forward iteration can be useful for setting
     # hyper-parameters
+    print("Setting up image space data products", file=log)
     residual, wsum, _, psfhat, mean_beam = setup_image_data(dds, opts, 'FORWARD_RESIDUAL', log=log)
 
     # we set the alphas used for reweighting using the

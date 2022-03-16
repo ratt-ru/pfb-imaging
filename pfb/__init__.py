@@ -95,6 +95,8 @@ def set_client(opts, stack, log, scheduler='distributed'):
     elif scheduler in ['sync', 'single-threaded']:
         import dask
         dask.config.set(scheduler=scheduler)
+    else:
+        dask.config.set(pool=ThreadPool(opts.nthreads))
 
     # return updated opts
     return opts

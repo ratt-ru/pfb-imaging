@@ -15,10 +15,12 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
     Hessian will be applied to x
     '''
     if not isinstance(x, da.Array):
-        x = da.from_array(x, chunks=(1, -1, -1), name=False)
+        x = da.from_array(x, chunks=(1, -1, -1),
+                          name="x-" + uuid4().hex)
 
     if not isinstance(mask, da.Array):
-        mask = da.from_array(mask, chunks=(-1, -1), name=False)
+        mask = da.from_array(mask, chunks=(-1, -1),
+                             name="mask-" + uuid4().hex)
 
     assert mask.ndim == 2
 
