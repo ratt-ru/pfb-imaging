@@ -24,7 +24,6 @@ def restore(**kw):
     Can also be used to convolve images to a common resolution
     and/or perform a primary beam correction.
     '''
-    # defaults.update(kw['nworkers'])
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
     pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')

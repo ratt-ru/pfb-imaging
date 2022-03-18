@@ -131,6 +131,19 @@ spotless_recipe:
         sigmainv: 1e-5
         mask: mds
 
+    backward_bz:
+      cab: pfb.backward
+      params:
+        mask: mds
+        niter: 0
+        pd_maxit: 50
+        sigmainv: 1e-5
+        sigma21: 1e-3
+        alpha: 1e-3
+        hessnorm: 1
+        bases: self
+        do_residual: false
+
     grid_bp1:
       cab: pfb.grid
       params:

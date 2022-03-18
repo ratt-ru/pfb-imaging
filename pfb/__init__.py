@@ -99,10 +99,14 @@ def set_client(opts, stack, log, scheduler='distributed'):
     elif scheduler in ['sync', 'single-threaded']:
         import dask
         dask.config.set(scheduler=scheduler)
+        print(f"Initialising with synchronous scheduler",
+              file=log)
     elif scheduler=='threads':
         import dask
         from multiprocessing.pool import ThreadPool
         dask.config.set(pool=ThreadPool(nthreads_dask))
+        print(f"Initialising ThreadPool with {nthreads_dask} threads",
+              file=log)
     else:
         raise ValueError(f"Unknown scheduler option {opts.scheduler}")
 

@@ -89,7 +89,6 @@ def clean(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
-    # defaults.update(kw['nworkers'])
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
     pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')

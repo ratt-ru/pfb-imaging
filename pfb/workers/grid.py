@@ -48,7 +48,6 @@ def grid(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
-    # defaults.update(kw['nworkers'])
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
     pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
@@ -216,46 +215,6 @@ def _grid(**kw):
             # cache counts
             count_ds = xr.Dataset({'COUNTS': (('band', 'x', 'y'), counts)})
             count_ds.to_zarr(f'{basename}_counts.zarr', mode='w')
-
-
-        # we can always do this on the fly given counts
-        # # now convert counts to imaging weights
-        # # required because of https://github.com/ska-sa/dask-ms/issues/171
-        # xdsw = xds_from_zarr(xds_name, columns=columns)
-        # writes = []
-        # for ds, dsw in zip(xds, xdsw):
-        #     uvw = ds.UVW.data
-        #     freqs = ds.FREQ.data
-        #     bandid = ds.bandid
-        #     imweight = counts_to_weights(counts[bandid],
-        #                                  uvw,
-        #                                  freqs,
-        #                                  nx, ny,
-        #                                  cell_rad, cell_rad,
-        #                                  opts.robustness)
-        #     assert ds.fieldid == dsw.fieldid
-        #     assert ds.ddid == dsw.ddid
-        #     assert ds.scanid == dsw.scanid
-        #     assert ds.bandid == dsw.bandid
-        #     assert ds.dims['row'] == dsw.dims['row']
-        #     assert ds.dims['row'] == np.sum(dsw.chunks['row'])
-        #     imweight = imweight.rechunk({0:dsw.chunks['row']})
-        #     out_ds = dsw.assign(**{opts.imaging_weight_column: (('row', 'chan'),
-        #                                                         imweight)})
-        #     writes.append(out_ds)
-
-        # dask.visualize(writes, color="order", cmap="autumn",
-        #            node_attr={"penwidth": "4"},
-        #            filename=f'{basename}_weight_ordered_graph.pdf',
-        #            optimize_graph=False)
-        # dask.visualize(writes, filename=f'{basename}_weight_graph.pdf',
-        #             optimize_graph=False)
-        # calculating imaging weights
-        # dask.compute(xds_to_zarr(writes, xds_name,
-        #                          columns=opts.imaging_weight_column))
-        # # need to reload to get imaging weights
-        # xds = xds_from_zarr(xds_name, chunks={'row':opts.row_chunk},
-        #                     columns=columns)
 
     # check if model exists
     try:
