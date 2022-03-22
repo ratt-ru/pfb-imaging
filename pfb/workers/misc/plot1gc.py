@@ -39,7 +39,7 @@ def plot1gc(**kw):
         args = set_client(args, stack, log)
 
         # TODO - prettier config printing
-        print('Input Options:', file=log)
+        print('Input Options:', file=log, scheduler='sync')
         for key in args.keys():
             print('     %25s = %s' % (key, args[key]), file=log)
 
