@@ -1,0 +1,18 @@
+inputs:
+  _include:
+    - (pfb.parser)dist.yml
+  gains:
+    dtype: str
+    info: "Path to QuartiCal gain file"
+    abbreviation: g
+  output_filename:
+    dtype: str
+    info: "Folder to place gains"
+    abbreviation: o
+  overwrite:
+    dtype: bool
+    default: false
+    info: "Allow overwrite of existing plots"
+
+outputs:
+  {}

@@ -5,49 +5,48 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('PLOT1GC')
+log = pyscilog.get_logger('GAINSPECTOR')
 
+from scabha.schema_utils import clickify_parameters
+from pfb.parser.schemas import schema
 
-@cli.command()
-@click.option('-g', '--gains', required=True,
-              help='Path to qcal gains.')
-@click.option('-o', '--output-filename', type=str,
-              help="Basename of output.")
-@click.option('-ha', '--host-address',
-              help='Address where the distributed client lives. '
-              'Will use a local cluster if no address is provided')
-@click.option('-nw', '--nworkers', type=int, default=1,
-              help='Number of workers for the client.')
-@click.option('-ntpw', '--nthreads-per-worker', type=int, default=1,
-              help='Number of dask threads per worker.')
-@click.option('-nvt', '--nvthreads', type=int,
-              help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
-@click.option('-mem', '--mem-limit', type=int,
-              help="Memory limit in GB. Default uses all available memory")
-@click.option('-nthreads', '--nthreads', type=int,
-              help="Total available threads. Default uses all available threads")
-def plot1gc(**kw):
+# create default parameters from schema
+defaults = {}
+for key in schema.gainspector["inputs"].keys():
+    defaults[key] = schema.gainspector["inputs"][key]["default"]
+
+@cli.command(context_settings={'show_default': True})
+@clickify_parameters(schema.gainspector)
+def gainspector(**kw):
     '''
     Plot effective gains produced my QuartiCal
     '''
-    args = OmegaConf.create(kw)
-    pyscilog.log_to_file(args.output_filename + '.log')
-    OmegaConf.set_struct(args, True)
+    defaults.update(kw)
+    opts = OmegaConf.create(defaults)
+    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
+
+    if opts.nworkers is None:
+        if opts.scheduler=='distributed':
+            opts.nworkers = opts.nband
+        else:
+            opts.nworkers = 1
+
+    OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log)
+        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
 
         # TODO - prettier config printing
-        print('Input Options:', file=log, scheduler='sync')
-        for key in args.keys():
-            print('     %25s = %s' % (key, args[key]), file=log)
+        print('Input Options:', file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _plot1gc(**args)
+        return _gainspector(**opts)
 
-def _plot1gc(**kw):
-    args = OmegaConf.create(kw)
-    OmegaConf.set_struct(args, True)
+def _gainspector(**kw):
+    opts = OmegaConf.create(kw)
+    OmegaConf.set_struct(opts, True)
 
     import matplotlib as mpl
     mpl.rcParams.update({'font.size': 4, 'font.family': 'serif'})
@@ -56,7 +55,7 @@ def _plot1gc(**kw):
     import matplotlib.pyplot as plt
     from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-    Gs = xds_from_zarr(args.gains)
+    Gs = xds_from_zarr(opts.gains)
 
     ncorr = 1
     for s, G in enumerate(Gs):
@@ -80,7 +79,7 @@ def _plot1gc(**kw):
 
             fig.tight_layout()
 
-            plt.savefig(args.output_filename + f"_corr{c}_scan{s}_abs.png",
+            plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_abs.png",
                         dpi=500, bbox_inches='tight')
 
             fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
@@ -104,7 +103,7 @@ def _plot1gc(**kw):
 
             fig.tight_layout()
 
-            plt.savefig(args.output_filename + f"_corr{c}_scan{s}_phase.png",
+            plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_phase.png",
                         dpi=500, bbox_inches='tight')
 
             fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
@@ -126,10 +125,6 @@ def _plot1gc(**kw):
 
             fig.tight_layout()
 
-            plt.savefig(args.output_filename + f"_corr{c}_scan{s}_jhj.png",
+            plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_jhj.png",
                         dpi=500, bbox_inches='tight')
 
-if __name__=='__main__':
-    main()
-
-# rmse = np.sqrt(np.vdot(res, res).real/res.size)
