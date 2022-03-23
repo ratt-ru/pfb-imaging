@@ -36,4 +36,14 @@ cabs:
     _include:
       - (pfb.parser)restore.yaml
 
+  'pfb.gainspector':
+    command: (pfb.workers.misc.gainspector)gainspector
 
+    _include:
+      - (pfb.parser)gainspector.yaml
+
+  'pfb.ift2qc':
+    command: (pfb.workers.misc.ift2qc)ift2qc
+
+    _include:
+      - (pfb.parser)ift2qc.yaml

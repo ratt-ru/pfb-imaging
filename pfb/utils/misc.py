@@ -646,3 +646,77 @@ def setup_image_data(dds, opts, rname, apparent=False, log=None):
         psfhat = None
         mean_beam = None
     return residual, wsum, psf, psfhat, mean_beam
+
+
+def interp_gain_grid(gdct, ant_names):
+    nant = ant_names.size
+    ncorr, ntime, nfreq = gdct[ant_names[0]].shape
+    time = gdct['time']
+    assert time.size==ntime
+    freq = gdct['frequencies']
+    assert freq.size==nfreq
+
+    gain = np.zeros((ntime, nfreq, nant, 1, ncorr), dtype=np.complex128)
+
+    # get axes in qcal order
+    for p, name in enumerate(ant_names):
+        gain[:, :, p, 0, :] = np.moveaxis(gdct[name], 0, -1)
+
+    # fit spline to time and freq axes
+    gobj_amp = np.zeros((nant, 1, ncorr), dtype=object)
+    gobj_phase = np.zeros((nant, 1, ncorr), dtype=object)
+    from scipy.interpolate import RectBivariateSpline as rbs
+    for p in range(nant):
+        for c in range(ncorr):
+            gobj_amp[p, 0, c] = rbs(time, freq, np.abs(gain[:, :, p, 0, c]))
+            unwrapped_phase = np.unwrap(np.unwrap(np.angle(gain[:, :, p, 0, c]), axis=0), axis=1)
+            gobj_phase[p, 0, c] = rbs(time, freq, unwrapped_phase)
+    return gobj_amp, gobj_phase
+
+
+def array2qcal_ds(gobj_amp, gobj_phase, time, freq, ant_names, fid, ddid, sid, fname):
+    nant, ndir, ncorr = gobj_amp.shape
+    ntime = time.size
+    nchan = freq.size
+    # gains not chunked on disk
+    gain = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.complex128)
+    for p in range(nant):
+        for c in range(ncorr):
+            gain[:, :, p, 0, c] = gobj_amp[p, 0, c](time, freq)*np.exp(1.0j*gobj_phase[p, 0, c](time, freq))
+    gain = da.from_array(gain, chunks=(-1, -1, -1, -1, -1))
+    gflags = da.zeros((ntime, nchan, nant, ndir), chunks=(-1, -1, -1, -1), dtype=np.int8)
+    data_vars = {
+        'gains':(('gain_t', 'gain_f', 'ant', 'dir', 'corr'), gain),
+        'gain_flags':(('gain_t', 'gain_f', 'ant', 'dir'), gflags)
+    }
+    from collections import namedtuple
+    gain_spec_tup = namedtuple('gains_spec_tup', 'tchunk fchunk achunk dchunk cchunk')
+    attrs = {
+        'DATA_DESC_ID': int(ddid),
+        'FIELD_ID': int(fid),
+        'FIELD_NAME': fname,
+        'GAIN_AXES': ('gain_t', 'gain_f', 'ant', 'dir', 'corr'),
+        'GAIN_SPEC': gain_spec_tup(tchunk=(int(ntime),),
+                                    fchunk=(int(nchan),),
+                                    achunk=(int(nant),),
+                                    dchunk=(int(1),),
+                                    cchunk=(int(ncorr),)),
+        'NAME': 'NET',
+        'SCAN_NUMBER': int(sid),
+        'TYPE': 'complex'
+    }
+    if ncorr==1:
+        corrs = np.array(['XX'], dtype=object)
+    elif ncorr==2:
+        corrs = np.array(['XX', 'YY'], dtype=object)
+    coords = {
+        'gain_f': (('gain_f',), freq),
+        'gain_t': (('gain_t',), time),
+        'ant': (('ant'), ant_names),
+        'corr': (('corr'), corrs),
+        'dir': (('dir'), np.array([0], dtype=np.int32)),
+        'f_chunk': (('f_chunk'), np.array([0], dtype=np.int32)),
+        't_chunk': (('t_chunk'), np.array([0], dtype=np.int32))
+    }
+    from daskms import Dataset
+    return Dataset(data_vars, coords=coords, attrs=attrs)

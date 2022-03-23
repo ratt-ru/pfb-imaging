@@ -23,7 +23,7 @@ def gainspector(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
+    pyscilog.log_to_file(f'{opts.output_filename}.log')
 
     if opts.nworkers is None:
         if opts.scheduler=='distributed':
@@ -83,7 +83,7 @@ def _gainspector(**kw):
                         dpi=500, bbox_inches='tight')
 
             fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
-            gref = G.gains.values[:, :, 57, 0, c]
+            gref = G.gains.values[:, :, -1, 0, c]
             for i, ax in enumerate(axs.ravel()):
                 if i < 58:
                     g = G.gains.values[:, :, i, 0, c] * gref.conj()
@@ -106,25 +106,25 @@ def _gainspector(**kw):
             plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_phase.png",
                         dpi=500, bbox_inches='tight')
 
-            fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
-            for i, ax in enumerate(axs.ravel()):
-                if i < 58:
-                    g = G.jhj.values[:, :, i, 0, c]
+            # fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
+            # for i, ax in enumerate(axs.ravel()):
+            #     if i < 58:
+            #         g = G.jhj.values[:, :, i, 0, c]
 
-                    im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
-                    ax.set_title(f"Antenna: {i}")
-                    ax.axis('off')
+            #         im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
+            #         ax.set_title(f"Antenna: {i}")
+            #         ax.axis('off')
 
-                    divider = make_axes_locatable(ax)
-                    cax = divider.append_axes("bottom", size="10%", pad=0.01)
-                    cb = fig.colorbar(im, cax=cax, orientation="horizontal")
-                    cb.outline.set_visible(False)
-                    cb.ax.tick_params(length=0.5, width=0.5, labelsize=0.5, pad=0.5)
-                else:
-                    ax.axis('off')
+            #         divider = make_axes_locatable(ax)
+            #         cax = divider.append_axes("bottom", size="10%", pad=0.01)
+            #         cb = fig.colorbar(im, cax=cax, orientation="horizontal")
+            #         cb.outline.set_visible(False)
+            #         cb.ax.tick_params(length=0.5, width=0.5, labelsize=0.5, pad=0.5)
+            #     else:
+            #         ax.axis('off')
 
-            fig.tight_layout()
+            # fig.tight_layout()
 
-            plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_jhj.png",
-                        dpi=500, bbox_inches='tight')
+            # plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_jhj.png",
+            #             dpi=500, bbox_inches='tight')
 

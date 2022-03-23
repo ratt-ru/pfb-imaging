@@ -1,0 +1,19 @@
+inputs:
+  _include:
+    - (pfb.parser)dist.yml
+  ms:
+    dtype: MS
+    required: true
+    info: "Measurement set to interpolate gains to (used to get metadata)"
+  gains:
+    dtype: str
+    required: true
+    info: "Path to IFT gain .npz file"
+  output_filename:
+    dtype: str
+    required: true
+    info: "Name of output QuartiCal dataset"
+    abbreviation: o
+
+outputs:
+  {}
