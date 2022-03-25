@@ -47,3 +47,9 @@ cabs:
 
     _include:
       - (pfb.parser)ift2qc.yaml
+
+  'pfb.fledges':
+    command: (pfb.workers.misc.fledges)fledges
+
+    _include:
+      - (pfb.parser)fledges.yaml

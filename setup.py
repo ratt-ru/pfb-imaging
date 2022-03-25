@@ -6,6 +6,7 @@ with open("README.rst", "r") as fh:
 
 requirements = [
                 'matplotlib',
+                'ipython',
                 'scikit-image',
                 'dask[distributed]',
                 'PyWavelets',
@@ -19,6 +20,7 @@ requirements = [
                 'graphviz',
                 'nifty7',
                 'sympy',
+                'rich',
 
                 "codex-africanus[complete]"
                 "@git+https://github.com/landmanbester/codex-africanus.git"
@@ -32,7 +34,22 @@ requirements = [
                 "@git+https://github.com/ratt-ru/packratt.git"
                 "@master",
 
-                "scabha @ git+https://github.com/caracal-pipeline/scabha2",
+                "scabha"
+                "@git+https://github.com/caracal-pipeline/scabha2"
+                "@rich",
+
+                "stimela"
+                "@git+https://github.com/caracal-pipeline/stimela2.git"
+                "@rich",
+
+                "quartical"
+                "@git+https://github.com/JSKenyon/QuartiCal.git"
+                "@stimelation",
+
+                "surfvis"
+                "@git+https://github.com/ratt-ru/surfvis.git"
+                "@stimelation"
+
             ]
 
 

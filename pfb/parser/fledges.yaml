@@ -1,0 +1,17 @@
+inputs:
+  ms:
+    dtype: MS
+    required: true
+  row_chunks:
+    dtype: int
+    default: 10000
+  chan_lower:
+    dtype: int
+    default: 128
+    abbreviation: cl
+  chan_upper:
+    dtype: int
+    default: 256
+
+outputs:
+  {}
