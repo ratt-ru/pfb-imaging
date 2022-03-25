@@ -77,6 +77,9 @@ def _ift2qc(**kw):  # '/home/landman/projects/ESO137/subsets/qcal/out/ift_gains/
         D = array2qcal_ds(gobj_amp, gobj_phase, time, ms_freq, ant_names, fid, ddid, sid, fname)
         writes.append(D)
 
-    outname = opts.output_filename.rstrip('/')
-    dask.compute(xds_to_zarr(writes, f'{outname}/gains.qc::NET', columns='ALL'))
+    if not opts.output_filename.endswith('/'):
+        outname = opts.output_filename + '/'
+    else:
+        outname = opts.output_filename
+    dask.compute(xds_to_zarr(writes, f'{outname}gains.qc::NET', columns='ALL'))
 
