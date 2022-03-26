@@ -98,6 +98,18 @@ inputs:
     dtype: str
     default: double
     info: '"single" or "double"'
+  epsilon:
+    dtype: float
+    default: 1e-7
+  wstack:
+    dtype: bool
+    default: true
+    info: "Perform w-correction via improved w-stacking"
+  double_accum:
+    dtype: bool
+    default: true
+    info: "Accumulate onto grid using double precision. \
+          Only has an affect when using single precision."
 
   _include:
     - (pfb.parser)gridding.yml

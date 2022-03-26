@@ -74,7 +74,7 @@ def init(**kw):
         except Exception as e:
             raise ValueError(f"No gain table  at {opts.gain_table}")
 
-    if opts.product not in ["I", "Q", "U", "V"]:
+    if opts.product.upper() not in ["I", "Q", "U", "V", "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
     OmegaConf.set_struct(opts, True)
@@ -114,6 +114,7 @@ def _init(**kw):
     from ducc0.fft import good_size
     from pfb.utils.fits import set_wcs, save_fits
     from pfb.utils.stokes import single_stokes
+    from pfb.utils.correlations import single_corr
     from pfb.utils.misc import compute_context
     import xarray as xr
 
@@ -282,15 +283,17 @@ def _init(**kw):
         # spws = dask.compute(spws)[0]
         pols = dask.compute(pols)[0]
 
+        # import pdb; pdb.set_trace()
+        # corr_type = set(tuple(pols[0].CORR_TYPE.data.squeeze()))
+        pol_type='linear'
 
-        corr_type = set(tuple(pols[0].CORR_TYPE.data.squeeze()))
-        if corr_type.issubset(set([9, 10, 11, 12])):
-            pol_type = 'linear'
-        elif corr_type.issubset(set([5, 6, 7, 8])):
-            pol_type = 'circular'
-        else:
-            raise ValueError(f"Cannot determine polarisation type "
-                             f"from correlations {pols[0].CORR_TYPE.data}")
+        # if corr_type.issubset(set([9, 10, 11, 12])):
+        #     pol_type = 'linear'
+        # elif corr_type.issubset(set([5, 6, 7, 8])):
+        #     pol_type = 'circular'
+        # else:
+        #     raise ValueError(f"Cannot determine polarisation type "
+        #                      f"from correlations {pols[0].CORR_TYPE.data}")
 
         for ids, ds in enumerate(xds):
             fid = ds.FIELD_ID
@@ -334,14 +337,26 @@ def _init(**kw):
                 else:
                     jones = None
 
-                out_ds = single_stokes(ds=subds,
-                                       jones=jones,
-                                       opts=opts,
-                                       freq=freqs[ms][idt][Inu],
-                                       freq_out=freq_out[band_id],
-                                       chan_width=chan_width[Inu],
-                                       bandid=band_id,
-                                       **universal_opts)
+                if opts.product.upper() in ["I", "Q", "U", "V"]:
+                    out_ds = single_stokes(ds=subds,
+                                        jones=jones,
+                                        opts=opts,
+                                        freq=freqs[ms][idt][Inu],
+                                        freq_out=freq_out[band_id],
+                                        chan_width=chan_width[Inu],
+                                        bandid=band_id,
+                                        **universal_opts)
+                elif opts.product.upper() in ["XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
+                    out_ds = single_corr(ds=subds,
+                                         jones=jones,
+                                         opts=opts,
+                                         freq=freqs[ms][idt][Inu],
+                                         freq_out=freq_out[band_id],
+                                         chan_width=chan_width[Inu],
+                                         bandid=band_id,
+                                         **universal_opts)
+                else:
+                    raise ValueError(f"Product {args.product} not supported yet")
                 out_datasets.append(out_ds)
 
     writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',

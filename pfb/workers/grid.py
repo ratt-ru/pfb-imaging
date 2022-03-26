@@ -58,7 +58,7 @@ def grid(**kw):
         else:
             opts.nworkers = 1
 
-    if opts.product not in ["I", "Q", "U", "V"]:
+    if opts.product.upper() not in ["I", "Q", "U", "V", "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
     OmegaConf.set_struct(opts, True)
@@ -220,7 +220,7 @@ def _grid(**kw):
     try:
         mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
         model = mds.get(opts.model_name).data
-        print(f"Using {opts.model_name} for residual compuation. ", file=log)
+        print(f"Using {opts.model_name} for residual computation. ", file=log)
     except:
         if opts.residual:
             print("Cannot compute residual without a model. ", file=log)
@@ -235,6 +235,7 @@ def _grid(**kw):
         wgt = ds.WEIGHT.data
         wsum = ds.WSUM.data
         if opts.robustness is not None:
+            print(f"Robustness set to {opts.robustness}, computing imaging weights", file=log)
             imwgt = counts_to_weights(counts[ds.bandid],
                                       uvw,
                                       freq,

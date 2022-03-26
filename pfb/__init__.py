@@ -55,7 +55,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
         nthreads_dask = nworkers * nthreads_per_worker
 
     if opts.nvthreads is None:
-        if opts.scheduler == 'single-threaded':
+        if opts.scheduler in ['single-threaded', 'sync']:
             nvthreads = nthreads
         elif opts.host_address is not None:
             nvthreads = max(nthreads//nthreads_per_worker, 1)
