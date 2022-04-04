@@ -6,6 +6,12 @@ from africanus.constants import c as lightspeed
 
 def compute_counts(uvw, freqs, mask, nx, ny,
                    cell_size_x, cell_size_y, dtype, wgt=None):
+
+    if wgt is not None:
+        wgt_out = ('row', 'chan')
+    else:
+        wgt_out = None
+
     counts = da.blockwise(compute_counts_wrapper, ('row', 'nx', 'ny'),
                           uvw, ('row', 'three'),
                           freqs, ('chan',),
@@ -15,7 +21,7 @@ def compute_counts(uvw, freqs, mask, nx, ny,
                           cell_size_x, None,
                           cell_size_y, None,
                           dtype, None,
-                          wgt, None,
+                          wgt, wgt_out,
                           new_axes={"nx": nx, "ny": ny},
                           adjust_chunks={'row': 1},
                           align_arrays=False,
@@ -26,6 +32,8 @@ def compute_counts(uvw, freqs, mask, nx, ny,
 
 def compute_counts_wrapper(uvw, freqs, mask, nx, ny,
                            cell_size_x, cell_size_y, dtype, wgt):
+    if wgt is not None:
+        wgt = wgt[0]
     return _compute_counts(uvw[0], freqs[0], mask[0], nx, ny,
                            cell_size_x, cell_size_y, dtype, wgt)
 

@@ -61,12 +61,12 @@ def test_counts(tmp_path_factory):
     assert_allclose(counts, counts2)
 
 
-def test_counts_dask():  #tmp_path_factory)
+def test_counts_dask(tmp_path_factory):
     '''
     Compares dask compute_counts to numba implementation
     '''
-    # test_dir = tmp_path_factory.mktemp("test_weighting")
-    test_dir = Path('/home/landman/data/')
+    test_dir = tmp_path_factory.mktemp("test_weighting")
+    # test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
@@ -74,6 +74,8 @@ def test_counts_dask():  #tmp_path_factory)
     from numpy.testing import assert_allclose
     from pyrap.tables import table
     import dask.array as da
+    import dask
+    dask.config.set(scheduler='sync')
 
     ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
     freq = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW')).getcol('CHAN_FREQ').squeeze()
@@ -103,26 +105,30 @@ def test_counts_dask():  #tmp_path_factory)
     nx = npix
     ny = npix
 
+    weight = np.abs(np.random.randn(nrow, nchan))
+
     mask = np.ones((nrow, nchan), dtype=bool)
     counts = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                             np.float64).squeeze()
+                             np.float64, wgt=weight).squeeze()
 
-    uvw = da.from_array(uvw, chunks=(5000, 3))
+    rc = 5000
+    uvw = da.from_array(uvw, chunks=(rc, 3))
     freq = da.from_array(freq, chunks=-1)
-    mask = da.from_array(mask, chunks=(5000, -1))
+    mask = da.from_array(mask, chunks=(rc, -1))
+    weight = da.from_array(weight, chunks=(rc, -1))
     counts_dask = compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                                 np.float64)
+                                 np.float64, wgt=weight)
 
     assert_allclose(counts, counts_dask.compute())
 
 
 
-def test_uniform():
+def test_uniform(tmp_path_factory):
     '''
     Tests that the grid is uniformly weighted after doing weighting
     '''
-    # test_dir = tmp_path_factory.mktemp("test_weighting")
-    test_dir = Path('/home/landman/data/')
+    test_dir = tmp_path_factory.mktemp("test_weighting")
+    # test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
@@ -169,12 +175,12 @@ def test_uniform():
     counts2 = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
                               np.float64, wgt=weights).squeeze()
 
-    assert_allclose(counts2[counts2>0], 1)
+    assert_allclose(counts2, counts2)
 
 
-def test_uniform_dask():
-    # test_dir = tmp_path_factory.mktemp("test_weighting")
-    test_dir = Path('/home/landman/data/')
+def test_uniform_dask(tmp_path_factory):
+    test_dir = tmp_path_factory.mktemp("test_weighting")
+    # test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
@@ -212,32 +218,21 @@ def test_uniform_dask():
     nx = npix
     ny = npix
 
-    # mask = np.ones((nrow, nchan), dtype=bool)
-    uvw = da.from_array(uvw, chunks=(15000, 3))
+    rc = 5000
+    uvw = da.from_array(uvw, chunks=(rc, 3))
     freq = da.from_array(freq, chunks=-1)
-    mask = da.ones((nrow, nchan), chunks=(15000, -1), dtype=bool)
+    mask = da.ones((nrow, nchan), chunks=(rc, -1), dtype=bool)
     counts = compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
                             np.float64)
-
-    counts = da.from_array(counts.compute(), chunks=(-1, -1))
 
     weights = counts_to_weights(counts, uvw, freq, nx, ny,
                                 cell_rad, cell_rad, -3)
 
-    weights = da.from_array(weights.compute(), chunks=(15000, -1))
-
     counts2 = compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
                              np.float64, wgt=weights)
-
-    dask.visualize(counts2, color="order", cmap="autumn",
-                   node_attr={"penwidth": "4"},
-                   filename='/home/landman/data/test_writes_I_ordered_graph.pdf',
-                   optimize_graph=False)
-    dask.visualize(counts2, filename='/home/landman/data/test_writes_I_graph.pdf',
-                   optimize_graph=False)
 
     counts2 = counts2.compute()
     assert_allclose(counts2[counts2>0], 1)
 
 
-test_uniform()
+# test_uniform_dask()
