@@ -50,7 +50,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
     # the number of dask threads
     if opts.scheduler == 'threads':
         # if using threads we use one dask thread per band
-        nthreads_dask = max(opts.nthreads//opts.nband, 1)
+        nthreads_dask = opts.nband
     else:
         nthreads_dask = nworkers * nthreads_per_worker
 

@@ -43,7 +43,10 @@ def single_stokes(ds=None,
 
     frow = inlined_array(frow, [ant1, ant2])
 
-    if opts.weight_column is not None:
+    if opts.sigma_column is not None:
+        sigma = getattr(ds, opts.sigma_column).data
+        weight = 1.0/sigma**2
+    elif opts.weight_column is not None:
         weight = getattr(ds, opts.weight_column).data
     else:
         weight = da.ones_like(data, dtype=real_type)

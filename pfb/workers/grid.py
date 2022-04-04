@@ -284,18 +284,21 @@ def _grid(**kw):
             dvars['PSF'] = (('x_psf', 'y_psf'), psf)
             dvars['PSFHAT'] = (('x_psf', 'yo2'), psfhat)
 
+        if imwgt is not None:
+                wgt *= imwgt
+
         if opts.weight:
             # TODO - BDA
             # combine weights
-            if imwgt is not None:
-                wgt *= imwgt
             wgt = wgt.rechunk({0:100000, 1:-1})
             dvars['WEIGHT'] = (('row', 'chan'), wgt)
 
         dvars['FREQ'] = (('chan',), freq)
         dvars['UVW'] = (('row', 'three'), uvw.rechunk({0:100000, 1:-1}))
-        dvars['WSUM'] = (('scalar',), da.atleast_1d(wgt.sum()))
-        dvars['MASK'] = (('row', 'chan'), mask.rechunk({0:100000, 1:-1}))
+        mask = mask.rechunk({0:100000, 1:-1})
+        dvars['MASK'] = (('row', 'chan'), mask)
+        wsum = wgt[mask.astype(bool)].sum()
+        dvars['WSUM'] = (('scalar',), da.atleast_1d(wsum))
 
         # evaluate beam at x and y coords
         cell_deg = np.rad2deg(cell_rad)

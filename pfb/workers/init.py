@@ -182,12 +182,19 @@ def _init(**kw):
 
     # only WEIGHT column gets special treatment
     # any other column must have channel axis
-    if opts.weight_column is not None:
+    if opts.sigma_column is not None:
+        print(f"Initialising weights from {opts.sigma_column} column", file=log)
+        columns += (opts.sigma_column,)
+        schema[opts.sigma_column] = {'dims': ('chan', 'corr')}
+    elif opts.weight_column is not None:
+        print(f"Using weights from {opts.weight_column} column", file=log)
         columns += (opts.weight_column,)
         if opts.weight_column == 'WEIGHT':
             schema[opts.weight_column] = {'dims': ('corr')}
         else:
             schema[opts.weight_column] = {'dims': ('chan', 'corr')}
+    else:
+        print(f"No weights provided, using unity weights", file=log)
 
     # flag row
     if 'FLAG_ROW' in xds[0]:
@@ -339,13 +346,13 @@ def _init(**kw):
 
                 if opts.product.upper() in ["I", "Q", "U", "V"]:
                     out_ds = single_stokes(ds=subds,
-                                        jones=jones,
-                                        opts=opts,
-                                        freq=freqs[ms][idt][Inu],
-                                        freq_out=freq_out[band_id],
-                                        chan_width=chan_width[Inu],
-                                        bandid=band_id,
-                                        **universal_opts)
+                                           jones=jones,
+                                           opts=opts,
+                                           freq=freqs[ms][idt][Inu],
+                                           freq_out=freq_out[band_id],
+                                           chan_width=chan_width[Inu],
+                                           bandid=band_id,
+                                           **universal_opts)
                 elif opts.product.upper() in ["XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
                     out_ds = single_corr(ds=subds,
                                          jones=jones,

@@ -28,6 +28,13 @@ inputs:
     abbreviation: wc
     info: 'Column containing natural weights. Must be the same across MSs'
     metavar: COLUMN
+  sigma_column:
+    dtype: str
+    abbreviation: sc
+    info: 'Column containing standard devations. \
+           Will be used to initialise natural weights if detected. \
+           Must be the same across MSs'
+    metavar: COLUMN
   flag_column:
     dtype: str
     default: FLAG
