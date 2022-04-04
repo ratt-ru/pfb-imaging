@@ -40,15 +40,7 @@ requirements = [
 
                 "stimela"
                 "@git+https://github.com/caracal-pipeline/stimela2.git"
-                "@rich",
-
-                "quartical"
-                "@git+https://github.com/JSKenyon/QuartiCal.git"
-                "@stimelation",
-
-                "surfvis"
-                "@git+https://github.com/ratt-ru/surfvis.git"
-                "@stimelation"
+                "@rich"
 
             ]
 

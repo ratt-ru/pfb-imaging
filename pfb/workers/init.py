@@ -374,6 +374,8 @@ def _init(**kw):
     #                  optimize_graph=False,
     #                  scheduler=opts.scheduler)
 
-    dask.compute(writes)
+    # import pdb; pdb.set_trace()
+
+    dask.compute(writes, optimize_graph=False)
 
     print("All done here.", file=log)

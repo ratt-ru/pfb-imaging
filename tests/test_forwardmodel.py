@@ -259,5 +259,5 @@ def test_forwardmodel(beam_model, do_gains, wstack, robustness, mean_ds, tmp_pat
         assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -
                         model[:, Ix[i], Iy[i]], 1.0, atol=10*epsilon)
 
-
-# test_forwardmodel(None, False, False, None)
+ # beam_model, do_gains, wstack, robustness, mean_ds
+# test_forwardmodel('kbl', False, True, 0.0, False)

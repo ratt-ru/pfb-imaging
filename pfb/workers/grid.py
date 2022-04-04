@@ -235,7 +235,6 @@ def _grid(**kw):
         wgt = ds.WEIGHT.data
         wsum = ds.WSUM.data
         if opts.robustness is not None:
-            print(f"Robustness set to {opts.robustness}, computing imaging weights", file=log)
             imwgt = counts_to_weights(counts[ds.bandid],
                                       uvw,
                                       freq,

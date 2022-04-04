@@ -13,6 +13,10 @@ inputs:
     dtype: bool
     default: false
     info: "Allow overwrite of existing plots"
+  join_times:
+    dtype: bool
+    default: false
+    info: "Concatenate along time axis"
 
 outputs:
   {}
