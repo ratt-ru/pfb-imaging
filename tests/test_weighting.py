@@ -175,7 +175,7 @@ def test_uniform(tmp_path_factory):
     counts2 = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
                               np.float64, wgt=weights).squeeze()
 
-    assert_allclose(counts2, counts2)
+    assert_allclose(counts2[counts2>0], 1)
 
 
 def test_uniform_dask(tmp_path_factory):
