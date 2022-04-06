@@ -92,8 +92,8 @@ def _gainspector(**kw):
                     # import pdb; pdb.set_trace()
                     g = G.values[:, :, i, 0, c]
 
-                    # im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
-                    im = ax.imshow(g.real, cmap='inferno', interpolation=None)
+                    im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
+                    # im = ax.imshow(g.real, cmap='inferno', interpolation=None)
                     ax.set_title(f"Antenna: {i}")
                     ax.axis('off')
 
@@ -116,9 +116,9 @@ def _gainspector(**kw):
                 if i < 58:
                     g = G.values[:, :, i, 0, c] * gref.conj()
 
-                    # im = ax.imshow(np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1),
-                    #             cmap='inferno', interpolation=None)
-                    im = ax.imshow(g.imag, cmap='inferno', interpolation=None)
+                    im = ax.imshow(np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1),
+                                cmap='inferno', interpolation=None)
+                    # im = ax.imshow(g.imag, cmap='inferno', interpolation=None)
                     ax.set_title(f"Antenna: {i}")
                     ax.axis('off')
 

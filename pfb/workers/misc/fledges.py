@@ -47,10 +47,11 @@ def _fledges(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
+    import dask
     import dask.array as da
     from daskms import xds_from_ms, xds_to_table
 
-    xds = xds_from_ms(opts.ms, columns='FLAG', chunks={'row':args.row_chunk},
+    xds = xds_from_ms(opts.ms, columns='FLAG', chunks={'row':opts.row_chunk},
                       group_cols=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'])
     writes = []
     for ds in xds:

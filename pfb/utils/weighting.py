@@ -43,12 +43,14 @@ def _compute_counts(uvw, freqs, mask, nx, ny,
                     cell_size_x, cell_size_y, dtype,
                     wgt=None):
     # ufreqs
-    umax = 1/cell_size_x/2
-    u_diff = 1/((nx+1)*cell_size_x)  # +1 for bin edges
+    u_cell = 1/(nx*cell_size_x)
+    # shifts fftfreqs such that they start at zero
+    # convenient to look up the pixel value
+    umax = np.abs(-1/cell_size_x/2 - u_cell/2)
 
     # vfreqs
-    vmax = 1/cell_size_y/2
-    v_diff = 1/((ny+1)*cell_size_y)
+    v_cell = 1/(ny*cell_size_y)
+    vmax = np.abs(-1/cell_size_y/2 - v_cell/2)
 
     # initialise array to store counts
     # the additional axis is to allow chunking over row
@@ -70,10 +72,10 @@ def _compute_counts(uvw, freqs, mask, nx, ny,
             chan_normfreq = normfreqs[c]
             u_tmp = uvw_row[0] * chan_normfreq
             v_tmp = uvw_row[1] * chan_normfreq
-            # get u index (-1 because we start counting at zero)
-            u_idx = int(np.round((u_tmp + umax)/u_diff))-1
+            # get u index
+            u_idx = int(np.floor((u_tmp + umax)/u_cell))
             # get v index
-            v_idx = int(np.round((v_tmp + vmax)/v_diff))-1
+            v_idx = int(np.floor((v_tmp + vmax)/v_cell))
             counts[0, u_idx, v_idx] += wgt[r, c]
     return counts
 
@@ -103,15 +105,15 @@ def counts_to_weights_wrapper(counts, uvw, freqs, nx, ny,
 def _counts_to_weights(counts, uvw, freqs, nx, ny,
                        cell_size_x, cell_size_y, robust):
     # ufreqs
-    umax = 1/cell_size_x/2
-    u_diff = 1/((nx+1)*cell_size_x)  # +1 for bin edges
+    u_cell = 1/(nx*cell_size_x)
+    umax = np.abs(-1/cell_size_x/2 - u_cell/2)
 
     # vfreqs
-    vmax = 1/cell_size_y/2
-    v_diff = 1/((ny+1)*cell_size_y)
+    v_cell = 1/(ny*cell_size_y)
+    vmax = np.abs(-1/cell_size_y/2 - v_cell/2)
 
     # initialise array to store counts
-    # the additional axis is to allow chunking over ro
+    # the additional axis is to allow chunking over row
     nchan = freqs.size
     nrow = uvw.shape[0]
 
@@ -131,10 +133,41 @@ def _counts_to_weights(counts, uvw, freqs, nx, ny,
             chan_normfreq = normfreqs[c]
             u_tmp = uvw_row[0] * chan_normfreq
             v_tmp = uvw_row[1] * chan_normfreq
-            # get u index (-1 because we start counting at zero)
-            u_idx = int(np.round((u_tmp + umax)/u_diff)) - 1
+            # get u index
+            u_idx = int(np.floor((u_tmp + umax)/u_cell))
             # get v index
-            v_idx = int(np.round((v_tmp + vmax)/v_diff)) - 1
+            v_idx = int(np.floor((v_tmp + vmax)/v_cell))
             if counts[u_idx, v_idx]:
                 weights[r, c] = 1.0/counts[u_idx, v_idx]
     return weights
+
+
+def filter_extreme_counts(counts, nbox=16, nlevel=10):
+
+    return da.blockwise(_filter_extreme_counts, 'bxy',
+                        counts, 'bxy',
+                        nbox, None,
+                        nlevel, None,
+                        dtype=counts.dtype)
+
+
+
+@njit(nogil=True, fastmath=True, cache=True)
+def _filter_extreme_counts(counts, nbox=16, level=10):
+    '''
+    Replaces extreme counts by local mean computed i
+    '''
+    nband, nx, ny = counts.shape
+    for b in range(nband):
+        cb = counts[b]
+        I, J = np.where(cb>0)
+        for i, j in zip(I, J):
+            ilow = np.maximum(0, i-nbox//2)
+            ihigh = np.minimum(nx, i+nbox//2)
+            jlow = np.maximum(0, j-nbox//2)
+            jhigh = np.minimum(ny, j+nbox//2)
+            local_mean = np.mean(cb[ilow:ihigh, jlow:jhigh])
+            if 1/cb[i,j] > level/local_mean:
+                counts[b, i, j] = local_mean
+    return counts
+

@@ -89,7 +89,8 @@ def _grid(**kw):
     from pfb.utils.misc import compute_context
     from pfb.operators.gridder import vis2im
     from pfb.operators.fft import fft2d
-    from pfb.utils.weighting import compute_counts, counts_to_weights
+    from pfb.utils.weighting import (compute_counts, counts_to_weights,
+                                     filter_extreme_counts)
     from pfb.utils.beam import eval_beam
     import xarray as xr
     from uuid import uuid4
@@ -225,6 +226,11 @@ def _grid(**kw):
         if opts.residual:
             print("Cannot compute residual without a model. ", file=log)
         model = None
+
+    # get rid of artificially high weights corresponding to nearly empty cells
+    if opts.filter_extreme_counts:
+        counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
+                                       nlevel=opts.filter_level)
 
     writes = []
     freq_out = []

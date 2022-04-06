@@ -8,7 +8,7 @@ inputs:
     dtype: str
     abbreviation: mname
     default: MODEL
-    info: 'Name of residual in xds'
+    info: 'Name of model in xds'
   mask:
     dtype: str
     abbreviation: mask

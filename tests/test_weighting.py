@@ -50,9 +50,16 @@ def test_counts(tmp_path_factory):
     mask = np.ones((nrow, nchan), dtype=bool)
     counts = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
                              dtype=np.float64).squeeze()
-    # we need to take npix+1 to get the bin edges
-    ku = np.sort(np.fft.fftfreq(nx+1, cell_rad))
-    kv = np.sort(np.fft.fftfreq(ny+1, cell_rad))
+    ku = np.sort(np.fft.fftfreq(nx, cell_rad))
+    # shift by half a pixel to get bin edges
+    kucell = ku[1] - ku[0]
+    ku -= kucell/2
+    # add upper edge
+    ku = np.append(ku, ku.max() + kucell)
+    kv = np.sort(np.fft.fftfreq(ny, cell_rad))
+    kvcell = kv[1] - kv[0]
+    kv -= kvcell/2
+    kv = np.append(kv, kv.max() + kvcell)
     weights = np.ones((nrow*nchan), dtype=np.float64)
     u = (uvw[:, 0:1] * freq[None, :]/lightspeed).ravel()
     v = (uvw[:, 1:2] * freq[None, :]/lightspeed).ravel()

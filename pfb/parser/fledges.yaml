@@ -2,9 +2,15 @@ inputs:
   ms:
     dtype: MS
     required: true
-  row_chunks:
+  output_filename:
+    dtype: str
+    required: true
+    info: 'Basename of output'
+    abbreviation: o
+  row_chunk:
     dtype: int
     default: 10000
+    abbreviation: rc
   chan_lower:
     dtype: int
     default: 128
@@ -12,6 +18,15 @@ inputs:
   chan_upper:
     dtype: int
     default: 256
+    abbreviation: cu
+  nband:
+    dtype: int
+    required: true
+    abbreviation: nb
+    info: 'Number of dask threads (stupid hack)'
+
+  _include:
+    - (pfb.parser)dist.yml
 
 outputs:
   {}

@@ -53,3 +53,9 @@ cabs:
 
     _include:
       - (pfb.parser)fledges.yaml
+
+  'pfb.hard_threshold':
+    command: (pfb.workers.misc.hard_threshold)hard_threshold
+
+    _include:
+      - (pfb.parser)hard_threshold.yaml
