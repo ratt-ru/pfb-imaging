@@ -11,12 +11,12 @@ from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}
-for key in schema.hard_threshold["inputs"].keys():
-    defaults[key] = schema.hard_threshold["inputs"][key]["default"]
+for key in schema.hthresh["inputs"].keys():
+    defaults[key] = schema.hthresh["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.hard_threshold)
-def hard_threshold(**kw):
+@clickify_parameters(schema.hthresh)
+def hthresh(**kw):
     '''
     Apply hard threshold to model and write out corresponding fits file
     '''
@@ -41,12 +41,13 @@ def hard_threshold(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _hard_threshold(**opts)
+        return _hthresh(**opts)
 
-def _hard_threshold(**kw):
+def _hthresh(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
+    import numpy as np
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.utils.fits import load_fits, set_wcs, save_fits
 

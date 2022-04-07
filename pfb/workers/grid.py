@@ -217,6 +217,11 @@ def _grid(**kw):
             count_ds = xr.Dataset({'COUNTS': (('band', 'x', 'y'), counts)})
             count_ds.to_zarr(f'{basename}_counts.zarr', mode='w')
 
+        # get rid of artificially high weights corresponding to nearly empty cells
+        if opts.filter_extreme_counts:
+            counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
+                                           nlevel=opts.filter_level)
+
     # check if model exists
     try:
         mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
@@ -227,10 +232,7 @@ def _grid(**kw):
             print("Cannot compute residual without a model. ", file=log)
         model = None
 
-    # get rid of artificially high weights corresponding to nearly empty cells
-    if opts.filter_extreme_counts:
-        counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
-                                       nlevel=opts.filter_level)
+
 
     writes = []
     freq_out = []

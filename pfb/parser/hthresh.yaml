@@ -28,3 +28,10 @@ inputs:
     abbreviation: mname
     default: MODEL
     info: 'Name of model in xds'
+  threshold:
+    dtype: float
+    abbreviation: th
+    required: true
+    info: 'Values below threshold will be set to zero'
+outputs:
+  {}

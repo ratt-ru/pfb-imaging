@@ -313,7 +313,7 @@ def _backward(**kw):
             uvw = ds.UVW.data
             freq = ds.FREQ.data
             beam = ds.BEAM.data
-            vis_mask = dds.MASK.data
+            vis_mask = ds.MASK.data
             b = ds.bandid
             # we only want to apply the beam once here
             residual = (dirty -

@@ -12,6 +12,12 @@ cabs:
     _include:
       - (pfb.parser)grid.yaml
 
+  'pfb.degrid':
+    command: (pfb.workers.degrid)degrid
+
+    _include:
+      - (pfb.parser)degrid.yaml
+
   'pfb.forward':
     command: (pfb.workers.deconv.forward)forward
 
@@ -54,8 +60,8 @@ cabs:
     _include:
       - (pfb.parser)fledges.yaml
 
-  'pfb.hard_threshold':
-    command: (pfb.workers.misc.hard_threshold)hard_threshold
+  'pfb.hthresh':
+    command: (pfb.workers.misc.hthresh)hthresh
 
     _include:
-      - (pfb.parser)hard_threshold.yaml
+      - (pfb.parser)hthresh.yaml

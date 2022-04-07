@@ -8,55 +8,16 @@ pyscilog.init('pfb')
 log = pyscilog.get_logger('DEGRID')
 
 
-@cli.command()
-@click.option('-ms', '--ms', required=True,
-              help='Path to measurement set.')
-@click.option('-m', '--model', required=True,
-              help='Path to model.fits')
-@click.option('-mc', '--model-column', default='MODEL_DATA',
-              help="Model column to write visibilities to."
-              "Must be the same across MSs")
-@click.option('-rchunk', '--row-chunk', type=int, default=-1,
-              help="Number of rows in a chunk.")
-@click.option('-eps', '--epsilon', type=float, default=1e-5,
-              help='Gridder accuracy')
-@click.option('--group-by-field/--no-group-by-field', default=True)
-@click.option('--group-by-ddid/--no-group-by-ddid', default=True)
-@click.option('--group-by-scan/--no-group-by-scan', default=True)
-@click.option('--wstack/--no-wstack', default=True)
-@click.option('--mock/--no-mock', default=False)
-@click.option('--double-accum/--no-double-accum', default=True)
-@click.option('-o', '--output-filename', type=str, required=True,
-              help="Basename of output.")
-@click.option('-nb', '--nband', type=int, required=True,
-              help="Number of imaging bands")
-@click.option('-nbo', '--nband-out', type=int,
-              help="Number of imaging bands in output cube. "
-              "Default is same as input but it is possible to increase it to "
-              "improve degridding accuracy. If set to -1 the model will be "
-              "interpolated to the resolution of the MS.")
-@click.option('-spo', '--spectral-poly-order', type=int,
-              help='Order of polynomial to fit to freq axis. '
-              'Set to zero to turn off interpolation')
-@click.option('-otype', '--output-type',
-              help="Data type of output")
-@click.option('-rtype', '--real-type', default='f4',
-              help="Real data type")
-@click.option('-ha', '--host-address',
-              help='Address where the distributed client lives. '
-              'Will use a local cluster if no address is provided')
-@click.option('-nw', '--nworkers', type=int,
-              help='Number of workers for the client.')
-@click.option('-ntpw', '--nthreads-per-worker', type=int,
-              help='Number of dask threads per worker.')
-@click.option('-nvt', '--nvthreads', type=int,
-              help="Total number of threads to use per worker")
-@click.option('-mem', '--mem-limit', type=float,
-              help="Memory limit in GB. Default uses all available memory")
-@click.option('-nthreads', '--nthreads', type=int,
-              help="Total available threads. Default uses all available threads")
-@click.option('-scheduler', '--scheduler', default='distributed',
-              help="Total available threads. Default uses all available threads")
+from scabha.schema_utils import clickify_parameters
+from pfb.parser.schemas import schema
+
+# create default parameters from schema
+defaults = {}
+for key in schema.degrid["inputs"].keys():
+    defaults[key] = schema.degrid["inputs"][key]["default"]
+
+@cli.command(context_settings={'show_default': True})
+@clickify_parameters(schema.degrid)
 def degrid(**kw):
     '''
     Predict model visibilities to measurement sets.
@@ -109,13 +70,19 @@ def degrid(**kw):
         raise ValueError(f"No MS at {opts.ms}")
 
     if opts.nworkers is None:
-        opts.nworkers = opts.nband
+        if opts.scheduler=='distributed':
+            opts.nworkers = opts.nband
+        else:
+            opts.nworkers = 1
 
     OmegaConf.set_struct(opts, True)
 
+    if opts.product.upper() not in ["I", "Q", "U", "V", "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
+        raise NotImplementedError(f"Product {opts.product} not yet supported")
+
     with ExitStack() as stack:
         from pfb import set_client
-        opts = set_client(opts, stack, log)
+        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -136,15 +103,16 @@ def _degrid(**kw):
     import dask
     from dask.distributed import performance_report
     from dask.graph_manipulation import clone
-    from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms import xds_from_storage_table as xds_from_table
-    from daskms.utils import dataset_type
-    mstype = dataset_type(opts.ms[0])
-    if mstype == 'casa':
-        from daskms import xds_to_table
-    else:
-        raise ValueError("predict currently only supports measurement sets")
-        # from daskms.experimental.zarr import xds_to_zarr as xds_to_table
+    from daskms import xds_from_ms, xds_from_table, xds_to_table
+    # from daskms import xds_from_storage_ms as xds_from_ms
+    # from daskms import xds_from_storage_table as xds_from_table
+    # from daskms.utils import dataset_type
+    # mstype = dataset_type(opts.ms[0])
+    # if mstype == 'casa':
+    #     from daskms import xds_to_table
+    # else:
+    #     raise ValueError("predict currently only supports measurement sets")
+    #     # from daskms.experimental.zarr import xds_to_zarr as xds_to_table
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import model as im2vis
@@ -185,13 +153,8 @@ def _degrid(**kw):
         raise NotImplementedError("Grouping by scan is currently mandatory")
 
     # chan <-> band mapping
-    freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks = chan_to_band_mapping(
-        opts.ms, nband=nband_out, group_by=group_by)
-
-    if opts.output_type is not None:
-        output_type = np.dtype(opts.output_type)
-    else:
-        output_type = np.result_type(np.dtype(opts.real_type), np.complex64)
+    freqs, fbin_idx, fbin_counts, freq_out, band_mapping, chan_chunks = \
+        chan_to_band_mapping(opts.ms, nband=nband_out, group_by=group_by)
 
     # if mstype == 'zarr':
     #     if opts.model_column in xds[0].keys():
@@ -274,13 +237,14 @@ def _degrid(**kw):
 
     print("Computing model visibilities", file=log)
     mask = da.from_array(mask, chunks=(nx, ny), name=False)
-    comps = da.from_array(comps.astype(opts.real_type),
+    comps = da.from_array(comps,
                           chunks=(-1, ncomps), name=False)
     freq_out = da.from_array(freq_out, chunks=-1, name=False)
     writes = []
     radec = None  # assumes we are only imaging field 0 of first MS
     for ms in opts.ms:
-        xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=('UVW'),
+        # DATA used to get required type since MODEL_DATA may not exist yet
+        xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=('UVW','DATA'),
                           group_cols=group_by)
 
         # subtables
@@ -318,8 +282,8 @@ def _degrid(**kw):
             vis_I = im2vis(uvw,
                            freqs[ms][idt],
                            model,
-                           freq_bin_idx[ms][idt],
-                           freq_bin_counts[ms][idt],
+                           fbin_idx[ms][idt],
+                           fbin_counts[ms][idt],
                            cell_rad,
                            nthreads=opts.nvthreads,
                            epsilon=opts.epsilon,
@@ -328,17 +292,19 @@ def _degrid(**kw):
             # vis_Q = im2vis(uvw,
             #              freqs[ms][idt],
             #              model[1],
-            #              freq_bin_idx[ms][idt],
-            #              freq_bin_counts[ms][idt],
+            #              fbin_idx[ms][idt],
+            #              fbin_counts[ms][idt],
             #              cell_rad,
             #              nthreads=ngridder_threads,
             #              epsilon=opts.epsilon,
             #              do_wstacking=opts.wstack)
 
+            vis_I = vis_I.astype(ds.DATA.dtype)
             model_vis = restore_corrs(vis_I, ncorr)
 
+            # Does this mean that visibilities for all bands end up
+            # in memory at this point?
             model_vis = model_vis.rechunk({1: -1})
-
 
             # if mstype == 'zarr':
             #     model_vis = model_vis.rechunk(model_chunks)
@@ -358,11 +324,12 @@ def _degrid(**kw):
     #     with performance_report(filename=opts.output_filename + '_predict_per.html'):
     #         dask.compute(writes, optimize_graph=False)
 
-    from pfb.utils.misc import compute_context
-    with compute_context(opts.scheduler, opts.output_filename):
-        dask.compute(writes,
-                     optimize_graph=False,
-                     scheduler=opts.scheduler)
+    dask.compute(writes)
+    # from pfb.utils.misc import compute_context
+    # with compute_context(opts.scheduler, opts.output_filename):
+    #     dask.compute(writes,
+    #                  optimize_graph=False,
+    #                  scheduler=opts.scheduler)
 
     print("All done here.", file=log)
 
