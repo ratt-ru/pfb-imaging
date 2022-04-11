@@ -61,7 +61,7 @@ def _gainspector(**kw):
     OmegaConf.set_struct(opts, True)
 
     import matplotlib as mpl
-    mpl.rcParams.update({'font.size': 4, 'font.family': 'serif'})
+    mpl.rcParams.update({'font.size': 10, 'font.family': 'serif'})
     import numpy as np
     from daskms.experimental.zarr import xds_from_zarr
     import matplotlib.pyplot as plt
@@ -80,9 +80,6 @@ def _gainspector(**kw):
     if opts.join_times:
         Gs = [xr.concat(Gs, dim='gain_t')]
 
-    # import pdb; pdb.set_trace()
-
-    ncorr = 1
     for s, G in enumerate(Gs):
         gain = G.gains.sortby('gain_t')
         ntime, nchan, nant, ndir, ncorr = gain.shape
@@ -95,7 +92,7 @@ def _gainspector(**kw):
         else:
             gref = np.ones((ntime, nchan, ndir, ncorr))
         for c in [0,1]:
-            fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
+            fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*4))
             for i, ax in enumerate(axs.ravel()):
                 if i < nant:
                     g = gain.values[:, :, i, 0, c]
@@ -109,16 +106,16 @@ def _gainspector(**kw):
                     cax = divider.append_axes("bottom", size="10%", pad=0.01)
                     cb = fig.colorbar(im, cax=cax, orientation="horizontal")
                     cb.outline.set_visible(False)
-                    cb.ax.tick_params(length=0.1, width=0.1, labelsize=1.0, pad=0.1)
+                    cb.ax.tick_params(length=0.1, width=0.1, labelsize=10.0, pad=0.1)
                 else:
                     ax.axis('off')
 
             fig.tight_layout()
 
             plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_abs.png",
-                        dpi=500, bbox_inches='tight')
+                        dpi=100, bbox_inches='tight')
 
-            fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
+            fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*4))
 
             for i, ax in enumerate(axs.ravel()):
                 if i < nant:
@@ -134,18 +131,18 @@ def _gainspector(**kw):
                     cax = divider.append_axes("bottom", size="10%", pad=0.01)
                     cb = fig.colorbar(im, cax=cax, orientation="horizontal")
                     cb.outline.set_visible(False)
-                    cb.ax.tick_params(length=0.5, width=0.5, labelsize=1, pad=0.5)
+                    cb.ax.tick_params(length=0.5, width=0.5, labelsize=10, pad=0.5)
                 else:
                     ax.axis('off')
 
             fig.tight_layout()
 
             plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_phase.png",
-                        dpi=500, bbox_inches='tight')
+                        dpi=100, bbox_inches='tight')
 
             try:
                 jhj = G.jhj.sortby('gain_t')
-                fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
+                fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*4))
                 for i, ax in enumerate(axs.ravel()):
                     if i < nant:
                         g = jhj.values[:, :, i, 0, c]
@@ -158,14 +155,14 @@ def _gainspector(**kw):
                         cax = divider.append_axes("bottom", size="10%", pad=0.01)
                         cb = fig.colorbar(im, cax=cax, orientation="horizontal")
                         cb.outline.set_visible(False)
-                        cb.ax.tick_params(length=0.5, width=0.5, labelsize=1, pad=0.5)
+                        cb.ax.tick_params(length=0.5, width=0.5, labelsize=10, pad=0.5)
                     else:
                         ax.axis('off')
 
                 fig.tight_layout()
 
                 plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_jhj.png",
-                            dpi=500, bbox_inches='tight')
+                            dpi=100, bbox_inches='tight')
             except Exception as e:
                 raise e
 
