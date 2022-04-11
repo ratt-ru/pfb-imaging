@@ -84,13 +84,21 @@ def _gainspector(**kw):
 
     ncorr = 1
     for s, G in enumerate(Gs):
-        G = G.gains.sortby('gain_t')
-        for c in range(ncorr):
+        gain = G.gains.sortby('gain_t')
+        ntime, nchan, nant, ndir, ncorr = gain.shape
+        if opts.ref_ant is not None:
+            if opts.ref_ant == -1:
+                ref_ant = nant-1
+            else:
+                ref_ant = opts.ref_ant
+            gref = gain[:, :, ref_ant]
+        else:
+            gref = np.ones((ntime, nchan, ndir, ncorr))
+        for c in [0,1]:
             fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
             for i, ax in enumerate(axs.ravel()):
-                if i < 58:
-                    # import pdb; pdb.set_trace()
-                    g = G.values[:, :, i, 0, c]
+                if i < nant:
+                    g = gain.values[:, :, i, 0, c]
 
                     im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
                     # im = ax.imshow(g.real, cmap='inferno', interpolation=None)
@@ -101,7 +109,7 @@ def _gainspector(**kw):
                     cax = divider.append_axes("bottom", size="10%", pad=0.01)
                     cb = fig.colorbar(im, cax=cax, orientation="horizontal")
                     cb.outline.set_visible(False)
-                    cb.ax.tick_params(length=0.1, width=0.1, labelsize=0.1, pad=0.1)
+                    cb.ax.tick_params(length=0.1, width=0.1, labelsize=1.0, pad=0.1)
                 else:
                     ax.axis('off')
 
@@ -111,10 +119,10 @@ def _gainspector(**kw):
                         dpi=500, bbox_inches='tight')
 
             fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
-            gref = G.values[:, :, -1, 0, c]
+
             for i, ax in enumerate(axs.ravel()):
-                if i < 58:
-                    g = G.values[:, :, i, 0, c] * gref.conj()
+                if i < nant:
+                    g = gain.values[:, :, i, 0, c] * gref[:, :, 0, c].conj()
 
                     im = ax.imshow(np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1),
                                 cmap='inferno', interpolation=None)
@@ -126,7 +134,7 @@ def _gainspector(**kw):
                     cax = divider.append_axes("bottom", size="10%", pad=0.01)
                     cb = fig.colorbar(im, cax=cax, orientation="horizontal")
                     cb.outline.set_visible(False)
-                    cb.ax.tick_params(length=0.5, width=0.5, labelsize=0.5, pad=0.5)
+                    cb.ax.tick_params(length=0.5, width=0.5, labelsize=1, pad=0.5)
                 else:
                     ax.axis('off')
 
@@ -135,25 +143,29 @@ def _gainspector(**kw):
             plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_phase.png",
                         dpi=500, bbox_inches='tight')
 
-            # fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
-            # for i, ax in enumerate(axs.ravel()):
-            #     if i < 58:
-            #         g = G.jhj.values[:, :, i, 0, c]
+            try:
+                jhj = G.jhj.sortby('gain_t')
+                fig, axs = plt.subplots(nrows=8, ncols=8, figsize=(16, 12))
+                for i, ax in enumerate(axs.ravel()):
+                    if i < nant:
+                        g = jhj.values[:, :, i, 0, c]
 
-            #         im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
-            #         ax.set_title(f"Antenna: {i}")
-            #         ax.axis('off')
+                        im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
+                        ax.set_title(f"Antenna: {i}")
+                        ax.axis('off')
 
-            #         divider = make_axes_locatable(ax)
-            #         cax = divider.append_axes("bottom", size="10%", pad=0.01)
-            #         cb = fig.colorbar(im, cax=cax, orientation="horizontal")
-            #         cb.outline.set_visible(False)
-            #         cb.ax.tick_params(length=0.5, width=0.5, labelsize=0.5, pad=0.5)
-            #     else:
-            #         ax.axis('off')
+                        divider = make_axes_locatable(ax)
+                        cax = divider.append_axes("bottom", size="10%", pad=0.01)
+                        cb = fig.colorbar(im, cax=cax, orientation="horizontal")
+                        cb.outline.set_visible(False)
+                        cb.ax.tick_params(length=0.5, width=0.5, labelsize=1, pad=0.5)
+                    else:
+                        ax.axis('off')
 
-            # fig.tight_layout()
+                fig.tight_layout()
 
-            # plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_jhj.png",
-            #             dpi=500, bbox_inches='tight')
+                plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_jhj.png",
+                            dpi=500, bbox_inches='tight')
+            except Exception as e:
+                raise e
 

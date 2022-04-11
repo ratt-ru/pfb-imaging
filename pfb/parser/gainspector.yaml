@@ -17,6 +17,9 @@ inputs:
     dtype: bool
     default: false
     info: "Concatenate along time axis"
+  ref_ant:
+    dtype: int
+    info: "Which antenna to use as the reference antenna"
 
 outputs:
   {}
