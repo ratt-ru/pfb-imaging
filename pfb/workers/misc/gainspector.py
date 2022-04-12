@@ -92,7 +92,9 @@ def _gainspector(**kw):
         else:
             gref = np.ones((ntime, nchan, ndir, ncorr))
         for c in [0,1]:
-            fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*4))
+            ntot = ntime + nchan
+            tlength = int(np.ceil(11 * ntime/ntot))
+            fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*tlength))
             for i, ax in enumerate(axs.ravel()):
                 if i < nant:
                     g = gain.values[:, :, i, 0, c]
@@ -115,7 +117,7 @@ def _gainspector(**kw):
             plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_abs.png",
                         dpi=100, bbox_inches='tight')
 
-            fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*4))
+            fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*tlength))
 
             for i, ax in enumerate(axs.ravel()):
                 if i < nant:
@@ -142,7 +144,7 @@ def _gainspector(**kw):
 
             try:
                 jhj = G.jhj.sortby('gain_t')
-                fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*4))
+                fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*tlength))
                 for i, ax in enumerate(axs.ravel()):
                     if i < nant:
                         g = jhj.values[:, :, i, 0, c]
