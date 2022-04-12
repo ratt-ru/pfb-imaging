@@ -73,5 +73,5 @@ def _fledges(**kw):
 
 def set_flags(flag, chan_lower, chan_upper):
     flag[:, 0:chan_lower, :] = True
-    flag[:, chan_upper:, :] = True
+    flag[:, -chan_upper:, :] = True
     return flag
