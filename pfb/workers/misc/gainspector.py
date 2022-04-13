@@ -97,10 +97,14 @@ def _gainspector(**kw):
             fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*tlength))
             for i, ax in enumerate(axs.ravel()):
                 if i < nant:
-                    g = gain.values[:, :, i, 0, c]
+                    g = np.abs(gain.values[:, :, i, 0, c])
 
-                    im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
-                    # im = ax.imshow(g.real, cmap='inferno', interpolation=None)
+                    gmean = np.median(g)
+                    glow = gmean/5
+                    ghigh = gmean*5
+
+                    im = ax.imshow(g, cmap='inferno', interpolation=None,
+                                   vmin=glow, vmax=ghigh)
                     ax.set_title(f"Antenna: {i}")
                     ax.axis('off')
 
@@ -116,15 +120,20 @@ def _gainspector(**kw):
 
             plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_abs.png",
                         dpi=100, bbox_inches='tight')
+            plt.close()
 
             fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*tlength))
 
             for i, ax in enumerate(axs.ravel()):
                 if i < nant:
                     g = gain.values[:, :, i, 0, c] * gref[:, :, 0, c].conj()
+                    g = np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1)
+                    gmean = np.median(g)
+                    glow = gmean/5
+                    ghigh = gmean*5
 
-                    im = ax.imshow(np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1),
-                                cmap='inferno', interpolation=None)
+                    im = ax.imshow(g, cmap='inferno', interpolation=None,
+                                   vmin=glow, vmax=ghigh)
                     # im = ax.imshow(g.imag, cmap='inferno', interpolation=None)
                     ax.set_title(f"Antenna: {i}")
                     ax.axis('off')
@@ -141,7 +150,7 @@ def _gainspector(**kw):
 
             plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_phase.png",
                         dpi=100, bbox_inches='tight')
-
+            plt.close()
             try:
                 jhj = G.jhj.sortby('gain_t')
                 fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*tlength))
@@ -165,6 +174,7 @@ def _gainspector(**kw):
 
                 plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_jhj.png",
                             dpi=100, bbox_inches='tight')
+                plt.close()
             except Exception as e:
                 raise e
 
