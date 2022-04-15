@@ -26,13 +26,13 @@ def gainspector(**kw):
     pyscilog.log_to_file(f'{opts.output_filename}.log')
 
     from glob import glob
-    if opts.gains is not None:
-        gt = glob(opts.gains)
+    if opts.gain_dir is not None:
+        gt = glob(opts.gain_dir)
         try:
             assert len(gt) > 0
-            opts.gains = gt
+            opts.gain_dir = gt
         except Exception as e:
-            raise ValueError(f"No gain table  at {opts.gains}")
+            raise ValueError(f"No gain table  at {opts.gain_dir}")
 
     if opts.nworkers is None:
         if opts.scheduler=='distributed':
@@ -56,22 +56,24 @@ def gainspector(**kw):
 def _gainspector(**kw):
     opts = OmegaConf.create(kw)
     from omegaconf import ListConfig
-    if not isinstance(opts.gains, list) and not isinstance(opts.gains, ListConfig):
-        opts.gains = [opts.gains]
+    if not isinstance(opts.gain_dir, list) and not isinstance(opts.gain_dir, ListConfig):
+        opts.gain_dir = [opts.gain_dir]
     OmegaConf.set_struct(opts, True)
 
     import matplotlib as mpl
     mpl.rcParams.update({'font.size': 10, 'font.family': 'serif'})
     import numpy as np
+    import dask
+    dask.config.set(**{'array.slicing.split_large_chunks': False})
     from daskms.experimental.zarr import xds_from_zarr
     import matplotlib.pyplot as plt
     from mpl_toolkits.axes_grid1 import make_axes_locatable
     import xarray as xr
 
     Gs = []
-    for gain in opts.gains:
+    for gain in opts.gain_dir:
         # import pdb; pdb.set_trace()
-        G = xds_from_zarr(f'{gain}/gains.qc::G')
+        G = xds_from_zarr(f'{gain}::{opts.gain_term}')
         for g in G:
             Gs.append(g)
 
@@ -99,9 +101,9 @@ def _gainspector(**kw):
                 if i < nant:
                     g = np.abs(gain.values[:, :, i, 0, c])
 
-                    gmean = np.median(g)
-                    glow = gmean/5
-                    ghigh = gmean*5
+                    gmed = np.median(g)
+                    glow = gmed/opts.vlow
+                    ghigh = gmed*opts.vhigh
 
                     im = ax.imshow(g, cmap='inferno', interpolation=None,
                                    vmin=glow, vmax=ghigh)
@@ -128,9 +130,10 @@ def _gainspector(**kw):
                 if i < nant:
                     g = gain.values[:, :, i, 0, c] * gref[:, :, 0, c].conj()
                     g = np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1)
-                    gmean = np.median(g)
-                    glow = gmean/5
-                    ghigh = gmean*5
+
+                    gmed = np.median(g)
+                    glow = gmed/opts.vlow
+                    ghigh = gmed*opts.vhigh
 
                     im = ax.imshow(g, cmap='inferno', interpolation=None,
                                    vmin=glow, vmax=ghigh)

@@ -1,13 +1,16 @@
 inputs:
   _include:
     - (pfb.parser)dist.yml
-  gains:
+  gain_dir:
     dtype: str
-    info: "Path to QuartiCal gain file"
+    info: "Path to QuartiCal gain directory"
     abbreviation: g
+  gain_term:
+    dtype: str
+    info: "Name of term to inetrpolate"
   output_filename:
     dtype: str
-    info: "Folder to place gains"
+    info: "Folder to place gain plots"
     abbreviation: o
   overwrite:
     dtype: bool
@@ -20,6 +23,16 @@ inputs:
   ref_ant:
     dtype: int
     info: "Which antenna to use as the reference antenna"
+  vlow:
+    dtype: float
+    default: 3
+    info: "Set's the lower limit on the colorbar to median/vlow"
+  vhigh:
+    dtype: float
+    default: 3
+    info: "Set's the upper limit on the colorbar to median * vhigh"
+
+
 
 outputs:
   {}
