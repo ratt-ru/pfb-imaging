@@ -84,6 +84,11 @@ def _gainspector(**kw):
 
     for s, G in enumerate(Gs):
         gain = G.gains.sortby('gain_t')
+        try:
+            flag = G.gain_flags.sortby('gain_t')
+        except:
+            flag = None
+            print('No gain flags found', file=log)
         ntime, nchan, nant, ndir, ncorr = gain.shape
         if opts.ref_ant is not None:
             if opts.ref_ant == -1:
@@ -100,10 +105,14 @@ def _gainspector(**kw):
             for i, ax in enumerate(axs.ravel()):
                 if i < nant:
                     g = np.abs(gain.values[:, :, i, 0, c])
+                    if flag is not None:
+                        f = flag.values[:, :, i, 0]
+                        g[f] = np.nan
 
-                    gmed = np.median(g)
-                    glow = gmed/opts.vlow
-                    ghigh = gmed*opts.vhigh
+                    gmed = np.nanmedian(g)
+                    gstd = np.nanstd(g)
+                    glow = gmed - opts.vlow * gstd
+                    ghigh = gmed + opts.vhigh * gstd
 
                     im = ax.imshow(g, cmap='inferno', interpolation=None,
                                    vmin=glow, vmax=ghigh)
@@ -130,10 +139,14 @@ def _gainspector(**kw):
                 if i < nant:
                     g = gain.values[:, :, i, 0, c] * gref[:, :, 0, c].conj()
                     g = np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1)
+                    if flag is not None:
+                        f = flag.values[:, :, i, 0]
+                        g[f] = np.nan
 
-                    gmed = np.median(g)
-                    glow = gmed/opts.vlow
-                    ghigh = gmed*opts.vhigh
+                    gmed = np.nanmedian(g)
+                    gstd = np.nanstd(g)
+                    glow = gmed - opts.vlow * gstd
+                    ghigh = gmed + opts.vhigh * gstd
 
                     im = ax.imshow(g, cmap='inferno', interpolation=None,
                                    vmin=glow, vmax=ghigh)
@@ -160,6 +173,14 @@ def _gainspector(**kw):
                 for i, ax in enumerate(axs.ravel()):
                     if i < nant:
                         g = jhj.values[:, :, i, 0, c]
+                        if flag is not None:
+                            f = flag.values[:, :, i, 0]
+                            g[f] = np.nan
+
+                        gmed = np.nanmedian(g)
+                        gstd = np.nanstd(g)
+                        glow = gmed - opts.vlow * gstd
+                        ghigh = gmed + opts.vhigh * gstd
 
                         im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
                         ax.set_title(f"Antenna: {i}")
