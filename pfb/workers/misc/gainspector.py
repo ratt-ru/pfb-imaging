@@ -179,5 +179,5 @@ def _gainspector(**kw):
                             dpi=100, bbox_inches='tight')
                 plt.close()
             except Exception as e:
-                raise e
+                continue
 
