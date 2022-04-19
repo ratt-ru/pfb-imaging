@@ -72,8 +72,11 @@ def _gainspector(**kw):
 
     Gs = []
     for gain in opts.gain_dir:
-        # import pdb; pdb.set_trace()
-        G = xds_from_zarr(f'{gain}::{opts.gain_term}')
+        # why do we distinguish between :: and /?
+        try:
+            G = xds_from_zarr(f'{gain}::{opts.gain_term}')
+        except:
+            G = xds_from_zarr(f'{gain}/{opts.gain_term}')
         for g in G:
             Gs.append(g)
 
