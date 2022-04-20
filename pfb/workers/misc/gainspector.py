@@ -111,10 +111,14 @@ def _gainspector(**kw):
                         It, If = np.where(f)
                         g[It, If] = np.nan
 
-                    gmed = np.nanmedian(g)
-                    gstd = np.nanstd(g)
-                    glow = gmed - opts.vlow * gstd
-                    ghigh = gmed + opts.vhigh * gstd
+                    if opts.vmina is not None:
+                        glow = opts.vmina
+                        ghigh = opts.vmaxa
+                    else:
+                        gmed = np.nanmedian(g)
+                        gstd = np.nanstd(g)
+                        glow = gmed - opts.vlow * gstd
+                        ghigh = gmed + opts.vhigh * gstd
 
                     im = ax.imshow(g,
                                    cmap='inferno', interpolation=None,
@@ -147,17 +151,17 @@ def _gainspector(**kw):
                         It, If = np.where(f)
                         g[It, If] = np.nan
 
-                    gmed = np.nanmedian(g)
-                    gstd = np.nanstd(g)
-                    glow = gmed - opts.vlow * gstd
-                    ghigh = gmed + opts.vhigh * gstd
+                    if opts.vminp is not None:
+                        glow = opts.vminp
+                        ghigh = opts.vmaxp
+                    else:
+                        gmed = np.nanmedian(g)
+                        gstd = np.nanstd(g)
+                        glow = gmed - opts.vlow * gstd
+                        ghigh = gmed + opts.vhigh * gstd
 
-
-                    # cmap = mpl.cm.inferno
-                    # cmap.set_bad('white',1.)
                     im = ax.imshow(g, cmap='inferno', interpolation=None,
                                    vmin=glow, vmax=ghigh)
-                    # im = ax.imshow(g.imag, cmap='inferno', interpolation=None)
                     ax.set_title(f"Antenna: {i}")
                     ax.axis('off')
 
@@ -185,14 +189,6 @@ def _gainspector(**kw):
                             It, If = np.where(f)
                             g[It, If] = np.nan
 
-                        gmed = np.nanmedian(g)
-                        gstd = np.nanstd(g)
-                        glow = gmed - opts.vlow * gstd
-                        ghigh = gmed + opts.vhigh * gstd
-
-
-                        # cmap = mpl.cm.inferno
-                        # cmap.set_bad('white',1.)
                         im = ax.imshow(np.abs(g), cmap='inferno',
                                        interpolation=None)
                         ax.set_title(f"Antenna: {i}")

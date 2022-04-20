@@ -31,6 +31,18 @@ inputs:
     dtype: float
     default: 3
     info: "Set's the upper limit on the colorbar to median * vhigh"
+  vmina:
+    dtype: float
+    info: "Set's hard lower limit on all amplitude colorbars"
+  vmaxa:
+    dtype: float
+    info: "Set's hard upper limit on all amplitude colorbars"
+  vminp:
+    dtype: float
+    info: "Set's hard lower limit on all phase colorbars"
+  vmaxp:
+    dtype: float
+    info: "Set's hard upper limit on all phase colorbars"
 
 
 
