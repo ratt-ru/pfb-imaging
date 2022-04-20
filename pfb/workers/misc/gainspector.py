@@ -60,8 +60,8 @@ def _gainspector(**kw):
         opts.gain_dir = [opts.gain_dir]
     OmegaConf.set_struct(opts, True)
 
-    import matplotlib as mpl
-    mpl.rcParams.update({'font.size': 10, 'font.family': 'serif'})
+    # import matplotlib as mpl
+    # mpl.rcParams.update({'font.size': 10, 'font.family': 'serif'})
     import numpy as np
     import dask
     dask.config.set(**{'array.slicing.split_large_chunks': False})
@@ -79,8 +79,6 @@ def _gainspector(**kw):
             G = xds_from_zarr(f'{gain}/{opts.gain_term}')
         for g in G:
             Gs.append(g)
-
-    # import pdb; pdb.set_trace()
 
     if opts.join_times:
         Gs = [xr.concat(Gs, dim='gain_t')]
@@ -110,14 +108,16 @@ def _gainspector(**kw):
                     g = np.abs(gain.values[:, :, i, 0, c])
                     if flag is not None:
                         f = flag.values[:, :, i, 0]
-                        g[f] = np.nan
+                        It, If = np.where(f)
+                        g[It, If] = np.nan
 
                     gmed = np.nanmedian(g)
                     gstd = np.nanstd(g)
                     glow = gmed - opts.vlow * gstd
                     ghigh = gmed + opts.vhigh * gstd
 
-                    im = ax.imshow(g, cmap='inferno', interpolation=None,
+                    im = ax.imshow(g,
+                                   cmap='inferno', interpolation=None,
                                    vmin=glow, vmax=ghigh)
                     ax.set_title(f"Antenna: {i}")
                     ax.axis('off')
@@ -144,13 +144,17 @@ def _gainspector(**kw):
                     g = np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1)
                     if flag is not None:
                         f = flag.values[:, :, i, 0]
-                        g[f] = np.nan
+                        It, If = np.where(f)
+                        g[It, If] = np.nan
 
                     gmed = np.nanmedian(g)
                     gstd = np.nanstd(g)
                     glow = gmed - opts.vlow * gstd
                     ghigh = gmed + opts.vhigh * gstd
 
+
+                    # cmap = mpl.cm.inferno
+                    # cmap.set_bad('white',1.)
                     im = ax.imshow(g, cmap='inferno', interpolation=None,
                                    vmin=glow, vmax=ghigh)
                     # im = ax.imshow(g.imag, cmap='inferno', interpolation=None)
@@ -178,14 +182,19 @@ def _gainspector(**kw):
                         g = jhj.values[:, :, i, 0, c]
                         if flag is not None:
                             f = flag.values[:, :, i, 0]
-                            g[f] = np.nan
+                            It, If = np.where(f)
+                            g[It, If] = np.nan
 
                         gmed = np.nanmedian(g)
                         gstd = np.nanstd(g)
                         glow = gmed - opts.vlow * gstd
                         ghigh = gmed + opts.vhigh * gstd
 
-                        im = ax.imshow(np.abs(g), cmap='inferno', interpolation=None)
+
+                        # cmap = mpl.cm.inferno
+                        # cmap.set_bad('white',1.)
+                        im = ax.imshow(np.abs(g), cmap='inferno',
+                                       interpolation=None)
                         ax.set_title(f"Antenna: {i}")
                         ax.axis('off')
 
