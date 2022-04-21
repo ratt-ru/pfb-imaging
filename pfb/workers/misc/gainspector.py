@@ -149,8 +149,8 @@ def _gainspector(**kw):
 
             for i, ax in enumerate(axs.ravel()):
                 if i < nant:
-                    g = gain.values[:, :, i, 0, c] * gref[:, :, 0, c].conj()
                     if opts.mode == 'ampphase':
+                        g = gain.values[:, :, i, 0, c] * gref[:, :, 0, c].conj()
                         g = np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1)
                     elif opts.mode == 'reim':
                         g = np.image(gain.values[:, :, i, 0, c])
