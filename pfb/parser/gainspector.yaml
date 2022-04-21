@@ -43,6 +43,10 @@ inputs:
   vmaxp:
     dtype: float
     info: "Set's hard upper limit on all phase colorbars"
+  mode:
+    dtype: str
+    default: ampphase
+    info: "reim or ampphase"
 
 
 

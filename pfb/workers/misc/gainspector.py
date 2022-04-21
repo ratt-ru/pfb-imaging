@@ -105,7 +105,12 @@ def _gainspector(**kw):
             fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*tlength))
             for i, ax in enumerate(axs.ravel()):
                 if i < nant:
-                    g = np.abs(gain.values[:, :, i, 0, c])
+                    if opts.mode == 'ampphase':
+                        g = np.abs(gain.values[:, :, i, 0, c])
+                    elif opts.mode == 'reim':
+                        g = np.real(gain.values[:, :, i, 0, c])
+                    else:
+                        raise ValueError(f'Unknown mode {opts.mode}')
                     if flag is not None:
                         f = flag.values[:, :, i, 0]
                         It, If = np.where(f)
@@ -145,7 +150,13 @@ def _gainspector(**kw):
             for i, ax in enumerate(axs.ravel()):
                 if i < nant:
                     g = gain.values[:, :, i, 0, c] * gref[:, :, 0, c].conj()
-                    g = np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1)
+                    if opts.mode == 'ampphase':
+                        g = np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1)
+                    elif opts.mode == 'reim':
+                        g = np.image(gain.values[:, :, i, 0, c])
+                    else:
+                        raise ValueError(f'Unknown mode {opts.mode}')
+
                     if flag is not None:
                         f = flag.values[:, :, i, 0]
                         It, If = np.where(f)
