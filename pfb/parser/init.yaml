@@ -43,10 +43,13 @@ inputs:
     metavar: COLUMN
   gain_table:
     dtype: str
-    abbreviation: gt
     info: "Path to Quartical gain table containing NET gains.\
           There must be a table for each MS and glob(ms) and glob(gt) \
           should match up."
+  gain_term:
+    dtype: str
+    default: NET
+    info: "Which gain term to use. Default is NET"
   product:
     dtype: str
     abbreviation: p

@@ -74,7 +74,8 @@ def init(**kw):
         except Exception as e:
             raise ValueError(f"No gain table  at {opts.gain_table}")
 
-    if opts.product.upper() not in ["I", "Q", "U", "V", "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
+    if opts.product.upper() not in ["I", "Q", "U", "V", "XX", "YX", "XY",
+                                    "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
     OmegaConf.set_struct(opts, True)
@@ -95,7 +96,8 @@ def _init(**kw):
     from omegaconf import ListConfig
     if not isinstance(opts.ms, list) and not isinstance(opts.ms, ListConfig):
         opts.ms = [opts.ms]
-    if not isinstance(opts.gain_table, list) and not isinstance(opts.gain_table, ListConfig):
+    if not isinstance(opts.gain_table, list) and not isinstance(opts.gain_table,
+                                                                ListConfig):
         opts.gain_table = [opts.gain_table]
     OmegaConf.set_struct(opts, True)
 
@@ -212,7 +214,12 @@ def _init(**kw):
         tbin_idx[ms] = {}
         tbin_counts[ms] = {}
         if opts.gain_table[ims] is not None:
-            G = xds_from_zarr(opts.gain_table[ims].rstrip('/') + '::NET')
+            try:
+                G = xds_from_zarr(opts.gain_table[ims].rstrip('/') +
+                                  f'::{opts.gain_term}')
+            except:
+                G = xds_from_zarr(opts.gain_table[ims].rstrip('/') +
+                                  f'/{opts.gain_term}')
 
         for ids, ds in enumerate(xds):
             fid = ds.FIELD_ID
@@ -275,9 +282,14 @@ def _init(**kw):
                           table_schema=schema, group_cols=group_by)
 
         if opts.gain_table[ims] is not None:
-            G = xds_from_zarr(opts.gain_table[ims].rstrip('/') + '::NET',
-                              chunks=gain_chunks[ms])
-
+            try:
+                G = xds_from_zarr(opts.gain_table[ims].rstrip('/') +
+                                  f'::{opts.gain_term}',
+                                  chunks=gain_chunks[ms])
+            except:
+                G = xds_from_zarr(opts.gain_table[ims].rstrip('/') +
+                                  f'/{opts.gain_term}',
+                                  chunks=gain_chunks[ms])
         # subtables
         ddids = xds_from_table(ms + "::DATA_DESCRIPTION")
         fields = xds_from_table(ms + "::FIELD")
@@ -353,7 +365,8 @@ def _init(**kw):
                                            chan_width=chan_width[Inu],
                                            bandid=band_id,
                                            **universal_opts)
-                elif opts.product.upper() in ["XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
+                elif opts.product.upper() in ["XX", "YX", "XY", "YY", "RR",
+                                              "RL", "LR", "LL"]:
                     out_ds = single_corr(ds=subds,
                                          jones=jones,
                                          opts=opts,
@@ -363,7 +376,8 @@ def _init(**kw):
                                          bandid=band_id,
                                          **universal_opts)
                 else:
-                    raise ValueError(f"Product {args.product} not supported yet")
+                    raise NotImplementedError(f"Product {args.product} not "
+                                              "supported yet")
                 out_datasets.append(out_ds)
 
     writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',
