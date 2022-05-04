@@ -81,7 +81,7 @@ def _gainspector(**kw):
             Gs.append(g)
 
     if opts.join_times:
-        Gs = [xr.concat(Gs, dim='gain_t', compat='override')]
+        Gs = [xr.concat(Gs, dim='gain_t')]
 
     for s, G in enumerate(Gs):
         gain = G.gains.sortby('gain_t')
