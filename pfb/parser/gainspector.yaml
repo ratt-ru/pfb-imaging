@@ -47,6 +47,10 @@ inputs:
     dtype: str
     default: ampphase
     info: "reim or ampphase"
+  jhj:
+    dtype: bool
+    default: false
+    info: "Plot jhj if it exists"
 
 
 
