@@ -56,7 +56,8 @@ def gainspector(**kw):
 def _gainspector(**kw):
     opts = OmegaConf.create(kw)
     from omegaconf import ListConfig
-    if not isinstance(opts.gain_dir, list) and not isinstance(opts.gain_dir, ListConfig):
+    if not isinstance(opts.gain_dir, list) and not \
+        isinstance(opts.gain_dir, ListConfig):
         opts.gain_dir = [opts.gain_dir]
     OmegaConf.set_struct(opts, True)
 
@@ -102,7 +103,8 @@ def _gainspector(**kw):
         for c in [0,1]:
             ntot = ntime + nchan
             tlength = int(np.ceil(11 * ntime/ntot))
-            fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*tlength))
+            fig, axs = plt.subplots(nrows=nant, ncols=1,
+                                    figsize=(10, nant*tlength))
             for i, ax in enumerate(axs.ravel()):
                 if i < nant:
                     if opts.mode == 'ampphase':
@@ -135,22 +137,25 @@ def _gainspector(**kw):
                     cax = divider.append_axes("bottom", size="10%", pad=0.01)
                     cb = fig.colorbar(im, cax=cax, orientation="horizontal")
                     cb.outline.set_visible(False)
-                    cb.ax.tick_params(length=0.1, width=0.1, labelsize=10.0, pad=0.1)
+                    cb.ax.tick_params(length=0.1, width=0.1,
+                                      labelsize=10.0, pad=0.1)
                 else:
                     ax.axis('off')
 
             fig.tight_layout()
-
-            plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_abs.png",
+            name = 'real' if opts.mode == 'reim' else 'abs'
+            plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_{name}.png",
                         dpi=100, bbox_inches='tight')
             plt.close()
 
-            fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*tlength))
+            fig, axs = plt.subplots(nrows=nant, ncols=1,
+                                    figsize=(10, nant*tlength))
 
             for i, ax in enumerate(axs.ravel()):
                 if i < nant:
                     if opts.mode == 'ampphase':
-                        g = gain.values[:, :, i, 0, c] * gref[:, :, 0, c].conj()
+                        g = (gain.values[:, :, i, 0, c] *
+                             gref[:, :, 0, c].conj())
                         g = np.unwrap(np.unwrap(np.angle(g), axis=0), axis=1)
                     elif opts.mode == 'reim':
                         g = np.imag(gain.values[:, :, i, 0, c])
@@ -180,18 +185,21 @@ def _gainspector(**kw):
                     cax = divider.append_axes("bottom", size="10%", pad=0.01)
                     cb = fig.colorbar(im, cax=cax, orientation="horizontal")
                     cb.outline.set_visible(False)
-                    cb.ax.tick_params(length=0.5, width=0.5, labelsize=10, pad=0.5)
+                    cb.ax.tick_params(length=0.5, width=0.5,
+                                      labelsize=10, pad=0.5)
                 else:
                     ax.axis('off')
 
             fig.tight_layout()
 
-            plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_phase.png",
+            name = 'imag' if opts.mode == 'reim' else 'phase'
+            plt.savefig(opts.output_filename + f"_corr{c}_scan{s}_{name}.png",
                         dpi=100, bbox_inches='tight')
             plt.close()
             try:
                 jhj = G.jhj.sortby('gain_t')
-                fig, axs = plt.subplots(nrows=nant, ncols=1, figsize=(10, nant*tlength))
+                fig, axs = plt.subplots(nrows=nant, ncols=1,
+                                        figsize=(10, nant*tlength))
                 for i, ax in enumerate(axs.ravel()):
                     if i < nant:
                         g = jhj.values[:, :, i, 0, c]
@@ -209,7 +217,8 @@ def _gainspector(**kw):
                         cax = divider.append_axes("bottom", size="10%", pad=0.01)
                         cb = fig.colorbar(im, cax=cax, orientation="horizontal")
                         cb.outline.set_visible(False)
-                        cb.ax.tick_params(length=0.5, width=0.5, labelsize=10, pad=0.5)
+                        cb.ax.tick_params(length=0.5, width=0.5,
+                                          labelsize=10, pad=0.5)
                     else:
                         ax.axis('off')
 
