@@ -353,6 +353,8 @@ def _grid(**kw):
         writes.append(out_ds)
         freq_out.append(ds.freq_out)
 
+    freq_out = np.unique(np.stack(freq_out))
+
     # dask.visualize(writes, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
     #                filename=f'{basename}_grid_ordered_graph.pdf',
@@ -372,7 +374,6 @@ def _grid(**kw):
                 'ra': xds[0].ra,
                 'dec': xds[0].dec,
                 'cell_rad': cell_rad}
-        freq_out = np.sort(np.stack(freq_out))
         coords = {'freq': freq_out}
         real_type = np.float64 if opts.precision=='double' else np.float32
         model = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
