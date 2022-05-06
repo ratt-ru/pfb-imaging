@@ -416,6 +416,38 @@ def _grid(**kw):
                 save_fits(f'{basename}{opts.postfix}_dirty.fits', dirty, hdr,
                         dtype=np.float32)
 
+        if opts.residual:
+            print("Saving residual as fits", file=log)
+            residual = np.zeros((nband, nx, ny), dtype=np.float32)
+            wsums = np.zeros(nband, dtype=np.float32)
+
+            hdr = set_wcs(cell_size / 3600, cell_size / 3600,
+                          nx, ny, radec, freq_out)
+            hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600,
+                              nx, ny, radec, np.mean(freq_out))
+
+            for ds in xds:
+                b = ds.bandid
+                residual[b] += ds.RESIDUAL.values
+                wsums[b] += ds.WSUM.values
+
+            for b, w in enumerate(wsums):
+                hdr[f'WSUM{b}'] = w
+            wsum = np.sum(wsums)
+            hdr_mfs[f'WSUM'] = wsum
+
+            residual_mfs = np.sum(residual, axis=0, keepdims=True)/wsum
+
+            if opts.fits_mfs:
+                save_fits(f'{basename}{opts.postfix}_residual_mfs.fits',
+                          residual_mfs, hdr_mfs, dtype=np.float32)
+
+            if opts.fits_cubes:
+                fmask = wsums > 0
+                dirty[fmask] /= wsums[fmask, None, None]
+                save_fits(f'{basename}{opts.postfix}_residual.fits', residual,
+                          hdr, dtype=np.float32)
+
         if opts.psf:
             print("Saving PSF as fits", file=log)
             psf = np.zeros((nband, nx_psf, ny_psf), dtype=np.float32)
