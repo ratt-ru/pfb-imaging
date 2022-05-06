@@ -166,8 +166,10 @@ def _backward(**kw):
     # residual after forward iteration can be useful for setting
     # hyper-parameters
     print("Setting up image space data products", file=log)
-    residual, wsum, _, psfhat, mean_beam = setup_image_data(dds, opts, 'FORWARD_RESIDUAL', log=log)
-
+    residual, wsum, _, psfhat, mean_beam = setup_image_data(dds, opts,
+                                                        'FORWARD_RESIDUAL',
+                                                        log=log)
+    have_resid = residual.any()
     # we set the alphas used for reweighting using the
     # current clean residuals when available
     if opts.alpha is None:
@@ -177,8 +179,8 @@ def _backward(**kw):
             for m in range(nbasis):
                 alpha[m] = np.std(resid_comps[:, m])
         else:
-            print("No residual in dds and alpha was not provided, "
-                  "setting alpha to 1e-5.", file=log)
+            print(f"No residual in dds and alpha was not provided, "
+                  f"setting alpha to {alpha[0]}.", file=log)
     else:
         alpha = np.ones(nbasis) * opts.alpha
 

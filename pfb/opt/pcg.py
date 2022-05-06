@@ -74,81 +74,72 @@ def pcg(A,
             print("Success, converged after %i iters" % k, file=log)
     return x
 
-# from pfb.operators.hessian import _hessian_psf_impl as hessian_psf
-# def _pcg_psf_impl(psfhat,
-#                   b,
-#                   x0,
-#                   beam,
-#                   hessopts,
-#                   waveopts,
-#                   tol=1e-5,
-#                   maxit=500,
-#                   minit=100,
-#                   verbosity=1,
-#                   report_freq=10,
-#                   backtrack=True):
-#     '''
-#     A specialised distributed version of pcg when the operator implements
-#     convolution with the psf (+ L2 regularisation by sigma**2)
-#     '''
-#     nband, nbasis, nmax = b.shape
-#     model = np.zeros((nband, nbasis, nmax), dtype=b.dtype)
-#     sigmainvsq = hessopts['sigmainv']**2
-#     # PCG preconditioner
-#     if sigmainvsq > 0:
-#         def M(x): return x / sigmainvsq
-#     else:
-#         M = None
+from pfb.operators.psf import _hessian_reg_psf as hessian_psf
+def _pcg_psf_impl(psfhat,
+                  b,
+                  x0,
+                  beam,
+                  hessopts,
+                  tol=1e-5,
+                  maxit=500,
+                  minit=100,
+                  verbosity=1,
+                  report_freq=10,
+                  backtrack=True):
+    '''
+    A specialised distributed version of pcg when the operator implements
+    convolution with the psf (+ L2 regularisation by sigma**2)
+    '''
+    nband, nbasis, nmax = b.shape
+    model = np.zeros((nband, nbasis, nmax), dtype=b.dtype)
+    sigmainvsq = hessopts['sigmainv']**2
+    # PCG preconditioner
+    if sigmainvsq > 0:
+        def M(x): return x / sigmainvsq
+    else:
+        M = None
 
-#     for k in range(nband):
-#         A = partial(hessian_psf,
-#                     psfhat=psfhat[k],
-#                     beam=beam[k],
-#                     **hessopts,
-#                     **waveopts)
-#         model[k] = pcg(A, b[k], x0[k],
-#                        M=M, tol=tol, maxit=maxit, minit=minit,
-#                        verbosity=verbosity, report_freq=report_freq,
-#                        backtrack=backtrack)
+    for k in range(nband):
+        A = partial(hessian_psf,
+                    psfhat=psfhat[k],
+                    beam=beam[k],
+                    **hessopts)
+        model[k] = pcg(A, b[k], x0[k],
+                       M=M, tol=tol, maxit=maxit, minit=minit,
+                       verbosity=verbosity, report_freq=report_freq,
+                       backtrack=backtrack)
 
-#     return model
+    return model
 
-# def _pcg_psf(psfhat,
-#              b,
-#              x0,
-#              beam,
-#              hessopts,
-#              waveopts,
-#              cgopts):
-#     return _pcg_psf_impl(psfhat[0][0],
-#                          b,
-#                          x0,
-#                          beam[0][0],
-#                          hessopts,
-#                          waveopts,
-#                          **cgopts)
+def _pcg_psf(psfhat,
+             b,
+             x0,
+             beam,
+             hessopts,
+             cgopts):
+    return _pcg_psf_impl(psfhat[0][0],
+                         b,
+                         x0,
+                         beam[0][0],
+                         hessopts,
+                         **cgopts)
 
-# def pcg_psf(psfhat,
-#             b,
-#             x0,
-#             beam,
-#             hessopts,
-#             waveopts,
-#             cgopts):
+def pcg_psf(psfhat,
+            b,
+            x0,
+            beam,
+            hessopts,
+            cgopts):
 
-#     # print(hessopts)
-
-#     # quit()
-#     model = da.blockwise(_pcg_psf, ('nband', 'nbasis', 'nmax'),
-#                          psfhat, ('nband', 'nx_psf', 'ny_psf'),
-#                          b, ('nband', 'nbasis', 'nmax'),
-#                          x0, ('nband', 'nbasis', 'nmax'),
-#                          beam, ('nband', 'nx', 'ny'),
-#                          hessopts, None,
-#                          waveopts, None,
-#                          cgopts, None,
-#                          dtype=b.dtype)
-#     return model
+    model = da.blockwise(_pcg_psf, ('nband', 'nbasis', 'nmax'),
+                         psfhat, ('nband', 'nx_psf', 'ny_psf'),
+                         b, ('nband', 'nbasis', 'nmax'),
+                         x0, ('nband', 'nbasis', 'nmax'),
+                         beam, ('nband', 'nx', 'ny'),
+                         hessopts, None,
+                         cgopts, None,
+                         dtype=b.dtype)
+    return model
 
 
 # from pfb.operators.hessian import _hessian_reg_wgt as hessian_wgt

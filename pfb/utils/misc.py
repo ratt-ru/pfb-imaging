@@ -623,8 +623,11 @@ def setup_image_data(dds, opts, rname, apparent=False, log=None):
         psf = da.stack(psf)/wsum
         psfhat = da.stack(psfhat)/wsum
         mean_beam = da.stack(mean_beam)/wsums[:, None, None]
-        residual, psf, psfhat, mean_beam, wsum = dask.compute(residual, psf, psfhat,
-                                                         mean_beam, wsum)
+        residual, psf, psfhat, mean_beam, wsum = dask.compute(residual,
+                                                              psf,
+                                                              psfhat,
+                                                              mean_beam,
+                                                              wsum)
     else:
         for ds in dds:
             b = ds.bandid

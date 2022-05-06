@@ -150,3 +150,25 @@ def psf_convolve_cube(x, psfhat, beam, psfopts,
         return convim.compute()
     else:
         return convim
+
+
+def _hessian_reg_psf(x, beam, psfhat,
+                     nthreads=None,
+                     sigmainv=None,
+                     pmask=None,
+                     padding=None,
+                     unpad_x=None,
+                     unpad_y=None,
+                     lastsize=None):
+    """
+    Tikhonov regularised Hessian approx
+    """
+
+    xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(0, 1))
+    xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
+                forward=True, inorm=0)
+    xhat = c2r(xhat * psfhat, axes=(0, 1), forward=False,
+                lastsize=lastsize, inorm=2, nthreads=nthreads)
+    im = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
+
+    return beam*im + x * sigmainv**2
