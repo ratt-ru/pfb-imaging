@@ -176,10 +176,10 @@ def _grid(**kw):
             print(f'Removing {dds_name}', file=log)
             import shutil
             shutil.rmtree(dds_name)
-        else:
-            raise RuntimeError(f'Not overwriting {dds_name}, directory exists. '
-                               f'Set overwrite flag or specify a different '
-                               'postfix to create a new data set')
+        # else:
+        #     raise RuntimeError(f'Not overwriting {dds_name}, directory exists. '
+        #                        f'Set overwrite flag or specify a different '
+        #                        'postfix to create a new data set')
 
     print(f'Data products will be stored in {dds_name}.', file=log)
 
