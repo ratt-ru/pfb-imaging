@@ -176,10 +176,10 @@ def _grid(**kw):
             print(f'Removing {dds_name}', file=log)
             import shutil
             shutil.rmtree(dds_name)
-        # else:
-        #     raise RuntimeError(f'Not overwriting {dds_name}, directory exists. '
-        #                        f'Set overwrite flag or specify a different '
-        #                        'postfix to create a new data set')
+        else:
+            raise RuntimeError(f'Not overwriting {dds_name}, directory exists. '
+                               f'Set overwrite flag or specify a different '
+                               'postfix to create a new data set')
 
     print(f'Data products will be stored in {dds_name}.', file=log)
 
@@ -318,13 +318,6 @@ def _grid(**kw):
         dvars['BEAM'] = (('x', 'y'), bvals)
 
         if opts.residual:
-            if not opts.dirty:
-                try:
-                    dirty = ds.DIRTY.data
-                except Exception as e:
-                    raise ValueError("Can't compute residual without dirty. "
-                                     "There is no residual in ds and you "
-                                     "have not asked to compute it. ")
             if model is not None and model.any():
                 from pfb.operators.hessian import hessian
                 hessopts = {
@@ -336,9 +329,11 @@ def _grid(**kw):
                 }
                 # we only want to apply the beam once here
                 residual = dirty - hessian(bvals * model[ds.bandid], uvw, wgt,
-                                           freq, None, hessopts)
+                                           mask, freq, None, hessopts)
                 residual = inlined_array(residual, [uvw, freq])
-                dvars['RESIDUAL'] = (('x', 'y'), residual)
+            else:
+                residual = dirty
+            dvars['RESIDUAL'] = (('x', 'y'), residual)
 
 
         attrs = {
@@ -396,8 +391,11 @@ def _grid(**kw):
             dirty = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband, dtype=np.float32)
 
-            hdr = set_wcs(cell_size / 3600, cell_size / 3600,
-                          nx, ny, radec, freq_out)
+            try:
+                hdr = set_wcs(cell_size / 3600, cell_size / 3600,
+                            nx, ny, radec, freq_out)
+            except:
+                import pdb; pdb.set_trace()
             hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600,
                               nx, ny, radec, np.mean(freq_out))
 

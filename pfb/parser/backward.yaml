@@ -95,7 +95,7 @@ inputs:
     info: "Output fits cubes"
   do_residual:
     dtype: bool
-    default: false
+    default: true
     info: 'Whether to make the residual at the end the forward step'
 
 outputs:
