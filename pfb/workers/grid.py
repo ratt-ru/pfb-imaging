@@ -318,6 +318,13 @@ def _grid(**kw):
         dvars['BEAM'] = (('x', 'y'), bvals)
 
         if opts.residual:
+            if not opts.dirty:
+                try:
+                    dirty = ds.DIRTY.data
+                except Exception as e:
+                    raise ValueError("Can't compute residual without dirty. "
+                                     "There is no residual in ds and you "
+                                     "have not asked to compute it. ")
             if model is not None and model.any():
                 from pfb.operators.hessian import hessian
                 hessopts = {
