@@ -9,45 +9,13 @@ pyscilog.init('pfb')
 log = pyscilog.get_logger('BINTERP')
 
 
-@cli.command()
-@click.option('-image', '--image', required=True,
-              help="Path to model or restored image cube.")
-@click.option('-o', '--output-dir',
-              help='Output directory. Placed next to -image if not provided')
-@click.option('-postfix', '--postfix', default='beam.fits',
-              help="Postfix to append to -image for writing out beams.")
-@click.option('-ms', '--ms',
-               help="Will interpolate beam onto TIME if provided.")
-@click.option('-bm', '--beam-model', default=None, required=True,
-                help="Fits beam model to use. \n"
-                    "It is assumed that the pattern is path_to_beam/"
-                    "name_corr_re/im.fits. \n"
-                    "Provide only the path up to name "
-                    "e.g. /home/user/beams/meerkat_lband. \n"
-                    "Patterns mathing corr are determined "
-                    "automatically. \n"
-                    "Only real and imaginary beam models currently "
-                    "supported.")
-@click.option('-band', "--band", type=str, default='l',
-                help="Band to use with JimBeam. L or UHF")
-@click.option('-st', '--sparsify-time', type=int, default=10,
-              help="Average beam interpolation over this many unique time "
-              "stamps. Only has an effect if MS is provided.")
-@click.option('-otype', '--out-dtype', default='f4', type=str,
-              help="Data type of output. Default is single precision")
-@click.option('-ha', '--host-address',
-              help='Address where the distributed client lives. '
-              'Will use a local cluster if no address is provided')
-@click.option('-nw', '--nworkers', type=int, default=1,
-              help='Number of workers for the client.')
-@click.option('-ntpw', '--nthreads-per-worker', type=int,
-              help='Number of dask threads per worker.')
-@click.option('-nvt', '--nvthreads', type=int,
-              help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
-@click.option('-mem', '--mem-limit', type=int,
-              help="Memory limit in GB. Default uses all available memory")
-@click.option('-nthreads', '--nthreads', type=int,
-              help="Total available threads. Default uses all available threads")
+# create default parameters from schema
+defaults = {}
+for key in schema.binterp["inputs"].keys():
+    defaults[key] = schema.binterp["inputs"][key]["default"]
+
+@cli.command(context_settings={'show_default': True})
+@clickify_parameters(schema.binterp)
 def binterp(**kw):
     """
     Beam interpolator

@@ -81,6 +81,7 @@ def _grid(**kw):
     import os
     import numpy as np
     import dask
+    dask.config.set(**{'array.slicing.split_large_chunks': False})
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
     import dask.array as da
     from africanus.constants import c as lightspeed
@@ -108,7 +109,7 @@ def _grid(**kw):
     if opts.robustness is not None:
         columns += (opts.imaging_weight_column,)
 
-    xds = xds_from_zarr(xds_name, chunks={'row':opts.row_chunk},
+    xds = xds_from_zarr(xds_name, chunks={'row': -1},
                         columns=columns)
 
     # get max uv coords over all datasets
@@ -298,12 +299,12 @@ def _grid(**kw):
         if opts.weight:
             # TODO - BDA
             # combine weights
-            wgt = wgt.rechunk({0:100000, 1:-1})
+            wgt = wgt.rechunk({0:opts.row_chunk, 1:-1})
             dvars['WEIGHT'] = (('row', 'chan'), wgt)
 
         dvars['FREQ'] = (('chan',), freq)
-        dvars['UVW'] = (('row', 'three'), uvw.rechunk({0:100000, 1:-1}))
-        mask = mask.rechunk({0:100000, 1:-1})
+        dvars['UVW'] = (('row', 'three'), uvw.rechunk({0:opts.row_chunk, 1:-1}))
+        mask = mask.rechunk({0:opts.row_chunk, 1:-1})
         dvars['MASK'] = (('row', 'chan'), mask)
         wsum = wgt[mask.astype(bool)].sum()
         dvars['WSUM'] = (('scalar',), da.atleast_1d(wsum))

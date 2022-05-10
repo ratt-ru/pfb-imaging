@@ -106,6 +106,7 @@ def _init(**kw):
     import numpy as np
     from pfb.utils.misc import chan_to_band_mapping
     import dask
+    dask.config.set(**{'array.slicing.split_large_chunks': False})
     from dask.graph_manipulation import clone
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table

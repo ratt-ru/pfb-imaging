@@ -65,3 +65,9 @@ cabs:
 
     _include:
       - (pfb.parser)hthresh.yaml
+
+  'pfb.bsmooth':
+    command: (pfb.workers.misc.bsmooth)bsmooth
+
+    _include:
+      - (pfb.parser)bsmooth.yaml

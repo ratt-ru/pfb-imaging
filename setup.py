@@ -55,6 +55,7 @@ setup(
      long_description_content_type="text/markdown",
      url="https://github.com/ratt-ru/pfb-clean",
      packages=find_packages(),
+     python_requires='>=3.7',
      install_requires=requirements,
      classifiers=[
          "Programming Language :: Python :: 3",

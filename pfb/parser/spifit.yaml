@@ -1,0 +1,82 @@
+inputs:
+  image:
+    dtype: str
+    required: true
+    info: 'Path to model/restored images (needs to be in quotes if wildcard)'
+  residual:
+    dtype: str
+    info: 'Path to residuals (needs to be in quotes if wildcard)'
+  output_filename:
+    dtype: str
+    required: true
+    info: 'Basename of output'
+    metavar: BASENAME
+    abbreviation: o
+  psf_pars:
+    dtype: str
+    info: 'Comma seperated Gaussian parameters corresponding \
+           to the desired resolution'
+  circ_psf:
+    dtype: bool
+    default: false
+    info: 'Circularise convolution kernel. '
+  threshold:
+    dtype: float
+    default: 10
+    info: 'Multiple of the RMS in the residual to threshold. \
+           Only components above threshold*RMS will be fit. '
+  maxdr:
+    dtype: float
+    default: 1000
+    info: "Maximum dynamic range used to determine the \
+           threshold above which components need to be fit. \
+           Only used if residual is not passed in."
+  band_weights:
+    dtype: str
+    info: 'Comma separated list of band weights'
+  pb_min:
+    dtype: float
+    default: 0.15
+    info: 'Primary beam cut-off'
+  products:
+    dtype: str
+    default: 'aeikIcmrbd'
+    info: "Outputs to write. Letter correspond to: \
+           a - alpha map \
+           e - alpha error map \
+           i - I0 map \
+           k - I0 error map \
+           I - reconstructed cube form alpha and I0 \
+           c - restoring beam used for convolution \
+           m - convolved model \
+           r - convolved residual \
+           b - average primary beam image \
+           d - difference image \
+           Default is to write all of them"
+  padding_frac:
+    dtype: float
+    default: 0.5
+    info: "Padding factor for FFT's."
+  dont_convolve:
+    dtype: bool
+    default: false
+    info: "Don't convolve to uniform resolution"
+  ref_freq:
+    dtype: float
+    info: "Reference frequency"
+  out_dtype:
+    dtype: str
+    default: f4
+    info: "Output data type (as 'f4' or 'f8'). "
+  add_convolved_residuals:
+    dtype: bool
+    default: true
+    info: 'Add in convolved residuals before fitting spi'
+  beam_model:
+    dtype: str
+    info: 'Average fits beam pattern. '
+  _include:
+    (pfb.parser)dist.yml
+
+outputs:
+  {}

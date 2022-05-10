@@ -7,78 +7,23 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('SPIFIT')
 
-@cli.command()
-@click.option('-image', '--image', required=True,
-              help="Path to model or restored image cube.")
-@click.option('-resid', "--residual", required=False,
-              help="Path to residual image cube.")
-@click.option('-o', '--output-filename', required=True,
-              help="Path to output directory + prefix.")
-@click.option('-pp', '--psf-pars', nargs=3, type=float,
-              help="Beam parameters matching FWHM of restoring beam "
-                   "specified as emaj emin pa."
-                   "By default these are taken from the fits header "
-                   "of the residual image.")
-@click.option('--circ-psf/--no-circ-psf', default=False)
-@click.option('-th', '--threshold', default=10, type=float, show_default=True,
-              help="Multiple of the rms in the residual to threshold on."
-                   "Only components above threshold*rms will be fit.")
-@click.option('-maxdr', '--maxdr', default=100, type=float, show_default=True,
-              help="Maximum dynamic range used to determine the "
-                   "threshold above which components need to be fit. "
-                   "Only used if residual is not passed in.")
-@click.option('-bw', '--band-weights', type=float,
-              help="Per bands weights to use during the fit")
-@click.option('-pb-min', '--pb-min', type=float, default=0.15,
-              help="Set image to zero where pb falls below this value")
-@click.option('-products', '--products', default='aeikIcmrbd', type=str,
-              help="Outputs to write. Letter correspond to: \n"
-              "a - alpha map \n"
-              "e - alpha error map \n"
-              "i - I0 map \n"
-              "k - I0 error map \n"
-              "I - reconstructed cube form alpha and I0 \n"
-              "c - restoring beam used for convolution \n"
-              "m - convolved model \n"
-              "r - convolved residual \n"
-              "b - average primary beam image \n"
-              "d - difference image \n"
-              "Default is to write all of them")
-@click.option('-pf', "--padding-frac", default=0.5, type=float,
-              show_default=True, help="Padding factor for FFT's.")
-@click.option('-dc', "--dont-convolve", is_flag=True,
-              help="Do not convolve by the clean beam before fitting")
-@click.option('-rf', '--ref-freq', type=float,
-              help='Reference frequency where the I0 map is sought. '
-              "Will overwrite in fits headers of output.")
-@click.option('-otype', '--out-dtype', default='f4', type=str,
-              help="Data type of output. Default is single precision")
-@click.option('-acr', '--add-convolved-residuals', is_flag=True,
-              help='Flag to add in the convolved residuals before '
-              'fitting components')
-@click.option('-bm', '--beam-model', default=None,
-              help="Fits power beam model. It is assumed that the beam "
-              "match the fits headers of --image. You can use the binterp "
-              "worker to create compatible beam models")
-@click.option('-ha', '--host-address',
-              help='Address where the distributed client lives. '
-              'Will use a local cluster if no address is provided')
-@click.option('-nw', '--nworkers', type=int, default=1,
-              help='Number of workers for the client.')
-@click.option('-ntpw', '--nthreads-per-worker', type=int,
-              help='Number of dask threads per worker.')
-@click.option('-nvt', '--nvthreads', type=int,
-              help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
-@click.option('-mem', '--mem-limit', type=int,
-              help="Memory limit in GB. Default uses all available memory")
-@click.option('-nthreads', '--nthreads', type=int,
-              help="Total available threads. Default uses all available threads")
+from scabha.schema_utils import clickify_parameters
+from pfb.parser.schemas import schema
+
+# create default parameters from schema
+defaults = {}
+for key in schema.spifit["inputs"].keys():
+    defaults[key] = schema.spifit["inputs"][key]["default"]
+
+@cli.command(context_settings={'show_default': True})
+@clickify_parameters(schema.spifit)
 def spifit(**kw):
     """
     Spectral index fitter
 
     """
-    opts = OmegaConf.create(kw)
+    defaults.update(kw)
+    opts = OmegaConf.create(defaults)
     pyscilog.log_to_file(opts.output_filename + '.log')
     from glob import glob
     from omegaconf import ListConfig

@@ -45,7 +45,7 @@ inputs:
     dtype: int
     info: 'Number of rows in a chunk in output dataset'
     abbreviation: roc
-    default: -1
+    default: 10000
   fits_mfs:
     dtype: bool
     default: true
