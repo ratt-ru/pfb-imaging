@@ -8,6 +8,8 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('BINTERP')
 
+from scabha.schema_utils import clickify_parameters
+from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}

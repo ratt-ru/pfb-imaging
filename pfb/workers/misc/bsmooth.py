@@ -55,33 +55,37 @@ def _bsmooth(**kw):
     if ntime > 1:
         raise ValueError("Bandpass can't have ntime > 1")
 
-    bpass = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.complex128)
+    bamp = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
+    bphase = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
     wgt = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
     for ds in xds:
-        jhj = ds.jhj.values.real
+        jhj = np.abs(ds.jhj.values)
         g = ds.gains.values
         f = ds.gain_flags.values
         flag = np.any(jhj == 0, axis=-1)
-        flag = np.logical_or(flag, f)
+        flag = np.logical_or(flag, f)[:, :, :, :, None]
 
-        for c in range(ncorr):
-            g[:, :, :, :, c] = np.nan
-            jhj[:, :, :, :, c] = np.nan
-        bpass += g*jhj
+        # for c in range(ncorr):
+        #     jhj[flag, c] = 0.0
+        bamp += np.abs(g)*jhj
+        bphase += np.angle(g)*jhj
         wgt += jhj
 
-    bpass = np.where(wgt > 0, bpass/wgt, np.nan)
-    bpass = da.from_array(bpass, chunks=(-1, -1, -1, -1, -1))
-    xdsw = []
-    for ds in xds:
-        xdsw.append(ds.assign(**{'gains': (ds.GAIN_AXES, bpass)}))
+    # import pdb; pdb.set_trace()
+    bamp = np.where(wgt > 0, bamp/wgt, np.nan)
+    bphase = np.where(wgt > 0, bphase/wgt, np.nan)
+    bpass = bamp * np.exp(1.0j*bphase)
+    # bpass = da.from_array(bpass, chunks=(-1, -1, -1, -1, -1))
+    # xdsw = []
+    # for ds in xds:
+    #     xdsw.append(ds.assign(**{'gains': (ds.GAIN_AXES, bpass)}))
 
     ppath = gain_dir.parent
-    dask.compute(xds_to_zarr(xdsw, f'{str(ppath)}/smoothed.qc::{opts.gain_term}',
-                             columns='ALL'))
+    # dask.compute(xds_to_zarr(xdsw, f'{str(ppath)}/smoothed.qc::{opts.gain_term}',
+    #                          columns='ALL'))
 
     freq = xds[0].gain_f
-    bpass = bpass.compute()
+    # bpass = bpass.compute()
     for p in range(nant):
         for c in range(ncorr):
             fig, ax = plt.subplots(nrows=1, ncols=2,
@@ -91,7 +95,8 @@ def _bsmooth(**kw):
             phase = np.angle(bpass[0, :, p, 0, c])
             phase = np.where(phase < -np.pi, phase + 2*np.pi, phase)
             phase = np.where(phase > np.pi, phase - 2*np.pi, phase)
-            phase[~np.isnan(phase)] = np.unwrap(phase[~np.isnan(phase)])
+            #phase[~np.isnan(phase)] = np.unwrap(phase[~np.isnan(phase)])
+
 
             for s, ds in enumerate(xds):
                 jhj = ds.jhj.values.real[0, :, p, 0, c]
@@ -102,22 +107,22 @@ def _bsmooth(**kw):
                 tphase = np.where(tphase < -np.pi, tphase + 2*np.pi, tphase)
                 tphase = np.where(tphase > np.pi, tphase - 2*np.pi, tphase)
 
-                tphase[~np.isnan(tphase)] = np.unwrap(tphase[~np.isnan(tphase)])
+                # tphase[~np.isnan(tphase)] = np.unwrap(tphase[~np.isnan(tphase)])
                 tamp[flag] = np.nan
                 tphase[flag] = np.nan
 
-                ax[0].plot(freq, tamp, 'b', alpha=0.15)
-                ax[1].plot(freq, tphase, 'b', alpha=0.15)
+                ax[0].plot(freq, tamp, 'b', alpha=0.15, linewidth=2)
+                ax[1].plot(freq, tphase, 'b', alpha=0.15, linewidth=2)
 
-            ax[0].plot(freq, amp, 'k')
+            ax[0].plot(freq, amp, 'k', linewidth=1)
             ax[0].set_xlabel('freq / [MHz]')
 
-            ax[1].plot(freq, phase, 'k')
+            ax[1].plot(freq, phase, 'k', linewidth=1)
             ax[1].set_xlabel('freq / [MHz]')
 
         fig.tight_layout()
-        name = f'{str(ppath)}/Antenna{p}corr{c}.png'
+        name = f'{str(ppath)}/Antenna{p}corr{c}{opts.postfix}.png'
         plt.savefig(name, dpi=500, bbox_inches='tight')
-        plt.close()
+        plt.close('all')
 
 
