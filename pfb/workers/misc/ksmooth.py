@@ -52,6 +52,7 @@ def _ksmooth(**kw):
 
     nscan = len(xds)
     ntime, nchan, nant, ndir, ncorr = xds[0].gains.data.shape
+    import pdb; pdb.set_trace()
     if nchan > 1:
         raise ValueError("nchan can't be > 1")
 

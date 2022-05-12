@@ -723,3 +723,51 @@ def array2qcal_ds(gobj_amp, gobj_phase, time, freq, ant_names, fid, ddid, sid, f
     }
     from daskms import Dataset
     return Dataset(data_vars, coords=coords, attrs=attrs)
+
+
+# not currently chunking over time
+def accum_vis(data, flag, ant1, ant2,
+              tbin_idx, tbin_cnts, ref_ant=-1):
+    return da.blockwise(accum_vis, 'afc',
+                        data, 'rfc',
+                        FLAG.data, 'rfc',
+                        freq, 'f',
+                        ant1, 'r',
+                        ant2, 'r',
+                        tbin_idx, 't',
+                        tbin_counts, 't',
+                        new_axes={'a':nant},
+                        dtype=np.complex128)
+
+
+def _accum_vis(data, flag, ant1, ant2,
+               tbin_idx, tbin_cnts, ref_ant=-1):
+    return _accum_vis_impl(data[0], flag[0], ant1[0], ant2[0],
+                           tbin_idx[0], tbin_cnts[0], ref_ant)
+
+def _accum_vis_impl(data, flag, ant1, ant2,
+                    tbin_idx, tbin_cnts, ref_ant=-1):
+    # we can zero flagged data because they won't contribute to the FT
+    data[flag] = 0j
+
+    ntime = tbin_idx.size
+    nrow, nchan, ncorr = data.shape
+    nant = np.maximum(ant1.max(), ant2.max()) + 1
+    if ref_ant == -1:
+        ref_ant = nant-1
+    ncorr = data.shape[-1]
+    vis = np.zeros((nant, nchan, ncorr), dtype=np.complex128)
+    counts = np.zeros((nant, nchan, ncorr), dtype=np.float64)
+    for t in range(ntime):
+        for row in range(tbin_idx[t],
+                         tbin_idx[t] + tbin_cnts[t]):
+            p = int(ant1[row])
+            if p != ref_ant:
+                continue
+            q = int(ant2[row])
+            for nu in range(nchan):
+                for c in range(ncorr):
+                    vis[q, nu, c] += data[row, nu, c].astype(np.complex128)
+                    counts[q, nu, c] += np.int(flag[row, nu, c])
+
+    return np.where(counts, vis/counts, 0j)

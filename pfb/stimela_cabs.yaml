@@ -71,3 +71,15 @@ cabs:
 
     _include:
       - (pfb.parser)bsmooth.yaml
+
+  'pfb.ksmooth':
+    command: (pfb.workers.misc.ksmooth)ksmooth
+
+    _include:
+      - (pfb.parser)ksmooth.yaml
+
+  'pfb.delay_init':
+    command: (pfb.workers.misc.delay_init)delay_init
+
+    _include:
+      - (pfb.parser)delay_init.yaml
