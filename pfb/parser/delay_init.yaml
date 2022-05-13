@@ -14,7 +14,7 @@ inputs:
     dtype: str
   min_delay:
     dtype: float
-    default: 1e-11
+    default: 1e-12
     info: 'Min value of delay. Used to set freq padding'
   ref_ant:
     dtype: int

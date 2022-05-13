@@ -764,15 +764,13 @@ def _accum_vis_impl(data, flag, ant1, ant2,
                          tbin_idx[t] + tbin_counts[t]):
             p = int(ant1[row])
             q = int(ant2[row])
-            if q != ref_ant:
-                continue
-            vis[p] += data[row].astype(np.complex128)
-            counts[p] += flag[row].astype(np.float64)
-
-            # for nu in range(nchan):
-            #     for c in range(ncorr):
-            #         vis[p, nu, c] += np.complex128(data[row, nu, c])
-            #         counts[p, nu, c] += np.int(flag[row, nu, c])
+            if p == ref_ant or q == ref_ant:
+                if p < q:
+                    vis[p] += data[row].astype(np.complex128)
+                    counts[p] += flag[row].astype(np.float64)
+                else:
+                    vis[p] += data[row].astype(np.complex128).conj()
+                    counts[p] += flag[row].astype(np.float64).conj()
     valid = counts > 0
     vis[valid] = vis[valid]/counts[valid]
     return vis
