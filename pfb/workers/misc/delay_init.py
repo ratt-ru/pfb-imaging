@@ -22,7 +22,7 @@ def delay_init(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'bsmooth.log')
+    pyscilog.log_to_file(f'delay_init.log')
     OmegaConf.set_struct(opts, True)
 
     # TODO - prettier config printing
@@ -40,54 +40,97 @@ def _delay_init(**kw):
     import dask
     import dask.array as da
     from daskms import xds_from_ms, xds_from_table
+    from daskms.experimental.zarr import xds_to_zarr
     from ducc0.fft import c2c, good_size
     from africanus.calibration.utils import chunkify_rows
-    from pfb.utils.misc import accum_vis
-    xds = xds_from_ms(opts.ms, group_cols=['SCAN_NUMBER'],
+    from pfb.utils.misc import accum_vis, estimate_delay
+    import matplotlib.pyplot as plt
+    from daskms import Dataset
+    from pathlib import Path
+
+    ms_path = Path(opts.ms).resolve()
+    ms_name = str(ms_path)
+    xds = xds_from_ms(ms_name,
+                      group_cols=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'],
                       chunks={'row': -1, 'chan': -1, 'corr': 1})
+    ant_names = xds_from_table(f'{ms_name}::ANTENNA')[0].NAME.values
+    # pad frequency to get sufficient resolution in delay space
+    spws = dask.compute(xds_from_table(f'{ms_name}::SPECTRAL_WINDOW'))[0]
+    fields = dask.compute(xds_from_table(f'{ms_name}::FIELD'))[0]
+
     ant1 = xds[0].ANTENNA1.values
     ant2 = xds[0].ANTENNA2.values
     nant = np.maximum(ant1.max(), ant2.max()) + 1
-    spw = xds_from_table(f'{opts.ms}::SPECTRAL_WINDOW')[0]
-    freq = spw.CHAN_FREQ.data
-    vis_ants = []
+    out_ds = []
     for ds in xds:
-        rchunks, tbin_idx, tbin_cnts = chunkify_rows(ds.TIME.values, -1)
-        utime = ds.TIME.values[tbin_idx]
+        fid = ds.FIELD_ID
+        ddid = ds.DATA_DESC_ID
+        sid = ds.SCAN_NUMBER
+        fname = fields[fid].NAME.values[0]
+
+        # only diagonal correlations
+        if ds.corr.size > 1:
+            ds = ds.sel(corr=[0, -1])
+            ncorr = 2
+        else:
+            ncorr = 1
+        rchunks, tbin_idx, tbin_counts = chunkify_rows(ds.TIME.values, -1)
         vis_ant = accum_vis(ds.DATA.data, ds.FLAG.data,
                             ds.ANTENNA1.data, ds.ANTENNA2.data,
-                            tbin_idx, tbin_cnts)
+                            tbin_idx, tbin_counts, nant,
+                            ref_ant=opts.ref_ant)
 
-        vis_ants.append(vis_ant)
+        vis_ant.rechunk({1:8})
 
-    vis_ants = dask.compute(vis_ants)
+        freq = spws[ddid].CHAN_FREQ.data[0]
+        delays = estimate_delay(vis_ant, freq, opts.min_delay)
 
-    # pad frequency to get sufficient resolution in delay space
-    delta_freq = 1.0/opts.min_delay
-    fmax = freq.min() + 1/delta_freq
-    fexcess = fmax - freq.max()
-    freq_cell = freq[1]-freq[0]
-    if fexcess > 0:
-        npad = np.int(np.ceil(fexcess/freq_cell))
-        npix = (nchan + npad)
-    else:
-        npix = nchan
-    while npix%2:
-        npix = good_size(npix+1)
-    npad = npix - nchan
-    fft_freq = np.fft.fftfreq(npix, freq_cell)
-    fft_freq = np.fft.fftshift(fft_freq)
-    delays = np.zeros((nant, ncorr), dtype=np.float64)
-    import matplotlib.pyplot as plt
-    for vis_ant in vis_ants:
-        vis = np.pad(vis_ant, (0, npad, 0),
-                     mode='constant')
-        pspecs = np.abs(c2c(vis, axes=1, nthreads=opts.nthreads))
-        for p in range(nant):
-            for c in range(ncorr):
-                plt.plot(fft_freq, pspecs)
-                plt.show()
-                plt.close('all')
-                delay_idx = np.argmax(pspecs[p, :, c])
-                delay = fft_freq[delay_idx]
-                print(delay)
+        utime = ds.TIME.data[tbin_idx]
+        ntime = utime.size
+        nchan = freq.size
+        ndir = 1
+        gain = da.exp(1.0j * freq[:, None, None, None] * delays[None, :, None, :])
+        gain = da.tile(gain[None, :, :, :, :], (ntime, 1, 1, 1, 1))
+        gain = da.rechunk(gain, (-1, -1, -1, -1, -1))
+        gflags = da.zeros((ntime, nchan, nant, ndir), chunks=(-1, -1, -1, -1), dtype=np.int8)
+        data_vars = {
+            'gains':(('gain_t', 'gain_f', 'ant', 'dir', 'corr'), gain),
+            'gain_flags':(('gain_t', 'gain_f', 'ant', 'dir'), gflags)
+        }
+        from collections import namedtuple
+        gain_spec_tup = namedtuple('gains_spec_tup', 'tchunk fchunk achunk dchunk cchunk')
+        attrs = {
+            'DATA_DESC_ID': int(ddid),
+            'FIELD_ID': int(fid),
+            'FIELD_NAME': fname,
+            'GAIN_AXES': ('gain_t', 'gain_f', 'ant', 'dir', 'corr'),
+            'GAIN_SPEC': gain_spec_tup(tchunk=(int(ntime),),
+                                        fchunk=(int(nchan),),
+                                        achunk=(int(nant),),
+                                        dchunk=(int(1),),
+                                        cchunk=(int(ncorr),)),
+            'NAME': 'NET',
+            'SCAN_NUMBER': int(sid),
+            'TYPE': 'complex'
+        }
+        if ncorr==1:
+            corrs = np.array(['XX'], dtype=object)
+        elif ncorr==2:
+            corrs = np.array(['XX', 'YY'], dtype=object)
+        coords = {
+            'gain_f': (('gain_f',), freq),
+            'gain_t': (('gain_t',), utime),
+            'ant': (('ant'), ant_names),
+            'corr': (('corr'), corrs),
+            'dir': (('dir'), np.array([0], dtype=np.int32)),
+            'f_chunk': (('f_chunk'), np.array([0], dtype=np.int32)),
+            't_chunk': (('t_chunk'), np.array([0], dtype=np.int32))
+        }
+
+        out_ds.append(Dataset(data_vars, coords=coords, attrs=attrs))
+
+    out_path = Path(f'{opts.gain_dir}::{opts.gain_term}').resolve()
+    out_name = str(out_path)
+    writes = xds_to_zarr(out_ds, out_path, columns='ALL')
+    dask.compute(writes)
+

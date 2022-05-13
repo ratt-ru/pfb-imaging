@@ -6,7 +6,7 @@ import dask
 import dask.array as da
 from dask.distributed import performance_report
 from dask.diagnostics import ProgressBar
-from ducc0.fft import r2c, c2r
+from ducc0.fft import r2c, c2r, good_size
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 from numba.core.extending import SentryLiteralArgs
@@ -727,28 +727,29 @@ def array2qcal_ds(gobj_amp, gobj_phase, time, freq, ant_names, fid, ddid, sid, f
 
 # not currently chunking over time
 def accum_vis(data, flag, ant1, ant2,
-              tbin_idx, tbin_cnts, ref_ant=-1):
-    return da.blockwise(accum_vis, 'afc',
+              tbin_idx, tbin_counts, nant, ref_ant=-1):
+    return da.blockwise(_accum_vis, 'afc',
                         data, 'rfc',
-                        FLAG.data, 'rfc',
-                        freq, 'f',
+                        flag, 'rfc',
                         ant1, 'r',
                         ant2, 'r',
                         tbin_idx, 't',
                         tbin_counts, 't',
+                        ref_ant, None,
                         new_axes={'a':nant},
                         dtype=np.complex128)
 
 
 def _accum_vis(data, flag, ant1, ant2,
-               tbin_idx, tbin_cnts, ref_ant=-1):
+               tbin_idx, tbin_counts, ref_ant):
     return _accum_vis_impl(data[0], flag[0], ant1[0], ant2[0],
-                           tbin_idx[0], tbin_cnts[0], ref_ant)
+                           tbin_idx[0], tbin_counts[0], ref_ant)
 
+# @jit(nopython=True, fastmath=True, parallel=False, cache=True, nogil=True)
 def _accum_vis_impl(data, flag, ant1, ant2,
-                    tbin_idx, tbin_cnts, ref_ant=-1):
+                    tbin_idx, tbin_counts, ref_ant):
     # we can zero flagged data because they won't contribute to the FT
-    data[flag] = 0j
+    data = np.where(flag, 0j, data)
 
     ntime = tbin_idx.size
     nrow, nchan, ncorr = data.shape
@@ -760,14 +761,64 @@ def _accum_vis_impl(data, flag, ant1, ant2,
     counts = np.zeros((nant, nchan, ncorr), dtype=np.float64)
     for t in range(ntime):
         for row in range(tbin_idx[t],
-                         tbin_idx[t] + tbin_cnts[t]):
+                         tbin_idx[t] + tbin_counts[t]):
             p = int(ant1[row])
-            if p != ref_ant:
-                continue
             q = int(ant2[row])
-            for nu in range(nchan):
-                for c in range(ncorr):
-                    vis[q, nu, c] += data[row, nu, c].astype(np.complex128)
-                    counts[q, nu, c] += np.int(flag[row, nu, c])
+            if q != ref_ant:
+                continue
+            vis[p] += data[row].astype(np.complex128)
+            counts[p] += flag[row].astype(np.float64)
 
-    return np.where(counts, vis/counts, 0j)
+            # for nu in range(nchan):
+            #     for c in range(ncorr):
+            #         vis[p, nu, c] += np.complex128(data[row, nu, c])
+            #         counts[p, nu, c] += np.int(flag[row, nu, c])
+    valid = counts > 0
+    vis[valid] = vis[valid]/counts[valid]
+    return vis
+
+def estimate_delay(vis_ant, freq, min_delay):
+    return da.blockwise(
+        _estimate_delay, 'ac',
+        vis_ant, 'afc',
+        freq, 'f',
+        min_delay, None,
+        dtype=np.float64
+    )
+
+def _estimate_delay(vis_ant, freq, min_delay):
+    return _estimate_delay_impl(vis_ant[0], freq[0], min_delay)
+
+def _estimate_delay_impl(vis_ant, freq, min_delay):
+    delta_freq = 1.0/min_delay
+    nchan = freq.size
+    fmax = freq.min() + delta_freq
+    fexcess = fmax - freq.max()
+    freq_cell = freq[1]-freq[0]
+    if fexcess > 0:
+        npad = np.int(np.ceil(fexcess/freq_cell))
+        npix = (nchan + npad)
+    else:
+        npix = nchan
+    while npix%2:
+        npix = good_size(npix+1)
+    npad = npix - nchan
+    lag = np.fft.fftfreq(npix, freq_cell)
+    lag = Fs(lag)
+    dlag = lag[1] - lag[0]
+    nant, _, ncorr = vis_ant.shape
+    delays = np.zeros((nant, ncorr), dtype=np.float64)
+    for p in range(nant):
+        for c in range(ncorr):
+            vis_fft = np.fft.fft(vis_ant[p, :, c], npix)
+            pspec = np.abs(Fs(vis_fft))
+            if not pspec.any():
+                continue
+            delay_idx = np.argmax(pspec)
+            # fm1 = lag[delay_idx-1]
+            # f0 = lag[delay_idx]
+            # fp1 = lag[delay_idx+1]
+            # delays[p,c] = 0.5*dlag*(fp1 - fm1)/(fm1 - 2*f0 + fp1)
+            print(lag[delay_idx])
+            delays[p,c] = lag[delay_idx]
+    return delays

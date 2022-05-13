@@ -16,7 +16,13 @@ inputs:
     dtype: float
     default: 1e-11
     info: 'Min value of delay. Used to set freq padding'
-
+  ref_ant:
+    dtype: int
+    default: -1
+    info: 'Reference antenna'
+  nthreads:
+    dtype: int
+    default: 8
 
 outputs:
   {}
