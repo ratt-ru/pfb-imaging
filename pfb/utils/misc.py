@@ -764,13 +764,12 @@ def _accum_vis_impl(data, flag, ant1, ant2,
                          tbin_idx[t] + tbin_counts[t]):
             p = int(ant1[row])
             q = int(ant2[row])
-            if p == ref_ant or q == ref_ant:
-                if p < q:
-                    vis[p] += data[row].astype(np.complex128)
-                    counts[p] += flag[row].astype(np.float64)
-                else:
-                    vis[p] += data[row].astype(np.complex128).conj()
-                    counts[p] += flag[row].astype(np.float64).conj()
+            if p == ref_ant:
+                vis[q] += data[row].astype(np.complex128)
+                counts[q] += flag[row].astype(np.float64)
+            elif q == ref_ant:
+                vis[p] += data[row].astype(np.complex128).conj()
+                counts[p] += flag[row].astype(np.float64).conj()
     valid = counts > 0
     vis[valid] = vis[valid]/counts[valid]
     return vis
@@ -817,6 +816,6 @@ def _estimate_delay_impl(vis_ant, freq, min_delay):
             # f0 = lag[delay_idx]
             # fp1 = lag[delay_idx+1]
             # delays[p,c] = 0.5*dlag*(fp1 - fm1)/(fm1 - 2*f0 + fp1)
-            print(lag[delay_idx])
+            print(p, lag[delay_idx])
             delays[p,c] = lag[delay_idx]
     return delays
