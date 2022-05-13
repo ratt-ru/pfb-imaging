@@ -89,7 +89,7 @@ def _delay_init(**kw):
         ntime = utime.size
         nchan = freq.size
         ndir = 1
-        gain = da.exp(1.0j * freq[:, None, None, None] * delays[None, :, None, :])
+        gain = da.exp(2.0j * np.pi * freq[:, None, None, None] * delays[None, :, None, :])
         gain = da.tile(gain[None, :, :, :, :], (ntime, 1, 1, 1, 1))
         gain = da.rechunk(gain, (-1, -1, -1, -1, -1))
         gflags = da.zeros((ntime, nchan, nant, ndir), chunks=(-1, -1, -1, -1), dtype=np.int8)

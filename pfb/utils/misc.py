@@ -775,13 +775,12 @@ def _accum_vis_impl(data, flag, ant1, ant2,
     return vis
 
 def estimate_delay(vis_ant, freq, min_delay):
-    return da.blockwise(
-        _estimate_delay, 'ac',
-        vis_ant, 'afc',
-        freq, 'f',
-        min_delay, None,
-        dtype=np.float64
-    )
+    return da.blockwise(_estimate_delay, 'ac',
+                        vis_ant, 'afc',
+                        freq, 'f',
+                        min_delay, None,
+                        dtype=np.float64)
+
 
 def _estimate_delay(vis_ant, freq, min_delay):
     return _estimate_delay_impl(vis_ant[0], freq[0], min_delay)
