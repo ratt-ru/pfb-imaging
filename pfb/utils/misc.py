@@ -816,6 +816,6 @@ def _estimate_delay_impl(vis_ant, freq, min_delay):
             # f0 = lag[delay_idx]
             # fp1 = lag[delay_idx+1]
             # delays[p,c] = 0.5*dlag*(fp1 - fm1)/(fm1 - 2*f0 + fp1)
-            print(p, lag[delay_idx])
-            delays[p,c] = lag[delay_idx]
+            print(p, c, -lag[delay_idx])
+            delays[p,c] = -lag[delay_idx]
     return delays
