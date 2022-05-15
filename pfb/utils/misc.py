@@ -746,12 +746,16 @@ def _accum_vis(data, flag, ant1, ant2,
                            tbin_idx[0], tbin_counts[0], ref_ant)
 
 # @jit(nopython=True, fastmath=True, parallel=False, cache=True, nogil=True)
-def _accum_vis_impl(data, flag, ant1, ant2,
-                    tbin_idx, tbin_counts, ref_ant):
+def _accum_vis_impl(data, flag, ant1, ant2, ref_ant):
+    # select out reference antenna
+    I = np.where((ant1==ref_ant) | (ant2==ref_ant))[0]
+    data = data[I]
+    flag = flag[I]
+    ant1 = ant1[I]
+    ant2 = ant2[I]
+
     # we can zero flagged data because they won't contribute to the FT
     data = np.where(flag, 0j, data)
-
-    ntime = tbin_idx.size
     nrow, nchan, ncorr = data.shape
     nant = np.maximum(ant1.max(), ant2.max()) + 1
     if ref_ant == -1:
@@ -759,17 +763,15 @@ def _accum_vis_impl(data, flag, ant1, ant2,
     ncorr = data.shape[-1]
     vis = np.zeros((nant, nchan, ncorr), dtype=np.complex128)
     counts = np.zeros((nant, nchan, ncorr), dtype=np.float64)
-    for t in range(ntime):
-        for row in range(tbin_idx[t],
-                         tbin_idx[t] + tbin_counts[t]):
-            p = int(ant1[row])
-            q = int(ant2[row])
-            if p == ref_ant:
-                vis[q] += data[row].astype(np.complex128)
-                counts[q] += flag[row].astype(np.float64)
-            elif q == ref_ant:
-                vis[p] += data[row].astype(np.complex128).conj()
-                counts[p] += flag[row].astype(np.float64).conj()
+    for row in range(nrow):
+        p = int(ant1[row])
+        q = int(ant2[row])
+        if p == ref_ant:
+            vis[q] += data[row].astype(np.complex128).conj()
+            counts[q] += flag[row].astype(np.float64)
+        elif q == ref_ant:
+            vis[p] += data[row].astype(np.complex128)
+            counts[p] += flag[row].astype(np.float64)
     valid = counts > 0
     vis[valid] = vis[valid]/counts[valid]
     return vis
@@ -815,6 +817,6 @@ def _estimate_delay_impl(vis_ant, freq, min_delay):
             # f0 = lag[delay_idx]
             # fp1 = lag[delay_idx+1]
             # delays[p,c] = 0.5*dlag*(fp1 - fm1)/(fm1 - 2*f0 + fp1)
-            print(p, c, -lag[delay_idx])
-            delays[p,c] = -lag[delay_idx]
+            print(p, c, lag[delay_idx])
+            delays[p,c] = lag[delay_idx]
     return delays

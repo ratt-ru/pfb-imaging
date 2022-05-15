@@ -18,7 +18,7 @@ for key in schema.ksmooth["inputs"].keys():
 @clickify_parameters(schema.ksmooth)
 def ksmooth(**kw):
     '''
-    Smooth time variable solution
+    Per antenna KGB plotter
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
@@ -46,9 +46,15 @@ def _ksmooth(**kw):
     gain_dir = Path(opts.gain_dir).resolve()
 
     try:
-        xds = xds_from_zarr(f'{str(gain_dir)}::{opts.gain_term}')
+        K = xds_from_zarr(f'{str(gain_dir)}::K')
+        G = xds_from_zarr(f'{str(gain_dir)}::G')
+        B = xds_from_zarr(f'{str(gain_dir)}::B')
     except Exception as e:
-        xds = xds_from_zarr(f'{str(gain_dir)}/{opts.gain_term}')
+        K = xds_from_zarr(f'{str(gain_dir)}/K')
+        G = xds_from_zarr(f'{str(gain_dir)}/G')
+        B = xds_from_zarr(f'{str(gain_dir)}/B')
+
+    import pdb; pdb.set_trace()
 
     nscan = len(xds)
     ntime, nchan, nant, ndir, ncorr = xds[0].gains.data.shape
@@ -59,8 +65,8 @@ def _ksmooth(**kw):
     ppath = gain_dir.parent
     for p in range(nant):
         for c in range(ncorr):
-            fig, ax = plt.subplots(nrows=1, ncols=2,
-                                figsize=(18, 18))
+            fig, ax = plt.subplots(nrows=3, ncols=2,
+                                  figsize=(18, 18))
             fig.suptitle(f'Antenna {p}, corr {c}')
 
             for s, ds in enumerate(xds):
@@ -79,9 +85,9 @@ def _ksmooth(**kw):
             ax[0].set_xlabel('time')
             ax[1].set_xlabel('time')
 
-        fig.tight_layout()
-        name = f'{str(ppath)}/Antenna{p}corr{c}{opts.postfix}.png'
-        plt.savefig(name, dpi=500, bbox_inches='tight')
-        plt.close('all')
+            fig.tight_layout()
+            name = f'{str(ppath)}/Antenna{p}corr{c}{opts.postfix}.png'
+            plt.savefig(name, dpi=500, bbox_inches='tight')
+            plt.close('all')
 
 
