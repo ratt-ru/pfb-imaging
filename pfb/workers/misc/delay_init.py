@@ -76,7 +76,7 @@ def _delay_init(**kw):
             ncorr = 1
         vis_ant = accum_vis(ds.DATA.data, ds.FLAG.data,
                             ds.ANTENNA1.data, ds.ANTENNA2.data,
-                            ref_ant=opts.ref_ant)
+                            nant, ref_ant=opts.ref_ant)
 
         vis_ant.rechunk({1:8})
 
