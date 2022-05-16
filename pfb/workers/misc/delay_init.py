@@ -83,7 +83,7 @@ def _delay_init(**kw):
         freq = spws[ddid].CHAN_FREQ.data[0]
         delays = estimate_delay(vis_ant, freq, opts.min_delay)
 
-        utime = ds.TIME.data[tbin_idx]
+        utime = np.unique(ds.TIME.values)
         ntime = utime.size
         nchan = freq.size
         ndir = 1
