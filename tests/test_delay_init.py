@@ -25,8 +25,8 @@ def test_delay_init():
     nchan = freq.size
 
     ref_ant = 20
-    delays = 5e-7 + np.abs(1e-9*np.random.randn(nant, ncorr))
-    delays[ref_ant] = 0
+    delays = 1e-7*np.random.randn(nant, ncorr)
+    # delays[ref_ant] = 0
     phase = freq[None, :, None] * delays[:, None, :]
     phase = np.tile(phase[None, :, :, :], (ntime, 1, 1, 1))
     gain = np.exp(2j * np.pi * phase[:, :, :, None, :])
@@ -39,6 +39,9 @@ def test_delay_init():
 
     delays_rec = _estimate_delay_impl(vis_ant, freq, 1e-11)
 
+    # scale delays to account for ref_ant
+    print(delays[ref_ant])
+    delays -= delays[ref_ant:ref_ant+1]
     print(np.abs(delays - delays_rec).max())
 
 

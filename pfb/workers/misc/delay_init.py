@@ -74,10 +74,8 @@ def _delay_init(**kw):
             ncorr = 2
         else:
             ncorr = 1
-        rchunks, tbin_idx, tbin_counts = chunkify_rows(ds.TIME.values, -1)
         vis_ant = accum_vis(ds.DATA.data, ds.FLAG.data,
                             ds.ANTENNA1.data, ds.ANTENNA2.data,
-                            tbin_idx, tbin_counts, nant,
                             ref_ant=opts.ref_ant)
 
         vis_ant.rechunk({1:8})

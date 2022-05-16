@@ -726,24 +726,19 @@ def array2qcal_ds(gobj_amp, gobj_phase, time, freq, ant_names, fid, ddid, sid, f
 
 
 # not currently chunking over time
-def accum_vis(data, flag, ant1, ant2,
-              tbin_idx, tbin_counts, nant, ref_ant=-1):
+def accum_vis(data, flag, ant1, ant2, nant, ref_ant=-1):
     return da.blockwise(_accum_vis, 'afc',
                         data, 'rfc',
                         flag, 'rfc',
                         ant1, 'r',
                         ant2, 'r',
-                        tbin_idx, 't',
-                        tbin_counts, 't',
                         ref_ant, None,
                         new_axes={'a':nant},
                         dtype=np.complex128)
 
 
-def _accum_vis(data, flag, ant1, ant2,
-               tbin_idx, tbin_counts, ref_ant):
-    return _accum_vis_impl(data[0], flag[0], ant1[0], ant2[0],
-                           tbin_idx[0], tbin_counts[0], ref_ant)
+def _accum_vis(data, flag, ant1, ant2, ref_ant):
+    return _accum_vis_impl(data[0], flag[0], ant1[0], ant2[0], ref_ant)
 
 # @jit(nopython=True, fastmath=True, parallel=False, cache=True, nogil=True)
 def _accum_vis_impl(data, flag, ant1, ant2, ref_ant):
