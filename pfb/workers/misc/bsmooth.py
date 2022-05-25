@@ -120,9 +120,9 @@ def _bsmooth(**kw):
             ax[1].plot(freq, phase, 'k', linewidth=1)
             ax[1].set_xlabel('freq / [MHz]')
 
-        fig.tight_layout()
-        name = f'{str(ppath)}/Antenna{p}corr{c}{opts.postfix}.png'
-        plt.savefig(name, dpi=500, bbox_inches='tight')
-        plt.close('all')
+            fig.tight_layout()
+            name = f'{str(ppath)}/Antenna{p}corr{c}{opts.postfix}.png'
+            plt.savefig(name, dpi=500, bbox_inches='tight')
+            plt.close('all')
 
 

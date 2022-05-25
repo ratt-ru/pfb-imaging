@@ -41,10 +41,7 @@ def _delay_init(**kw):
     import dask.array as da
     from daskms import xds_from_ms, xds_from_table
     from daskms.experimental.zarr import xds_to_zarr
-    from ducc0.fft import c2c, good_size
-    from africanus.calibration.utils import chunkify_rows
     from pfb.utils.misc import accum_vis, estimate_delay
-    import matplotlib.pyplot as plt
     from daskms import Dataset
     from pathlib import Path
 
