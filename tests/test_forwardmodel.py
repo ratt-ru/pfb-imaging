@@ -136,7 +136,7 @@ def test_forwardmodel(beam_model, do_gains, wstack, robustness, mean_ds, tmp_pat
 
         # corrupted vis
         model_vis = model_vis.reshape(nrow, nchan, 1, 2, 2)
-        from africanus.calibration.utils import chunkify_rows
+        from pfb.utils.misc import chunkify_rows
         time = ms.getcol('TIME')
         row_chunks, tbin_idx, tbin_counts = chunkify_rows(time, ntime)
         ant1 = ms.getcol('ANTENNA1')

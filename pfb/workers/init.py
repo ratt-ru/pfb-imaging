@@ -113,12 +113,11 @@ def _init(**kw):
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
     import dask.array as da
     from africanus.constants import c as lightspeed
-    from africanus.calibration.utils import chunkify_rows
     from ducc0.fft import good_size
     from pfb.utils.fits import set_wcs, save_fits
     from pfb.utils.stokes import single_stokes
     from pfb.utils.correlations import single_corr
-    from pfb.utils.misc import compute_context
+    from pfb.utils.misc import compute_context, chunkify_rows
     import xarray as xr
 
     basename = f'{opts.output_filename}_{opts.product}'

@@ -21,10 +21,7 @@ requirements = [
                 'nifty7',
                 'sympy',
                 'rich',
-
-                "codex-africanus[complete]"
-                "@git+https://github.com/landmanbester/codex-africanus.git"
-                "@calutils",
+                "codex-africanus[complete]",
 
                 "dask-ms[xarray, zarr]"
                 "@git+https://github.com/ska-sa/dask-ms.git"

@@ -1,7 +1,6 @@
 # import numpy as np
 # from pyrap.tables import table
 # from africanus.calibration.utils import corrupt_vis
-# from africanus.calibration.utils import chunkify_rows
 # from pfb.utils.misc import _accum_vis_impl, _estimate_delay_impl
 # from ducc0.fft import good_size
 
