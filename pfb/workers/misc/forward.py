@@ -1,6 +1,6 @@
 # flake8: noqa
 from contextlib import ExitStack
-from pfb.workers.main import cli
+from pfb.workers.experimental import cli
 from functools import partial
 import click
 from omegaconf import OmegaConf
