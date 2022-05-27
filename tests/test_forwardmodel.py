@@ -248,7 +248,7 @@ def test_forwardmodel(beam_model, do_gains, wstack, robustness, mean_ds, tmp_pat
     forward_args["wstack"] = wstack
     forward_args["use_psf"] = not wstack
     forward_args["mean_ds"] = mean_ds
-    from pfb.workers.deconv.forward import _forward
+    from pfb.workers.misc.forward import _forward
     _forward(**forward_args)
 
     # get inferred model

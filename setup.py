@@ -61,7 +61,7 @@ setup(
      ],
      entry_points={'console_scripts':[
         'pfb = pfb.workers.main:cli',
-        'pfbmisc = pfb.workers.misc:cli'
+        'pfbmisc = pfb.workers.experimental:cli'
         ]
      }
 
