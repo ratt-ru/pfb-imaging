@@ -65,8 +65,9 @@ def _bsmooth(**kw):
         flag = np.any(jhj == 0, axis=-1)
         flag = np.logical_or(flag, f)[:, :, :, :, None]
 
-        # for c in range(ncorr):
-        #     jhj[flag, c] = 0.0
+        for c in range(ncorr):
+            jhj[flag, c] = 0.0
+
         bamp += np.abs(g)*jhj
         bphase += np.angle(g)*jhj
         wgt += jhj
@@ -86,7 +87,7 @@ def _bsmooth(**kw):
 
     freq = xds[0].gain_f
     # bpass = bpass.compute()
-    for p in range(nant):
+    for p in range(2):
         for c in range(ncorr):
             fig, ax = plt.subplots(nrows=1, ncols=2,
                                 figsize=(18, 18))
