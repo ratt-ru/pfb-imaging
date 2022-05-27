@@ -63,7 +63,7 @@ def _bsmooth(**kw):
         g = ds.gains.values
         f = ds.gain_flags.values
         flag = np.any(jhj == 0, axis=-1)
-        flag = np.logical_or(flag, f)[:, :, :, :, None]
+        flag = np.logical_or(flag, f)# [:, :, :, :, None]
 
         for c in range(ncorr):
             jhj[flag, c] = 0.0
