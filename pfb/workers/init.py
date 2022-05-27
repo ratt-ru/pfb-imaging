@@ -378,10 +378,17 @@ def _init(**kw):
                 else:
                     raise NotImplementedError(f"Product {args.product} not "
                                               "supported yet")
-                out_datasets.append(out_ds)
+                # if all data in a dataset is flagged we return None and
+                # ignore this chunk of data
+                if out_ds is not None:
+                    out_datasets.append(out_ds)
 
-    writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',
-                         columns='ALL')
+    if len(out_datasets):
+        writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',
+                            columns='ALL')
+    else:
+        raise ValueError('No datasets found to write. '
+                         'Data completely flagged maybe?')
 
     # dask.visualize(writes, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},

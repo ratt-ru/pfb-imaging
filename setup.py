@@ -60,7 +60,8 @@ setup(
          "Operating System :: OS Independent",
      ],
      entry_points={'console_scripts':[
-        'pfb = pfb.workers.main:cli'
+        'pfb = pfb.workers.main:cli',
+        'pfbmisc = pfb.workers.misc:cli'
         ]
      }
 

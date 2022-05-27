@@ -6,9 +6,18 @@ inputs:
   gain_term:
     dtype: str
     abbreviation: gt
-    info: 'gain term name'
+    info: 'Gain term name'
   postfix:
     dtype: str
+    info: 'Postfix to attend to antenna and corr labels'
+  remove_slope:
+    dtype: bool
+    default: false
+    info: 'Remove the slope in bandpass phases'
+  remove_offset:
+    dtype: bool
+    default: false
+    info: 'Remove offset of mean phase from zero and mean amp from one'
 
 
 outputs:

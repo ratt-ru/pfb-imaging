@@ -250,15 +250,15 @@ def _grid(**kw):
                                       nx, ny,
                                       cell_rad, cell_rad,
                                       opts.robustness)
-        else:
-            imwgt = None
+            wgt *= imwgt
+
         mask = ds.MASK.data
         dvars = {}
         if opts.dirty:
             dirty = vis2im(uvw=uvw,
                            freq=freq,
                            vis=vis,
-                           wgt=imwgt,
+                           wgt=wgt,
                            nx=nx,
                            ny=ny,
                            cellx=cell_rad,
@@ -276,7 +276,6 @@ def _grid(**kw):
             psf = vis2im(uvw=uvw,
                          freq=freq,
                          vis=wgt.astype(vis.dtype),
-                         wgt=imwgt,
                          nx=nx_psf,
                          ny=ny_psf,
                          cellx=cell_rad,
@@ -292,9 +291,6 @@ def _grid(**kw):
             psfhat = fft2d(psf, nthreads=opts.nvthreads)
             dvars['PSF'] = (('x_psf', 'y_psf'), psf)
             dvars['PSFHAT'] = (('x_psf', 'yo2'), psfhat)
-
-        if imwgt is not None:
-                wgt *= imwgt
 
         if opts.weight:
             # TODO - BDA

@@ -83,6 +83,10 @@ def single_stokes(ds=None,
     else:
         flag = da.broadcast_to(frow[:, None], (nrow, nchan))
 
+    if flag.all():
+        import pdb; pfb.set_trace()
+        return
+
     mask = ~flag
     mask = inlined_array(mask, [frow])
     uvw = ds.UVW.data
@@ -229,7 +233,7 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                     wgt[row, chan] = wval
                     vis[row, chan] = vis_func(gp[chan], gq[chan],
                                               weight[row, chan],
-                                              data[row, chan])  #/wval
+                                              data[row, chan])/wval
 
         return vis, wgt
     return _impl

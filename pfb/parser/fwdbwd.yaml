@@ -1,0 +1,91 @@
+inputs:
+  _include:
+    - (pfb.parser)gridding.yml
+    - (pfb.parser)pdopts.yml
+    - (pfb.parser)pmopts.yml
+    - (pfb.parser)dist.yml
+  model_name:
+    dtype: str
+    abbreviation: mname
+    default: MODEL
+    info: 'Name of model in mds'
+  mask:
+    dtype: str
+    abbreviation: mask
+    info: 'Either path to mask.fits or set to mds to use \
+          the mask contained in the mds.'
+  nband:
+    dtype: int
+    required: true
+    abbreviation: nb
+    info: 'Number of imaging bands'
+  output_filename:
+    dtype: str
+    required: true
+    info: 'Basename of output'
+    metavar: BASENAME
+    abbreviation: o
+  postfix:
+    dtype: str
+    default: ''
+    info: 'Can be used to specify a custom name for the image space data \
+          products'
+  product:
+    dtype: str
+    abbreviation: p
+    default: I
+    info: 'Imaging products to produce. Options are I, Q, U, V. \
+          Only single Stokes products are currently supported'
+  row_chunk:
+    dtype: int
+    info: 'Number of rows in a chunk in output dataset'
+    abbreviation: rc
+    default: -1
+  sigmainv:
+    dtype: float
+    info: 'Standard deviation of assumed GRF prior'
+    default: 1e-5
+    abbreviation: sinv
+  bases:
+    dtype: str
+    info: 'Wavelet bases to use. Give as comma separated str eg. '
+    default: 'self,db1,db2'
+    abbreviation: bases
+  nlevels:
+    dtype: int
+    info: 'Wavelet decomposition level'
+    default: 3
+    abbreviation: nlevels
+  hessnorm:
+    dtype: float
+    info: 'Spectral norm of th ehessian approximation'
+    abbreviation: hessnorm
+  sigma21:
+    dtype: float
+    required: true
+    info: 'Wavelet thresholding level'
+    abbreviation: sig21
+  alpha:
+    dtype: float
+    required: true
+    info: 'L21 reweighting parameter'
+  positivity:
+    dtype: bool
+    info: Apply positivity constraint
+    default: True
+  niter:
+    dtype: int
+    default: 5
+    info: Number of iterations. L21 reweighting will take place after every iteration
+    abbreviation: niter
+  fits_mfs:
+    dtype: bool
+    default: true
+    info: "Output MFS fits files"
+  fits_cubes:
+    dtype: bool
+    default: false
+    info: "Output fits cubes"
+
+outputs:
+  {}

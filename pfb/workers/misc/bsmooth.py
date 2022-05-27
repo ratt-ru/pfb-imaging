@@ -72,7 +72,6 @@ def _bsmooth(**kw):
         bphase += np.angle(g)*jhj
         wgt += jhj
 
-    # import pdb; pdb.set_trace()
     bamp = np.where(wgt > 0, bamp/wgt, np.nan)
     bphase = np.where(wgt > 0, bphase/wgt, np.nan)
     bpass = bamp * np.exp(1.0j*bphase)
@@ -87,7 +86,7 @@ def _bsmooth(**kw):
 
     freq = xds[0].gain_f
     # bpass = bpass.compute()
-    for p in range(2):
+    for p in range(nant):
         for c in range(ncorr):
             fig, ax = plt.subplots(nrows=1, ncols=2,
                                 figsize=(18, 18))
@@ -112,13 +111,15 @@ def _bsmooth(**kw):
                 tamp[flag] = np.nan
                 tphase[flag] = np.nan
 
-                ax[0].plot(freq, tamp, 'b', alpha=0.15, linewidth=2)
-                ax[1].plot(freq, tphase, 'b', alpha=0.15, linewidth=2)
+                ax[0].plot(freq, tamp, label=f'scan-{s}', alpha=0.25, linewidth=2)
+                ax[1].plot(freq, np.rad2deg(tphase), label=f'scan-{s}', alpha=0.25, linewidth=2)
 
-            ax[0].plot(freq, amp, 'k', linewidth=1)
+            ax[0].plot(freq, amp, 'k', label='inf', linewidth=1)
+            ax[0].legend()
             ax[0].set_xlabel('freq / [MHz]')
 
-            ax[1].plot(freq, phase, 'k', linewidth=1)
+            ax[1].plot(freq, np.rad2deg(phase), 'k', label='inf', linewidth=1)
+            ax[1].legend()
             ax[1].set_xlabel('freq / [MHz]')
 
             fig.tight_layout()
