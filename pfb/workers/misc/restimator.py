@@ -47,10 +47,6 @@ def _restimator(**kw):
     xds = xds_from_ms(ms_name,
                       group_cols=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'],
                       chunks={'row': -1, 'chan': -1, 'corr': -1})
-    ant_names = xds_from_table(f'{ms_name}::ANTENNA')[0].NAME.values
-    # pad frequency to get sufficient resolution in delay space
-    spws = dask.compute(xds_from_table(f'{ms_name}::SPECTRAL_WINDOW'))[0]
-    fields = dask.compute(xds_from_table(f'{ms_name}::FIELD'))[0]
 
     ant1 = xds[0].ANTENNA1.values
     ant2 = xds[0].ANTENNA2.values
