@@ -1,0 +1,10 @@
+inputs:
+  ms:
+    dtype: str
+    required: true
+  nthreads:
+    dtype: int
+    default: 8
+
+outputs:
+  {}
