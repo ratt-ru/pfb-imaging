@@ -55,6 +55,8 @@ def _restimator(**kw):
     counts = np.zeros(nant)
     for ds in xds:
         flag = ds.FLAG.values
+        ant1 = ds.ANTENNA1.values
+        ant2 = ds.ANTENNA2.values
         for p in range(nant):
             I = np.where((ant1==p) | (ant2==p))[0]
             flags[p] += np.sum(flag[I])
@@ -66,6 +68,7 @@ def _restimator(**kw):
         flag_percent = flags[p]*100/counts[p]
         if flag_percent < best_percent:
             best_ant = p
+            best_percent = flag_percent
 
         print(f'{flag_percent} percent flagged for antenna {p}', file=log)
 
