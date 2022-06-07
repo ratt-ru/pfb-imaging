@@ -68,24 +68,30 @@ def _bsmooth(**kw):
         for c in range(ncorr):
             jhj[flag, c] = 0.0
 
-        bamp += np.abs(g)*jhj
+        amp = np.abs(g)
+
+        if np.mean(amp) >= 2 and opts.reject_crazy:
+            continue
+
+        bamp += amp*jhj
         bphase += np.angle(g)*jhj
         wgt += jhj
 
     bamp = np.where(wgt > 0, bamp/wgt, np.nan)
     bphase = np.where(wgt > 0, bphase/wgt, np.nan)
     bpass = bamp * np.exp(1.0j*bphase)
-    # bpass = da.from_array(bpass, chunks=(-1, -1, -1, -1, -1))
-    # xdsw = []
-    # for ds in xds:
-    #     xdsw.append(ds.assign(**{'gains': (ds.GAIN_AXES, bpass)}))
+    bpass = da.from_array(bpass, chunks=(-1, -1, -1, -1, -1))
+    xdsw = []
+    for ds in xds:
+        xdsw.append(ds.assign(**{'gains': (ds.GAIN_AXES, bpass)}))
 
     ppath = gain_dir.parent
-    # dask.compute(xds_to_zarr(xdsw, f'{str(ppath)}/smoothed.qc::{opts.gain_term}',
-    #                          columns='ALL'))
+    writes = xds_to_zarr(xdsw, f'{str(ppath)}/smoothed.qc::{opts.gain_term}',
+                             columns='ALL')
+
+    bpass = dask.compute(bpass, writes)[0]
 
     freq = xds[0].gain_f
-    # bpass = bpass.compute()
     for p in range(nant):
         for c in range(ncorr):
             fig, ax = plt.subplots(nrows=1, ncols=2,

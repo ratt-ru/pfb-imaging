@@ -97,7 +97,6 @@ def _psf_convolve_cube_impl(x, psfhat, beam,
                             unpad_x=None,
                             unpad_y=None,
                             lastsize=None):
-    gc.collect()
     nb, nx, ny = x.shape
     convim = np.zeros((nb, nx, ny), dtype=x.dtype)
     for b in range(nb):
@@ -155,7 +154,6 @@ def psf_convolve_cube(x, psfhat, beam, psfopts,
 def _hessian_reg_psf(x, beam, psfhat,
                      nthreads=None,
                      sigmainv=None,
-                     pmask=None,
                      padding=None,
                      unpad_x=None,
                      unpad_y=None,
@@ -164,11 +162,14 @@ def _hessian_reg_psf(x, beam, psfhat,
     Tikhonov regularised Hessian approx
     """
 
-    xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(0, 1))
-    xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
+
+    xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(1, 2))
+    # import pdb; pdb.set_trace()
+    xhat = r2c(xhat, axes=(1, 2), nthreads=nthreads,
                 forward=True, inorm=0)
-    xhat = c2r(xhat * psfhat, axes=(0, 1), forward=False,
+    # import pdb; pdb.set_trace()
+    xhat = c2r(xhat * psfhat, axes=(1, 2), forward=False,
                 lastsize=lastsize, inorm=2, nthreads=nthreads)
-    im = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
+    im = Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y]
 
     return beam*im + x * sigmainv**2

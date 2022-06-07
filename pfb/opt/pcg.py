@@ -7,7 +7,7 @@ log = pyscilog.get_logger('PCG')
 
 def pcg(A,
         b,
-        x0,
+        x0=None,
         M=None,
         tol=1e-5,
         maxit=500,
@@ -15,6 +15,9 @@ def pcg(A,
         verbosity=1,
         report_freq=10,
         backtrack=True):
+
+    if x0 is None:
+        x0 = np.zeros(b.shape, dtype=b.dtype)
 
     if M is None:
         def M(x): return x

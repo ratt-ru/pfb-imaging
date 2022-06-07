@@ -10,6 +10,10 @@ inputs:
   postfix:
     dtype: str
     info: 'Postfix to attend to antenna and corr labels'
+  reject_crazy:
+    dtype: bool
+    default: false
+    info: 'Discard scans with non-sensical bandpass amplitudes'
   remove_slope:
     dtype: bool
     default: false

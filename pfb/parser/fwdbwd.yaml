@@ -3,6 +3,7 @@ inputs:
     - (pfb.parser)gridding.yml
     - (pfb.parser)pdopts.yml
     - (pfb.parser)pmopts.yml
+    - (pfb.parser)cgopts.yml
     - (pfb.parser)dist.yml
   model_name:
     dtype: str
@@ -69,6 +70,7 @@ inputs:
     dtype: float
     required: true
     info: 'L21 reweighting parameter'
+    abbreviation: alpha
   positivity:
     dtype: bool
     info: Apply positivity constraint

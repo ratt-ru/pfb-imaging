@@ -58,7 +58,8 @@ def _fwdbwd(**kw):
     from pfb.utils.misc import setup_image_data, init_mask
     from pfb.operators.psi import im2coef, coef2im
     from pfb.operators.hessian import hessian, hessian_xds
-    from pfb.opt.pcg import pcg_psf
+    from pfb.operators.psf import _hessian_reg_psf
+    from pfb.opt.pcg import pcg
     from pfb.opt.primal_dual import primal_dual
     from pfb.opt.power_method import power_method
     from pfb.prox.prox_21m import prox_21m
@@ -165,29 +166,22 @@ def _fwdbwd(**kw):
     npad_xr = nx_psf - nx - npad_xl
     npad_yl = (ny_psf - ny)//2
     npad_yr = ny_psf - ny - npad_yl
-    psf_padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
+    psf_padding = ((0,0), (npad_xl, npad_xr), (npad_yl, npad_yr))
     unpad_x = slice(npad_xl, -npad_xr)
     unpad_y = slice(npad_yl, -npad_yr)
-    lastsize = ny + np.sum(padding[-1])
-
-    psfopts = {}
-    psfopts['padding'] = psf_padding
-    psfopts['unpad_x'] = unpad_x
-    psfopts['unpad_y'] = unpad_y
-    psfopts['lastsize'] = lastsize
-    psfopts['nthreads'] = opts.nvthreads
+    lastsize = ny + np.sum(psf_padding[-1])
 
     # the PSF is normalised so we don't need to pass wsum
-    hess = partial(psf_convolve_cube, psfhat=psfhat,
-                   beam=mean_beam * mask[None],
-                   psfopts=psfopts, sigmainv=opts.sigmainv,
-                   compute=True)
+    hess = partial(_hessian_reg_psf, beam=mean_beam * mask[None],
+                   psfhat=psfhat, nthreads=opts.nvthreads,
+                   sigmainv=opts.sigmainv, padding=psf_padding,
+                   unpad_x=unpad_x, unpad_y=unpad_y, lastsize=lastsize)
 
     if opts.hessnorm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
         hessnorm, _ = power_method(hess, (nband, nx, ny), tol=opts.pm_tol,
-                         maxit=opts.pm_maxit, verbosity=opts.pm_verbose,
-                         report_freq=opts.pm_report_freq)
+                                   maxit=opts.pm_maxit, verbosity=opts.pm_verbose,
+                                   report_freq=opts.pm_report_freq)
     else:
         hessnorm = opts.hessnorm
 
@@ -203,23 +197,17 @@ def _fwdbwd(**kw):
     else:
         weight = np.ones((nbasis, nmax), dtype=model.dtype)
 
-    cgopts = {}
-    cgopts['tol'] = opts.cg_tol
-    cgopts['maxit'] = opts.cg_maxit
-    cgopts['minit'] = opts.cg_minit
-    cgopts['verbosity'] = opts.cg_verbose
-    cgopts['report_freq'] = opts.cg_report_freq
-    cgopts['backtrack'] = opts.backtrack
     for i in range(opts.niter):
         print('Getting update', file=log)
-        x0 = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
-        update = pcg_psf(psfhat, residual, x0, mean_beam,
-                         psfopts, cgopts)
+        update = pcg(hess, residual, tol=opts.cg_tol,
+                     maxit=opts.cg_maxit, minit=opts.cg_minit,
+                     verbosity=opts.cg_verbose, report_freq=opts.cg_report_freq,
+                     backtrack=opts.backtrack)
 
         print('Getting model', file=log)
         modelp = deepcopy(model)
         data = model + update
-        model, dual = primal_dual(hess, data, model, dual, sigma21,
+        model, dual = primal_dual(hess, data, model, dual, opts.sigma21,
                                   psi, psiH, weight, hessnorm, prox_21,
                                   nu=nbasis, positivity=opts.positivity,
                                   tol=opts.pd_tol, maxit=opts.pd_maxit,
@@ -229,11 +217,13 @@ def _fwdbwd(**kw):
         # reweight
         l2_norm = np.linalg.norm(psiH(model), axis=0)
         for m in range(nbasis):
-            weight[m] = alpha[m]/(alpha[m] + l2_norm[m])
+            weight[m] = opts.alpha/(opts.alpha + l2_norm[m])
+
+        model_dask = da.from_array(model, chunks=(1, -1, -1))
 
         print('Computing residual', file=log)
         # first write it to disk
-        for ds in zip(dds):
+        for ds in dds:
             dirty = ds.DIRTY.data
             wgt = ds.WEIGHT.data
             uvw = ds.UVW.data
@@ -242,7 +232,7 @@ def _fwdbwd(**kw):
             vis_mask = ds.MASK.data
             b = ds.bandid
             # we only want to apply the beam once here
-            residual += dirty - hessian(beam * model[b], uvw, wgt,
+            residual += dirty - hessian(beam * model_dask[b], uvw, wgt,
                                         vis_mask, freq, None, hessopts)
             ds = ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
             writes.append(ds)
@@ -261,23 +251,22 @@ def _fwdbwd(**kw):
 
 
 
+    # print("Saving results", file=log)
+    # mask = np.any(model, axis=0).astype(bool)
+    # mask = da.from_array(mask, chunks=(-1, -1))
+    # model = da.from_array(model, chunks=(1, -1, -1), name=False)
+    # modelp = da.from_array(modelp, chunks=(1, -1, -1), name=False)
+    # dual = da.from_array(dual, chunks=(1, -1, -1), name=False)
+    # weight = da.from_array(weight, chunks=(-1, -1), name=False)
 
-    print("Saving results", file=log)
-    mask = np.any(model, axis=0).astype(bool)
-    mask = da.from_array(mask, chunks=(-1, -1))
-    model = da.from_array(model, chunks=(1, -1, -1), name=False)
-    modelp = da.from_array(modelp, chunks=(1, -1, -1), name=False)
-    dual = da.from_array(dual, chunks=(1, -1, -1), name=False)
-    weight = da.from_array(weight, chunks=(-1, -1), name=False)
+    # mds = mds.assign(**{
+    #                  'MASK': (('x', 'y'), mask),
+    #                  'MODEL': (('band', 'x', 'y'), model),
+    #                  'MODELP': (('band', 'x', 'y'), modelp),
+    #                  'DUAL': (('band', 'basis', 'coef'), dual),
+    #                  'WEIGHT': (('basis', 'coef'), weight)})
 
-    mds = mds.assign(**{
-                     'MASK': (('x', 'y'), mask),
-                     'MODEL': (('band', 'x', 'y'), model),
-                     'MODELP': (('band', 'x', 'y'), modelp),
-                     'DUAL': (('band', 'basis', 'coef'), dual),
-                     'WEIGHT': (('basis', 'coef'), weight)})
-
-    dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
+    # dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
     if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)
