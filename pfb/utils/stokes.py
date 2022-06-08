@@ -84,7 +84,6 @@ def single_stokes(ds=None,
         flag = da.broadcast_to(frow[:, None], (nrow, nchan))
 
     if flag.all():
-        import pdb; pfb.set_trace()
         return
 
     mask = ~flag
