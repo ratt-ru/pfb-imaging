@@ -222,7 +222,7 @@ def _fwdbwd(**kw):
         model_dask = da.from_array(model, chunks=(1, -1, -1))
 
         print('Computing residual', file=log)
-        # first write it to disk
+        # first write it to disk per dataset
         out_ds = []
         for ds in dds:
             dirty = ds.DIRTY.data
@@ -233,42 +233,48 @@ def _fwdbwd(**kw):
             vis_mask = ds.MASK.data
             b = ds.bandid
             # we only want to apply the beam once here
-            residual += dirty - hessian(beam * model_dask[b], uvw, wgt,
-                                        vis_mask, freq, None, hessopts)
+            residual = dirty - hessian(beam * model_dask[b], uvw, wgt,
+                                       vis_mask, freq, None, hessopts)
             ds = ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
             out_ds.append(ds)
 
-        writes = xds_to_zarr(writes, dds_name, columns='RESIDUAL')
+        writes = xds_to_zarr(out_ds, dds_name, columns='RESIDUAL')
         dask.compute(writes)
 
         # reconstruct from disk
+        dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk})
         residual = [da.zeros((nx, ny), chunks=(-1, -1),
                     dtype=real_type) for _ in range(nband)]
-        for ds in zip(dds):
+        for ds in dds:
             b = ds.bandid
             # we only want to apply the beam once here
-            residual[b] += ds.RESIDUAL.data
+            residual[b] += ds.RESIDUAL.data * ds.BEAM.data
         residual = da.stack(residual)/wsum
+        residual = residual.compute()
+        residual_mfs = np.sum(residual, axis=0)
+        rms = np.std(residual_mfs)
+        rmax = residual_mfs.max()
+        print(f"At iteration {i+1} the max of residual is {rmax} and the rms "
+              f"is {rms}", file=log)
 
 
 
 
-    # print("Saving results", file=log)
-    # mask = np.any(model, axis=0).astype(bool)
-    # mask = da.from_array(mask, chunks=(-1, -1))
-    # model = da.from_array(model, chunks=(1, -1, -1), name=False)
-    # modelp = da.from_array(modelp, chunks=(1, -1, -1), name=False)
-    # dual = da.from_array(dual, chunks=(1, -1, -1), name=False)
-    # weight = da.from_array(weight, chunks=(-1, -1), name=False)
+    print("Saving results", file=log)
+    mask = np.any(model, axis=0).astype(bool)
+    mask = da.from_array(mask, chunks=(-1, -1))
+    model = da.from_array(model, chunks=(1, -1, -1), name=False)
+    modelp = da.from_array(modelp, chunks=(1, -1, -1), name=False)
+    dual = da.from_array(dual, chunks=(1, -1, -1), name=False)
+    weight = da.from_array(weight, chunks=(-1, -1), name=False)
 
-    # mds = mds.assign(**{
-    #                  'MASK': (('x', 'y'), mask),
-    #                  'MODEL': (('band', 'x', 'y'), model),
-    #                  'MODELP': (('band', 'x', 'y'), modelp),
-    #                  'DUAL': (('band', 'basis', 'coef'), dual),
-    #                  'WEIGHT': (('basis', 'coef'), weight)})
+    mds = mds.assign(**{
+                     'MASK': (('x', 'y'), mask),
+                     'MODEL': (('band', 'x', 'y'), model),
+                     'DUAL': (('band', 'basis', 'coef'), dual),
+                     'WEIGHT': (('basis', 'coef'), weight)})
 
-    # dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
+    dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
     if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)
@@ -289,27 +295,25 @@ def _fwdbwd(**kw):
         model_mfs = np.mean(model, axis=0)
         save_fits(f'{basename}_model_mfs.fits', model_mfs, hdr_mfs)
 
-        if opts.do_residual:
-            residual = np.zeros((nband, nx, ny), dtype=dds[0].DIRTY.dtype)
-            wsums = np.zeros(nband)
-            for ds in dds:
-                b = ds.bandid
-                wsums[b] += ds.WSUM.values[0]
-                residual[b] += ds.RESIDUAL.values
-            wsum = np.sum(wsums)
-            residual /= wsum
-            residual_mfs = np.sum(residual, axis=0)
-            save_fits(f'{basename}_residual_mfs.fits', residual_mfs, hdr_mfs)
+        residual = np.zeros((nband, nx, ny), dtype=dds[0].DIRTY.dtype)
+        wsums = np.zeros(nband)
+        for ds in dds:
+            b = ds.bandid
+            wsums[b] += ds.WSUM.values[0]
+            residual[b] += ds.RESIDUAL.values
+        wsum = np.sum(wsums)
+        residual /= wsum
+        residual_mfs = np.sum(residual, axis=0)
+        save_fits(f'{basename}_residual_mfs.fits', residual_mfs, hdr_mfs)
 
         if opts.fits_cubes:
             # need residual in Jy/beam
             wsums = np.amax(psf, axes=(1,2))
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
             save_fits(f'{basename}_model.fits', model, hdr)
-            if opts.do_residual:
-                fmask = wsums > 0
-                residual[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}_residual.fits',
-                        residual, hdr)
+            fmask = wsums > 0
+            residual[fmask] /= wsums[fmask, None, None]
+            save_fits(f'{basename}_residual.fits',
+                    residual, hdr)
 
     print("All done here.", file=log)
