@@ -23,6 +23,9 @@ inputs:
   nthreads:
     dtype: int
     default: 8
+  split_scans:
+    dtype: bool
+    default: false
 
 outputs:
   {}

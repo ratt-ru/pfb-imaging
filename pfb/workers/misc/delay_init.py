@@ -47,8 +47,12 @@ def _delay_init(**kw):
 
     ms_path = Path(opts.ms).resolve()
     ms_name = str(ms_path)
+    group_cols = ['FIELD_ID', 'DATA_DESC_ID']
+    if opts.split_scans:
+        print("Splitting estimate by scan", file=log)
+        group_cols.append('SCAN_NUMBER')
     xds = xds_from_ms(ms_name,
-                      group_cols=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'],
+                      group_cols=group_cols,
                       chunks={'row': -1, 'chan': -1, 'corr': 1})
     ant_names = xds_from_table(f'{ms_name}::ANTENNA')[0].NAME.values
     # pad frequency to get sufficient resolution in delay space
@@ -62,7 +66,10 @@ def _delay_init(**kw):
     for ds in xds:
         fid = ds.FIELD_ID
         ddid = ds.DATA_DESC_ID
-        sid = ds.SCAN_NUMBER
+        if opts.split_scans:
+            sid = int(ds.SCAN_NUMBER)
+        else:
+            sid = '?'
         fname = fields[fid].NAME.values[0]
 
         # only diagonal correlations
@@ -71,9 +78,14 @@ def _delay_init(**kw):
             ncorr = 2
         else:
             ncorr = 1
+
+        if opts.ref_ant == -1:
+            ref_ant = nant-1
+        else:
+            ref_ant = opts.ref_ant
         vis_ant = accum_vis(ds.DATA.data, ds.FLAG.data,
                             ds.ANTENNA1.data, ds.ANTENNA2.data,
-                            nant, ref_ant=opts.ref_ant)
+                            nant, ref_ant=ref_ant)
 
         vis_ant.rechunk({1:8})
 
@@ -105,7 +117,7 @@ def _delay_init(**kw):
                                         dchunk=(int(1),),
                                         cchunk=(int(ncorr),)),
             'NAME': 'NET',
-            'SCAN_NUMBER': int(sid),
+            'SCAN_NUMBER': sid,
             'TYPE': 'complex'
         }
         if ncorr==1:

@@ -117,8 +117,8 @@ def _bsmooth(**kw):
                 tamp[flag] = np.nan
                 tphase[flag] = np.nan
 
-                ax[0].plot(freq, tamp, label=f'scan-{s}', alpha=0.25, linewidth=2)
-                ax[1].plot(freq, np.rad2deg(tphase), label=f'scan-{s}', alpha=0.25, linewidth=2)
+                ax[0].plot(freq, tamp, label=f'scan-{s}', alpha=0.5, linewidth=1)
+                ax[1].plot(freq, np.rad2deg(tphase), label=f'scan-{s}', alpha=0.5, linewidth=1)
 
             ax[0].plot(freq, amp, 'k', label='inf', linewidth=1)
             ax[0].legend()
