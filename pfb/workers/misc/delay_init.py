@@ -42,7 +42,7 @@ def _delay_init(**kw):
     from daskms import xds_from_ms, xds_from_table
     from daskms.experimental.zarr import xds_to_zarr
     from pfb.utils.misc import accum_vis, estimate_delay
-    from daskms import Dataset
+    import xarray as xr
     from pathlib import Path
 
     ms_path = Path(opts.ms).resolve()
@@ -134,10 +134,12 @@ def _delay_init(**kw):
             't_chunk': (('t_chunk'), np.array([0], dtype=np.int32))
         }
 
-        ods = Dataset(data_vars, coords=coords, attrs=attrs)
+        ods = xr.Dataset(data_vars, coords=coords, attrs=attrs)
         ods = ods.chunk({ax: "auto" for ax in ods.GAIN_AXES[:2]})
         out_ds.append(ods)
 
+    # LB - Why is this required? ods.chunk should coerce all arrays to have the same chunking
+    out_ds = xr.unify_chunks(*out_ds)
     out_path = Path(f'{opts.gain_dir}::{opts.gain_term}').resolve()
     out_name = str(out_path)
     writes = xds_to_zarr(out_ds, out_path, columns='ALL')
