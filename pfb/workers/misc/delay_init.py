@@ -134,7 +134,9 @@ def _delay_init(**kw):
             't_chunk': (('t_chunk'), np.array([0], dtype=np.int32))
         }
 
-        out_ds.append(Dataset(data_vars, coords=coords, attrs=attrs))
+        ods = Dataset(data_vars, coords=coords, attrs=attrs)
+        ods = ods.chunk({ax: "auto" for ax in ods.GAIN_AXES[:2]})
+        out_ds.append(ods)
 
     out_path = Path(f'{opts.gain_dir}::{opts.gain_term}').resolve()
     out_name = str(out_path)

@@ -223,6 +223,7 @@ def _fwdbwd(**kw):
 
         print('Computing residual', file=log)
         # first write it to disk
+        out_ds = []
         for ds in dds:
             dirty = ds.DIRTY.data
             wgt = ds.WEIGHT.data
@@ -235,9 +236,10 @@ def _fwdbwd(**kw):
             residual += dirty - hessian(beam * model_dask[b], uvw, wgt,
                                         vis_mask, freq, None, hessopts)
             ds = ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
-            writes.append(ds)
+            out_ds.append(ds)
 
-        dask.compute(xds_to_zarr(writes, dds_name, columns='RESIDUAL'))
+        writes = xds_to_zarr(writes, dds_name, columns='RESIDUAL')
+        dask.compute(writes)
 
         # reconstruct from disk
         residual = [da.zeros((nx, ny), chunks=(-1, -1),
