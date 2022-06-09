@@ -10,18 +10,14 @@ inputs:
   postfix:
     dtype: str
     info: 'Postfix to attend to antenna and corr labels'
-  reject_crazy:
-    dtype: bool
-    default: false
-    info: 'Discard scans with non-sensical bandpass amplitudes'
-  remove_slope:
-    dtype: bool
-    default: false
-    info: 'Remove the slope in bandpass phases'
-  remove_offset:
-    dtype: bool
-    default: false
-    info: 'Remove offset of mean phase from zero and mean amp from one'
+  reject_abs_thresh:
+    dtype: float
+    default: 2.0
+    info: 'Discard data where amplitudes are above this value'
+  reject_phase_thresh:
+    dtype: float
+    default: 7.5
+    info: 'Discard data where abs(phase) is above this number'
 
 
 outputs:

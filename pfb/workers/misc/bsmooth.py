@@ -71,11 +71,10 @@ def _bsmooth(**kw):
             jhj[flag, c] = 0.0
 
         amp = np.abs(g)
-
-        if np.mean(amp) >= 2 and opts.reject_crazy:
-            continue
+        jhj = np.where(amp < opts.reject_amp_thresh, jhj, 0)
 
         phase = np.angle(g)
+        jhj = np.where(np.abs(phase) < opts.reject_phase_thresh, jhj, 0)
 
         freq = ds.gain_f.values
         for p in range(nant):
