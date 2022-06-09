@@ -74,7 +74,7 @@ def _bsmooth(**kw):
         jhj = np.where(amp < opts.reject_amp_thresh, jhj, 0)
 
         phase = np.angle(g)
-        jhj = np.where(np.abs(phase) < opts.reject_phase_thresh, jhj, 0)
+        jhj = np.where(np.abs(phase) < np.deg2rad(opts.reject_phase_thresh), jhj, 0)
 
         # remove slope BEFORE averaging
         freq = ds.gain_f.values
