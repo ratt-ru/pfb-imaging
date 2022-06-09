@@ -89,8 +89,6 @@ def _bsmooth(**kw):
                 f = freq[idx]
                 coeffs = np.polyfit(f, y, 1, w=w)
                 phase[0, idx, p, 0, c] -= np.polyval(coeffs, f)
-                # enforce mean amplitude of one
-                amp[0, idx, p, 0, c] -= np.mean(amp[0, idx, p, 0, c]-1)
 
 
         bamp += amp*jhj
