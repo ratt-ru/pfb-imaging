@@ -80,12 +80,15 @@ def _bsmooth(**kw):
         freq = ds.gain_f.values
         for p in range(nant):
             for c in range(ncorr):
-                idx = np.where(jhj[0, :, p, 0, c] > 0)
+                idx = np.where(jhj[0, :, p, 0, c] > 0)[0]
+                if idx.size < 2:
+                    continue
                 # enforce zero offset and slope
                 w = np.sqrt(jhj[0, idx, p, 0, c])
                 y = phase[0, idx, p, 0, c]
-                coeffs = np.polyfit(freq[idx], y, 1, w=w)
-                phase[0, idx, p, 0, c] -= np.polyval(coeffs, freq[idx])
+                f = freq[idx]
+                coeffs = np.polyfit(f, y, 1, w=w)
+                phase[0, idx, p, 0, c] -= np.polyval(coeffs, f)
                 # enforce mean amplitude of one
                 amp[0, idx, p, 0, c] -= np.mean(amp[0, idx, p, 0, c]-1)
 
