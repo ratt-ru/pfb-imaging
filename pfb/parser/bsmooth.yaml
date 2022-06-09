@@ -10,7 +10,7 @@ inputs:
   postfix:
     dtype: str
     info: 'Postfix to attend to antenna and corr labels'
-  reject_abs_thresh:
+  reject_amp_thresh:
     dtype: float
     default: 2.0
     info: 'Discard data where amplitudes are above this value'
