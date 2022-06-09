@@ -84,7 +84,7 @@ def _bsmooth(**kw):
                 # enforce zero offset and slope
                 w = np.sqrt(jhj[0, idx, p, 0, c])
                 y = phase[0, idx, p, 0, c]
-                coeffs = np.polyfit(freq[idx], y, w=w)
+                coeffs = np.polyfit(freq[idx], y, 1, w=w)
                 phase[0, idx, p, 0, c] -= np.polyval(coeffs, freq[idx])
                 # enforce mean amplitude of one
                 amp[0, idx, p, 0, c] -= np.mean(amp[0, idx, p, 0, c]-1)
