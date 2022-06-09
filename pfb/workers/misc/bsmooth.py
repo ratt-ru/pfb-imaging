@@ -54,6 +54,8 @@ def _bsmooth(**kw):
     ntime, nchan, nant, ndir, ncorr = xds[0].gains.data.shape
     if ntime > 1:
         raise ValueError("Bandpass can't have ntime > 1")
+    if ndir > 1:
+        raise ValueError("Bandpass can't have ndir > 1")
 
     bamp = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
     bphase = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
@@ -73,12 +75,29 @@ def _bsmooth(**kw):
         if np.mean(amp) >= 2 and opts.reject_crazy:
             continue
 
+        phase = np.angle(g)
+
+        freq = ds.gain_f.values
+        for p in range(nant):
+            for c in range(ncorr):
+                idx = np.where(jhj[0, :, p, 0, c] > 0)
+                # enforce zero offset and slope
+                w = np.sqrt(jhj[0, idx, p, 0, c])
+                y = phase[0, idx, p, 0, c]
+                coeffs = np.polyfit(freq[idx], y, w=w)
+                phase[0, idx, p, 0, c] -= np.polyval(coeffs, freq[idx])
+                # enforce mean amplitude of one
+                amp[0, idx, p, 0, c] -= np.mean(amp[0, idx, p, 0, c]-1)
+
+
         bamp += amp*jhj
-        bphase += np.angle(g)*jhj
+        bphase += phase*jhj
         wgt += jhj
 
     bamp = np.where(wgt > 0, bamp/wgt, np.nan)
     bphase = np.where(wgt > 0, bphase/wgt, np.nan)
+
+
     bpass = bamp * np.exp(1.0j*bphase)
     bpass = da.from_array(bpass, chunks=(-1, -1, -1, -1, -1))
     xdsw = []
