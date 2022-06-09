@@ -173,7 +173,7 @@ def _fwdbwd(**kw):
 
     # the PSF is normalised so we don't need to pass wsum
     hess = partial(_hessian_reg_psf, beam=mean_beam * mask[None],
-                   psfhat=psfhat, nthreads=opts.nvthreads,
+                   psfhat=psfhat, nthreads=opts.nthreads,
                    sigmainv=opts.sigmainv, padding=psf_padding,
                    unpad_x=unpad_x, unpad_y=unpad_y, lastsize=lastsize)
 
