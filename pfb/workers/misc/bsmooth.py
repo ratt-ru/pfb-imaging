@@ -76,6 +76,7 @@ def _bsmooth(**kw):
         phase = np.angle(g)
         jhj = np.where(np.abs(phase) < opts.reject_phase_thresh, jhj, 0)
 
+        # remove slope BEFORE averaging
         freq = ds.gain_f.values
         for p in range(nant):
             for c in range(ncorr):
@@ -94,21 +95,28 @@ def _bsmooth(**kw):
         bphase += phase*jhj
         wgt += jhj
 
-    bamp = np.where(wgt > 0, bamp/wgt, np.nan)
-    bphase = np.where(wgt > 0, bphase/wgt, np.nan)
-
+    # flagged data get's set to ones
+    bamp = np.where(wgt > 0, bamp/wgt, 1)
+    bphase = np.where(wgt > 0, bphase/wgt, 0)
+    flag = wgt>0
+    # flag has no corr axis
+    flag = np.any(flag, axis=-1)
 
     bpass = bamp * np.exp(1.0j*bphase)
     bpass = da.from_array(bpass, chunks=(-1, -1, -1, -1, -1))
-    xdsw = []
-    for ds in xds:
-        xdsw.append(ds.assign(**{'gains': (ds.GAIN_AXES, bpass)}))
+    flag = da.from_array(flag, chunks=(-1, -1, -1, -1))
+    for i, ds in enumerate(xds):
+        xds[i] = ds.assign(**{'gains': (ds.GAIN_AXES, bpass),
+                              'gain_flags': (ds.GAIN_AXES[0:-1], flag)})
 
     ppath = gain_dir.parent
-    writes = xds_to_zarr(xdsw, f'{str(ppath)}/smoothed.qc::{opts.gain_term}',
+    writes = xds_to_zarr(xds, f'{str(ppath)}/smoothed.qc::{opts.gain_term}',
                              columns='ALL')
 
     bpass = dask.compute(bpass, writes)[0]
+
+    # set to NaN's for plotting
+    bpass = np.where(wgt > 0, bpass, np.nan)
 
     freq = xds[0].gain_f
     for p in range(nant):
