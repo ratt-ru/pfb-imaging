@@ -39,9 +39,12 @@ def _bsmooth(**kw):
     import numpy as np
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pathlib import Path
+    import matplotlib as mpl
+    mpl.rcParams.update({'font.size': 18, 'font.family': 'serif'})
     import matplotlib.pyplot as plt
     import dask.array as da
     import dask
+    from scipy.ndimage import median_filter
 
     gain_dir = Path(opts.gain_dir).resolve()
 
@@ -104,25 +107,20 @@ def _bsmooth(**kw):
 
     samp = np.zeros_like(bamp)
     sphase = np.zeros_like(bamp)
-    # smoothing spline
-    from scipy.interpolate import UnivariateSpline as uvs
-    from scipy.ndimage import median_filter
     for p in range(nant):
         for c in range(ncorr):
             idx = wgt[0, :, p, 0, c] > 0
             x = freq[idx]
             w = np.sqrt(wgt[0, idx, p, 0, c])
             amp = bamp[0, idx, p, 0, c]
-            # ampo = uvs(x, amp, w=w)
             amplin = np.interp(freq, x, amp)
             samp[0, :, p, 0, c] = median_filter(amplin, size=5)
             phase = bphase[0, idx, p, 0, c]
-            # phaseo = uvs(x, phase, w=w*amp)  # naive uncertainty propagation
             phaselin = np.interp(freq, x, phase)
             sphase[0, :, p, 0, c] = median_filter(phaselin, size=5)
 
 
-    bpass = bamp * np.exp(1.0j*bphase)
+    bpass = samp * np.exp(1.0j*sphase)
     bpass = da.from_array(bpass, chunks=(-1, -1, -1, -1, -1))
     flag = da.from_array(flag, chunks=(-1, -1, -1, -1))
     for i, ds in enumerate(xds):
@@ -143,12 +141,9 @@ def _bsmooth(**kw):
         for c in range(ncorr):
             fig, ax = plt.subplots(nrows=1, ncols=2,
                                 figsize=(18, 18))
-            fig.suptitle(f'Antenna {p}, corr {c}')
+            fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
             amp = np.abs(bpass[0, :, p, 0, c])
             phase = np.angle(bpass[0, :, p, 0, c])
-            # phase = np.where(phase < -np.pi, phase + 2*np.pi, phase)
-            # phase = np.where(phase > np.pi, phase - 2*np.pi, phase)
-            #phase[~np.isnan(phase)] = np.unwrap(phase[~np.isnan(phase)])
 
 
             for s, ds in enumerate(xds):
@@ -157,10 +152,6 @@ def _bsmooth(**kw):
                 flag = np.logical_or(jhj==0, f)
                 tamp = np.abs(xds[s].gains.values[0, :, p, 0, c])
                 tphase = np.angle(xds[s].gains.values[0, :, p, 0, c])
-                # tphase = np.where(tphase < -np.pi, tphase + 2*np.pi, tphase)
-                # tphase = np.where(tphase > np.pi, tphase - 2*np.pi, tphase)
-
-                # tphase[~np.isnan(tphase)] = np.unwrap(tphase[~np.isnan(tphase)])
                 tamp[flag] = np.nan
                 tphase[flag] = np.nan
 
