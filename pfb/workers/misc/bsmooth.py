@@ -102,6 +102,23 @@ def _bsmooth(**kw):
     # flag has no corr axis
     flag = np.any(flag, axis=-1)
 
+    samp = np.zeros_like(bamp)
+    sphase = np.zeros_like(bamp)
+    # smoothing spline
+    from scipy.interpolate import UnivariateSpline as uvs
+    for p in range(nant):
+        for c in range(ncorr):
+            idx = wgt[0, :, p, 0, c] > 0
+            x = freq[idx]
+            w = np.sqrt(wgt[0, idx, p, 0, c])
+            amp = bamp[0, idx, p, 0, c]
+            ampo = uvs(x, amp, w=w)
+            samp = ampo[freq]
+            phase = bphase[0, idx, p, 0, c]
+            phaseo = uvs(x, phase, w=w*amp)  # naive uncertainty propagation
+            sphase[0, :, p, 0, c] = phaseo(freq)
+
+
     bpass = bamp * np.exp(1.0j*bphase)
     bpass = da.from_array(bpass, chunks=(-1, -1, -1, -1, -1))
     flag = da.from_array(flag, chunks=(-1, -1, -1, -1))
@@ -126,8 +143,8 @@ def _bsmooth(**kw):
             fig.suptitle(f'Antenna {p}, corr {c}')
             amp = np.abs(bpass[0, :, p, 0, c])
             phase = np.angle(bpass[0, :, p, 0, c])
-            phase = np.where(phase < -np.pi, phase + 2*np.pi, phase)
-            phase = np.where(phase > np.pi, phase - 2*np.pi, phase)
+            # phase = np.where(phase < -np.pi, phase + 2*np.pi, phase)
+            # phase = np.where(phase > np.pi, phase - 2*np.pi, phase)
             #phase[~np.isnan(phase)] = np.unwrap(phase[~np.isnan(phase)])
 
 
@@ -137,8 +154,8 @@ def _bsmooth(**kw):
                 flag = np.logical_or(jhj==0, f)
                 tamp = np.abs(xds[s].gains.values[0, :, p, 0, c])
                 tphase = np.angle(xds[s].gains.values[0, :, p, 0, c])
-                tphase = np.where(tphase < -np.pi, tphase + 2*np.pi, tphase)
-                tphase = np.where(tphase > np.pi, tphase - 2*np.pi, tphase)
+                # tphase = np.where(tphase < -np.pi, tphase + 2*np.pi, tphase)
+                # tphase = np.where(tphase > np.pi, tphase - 2*np.pi, tphase)
 
                 # tphase[~np.isnan(tphase)] = np.unwrap(tphase[~np.isnan(tphase)])
                 tamp[flag] = np.nan
@@ -148,10 +165,12 @@ def _bsmooth(**kw):
                 ax[1].plot(freq, np.rad2deg(tphase), label=f'scan-{s}', alpha=0.5, linewidth=1)
 
             ax[0].plot(freq, amp, 'k', label='inf', linewidth=1)
+            ax[0].plot(freq, samp[0, :, p, 0, c], 'r', label='smooth', linewidth=1)
             ax[0].legend()
             ax[0].set_xlabel('freq / [MHz]')
 
             ax[1].plot(freq, np.rad2deg(phase), 'k', label='inf', linewidth=1)
+            ax[0].plot(freq, sphase[0, :, p, 0, c], 'r', label='smooth', linewidth=1)
             ax[1].legend()
             ax[1].set_xlabel('freq / [MHz]')
 
