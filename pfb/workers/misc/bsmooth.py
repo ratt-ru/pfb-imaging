@@ -106,17 +106,20 @@ def _bsmooth(**kw):
     sphase = np.zeros_like(bamp)
     # smoothing spline
     from scipy.interpolate import UnivariateSpline as uvs
+    from scipy.ndimage import median_filter
     for p in range(nant):
         for c in range(ncorr):
             idx = wgt[0, :, p, 0, c] > 0
             x = freq[idx]
             w = np.sqrt(wgt[0, idx, p, 0, c])
             amp = bamp[0, idx, p, 0, c]
-            ampo = uvs(x, amp, w=w)
-            samp[0, :, p, 0, c] = ampo(freq)
+            # ampo = uvs(x, amp, w=w)
+            amplin = np.interp(freq, x, amp)
+            samp[0, :, p, 0, c] = median_filter(amplin, size=5)
             phase = bphase[0, idx, p, 0, c]
-            phaseo = uvs(x, phase, w=w*amp)  # naive uncertainty propagation
-            sphase[0, :, p, 0, c] = phaseo(freq)
+            # phaseo = uvs(x, phase, w=w*amp)  # naive uncertainty propagation
+            phaselin = np.interp(freq, x, phase)
+            sphase[0, :, p, 0, c] = median_filter(phaselin, size=5)
 
 
     bpass = bamp * np.exp(1.0j*bphase)
@@ -170,7 +173,7 @@ def _bsmooth(**kw):
             ax[0].set_xlabel('freq / [MHz]')
 
             ax[1].plot(freq, np.rad2deg(phase), 'k', label='inf', linewidth=1)
-            ax[0].plot(freq, sphase[0, :, p, 0, c], 'r', label='smooth', linewidth=1)
+            ax[1].plot(freq, sphase[0, :, p, 0, c], 'r', label='smooth', linewidth=1)
             ax[1].legend()
             ax[1].set_xlabel('freq / [MHz]')
 
