@@ -113,7 +113,7 @@ def _bsmooth(**kw):
             w = np.sqrt(wgt[0, idx, p, 0, c])
             amp = bamp[0, idx, p, 0, c]
             ampo = uvs(x, amp, w=w)
-            samp = ampo[freq]
+            samp[0, :, p, 0, c] = ampo(freq)
             phase = bphase[0, idx, p, 0, c]
             phaseo = uvs(x, phase, w=w*amp)  # naive uncertainty propagation
             sphase[0, :, p, 0, c] = phaseo(freq)
