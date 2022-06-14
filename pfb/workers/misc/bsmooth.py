@@ -173,7 +173,7 @@ def _bsmooth(**kw):
             ax[0].set_xlabel('freq / [MHz]')
 
             ax[1].plot(freq, np.rad2deg(phase), 'k', label='inf', linewidth=1)
-            ax[1].plot(freq, sphase[0, :, p, 0, c], 'r', label='smooth', linewidth=1)
+            ax[1].plot(freq, np.rad2deg(sphase[0, :, p, 0, c]), 'r', label='smooth', linewidth=1)
             ax[1].legend()
             ax[1].set_xlabel('freq / [MHz]')
 
