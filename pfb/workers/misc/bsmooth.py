@@ -142,9 +142,6 @@ def _bsmooth(**kw):
             fig, ax = plt.subplots(nrows=1, ncols=2,
                                 figsize=(18, 18))
             fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
-            amp = np.abs(bpass[0, :, p, 0, c])
-            phase = np.angle(bpass[0, :, p, 0, c])
-
 
             for s, ds in enumerate(xds):
                 jhj = ds.jhj.values.real[0, :, p, 0, c]
@@ -158,12 +155,12 @@ def _bsmooth(**kw):
                 ax[0].plot(freq, tamp, label=f'scan-{s}', alpha=0.5, linewidth=1)
                 ax[1].plot(freq, np.rad2deg(tphase), label=f'scan-{s}', alpha=0.5, linewidth=1)
 
-            ax[0].plot(freq, amp, 'k', label='inf', linewidth=1)
+            ax[0].plot(freq, bamp[0, :, p, 0, c], 'k', label='inf', linewidth=1)
             ax[0].plot(freq, samp[0, :, p, 0, c], 'r', label='smooth', linewidth=1)
             ax[0].legend()
             ax[0].set_xlabel('freq / [MHz]')
 
-            ax[1].plot(freq, np.rad2deg(phase), 'k', label='inf', linewidth=1)
+            ax[1].plot(freq, np.rad2deg(bphase[0, :, p, 0, c]), 'k', label='inf', linewidth=1)
             ax[1].plot(freq, np.rad2deg(sphase[0, :, p, 0, c]), 'r', label='smooth', linewidth=1)
             ax[1].legend()
             ax[1].set_xlabel('freq / [MHz]')
