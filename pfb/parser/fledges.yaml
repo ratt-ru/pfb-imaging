@@ -9,7 +9,7 @@ inputs:
     abbreviation: o
   row_chunk:
     dtype: int
-    default: 10000
+    default: -1
     abbreviation: rc
   franges:
     dtype: str
@@ -19,11 +19,8 @@ inputs:
           eg. ':128,2697:2705,:-128' (the default)
   nthreads:
     dtype: int
-    default: 64
+    default: 16
     info: 'Number of dask threads'
-
-  _include:
-    - (pfb.parser)dist.yml
 
 outputs:
   {}

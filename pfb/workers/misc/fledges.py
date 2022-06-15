@@ -23,18 +23,10 @@ def fledges(**kw):
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
     pyscilog.log_to_file(f'{opts.output_filename}.log')
-
-    if opts.nworkers is None:
-        if opts.scheduler=='distributed':
-            opts.nworkers = opts.nband
-        else:
-            opts.nworkers = 1
-
     OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
-        from pfb import set_client
-        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
+
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -47,7 +39,9 @@ def _fledges(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
+    from multiprocessing.pool import ThreadPool
     import dask
+    dask.config.set(pool=ThreadPool(opts.nthreads))
     import dask.array as da
     from daskms import xds_from_ms, xds_to_table, xds_from_table
 
