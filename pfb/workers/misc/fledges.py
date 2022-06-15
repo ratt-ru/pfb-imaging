@@ -18,7 +18,7 @@ for key in schema.fledges["inputs"].keys():
 @clickify_parameters(schema.fledges)
 def fledges(**kw):
     '''
-    Routine to interpolate gains defined on a grid onto a measurement set
+    Apply a frequency mask
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
@@ -49,17 +49,25 @@ def _fledges(**kw):
 
     import dask
     import dask.array as da
-    from daskms import xds_from_ms, xds_to_table
+    from daskms import xds_from_ms, xds_to_table, xds_from_table
 
     xds = xds_from_ms(opts.ms, columns='FLAG', chunks={'row':opts.row_chunk},
                       group_cols=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'])
+
+    # 1419.8:1421.3 <=> 2697:2705
+    I = np.zeros(xds[0].chan.size, dtype=bool)
+    for idx in opts.franges.split(','):
+        m = re.match('(\d+)?:(-?\d+)?', idx)
+        ilow = int(m.group(1)) if m.group(1) is not None else None
+        ihigh = int(m.group(1)) if m.group(1) is not None else None
+        I[slice(ilow, ihigh)] = True
+    I = da.from_array(I, chunks=-1)
     writes = []
     for ds in xds:
         flag = ds.FLAG.data
         flag = da.blockwise(set_flags, 'rfc',
                             flag, 'rfc',
-                            opts.chan_lower, None,
-                            opts.chan_upper, None,
+                            I, 'f',
                             dtype=bool)
 
         ds = ds.assign(**{'FLAG': (('row','chan','corr'), flag)})
@@ -68,10 +76,6 @@ def _fledges(**kw):
 
     dask.compute(writes)
 
-
-
-
-def set_flags(flag, chan_lower, chan_upper):
-    flag[:, 0:chan_lower, :] = True
-    flag[:, -chan_upper:, :] = True
+def set_flags(flag, I):
+    flag[:, I, :] = True
     return flag
