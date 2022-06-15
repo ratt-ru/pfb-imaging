@@ -2,11 +2,6 @@ inputs:
   ms:
     dtype: MS
     required: true
-  output_filename:
-    dtype: str
-    required: true
-    info: 'Basename of output'
-    abbreviation: o
   row_chunk:
     dtype: int
     default: -1

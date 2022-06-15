@@ -22,7 +22,7 @@ def fledges(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{opts.output_filename}.log')
+    pyscilog.log_to_file(f'fledges.log')
     OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
@@ -44,6 +44,8 @@ def _fledges(**kw):
     dask.config.set(pool=ThreadPool(opts.nthreads))
     import dask.array as da
     from daskms import xds_from_ms, xds_to_table, xds_from_table
+    import numpy as np
+    import re
 
     xds = xds_from_ms(opts.ms, columns='FLAG', chunks={'row':opts.row_chunk},
                       group_cols=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'])
