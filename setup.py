@@ -25,19 +25,20 @@ requirements = [
 
                 "dask-ms[xarray, zarr]"
                 "@git+https://github.com/ska-sa/dask-ms.git"
-                "@becd3572f86a0ad78b55540f25fce6e129976a29",
+                "@master",
 
                 "packratt"
                 "@git+https://github.com/ratt-ru/packratt.git"
-                "@aae9c681f647b8b9ad6d884258b7c4eceff58edd",
+                "@master",
 
                 "scabha"
                 "@git+https://github.com/caracal-pipeline/scabha2"
-                "@af3225e66161b523623c56f02c9d2570721c3d3c",
+                "@rich",
 
                 "stimela"
                 "@git+https://github.com/caracal-pipeline/stimela2.git"
-                "@14c704d4f536814dee02dd80185f4870adec9de1"
+                "@rich",
+
 
             ]
 
