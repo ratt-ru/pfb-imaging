@@ -11,7 +11,7 @@ inputs:
     default: ':128,2697:2705,-128:'
     info: Channel ranges to flag.
           Give as a comma seperated string of numpy slices
-          eg. ':128,2697:2705,:-128' (the default)
+          eg. ':128,2697:2705,-128:' (the default)
   nthreads:
     dtype: int
     default: 16
