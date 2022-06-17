@@ -53,10 +53,11 @@ def _fledges(**kw):
     # 1419.8:1421.3 <=> 2697:2705
     I = np.zeros(xds[0].chan.size, dtype=bool)
     for idx in opts.franges.split(','):
-        m = re.match('(\d+)?:(-?\d+)?', idx)
+        m = re.match('(-?\d+)?:(-?\d+)?', idx)
         ilow = int(m.group(1)) if m.group(1) is not None else None
-        ihigh = int(m.group(1)) if m.group(1) is not None else None
+        ihigh = int(m.group(2)) if m.group(2) is not None else None
         I[slice(ilow, ihigh)] = True
+
     I = da.from_array(I, chunks=-1)
     writes = []
     for ds in xds:
