@@ -33,7 +33,7 @@ requirements = [
 
                 "scabha"
                 "@git+https://github.com/caracal-pipeline/scabha2"
-                "@caching",
+                "@rich",
 
                 "stimela"
                 "@git+https://github.com/caracal-pipeline/stimela2.git"
