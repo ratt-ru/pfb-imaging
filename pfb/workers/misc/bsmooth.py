@@ -109,7 +109,9 @@ def _bsmooth(**kw):
     sphase = np.zeros_like(bamp)
     for p in range(nant):
         for c in range(ncorr):
-            idx = wgt[0, :, p, 0, c] > 0
+            idx = np.where(jhj[0, :, p, 0, c] > 0)[0]
+            if idx.size < 2:
+                continue
             x = freq[idx]
             w = np.sqrt(wgt[0, idx, p, 0, c])
             amp = bamp[0, idx, p, 0, c]
@@ -134,7 +136,11 @@ def _bsmooth(**kw):
     bpass = dask.compute(bpass, writes)[0]
 
     # set to NaN's for plotting
-    bpass = np.where(wgt > 0, bpass, np.nan)
+    bamp = np.where(wgt > 0, bamp, np.nan)
+    bphase = np.where(wgt > 0, bphase, np.nan)
+
+    samp = np.where(wgt > 0, samp, np.nan)
+    sphase = np.where(wgt > 0, sphase, np.nan)
 
     freq = xds[0].gain_f
     for p in range(nant):
