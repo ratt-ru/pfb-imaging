@@ -116,10 +116,11 @@ def _bsmooth(**kw):
             w = np.sqrt(wgt[0, idx, p, 0, c])
             amp = bamp[0, idx, p, 0, c]
             amplin = np.interp(freq, x, amp)
-            samp[0, :, p, 0, c] = median_filter(amplin, size=5)
+            samp[0, :, p, 0, c] = median_filter(amplin, size=opts.filter_size)
             phase = bphase[0, idx, p, 0, c]
             phaselin = np.interp(freq, x, phase)
-            sphase[0, :, p, 0, c] = median_filter(phaselin, size=5)
+            sphase[0, :, p, 0, c] = median_filter(phaselin,
+                                                  size=opts.filter_size)
 
 
     bpass = samp * np.exp(1.0j*sphase)
