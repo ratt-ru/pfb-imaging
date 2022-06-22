@@ -143,8 +143,8 @@ def _bsmooth(**kw):
     bamp = np.where(wgt > 0, bamp, np.nan)
     bphase = np.where(wgt > 0, bphase, np.nan)
 
-    samp = np.where(wgt > 0, samp, np.nan)
-    sphase = np.where(wgt > 0, sphase, np.nan)
+    # samp = np.where(wgt > 0, samp, np.nan)
+    # sphase = np.where(wgt > 0, sphase, np.nan)
 
     freq = xds[0].gain_f
     for p in range(nant):
