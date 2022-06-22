@@ -135,6 +135,9 @@ def _bsmooth(**kw):
 
     bpass = dask.compute(bpass, writes)[0]
 
+    if not opts.do_plots:
+        quit()
+
     # set to NaN's for plotting
     bamp = np.where(wgt > 0, bamp, np.nan)
     bphase = np.where(wgt > 0, bphase, np.nan)

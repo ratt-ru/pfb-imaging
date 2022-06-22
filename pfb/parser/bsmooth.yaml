@@ -18,6 +18,10 @@ inputs:
     dtype: float
     default: 7.5
     info: 'Discard data where abs(phase) is above this number'
+  do_plots:
+    dtype: bool
+    default: false
+    info: 'Make per antenna plots'
 
 
 outputs:
