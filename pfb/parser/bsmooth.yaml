@@ -18,6 +18,10 @@ inputs:
     dtype: float
     default: 7.5
     info: 'Discard data where abs(phase) is above this number'
+  filter_size:
+    dtype: int
+    default: 5
+    info: Median filter window size (larger -> more smoothing)
   do_plots:
     dtype: bool
     default: false
