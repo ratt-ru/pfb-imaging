@@ -7,5 +7,5 @@ def cli():
     pass
 
 from pfb.workers.misc import (transcols, gainspector, sim_noise, ift2qc,
-                              fledges, hthresh, bsmooth, ksmooth, delay_init,
+                              fledges, hthresh, bsmooth, delay_init,
                               forward, backward, nnls, restimator)
