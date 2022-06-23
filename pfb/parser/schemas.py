@@ -23,9 +23,14 @@ if schema is None:
 
     structured = OmegaConf.structured(_CabInputsOutputs)
 
-    schema = OmegaConf.create(configuratt.load_nested(files,
-                                                      structured=structured,
-                                                      config_class="PfbCleanCabs"))
+    tmp = configuratt.load_nested(files,
+                                  structured=structured,
+                                  config_class="PfbCleanCabs")
+
+    # this is required since upgrade of scabha to caching branch.
+    # tmp is a tuple containing the config object as the first element
+    # and a set containing locations of .yaml configs for pfb workers
+    schema = OmegaConf.create(tmp[0])
 
 
 

@@ -30,11 +30,15 @@ requirements = [
 
                 "packratt"
                 "@git+https://github.com/ratt-ru/packratt.git"
-                "@master",
+                "@pyyaml",
 
-                # "stimela"
-                # "@git+https://github.com/caracal-pipeline/stimela2.git"
-                # "@rich",
+                "scabha"
+                "@git+https://github.com/caracal-pipeline/scabha2"
+                "@caching",
+
+                "stimela"
+                "@git+https://github.com/caracal-pipeline/stimela2.git"
+                "@issue-34",
 
 
             ]
