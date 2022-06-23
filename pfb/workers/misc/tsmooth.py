@@ -4,19 +4,19 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('BSMOOTH')
+log = pyscilog.get_logger('TSMOOTH')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}
-for key in schema.bsmooth["inputs"].keys():
-    defaults[key] = schema.bsmooth["inputs"][key]["default"]
+for key in schema.tsmooth["inputs"].keys():
+    defaults[key] = schema.tsmooth["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.bsmooth)
-def bsmooth(**kw):
+@clickify_parameters(schema.tsmooth)
+def tsmooth(**kw):
     '''
     Smooth and plot 1D gain solutions with a median filter
     '''
@@ -30,9 +30,9 @@ def bsmooth(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    return _bsmooth(**opts)
+    return _tsmooth(**opts)
 
-def _bsmooth(**kw):
+def _tsmooth(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -45,6 +45,7 @@ def _bsmooth(**kw):
     import dask.array as da
     import dask
     from scipy.ndimage import median_filter
+    import xarray as xr
 
     gain_dir = Path(opts.gain_dir).resolve()
 
@@ -53,12 +54,14 @@ def _bsmooth(**kw):
     except Exception as e:
         xds = xds_from_zarr(f'{str(gain_dir)}/{opts.gain_term}')
 
+    xds_concat = xr.concat(xds, dim='gain_t').sortby('gain_t')
+
     nscan = len(xds)
-    ntime, nchan, nant, ndir, ncorr = xds[0].gains.data.shape
-    if ntime > 1:
-        raise ValueError("Only freq smoothing currently supported")
+    ntime, nchan, nant, ndir, ncorr = xds_concat.gains.data.shape
+    if nchan > 1:
+        raise ValueError("Only time smoothing currently supported")
     if ndir > 1:
-        raise ValueError("Only freq smoothing currently supported")
+        raise ValueError("Only time smoothing currently supported")
 
     bamp = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
     bphase = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
@@ -79,8 +82,6 @@ def _bsmooth(**kw):
         phase = np.angle(g)
         jhj = np.where(np.abs(phase) < np.deg2rad(opts.reject_phase_thresh), jhj, 0)
 
-        # remove slope BEFORE averaging
-        freq = ds.gain_f.values
         for p in range(nant):
             for c in range(ncorr):
                 idx = np.where(jhj[0, :, p, 0, c] > 0)[0]
@@ -93,10 +94,6 @@ def _bsmooth(**kw):
                 coeffs = np.polyfit(f, y, 1, w=w)
                 phase[0, idx, p, 0, c] -= np.polyval(coeffs, f)
 
-
-        bamp += amp*jhj
-        bphase += phase*jhj
-        wgt += jhj
 
     # flagged data get's set to ones
     bamp = np.where(wgt > 0, bamp/wgt, 1)
