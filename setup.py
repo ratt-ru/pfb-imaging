@@ -22,7 +22,6 @@ requirements = [
                 'sympy',
                 'rich',
                 "codex-africanus[complete]",
-                "scabha>=2.0b1",
 
                 "dask-ms[xarray, zarr]"
                 "@git+https://github.com/ska-sa/dask-ms.git"
