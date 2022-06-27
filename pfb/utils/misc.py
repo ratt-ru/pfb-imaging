@@ -591,63 +591,42 @@ def setup_image_data(dds, opts, rname, apparent=False, log=None):
     residual = [da.zeros((nx, ny), chunks=(-1, -1),
                          dtype=real_type) for _ in range(nband)]
     wsums = [da.zeros(1, dtype=real_type) for _ in range(nband)]
-    if opts.mean_ds and opts.use_psf:
-        nx_psf, ny_psf = dds[0].PSF.shape
-        nx_psf, nyo2_psf = dds[0].PSFHAT.shape
-        psf = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1),
+    nx_psf, ny_psf = dds[0].PSF.shape
+    nx_psf, nyo2_psf = dds[0].PSFHAT.shape
+    psf = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1),
+                    dtype=complex_type) for _ in range(nband)]
+    psfhat = [da.zeros((nx_psf, nyo2_psf), chunks=(-1, -1),
                         dtype=complex_type) for _ in range(nband)]
-        psfhat = [da.zeros((nx_psf, nyo2_psf), chunks=(-1, -1),
-                           dtype=complex_type) for _ in range(nband)]
-        mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
-                              dtype=real_type) for _ in range(nband)]
-        for ds in dds:
-            b = ds.bandid
-            if apparent:
-                # in case rname does not exist
-                try:
-                    residual[b] += ds.get(rname).data
-                except:
-                    print(f"Could not find {rname} in dds", file=log)
-            else:
-                try:
-                    residual[b] += ds.get(rname).data * ds.BEAM.data
-                except:
-                    print(f"Cold not find {rname} in dds", file=log)
-            psf[b] += ds.PSF.data
-            psfhat[b] += ds.PSFHAT.data
-            mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
-            wsums[b] += ds.WSUM.data[0]
-        wsums = da.stack(wsums).squeeze()
-        wsum = wsums.sum()
-        residual = da.stack(residual)/wsum
-        psf = da.stack(psf)/wsum
-        psfhat = da.stack(psfhat)/wsum
-        mean_beam = da.stack(mean_beam)/wsums[:, None, None]
-        residual, psf, psfhat, mean_beam, wsum = dask.compute(residual,
-                                                              psf,
-                                                              psfhat,
-                                                              mean_beam,
-                                                              wsum)
-    else:
-        for ds in dds:
-            b = ds.bandid
-            if apparent:
-                try:
-                    residual[b] += ds.get(rname).data
-                except:
-                    print(f"Cold not find {rname} in dds", file=log)
-            else:
-                try:
-                    residual[b] += ds.get(rname).data * ds.BEAM.data
-                except:
-                    print(f"Cold not find {rname} in dds", file=log)
-            wsums[b] += ds.WSUM.data[0]
-        wsum = da.stack(wsums).sum()
-        residual = da.stack(residual)/wsum
-        residual, wsum = dask.compute(residual, wsum)
-        psf = None
-        psfhat = None
-        mean_beam = None
+    mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
+                            dtype=real_type) for _ in range(nband)]
+    for ds in dds:
+        b = ds.bandid
+        if apparent:
+            # in case rname does not exist
+            try:
+                residual[b] += ds.get(rname).data
+            except:
+                print(f"Could not find {rname} in dds", file=log)
+        else:
+            try:
+                residual[b] += ds.get(rname).data * ds.BEAM.data
+            except:
+                print(f"Cold not find {rname} in dds", file=log)
+        psf[b] += ds.PSF.data
+        psfhat[b] += ds.PSFHAT.data
+        mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
+        wsums[b] += ds.WSUM.data[0]
+    wsums = da.stack(wsums).squeeze()
+    wsum = wsums.sum()
+    residual = da.stack(residual)/wsum
+    psf = da.stack(psf)/wsum
+    psfhat = da.stack(psfhat)/wsum
+    mean_beam = da.stack(mean_beam)/wsums[:, None, None]
+    residual, psf, psfhat, mean_beam, wsum = dask.compute(residual,
+                                                            psf,
+                                                            psfhat,
+                                                            mean_beam,
+                                                            wsum)
     return residual, wsum, psf, psfhat, mean_beam
 
 

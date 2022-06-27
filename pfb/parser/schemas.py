@@ -30,7 +30,7 @@ if schema is None:
     # this is required since upgrade of scabha to caching branch.
     # tmp is a tuple containing the config object as the first element
     # and a set containing locations of .yaml configs for pfb workers
-    schema = OmegaConf.create(tmp)
+    schema = OmegaConf.create(tmp[0])
 
 
 

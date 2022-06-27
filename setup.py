@@ -29,15 +29,15 @@ requirements = [
 
                 "packratt"
                 "@git+https://github.com/ratt-ru/packratt.git"
-                "@pyyaml",
+                "@master",
 
                 "scabha"
                 "@git+https://github.com/caracal-pipeline/scabha2"
-                "@rich",
+                "@nested-schemas",
 
                 "stimela"
                 "@git+https://github.com/caracal-pipeline/stimela2.git"
-                "@rich",
+                "@nested-schemas",
 
 
             ]

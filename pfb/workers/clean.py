@@ -126,6 +126,7 @@ def _clean(**kw):
     import dask.array as da
     from dask.distributed import performance_report
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
+    from pfb.utils.misc import setup_image_data
     from pfb.deconv.hogbom import hogbom
     from pfb.deconv.clark import clark
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
@@ -256,10 +257,9 @@ def _clean(**kw):
     print("Saving results", file=log)
     if opts.update_mask:
         mask = np.any(model, axis=0)
-        # from scipy import ndimage
-        # mask = ndimage.binary_dilation(mask)
-        # mask = ndimage.binary_closing(mask)
-        # mask = ndimage.binary_erosion(mask)
+        from scipy import ndimage
+        mask = ndimage.binary_dilation(mask)
+        mask = ndimage.binary_erosion(mask)
         if 'MASK' in mds:
             mask = np.logical_or(mask, mds.MASK.values)
         mds = mds.assign(**{
@@ -275,26 +275,25 @@ def _clean(**kw):
     dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
     if opts.do_residual:
-        print("Computing residual", file=log)
-        from pfb.operators.hessian import hessian
-        # Required because of https://github.com/ska-sa/dask-ms/issues/171
-        ddsw = xds_from_zarr(dds_name, chunks={'band': 1}, columns='DIRTY')
-        writes = []
-        for ds, dsw in zip(dds, ddsw):
-            dirty = ds.get(rname).data
+        print('Computing final residual', file=log)
+        # first write it to disk per dataset
+        out_ds = []
+        for ds in dds:
+            dirty = ds.DIRTY.data
             wgt = ds.WEIGHT.data
             uvw = ds.UVW.data
             freq = ds.FREQ.data
             beam = ds.BEAM.data
             vis_mask = ds.MASK.data
             b = ds.bandid
-            # no beam application for apparent scale
-            residual = (dirty - hessian(model[b], uvw, wgt, vis_mask, freq,
-                                        None, hessopts))
-            dsw = dsw.assign(**{'CLEAN_RESIDUAL': (('x', 'y'), residual)})
-            writes.append(dsw)
+            # we only want to apply the beam once here
+            residual = dirty - hessian(beam * model_dask[b], uvw, wgt,
+                                       vis_mask, freq, None, hessopts)
+            ds = ds.assign(**{'CLEAN_RESIDUAL': (('x', 'y'), residual)})
+            out_ds.append(ds)
 
-        dask.compute(xds_to_zarr(writes, dds_name, columns='CLEAN_RESIDUAL'))
+        writes = xds_to_zarr(out_ds, dds_name, columns='CLEAN_RESIDUAL')
+        dask.compute(writes)
 
     if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)
