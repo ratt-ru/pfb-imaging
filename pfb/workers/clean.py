@@ -130,6 +130,7 @@ def _clean(**kw):
     from pfb.deconv.hogbom import hogbom
     from pfb.deconv.clark import clark
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
+    from pfb.operators.hessian import hessian
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -148,16 +149,19 @@ def _clean(**kw):
     nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
 
     # stitch dirty/psf in apparent scale
-    if opts.residual_name in dds[0]:
-        rname = opts.residual_name
-    else:
-        rname = 'DIRTY'
-    print(f'Using {rname} as residual', file=log)
     output_type = dds[0].DIRTY.dtype
-    residual, wsum, psf, psfhat, _ = setup_image_data(dds, opts, rname, apparent=True, log=log)
+    dirty, residual, wsum, psf, psfhat, _ = setup_image_data(dds,
+                                                             opts,
+                                                             apparent=True,
+                                                             log=log)
+    import pdb; pdb.set_trace()
     psf_mfs = np.sum(psf, axis=0)
-    dirty_mfs = np.sum(dirty, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
+    dirty_mfs = np.sum(dirty, axis=0)
+    if residual is None:
+        residual = dirty.copy()
+        residual_mfs = dirty_mfs.copy()
+    model = mds.MODEL.values
 
     # set up Hessian
     from pfb.operators.hessian import hessian_xds
@@ -198,14 +202,10 @@ def _clean(**kw):
         psfopts['nthreads'] = opts.nvthreads
         psfo = partial(psf_convolve_cube, psfhat=psfhat, beam=None, psfopts=psfopts)
 
-    rms = np.std(dirty_mfs)
-    rmax = np.abs(dirty_mfs).max()
+    rms = np.std(residual_mfs)
+    rmax = np.abs(residual_mfs).max()
 
     print("Iter %i: peak residual = %f, rms = %f" % (0, rmax, rms), file=log)
-
-    residual = dirty.copy()
-    residual_mfs = dirty_mfs.copy()
-    model = np.zeros_like(residual)
     for k in range(opts.nmiter):
         if opts.use_clark:
             print("Running Clark", file=log)
@@ -229,8 +229,8 @@ def _clean(**kw):
         model += x
 
         print("Getting residual", file=log)
-        convimage = hess(x)
-        ne.evaluate('residual - convimage', out=residual,
+        convimage = hess(model)
+        ne.evaluate('dirty - convimage', out=residual,
                     casting='same_kind')
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
@@ -287,7 +287,7 @@ def _clean(**kw):
             vis_mask = ds.MASK.data
             b = ds.bandid
             # we only want to apply the beam once here
-            residual = dirty - hessian(beam * model_dask[b], uvw, wgt,
+            residual = dirty - hessian(beam * model[b], uvw, wgt,
                                        vis_mask, freq, None, hessopts)
             ds = ds.assign(**{'CLEAN_RESIDUAL': (('x', 'y'), residual)})
             out_ds.append(ds)

@@ -94,6 +94,7 @@ def _forward(**kw):
     from pfb.opt.pcg import pcg
     from astropy.io import fits
     import pywt
+    from pfb.operators.hessian import hessian
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -110,15 +111,16 @@ def _forward(**kw):
         assert ds.ny == ny
 
     # stitch residuals after beam application
-    if opts.residual_name in dds[0]:
-        rname = opts.residual_name
-    else:
-        rname = 'DIRTY'
-    print(f'Using {rname} as residual', file=log)
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
-    residual, wsum, _, psfhat, mean_beam = setup_image_data(dds, opts, rname, log=log)
-
+    dirty, residual, wsum, _, psfhat, mean_beam = setup_image_data(dds,
+                                                                   opts,
+                                                                   log=log)
+    dirty_mfs = np.sum(dirty, axis=0)
+    if residual is None:
+        residual = dirty.copy()
+        residual_mfs = dirty_mfs.copy()
+    model = mds.MODEL.values
     mask = init_mask(opts.mask, mds, real_type, log)
 
     try:
@@ -195,19 +197,23 @@ def _forward(**kw):
     update = pcg(hess, mask * residual, x0, **cgopts)
 
     print("Writing update.", file=log)
+    model += update
     update = da.from_array(update, chunks=(1, -1, -1))
+    model = da.from_array(model, chunks=(1, -1, -1))
     mds = mds.assign(**{'UPDATE': (('band', 'x', 'y'),
                      update)})
-    dask.compute(xds_to_zarr(mds, mds_name, columns='UPDATE'))
+
+    mds = mds.assign(**{'FORWARD_MODEL': (('band', 'x', 'y'),
+                     model)})
+
+    dask.compute(xds_to_zarr(mds, mds_name, columns=('UPDATE', 'FORWARD_MODEL')))
 
     if opts.do_residual:
-        print("Computing residual", file=log)
-        from pfb.operators.hessian import hessian
-        # Required because of https://github.com/ska-sa/dask-ms/issues/171
-        ddsw = xds_from_zarr(dds_name, columns='DIRTY')
-        writes = []
-        for ds, dsw in zip(dds, ddsw):
-            dirty = ds.get(rname).data
+        print('Computing final residual', file=log)
+        # first write it to disk per dataset
+        out_ds = []
+        for ds in dds:
+            dirty = ds.DIRTY.data
             wgt = ds.WEIGHT.data
             uvw = ds.UVW.data
             freq = ds.FREQ.data
@@ -215,14 +221,13 @@ def _forward(**kw):
             vis_mask = ds.MASK.data
             b = ds.bandid
             # we only want to apply the beam once here
-            residual = (dirty - hessian(beam * update[b], uvw, wgt, vis_mask,
-                                        freq, None, hessopts))
-            dsw = dsw.assign(**{'FORWARD_RESIDUAL': (('x', 'y'),
-                                                      residual)})
+            residual = dirty - hessian(beam * model[b], uvw, wgt,
+                                       vis_mask, freq, None, hessopts)
+            ds = ds.assign(**{'FORWARD_RESIDUAL': (('x', 'y'), residual)})
+            out_ds.append(ds)
 
-            writes.append(dsw)
-
-        dask.compute(xds_to_zarr(writes, dds_name, columns='FORWARD_RESIDUAL'))
+        writes = xds_to_zarr(out_ds, dds_name, columns='FORWARD_RESIDUAL')
+        dask.compute(writes)
 
     if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)

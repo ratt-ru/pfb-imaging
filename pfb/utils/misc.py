@@ -583,18 +583,23 @@ def coerce_literal(func, literals):
     return
 
 
-def setup_image_data(dds, opts, rname, apparent=False, log=None):
+def setup_image_data(dds, opts, apparent=False, log=None):
     nband = opts.nband
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
     nx, ny = dds[0].DIRTY.shape
-    residual = [da.zeros((nx, ny), chunks=(-1, -1),
+    dirty = [da.zeros((nx, ny), chunks=(-1, -1),
                          dtype=real_type) for _ in range(nband)]
+    if opts.residual_name in dds[0]:
+        residual = [da.zeros((nx, ny), chunks=(-1, -1),
+                            dtype=real_type) for _ in range(nband)]
+    else:
+        residual = None
     wsums = [da.zeros(1, dtype=real_type) for _ in range(nband)]
     nx_psf, ny_psf = dds[0].PSF.shape
     nx_psf, nyo2_psf = dds[0].PSFHAT.shape
     psf = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1),
-                    dtype=complex_type) for _ in range(nband)]
+                    dtype=real_type) for _ in range(nband)]
     psfhat = [da.zeros((nx_psf, nyo2_psf), chunks=(-1, -1),
                         dtype=complex_type) for _ in range(nband)]
     mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
@@ -602,32 +607,32 @@ def setup_image_data(dds, opts, rname, apparent=False, log=None):
     for ds in dds:
         b = ds.bandid
         if apparent:
-            # in case rname does not exist
-            try:
+            dirty[b] += ds.DIRTY.data
+            if opts.residual_name in ds:
                 residual[b] += ds.get(rname).data
-            except:
-                print(f"Could not find {rname} in dds", file=log)
         else:
-            try:
+            dirty[b] += ds.DIRTY.data * ds.BEAM.data
+            if opts.residual_name in ds:
                 residual[b] += ds.get(rname).data * ds.BEAM.data
-            except:
-                print(f"Cold not find {rname} in dds", file=log)
         psf[b] += ds.PSF.data
         psfhat[b] += ds.PSFHAT.data
         mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
         wsums[b] += ds.WSUM.data[0]
     wsums = da.stack(wsums).squeeze()
     wsum = wsums.sum()
-    residual = da.stack(residual)/wsum
+    dirty = da.stack(dirty)/wsum
+    if opts.residual_name in ds:
+        residual = da.stack(residual)/wsum
     psf = da.stack(psf)/wsum
     psfhat = da.stack(psfhat)/wsum
     mean_beam = da.stack(mean_beam)/wsums[:, None, None]
-    residual, psf, psfhat, mean_beam, wsum = dask.compute(residual,
-                                                            psf,
-                                                            psfhat,
-                                                            mean_beam,
-                                                            wsum)
-    return residual, wsum, psf, psfhat, mean_beam
+    dirty, residual, psf, psfhat, mean_beam, wsum = dask.compute(dirty,
+                                                                 residual,
+                                                                 psf,
+                                                                 psfhat,
+                                                                 mean_beam,
+                                                                 wsum)
+    return dirty, residual, wsum, psf, psfhat, mean_beam
 
 
 def interp_gain_grid(gdct, ant_names):
