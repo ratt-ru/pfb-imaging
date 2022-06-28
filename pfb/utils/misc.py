@@ -625,7 +625,9 @@ def setup_image_data(dds, opts, apparent=False, log=None):
         residual = da.stack(residual)/wsum
     psf = da.stack(psf)/wsum
     psfhat = da.stack(psfhat)/wsum
-    mean_beam = da.stack(mean_beam)/wsums[:, None, None]
+    for b in range(nband):
+        if wsums[b]:
+            mean_beam[b] /= wsums[b]
     dirty, residual, psf, psfhat, mean_beam, wsum = dask.compute(dirty,
                                                                  residual,
                                                                  psf,
