@@ -154,7 +154,6 @@ def _clean(**kw):
                                                              opts,
                                                              apparent=True,
                                                              log=log)
-    import pdb; pdb.set_trace()
     psf_mfs = np.sum(psf, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
     dirty_mfs = np.sum(dirty, axis=0)

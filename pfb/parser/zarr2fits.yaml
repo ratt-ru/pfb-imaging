@@ -1,0 +1,12 @@
+inputs:
+  zfile:
+    dtype: str
+    required: true
+    info: 'Path to .zarr dataset'
+  column:
+    dtype: str
+    default: DIRTY
+    info: 'Name of column to produce fits from'
+
+outputs:
+  {}

@@ -342,6 +342,7 @@ def _grid(**kw):
             'dec': xds[0].dec,
             'cell_rad': cell_rad,
             'bandid': ds.bandid,
+            'scanid': ds.scanid,
             'freq_out': ds.freq_out,
             'robustness': opts.robustness
         }

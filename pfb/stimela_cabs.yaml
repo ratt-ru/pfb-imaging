@@ -77,3 +77,9 @@ cabs:
 
     _include:
       - (pfb.parser)delay_init.yaml
+
+  'pfbmisc.zarr2fits':
+    command: (pfb.workers.misc.zarr2fits)zarr2fits
+
+    _include:
+      - (pfb.parser)zarr2fits.yaml

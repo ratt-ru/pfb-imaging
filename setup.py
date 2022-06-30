@@ -33,7 +33,7 @@ requirements = [
 
                 "scabha"
                 "@git+https://github.com/caracal-pipeline/scabha2"
-                "@nested-schemas",
+                "@master",
 
                 "stimela"
                 "@git+https://github.com/caracal-pipeline/stimela2.git"
