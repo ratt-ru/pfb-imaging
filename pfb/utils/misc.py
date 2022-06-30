@@ -596,12 +596,16 @@ def setup_image_data(dds, opts, apparent=False, log=None):
     else:
         residual = None
     wsums = [da.zeros(1, dtype=real_type) for _ in range(nband)]
-    nx_psf, ny_psf = dds[0].PSF.shape
-    nx_psf, nyo2_psf = dds[0].PSFHAT.shape
-    psf = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1),
-                    dtype=real_type) for _ in range(nband)]
-    psfhat = [da.zeros((nx_psf, nyo2_psf), chunks=(-1, -1),
-                        dtype=complex_type) for _ in range(nband)]
+    if 'PSF' in dds[0]:
+        nx_psf, ny_psf = dds[0].PSF.shape
+        nx_psf, nyo2_psf = dds[0].PSFHAT.shape
+        psf = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1),
+                        dtype=real_type) for _ in range(nband)]
+        psfhat = [da.zeros((nx_psf, nyo2_psf), chunks=(-1, -1),
+                            dtype=complex_type) for _ in range(nband)]
+    else:
+        psf = None
+        psfhat = None
     mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
                             dtype=real_type) for _ in range(nband)]
     for ds in dds:
@@ -609,13 +613,14 @@ def setup_image_data(dds, opts, apparent=False, log=None):
         if apparent:
             dirty[b] += ds.DIRTY.data
             if opts.residual_name in ds:
-                residual[b] += ds.get(rname).data
+                residual[b] += ds.get(opts.residual_name).data
         else:
             dirty[b] += ds.DIRTY.data * ds.BEAM.data
             if opts.residual_name in ds:
-                residual[b] += ds.get(rname).data * ds.BEAM.data
-        psf[b] += ds.PSF.data
-        psfhat[b] += ds.PSFHAT.data
+                residual[b] += ds.get(opts.residual_name).data * ds.BEAM.data
+        if 'PSF' in ds:
+            psf[b] += ds.PSF.data
+            psfhat[b] += ds.PSFHAT.data
         mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
         wsums[b] += ds.WSUM.data[0]
     wsums = da.stack(wsums).squeeze()
@@ -623,8 +628,9 @@ def setup_image_data(dds, opts, apparent=False, log=None):
     dirty = da.stack(dirty)/wsum
     if opts.residual_name in ds:
         residual = da.stack(residual)/wsum
-    psf = da.stack(psf)/wsum
-    psfhat = da.stack(psfhat)/wsum
+    if 'PSF' in ds:
+        psf = da.stack(psf)/wsum
+        psfhat = da.stack(psfhat)/wsum
     for b in range(nband):
         if wsums[b]:
             mean_beam[b] /= wsums[b]
