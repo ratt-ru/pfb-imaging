@@ -25,11 +25,12 @@ def hogbom(
     q = pq - p*ny
     IRmax = np.sqrt(IRsearch[p, q])
     wsums = np.amax(PSF, axis=(1,2))
+    fsel = wsums > 0
     tol = pf * IRmax
     k = 0
     stall_count = 0
     while IRmax > tol and k < maxit and stall_count < 5:
-        xhat = IR[:, p, q] / wsums
+        xhat = IR[fsel, p, q] / wsums[fsel]
         x[:, p, q] += gamma * xhat
         ne.evaluate('IR - gamma * xhat * psf', local_dict={
                     'IR': IR,
