@@ -177,6 +177,10 @@ def _grid(**kw):
             print(f'Removing {dds_name}', file=log)
             import shutil
             shutil.rmtree(dds_name)
+            try:
+                shutil.rmtree(f'{basename}_counts.zarr')
+            except:
+                pass
         else:
             raise RuntimeError(f'Not overwriting {dds_name}, directory exists. '
                                f'Set overwrite flag or specify a different '

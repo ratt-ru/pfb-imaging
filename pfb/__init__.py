@@ -72,7 +72,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
     # avoids numexpr error, probably don't want more than 10 vthreads for ne anyway
     import numexpr as ne
     max_cores = ne.detect_number_of_cores()
-    ne_threads = min(max_cores, opts.nvthreads)
+    ne_threads = min(max_cores, opts.nthreads)
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
     if scheduler=='distributed':

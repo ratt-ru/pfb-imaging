@@ -48,12 +48,15 @@ def _zarr2fits(**kw):
     scans = []
     bands = []
     freq_out = []
+    wsum = 0.0
     for ds in xds:
         if ds.scanid not in scans:
             scans.append(ds.scanid)
         if ds.bandid not in bands:
             bands.append(ds.bandid)
             freq_out.append(np.mean(ds.FREQ.values))
+
+        wsum += ds.WSUM.values
 
     nscan = len(scans)
     nband = len(bands)
@@ -98,6 +101,6 @@ def _zarr2fits(**kw):
     header['SPECSYS'] = 'TOPOCENT'
 
     zname = opts.zfile.rstrip('.zarr')
-    save_fits(f'{zname}_{opts.column}.fits', img, header)
+    save_fits(f'{zname}_{opts.column}.fits', img/wsum*100, header)
 
     print("All done here", file=log)

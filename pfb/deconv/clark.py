@@ -49,10 +49,11 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     p = Ip[pq]
     q = Iq[pq]
     Amax = np.sqrt(Asearch[pq])
+    fsel = wsums > 0
     k = 0
     while Amax > th and k < maxit:
         xhat = A[:, pq]
-        model[:, p, q] += gamma * xhat/wsums
+        model[fsel, p, q] += gamma * xhat[fsel]/wsums[fsel]
         Idelp = p - Ip
         Idelq = q - Iq
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
