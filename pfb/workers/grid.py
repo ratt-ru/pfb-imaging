@@ -241,6 +241,7 @@ def _grid(**kw):
 
     writes = []
     freq_out = []
+    wsums = np.zeros(nband)
     for ds in xds:
         uvw = ds.UVW.data
         freq = ds.FREQ.data
@@ -354,6 +355,7 @@ def _grid(**kw):
         out_ds = xr.Dataset(dvars, attrs=attrs)
         writes.append(out_ds)
         freq_out.append(ds.freq_out)
+        wsums[ds.bandid] += wsum
 
     freq_out = np.unique(np.stack(freq_out))
 
@@ -381,7 +383,8 @@ def _grid(**kw):
         model = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
         mask = da.zeros((nx, ny), chunks=(-1, -1), dtype=bool)
         data_vars = {'MODEL': (('band', 'x', 'y'), model),
-                    'MASK': (('x', 'y'), mask)}
+                    'MASK': (('x', 'y'), mask),
+                    'WSUM': (('band',), da.from_array(wsums, chunks=1))}
         mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
         dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
 

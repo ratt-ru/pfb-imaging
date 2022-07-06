@@ -104,6 +104,7 @@ def _degrid(**kw):
     from dask.distributed import performance_report
     from dask.graph_manipulation import clone
     from daskms import xds_from_ms, xds_from_table, xds_to_table
+    from daskms.experimental.zarr import xds_from_zarr
     # from daskms import xds_from_storage_ms as xds_from_ms
     # from daskms import xds_from_storage_table as xds_from_table
     # from daskms.utils import dataset_type
@@ -120,14 +121,15 @@ def _degrid(**kw):
     from pfb.utils.misc import restore_corrs, model_from_comps
     from astropy.io import fits
 
-    # always returns 4D
-    # gridder expects freq axis
-    model = np.atleast_3d(load_fits(opts.model).squeeze())
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    mds_name = f'{basename}{opts.postfix}.mds.zarr'
+    mds = xds_from_zarr(mds_name)[0]
+    cell_rad = mds.cell_rad
+    mfreqs = mds.freq.values
+    ref_freq = mfreqs[0]
+    model = mds.MODEL.values
     nband, nx, ny = model.shape
-    hdr = fits.getheader(opts.model)
-    cell_d = np.abs(hdr['CDELT1'])
-    cell_rad = np.deg2rad(cell_d)
-    mfreqs, ref_freq = data_from_header(hdr, axis=3)
+    wsums = mds.WSUM.values
 
     if opts.nband_out is None:
         nband_out = nband
@@ -162,9 +164,6 @@ def _degrid(**kw):
     #     else:
     #         model_chunks = xds[0].DATA.data.chunks
     #         print('Chunking model same as data', file=log)
-
-
-
 
     ms_chunks = {}
     ncorr = None
@@ -215,18 +214,9 @@ def _degrid(**kw):
         for i in range(1, order+1):
             Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
 
-        # get wsum per band
-        wsums = np.zeros((mfreqs.size,1))
-        try:
-            for i in range(mfreqs.size):
-                wsums[i] = hdr[f'WSUM{i}']
-        except Exception as e:
-            print("Can't find WSUMS in header, using unity weights", file=log)
-            wsums = np.ones((mfreqs.size,1))
+        dirty_comps = Xfit.T.dot(wsums[:, None]*beta)
 
-        dirty_comps = Xfit.T.dot(wsums*beta)
-
-        hess_comps = Xfit.T.dot(wsums*Xfit)
+        hess_comps = Xfit.T.dot(wsums[:, None]*Xfit)
 
         comps = np.linalg.solve(hess_comps, dirty_comps)
         freq_fitted = True
@@ -304,7 +294,7 @@ def _degrid(**kw):
 
             # Does this mean that visibilities for all bands end up
             # in memory at this point?
-            model_vis = model_vis.rechunk({1: -1})
+            # model_vis = model_vis.rechunk({1: -1})
 
             # if mstype == 'zarr':
             #     model_vis = model_vis.rechunk(model_chunks)

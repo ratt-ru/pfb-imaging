@@ -254,11 +254,8 @@ def _fwdbwd(**kw):
         residual_mfs = np.sum(residual, axis=0)
         rms = np.std(residual_mfs)
         rmax = residual_mfs.max()
-        print(f"At iteration {i+1} the max of residual is {rmax} and the rms "
-              f"is {rms}", file=log)
-
-
-
+        print(f"At iteration {i+1} the max of residual is {rmax:.3e} and the rms "
+              f"is {rms:.3e}", file=log)
 
     print("Saving results", file=log)
     mask = np.any(model, axis=0).astype(bool)

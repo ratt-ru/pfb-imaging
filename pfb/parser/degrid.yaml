@@ -22,7 +22,7 @@ inputs:
     info: 'Number of imaging bands'
   nband_out:
     dtype: int
-    abbreviation: -nbo
+    abbreviation: nbo
     info: Interpolate model to this many output bands before degridding
   spectral_poly_order:
     dtype: int
@@ -39,11 +39,11 @@ inputs:
     default: I
     info: 'Imaging products to produce. Options are I, Q, U, V. \
           Only single Stokes products are currently supported'
-  model:
+  model_name:
     dtype: str
-    required: true
-    abbreviation: model
-    info: 'Path to model.fits'
+    default: MODEL
+    abbreviation: mname
+    info: 'Name of model in mds'
   row_chunk:
     dtype: int
     info: 'Number of rows in a chunk in output dataset'
