@@ -251,9 +251,8 @@ def _forward(**kw):
                 wsums[b] += ds.WSUM.values
                 residual[b] += ds.FORWARD_RESIDUAL.values.astype(np.float32)
             wsum = np.sum(wsums)
-            residual /= wsum
 
-            residual_mfs = np.sum(residual, axis=0)
+            residual_mfs = np.sum(residual, axis=0)/wsum
             save_fits(f'{basename}{opts.postfix}_forward_residual_mfs.fits',
                       residual_mfs, hdr_mfs)
 
