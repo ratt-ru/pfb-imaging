@@ -22,6 +22,7 @@ requirements = [
                 'sympy',
                 'rich',
                 "codex-africanus[complete]",
+                "scabha",
 
                 "dask-ms[xarray, zarr]"
                 "@git+https://github.com/ska-sa/dask-ms.git"
@@ -29,10 +30,6 @@ requirements = [
 
                 "packratt"
                 "@git+https://github.com/ratt-ru/packratt.git"
-                "@master",
-
-                "scabha"
-                "@git+https://github.com/caracal-pipeline/scabha2"
                 "@master",
 
                 "stimela"
