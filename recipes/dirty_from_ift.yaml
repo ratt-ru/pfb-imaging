@@ -1,0 +1,88 @@
+_include:
+  - (pfb)stimela_cabs.yaml
+  - (quartical)stimela_cabs.yaml
+  - (surfvis)stimela_cabs.yaml
+
+opts:
+  log:
+    dir: logs
+    nest: 2
+
+qc2dirty_recipe:
+  name: "qc2dirty"
+  info: "Transfers qcal solutions to target and makes dirty image"
+
+  inputs:
+    ms:
+      dtype: MS
+      required: true
+      abbreviation: ms
+    data_column:
+      default: DATA
+      aliases: ['*.input_ms/data_column','*.data_column']
+    weight_column:
+      default: WEIGHT_SPECTRUM
+      aliases: ['*.input_ms/weight_column','*.weight_column']
+    model_column:
+      dtype: str
+      default: MODEL_DATA
+    nband:
+      default: 8
+      aliases: ['*.nband']
+    output_filename:
+      aliases: ['*.output_filename']
+    gain_table:
+      dtype: str
+    dworkers:
+      default: 1
+      aliases: ['*.dask/workers','*.nworkers']
+    dthreads:
+      default: 8
+      aliases: ['*.dask/threads','*.nthreads_per_worker']
+    dscheduler:
+      default: threads
+      aliases: ['*.dask/scheduler','*.scheduler']
+    vthreads:
+      default: 8
+      aliases: ['*.solver/threads','*.nvthreads']
+    nthreads:
+      default: 64
+      aliases: ['*.nthreads']
+
+  steps:
+    transfer:
+      cab: quartical
+      info: "Transfer gains to the targer"
+      params:
+        input_ms/path: '{recipe.ms}'
+        input_ms/time_chunk: 0
+        input_ms/freq_chunk: 0
+        input_ms/group_by: [SCAN_NUMBER,FIELD_ID,DATA_DESC_ID]
+        input_ms/select_corr: [0, 3]
+        input_model/recipe: DATA   # MODEL_DATA may not exist at this stage
+        input_model/apply_p_jones: false
+        solver/terms: [G]
+        solver/iter_recipe: [0]
+        G/time_interval: 0
+        G/freq_interval: 0
+        G/load_from: 'recipe.load_from'
+        output/directory: out/init_target.qc
+        output/overwrite: 1
+        output/flags: false
+        output/apply_p_jones_inv: false
+        output/net_gain: true
+
+    init_vis:
+      cab: init
+      info: "Apply gain solutions to visibilities and weights"
+      params:
+        ms: '{recipe.ms}'
+        gain_table: '{recipe.gain_table}'  # always uses NET
+
+    make_dirty:
+      cab: grid
+      info: "Transforms corrupted vis to dirty"
+      params:
+        overwrite: true
+
+

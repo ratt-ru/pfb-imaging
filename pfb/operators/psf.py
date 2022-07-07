@@ -3,6 +3,8 @@ import dask.array as da
 from daskms.optimisation import inlined_array
 from uuid import uuid4
 from ducc0.fft import r2c, c2r, c2c, good_size
+from uuid import uuid4
+import gc
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
@@ -10,7 +12,7 @@ Fs = np.fft.fftshift
 def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, mask,
                      compute=True, use_beam=True):
     '''
-    Image space Hessian reduction over dataset
+    Image space Hessian with reduction over dataset
     '''
     if not isinstance(x, da.Array):
         x = da.from_array(x, chunks=(1, -1, -1), name=False)
@@ -56,12 +58,9 @@ def _psf_convolve_impl(x, psfhat, beam,
                        unpad_x=None,
                        unpad_y=None,
                        lastsize=None):
-    """
-    Tikhonov regularised Hessian of coeffs
-    """
     nx, ny = x.shape
     xhat = x if beam is None else x * beam
-    xhat = iFs(np.pad(x, padding, mode='constant'), axes=(0, 1))
+    xhat = iFs(np.pad(xhat, padding, mode='constant'), axes=(0, 1))
     xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
                 forward=True, inorm=0)
     xhat = c2r(xhat * psfhat, axes=(0, 1), forward=False,
@@ -90,3 +89,93 @@ def psf_convolve(x, psfhat, beam, psfopts):
                         psfopts, None,
                         align_arrays=False,
                         dtype=x.dtype)
+
+
+def _psf_convolve_cube_impl(x, psfhat, beam,
+                            nthreads=None,
+                            padding=None,
+                            unpad_x=None,
+                            unpad_y=None,
+                            lastsize=None):
+    nb, nx, ny = x.shape
+    convim = np.zeros((nb, nx, ny), dtype=x.dtype)
+    for b in range(nb):
+        xhat = x[b] if beam is None else x[b] * beam[b]
+        xhat = iFs(np.pad(xhat, padding, mode='constant'), axes=(0, 1))
+        xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
+                   forward=True, inorm=0)
+        xhat = c2r(xhat * psfhat[b], axes=(0, 1), forward=False,
+                   lastsize=lastsize, inorm=2, nthreads=nthreads)
+        convim[b] = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
+
+        if beam is not None:
+            convim[b] *= beam[b]
+
+    return convim
+
+def _psf_convolve_cube(x, psfhat, beam, psfopts):
+    return _psf_convolve_cube_impl(x, psfhat, beam, **psfopts)
+
+def psf_convolve_cube(x, psfhat, beam, psfopts,
+                      wsum=1, sigmainv=None, compute=True):
+    if not isinstance(x, da.Array):
+        x = da.from_array(x, chunks=(1, -1, -1),
+                          name="x-" + uuid4().hex)
+    if not isinstance(psfhat, da.Array):
+        psfhat = da.from_array(psfhat, chunks=(1, -1, -1),
+                               name="psfhat-" + uuid4().hex)
+
+    if beam is None:
+        bout = None
+    else:
+        bout = ('nb', 'nx', 'ny')
+        if not isinstance(beam, da.Array):
+            beam = da.from_array(beam, chunks=(1, -1, -1),
+                                 name="beam-" + uuid4().hex)
+
+    convim = da.blockwise(_psf_convolve_cube, ('nb', 'nx', 'ny'),
+                          x, ('nb', 'nx', 'ny'),
+                          psfhat, ('nb', 'nx', 'ny'),
+                          beam, bout,
+                          psfopts, None,
+                          align_arrays=False,
+                          dtype=x.dtype)
+    convim /= wsum
+
+    if sigmainv:
+        convim += x * sigmainv**2
+
+    if compute:
+        return convim.compute()
+    else:
+        return convim
+
+
+def _hessian_reg_psf(x, beam, psfhat,
+                     nthreads=None,
+                     sigmainv=None,
+                     padding=None,
+                     unpad_x=None,
+                     unpad_y=None,
+                     lastsize=None):
+    """
+    Tikhonov regularised Hessian approx
+    """
+
+    if beam is not None:
+        xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(1, 2))
+    else:
+        xhat = iFs(np.pad(x, padding, mode='constant'), axes=(1, 2))
+    xhat = r2c(xhat, axes=(1, 2), nthreads=nthreads,
+               forward=True, inorm=0)
+    xhat = c2r(xhat * psfhat, axes=(1, 2), forward=False,
+               lastsize=lastsize, inorm=2, nthreads=nthreads)
+    im = Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y]
+
+    if beam is not None:
+        im *= beam
+
+    if sigmainv:
+        return im + x * sigmainv**2
+    else:
+        return im

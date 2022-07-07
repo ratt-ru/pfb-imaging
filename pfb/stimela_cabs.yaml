@@ -1,0 +1,85 @@
+
+cabs:
+  'pfb.init':
+    command: (pfb.workers.init)init
+
+    _include:
+      - (pfb.parser)init.yaml
+
+  'pfb.grid':
+    command: (pfb.workers.grid)grid
+
+    _include:
+      - (pfb.parser)grid.yaml
+
+  'pfb.degrid':
+    command: (pfb.workers.degrid)degrid
+
+    _include:
+      - (pfb.parser)degrid.yaml
+
+  'pfb.clean':
+    command: (pfb.workers.deconv.clean)clean
+
+    _include:
+      - (pfb.parser)clean.yaml
+
+  'pfb.restore':
+    command: (pfb.workers.restore)restore
+
+    _include:
+      - (pfb.parser)restore.yaml
+
+  'pfbmisc.forward':
+    command: (pfb.workers.misc.forward)forward
+
+    _include:
+      - (pfb.parser)forward.yaml
+
+  'pfbmisc.backward':
+    command: (pfb.workers.misc.backward)backward
+
+    _include:
+      - (pfb.parser)backward.yaml
+
+  'pfbmisc.gainspector':
+    command: (pfb.workers.misc.gainspector)gainspector
+
+    _include:
+      - (pfb.parser)gainspector.yaml
+
+  'pfbmisc.ift2qc':
+    command: (pfb.workers.misc.ift2qc)ift2qc
+
+    _include:
+      - (pfb.parser)ift2qc.yaml
+
+  'pfbmisc.fledges':
+    command: (pfb.workers.misc.fledges)fledges
+
+    _include:
+      - (pfb.parser)fledges.yaml
+
+  'pfbmisc.hthresh':
+    command: (pfb.workers.misc.hthresh)hthresh
+
+    _include:
+      - (pfb.parser)hthresh.yaml
+
+  'pfbmisc.bsmooth':
+    command: (pfb.workers.misc.bsmooth)bsmooth
+
+    _include:
+      - (pfb.parser)bsmooth.yaml
+
+  'pfbmisc.delay_init':
+    command: (pfb.workers.misc.delay_init)delay_init
+
+    _include:
+      - (pfb.parser)delay_init.yaml
+
+  'pfbmisc.zarr2fits':
+    command: (pfb.workers.misc.zarr2fits)zarr2fits
+
+    _include:
+      - (pfb.parser)zarr2fits.yaml

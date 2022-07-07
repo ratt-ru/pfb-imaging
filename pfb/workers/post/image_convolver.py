@@ -38,9 +38,9 @@ def create_parser():
     return p
 
 
-def main(args):
+def main(opts):
     # read coords from fits file
-    hdr = fits.getheader(args.image)
+    hdr = fits.getheader(opts.image)
     l_coord, ref_l = data_from_header(hdr, axis=1)
     l_coord -= ref_l
     m_coord, ref_m = data_from_header(hdr, axis=2)
@@ -71,19 +71,19 @@ def main(args):
             # using key of 1 for consistency with fits standard
             gausspari = ((emaj, emin, pa),)
 
-    if len(gausspari) == 0 and args.psf_pars is None:
+    if len(gausspari) == 0 and opts.psf_pars is None:
         raise ValueError("No psf parameters in fits file and none passed in.")
 
     if len(gausspari) == 0:
         print("No psf parameters in fits file. Convolving model to resolution specified by psf-pars.")
-        gaussparf = tuple(args.psf_pars)
+        gaussparf = tuple(opts.psf_pars)
     else:
-        if args.psf_pars is None:
+        if opts.psf_pars is None:
             gaussparf = gausspari[0]
         else:
-            gaussparf = tuple(args.psf_pars)
+            gaussparf = tuple(opts.psf_pars)
 
-    if args.circ_psf:
+    if opts.circ_psf:
         e = (gaussparf[0] + gaussparf[1])/2.0
         gaussparf[0] = e
         gaussparf[1] = e
@@ -105,14 +105,14 @@ def main(args):
     xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
 
     # convolve image
-    imagei = load_fits(args.image, dtype=np.float32).squeeze()
+    imagei = load_fits(opts.image, dtype=np.float32).squeeze()
     print(imagei.shape)
     image, gausskern = convolve2gaussres(
-        imagei, xx, yy, gaussparf, args.ncpu, gausspari, args.padding_frac)
+        imagei, xx, yy, gaussparf, opts.ncpu, gausspari, opts.padding_frac)
 
     # load beam and correct
-    if args.beam_model is not None:
-        bhdr = fits.getheader(args.beam_model)
+    if opts.beam_model is not None:
+        bhdr = fits.getheader(opts.beam_model)
         l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
         l_coord_beam -= ref_lb
         if not np.array_equal(l_coord_beam, l_coord):
@@ -130,18 +130,18 @@ def main(args):
             raise ValueError(
                 "Freqs of beam model do not match those of image. Use power_beam_maker to interpolate to fits header.")
 
-        beam_image = load_fits(args.beam_model, dtype=np.float32).squeeze()
+        beam_image = load_fits(opts.beam_model, dtype=np.float32).squeeze()
 
-        image = np.where(beam_image >= args.pb_min, image/beam_image, 0.0)
+        image = np.where(beam_image >= opts.pb_min, image/beam_image, 0.0)
 
     # save next to model if no outfile is provided
-    if args.output_filename is None:
+    if opts.output_filename is None:
         # strip .fits from model filename
-        tmp = args.model[::-1]
+        tmp = opts.model[::-1]
         idx = tmp.find('.')
-        outfile = args.model[0:-idx]
+        outfile = opts.model[0:-idx]
     else:
-        outfile = args.output_filename
+        outfile = opts.output_filename
 
     # save images
     name = outfile + '.clean_psf.fits'
@@ -156,22 +156,22 @@ def main(args):
 
 
 if __name__ == "__main__":
-    args = create_parser().parse_args()
+    opts = create_parser().parse_opts()
 
-    if not args.ncpu:
+    if not opts.ncpu:
         import multiprocessing
-        args.ncpu = multiprocessing.cpu_count()
+        opts.ncpu = multiprocessing.cpu_count()
 
     print(' \n ')
-    GD = vars(args)
+    GD = vars(opts)
     print('Input Options:')
     for key in GD.keys():
         print(key, ' = ', GD[key])
 
     print(' \n ')
 
-    print("Using %i threads" % args.ncpu)
+    print("Using %i threads" % opts.ncpu)
 
     print(' \n ')
 
-    main(args)
+    main(opts)

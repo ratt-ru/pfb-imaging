@@ -1,0 +1,103 @@
+inputs:
+  ms:
+    dtype: MS
+    required: true
+    info: 'Path to measurement set.'
+    metavar: MS
+    abbreviation: ms
+  output_filename:
+    dtype: str
+    required: true
+    info: 'Basename of output'
+    metavar: BASENAME
+    abbreviation: o
+  nband:
+    dtype: int
+    required: true
+    abbreviation: nb
+    info: 'Number of imaging bands'
+  data_column:
+    dtype: str
+    default: DATA
+    abbreviation: dc
+    info: 'Data column to image. Must be the same across MSs'
+    metavar: COLUMN
+  weight_column:
+    dtype: str
+    default: WEIGHT_SPECTRUM
+    abbreviation: wc
+    info: 'Column containing natural weights. Must be the same across MSs'
+    metavar: COLUMN
+  sigma_column:
+    dtype: str
+    abbreviation: sc
+    info: 'Column containing standard devations. \
+           Will be used to initialise natural weights if detected. \
+           Must be the same across MSs'
+    metavar: COLUMN
+  flag_column:
+    dtype: str
+    default: FLAG
+    abbreviation: fc
+    info: 'Column containing data flags. Must be the same across MSs'
+    metavar: COLUMN
+  gain_table:
+    dtype: str
+    info: "Path to Quartical gain table containing NET gains.\
+          There must be a table for each MS and glob(ms) and glob(gt) \
+          should match up."
+  gain_term:
+    dtype: str
+    default: NET
+    info: "Which gain term to use. Default is NET"
+  product:
+    dtype: str
+    abbreviation: p
+    default: I
+    info: 'Imaging products to produce. Options are I, Q, U, V. \
+          Only single Stokes products are currently supported'
+  utimes_per_chunk:
+    dtype: int
+    info: 'Unique times per row chunk'
+    abbreviation: utpc
+    default: -1
+  row_out_chunk:
+    dtype: int
+    info: 'Number of rows in a chunk in output dataset'
+    abbreviation: roc
+    default: 10000
+  group_by_field:
+    dtype: bool
+    default: True
+    info: "Split data by field"
+  group_by_ddid:
+    dtype: bool
+    default: True
+    info: "Split data by DDID"
+  group_by_scan:
+    dtype: bool
+    default: True
+    info: "Split data by scan"
+  precision:
+    dtype: str
+    default: double
+    info: '"single" or "double"'
+  bda_decorr:
+    dtype: float
+    default: 1.0
+    info: "BDA decorrelation factor. Only has an effect if less than one"
+  beam_model:
+    dtype: str
+    info: "Beam model to use"
+  max_field_of_view:
+    dtype: float
+    abbreviation: fov
+    default: 3.0
+    info: 'Field of view in degrees'
+    metavar: DEG
+
+  _include:
+    - (pfb.parser)dist.yml
+
+outputs:
+    {}

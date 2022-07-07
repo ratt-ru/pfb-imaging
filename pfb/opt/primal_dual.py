@@ -59,6 +59,9 @@ def primal_dual(
         if eps < tol:
             break
 
+        if np.isnan(eps) or np.isinf(eps):
+            import pdb; pdb.set_trace()
+
         if not k % report_freq and verbosity > 1:
             print("At iteration %i eps = %f" % (k, eps), file=log)
 

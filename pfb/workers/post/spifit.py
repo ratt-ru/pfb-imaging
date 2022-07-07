@@ -7,113 +7,58 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('SPIFIT')
 
-@cli.command()
-@click.option('-image', '--image', required=True,
-              help="Path to model or restored image cube.")
-@click.option('-resid', "--residual", required=False,
-              help="Path to residual image cube.")
-@click.option('-o', '--output-filename', required=True,
-              help="Path to output directory + prefix.")
-@click.option('-pp', '--psf-pars', nargs=3, type=float,
-              help="Beam parameters matching FWHM of restoring beam "
-                   "specified as emaj emin pa."
-                   "By default these are taken from the fits header "
-                   "of the residual image.")
-@click.option('--circ-psf/--no-circ-psf', default=False)
-@click.option('-th', '--threshold', default=10, type=float, show_default=True,
-              help="Multiple of the rms in the residual to threshold on."
-                   "Only components above threshold*rms will be fit.")
-@click.option('-maxdr', '--maxdr', default=100, type=float, show_default=True,
-              help="Maximum dynamic range used to determine the "
-                   "threshold above which components need to be fit. "
-                   "Only used if residual is not passed in.")
-@click.option('-bw', '--band-weights', type=float,
-              help="Per bands weights to use during the fit")
-@click.option('-pb-min', '--pb-min', type=float, default=0.15,
-              help="Set image to zero where pb falls below this value")
-@click.option('-products', '--products', default='aeikIcmrbd', type=str,
-              help="Outputs to write. Letter correspond to: \n"
-              "a - alpha map \n"
-              "e - alpha error map \n"
-              "i - I0 map \n"
-              "k - I0 error map \n"
-              "I - reconstructed cube form alpha and I0 \n"
-              "c - restoring beam used for convolution \n"
-              "m - convolved model \n"
-              "r - convolved residual \n"
-              "b - average primary beam image \n"
-              "d - difference image \n"
-              "Default is to write all of them")
-@click.option('-pf', "--padding-frac", default=0.5, type=float,
-              show_default=True, help="Padding factor for FFT's.")
-@click.option('-dc', "--dont-convolve", is_flag=True,
-              help="Do not convolve by the clean beam before fitting")
-@click.option('-rf', '--ref-freq', type=float,
-              help='Reference frequency where the I0 map is sought. '
-              "Will overwrite in fits headers of output.")
-@click.option('-otype', '--out-dtype', default='f4', type=str,
-              help="Data type of output. Default is single precision")
-@click.option('-acr', '--add-convolved-residuals', is_flag=True,
-              help='Flag to add in the convolved residuals before '
-              'fitting components')
-@click.option('-bm', '--beam-model', default=None,
-              help="Fits power beam model. It is assumed that the beam "
-              "match the fits headers of --image. You can use the binterp "
-              "worker to create compatible beam models")
-@click.option('-ha', '--host-address',
-              help='Address where the distributed client lives. '
-              'Will use a local cluster if no address is provided')
-@click.option('-nw', '--nworkers', type=int, default=1,
-              help='Number of workers for the client.')
-@click.option('-ntpw', '--nthreads-per-worker', type=int,
-              help='Number of dask threads per worker.')
-@click.option('-nvt', '--nvthreads', type=int,
-              help="Total number of threads to use for vertical scaling (eg. gridder, fft's etc.)")
-@click.option('-mem', '--mem-limit', type=int,
-              help="Memory limit in GB. Default uses all available memory")
-@click.option('-nthreads', '--nthreads', type=int,
-              help="Total available threads. Default uses all available threads")
+from scabha.schema_utils import clickify_parameters
+from pfb.parser.schemas import schema
+
+# create default parameters from schema
+defaults = {}
+for key in schema.spifit["inputs"].keys():
+    defaults[key] = schema.spifit["inputs"][key]["default"]
+
+@cli.command(context_settings={'show_default': True})
+@clickify_parameters(schema.spifit)
 def spifit(**kw):
     """
     Spectral index fitter
 
     """
-    args = OmegaConf.create(kw)
-    pyscilog.log_to_file(args.output_filename + '.log')
+    defaults.update(kw)
+    opts = OmegaConf.create(defaults)
+    pyscilog.log_to_file(opts.output_filename + '.log')
     from glob import glob
     from omegaconf import ListConfig
     # image is either a string or a list of strings that we want to glob on
-    if isinstance(args.image, str):
-        image = sorted(glob(args.image))
-    elif isinstance(args.image, list) or isinstance(args.image, ListConfig):
+    if isinstance(opts.image, str):
+        image = sorted(glob(opts.image))
+    elif isinstance(opts.image, list) or isinstance(opts.image, ListConfig):
         image = []
-        for i in len(args.image):
-            image.append(sorted(glob(args.image[i])))
+        for i in len(opts.image):
+            image.append(sorted(glob(opts.image[i])))
 
     # make sure it's not empty
     try:
         assert len(image) > 0
-        args.image = image
+        opts.image = image
     except:
-        raise ValueError(f"No image at {args.image}")
+        raise ValueError(f"No image at {opts.image}")
 
     # same goes for the residual except that it may also be None
-    if isinstance(args.residual, str):
-        residual = sorted(glob(args.residual))
-    elif isinstance(args.residual, list) or isinstance(args.residual, ListConfig):
+    if isinstance(opts.residual, str):
+        residual = sorted(glob(opts.residual))
+    elif isinstance(opts.residual, list) or isinstance(opts.residual, ListConfig):
         residual = []
-        for i in len(args.residual):
-            residual.append(sorted(glob(args.residual[i])))
+        for i in len(opts.residual):
+            residual.append(sorted(glob(opts.residual[i])))
 
-    if args.residual is not None:
+    if opts.residual is not None:
         try:
             assert len(residual) > 0
-            args.residual = residual
+            opts.residual = residual
         except:
-            raise ValueError(f"No residual at {args.residual}")
+            raise ValueError(f"No residual at {opts.residual}")
         # we also need the same number of residuals as images
         try:
-            assert len(args.image) == len(args.residual)
+            assert len(opts.image) == len(opts.residual)
         except:
             raise ValueError(f"Number of images and residuals need to "
                                 "match")
@@ -121,22 +66,22 @@ def spifit(**kw):
         print("No residual passed in!", file=log)
 
     # and finally the beam model
-    if isinstance(args.beam_model, str):
-        beam_model  = sorted(glob(args.beam_model))
-    elif isinstance(args.beam_model, list) or isinstance(args.beam_model, ListConfig):
+    if isinstance(opts.beam_model, str):
+        beam_model  = sorted(glob(opts.beam_model))
+    elif isinstance(opts.beam_model, list) or isinstance(opts.beam_model, ListConfig):
         beam_model = []
-        for i in len(args.beam_model):
-            beam_model.append(sorted(glob(args.beam_model[i])))
+        for i in len(opts.beam_model):
+            beam_model.append(sorted(glob(opts.beam_model[i])))
 
-    if args.beam_model is not None:
+    if opts.beam_model is not None:
         try:
             assert len(beam_model) > 0
-            args.beam_model = beam_model
+            opts.beam_model = beam_model
         except:
-            raise ValueError(f"No beam model at {args.beam_model}")
+            raise ValueError(f"No beam model at {opts.beam_model}")
 
         try:
-            assert len(args.image) == len(args.beam_model)
+            assert len(opts.image) == len(opts.beam_model)
         except:
             raise ValueError(f"Number of images and beam models need to "
                                 "match")
@@ -145,23 +90,23 @@ def spifit(**kw):
 
     # LB - TODO: can we sort them along freq at this point already?
 
-    OmegaConf.set_struct(args, True)
+    OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log)
+        opts = set_client(opts, stack, log)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
-        for key in args.keys():
-            print('     %25s = %s' % (key, args[key]), file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _spifit(**args)
+        return _spifit(**opts)
 
 
 def _spifit(**kw):
-    args = OmegaConf.create(kw)
-    OmegaConf.set_struct(args, True)
+    opts = OmegaConf.create(kw)
+    OmegaConf.set_struct(opts, True)
 
     import dask.array as da
     import numpy as np
@@ -172,11 +117,11 @@ def _spifit(**kw):
 
     # get max gausspars
     gaussparf = None
-    if args.psf_pars is None:
-        if args.residual is None:
-            ppsource = args.image
+    if opts.psf_pars is None:
+        if opts.residual is None:
+            ppsource = opts.image
         else:
-            ppsource = args.residual
+            ppsource = opts.residual
 
         for image in ppsource:
             try:
@@ -214,9 +159,9 @@ def _spifit(**kw):
                 gaussparf[1] = np.maximum(gaussparf[1], gausspars[1])
     else:
         freq_idx0 = 0  # assumption
-        gaussparf = list(args.psf_pars)
+        gaussparf = list(opts.psf_pars)
 
-    if args.circ_psf:
+    if opts.circ_psf:
         e = np.maximum(gaussparf[0], gaussparf[1])
         gaussparf[0] = e
         gaussparf[1] = e
@@ -227,12 +172,12 @@ def _spifit(**kw):
 
     # get required data products
     image_dict = {}
-    for i in range(len(args.image)):
+    for i in range(len(opts.image)):
         image_dict[i] = {}
 
         # load model image
-        model = load_fits(args.image[i], dtype=args.out_dtype).squeeze()
-        mhdr = fits.getheader(args.image[i])
+        model = load_fits(opts.image[i], dtype=opts.out_dtype).squeeze()
+        mhdr = fits.getheader(opts.image[i])
 
         if model.ndim < 3:
             model = model[None, :, :]
@@ -261,8 +206,8 @@ def _spifit(**kw):
         xx, yy = np.meshgrid(l_coord, m_coord, indexing='ij')
 
         # load beam
-        if args.beam_model is not None:
-            bhdr = fits.getheader(args.beam_model[i])
+        if opts.beam_model is not None:
+            bhdr = fits.getheader(opts.beam_model[i])
             l_coord_beam, ref_lb = data_from_header(bhdr, axis=1)
             l_coord_beam -= ref_lb
             if not np.array_equal(l_coord_beam, l_coord):
@@ -281,18 +226,18 @@ def _spifit(**kw):
                 raise ValueError("Freq coordinates of beam model do not match "
                                  "those of image. Use binterp to make "
                                  "compatible beam images")
-            beam_image = load_fits(args.beam_model[i],
-                                   dtype=args.out_dtype).squeeze()
+            beam_image = load_fits(opts.beam_model[i],
+                                   dtype=opts.out_dtype).squeeze()
 
             if beam_image.ndim < 3:
                 beam_image = beam_image[None, :, :]
 
         else:
-            beam_image = np.ones(model.shape, dtype=args.out_dtype)
+            beam_image = np.ones(model.shape, dtype=opts.out_dtype)
 
         image_dict[i]['beam'] = beam_image
 
-        if not args.dont_convolve:
+        if not opts.dont_convolve:
             print("Convolving model %i"%i, file=log)
             # convolve model to desired resolution
             # get initial resolution of model
@@ -314,14 +259,14 @@ def _spifit(**kw):
                     break
 
             model, gausskern = convolve2gaussres(model, xx, yy, gaussparf,
-                                                 args.nthreads, gausspari,
-                                                 args.padding_frac,
+                                                 opts.nthreads, gausspari,
+                                                 opts.padding_frac,
                                                  norm_kernel=False if gausspari is None else True)
 
         # add in residuals and set threshold
-        if args.residual is not None:
+        if opts.residual is not None:
             msg = "of residual do not match those of model"
-            rhdr = fits.getheader(args.residual[i])
+            rhdr = fits.getheader(opts.residual[i])
             l_res, ref_lb = data_from_header(rhdr, axis=1)
             l_res -= ref_lb
             if not np.array_equal(l_res, l_coord):
@@ -336,8 +281,8 @@ def _spifit(**kw):
             if not np.array_equal(freqs, freqs_res):
                 raise ValueError("Freqs " + msg)
 
-            resid = load_fits(args.residual[i],
-                              dtype=args.out_dtype).squeeze()
+            resid = load_fits(opts.residual[i],
+                              dtype=opts.out_dtype).squeeze()
             if resid.ndim < 3:
                 resid = resid[None, :, :]
 
@@ -361,11 +306,11 @@ def _spifit(**kw):
                     gausspari = None
                     break
 
-            if gausspari is not None and args.add_convolved_residuals:
+            if gausspari is not None and opts.add_convolved_residuals:
                 print("Convolving residuals %i"%i, file=log)
                 resid, _ = convolve2gaussres(resid, xx, yy, gaussparf,
-                                             args.nthreads, gausspari,
-                                             args.padding_frac,
+                                             opts.nthreads, gausspari,
+                                             opts.padding_frac,
                                              norm_kernel=False)
                 model += resid
                 print("Convolved residuals added to convolved model %i"%i,
@@ -389,7 +334,7 @@ def _spifit(**kw):
         beam_image.append(image_dict[i]['beam'])
         resid.append(image_dict[i]['resid'])
     freqs = np.concatenate(freqs, axis=0)
-    Isort = np.argsort(freqs)
+    Isort = np.optsort(freqs)
     freqs = freqs[Isort]
 
     model = np.concatenate(model, axis=0)
@@ -406,54 +351,54 @@ def _spifit(**kw):
         hdr['BMAJ' + str(i)] = gaussparf[0]
         hdr['BMIN' + str(i)] = gaussparf[1]
         hdr['BPA' + str(i)] = gaussparf[2]
-    if args.ref_freq is None:
+    if opts.ref_freq is None:
         ref_freq = np.mean(freqs)
     else:
-        ref_freq = args.ref_freq
+        ref_freq = opts.ref_freq
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
     hdr_mfs['BMAJ'] = gaussparf[0]
     hdr_mfs['BMIN'] = gaussparf[1]
     hdr_mfs['BPA'] = gaussparf[2]
 
     # save convolved model
-    if 'm' in args.products:
-        name = args.output_filename + '.convolved_model.fits'
-        save_fits(name, model, hdr, dtype=args.out_dtype)
+    if 'm' in opts.products:
+        name = opts.output_filename + '.convolved_model.fits'
+        save_fits(name, model, hdr, dtype=opts.out_dtype)
         print("Wrote convolved model to %s" % name, file=log)
 
     beam_image = np.concatenate(beam_image, axis=0)
     beam_image = beam_image[Isort]
 
-    if 'b' in args.products:
-        name = args.output_filename + '.power_beam.fits'
-        save_fits(name, beam_image, hdr, dtype=args.out_dtype)
+    if 'b' in opts.products:
+        name = opts.output_filename + '.power_beam.fits'
+        save_fits(name, beam_image, hdr, dtype=opts.out_dtype)
         print("Wrote average power beam to %s" % name, file=log)
 
     if resid[0] is not None:
         resid = np.concatenate(resid, axis=0)
         resid = resid[Isort]
 
-        if 'r' in args.products:
-            name = args.output_filename + '.convolved_residual.fits'
-            save_fits(name, resid, hdr, dtype=args.out_dtype)
+        if 'r' in opts.products:
+            name = opts.output_filename + '.convolved_residual.fits'
+            save_fits(name, resid, hdr, dtype=opts.out_dtype)
             print("Wrote convolved residuals to %s" % name, file=log)
 
         # get threshold
         counts = np.sum(resid != 0)
         rms = np.sqrt(np.sum(resid**2)/counts)
         rms_cube = np.std(resid.reshape(nband, npix_l*npix_m), axis=1).ravel()
-        threshold = args.threshold * rms
+        threshold = opts.threshold * rms
     else:
         print("No residual provided. Setting  threshold i.t.o dynamic range. "
-              "Max dynamic range is %i " % args.maxdr, file=log)
-        threshold = model.max()/args.maxdr
+              "Max dynamic range is %i " % opts.maxdr, file=log)
+        threshold = model.max()/opts.maxdr
         rms_cube = None
 
     print("Threshold set to %f Jy. \n" % threshold, file=log)
 
     # beam cut off
     beam_min = np.amin(beam_image, axis=0)
-    model = np.where(beam_min[None] > args.pb_min, model, 0.0)
+    model = np.where(beam_min[None] > opts.pb_min, model, 0.0)
 
     # get pixels above threshold
     minimage = np.amin(model, axis=0)
@@ -473,8 +418,8 @@ def _spifit(**kw):
         # normalise
         weights /= weights.max()
     else:
-        if args.band_weights is not None:
-            weights = np.array(args.band_weights)
+        if opts.band_weights is not None:
+            weights = np.array(opts.band_weights)
             try:
                 assert weights.size == nband
             except Exception as e:
@@ -486,9 +431,9 @@ def _spifit(**kw):
 
     ncomps, _ = fitcube.shape
     fitcube = da.from_array(fitcube.astype(np.float64),
-                            chunks=(ncomps//args.nthreads, nband))
+                            chunks=(ncomps//opts.nthreads, nband))
     beam_comps = da.from_array(beam_comps.astype(np.float64),
-                               chunks=(ncomps//args.nthreads, nband))
+                               chunks=(ncomps//opts.nthreads, nband))
     weights = da.from_array(weights.astype(np.float64), chunks=(nband))
     freqsdask = da.from_array(freqs.astype(np.float64), chunks=(nband))
 
@@ -510,47 +455,47 @@ def _spifit(**kw):
     i0map[maskindices[:, 0], maskindices[:, 1]] = Iref
     i0_err_map[maskindices[:, 0], maskindices[:, 1]] = i0_err
 
-    if 'I' in args.products:
+    if 'I' in opts.products:
         # get the reconstructed cube
         Irec_cube = i0map[None, :, :] * \
             (freqs[:, None, None]/ref_freq)**alphamap[None, :, :]
-        name = args.output_filename + '.Irec_cube.fits'
-        save_fits(name, Irec_cube, hdr, dtype=args.out_dtype)
+        name = opts.output_filename + '.Irec_cube.fits'
+        save_fits(name, Irec_cube, hdr, dtype=opts.out_dtype)
         print("Wrote reconstructed cube to %s" % name, file=log)
 
     # save alpha map
-    if 'a' in args.products:
-        name = args.output_filename + '.alpha.fits'
-        save_fits(name, alphamap, hdr_mfs, dtype=args.out_dtype)
+    if 'a' in opts.products:
+        name = opts.output_filename + '.alpha.fits'
+        save_fits(name, alphamap, hdr_mfs, dtype=opts.out_dtype)
         print("Wrote alpha map to %s" % name, file=log)
 
     # save alpha error map
-    if 'e' in args.products:
-        name = args.output_filename + '.alpha_err.fits'
-        save_fits(name, alpha_err_map, mhdr, dtype=args.out_dtype)
+    if 'e' in opts.products:
+        name = opts.output_filename + '.alpha_err.fits'
+        save_fits(name, alpha_err_map, mhdr, dtype=opts.out_dtype)
         print("Wrote alpha error map to %s" % name, file=log)
 
     # save I0 map
-    if 'i' in args.products:
-        name = args.output_filename + '.I0.fits'
-        save_fits(name, i0map, mhdr, dtype=args.out_dtype)
+    if 'i' in opts.products:
+        name = opts.output_filename + '.I0.fits'
+        save_fits(name, i0map, mhdr, dtype=opts.out_dtype)
         print("Wrote I0 map to %s" % name, file=log)
 
     # save I0 error map
-    if 'k' in args.products:
-        name = args.output_filename + '.I0_err.fits'
-        save_fits(name, i0_err_map, mhdr, dtype=args.out_dtype)
+    if 'k' in opts.products:
+        name = opts.output_filename + '.I0_err.fits'
+        save_fits(name, i0_err_map, mhdr, dtype=opts.out_dtype)
         print("Wrote I0 error map to %s" % name, file=log)
 
-    if 'd' in args.products:
+    if 'd' in opts.products:
         Irec_cube = i0map[None, :, :] * \
             (freqs[:, None, None]/ref_freq)**alphamap[None, :, :]
         diff = model - beam_image * Irec_cube
         diff_image = np.zeros(model.shape, dtype=model.dtype)
         diff_image[...] = np.nan
         diff_image[:, maskindices[:, 0], maskindices[:, 1]] = diff[:, maskindices[:, 0], maskindices[:, 1]]
-        name = args.output_filename + '.diff.fits'
-        save_fits(name, diff_image, hdr, dtype=args.out_dtype)
+        name = opts.output_filename + '.diff.fits'
+        save_fits(name, diff_image, hdr, dtype=opts.out_dtype)
         print("Wrote diff map to %s" % name, file=log)
 
 

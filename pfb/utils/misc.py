@@ -6,7 +6,7 @@ import dask
 import dask.array as da
 from dask.distributed import performance_report
 from dask.diagnostics import ProgressBar
-from ducc0.fft import r2c, c2r
+from ducc0.fft import r2c, c2r, good_size
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 from numba.core.extending import SentryLiteralArgs
@@ -274,7 +274,7 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
     image = Fs(c2r(imhat, axes=ax, forward=False, lastsize=lastsize, inorm=2,
                    nthreads=nthreads), axes=ax)[:, unpad_x, unpad_y]
 
-    return image, gausskern[:, unpad_x, unpad_y]
+    return image
 
 def chan_to_band_mapping(ms_name, nband=None,
                          group_by=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']):
@@ -404,22 +404,6 @@ def chan_to_band_mapping(ms_name, nband=None,
 
     return freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks
 
-
-def stitch_images(dirties, nband, band_mapping):
-    _, nx, ny = dirties[0].shape
-    dirty = np.zeros((nband, nx, ny), dtype=dirties[0].dtype)
-    d = 0
-    for ims in band_mapping:
-        for idt in band_mapping[ims]:
-            for b, band in enumerate(band_mapping[ims][idt]):
-                ne.evaluate('a + b', local_dict={
-                    'a': dirty[band],
-                    'b': dirties[d][b]},
-                    out=dirty[band], casting='same_kind')
-                # dirty[band] += dirties[d][b]
-            d += 1
-    return dirty
-
 def restore_corrs(vis, ncorr):
     return da.blockwise(_restore_corrs, ('row', 'chan', 'corr'),
                         vis, ('row', 'chan'),
@@ -434,28 +418,6 @@ def _restore_corrs(vis, ncorr):
     if model_vis.shape[-1] > 1:
         model_vis[:, :, -1] = vis
     return model_vis
-
-def plan_row_chunk(mem_limit, image_size, nrow, mem_per_row, nthreads_per_worker, fudge=0.8):
-    '''
-    Plan row chunking on single node assuming all dask threads are executing
-    simultaneously.
-    '''
-    mem_after_image = mem_limit*1e9 - nthreads_per_worker * image_size
-    if mem_after_image < 0:
-        raise RuntimeError("You do not have the memory to process the with this many chunks."
-                            "Decrease number of dask threads or image size.")
-    row_chunk = nrow / nthreads_per_worker
-    # fudge should account for gridder memory overhead
-    while row_chunk * mem_per_row * nthreads_per_worker >= fudge * mem_after_image:
-        row_chunk /= 2  # decrease until problem fits in memory
-    # divide into nearly equal chunks
-    nrow_chunk = int(nrow / row_chunk)
-    if nrow_chunk > 1:
-        row_intervals = np.linspace(0, nrow-1, nrow_chunk+1)
-        row_chunk = int(np.ceil((row_intervals[1] - row_intervals[0])))
-    else:
-        row_chunk = int(row_chunk)
-    return row_chunk
 
 def fitcleanbeam(psf: np.ndarray,
                  level: float = 0.5,
@@ -502,7 +464,6 @@ def fitcleanbeam(psf: np.ndarray,
         R = np.array([[c(t), -s(t)],
                       [s(t), c(t)]])
         A = np.dot(np.dot(R.T, A), R)
-        xy = np.array([x.ravel(), y.ravel()])
         R = np.einsum('nb,bc,cn->n', xy.T, A, xy)
         # GaussPar should corresponds to FWHM
         fwhm_conv = 2 * np.sqrt(2 * np.log(2))
@@ -619,3 +580,248 @@ def coerce_literal(func, literals):
     func_locals = inspect.stack()[1].frame.f_locals  # One frame up.
     arg_types = [func_locals[k] for k in inspect.signature(func).parameters]
     SentryLiteralArgs(literals).for_function(func).bind(*arg_types)
+    return
+
+
+def setup_image_data(dds, opts, apparent=False, log=None):
+    nband = opts.nband
+    real_type = dds[0].DIRTY.dtype
+    complex_type = np.result_type(real_type, np.complex64)
+    nx, ny = dds[0].DIRTY.shape
+    dirty = [da.zeros((nx, ny), chunks=(-1, -1),
+                         dtype=real_type) for _ in range(nband)]
+    if opts.residual_name in dds[0]:
+        residual = [da.zeros((nx, ny), chunks=(-1, -1),
+                            dtype=real_type) for _ in range(nband)]
+    else:
+        residual = None
+    wsums = [da.zeros(1, dtype=real_type) for _ in range(nband)]
+    if 'PSF' in dds[0]:
+        nx_psf, ny_psf = dds[0].PSF.shape
+        nx_psf, nyo2_psf = dds[0].PSFHAT.shape
+        psf = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1),
+                        dtype=real_type) for _ in range(nband)]
+        psfhat = [da.zeros((nx_psf, nyo2_psf), chunks=(-1, -1),
+                            dtype=complex_type) for _ in range(nband)]
+    else:
+        psf = None
+        psfhat = None
+    mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
+                            dtype=real_type) for _ in range(nband)]
+    for ds in dds:
+        b = ds.bandid
+        if apparent:
+            dirty[b] += ds.DIRTY.data
+            if opts.residual_name in ds:
+                residual[b] += ds.get(opts.residual_name).data
+        else:
+            dirty[b] += ds.DIRTY.data * ds.BEAM.data
+            if opts.residual_name in ds:
+                residual[b] += ds.get(opts.residual_name).data * ds.BEAM.data
+        if 'PSF' in ds:
+            psf[b] += ds.PSF.data
+            psfhat[b] += ds.PSFHAT.data
+        mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
+        wsums[b] += ds.WSUM.data[0]
+    wsums = da.stack(wsums).squeeze()
+    wsum = wsums.sum()
+    dirty = da.stack(dirty)/wsum
+    if opts.residual_name in ds:
+        residual = da.stack(residual)/wsum
+    if 'PSF' in ds:
+        psf = da.stack(psf)/wsum
+        psfhat = da.stack(psfhat)/wsum
+    for b in range(nband):
+        if wsums[b]:
+            mean_beam[b] /= wsums[b]
+    dirty, residual, psf, psfhat, mean_beam, wsum = dask.compute(dirty,
+                                                                 residual,
+                                                                 psf,
+                                                                 psfhat,
+                                                                 mean_beam,
+                                                                 wsum)
+    return dirty, residual, wsum, psf, psfhat, mean_beam
+
+
+def interp_gain_grid(gdct, ant_names):
+    nant = ant_names.size
+    ncorr, ntime, nfreq = gdct[ant_names[0]].shape
+    time = gdct['time']
+    assert time.size==ntime
+    freq = gdct['frequencies']
+    assert freq.size==nfreq
+
+    gain = np.zeros((ntime, nfreq, nant, 1, ncorr), dtype=np.complex128)
+
+    # get axes in qcal order
+    for p, name in enumerate(ant_names):
+        gain[:, :, p, 0, :] = np.moveaxis(gdct[name], 0, -1)
+
+    # fit spline to time and freq axes
+    gobj_amp = np.zeros((nant, 1, ncorr), dtype=object)
+    gobj_phase = np.zeros((nant, 1, ncorr), dtype=object)
+    from scipy.interpolate import RectBivariateSpline as rbs
+    for p in range(nant):
+        for c in range(ncorr):
+            gobj_amp[p, 0, c] = rbs(time, freq, np.abs(gain[:, :, p, 0, c]))
+            unwrapped_phase = np.unwrap(np.unwrap(np.angle(gain[:, :, p, 0, c]), axis=0), axis=1)
+            gobj_phase[p, 0, c] = rbs(time, freq, unwrapped_phase)
+    return gobj_amp, gobj_phase
+
+
+def array2qcal_ds(gobj_amp, gobj_phase, time, freq, ant_names, fid, ddid, sid, fname):
+    nant, ndir, ncorr = gobj_amp.shape
+    ntime = time.size
+    nchan = freq.size
+    # gains not chunked on disk
+    gain = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.complex128)
+    for p in range(nant):
+        for c in range(ncorr):
+            gain[:, :, p, 0, c] = gobj_amp[p, 0, c](time, freq)*np.exp(1.0j*gobj_phase[p, 0, c](time, freq))
+    gain = da.from_array(gain, chunks=(-1, -1, -1, -1, -1))
+    gflags = da.zeros((ntime, nchan, nant, ndir), chunks=(-1, -1, -1, -1), dtype=np.int8)
+    data_vars = {
+        'gains':(('gain_t', 'gain_f', 'ant', 'dir', 'corr'), gain),
+        'gain_flags':(('gain_t', 'gain_f', 'ant', 'dir'), gflags)
+    }
+    from collections import namedtuple
+    gain_spec_tup = namedtuple('gains_spec_tup', 'tchunk fchunk achunk dchunk cchunk')
+    attrs = {
+        'DATA_DESC_ID': int(ddid),
+        'FIELD_ID': int(fid),
+        'FIELD_NAME': fname,
+        'GAIN_AXES': ('gain_t', 'gain_f', 'ant', 'dir', 'corr'),
+        'GAIN_SPEC': gain_spec_tup(tchunk=(int(ntime),),
+                                    fchunk=(int(nchan),),
+                                    achunk=(int(nant),),
+                                    dchunk=(int(1),),
+                                    cchunk=(int(ncorr),)),
+        'NAME': 'NET',
+        'SCAN_NUMBER': int(sid),
+        'TYPE': 'complex'
+    }
+    if ncorr==1:
+        corrs = np.array(['XX'], dtype=object)
+    elif ncorr==2:
+        corrs = np.array(['XX', 'YY'], dtype=object)
+    coords = {
+        'gain_f': (('gain_f',), freq),
+        'gain_t': (('gain_t',), time),
+        'ant': (('ant'), ant_names),
+        'corr': (('corr'), corrs),
+        'dir': (('dir'), np.array([0], dtype=np.int32)),
+        'f_chunk': (('f_chunk'), np.array([0], dtype=np.int32)),
+        't_chunk': (('t_chunk'), np.array([0], dtype=np.int32))
+    }
+    from daskms import Dataset
+    return Dataset(data_vars, coords=coords, attrs=attrs)
+
+
+# not currently chunking over time
+def accum_vis(data, flag, ant1, ant2, nant, ref_ant=-1):
+    return da.blockwise(_accum_vis, 'afc',
+                        data, 'rfc',
+                        flag, 'rfc',
+                        ant1, 'r',
+                        ant2, 'r',
+                        ref_ant, None,
+                        new_axes={'a':nant},
+                        dtype=np.complex128)
+
+
+def _accum_vis(data, flag, ant1, ant2, ref_ant):
+    return _accum_vis_impl(data[0], flag[0], ant1[0], ant2[0], ref_ant)
+
+# @jit(nopython=True, fastmath=True, parallel=False, cache=True, nogil=True)
+def _accum_vis_impl(data, flag, ant1, ant2, ref_ant):
+    # select out reference antenna
+    I = np.where((ant1==ref_ant) | (ant2==ref_ant))[0]
+    data = data[I]
+    flag = flag[I]
+    ant1 = ant1[I]
+    ant2 = ant2[I]
+
+    # we can zero flagged data because they won't contribute to the FT
+    data = np.where(flag, 0j, data)
+    nrow, nchan, ncorr = data.shape
+    nant = np.maximum(ant1.max(), ant2.max()) + 1
+    if ref_ant == -1:
+        ref_ant = nant-1
+    ncorr = data.shape[-1]
+    vis = np.zeros((nant, nchan, ncorr), dtype=np.complex128)
+    counts = np.zeros((nant, nchan, ncorr), dtype=np.float64)
+    for row in range(nrow):
+        p = int(ant1[row])
+        q = int(ant2[row])
+        if p == ref_ant:
+            vis[q] += data[row].astype(np.complex128).conj()
+            counts[q] += flag[row].astype(np.float64)
+        elif q == ref_ant:
+            vis[p] += data[row].astype(np.complex128)
+            counts[p] += flag[row].astype(np.float64)
+    valid = counts > 0
+    vis[valid] = vis[valid]/counts[valid]
+    return vis
+
+def estimate_delay(vis_ant, freq, min_delay):
+    return da.blockwise(_estimate_delay, 'ac',
+                        vis_ant, 'afc',
+                        freq, 'f',
+                        min_delay, None,
+                        dtype=np.float64)
+
+
+def _estimate_delay(vis_ant, freq, min_delay):
+    return _estimate_delay_impl(vis_ant[0], freq[0], min_delay)
+
+def _estimate_delay_impl(vis_ant, freq, min_delay):
+    delta_freq = 1.0/min_delay
+    nchan = freq.size
+    fmax = freq.min() + delta_freq
+    fexcess = fmax - freq.max()
+    freq_cell = freq[1]-freq[0]
+    if fexcess > 0:
+        npad = np.int(np.ceil(fexcess/freq_cell))
+        npix = (nchan + npad)
+    else:
+        npix = nchan
+    while npix%2:
+        npix = good_size(npix+1)
+    npad = npix - nchan
+    lag = np.fft.fftfreq(npix, freq_cell)
+    lag = Fs(lag)
+    dlag = lag[1] - lag[0]
+    nant, _, ncorr = vis_ant.shape
+    delays = np.zeros((nant, ncorr), dtype=np.float64)
+    for p in range(nant):
+        for c in range(ncorr):
+            vis_fft = np.fft.fft(vis_ant[p, :, c], npix)
+            pspec = np.abs(Fs(vis_fft))
+            if not pspec.any():
+                continue
+            delay_idx = np.argmax(pspec)
+            # fm1 = lag[delay_idx-1]
+            # f0 = lag[delay_idx]
+            # fp1 = lag[delay_idx+1]
+            # delays[p,c] = 0.5*dlag*(fp1 - fm1)/(fm1 - 2*f0 + fp1)
+            # print(p, c, lag[delay_idx])
+            delays[p,c] = lag[delay_idx]
+    return delays
+
+
+def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):
+    utimes, time_bin_counts = np.unique(time, return_counts=True)
+    n_time = len(utimes)
+    if utimes_per_chunk == 0 or utimes_per_chunk == -1:
+        utimes_per_chunk = n_time
+    row_chunks = [np.sum(time_bin_counts[i:i+utimes_per_chunk])
+                  for i in range(0, n_time, utimes_per_chunk)]
+    time_bin_indices = np.zeros(n_time, dtype=np.int32)
+    time_bin_indices[1::] = np.cumsum(time_bin_counts)[0:-1]
+    time_bin_indices = time_bin_indices.astype(np.int32)
+    time_bin_counts = time_bin_counts.astype(np.int32)
+    if daskify_idx:
+        import dask.array as da
+        time_bin_indices = da.from_array(time_bin_indices, chunks=utimes_per_chunk)
+        time_bin_counts = da.from_array(time_bin_counts, chunks=utimes_per_chunk)
+    return tuple(row_chunks), time_bin_indices, time_bin_counts

@@ -25,11 +25,12 @@ def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
     hdu.writeto(name, overwrite=overwrite)
 
 
-def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
+def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
+            unit='Jy/beam', GuassPar=None):
     """
     cell_x/y - cell sizes in degrees
     nx/y - number of x and y pixels
-    radec - right ascention and declination in degrees
+    radec - right ascention and declination in radians
     freq - frequencies in Hz
     """
 

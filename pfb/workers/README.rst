@@ -2,19 +2,18 @@ Module of workers
 ==================
 
 Each worker module can be run as a standalone program.
-run
+Run
 
-$ pfbworkers --help
+$ pfb --help
 
 for a list of available workers.
 
 Documentation for each worker is listed under
 
-$ pfbworkers workername --help
+$ pfb workername --help
 
 All workers can be run on a distributed scheduler chunked over row and
-imaging band (the current limitation being that all images fit onto a single
-worker).
+imaging band.
 
 
 .. Imaging weights
@@ -22,87 +21,89 @@ worker).
 .. Unless you know your instrument and its environment exactly, a typical
 .. workflow starts with creating the imaging weights. See
 
-.. $ pfbworkers imweight --help
+.. $ pfb imweight --help
 
-.. for options. This will write out a column (IMAGIMG_WEIGHT_SPECTRUM by default)
-.. containing the imaging weights (note these are combined with the WEIGHT
+.. for options. This will write out a column (IMAGING_WEIGHT_SPECTRUM by default)
+.. containing the imaging weights. These will be combined with the natural weights
 .. column as described in imweights docs).
 
 
-.. Dirty image
+.. Gridding
 .. -----------
-.. The next step is getting a dirty image. Use
+.. The next step is to flip our data products into a more convenient form for
+.. imaging. This is achievd with the grid worker, run
 
-.. $ pfbworkers dirty --help
+.. $ pfb grid --help
 
-.. for specific options (note that your cell size and field of view needs to be
-.. consistent when running any of imweight, dirty or psf). Most of the time it is
-.. easiest to set the image size via the super-resolution-factor and
-.. field-of-view options.
+.. for available options. Your cell size and number of pixels needs to be
+.. consistent what was provided to the imweight worker. These will be
+.. determined automatically using the super-resolution-factor and
+.. field-of-view parameters. Data products produced by the grid worker can
+.. include a dirty image, PSF, weights and visibilities (obtained by setting
+.. the dirty, psf, weight and vis options, respectively). The weights and
+.. visibilities that are written out correspond to the product requested.
+.. For example, if product is set to 'I' then the Stokes I weights and
+.. visibilities will be computed and written to a chunked repositry called
+.. output_filename_product.xds.zarr which can be opened using the experimental
+.. dask-ms xds_from_zarr function. Importantly, the weights have been
+.. pre-applied to the data and should not be applied during gridding.
+.. They incorporate all of the imaging weights and gain solutions so that
+.. gradient can be computed as
 
-.. Point spread function
-.. ---------------------
-.. Once a dirty image has been created, you will need a PSF. See
+.. $ IR = R.H(V - W R x)
 
-.. $ pfbworkers psf --help
+.. where R.H/R is the unweighted gridder/degridder, V/W are are the precomputed
+.. visibilities/weights and x is the model. Alternatively, the gradient can also
+.. be computed as
 
-.. for options. By default the PSF is constructed at twice the size of the image.
-.. This is usually what you want if you plan to use the fluxmop capabilities so
-.. undersize at your own peril. The psf worker will write out a weight table
-.. in .zarr format that makes "major" iterations significantly faster. The idea
-.. here is to compute gradients using
+.. $ IR = ID - R.H W R x
 
-.. $ IR = ID - R.H W R I
+.. which avoids loading the visibilities into memory. The grid worker will also
+.. initialise a model dataset called output_filename_product.mds.zarr. These
+.. two products (i.e. the xds and the mds) are used by the deconvolution
+.. workers documented below. Fits files of the dirty image and PSF can also
+.. optionally be written out.
 
-.. where W denotes the weights and R is the measurement operator. Compared to the
-.. visibility space expression
-
-.. $ IR = R.H W (V - R I)
-
-.. the former needs only about a third of the IO (less if the weights are highly
-.. compressible). We might also be able to exploit some special structure here
-.. but that is still WIP.
 
 .. Deconvolution
 .. -------------
 
-.. You can then run one fo the deconvolution algorithms to get rid of those pesky
-.. PSF sidelobes. Have a look at (more on the way)
+.. There are currently three deconvolution workers that can be used to get rid of
+.. those pesky PSF sidelobes. These workers have all been designed to work with
+.. the data products produced by the grid worker and to be compatible with the
+.. forward-backward algorithmic structure. Importantly, the grid worker needs to
+.. be rerun if the weights or calibration solutions are altered.
 
-.. $ pfbworkers clean --help
+.. Clean
+.. ~~~~~
 
-.. for example. You have to use consistent settings for the dirty image, PSF and
-.. weight table. There are good reasons for this. For example, CLEAN doesn't work
-.. very well if you start off with natural weighting but you might want to change
-.. the weighting as you get to the faint (and probably diffuse) background.
-.. In this case, you might want to start with say Briggs -1 and progress all the
-.. way through to natural weighting. Especially if you are using the fluxmop.
+.. The standard single-scale clean algorithm is implemented in the clean worker.
+.. Run
 
-.. Flux mop
-.. --------
-.. The flux mop is a fairly simple utility. It basically uses the conjugate
-.. gradient algorithm to invert a linear system of the form
+.. $ pfb clean --help
 
-.. $ Ax = b
+.. for available options.
 
-.. where the operator A is some regularised approximation of the Hessian (eg.
-.. convolution by the PSF + Identity) and b is the residual image. The solution
-.. is in the same units as the model and will (probably) try to overfit the data
-.. (which is where the name comes from) under the given prior. This is a
-.. particularly useful tool when using Single Scale Clean (SSC). SSC is very
-.. robust against imperfect data (calibration artefacts, RFI etc.) but suffers
-.. from some very undesirable properties viz. it starts crawling to a halt if the
-.. remaining faint emission is diffuse and it does not produce physical models
-.. (it also sucks when using natural weighting). All of the above can be overcome
-.. by following the simple instructions that follow.
+.. Forward step
+.. ~~~~~~~~~~~~
+.. The forward step uses the conjugate gradient algorithm to invert the linear
+.. system
 
-.. Because of the way SSC works (viz. it adds components one pixel at a time
-.. (or interpolates residual visibility amplitudes using a constant function)),
-.. you might want to say "Hey, wait a sec. What if we try doing all them pixels
-.. at the same time. You can do that (and more) with the flux mop. Have a look at
+.. $ A x = dirty
 
-.. $ pfbworkers fluxmop --help
+.. where A can be convolution with the PSF (approximate image space solution)
+.. or an application of the heessian. The latter is more accurate but can be
+.. computationally prohibitive. Have a look at
 
-.. In particular, for SSC, try using the --model-as-mask feature (just note that
-.. passing in the weight-table for this step might be prohibitively
-.. computationally expensive).
+.. $ pfb forward --help
+
+.. for available options.
+
+.. Backward step
+.. ~~~~~~~~~~~~~
+.. The backward step can be used to enforce a possitivity constraint and to
+.. impose sparsity in a dictionary of wavelets (SARA prior). See
+
+.. $ pfb backward --help
+
+.. for available options.

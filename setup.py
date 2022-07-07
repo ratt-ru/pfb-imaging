@@ -6,6 +6,7 @@ with open("README.rst", "r") as fh:
 
 requirements = [
                 'matplotlib',
+                'ipython',
                 'scikit-image',
                 'dask[distributed]',
                 'PyWavelets',
@@ -19,10 +20,9 @@ requirements = [
                 'graphviz',
                 'nifty7',
                 'sympy',
-
-                "codex-africanus[complete]"
-                "@git+https://github.com/landmanbester/codex-africanus.git"
-                "@calutils",
+                'rich',
+                "codex-africanus[complete]",
+                "scabha",
 
                 "dask-ms[xarray, zarr]"
                 "@git+https://github.com/ska-sa/dask-ms.git"
@@ -31,6 +31,12 @@ requirements = [
                 "packratt"
                 "@git+https://github.com/ratt-ru/packratt.git"
                 "@master",
+
+                "stimela"
+                "@git+https://github.com/caracal-pipeline/stimela2.git"
+                "@nested-schemas",
+
+
             ]
 
 
@@ -38,22 +44,25 @@ setup(
      name='pfb-clean',
      version=pfb.__version__,
      author="Landman Bester",
-     author_email="lbester@ska.ac.za",
+     author_email="lbester@sarao.ac.za",
      description="Pre-conditioned forward-backward CLEAN algorithm",
      long_description=long_description,
      long_description_content_type="text/markdown",
      url="https://github.com/ratt-ru/pfb-clean",
      packages=find_packages(),
+     python_requires='>=3.7',
      install_requires=requirements,
      classifiers=[
          "Programming Language :: Python :: 3",
          "License :: OSI Approved :: MIT License",
          "Operating System :: OS Independent",
      ],
-     entry_points='''
-                    [console_scripts]
-                    pfb=pfb.workers.main:cli
+     entry_points={'console_scripts':[
+        'pfb = pfb.workers.main:cli',
+        'pfbmisc = pfb.workers.experimental:cli'
+        ]
+     }
 
-     '''
+
      ,
  )

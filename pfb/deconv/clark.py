@@ -49,10 +49,11 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     p = Ip[pq]
     q = Iq[pq]
     Amax = np.sqrt(Asearch[pq])
+    fsel = wsums > 0
     k = 0
     while Amax > th and k < maxit:
         xhat = A[:, pq]
-        model[:, p, q] += gamma * xhat/wsums
+        model[fsel, p, q] += gamma * xhat[fsel]/wsums[fsel]
         Idelp = p - Ip
         Idelq = q - Iq
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
@@ -69,7 +70,7 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
 
 def clark(ID,
           PSF,
-          psfo=None,
+          psfo,
           gamma=0.05,
           pf=0.05,
           maxit=50,
@@ -86,25 +87,6 @@ def clark(ID,
     ID /= wsum
     PSF /= wsum
     wsums = np.amax(PSF, axis=(1,2))
-    if psfo is None:
-        print("Setting up PSF operator", file=log)
-        from ducc0.fft import r2c
-        iFs = np.fft.ifftshift
-
-        padding = psfopts['padding']
-        unpad_x = psfopts['unpad_x']
-        unpad_y = psfopts['unpad_y']
-        lastsize = psfopts['lastsize']
-        nthreads = psfopts['nthreads']
-        psf_pad = iFs(PSF, axes=(1, 2))
-        psfhat = r2c(psf_pad, axes=(1, 2), forward=True,
-                     nthreads=nthreads, inorm=0)
-        del psf_pad
-        psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name=False)
-
-        from pfb.operators.psf import psf_convolve
-        psfo = partial(psf_convolve, psfhat=psfhat, psfopts=psfopts)
-
     nx0 = nx_psf//2
     ny0 = ny_psf//2
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
@@ -126,7 +108,7 @@ def clark(ID,
                          gamma=gamma,
                          th=subth,
                          maxit=submaxit)
-        IR = ID - psfo(model).compute()
+        IR = ID - psfo(model)
         IRsearch = np.sum(IR, axis=0)**2
         pq = IRsearch.argmax()
         p = pq//ny
