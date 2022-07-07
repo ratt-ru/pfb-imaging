@@ -5,7 +5,12 @@ inputs:
     dtype: str
     abbreviation: mname
     default: MODEL
-    info: 'Name of residual in xds'
+    info: 'Name of model in mds'
+  residual_name:
+    dtype: str
+    abbreviation: rname
+    default: RESIDUAL
+    info: 'Name of residual in dds'
   nband:
     dtype: int
     required: true

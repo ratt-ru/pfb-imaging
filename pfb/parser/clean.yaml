@@ -44,6 +44,10 @@ inputs:
     dtype: bool
     default: false
     info: 'Will create a mask from clean components and write it to the mds'
+  dirosion:
+    dtype: int
+    default: 1
+    info: Perform dilation followed by erosion with structure element of this width
   fits_mfs:
     dtype: bool
     default: true
@@ -55,7 +59,7 @@ inputs:
   do_residual:
     dtype: bool
     default: false
-    info: 'Whether to make the residual at the end the forward step'
+    info: 'Make final residual'
   nmiter:
     dtype: int
     default: 5

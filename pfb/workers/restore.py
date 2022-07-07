@@ -15,7 +15,7 @@ defaults = {}
 for key in schema.restore["inputs"].keys():
     defaults[key] = schema.restore["inputs"][key]["default"]
 
-@cli.command()
+@cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.restore)
 def restore(**kw):
     '''
@@ -59,8 +59,6 @@ def _restore(**kw):
     dds_name = f'{basename}{opts.postfix}.dds.zarr'
     mds_name = f'{basename}{opts.postfix}.mds.zarr'
 
-
-
     dds = xds_from_zarr(dds_name)
     # only a single mds (for now)
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
@@ -76,23 +74,24 @@ def _restore(**kw):
         assert ds.nx == nx
         assert ds.ny == ny
 
-    output_type = dds[0].RESIDUAL.dtype
+    try:
+        output_type = dds[0].get(opts.residual_name).dtype
+    except:
+        raise ValueError(f"{opts.residual_name} dot in dds")
     residual = np.zeros((nband, nx, ny), dtype=output_type)
     psf = np.zeros((nband, nx_psf, ny_psf), dtype=output_type)
     wsums = np.zeros(nband)
     for ds in dds:
         b = ds.bandid
-        residual[b] += ds.RESIDUAL.values
+        residual[b] += ds.get(opts.residual_name).values
         psf[b] += ds.PSF.values
         wsums[b] += ds.WSUM.values[0]
     wsum = wsums.sum()
-    residual /= wsum
-    psf /= wsum
-    psf_mfs = np.sum(psf, axis=0)
-    residual_mfs = np.sum(residual, axis=0)
+    psf_mfs = np.sum(psf, axis=0)/wsum
+    residual_mfs = np.sum(residual, axis=0)/wsum
     fmask = wsums > 0
-    residual[fmask] /= wsums[fmask, None, None]/wsum
-    psf[fmask] /= wsums[fmask, None, None]/wsum
+    residual[fmask] /= wsums[fmask, None, None]
+    psf[fmask] /= wsums[fmask, None, None]
     # sanity check
     assert (psf_mfs.max() - 1.0) < 2e-7
     assert ((np.amax(psf, axis=(1,2)) - 1.0) < 2e-7).all()
@@ -113,7 +112,9 @@ def _restore(**kw):
     for v in range(opts.nband):
         cpsf[v] = Gaussian2D(xx, yy, GaussPars[v], normalise=False)
 
-    model = mds.MODEL.values
+    model = mds.get(opts.model_name).values
+    if not model.any():
+        print("Warning - model is empty", file=log)
     model_mfs = np.mean(model, axis=0)
 
     image_mfs = convolve2gaussres(model_mfs[None], xx, yy,
@@ -165,3 +166,5 @@ def _restore(**kw):
 
     if 'C' in opts.outputs:
         save_fits(f'{basename}{opts.postfix}.cpsf.fits', cpsf, hdr)
+
+    print("All done here", file=log)

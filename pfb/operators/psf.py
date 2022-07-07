@@ -162,14 +162,20 @@ def _hessian_reg_psf(x, beam, psfhat,
     Tikhonov regularised Hessian approx
     """
 
-
-    xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(1, 2))
-    # import pdb; pdb.set_trace()
+    if beam is not None:
+        xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(1, 2))
+    else:
+        xhat = iFs(np.pad(x, padding, mode='constant'), axes=(1, 2))
     xhat = r2c(xhat, axes=(1, 2), nthreads=nthreads,
-                forward=True, inorm=0)
-    # import pdb; pdb.set_trace()
+               forward=True, inorm=0)
     xhat = c2r(xhat * psfhat, axes=(1, 2), forward=False,
-                lastsize=lastsize, inorm=2, nthreads=nthreads)
+               lastsize=lastsize, inorm=2, nthreads=nthreads)
     im = Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y]
 
-    return beam*im + x * sigmainv**2
+    if beam is not None:
+        im *= beam
+
+    if sigmainv:
+        return im + x * sigmainv**2
+    else:
+        return im

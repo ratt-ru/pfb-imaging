@@ -160,6 +160,8 @@ def _clean(**kw):
     if residual is None:
         residual = dirty.copy()
         residual_mfs = dirty_mfs.copy()
+    else:
+        residual_mfs = np.sum(residual, axis=0)
     model = mds.MODEL.values
 
     # set up Hessian
@@ -178,10 +180,7 @@ def _clean(**kw):
 
     # to set up psf convolve when using Clark
     if opts.use_clark:
-        from pfb.operators.psf import psf_convolve_cube
-        from pfb.operators.fft import fft_cube
-        from ducc0.fft import r2c
-        iFs = np.fft.ifftshift
+        from pfb.operators.psf import _hessian_reg_psf
 
         npad_xl = (nx_psf - nx)//2
         npad_xr = nx_psf - nx - npad_xl
@@ -193,13 +192,17 @@ def _clean(**kw):
         lastsize = ny + np.sum(padding[-1])
 
         # precompute so we don't need to repeat on each hessian call
-        psfopts = {}
-        psfopts['padding'] = padding
-        psfopts['unpad_x'] = unpad_x
-        psfopts['unpad_y'] = unpad_y
-        psfopts['lastsize'] = lastsize
-        psfopts['nthreads'] = opts.nvthreads
-        psfo = partial(psf_convolve_cube, psfhat=psfhat, beam=None, psfopts=psfopts)
+        # for dask wrapper but graph construction currently takes too long
+        # psfopts = {}
+        # psfopts['padding'] = padding
+        # psfopts['unpad_x'] = unpad_x
+        # psfopts['unpad_y'] = unpad_y
+        # psfopts['lastsize'] = lastsize
+        # psfopts['nthreads'] = opts.nvthreads
+        psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
+                       nthreads=opts.nthreads, sigmainv=0,
+                       padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
+                       lastsize = lastsize)
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -257,8 +260,10 @@ def _clean(**kw):
     if opts.update_mask:
         mask = np.any(model, axis=0)
         from scipy import ndimage
-        mask = ndimage.binary_dilation(mask)
-        mask = ndimage.binary_erosion(mask)
+        if opts.dirosion:
+            struct = ndimage.generate_binary_structure(2, opts.dirosion)
+            mask = ndimage.binary_dilation(mask, structure=struct)
+            mask = ndimage.binary_erosion(mask)
         if 'MASK' in mds:
             mask = np.logical_or(mask, mds.MASK.values)
         mds = mds.assign(**{

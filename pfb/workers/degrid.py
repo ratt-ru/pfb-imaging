@@ -103,18 +103,10 @@ def _degrid(**kw):
     import dask
     from dask.distributed import performance_report
     from dask.graph_manipulation import clone
-    # from daskms import xds_from_ms, xds_from_table, xds_to_table
     from daskms.experimental.zarr import xds_from_zarr
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms import xds_to_storage_table as xds_to_table
-    # from daskms.utils import dataset_type
-    # mstype = dataset_type(opts.ms[0])
-    # if mstype == 'casa':
-    #     from daskms import xds_to_table
-    # else:
-    #     raise ValueError("predict currently only supports measurement sets")
-    #     # from daskms.experimental.zarr import xds_to_zarr as xds_to_table
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import model as im2vis
