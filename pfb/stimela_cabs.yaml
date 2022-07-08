@@ -30,6 +30,12 @@ cabs:
     _include:
       - (pfb.parser)restore.yaml
 
+  'pfb.fwdbwd':
+    command: (pfb.workers.fwdbwd)fwdbwd
+
+    _include:
+      - (pfb.parser)fwdbwd.yaml
+
   'pfbmisc.forward':
     command: (pfb.workers.misc.forward)forward
 
