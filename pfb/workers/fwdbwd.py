@@ -197,11 +197,16 @@ def _fwdbwd(**kw):
     else:
         weight = np.ones((nbasis, nmax), dtype=model.dtype)
 
+    residual_mfs = np.sum(residual, axis=0)
+    rms = np.std(residual_mfs)
+    rmax = residual_mfs.max()
+    print(f"It {0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for i in range(opts.niter):
         print('Getting update', file=log)
-        update = pcg(hess, residual, tol=opts.cg_tol,
-                     maxit=opts.cg_maxit, minit=opts.cg_minit,
-                     verbosity=opts.cg_verbose, report_freq=opts.cg_report_freq,
+        update = pcg(hess, mask[None] * residual,
+                     tol=opts.cg_tol, maxit=opts.cg_maxit,
+                     minit=opts.cg_minit, verbosity=opts.cg_verbose,
+                     report_freq=opts.cg_report_freq,
                      backtrack=opts.backtrack)
 
         print('Getting model', file=log)
@@ -247,15 +252,19 @@ def _fwdbwd(**kw):
                     dtype=real_type) for _ in range(nband)]
         for ds in dds:
             b = ds.bandid
-            # we only want to apply the beam once here
+            # we ave to apply the beam here in case it varies with ds
+            # the mask will be applied prior to massing into PCG
             residual[b] += ds.RESIDUAL.data * ds.BEAM.data
         residual = da.stack(residual)/wsum
         residual = residual.compute()
         residual_mfs = np.sum(residual, axis=0)
         rms = np.std(residual_mfs)
         rmax = residual_mfs.max()
-        print(f"At iteration {i+1} the max of residual is {rmax:.3e} and the rms "
-              f"is {rms:.3e}", file=log)
+        eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
+        print(f"It {i+1}: max resid = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}",
+              file=log)
+        if eps < opts.tol:
+            break
 
     print("Saving results", file=log)
     mask = np.any(model, axis=0).astype(bool)

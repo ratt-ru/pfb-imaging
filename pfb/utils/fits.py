@@ -99,9 +99,9 @@ def add_beampars(hdr, GaussPar, GaussPars=None):
 
     if GaussPars is not None:
         for i in range(len(GaussPars)):
-            hdr['BMAJ' + str(i)] = GaussPars[i][0]
-            hdr['BMIN' + str(i)] = GaussPars[i][1]
-            hdr['PA' + str(i)] = GaussPars[i][2]
+            hdr['BMAJ' + str(i+1)] = GaussPars[i][0]
+            hdr['BMIN' + str(i+1)] = GaussPars[i][1]
+            hdr['PA' + str(i+1)] = GaussPars[i][2]
 
     return hdr
 

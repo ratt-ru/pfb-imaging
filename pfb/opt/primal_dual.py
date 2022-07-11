@@ -63,17 +63,16 @@ def primal_dual(
             import pdb; pdb.set_trace()
 
         if not k % report_freq and verbosity > 1:
-            print("At iteration %i eps = %f" % (k, eps), file=log)
+            print(f"At iteration {k} eps = {eps:.3e}", file=log)
 
     if k == maxit - 1:
         if verbosity:
-            print(
-                "Maximum iterations reached. "
-                "Relative difference between updates = %f" %
-                eps, file=log)
+            print("Maximum iterations reached. "
+                  f"Relative difference between updates = {eps:.3e}",
+                  file=log)
     else:
         if verbosity:
-            print("Success, converged after %i iterations" % k, file=log)
+            print(f"Success, converged after {k} iterations", file=log)
 
     return x, v
 

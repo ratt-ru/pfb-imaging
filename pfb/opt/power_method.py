@@ -31,16 +31,14 @@ def power_method(
         k += 1
 
         if not k % report_freq and verbosity > 1:
-            print("At iteration %i eps = %f" % (k, eps), file=log)
+            print(f"At iteration {k} eps = {eps:.3e}", file=log)
 
     if k == maxit:
         if verbosity:
-            print(
-                "Maximum iterations reached. eps = %f, current beta = %f" %
-                (eps, beta), file=log)
+            print(f"Maximum iterations reached. "
+                  f"eps = {eps:.3e}, beta = {beta:.3e}", file=log)
     else:
         if verbosity:
-            print(
-                "Success, converged after %i iterations. beta = %f" %
-                (k, beta), file=log)
+            print(f"Success, converged after {k} iterations. "
+                  f"beta = {beta:.3e}", file=log)
     return beta, bp

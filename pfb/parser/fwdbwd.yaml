@@ -80,6 +80,12 @@ inputs:
     default: 5
     info: Number of iterations. L21 reweighting will take place after every iteration
     abbreviation: niter
+  tol:
+    dtype: float
+    default: 1e-5
+    info:
+      Tolerance at which to terminate algorithm.
+      Will stop when norm(x-xp)/norm(x) < tol
   fits_mfs:
     dtype: bool
     default: true

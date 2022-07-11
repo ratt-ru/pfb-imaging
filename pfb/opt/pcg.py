@@ -64,17 +64,18 @@ def pcg(A,
             stall_count += 1
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} epsx = {epsx}, epsn = {epsn}", file=log)
+            print(f"At iteration {k} epsx = {epsx:.3e}, epsn = {epsn:.3e}",
+                  file=log)
 
     if k >= maxit:
         if verbosity:
-            print("Max iters reached. eps = %f." % eps, file=log)
+            print(f"Max iters reached. eps = {eps:.3e}", file=log)
     elif stall_count >= 5:
         if verbosity:
-            print("Stalled. eps = %f." % eps, file=log)
+            print(f"Stalled. eps = {eps:.3e}", file=log)
     else:
         if verbosity:
-            print("Success, converged after %i iters" % k, file=log)
+            print(f"Success, converged after {k}", file=log)
     return x
 
 from pfb.operators.psf import _hessian_reg_psf as hessian_psf
