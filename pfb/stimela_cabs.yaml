@@ -19,7 +19,7 @@ cabs:
       - (pfb.parser)degrid.yaml
 
   'pfb.clean':
-    command: (pfb.workers.deconv.clean)clean
+    command: (pfb.workers.clean)clean
 
     _include:
       - (pfb.parser)clean.yaml
