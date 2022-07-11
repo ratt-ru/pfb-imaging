@@ -1,7 +1,7 @@
 import packratt
 import pytest
 from pathlib import Path
-from daskms import Dataset
+from xarray import Dataset
 from collections import namedtuple
 import dask
 import dask.array as da
