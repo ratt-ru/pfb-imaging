@@ -43,6 +43,17 @@ def single_stokes(ds=None,
 
     frow = inlined_array(frow, [ant1, ant2])
 
+    if opts.flag_column is not None:
+        flag = getattr(ds, opts.flag_column).data
+        flag = da.any(flag, axis=2)
+        flag = da.logical_or(flag, frow[:, None])
+    else:
+        flag = da.broadcast_to(frow[:, None], (nrow, nchan))
+
+    # Does this trigger an early compute()?
+    if flag.all():
+        return
+
     if opts.sigma_column is not None:
         sigma = getattr(ds, opts.sigma_column).data
         weight = 1.0/sigma**2
@@ -76,16 +87,6 @@ def single_stokes(ds=None,
     vis = inlined_array(vis, [ant1, ant2, tbin_idx, tbin_counts, jones])
     wgt = inlined_array(wgt, [ant1, ant2, tbin_idx, tbin_counts, jones])
 
-    if opts.flag_column is not None:
-        flag = getattr(ds, opts.flag_column).data
-        flag = da.any(flag, axis=2)
-        flag = da.logical_or(flag, frow[:, None])
-    else:
-        flag = da.broadcast_to(frow[:, None], (nrow, nchan))
-
-    if flag.all():
-        return
-
     mask = ~flag
     mask = inlined_array(mask, [frow])
     uvw = ds.UVW.data
@@ -94,18 +95,9 @@ def single_stokes(ds=None,
 
     wsum = da.sum(wgt[mask])
     data_vars['WSUM'] = (('scalar'), da.array((wsum,)))
-
-    # wgt = wgt.rechunk({0:opts.row_out_chunk})
     data_vars['WEIGHT'] = (('row', 'chan'), wgt)
-
-    # uvw = uvw.rechunk({0:opts.row_out_chunk})
     data_vars['UVW'] = (('row', 'uvw'), uvw)
-
-    # vis = vis.rechunk({0:opts.row_out_chunk})
     data_vars['VIS'] = (('row', 'chan'), vis)
-
-    # MASK = ~FLAG.astype(np.uint8) for wgridder convention
-    # mask = mask.rechunk({0:opts.row_out_chunk})
     data_vars['MASK'] = (('row', 'chan'), mask.astype(np.uint8))
 
     # if opts.weight:
@@ -192,7 +184,6 @@ def weight_data(data, weight, jones, tbin_idx, tbin_counts,
 
     vis = da.blockwise(getitem, 'rf', res, 'rf', 0, None, dtype=data.dtype)
     wgt = da.blockwise(getitem, 'rf', res, 'rf', 1, None, dtype=weight.dtype)
-
 
     return vis, wgt
 

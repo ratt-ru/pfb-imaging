@@ -8,13 +8,13 @@ import dask.array as da
 from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
-@pmp('beam_model', (None, 'kbl',))
 @pmp('do_gains', (False, True))
-def test_fwdbwd(beam_model, do_gains, tmp_path_factory):
+@pmp('use_clark', (False, True))
+def test_clean(do_gains, use_clark, tmp_path_factory):
     '''
-    Here we test that the forward backward algorithm correctly infers
-    the fluxes of point sources with known locations in the presence
-    of the wterm, DI gain corruptions and a static known primary beam.
+    Here we test that clean correctly infers the fluxes of point sources
+    placed at the centers of pixels in the presence of the wterm and DI gain
+    corruptions.
     TODO - add per scan PB variations
     '''
     test_dir = tmp_path_factory.mktemp("test_pfb")
@@ -79,25 +79,12 @@ def test_fwdbwd(beam_model, do_gains, tmp_path_factory):
     for i in range(nsource):
         model[:, Ix[i], Iy[i]] = I0[i] * (freq/freq0) ** alpha[i]
 
-    # TODO - interpolate beam
-    if beam_model is None:
-        beam = np.ones((nchan, nx, ny), dtype=float)
-    elif beam_model == 'kbl':
-        from katbeam import JimBeam
-        beamo = JimBeam('MKAT-AA-L-JIM-2020').I
-        l = (-(nx//2) + np.arange(nx)) * cell_deg
-        m = (-(ny//2) + np.arange(ny)) * cell_deg
-        ll, mm = np.meshgrid(l, m, indexing='ij')
-        beam = np.zeros((nchan, nx, ny), dtype=float)
-        for c in range(nchan):
-            beam[c] = beamo(ll, mm, freq[c]/1e6)
-
     # model vis
     epsilon = 1e-7  # tests take too long if smaller
     from ducc0.wgridder import dirty2ms
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
-        model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], beam[c]*model[c],
+        model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], model[c],
                                     pixsize_x=cell_rad, pixsize_y=cell_rad,
                                     epsilon=epsilon, do_wstacking=True, nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]
@@ -112,7 +99,7 @@ def test_fwdbwd(beam_model, do_gains, tmp_path_factory):
 
     if do_gains:
         t = (utime-utime.min())/(utime.max() - utime.min())
-        nu = 2*(freq/freq0 - 1.0)
+        nu = 2.5*(freq/freq0 - 1.0)
 
         from africanus.gps.utils import abs_diff
         tt = abs_diff(t, t)
@@ -201,7 +188,7 @@ def test_fwdbwd(beam_model, do_gains, tmp_path_factory):
     init_args["weight_column"] = None
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = gain_path
-    init_args["beam_model"] = beam_model
+    init_args["beam_model"] = None
     init_args["max_field_of_view"] = fov
     from pfb.workers.init import _init
     _init(**init_args)
@@ -217,64 +204,51 @@ def test_fwdbwd(beam_model, do_gains, tmp_path_factory):
     grid_args["field_of_view"] = fov
     grid_args["fits_mfs"] = True
     grid_args["psf"] = True
+    grid_args["residual"] = False
     grid_args["nthreads"] = 8  # has to be set when calling _grid
     grid_args["nvthreads"] = 8
     grid_args["overwrite"] = True
-    grid_args["robustness"] = None
+    grid_args["robustness"] = 0.0
     grid_args["wstack"] = True
-    grid_args["residual"] = False
     from pfb.workers.grid import _grid
     _grid(**grid_args)
 
-    # place mask in mds
-    mask = np.any(model, axis=0)
+    # run clean
+    clean_args = {}
+    for key in schema.clean["inputs"].keys():
+        clean_args[key] = schema.clean["inputs"][key]["default"]
+    clean_args["output_filename"] = outname
+    clean_args["postfix"] = postfix
+    clean_args["nband"] = nchan
+    clean_args["mask"] = 'mds'
+    clean_args["use_clark"] = use_clark
+    clean_args["update_maks"] = False
+    clean_args["dirosion"] = 0
+    clean_args["do_residual"] = False
+    clean_args["nmiter"] = 100
+    threshold = 1e-5
+    clean_args["threshold"] = threshold
+    clean_args["gamma"] = 0.05
+    clean_args["peak_factor"] = 0.75
+    clean_args["sub_peak_factor"] = 0.75
+    clean_args["nthreads"] = 8
+    clean_args["nvthreads"] = 8
+    clean_args["scheduler"] = 'sync'
+    clean_args["wstack"] = True
+    clean_args["epsilon"] = epsilon
+    from pfb.workers.clean import _clean
+    _clean(**clean_args)
+
+    # get inferred model
     basename = f'{outname}_I'
     mds_name = f'{basename}{postfix}.mds.zarr'
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    mds = mds.assign(**{
-                'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
-        })
-    dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
+    model_inferred = mds.CLEAN_MODEL.values
 
-
-    # run fwdbwd to get model
-    fwdbwd_args = {}
-    for key in schema.fwdbwd["inputs"].keys():
-        fwdbwd_args[key] = schema.fwdbwd["inputs"][key]["default"]
-    fwdbwd_args["output_filename"] = outname
-    fwdbwd_args["postfix"] = postfix
-    fwdbwd_args["nband"] = nchan
-    fwdbwd_args["mask"] = 'mds'
-    fwdbwd_args["nthreads"] = 8  # has to be set when calling _fwdbwd
-    fwdbwd_args["nvthreads"] = 8
-    fwdbwd_args["pm_tol"] = 0.1*epsilon
-    fwdbwd_args["pm_maxit"] = 250
-    fwdbwd_args["cg_tol"] = 0.1*epsilon
-    fwdbwd_args["cg_maxit"] = 50
-    fwdbwd_args["cg_minit"] = 1
-    fwdbwd_args["pd_tol"] = 0.1*epsilon
-    fwdbwd_args["pd_maxit"] = 100
-    fwdbwd_args["wstack"] = True
-    fwdbwd_args["sigma21"] = 0
-    fwdbwd_args["alpha"] = 1
-    fwdbwd_args["bases"] = 'self'
-    fwdbwd_args["sigmainv"] = 0.0
-    fwdbwd_args["tol"] = 0.1*epsilon
-    fwdbwd_args["niter"] = 10
-
-    from pfb.workers.fwdbwd import _fwdbwd
-    _fwdbwd(**fwdbwd_args)
-
-    # get inferred model
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    model_inferred = mds.MODEL.values
-
-    # we do not expect a perfect match after a handful of iterations
-    # hence larger tolerance of 5e-6
     for i in range(nsource):
         assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -
                         model[:, Ix[i], Iy[i]], 1.0,
-                        atol=50*epsilon, rtol=50*epsilon)
+                        atol=5*threshold)
 
- # beam_model, do_gains
-# test_fwdbwd('kbl', True)
+ # do_gains, use_clark
+# test_clean(True, True)
