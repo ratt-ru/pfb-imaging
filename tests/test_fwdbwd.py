@@ -10,11 +10,11 @@ pmp = pytest.mark.parametrize
 
 @pmp('beam_model', (None, 'kbl',))
 @pmp('do_gains', (False, True))
-def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
+def test_fwdbwd(beam_model, do_gains, tmp_path_factory):
     '''
-    Here we test that the PCG algorithm correctly infers the fluxes of point
-    sources with known locations in the presence of the wterm, DI gain
-    corruptions and a static known primary beam when using the full hessian.
+    Here we test that the forward backward algorithm correctly infers
+    the fluxes of point sources with known locations in the presence
+    of the wterm, DI gain corruptions and a static known primary beam.
     TODO - add per scan PB variations
     '''
     test_dir = tmp_path_factory.mktemp("test_pfb")
@@ -112,7 +112,7 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
 
     if do_gains:
         t = (utime-utime.min())/(utime.max() - utime.min())
-        nu = 2.5*(freq/freq0 - 1.0)
+        nu = 2*(freq/freq0 - 1.0)
 
         from africanus.gps.utils import abs_diff
         tt = abs_diff(t, t)
@@ -216,13 +216,13 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
     grid_args["fits_mfs"] = True
-    grid_args["psf"] = False
-    grid_args["residual"] = False
+    grid_args["psf"] = True
     grid_args["nthreads"] = 8  # has to be set when calling _grid
     grid_args["nvthreads"] = 8
     grid_args["overwrite"] = True
-    grid_args["robustness"] = 0.0
+    grid_args["robustness"] = None
     grid_args["wstack"] = True
+    grid_args["residual"] = False
     from pfb.workers.grid import _grid
     _grid(**grid_args)
 
@@ -237,30 +237,44 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
     dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
 
-    # grid data to produce dirty image
-    forward_args = {}
-    for key in schema.forward["inputs"].keys():
-        forward_args[key] = schema.forward["inputs"][key]["default"]
-    forward_args["output_filename"] = outname
-    forward_args["postfix"] = postfix
-    forward_args["nband"] = nchan
-    forward_args["mask"] = 'mds'
-    forward_args["use_psf"] = False
-    forward_args["nthreads"] = 8  # has to be set when calling _forward
-    forward_args["nvthreads"] = 8
-    forward_args["cg_tol"] = 0.5*epsilon
-    forward_args["wstack"] = True
-    forward_args["mean_ds"] = False
-    from pfb.workers.misc.forward import _forward
-    _forward(**forward_args)
+    # run fwdbwd to get model
+    fwdbwd_args = {}
+    for key in schema.fwdbwd["inputs"].keys():
+        fwdbwd_args[key] = schema.fwdbwd["inputs"][key]["default"]
+    fwdbwd_args["output_filename"] = outname
+    fwdbwd_args["postfix"] = postfix
+    fwdbwd_args["nband"] = nchan
+    fwdbwd_args["mask"] = 'mds'
+    fwdbwd_args["nthreads"] = 8  # has to be set when calling _fwdbwd
+    fwdbwd_args["nvthreads"] = 8
+    fwdbwd_args["pm_tol"] = 0.1*epsilon
+    fwdbwd_args["pm_maxit"] = 250
+    fwdbwd_args["cg_tol"] = 0.1*epsilon
+    fwdbwd_args["cg_maxit"] = 50
+    fwdbwd_args["cg_minit"] = 1
+    fwdbwd_args["pd_tol"] = 0.1*epsilon
+    fwdbwd_args["pd_maxit"] = 100
+    fwdbwd_args["wstack"] = True
+    fwdbwd_args["sigma21"] = 0
+    fwdbwd_args["alpha"] = 1
+    fwdbwd_args["bases"] = 'self'
+    fwdbwd_args["sigmainv"] = 0.0
+    fwdbwd_args["tol"] = 0.1*epsilon
+    fwdbwd_args["niter"] = 10
+
+    from pfb.workers.fwdbwd import _fwdbwd
+    _fwdbwd(**fwdbwd_args)
 
     # get inferred model
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    model_inferred = mds.UPDATE.values
+    model_inferred = mds.MODEL.values
 
+    # we do not expect a perfect match after a handful of iterations
+    # hence larger tolerance of 5e-6
     for i in range(nsource):
         assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -
-                        model[:, Ix[i], Iy[i]], 1.0, atol=10*epsilon)
+                        model[:, Ix[i], Iy[i]], 1.0,
+                        atol=50*epsilon, rtol=50*epsilon)
 
  # beam_model, do_gains
-# test_forwardmodel('kbl', False, True, 0.0, False)
+# test_fwdbwd('kbl', True)

@@ -36,9 +36,13 @@ inputs:
     info: 'Number of rows in a chunk in output dataset'
     abbreviation: rc
     default: -1
-  use_clark:
-    dtype: bool
-    default: false
+  algo:
+    dtype: str
+    default: agroclean
+    choices:
+      - hogbom
+      - clark
+      - agroclean
     info: 'Fast, approximate minor cycle'
   update_mask:
     dtype: bool
@@ -97,7 +101,7 @@ inputs:
     abbreviation: cmaxit
   sub_maxit:
     dtype: int
-    default: 5000
+    default: 1000
     info: 'Maximum number of iterations for the sub-minor cycle'
     abbreviation: smaxit
   verbose:

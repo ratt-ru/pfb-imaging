@@ -129,6 +129,7 @@ def _clean(**kw):
     from pfb.utils.misc import setup_image_data
     from pfb.deconv.hogbom import hogbom
     from pfb.deconv.clark import clark
+    from pfb.deconv.agroclean import agroclean
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.operators.hessian import hessian
 
@@ -178,8 +179,8 @@ def _clean(**kw):
                    wsum=wsum, sigmainv=0, mask=np.ones_like(dirty_mfs),
                    compute=True, use_beam=False)
 
-    # to set up psf convolve when using Clark
-    if opts.use_clark:
+    # set up psf convolve if required
+    if opts.algo in ['agroclean', 'clark']:
         from pfb.operators.psf import _hessian_reg_psf
 
         npad_xl = (nx_psf - nx)//2
@@ -190,15 +191,6 @@ def _clean(**kw):
         unpad_x = slice(npad_xl, -npad_xr)
         unpad_y = slice(npad_yl, -npad_yr)
         lastsize = ny + np.sum(padding[-1])
-
-        # precompute so we don't need to repeat on each hessian call
-        # for dask wrapper but graph construction currently takes too long
-        # psfopts = {}
-        # psfopts['padding'] = padding
-        # psfopts['unpad_x'] = unpad_x
-        # psfopts['unpad_y'] = unpad_y
-        # psfopts['lastsize'] = lastsize
-        # psfopts['nthreads'] = opts.nvthreads
         psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
                        nthreads=opts.nthreads, sigmainv=0,
                        padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
@@ -209,9 +201,9 @@ def _clean(**kw):
 
     print("Iter %i: peak residual = %f, rms = %f" % (0, rmax, rms), file=log)
     for k in range(opts.nmiter):
-        if opts.use_clark:
+        if opts.algo.lower() == 'clark':
             print("Running Clark", file=log)
-            x = clark(residual, psf, psfo=psfo,
+            x = clark(residual, psf, psfo,
                       gamma=opts.gamma,
                       pf=opts.peak_factor,
                       maxit=opts.clark_maxit,
@@ -219,7 +211,7 @@ def _clean(**kw):
                       submaxit=opts.sub_maxit,
                       verbosity=opts.verbose,
                       report_freq=opts.report_freq)
-        else:
+        elif opts.algo.lower() == 'hogbom':
             print("Running Hogbom", file=log)
             x = hogbom(residual, psf,
                        gamma=opts.gamma,
@@ -227,6 +219,17 @@ def _clean(**kw):
                        maxit=opts.hogbom_maxit,
                        verbosity=opts.verbose,
                        report_freq=opts.report_freq)
+        elif opts.algo.lower() == 'agroclean':
+            x = agroclean(residual, psf, psfo,
+                          gamma=opts.gamma,
+                          pf=opts.peak_factor,
+                          maxit=opts.clark_maxit,
+                          subpf=opts.sub_peak_factor,
+                          submaxit=opts.sub_maxit,
+                          verbosity=opts.verbose,
+                          report_freq=opts.report_freq)
+        else:
+            raise ValueError(f'{opts.algo} is not a valid algo option')
 
         model += x
 
@@ -263,7 +266,7 @@ def _clean(**kw):
         if opts.dirosion:
             struct = ndimage.generate_binary_structure(2, opts.dirosion)
             mask = ndimage.binary_dilation(mask, structure=struct)
-            mask = ndimage.binary_erosion(mask)
+            mask = ndimage.binary_erosion(mask, structure=struct)
         if 'MASK' in mds:
             mask = np.logical_or(mask, mds.MASK.values)
         mds = mds.assign(**{

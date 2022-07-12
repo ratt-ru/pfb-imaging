@@ -8,13 +8,13 @@ import dask.array as da
 from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
-@pmp('beam_model', (None, 'kbl',))
 @pmp('do_gains', (False, True))
-def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
+@pmp('algo', ('hogbom', 'clark'))
+def test_clean(do_gains, algo, tmp_path_factory):
     '''
-    Here we test that the PCG algorithm correctly infers the fluxes of point
-    sources with known locations in the presence of the wterm, DI gain
-    corruptions and a static known primary beam when using the full hessian.
+    Here we test that clean correctly infers the fluxes of point sources
+    placed at the centers of pixels in the presence of the wterm and DI gain
+    corruptions.
     TODO - add per scan PB variations
     '''
     test_dir = tmp_path_factory.mktemp("test_pfb")
@@ -79,25 +79,12 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
     for i in range(nsource):
         model[:, Ix[i], Iy[i]] = I0[i] * (freq/freq0) ** alpha[i]
 
-    # TODO - interpolate beam
-    if beam_model is None:
-        beam = np.ones((nchan, nx, ny), dtype=float)
-    elif beam_model == 'kbl':
-        from katbeam import JimBeam
-        beamo = JimBeam('MKAT-AA-L-JIM-2020').I
-        l = (-(nx//2) + np.arange(nx)) * cell_deg
-        m = (-(ny//2) + np.arange(ny)) * cell_deg
-        ll, mm = np.meshgrid(l, m, indexing='ij')
-        beam = np.zeros((nchan, nx, ny), dtype=float)
-        for c in range(nchan):
-            beam[c] = beamo(ll, mm, freq[c]/1e6)
-
     # model vis
     epsilon = 1e-7  # tests take too long if smaller
     from ducc0.wgridder import dirty2ms
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
-        model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], beam[c]*model[c],
+        model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], model[c],
                                     pixsize_x=cell_rad, pixsize_y=cell_rad,
                                     epsilon=epsilon, do_wstacking=True, nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]
@@ -201,7 +188,7 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
     init_args["weight_column"] = None
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = gain_path
-    init_args["beam_model"] = beam_model
+    init_args["beam_model"] = None
     init_args["max_field_of_view"] = fov
     from pfb.workers.init import _init
     _init(**init_args)
@@ -216,7 +203,7 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
     grid_args["fits_mfs"] = True
-    grid_args["psf"] = False
+    grid_args["psf"] = True
     grid_args["residual"] = False
     grid_args["nthreads"] = 8  # has to be set when calling _grid
     grid_args["nvthreads"] = 8
@@ -226,41 +213,42 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
     from pfb.workers.grid import _grid
     _grid(**grid_args)
 
-    # place mask in mds
-    mask = np.any(model, axis=0)
+    # run clean
+    clean_args = {}
+    for key in schema.clean["inputs"].keys():
+        clean_args[key] = schema.clean["inputs"][key]["default"]
+    clean_args["output_filename"] = outname
+    clean_args["postfix"] = postfix
+    clean_args["nband"] = nchan
+    clean_args["mask"] = 'mds'
+    clean_args["algo"] = algo
+    clean_args["update_maks"] = False
+    clean_args["dirosion"] = 0
+    clean_args["do_residual"] = False
+    clean_args["nmiter"] = 100
+    threshold = 1e-5
+    clean_args["threshold"] = threshold
+    clean_args["gamma"] = 0.1
+    clean_args["peak_factor"] = 0.75
+    clean_args["sub_peak_factor"] = 0.75
+    clean_args["nthreads"] = 8
+    clean_args["nvthreads"] = 8
+    clean_args["scheduler"] = 'sync'
+    clean_args["wstack"] = True
+    clean_args["epsilon"] = epsilon
+    from pfb.workers.clean import _clean
+    _clean(**clean_args)
+
+    # get inferred model
     basename = f'{outname}_I'
     mds_name = f'{basename}{postfix}.mds.zarr'
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    mds = mds.assign(**{
-                'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
-        })
-    dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
-
-
-    # grid data to produce dirty image
-    forward_args = {}
-    for key in schema.forward["inputs"].keys():
-        forward_args[key] = schema.forward["inputs"][key]["default"]
-    forward_args["output_filename"] = outname
-    forward_args["postfix"] = postfix
-    forward_args["nband"] = nchan
-    forward_args["mask"] = 'mds'
-    forward_args["use_psf"] = False
-    forward_args["nthreads"] = 8  # has to be set when calling _forward
-    forward_args["nvthreads"] = 8
-    forward_args["cg_tol"] = 0.5*epsilon
-    forward_args["wstack"] = True
-    forward_args["mean_ds"] = False
-    from pfb.workers.misc.forward import _forward
-    _forward(**forward_args)
-
-    # get inferred model
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    model_inferred = mds.UPDATE.values
+    model_inferred = mds.CLEAN_MODEL.values
 
     for i in range(nsource):
         assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -
-                        model[:, Ix[i], Iy[i]], 1.0, atol=10*epsilon)
+                        model[:, Ix[i], Iy[i]], 1.0,
+                        atol=5*threshold)
 
- # beam_model, do_gains
-# test_forwardmodel('kbl', False, True, 0.0, False)
+ # do_gains, algo
+# test_clean(False, 'agroclean')

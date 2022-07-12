@@ -134,6 +134,11 @@ def _restore(**kw):
     GaussPar[1] *= cell_deg
     GaussPar = tuple(GaussPar)
 
+    GaussPars = list(GaussPars)
+    for i, gp in enumerate(GaussPars):
+        GaussPars[i] = (gp[0]*cell_deg, gp[1]*cell_deg, gp[2])
+    GaussPars = tuple(GaussPars)
+
     # init fits headers
     radec = (mds.ra, mds.dec)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, np.mean(freq))

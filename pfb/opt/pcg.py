@@ -24,6 +24,9 @@ def pcg(A,
 
     r = A(x0) - b
     y = M(r)
+    if not np.any(y):
+        print(f"Initial residual is zero", file=log)
+        return x0
     p = -y
     rnorm = np.vdot(r, y)
     if np.isnan(rnorm) or rnorm == 0.0:
@@ -53,28 +56,33 @@ def pcg(A,
 
         beta = rnorm_next / rnorm
         p = beta * p - y
+        # if p is zero we should stop
+        if not np.any(p):
+            break
         rnorm = rnorm_next
         k += 1
         epsx = np.linalg.norm(x - xp) / np.linalg.norm(x)
         epsn = rnorm / eps0
         epsp = eps
+        # eps = rnorm / eps0
         eps = np.maximum(epsx, epsn)
 
         if np.abs(epsp - eps) < 1e-3*tol:
             stall_count += 1
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} epsx = {epsx}, epsn = {epsn}", file=log)
+            print(f"At iteration {k} epsx = {epsx:.3e}, epsn = {epsn:.3e}",
+                  file=log)
 
     if k >= maxit:
         if verbosity:
-            print("Max iters reached. eps = %f." % eps, file=log)
+            print(f"Max iters reached. eps = {eps:.3e}", file=log)
     elif stall_count >= 5:
         if verbosity:
-            print("Stalled. eps = %f." % eps, file=log)
+            print(f"Stalled. eps = {eps:.3e}", file=log)
     else:
         if verbosity:
-            print("Success, converged after %i iters" % k, file=log)
+            print(f"Success, converged after {k} iterations", file=log)
     return x
 
 from pfb.operators.psf import _hessian_reg_psf as hessian_psf
