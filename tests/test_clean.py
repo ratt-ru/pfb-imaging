@@ -9,8 +9,8 @@ from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 @pmp('do_gains', (False, True))
-@pmp('use_clark', (False, True))
-def test_clean(do_gains, use_clark, tmp_path_factory):
+@pmp('algo', ('hogbom', 'clark'))
+def test_clean(do_gains, algo, tmp_path_factory):
     '''
     Here we test that clean correctly infers the fluxes of point sources
     placed at the centers of pixels in the presence of the wterm and DI gain
@@ -221,14 +221,14 @@ def test_clean(do_gains, use_clark, tmp_path_factory):
     clean_args["postfix"] = postfix
     clean_args["nband"] = nchan
     clean_args["mask"] = 'mds'
-    clean_args["use_clark"] = use_clark
+    clean_args["algo"] = algo
     clean_args["update_maks"] = False
     clean_args["dirosion"] = 0
     clean_args["do_residual"] = False
     clean_args["nmiter"] = 100
     threshold = 1e-5
     clean_args["threshold"] = threshold
-    clean_args["gamma"] = 0.05
+    clean_args["gamma"] = 0.1
     clean_args["peak_factor"] = 0.75
     clean_args["sub_peak_factor"] = 0.75
     clean_args["nthreads"] = 8
@@ -250,5 +250,5 @@ def test_clean(do_gains, use_clark, tmp_path_factory):
                         model[:, Ix[i], Iy[i]], 1.0,
                         atol=5*threshold)
 
- # do_gains, use_clark
-# test_clean(True, True)
+ # do_gains, algo
+# test_clean(False, 'agroclean')
