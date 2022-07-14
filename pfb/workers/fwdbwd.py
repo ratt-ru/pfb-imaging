@@ -313,7 +313,6 @@ def _fwdbwd(**kw):
 
         if opts.fits_cubes:
             # need residual in Jy/beam
-            wsums = np.amax(psf, axes=(1,2))
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
             save_fits(f'{basename}_model.fits', model, hdr)
             fmask = wsums > 0
