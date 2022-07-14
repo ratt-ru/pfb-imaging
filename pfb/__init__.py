@@ -80,7 +80,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
         if opts.host_address is not None:
             from distributed import Client
             print("Initialising distributed client.", file=log)
-            client = stack.enter_context(Client(address))
+            client = stack.enter_context(Client(opts.host_address))
         else:
             if nthreads_dask * opts.nvthreads > opts.nthreads:
                 print("Warning - you are attempting to use more threads than "
