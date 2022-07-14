@@ -52,8 +52,9 @@ def init(**kw):
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
     pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}.log')
-    from glob import glob
-    ms = glob(opts.ms)
+    from daskms.fsspec_store import DaskMSStore
+    msstore = DaskMSStore.from_url_and_kw(opts.ms, {})
+    ms = msstore.fs.glob(opts.ms)
     try:
         assert len(ms) > 0
         opts.ms = ms
@@ -67,7 +68,8 @@ def init(**kw):
             opts.nworkers = 1
 
     if opts.gain_table is not None:
-        gt = glob(opts.gain_table)
+        gainstore = DaskMSStore.from_url_and_kw(opts.gain_table, {})
+        gt = gainstore.fs.glob(opts.gain_table)
         try:
             assert len(gt) > 0
             opts.gain_table = gt

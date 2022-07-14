@@ -61,8 +61,9 @@ def degrid(**kw):
     opts = OmegaConf.create(kw)
     pyscilog.log_to_file(opts.output_filename + '.log')
 
-    from glob import glob
-    ms = glob(opts.ms)
+    from daskms.fsspec_store import DaskMSStore
+    msstore = DaskMSStore.from_url_and_kw(opts.ms, {})
+    ms = msstore.fs.glob(opts.ms)
     try:
         assert len(ms) > 0
         opts.ms = ms
