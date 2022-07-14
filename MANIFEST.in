@@ -1,8 +1,3 @@
 include pfb/stimela_cabs.yaml
 include pfb/parser/*.yml
-include pfb/parser/init.yaml
-inlcude pfb/parser/grid.yaml
-inlcude pfb/parser/clean.yaml
-inlcude pfb/parser/degrid.yaml
-inlcude pfb/parser/restore.yaml
-inlcude pfb/parser/fwdbwd.yaml
+include pfb/parser/*.yaml
