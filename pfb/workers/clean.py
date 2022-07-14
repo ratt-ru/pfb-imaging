@@ -199,11 +199,17 @@ def _clean(**kw):
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
 
+    if opts.threshold is None:
+        threshold = opts.sigmathreshold * rms
+    else:
+        threshold = opts.threshold
+
     print("Iter %i: peak residual = %f, rms = %f" % (0, rmax, rms), file=log)
     for k in range(opts.nmiter):
         if opts.algo.lower() == 'clark':
             print("Running Clark", file=log)
             x = clark(residual, psf, psfo,
+                      threshold=threshold,
                       gamma=opts.gamma,
                       pf=opts.peak_factor,
                       maxit=opts.clark_maxit,
@@ -214,6 +220,7 @@ def _clean(**kw):
         elif opts.algo.lower() == 'hogbom':
             print("Running Hogbom", file=log)
             x = hogbom(residual, psf,
+                       threshold=threshold,
                        gamma=opts.gamma,
                        pf=opts.peak_factor,
                        maxit=opts.hogbom_maxit,
@@ -221,6 +228,7 @@ def _clean(**kw):
                        report_freq=opts.report_freq)
         elif opts.algo.lower() == 'agroclean':
             x = agroclean(residual, psf, psfo,
+                          threshold=threshold,
                           gamma=opts.gamma,
                           pf=opts.peak_factor,
                           maxit=opts.clark_maxit,
@@ -253,15 +261,19 @@ def _clean(**kw):
         print("Iter %i: peak residual = %f, rms = %f" % (
                 k+1, rmax, rms), file=log)
 
-        if opts.threshold is not None:
-            if rmax <= opts.threshold:
-                print("Terminating because final threshold has been reached",
-                      file=log)
-                break
+        if opts.threshold is None:
+            threshold = opts.sigmathreshold * rms
+        else:
+            threshold = opts.threshold
+
+        if rmax <= threshold:
+            print("Terminating because final threshold has been reached",
+                    file=log)
+            break
 
     print("Saving results", file=log)
     if opts.update_mask:
-        mask = np.any(model, axis=0)
+        mask = np.any(model > rms, axis=0)
         from scipy import ndimage
         if opts.dirosion:
             struct = ndimage.generate_binary_structure(2, opts.dirosion)
@@ -317,6 +329,9 @@ def _clean(**kw):
         model_mfs = np.mean(model, axis=0)
 
         save_fits(f'{basename}_clean_model_mfs.fits', model_mfs, hdr_mfs)
+
+        if opts.update_mask:
+            save_fits(f'{basename}_clean_mask.fits', mask, hdr_mfs)
 
         if opts.do_residual:
             dds = xds_from_zarr(dds_name, chunks={'band': 1})

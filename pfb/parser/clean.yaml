@@ -71,9 +71,14 @@ inputs:
     abbreviation: nmiter
   threshold:
     dtype: float
-    default: 0.0
-    info: 'Absolute threshold at which to stop cleaning'
+    info:
+      Absolute threshold at which to stop cleaning.
+      By default it is set automatically using sigmathreshold parameter
     abbreviation: th
+  sigmathreshold:
+    dtype: float
+    default: 1.414
+    info: Multiple of the rms at which to terminate the minor cycle
   gamma:
     dtype: float
     default: 0.1

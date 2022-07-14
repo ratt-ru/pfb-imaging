@@ -8,6 +8,7 @@ log = pyscilog.get_logger('HOGBOM')
 def hogbom(
         ID,
         PSF,
+        threshold=0,
         gamma=0.1,
         pf=0.1,
         maxit=10000,
@@ -26,7 +27,7 @@ def hogbom(
     IRmax = np.sqrt(IRsearch[p, q])
     wsums = np.amax(PSF, axis=(1,2))
     fsel = wsums > 0
-    tol = pf * IRmax
+    tol = np.maximum(pf * IRmax, threshold)
     k = 0
     stall_count = 0
     while IRmax > tol and k < maxit and stall_count < 5:
