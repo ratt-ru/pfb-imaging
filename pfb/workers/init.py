@@ -52,14 +52,14 @@ def init(**kw):
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
     pyscilog.log_to_file(f'init.log')
-    from daskms.fsspec_store import DaskMSStore
-    msstore = DaskMSStore.from_url_and_kw(opts.ms, {})
-    ms = msstore.fs.glob(opts.ms)
-    try:
-        assert len(ms) > 0
-        opts.ms = ms
-    except:
-        raise ValueError(f"No MS at {opts.ms}")
+    # from daskms.fsspec_store import DaskMSStore
+    # msstore = DaskMSStore.from_url_and_kw(opts.ms, {})
+    # ms = msstore.fs.glob(opts.ms)
+    # try:
+    #     assert len(ms) > 0
+    #     opts.ms = ms
+    # except:
+    #     raise ValueError(f"No MS at {opts.ms}")
 
     if opts.nworkers is None:
         if opts.scheduler=='distributed':
