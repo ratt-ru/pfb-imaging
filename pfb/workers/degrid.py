@@ -59,7 +59,9 @@ def degrid(**kw):
 
     '''
     opts = OmegaConf.create(kw)
-    pyscilog.log_to_file(opts.output_filename + '.log')
+    import time
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    pyscilog.log_to_file(f'degrid_{timestamp}.log')
 
     from daskms.fsspec_store import DaskMSStore
     msstore = DaskMSStore.from_url_and_kw(opts.ms, {})

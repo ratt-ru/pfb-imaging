@@ -24,7 +24,9 @@ def fwdbwd(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
+    import time
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    pyscilog.log_to_file(f'fwdbwd_{timestamp}.log')
 
     if opts.nworkers is None:
         if opts.scheduler=='distributed':

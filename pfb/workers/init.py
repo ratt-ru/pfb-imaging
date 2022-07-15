@@ -51,7 +51,9 @@ def init(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'init.log')
+    import time
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    pyscilog.log_to_file(f'init_{timestamp}.log')
     # from daskms.fsspec_store import DaskMSStore
     # msstore = DaskMSStore.from_url_and_kw(opts.ms, {})
     # ms = msstore.fs.glob(opts.ms)

@@ -22,7 +22,9 @@ def fledges(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'fledges.log')
+    import time
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    pyscilog.log_to_file(f'fledges_{timestamp}.log')
     OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
