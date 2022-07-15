@@ -54,14 +54,14 @@ def init(**kw):
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     pyscilog.log_to_file(f'init_{timestamp}.log')
-    # from daskms.fsspec_store import DaskMSStore
-    # msstore = DaskMSStore.from_url_and_kw(opts.ms, {})
-    # ms = msstore.fs.glob(opts.ms)
-    # try:
-    #     assert len(ms) > 0
-    #     opts.ms = ms
-    # except:
-    #     raise ValueError(f"No MS at {opts.ms}")
+    from daskms.fsspec_store import DaskMSStore
+    msstore = DaskMSStore.from_url_and_kw(opts.ms, {})
+    ms = msstore.fs.glob(opts.ms)
+    try:
+        assert len(ms) > 0
+        opts.ms = list(map(msstore.fs.unstrip_protocol, ms))
+    except:
+        raise ValueError(f"No MS at {opts.ms}")
 
     if opts.nworkers is None:
         if opts.scheduler=='distributed':
@@ -74,7 +74,7 @@ def init(**kw):
         gt = gainstore.fs.glob(opts.gain_table)
         try:
             assert len(gt) > 0
-            opts.gain_table = gt
+            opts.gain_table = list(map(gainstore.fs.unstrip_protocol, gt))
         except Exception as e:
             raise ValueError(f"No gain table  at {opts.gain_table}")
 
