@@ -1,5 +1,5 @@
 FROM ubuntu:focal
-MAINTAINER Simon Perkins "lbester@sarao.ac.za"
+MAINTAINER Landman Bester "lbester@sarao.ac.za"
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt -y update && \
