@@ -22,8 +22,10 @@ def bsmooth(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'bsmooth.log')
     OmegaConf.set_struct(opts, True)
+    import time
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    pyscilog.log_to_file(f'bsmooth_{timestamp}.log')
 
     # TODO - prettier config printing
     print('Input Options:', file=log)

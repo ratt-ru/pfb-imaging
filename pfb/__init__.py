@@ -68,11 +68,11 @@ def set_client(opts, stack, log, scheduler='distributed'):
     os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
-    os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
+    os.environ["NUMBA_NUM_THREADS"] = str(opts.nband)
     # avoids numexpr error, probably don't want more than 10 vthreads for ne anyway
     import numexpr as ne
     max_cores = ne.detect_number_of_cores()
-    ne_threads = min(max_cores, opts.nthreads)
+    ne_threads = min(max_cores, opts.nband)
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
     if scheduler=='distributed':
@@ -80,7 +80,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
         if opts.host_address is not None:
             from distributed import Client
             print("Initialising distributed client.", file=log)
-            client = stack.enter_context(Client(address))
+            client = stack.enter_context(Client(opts.host_address))
         else:
             if nthreads_dask * opts.nvthreads > opts.nthreads:
                 print("Warning - you are attempting to use more threads than "

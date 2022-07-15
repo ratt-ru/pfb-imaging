@@ -297,8 +297,8 @@ def chan_to_band_mapping(ms_name, nband=None,
 
     where IDENTITY is constructed from the FIELD/DDID and SCAN ID's.
     '''
-    from daskms import xds_from_ms
-    from daskms import xds_from_table
+    from daskms import xds_from_storage_ms as xds_from_ms
+    from daskms import xds_from_storage_table as xds_from_table
     import dask
     import dask.array as da
 

@@ -50,7 +50,9 @@ def grid(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
+    import time
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    pyscilog.log_to_file(f'grid_{timestamp}.log')
 
     if opts.nworkers is None:
         if opts.scheduler=='distributed':
@@ -190,18 +192,27 @@ def _grid(**kw):
 
     # LB - what is the point of specifying name here?
     if opts.robustness is not None:
-        if os.path.isdir(f'{basename}_counts.zarr'):
-            counts_ds = xr.open_dataset(f'{basename}_counts.zarr', chunks={'band':1, 'x':-1, 'y':-1}, engine='zarr')
-            print(f'Found cached counts array at {basename}_counts.zarr',
+        try:
+            counts_ds = xds_from_zarr(f'{basename}.counts.zarr',
+                                      chunks={'band':1, 'x':-1, 'y':-1})
+            assert counts_ds[0].bands.size == nband
+            assert counts_ds[0].x.size == nx
+            assert counts_ds[0].y.size == ny
+            assert counts_ds[0].bands.size == nband
+            assert counts_ds[0].cell_rad == cell_rad
+            print(f'Found cached gridded weights at {basename}.counts.zarr. '
+                  f'Coordinats and cell sizes indicate that it can be reused',
                   file=log)
             counts = counts_ds.COUNTS.data
-        else:
+        except:
             counts = [da.zeros((nx, ny), chunks=(-1, -1),
                             name="zeros-"+uuid4().hex) for _ in range(nband)]
             # first loop over data to compute counts
+            nchan = 0
             for ds in xds:
                 uvw = ds.UVW.data
                 freq = ds.FREQ.data
+                nchan += freq.size
                 mask = ds.MASK.data
                 wgt = ds.WEIGHT.data
                 bandid = ds.bandid
@@ -219,8 +230,18 @@ def _grid(**kw):
             counts = da.stack(counts, axis=0)
             counts = counts.rechunk({0:1, 1:-1, 2:-1})
             # cache counts
-            count_ds = xr.Dataset({'COUNTS': (('band', 'x', 'y'), counts)})
-            count_ds.to_zarr(f'{basename}_counts.zarr', mode='w')
+            dvars = {'COUNTS': (('band', 'x', 'y'), counts)}
+            attrs = {
+                'cell_rad': cell_rad
+            }
+            counts_ds = xr.Dataset(dvars, attrs=attrs)
+            # we need to rechunk for zarr codec but subsequent usage of counts
+            # array needs to be chunks as (1, -1, -1)
+            counts_ds = counts_ds.chunk({'x':'auto', 'y':'auto'})
+            writes = xds_to_zarr(counts_ds, f'{basename}.counts.zarr',
+                                 columns='ALL')
+            print("Computing gridded weights", file=log)
+            dask.compute(writes)
 
         # get rid of artificially high weights corresponding to nearly empty cells
         if opts.filter_extreme_counts:

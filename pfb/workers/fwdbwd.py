@@ -24,7 +24,9 @@ def fwdbwd(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
+    import time
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    pyscilog.log_to_file(f'fwdbwd_{timestamp}.log')
 
     if opts.nworkers is None:
         if opts.scheduler=='distributed':
@@ -313,7 +315,6 @@ def _fwdbwd(**kw):
 
         if opts.fits_cubes:
             # need residual in Jy/beam
-            wsums = np.amax(psf, axes=(1,2))
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
             save_fits(f'{basename}_model.fits', model, hdr)
             fmask = wsums > 0

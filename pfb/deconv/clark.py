@@ -71,6 +71,7 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
 def clark(ID,
           PSF,
           psfo,
+          threshold=0,
           gamma=0.05,
           pf=0.05,
           maxit=50,
@@ -96,7 +97,7 @@ def clark(ID,
     p = pq//ny
     q = pq - p*ny
     IRmax = np.sqrt(IRsearch[p, q])
-    tol = pf * IRmax
+    tol = np.maximum(pf * IRmax, threshold)
     k = 0
     stall_count = 0
     while IRmax > tol and k < maxit and stall_count < 5:

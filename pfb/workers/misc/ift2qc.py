@@ -22,7 +22,9 @@ def ift2qc(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{opts.output_filename}.log')
+    import time
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    pyscilog.log_to_file(f'ift2qc_{timestamp}.log')
 
     if opts.nworkers is None:
         if opts.scheduler=='distributed':

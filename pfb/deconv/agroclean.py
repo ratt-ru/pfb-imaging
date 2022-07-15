@@ -140,6 +140,7 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
 def agroclean(ID,
               PSF,
               psfo,
+              threshold=0,
               gamma=0.1,
               pf=0.15,
               maxit=25,
@@ -160,12 +161,14 @@ def agroclean(ID,
     ny0 = ny_psf//2
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
     IR = ID.copy()
-    IRsearch = np.sum(IR, axis=0)**2
+    IRMFS = np.sum(IR, axis=0)
+    rms = np.std(IRMFS)
+    IRsearch = IRMFS**2
     pq = IRsearch.argmax()
     p = pq//ny
     q = pq - p*ny
     IRmax = np.sqrt(IRsearch[p, q])
-    tol = pf * IRmax
+    tol = np.maximum(pf * IRmax, threshold)
     k = 0
     stall_count = 0
     while IRmax > tol and k < maxit and stall_count < 5:
@@ -183,8 +186,12 @@ def agroclean(ID,
         x = pcg(hess, mask * IR, mmfs - model,
                 tol=1e-2, maxit=50, minit=1)
         model += x
+        # invalid = np.mean(model, axis=0) < rms/10
+        # model[:, invalid] = 0.0
         IR = ID - psfo(model)
-        IRsearch = np.sum(IR, axis=0)**2
+        IRMFS = np.sum(IR, axis=0)
+        rms = np.std(IRMFS)
+        IRsearch = IRMFS**2
         pq = IRsearch.argmax()
         p = pq//ny
         q = pq - p*ny

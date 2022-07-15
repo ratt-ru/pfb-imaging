@@ -51,12 +51,15 @@ def init(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}.log')
-    from glob import glob
-    ms = glob(opts.ms)
+    import time
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    pyscilog.log_to_file(f'init_{timestamp}.log')
+    from daskms.fsspec_store import DaskMSStore
+    msstore = DaskMSStore.from_url_and_kw(opts.ms, {})
+    ms = msstore.fs.glob(opts.ms)
     try:
         assert len(ms) > 0
-        opts.ms = ms
+        opts.ms = list(map(msstore.fs.unstrip_protocol, ms))
     except:
         raise ValueError(f"No MS at {opts.ms}")
 
@@ -67,10 +70,11 @@ def init(**kw):
             opts.nworkers = 1
 
     if opts.gain_table is not None:
-        gt = glob(opts.gain_table)
+        gainstore = DaskMSStore.from_url_and_kw(opts.gain_table, {})
+        gt = gainstore.fs.glob(opts.gain_table)
         try:
             assert len(gt) > 0
-            opts.gain_table = gt
+            opts.gain_table = list(map(gainstore.fs.unstrip_protocol, gt))
         except Exception as e:
             raise ValueError(f"No gain table  at {opts.gain_table}")
 
@@ -385,7 +389,7 @@ def _init(**kw):
 
     if len(out_datasets):
         writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',
-                            columns='ALL')
+                             columns='ALL')
     else:
         raise ValueError('No datasets found to write. '
                          'Data completely flagged maybe?')
