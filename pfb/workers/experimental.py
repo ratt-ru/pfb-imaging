@@ -6,7 +6,6 @@ import click
 def cli():
     pass
 
-from pfb.workers.misc import (transcols, gainspector, sim_noise, ift2qc,
-                              fledges, hthresh, bsmooth, delay_init,
-                              forward, backward, nnls, restimator,
-                              zarr2fits)
+from pfb.workers.misc import (gainspector, ift2qc, fledges, hthresh,
+                              bsmooth, delay_init, forward, backward,
+                              restimator, zarr2fits)

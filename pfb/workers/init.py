@@ -389,7 +389,7 @@ def _init(**kw):
 
     if len(out_datasets):
         writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',
-                            columns='ALL')
+                             columns='ALL')
     else:
         raise ValueError('No datasets found to write. '
                          'Data completely flagged maybe?')
