@@ -134,6 +134,9 @@ def _clean(**kw):
     from pfb.deconv.agroclean import agroclean
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.operators.hessian import hessian
+    from pfb.opt.pcg import pcg
+    from pfb.operators.hessian import hessian_xds
+    from pfb.operators.psf import _hessian_reg_psf
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -167,8 +170,17 @@ def _clean(**kw):
         residual_mfs = np.sum(residual, axis=0)
     model = mds.MODEL.values
 
+    # required for intermediary results which are not curruntly written
+    # ra = dds[0].ra
+    # dec = dds[0].dec
+    # radec = [ra, dec]
+    # cell_rad = dds[0].cell_rad
+    # cell_deg = np.rad2deg(cell_rad)
+    # freq_out = mds.freq.data
+    # ref_freq = np.mean(freq_out)
+    # hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+
     # set up Hessian
-    from pfb.operators.hessian import hessian_xds
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
     hessopts['wstack'] = opts.wstack
@@ -181,22 +193,18 @@ def _clean(**kw):
                    wsum=wsum, sigmainv=0, mask=np.ones_like(dirty_mfs),
                    compute=True, use_beam=False)
 
-    # set up psf convolve if required
-    if opts.algo in ['agroclean', 'clark']:
-        from pfb.operators.psf import _hessian_reg_psf
-
-        npad_xl = (nx_psf - nx)//2
-        npad_xr = nx_psf - nx - npad_xl
-        npad_yl = (ny_psf - ny)//2
-        npad_yr = ny_psf - ny - npad_yl
-        padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
-        unpad_x = slice(npad_xl, -npad_xr)
-        unpad_y = slice(npad_yl, -npad_yr)
-        lastsize = ny + np.sum(padding[-1])
-        psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
-                       nthreads=opts.nthreads, sigmainv=0,
-                       padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
-                       lastsize = lastsize)
+    npad_xl = (nx_psf - nx)//2
+    npad_xr = nx_psf - nx - npad_xl
+    npad_yl = (ny_psf - ny)//2
+    npad_yr = ny_psf - ny - npad_yl
+    padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+    unpad_x = slice(npad_xl, -npad_xr)
+    unpad_y = slice(npad_yl, -npad_yr)
+    lastsize = ny + np.sum(padding[-1])
+    psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
+                    nthreads=opts.nthreads, sigmainv=0,
+                    padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
+                    lastsize = lastsize)
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -240,6 +248,14 @@ def _clean(**kw):
                           report_freq=opts.report_freq)
         else:
             raise ValueError(f'{opts.algo} is not a valid algo option')
+
+        if opts.mop_flux:
+            mask = (np.any(x, axis=0) | np.any(model, axis=0))[None, :, :]
+            x = pcg(lambda x: mask * psfo(mask*x), mask * residual, x,
+                    tol=opts.cg_tol, maxit=opts.cg_maxit,
+                    minit=opts.cg_minit, verbosity=opts.cg_verbose,
+                    report_freq=opts.cg_report_freq,
+                    backtrack=opts.backtrack)
 
         model += x
 

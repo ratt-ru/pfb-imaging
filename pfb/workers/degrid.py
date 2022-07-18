@@ -68,7 +68,7 @@ def degrid(**kw):
     ms = msstore.fs.glob(opts.ms)
     try:
         assert len(ms) > 0
-        opts.ms = ms
+        opts.ms = list(map(msstore.fs.unstrip_protocol, ms))
     except:
         raise ValueError(f"No MS at {opts.ms}")
 

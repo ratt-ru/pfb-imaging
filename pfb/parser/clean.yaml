@@ -64,6 +64,10 @@ inputs:
     dtype: bool
     default: false
     info: 'Make final residual'
+  mop_flux:
+    dtype: bool
+    default: true
+    info: Run PCG based flux mop between major iterations
   nmiter:
     dtype: int
     default: 5
@@ -119,6 +123,36 @@ inputs:
     default: 10
     info: 'Report frequency for minor cycles'
     abbreviation: rf
+  cg_tol:
+    dtype: float
+    default: 1e-3
+    info: 'Tolreance of conjugate gradient algorithm'
+    abbreviation: cgtol
+  cg_maxit:
+    dtype: int
+    default: 100
+    info: 'Maximum iterations for conjugate gradient algorithm'
+    abbreviation: cgmaxit
+  cg_minit:
+    dtype: int
+    default: 1
+    info: 'Minimum iterations for conjugate gradient algorithm'
+    abbreviation: cgminit
+  cg_verbose:
+    dtype: int
+    default: 1
+    info: 'Verbosity of conjugate gradient algorithm. Set to > 1 for \
+          debugging, 0 for silence'
+    abbreviation: cgverb
+  cg_report_freq:
+    dtype: int
+    default: 100
+    info: 'Report frequency of conjugate gradient algorithm'
+    abbreviation: cgrf
+  backtrack:
+    dtype: bool
+    default: true
+    info: 'Ensure residual decreases at every iteration'
   _include:
     - (pfb.parser)gridding.yml
     - (pfb.parser)dist.yml

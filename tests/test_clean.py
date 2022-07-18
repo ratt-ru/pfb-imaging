@@ -236,6 +236,7 @@ def test_clean(do_gains, algo, tmp_path_factory):
     clean_args["scheduler"] = 'sync'
     clean_args["wstack"] = True
     clean_args["epsilon"] = epsilon
+    clean_args["mop_flux"] = False
     from pfb.workers.clean import _clean
     _clean(**clean_args)
 
