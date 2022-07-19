@@ -199,17 +199,29 @@ def _fwdbwd(**kw):
     else:
         weight = np.ones((nbasis, nmax), dtype=model.dtype)
 
+    # for saving intermediaries
+    ra = mds.ra
+    dec = mds.dec
+    radec = [ra, dec]
+    cell_rad = mds.cell_rad
+    cell_deg = np.rad2deg(cell_rad)
+    freq_out = mds.band.values
+    hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
+
     residual_mfs = np.sum(residual, axis=0)
     rms = np.std(residual_mfs)
     rmax = residual_mfs.max()
     print(f"It {0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for i in range(opts.niter):
         print('Getting update', file=log)
-        update = pcg(hess, mask[None] * residual,
+        update, fwd_resid = pcg(hess, mask[None] * residual,
                      tol=opts.cg_tol, maxit=opts.cg_maxit,
                      minit=opts.cg_minit, verbosity=opts.cg_verbose,
                      report_freq=opts.cg_report_freq,
-                     backtrack=opts.backtrack)
+                     backtrack=opts.backtrack, return_resid=True)
+
+        save_fits(f'{basename}_update_{i}.fits', update, hdr)
+        save_fits(f'{basename}_fwd_resid_{i}.fits', fwd_resid, hdr)
 
         print('Getting model', file=log)
         modelp = deepcopy(model)

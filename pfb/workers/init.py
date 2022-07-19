@@ -55,8 +55,8 @@ def init(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     pyscilog.log_to_file(f'init_{timestamp}.log')
     from daskms.fsspec_store import DaskMSStore
-    msstore = DaskMSStore.from_url_and_kw(opts.ms, {})
-    ms = msstore.fs.glob(opts.ms)
+    msstore = DaskMSStore.from_url_and_kw(opts.ms.rstrip('/'), {})
+    ms = msstore.fs.glob(opts.ms.rstrip('/'))
     try:
         assert len(ms) > 0
         opts.ms = list(map(msstore.fs.unstrip_protocol, ms))
@@ -70,8 +70,9 @@ def init(**kw):
             opts.nworkers = 1
 
     if opts.gain_table is not None:
-        gainstore = DaskMSStore.from_url_and_kw(opts.gain_table, {})
-        gt = gainstore.fs.glob(opts.gain_table)
+        gainstore = DaskMSStore.from_url_and_kw(opts.gain_table.rstrip('/'),
+                                                {})
+        gt = gainstore.fs.glob(opts.gain_table.rstrip('/'))
         try:
             assert len(gt) > 0
             opts.gain_table = list(map(gainstore.fs.unstrip_protocol, gt))

@@ -170,7 +170,7 @@ def _clean(**kw):
         residual_mfs = np.sum(residual, axis=0)
     model = mds.MODEL.values
 
-    # required for intermediary results which are not curruntly written
+    # for intermediary results (not curruntly written)
     # ra = dds[0].ra
     # dec = dds[0].dec
     # radec = [ra, dec]
@@ -188,7 +188,7 @@ def _clean(**kw):
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads
     # always clean in apparent scale
-    # we do not want to use the mask here
+    # we do not want to use the mask here???
     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
                    wsum=wsum, sigmainv=0, mask=np.ones_like(dirty_mfs),
                    compute=True, use_beam=False)
@@ -218,38 +218,39 @@ def _clean(**kw):
     for k in range(opts.nmiter):
         if opts.algo.lower() == 'clark':
             print("Running Clark", file=log)
-            x = clark(residual, psf, psfo,
-                      threshold=threshold,
-                      gamma=opts.gamma,
-                      pf=opts.peak_factor,
-                      maxit=opts.clark_maxit,
-                      subpf=opts.sub_peak_factor,
-                      submaxit=opts.sub_maxit,
-                      verbosity=opts.verbose,
-                      report_freq=opts.report_freq)
+            x, status = clark(residual, psf, psfo,
+                              threshold=threshold,
+                              gamma=opts.gamma,
+                              pf=opts.peak_factor,
+                              maxit=opts.clark_maxit,
+                              subpf=opts.sub_peak_factor,
+                              submaxit=opts.sub_maxit,
+                              verbosity=opts.verbose,
+                              report_freq=opts.report_freq)
         elif opts.algo.lower() == 'hogbom':
             print("Running Hogbom", file=log)
-            x = hogbom(residual, psf,
-                       threshold=threshold,
-                       gamma=opts.gamma,
-                       pf=opts.peak_factor,
-                       maxit=opts.hogbom_maxit,
-                       verbosity=opts.verbose,
-                       report_freq=opts.report_freq)
+            x, status = hogbom(residual, psf,
+                               threshold=threshold,
+                               gamma=opts.gamma,
+                               pf=opts.peak_factor,
+                               maxit=opts.hogbom_maxit,
+                               verbosity=opts.verbose,
+                               report_freq=opts.report_freq)
         elif opts.algo.lower() == 'agroclean':
-            x = agroclean(residual, psf, psfo,
-                          threshold=threshold,
-                          gamma=opts.gamma,
-                          pf=opts.peak_factor,
-                          maxit=opts.clark_maxit,
-                          subpf=opts.sub_peak_factor,
-                          submaxit=opts.sub_maxit,
-                          verbosity=opts.verbose,
-                          report_freq=opts.report_freq)
+            x, status = agroclean(residual, psf, psfo,
+                                  threshold=threshold,
+                                  gamma=opts.gamma,
+                                  pf=opts.peak_factor,
+                                  maxit=opts.clark_maxit,
+                                  subpf=opts.sub_peak_factor,
+                                  submaxit=opts.sub_maxit,
+                                  verbosity=opts.verbose,
+                                  report_freq=opts.report_freq)
         else:
             raise ValueError(f'{opts.algo} is not a valid algo option')
 
-        if opts.mop_flux:
+        # if clean has stalled or not converged do flux mop step
+        if opts.mop_flux and status:
             mask = (np.any(x, axis=0) | np.any(model, axis=0))[None, :, :]
             x = pcg(lambda x: mask * psfo(mask*x), mask * residual, x,
                     tol=opts.cg_tol, maxit=opts.cg_maxit,

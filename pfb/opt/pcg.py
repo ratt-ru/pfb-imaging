@@ -14,7 +14,8 @@ def pcg(A,
         minit=100,
         verbosity=1,
         report_freq=10,
-        backtrack=True):
+        backtrack=True,
+        return_resid=False):
 
     if x0 is None:
         x0 = np.zeros(b.shape, dtype=b.dtype)
@@ -83,7 +84,10 @@ def pcg(A,
     else:
         if verbosity:
             print(f"Success, converged after {k} iterations", file=log)
-    return x
+    if not return_resid:
+        return x
+    else:
+        return x, r
 
 from pfb.operators.psf import _hessian_reg_psf as hessian_psf
 def _pcg_psf_impl(psfhat,
