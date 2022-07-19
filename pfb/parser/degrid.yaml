@@ -1,9 +1,8 @@
 inputs:
   ms:
-    dtype: MS
+    dtype: str
     required: true
     info: 'Path to measurement set.'
-    metavar: MS
     abbreviation: ms
   output_filename:
     dtype: str
