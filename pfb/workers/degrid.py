@@ -58,7 +58,8 @@ def degrid(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
-    opts = OmegaConf.create(kw)
+    defaults.update(kw)
+    opts = OmegaConf.create(defaults)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     pyscilog.log_to_file(f'degrid_{timestamp}.log')
@@ -72,6 +73,8 @@ def degrid(**kw):
     except:
         raise ValueError(f"No MS at {opts.ms}")
 
+
+    import pdb; pdb.set_trace()
     if opts.nworkers is None:
         if opts.scheduler=='distributed':
             opts.nworkers = opts.nband
