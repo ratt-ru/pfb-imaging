@@ -116,6 +116,7 @@ def _init(**kw):
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
+    from daskms.fsspec_store import DaskMSStore
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
@@ -126,6 +127,15 @@ def _init(**kw):
     import xarray as xr
 
     basename = f'{opts.output_filename}_{opts.product}'
+
+    xdsstore = DaskMSStore.from_url_and_kw(f'{basename}.xds.zarr', {})
+    if xdsstore.exists():
+        if opts.overwrite:
+            print(f"Overwriting {basename}.xds.zarr", file=log)
+            xdsstore.rm(recursive=True)
+        else:
+            raise ValueError(f"{basename}.xds.zarr exists. "
+                             "Set overwrite to overwrite it. ")
 
     # TODO - optional grouping.
     # We need to construct an identifier between

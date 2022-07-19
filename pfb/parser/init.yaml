@@ -11,6 +11,10 @@ inputs:
     info: 'Basename of output'
     metavar: BASENAME
     abbreviation: o
+  overwrite:
+    dtype: bool
+    default: false
+    info: Allow overwrite of output xds
   nband:
     dtype: int
     required: true
