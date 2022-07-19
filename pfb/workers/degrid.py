@@ -306,8 +306,8 @@ def _degrid(**kw):
             model_vis = restore_corrs(vis_I, ncorr)
 
             # In case MODEL_DATA does not exist we need to chunk it like DATA
-            if not model_exists[ms]:
-                model_vis = model_vis.rechunk(on_disk_chunks[ms])
+            # if not model_exists[ms]:  # we rechunk
+            model_vis = model_vis.rechunk(on_disk_chunks[ms])
 
             out_ds = ds.assign(**{opts.model_column: (("row", "chan", "corr"), model_vis)})
             out_data.append(out_ds)
