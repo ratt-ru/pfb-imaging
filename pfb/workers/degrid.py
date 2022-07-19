@@ -228,6 +228,7 @@ def _degrid(**kw):
     for ms in opts.ms:
         try:
             xds = xds_from_ms(ms, columns=opts.model_column)
+            model_exists[ms] = True
         except:
             model_exists[ms] = False
             xds = xds_from_ms(ms)
