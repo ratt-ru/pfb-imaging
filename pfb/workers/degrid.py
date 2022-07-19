@@ -73,8 +73,6 @@ def degrid(**kw):
     except:
         raise ValueError(f"No MS at {opts.ms}")
 
-
-    import pdb; pdb.set_trace()
     if opts.nworkers is None:
         if opts.scheduler=='distributed':
             opts.nworkers = opts.nband
