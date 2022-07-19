@@ -251,6 +251,7 @@ def _clean(**kw):
 
         # if clean has stalled or not converged do flux mop step
         if opts.mop_flux and status:
+            print(f"Mopping flux at iter {k+1}", file=log)
             mask = (np.any(x, axis=0) | np.any(model, axis=0))[None, :, :]
             x = pcg(lambda x: mask * psfo(mask*x), mask * residual, x,
                     tol=opts.cg_tol, maxit=opts.cg_maxit,
@@ -277,8 +278,7 @@ def _clean(**kw):
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
 
-        print("Iter %i: peak residual = %f, rms = %f" % (
-                k+1, rmax, rms), file=log)
+        print(f"Iter {k+1}: peak residual = {rmax}, rms = {rms}", file=log)
 
         if opts.threshold is None:
             threshold = opts.sigmathreshold * rms
@@ -287,7 +287,7 @@ def _clean(**kw):
 
         if rmax <= threshold:
             print("Terminating because final threshold has been reached",
-                    file=log)
+                  file=log)
             break
 
     print("Saving results", file=log)

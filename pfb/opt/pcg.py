@@ -5,6 +5,47 @@ import pyscilog
 log = pyscilog.get_logger('PCG')
 
 
+def cg(A,
+       b,
+       x0=None,
+       tol=1e-5,
+       maxit=500,
+       verbosity=1,
+       report_freq=10):
+
+    if x0 is None:
+        x = np.zeros(b.shape, dtype=b.dtype)
+    else:
+        x = x0.copy()
+
+    # initial residual
+    r = A(x) - b
+    p = -r
+    rnorm = np.vdot(r, r)
+    rnorm0 = rnorm
+    eps = rnorm
+    k = 0
+    while eps > tol and k < maxit:
+        xp = x
+        rp = r
+        Ap = A(p)
+        alpha = rnorm/np.vdot(p, Ap)
+        x += alpha * p
+        r += alpha * Ap
+        rnorm_next = np.vdot(r, r)
+        beta = rnorm_next/rnorm
+        p = beta*p - r
+        rnorm = rnorm_next
+        eps = rnorm #/rnorm0
+
+        k += 1
+
+    if k >= maxit:
+        print(f"Max iters reached eps = {eps}")
+
+    return x
+
+
 def pcg(A,
         b,
         x0=None,

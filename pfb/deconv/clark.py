@@ -137,4 +137,4 @@ def clark(ID,
     else:
         if verbosity:
             print("Success, converged after %i iterations" % k, file=log)
-        return model, 0
+        return model, 0 if tol > threshold else 1
