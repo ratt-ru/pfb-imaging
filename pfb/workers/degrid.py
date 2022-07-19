@@ -222,6 +222,21 @@ def _degrid(**kw):
         comps = beta
         freq_fitted = False
 
+    # this is a hack to get on disk chunks when MODEL_DATA does not exits
+    on_disk_chunks = {}
+    model_exists = {}
+    for ms in opts.ms:
+        try:
+            xds = xds_from_ms(ms, columns=opts.model_column)
+        except:
+            model_exists[ms] = False
+            xds = xds_from_ms(ms)
+            rc = xds[0].chunks['row'][0]
+            fc = xds[0].chunks['chan'][0]
+            cc = xds[0].chunks['corr'][0]
+            on_disk_chunks[ms] = {0:rc, 1:fc, 2: cc}
+
+
     print("Computing model visibilities", file=log)
     mask = da.from_array(mask, chunks=(nx, ny), name=False)
     comps = da.from_array(comps,
@@ -289,16 +304,10 @@ def _degrid(**kw):
             vis_I = vis_I.astype(ds.DATA.dtype)
             model_vis = restore_corrs(vis_I, ncorr)
 
-            # Does this mean that visibilities for all bands end up
-            # in memory at this point?
-            # model_vis = model_vis.rechunk({1: -1})
+            # In case MODEL_DATA does not exist we need to chunk it like DATA
+            if not model_exists[ms]:
+                model_vis = model_vis.rechunk(on_disk_chunks[ms])
 
-            # if mstype == 'zarr':
-            #     model_vis = model_vis.rechunk(model_chunks)
-            #     uvw = uvw.rechunk((model_chunks[0], 3))
-
-            # out_ds = ds.assign(**{opts.model_column: (("row", "chan", "corr"), model_vis),
-            #                       'UVW': (("row", "three"), uvw)})
             out_ds = ds.assign(**{opts.model_column: (("row", "chan", "corr"), model_vis)})
             out_data.append(out_ds)
 
