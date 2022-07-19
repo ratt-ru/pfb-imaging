@@ -224,18 +224,12 @@ def _degrid(**kw):
 
     # this is a hack to get on disk chunks when MODEL_DATA does not exits
     on_disk_chunks = {}
-    model_exists = {}
     for ms in opts.ms:
-        try:
-            xds = xds_from_ms(ms, columns=opts.model_column)
-            model_exists[ms] = True
-        except:
-            model_exists[ms] = False
-            xds = xds_from_ms(ms)
-            rc = xds[0].chunks['row'][0]
-            fc = xds[0].chunks['chan'][0]
-            cc = xds[0].chunks['corr'][0]
-            on_disk_chunks[ms] = {0:rc, 1:fc, 2: cc}
+        xds = xds_from_ms(ms)
+        rc = xds[0].chunks['row'][0]
+        fc = xds[0].chunks['chan'][0]
+        cc = xds[0].chunks['corr'][0]
+        on_disk_chunks[ms] = {0:rc, 1:fc, 2: cc}
 
 
     print("Computing model visibilities", file=log)
