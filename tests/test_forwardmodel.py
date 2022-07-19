@@ -215,7 +215,7 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
     grid_args["postfix"] = postfix
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
-    grid_args["fits_mfs"] = True
+    grid_args["fits_mfs"] = False
     grid_args["psf"] = False
     grid_args["residual"] = False
     grid_args["nthreads"] = 8  # has to be set when calling _grid
@@ -251,6 +251,7 @@ def test_forwardmodel(beam_model, do_gains, tmp_path_factory):
     forward_args["cg_tol"] = 0.5*epsilon
     forward_args["wstack"] = True
     forward_args["mean_ds"] = False
+    forward_args["fits_mfs"] = False
     from pfb.workers.misc.forward import _forward
     _forward(**forward_args)
 

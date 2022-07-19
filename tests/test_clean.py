@@ -202,7 +202,7 @@ def test_clean(do_gains, algo, tmp_path_factory):
     grid_args["postfix"] = postfix
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
-    grid_args["fits_mfs"] = True
+    grid_args["fits_mfs"] = False
     grid_args["psf"] = True
     grid_args["residual"] = False
     grid_args["nthreads"] = 8  # has to be set when calling _grid
@@ -237,6 +237,7 @@ def test_clean(do_gains, algo, tmp_path_factory):
     clean_args["wstack"] = True
     clean_args["epsilon"] = epsilon
     clean_args["mop_flux"] = False
+    clean_args["fits_mfs"] = False
     from pfb.workers.clean import _clean
     _clean(**clean_args)
 

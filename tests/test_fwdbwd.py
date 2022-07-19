@@ -215,7 +215,7 @@ def test_fwdbwd(beam_model, do_gains, tmp_path_factory):
     grid_args["postfix"] = postfix
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
-    grid_args["fits_mfs"] = True
+    grid_args["fits_mfs"] = False
     grid_args["psf"] = True
     grid_args["nthreads"] = 8  # has to be set when calling _grid
     grid_args["nvthreads"] = 8
@@ -261,6 +261,7 @@ def test_fwdbwd(beam_model, do_gains, tmp_path_factory):
     fwdbwd_args["sigmainv"] = 0.0
     fwdbwd_args["tol"] = 0.1*epsilon
     fwdbwd_args["niter"] = 10
+    fwdbwd_args["fits_mfs"] = False
 
     from pfb.workers.fwdbwd import _fwdbwd
     _fwdbwd(**fwdbwd_args)
