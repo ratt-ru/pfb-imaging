@@ -222,14 +222,14 @@ def _degrid(**kw):
         comps = beta
         freq_fitted = False
 
-    # this is a hack to get on disk chunks when MODEL_DATA does not exits
-    on_disk_chunks = {}
-    for ms in opts.ms:
-        xds = xds_from_ms(ms)
-        rc = xds[0].chunks['row'][0]
-        fc = xds[0].chunks['chan'][0]
-        cc = xds[0].chunks['corr'][0]
-        on_disk_chunks[ms] = {0:rc, 1:fc, 2: cc}
+    # # this is a hack to get on disk chunks when MODEL_DATA does not exits
+    # on_disk_chunks = {}
+    # for ms in opts.ms:
+    #     xds = xds_from_ms(ms)
+    #     rc = xds[0].chunks['row'][0]
+    #     fc = xds[0].chunks['chan'][0]
+    #     cc = xds[0].chunks['corr'][0]
+    #     on_disk_chunks[ms] = {0:rc, 1:fc, 2: cc}
 
 
     print("Computing model visibilities", file=log)
@@ -301,12 +301,12 @@ def _degrid(**kw):
 
             # In case MODEL_DATA does not exist we need to chunk it like DATA
             # if not model_exists[ms]:  # we rechunk
-            model_vis = model_vis.rechunk(on_disk_chunks[ms])
+            # model_vis = model_vis.rechunk(on_disk_chunks[ms])
 
             out_ds = ds.assign(**{opts.model_column: (("row", "chan", "corr"), model_vis)})
             out_data.append(out_ds)
 
-        writes.append(xds_to_table(out_data, ms, columns=[opts.model_column]))
+        writes.append(xds_to_table(out_data, ms, columns=[opts.model_column], rechunk=True))
 
     # dask.visualize(*writes, filename=opts.output_filename + '_predict_graph.pdf',
     #                optimize_graph=False, collapse_outputs=True)
