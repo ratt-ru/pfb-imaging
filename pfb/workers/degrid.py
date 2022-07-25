@@ -65,7 +65,7 @@ def degrid(**kw):
     pyscilog.log_to_file(f'degrid_{timestamp}.log')
 
     from daskms.fsspec_store import DaskMSStore
-    msstore = DaskMSStore.from_url_and_kw(opts.ms.rstrip('/'), {})
+    msstore = DaskMSStore(opts.ms.rstrip('/'))
     ms = msstore.fs.glob(opts.ms.rstrip('/'))
     try:
         assert len(ms) > 0

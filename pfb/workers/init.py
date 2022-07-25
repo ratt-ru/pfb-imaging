@@ -55,7 +55,7 @@ def init(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     pyscilog.log_to_file(f'init_{timestamp}.log')
     from daskms.fsspec_store import DaskMSStore
-    msstore = DaskMSStore.from_url_and_kw(opts.ms.rstrip('/'), {})
+    msstore = DaskMSStore(opts.ms.rstrip('/'))
     ms = msstore.fs.glob(opts.ms.rstrip('/'))
     try:
         assert len(ms) > 0
@@ -70,8 +70,7 @@ def init(**kw):
             opts.nworkers = 1
 
     if opts.gain_table is not None:
-        gainstore = DaskMSStore.from_url_and_kw(opts.gain_table.rstrip('/'),
-                                                {})
+        gainstore = DaskMSStore(opts.gain_table.rstrip('/'))
         gt = gainstore.fs.glob(opts.gain_table.rstrip('/'))
         try:
             assert len(gt) > 0
@@ -128,7 +127,7 @@ def _init(**kw):
 
     basename = f'{opts.output_filename}_{opts.product}'
 
-    xdsstore = DaskMSStore.from_url_and_kw(f'{basename}.xds.zarr', {})
+    xdsstore = DaskMSStore(f'{basename}.xds.zarr')
     if xdsstore.exists():
         if opts.overwrite:
             print(f"Overwriting {basename}.xds.zarr", file=log)
