@@ -1,10 +1,15 @@
 import numpy as np
 from numba import njit, prange
 import dask.array as da
+from ducc0.wgridder.experimental import vis2dirty
+from ducc0.fft import c2c, genuine_hartley
 from africanus.constants import c as lightspeed
+from skimage.measure import block_reduce
+iFs = np.fft.ifftshift
+Fs = np.fft.fftshift
 
 
-def compute_counts(uvw, freqs, mask, nx, ny,
+def compute_counts(uvw, freq, mask, nx, ny,
                    cell_size_x, cell_size_y, dtype, wgt=None):
 
     if wgt is not None:
@@ -14,7 +19,7 @@ def compute_counts(uvw, freqs, mask, nx, ny,
 
     counts = da.blockwise(compute_counts_wrapper, ('row', 'nx', 'ny'),
                           uvw, ('row', 'three'),
-                          freqs, ('chan',),
+                          freq, ('chan',),
                           mask, ('row', 'chan'),
                           nx, None,
                           ny, None,
@@ -30,25 +35,61 @@ def compute_counts(uvw, freqs, mask, nx, ny,
     return counts.sum(axis=0)
 
 
-def compute_counts_wrapper(uvw, freqs, mask, nx, ny,
+def compute_counts_wrapper(uvw, freq, mask, nx, ny,
                            cell_size_x, cell_size_y, dtype, wgt):
     if wgt is not None:
         wgt = wgt[0]
-    return _compute_counts(uvw[0], freqs[0], mask[0], nx, ny,
-                           cell_size_x, cell_size_y, dtype, wgt)
+    # return _compute_counts(uvw[0], freq[0], mask[0], nx, ny,
+    #                        cell_size_x, cell_size_y, dtype, wgt)
+    return _grid_weights(uvw[0], freq[0], mask[0], nx, ny,
+                         cell_size_x, cell_size_y, dtype, wgt)
+
+
+def _grid_weights(uvw, freq, mask, nx, ny,
+                  cell_size_x, cell_size_y, dtype,
+                  wgt=None):
+
+    # accumulate counts
+    nrow = uvw.shape[0]
+    nchan = freq.size
+    rtype = np.result_type(np.complex64, dtype)
+    if wgt is None:
+        wgt = np.ones((nrow, nchan), dtype=rtype)
+    else:
+        wgt = wgt.astype(rtype)
+
+    psf = vis2dirty(uvw=uvw,
+                    freq=freq,
+                    vis=wgt,
+                    mask=mask,
+                    npix_x=nx, npix_y=ny,
+                    pixsize_x=cell_size_x, pixsize_y=cell_size_y,
+                    center_x=0, center_y=0,
+                    epsilon=1e-7,
+                    flip_v=False,
+                    do_wgridding=True,
+                    divide_by_n=True,
+                    nthreads=2,
+                    sigma_min=1.1, sigma_max=2.6,
+                    double_precision_accumulation=True)
+
+    psf = np.pad(psf, ((nx//2, nx//2), (ny//2, ny//2)), mode='constant')
+    counts = np.abs(genuine_hartley(iFs(psf), inorm=2, nthreads=2))
+    counts = block_reduce(Fs(counts))
+    return counts[None, :, :]
 
 
 @njit(nogil=True, fastmath=True, cache=True)
-def _compute_counts(uvw, freqs, mask, nx, ny,
+def _compute_counts(uvw, freq, mask, nx, ny,
                     cell_size_x, cell_size_y, dtype,
                     wgt=None):
-    # ufreqs
+    # ufreq
     u_cell = 1/(nx*cell_size_x)
-    # shifts fftfreqs such that they start at zero
+    # shifts fftfreq such that they start at zero
     # convenient to look up the pixel value
     umax = np.abs(-1/cell_size_x/2 - u_cell/2)
 
-    # vfreqs
+    # vfreq
     v_cell = 1/(ny*cell_size_y)
     vmax = np.abs(-1/cell_size_y/2 - v_cell/2)
 
@@ -58,18 +99,18 @@ def _compute_counts(uvw, freqs, mask, nx, ny,
 
     # accumulate counts
     nrow = uvw.shape[0]
-    nchan = freqs.size
+    nchan = freq.size
     if wgt is None:
         wgt = np.ones((nrow, nchan))
 
-    normfreqs = freqs / lightspeed
+    normfreq = freq / lightspeed
     for r in range(nrow):
         uvw_row = uvw[r]
         for c in range(nchan):
             if not mask[r, c]:
                 continue
             # get current uv coords
-            chan_normfreq = normfreqs[c]
+            chan_normfreq = normfreq[c]
             u_tmp = uvw_row[0] * chan_normfreq
             v_tmp = uvw_row[1] * chan_normfreq
             # get u index
@@ -80,13 +121,13 @@ def _compute_counts(uvw, freqs, mask, nx, ny,
     return counts
 
 
-def counts_to_weights(counts, uvw, freqs, nx, ny,
+def counts_to_weights(counts, uvw, freq, nx, ny,
                       cell_size_x, cell_size_y, robust):
 
     weights = da.blockwise(counts_to_weights_wrapper, ('row', 'chan'),
                            counts, ('nx', 'ny'),
                            uvw, ('row', 'three'),
-                           freqs, ('chan',),
+                           freq, ('chan',),
                            nx, None,
                            ny, None,
                            cell_size_x, None,
@@ -95,26 +136,26 @@ def counts_to_weights(counts, uvw, freqs, nx, ny,
                            dtype=counts.dtype)
     return weights
 
-def counts_to_weights_wrapper(counts, uvw, freqs, nx, ny,
+def counts_to_weights_wrapper(counts, uvw, freq, nx, ny,
                               cell_size_x, cell_size_y, robust):
-    return _counts_to_weights(counts[0][0], uvw[0], freqs, nx, ny,
+    return _counts_to_weights(counts[0][0], uvw[0], freq, nx, ny,
                               cell_size_x, cell_size_y, robust)
 
 
 @njit(nogil=True, fastmath=True, cache=True)
-def _counts_to_weights(counts, uvw, freqs, nx, ny,
+def _counts_to_weights(counts, uvw, freq, nx, ny,
                        cell_size_x, cell_size_y, robust):
-    # ufreqs
+    # ufreq
     u_cell = 1/(nx*cell_size_x)
     umax = np.abs(-1/cell_size_x/2 - u_cell/2)
 
-    # vfreqs
+    # vfreq
     v_cell = 1/(ny*cell_size_y)
     vmax = np.abs(-1/cell_size_y/2 - v_cell/2)
 
     # initialise array to store counts
     # the additional axis is to allow chunking over row
-    nchan = freqs.size
+    nchan = freq.size
     nrow = uvw.shape[0]
 
     # Briggs weighting factor
@@ -124,13 +165,13 @@ def _counts_to_weights(counts, uvw, freqs, nx, ny,
         ssq = numsqrt * numsqrt/avgW
         counts = 1 + counts * ssq
 
-    normfreqs = freqs / lightspeed
+    normfreq = freq / lightspeed
     weights = np.zeros((nrow, nchan), dtype=counts.dtype)
     for r in range(nrow):
         uvw_row = uvw[r]
         for c in range(nchan):
             # get current uv
-            chan_normfreq = normfreqs[c]
+            chan_normfreq = normfreq[c]
             u_tmp = uvw_row[0] * chan_normfreq
             v_tmp = uvw_row[1] * chan_normfreq
             # get u index
