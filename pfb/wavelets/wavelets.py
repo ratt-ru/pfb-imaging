@@ -648,8 +648,8 @@ def wavelet_setup(x, bases, nlevels):
     iys = Dict()
     sys = Dict()
     nmax = x[0].ravel().size
-    ntots = List()
-    ntots.append(nmax)
+    ntot = List()
+    ntot.append(nmax)
     for base in bases:
         if base == 'self':
             continue
@@ -657,7 +657,7 @@ def wavelet_setup(x, bases, nlevels):
         y, iy, sy = ravel_coeffs(alpha)
         iys[base] = iy
         sys[base] = sy
-        ntots.append(y.size)
+        ntot.append(y.size)
         nmax = np.maximum(nmax, y.size)
 
-    return iys, sys, ntots, nmax
+    return iys, sys, ntot, nmax

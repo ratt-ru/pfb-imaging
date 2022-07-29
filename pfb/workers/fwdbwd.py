@@ -66,6 +66,7 @@ def _fwdbwd(**kw):
     from pfb.opt.power_method import power_method
     from pfb.prox.prox_21m import prox_21m
     from pfb.prox.prox_21 import prox_21
+    from pfb.wavelets.wavelets import wavelet_setup
     import pywt
     from copy import deepcopy
 
@@ -124,36 +125,13 @@ def _fwdbwd(**kw):
 
     # dictionary setup
     print("Setting up dictionary", file=log)
-    bases = opts.bases.split(',')
-    ntots = []
-    iys = {}
-    sys = {}
-    for base in bases:
-        if base == 'self':
-            y, iy, sy = model[0].ravel(), 0, 0
-        else:
-            alpha = pywt.wavedecn(model[0], base, mode='zero',
-                                  level=opts.nlevels)
-            y, iy, sy = pywt.ravel_coeffs(alpha)
-        iys[base] = iy
-        sys[base] = sy
-        ntots.append(y.size)
-
-    # get padding info
-    nmax = np.asarray(ntots).max()
-    padding = []
-    nbasis = len(ntots)
-    for i in range(nbasis):
-        padding.append(slice(0, ntots[i]))
-
-
-    # initialise dictionary operators
-    bases = da.from_array(np.array(bases, dtype=object), chunks=-1)
-    ntots = da.from_array(np.array(ntots, dtype=object), chunks=-1)
-    padding = da.from_array(np.array(padding, dtype=object), chunks=-1)
-    psiH = partial(im2coef, bases=bases, ntot=ntots, nmax=nmax,
+    bases = tuple(opts.bases.split(','))
+    nbasis = len(bases)
+    iys, sys, ntot, nmax = wavelet_setup(residual, bases, opts.nlevels)
+    ntot = tuple(ntot)
+    psiH = partial(im2coef, bases=bases, ntot=ntot, nmax=nmax,
                    nlevels=opts.nlevels)
-    psi = partial(coef2im, bases=bases, padding=padding,
+    psi = partial(coef2im, bases=bases, ntot=ntot,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
     hessopts = {}

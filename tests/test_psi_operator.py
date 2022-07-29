@@ -29,11 +29,11 @@ def test_psi(nx, ny, nband, nlevels):
     # set up dictionary
     bases = ('self','db1','db2','db3','db4','db5')
     nbasis = len(bases)
-    iys, sys, ntots, nmax = wavelet_setup(x, bases, nlevels)
-    ntots = tuple(ntots)
-    psiH = partial(im2coef, bases=bases, ntot=ntots, nmax=nmax,
+    iys, sys, ntot, nmax = wavelet_setup(x, bases, nlevels)
+    ntot = tuple(ntot)
+    psiH = partial(im2coef, bases=bases, ntot=ntot, nmax=nmax,
                    nlevels=nlevels)
-    psi = partial(coef2im, bases=bases, ntot=ntots,
+    psi = partial(coef2im, bases=bases, ntot=ntot,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
     # decompose
@@ -61,11 +61,11 @@ def test_prox21(nx, ny, nband, nlevels):
     # set up dictionary info
     bases = ('self','db1','db2','db3','db4','db5')
     nbasis = len(bases)
-    iys, sys, ntots, nmax = wavelet_setup(x, bases, nlevels)
-    ntots = tuple(ntots)
-    psiH = partial(im2coef, bases=bases, ntot=ntots, nmax=nmax,
+    iys, sys, ntot, nmax = wavelet_setup(x, bases, nlevels)
+    ntot = tuple(ntot)
+    psiH = partial(im2coef, bases=bases, ntot=ntot, nmax=nmax,
                    nlevels=nlevels)
-    psi = partial(coef2im, bases=bases, ntot=ntots,
+    psi = partial(coef2im, bases=bases, ntot=ntot,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
     weights_21 = np.ones((nbasis, nmax))

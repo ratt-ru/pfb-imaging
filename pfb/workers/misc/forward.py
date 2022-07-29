@@ -91,7 +91,6 @@ def _forward(**kw):
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.utils.fits import load_fits, set_wcs, save_fits
     from pfb.utils.misc import setup_image_data, init_mask
-    from pfb.operators.psi import im2coef, coef2im
     from pfb.operators.hessian import hessian_xds
     from pfb.opt.pcg import pcg
     from astropy.io import fits

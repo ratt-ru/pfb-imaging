@@ -10,7 +10,8 @@ Fs = np.fft.fftshift
 
 
 def compute_counts(uvw, freq, mask, nx, ny,
-                   cell_size_x, cell_size_y, dtype, wgt=None):
+                   cell_size_x, cell_size_y, dtype, wgt=None,
+                   mode='grid'):
 
     if wgt is not None:
         wgt_out = ('row', 'chan')
@@ -27,6 +28,7 @@ def compute_counts(uvw, freq, mask, nx, ny,
                           cell_size_y, None,
                           dtype, None,
                           wgt, wgt_out,
+                          mode, None,
                           new_axes={"nx": nx, "ny": ny},
                           adjust_chunks={'row': 1},
                           align_arrays=False,
@@ -36,13 +38,17 @@ def compute_counts(uvw, freq, mask, nx, ny,
 
 
 def compute_counts_wrapper(uvw, freq, mask, nx, ny,
-                           cell_size_x, cell_size_y, dtype, wgt):
+                           cell_size_x, cell_size_y, dtype, wgt, mode):
     if wgt is not None:
         wgt = wgt[0]
-    # return _compute_counts(uvw[0], freq[0], mask[0], nx, ny,
-    #                        cell_size_x, cell_size_y, dtype, wgt)
-    return _grid_weights(uvw[0], freq[0], mask[0], nx, ny,
-                         cell_size_x, cell_size_y, dtype, wgt)
+    if mode=='count':
+        return _compute_counts(uvw[0], freq[0], mask[0], nx, ny,
+                            cell_size_x, cell_size_y, dtype, wgt)
+    elif mode=='grid':
+        return _grid_weights(uvw[0], freq[0], mask[0], nx, ny,
+                            cell_size_x, cell_size_y, dtype, wgt)
+    else:
+        raise ValueError(f'Unknown mode {mode}')
 
 
 def _grid_weights(uvw, freq, mask, nx, ny,
