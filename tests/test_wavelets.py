@@ -1,28 +1,29 @@
-# from itertools import product
+from itertools import product
+import numba
+from numba.cpython.unsafe.tuple import tuple_setitem
+import numpy as np
+import pywt
+from numpy.testing import assert_array_almost_equal, assert_array_equal
+import pytest
 
-# import numba
-# from numba.cpython.unsafe.tuple import tuple_setitem
-# import numpy as np
-# from numpy.testing import assert_array_almost_equal, assert_array_equal
-# import pytest
+from pfb.wavelets.wavelets import (dwt, dwt_axis,
+                                   idwt, idwt_axis,
+                                   dwt_max_level,
+                                   str_to_int,
+                                   coeff_product,
+                                   promote_axis,
+                                   promote_level,
+                                   discrete_wavelet,
+                                   wavedecn, waverecn,
+                                   ravel_coeffs, unravel_coeffs)
+from pfb.wavelets.modes import (Modes,
+                                promote_mode,
+                                mode_str_to_enum)
 
-# from pfb.wavelets.wavelets import (dwt, dwt_axis,
-#                                    idwt, idwt_axis,
-#                                    dwt_max_level,
-#                                    str_to_int,
-#                                    coeff_product,
-#                                    promote_axis,
-#                                    promote_level,
-#                                    discrete_wavelet,
-#                                    wavedecn, waverecn)
-# from pfb.wavelets.modes import (Modes,
-#                                 promote_mode,
-#                                 mode_str_to_enum)
-
-# from pfb.wavelets.intrinsics import slice_axis
+from pfb.wavelets.intrinsics import slice_axis
 
 
-# convert_mode = numba.njit(lambda s: mode_str_to_enum(s))
+convert_mode = numba.njit(lambda s: mode_str_to_enum(s))
 
 
 # @pytest.mark.parametrize("ndim", [1, 2, 3])
@@ -228,106 +229,91 @@
 #     assert_array_almost_equal(output, pywt_out)
 
 
-# @pytest.mark.parametrize("data_shape", [(50, 24, 63)])
-# @pytest.mark.parametrize("complex_data", [True, False])
-# @pytest.mark.parametrize("level", list(range(10)))
-# @pytest.mark.parametrize("mode", ["symmetric", "zero"])
-# @pytest.mark.parametrize("wavelet", ["db1", "db4", "db5"])
-# def test_wavedecn_waverecn(data_shape, wavelet, mode, level, complex_data):
-#     pywt = pytest.importorskip("pywt")
-#     data = np.random.random(data_shape)
+@pytest.mark.parametrize("data_shape", [(64, 128)])
+@pytest.mark.parametrize("complex_data", [True, False])
+@pytest.mark.parametrize("level", list(range(10)))
+@pytest.mark.parametrize("mode", ["symmetric", "zero"])
+@pytest.mark.parametrize("wavelet", ["db1", "db4", "db5"])
+def test_wavedecn_waverecn(data_shape, wavelet, mode, level, complex_data):
+    pywt = pytest.importorskip("pywt")
+    data = np.random.random(data_shape)
 
-#     if complex_data:
-#         data = data + np.random.random(data_shape) * 1j
+    if complex_data:
+        data = data + np.random.random(data_shape) * 1j
 
-#     out = pywt.wavedecn(data, wavelet, mode)
-#     a, coeffs = wavedecn(data, wavelet, mode)
+    out = pywt.wavedecn(data, wavelet, mode)
+    coeffs = wavedecn(data, wavelet, mode)
 
-#     assert_array_almost_equal(a, out[0])
+    assert_array_almost_equal(coeffs[0]['aa'], out[0])
 
-#     for d1, d2 in zip(out[1:], coeffs):
-#         assert list(d1.keys()) == list(d2.keys())
+    for d1, d2 in zip(out[1:], coeffs[1:]):
+        assert list(d1.keys()) == list(d2.keys())
 
-#         for k, v in d1.items():
-#             assert_array_almost_equal(v, d2[k])
+        for k, v in d1.items():
+            assert_array_almost_equal(v, d2[k])
 
-#     pywt_rec = pywt.waverecn(out, wavelet, mode)
-#     rec = waverecn(a, coeffs, wavelet, mode)
-#     assert_array_almost_equal(pywt_rec, rec)
+    pywt_rec = pywt.waverecn(out, wavelet, mode)
+    rec = waverecn(coeffs, wavelet, mode)
+    assert_array_almost_equal(pywt_rec, rec)
 
-#     out = pywt.wavedecn(data, wavelet, mode, axes=(1, 2))
-#     a, coeffs = wavedecn(data, wavelet, mode, axis=(1, 2))
+    # out = pywt.wavedecn(data, wavelet, mode, axes=(1, 2))
+    # coeffs = wavedecn(data, wavelet, mode, axis=(1, 2))
 
-#     assert_array_almost_equal(a, out[0])
+    # assert_array_almost_equal(coeffs[0]['aa'], out[0])
 
-#     for d1, d2 in zip(out[1:], coeffs):
-#         assert list(d1.keys()) == list(d2.keys())
+    # for d1, d2 in zip(out[1:], coeffs[1:]):
+    #     assert list(d1.keys()) == list(d2.keys())
 
-#         for k, v in d1.items():
-#             assert_array_almost_equal(v, d2[k])
+    #     for k, v in d1.items():
+    #         assert_array_almost_equal(v, d2[k])
 
-#     pywt_rec = pywt.waverecn(out, wavelet, mode, axes=(1, 2))
-#     rec = waverecn(a, coeffs, wavelet, mode, axis=(1, 2))
-#     assert_array_almost_equal(pywt_rec, rec)
+    # pywt_rec = pywt.waverecn(out, wavelet, mode, axes=(1, 2))
+    # rec = waverecn(coeffs, wavelet, mode, axis=(1, 2))
+    # assert_array_almost_equal(pywt_rec, rec)
 
-#     # Test various levels of decomposition
-#     out = pywt.wavedecn(data, wavelet, mode, level=level, axes=(1, 2))
-#     a, coeffs = wavedecn(data, wavelet, mode, level=level, axis=(1, 2))
+    # # Test various levels of decomposition
+    # out = pywt.wavedecn(data, wavelet, mode, level=level, axes=(1, 2))
+    # coeffs = wavedecn(data, wavelet, mode, level=level, axis=(1, 2))
 
-#     assert_array_almost_equal(a, out[0])
+    # assert_array_almost_equal(coeffs[0]['aa'], out[0])
 
-#     for d1, d2 in zip(out[1:], coeffs):
-#         assert list(d1.keys()) == list(d2.keys())
+    # for d1, d2 in zip(out[1:], coeffs[1:]):
+    #     assert list(d1.keys()) == list(d2.keys())
 
-#         for k, v in d1.items():
-#             assert_array_almost_equal(v, d2[k])
+    #     for k, v in d1.items():
+    #         assert_array_almost_equal(v, d2[k])
 
-#     pywt_rec = pywt.waverecn(out, wavelet, mode, axes=(1, 2))
-#     rec = waverecn(a, coeffs, wavelet, mode, axis=(1, 2))
-#     assert_array_almost_equal(pywt_rec, rec)
+    # pywt_rec = pywt.waverecn(out, wavelet, mode, axes=(1, 2))
+    # rec = waverecn(coeffs, wavelet, mode, axis=(1, 2))
+    # assert_array_almost_equal(pywt_rec, rec)
 
-# # @pytest.mark.parametrize("nx", (24, 120))
-# # @pytest.mark.parametrize("ny", (68, 125))
-# # @pytest.mark.parametrize("level", list(range(4)))
-# # @pytest.mark.parametrize("mode", ["symmetric", "zero"])
-# # @pytest.mark.parametrize("wavelet", ["db1", "db4", "db5"])
-# # def test_ravel_coeffs(nx, ny, level, mode, wavelet):
-# #     pywt = pytest.importorskip("pywt")
+@pytest.mark.parametrize("nx", (24, 120))
+@pytest.mark.parametrize("ny", (68, 125))
+@pytest.mark.parametrize("level", list(range(4)))
+@pytest.mark.parametrize("mode", ["symmetric", "zero"])
+@pytest.mark.parametrize("wavelet", ["db1", "db4", "db5"])
+def test_ravel_coeffs(nx, ny, level, mode, wavelet):
+    # pywt = pytest.importorskip("pywt")
+    from time import time
+    x = np.random.randn(nx, ny)
 
-# #     x = np.random.randn(nx, ny)
+    out = pywt.wavedecn(x, wavelet, mode, level=level)
+    z, iy, sy = pywt.ravel_coeffs(out)
 
-# #     out = pywt.wavedecn(x, wavelet, mode, level=level)
-# #     z, iy, sy = pywt.ravel_coeffs(out)
+    coeffs = wavedecn(x, wavelet, mode, level=level)
+    z2, iy2, sy2 = ravel_coeffs(coeffs)
 
-# #     a, coeffs = wavedecn(x, wavelet, mode, level=level)
-# #     z2 = ravel_coeffs(a, coeffs)
+    assert_array_almost_equal(z, z2, decimal=13)
 
-# #     assert_array_almost_equal(z, z2, decimal=13)
+    outrec = pywt.unravel_coeffs(z, iy, sy)
+    outrec2 = unravel_coeffs(z2, iy2, sy2)
 
-# #     for d1 in iy[1:]:
-# #         print(d1)
-
-# #     # for d1, d2 in zip(sy, sy2):
-# #     #     assert d1 == d2
-
-# #     outrec = pywt.unravel_coeffs(z, iy, sy)
-
-# #     from numba.typed import List
-# #     # iy1 = List(iy[0])
-# #     iy2 = List(iy[1:])
-# #     # sy1 = List(sy[0])
-# #     sy2 = List(sy[1:])
+    assert np.allclose(outrec[0], outrec2[0]['aa'])
+    for i in range(1, len(coeffs)):
+        assert np.allclose(outrec[i]['ad'], outrec2[i]['ad'])
+        assert np.allclose(outrec[i]['da'], outrec2[i]['da'])
+        assert np.allclose(outrec[i]['dd'], outrec2[i]['dd'])
 
 
-
-# #     # arec, coeffsrec = unravel_coeffs(z2, iy2, sy2)
-
-# #     # assert_array_almost_equal(arec, outrec[0])
-
-# #     # xrec1 = pywt.waverecn(outrec, wavelet, mode)
-
-# #     # xrec2 = waverecn(a, coeffs, wavelet, mode)
-
-
-# # if __name__=="__main__":
-# #     test_ravel_coeffs(128, 128, 2, 'zero', 'db3')
+# test_wavedecn_waverecn((1024,1024), 'db1', 'zero', 3, False)
+# test_ravel_coeffs(2048, 1024, 2, 'zero', 'db3')

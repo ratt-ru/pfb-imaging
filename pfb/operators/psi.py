@@ -1,39 +1,53 @@
 import numpy as np
+import numba
 import pywt
 import dask.array as da
+from pfb.wavelets.wavelets import wavedecn, waverecn, ravel_coeffs, unravel_coeffs
 
 
-def _coef2im_impl(alpha, bases, padding, iy, sy, nx, ny):
+@numba.njit(nogil=True, fastmath=True, cache=True)
+def pad(x, n):
+    '''
+    pad 1D array by n
+    '''
+    return np.append(x, np.zeros(n, dtype=x.dtype))
+
+
+@numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)
+def _coef2im_impl(alpha, bases, ntot, iy, sy, nx, ny):
     '''
     Per band coefficients to image
     '''
     nband, nbasis, _ = alpha.shape
     # not chunking over basis
-    x = np.zeros((nband, nx, ny), dtype=alpha.dtype)
+    x = np.zeros((nband, nbasis, nx, ny), dtype=alpha.dtype)
     for l in range(nband):
-        for b, base in enumerate(bases):
-            a = alpha[l, b, padding[b]]
+        for b in numba.prange(nbasis):
+        # for b, base in enumerate(bases):
+            base = bases[b]
+            a = alpha[l, b, 0:ntot[b]]
             if base == 'self':
                 wave = a.reshape(nx, ny)
             else:
-                alpha_rec = pywt.unravel_coeffs(
+                alpha_rec = unravel_coeffs(
                     a, iy[base], sy[base], output_format='wavedecn')
-                wave = pywt.waverecn(alpha_rec, base, mode='zero')
+                wave = waverecn(alpha_rec, base, mode='zero')
 
-            x[l] += wave
-    return x
+            x[l, b] = wave
+    return np.sum(x, axis=1)
 
-def _coef2im(alpha, bases, padding, iy, sy, nx, ny):
-    return _coef2im_impl(alpha[0][0], bases[0], padding[0],
+def _coef2im(alpha, bases, ntot, iy, sy, nx, ny):
+    return _coef2im_impl(alpha[0][0], bases, ntot,
                          iy, sy, nx, ny)
 
-def coef2im(alpha, bases, padding, iy, sy, nx, ny, compute=True):
+def coef2im(alpha, bases, ntot, iy, sy, nx, ny, compute=True):
     if not isinstance(alpha, da.Array):
         alpha = da.from_array(alpha, chunks=(1, -1, -1), name=False)
+
     graph = da.blockwise(_coef2im, ("band", "nx", "ny"),
                          alpha, ("band", "basis", "ntot"),
-                         bases, ("basis",),
-                         padding, ("basis",),
+                         bases, None, #("basis",),
+                         ntot, None, #("basis",),
                          iy, None,
                          sy, None,
                          nx, None,
@@ -46,6 +60,8 @@ def coef2im(alpha, bases, padding, iy, sy, nx, ny, compute=True):
     else:
         return graph
 
+
+@numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)
 def _im2coef_impl(x, bases, ntot, nmax, nlevels):
     '''
     Per band image to coefficients
@@ -54,16 +70,18 @@ def _im2coef_impl(x, bases, ntot, nmax, nlevels):
     nband, _, _ = x.shape
     alpha = np.zeros((nband, nbasis, nmax), dtype=x.dtype)
     for l in range(nband):
-        for b, base in enumerate(bases):
+        for b in numba.prange(nbasis):
+        # for b, base in enumerate(bases):
+            base = bases[b]
             if base == 'self':
                 # ravel and pad
-                alpha[l, b] = np.pad((x[l]).ravel(), (0, nmax-ntot[b]), mode='constant')
+                alpha[l, b] = pad((x[l]).ravel(), nmax-ntot[b]) #, mode='constant')
             else:
                 # decompose
-                alpha_tmp = pywt.wavedecn(x[l], base, mode='zero', level=nlevels)
+                alpha_tmp = wavedecn(x[l], base, mode='zero', level=nlevels)
                 # ravel and pad
-                alpha_tmp, _, _ = pywt.ravel_coeffs(alpha_tmp)
-                alpha[l, b] = np.pad(alpha_tmp, (0, nmax-ntot[b]), mode='constant')
+                alpha_tmp, _, _ = ravel_coeffs(alpha_tmp)
+                alpha[l, b] = pad(alpha_tmp, nmax-ntot[b])  #, mode='constant')
 
     return alpha
 
@@ -74,14 +92,16 @@ def _im2coef(x, bases, ntot, nmax, nlevels):
 def im2coef(x, bases, ntot, nmax, nlevels, compute=True):
     if not isinstance(x, da.Array):
         x = da.from_array(x, chunks=(1, -1, -1), name=False)
+
     graph = da.blockwise(_im2coef, ("band", "basis", "nmax"),
                          x, ("band", "nx", "ny"),
-                         bases, ("basis",),
-                         ntot, ("basis",),
+                         bases, None, #("basis",),
+                         ntot, None, #("basis",),
                          nmax, None,
                          nlevels, None,
-                         new_axes={'nmax':nmax},
+                         new_axes={'basis':len(bases), 'nmax':nmax},
                          dtype=x.dtype)
+
     if compute:
         return graph.compute()
     else:

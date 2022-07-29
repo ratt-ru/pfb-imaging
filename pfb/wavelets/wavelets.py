@@ -518,29 +518,33 @@ def wavedecn(data, wavelet, mode='symmetric', level=None, axis=None):
             a = not_optional(coeffs.pop('a' * naxis))
             coeffs_list.append(coeffs)
 
+        coeffs_list.append({'aa': a})
+
         coeffs_list.reverse()
 
-        return a, coeffs_list
+        return coeffs_list
 
     return impl
 
 
 @numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
-def waverecn(ca, coeffs, wavelet, mode='symmetric', axis=None):
-    if not isinstance(ca, nbtypes.npytypes.Array):
-        raise TypeError("ca must be an ndarray")
+def waverecn(coeffs, wavelet, mode='symmetric', axis=None):
+    # ca = coeffs[0]['aa']
+    # if not isinstance(ca, nbtypes.npytypes.Array):
+    #     raise TypeError("ca must be an ndarray")
 
     have_axis = not is_nonelike(axis)
-    ndim_slices = (slice(None),) * ca.ndim
+    # ndim_slices = (slice(None),) * ca.ndim
 
-    def impl(ca, coeffs, wavelet, mode='symmetric', axis=None):
-        if len(coeffs) == 0:
+    def impl(coeffs, wavelet, mode='symmetric', axis=None):
+        ca = coeffs[0]['aa']
+        if len(coeffs) == 1:
             return ca
 
         coeff_ndims = [ca.ndim]
         coeff_shapes = [ca.shape]
 
-        for c in coeffs:
+        for c in coeffs[1:]:
             coeff_ndims.extend([v.ndim for v in c.values()])
             coeff_shapes.extend([v.shape for v in c.values()])
 
@@ -557,7 +561,7 @@ def waverecn(ca, coeffs, wavelet, mode='symmetric', axis=None):
         paxes = promote_axis(axis, ndim)
         naxis = len(paxes)
 
-        for idx, c in enumerate(coeffs):
+        for idx, c in enumerate(coeffs[1:]):
             c[not_optional('a' * naxis)] = ca
             ca = idwt(c, wavelet, mode, axis)
 
@@ -565,64 +569,95 @@ def waverecn(ca, coeffs, wavelet, mode='symmetric', axis=None):
 
     return impl
 
-# @numba.njit(nogil=True, fastmath=True, cache=True)
-# def ravel_coeffs(a_coeffs, coeffs):
-#     ndim = a_coeffs.ndim
 
-#     # initialize with the approximation coefficients.
-#     a_size = a_coeffs.size
+@numba.njit(nogil=True, fastmath=True, cache=True)
+def ravel_coeffs(coeffs):
+    a_coeffs = coeffs[0]['aa']
 
-#     # preallocate output array
-#     arr_size = a_size
-#     n_coeffs = 0
-#     for d in coeffs:
-#         n_coeffs += 1
-#         for k, v in d.items():
-#             arr_size += v.size
+    ndim = a_coeffs.ndim
 
-#     coeff_arr = np.empty((arr_size, ), dtype=a_coeffs.dtype)
+    # initialize with the approximation coefficients.
+    a_size = a_coeffs.size
+    arr_size = a_size
+    for c in coeffs[1:]:
+        for k, v in c.items():
+            arr_size += v.size
+    coeff_arr = np.empty((arr_size, ), dtype=a_coeffs.dtype)
 
-#     a_slice = slice(a_size)
-#     coeff_arr[a_slice] = a_coeffs.ravel()
+    a_slice = slice(a_size)
+    coeff_arr[a_slice] = a_coeffs.ravel()
 
-#     # initialize list of coefficient slices
-#     # coeff_slices = List()
-#     # coeff_shapes = List()
-#     # coeff_slices.append(a_slice)
-#     # coeff_shapes.append(a_coeffs.shape)
+    # initialize list of coefficient slices
+    coeff_slices = List()
+    coeff_shapes = List()
+    tmp1 = Dict()
+    tmp1['aa'] = a_slice
+    coeff_slices.append(tmp1)
+    tmp2 = Dict()
+    tmp2['aa'] = a_coeffs.shape
+    coeff_shapes.append(tmp2)
+    coeff_shapes[-1]['aa'] = a_coeffs.shape
 
-#     # numba.typed.Dict(numba.types.unicode_type, numba.types.float64[:])
+    if len(coeffs) == 1:
+        return coeff_arr, coeff_slices, coeff_shapes
 
-#     # loop over the detail cofficients, embedding them in coeff_arr
-#     offset = a_size
-#     for coeff_dict in coeffs:
-#         # new dictionaries for detail coefficient slices and shapes
-#         # coeff_slices.append(Dict())
-#         # coeff_shapes.append(Dict())
+    # loop over the detail cofficients, embedding them in coeff_arr
+    offset = a_size
+    for coeff_dict in coeffs[1:]:
+        # new dictionaries for detail coefficient slices and shapes
+        tmp1 = Dict()
+        tmp2 = Dict()
 
-#         # sort to make sure key order is consistent across Python versions
-#         keys = sorted(coeff_dict.keys())
-#         for i, key in enumerate(keys):
-#             d = coeff_dict[key]
-#             sl = slice(offset, offset + d.size)
-#             offset += d.size
-#             coeff_arr[sl] = d.ravel()
-#             # coeff_slices[-1][key] = sl
-#             # coeff_shapes[-1][key] = d.shape
-#     return coeff_arr  #, coeff_slices, coeff_shapes
+        # sort to make sure key order is consistent across Python versions
+        keys = sorted(coeff_dict.keys())
+        for i, key in enumerate(keys):
+            d = coeff_dict[key]
+            sl = slice(offset, offset + d.size)
+            offset += d.size
+            coeff_arr[sl] = d.ravel()
+            tmp1[key] = sl
+            tmp2[key] = d.shape
+
+        coeff_slices.append(tmp1)
+        coeff_shapes.append(tmp2)
+    return coeff_arr, coeff_slices, coeff_shapes
 
 
-# @numba.njit(nogil=True, fastmath=True, cache=True)
-# def unravel_coeffs(arr, coeff_slices, coeff_shapes, output_format='wavedecn'):
-#     arr = np.asarray(arr)
-#     coeffs = List(arr[coeff_slices[0]].reshape(coeff_shapes[0]))
+@numba.njit(nogil=True, fastmath=True, cache=True)
+def unravel_coeffs(arr, coeff_slices, coeff_shapes, output_format='wavedecn'):
+    arr = np.asarray(arr)
+    coeffs = List()
+    tmp = Dict()
+    tmp['aa'] = arr[coeff_slices[0]['aa']].reshape(coeff_shapes[0]['aa'])
+    coeffs.append(tmp)
 
-#     # difference coefficients at each level
-#     for n in range(1, len(coeff_slices)):
-#         slice_dict = coeff_slices[n]
-#         shape_dict = coeff_shapes[n]
-#         d = {}
-#         for k, v in coeff_slices[n].items():
-#             d[k] = arr[v].reshape(shape_dict[k])
-#         coeffs.append(d)
-#     return coeffs[0], coeffs[1:]
+    # difference coefficients at each level
+    for n in range(1, len(coeff_slices)):
+        slice_dict = coeff_slices[n]
+        shape_dict = coeff_shapes[n]
+        d = Dict()
+        for k, v in coeff_slices[n].items():
+            d[k] = arr[v].reshape(shape_dict[k])
+        coeffs.append(d)
+    return coeffs
+
+
+@numba.njit(nogil=True, fastmath=True, cache=True)
+def wavelet_setup(x, bases, nlevels):
+    # set up dictionary info
+    iys = Dict()
+    sys = Dict()
+    nmax = x[0].ravel().size
+    ntots = List()
+    ntots.append(nmax)
+    for base in bases:
+        if base == 'self':
+            continue
+        alpha = wavedecn(x[0], base, mode='zero', level=nlevels)
+        y, iy, sy = ravel_coeffs(alpha)
+        iys[base] = iy
+        sys[base] = sy
+        ntots.append(y.size)
+        nmax = np.maximum(nmax, y.size)
+
+    return iys, sys, ntots, nmax
