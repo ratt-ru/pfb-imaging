@@ -134,6 +134,9 @@ def _clean(**kw):
     from pfb.deconv.agroclean import agroclean
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.operators.hessian import hessian
+    from pfb.opt.pcg import pcg
+    from pfb.operators.hessian import hessian_xds
+    from pfb.operators.psf import _hessian_reg_psf
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -167,8 +170,17 @@ def _clean(**kw):
         residual_mfs = np.sum(residual, axis=0)
     model = mds.MODEL.values
 
+    # for intermediary results (not curruntly written)
+    # ra = dds[0].ra
+    # dec = dds[0].dec
+    # radec = [ra, dec]
+    # cell_rad = dds[0].cell_rad
+    # cell_deg = np.rad2deg(cell_rad)
+    # freq_out = mds.freq.data
+    # ref_freq = np.mean(freq_out)
+    # hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+
     # set up Hessian
-    from pfb.operators.hessian import hessian_xds
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
     hessopts['wstack'] = opts.wstack
@@ -176,27 +188,23 @@ def _clean(**kw):
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads
     # always clean in apparent scale
-    # we do not want to use the mask here
+    # we do not want to use the mask here???
     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
                    wsum=wsum, sigmainv=0, mask=np.ones_like(dirty_mfs),
                    compute=True, use_beam=False)
 
-    # set up psf convolve if required
-    if opts.algo in ['agroclean', 'clark']:
-        from pfb.operators.psf import _hessian_reg_psf
-
-        npad_xl = (nx_psf - nx)//2
-        npad_xr = nx_psf - nx - npad_xl
-        npad_yl = (ny_psf - ny)//2
-        npad_yr = ny_psf - ny - npad_yl
-        padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
-        unpad_x = slice(npad_xl, -npad_xr)
-        unpad_y = slice(npad_yl, -npad_yr)
-        lastsize = ny + np.sum(padding[-1])
-        psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
-                       nthreads=opts.nthreads, sigmainv=0,
-                       padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
-                       lastsize = lastsize)
+    npad_xl = (nx_psf - nx)//2
+    npad_xr = nx_psf - nx - npad_xl
+    npad_yl = (ny_psf - ny)//2
+    npad_yr = ny_psf - ny - npad_yl
+    padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+    unpad_x = slice(npad_xl, -npad_xr)
+    unpad_y = slice(npad_yl, -npad_yr)
+    lastsize = ny + np.sum(padding[-1])
+    psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
+                    nthreads=opts.nthreads, sigmainv=0,
+                    padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
+                    lastsize = lastsize)
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -210,36 +218,46 @@ def _clean(**kw):
     for k in range(opts.nmiter):
         if opts.algo.lower() == 'clark':
             print("Running Clark", file=log)
-            x = clark(residual, psf, psfo,
-                      threshold=threshold,
-                      gamma=opts.gamma,
-                      pf=opts.peak_factor,
-                      maxit=opts.clark_maxit,
-                      subpf=opts.sub_peak_factor,
-                      submaxit=opts.sub_maxit,
-                      verbosity=opts.verbose,
-                      report_freq=opts.report_freq)
+            x, status = clark(residual, psf, psfo,
+                              threshold=threshold,
+                              gamma=opts.gamma,
+                              pf=opts.peak_factor,
+                              maxit=opts.clark_maxit,
+                              subpf=opts.sub_peak_factor,
+                              submaxit=opts.sub_maxit,
+                              verbosity=opts.verbose,
+                              report_freq=opts.report_freq)
         elif opts.algo.lower() == 'hogbom':
             print("Running Hogbom", file=log)
-            x = hogbom(residual, psf,
-                       threshold=threshold,
-                       gamma=opts.gamma,
-                       pf=opts.peak_factor,
-                       maxit=opts.hogbom_maxit,
-                       verbosity=opts.verbose,
-                       report_freq=opts.report_freq)
+            x, status = hogbom(residual, psf,
+                               threshold=threshold,
+                               gamma=opts.gamma,
+                               pf=opts.peak_factor,
+                               maxit=opts.hogbom_maxit,
+                               verbosity=opts.verbose,
+                               report_freq=opts.report_freq)
         elif opts.algo.lower() == 'agroclean':
-            x = agroclean(residual, psf, psfo,
-                          threshold=threshold,
-                          gamma=opts.gamma,
-                          pf=opts.peak_factor,
-                          maxit=opts.clark_maxit,
-                          subpf=opts.sub_peak_factor,
-                          submaxit=opts.sub_maxit,
-                          verbosity=opts.verbose,
-                          report_freq=opts.report_freq)
+            x, status = agroclean(residual, psf, psfo,
+                                  threshold=threshold,
+                                  gamma=opts.gamma,
+                                  pf=opts.peak_factor,
+                                  maxit=opts.clark_maxit,
+                                  subpf=opts.sub_peak_factor,
+                                  submaxit=opts.sub_maxit,
+                                  verbosity=opts.verbose,
+                                  report_freq=opts.report_freq)
         else:
             raise ValueError(f'{opts.algo} is not a valid algo option')
+
+        # if clean has stalled or not converged do flux mop step
+        if opts.mop_flux and status:
+            print(f"Mopping flux at iter {k+1}", file=log)
+            mask = (np.any(x, axis=0) | np.any(model, axis=0))[None, :, :]
+            x = pcg(lambda x: mask * psfo(mask*x), mask * residual, x,
+                    tol=opts.cg_tol, maxit=opts.cg_maxit,
+                    minit=opts.cg_minit, verbosity=opts.cg_verbose,
+                    report_freq=opts.cg_report_freq,
+                    backtrack=opts.backtrack)
 
         model += x
 
@@ -260,8 +278,7 @@ def _clean(**kw):
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
 
-        print("Iter %i: peak residual = %f, rms = %f" % (
-                k+1, rmax, rms), file=log)
+        print(f"Iter {k+1}: peak residual = {rmax}, rms = {rms}", file=log)
 
         if opts.threshold is None:
             threshold = opts.sigmathreshold * rms
@@ -270,7 +287,7 @@ def _clean(**kw):
 
         if rmax <= threshold:
             print("Terminating because final threshold has been reached",
-                    file=log)
+                  file=log)
             break
 
     print("Saving results", file=log)

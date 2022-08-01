@@ -58,17 +58,18 @@ def degrid(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
-    opts = OmegaConf.create(kw)
+    defaults.update(kw)
+    opts = OmegaConf.create(defaults)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     pyscilog.log_to_file(f'degrid_{timestamp}.log')
 
     from daskms.fsspec_store import DaskMSStore
-    msstore = DaskMSStore.from_url_and_kw(opts.ms, {})
-    ms = msstore.fs.glob(opts.ms)
+    msstore = DaskMSStore(opts.ms.rstrip('/'))
+    ms = msstore.fs.glob(opts.ms.rstrip('/'))
     try:
         assert len(ms) > 0
-        opts.ms = ms
+        opts.ms = list(map(msstore.fs.unstrip_protocol, ms))
     except:
         raise ValueError(f"No MS at {opts.ms}")
 
@@ -221,6 +222,16 @@ def _degrid(**kw):
         comps = beta
         freq_fitted = False
 
+    # # this is a hack to get on disk chunks when MODEL_DATA does not exits
+    # on_disk_chunks = {}
+    # for ms in opts.ms:
+    #     xds = xds_from_ms(ms)
+    #     rc = xds[0].chunks['row'][0]
+    #     fc = xds[0].chunks['chan'][0]
+    #     cc = xds[0].chunks['corr'][0]
+    #     on_disk_chunks[ms] = {0:rc, 1:fc, 2: cc}
+
+
     print("Computing model visibilities", file=log)
     mask = da.from_array(mask, chunks=(nx, ny), name=False)
     comps = da.from_array(comps,
@@ -288,20 +299,14 @@ def _degrid(**kw):
             vis_I = vis_I.astype(ds.DATA.dtype)
             model_vis = restore_corrs(vis_I, ncorr)
 
-            # Does this mean that visibilities for all bands end up
-            # in memory at this point?
-            # model_vis = model_vis.rechunk({1: -1})
+            # In case MODEL_DATA does not exist we need to chunk it like DATA
+            # if not model_exists[ms]:  # we rechunk
+            # model_vis = model_vis.rechunk(on_disk_chunks[ms])
 
-            # if mstype == 'zarr':
-            #     model_vis = model_vis.rechunk(model_chunks)
-            #     uvw = uvw.rechunk((model_chunks[0], 3))
-
-            # out_ds = ds.assign(**{opts.model_column: (("row", "chan", "corr"), model_vis),
-            #                       'UVW': (("row", "three"), uvw)})
             out_ds = ds.assign(**{opts.model_column: (("row", "chan", "corr"), model_vis)})
             out_data.append(out_ds)
 
-        writes.append(xds_to_table(out_data, ms, columns=[opts.model_column]))
+        writes.append(xds_to_table(out_data, ms, columns=[opts.model_column], rechunk=True))
 
     # dask.visualize(*writes, filename=opts.output_filename + '_predict_graph.pdf',
     #                optimize_graph=False, collapse_outputs=True)

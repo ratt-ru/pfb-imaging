@@ -11,6 +11,10 @@ inputs:
     info: 'Basename of output'
     metavar: BASENAME
     abbreviation: o
+  overwrite:
+    dtype: bool
+    default: false
+    info: Allow overwrite of output xds
   nband:
     dtype: int
     required: true
@@ -61,11 +65,6 @@ inputs:
     info: 'Unique times per row chunk'
     abbreviation: utpc
     default: -1
-  row_out_chunk:
-    dtype: int
-    info: 'Number of rows in a chunk in output dataset'
-    abbreviation: roc
-    default: 10000
   group_by_field:
     dtype: bool
     default: True

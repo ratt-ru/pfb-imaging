@@ -227,7 +227,7 @@ def _grid(**kw):
                             wgt.dtype)
 
                 counts[bandid] += count
-            counts = da.stack(counts, axis=0)
+            counts = da.stack(counts)
             counts = counts.rechunk({0:1, 1:-1, 2:-1})
             # cache counts
             dvars = {'COUNTS': (('band', 'x', 'y'), counts)}
@@ -241,7 +241,10 @@ def _grid(**kw):
             writes = xds_to_zarr(counts_ds, f'{basename}.counts.zarr',
                                  columns='ALL')
             print("Computing gridded weights", file=log)
-            dask.compute(writes)
+            counts = dask.compute(counts, writes)[0]
+            counts = da.from_array(counts, chunks=(1, -1, -1))
+
+
 
         # get rid of artificially high weights corresponding to nearly empty cells
         if opts.filter_extreme_counts:
@@ -249,15 +252,16 @@ def _grid(**kw):
                                            nlevel=opts.filter_level)
 
     # check if model exists
-    try:
-        mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-        model = mds.get(opts.model_name).data
-        print(f"Using {opts.model_name} for residual computation. ", file=log)
-    except:
-        if opts.residual:
+    if opts.residual:
+        try:
+            mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
+            model = mds.get(opts.model_name).data
+            print(f"Using {opts.model_name} for residual computation. ", file=log)
+        except:
             print("Cannot compute residual without a model. ", file=log)
+            model = None
+    else:
         model = None
-
 
 
     writes = []

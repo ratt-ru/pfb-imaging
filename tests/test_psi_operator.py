@@ -6,6 +6,9 @@ from pfb.prox.prox_21 import prox_21
 from pfb.operators.psi import im2coef, coef2im
 import pywt
 import pytest
+from numba.typed import Dict
+from pfb.wavelets.wavelets import (wavedecn, waverecn, unravel_coeffs,
+                                   ravel_coeffs, wavelet_setup)
 
 pmp = pytest.mark.parametrize
 
@@ -17,41 +20,20 @@ def test_psi(nx, ny, nband, nlevels):
     """
     Check that decomposition + reconstruction is the identity
     """
-    image = pywt.data.aero()
-
+    # image = pywt.data.aero()
+    image = np.random.randn(nx, ny)
     nu = 1.0  + 0.1 * np.arange(nband)
 
     x = image[None, 0:nx, 0:ny] * nu[:, None, None] ** (-0.7)
 
-    # set up dictionary info
-    bases = ['self','db1']
-    ntots = []
-    iys = {}
-    sys = {}
-    for base in bases:
-        if base == 'self':
-            y, iy, sy = x[0].ravel(), 0, 0
-        else:
-            alpha = pywt.wavedecn(x[0], base, mode='zero',
-                                  level=nlevels)
-            y, iy, sy = pywt.ravel_coeffs(alpha)
-        iys[base] = iy
-        sys[base] = sy
-        ntots.append(y.size)
-
-    # get padding info
-    nmax = np.asarray(ntots).max()
-    padding = []
-    nbasis = len(ntots)
-    for i in range(nbasis):
-        padding.append(slice(0, ntots[i]))
-
-    bases = da.from_array(np.array(bases, dtype=object), chunks=-1)
-    ntots = da.from_array(np.array(ntots, dtype=object), chunks=-1)
-    padding = da.from_array(np.array(padding, dtype=object), chunks=-1)
-    psiH = partial(im2coef, bases=bases, ntot=ntots, nmax=nmax,
+    # set up dictionary
+    bases = ('self','db1','db2','db3','db4','db5')
+    nbasis = len(bases)
+    iys, sys, ntot, nmax = wavelet_setup(x, bases, nlevels)
+    ntot = tuple(ntot)
+    psiH = partial(im2coef, bases=bases, ntot=ntot, nmax=nmax,
                    nlevels=nlevels)
-    psi = partial(coef2im, bases=bases, padding=padding,
+    psi = partial(coef2im, bases=bases, ntot=ntot,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
     # decompose
@@ -59,9 +41,8 @@ def test_psi(nx, ny, nband, nlevels):
     # reconstruct
     xrec = psi(alpha)
 
-    # the two is required here because the operator is not normalised
-    # to have a spectral norm of one and there are two bases
-    assert_array_almost_equal(2*x, xrec, decimal=12)
+    # the nbasis is required here because the operator is not normalised
+    assert_array_almost_equal(nbasis*x, xrec, decimal=12)
 
 @pmp("nx", [120, 240])
 @pmp("ny", [32, 150])
@@ -78,34 +59,13 @@ def test_prox21(nx, ny, nband, nlevels):
     x = image[None, 0:nx, 0:ny] * nu[:, None, None] ** (-0.7)
 
     # set up dictionary info
-    bases = ['self','db1']
-    ntots = []
-    iys = {}
-    sys = {}
-    for base in bases:
-        if base == 'self':
-            y, iy, sy = x[0].ravel(), 0, 0
-        else:
-            alpha = pywt.wavedecn(x[0], base, mode='zero',
-                                  level=nlevels)
-            y, iy, sy = pywt.ravel_coeffs(alpha)
-        iys[base] = iy
-        sys[base] = sy
-        ntots.append(y.size)
-
-    # get padding info
-    nmax = np.asarray(ntots).max()
-    padding = []
-    nbasis = len(ntots)
-    for i in range(nbasis):
-        padding.append(slice(0, ntots[i]))
-
-    bases = da.from_array(np.array(bases, dtype=object), chunks=-1)
-    ntots = da.from_array(np.array(ntots, dtype=object), chunks=-1)
-    padding = da.from_array(np.array(padding, dtype=object), chunks=-1)
-    psiH = partial(im2coef, bases=bases, ntot=ntots, nmax=nmax,
+    bases = ('self','db1','db2','db3','db4','db5')
+    nbasis = len(bases)
+    iys, sys, ntot, nmax = wavelet_setup(x, bases, nlevels)
+    ntot = tuple(ntot)
+    psiH = partial(im2coef, bases=bases, ntot=ntot, nmax=nmax,
                    nlevels=nlevels)
-    psi = partial(coef2im, bases=bases, padding=padding,
+    psi = partial(coef2im, bases=bases, ntot=ntot,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
     weights_21 = np.ones((nbasis, nmax))
@@ -117,6 +77,5 @@ def test_prox21(nx, ny, nband, nlevels):
 
     xrec = psi(y)
 
-    # the two is required here because the operator is not normalised
-    # to have a spectral norm of one and there are two bases
-    assert_array_almost_equal(2*x, xrec, decimal=12)
+    # the nbasis is required here because the operator is not normalised
+    assert_array_almost_equal(nbasis*x, xrec, decimal=12)

@@ -4,7 +4,6 @@ import dask
 import dask.array as da
 from daskms.optimisation import inlined_array
 from ducc0.wgridder import ms2dirty, dirty2ms
-from pfb.operators.psi import im2coef, coef2im
 from uuid import uuid4
 
 

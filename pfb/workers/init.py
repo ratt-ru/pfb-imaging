@@ -55,8 +55,8 @@ def init(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     pyscilog.log_to_file(f'init_{timestamp}.log')
     from daskms.fsspec_store import DaskMSStore
-    msstore = DaskMSStore.from_url_and_kw(opts.ms, {})
-    ms = msstore.fs.glob(opts.ms)
+    msstore = DaskMSStore(opts.ms.rstrip('/'))
+    ms = msstore.fs.glob(opts.ms.rstrip('/'))
     try:
         assert len(ms) > 0
         opts.ms = list(map(msstore.fs.unstrip_protocol, ms))
@@ -70,8 +70,8 @@ def init(**kw):
             opts.nworkers = 1
 
     if opts.gain_table is not None:
-        gainstore = DaskMSStore.from_url_and_kw(opts.gain_table, {})
-        gt = gainstore.fs.glob(opts.gain_table)
+        gainstore = DaskMSStore(opts.gain_table.rstrip('/'))
+        gt = gainstore.fs.glob(opts.gain_table.rstrip('/'))
         try:
             assert len(gt) > 0
             opts.gain_table = list(map(gainstore.fs.unstrip_protocol, gt))
@@ -115,6 +115,7 @@ def _init(**kw):
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
+    from daskms.fsspec_store import DaskMSStore
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
@@ -125,6 +126,15 @@ def _init(**kw):
     import xarray as xr
 
     basename = f'{opts.output_filename}_{opts.product}'
+
+    xdsstore = DaskMSStore(f'{basename}.xds.zarr')
+    if xdsstore.exists():
+        if opts.overwrite:
+            print(f"Overwriting {basename}.xds.zarr", file=log)
+            xdsstore.rm(recursive=True)
+        else:
+            raise ValueError(f"{basename}.xds.zarr exists. "
+                             "Set overwrite to overwrite it. ")
 
     # TODO - optional grouping.
     # We need to construct an identifier between

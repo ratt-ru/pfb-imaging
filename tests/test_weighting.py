@@ -124,7 +124,7 @@ def test_counts_dask(tmp_path_factory):
     mask = da.from_array(mask, chunks=(rc, -1))
     weight = da.from_array(weight, chunks=(rc, -1))
     counts_dask = compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                                 np.float64, wgt=weight)
+                                 np.float64, wgt=weight, mode='count')
 
     assert_allclose(counts, counts_dask.compute())
 
@@ -230,13 +230,13 @@ def test_uniform_dask(tmp_path_factory):
     freq = da.from_array(freq, chunks=-1)
     mask = da.ones((nrow, nchan), chunks=(rc, -1), dtype=bool)
     counts = compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                            np.float64)
+                            np.float64, mode='count')
 
     weights = counts_to_weights(counts, uvw, freq, nx, ny,
                                 cell_rad, cell_rad, -3)
 
     counts2 = compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                             np.float64, wgt=weights)
+                             np.float64, wgt=weights, mode='count')
 
     counts2 = counts2.compute()
     assert_allclose(counts2[counts2>0], 1)
