@@ -2,7 +2,7 @@
 cabs:
   'pfb_init':
     flavour: python-ext
-    command: (pfb.workers.init)init
+    command: pfb.workers.init.init
     policies:
       pass_missing_as_none: true
 
