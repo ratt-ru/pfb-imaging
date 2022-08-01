@@ -1,8 +1,8 @@
 
 cabs:
   'pfb_init':
-    flavour: python-ext
     command: pfb.workers.init.init
+    flavour: python-ext
     policies:
       pass_missing_as_none: true
 
@@ -10,85 +10,127 @@ cabs:
       - (pfb.parser)init.yaml
 
   'pfb_grid':
-    command: (pfb.workers.grid)grid
+    command: pfb.workers.grid.grid
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)grid.yaml
 
   'pfb_degrid':
-    command: (pfb.workers.degrid)degrid
+    command: pfb.workers.degrid.degrid
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)degrid.yaml
 
   'pfb_clean':
-    command: (pfb.workers.clean)clean
+    command: pfb.workers.clean.clean
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)clean.yaml
 
   'pfb_restore':
-    command: (pfb.workers.restore)restore
+    command: pfb.workers.restore.restore
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)restore.yaml
 
   'pfb_fwdbwd':
-    command: (pfb.workers.fwdbwd)fwdbwd
+    command: pfb.workers.fwdbwd.fwdbwd
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)fwdbwd.yaml
 
   'pfbmisc_forward':
-    command: (pfb.workers.misc.forward)forward
+    command: pfb.workers.misc.forward.forward
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)forward.yaml
 
   'pfbmisc_backward':
-    command: (pfb.workers.misc.backward)backward
+    command: pfb.workers.misc.backward.backward
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)backward.yaml
 
   'pfbmisc_gainspector':
-    command: (pfb.workers.misc.gainspector)gainspector
+    command: pfb.workers.misc.gainspector.gainspector
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)gainspector.yaml
 
   'pfbmisc_ift2qc':
-    command: (pfb.workers.misc.ift2qc)ift2qc
+    command: pfb.workers.misc.ift2qc.ift2qc
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)ift2qc.yaml
 
   'pfbmisc_fledges':
-    command: (pfb.workers.misc.fledges)fledges
+    command: pfb.workers.misc.fledges.fledges
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)fledges.yaml
 
   'pfbmisc_hthresh':
-    command: (pfb.workers.misc.hthresh)hthresh
+    command: pfb.workers.misc.hthresh.hthresh
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)hthresh.yaml
 
   'pfbmisc_bsmooth':
-    command: (pfb.workers.misc.bsmooth)bsmooth
+    command: pfb.workers.misc.bsmooth.bsmooth
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)bsmooth.yaml
 
   'pfbmisc_delay_init':
-    command: (pfb.workers.misc.delay_init)delay_init
+    command: pfb.workers.misc.delay_init.delay_init
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)delay_init.yaml
 
   'pfbmisc_zarr2fits':
-    command: (pfb.workers.misc.zarr2fits)zarr2fits
+    command: pfb.workers.misc.zarr2fits.zarr2fits
+    flavour: python-ext
+    policies:
+      pass_missing_as_none: true
 
     _include:
       - (pfb.parser)zarr2fits.yaml
