@@ -131,7 +131,6 @@ def _clean(**kw):
     from pfb.utils.misc import setup_image_data
     from pfb.deconv.hogbom import hogbom
     from pfb.deconv.clark import clark
-    from pfb.deconv.agroclean import agroclean
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.operators.hessian import hessian
     from pfb.opt.pcg import pcg
@@ -236,16 +235,6 @@ def _clean(**kw):
                                maxit=opts.hogbom_maxit,
                                verbosity=opts.verbose,
                                report_freq=opts.report_freq)
-        elif opts.algo.lower() == 'agroclean':
-            x, status = agroclean(residual, psf, psfo,
-                                  threshold=threshold,
-                                  gamma=opts.gamma,
-                                  pf=opts.peak_factor,
-                                  maxit=opts.clark_maxit,
-                                  subpf=opts.sub_peak_factor,
-                                  submaxit=opts.sub_maxit,
-                                  verbosity=opts.verbose,
-                                  report_freq=opts.report_freq)
         else:
             raise ValueError(f'{opts.algo} is not a valid algo option')
 

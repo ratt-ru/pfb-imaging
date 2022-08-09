@@ -47,6 +47,9 @@ def compute_counts_wrapper(uvw, freq, mask, nx, ny,
     elif mode=='grid':
         return _grid_weights(uvw[0], freq[0], mask[0], nx, ny,
                             cell_size_x, cell_size_y, dtype, wgt)
+    elif mode=='radial':
+        return _radial_weights(uvw[0], freq[0], mask[0], nx, ny,
+                            cell_size_x, cell_size_y, dtype, wgt)
     else:
         raise ValueError(f'Unknown mode {mode}')
 
@@ -73,7 +76,7 @@ def _grid_weights(uvw, freq, mask, nx, ny,
                     center_x=0, center_y=0,
                     epsilon=1e-7,
                     flip_v=False,
-                    do_wgridding=True,
+                    do_wgridding=False,
                     divide_by_n=True,
                     nthreads=2,
                     sigma_min=1.1, sigma_max=2.6,
@@ -83,6 +86,24 @@ def _grid_weights(uvw, freq, mask, nx, ny,
     counts = np.abs(genuine_hartley(iFs(psf), inorm=2, nthreads=2))
     counts = block_reduce(Fs(counts))
     return counts[None, :, :]
+
+
+def _radial_weights(uvw, freq, mask, nx, ny,
+                    cell_size_x, cell_size_y, dtype,
+                    wgt=None):
+
+    ugrid = np.fft.fftfreq(nx, cell_size_x)
+    vgrid = np.fft.fftfreq(ny, cell_size_y)
+    uu, vv = np.meshgrid(ugrid, vgrid)
+    uv = uu**2 + vv**2
+    uvmax = uv.max()
+
+    counts = uvmax
+
+
+
+
+
 
 
 @njit(nogil=True, fastmath=True, cache=True)

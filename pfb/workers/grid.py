@@ -176,11 +176,11 @@ def _grid(**kw):
 
     if os.path.isdir(dds_name):
         if opts.overwrite:
-            print(f'Removing {dds_name}', file=log)
+            print(f'Removing {dds_name} and {basename}.counts.zarr', file=log)
             import shutil
             shutil.rmtree(dds_name)
             try:
-                shutil.rmtree(f'{basename}_counts.zarr')
+                shutil.rmtree(f'{basename}.counts.zarr')
             except:
                 pass
         else:

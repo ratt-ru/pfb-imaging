@@ -825,3 +825,17 @@ def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):
         time_bin_indices = da.from_array(time_bin_indices, chunks=utimes_per_chunk)
         time_bin_counts = da.from_array(time_bin_counts, chunks=utimes_per_chunk)
     return tuple(row_chunks), time_bin_indices, time_bin_counts
+
+
+def add_column(ms, col_name, like_col="DATA", like_type=None):
+    if col_name not in ms.colnames():
+        desc = ms.getcoldesc(like_col)
+        desc['name'] = col_name
+        desc['comment'] = desc['comment'].replace(" ", "_")  # got this from Cyril, not sure why
+        dminfo = ms.getdminfo(like_col)
+        dminfo["NAME"] =  "{}-{}".format(dminfo["NAME"], col_name)
+        # if a different type is specified, insert that
+        if like_type:
+            desc['valueType'] = like_type
+        ms.addcols(desc, dminfo)
+    return ms
