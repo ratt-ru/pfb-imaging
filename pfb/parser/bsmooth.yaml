@@ -9,6 +9,7 @@ inputs:
     info: 'Gain term name'
   postfix:
     dtype: str
+    default: ''
     info: 'Postfix to attend to antenna and corr labels'
   reject_amp_thresh:
     dtype: float

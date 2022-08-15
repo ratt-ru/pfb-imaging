@@ -79,7 +79,8 @@ def _bsmooth(**kw):
         jhj = np.where(amp < opts.reject_amp_thresh, jhj, 0)
 
         phase = np.angle(g)
-        jhj = np.where(np.abs(phase) < np.deg2rad(opts.reject_phase_thresh), jhj, 0)
+        jhj = np.where(np.abs(phase) < np.deg2rad(opts.reject_phase_thresh),
+                       jhj, 0)
 
         # remove slope BEFORE averaging
         freq = ds.gain_f.values
@@ -133,20 +134,25 @@ def _bsmooth(**kw):
                               'gain_flags': (ds.GAIN_AXES[0:-1], flag)})
 
     ppath = gain_dir.parent
+    print(f"Writing smoothed gains to {str(ppath)}/"
+          f"smoothed.qc::{opts.gain_term}", file=log)
     writes = xds_to_zarr(xds, f'{str(ppath)}/smoothed.qc::{opts.gain_term}',
                          columns='ALL')
 
     bpass = dask.compute(bpass, writes)[0]
 
     if not opts.do_plots:
+        print("Not doing plots", file=log)
         quit()
 
     # set to NaN's for plotting
     bamp = np.where(wgt > 0, bamp, np.nan)
     bphase = np.where(wgt > 0, bphase, np.nan)
 
-    # samp = np.where(wgt > 0, samp, np.nan)
-    # sphase = np.where(wgt > 0, sphase, np.nan)
+    try:
+        xds = xds_from_zarr(f'{str(gain_dir)}::{opts.gain_term}')
+    except Exception as e:
+        xds = xds_from_zarr(f'{str(gain_dir)}/{opts.gain_term}')
 
     freq = xds[0].gain_f
     for p in range(nant):
@@ -182,4 +188,4 @@ def _bsmooth(**kw):
             plt.savefig(name, dpi=500, bbox_inches='tight')
             plt.close('all')
 
-
+    print("All done here", file=log)
