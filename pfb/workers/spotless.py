@@ -6,27 +6,27 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('FWDBWD')
+log = pyscilog.get_logger('SPOTLESS')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}
-for key in schema.fwdbwd["inputs"].keys():
-    defaults[key] = schema.fwdbwd["inputs"][key]["default"]
+for key in schema.spotless["inputs"].keys():
+    defaults[key] = schema.spotless["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.fwdbwd)
-def fwdbwd(**kw):
+@clickify_parameters(schema.spotless)
+def spotless(**kw):
     '''
-    Forward backward steps
+    Spotless algorithm
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'fwdbwd_{timestamp}.log')
+    pyscilog.log_to_file(f'spotless_{timestamp}.log')
 
     if opts.nworkers is None:
         if opts.scheduler=='distributed':
@@ -45,9 +45,9 @@ def fwdbwd(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _fwdbwd(**opts)
+        return _spotless(**opts)
 
-def _fwdbwd(**kw):
+def _spotless(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -151,16 +151,11 @@ def _fwdbwd(**kw):
     unpad_y = slice(npad_yl, -npad_yr)
     lastsize = ny + np.sum(psf_padding[-1])
 
-    npix = np.maximum(nx, ny)
-    l = -(nx//2) + np.arange(nx)
-    m = -(ny//2) + np.arange(ny)
-    s = (l[:, None]**2 + m[None, :]**2).astype(np.float64)
-    sigmainv = opts.sigmainv + 10*s**2/s.max()**2
-    M = lambda x: x / sigmainv**2
+    M = lambda x: x / opts.sigmainv
     # the PSF is normalised so we don't need to pass wsum
     hess = partial(_hessian_reg_psf, beam=mean_beam * mask[None],
                    psfhat=psfhat, nthreads=opts.nthreads,
-                   sigmainv=sigmainv, padding=psf_padding,
+                   sigmainv=opts.sigmainv, padding=psf_padding,
                    unpad_x=unpad_x, unpad_y=unpad_y, lastsize=lastsize)
 
     if opts.hessnorm is None:

@@ -67,9 +67,7 @@ def primal_dual(
 
     if k == maxit - 1:
         if verbosity:
-            print("Maximum iterations reached. "
-                  f"Relative difference between updates = {eps:.3e}",
-                  file=log)
+            print(f"Max iters reached. eps = {eps:.3e}", file=log)
     else:
         if verbosity:
             print(f"Success, converged after {k} iterations", file=log)

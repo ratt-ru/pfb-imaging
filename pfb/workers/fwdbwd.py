@@ -151,12 +151,15 @@ def _fwdbwd(**kw):
     unpad_y = slice(npad_yl, -npad_yr)
     lastsize = ny + np.sum(psf_padding[-1])
 
-    npix = np.maximum(nx, ny)
-    l = -(nx//2) + np.arange(nx)
-    m = -(ny//2) + np.arange(ny)
-    s = (l[:, None]**2 + m[None, :]**2).astype(np.float64)
-    sigmainv = opts.sigmainv + 10*s**2/s.max()**2
-    M = lambda x: x / sigmainv**2
+    residual_mfs = np.sum(residual, axis=0)
+    rms = np.std(residual_mfs)
+    rmax = residual_mfs.max()
+
+    lcoord = -(nx//2) + np.arange(nx)
+    mcoord = -(ny//2) + np.arange(ny)
+    scoord = (lcoord[:, None]**2 + mcoord[None, :]**2).astype(np.float64)
+    sigmainv = opts.sigmainv + (scoord/scoord.max())**4/rms**2
+    M = lambda x: x / sigmainv
     # the PSF is normalised so we don't need to pass wsum
     hess = partial(_hessian_reg_psf, beam=mean_beam * mask[None],
                    psfhat=psfhat, nthreads=opts.nthreads,
@@ -165,9 +168,11 @@ def _fwdbwd(**kw):
 
     if opts.hessnorm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
-        hessnorm, _ = power_method(hess, (nband, nx, ny), tol=opts.pm_tol,
-                                   maxit=opts.pm_maxit, verbosity=opts.pm_verbose,
-                                   report_freq=opts.pm_report_freq)
+        hessnorm, hessbeta = power_method(hess, (nband, nx, ny),
+                                          tol=opts.pm_tol,
+                                          maxit=opts.pm_maxit,
+                                          verbosity=opts.pm_verbose,
+                                          report_freq=opts.pm_report_freq)
     else:
         hessnorm = opts.hessnorm
 
@@ -192,9 +197,6 @@ def _fwdbwd(**kw):
     freq_out = mds.band.values
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
 
-    residual_mfs = np.sum(residual, axis=0)
-    rms = np.std(residual_mfs)
-    rmax = residual_mfs.max()
     print(f"It {0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for i in range(opts.niter):
         print('Getting update', file=log)
@@ -266,6 +268,16 @@ def _fwdbwd(**kw):
               file=log)
         if eps < opts.tol:
             break
+
+        sigmainv = opts.sigmainv + (scoord/scoord.max())**4/rms**2
+        M = lambda x: x / sigmainv
+        hessnorm, hessbeta = power_method(hess, (nband, nx, ny),
+                                          b0=hessbeta,
+                                          tol=opts.pm_tol,
+                                          maxit=opts.pm_maxit,
+                                          verbosity=opts.pm_verbose,
+                                          report_freq=opts.pm_report_freq)
+
 
     print("Saving results", file=log)
     mask = np.any(model, axis=0).astype(bool)
