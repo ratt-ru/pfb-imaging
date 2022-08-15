@@ -175,7 +175,7 @@ def _hessian_reg_psf(x, beam, psfhat,
     if beam is not None:
         im *= beam
 
-    if sigmainv:
+    if np.any(sigmainv):
         return im + x * sigmainv**2
     else:
         return im

@@ -6,12 +6,12 @@ from pfb.utils.weighting import (_compute_counts, _counts_to_weights,
 
 pmp = pytest.mark.parametrize
 
-def test_counts(tmp_path_factory):
+def test_counts():  #tmp_path_factory):
     '''
     Compares _compute_counts to memory greedy numpy implementation
     '''
-    test_dir = tmp_path_factory.mktemp("test_weighting")
-    # test_dir = Path('/home/landman/data/')
+    # test_dir = tmp_path_factory.mktemp("test_weighting")
+    test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
@@ -50,6 +50,7 @@ def test_counts(tmp_path_factory):
     mask = np.ones((nrow, nchan), dtype=bool)
     counts = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
                              dtype=np.float64).squeeze()
+    quit()
     ku = np.sort(np.fft.fftfreq(nx, cell_rad))
     # shift by half a pixel to get bin edges
     kucell = ku[1] - ku[0]
@@ -242,4 +243,4 @@ def test_uniform_dask(tmp_path_factory):
     assert_allclose(counts2[counts2>0], 1)
 
 
-# test_uniform_dask()
+test_counts()

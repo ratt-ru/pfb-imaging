@@ -10,8 +10,7 @@ Fs = np.fft.fftshift
 
 
 def compute_counts(uvw, freq, mask, nx, ny,
-                   cell_size_x, cell_size_y, dtype, wgt=None,
-                   mode='grid'):
+                   cell_size_x, cell_size_y, dtype, wgt=None):
 
     if wgt is not None:
         wgt_out = ('row', 'chan')
@@ -28,7 +27,6 @@ def compute_counts(uvw, freq, mask, nx, ny,
                           cell_size_y, None,
                           dtype, None,
                           wgt, wgt_out,
-                          mode, None,
                           new_axes={"nx": nx, "ny": ny},
                           adjust_chunks={'row': 1},
                           align_arrays=False,
@@ -38,78 +36,17 @@ def compute_counts(uvw, freq, mask, nx, ny,
 
 
 def compute_counts_wrapper(uvw, freq, mask, nx, ny,
-                           cell_size_x, cell_size_y, dtype, wgt, mode):
+                           cell_size_x, cell_size_y, dtype, wgt):
     if wgt is not None:
         wgt = wgt[0]
-    if mode=='count':
-        return _compute_counts(uvw[0], freq[0], mask[0], nx, ny,
-                            cell_size_x, cell_size_y, dtype, wgt)
-    elif mode=='grid':
-        return _grid_weights(uvw[0], freq[0], mask[0], nx, ny,
-                            cell_size_x, cell_size_y, dtype, wgt)
-    elif mode=='radial':
-        return _radial_weights(uvw[0], freq[0], mask[0], nx, ny,
-                            cell_size_x, cell_size_y, dtype, wgt)
-    else:
-        raise ValueError(f'Unknown mode {mode}')
-
-
-def _grid_weights(uvw, freq, mask, nx, ny,
-                  cell_size_x, cell_size_y, dtype,
-                  wgt=None):
-
-    # accumulate counts
-    nrow = uvw.shape[0]
-    nchan = freq.size
-    rtype = np.result_type(np.complex64, dtype)
-    if wgt is None:
-        wgt = np.ones((nrow, nchan), dtype=rtype)
-    else:
-        wgt = wgt.astype(rtype)
-
-    psf = vis2dirty(uvw=uvw,
-                    freq=freq,
-                    vis=wgt,
-                    mask=mask,
-                    npix_x=nx, npix_y=ny,
-                    pixsize_x=cell_size_x, pixsize_y=cell_size_y,
-                    center_x=0, center_y=0,
-                    epsilon=1e-7,
-                    flip_v=False,
-                    do_wgridding=False,
-                    divide_by_n=True,
-                    nthreads=2,
-                    sigma_min=1.1, sigma_max=2.6,
-                    double_precision_accumulation=True)
-
-    psf = np.pad(psf, ((nx//2, nx//2), (ny//2, ny//2)), mode='constant')
-    counts = np.abs(genuine_hartley(iFs(psf), inorm=2, nthreads=2))
-    counts = block_reduce(Fs(counts))
-    return counts[None, :, :]
-
-
-def _radial_weights(uvw, freq, mask, nx, ny,
-                    cell_size_x, cell_size_y, dtype,
-                    wgt=None):
-
-    ugrid = np.fft.fftfreq(nx, cell_size_x)
-    vgrid = np.fft.fftfreq(ny, cell_size_y)
-    uu, vv = np.meshgrid(ugrid, vgrid)
-    uv = uu**2 + vv**2
-    uvmax = uv.max()
-
-    counts = uvmax
-
-
-
-
-
+    return _compute_counts(uvw[0], freq[0], mask[0], nx, ny,
+                        cell_size_x, cell_size_y, dtype, wgt)
 
 
 @njit(nogil=True, fastmath=True, cache=True)
 def _compute_counts(uvw, freq, mask, nx, ny,
                     cell_size_x, cell_size_y, dtype,
-                    wgt=None):
+                    wgt=None, k=6):  # support hardcoded for now
     # ufreq
     u_cell = 1/(nx*cell_size_x)
     # shifts fftfreq such that they start at zero
@@ -131,21 +68,44 @@ def _compute_counts(uvw, freq, mask, nx, ny,
         wgt = np.ones((nrow, nchan))
 
     normfreq = freq / lightspeed
+    ko2 = k//2
+    ko2sq = ko2**2
     for r in range(nrow):
         uvw_row = uvw[r]
+        wgt_row = wgt[r]
         for c in range(nchan):
             if not mask[r, c]:
                 continue
-            # get current uv coords
+            wgt_row_chan = wgt_row[c]
+            # current uv coords
             chan_normfreq = normfreq[c]
             u_tmp = uvw_row[0] * chan_normfreq
             v_tmp = uvw_row[1] * chan_normfreq
-            # get u index
-            u_idx = int(np.floor((u_tmp + umax)/u_cell))
-            # get v index
-            v_idx = int(np.floor((v_tmp + vmax)/v_cell))
-            counts[0, u_idx, v_idx] += wgt[r, c]
+            # pixel coordinates
+            ug = (u_tmp + umax)/u_cell
+            vg = (v_tmp + vmax)/v_cell
+            if k:
+                # indices
+                u_idx = int(np.round(ug))
+                v_idx = int(np.round(vg))
+                for i in range(-ko2, ko2):
+                    x_idx = i + u_idx
+                    x = x_idx - ug + 0.5
+                    val = _es_kernel(x/ko2, 2.3, k) * wgt_row_chan
+                    for j in range(-ko2, ko2):
+                        y_idx = j + v_idx
+                        y = y_idx - vg + 0.5
+                        counts[0, x_idx, y_idx] += val * _es_kernel(y/ko2, 2.3, k)
+            else:  # nearest neighbour
+                # indices
+                u_idx = int(np.floor(ug))
+                v_idx = int(np.floor(vg))
+                counts[0, u_idx, v_idx] += wgt_row_chan
     return counts
+
+@njit(nogil=True, fastmath=True, cache=True, inline='always')
+def _es_kernel(x, beta, k):
+    return np.exp(beta*k*(np.sqrt((1-x)*(1+x)) - 1))
 
 
 def counts_to_weights(counts, uvw, freq, nx, ny,
@@ -234,8 +194,15 @@ def _filter_extreme_counts(counts, nbox=16, level=10):
             ihigh = np.minimum(nx, i+nbox//2)
             jlow = np.maximum(0, j-nbox//2)
             jhigh = np.minimum(ny, j+nbox//2)
-            local_mean = np.mean(cb[ilow:ihigh, jlow:jhigh])
-            if 1/cb[i,j] > level/local_mean:
+            tmp = cb[ilow:ihigh, jlow:jhigh]
+            ix, iy = np.where(tmp)
+            # check if there are too few values to compare to
+            if ix.size < nbox:
+                counts[b, i, j] = 0
+                continue
+            local_mean = np.mean(tmp[ix, iy])
+            if cb[i,j] < local_mean/level:
                 counts[b, i, j] = local_mean
     return counts
+
 
