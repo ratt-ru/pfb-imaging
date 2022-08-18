@@ -27,6 +27,10 @@ inputs:
     dtype: bool
     default: false
     info: 'Make per antenna plots'
+  detrend:
+    dtype: bool
+    default: true
+    info: Remove slope of phase before averaging
 
 
 outputs:

@@ -84,17 +84,18 @@ def _bsmooth(**kw):
 
         # remove slope BEFORE averaging
         freq = ds.gain_f.values
-        for p in range(nant):
-            for c in range(ncorr):
-                idx = np.where(jhj[0, :, p, 0, c] > 0)[0]
-                if idx.size < 2:
-                    continue
-                # enforce zero offset and slope
-                w = np.sqrt(jhj[0, idx, p, 0, c])
-                y = phase[0, idx, p, 0, c]
-                f = freq[idx]
-                coeffs = np.polyfit(f, y, 1, w=w)
-                phase[0, idx, p, 0, c] -= np.polyval(coeffs, f)
+        if opts.detrend:
+            for p in range(nant):
+                for c in range(ncorr):
+                    idx = np.where(jhj[0, :, p, 0, c] > 0)[0]
+                    if idx.size < 2:
+                        continue
+                    # enforce zero offset and slope
+                    w = np.sqrt(jhj[0, idx, p, 0, c])
+                    y = phase[0, idx, p, 0, c]
+                    f = freq[idx]
+                    coeffs = np.polyfit(f, y, 1, w=w)
+                    phase[0, idx, p, 0, c] -= np.polyval(coeffs, f)
 
 
         bamp += amp*jhj
