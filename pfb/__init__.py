@@ -23,16 +23,17 @@ def set_client(opts, stack, log, scheduler='distributed'):
     else:
         nthreads = int(opts.nthreads)
 
-    # configure memory limit
-    if opts.mem_limit is None:
-        if opts.host_address is not None:
-            raise ValueError("You have to specify mem-limit when using a distributed scheduler")
-        import psutil
-        mem_limit = int(psutil.virtual_memory()[1]/1e9)  # all available memory by default
-        with open_dict(opts):
-            opts.mem_limit = mem_limit
-    else:
-        mem_limit = int(opts.mem_limit)
+    # deprecated for now
+    # # configure memory limit
+    # if opts.mem_limit is None:
+    #     if opts.host_address is not None:
+    #         raise ValueError("You have to specify mem-limit when using a distributed scheduler")
+    #     import psutil
+    #     mem_limit = int(psutil.virtual_memory()[1]/1e9)  # all available memory by default
+    #     with open_dict(opts):
+    #         opts.mem_limit = mem_limit
+    # else:
+    #     mem_limit = int(opts.mem_limit)
 
     if opts.nworkers is None:
         raise ValueError("You have to specify the number of workers")

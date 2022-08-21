@@ -136,6 +136,7 @@ def _clean(**kw):
     from pfb.opt.pcg import pcg
     from pfb.operators.hessian import hessian_xds
     from pfb.operators.psf import _hessian_reg_psf
+    from scipy import ndimage
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -241,7 +242,12 @@ def _clean(**kw):
         # if clean has stalled or not converged do flux mop step
         if opts.mop_flux and status:
             print(f"Mopping flux at iter {k+1}", file=log)
-            mask = (np.any(x, axis=0) | np.any(model, axis=0))[None, :, :]
+            mask = (np.any(x, axis=0) | np.any(model, axis=0))
+            if opts.dirosion:
+                struct = ndimage.generate_binary_structure(2, opts.dirosion)
+                mask = ndimage.binary_dilation(mask, structure=struct)
+                mask = ndimage.binary_erosion(mask, structure=struct)
+            mask = mask[None, :, :]
             x = pcg(lambda x: mask * psfo(mask*x), mask * residual, x,
                     tol=opts.cg_tol, maxit=opts.cg_maxit,
                     minit=opts.cg_minit, verbosity=opts.cg_verbose,
@@ -264,7 +270,7 @@ def _clean(**kw):
         # save_fits(opts.output_filename + f'_convim_mfs{k}.fits',
         #           np.sum(convimage, axis=0), hdr_mfs)
 
-        rms = np.std(residual_mfs)
+        rms = np.std(residual_mfs[~np.any(model, axis=0)])
         rmax = np.abs(residual_mfs).max()
 
         print(f"Iter {k+1}: peak residual = {rmax}, rms = {rms}", file=log)
@@ -282,7 +288,6 @@ def _clean(**kw):
     print("Saving results", file=log)
     if opts.update_mask:
         mask = np.any(model > rms, axis=0)
-        from scipy import ndimage
         if opts.dirosion:
             struct = ndimage.generate_binary_structure(2, opts.dirosion)
             mask = ndimage.binary_dilation(mask, structure=struct)

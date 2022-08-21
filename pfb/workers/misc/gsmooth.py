@@ -4,19 +4,19 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('TSMOOTH')
+log = pyscilog.get_logger('GSMOOTH')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}
-for key in schema.tsmooth["inputs"].keys():
-    defaults[key] = schema.tsmooth["inputs"][key]["default"]
+for key in schema.gsmooth["inputs"].keys():
+    defaults[key] = schema.gsmooth["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.tsmooth)
-def tsmooth(**kw):
+@clickify_parameters(schema.gsmooth)
+def gsmooth(**kw):
     '''
     Smooth and plot 1D gain solutions with a median filter
     '''
@@ -32,13 +32,15 @@ def tsmooth(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    return _tsmooth(**opts)
+    return _gsmooth(**opts)
 
-def _tsmooth(**kw):
+def _gsmooth(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
     import numpy as np
+    import dask
+    dask.config.set(**{'array.slicing.split_large_chunks': False})
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pathlib import Path
     import matplotlib as mpl
@@ -58,63 +60,37 @@ def _tsmooth(**kw):
 
     xds_concat = xr.concat(xds, dim='gain_t').sortby('gain_t')
 
-    nscan = len(xds)
     ntime, nchan, nant, ndir, ncorr = xds_concat.gains.data.shape
     if nchan > 1:
         raise ValueError("Only time smoothing currently supported")
     if ndir > 1:
         raise ValueError("Only time smoothing currently supported")
 
-    bamp = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
-    bphase = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
-    wgt = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
-    for ds in xds:
-        jhj = np.abs(ds.jhj.values)
-        g = ds.gains.values
-        f = ds.gain_flags.values
-        flag = np.any(jhj == 0, axis=-1)
-        flag = np.logical_or(flag, f)# [:, :, :, :, None]
 
-        for c in range(ncorr):
-            jhj[flag, c] = 0.0
+    wgt = np.abs(xds_concat.jhj.values)
+    g = xds_concat.gains.values
+    f = xds_concat.gain_flags.values
+    flag = np.any(wgt == 0, axis=-1)
+    flag = np.logical_or(flag, f)
 
-        amp = np.abs(g)
-        jhj = np.where(amp < opts.reject_amp_thresh, jhj, 0)
+    for c in range(ncorr):
+        wgt[flag, c] = 0.0
 
-        phase = np.angle(g)
-        jhj = np.where(np.abs(phase) < np.deg2rad(opts.reject_phase_thresh), jhj, 0)
+    gamp = np.abs(g)
+    gphase = np.angle(g)
+    time = xds_concat.gain_t.values
 
-        for p in range(nant):
-            for c in range(ncorr):
-                idx = np.where(jhj[0, :, p, 0, c] > 0)[0]
-                if idx.size < 2:
-                    continue
-                # enforce zero offset and slope
-                w = np.sqrt(jhj[0, idx, p, 0, c])
-                y = phase[0, idx, p, 0, c]
-                f = freq[idx]
-                coeffs = np.polyfit(f, y, 1, w=w)
-                phase[0, idx, p, 0, c] -= np.polyval(coeffs, f)
-
-
-    # flagged data get's set to ones
-    bamp = np.where(wgt > 0, bamp/wgt, 1)
-    bphase = np.where(wgt > 0, bphase/wgt, 0)
-    flag = wgt>0
-    # flag has no corr axis
-    flag = np.any(flag, axis=-1)
-
-    samp = np.zeros_like(bamp)
-    sphase = np.zeros_like(bamp)
+    samp = np.zeros_like(amp)
+    sphase = np.zeros_like(phase)
     for p in range(nant):
         for c in range(ncorr):
-            idx = np.where(jhj[0, :, p, 0, c] > 0)[0]
+            idx = np.where(jhj[:, 0, p, 0, c] > 0)[0]
             if idx.size < 2:
                 continue
-            x = freq[idx]
-            w = np.sqrt(wgt[0, idx, p, 0, c])
-            amp = bamp[0, idx, p, 0, c]
-            amplin = np.interp(freq, x, amp)
+            x = time[idx]
+            w = np.sqrt(wgt[idx, 0, p, 0, c])
+            amp = gamp[idx, 0, p, 0, c]
+            amplin = np.interp(time, x, amp)
             samp[0, :, p, 0, c] = median_filter(amplin, size=opts.filter_size)
             phase = bphase[0, idx, p, 0, c]
             phaselin = np.interp(freq, x, phase)
