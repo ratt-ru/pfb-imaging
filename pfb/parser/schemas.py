@@ -32,6 +32,8 @@ if schema is None:
     # and a set containing locations of .yaml configs for pfb workers
     schema = OmegaConf.create(tmp[0])
 
+    import pdb; pdb.set_trace()
+
 
 
 

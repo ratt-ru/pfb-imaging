@@ -119,7 +119,7 @@ def kanterp(x, y, w, niter, nu0=5):
     m, P = Kfilter(m0, P0, x, y, H, w, sigma)
     ms, Ps, G = RTSsmoother(m, P, x, sigma)
 
-    return ms, Ps
+    # return ms, Ps
 
     m0 = ms[:, 0]
     P0 = Ps[:, :, 0]
@@ -169,7 +169,7 @@ def kanterp(x, y, w, niter, nu0=5):
 
 # np.random.seed(420)
 
-# N = 101
+# N = 512
 # x = np.sort(np.random.random(N))
 # xp = np.linspace(0, 1, 100)
 # f = func(x)
@@ -180,15 +180,15 @@ def kanterp(x, y, w, niter, nu0=5):
 # y = f + n
 
 # # add outliers
-# for i in range(0):  #int(0.1*N)):
+# for i in range(int(0.1*N)):
 #     idx = np.random.randint(0, N)
 #     y[idx] += 10 * np.random.randn()
-#     w[idx] = 0
-#     sigman[idx] = 1e7
+#     # w[idx] = 0
+#     # sigman[idx] = 1e7
 
 # iplot = np.where(w!=0)
 
-# ms, Ps = kanterp(x, y, w, 1, nu0=5)
+# ms, Ps = kanterp(x, y, w, 3, nu0=5)
 
 # import matplotlib.pyplot as plt
 
