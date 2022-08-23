@@ -49,7 +49,6 @@ def init(**kw):
     (eg. the number threads given to each gridder instance).
 
     '''
-    import pdb; pdb.set_trace()
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
     import time
