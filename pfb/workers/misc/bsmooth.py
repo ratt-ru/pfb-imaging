@@ -134,10 +134,10 @@ def _bsmooth(**kw):
         xds[i] = ds.assign(**{'gains': (ds.GAIN_AXES, bpass),
                               'gain_flags': (ds.GAIN_AXES[0:-1], flag)})
 
-    ppath = gain_dir.parent
-    print(f"Writing smoothed gains to {str(ppath)}/"
+
+    print(f"Writing smoothed gains to {str(gain_dir)}/"
           f"smoothed.qc::{opts.gain_term}", file=log)
-    writes = xds_to_zarr(xds, f'{str(ppath)}/smoothed.qc::{opts.gain_term}',
+    writes = xds_to_zarr(xds, f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
                          columns='ALL')
 
     bpass = dask.compute(bpass, writes)[0]
@@ -155,7 +155,7 @@ def _bsmooth(**kw):
     except Exception as e:
         xds = xds_from_zarr(f'{str(gain_dir)}/{opts.gain_term}')
 
-    freq = xds[0].gain_f
+    freq = xds[0].gain_f/1e6
     for p in range(nant):
         for c in range(ncorr):
             fig, ax = plt.subplots(nrows=1, ncols=2,
@@ -185,7 +185,7 @@ def _bsmooth(**kw):
             ax[1].set_xlabel('freq / [MHz]')
 
             fig.tight_layout()
-            name = f'{str(ppath)}/Antenna{p}corr{c}{opts.postfix}.png'
+            name = f'{str(gain_dir)}/{opts.gain_term}_Antenna{p}corr{c}.png'
             plt.savefig(name, dpi=500, bbox_inches='tight')
             plt.close('all')
 

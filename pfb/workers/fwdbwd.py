@@ -158,7 +158,7 @@ def _fwdbwd(**kw):
     lcoord = -(nx//2) + np.arange(nx)
     mcoord = -(ny//2) + np.arange(ny)
     scoord = (lcoord[:, None]**2 + mcoord[None, :]**2).astype(np.float64)
-    sigmainv = opts.sigmainv + (scoord/scoord.max())**4/rms**2
+    sigmainv = opts.sigmainv + nband * (scoord/scoord.max())**4/rms**2
     M = lambda x: x / sigmainv
     # the PSF is normalised so we don't need to pass wsum
     hess = partial(_hessian_reg_psf, beam=mean_beam * mask[None],

@@ -50,6 +50,7 @@ def _gsmooth(**kw):
     import dask
     from scipy.ndimage import median_filter
     import xarray as xr
+    from pfb.utils.regression import gpr
 
     gain_dir = Path(opts.gain_dir).resolve()
 
@@ -67,92 +68,115 @@ def _gsmooth(**kw):
         raise ValueError("Only time smoothing currently supported")
 
 
-    wgt = np.abs(xds_concat.jhj.values)
+    jhj = np.abs(xds_concat.jhj.values)
     g = xds_concat.gains.values
     f = xds_concat.gain_flags.values
-    flag = np.any(wgt == 0, axis=-1)
+    flag = np.any(jhj == 0, axis=-1)
     flag = np.logical_or(flag, f)
 
     for c in range(ncorr):
-        wgt[flag, c] = 0.0
+        jhj[flag, c] = 0.0
 
     gamp = np.abs(g)
     gphase = np.angle(g)
     time = xds_concat.gain_t.values
+    # the coordinate needs to be scaled to lie in (0, 1)
+    tmin = time.min()
+    tmax = time.max()
+    t = (time - tmin)/(tmax - tmin)
+    t += 0.01
+    t *= 0.99/t.max()
 
-    samp = np.zeros_like(amp)
-    sphase = np.zeros_like(phase)
-    for p in range(nant):
+    samp = np.zeros_like(gamp)
+    sampcov = np.zeros_like(gamp)
+    sphase = np.zeros_like(gphase)
+    sphasecov = np.zeros_like(gamp)
+    for p in range(3): #nant):
+        print(p)
         for c in range(ncorr):
             idx = np.where(jhj[:, 0, p, 0, c] > 0)[0]
             if idx.size < 2:
                 continue
-            x = time[idx]
-            w = np.sqrt(wgt[idx, 0, p, 0, c])
-            amp = gamp[idx, 0, p, 0, c]
-            amplin = np.interp(time, x, amp)
-            samp[0, :, p, 0, c] = median_filter(amplin, size=opts.filter_size)
-            phase = bphase[0, idx, p, 0, c]
-            phaselin = np.interp(freq, x, phase)
-            sphase[0, :, p, 0, c] = median_filter(phaselin,
-                                                  size=opts.filter_size)
+            w = jhj[:, 0, p, 0, c]
+            amp = gamp[:, 0, p, 0, c]
+            # mus, covs = kanterp(t, amp, w, opts.niter, nu0=2)
+            # samp[:, 0, p, 0, c] = mus[0, :]
+            # sampcov[:, 0, p, 0, c] = covs[0, 0, :]
+            mu, cov = gpr(amp, t, w, t)
+            samp[:, 0, p, 0, c] = mu
+            sampcov[:, 0, p, 0, c] = cov
+            phase = gphase[:, 0, p, 0, c]
+            wp = w/samp[:, 0, p, 0, c]
+            # mus, covs = kanterp(t, phase, wp, opts.niter, nu0=2)
+            # sphase[:, 0, p, 0, c] = mus[0, :]
+            # sphasecov[:, 0, p, 0, c] = covs[0, 0, :]
+            mu, cov = gpr(phase, t, wp, t)
+            sphase[:, 0, p, 0, c] = mu
+            sphasecov[:, 0, p, 0, c] = cov
 
 
-    bpass = samp * np.exp(1.0j*sphase)
-    bpass = da.from_array(bpass, chunks=(-1, -1, -1, -1, -1))
-    flag = da.from_array(flag, chunks=(-1, -1, -1, -1))
-    for i, ds in enumerate(xds):
-        xds[i] = ds.assign(**{'gains': (ds.GAIN_AXES, bpass),
-                              'gain_flags': (ds.GAIN_AXES[0:-1], flag)})
+    # gs = samp * np.exp(1.0j*sphase)
+    # gs = da.from_array(gs, chunks=(-1, -1, -1, -1, -1))
+    # flag = da.from_array(flag, chunks=(-1, -1, -1, -1))
+    # for i, ds in enumerate(xds):
+    #     xds[i] = ds.assign(**{'gains': (ds.GAIN_AXES, gs),
+    #                           'gain_flags': (ds.GAIN_AXES[0:-1], flag)})
 
-    ppath = gain_dir.parent
-    writes = xds_to_zarr(xds, f'{str(ppath)}/smoothed.qc::{opts.gain_term}',
-                         columns='ALL')
+    # ppath = gain_dir.parent
+    # writes = xds_to_zarr(xds, f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
+    #                      columns='ALL')
 
-    bpass = dask.compute(bpass, writes)[0]
+    # gs = dask.compute(gs, writes)[0]
 
     if not opts.do_plots:
         quit()
 
     # set to NaN's for plotting
-    bamp = np.where(wgt > 0, bamp, np.nan)
-    bphase = np.where(wgt > 0, bphase, np.nan)
+    gamp = np.where(jhj > 0, gamp, np.nan)
+    gphase = np.where(jhj > 0, gphase, np.nan)
 
     # samp = np.where(wgt > 0, samp, np.nan)
     # sphase = np.where(wgt > 0, sphase, np.nan)
 
-    freq = xds[0].gain_f
-    for p in range(nant):
+    print("Plotting results", file=log)
+    for p in range(3):  #nant):
         for c in range(ncorr):
             fig, ax = plt.subplots(nrows=1, ncols=2,
                                 figsize=(18, 18))
             fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
 
-            for s, ds in enumerate(xds):
-                jhj = ds.jhj.values.real[0, :, p, 0, c]
-                f = ds.gain_flags.values[0, :, p, 0]
-                flag = np.logical_or(jhj==0, f)
-                tamp = np.abs(xds[s].gains.values[0, :, p, 0, c])
-                tphase = np.angle(xds[s].gains.values[0, :, p, 0, c])
-                tamp[flag] = np.nan
-                tphase[flag] = np.nan
+            # for s, ds in enumerate(xds):
+            #     jhj = ds.jhj.values.real[0, :, p, 0, c]
+            #     f = ds.gain_flags.values[0, :, p, 0]
+            #     flag = np.logical_or(jhj==0, f)
+            #     tamp = np.abs(xds[s].gains.values[0, :, p, 0, c])
+            #     tphase = np.angle(xds[s].gains.values[0, :, p, 0, c])
+            #     tamp[flag] = np.nan
+            #     tphase[flag] = np.nan
 
-                ax[0].plot(freq, tamp, label=f'scan-{s}', alpha=0.5, linewidth=1)
-                ax[1].plot(freq, np.rad2deg(tphase), label=f'scan-{s}', alpha=0.5, linewidth=1)
+            #     ax[0].plot(freq, tamp, label=f'scan-{s}', alpha=0.5, linewidth=1)
+            #     ax[1].plot(freq, np.rad2deg(tphase), label=f'scan-{s}', alpha=0.5, linewidth=1)
 
-            ax[0].plot(freq, bamp[0, :, p, 0, c], 'k', label='inf', linewidth=1)
-            ax[0].plot(freq, samp[0, :, p, 0, c], 'r', label='smooth', linewidth=1)
+            sigma = 1.0/np.sqrt(jhj[:, 0, p, 0, c])
+            amp = gamp[:, 0, p, 0, c]
+            ax[0].errorbar(time, amp, sigma, fmt='xr')
+            ax[0].errorbar(time, samp[:, 0, p, 0, c], np.sqrt(sampcov[:, 0, p, 0, c]),
+                           fmt='ok', label='smooth')
             ax[0].legend()
-            ax[0].set_xlabel('freq / [MHz]')
+            ax[0].set_xlabel('time')
 
-            ax[1].plot(freq, np.rad2deg(bphase[0, :, p, 0, c]), 'k', label='inf', linewidth=1)
-            ax[1].plot(freq, np.rad2deg(sphase[0, :, p, 0, c]), 'r', label='smooth', linewidth=1)
+            sigmap = sigma/amp
+            ax[1].errorbar(time, np.rad2deg(gphase[:, 0, p, 0, c]), sigmap, fmt='xr')
+            ax[1].errorbar(time, np.rad2deg(sphase[:, 0, p, 0, c]), np.rad2deg(np.sqrt(sphasecov[:, 0, p, 0, c])),
+                       fmt='ok', label='smooth')
             ax[1].legend()
-            ax[1].set_xlabel('freq / [MHz]')
+            ax[1].set_xlabel('time')
 
             fig.tight_layout()
-            name = f'{str(ppath)}/Antenna{p}corr{c}{opts.postfix}.png'
-            plt.savefig(name, dpi=500, bbox_inches='tight')
+            name = f'{str(gain_dir)}/{opts.gain_term}_Antenna{p}corr{c}.png'
+            plt.savefig(name, dpi=250, bbox_inches='tight')
             plt.close('all')
+
+    print("All done here.", file=log)
 
 

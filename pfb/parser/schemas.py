@@ -32,6 +32,10 @@ if schema is None:
     # and a set containing locations of .yaml configs for pfb workers
     schema = OmegaConf.create(tmp[0])
 
+    for worker in schema.keys():
+        for param in schema[worker]['inputs']:
+            if schema[worker]['inputs'][param]['default'] == '<UNSET>':
+                schema[worker]['inputs'][param]['default'] = None
 
 
 

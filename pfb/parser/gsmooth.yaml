@@ -7,9 +7,6 @@ inputs:
     dtype: str
     abbreviation: gt
     info: 'Gain term name'
-  postfix:
-    dtype: str
-    info: 'Postfix to attend to antenna and corr labels'
   reject_amp_thresh:
     dtype: float
     default: 2.0
@@ -18,10 +15,10 @@ inputs:
     dtype: float
     default: 7.5
     info: 'Discard data where abs(phase) is above this number'
-  filter_size:
+  niter:
     dtype: int
     default: 5
-    info: Median filter window size (larger -> more smoothing)
+    info: Number of reweighting iterations (larger -> more smoothing)
   do_plots:
     dtype: bool
     default: false
