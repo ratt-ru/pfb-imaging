@@ -78,7 +78,7 @@ def _bsmooth(**kw):
         amp = np.abs(g)
         jhj = np.where(amp < opts.reject_amp_thresh, jhj, 0)
 
-        phase = np.angle(g)
+        phase = np.angle(g) - np.angle(g[:, :, opts.ref_ant])[:, :, None]
         jhj = np.where(np.abs(phase) < np.deg2rad(opts.reject_phase_thresh),
                        jhj, 0)
 

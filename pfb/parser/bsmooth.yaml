@@ -2,35 +2,48 @@ inputs:
   gain_dir:
     dtype: str
     abbreviation: gd
-    info: 'Path to gain directory'
+    info:
+      Path to gain directory
   gain_term:
     dtype: str
     abbreviation: gt
-    info: 'Gain term name'
+    info:
+      Gain term name
   postfix:
     dtype: str
     default: ''
-    info: 'Postfix to attend to antenna and corr labels'
+    info:
+      Postfix to attend to antenna and corr labels
+  ref_ant:
+    dtype: int
+    default: -1
+    info:
+      Reference antenna (will have zero phase)
   reject_amp_thresh:
     dtype: float
     default: 2.0
-    info: 'Discard data where amplitudes are above this value'
+    info:
+      Discard data where amplitudes are above this value
   reject_phase_thresh:
     dtype: float
     default: 7.5
-    info: 'Discard data where abs(phase) is above this number'
+    info:
+      Discard data where abs(phase) is above this number
   filter_size:
     dtype: int
     default: 5
-    info: Median filter window size (larger -> more smoothing)
+    info:
+      Median filter window size (larger -> more smoothing)
   do_plots:
     dtype: bool
     default: false
-    info: 'Make per antenna plots'
+    info:
+      Make per antenna plots
   detrend:
     dtype: bool
     default: true
-    info: Remove slope of phase before averaging
+    info:
+      Remove slope of phase before averaging
 
 
 outputs:
