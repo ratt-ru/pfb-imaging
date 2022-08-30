@@ -167,7 +167,8 @@ def _bsmooth(**kw):
                 f = ds.gain_flags.values[0, :, p, 0]
                 flag = np.logical_or(jhj==0, f)
                 tamp = np.abs(xds[s].gains.values[0, :, p, 0, c])
-                tphase = np.angle(xds[s].gains.values[0, :, p, 0, c])
+                tphase = (np.angle(xds[s].gains.values[0, :, p, 0, c]) -
+                          np.angle(xds[s].gains.values[0, :, opts.ref_ant, 0, c]))
                 tamp[flag] = np.nan
                 tphase[flag] = np.nan
 
