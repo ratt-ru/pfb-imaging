@@ -1,13 +1,14 @@
 import numpy as np
+import numba
 from numba import njit
 from math import factorial
 from scipy.optimize import fmin_l_bfgs_b as fmin
 from scipy.special import polygamma
-from jax.config import config
-config.update("jax_enable_x64", True)
-import jax.numpy as jnp
-from jax import grad, jit, vmap, jvp, value_and_grad
-
+# from jax.config import config
+# config.update("jax_enable_x64", True)
+# import jax.numpy as jnp
+# from jax import grad, jit, vmap, jvp, value_and_grad, lax
+# from jax.scipy.optimize import minimize
 
 def mattern52(xx, sigmaf, l):
     return sigmaf**2*np.exp(-np.sqrt(5)*xx/l)*(1 + np.sqrt(5)*xx/l +
@@ -172,8 +173,59 @@ def Qfunc(q, delta, m):
 
     return Q
 
+# @numba.jit
+def evidence(theta, y, x, Rinv):
+    m0 = theta[0]
+    dm0 = theta[1]
+    P0 = theta[2]
+    dP0 = theta[3]
+    sigmaf = theta[4]
+    sigman = theta[5]
+    N = x.size
+    delta = x[1:] - x[0:-1]
+    m = np.array([m0, dm0])
+    P = np.array([[P0, 0], [0, dP0]])
 
-def evidence(theta, y, x, H, Rinv):
+    Z = 0
+    w = Rinv / sigman**2
+    q = sigmaf**2
+    for k in range(1, N):
+        # This can be avoided if the data are on a regular grid
+        d = delta[k-1]
+        A = np.array([[1, d], [0, 1]])
+        Q = np.array([[q*d**3/3, q*d**2/2], [q*d**2/2, q*d]])
+
+        mp = A.dot(m)
+        Pp = A.dot(P.dot(A.T)) + Q
+
+        if w[k]:
+            v = y[k] - mp[0]
+
+            # Use WMI to write inverse ito weights (not variance)
+            a = Pp[0, 0]
+            b = Pp[0, 1]
+            c = Pp[1, 0]
+            d = Pp[1, 1]
+            Ppinv = np.array([[d, -b], [-c, a]])/(a*d - b*c)
+            a = Ppinv[0, 0] + w[k]
+            b = Ppinv[0, 1]
+            c = Ppinv[1, 0]
+            d = Ppinv[1, 1]
+            Sinv = w[k] - w[k]**2 * d / (a*d-b*c)
+
+            Z += 0.5*np.log(2*np.pi/Sinv) + 0.5*v*v*Sinv
+
+            m = mp + Pp[:, 0] * Sinv * v
+            P = Pp - Pp[:, 0:1] * Pp[0:1, :] * Sinv
+        else:
+            m = mp
+            P = Pp
+
+
+    return Z
+
+
+def evidence2(theta, y, x, H, Rinv):
     m0 = theta[0]
     dm0 = theta[1]
     P0 = theta[2]
@@ -215,7 +267,77 @@ def evidence(theta, y, x, H, Rinv):
 
     return Z
 
+# @jit
+# def factorial_jax(n):
+#     if n < 2:
+#         return 1
+#     else:
+#         return lax.prod(jnp.arange(1, n+1))
 
+# @jit
+# def Afunc_jax(delta):
+#     # phi = delta**jnp.arange(m)/list(map(factorial, jnp.arange(m)))
+#     m = 2
+#     A = jnp.zeros((m,m), dtype=np.float64)
+#     for i in range(0, m):
+#         for j in range(i, m):
+#             A = A.at[i, j].set(delta**(j-i))  #/factorial_jax(i))
+#     return A
+
+# @jit
+# def Qfunc_jax(q, delta):
+#     m = 2
+#     Q = jnp.zeros((m, m), dtype=np.float64)
+#     for j in range(1, m+1):
+#         for k in range(1, m+1):
+#             tmp = ((m-j) + (m-k) + 1)
+#             Q = Q.at[j-1, k-1].set(q*delta**tmp/tmp) # (tmp*factorial(m-j)*factorial(m-k)))
+
+#     return Q
+
+# # @jit  # why does this take forever?
+# def evidence_jax(theta, y, x, H, Rinv):
+#     m0 = theta[0]
+#     dm0 = theta[1]
+#     P0 = theta[2]
+#     dP0 = theta[3]
+#     sigmaf = theta[4]
+#     sigman = theta[5]
+#     N = x.size
+#     delta = x[1:] - x[0:-1]
+#     M = 2  # cubic spline
+#     m = jnp.array([m0, dm0])
+#     P = jnp.array([[P0, 0], [0, dP0]])
+
+#     Z = 0
+#     w = Rinv / sigman**2
+#     q = sigmaf**2
+#     for k in range(1, N):
+#         d = delta[k-1]
+#         A = jnp.array([[1, d], [0, 1]])
+#         Q = jnp.array([[q*d**3/3, q*d**2/2], [q*d**2/2, q*d]])
+
+#         mp = jnp.dot(A, m)
+#         Pp = jnp.dot(A, jnp.dot(P, A.T)) + Q
+
+#         v = y[k] - jnp.dot(H, mp)[0]
+
+#         # Use WMI to write inverse ito weights (not variance)
+#         Ppinv = jnp.linalg.inv(Pp)
+#         tmp = Ppinv + jnp.dot(H.T, w[k] * H)
+#         tmpinv = jnp.linalg.inv(tmp)
+#         Sinv = w[k] - jnp.vdot(w[k] * H, jnp.dot(tmpinv, H.T * w[k]))
+
+#         Z += 0.5*jnp.log(2*np.pi/Sinv) + 0.5*v*v*Sinv
+
+#         K = jnp.dot(Pp, H.T * Sinv)
+
+#         # import pdb; pdb.set_trace()
+#         m = mp + K[:, 0] * v
+#         print(m)
+#         P = Pp - jnp.dot(K, jnp.dot(H, Pp))
+
+#     return Z
 
 def Kfilter(m0, P0, x, y, H, Rinv, sigmaf):
     N = x.size
@@ -295,13 +417,7 @@ def nufunc(nu, meaneta, meanlogeta):
 def kanterp(x, y, w, niter=5, nu0=2):
     N = x.size
     M = 2  # cubic smoothing spline
-    theta = np.zeros(6)
-    theta[0] = y[0]
-    theta[1] = 0
-    theta[2] = 1.0
-    theta[3] = 0.1
-    theta[4] = np.sqrt(N)
-    theta[5] = 1.0
+    theta = np.array([y[0], 0, 1.0, 0.1, np.sqrt(N), 1.0])
 
     H = np.zeros((1, M), dtype=np.float64)
     H[0, 0] = 1
@@ -310,12 +426,14 @@ def kanterp(x, y, w, niter=5, nu0=2):
             (1e-5, None),
             (1e-5, None),
             (1e-5, None),
-            (1e-5, None),
-            (1e-5, None))
+            (1e-5, 2*N),
+            (1e-5, 5))
 
-    theta, fval, dinfo = fmin(evidence, theta, args=(y, x, H, w),
+    theta, fval, dinfo = fmin(evidence, theta, args=(y, x, w),
                               approx_grad=True,
                               bounds=bnds)
+
+
 
     m0 = np.array([theta[0], theta[1]])
     P0 = np.array([[theta[2], 0], [0, theta[3]]])
@@ -324,12 +442,7 @@ def kanterp(x, y, w, niter=5, nu0=2):
     m, P, Z = Kfilter(m0, P0, x, y, H, w/sigman**2, sigmaf)
     ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
 
-    # print(theta, fval, dinfo)
-
-    # return ms, Ps
-
-    m0 = ms[:, 0]
-    P0 = Ps[:, :, 0]
+    print(Z, theta)
 
     # initial residual
     res = y - ms[0]
@@ -342,9 +455,10 @@ def kanterp(x, y, w, niter=5, nu0=2):
         logeta = polygamma(0, (nu+1)/2) - np.log((nu + ressq)/2)
 
         # get smoothed signal
-        theta, fval, dinfo = fmin(evidence, theta, args=(y, x, H, eta),
+        theta, fval, dinfo = fmin(evidence, theta, args=(y, x, eta),
                                   approx_grad=True,
                                   bounds=bnds)
+
 
         m0 = np.array([theta[0], theta[1]])
         P0 = np.array([[theta[2], 0], [0, theta[3]]])
@@ -352,6 +466,9 @@ def kanterp(x, y, w, niter=5, nu0=2):
         sigman = theta[5]
         m, P, Z = Kfilter(m0, P0, x, y, H, eta/sigman**2, sigmaf)
         ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
+
+
+        print(Z, theta)
 
         if k == niter - 1:
             return ms, Ps
@@ -365,51 +482,133 @@ def kanterp(x, y, w, niter=5, nu0=2):
                         bounds=((1e-2, None),))
 
 
+def kanterp2(x, y, w, niter=5, nu0=2):
+    N = x.size
+    M = 2  # cubic smoothing spline
+    theta = np.array([y[0], 0, 1.0, 0.1, np.sqrt(N), 1.0])
 
-# def func(x):
-#     return 10*np.sin(20*x**2)*np.exp(-x**2/0.25) + np.exp(x)
+    H = np.zeros((1, M), dtype=np.float64)
+    H[0, 0] = 1
 
-# np.random.seed(420)
+    bnds = ((1e-5, None),
+            (1e-5, None),
+            (1e-5, None),
+            (1e-5, None),
+            (1e-5, 2*N),
+            (1e-5, 5))
 
-# N = 256
-# x = np.sort(np.random.random(N))
-# xp = np.linspace(0, 1, 100)
-# f = func(x)
-# ft = func(xp)
-# sigman = np.ones(N)
-# # sigman = np.exp(np.random.randn(N)) #/10000
-# n = sigman*np.random.randn(N)
-# w = 1/sigman**2
-# y = f + n
-
-# # add outliers
-# for i in range(int(0.1*N)):
-#     idx = np.random.randint(0, N)
-#     y[idx] += 10 * np.random.randn()
-#     # w[idx] = 0
-#     # sigman[idx] = 1e7
-
-# iplot = np.where(w!=0)
-
-# ms, Ps = kanterp(x, y, w, 3, nu0=5)
-# mu = ms[0, :]
-# P = Ps[0, 0, :]
-
-# # mu, P = gpr(y, x, w, x)
-
-# import matplotlib.pyplot as plt
-
-# plt.figure(3)
-# plt.fill_between(x, mu - np.sqrt(P), mu + np.sqrt(P), color='gray', alpha=0.25)
-# plt.plot(x, mu, 'b', alpha=0.5)
-# plt.plot(xp, ft, 'k', alpha=0.5)
-# plt.errorbar(x[iplot], y[iplot], sigman[iplot], fmt='xr', alpha=0.25)
-
-# plt.show()
-
-# print("Done")
+    theta, fval, dinfo = fmin(evidence2, theta, args=(y, x, H, w),
+                              approx_grad=True,
+                              bounds=bnds)
 
 
+
+    m0 = np.array([theta[0], theta[1]])
+    P0 = np.array([[theta[2], 0], [0, theta[3]]])
+    sigmaf = theta[4]
+    sigman = theta[5]
+    m, P, Z = Kfilter(m0, P0, x, y, H, w/sigman**2, sigmaf)
+    ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
+
+    print(Z, theta)
+
+    # initial residual
+    res = y - ms[0]
+    nu = nu0
+    for k in range(niter):
+        ressq = res**2/sigman**2
+
+        # solve for weights
+        eta = (nu+1)/(nu + ressq)
+        logeta = polygamma(0, (nu+1)/2) - np.log((nu + ressq)/2)
+
+        # get smoothed signal
+        theta, fval, dinfo = fmin(evidence2, theta, args=(y, x, H, eta),
+                                  approx_grad=True,
+                                  bounds=bnds)
+
+        m0 = np.array([theta[0], theta[1]])
+        P0 = np.array([[theta[2], 0], [0, theta[3]]])
+        sigmaf = theta[4]
+        sigman = theta[5]
+        m, P, Z = Kfilter(m0, P0, x, y, H, eta/sigman**2, sigmaf)
+        ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
+
+
+        print(Z, theta)
+
+        if k == niter - 1:
+            return ms, Ps
+
+        # residual
+        res = y - ms[0]
+
+        # degrees of freedom nu
+        nu, _, _ = fmin(nufunc, nu, args=(np.mean(eta), np.mean(logeta)),
+                        approx_grad=True,
+                        bounds=((1e-2, None),))
+
+
+def func(x):
+    return 10*np.sin(20*x**2)*np.exp(-x**2/0.25) + np.exp(x)
+
+
+if __name__=='__main__':
+    np.random.seed(420)
+
+    N = 512
+    x = np.sort(np.random.random(N))
+    xp = np.linspace(0, 1, 100)
+    f = func(x)
+    ft = func(xp)
+    # sigman = np.ones(N)
+    sigman = np.exp(np.random.randn(N)) #/10000
+    n = sigman*np.random.randn(N)
+    w = 1/sigman**2
+    y = f + n
+
+    # add outliers
+    for i in range(int(0.1*N)):
+        idx = np.random.randint(0, N)
+        y[idx] += 100 * np.random.randn()
+        # w[idx] = 1e-6
+
+    iplot = np.where(w!=0)
+
+    theta = np.array([y[0], 25, 1.0, 0.1, np.sqrt(N), 1.0])
+
+    H = np.zeros((1, 2), dtype=np.float64)
+    H[0, 0] = 1
+
+    print(evidence(theta, y, x, w) - evidence2(theta, y, x, H, w))
+
+    quit()
+
+    # from time import time
+    # ti = time()
+    print("fast")
+    ms, Ps = kanterp(x, y, w, 3, nu0=5)
+    print("slow")
+    ms, Ps = kanterp2(x, y, w, 3, nu0=5)
+    # mu = ms[0, :]
+    # P = Ps[0, 0, :]
+    # print(time() - ti)
+
+    quit()
+
+    # mu, P = gpr(y, x, w, x)
+
+    import matplotlib.pyplot as plt
+
+    plt.figure(3)
+    plt.fill_between(x, mu - np.sqrt(P), mu + np.sqrt(P), color='gray', alpha=0.25)
+    plt.plot(x, mu, 'b', alpha=0.5)
+    plt.plot(xp, ft, 'k', alpha=0.5)
+    plt.errorbar(x[iplot], y[iplot], sigman[iplot], fmt='xr', alpha=0.25)
+
+    plt.show()
+
+    print("Done")
 
 
 
