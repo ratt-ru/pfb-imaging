@@ -3,6 +3,10 @@ from numba import njit
 from math import factorial
 from scipy.optimize import fmin_l_bfgs_b as fmin
 from scipy.special import polygamma
+from jax.config import config
+config.update("jax_enable_x64", True)
+import jax.numpy as jnp
+from jax import grad, jit, vmap, jvp, value_and_grad
 
 
 def mattern52(xx, sigmaf, l):
@@ -58,10 +62,10 @@ def dZdtheta(theta, xx, y, Sigma):
     alpha = Kyinv.dot(y)
     Z = (np.vdot(y, alpha) + logdetK)/2
 
-    # derivs
-    dZ = np.zeros(theta.size)
-    alpha = alpha.reshape(N, 1)
-    aaT = Kyinv - alpha.dot(alpha.T)
+    # # derivs
+    # dZ = np.zeros(theta.size)
+    # alpha = alpha.reshape(N, 1)
+    # aaT = Kyinv - alpha.dot(alpha.T)
 
     # # deriv wrt sigmaf
     # dK = 2 * K / sigmaf
@@ -169,6 +173,50 @@ def Qfunc(q, delta, m):
     return Q
 
 
+def evidence(theta, y, x, H, Rinv):
+    m0 = theta[0]
+    dm0 = theta[1]
+    P0 = theta[2]
+    dP0 = theta[3]
+    sigmaf = theta[4]
+    sigman = theta[5]
+    N = x.size
+    delta = x[1:] - x[0:-1]
+    M = 2  # cubic spline
+    m = np.zeros((M, N), dtype=np.float64)
+    P = np.zeros((M, M, N), dtype=np.float64)
+    m[0, 0] = m0
+    m[1, 0] = dm0
+    P[0, 0, 0] = P0
+    P[1, 1, 0] = dP0
+
+    Z = 0
+    w = Rinv / sigman**2
+    for k in range(1, N):
+        A = Afunc(delta[k-1], M)
+        Q = Qfunc(sigmaf**2, delta[k-1], M)
+
+        mp = A @ m[:, k-1]
+        Pp = A @ P[:, :, k-1] @ A.T + Q
+
+        v = y[k] - H @ mp
+
+        # Use WMI to write inverse ito weights (not variance)
+        Ppinv = np.linalg.inv(Pp)
+        tmp = Ppinv + H.T @ (w[k] * H)
+        tmpinv = np.linalg.inv(tmp)
+        Sinv = w[k] - w[k] * H @ tmpinv @ (H.T * w[k])
+
+        Z += 0.5*np.log(2*np.pi/Sinv) + 0.5*v*v*Sinv
+
+        K = Pp @ H.T @ Sinv
+        m[:, k] = mp + K @ v
+        P[:, :, k] = Pp - K @ H @ Pp
+
+    return Z
+
+
+
 def Kfilter(m0, P0, x, y, H, Rinv, sigmaf):
     N = x.size
     delta = x[1:] - x[0:-1]
@@ -189,29 +237,17 @@ def Kfilter(m0, P0, x, y, H, Rinv, sigmaf):
 
         v = y[k] - H @ mp
 
-        # S = H @ Pp @ H.T + R[k]
-        # Sinv = np.linalg.inv(S)
-
-        # import pdb; pdb.set_trace()
-
         # Use WMI to write inverse ito weights (not variance)
-        try:
-            Ppinv = np.linalg.inv(Pp)
-        except:
-            Ppinv = np.linalg.pinv(Pp)
-            import pdb; pdb.set_trace()
+        Ppinv = np.linalg.inv(Pp)
         tmp = Ppinv + H.T @ (Rinv[k] * H)
         tmpinv = np.linalg.inv(tmp)
         Sinv = Rinv[k] - Rinv[k] * H @ tmpinv @ (H.T * Rinv[k])
 
-
-        Z += 0.5*np.log(2*np.pi/Sinv) + v*S*v
+        Z += 0.5*np.log(2*np.pi/Sinv) + 0.5*v*v*Sinv
 
         K = Pp @ H.T @ Sinv
 
         m[:, k] = mp + K @ v
-        if np.any(np.isnan(m)):
-            import pdb; pdb.set_trace()
         P[:, :, k] = Pp - K @ H @ Pp
 
     return m, P, Z
@@ -251,78 +287,77 @@ def RTSsmoother(m, P, x, sigmaf):
 
     return ms, Ps, Gout
 
-def energy(sigmaf, m0, P0, x, y, H, Rinv):
-    m, P, Z = Kfilter(m0, P0, x, y, H, Rinv, sigmaf)
-    ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
-    chi2_dof = np.mean((y - ms[0, :])**2 * Rinv)
-    return (chi2_dof - 1)**2
-
 def nufunc(nu, meaneta, meanlogeta):
     const = 1 + meanlogeta - meaneta
     val = polygamma(0, nu/2) - np.log(nu/2) - const
     return val*val
 
-def kanterp(x, y, w, niter, nu0=2):
+def kanterp(x, y, w, niter=5, nu0=2):
     N = x.size
     M = 2  # cubic smoothing spline
-    m0 = np.zeros((M), dtype=np.float64)
-    m0[0] = y[0]
+    theta = np.zeros(6)
+    theta[0] = y[0]
+    theta[1] = 0
+    theta[2] = 1.0
+    theta[3] = 0.1
+    theta[4] = np.sqrt(N)
+    theta[5] = 1.0
 
-    sigma0 = np.sqrt(N)
-    w = np.ones(N)/np.var(y)
-
-    P0 = np.eye(M) * np.var(y) / 100
     H = np.zeros((1, M), dtype=np.float64)
     H[0, 0] = 1
 
-    sigma = np.sqrt(N)
-    w = np.ones(N)/np.var(y)
-    # sigma, fval, dinfo = fmin(energy, sigma, args=(m0, P0, x, y, H, w),
-    #                             approx_grad=True,
-    #                             bounds=((1e-5, None),))
+    bnds = ((1e-5, None),
+            (1e-5, None),
+            (1e-5, None),
+            (1e-5, None),
+            (1e-5, None),
+            (1e-5, None))
 
-    m, P, Z = Kfilter(m0, P0, x, y, H, w, sigma)
-    ms, Ps, G = RTSsmoother(m, P, x, sigma)
+    theta, fval, dinfo = fmin(evidence, theta, args=(y, x, H, w),
+                              approx_grad=True,
+                              bounds=bnds)
 
-    print(sigma, fval, dinfo)
+    m0 = np.array([theta[0], theta[1]])
+    P0 = np.array([[theta[2], 0], [0, theta[3]]])
+    sigmaf = theta[4]
+    sigman = theta[5]
+    m, P, Z = Kfilter(m0, P0, x, y, H, w/sigman**2, sigmaf)
+    ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
 
-    return ms, Ps
+    # print(theta, fval, dinfo)
+
+    # return ms, Ps
 
     m0 = ms[:, 0]
     P0 = Ps[:, :, 0]
 
     # initial residual
     res = y - ms[0]
-    lam = 1.0/np.mean(res*res)
     nu = nu0
     for k in range(niter):
-        ressq = res**2*lam
+        ressq = res**2/sigman**2
 
         # solve for weights
         eta = (nu+1)/(nu + ressq)
         logeta = polygamma(0, (nu+1)/2) - np.log((nu + ressq)/2)
 
         # get smoothed signal
-        # sigma, fval, dinfo = fmin(energy, sigma0, args=(m0, P0, x, y, H, lam*eta),
-        #                         approx_grad=True,
-        #                         bounds=((1e-5, None),))
+        theta, fval, dinfo = fmin(evidence, theta, args=(y, x, H, eta),
+                                  approx_grad=True,
+                                  bounds=bnds)
 
-        m, P = Kfilter(m0, P0, x, y, H, lam*eta, sigma)
-        ms, Ps, G = RTSsmoother(m, P, x, sigma)
+        m0 = np.array([theta[0], theta[1]])
+        P0 = np.array([[theta[2], 0], [0, theta[3]]])
+        sigmaf = theta[4]
+        sigman = theta[5]
+        m, P, Z = Kfilter(m0, P0, x, y, H, eta/sigman**2, sigmaf)
+        ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
 
         if k == niter - 1:
-            print(nu, sigma)
             return ms, Ps
-
-        # using smoother results as next starting guess
-        m0 = ms[:, 0]
-        P0 = Ps[:, :, 0]
 
         # residual
         res = y - ms[0]
-
-        # overall variance factor
-        lam = 1/np.mean(res**2*eta)
 
         # degrees of freedom nu
         nu, _, _ = fmin(nufunc, nu, args=(np.mean(eta), np.mean(logeta)),
@@ -356,11 +391,11 @@ def kanterp(x, y, w, niter, nu0=2):
 
 # iplot = np.where(w!=0)
 
-# # ms, Ps = kanterp(x, y, w, 3, nu0=5)
-# # mu = ms[0, :]
-# # P = Ps[0, 0, :]
+# ms, Ps = kanterp(x, y, w, 3, nu0=5)
+# mu = ms[0, :]
+# P = Ps[0, 0, :]
 
-# mu, P = gpr(y, x, w, x)
+# # mu, P = gpr(y, x, w, x)
 
 # import matplotlib.pyplot as plt
 
