@@ -173,7 +173,7 @@ def Qfunc(q, delta, m):
 
     return Q
 
-# @numba.jit
+# @numba.njit
 def evidence(theta, y, x, Rinv):
     m0 = theta[0]
     dm0 = theta[1]
@@ -183,8 +183,8 @@ def evidence(theta, y, x, Rinv):
     sigman = theta[5]
     N = x.size
     delta = x[1:] - x[0:-1]
-    m = np.array([m0, dm0])
-    P = np.array([[P0, 0], [0, dP0]])
+    m = np.array([m0, dm0], dtype=np.float64)
+    P = np.array([[P0, 0], [0, dP0]], dtype=np.float64)
 
     Z = 0
     w = Rinv / sigman**2
@@ -192,8 +192,8 @@ def evidence(theta, y, x, Rinv):
     for k in range(1, N):
         # This can be avoided if the data are on a regular grid
         d = delta[k-1]
-        A = np.array([[1, d], [0, 1]])
-        Q = np.array([[q*d**3/3, q*d**2/2], [q*d**2/2, q*d]])
+        A = np.array([[1, d], [0, 1]], dtype=np.float64)
+        Q = np.array([[q*d**3/3, q*d**2/2], [q*d**2/2, q*d]], dtype=np.float64)
 
         mp = A.dot(m)
         Pp = A.dot(P.dot(A.T)) + Q
@@ -206,7 +206,7 @@ def evidence(theta, y, x, Rinv):
             b = Pp[0, 1]
             c = Pp[1, 0]
             d = Pp[1, 1]
-            Ppinv = np.array([[d, -b], [-c, a]])/(a*d - b*c)
+            Ppinv = np.array([[d, -b], [-c, a]], dtype=np.float64)/(a*d - b*c)
             a = Ppinv[0, 0] + w[k]
             b = Ppinv[0, 1]
             c = Ppinv[1, 0]
@@ -442,7 +442,7 @@ def kanterp(x, y, w, niter=5, nu0=2):
     m, P, Z = Kfilter(m0, P0, x, y, H, w/sigman**2, sigmaf)
     ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
 
-    print(Z, theta)
+    print(Z, theta, dinfo)
 
     # initial residual
     res = y - ms[0]
@@ -468,7 +468,7 @@ def kanterp(x, y, w, niter=5, nu0=2):
         ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
 
 
-        print(Z, theta)
+        print(Z, theta, dinfo)
 
         if k == niter - 1:
             return ms, Ps
@@ -510,7 +510,7 @@ def kanterp2(x, y, w, niter=5, nu0=2):
     m, P, Z = Kfilter(m0, P0, x, y, H, w/sigman**2, sigmaf)
     ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
 
-    print(Z, theta)
+    print(Z, theta, dinfo)
 
     # initial residual
     res = y - ms[0]
@@ -535,7 +535,7 @@ def kanterp2(x, y, w, niter=5, nu0=2):
         ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
 
 
-        print(Z, theta)
+        print(Z, theta, dinfo)
 
         if k == niter - 1:
             return ms, Ps
@@ -556,7 +556,7 @@ def func(x):
 if __name__=='__main__':
     np.random.seed(420)
 
-    N = 512
+    N = 256
     x = np.sort(np.random.random(N))
     xp = np.linspace(0, 1, 100)
     f = func(x)
@@ -588,13 +588,13 @@ if __name__=='__main__':
     # ti = time()
     print("fast")
     ms, Ps = kanterp(x, y, w, 3, nu0=5)
-    print("slow")
-    ms, Ps = kanterp2(x, y, w, 3, nu0=5)
-    # mu = ms[0, :]
-    # P = Ps[0, 0, :]
-    # print(time() - ti)
+    # print("slow")
+    # ms, Ps = kanterp2(x, y, w, 3, nu0=5)
+    mu = ms[0, :]
+    P = Ps[0, 0, :]
+    # # print(time() - ti)
 
-    quit()
+    # quit()
 
     # mu, P = gpr(y, x, w, x)
 
