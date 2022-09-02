@@ -4,11 +4,12 @@ from numba import njit
 from math import factorial
 from scipy.optimize import fmin_l_bfgs_b as fmin
 from scipy.special import polygamma
-# from jax.config import config
-# config.update("jax_enable_x64", True)
-# import jax.numpy as jnp
-# from jax import grad, jit, vmap, jvp, value_and_grad, lax
-# from jax.scipy.optimize import minimize
+from jax.config import config
+config.update("jax_enable_x64", True)
+import jax.numpy as jnp
+from jax import grad, jit, vmap, jvp, value_and_grad, lax
+from jax.scipy.optimize import minimize
+from time import time
 
 def mattern52(xx, sigmaf, l):
     return sigmaf**2*np.exp(-np.sqrt(5)*xx/l)*(1 + np.sqrt(5)*xx/l +
@@ -173,54 +174,63 @@ def Qfunc(q, delta, m):
 
     return Q
 
-# @numba.njit
+@numba.njit
 def evidence(theta, y, x, Rinv):
     m0 = theta[0]
-    dm0 = theta[1]
-    P0 = theta[2]
-    dP0 = theta[3]
+    m1 = theta[1]
+    p00 = theta[2]
+    p11 = theta[3]
+    p01 = 0
     sigmaf = theta[4]
     sigman = theta[5]
     N = x.size
     delta = x[1:] - x[0:-1]
-    m = np.array([m0, dm0], dtype=np.float64)
-    P = np.array([[P0, 0], [0, dP0]], dtype=np.float64)
 
     Z = 0
     w = Rinv / sigman**2
     q = sigmaf**2
+    a00 = a11 = 1
     for k in range(1, N):
         # This can be avoided if the data are on a regular grid
-        d = delta[k-1]
-        A = np.array([[1, d], [0, 1]], dtype=np.float64)
-        Q = np.array([[q*d**3/3, q*d**2/2], [q*d**2/2, q*d]], dtype=np.float64)
+        dlta = delta[k-1]
+        a01 = dlta
+        qd = q*dlta
+        qdd = qd * dlta
+        q00 = qdd * dlta / 3
+        q01 = qdd/2
+        q11 = qd
 
-        mp = A.dot(m)
-        Pp = A.dot(P.dot(A.T)) + Q
+        mp0 = m0 + dlta * m1
+        mp1 = m1
+        pp00 = dlta*p01 + dlta*(dlta*p11 + p01) + p00 + q00
+        pp01 = dlta*p11 + p01 + q01
+        pp11 = p11 + q11
 
         if w[k]:
-            v = y[k] - mp[0]
+            v = y[k] - mp0
+            det = pp00 * pp11 - pp01 * pp01
 
-            # Use WMI to write inverse ito weights (not variance)
-            a = Pp[0, 0]
-            b = Pp[0, 1]
-            c = Pp[1, 0]
-            d = Pp[1, 1]
-            Ppinv = np.array([[d, -b], [-c, a]], dtype=np.float64)/(a*d - b*c)
-            a = Ppinv[0, 0] + w[k]
-            b = Ppinv[0, 1]
-            c = Ppinv[1, 0]
-            d = Ppinv[1, 1]
-            Sinv = w[k] - w[k]**2 * d / (a*d-b*c)
+            a2 = pp11/det + w[k]
+            b2 = -pp01/det
+            c2 = -pp01/det
+            d2 = pp00/det
+            det2 = a2*d2 - b2 * c2
+            Sinv = w[k] - w[k]**2 * d2 / det2
 
             Z += 0.5*np.log(2*np.pi/Sinv) + 0.5*v*v*Sinv
 
-            m = mp + Pp[:, 0] * Sinv * v
-            P = Pp - Pp[:, 0:1] * Pp[0:1, :] * Sinv
-        else:
-            m = mp
-            P = Pp
+            m0 = mp0 + pp00 * Sinv * v
+            m1 = mp1 + pp01 * Sinv * v
+            p00 = -pp00**2*Sinv + pp00
+            p01 = -pp00*pp01*Sinv + pp01
+            p11 = -pp01*Sinv*pp01 + pp11
 
+        else:
+            m0 = mp0
+            m1 = mp1
+            p00 = pp00
+            p01 = pp01
+            p11 = pp11
 
     return Z
 
@@ -267,77 +277,66 @@ def evidence2(theta, y, x, H, Rinv):
 
     return Z
 
-# @jit
-# def factorial_jax(n):
-#     if n < 2:
-#         return 1
-#     else:
-#         return lax.prod(jnp.arange(1, n+1))
 
-# @jit
-# def Afunc_jax(delta):
-#     # phi = delta**jnp.arange(m)/list(map(factorial, jnp.arange(m)))
-#     m = 2
-#     A = jnp.zeros((m,m), dtype=np.float64)
-#     for i in range(0, m):
-#         for j in range(i, m):
-#             A = A.at[i, j].set(delta**(j-i))  #/factorial_jax(i))
-#     return A
+# @jit  # why does this take forever?
+def evidence_jax(theta, y, x, Rinv):
+    m0 = theta[0]
+    m1 = theta[1]
+    p00 = theta[2]
+    p11 = theta[3]
+    p01 = 0
+    sigmaf = theta[4]
+    sigman = theta[5]
+    N = x.size
+    delta = x[1:] - x[0:-1]
 
-# @jit
-# def Qfunc_jax(q, delta):
-#     m = 2
-#     Q = jnp.zeros((m, m), dtype=np.float64)
-#     for j in range(1, m+1):
-#         for k in range(1, m+1):
-#             tmp = ((m-j) + (m-k) + 1)
-#             Q = Q.at[j-1, k-1].set(q*delta**tmp/tmp) # (tmp*factorial(m-j)*factorial(m-k)))
+    Z = 0
+    w = Rinv / sigman**2
+    q = sigmaf**2
+    a00 = a11 = 1
+    for k in range(1, N):
+        # This can be avoided if the data are on a regular grid
+        dlta = delta[k-1]
+        a01 = dlta
+        qd = q*dlta
+        qdd = qd * dlta
+        q00 = qdd * dlta / 3
+        q01 = qdd/2
+        q11 = qd
 
-#     return Q
+        mp0 = m0 + dlta * m1
+        mp1 = m1
+        pp00 = dlta*p01 + dlta*(dlta*p11 + p01) + p00 + q00
+        pp01 = dlta*p11 + p01 + q01
+        pp11 = p11 + q11
 
-# # @jit  # why does this take forever?
-# def evidence_jax(theta, y, x, H, Rinv):
-#     m0 = theta[0]
-#     dm0 = theta[1]
-#     P0 = theta[2]
-#     dP0 = theta[3]
-#     sigmaf = theta[4]
-#     sigman = theta[5]
-#     N = x.size
-#     delta = x[1:] - x[0:-1]
-#     M = 2  # cubic spline
-#     m = jnp.array([m0, dm0])
-#     P = jnp.array([[P0, 0], [0, dP0]])
+        if w[k]:
+            v = y[k] - mp0
+            det = pp00 * pp11 - pp01 * pp01
 
-#     Z = 0
-#     w = Rinv / sigman**2
-#     q = sigmaf**2
-#     for k in range(1, N):
-#         d = delta[k-1]
-#         A = jnp.array([[1, d], [0, 1]])
-#         Q = jnp.array([[q*d**3/3, q*d**2/2], [q*d**2/2, q*d]])
+            a2 = pp11/det + w[k]
+            b2 = -pp01/det
+            c2 = -pp01/det
+            d2 = pp00/det
+            det2 = a2*d2 - b2 * c2
+            Sinv = w[k] - w[k]**2 * d2 / det2
 
-#         mp = jnp.dot(A, m)
-#         Pp = jnp.dot(A, jnp.dot(P, A.T)) + Q
+            Z += 0.5*np.log(2*np.pi/Sinv) + 0.5*v*v*Sinv
 
-#         v = y[k] - jnp.dot(H, mp)[0]
+            m0 = mp0 + pp00 * Sinv * v
+            m1 = mp1 + pp01 * Sinv * v
+            p00 = -pp00**2*Sinv + pp00
+            p01 = -pp00*pp01*Sinv + pp01
+            p11 = -pp01*Sinv*pp01 + pp11
 
-#         # Use WMI to write inverse ito weights (not variance)
-#         Ppinv = jnp.linalg.inv(Pp)
-#         tmp = Ppinv + jnp.dot(H.T, w[k] * H)
-#         tmpinv = jnp.linalg.inv(tmp)
-#         Sinv = w[k] - jnp.vdot(w[k] * H, jnp.dot(tmpinv, H.T * w[k]))
+        else:
+            m0 = mp0
+            m1 = mp1
+            p00 = pp00
+            p01 = pp01
+            p11 = pp11
 
-#         Z += 0.5*jnp.log(2*np.pi/Sinv) + 0.5*v*v*Sinv
-
-#         K = jnp.dot(Pp, H.T * Sinv)
-
-#         # import pdb; pdb.set_trace()
-#         m = mp + K[:, 0] * v
-#         print(m)
-#         P = Pp - jnp.dot(K, jnp.dot(H, Pp))
-
-#     return Z
+    return Z
 
 def Kfilter(m0, P0, x, y, H, Rinv, sigmaf):
     N = x.size
@@ -429,9 +428,9 @@ def kanterp(x, y, w, niter=5, nu0=2):
             (1e-5, 2*N),
             (1e-5, 5))
 
-    theta, fval, dinfo = fmin(evidence, theta, args=(y, x, w),
-                              approx_grad=True,
-                              bounds=bnds)
+    # theta, fval, dinfo = fmin(evidence, theta, args=(y, x, w),
+    #                           approx_grad=True,
+    #                           bounds=bnds)
 
 
 
@@ -442,7 +441,7 @@ def kanterp(x, y, w, niter=5, nu0=2):
     m, P, Z = Kfilter(m0, P0, x, y, H, w/sigman**2, sigmaf)
     ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
 
-    print(Z, theta, dinfo)
+    # print(Z, theta, dinfo)
 
     # initial residual
     res = y - ms[0]
@@ -497,9 +496,9 @@ def kanterp2(x, y, w, niter=5, nu0=2):
             (1e-5, 2*N),
             (1e-5, 5))
 
-    theta, fval, dinfo = fmin(evidence2, theta, args=(y, x, H, w),
-                              approx_grad=True,
-                              bounds=bnds)
+    # theta, fval, dinfo = fmin(evidence2, theta, args=(y, x, H, w),
+    #                           approx_grad=True,
+    #                           bounds=bnds)
 
 
 
@@ -510,7 +509,7 @@ def kanterp2(x, y, w, niter=5, nu0=2):
     m, P, Z = Kfilter(m0, P0, x, y, H, w/sigman**2, sigmaf)
     ms, Ps, G = RTSsmoother(m, P, x, sigmaf)
 
-    print(Z, theta, dinfo)
+    # print(Z, theta, dinfo)
 
     # initial residual
     res = y - ms[0]
@@ -556,7 +555,7 @@ def func(x):
 if __name__=='__main__':
     np.random.seed(420)
 
-    N = 256
+    N = 4096
     x = np.sort(np.random.random(N))
     xp = np.linspace(0, 1, 100)
     f = func(x)
@@ -575,18 +574,35 @@ if __name__=='__main__':
 
     iplot = np.where(w!=0)
 
-    theta = np.array([y[0], 25, 1.0, 0.1, np.sqrt(N), 1.0])
+    theta = np.array((6.76914626e-01, 4.04403714e+00, 1.00000000e-05, 3.80339807e+00, 8.19198868e+03, 2.20817999e+00))
 
-    H = np.zeros((1, 2), dtype=np.float64)
-    H[0, 0] = 1
+    # theta = jnp.array((6.76914626e-01, 4.04403714e+00, 1.00000000e-05, 3.80339807e+00, 8.19198868e+03, 2.20817999e+00))
+    # y = jnp.array(y)
+    # x = jnp.array(x)
+    # w = jnp.array(w)
 
-    print(evidence(theta, y, x, w) - evidence2(theta, y, x, H, w))
+    # print
+    # print(y)
+    # print(x)
+    # print(w)
+
+
+
+    evidence(theta, y, x, w)
+
+    ti = time()
+    evidence(theta, y, x, w)
+    print(time() - ti)
 
     quit()
 
+    # print(evidence(theta, y, x, w) - evidence2(theta, y, x, H, w))
+
+    # quit()
+
     # from time import time
     # ti = time()
-    print("fast")
+    # print("fast")
     ms, Ps = kanterp(x, y, w, 3, nu0=5)
     # print("slow")
     # ms, Ps = kanterp2(x, y, w, 3, nu0=5)
