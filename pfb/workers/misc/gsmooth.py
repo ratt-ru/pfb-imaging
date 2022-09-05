@@ -50,7 +50,7 @@ def _gsmooth(**kw):
     import dask
     from scipy.ndimage import median_filter
     import xarray as xr
-    from pfb.utils.regression import gpr
+    from pfb.utils.regression import gpr, kanterp
 
     gain_dir = Path(opts.gain_dir).resolve()
 
@@ -99,20 +99,20 @@ def _gsmooth(**kw):
                 continue
             w = jhj[:, 0, p, 0, c]
             amp = gamp[:, 0, p, 0, c]
-            # mus, covs = kanterp(t, amp, w, opts.niter, nu0=2)
-            # samp[:, 0, p, 0, c] = mus[0, :]
-            # sampcov[:, 0, p, 0, c] = covs[0, 0, :]
-            mu, cov = gpr(amp, t, w, t)
-            samp[:, 0, p, 0, c] = mu
-            sampcov[:, 0, p, 0, c] = cov
+            mus, covs = kanterp(t, amp, w, opts.niter, nu0=2)
+            samp[:, 0, p, 0, c] = mus[0, :]
+            sampcov[:, 0, p, 0, c] = covs[0, 0, :]
+            # mu, cov = gpr(amp, t, w, t)
+            # samp[:, 0, p, 0, c] = mu
+            # sampcov[:, 0, p, 0, c] = cov
             phase = gphase[:, 0, p, 0, c]
             wp = w/samp[:, 0, p, 0, c]
-            # mus, covs = kanterp(t, phase, wp, opts.niter, nu0=2)
-            # sphase[:, 0, p, 0, c] = mus[0, :]
-            # sphasecov[:, 0, p, 0, c] = covs[0, 0, :]
-            mu, cov = gpr(phase, t, wp, t)
-            sphase[:, 0, p, 0, c] = mu
-            sphasecov[:, 0, p, 0, c] = cov
+            mus, covs = kanterp(t, phase, wp, opts.niter, nu0=2)
+            sphase[:, 0, p, 0, c] = mus[0, :]
+            sphasecov[:, 0, p, 0, c] = covs[0, 0, :]
+            # mu, cov = gpr(phase, t, wp, t)
+            # sphase[:, 0, p, 0, c] = mu
+            # sphasecov[:, 0, p, 0, c] = cov
 
 
     # gs = samp * np.exp(1.0j*sphase)
@@ -144,18 +144,6 @@ def _gsmooth(**kw):
             fig, ax = plt.subplots(nrows=1, ncols=2,
                                 figsize=(18, 18))
             fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
-
-            # for s, ds in enumerate(xds):
-            #     jhj = ds.jhj.values.real[0, :, p, 0, c]
-            #     f = ds.gain_flags.values[0, :, p, 0]
-            #     flag = np.logical_or(jhj==0, f)
-            #     tamp = np.abs(xds[s].gains.values[0, :, p, 0, c])
-            #     tphase = np.angle(xds[s].gains.values[0, :, p, 0, c])
-            #     tamp[flag] = np.nan
-            #     tphase[flag] = np.nan
-
-            #     ax[0].plot(freq, tamp, label=f'scan-{s}', alpha=0.5, linewidth=1)
-            #     ax[1].plot(freq, np.rad2deg(tphase), label=f'scan-{s}', alpha=0.5, linewidth=1)
 
             sigma = 1.0/np.sqrt(jhj[:, 0, p, 0, c])
             amp = gamp[:, 0, p, 0, c]

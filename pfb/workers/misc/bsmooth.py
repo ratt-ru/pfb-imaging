@@ -47,6 +47,7 @@ def _bsmooth(**kw):
     import dask.array as da
     import dask
     from scipy.ndimage import median_filter
+    from pfb.utils.regression import kanterp
 
     gain_dir = Path(opts.gain_dir).resolve()
 
@@ -105,26 +106,30 @@ def _bsmooth(**kw):
     # flagged data get's set to ones
     bamp = np.where(wgt > 0, bamp/wgt, 1)
     bphase = np.where(wgt > 0, bphase/wgt, 0)
-    flag = wgt>0
+    flag = wgt == 0
     # flag has no corr axis
     flag = np.any(flag, axis=-1)
 
     samp = np.zeros_like(bamp)
     sphase = np.zeros_like(bamp)
-    for p in range(nant):
+    for p in range(3):
         for c in range(ncorr):
-            idx = np.where(jhj[0, :, p, 0, c] > 0)[0]
+            # idx = np.where(jhj[0, :, p, 0, c] > 0)[0]
+            idx = flag[0, :, p, 0]
             if idx.size < 2:
                 continue
-            x = freq[idx]
-            w = np.sqrt(wgt[0, idx, p, 0, c])
-            amp = bamp[0, idx, p, 0, c]
-            amplin = np.interp(freq, x, amp)
-            samp[0, :, p, 0, c] = median_filter(amplin, size=opts.filter_size)
-            phase = bphase[0, idx, p, 0, c]
-            phaselin = np.interp(freq, x, phase)
-            sphase[0, :, p, 0, c] = median_filter(phaselin,
-                                                  size=opts.filter_size)
+            # x = freq[idx]
+            # w = np.sqrt(wgt[0, idx, p, 0, c])
+            w = wgt[0, :, p, 0, c]
+            amp = bamp[0, :, p, 0, c]
+            # amplin = np.interp(freq, x, amp)
+            # samp[0, :, p, 0, c] = median_filter(amplin, size=opts.filter_size)
+            samp[0, :, p, 0, c] = kanterp(freq, amp, w, niter=3)
+            phase = bphase[0, :, p, 0, c]
+            # phaselin = np.interp(freq, x, phase)
+            # sphase[0, :, p, 0, c] = median_filter(phaselin,
+            #                                       size=opts.filter_size)
+            sphase[0, :, p, 0, c] = kanterp(freq, phase, w/samp[0, :, p, 0, c], niter=3)
 
 
     bpass = samp * np.exp(1.0j*sphase)
@@ -156,7 +161,7 @@ def _bsmooth(**kw):
         xds = xds_from_zarr(f'{str(gain_dir)}/{opts.gain_term}')
 
     freq = xds[0].gain_f/1e6
-    for p in range(nant):
+    for p in range(3):
         for c in range(ncorr):
             fig, ax = plt.subplots(nrows=1, ncols=2,
                                 figsize=(18, 18))
