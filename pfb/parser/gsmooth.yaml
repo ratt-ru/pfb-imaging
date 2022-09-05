@@ -7,6 +7,11 @@ inputs:
     dtype: str
     abbreviation: gt
     info: 'Gain term name'
+  ref_ant:
+    dtype: int
+    default: -1
+    info:
+      Reference antenna (will have zero phase)
   reject_amp_thresh:
     dtype: float
     default: 2.0

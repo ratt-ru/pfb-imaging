@@ -50,7 +50,7 @@ def _gsmooth(**kw):
     import dask
     from scipy.ndimage import median_filter
     import xarray as xr
-    from pfb.utils.regression import gpr, kanterp
+    from pfb.utils.regression import gpr, kanterp, kanterp3
 
     gain_dir = Path(opts.gain_dir).resolve()
 
@@ -77,8 +77,13 @@ def _gsmooth(**kw):
     for c in range(ncorr):
         jhj[flag, c] = 0.0
 
+    if opts.ref_ant == -1:
+        ref_ant = nant-1
+    else:
+        ref_ant = opts.ref_ant
+
     gamp = np.abs(g)
-    gphase = np.angle(g)
+    gphase = np.angle(g) - np.angle(g[:, :, ref_ant])[:, :, None]
     time = xds_concat.gain_t.values
     # the coordinate needs to be scaled to lie in (0, 1)
     tmin = time.min()
@@ -91,23 +96,26 @@ def _gsmooth(**kw):
     sampcov = np.zeros_like(gamp)
     sphase = np.zeros_like(gphase)
     sphasecov = np.zeros_like(gamp)
-    for p in range(3): #nant):
-        print(p)
+    for p in range(nant):
+        if p == ref_ant:
+            continue
         for c in range(ncorr):
+            print(f" p = {p}, c = {c}")
             idx = np.where(jhj[:, 0, p, 0, c] > 0)[0]
             if idx.size < 2:
                 continue
             w = jhj[:, 0, p, 0, c]
             amp = gamp[:, 0, p, 0, c]
-            mus, covs = kanterp(t, amp, w, opts.niter, nu0=2)
+            mus, covs = kanterp3(t, amp, w, opts.niter, nu0=2)
             samp[:, 0, p, 0, c] = mus[0, :]
             sampcov[:, 0, p, 0, c] = covs[0, 0, :]
             # mu, cov = gpr(amp, t, w, t)
             # samp[:, 0, p, 0, c] = mu
             # sampcov[:, 0, p, 0, c] = cov
             phase = gphase[:, 0, p, 0, c]
+            # phase = np.unwrap(phase, discont=2*np.pi*0.99)
             wp = w/samp[:, 0, p, 0, c]
-            mus, covs = kanterp(t, phase, wp, opts.niter, nu0=2)
+            mus, covs = kanterp3(t, phase, wp, opts.niter, nu0=2)
             sphase[:, 0, p, 0, c] = mus[0, :]
             sphasecov[:, 0, p, 0, c] = covs[0, 0, :]
             # mu, cov = gpr(phase, t, wp, t)
@@ -139,8 +147,9 @@ def _gsmooth(**kw):
     # sphase = np.where(wgt > 0, sphase, np.nan)
 
     print("Plotting results", file=log)
-    for p in range(3):  #nant):
+    for p in range(nant):
         for c in range(ncorr):
+            print(f" p = {p}, c = {c}")
             fig, ax = plt.subplots(nrows=1, ncols=2,
                                 figsize=(18, 18))
             fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
@@ -154,8 +163,12 @@ def _gsmooth(**kw):
             ax[0].set_xlabel('time')
 
             sigmap = sigma/amp
-            ax[1].errorbar(time, np.rad2deg(gphase[:, 0, p, 0, c]), sigmap, fmt='xr')
-            ax[1].errorbar(time, np.rad2deg(sphase[:, 0, p, 0, c]), np.rad2deg(np.sqrt(sphasecov[:, 0, p, 0, c])),
+            phase = gphase[:, 0, p, 0, c]
+            # phase = np.unwrap(phase, discont=2*np.pi*0.99)
+            ax[1].errorbar(time, np.rad2deg(phase), sigmap, fmt='xr')
+            phase = sphase[:, 0, p, 0, c]
+            # phase = np.unwrap(phase, discont=2*np.pi*0.99)
+            ax[1].errorbar(time, np.rad2deg(phase), np.rad2deg(np.sqrt(sphasecov[:, 0, p, 0, c])),
                        fmt='ok', label='smooth')
             ax[1].legend()
             ax[1].set_xlabel('time')

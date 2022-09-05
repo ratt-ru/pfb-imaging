@@ -47,7 +47,7 @@ def _bsmooth(**kw):
     import dask.array as da
     import dask
     from scipy.ndimage import median_filter
-    from pfb.utils.regression import kanterp
+    from pfb.utils.regression import kanterp3, kanterp2
 
     gain_dir = Path(opts.gain_dir).resolve()
 
@@ -104,7 +104,7 @@ def _bsmooth(**kw):
         wgt += jhj
 
     # flagged data get's set to ones
-    bamp = np.where(wgt > 0, bamp/wgt, 1)
+    bamp = np.where(wgt > 0, bamp/wgt, 0)
     bphase = np.where(wgt > 0, bphase/wgt, 0)
     flag = wgt == 0
     # flag has no corr axis
@@ -112,24 +112,35 @@ def _bsmooth(**kw):
 
     samp = np.zeros_like(bamp)
     sphase = np.zeros_like(bamp)
-    for p in range(3):
+    fmin = freq.min()
+    fmax = freq.max()
+    nu = (freq - fmin)/(fmax - fmin)
+    nu += 0.01
+    nu *= 0.99/nu.max()
+    for p in range(nant):
         for c in range(ncorr):
+            print(f" p = {p}, c = {c}")
             # idx = np.where(jhj[0, :, p, 0, c] > 0)[0]
-            idx = flag[0, :, p, 0]
-            if idx.size < 2:
+            idx = ~flag[0, :, p, 0]
+            if idx.sum() < 2:
                 continue
             # x = freq[idx]
             # w = np.sqrt(wgt[0, idx, p, 0, c])
             w = wgt[0, :, p, 0, c]
             amp = bamp[0, :, p, 0, c]
-            # amplin = np.interp(freq, x, amp)
+            amplin = np.interp(freq, freq[idx], amp[idx])
             # samp[0, :, p, 0, c] = median_filter(amplin, size=opts.filter_size)
-            samp[0, :, p, 0, c] = kanterp(freq, amp, w, niter=3)
+            I = slice(128, -128)
+            ms, Ps = kanterp3(nu[I], amplin[I], w[I], niter=10, nu0=2, sigmaf0=np.sqrt(nchan), sigman0=1)
+            # ms, Ps = kanterp2(nu[I], amplin[I], w[I], niter=10, nu0=2)
+            samp[0, I, p, 0, c] = ms[0, :]
             phase = bphase[0, :, p, 0, c]
-            # phaselin = np.interp(freq, x, phase)
+            phaselin = np.interp(freq, freq[idx], phase[idx])
             # sphase[0, :, p, 0, c] = median_filter(phaselin,
             #                                       size=opts.filter_size)
-            sphase[0, :, p, 0, c] = kanterp(freq, phase, w/samp[0, :, p, 0, c], niter=3)
+            ms, Ps = kanterp3(nu[I], phaselin[I], w[I]/samp[0, I, p, 0, c], niter=10, nu0=2, sigmaf0=np.sqrt(nchan), sigman0=1)
+            # ms, Ps = kanterp2(nu[I], phaselin[I], w[I]/samp[0, I, p, 0, c], niter=10, nu0=2)
+            sphase[0, I, p, 0, c] = ms[0, :]
 
 
     bpass = samp * np.exp(1.0j*sphase)
@@ -155,14 +166,18 @@ def _bsmooth(**kw):
     bamp = np.where(wgt > 0, bamp, np.nan)
     bphase = np.where(wgt > 0, bphase, np.nan)
 
+    samp = np.where(wgt > 0, samp, np.nan)
+    sphase = np.where(wgt > 0, sphase, np.nan)
+
     try:
         xds = xds_from_zarr(f'{str(gain_dir)}::{opts.gain_term}')
     except Exception as e:
         xds = xds_from_zarr(f'{str(gain_dir)}/{opts.gain_term}')
 
     freq = xds[0].gain_f/1e6
-    for p in range(3):
+    for p in range(nant):
         for c in range(ncorr):
+            print(f" p = {p}, c = {c}")
             fig, ax = plt.subplots(nrows=1, ncols=2,
                                 figsize=(18, 18))
             fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
@@ -192,7 +207,7 @@ def _bsmooth(**kw):
 
             fig.tight_layout()
             name = f'{str(gain_dir)}/{opts.gain_term}_Antenna{p}corr{c}.png'
-            plt.savefig(name, dpi=500, bbox_inches='tight')
+            plt.savefig(name, dpi=250, bbox_inches='tight')
             plt.close('all')
 
     print("All done here", file=log)

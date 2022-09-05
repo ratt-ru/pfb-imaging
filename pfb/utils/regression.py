@@ -460,6 +460,7 @@ def Kfilter_fast(sigmaf, y, x, Rinv, m0, m1, p00, p01, p11):
     P[1, 1, 0] = p11
 
     q = sigmaf**2
+    w = Rinv
     for k in range(1, N):
         # This can be avoided if the data are on a regular grid
         dlta = delta[k-1]
@@ -683,16 +684,31 @@ def evidence3(theta, y, x, Rinv, m0, m1, p00, p01, p11, sigman):
     return Z
 
 
-def kanterp3(x, y, w, niter=5, nu0=2):
+def kanterp3(x, y, w, niter=5, nu0=2, sigmaf0=None, sigman0=1, verbose=0, window=10):
     N = x.size
     M = 2  # cubic smoothing spline
     H = np.zeros((1, M), dtype=np.float64)
     H[0, 0] = 1
 
-    bnds = ((1e-5, 2*N),)
 
-    sigmaf = np.sqrt(N)
-    m, P = Kfilter_fast(sigmaf, y, x, w, y[0], 0, 1.0, 0, 1.0)
+
+    if sigmaf0 is None:
+        sigmaf = np.sqrt(N)
+    else:
+        sigmaf = sigmaf0
+
+    bnds = ((0.1*sigmaf, 10*sigmaf),)
+    I = y != 0
+    m0 = np.median(y[I][0:window])
+    x0 = np.median(x[I][0:window])
+    mplus = np.median(y[I][window:2*window])
+    xplus = np.median(x[I][window:2*window])
+    dm0 = (mplus-m0)/(xplus - x0)
+    P0 = np.mean((y[I][0:window] - m0)**2)
+    # import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
+    w /= sigman0**2
+    m, P = Kfilter_fast(sigmaf, y, x, w, m0, dm0, P0, 0, P0)
     ms, Ps = RTSsmoother_fast(m, P, x, sigmaf)
 
     # initial residual
@@ -716,11 +732,12 @@ def kanterp3(x, y, w, niter=5, nu0=2):
 
         m0 = ms[:, 0]
         P0 = Ps[:, :, 0]
-        m, P = Kfilter_fast(sigmaf[0], y, x, eta, ms[0, 0], ms[1, 0], Ps[0, 0, 0], Ps[0, 1, 0], Ps[1, 1, 0])
+        m, P = Kfilter_fast(sigmaf[0], y, x, eta/sigman**2, ms[0, 0], ms[1, 0], Ps[0, 0, 0], Ps[0, 1, 0], Ps[1, 1, 0])
         ms, Ps = RTSsmoother_fast(m, P, x, sigmaf[0])
 
 
-        print(fval, ms[0, 0], ms[1, 0], Ps[0, 0, 0], Ps[0, 1, 0], Ps[1, 1, 0], sigmaf, sigman, dinfo)
+        if verbose:
+            print(f"Z={fval}, sigmaf={sigmaf[0]}, sigman={sigman}, warning={dinfo['warnflag']}")
 
         if k == niter - 1:
             return ms, Ps
@@ -731,11 +748,9 @@ def kanterp3(x, y, w, niter=5, nu0=2):
         sigman = np.sqrt(np.mean(res**2*eta))
 
         # degrees of freedom nu
-        ti = time()
         nu, _, _ = fmin(nufunc, nu, args=(np.mean(eta), np.mean(logeta)),
                         approx_grad=True,
                         bounds=((1e-2, None),))
-        print("fmin nu", time() - ti)
 
 def func(x):
     return 10*np.sin(20*x**2)*np.exp(-x**2/0.25) + np.exp(x)
@@ -759,7 +774,7 @@ if __name__=='__main__':
     for i in range(int(0.1*N)):
         idx = np.random.randint(0, N)
         y[idx] += 10 * np.random.randn()
-        # w[idx] = 0.1
+        w[idx] = 0.25
 
     iplot = np.where(w!=0)
 
@@ -791,9 +806,12 @@ if __name__=='__main__':
 
     # from time import time
     # ti = time()
-    ms, Ps = kanterp(x, y, w, 3, nu0=2)
-    # ms, Ps = kanterp2(x, y, w, 3, nu0=2)
-    # ms, Ps = kanterp3(x, y, w, 3, nu0=2)
+    # ms, Ps = kanterp(x, y, w, 3, nu0=2)
+    # ms, Ps = kanterp2(x, y, w, 10, nu0=2)
+    ms, Ps = kanterp3(x, y, w, 3, nu0=2)
+    ti = time()
+    ms, Ps = kanterp3(x, y, w, 10, nu0=2)
+    print(time() - ti)
     mu = ms[0, :]
     P = Ps[0, 0, :]
     # # print(time() - ti)
