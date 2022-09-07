@@ -59,6 +59,22 @@ def _gsmooth(**kw):
     except Exception as e:
         xds = xds_from_zarr(f'{str(gain_dir)}/{opts.gain_term}')
 
+
+    K = xds_from_zarr(f'{str(gain_dir)}::K')
+
+    for k, dsk, dsg in enumertae(zip(xds, K)):
+        gain = np.zeros(dsg.gains.shape, dsg.gains.dtype)
+        offset = dsk.params.values[0, 0, :, 0, 0]
+        gain[:, :, :, :, 0] = dsg.gains.values[:, :, :, :, 0] * np.exp(1.0j*offset)[None, None, :, None, None]
+        offset = dsk.params.values[0, 0, :, 0, 1]
+        gain[:, :, :, :, 1] = dsg.gains.values[:, :, :, :, 1] * np.exp(1.0j*offset)[None, None, :, None, None]
+        dsg = dsg.assign(
+            **{
+                'gains': (('gain_t', 'gain_f', 'ant', 'dir', 'corr'), da.from_array(gain, chunks=(-1, -1, -1, -1, -1)))
+        }
+        )
+        xds[k] = dsg
+
     xds_concat = xr.concat(xds, dim='gain_t').sortby('gain_t')
 
     ntime, nchan, nant, ndir, ncorr = xds_concat.gains.data.shape
@@ -83,7 +99,7 @@ def _gsmooth(**kw):
         ref_ant = opts.ref_ant
 
     gamp = np.abs(g)
-    gphase = np.angle(g) - np.angle(g[:, :, ref_ant])[:, :, None]
+    gphase = np.angle(g*g[:, :, ref_ant].conj()[:, :, None])
     time = xds_concat.gain_t.values
     # the coordinate needs to be scaled to lie in (0, 1)
     tmin = time.min()
@@ -113,7 +129,6 @@ def _gsmooth(**kw):
             if p == ref_ant:
                 continue
             phase = gphase[:, 0, p, 0, c]
-            # phase = np.unwrap(phase, discont=2*np.pi*0.99)
             wp = w/samp[:, 0, p, 0, c]
             mus, covs = kanterp3(t, phase, wp, opts.niter, nu0=2)
             sphase[:, 0, p, 0, c] = mus[0, :]

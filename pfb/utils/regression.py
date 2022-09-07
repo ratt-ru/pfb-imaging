@@ -699,12 +699,12 @@ def kanterp3(x, y, w, niter=5, nu0=2, sigmaf0=None, sigman0=1, verbose=0, window
 
     bnds = ((0.1*sigmaf, 10*sigmaf),)
     I = y != 0
-    m0 = np.median(y[I][0:window])
-    x0 = np.median(x[I][0:window])
-    mplus = np.median(y[I][window:2*window])
-    xplus = np.median(x[I][window:2*window])
-    dm0 = (mplus-m0)/(xplus - x0)
-    P0 = np.mean((y[I][0:window] - m0)**2)
+    m0 = y[0]  #np.median(y[I][0:window])
+    # x0 = np.median(x[I][0:window])
+    # mplus = np.median(y[I][window:2*window])
+    # xplus = np.median(x[I][window:2*window])
+    dm0 = 0  #(mplus-m0)/(xplus - x0)
+    P0 = 1.0 #np.mean((y[I][0:window] - m0)**2)
     # import pdb; pdb.set_trace()
     # import pdb; pdb.set_trace()
     w /= sigman0**2
@@ -807,8 +807,8 @@ if __name__=='__main__':
     # from time import time
     # ti = time()
     # ms, Ps = kanterp(x, y, w, 3, nu0=2)
-    ms, Ps = kanterp2(x, y, w, 10, nu0=2)
-    # ms, Ps = kanterp3(x, y, w, 3, nu0=2)
+    # ms, Ps = kanterp2(x, y, w, 10, nu0=2)
+    ms, Ps = kanterp3(x, y, w, 3, nu0=2)
     ti = time()
     ms, Ps = kanterp3(x, y, w, 10, nu0=2)
     print(time() - ti)
