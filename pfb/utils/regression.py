@@ -807,8 +807,8 @@ if __name__=='__main__':
     # from time import time
     # ti = time()
     # ms, Ps = kanterp(x, y, w, 3, nu0=2)
-    # ms, Ps = kanterp2(x, y, w, 10, nu0=2)
-    ms, Ps = kanterp3(x, y, w, 3, nu0=2)
+    ms, Ps = kanterp2(x, y, w, 10, nu0=2)
+    # ms, Ps = kanterp3(x, y, w, 3, nu0=2)
     ti = time()
     ms, Ps = kanterp3(x, y, w, 10, nu0=2)
     print(time() - ti)

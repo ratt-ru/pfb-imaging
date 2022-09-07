@@ -97,8 +97,6 @@ def _gsmooth(**kw):
     sphase = np.zeros_like(gphase)
     sphasecov = np.zeros_like(gamp)
     for p in range(nant):
-        if p == ref_ant:
-            continue
         for c in range(ncorr):
             print(f" p = {p}, c = {c}")
             idx = np.where(jhj[:, 0, p, 0, c] > 0)[0]
@@ -112,6 +110,8 @@ def _gsmooth(**kw):
             # mu, cov = gpr(amp, t, w, t)
             # samp[:, 0, p, 0, c] = mu
             # sampcov[:, 0, p, 0, c] = cov
+            if p == ref_ant:
+                continue
             phase = gphase[:, 0, p, 0, c]
             # phase = np.unwrap(phase, discont=2*np.pi*0.99)
             wp = w/samp[:, 0, p, 0, c]
