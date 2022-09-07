@@ -63,7 +63,7 @@ def _gsmooth(**kw):
     K = xds_from_zarr(f'{str(gain_dir)}::K')
 
     for k, KG in enumerate(zip(xds, K)):
-        dsk, dsg = KG
+        dsg, dsk = KG
         gain = np.zeros(dsg.gains.shape, dsg.gains.dtype)
         offset = dsk.params.values[0, 0, :, 0, 0]
         gain[:, :, :, :, 0] = dsg.gains.values[:, :, :, :, 0] * np.exp(1.0j*offset)[None, None, :, None, None]
