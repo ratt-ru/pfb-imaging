@@ -62,13 +62,19 @@ def _gsmooth(**kw):
 
     K = xds_from_zarr(f'{str(gain_dir)}::K')
 
-    for k, KG in enumerate(zip(xds, K)):
-        dsg, dsk = KG
+    ti = 0
+    It = []
+    for k, GK in enumerate(zip(xds, K)):
+        dsg, dsk = GK
         gain = np.zeros(dsg.gains.shape, dsg.gains.dtype)
+        ntime = gain.shape[0]
+        It.append(slice(ti, ti+ntime))
+        ti += ntime
         offset = dsk.params.values[0, 0, :, 0, 0]
-        gain[:, :, :, :, 0] = dsg.gains.values[:, :, :, :, 0] * np.exp(1.0j*offset)[None, None, :, None, None]
-        offset = dsk.params.values[0, 0, :, 0, 1]
-        gain[:, :, :, :, 1] = dsg.gains.values[:, :, :, :, 1] * np.exp(1.0j*offset)[None, None, :, None, None]
+        # import pdb; pdb.set_trace()
+        gain[:, :, :, :, 0] = dsg.gains.values[:, :, :, :, 0] * np.exp(1.0j*offset[None, None, :, None])
+        offset = dsk.params.values[0, 0, :, 0, 2]
+        gain[:, :, :, :, 1] = dsg.gains.values[:, :, :, :, 1] * np.exp(1.0j*offset[None, None, :, None])
         dsg = dsg.assign(
             **{
                 'gains': (('gain_t', 'gain_f', 'ant', 'dir', 'corr'), da.from_array(gain, chunks=(-1, -1, -1, -1, -1)))
@@ -101,6 +107,18 @@ def _gsmooth(**kw):
 
     gamp = np.abs(g)
     gphase = np.angle(g*g[:, :, ref_ant].conj()[:, :, None])
+    gphase = np.unwrap(gphase, axis=0, discont=0.9*2*np.pi)
+    medvals0 = np.median(gphase[It[0], 0, :, 0, :], axis=0)
+    for I in It[1:]:
+        medvals = np.median(gphase[I, 0, :, 0, :], axis=0)
+        for p in range(nant):
+            for c in range(ncorr):
+                tmp = medvals[p, c] - medvals0[p, c]
+                if np.abs(tmp) > 0.9*2*np.pi:
+                    # import pdb; pdb.set_trace()
+                    gphase[I, 0, p, 0, c] -= 2*np.pi*np.sign(tmp)
+
+
     time = xds_concat.gain_t.values
     # the coordinate needs to be scaled to lie in (0, 1)
     tmin = time.min()
