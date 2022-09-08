@@ -147,28 +147,32 @@ def _gsmooth(**kw):
     t += 0.01
     t *= 0.99/t.max()
 
-    samp = np.zeros_like(gamp)
-    sampcov = np.zeros_like(gamp)
-    sphase = np.zeros_like(gphase)
-    sphasecov = np.zeros_like(gamp)
-    for p in range(nant):
-        for c in range(ncorr):
-            print(f" p = {p}, c = {c}")
-            idx = np.where(jhj[:, 0, p, 0, c] > 0)[0]
-            if idx.size < 2:
-                continue
-            w = jhj[:, 0, p, 0, c]
-            amp = gamp[:, 0, p, 0, c]
-            mus, covs = kanterp3(t, amp, w, opts.niter, nu0=2)
-            samp[:, 0, p, 0, c] = mus[0, :]
-            sampcov[:, 0, p, 0, c] = covs[0, 0, :]
-            if p == ref_ant:
-                continue
-            phase = gphase[:, 0, p, 0, c]
-            wp = w/samp[:, 0, p, 0, c]
-            mus, covs = kanterp3(t, phase, wp, opts.niter, nu0=2)
-            sphase[:, 0, p, 0, c] = mus[0, :]
-            sphasecov[:, 0, p, 0, c] = covs[0, 0, :]
+    samp = gamp
+    sphase = gphase
+
+
+    # samp = np.zeros_like(gamp)
+    # sampcov = np.zeros_like(gamp)
+    # sphase = np.zeros_like(gphase)
+    # sphasecov = np.zeros_like(gamp)
+    # for p in range(nant):
+    #     for c in range(ncorr):
+    #         print(f" p = {p}, c = {c}")
+    #         idx = np.where(jhj[:, 0, p, 0, c] > 0)[0]
+    #         if idx.size < 2:
+    #             continue
+    #         w = jhj[:, 0, p, 0, c]
+    #         amp = gamp[:, 0, p, 0, c]
+    #         mus, covs = kanterp3(t, amp, w, opts.niter, nu0=2)
+    #         samp[:, 0, p, 0, c] = mus[0, :]
+    #         sampcov[:, 0, p, 0, c] = covs[0, 0, :]
+    #         if p == ref_ant:
+    #             continue
+    #         phase = gphase[:, 0, p, 0, c]
+    #         wp = w/samp[:, 0, p, 0, c]
+    #         mus, covs = kanterp3(t, phase, wp, opts.niter, nu0=2)
+    #         sphase[:, 0, p, 0, c] = mus[0, :]
+    #         sphasecov[:, 0, p, 0, c] = covs[0, 0, :]
 
 
     gs = samp * np.exp(1.0j*sphase)
@@ -203,7 +207,9 @@ def _gsmooth(**kw):
             sigma = 1.0/np.sqrt(jhj[:, 0, p, 0, c])
             amp = gamp[:, 0, p, 0, c]
             ax[0].errorbar(time, amp, sigma, fmt='xr')
-            ax[0].errorbar(time, samp[:, 0, p, 0, c], np.sqrt(sampcov[:, 0, p, 0, c]),
+            # ax[0].errorbar(time, samp[:, 0, p, 0, c], np.sqrt(sampcov[:, 0, p, 0, c]),
+            #                fmt='ok', label='smooth')
+            ax[0].errorbar(time, samp[:, 0, p, 0, c], sigma,
                            fmt='ok', label='smooth')
             ax[0].legend()
             ax[0].set_xlabel('time')
@@ -214,7 +220,9 @@ def _gsmooth(**kw):
             ax[1].errorbar(time, np.rad2deg(phase), sigmap, fmt='xr')
             phase = sphase[:, 0, p, 0, c]
             # phase = np.unwrap(phase, discont=2*np.pi*0.99)
-            ax[1].errorbar(time, np.rad2deg(phase), np.rad2deg(np.sqrt(sphasecov[:, 0, p, 0, c])),
+            # ax[1].errorbar(time, np.rad2deg(phase), np.rad2deg(np.sqrt(sphasecov[:, 0, p, 0, c])),
+            #            fmt='ok', label='smooth')
+            ax[1].errorbar(time, np.rad2deg(phase), sigmap,
                        fmt='ok', label='smooth')
             ax[1].legend()
             ax[1].set_xlabel('time')
