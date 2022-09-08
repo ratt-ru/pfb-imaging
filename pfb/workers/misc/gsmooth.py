@@ -128,15 +128,15 @@ def _gsmooth(**kw):
 
     gamp = np.abs(g)
     gphase = np.angle(g*g[:, :, ref_ant].conj()[:, :, None])
-    gphase = np.unwrap(gphase, axis=0, discont=0.9*2*np.pi)
-    medvals0 = np.median(gphase[It[0], 0, :, 0, :], axis=0)
-    for I in It[1:]:
-        medvals = np.median(gphase[I, 0, :, 0, :], axis=0)
-        for p in range(nant):
-            for c in range(ncorr):
-                tmp = medvals[p, c] - medvals0[p, c]
-                if np.abs(tmp) > 0.9*2*np.pi:
-                    gphase[I, 0, p, 0, c] -= 2*np.pi*np.sign(tmp)
+    # gphase = np.unwrap(gphase, axis=0, discont=0.9*2*np.pi)
+    # medvals0 = np.median(gphase[It[0], 0, :, 0, :], axis=0)
+    # for I in It[1:]:
+    #     medvals = np.median(gphase[I, 0, :, 0, :], axis=0)
+    #     for p in range(nant):
+    #         for c in range(ncorr):
+    #             tmp = medvals[p, c] - medvals0[p, c]
+    #             if np.abs(tmp) > 0.9*2*np.pi:
+    #                 gphase[I, 0, p, 0, c] -= 2*np.pi*np.sign(tmp)
 
 
     time = xds_concat.gain_t.values
