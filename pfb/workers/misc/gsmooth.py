@@ -77,10 +77,31 @@ def _gsmooth(**kw):
         gain[:, :, :, :, 1] = dsg.gains.values[:, :, :, :, 1] * np.exp(1.0j*offset[None, None, :, None])
         dsg = dsg.assign(
             **{
-                'gains': (('gain_t', 'gain_f', 'ant', 'dir', 'corr'), da.from_array(gain, chunks=(-1, -1, -1, -1, -1)))
+                'gains': (dsg.GAIN_AXES, da.from_array(gain, chunks=(-1, -1, -1, -1, -1)))
         }
         )
         xds[k] = dsg
+
+        params = dsk.params.values
+        params[:, :, :, :, 0] = 0.0
+        params[:, :, :, :, 1] = 0.0
+        freq = dsk.gain_f.values
+        # this should work because the offsets have been zeroed
+        gain = np.exp(1.0j * params[:, :, :, :, (1,3)] * freq[None, :, None, None, None])
+        dsk = dsk.assign(
+            **{
+                'gains': (dsk.GAIN_AXES, da.from_array(gain, chunks=(-1, -1, -1, -1, -1))),
+                'params': (dsk.PARAM_AXES, da.from_array(params, chunks=(-1, -1, -1, -1, -1)))
+
+        }
+        )
+        K[k] = dsk
+
+    writes = xds_to_zarr(K, f'{str(gain_dir)}/smoothed.qc::K',
+                         columns='ALL')
+
+    dask.compute(writes)
+
 
     xds_concat = xr.concat(xds, dim='gain_t').sortby('gain_t')
 
@@ -115,7 +136,6 @@ def _gsmooth(**kw):
             for c in range(ncorr):
                 tmp = medvals[p, c] - medvals0[p, c]
                 if np.abs(tmp) > 0.9*2*np.pi:
-                    # import pdb; pdb.set_trace()
                     gphase[I, 0, p, 0, c] -= 2*np.pi*np.sign(tmp)
 
 
@@ -142,9 +162,6 @@ def _gsmooth(**kw):
             mus, covs = kanterp3(t, amp, w, opts.niter, nu0=2)
             samp[:, 0, p, 0, c] = mus[0, :]
             sampcov[:, 0, p, 0, c] = covs[0, 0, :]
-            # mu, cov = gpr(amp, t, w, t)
-            # samp[:, 0, p, 0, c] = mu
-            # sampcov[:, 0, p, 0, c] = cov
             if p == ref_ant:
                 continue
             phase = gphase[:, 0, p, 0, c]
@@ -152,23 +169,18 @@ def _gsmooth(**kw):
             mus, covs = kanterp3(t, phase, wp, opts.niter, nu0=2)
             sphase[:, 0, p, 0, c] = mus[0, :]
             sphasecov[:, 0, p, 0, c] = covs[0, 0, :]
-            # mu, cov = gpr(phase, t, wp, t)
-            # sphase[:, 0, p, 0, c] = mu
-            # sphasecov[:, 0, p, 0, c] = cov
 
 
-    # gs = samp * np.exp(1.0j*sphase)
-    # gs = da.from_array(gs, chunks=(-1, -1, -1, -1, -1))
-    # flag = da.from_array(flag, chunks=(-1, -1, -1, -1))
-    # for i, ds in enumerate(xds):
-    #     xds[i] = ds.assign(**{'gains': (ds.GAIN_AXES, gs),
-    #                           'gain_flags': (ds.GAIN_AXES[0:-1], flag)})
+    gs = samp * np.exp(1.0j*sphase)
+    gs = da.from_array(gs, chunks=(-1, -1, -1, -1, -1))
+    for i, ds in enumerate(xds):
+        gsi = gs[It[i]]
+        xds[i] = ds.assign(**{'gains': (ds.GAIN_AXES, gsi)})
 
-    # ppath = gain_dir.parent
-    # writes = xds_to_zarr(xds, f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
-    #                      columns='ALL')
+    writes = xds_to_zarr(xds, f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
+                         columns='ALL')
 
-    # gs = dask.compute(gs, writes)[0]
+    dask.compute(writes)
 
     if not opts.do_plots:
         quit()
