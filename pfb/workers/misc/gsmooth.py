@@ -71,13 +71,16 @@ def _gsmooth(**kw):
         It.append(slice(ti, ti+ntime))
         ti += ntime
         offset = dsk.params.values[0, 0, :, 0, 0]
-        # G K = G exp(1.0j*(offset + slope*freq)) ?
-        gain[:, :, :, :, 0] = dsg.gains.values[:, :, :, :, 0] * np.exp(1.0j*offset[None, None, :, None])
+        # K = exp(1.0j*(offset + 2pi*slope*freq))
+        gain[:, :, :, :, 0] = (dsg.gains.values[:, :, :, :, 0] *
+                               np.exp(1.0j*offset[None, None, :, None]))
         offset = dsk.params.values[0, 0, :, 0, 2]
-        gain[:, :, :, :, 1] = dsg.gains.values[:, :, :, :, 1] * np.exp(1.0j*offset[None, None, :, None])
+        gain[:, :, :, :, 1] = (dsg.gains.values[:, :, :, :, 1] *
+                               np.exp(1.0j*offset[None, None, :, None]))
         dsg = dsg.assign(
             **{
-                'gains': (dsg.GAIN_AXES, da.from_array(gain, chunks=(-1, -1, -1, -1, -1)))
+                'gains': (dsg.GAIN_AXES,
+                          da.from_array(gain, chunks=(-1, -1, -1, -1, -1)))
         }
         )
         xds[k] = dsg
@@ -85,18 +88,22 @@ def _gsmooth(**kw):
         params = dsk.params.values
         params[:, :, :, :, 0] = 0.0
         params[:, :, :, :, 2] = 0.0
-        freq = dsk.gain_f.values
-        # this should work because the offsets have been zeroed
-        gain = np.exp(2.0j*np.pi*params[:, :, :, :, (1,3)] * freq[None, :, None, None, None])
+        freq = dsk.gain_f.values[None, :, None, None, None]
+        # this works because the offsets have been zeroed
+        gain = np.exp(2.0j*np.pi*params[:, :, :, :, (1,3)] * freq)
         dsk = dsk.assign(
             **{
-                'gains': (dsk.GAIN_AXES, da.from_array(gain, chunks=(-1, -1, -1, -1, -1))),
-                'params': (dsk.PARAM_AXES, da.from_array(params, chunks=(-1, -1, -1, -1, -1)))
+                'gains': (dsk.GAIN_AXES,
+                          da.from_array(gain, chunks=(-1, -1, -1, -1, -1))),
+                'params': (dsk.PARAM_AXES,
+                           da.from_array(params, chunks=(-1, -1, -1, -1, -1)))
 
         }
         )
         K[k] = dsk
 
+    print(f"Writing pure delays (i.e. offset removed) to {str(gain_dir)}/"
+          f"smoothed.qc::K", file=log)
     writes = xds_to_zarr(K, f'{str(gain_dir)}/smoothed.qc::K',
                          columns='ALL')
 
@@ -128,15 +135,15 @@ def _gsmooth(**kw):
 
     gamp = np.abs(g)
     gphase = np.angle(g*g[:, :, ref_ant].conj()[:, :, None])
-    # gphase = np.unwrap(gphase, axis=0, discont=0.9*2*np.pi)
-    # medvals0 = np.median(gphase[It[0], 0, :, 0, :], axis=0)
-    # for I in It[1:]:
-    #     medvals = np.median(gphase[I, 0, :, 0, :], axis=0)
-    #     for p in range(nant):
-    #         for c in range(ncorr):
-    #             tmp = medvals[p, c] - medvals0[p, c]
-    #             if np.abs(tmp) > 0.9*2*np.pi:
-    #                 gphase[I, 0, p, 0, c] -= 2*np.pi*np.sign(tmp)
+    gphase = np.unwrap(gphase, axis=0, discont=0.9*2*np.pi)
+    medvals0 = np.median(gphase[It[0], 0, :, 0, :], axis=0)
+    for I in It[1:]:
+        medvals = np.median(gphase[I, 0, :, 0, :], axis=0)
+        for p in range(nant):
+            for c in range(ncorr):
+                tmp = medvals[p, c] - medvals0[p, c]
+                if np.abs(tmp) > 0.9*2*np.pi:
+                    gphase[I, 0, p, 0, c] -= 2*np.pi*np.sign(tmp)
 
 
     time = xds_concat.gain_t.values
@@ -151,28 +158,28 @@ def _gsmooth(**kw):
     sphase = gphase
 
 
-    # samp = np.zeros_like(gamp)
-    # sampcov = np.zeros_like(gamp)
-    # sphase = np.zeros_like(gphase)
-    # sphasecov = np.zeros_like(gamp)
-    # for p in range(nant):
-    #     for c in range(ncorr):
-    #         print(f" p = {p}, c = {c}")
-    #         idx = np.where(jhj[:, 0, p, 0, c] > 0)[0]
-    #         if idx.size < 2:
-    #             continue
-    #         w = jhj[:, 0, p, 0, c]
-    #         amp = gamp[:, 0, p, 0, c]
-    #         mus, covs = kanterp3(t, amp, w, opts.niter, nu0=2)
-    #         samp[:, 0, p, 0, c] = mus[0, :]
-    #         sampcov[:, 0, p, 0, c] = covs[0, 0, :]
-    #         if p == ref_ant:
-    #             continue
-    #         phase = gphase[:, 0, p, 0, c]
-    #         wp = w/samp[:, 0, p, 0, c]
-    #         mus, covs = kanterp3(t, phase, wp, opts.niter, nu0=2)
-    #         sphase[:, 0, p, 0, c] = mus[0, :]
-    #         sphasecov[:, 0, p, 0, c] = covs[0, 0, :]
+    samp = np.zeros_like(gamp)
+    sampcov = np.zeros_like(gamp)
+    sphase = np.zeros_like(gphase)
+    sphasecov = np.zeros_like(gamp)
+    for p in range(nant):
+        for c in range(ncorr):
+            print(f" p = {p}, c = {c}")
+            idx = np.where(jhj[:, 0, p, 0, c] > 0)[0]
+            if idx.size < 2:
+                continue
+            w = jhj[:, 0, p, 0, c]
+            amp = gamp[:, 0, p, 0, c]
+            mus, covs = kanterp3(t, amp, w, opts.niter, nu0=2)
+            samp[:, 0, p, 0, c] = mus[0, :]
+            sampcov[:, 0, p, 0, c] = covs[0, 0, :]
+            if p == ref_ant:
+                continue
+            phase = gphase[:, 0, p, 0, c]
+            wp = w/samp[:, 0, p, 0, c]
+            mus, covs = kanterp3(t, phase, wp, opts.niter, nu0=2)
+            sphase[:, 0, p, 0, c] = mus[0, :]
+            sphasecov[:, 0, p, 0, c] = covs[0, 0, :]
 
 
     gs = samp * np.exp(1.0j*sphase)
@@ -181,20 +188,23 @@ def _gsmooth(**kw):
         gsi = gs[It[i]]
         xds[i] = ds.assign(**{'gains': (ds.GAIN_AXES, gsi)})
 
-    writes = xds_to_zarr(xds, f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
+    print(f"Writing smoothed gains to {str(gain_dir)}/"
+          f"smoothed.qc::{opts.gain_term}", file=log)
+    writes = xds_to_zarr(xds,
+                         f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
                          columns='ALL')
 
     dask.compute(writes)
 
     if not opts.do_plots:
+        print("Not doing plots", file=log)
+        print("All done here", file=log)
+        quit()
         quit()
 
     # set to NaN's for plotting
     gamp = np.where(jhj > 0, gamp, np.nan)
     gphase = np.where(jhj > 0, gphase, np.nan)
-
-    # samp = np.where(wgt > 0, samp, np.nan)
-    # sphase = np.where(wgt > 0, sphase, np.nan)
 
     print("Plotting results", file=log)
     for p in range(nant):
@@ -206,24 +216,20 @@ def _gsmooth(**kw):
 
             sigma = 1.0/np.sqrt(jhj[:, 0, p, 0, c])
             amp = gamp[:, 0, p, 0, c]
-            ax[0].errorbar(time, amp, sigma, fmt='xr')
-            # ax[0].errorbar(time, samp[:, 0, p, 0, c], np.sqrt(sampcov[:, 0, p, 0, c]),
-            #                fmt='ok', label='smooth')
-            ax[0].errorbar(time, samp[:, 0, p, 0, c], sigma,
+            ax[0].errorbar(time, amp, sigma, fmt='xr', label='raw')
+            ax[0].errorbar(time, samp[:, 0, p, 0, c],
+                           np.sqrt(sampcov[:, 0, p, 0, c]),
                            fmt='ok', label='smooth')
             ax[0].legend()
             ax[0].set_xlabel('time')
 
             sigmap = sigma/amp
             phase = gphase[:, 0, p, 0, c]
-            # phase = np.unwrap(phase, discont=2*np.pi*0.99)
             ax[1].errorbar(time, np.rad2deg(phase), sigmap, fmt='xr')
             phase = sphase[:, 0, p, 0, c]
-            # phase = np.unwrap(phase, discont=2*np.pi*0.99)
-            # ax[1].errorbar(time, np.rad2deg(phase), np.rad2deg(np.sqrt(sphasecov[:, 0, p, 0, c])),
-            #            fmt='ok', label='smooth')
-            ax[1].errorbar(time, np.rad2deg(phase), sigmap,
-                       fmt='ok', label='smooth')
+            ax[1].errorbar(time, np.rad2deg(phase),
+                           np.rad2deg(np.sqrt(sphasecov[:, 0, p, 0, c])),
+                           fmt='ok', label='smooth')
             ax[1].legend()
             ax[1].set_xlabel('time')
 

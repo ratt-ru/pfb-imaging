@@ -147,12 +147,9 @@ def _bsmooth(**kw):
     bpass = da.from_array(bpass, chunks=(-1, -1, -1, -1, -1))
     flag = da.from_array(flag, chunks=(-1, -1, -1, -1))
     for i, ds in enumerate(xds):
-        phase = np.angle(ds.gains.data.conj()[:, :, opts.ref_ant][:, :, None])
-        bpass = ds.gains.data * np.exp(1.0j*phase)
-        flag = ds.gain_flags.data
-        # import pdb; pdb.set_trace()
         xds[i] = ds.assign(**{'gains': (ds.GAIN_AXES, bpass),
-                              'gain_flags': (ds.GAIN_AXES[0:-1], flag.astype(bool))})
+                              'gain_flags': (ds.GAIN_AXES[0:-1],
+                                             flag.astype(bool))})
 
 
     print(f"Writing smoothed gains to {str(gain_dir)}/"
@@ -164,6 +161,7 @@ def _bsmooth(**kw):
 
     if not opts.do_plots:
         print("Not doing plots", file=log)
+        print("All done here", file=log)
         quit()
 
     # set to NaN's for plotting
