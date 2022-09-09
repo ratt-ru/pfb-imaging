@@ -71,7 +71,7 @@ def _gsmooth(**kw):
         It.append(slice(ti, ti+ntime))
         ti += ntime
         offset = dsk.params.values[0, 0, :, 0, 0]
-        # import pdb; pdb.set_trace()
+        # G K = G exp(1.0j*(offset + slope*freq)) ?
         gain[:, :, :, :, 0] = dsg.gains.values[:, :, :, :, 0] * np.exp(1.0j*offset[None, None, :, None])
         offset = dsk.params.values[0, 0, :, 0, 2]
         gain[:, :, :, :, 1] = dsg.gains.values[:, :, :, :, 1] * np.exp(1.0j*offset[None, None, :, None])
@@ -84,10 +84,10 @@ def _gsmooth(**kw):
 
         params = dsk.params.values
         params[:, :, :, :, 0] = 0.0
-        params[:, :, :, :, 1] = 0.0
+        params[:, :, :, :, 2] = 0.0
         freq = dsk.gain_f.values
         # this should work because the offsets have been zeroed
-        gain = np.exp(1.0j * params[:, :, :, :, (1,3)] * freq[None, :, None, None, None])
+        gain = np.exp(2.0j*np.pi*params[:, :, :, :, (1,3)] * freq[None, :, None, None, None])
         dsk = dsk.assign(
             **{
                 'gains': (dsk.GAIN_AXES, da.from_array(gain, chunks=(-1, -1, -1, -1, -1))),
