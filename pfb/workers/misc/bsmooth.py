@@ -63,6 +63,11 @@ def _bsmooth(**kw):
     if ndir > 1:
         raise ValueError("Only freq smoothing currently supported")
 
+    if opts.ref_ant == -1:
+        ref_ant = nant-1
+    else:
+        ref_ant = opts.ref_ant
+
     bamp = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
     bphase = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
     wgt = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
@@ -79,7 +84,7 @@ def _bsmooth(**kw):
         amp = np.abs(g)
         jhj = np.where(amp < opts.reject_amp_thresh, jhj, 0)
 
-        phase = np.angle(g) - np.angle(g[:, :, opts.ref_ant])[:, :, None]
+        phase = np.angle(g) - np.angle(g[:, :, ref_ant])[:, :, None]
         jhj = np.where(np.abs(phase) < np.deg2rad(opts.reject_phase_thresh),
                        jhj, 0)
 
@@ -134,6 +139,8 @@ def _bsmooth(**kw):
             ms, Ps = kanterp3(nu[I], amplin[I], w[I], niter=10, nu0=2, sigmaf0=np.sqrt(nchan), sigman0=1)
             # ms, Ps = kanterp2(nu[I], amplin[I], w[I], niter=10, nu0=2)
             samp[0, I, p, 0, c] = ms[0, :]
+            if p == ref_ant:
+                continue
             phase = bphase[0, :, p, 0, c]
             phaselin = np.interp(freq, freq[idx], phase[idx])
             # sphase[0, :, p, 0, c] = median_filter(phaselin,
@@ -144,6 +151,7 @@ def _bsmooth(**kw):
 
 
     bpass = samp * np.exp(1.0j*sphase)
+    # import pdb; pdb.set_trace()
     bpass = da.from_array(bpass, chunks=(-1, -1, -1, -1, -1))
     flag = da.from_array(flag, chunks=(-1, -1, -1, -1))
     for i, ds in enumerate(xds):
@@ -168,8 +176,10 @@ def _bsmooth(**kw):
     bamp = np.where(wgt > 0, bamp, np.nan)
     bphase = np.where(wgt > 0, bphase, np.nan)
 
-    samp = np.where(wgt > 0, samp, np.nan)
-    sphase = np.where(wgt > 0, sphase, np.nan)
+    samp = np.abs(bpass)
+    sphase = np.angle(bpass)
+    # samp = np.where(wgt > 0, samp, np.nan)
+    # sphase = np.where(wgt > 0, sphase, np.nan)
 
     try:
         xds = xds_from_zarr(f'{str(gain_dir)}::{opts.gain_term}')

@@ -200,7 +200,6 @@ def _gsmooth(**kw):
         print("Not doing plots", file=log)
         print("All done here", file=log)
         quit()
-        quit()
 
     # set to NaN's for plotting
     gamp = np.where(jhj > 0, gamp, np.nan)
