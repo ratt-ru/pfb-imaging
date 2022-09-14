@@ -10,7 +10,7 @@ Fs = np.fft.fftshift
 
 
 def compute_counts(uvw, freq, mask, nx, ny,
-                   cell_size_x, cell_size_y, dtype, wgt=None):
+                   cell_size_x, cell_size_y, dtype, wgt=None, k=6):
 
     if wgt is not None:
         wgt_out = ('row', 'chan')
@@ -27,6 +27,7 @@ def compute_counts(uvw, freq, mask, nx, ny,
                           cell_size_y, None,
                           dtype, None,
                           wgt, wgt_out,
+                          k, None,
                           new_axes={"nx": nx, "ny": ny},
                           adjust_chunks={'row': 1},
                           align_arrays=False,
@@ -36,11 +37,11 @@ def compute_counts(uvw, freq, mask, nx, ny,
 
 
 def compute_counts_wrapper(uvw, freq, mask, nx, ny,
-                           cell_size_x, cell_size_y, dtype, wgt):
+                           cell_size_x, cell_size_y, dtype, wgt, k):
     if wgt is not None:
         wgt = wgt[0]
     return _compute_counts(uvw[0], freq[0], mask[0], nx, ny,
-                        cell_size_x, cell_size_y, dtype, wgt)
+                        cell_size_x, cell_size_y, dtype, wgt, k)
 
 
 
