@@ -27,6 +27,7 @@ def compute_counts(uvw, freq, mask, nx, ny,
                           cell_size_y, None,
                           dtype, None,
                           wgt, wgt_out,
+                          mode, None,
                           new_axes={"nx": nx, "ny": ny},
                           adjust_chunks={'row': 1},
                           align_arrays=False,
@@ -41,6 +42,7 @@ def compute_counts_wrapper(uvw, freq, mask, nx, ny,
         wgt = wgt[0]
     return _compute_counts(uvw[0], freq[0], mask[0], nx, ny,
                         cell_size_x, cell_size_y, dtype, wgt)
+
 
 
 @njit(nogil=True, fastmath=True, cache=True)
@@ -106,7 +108,6 @@ def _compute_counts(uvw, freq, mask, nx, ny,
 @njit(nogil=True, fastmath=True, cache=True, inline='always')
 def _es_kernel(x, beta, k):
     return np.exp(beta*k*(np.sqrt((1-x)*(1+x)) - 1))
-
 
 def counts_to_weights(counts, uvw, freq, nx, ny,
                       cell_size_x, cell_size_y, robust):

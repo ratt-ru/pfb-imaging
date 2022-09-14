@@ -136,7 +136,7 @@ cabs:
     command: pfb.workers.misc.bsmooth.bsmooth
     flavour: python-ext
     policies:
-      # pass_missing_as_none: true
+      pass_missing_as_none: true
       prefix: '--'
       replace: {'_': '-'}
 
@@ -147,18 +147,19 @@ cabs:
     command: pfb.workers.misc.gsmooth.gsmooth
     flavour: python-ext
     policies:
-      # pass_missing_as_none: true
+      pass_missing_as_none: true
       prefix: '--'
       replace: {'_': '-'}
 
     _include:
       - (pfb.parser)gsmooth.yaml
 
+
   'pfbmisc_delay_init':
     command: pfb.workers.misc.delay_init.delay_init
     flavour: python-ext
     policies:
-      # pass_missing_as_none: true
+      pass_missing_as_none: true
       prefix: '--'
       replace: {'_': '-'}
 
@@ -169,7 +170,7 @@ cabs:
     command: pfb.workers.misc.zarr2fits.zarr2fits
     flavour: python-ext
     policies:
-      # pass_missing_as_none: true
+      pass_missing_as_none: true
       prefix: '--'
       replace: {'_': '-'}
 
