@@ -422,11 +422,8 @@ def _grid(**kw):
             dirty = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband, dtype=np.float32)
 
-            try:
-                hdr = set_wcs(cell_size / 3600, cell_size / 3600,
-                            nx, ny, radec, freq_out)
-            except:
-                import pdb; pdb.set_trace()
+            hdr = set_wcs(cell_size / 3600, cell_size / 3600,
+                          nx, ny, radec, freq_out)
             hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600,
                               nx, ny, radec, np.mean(freq_out))
 

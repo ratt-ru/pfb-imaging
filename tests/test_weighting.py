@@ -49,8 +49,7 @@ def test_counts():  #tmp_path_factory):
 
     mask = np.ones((nrow, nchan), dtype=bool)
     counts = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                             dtype=np.float64).squeeze()
-    quit()
+                             dtype=np.float64, k=0).squeeze()
     ku = np.sort(np.fft.fftfreq(nx, cell_rad))
     # shift by half a pixel to get bin edges
     kucell = ku[1] - ku[0]

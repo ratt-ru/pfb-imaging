@@ -158,8 +158,11 @@ def _fwdbwd(**kw):
     lcoord = -(nx//2) + np.arange(nx)
     mcoord = -(ny//2) + np.arange(ny)
     scoord = (lcoord[:, None]**2 + mcoord[None, :]**2).astype(np.float64)
-    sigmainv = opts.sigmainv + nband * (scoord/scoord.max())**4/rms**2
-    M = lambda x: x / sigmainv
+    sigmainv = opts.sigmainv # + nband * (scoord/scoord.max())**4/rms**2
+    if np.any(sigmainv):
+        M = lambda x: x / sigmainv
+    else:
+        M = None
     # the PSF is normalised so we don't need to pass wsum
     hess = partial(_hessian_reg_psf, beam=mean_beam * mask[None],
                    psfhat=psfhat, nthreads=opts.nthreads,
@@ -269,14 +272,14 @@ def _fwdbwd(**kw):
         if eps < opts.tol:
             break
 
-        sigmainv = opts.sigmainv + (scoord/scoord.max())**4/rms**2
-        M = lambda x: x / sigmainv
-        hessnorm, hessbeta = power_method(hess, (nband, nx, ny),
-                                          b0=hessbeta,
-                                          tol=opts.pm_tol,
-                                          maxit=opts.pm_maxit,
-                                          verbosity=opts.pm_verbose,
-                                          report_freq=opts.pm_report_freq)
+        # sigmainv = opts.sigmainv #+ (scoord/scoord.max())**4/rms**2
+        # M = lambda x: x / sigmainv
+        # hessnorm, hessbeta = power_method(hess, (nband, nx, ny),
+        #                                   b0=hessbeta,
+        #                                   tol=opts.pm_tol,
+        #                                   maxit=opts.pm_maxit,
+        #                                   verbosity=opts.pm_verbose,
+        #                                   report_freq=opts.pm_report_freq)
 
 
     print("Saving results", file=log)
