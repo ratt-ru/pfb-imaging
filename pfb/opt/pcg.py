@@ -121,7 +121,7 @@ def pcg(A,
             print(f"Max iters reached. eps = {eps:.3e}", file=log)
     elif stall_count >= 5:
         if verbosity:
-            print(f"Stalled. eps = {eps:.3e}", file=log)
+            print(f"Stalled after {k} iterations with eps = {eps:.3e}", file=log)
     else:
         if verbosity:
             print(f"Success, converged after {k} iterations", file=log)

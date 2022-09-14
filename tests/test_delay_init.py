@@ -1,6 +1,6 @@
 # import numpy as np
 # from pyrap.tables import table
-# from africanus.calibration.utils import corrupt_vis
+# from africanus.calibration.utils import corrupt_vis, chunkify_rows
 # from pfb.utils.misc import _accum_vis_impl, _estimate_delay_impl
 # from ducc0.fft import good_size
 
@@ -26,7 +26,7 @@
 #     ref_ant = 20
 #     delays = 1e-7*np.random.randn(nant, ncorr)
 #     # delays[ref_ant] = 0
-#     phase = freq[None, :, None] * delays[:, None, :]
+#     phase = freq[None, :, None] * delays[:, None, :]  # tecs/freq
 #     phase = np.tile(phase[None, :, :, :], (ntime, 1, 1, 1))
 #     gain = np.exp(2j * np.pi * phase[:, :, :, None, :])
 
@@ -47,41 +47,4 @@
 
 
 # test_delay_init()
-# # nchan = 100
-# # fmin = 1054535156.25
-# # fupper = 1075224609.375
-# # nu = np.linspace(fmin, fupper, nchan)
-# # fcell = nu[1]-nu[0]
 
-# # max_delay = 1/fcell
-
-# # print(max_delay)
-
-# # delay = max_delay/5
-
-# # min_delay = 1e-8
-# # fmax = fmin + 1/min_delay
-# # fexcess = fmax - fupper
-# # if fexcess > 0:
-# #     npad = np.int(np.ceil(fexcess/fcell))
-# #     npix = (nchan + npad)
-# # else:
-# #     npix = nchan
-
-# # lag = np.fft.fftfreq(npix, d=fcell)
-# # lag = np.fft.fftshift(lag)
-
-# # s = np.exp(2j*np.pi*nu*delay)
-
-# # shat = np.fft.fft(s, n=npix)
-# # shat = np.fft.fftshift(shat)
-
-# # pspec = np.abs(shat)
-# # idx = np.argmax(pspec)
-
-# # print(delay, lag[idx], idx)
-
-# # import matplotlib.pyplot as plt
-
-# # plt.plot(lag, pspec)
-# # plt.savefig('/home/landman/testing/test.png', dpi=250)

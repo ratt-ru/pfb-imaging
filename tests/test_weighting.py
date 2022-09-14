@@ -49,7 +49,7 @@ def test_counts(tmp_path_factory):
 
     mask = np.ones((nrow, nchan), dtype=bool)
     counts = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                             dtype=np.float64).squeeze()
+                             dtype=np.float64, k=0).squeeze()
     ku = np.sort(np.fft.fftfreq(nx, cell_rad))
     # shift by half a pixel to get bin edges
     kucell = ku[1] - ku[0]
@@ -116,7 +116,7 @@ def test_counts_dask(tmp_path_factory):
 
     mask = np.ones((nrow, nchan), dtype=bool)
     counts = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                             np.float64, wgt=weight).squeeze()
+                             np.float64, wgt=weight, k=0).squeeze()
 
     rc = 5000
     uvw = da.from_array(uvw, chunks=(rc, 3))
@@ -124,7 +124,7 @@ def test_counts_dask(tmp_path_factory):
     mask = da.from_array(mask, chunks=(rc, -1))
     weight = da.from_array(weight, chunks=(rc, -1))
     counts_dask = compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                                 np.float64, wgt=weight, mode='count')
+                                 np.float64, wgt=weight, k=0)
 
     assert_allclose(counts, counts_dask.compute())
 
@@ -173,14 +173,14 @@ def test_uniform(tmp_path_factory):
 
     mask = np.ones((nrow, nchan), dtype=bool)
     counts = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                             dtype=np.float64).squeeze()
+                             dtype=np.float64, k=0).squeeze()
 
     weights = _counts_to_weights(counts, uvw, freq, nx, ny,
                                  cell_rad, cell_rad, -3)
 
 
     counts2 = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                              np.float64, wgt=weights).squeeze()
+                              np.float64, wgt=weights, k=0).squeeze()
 
     assert_allclose(counts2[counts2>0], 1)
 
@@ -230,16 +230,16 @@ def test_uniform_dask(tmp_path_factory):
     freq = da.from_array(freq, chunks=-1)
     mask = da.ones((nrow, nchan), chunks=(rc, -1), dtype=bool)
     counts = compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                            np.float64, mode='count')
+                            np.float64, k=0)
 
     weights = counts_to_weights(counts, uvw, freq, nx, ny,
                                 cell_rad, cell_rad, -3)
 
     counts2 = compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                             np.float64, wgt=weights, mode='count')
+                             np.float64, wgt=weights, k=0)
 
     counts2 = counts2.compute()
     assert_allclose(counts2[counts2>0], 1)
 
 
-# test_uniform_dask()
+# test_counts()

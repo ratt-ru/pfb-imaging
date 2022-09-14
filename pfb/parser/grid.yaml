@@ -100,7 +100,7 @@ inputs:
     info: '"single" or "double"'
   filter_extreme_counts:
     dtype: bool
-    default: true
+    default: false
     info: "Replace extreme outliers in the weighting grid by their local mean"
   filter_nbox:
     dtype: int

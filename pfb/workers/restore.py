@@ -158,7 +158,7 @@ def _restore(**kw):
         save_fits(f'{basename}{opts.postfix}.residual_mfs.fits', residual_mfs, hdr_mfs)
 
     if 'R' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.residual.fits', model, hdr)
+        save_fits(f'{basename}{opts.postfix}.residual.fits', residual, hdr)
 
     if 'i' in opts.outputs:
         save_fits(f'{basename}{opts.postfix}.image_mfs.fits', image_mfs, hdr_mfs)

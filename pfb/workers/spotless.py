@@ -6,27 +6,27 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('FWDBWD')
+log = pyscilog.get_logger('SPOTLESS')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}
-for key in schema.fwdbwd["inputs"].keys():
-    defaults[key] = schema.fwdbwd["inputs"][key]["default"]
+for key in schema.spotless["inputs"].keys():
+    defaults[key] = schema.spotless["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.fwdbwd)
-def fwdbwd(**kw):
+@clickify_parameters(schema.spotless)
+def spotless(**kw):
     '''
-    Forward backward steps
+    Spotless algorithm
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'fwdbwd_{timestamp}.log')
+    pyscilog.log_to_file(f'spotless_{timestamp}.log')
 
     if opts.nworkers is None:
         if opts.scheduler=='distributed':
@@ -45,9 +45,9 @@ def fwdbwd(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _fwdbwd(**opts)
+        return _spotless(**opts)
 
-def _fwdbwd(**kw):
+def _spotless(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -151,31 +151,18 @@ def _fwdbwd(**kw):
     unpad_y = slice(npad_yl, -npad_yr)
     lastsize = ny + np.sum(psf_padding[-1])
 
-    residual_mfs = np.sum(residual, axis=0)
-    rms = np.std(residual_mfs)
-    rmax = residual_mfs.max()
-
-    lcoord = -(nx//2) + np.arange(nx)
-    mcoord = -(ny//2) + np.arange(ny)
-    scoord = (lcoord[:, None]**2 + mcoord[None, :]**2).astype(np.float64)
-    sigmainv = opts.sigmainv # + nband * (scoord/scoord.max())**4/rms**2
-    if np.any(sigmainv):
-        M = lambda x: x / sigmainv
-    else:
-        M = None
+    M = lambda x: x / opts.sigmainv
     # the PSF is normalised so we don't need to pass wsum
     hess = partial(_hessian_reg_psf, beam=mean_beam * mask[None],
                    psfhat=psfhat, nthreads=opts.nthreads,
-                   sigmainv=sigmainv, padding=psf_padding,
+                   sigmainv=opts.sigmainv, padding=psf_padding,
                    unpad_x=unpad_x, unpad_y=unpad_y, lastsize=lastsize)
 
     if opts.hessnorm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
-        hessnorm, hessbeta = power_method(hess, (nband, nx, ny),
-                                          tol=opts.pm_tol,
-                                          maxit=opts.pm_maxit,
-                                          verbosity=opts.pm_verbose,
-                                          report_freq=opts.pm_report_freq)
+        hessnorm, _ = power_method(hess, (nband, nx, ny), tol=opts.pm_tol,
+                                   maxit=opts.pm_maxit, verbosity=opts.pm_verbose,
+                                   report_freq=opts.pm_report_freq)
     else:
         hessnorm = opts.hessnorm
 
@@ -200,6 +187,9 @@ def _fwdbwd(**kw):
     freq_out = mds.band.values
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
 
+    residual_mfs = np.sum(residual, axis=0)
+    rms = np.std(residual_mfs)
+    rmax = residual_mfs.max()
     print(f"It {0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for i in range(opts.niter):
         print('Getting update', file=log)
@@ -271,16 +261,6 @@ def _fwdbwd(**kw):
               file=log)
         if eps < opts.tol:
             break
-
-        # sigmainv = opts.sigmainv #+ (scoord/scoord.max())**4/rms**2
-        # M = lambda x: x / sigmainv
-        # hessnorm, hessbeta = power_method(hess, (nband, nx, ny),
-        #                                   b0=hessbeta,
-        #                                   tol=opts.pm_tol,
-        #                                   maxit=opts.pm_maxit,
-        #                                   verbosity=opts.pm_verbose,
-        #                                   report_freq=opts.pm_report_freq)
-
 
     print("Saving results", file=log)
     mask = np.any(model, axis=0).astype(bool)

@@ -176,7 +176,6 @@ def _forward(**kw):
                        wsum=wsum, sigmainv=opts.sigmainv, mask=mask,
                        compute=True)
 
-    # # import pdb; pdb.set_trace()
     # x = np.random.randn(nband, nx, ny)  #.astype(np.float32)
     # res = hess(x)
     # dask.visualize(res, color="order", cmap="autumn",

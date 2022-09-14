@@ -1,29 +1,34 @@
 host_address:
   dtype: str
-  info: 'Address where the distributed client lives. Will use a local cluster if no address is provided'
+  info:
+    Address where the distributed client lives. Will use a local cluster if no
+    address is provided and scheduler is set to distributed.
   abbreviation: ha
 nworkers:
   dtype: int
-  info: 'Number of worker processes'
   abbreviation: nw
+  info:
+    Number of worker processes.
 nthreads_per_worker:
   dtype: int
-  info: 'Number of threads per worker process'
+  info:
+    Number of threads per worker process.
   abbreviation: ntpw
 nvthreads:
   dtype: int
-  info: 'Number of threads used to scale vertically (eg. for FFTs)'
+  info:
+    Number of threads used to scale vertically (eg. for FFTs).
   abbreviation: nvthreads
 nthreads:
   dtype: int
-  info: 'Total number of threads to use between all processes. Will use all available resources by default'
+  info:
+    Total number of threads to use between all processes.
+    Will use all available resources by default
   abbreviation: nthreads
-mem_limit:
-  dtype: int
-  info: 'Memory limit. Will use all available resources by default'
-  abbreviation: mem_limit
 scheduler:
   dtype: str
-  default: sync
-  info: distributed | single-threaded/sync | threads
+  default: threads
+  choices: ["threads", "single-threaded", "sync", "distributed"]
   abbreviation: scheduler
+  info:
+    Which dask scheduler to use.

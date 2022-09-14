@@ -38,12 +38,11 @@ inputs:
     default: -1
   algo:
     dtype: str
-    default: agroclean
+    default: clark
     choices:
       - hogbom
       - clark
-      - agroclean
-    info: 'Fast, approximate minor cycle'
+    info: 'Which minor cycle to use'
   update_mask:
     dtype: bool
     default: false

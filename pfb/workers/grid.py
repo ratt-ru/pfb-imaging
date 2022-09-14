@@ -176,11 +176,11 @@ def _grid(**kw):
 
     if os.path.isdir(dds_name):
         if opts.overwrite:
-            print(f'Removing {dds_name}', file=log)
+            print(f'Removing {dds_name} and {basename}.counts.zarr', file=log)
             import shutil
             shutil.rmtree(dds_name)
             try:
-                shutil.rmtree(f'{basename}_counts.zarr')
+                shutil.rmtree(f'{basename}.counts.zarr')
             except:
                 pass
         else:
@@ -422,11 +422,8 @@ def _grid(**kw):
             dirty = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband, dtype=np.float32)
 
-            try:
-                hdr = set_wcs(cell_size / 3600, cell_size / 3600,
-                            nx, ny, radec, freq_out)
-            except:
-                import pdb; pdb.set_trace()
+            hdr = set_wcs(cell_size / 3600, cell_size / 3600,
+                          nx, ny, radec, freq_out)
             hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600,
                               nx, ny, radec, np.mean(freq_out))
 
