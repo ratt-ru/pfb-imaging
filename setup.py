@@ -23,10 +23,7 @@ requirements = [
                 'nifty7',
                 'sympy',
                 "codex-africanus[complete]",
-
-                "dask-ms[xarray, zarr, s3]"
-                "@git+https://github.com/ratt-ru/dask-ms.git"
-                "@master",
+                "dask-ms[xarray, zarr, s3]",
 
                 "packratt"
                 "@git+https://github.com/ratt-ru/packratt.git"
