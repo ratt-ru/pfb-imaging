@@ -97,7 +97,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
 
         from pfb.scheduling import install_plugin
         client.run_on_scheduler(install_plugin)
-        client.wait_for_workers(dask_opts.workers)
+        client.wait_for_workers(opts.nworkers)
     elif scheduler in ['sync', 'single-threaded']:
         import dask
         dask.config.set(scheduler=scheduler)

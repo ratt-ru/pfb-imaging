@@ -12,7 +12,6 @@ RUN apt -y update && \
     apt clean
 
 
-ADD . /src/pfb
 RUN python -m pip install -U pip setuptools wheel && \
     python -m pip install -U pfb-clean@git+https://github.com/ratt-ru/pfb-clean@awskube && \
     python -m pip install numpy==1.22 && \

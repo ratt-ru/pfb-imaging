@@ -412,7 +412,7 @@ def _init(**kw):
     #                '_writes_I_graph.pdf', optimize_graph=False)
 
     # import pdb; pdb.set_trace()
-
-    dask.compute(writes, optimize_graph=False)
+    with compute_context(opts.scheduler, opts.output_filename+'_init'):
+        dask.compute(writes, optimize_graph=False)
 
     print("All done here.", file=log)

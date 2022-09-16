@@ -392,7 +392,8 @@ def _grid(**kw):
     #                optimize_graph=False)
 
     print("Computing image space data products", file=log)
-    dask.compute(xds_to_zarr(writes, dds_name, columns='ALL'))
+    with compute_context(opts.scheduler, opts.output_filename+'_grid'):
+        dask.compute(xds_to_zarr(writes, dds_name, columns='ALL'))
 
     if model is None:
         print("Initialising model ds", file=log)
