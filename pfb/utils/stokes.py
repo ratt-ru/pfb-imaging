@@ -220,10 +220,11 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                 for chan in range(nchan):
                     wval = wgt_func(gp[chan], gq[chan],
                                     weight[row, chan])
-                    wgt[row, chan] = wval
-                    vis[row, chan] = vis_func(gp[chan], gq[chan],
-                                              weight[row, chan],
-                                              data[row, chan])/wval
+                    if wval > 1e-6:
+                        wgt[row, chan] = wval
+                        vis[row, chan] = vis_func(gp[chan], gq[chan],
+                                                weight[row, chan],
+                                                data[row, chan])/wval
 
         return vis, wgt
     return _impl
