@@ -10,11 +10,11 @@ from daskms.optimisation import inlined_array
 from operator import getitem
 from pfb.utils.beam import interp_beam
 
+
 def single_stokes(ds=None,
                   jones=None,
                   opts=None,
                   freq=None,
-                  freq_out=None,
                   chan_width=None,
                   bandid=None,
                   cell_rad=None,
@@ -73,14 +73,18 @@ def single_stokes(ds=None,
         ntime = tbin_idx.size
         nant = da.maximum(ant1.max(), ant2.max()).compute() + 1
         jones = da.ones((ntime, nchan, nant, 1, 2),
-                        chunks=(tbin_idx.chunks[0][0], -1, -1, 1, 2),
-                        dtype=complex_type)
+                         chunks=(-1, -1, -1, 1, 2),  # no chunking at this level
+                         dtype=complex_type)
     elif jones.dtype != complex_type:
         jones = jones.astype(complex_type)
 
     # qcal has chan and ant axes reversed compared to pfb implementation
     jones = da.swapaxes(jones, 1, 2)
 
+    # Note we do not chunk at this level since all the chunking happens upfront
+    # we cast to dask arrays simply to defer the compute
+    tbin_idx = da.from_array(tbin_idx, chunks=(-1))
+    tbin_counts = da.from_array(tbin_counts, chunks=(-1))
     vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts,
                            ant1, ant2, pol='linear', product=opts.product)
 
@@ -138,6 +142,7 @@ def single_stokes(ds=None,
 
     # TODO - interpolate beam in time and freq
     npix = int(np.deg2rad(opts.max_field_of_view)/cell_rad)
+    freq_out = np.mean(freq)
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
 
     data_vars['BEAM'] = (('scalar'), beam)

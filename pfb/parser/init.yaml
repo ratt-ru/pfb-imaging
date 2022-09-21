@@ -65,18 +65,6 @@ inputs:
     info: 'Unique times per row chunk'
     abbreviation: utpc
     default: -1
-  group_by_field:
-    dtype: bool
-    default: True
-    info: "Split data by field"
-  group_by_ddid:
-    dtype: bool
-    default: True
-    info: "Split data by DDID"
-  group_by_scan:
-    dtype: bool
-    default: True
-    info: "Split data by scan"
   precision:
     dtype: str
     default: double

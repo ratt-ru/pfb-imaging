@@ -173,7 +173,8 @@ def test_fwdbwd(beam_model, do_gains, tmp_path_factory):
             'GAIN_AXES': ('gain_t', 'gain_f', 'ant', 'dir', 'corr')
         }
         coords = {
-            'gain_f': (('gain_f',), freq)
+            'gain_f': (('gain_f',), freq),
+            'gain_t': (('gain_t',), utime)
 
         }
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)

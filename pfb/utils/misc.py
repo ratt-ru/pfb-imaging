@@ -11,7 +11,14 @@ iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 from numba.core.extending import SentryLiteralArgs
 import inspect
-
+from daskms import xds_from_storage_ms as xds_from_ms
+from daskms import xds_from_storage_table as xds_from_table
+from daskms.experimental.zarr import xds_from_zarr
+from omegaconf import ListConfig
+from skimage.morphology import label
+from scipy.optimize import curve_fit
+from collections import namedtuple
+from scipy.interpolate import RectBivariateSpline as rbs
 
 def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
     nband, nx, ny = model
@@ -119,17 +126,6 @@ def kron_matvec2(A, b):
         x[:] = Z.T.ravel()
     return x
 
-def str2bool(v):
-    if isinstance(v, bool):
-        return v
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        import argparse
-        raise argparse.ArgumentTypeError('Boolean value expected.')
-
 
 def to4d(data):
     if data.ndim == 4:
@@ -207,7 +203,6 @@ def give_edges(p, q, nx, ny, nx_psf, ny_psf):
 
 
 def get_padding_info(nx, ny, pfrac):
-    from ducc0.fft import good_size
     npad_x = int(pfrac * nx)
     nfft = good_size(nx + npad_x, True)
     npad_xl = (nfft - nx) // 2
@@ -297,12 +292,7 @@ def chan_to_band_mapping(ms_name, nband=None,
 
     where IDENTITY is constructed from the FIELD/DDID and SCAN ID's.
     '''
-    from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms import xds_from_storage_table as xds_from_table
-    import dask
-    import dask.array as da
 
-    from omegaconf import ListConfig
     if not isinstance(ms_name, list) and not isinstance(ms_name, ListConfig) :
         ms_name = [ms_name]
 
@@ -404,6 +394,218 @@ def chan_to_band_mapping(ms_name, nband=None,
 
     return freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks
 
+
+def construct_mappings(ms_name, gain_name=None, nband=None, utpc=None):
+    '''
+    Construct dictionaries containing per MS, FIELD, DDID and SCAN
+    time and frequency mappings.
+
+    Input:
+    ms_name     - list of ms names
+    nband       - number of imaging bands (defaults to a single band)
+    utpc        - unique times per image (defaults to one per scan)
+
+    The chan <-> band mapping is determined by:
+
+    freqs           - dict[MS][IDT] frequencies chunked by band
+    fbin_idx        - dict[MS][IDT] freq bin starting indices
+    fbin_counts     - dict[MS][IDT] freq bin counts
+    band_mapping    - dict[MS][IDT] mapping from output band back
+                      to channel indices
+
+    where IDT is constructed as FIELD#_DDID#_SCAN#.
+    band_mapping would be redundant if we were imaging a single SPW.
+
+    Similarly, the row <-> time mapping is determined by:
+
+    times           - dict[MS][IDT] unique times per output image
+    tbin_idx        - dict[MS][IDT] time bin starting indices
+    tbin_counts     - dict[MS][IDT] time bin counts
+    row_mapping     - dict[MS][IDT] mapping from output time
+
+    where here the row_mapping would be redundant of we were imaging
+    a single scan.
+
+    '''
+
+    if not isinstance(ms_name, list) and not isinstance(ms_name, ListConfig):
+        ms_name = [ms_name]
+
+    if gain_name is not None:
+        if not isinstance(gain_name, list) and not isinstance(gain_name, ListConfig):
+            gain_name = [gain_name]
+        assert len(ms_name) == len(gain_name)
+
+    # collect times and frequencies per ms and ds
+    freqs = {}
+    chan_widths = {}
+    times = {}
+    gain_times = {}
+    gain_freqs = {}
+    gain_axes = {}
+    gain_spec = {}
+    radecs = {}
+    uv_maxs = []
+    idts = []
+    for ims, ms in enumerate(ms_name):
+        xds = xds_from_ms(ms, chunks={"row": -1}, columns=('TIME','UVW'),
+                          group_cols=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'])
+
+        # subtables
+        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")
+        fields = xds_from_table(ms + "::FIELD")
+        spws = xds_from_table(ms + "::SPECTRAL_WINDOW")
+        pols = xds_from_table(ms + "::POLARIZATION")
+
+        if gain_name is not None:
+            gain = xds_from_zarr(gain_name[ims])
+            gain_times[ms] = {}
+            gain_freqs[ms] = {}
+            gain_axes[ms] = {}
+            gain_spec[ms] = {}
+
+        freqs[ms] = {}
+        times[ms] = {}
+        radecs[ms] = {}
+        chan_widths[ms] = {}
+        for ids, ds in enumerate(xds):
+            idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
+            idts.append(idt)
+            field = fields[ds.FIELD_ID]
+            radecs[ms][idt] = field.PHASE_DIR.data.squeeze()
+
+            spw = spws[ds.DATA_DESC_ID]
+            freqs[ms][idt] = spw.CHAN_FREQ.data.squeeze()
+            chan_widths[ms][idt] = spw.CHAN_WIDTH.data.squeeze()
+            times[ms][idt] = ds.TIME.data.squeeze()
+            uvw = ds.UVW.data
+            u_max = abs(uvw[:, 0].max())
+            v_max = abs(uvw[:, 1]).max()
+            uv_maxs.append(da.maximum(u_max, v_max))
+
+            if gain_name is not None:
+                gain_times[ms][idt] = gain[ids].gain_t.data
+                gain_freqs[ms][idt] = gain[ids].gain_f.data
+                gain_axes[ms][idt] = gain[ids].GAIN_AXES
+                gain_spec[ms][idt] = gain[ids].GAIN_SPEC
+
+
+    # Early compute to get metadata
+    times, freqs, gain_times, gain_freqs, gain_axes, gain_spec, radecs,\
+        chan_widths, uv_maxs = dask.compute(times, freqs, gain_times,\
+        gain_freqs, gain_axes, gain_spec, radecs, chan_widths, uv_maxs)
+
+    uv_max = max(uv_maxs)
+
+    # Is this sufficient to make sure the MSs and gains are aligned?
+    all_freqs = []
+    utimes = {}
+    for ms in ms_name:
+        utimes[ms] = {}
+        for idt in idts:
+            freq = freqs[ms][idt]
+            if gain_name is not None:
+                try:
+                    assert (gain_freqs[ms][idt] == freq).all()
+                except Exception as e:
+                    raise ValueError(f'Mismatch between gain and MS '
+                                     f'frequencies for {ms} at {idt}')
+            all_freqs.append(freq)
+            utime = np.unique(times[ms][idt])
+            if gain_name is not None:
+                try:
+                    assert (gain_times[ms][idt] == utime).all()
+                except Exception as e:
+                    raise ValueError(f'Mismatch between gain and MS '
+                                     f'utimes for {ms} at {idt}')  #WTF!!
+            utimes[ms][idt] = utime
+
+    # freq mapping
+    ufreqs = np.unique(all_freqs)  # sorted ascending
+    nchan = ufreqs.size
+    if nband is None:
+        nband = 1
+    else:
+       nband = nband
+
+    # should we use bin edges here? what about inhomogeneous channel widths?
+    fmin = ufreqs[0]
+    fmax = ufreqs[-1]
+    fbins = np.linspace(fmin, fmax, nband + 1)
+    band_mapping = {}
+    fbin_idx = {}
+    fbin_counts = {}
+    for ms in ms_name:
+        fbin_idx[ms] = {}
+        fbin_counts[ms] = {}
+        band_mapping[ms] = {}
+        for idt in idts:
+            freq = freqs[ms][idt]
+            band_map = np.zeros(freq.size, dtype=np.int32)
+            for band in range(nband):
+                indl = freq >= fbins[band]
+                if band == nband-1:
+                    indu = freq <= fbins[band + 1]
+                else:
+                    indu = freq < fbins[band + 1]
+                band_map = np.where(indl & indu, band, band_map)
+
+            bands, bin_counts = np.unique(band_map, return_counts=True)
+            band_mapping[ms][idt] = bands
+            bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
+            fbin_idx[ms][idt] = bin_idx
+            fbin_counts[ms][idt] = bin_counts
+
+    # This logic does not currently handle overlapping scans
+    tbin_idx = {}
+    tbin_counts = {}
+    row_mapping = {}
+    ms_chunks = {}
+    gain_chunks = {}
+    for ims, ms in enumerate(ms_name):
+        tbin_idx[ms] = {}
+        tbin_counts[ms] = {}
+        row_mapping[ms] = {}
+        ms_chunks[ms] = []
+        gain_chunks[ms] = []
+        for idt in idts:
+            time = times[ms][idt]
+            if utpc in [0, -1, None]:
+                utpc = np.unique(time).size
+            row_chunks, tidx, tcounts = chunkify_rows(time, utpc, daskify_idx=False)
+            tbin_idx[ms][idt] = tidx
+            tbin_counts[ms][idt] = tcounts
+
+            ms_chunks[ms].append({'row': row_chunks,
+                                  'chan': tuple(fbin_counts[ms][idt])})
+
+            if gain_name is not None:
+                tmp_dict = {}
+                for name, val in zip(gain_axes[ms][idt], gain_spec[ms][idt]):
+                    if name == 'gain_t':
+                        ntimes = gain_times[ms][idt].size
+                        nchunksm1 = ntimes//utpc
+                        rem = ntimes - nchunksm1*utpc
+                        tmp_dict[name] = (utpc,)*nchunksm1
+                        if rem:
+                            tmp_dict[name] += (rem,)
+                    elif name == 'gain_f':
+                        tmp_dict[name] = tuple(fbin_counts[ms][idt])
+                    elif name == 'dir':
+                        if len(val) > 1:
+                            raise ValueError("DD gains not supported yet")
+                        if val[0] > 1:
+                            raise ValueError("DD gains not supported yet")
+                        tmp_dict[name] = val
+                    else:
+                        tmp_dict[name] = val
+
+                gain_chunks[ms].append(tmp_dict)
+
+    return freqs, fbin_idx, fbin_counts, band_mapping, utimes, tbin_idx,\
+        tbin_counts, ms_chunks, gain_chunks, radecs, chan_widths, uv_max
+
+
 def restore_corrs(vis, ncorr):
     return da.blockwise(_restore_corrs, ('row', 'chan', 'corr'),
                         vis, ('row', 'chan'),
@@ -425,27 +627,9 @@ def fitcleanbeam(psf: np.ndarray,
     """
     Find the Gaussian that approximates the main lobe of the PSF.
     """
-    from skimage.morphology import label
-    from scipy.optimize import curve_fit
+
 
     nband, nx, ny = psf.shape
-
-    # # find extent required to capture main lobe
-    # # saves on time to label islands
-    # psf0 = psf[0]/psf[0].max()  # largest PSF at lowest freq
-    # num_islands = 0
-    # npix = np.minimum(nx, ny)
-    # nbox = np.minimum(12, npix)  # 12 pixel minimum
-    # if npix <= nbox:
-    #     nbox = npix
-    # else:
-    #     while num_islands < 2:
-    #         Ix = slice(nx//2 - nbox//2, nx//2 + nbox//2)
-    #         Iy = slice(ny//2 - nbox//2, ny//2 + nbox//2)
-    #         mask = np.where(psf0[Ix, Iy] > level, 1.0, 0)
-    #         islands, num_islands = label(mask, return_num=True)
-    #         if num_islands < 2:
-    #             nbox *= 2  # double size and try again
 
     # coordinates
     x = np.arange(-nx / 2, nx / 2)
@@ -660,7 +844,6 @@ def interp_gain_grid(gdct, ant_names):
     # fit spline to time and freq axes
     gobj_amp = np.zeros((nant, 1, ncorr), dtype=object)
     gobj_phase = np.zeros((nant, 1, ncorr), dtype=object)
-    from scipy.interpolate import RectBivariateSpline as rbs
     for p in range(nant):
         for c in range(ncorr):
             gobj_amp[p, 0, c] = rbs(time, freq, np.abs(gain[:, :, p, 0, c]))
@@ -684,7 +867,6 @@ def array2qcal_ds(gobj_amp, gobj_phase, time, freq, ant_names, fid, ddid, sid, f
         'gains':(('gain_t', 'gain_f', 'ant', 'dir', 'corr'), gain),
         'gain_flags':(('gain_t', 'gain_f', 'ant', 'dir'), gflags)
     }
-    from collections import namedtuple
     gain_spec_tup = namedtuple('gains_spec_tup', 'tchunk fchunk achunk dchunk cchunk')
     attrs = {
         'DATA_DESC_ID': int(ddid),
@@ -713,8 +895,7 @@ def array2qcal_ds(gobj_amp, gobj_phase, time, freq, ant_names, fid, ddid, sid, f
         'f_chunk': (('f_chunk'), np.array([0], dtype=np.int32)),
         't_chunk': (('t_chunk'), np.array([0], dtype=np.int32))
     }
-    from daskms import Dataset
-    return Dataset(data_vars, coords=coords, attrs=attrs)
+    return xr.Dataset(data_vars, coords=coords, attrs=attrs)
 
 
 # not currently chunking over time
@@ -821,7 +1002,6 @@ def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):
     time_bin_indices = time_bin_indices.astype(np.int32)
     time_bin_counts = time_bin_counts.astype(np.int32)
     if daskify_idx:
-        import dask.array as da
         time_bin_indices = da.from_array(time_bin_indices, chunks=utimes_per_chunk)
         time_bin_counts = da.from_array(time_bin_counts, chunks=utimes_per_chunk)
     return tuple(row_chunks), time_bin_indices, time_bin_counts

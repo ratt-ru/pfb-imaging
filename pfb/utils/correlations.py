@@ -140,6 +140,7 @@ def single_corr(ds=None,
 
     # TODO - interpolate beam in time and freq
     npix = int(np.deg2rad(opts.max_field_of_view)/cell_rad)
+    freq_out = np.mean(freq)
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
 
     data_vars['BEAM'] = (('scalar'), beam)
