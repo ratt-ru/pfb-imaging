@@ -2,32 +2,31 @@ inputs:
   gain_dir:
     dtype: str
     abbreviation: gd
-    info: 'Path to gain directory'
+    info:
+      Path to gain directory
   gain_term:
     dtype: str
     abbreviation: gt
-    info: 'Gain term name'
+    info:
+      Gain term name
   ref_ant:
     dtype: int
     default: -1
     info:
       Reference antenna (will have zero phase)
-  reject_amp_thresh:
-    dtype: float
-    default: 2.0
-    info: 'Discard data where amplitudes are above this value'
-  reject_phase_thresh:
-    dtype: float
-    default: 7.5
-    info: 'Discard data where abs(phase) is above this number'
   niter:
     dtype: int
     default: 5
-    info: Number of reweighting iterations (larger -> more smoothing)
+    info:
+      Number of reweighting iterations (larger -> more smoothing)
   do_plots:
     dtype: bool
     default: false
-    info: 'Make per antenna plots'
+    info:
+      Make per antenna plots
+
+  _include:
+    - (pfb.parser)dist.yml
 
 
 outputs:

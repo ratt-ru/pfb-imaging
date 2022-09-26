@@ -50,10 +50,6 @@ def single_stokes(ds=None,
     else:
         flag = da.broadcast_to(frow[:, None], (nrow, nchan))
 
-    # Does this trigger an early compute()?
-    if flag.all():
-        return
-
     if opts.sigma_column is not None:
         sigma = getattr(ds, opts.sigma_column).data
         weight = 1.0/sigma**2
@@ -90,6 +86,9 @@ def single_stokes(ds=None,
 
     vis = inlined_array(vis, [ant1, ant2, tbin_idx, tbin_counts, jones])
     wgt = inlined_array(wgt, [ant1, ant2, tbin_idx, tbin_counts, jones])
+
+    if opts.radec is not None and not np.array_equal(radec, opts.radec):
+        raise NotImplementedError()
 
     mask = ~flag
     mask = inlined_array(mask, [frow])

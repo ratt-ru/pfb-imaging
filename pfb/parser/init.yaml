@@ -20,6 +20,10 @@ inputs:
     required: true
     abbreviation: nb
     info: 'Number of imaging bands'
+  radec:
+    dtype: Optional[List[any]]
+    info:
+      Rephase all images to this radec specified in radians
   data_column:
     dtype: str
     default: DATA
@@ -60,10 +64,12 @@ inputs:
     default: I
     info: 'Imaging products to produce. Options are I, Q, U, V. \
           Only single Stokes products are currently supported'
-  utimes_per_chunk:
+  integrations_per_image:
     dtype: int
-    info: 'Unique times per row chunk'
-    abbreviation: utpc
+    info:
+      Number of time integrations per image.
+      Default (-1, 0, None) makes an image per scan.
+    abbreviation: ipi
     default: -1
   precision:
     dtype: str

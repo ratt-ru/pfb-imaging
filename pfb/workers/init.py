@@ -145,7 +145,7 @@ def _init(**kw):
     freqs, fbin_idx, fbin_counts, band_mapping, utimes, tbin_idx, \
         tbin_counts, ms_chunks, gain_chunks, radecs, chan_widths, \
         uv_max = construct_mappings(opts.ms, gain_names, opts.nband,
-                                    opts.utimes_per_chunk)
+                                    opts.integrations_per_image)
 
     max_freq = 0
     for ms in opts.ms:
@@ -153,8 +153,12 @@ def _init(**kw):
             freq = freqs[ms][idt]
             max_freq = np.maximum(max_freq, freq.max())
 
-    # approx max cell size
+    # cell size
     cell_rad = 1.0 / (2 * uv_max * max_freq / lightspeed)
+
+    # we should rephase to the Barycenter of all datasets
+    if opts.radec is not None:
+        raise NotImplementedError()
 
     # this is not optional but we can always concatenate later if needs be
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']

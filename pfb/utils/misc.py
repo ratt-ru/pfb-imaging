@@ -19,6 +19,7 @@ from skimage.morphology import label
 from scipy.optimize import curve_fit
 from collections import namedtuple
 from scipy.interpolate import RectBivariateSpline as rbs
+from africanus.coordinates.coordinates import radec_to_lmn
 
 def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
     nband, nx, ny = model
@@ -1019,3 +1020,19 @@ def add_column(ms, col_name, like_col="DATA", like_type=None):
             desc['valueType'] = like_type
         ms.addcols(desc, dminfo)
     return ms
+
+
+def rephase_vis(vis, uvw, radec_in, radec_out):
+    return da.blockwise(_rephase_vis, 'rf',
+                        vis, 'rf',
+                        uvw, 'r3',
+                        radec_in, None,
+                        radec_out, None,
+                        dtype=vis.dtype)
+
+def _rephase_vis(vis, uvw, radec_in, radec_out):
+    l_in, m_in, n_in = radec_to_lmn(radec_in)
+    l_out, m_out, n_out = radec_to_lmn(radec_out)
+    return vis * np.exp(1j*(uvw[:, 0]*(l_out-l_in) +
+                            uvw[:, 1]*(m_out-m_in) +
+                            uvw[:, 2]*(n_out-n_in)))

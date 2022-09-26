@@ -22,17 +22,23 @@ def bsmooth(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
+    opts.nband = 1  # hack!!!
     OmegaConf.set_struct(opts, True)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     pyscilog.log_to_file(f'bsmooth_{timestamp}.log')
 
-    # TODO - prettier config printing
-    print('Input Options:', file=log)
-    for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
 
-    return _bsmooth(**opts)
+    with ExitStack() as stack:
+        from pfb import set_client
+        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
+
+        # TODO - prettier config printing
+        print('Input Options:', file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
+
+        return _bsmooth(**opts)
 
 def _bsmooth(**kw):
     opts = OmegaConf.create(kw)
