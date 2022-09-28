@@ -142,10 +142,12 @@ def _init(**kw):
         gain_names = list(map(tmpf, opts.gain_table))
     else:
         gain_names = None
-    freqs, fbin_idx, fbin_counts, band_mapping, utimes, tbin_idx, \
-        tbin_counts, ms_chunks, gain_chunks, radecs, chan_widths, \
-        uv_max = construct_mappings(opts.ms, gain_names, opts.nband,
-                                    opts.integrations_per_image)
+    freqs, fbin_idx, fbin_counts, band_mapping, utimes, tbin_idx,\
+        tbin_counts, time_mapping, ms_chunks, gain_chunks, radecs,\
+        chan_widths, uv_max, antpos, poltype =\
+            construct_mappings(opts.ms, gain_names,
+                               opts.nband,
+                               opts.integrations_per_image)
 
     max_freq = 0
     for ms in opts.ms:
@@ -194,32 +196,8 @@ def _init(**kw):
                           table_schema=schema, group_cols=group_by)
 
         if opts.gain_table is not None:
-            G = xds_from_zarr(gain_names[ims],
+            gds = xds_from_zarr(gain_names[ims],
                               chunks=gain_chunks[ms])
-
-        # subtables
-        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")
-        fields = xds_from_table(ms + "::FIELD")
-        spws = xds_from_table(ms + "::SPECTRAL_WINDOW")
-        pols = xds_from_table(ms + "::POLARIZATION")
-
-        # subtable data precomputed
-        # ddids = dask.compute(ddids)[0]
-        # fields = dask.compute(fields)[0]
-        # spws = dask.compute(spws)[0]
-        # pols = dask.compute(pols)[0]
-
-        # TODO - polarisation info
-        # corr_type = set(tuple(pols[0].CORR_TYPE.data.squeeze()))
-        pol_type='linear'
-
-        # if corr_type.issubset(set([9, 10, 11, 12])):
-        #     pol_type = 'linear'
-        # elif corr_type.issubset(set([5, 6, 7, 8])):
-        #     pol_type = 'circular'
-        # else:
-        #     raise ValueError(f"Cannot determine polarisation type "
-        #                      f"from correlations {pols[0].CORR_TYPE.data}")
 
         for ids, ds in enumerate(xds):
             fid = ds.FIELD_ID
@@ -230,49 +208,65 @@ def _init(**kw):
             nchan = ds.dims['chan']
             ncorr = ds.dims['corr']
 
-            universal_opts = {
-                'tbin_idx':tbin_idx[ms][idt],
-                'tbin_counts':tbin_counts[ms][idt],
-                'cell_rad':cell_rad,
-                'radec':radecs[ms][idt]
-            }
+            for t, (tlow, thigh, tid) in enumerate(zip(
+                                        time_mapping[ms][idt]['low'],
+                                        time_mapping[ms][idt]['high'],
+                                        time_mapping[ms][idt]['time_id'])):
+                It = slice(tlow, thigh)
+                Irow = slice(tbin_idx[ms][idt][tlow],
+                             tbin_idx[ms][idt][tlow] +
+                             ms_chunks[ms][ids]['row'][t])
 
-            for b, band_id in enumerate(band_mapping[ms][idt]):
-                f0 = fbin_idx[ms][idt][b]
-                ff = f0 + fbin_counts[ms][idt][b]
-                Inu = slice(f0, ff)
+                for b, band_id in enumerate(band_mapping[ms][idt]):
+                    f0 = fbin_idx[ms][idt][b]
+                    ff = f0 + fbin_counts[ms][idt][b]
+                    Inu = slice(f0, ff)
 
-                subds = ds[{'chan': Inu}]
-                if opts.gain_table is not None:
-                    # Only DI gains currently supported
-                    jones = G[ids][{'gain_f': Inu}].gains.data
-                else:
-                    jones = None
+                    subds = ds[{'row': Irow, 'chan': Inu}]
+                    if opts.gain_table is not None:
+                        # Only DI gains currently supported
+                        jones = gds[ids][{'gain_t': It, 'gain_f': Inu}].gains.data
+                    else:
+                        jones = None
 
-                if opts.product.upper() in ["I", "Q", "U", "V"]:
-                    out_ds = single_stokes(ds=subds,
-                                           jones=jones,
-                                           opts=opts,
-                                           freq=freqs[ms][idt][Inu],
-                                           chan_width=chan_widths[ms][idt][Inu],
-                                           bandid=band_id,
-                                           **universal_opts)
-                elif opts.product.upper() in ["XX", "YX", "XY", "YY", "RR",
-                                              "RL", "LR", "LL"]:
-                    out_ds = single_corr(ds=subds,
-                                         jones=jones,
-                                         opts=opts,
-                                         freq=freqs[ms][idt][Inu],
-                                         chan_width=chan_width[Inu],
-                                         bandid=band_id,
-                                         **universal_opts)
-                else:
-                    raise NotImplementedError(f"Product {args.product} not "
-                                              "supported yet")
-                # if all data in a dataset is flagged we return None and
-                # ignore this chunk of data
-                if out_ds is not None:
-                    out_datasets.append(out_ds)
+                    if opts.product.upper() in ["I", "Q", "U", "V"]:
+                        out_ds = single_stokes(
+                            ds=subds,
+                            jones=jones,
+                            opts=opts,
+                            freq=freqs[ms][idt][Inu],
+                            chan_width=chan_widths[ms][idt][Inu],
+                            bandid=band_id,
+                            utime=utimes[ms][idt][It],
+                            tbin_idx=tbin_idx[ms][idt][It],
+                            tbin_counts=tbin_counts[ms][idt][It],
+                            timeid=tid,
+                            cell_rad=cell_rad,
+                            radec=radecs[ms][idt],
+                            antpos=antpos[ms],
+                            poltype=poltype[ms])
+                    elif opts.product.upper() in ["XX", "YX", "XY", "YY", "RR",
+                                                "RL", "LR", "LL"]:
+                        out_ds = single_corr(
+                            ds=subds,
+                            jones=jones,
+                            opts=opts,
+                            freq=freqs[ms][idt][Inu],
+                            chan_width=chan_widths[ms][idt][Inu],
+                            bandid=band_id,
+                            utimes=utimes[ms][idt][It],
+                            tbin_idx=tbin_idx[ms][idt][It],
+                            tbin_counts=tbin_counts[ms][idt][It],
+                            timeid=tid,
+                            cell_rad=cell_rad,
+                            radec=radecs[ms][idt])
+                    else:
+                        raise NotImplementedError(f"Product {args.product} not "
+                                                "supported yet")
+                    # if all data in a dataset is flagged we return None and
+                    # ignore this chunk of data
+                    if out_ds is not None:
+                        out_datasets.append(out_ds)
 
     if len(out_datasets):
         writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',

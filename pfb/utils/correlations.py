@@ -11,16 +11,17 @@ from operator import getitem
 from pfb.utils.beam import interp_beam
 
 def single_corr(ds=None,
-                  jones=None,
-                  opts=None,
-                  freq=None,
-                  freq_out=None,
-                  chan_width=None,
-                  bandid=None,
-                  cell_rad=None,
-                  tbin_idx=None,
-                  tbin_counts=None,
-                  radec=None):
+                jones=None,
+                opts=None,
+                freq=None,
+                chan_width=None,
+                bandid=None,
+                cell_rad=None,
+                utimes=None,
+                tbin_idx=None,
+                tbin_counts=None,
+                timeid=None,
+                radec=None):
 
     if opts.precision.lower() == 'single':
         real_type = np.float32

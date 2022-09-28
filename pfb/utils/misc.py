@@ -395,8 +395,16 @@ def chan_to_band_mapping(ms_name, nband=None,
 
     return freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks
 
+@dask.delayed
+def fetch_poltype(corr_type):
+    corr_type = set(tuple(corr_type))
+    if corr_type.issubset(set([9, 10, 11, 12])):
+        return 'linear'
+    elif corr_type.issubset(set([5, 6, 7, 8])):
+        return 'circular'
 
-def construct_mappings(ms_name, gain_name=None, nband=None, utpc=None):
+
+def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
     '''
     Construct dictionaries containing per MS, FIELD, DDID and SCAN
     time and frequency mappings.
@@ -404,7 +412,9 @@ def construct_mappings(ms_name, gain_name=None, nband=None, utpc=None):
     Input:
     ms_name     - list of ms names
     nband       - number of imaging bands (defaults to a single band)
-    utpc        - unique times per image (defaults to one per scan)
+    ipi         - integrations (i.e. unique times) per output image.
+                  Defaults to one per scan which is also the min time
+                  resolion.
 
     The chan <-> band mapping is determined by:
 
@@ -419,10 +429,10 @@ def construct_mappings(ms_name, gain_name=None, nband=None, utpc=None):
 
     Similarly, the row <-> time mapping is determined by:
 
-    times           - dict[MS][IDT] unique times per output image
+    utimes          - dict[MS][IDT] unique times per output image
     tbin_idx        - dict[MS][IDT] time bin starting indices
     tbin_counts     - dict[MS][IDT] time bin counts
-    row_mapping     - dict[MS][IDT] mapping from output time
+    time_mapping    - dict[MS][IDT] mapping from output time
 
     where here the row_mapping would be redundant of we were imaging
     a single scan.
@@ -446,6 +456,8 @@ def construct_mappings(ms_name, gain_name=None, nband=None, utpc=None):
     gain_axes = {}
     gain_spec = {}
     radecs = {}
+    antpos = {}
+    poltype = {}
     uv_maxs = []
     idts = []
     for ims, ms in enumerate(ms_name):
@@ -457,6 +469,11 @@ def construct_mappings(ms_name, gain_name=None, nband=None, utpc=None):
         fields = xds_from_table(ms + "::FIELD")
         spws = xds_from_table(ms + "::SPECTRAL_WINDOW")
         pols = xds_from_table(ms + "::POLARIZATION")
+        ants = xds_from_table(ms + "::ANTENNA")
+
+        antpos[ms] = ants[0].POSITION.data
+        poltype[ms] = fetch_poltype(pols[0].CORR_TYPE.data.squeeze())
+
 
         if gain_name is not None:
             gain = xds_from_zarr(gain_name[ims])
@@ -493,14 +510,16 @@ def construct_mappings(ms_name, gain_name=None, nband=None, utpc=None):
 
     # Early compute to get metadata
     times, freqs, gain_times, gain_freqs, gain_axes, gain_spec, radecs,\
-        chan_widths, uv_maxs = dask.compute(times, freqs, gain_times,\
-        gain_freqs, gain_axes, gain_spec, radecs, chan_widths, uv_maxs)
+        chan_widths, uv_maxs, antpos, poltype = dask.compute(times, freqs,\
+        gain_times, gain_freqs, gain_axes, gain_spec, radecs, chan_widths,\
+        uv_maxs, antpos, poltype)
 
     uv_max = max(uv_maxs)
 
     # Is this sufficient to make sure the MSs and gains are aligned?
     all_freqs = []
     utimes = {}
+    ntimes_out = 0
     for ms in ms_name:
         utimes[ms] = {}
         for idt in idts:
@@ -520,6 +539,10 @@ def construct_mappings(ms_name, gain_name=None, nband=None, utpc=None):
                     raise ValueError(f'Mismatch between gain and MS '
                                      f'utimes for {ms} at {idt}')  #WTF!!
             utimes[ms][idt] = utime
+            if ipi in [0, -1, None]:
+                ntimes_out += 1
+            else:
+                ntimes_out += np.ceil(utime.size/ipi)
 
     # freq mapping
     ufreqs = np.unique(all_freqs)  # sorted ascending
@@ -560,22 +583,34 @@ def construct_mappings(ms_name, gain_name=None, nband=None, utpc=None):
     # This logic does not currently handle overlapping scans
     tbin_idx = {}
     tbin_counts = {}
-    row_mapping = {}
+    time_mapping = {}
     ms_chunks = {}
     gain_chunks = {}
+    ti = 0
     for ims, ms in enumerate(ms_name):
         tbin_idx[ms] = {}
         tbin_counts[ms] = {}
-        row_mapping[ms] = {}
+        time_mapping[ms] = {}
         ms_chunks[ms] = []
         gain_chunks[ms] = []
         for idt in idts:
             time = times[ms][idt]
-            if utpc in [0, -1, None]:
-                utpc = np.unique(time).size
-            row_chunks, tidx, tcounts = chunkify_rows(time, utpc, daskify_idx=False)
+            # has to be here since scans not same length
+            ntime = utimes[ms][idt].size
+            if ipi in [0, -1, None]:
+                ipit = ntime
+            else:
+                ipit = ipi
+            row_chunks, tidx, tcounts = chunkify_rows(time, ipit,
+                                                      daskify_idx=False)
             tbin_idx[ms][idt] = tidx
             tbin_counts[ms][idt] = tcounts
+            time_mapping[ms][idt] = {}
+            time_mapping[ms][idt]['low'] = np.arange(0, ntime, ipit)
+            hmap = np.append(np.arange(ipit, ntime, ipit), ntime)
+            time_mapping[ms][idt]['high'] = hmap
+            time_mapping[ms][idt]['time_id'] = np.arange(ti, ti + hmap.size)
+            ti += hmap.size
 
             ms_chunks[ms].append({'row': row_chunks,
                                   'chan': tuple(fbin_counts[ms][idt])})
@@ -585,9 +620,9 @@ def construct_mappings(ms_name, gain_name=None, nband=None, utpc=None):
                 for name, val in zip(gain_axes[ms][idt], gain_spec[ms][idt]):
                     if name == 'gain_t':
                         ntimes = gain_times[ms][idt].size
-                        nchunksm1 = ntimes//utpc
-                        rem = ntimes - nchunksm1*utpc
-                        tmp_dict[name] = (utpc,)*nchunksm1
+                        nchunksm1 = ntimes//ipit
+                        rem = ntimes - nchunksm1*ipit
+                        tmp_dict[name] = (ipit,)*nchunksm1
                         if rem:
                             tmp_dict[name] += (rem,)
                     elif name == 'gain_f':
@@ -604,7 +639,8 @@ def construct_mappings(ms_name, gain_name=None, nband=None, utpc=None):
                 gain_chunks[ms].append(tmp_dict)
 
     return freqs, fbin_idx, fbin_counts, band_mapping, utimes, tbin_idx,\
-        tbin_counts, ms_chunks, gain_chunks, radecs, chan_widths, uv_max
+        tbin_counts, time_mapping, ms_chunks, gain_chunks, radecs,\
+        chan_widths, uv_max, antpos, poltype
 
 
 def restore_corrs(vis, ncorr):

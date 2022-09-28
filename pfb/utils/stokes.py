@@ -18,9 +18,13 @@ def single_stokes(ds=None,
                   chan_width=None,
                   bandid=None,
                   cell_rad=None,
+                  utime=None,
                   tbin_idx=None,
                   tbin_counts=None,
-                  radec=None):
+                  timeid=None,
+                  radec=None,
+                  antpos=None,
+                  poltype=None):
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -64,37 +68,42 @@ def single_stokes(ds=None,
     if weight.dtype != real_type:
         weight = weight.astype(real_type)
 
-    if jones is None:
-        # TODO - remove unnecessary jones multiplies
-        ntime = tbin_idx.size
-        nant = da.maximum(ant1.max(), ant2.max()).compute() + 1
+    if jones is not None:
+        if jones.dtype != complex_type:
+            jones = jones.astype(complex_type)
+        # qcal has chan and ant axes reversed compared to pfb implementation
+        jones = da.swapaxes(jones, 1, 2)
+    else:
+        ntime = utime.size
+        nchan = freq.size
+        nant = antpos.shape[0]
+        # import pdb; pdb.set_trace()
         jones = da.ones((ntime, nchan, nant, 1, 2),
-                         chunks=(-1, -1, -1, 1, 2),  # no chunking at this level
-                         dtype=complex_type)
-    elif jones.dtype != complex_type:
-        jones = jones.astype(complex_type)
-
-    # qcal has chan and ant axes reversed compared to pfb implementation
-    jones = da.swapaxes(jones, 1, 2)
+                        chunks=(-1,)*5,
+                        dtype=complex_type)
 
     # Note we do not chunk at this level since all the chunking happens upfront
     # we cast to dask arrays simply to defer the compute
     tbin_idx = da.from_array(tbin_idx, chunks=(-1))
     tbin_counts = da.from_array(tbin_counts, chunks=(-1))
     vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                           ant1, ant2, pol='linear', product=opts.product)
+                        ant1, ant2, pol=poltype, product=opts.product)
 
     vis = inlined_array(vis, [ant1, ant2, tbin_idx, tbin_counts, jones])
     wgt = inlined_array(wgt, [ant1, ant2, tbin_idx, tbin_counts, jones])
 
-    if opts.radec is not None and not np.array_equal(radec, opts.radec):
+    if isinstance(opts.radec, str):
         raise NotImplementedError()
+    elif isinstance(opts.radec, np.ndarray) and not np.array_equal(radec, opts.radec):
+        raise NotImplementedError()
+
 
     mask = ~flag
     mask = inlined_array(mask, [frow])
     uvw = ds.UVW.data
 
     data_vars = {'FREQ': (('chan',), freq)}
+    data_vars['TIME'] = (('time',), utime)
 
     wsum = da.sum(wgt[mask])
     data_vars['WSUM'] = (('scalar'), da.array((wsum,)))
@@ -146,6 +155,7 @@ def single_stokes(ds=None,
 
     data_vars['BEAM'] = (('scalar'), beam)
 
+    # TODO - provide time and freq centroids
     attrs = {
         'ra' : radec[0],
         'dec': radec[1],
@@ -153,10 +163,13 @@ def single_stokes(ds=None,
         'ddid': ds.DATA_DESC_ID,
         'scanid': ds.SCAN_NUMBER,
         'bandid': int(bandid),
-        'freq_out': freq_out
+        'freq_out': freq_out,
+        'timeid': int(timeid),
+        'time_out': np.mean(utime)
     }
 
-    out_ds = Dataset(data_vars, attrs=attrs)
+    out_ds = Dataset(data_vars, attrs=attrs).chunk({'row':'auto',
+                                                    'chan':'auto'})
 
     return out_ds
 
@@ -192,9 +205,11 @@ def weight_data(data, weight, jones, tbin_idx, tbin_counts,
     return vis, wgt
 
 def _weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                      ant1, ant2, pol, product):
+                 ant1, ant2, pol, product):
+
     return _weight_data_impl(data[0], weight[0], jones[0][0][0],
-                             tbin_idx, tbin_counts, ant1, ant2, pol, product)
+                             tbin_idx, tbin_counts,
+                             ant1, ant2, pol, product)
 
 @generated_jit(nopython=True, nogil=True, cache=True)
 def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
