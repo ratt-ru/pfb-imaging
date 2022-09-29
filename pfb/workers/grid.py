@@ -111,7 +111,7 @@ def _grid(**kw):
     if opts.robustness is not None:
         columns += (opts.imaging_weight_column,)
 
-    xds = xds_from_zarr(xds_name, chunks={'row': -1},
+    xds = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1},
                         columns=columns)
 
     # get max uv coords over all datasets
