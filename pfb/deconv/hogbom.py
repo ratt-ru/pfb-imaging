@@ -58,12 +58,12 @@ def hogbom(
         if verbosity:
             print("Maximum iterations reached. Max of residual = %f." %
                   (IRmax), file=log)
-        return model, 1
+        return x, 1
     elif stall_count >= 5:
         if verbosity:
             print("Stalled. Max of residual = %f." %
                   (IRmax), file=log)
-        return model, 1
+        return x, 1
     else:
         if verbosity:
             print("Success, converged after %i iterations" % k, file=log)
