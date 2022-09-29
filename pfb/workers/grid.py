@@ -119,7 +119,7 @@ def _grid(**kw):
     max_freqs = []
     for ds in xds:
         uvw = ds.UVW.data
-        u_max = abs(uvw[:, 0].max())
+        u_max = abs(uvw[:, 0]).max()
         v_max = abs(uvw[:, 1]).max()
         uv_maxs.append(da.maximum(u_max, v_max))
         max_freqs.append(ds.FREQ.data.max())
