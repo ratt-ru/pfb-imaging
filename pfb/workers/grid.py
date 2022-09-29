@@ -376,8 +376,8 @@ def _grid(**kw):
             'robustness': opts.robustness
         }
 
-        out_ds = xr.Dataset(dvars, attrs=attrs).chunk({'row':'auto',
-                                                       'chan':'auto'})
+        out_ds = xr.Dataset(dvars, attrs=attrs).chunk({'row':100000,
+                                                       'chan':128})
         writes.append(out_ds.unify_chunks())
         freq_out.append(ds.freq_out)
         wsums[ds.bandid] += wsum

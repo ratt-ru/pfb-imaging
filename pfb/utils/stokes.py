@@ -181,8 +181,8 @@ def single_stokes(ds=None,
         'time_out': np.mean(utime)
     }
 
-    out_ds = Dataset(data_vars, attrs=attrs).chunk({'row':'auto',
-                                                    'chan':'auto'})
+    out_ds = Dataset(data_vars, attrs=attrs).chunk({'row':100000,
+                                                    'chan':128})
 
     return out_ds.unify_chunks()
 
