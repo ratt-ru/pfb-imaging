@@ -36,12 +36,12 @@ def single_stokes(ds=None,
     data = getattr(ds, opts.data_column).data
     nrow, nchan, _ = data.shape
 
-    ant1 = ds.ANTENNA1.data
-    ant2 = ds.ANTENNA2.data
+    ant1 = clone(ds.ANTENNA1.data)
+    ant2 = clone(ds.ANTENNA2.data)
 
     # MS may contain auto-correlations
     if 'FLAG_ROW' in ds:
-        frow = ds.FLAG_ROW.data | (ant1 == ant2)
+        frow = clone(ds.FLAG_ROW.data) | (ant1 == ant2)
     else:
         frow = (ant1 == ant2)
 
@@ -101,6 +101,19 @@ def single_stokes(ds=None,
     mask = ~flag
     mask = inlined_array(mask, [frow])
     uvw = ds.UVW.data
+
+    # uvw = ds.UVW.values
+    # ant1 = ant1.compute()
+    # ant2 = ant2.compute()
+    # time = ds.TIME.values
+
+    # from pfb.utils.astrometry import synthesize_uvw
+    # phase_ref_dir = np.zeros((1, 2))
+    # phase_ref_dir[0, 0] = radec[0]
+    # phase_ref_dir[0, 1] = radec[1]
+    # dct = synthesize_uvw(antpos, time, ant2, ant1, phase_ref_dir)
+
+    # import pdb; pdb.set_trace()
 
     data_vars = {'FREQ': (('chan',), freq)}
     data_vars['TIME'] = (('time',), utime)

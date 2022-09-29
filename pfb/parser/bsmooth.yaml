@@ -34,6 +34,11 @@ inputs:
     default: true
     info:
       Remove slope of phase before averaging
+  per_scan:
+    dtype: bool
+    default: false
+    info:
+      Smooth on per scan basis instead of globally
 
   _include:
     - (pfb.parser)dist.yml
