@@ -143,7 +143,8 @@ def _clean(**kw):
     dds_name = f'{basename}{opts.postfix}.dds.zarr'
     mds_name = f'{basename}{opts.postfix}.mds.zarr'
 
-    dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk})
+    dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk,
+                                          'chan':-1})
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
     nband = mds.nband
     nx = mds.nx

@@ -223,7 +223,7 @@ def test_clean(do_gains, algo, tmp_path_factory):
     clean_args["nband"] = nchan
     clean_args["mask"] = 'mds'
     clean_args["algo"] = algo
-    clean_args["update_maks"] = False
+    clean_args["update_mask"] = False
     clean_args["dirosion"] = 0
     clean_args["do_residual"] = False
     clean_args["nmiter"] = 100
