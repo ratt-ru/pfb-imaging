@@ -740,7 +740,7 @@ def kanterp3(x, y, w, niter=5, nu0=2, sigmaf0=None, sigman0=1, verbose=0, window
             print(f"Z={fval}, sigmaf={sigmaf[0]}, sigman={sigman}, warning={dinfo['warnflag']}")
 
         if k == niter - 1:
-            return ms, Ps, eta/sigman**2
+            return ms, Ps
 
         # residual
         res = y - ms[0]
@@ -751,9 +751,6 @@ def kanterp3(x, y, w, niter=5, nu0=2, sigmaf0=None, sigman0=1, verbose=0, window
         nu, _, _ = fmin(nufunc, nu, args=(np.mean(eta), np.mean(logeta)),
                         approx_grad=True,
                         bounds=((1e-2, None),))
-
-
-        print(k, nu, np.mean(res**2*eta/sigman**2))
 
 def func(x):
     return 10*np.sin(20*x**2)*np.exp(-x**2/0.25) + np.exp(x)
