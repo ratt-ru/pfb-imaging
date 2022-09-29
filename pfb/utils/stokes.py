@@ -184,7 +184,7 @@ def single_stokes(ds=None,
     out_ds = Dataset(data_vars, attrs=attrs).chunk({'row':'auto',
                                                     'chan':'auto'})
 
-    return out_ds
+    return out_ds.unify_chunks()
 
 
 def weight_data(data, weight, jones, tbin_idx, tbin_counts,

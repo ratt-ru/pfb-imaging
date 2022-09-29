@@ -115,19 +115,18 @@ def _grid(**kw):
                         columns=columns)
 
     # get max uv coords over all datasets
-    uvw = []
-    u_max = 0.0
-    v_max = 0.0
-    max_freq = 0.0
+    uv_maxs = []
+    max_freqs = []
     for ds in xds:
         uvw = ds.UVW.data
-        u_max = da.maximum(u_max, abs(uvw[:, 0]).max())
-        v_max = da.maximum(v_max, abs(uvw[:, 1]).max())
-        uv_max = da.maximum(u_max, v_max)
-        max_freq = da.maximum(max_freq, ds.FREQ.data.max())
+        u_max = abs(uvw[:, 0].max())
+        v_max = abs(uvw[:, 1]).max()
+        uv_maxs.append(da.maximum(u_max, v_max))
+        max_freqs.append(ds.FREQ.data.max())
 
-    uv_max = uv_max.compute()
-    max_freq = max_freq.compute()
+    uv_maxs, max_freqs = dask.compute(uv_maxs, max_freqs)
+    uv_max = max(uv_maxs)
+    max_freq = max(max_freqs)
 
     # max cell size
     cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
@@ -377,8 +376,9 @@ def _grid(**kw):
             'robustness': opts.robustness
         }
 
-        out_ds = xr.Dataset(dvars, attrs=attrs)
-        writes.append(out_ds)
+        out_ds = xr.Dataset(dvars, attrs=attrs).chunk({'row':'auto',
+                                                       'chan':'auto'})
+        writes.append(out_ds.unify_chunks())
         freq_out.append(ds.freq_out)
         wsums[ds.bandid] += wsum
 
