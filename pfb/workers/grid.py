@@ -175,13 +175,9 @@ def _grid(**kw):
 
     if os.path.isdir(dds_name):
         if opts.overwrite:
-            print(f'Removing {dds_name} and {basename}.counts.zarr', file=log)
+            print(f'Removing {dds_name}', file=log)
             import shutil
             shutil.rmtree(dds_name)
-            try:
-                shutil.rmtree(f'{basename}.counts.zarr')
-            except:
-                pass
         else:
             raise RuntimeError(f'Not overwriting {dds_name}, directory exists. '
                                f'Set overwrite flag or specify a different '
@@ -189,7 +185,6 @@ def _grid(**kw):
 
     print(f'Data products will be stored in {dds_name}.', file=log)
 
-    # LB - what is the point of specifying name here?
     if opts.robustness is not None:
         try:
             counts_ds = xds_from_zarr(f'{basename}.counts.zarr',
@@ -265,7 +260,7 @@ def _grid(**kw):
 
     writes = []
     freq_out = []
-    wsums = np.zeros(nband)
+    wsums = [da.zeros(1, chunks=(1), name="zeros-"+uuid4().hex) for _ in range(nband)]
     for ds in xds:
         uvw = ds.UVW.data
         freq = ds.FREQ.data
@@ -382,7 +377,7 @@ def _grid(**kw):
         freq_out.append(ds.freq_out)
         wsums[ds.bandid] += wsum
 
-    freq_out = np.unique(np.stack(freq_out))
+
 
     # dask.visualize(writes, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
@@ -393,7 +388,11 @@ def _grid(**kw):
 
     print("Computing image space data products", file=log)
     with compute_context(opts.scheduler, opts.output_filename+'_grid'):
-        dask.compute(xds_to_zarr(writes, dds_name, columns='ALL'))
+        writes = xds_to_zarr(writes, dds_name, columns='ALL')
+        wsums = dask.compute(writes, wsums)[1]
+
+    freq_out = np.unique(np.stack(freq_out))
+    wsums = np.stack(wsums).squeeze()
 
     if model is None:
         print("Initialising model ds", file=log)
