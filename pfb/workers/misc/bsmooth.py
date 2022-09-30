@@ -59,8 +59,10 @@ def _bsmooth(**kw):
 
     try:
         xds = xds_from_zarr(f'{str(gain_dir)}::{opts.gain_term}')
+        if not len(xds):
+            raise ValueError(f'No data at {str(gain_dir)}::{opts.gain_term}')
     except Exception as e:
-        xds = xds_from_zarr(f'{str(gain_dir)}/{opts.gain_term}')
+        raise(e)
 
     nscan = len(xds)
     ntime, nchan, nant, ndir, ncorr = xds[0].gains.data.shape
@@ -216,7 +218,7 @@ def _bsmooth(**kw):
     try:
         xds = xds_from_zarr(f'{str(gain_dir)}::{opts.gain_term}')
     except Exception as e:
-        xds = xds_from_zarr(f'{str(gain_dir)}/{opts.gain_term}')
+        raise(e)
 
 
 

@@ -61,8 +61,10 @@ def _gsmooth(**kw):
 
     try:
         xds = xds_from_zarr(f'{str(gain_dir)}::{opts.gain_term}')
+        if not len(xds):
+            raise ValueError(f'No data at {str(gain_dir)}::{opts.gain_term}')
     except Exception as e:
-        xds = xds_from_zarr(f'{str(gain_dir)}/{opts.gain_term}')
+        raise(e)
 
 
     K = xds_from_zarr(f'{str(gain_dir)}::K')
