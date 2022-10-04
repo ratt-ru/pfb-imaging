@@ -77,6 +77,11 @@ inputs:
     default: true
     info:
       Compute the dirty image
+  reset_model:
+    dtype: bool
+    default: false
+    info:
+      Force reset model to zero
   residual:
     dtype: bool
     default: true

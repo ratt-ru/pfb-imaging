@@ -203,6 +203,11 @@ def _grid(**kw):
                                f'Set overwrite flag or specify a different '
                                'postfix to create a new data set')
 
+    if os.path.isdir(mds_name) and opts.reset_model:
+        print(f'Removing {mds_name}', file=log)
+        import shutil
+        shutil.rmtree(mds_name)
+
     print(f'Data products will be stored in {dds_name}.', file=log)
 
     if opts.robustness is not None:
