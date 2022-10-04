@@ -137,4 +137,6 @@ def clark(ID,
     else:
         if verbosity:
             print("Success, converged after %i iterations" % k, file=log)
-        return model, 0  # if tol > threshold else 1
+        # we want to trigger the flux mop if the final threshold has
+        # been reached
+        return model, 0 if IRmax > threshold else 1

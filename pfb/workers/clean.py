@@ -240,8 +240,9 @@ def _clean(**kw):
         else:
             raise ValueError(f'{opts.algo} is not a valid algo option')
 
-        # if clean has stalled or not converged do flux mop step
-        if opts.mop_flux and status:
+        # do flux mop if clean has stalled, not converged or
+        # we have reached the final iteration/threshold
+        if opts.mop_flux and (status or k == opts.nmiter-1):
             print(f"Mopping flux at iter {k+1}", file=log)
             mask = (np.any(x, axis=0) | np.any(model, axis=0))
             if opts.dirosion:

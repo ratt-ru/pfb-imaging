@@ -67,7 +67,9 @@ def hogbom(
     else:
         if verbosity:
             print("Success, converged after %i iterations" % k, file=log)
-        return x, 0
+        # we want to trigger the flux mop if the final threshold has
+        # been reached
+        return x, 0 if IRmax > threshold else 1
 
 
 # import jax.numpy as jnp

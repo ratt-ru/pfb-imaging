@@ -111,8 +111,28 @@ def _grid(**kw):
     if opts.robustness is not None:
         columns += (opts.imaging_weight_column,)
 
-    xds = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1},
+    xdsp = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1},
                         columns=columns)
+    if opts.concat:
+        # LB - this is required because concat will try to mush different
+        # imaging bands together if they are not split upfront
+        print('Concatenating datasets along row dimension', file=log)
+        xds = []
+        for b in range(opts.nband):
+            xdsb = []
+            for ds in xdsp:
+                if ds.bandid == b:
+                    xdsb.append(ds)
+            xds.append(xr.concat(xdsb, dim='row',
+                                 data_vars='minimal',
+                                 coords='minimal').chunk({'row':-1}))
+        try:
+            assert len(xds) == opts.nband
+        except Exception as e:
+            raise RuntimeError('Something went wrong during concatenation.'
+                               'This is probably a bug.')
+    else:
+        xds = xdsp
 
     # get max uv coords over all datasets
     uv_maxs = []
@@ -257,7 +277,6 @@ def _grid(**kw):
     else:
         model = None
 
-
     writes = []
     freq_out = []
     wsums = [da.zeros(1, chunks=(1), name="zeros-"+uuid4().hex) for _ in range(nband)]
@@ -266,7 +285,6 @@ def _grid(**kw):
         freq = ds.FREQ.data
         vis = ds.VIS.data
         wgt = ds.WEIGHT.data
-        wsum = ds.WSUM.data
         if opts.robustness is not None:
             imwgt = counts_to_weights(counts[ds.bandid],
                                       uvw,
@@ -317,14 +335,11 @@ def _grid(**kw):
             dvars['PSFHAT'] = (('x_psf', 'yo2'), psfhat)
 
         if opts.weight:
-            # TODO - BDA
-            # combine weights
-            wgt = wgt.rechunk({0:opts.row_chunk, 1:-1})
             dvars['WEIGHT'] = (('row', 'chan'), wgt)
 
         dvars['FREQ'] = (('chan',), freq)
-        dvars['UVW'] = (('row', 'three'), uvw.rechunk({0:opts.row_chunk, 1:-1}))
-        mask = mask.rechunk({0:opts.row_chunk, 1:-1})
+        dvars['UVW'] = (('row', 'three'), uvw)
+        mask = mask
         dvars['MASK'] = (('row', 'chan'), mask)
         wsum = wgt[mask.astype(bool)].sum()
         dvars['WSUM'] = (('scalar',), da.atleast_1d(wsum))
@@ -335,6 +350,7 @@ def _grid(**kw):
         m = (-(ny//2) + da.arange(ny)) * cell_deg
         ll, mm = da.meshgrid(l, m, indexing='ij')
         bvals = eval_beam(ds.BEAM.data, ll, mm)
+        # bvals = da.ones_like(dirty)
 
         dvars['BEAM'] = (('x', 'y'), bvals)
 

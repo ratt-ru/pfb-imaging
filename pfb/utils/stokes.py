@@ -113,13 +113,13 @@ def single_stokes(ds=None,
     # phase_ref_dir[0, 1] = radec[1]
     # dct = synthesize_uvw(antpos, time, ant2, ant1, phase_ref_dir)
 
-    # import pdb; pdb.set_trace()
+    data_coords = {}
+    data_coords['FREQ'] = (('chan',), freq)
+    # this breaks concat because not all datasets have the same
+    # number of times in them.
+    # data_coords['TIME'] = (('time',), utime)
 
-    data_vars = {'FREQ': (('chan',), freq)}
-    data_vars['TIME'] = (('time',), utime)
-
-    wsum = da.sum(wgt[mask])
-    data_vars['WSUM'] = (('scalar'), da.array((wsum,)))
+    data_vars = {}
     data_vars['WEIGHT'] = (('row', 'chan'), wgt)
     data_vars['UVW'] = (('row', 'uvw'), uvw)
     data_vars['VIS'] = (('row', 'chan'), vis)
@@ -166,6 +166,10 @@ def single_stokes(ds=None,
     freq_out = np.mean(freq)
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
 
+
+    # Instead of BEAM we should have a pre-init step which computes
+    # per facet best approximations to smooth beams as describedin
+    # https://www.overleaf.com/read/yzrsrdwxhxrd
     data_vars['BEAM'] = (('scalar'), beam)
 
     # TODO - provide time and freq centroids
@@ -178,11 +182,13 @@ def single_stokes(ds=None,
         'bandid': int(bandid),
         'freq_out': freq_out,
         'timeid': int(timeid),
-        'time_out': np.mean(utime)
+        'time_out': np.mean(utime),
+        # 'WSUM': float(wsum)
     }
 
-    out_ds = Dataset(data_vars, attrs=attrs).chunk({'row':100000,
-                                                    'chan':128})
+    out_ds = Dataset(data_vars, coords=data_coords,
+                     attrs=attrs).chunk({'row':100000,
+                                         'chan':128})
 
     return out_ds.unify_chunks()
 
