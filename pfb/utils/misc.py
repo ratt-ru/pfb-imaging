@@ -634,7 +634,7 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
                             raise ValueError("DD gains not supported yet")
                         tmp_dict[name] = tuple(val)
                     else:
-                        tmp_dict[name] = val
+                        tmp_dict[name] = tuple(val)
 
                 gain_chunks[ms].append(tmp_dict)
 
