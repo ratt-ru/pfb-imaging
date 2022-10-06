@@ -9,6 +9,7 @@ from pfb.utils.misc import coerce_literal
 from daskms.optimisation import inlined_array
 from operator import getitem
 from pfb.utils.beam import interp_beam
+import dask
 
 
 def single_stokes(ds=None,
@@ -38,6 +39,7 @@ def single_stokes(ds=None,
 
     ant1 = clone(ds.ANTENNA1.data)
     ant2 = clone(ds.ANTENNA2.data)
+    uvw = clone(ds.UVW.data)
 
     # MS may contain auto-correlations
     if 'FLAG_ROW' in ds:
@@ -98,72 +100,89 @@ def single_stokes(ds=None,
         raise NotImplementedError()
 
 
+    flag = inlined_array(flag, [frow])
+
+    # do this before casting to dask array otherwise
+    # serialisation of attrs fails
+    freq_out = np.mean(freq)
+
+    # simple average over channels
+    if opts.chan_average:
+        from africanus.averaging.dask import time_and_channel
+
+        res = time_and_channel(
+                    ds.TIME.data,
+                    ds.INTERVAL.data,
+                    ant1,
+                    ant2,
+                    uvw=uvw,
+                    flag=flag[:, :, None],
+                    weight_spectrum=wgt[:, :, None],
+                    visibilities=vis[:, :, None],
+                    chan_freq=da.from_array(freq, chunks=-1),
+                    chan_width=da.from_array(chan_width, chunks=-1),
+                    time_bin_secs=1e-15,
+                    chan_bin_size=opts.chan_average)
+
+        # the map_blocks is here to deal with nan row chunks.
+        # since we only average in frequency row chunks should be preserved
+        cchunk = nchan//opts.chan_average
+        vis = res.visibilities.map_blocks(lambda x: x,
+                                          chunks=(nrow, cchunk, 1))[:, :, 0]
+        wgt = res.weight_spectrum.map_blocks(lambda x: x,
+                                             chunks=(nrow, cchunk, 1))[:, :, 0]
+        flag = res.flag.map_blocks(lambda x: x,
+                                   chunks=(nrow, cchunk, 1))[:, :, 0]
+        uvw = res.uvw.map_blocks(lambda x: x,
+                                 chunks=(nrow, 3))
+
+        freq = res.chan_freq.map_blocks(lambda x: x, chunks=(cchunk,))
+
+    # if opts.bda_decorr < 1:
+    #     wgt = da.where(mask, wgt, 0.0)
+    #     from africanus.averaging.dask import bda
+
+    #     w_avs = []
+    #     uvw = uvw.compute()
+    #     t = time.compute()
+    #     a1 = ant1.compute()
+    #     a2 = ant2.compute()
+    #     intv = interval.compute()
+    #     fr = frow.compute()[:, None, None]
+
+    #     res = bda(ds.TIME.data,
+    #                 ds.INTERVAL.data,
+    #                 ant1, ant2,
+    #                 uvw=uvw,
+    #                 flag=f[:, :, None],
+    #                 weight_spectrum=wgt[:, :, None],
+    #                 chan_freq=freq,
+    #                 chan_width=chan_width,
+    #                 decorrelation=0.95,
+    #                 min_nchan=freq.size)
+
+    #     uvw = res.uvw.reshape(-1, nchan, 3)[:, 0, :]
+    #     wgt = res.weight_spectrum.reshape(-1, nchan).squeeze()
+
+    #     uvw = uvw.rechunk({0:opts.row_out_chunk})
+
     mask = ~flag
-    mask = inlined_array(mask, [frow])
-    uvw = ds.UVW.data
 
-    # uvw = ds.UVW.values
-    # ant1 = ant1.compute()
-    # ant2 = ant2.compute()
-    # time = ds.TIME.values
-
-    # from pfb.utils.astrometry import synthesize_uvw
-    # phase_ref_dir = np.zeros((1, 2))
-    # phase_ref_dir[0, 0] = radec[0]
-    # phase_ref_dir[0, 1] = radec[1]
-    # dct = synthesize_uvw(antpos, time, ant2, ant1, phase_ref_dir)
-
-    data_coords = {}
-    data_coords['FREQ'] = (('chan',), freq)
+    # data_coords = {}
+    # data_coords['FREQ'] = (('chan',), freq)
     # this breaks concat because not all datasets have the same
     # number of times in them.
     # data_coords['TIME'] = (('time',), utime)
 
     data_vars = {}
+    data_vars['FREQ'] = (('chan',), freq)
     data_vars['WEIGHT'] = (('row', 'chan'), wgt)
     data_vars['UVW'] = (('row', 'uvw'), uvw)
     data_vars['VIS'] = (('row', 'chan'), vis)
     data_vars['MASK'] = (('row', 'chan'), mask.astype(np.uint8))
 
-    # if opts.weight:
-    #     wgt = da.where(mask, wgt, 0.0)
-    #     # TODO - BDA over frequency
-    #     if opts.bda_decorr < 1:
-    #         raise NotImplementedError("BDA not working yet")
-    #         from africanus.averaging.dask import bda
-
-    #         w_avs = []
-    #         uvw = uvw.compute()
-    #         t = time.compute()
-    #         a1 = ant1.compute()
-    #         a2 = ant2.compute()
-    #         intv = interval.compute()
-    #         fr = frow.compute()[:, None, None]
-
-    #         res = bda(ds.TIME.data,
-    #                   ds.INTERVAL.data,
-    #                   ant1, ant2,
-    #                   uvw=uvw,
-    #                   flag=f[:, :, None],
-    #                   weight_spectrum=wgt[:, :, None],
-    #                   chan_freq=freq,
-    #                   chan_width=chan_width,
-    #                   decorrelation=0.95,
-    #                   min_nchan=freq.size)
-
-    #         uvw = res.uvw.reshape(-1, nchan, 3)[:, 0, :]
-    #         wgt = res.weight_spectrum.reshape(-1, nchan).squeeze()
-
-    #         uvw = uvw.rechunk({0:opts.row_out_chunk})
-    #         data_vars['UVW'] = (('row', 'uvw'), uvw)
-
-    #     wgt = wgt.rechunk({0:opts.row_out_chunk})
-    #     data_vars['WEIGHT'] = (('row', 'chan'), wgt)
-
-
     # TODO - interpolate beam in time and freq
     npix = int(np.deg2rad(opts.max_field_of_view)/cell_rad)
-    freq_out = np.mean(freq)
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
 
 
@@ -182,11 +201,10 @@ def single_stokes(ds=None,
         'bandid': int(bandid),
         'freq_out': freq_out,
         'timeid': int(timeid),
-        'time_out': np.mean(utime),
-        # 'WSUM': float(wsum)
+        'time_out': np.mean(utime)
     }
 
-    out_ds = Dataset(data_vars, coords=data_coords,
+    out_ds = Dataset(data_vars, # coords=data_coords,
                      attrs=attrs).chunk({'row':100000,
                                          'chan':128})
 

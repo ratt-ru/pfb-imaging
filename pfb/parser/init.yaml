@@ -88,6 +88,11 @@ inputs:
     default: 3.0
     info: 'Field of view in degrees'
     metavar: DEG
+  chan_average:
+    dtype: int
+    default: None
+    info:
+      Average this number if chanbels together
 
   _include:
     - (pfb.parser)dist.yml
