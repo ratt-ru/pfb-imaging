@@ -90,7 +90,7 @@ inputs:
     metavar: DEG
   chan_average:
     dtype: int
-    default: None
+    default: 1
     info:
       Average this number if chanbels together
 

@@ -107,7 +107,7 @@ def single_stokes(ds=None,
     freq_out = np.mean(freq)
 
     # simple average over channels
-    if opts.chan_average:
+    if opts.chan_average > 1:
         from africanus.averaging.dask import time_and_channel
 
         res = time_and_channel(

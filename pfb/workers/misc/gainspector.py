@@ -80,7 +80,7 @@ def _gainspector(**kw):
         try:
             G = xds_from_zarr(f'{gain}::{opts.gain_term}')
         except:
-            G = xds_from_zarr(f'{gain}/{opts.gain_term}')
+            raise ValueError(f'Failed to load gains at {gain}::{opts.gain_term}')
         for g in G:
             Gs.append(g)
 
