@@ -135,7 +135,7 @@ def _clean(**kw):
     from pfb.operators.hessian import hessian
     from pfb.opt.pcg import pcg, pcg_psf
     from pfb.operators.hessian import hessian_xds
-    from pfb.operators.psf import psf_convolve_cube
+    from pfb.operators.psf import psf_convolve_cube, _hessian_reg_psf
     from scipy import ndimage
     from copy import copy
 
@@ -212,22 +212,24 @@ def _clean(**kw):
     psfopts['unpad_x'] = unpad_x
     psfopts['unpad_y'] = unpad_y
     psfopts['lastsize'] = lastsize
-    psfo = partial(psf_convolve_cube,
-                   psfhat=da.from_array(psfhat, chunks=(1, -1, -1)),
-                   beam=None,
-                   psfopts=psfopts,
-                   wsum=1,  # psf is normalised to sum to one
-                   sigmainv=0,
-                   compute=True)
-
-    # padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
-    # psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
-    #                 nthreads=opts.nthreads, sigmainv=0,
-    #                 padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
-    #                 lastsize = lastsize)
+    # psfo = partial(psf_convolve_cube,
+    #                psfhat=da.from_array(psfhat, chunks=(1, -1, -1)),
+    #                beam=None,
+    #                psfopts=psfopts,
+    #                wsum=1,  # psf is normalised to sum to one
+    #                sigmainv=0,
+    #                compute=True)
 
     hess2opts = copy(psfopts)
     hess2opts['sigmainv'] = 1e-8
+
+    padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+    psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
+                    nthreads=opts.nthreads, sigmainv=0,
+                    padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
+                    lastsize = lastsize)
+
+
 
     cgopts = {}
     cgopts['tol'] = opts.cg_tol
