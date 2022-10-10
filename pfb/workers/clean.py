@@ -133,10 +133,11 @@ def _clean(**kw):
     from pfb.deconv.clark import clark
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.operators.hessian import hessian
-    from pfb.opt.pcg import pcg
+    from pfb.opt.pcg import pcg, pcg_psf
     from pfb.operators.hessian import hessian_xds
     from pfb.operators.psf import psf_convolve_cube
     from scipy import ndimage
+    from copy import copy
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -225,6 +226,18 @@ def _clean(**kw):
     #                 padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
     #                 lastsize = lastsize)
 
+    hess2opts = copy(psfopts)
+    hess2opts['sigmainv'] = 1e-8
+
+    cgopts = {}
+    cgopts['tol'] = opts.cg_tol
+    cgopts['maxit'] = opts.cg_maxit
+    cgopts['minit'] = opts.cg_minit
+    cgopts['verbosity'] = opts.cg_verbose
+    cgopts['report_freq'] = opts.cg_report_freq
+    cgopts['backtrack'] = opts.backtrack
+
+
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
 
@@ -267,12 +280,14 @@ def _clean(**kw):
                 struct = ndimage.generate_binary_structure(2, opts.dirosion)
                 mask = ndimage.binary_dilation(mask, structure=struct)
                 mask = ndimage.binary_erosion(mask, structure=struct)
-            mask = mask[None, :, :]
-            x = pcg(lambda x: mask * psfo(mask*x), mask * residual, x,
-                    tol=opts.cg_tol, maxit=opts.cg_maxit,
-                    minit=opts.cg_minit, verbosity=opts.cg_verbose,
-                    report_freq=opts.cg_report_freq,
-                    backtrack=opts.backtrack)
+            mask = mask[None, :, :].astype(residual.dtype)
+            # x = pcg(lambda x: mask * psfo(mask*x), mask * residual, x,
+            #         tol=opts.cg_tol, maxit=opts.cg_maxit,
+            #         minit=opts.cg_minit, verbosity=opts.cg_verbose,
+            #         report_freq=opts.cg_report_freq,
+            #         backtrack=opts.backtrack)
+            x = pcg_psf(psfhat, mask*residual, x,
+                        mask, hess2opts, cgopts)
 
         model += x
 
