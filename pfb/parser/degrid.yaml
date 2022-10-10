@@ -36,30 +36,21 @@ inputs:
     dtype: str
     abbreviation: p
     default: I
-    info: 'Imaging products to produce. Options are I, Q, U, V. \
+    info: 'Imaging products to degrid. Options are I, Q, U, V. \
           Only single Stokes products are currently supported'
   model_name:
     dtype: str
     default: MODEL
     abbreviation: mname
     info: 'Name of model in mds'
-  row_chunk:
+  utimes_per_chunk:
     dtype: int
-    info: 'Number of rows in a chunk in output dataset'
-    abbreviation: rc
     default: -1
-  group_by_field:
-    dtype: bool
-    default: True
-    info: "Split data by field"
-  group_by_ddid:
-    dtype: bool
-    default: True
-    info: "Split data by DDID"
-  group_by_scan:
-    dtype: bool
-    default: True
-    info: "Split data by scan"
+    abbreviation: utpc
+    info:
+      Number of unique times per chunk to degrid.
+      Default (-1, 0, None) degrids per scan.
+
   _include:
     - (pfb.parser)gridding.yml
     - (pfb.parser)dist.yml

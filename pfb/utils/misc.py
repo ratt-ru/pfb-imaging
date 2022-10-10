@@ -421,21 +421,20 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
     freqs           - dict[MS][IDT] frequencies chunked by band
     fbin_idx        - dict[MS][IDT] freq bin starting indices
     fbin_counts     - dict[MS][IDT] freq bin counts
-    band_mapping    - dict[MS][IDT] mapping from output band back
-                      to channel indices
+    band_mapping    - dict[MS][IDT] output bands in dataset
+    freq_out        - array of linearly spaced output frequencies
+                      over entire frequency range.
+                      freq_out[band_mapping[MS][IDT]] gives the
+                      model frequencies in a dataset
 
     where IDT is constructed as FIELD#_DDID#_SCAN#.
-    band_mapping would be redundant if we were imaging a single SPW.
 
     Similarly, the row <-> time mapping is determined by:
 
     utimes          - dict[MS][IDT] unique times per output image
     tbin_idx        - dict[MS][IDT] time bin starting indices
     tbin_counts     - dict[MS][IDT] time bin counts
-    time_mapping    - dict[MS][IDT] mapping from output time
-
-    where here the row_mapping would be redundant of we were imaging
-    a single scan.
+    time_mapping    - dict[MS][IDT] utimes per dataset
 
     '''
 
@@ -556,6 +555,23 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
     fmin = ufreqs[0]
     fmax = ufreqs[-1]
     fbins = np.linspace(fmin, fmax, nband + 1)
+
+    freq_out = np.zeros(nband)
+    chan_count = 0
+    for band in range(nband):
+        indl = ufreqs >= fbins[band]
+        # inclusive except for the last one
+        if band == nband-1:
+            indu = ufreqs <= fbins[band + 1]
+        else:
+            indu = ufreqs < fbins[band + 1]
+        freq_out[band] = np.mean(ufreqs[indl&indu])
+        chan_count += ufreqs[indl&indu].size
+
+    if chan_count < nchan:
+        raise RuntimeError("Something has gone wrong with the chan <-> band "
+                           "mapping. This is probably a bug.")
+
     band_mapping = {}
     fbin_idx = {}
     fbin_counts = {}
@@ -638,8 +654,9 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
 
                 gain_chunks[ms].append(tmp_dict)
 
-    return freqs, fbin_idx, fbin_counts, band_mapping, utimes, tbin_idx,\
-        tbin_counts, time_mapping, ms_chunks, gain_chunks, radecs,\
+    return freqs, fbin_idx, fbin_counts, band_mapping, freq_out, \
+        utimes, tbin_idx, tbin_counts, time_mapping, \
+        ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype
 
 

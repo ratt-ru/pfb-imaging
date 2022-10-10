@@ -168,12 +168,6 @@ def single_stokes(ds=None,
 
     mask = ~flag
 
-    # data_coords = {}
-    # data_coords['FREQ'] = (('chan',), freq)
-    # this breaks concat because not all datasets have the same
-    # number of times in them.
-    # data_coords['TIME'] = (('time',), utime)
-
     data_vars = {}
     data_vars['FREQ'] = (('chan',), freq)
     data_vars['WEIGHT'] = (('row', 'chan'), wgt)
@@ -181,14 +175,12 @@ def single_stokes(ds=None,
     data_vars['VIS'] = (('row', 'chan'), vis)
     data_vars['MASK'] = (('row', 'chan'), mask.astype(np.uint8))
 
-    # TODO - interpolate beam in time and freq
+    # TODO - interpolate beam in time and frequency
+    # Instead of BEAM we should have a pre-init step which computes
+    # per facet best approximations to smooth beams as described in
+    # https://www.overleaf.com/read/yzrsrdwxhxrd
     npix = int(np.deg2rad(opts.max_field_of_view)/cell_rad)
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
-
-
-    # Instead of BEAM we should have a pre-init step which computes
-    # per facet best approximations to smooth beams as describedin
-    # https://www.overleaf.com/read/yzrsrdwxhxrd
     data_vars['BEAM'] = (('scalar'), beam)
 
     # TODO - provide time and freq centroids
@@ -204,7 +196,7 @@ def single_stokes(ds=None,
         'time_out': np.mean(utime)
     }
 
-    out_ds = Dataset(data_vars, # coords=data_coords,
+    out_ds = Dataset(data_vars,
                      attrs=attrs).chunk({'row':100000,
                                          'chan':128})
 

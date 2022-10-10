@@ -219,6 +219,7 @@ def _clean(**kw):
                    sigmainv=0,
                    compute=True)
 
+    # padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
     # psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
     #                 nthreads=opts.nthreads, sigmainv=0,
     #                 padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,

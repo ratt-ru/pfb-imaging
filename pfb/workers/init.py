@@ -78,8 +78,9 @@ def init(**kw):
         except Exception as e:
             raise ValueError(f"No gain table  at {opts.gain_table}")
 
-    if opts.product.upper() not in ["I", "Q", "U", "V", "XX", "YX", "XY",
-                                    "YY", "RR", "RL", "LR", "LL"]:
+    if opts.product.upper() not in ["I"]:
+                                    # , "Q", "U", "V", "XX", "YX", "XY",
+                                    # "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
     OmegaConf.set_struct(opts, True)
@@ -98,11 +99,12 @@ def init(**kw):
 def _init(**kw):
     opts = OmegaConf.create(kw)
     from omegaconf import ListConfig
-    if not isinstance(opts.ms, list) and not isinstance(opts.ms, ListConfig):
+    if (not isinstance(opts.ms, list) and not
+        isinstance(opts.ms, ListConfig)):
         opts.ms = [opts.ms]
     if opts.gain_table is not None:
-        if not isinstance(opts.gain_table, list) and not isinstance(opts.gain_table,
-                                                                    ListConfig):
+        if (not isinstance(opts.gain_table, list) and not
+            isinstance(opts.gain_table,ListConfig)):
             opts.gain_table = [opts.gain_table]
     OmegaConf.set_struct(opts, True)
 
@@ -142,9 +144,10 @@ def _init(**kw):
         gain_names = list(map(tmpf, opts.gain_table))
     else:
         gain_names = None
-    freqs, fbin_idx, fbin_counts, band_mapping, utimes, tbin_idx,\
-        tbin_counts, time_mapping, ms_chunks, gain_chunks, radecs,\
-        chan_widths, uv_max, antpos, poltype =\
+    freqs, fbin_idx, fbin_counts, band_mapping, freq_out, \
+        utimes, tbin_idx, tbin_counts, time_mapping, \
+        ms_chunks, gain_chunks, radecs, \
+        chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms, gain_names,
                                opts.nband,
                                opts.integrations_per_image)
