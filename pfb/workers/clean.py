@@ -135,7 +135,7 @@ def _clean(**kw):
     from pfb.operators.hessian import hessian
     from pfb.opt.pcg import pcg
     from pfb.operators.hessian import hessian_xds
-    from pfb.operators.psf import _hessian_reg_psf
+    from pfb.operators.psf import psf_convolve_cube
     from scipy import ndimage
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
@@ -173,7 +173,7 @@ def _clean(**kw):
         residual_mfs = np.sum(residual, axis=0)
     model = mds.MODEL.values
 
-    # for intermediary results (not curruntly written)
+    # for intermediary results (not currently written)
     # ra = dds[0].ra
     # dec = dds[0].dec
     # radec = [ra, dec]
@@ -183,7 +183,7 @@ def _clean(**kw):
     # ref_freq = np.mean(freq_out)
     # hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
-    # set up Hessian
+    # set up vis space Hessian
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
     hessopts['wstack'] = opts.wstack
@@ -196,18 +196,33 @@ def _clean(**kw):
                    wsum=wsum, sigmainv=0, mask=np.ones_like(dirty_mfs),
                    compute=True, use_beam=False)
 
+    # set up image space Hessian
     npad_xl = (nx_psf - nx)//2
     npad_xr = nx_psf - nx - npad_xl
     npad_yl = (ny_psf - ny)//2
     npad_yr = ny_psf - ny - npad_yl
-    padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+    padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
     unpad_x = slice(npad_xl, -npad_xr)
     unpad_y = slice(npad_yl, -npad_yr)
     lastsize = ny + np.sum(padding[-1])
-    psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
-                    nthreads=opts.nthreads, sigmainv=0,
-                    padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
-                    lastsize = lastsize)
+    psfopts = {}
+    psfopts['nthreads'] = opts.nvthreads
+    psfopts['padding'] = padding
+    psfopts['unpad_x'] = unpad_x
+    psfopts['unpad_y'] = unpad_y
+    psfopts['lastsize'] = lastsize
+    psfo = partial(psf_convolve_cube,
+                   psfhat=da.from_array(psfhat, chunks=(1, -1, -1)),
+                   beam=None,
+                   psfopts=psfopts,
+                   wsum=1,  # psf is normalised to sum to one
+                   sigmainv=0,
+                   compute=True)
+
+    # psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
+    #                 nthreads=opts.nthreads, sigmainv=0,
+    #                 padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
+    #                 lastsize = lastsize)
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()

@@ -124,8 +124,8 @@ def single_stokes(ds=None,
                     time_bin_secs=1e-15,
                     chan_bin_size=opts.chan_average)
 
-        # the map_blocks is here to deal with nan row chunks.
-        # since we only average in frequency row chunks should be preserved
+        # map_blocks to deal with nan row chunks.
+        # only freq average -> row chunks are preserved
         cchunk = nchan//opts.chan_average
         vis = res.visibilities.map_blocks(lambda x: x,
                                           chunks=(nrow, cchunk, 1))[:, :, 0]
