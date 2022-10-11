@@ -96,7 +96,7 @@ def _degrid(**kw):
     mds = xds_from_zarr(mds_name)[0]
     cell_rad = mds.cell_rad
     mfreqs = mds.freq.data
-    model = getattr(mds, MODEL).data
+    model = getattr(mds, opts.model_name).data
     wsums = mds.WSUM.data
 
     model, mfreqs, wsums = dask.compute(model, mfreqs, wsums)
