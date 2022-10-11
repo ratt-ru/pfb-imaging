@@ -191,8 +191,7 @@ def _clean(**kw):
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads
-    # always clean in apparent scale
-    # we do not want to use the mask here???
+    # always clean in apparent scale so no beam
     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
                    wsum=wsum, sigmainv=0, mask=np.ones_like(dirty_mfs),
                    compute=True, use_beam=False)
@@ -252,15 +251,20 @@ def _clean(**kw):
     for k in range(opts.nmiter):
         if opts.algo.lower() == 'clark':
             print("Running Clark", file=log)
+            # import cProfile
+            # with cProfile.Profile() as pr:
             x, status = clark(residual, psf, psfo,
-                              threshold=threshold,
-                              gamma=opts.gamma,
-                              pf=opts.peak_factor,
-                              maxit=opts.clark_maxit,
-                              subpf=opts.sub_peak_factor,
-                              submaxit=opts.sub_maxit,
-                              verbosity=opts.verbose,
-                              report_freq=opts.report_freq)
+                            threshold=threshold,
+                            gamma=opts.gamma,
+                            pf=opts.peak_factor,
+                            maxit=opts.clark_maxit,
+                            subpf=opts.sub_peak_factor,
+                            submaxit=opts.sub_maxit,
+                            verbosity=opts.verbose,
+                            report_freq=opts.report_freq)
+            # pr.print_stats(sort='cumtime')
+            # quit()
+
         elif opts.algo.lower() == 'hogbom':
             print("Running Hogbom", file=log)
             x, status = hogbom(residual, psf,
