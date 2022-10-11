@@ -88,6 +88,7 @@ def _degrid(**kw):
     from pfb.utils.fits import load_fits, data_from_header
     from pfb.utils.misc import restore_corrs, model_from_comps
     from astropy.io import fits
+    from pfb.utils.misc import compute_context
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     mds_name = f'{basename}{opts.postfix}.mds.zarr'
