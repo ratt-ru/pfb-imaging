@@ -60,7 +60,9 @@ def grid(**kw):
         else:
             opts.nworkers = 1
 
-    if opts.product.upper() not in ["I", "Q", "U", "V", "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
+    if opts.product.upper() not in ["I"]:
+                                    # , "Q", "U", "V", "XX", "YX", "XY",
+                                    # "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
     OmegaConf.set_struct(opts, True)
@@ -220,7 +222,7 @@ def _grid(**kw):
             assert counts_ds[0].bands.size == nband
             assert counts_ds[0].cell_rad == cell_rad
             print(f'Found cached gridded weights at {basename}.counts.zarr. '
-                  f'Coordinats and cell sizes indicate that it can be reused',
+                  f'Coords and cell sizes indicate that it can be reused',
                   file=log)
             counts = counts_ds.COUNTS.data
         except:
@@ -265,7 +267,8 @@ def _grid(**kw):
 
 
 
-        # get rid of artificially high weights corresponding to nearly empty cells
+        # get rid of artificially high weights corresponding to
+        # nearly empty cells
         if opts.filter_extreme_counts:
             counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
                                            nlevel=opts.filter_level)
@@ -275,7 +278,8 @@ def _grid(**kw):
         try:
             mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
             model = mds.get(opts.model_name).data
-            print(f"Using {opts.model_name} for residual computation. ", file=log)
+            print(f"Using {opts.model_name} for residual computation. ",
+                  file=log)
         except:
             print("Cannot compute residual without a model. ", file=log)
             model = None
@@ -284,7 +288,8 @@ def _grid(**kw):
 
     writes = []
     freq_out = []
-    wsums = [da.zeros(1, chunks=(1), name="zeros-"+uuid4().hex) for _ in range(nband)]
+    wsums = [da.zeros(1, chunks=(1),
+                      name="zeros-"+uuid4().hex) for _ in range(nband)]
     for ds in xds:
         uvw = ds.UVW.data
         freq = ds.FREQ.data

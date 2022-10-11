@@ -96,10 +96,13 @@ def _degrid(**kw):
     mds = xds_from_zarr(mds_name)[0]
     cell_rad = mds.cell_rad
     mfreqs = mds.freq.data
-    model = mds.MODEL.data
+    model = getattr(mds, MODEL).data
     wsums = mds.WSUM.data
 
     model, mfreqs, wsums = dask.compute(model, mfreqs, wsums)
+
+    if not np.any(model):
+        raise ValueError('Model is empty')
 
     ref_freq = mfreqs[0]
     nband, nx, ny = model.shape

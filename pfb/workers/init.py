@@ -248,8 +248,8 @@ def _init(**kw):
                             radec=radecs[ms][idt],
                             antpos=antpos[ms],
                             poltype=poltype[ms])
-                    elif opts.product.upper() in ["XX", "YX", "XY", "YY", "RR",
-                                                "RL", "LR", "LL"]:
+                    elif opts.product.upper() in ["XX", "YX", "XY", "YY",
+                                                  "RR", "RL", "LR", "LL"]:
                         out_ds = single_corr(
                             ds=subds,
                             jones=jones,
