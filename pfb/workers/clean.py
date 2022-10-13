@@ -261,7 +261,8 @@ def _clean(**kw):
                             subpf=opts.sub_peak_factor,
                             submaxit=opts.sub_maxit,
                             verbosity=opts.verbose,
-                            report_freq=opts.report_freq)
+                            report_freq=opts.report_freq,
+                            sigmathreshold=opts.sigmathreshold)
             # pr.print_stats(sort='cumtime')
             # quit()
 
@@ -292,6 +293,7 @@ def _clean(**kw):
             #         minit=opts.cg_minit, verbosity=opts.cg_verbose,
             #         report_freq=opts.cg_report_freq,
             #         backtrack=opts.backtrack)
+            # hess2opts['sigmainv'] = 1e-8
             x = pcg_psf(psfhat, mask*residual, x,
                         mask, hess2opts, cgopts)
 

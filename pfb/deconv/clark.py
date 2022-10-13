@@ -56,9 +56,11 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         model[fsel, p, q] += gamma * xhat[fsel]/wsums[fsel]
         Idelp = p - Ip
         Idelq = q - Iq
+        # find where PSF overlaps with image
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
-        A = subtract(A[:, mask], psf, Idelp[mask], Idelq[mask],
-                     xhat, nxo2, nyo2)
+        A = subtract(A[:, mask], psf,
+                              Idelp[mask], Idelq[mask],
+                              xhat, nxo2, nyo2)
         Asearch = np.sum(A, axis=0)**2
         pq = Asearch.argmax()
         p = Ip[pq]
@@ -79,19 +81,19 @@ def clark(ID,
           submaxit=1000,
           report_freq=1,
           verbosity=1,
-          psfopts=None):
+          psfopts=None,
+          sigmathreshold=2):
     nband, nx, ny = ID.shape
-    # initialise the PSF operator if not passed in
     _, nx_psf, ny_psf = PSF.shape
     wsums = np.amax(PSF, axis=(1,2))
     wsum = wsums.sum()
+    # normalise so the PSF always sums to 1
     ID /= wsum
     PSF /= wsum
     wsums = np.amax(PSF, axis=(1,2))
-    nx0 = nx_psf//2
-    ny0 = ny_psf//2
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
     IR = ID.copy()
+    # square avoids abs of full array
     IRsearch = np.sum(IR, axis=0)**2
     pq = IRsearch.argmax()
     p = pq//ny
@@ -109,6 +111,7 @@ def clark(ID,
                          gamma=gamma,
                          th=subth,
                          maxit=submaxit)
+        # subtract from full image (as in major cycle)
         IR = ID - psfo(model)
         IRsearch = np.sum(IR, axis=0)**2
         pq = IRsearch.argmax()
@@ -122,21 +125,27 @@ def clark(ID,
             stall_count += stall_count
 
         if not k % report_freq and verbosity > 1:
-            print("At iteration %i max residual = %f" % (k, IRmax), file=log)
+            print(f"At iteration {k} max resid = {IRmax}",
+                  file=log)
 
     if k >= maxit:
         if verbosity:
-            print("Maximum iterations reached. Max of residual = %f." %
-                  (IRmax), file=log)
+            print(f"Maximum iterations reached. Max of resid = {IRmax}",
+                  file=log)
         return model, 1
     elif stall_count >= 5:
         if verbosity:
-            print("Stalled. Max of residual = %f." %
-                  (IRmax), file=log)
+            print(f"Stalled. Max of resid = {IRmax}",
+                  file=log)
         return model, 1
     else:
         if verbosity:
-            print("Success, converged after %i iterations" % k, file=log)
-        # we want to trigger the flux mop if the final threshold has
-        # been reached
-        return model, 0 if IRmax > threshold else 1
+            print(f"Success, converged after {k} iterations. "
+                  f"Max resid = {IRmax}", file=log)
+        # This is approximate. We would like to trigger the flux mop
+        # if the final threshold has been reached but don't know the
+        # true rms until the true residual has been computed.
+        # Input threshold based on rms in previous major cycle
+        IRmfs = np.sum(IR, axis=0)
+        rms = np.std(IRmfs[~np.any(model, axis=0)])
+        return model, 0 if IRmax > sigmathreshold * rms else 1
