@@ -311,10 +311,13 @@ def _clean(**kw):
         # save_fits(opts.output_filename + f'_convim_mfs{k}.fits',
         #           np.sum(convimage, axis=0), hdr_mfs)
 
-        rms = np.std(residual_mfs[~np.any(model, axis=0)])
+        tmp_mask = ~np.any(model, axis=0)
+        rms = np.std(residual_mfs[tmp_mask])
         rmax = np.abs(residual_mfs).max()
+        rmax_inside = np.abs(residual_mfs[tmp_mask]).max()
 
-        print(f"Iter {k+1}: peak residual = {rmax}, rms = {rms}", file=log)
+        print(f"Iter {k+1}: peak residual = {rmax}, rms = {rms}, "
+              f"peak residual inside mask = {rmax_inside}", file=log)
 
         if opts.threshold is None:
             threshold = opts.sigmathreshold * rms
@@ -347,27 +350,6 @@ def _clean(**kw):
 
     dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
 
-    if opts.do_residual:
-        print('Computing final residual', file=log)
-        # first write it to disk per dataset
-        out_ds = []
-        for ds in dds:
-            dirty = ds.DIRTY.data
-            wgt = ds.WEIGHT.data
-            uvw = ds.UVW.data
-            freq = ds.FREQ.data
-            beam = ds.BEAM.data
-            vis_mask = ds.MASK.data
-            b = ds.bandid
-            # we only want to apply the beam once here
-            residual = dirty - hessian(beam * model[b], uvw, wgt,
-                                       vis_mask, freq, None, hessopts)
-            ds = ds.assign(**{'CLEAN_RESIDUAL': (('x', 'y'), residual)})
-            out_ds.append(ds)
-
-        writes = xds_to_zarr(out_ds, dds_name, columns='CLEAN_RESIDUAL')
-        dask.compute(writes)
-
     if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)
         # construct a header from xds attrs
@@ -383,34 +365,13 @@ def _clean(**kw):
         model_mfs = np.mean(model, axis=0)
 
         save_fits(f'{basename}_clean_model_mfs.fits', model_mfs, hdr_mfs)
-
-        if opts.update_mask:
-            save_fits(f'{basename}_clean_mask.fits', mask, hdr_mfs)
-
-        if opts.do_residual:
-            dds = xds_from_zarr(dds_name, chunks={'band': 1})
-            residual = [da.zeros((nx, ny), chunks=(-1, -1)) for _ in range(nband)]
-            wsums = np.zeros(nband)
-            for ds in dds:
-                b = ds.bandid
-                wsums[b] += ds.WSUM.values[0]
-                residual[b] += ds.CLEAN_RESIDUAL.data
-            wsum = np.sum(wsums)
-            residual = (da.stack(residual)/wsum).compute()
-
-            residual_mfs = np.sum(residual, axis=0)
-            save_fits(f'{basename}_clean_residual_mfs.fits',
-                      residual_mfs, hdr_mfs)
+        save_fits(f'{basename}_clean_residual_mfs.fits',
+                    residual_mfs, hdr_mfs)
 
         if opts.fits_cubes:
             # need residual in Jy/beam
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
             save_fits(f'{basename}_clean_model.fits', model, hdr)
-
-            if opts.do_residual:
-                fmask = wsums > 0
-                residual[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}_clean_residual.fits',
-                          residual, hdr)
+            save_fits(f'{basename}_clean_residual.fits', residual, hdr)
 
     print("All done here.", file=log)
