@@ -172,7 +172,10 @@ def _clean(**kw):
         residual_mfs = dirty_mfs.copy()
     else:
         residual_mfs = np.sum(residual, axis=0)
-    model = mds.MODEL.values
+    try:
+        model = getattr(mds, opts.model_name).values
+    except Exception as e:
+        raise e
 
     # for intermediary results (not currently written)
     # ra = dds[0].ra
@@ -288,11 +291,6 @@ def _clean(**kw):
                 mask = ndimage.binary_dilation(mask, structure=struct)
                 mask = ndimage.binary_erosion(mask, structure=struct)
             mask = mask[None, :, :].astype(residual.dtype)
-            # x = pcg(lambda x: mask * psfo(mask*x), mask * residual, x,
-            #         tol=opts.cg_tol, maxit=opts.cg_maxit,
-            #         minit=opts.cg_minit, verbosity=opts.cg_verbose,
-            #         report_freq=opts.cg_report_freq,
-            #         backtrack=opts.backtrack)
             # hess2opts['sigmainv'] = 1e-8
             x = pcg_psf(psfhat, mask*residual, x,
                         mask, hess2opts, cgopts)

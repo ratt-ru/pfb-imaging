@@ -1,16 +1,4 @@
 inputs:
-  residual_name:
-    dtype: str
-    abbreviation: rname
-    default: RESIDUAL
-    info:
-      Name of residual in xds
-  mask:
-    dtype: str
-    abbreviation: mask
-    info:
-      Either path to mask.fits or set to mds
-      to use the mask contained in the mds
   nband:
     dtype: int
     required: true
@@ -35,6 +23,24 @@ inputs:
     info:
       Imaging products to produce. Options are I, Q, U, V.
       Only single Stokes products are currently supported
+  residual_name:
+    dtype: str
+    abbreviation: rname
+    default: RESIDUAL
+    info:
+      Name of residual in dds
+  model_name:
+    dtype: str
+    abbreviation: mname
+    default: MODEL
+    info:
+      Name of model in mds
+  mask:
+    dtype: str
+    abbreviation: mask
+    info:
+      Either path to mask.fits or set to mds
+      to use the mask contained in the mds
   algo:
     dtype: str
     default: clark

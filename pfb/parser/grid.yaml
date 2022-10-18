@@ -28,12 +28,22 @@ inputs:
     abbreviation: iwc
     info:
       Column containing imaging weights. Must be the same across MSs
+  from_model:
+    dtype: str
+    info:
+      Name of model dataset to use for initialisation
   model_name:
     dtype: str
     default: MODEL
     abbreviation: mname
     info:
       Name of model in mds to use for residual computation
+  hard_threshold:
+    dtype: float
+    default: 0
+    abbreviation: hthresh
+    info:
+      Amount to hard threshold the input model by
   robustness:
     dtype: float
     abbreviation: rob

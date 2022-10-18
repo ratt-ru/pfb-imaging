@@ -115,8 +115,9 @@ def _grid(**kw):
 
     xdsp = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1},
                         columns=columns)
+    real_type = xdsp[0].WEIGHT.dtype
     if opts.concat:
-        # LB - this is required because concat will try to mush different
+        # this is required because concat will try to mush different
         # imaging bands together if they are not split upfront
         print('Concatenating datasets along row dimension', file=log)
         xds = []
@@ -136,7 +137,7 @@ def _grid(**kw):
     else:
         xds = xdsp
 
-    # get max uv coords over all datasets
+    # max uv coords over all datasets
     uv_maxs = []
     max_freqs = []
     for ds in xds:
@@ -274,17 +275,31 @@ def _grid(**kw):
                                            nlevel=opts.filter_level)
 
     # check if model exists
-    if opts.residual:
-        try:
-            mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-            model = mds.get(opts.model_name).data
-            print(f"Using {opts.model_name} for residual computation. ",
-                  file=log)
-        except:
-            print("Cannot compute residual without a model. ", file=log)
-            model = None
+    if opts.from_model is not None:
+        minit = opts.from_model
     else:
-        model = None
+        minit = mds_name
+    try:
+        mds = xds_from_zarr(minit, chunks={'band':1})[0]
+        print(f"Using {opts.model_name} for residual computation. ",
+                file=log)
+        model = mds.get(opts.model_name).data
+        if opts.hard_threshold:
+            print(f'Hard thresholding model by {opts.hard_threshold}',
+                  file=log)
+            from pfb.utils.misc import lthreshold
+            model = model.map_blocks(lthreshold,
+                                     sigma=opts.hard_threshold,
+                                     kind='l1',
+                                     dtype=real_type)
+
+    except Exception as e:
+        print(f"No model found at {minit}, initialising empty model",
+              file=log)
+        # noop in hessian when model is empty
+        model = da.zeros((nband, nx, ny),
+                         chunks=(1, -1, -1),
+                         dtype=real_type)
 
     writes = []
     freq_out = []
@@ -360,26 +375,22 @@ def _grid(**kw):
         m = (-(ny//2) + da.arange(ny)) * cell_deg
         ll, mm = da.meshgrid(l, m, indexing='ij')
         bvals = eval_beam(ds.BEAM.data, ll, mm)
-        # bvals = da.ones_like(dirty)
 
         dvars['BEAM'] = (('x', 'y'), bvals)
 
         if opts.residual:
-            if model is not None and model.any():
-                from pfb.operators.hessian import hessian
-                hessopts = {
-                    'cell': cell_rad,
-                    'wstack': opts.wstack,
-                    'epsilon': opts.epsilon,
-                    'double_accum': opts.double_accum,
-                    'nthreads': opts.nvthreads
-                }
-                # we only want to apply the beam once here
-                residual = dirty - hessian(bvals * model[ds.bandid], uvw, wgt,
-                                           mask, freq, None, hessopts)
-                residual = inlined_array(residual, [uvw, freq])
-            else:
-                residual = dirty
+            from pfb.operators.hessian import hessian
+            hessopts = {
+                'cell': cell_rad,
+                'wstack': opts.wstack,
+                'epsilon': opts.epsilon,
+                'double_accum': opts.double_accum,
+                'nthreads': opts.nvthreads
+            }
+            # we only want to apply the beam once here
+            residual = dirty - hessian(bvals * model[ds.bandid], uvw, wgt,
+                                        mask, freq, None, hessopts)
+            residual = inlined_array(residual, [uvw, freq])
             dvars['RESIDUAL'] = (('x', 'y'), residual)
 
 
@@ -420,24 +431,21 @@ def _grid(**kw):
     freq_out = np.unique(np.stack(freq_out))
     wsums = np.stack(wsums).squeeze()
 
-    if model is None:
-        print("Initialising model ds", file=log)
-        # TODO - allow non-zero input model
-        attrs = {'nband': nband,
-                'nx': nx,
-                'ny': ny,
-                'ra': xds[0].ra,
-                'dec': xds[0].dec,
-                'cell_rad': cell_rad}
-        coords = {'freq': freq_out}
-        real_type = np.float64 if opts.precision=='double' else np.float32
-        model = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
-        mask = da.zeros((nx, ny), chunks=(-1, -1), dtype=bool)
-        data_vars = {'MODEL': (('band', 'x', 'y'), model),
-                    'MASK': (('x', 'y'), mask),
-                    'WSUM': (('band',), da.from_array(wsums, chunks=1))}
-        mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
-        dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
+    print("Initialising model ds", file=log)
+    attrs = {'nband': nband,
+            'nx': nx,
+            'ny': ny,
+            'ra': xds[0].ra,
+            'dec': xds[0].dec,
+            'cell_rad': cell_rad}
+    coords = {'freq': freq_out}
+    real_type = np.float64 if opts.precision=='double' else np.float32
+    mask = model.any(axis=0)
+    data_vars = {'MODEL': (('band', 'x', 'y'), model),
+                'MASK': (('x', 'y'), mask),
+                'WSUM': (('band',), da.from_array(wsums, chunks=1))}
+    mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
+    dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
 
     # convert to fits files
     if opts.fits_mfs or opts.fits_cubes:

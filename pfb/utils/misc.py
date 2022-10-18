@@ -1091,21 +1091,9 @@ def _rephase_vis(vis, uvw, radec_in, radec_out):
                             uvw[:, 2]*(n_out-n_in)))
 
 
-# def chan_average(vis, wgt, freq, flag, fint=4):
-#     nchan = freq.size
-#     nf = int(np.ceil(nchan/fint))
-#     nrow = vis.shape[0]
-#     viso = np.zeros((nrow, nf), dtype=vis.dtype)
-#     wgto = np.zeros((nrow, nf), dtype=wgt.dtype)
-#     freqo = np.zeros(nf, dtype=freq.dtype)
-#     for r in range(nrow):
-#         for f in range(nf):
-#             for i in range(fint):
-#                 if not flag[r, fint*f + i]:
-#                     viso[r, f] += vis[r, fint*f + i] * wgt[r, fint*f + i]
-#                     wgto[r, f] += wgt[r, fint*f + i]
-#             # make sure this
-#             freqo[f] = np.mean(freq[fint*f:fint*f + fint])
-#             # normalise weighted sum
-#             if wgto[r, f]:
-#                 viso[r, f] /= wgto[r, f]
+def lthreshold(x, sigma, kind='l1'):
+    if kind=='l0':
+        return np.where(np.abs(x) > sigma, x, 0) * np.sign(x)
+    elif kind=='l1':
+        absx = np.abs(x)
+        return np.where(absx > sigma, absx - sigma, 0) * np.sign(x)
