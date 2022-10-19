@@ -146,7 +146,7 @@ inputs:
       Report frequency for minor cycles
   cg_tol:
     dtype: float
-    default: 1e-3
+    default: 1e-2
     abbreviation: cgtol
     info:
       Tolreance of conjugate gradient algorithm

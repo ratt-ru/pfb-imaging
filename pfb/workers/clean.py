@@ -178,14 +178,14 @@ def _clean(**kw):
         raise e
 
     # for intermediary results (not currently written)
-    # ra = dds[0].ra
-    # dec = dds[0].dec
-    # radec = [ra, dec]
-    # cell_rad = dds[0].cell_rad
-    # cell_deg = np.rad2deg(cell_rad)
-    # freq_out = mds.freq.data
-    # ref_freq = np.mean(freq_out)
-    # hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+    ra = dds[0].ra
+    dec = dds[0].dec
+    radec = [ra, dec]
+    cell_rad = dds[0].cell_rad
+    cell_deg = np.rad2deg(cell_rad)
+    freq_out = mds.freq.data
+    ref_freq = np.mean(freq_out)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
     # set up vis space Hessian
     hessopts = {}
@@ -281,20 +281,6 @@ def _clean(**kw):
         else:
             raise ValueError(f'{opts.algo} is not a valid algo option')
 
-        # do flux mop if clean has stalled, not converged or
-        # we have reached the final iteration/threshold
-        if opts.mop_flux and (status or k == opts.nmiter-1):
-            print(f"Mopping flux at iter {k+1}", file=log)
-            mask = (np.any(x, axis=0) | np.any(model, axis=0))
-            if opts.dirosion:
-                struct = ndimage.generate_binary_structure(2, opts.dirosion)
-                mask = ndimage.binary_dilation(mask, structure=struct)
-                mask = ndimage.binary_erosion(mask, structure=struct)
-            mask = mask[None, :, :].astype(residual.dtype)
-            # hess2opts['sigmainv'] = 1e-8
-            x = pcg_psf(psfhat, mask*residual, x,
-                        mask, hess2opts, cgopts)
-
         model += x
 
         print("Getting residual", file=log)
@@ -304,20 +290,42 @@ def _clean(**kw):
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
 
-        # save_fits(opts.output_filename + f'_residual_mfs{k}.fits',
-        #           residual_mfs, hdr_mfs)
-        # save_fits(opts.output_filename + f'_model_mfs{k}.fits',
-        #           np.mean(model, axis=0), hdr_mfs)
-        # save_fits(opts.output_filename + f'_convim_mfs{k}.fits',
-        #           np.sum(convimage, axis=0), hdr_mfs)
+        # do flux mop if clean has stalled, not converged or
+        # we have reached the final iteration/threshold
+        if opts.mop_flux and (status or k == opts.nmiter-1):
+            print(f"Mopping flux at iter {k+1}", file=log)
+            mask = np.any(model, axis=0)
+            if opts.dirosion:
+                struct = ndimage.generate_binary_structure(2, opts.dirosion)
+                mask = ndimage.binary_dilation(mask, structure=struct)
+                mask = ndimage.binary_erosion(mask, structure=struct)
+            # hess2opts['sigmainv'] = 1e-8
+            x0 = np.zeros_like(x)
+            x0[:, mask] = residual_mfs[mask]
+            mask = mask[None, :, :].astype(residual.dtype)
+            x = pcg_psf(psfhat, mask*residual, x0,
+                        mask, hess2opts, cgopts)
+
+            model += x
+
+            save_fits(f'{basename}_premop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
+
+            print("Getting residual", file=log)
+            convimage = hess(model)
+            ne.evaluate('dirty - convimage', out=residual,
+                        casting='same_kind')
+            ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
+                        casting='same_kind')
+
+            save_fits(f'{basename}_postmop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
 
         tmp_mask = ~np.any(model, axis=0)
         rms = np.std(residual_mfs[tmp_mask])
         rmax = np.abs(residual_mfs).max()
         rmax_inside = np.abs(residual_mfs[tmp_mask]).max()
 
-        print(f"Iter {k+1}: peak residual = {rmax}, rms = {rms}, "
-              f"peak residual inside mask = {rmax_inside}", file=log)
+        print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
+              file=log)
 
         if opts.threshold is None:
             threshold = opts.sigmathreshold * rms

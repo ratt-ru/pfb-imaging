@@ -14,11 +14,14 @@ def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     # loop over active indices
     nband = xhat.size
     for b in numba.prange(nband):
+    # for b in range(nband):
         for i in range(Ip.size):
             pp = nxo2 - Ip[i]
             qq = nyo2 - Iq[i]
             A[b, i] -= xhat[b] * psf[b, pp, qq]
+            # print(b, pp, qq, psf[b, pp, qq])
     return A
+
 
 @numba.jit(parallel=True, nopython=True, nogil=True, cache=True)
 def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
@@ -58,12 +61,10 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         Idelq = q - Iq
         # find where PSF overlaps with image
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
-        # Ipp = p - Idelp[mask]
-        # Iqq = q - Idelq[mask]
-        # psftmp = psf[:, Ipp, Iqq].copy()
         A = subtract(A[:, mask], psf,
-                    Idelp[mask], Idelq[mask],
-                    xhat, nxo2, nyo2)
+                     Idelp[mask], Idelq[mask],
+                     xhat, nxo2, nyo2)
+
         Asearch = np.sum(A, axis=0)**2
         pq = Asearch.argmax()
         p = Ip[pq]
@@ -150,5 +151,5 @@ def clark(ID,
         rms = np.std(IRmfs[~np.any(model, axis=0)])
         if verbosity:
             print(f"Success, converged after {k} iterations. "
-                  f"Max resid = {IRmax}, rms = {rms}", file=log)
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
         return model, 0 if IRmax > sigmathreshold * rms else 1
