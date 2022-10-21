@@ -132,24 +132,21 @@ def clark(ID,
             print(f"At iteration {k} max resid = {IRmax}",
                   file=log)
 
+    IRmfs = np.sum(IR, axis=0)
+    rms = np.std(IRmfs[~np.any(model, axis=0)])
+
     if k >= maxit:
         if verbosity:
-            print(f"Maximum iterations reached. Max of resid = {IRmax}",
-                  file=log)
+            print(f"Maximum iterations reached. Max of resid = {IRmax}"
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
         return model, 1
     elif stall_count >= 5:
         if verbosity:
-            print(f"Stalled. Max of resid = {IRmax}",
-                  file=log)
+            print(f"Stalled. Max of resid = {IRmax}"
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
         return model, 1
     else:
-        # This is approximate. We would like to trigger the flux mop
-        # if the final threshold has been reached but don't know the
-        # true rms until the true residual has been computed.
-        # Input threshold is based on rms in previous major cycle
-        IRmfs = np.sum(IR, axis=0)
-        rms = np.std(IRmfs[~np.any(model, axis=0)])
         if verbosity:
             print(f"Success, converged after {k} iterations. "
                   f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
-        return model, 0 if IRmax > sigmathreshold * rms else 1
+        return model, 0

@@ -290,9 +290,20 @@ def _clean(**kw):
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
 
+        tmp_mask = ~np.any(model, axis=0)
+        rms = np.std(residual_mfs[tmp_mask])
+        rmax = np.abs(residual_mfs).max()
+
+        if opts.threshold is None:
+            threshold = opts.sigmathreshold * rms
+        else:
+            threshold = opts.threshold
+
         # do flux mop if clean has stalled, not converged or
         # we have reached the final iteration/threshold
-        if opts.mop_flux and (status or k == opts.nmiter-1):
+        status |= k==nmiter-1
+        status |= rmax <= threshold
+        if opts.mop_flux and status:
             print(f"Mopping flux at iter {k+1}", file=log)
             mask = np.any(model, axis=0)
             if opts.dirosion:
@@ -319,18 +330,18 @@ def _clean(**kw):
 
             save_fits(f'{basename}_postmop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
 
-        tmp_mask = ~np.any(model, axis=0)
-        rms = np.std(residual_mfs[tmp_mask])
-        rmax = np.abs(residual_mfs).max()
-        rmax_inside = np.abs(residual_mfs[tmp_mask]).max()
+            tmp_mask = ~np.any(model, axis=0)
+            rms = np.std(residual_mfs[tmp_mask])
+            rmax = np.abs(residual_mfs).max()
+
+            if opts.threshold is None:
+                threshold = opts.sigmathreshold * rms
+            else:
+                threshold = opts.threshold
 
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
               file=log)
 
-        if opts.threshold is None:
-            threshold = opts.sigmathreshold * rms
-        else:
-            threshold = opts.threshold
 
         if rmax <= threshold:
             print("Terminating because final threshold has been reached",
