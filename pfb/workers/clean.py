@@ -301,7 +301,7 @@ def _clean(**kw):
 
         # do flux mop if clean has stalled, not converged or
         # we have reached the final iteration/threshold
-        status |= k==nmiter-1
+        status |= k == opts.nmiter-1
         status |= rmax <= threshold
         if opts.mop_flux and status:
             print(f"Mopping flux at iter {k+1}", file=log)
