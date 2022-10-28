@@ -19,35 +19,7 @@ for key in schema.init["inputs"].keys():
 @clickify_parameters(schema.init)
 def init(**kw):
     '''
-    Create a dirty image, psf and weights from a list of measurement
-    sets. MFS images are written out in units of Jy/beam.
-    By default only the MFS images are converted to fits files.
-    Set the --fits-cubes flag to also produce fits cubes.
-
-    If a host address is provided the computation can be distributed
-    over imaging band and row. When using a distributed scheduler both
-    mem-limit and nthreads is per node and have to be specified.
-
-    When using a local cluster, mem-limit and nthreads refer to the global
-    memory and threads available, respectively. All available resources
-    are used by default.
-
-    On a local cluster, the default is to use:
-
-        nworkers = nband
-        nthreads-per-worker = 1
-
-    They have to be specified in ~.config/dask/jobqueue.yaml in the
-    distributed case.
-
-    if LocalCluster:
-        nvthreads = nthreads//(nworkers*nthreads_per_worker)
-    else:
-        nvthreads = nthreads//nthreads-per-worker
-
-    where nvthreads refers to the number of threads used to scale vertically
-    (eg. the number threads given to each gridder instance).
-
+    Initialise data products for imaging
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
@@ -161,9 +133,9 @@ def _init(**kw):
     # cell size
     cell_rad = 1.0 / (2 * uv_max * max_freq / lightspeed)
 
-    # we should rephase to the Barycenter of all datasets
-    if opts.radec is not None:
-        raise NotImplementedError()
+    # # we should rephase to the Barycenter of all datasets
+    # if opts.radec is not None:
+    #     raise NotImplementedError()
 
     # this is not optional but we can always concatenate later if needs be
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']

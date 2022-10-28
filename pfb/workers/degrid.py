@@ -21,10 +21,6 @@ for key in schema.degrid["inputs"].keys():
 def degrid(**kw):
     '''
     Predict model visibilities to measurement sets.
-
-    The chan chunk size is determined automatically from chan <-> band
-    mapping.
-
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)

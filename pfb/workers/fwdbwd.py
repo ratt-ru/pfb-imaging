@@ -20,7 +20,7 @@ for key in schema.fwdbwd["inputs"].keys():
 @clickify_parameters(schema.fwdbwd)
 def fwdbwd(**kw):
     '''
-    Forward backward steps
+    Implements SARA minor cycle using forward backward steps
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)

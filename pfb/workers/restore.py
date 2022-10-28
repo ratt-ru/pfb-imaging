@@ -19,10 +19,7 @@ for key in schema.restore["inputs"].keys():
 @clickify_parameters(schema.restore)
 def restore(**kw):
     '''
-    Create restored images.
-
-    Can also be used to convolve images to a common resolution
-    and/or perform a primary beam correction.
+    Create fits image data products (eg. restored images).
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
