@@ -54,22 +54,24 @@ def hogbom(
         if not k % report_freq and verbosity > 1:
             print("At iteration %i max residual = %f" % (k, IRmax), file=log)
 
+    IRmfs = np.sum(IR, axis=0)
+    rms = np.std(IRmfs[~np.any(model, axis=0)])
+
     if k >= maxit:
         if verbosity:
-            print("Maximum iterations reached. Max of residual = %f." %
-                  (IRmax), file=log)
+            print(f"Max iters reached. "
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
         return x, 1
     elif stall_count >= 5:
         if verbosity:
-            print("Stalled. Max of residual = %f." %
-                  (IRmax), file=log)
+            print(f"Stalled. "
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
         return x, 1
     else:
         if verbosity:
-            print("Success, converged after %i iterations" % k, file=log)
-        # we want to trigger the flux mop if the final threshold has
-        # been reached
-        return x, 0 if IRmax > threshold else 1
+            print(f"Success, converged after {k} iterations. "
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+        return x, 0
 
 
 # import jax.numpy as jnp

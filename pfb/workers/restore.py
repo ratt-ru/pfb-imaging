@@ -145,31 +145,39 @@ def _restore(**kw):
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq)
 
     if 'm' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.model_mfs.fits', model_mfs, hdr_mfs)
+        save_fits(f'{basename}{opts.postfix}.model_mfs.fits', model_mfs, hdr_mfs,
+                  overwrite=opts.overwrite)
 
     if 'M' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.model.fits', model, hdr)
+        save_fits(f'{basename}{opts.postfix}.model.fits', model, hdr,
+                  overwrite=opts.overwrite)
 
     # model does not get resolution info
     hdr_mfs = add_beampars(hdr_mfs, GaussPar)
     hdr = add_beampars(hdr, GaussPar, GaussPars)
 
     if 'r' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.residual_mfs.fits', residual_mfs, hdr_mfs)
+        save_fits(f'{basename}{opts.postfix}.residual_mfs.fits', residual_mfs, hdr_mfs,
+                  overwrite=opts.overwrite)
 
     if 'R' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.residual.fits', residual, hdr)
+        save_fits(f'{basename}{opts.postfix}.residual.fits', residual, hdr,
+                  overwrite=opts.overwrite)
 
     if 'i' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.image_mfs.fits', image_mfs, hdr_mfs)
+        save_fits(f'{basename}{opts.postfix}.image_mfs.fits', image_mfs, hdr_mfs,
+                  overwrite=opts.overwrite)
 
     if 'I' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.image.fits', image, hdr)
+        save_fits(f'{basename}{opts.postfix}.image.fits', image, hdr,
+                  overwrite=opts.overwrite)
 
     if 'c' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.cpsf_mfs.fits', cpsf_mfs, hdr_mfs)
+        save_fits(f'{basename}{opts.postfix}.cpsf_mfs.fits', cpsf_mfs, hdr_mfs,
+                  overwrite=opts.overwrite)
 
     if 'C' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.cpsf.fits', cpsf, hdr)
+        save_fits(f'{basename}{opts.postfix}.cpsf.fits', cpsf, hdr,
+                  overwrite=opts.overwrite)
 
     print("All done here", file=log)

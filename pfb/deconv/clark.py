@@ -137,12 +137,12 @@ def clark(ID,
 
     if k >= maxit:
         if verbosity:
-            print(f"Maximum iterations reached. Max of resid = {IRmax}"
+            print(f"Max iters reached. "
                   f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
         return model, 1
     elif stall_count >= 5:
         if verbosity:
-            print(f"Stalled. Max of resid = {IRmax}"
+            print(f"Stalled. "
                   f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
         return model, 1
     else:
