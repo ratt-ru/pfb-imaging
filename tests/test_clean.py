@@ -186,10 +186,8 @@ def test_clean(do_gains, algo, tmp_path_factory):
     init_args["output_filename"] = outname
     init_args["nband"] = nchan
     init_args["data_column"] = "DATA2"
-    init_args["weight_column"] = None
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = gain_path
-    init_args["beam_model"] = None
     init_args["max_field_of_view"] = fov
     from pfb.workers.init import _init
     _init(**init_args)

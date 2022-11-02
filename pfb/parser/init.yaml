@@ -32,7 +32,7 @@ inputs:
     metavar: COLUMN
   weight_column:
     dtype: str
-    default: WEIGHT_SPECTRUM
+    # default: WEIGHT_SPECTRUM
     abbreviation: wc
     info: 'Column containing natural weights. Must be the same across MSs'
     metavar: COLUMN
