@@ -55,7 +55,7 @@ def hogbom(
             print("At iteration %i max residual = %f" % (k, IRmax), file=log)
 
     IRmfs = np.sum(IR, axis=0)
-    rms = np.std(IRmfs[~np.any(model, axis=0)])
+    rms = np.std(IRmfs[~np.any(x, axis=0)])
 
     if k >= maxit:
         if verbosity:
