@@ -91,9 +91,11 @@ def _degrid(**kw):
 
     mds = xds_from_zarr(mds_name)[0]
     cell_rad = mds.cell_rad
+    cell_deg = np.rad2deg(cell_rad)
     mfreqs = mds.freq.data
     model = getattr(mds, opts.model_name).data
     wsums = mds.WSUM.data
+    radec = (mds.ra, mds.dec)
 
     model, mfreqs, wsums = dask.compute(model, mfreqs, wsums)
 
@@ -115,7 +117,7 @@ def _degrid(**kw):
         ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms, None,
-                               opts.nband,
+                               opts.nband_out,
                                opts.utimes_per_chunk)
 
     # interpolate model
@@ -148,6 +150,28 @@ def _degrid(**kw):
 
         comps = np.linalg.solve(hess_comps, dirty_comps)
         freq_fitted = True
+
+
+        print("Saving fitted models", file=log)
+        from pfb.utils.misc import _model_from_comps
+        from pfb.utils.fits import set_wcs
+        from pfb.utils.fits import save_fits
+
+        m = _model_from_comps(comps, freq_out, mask,
+                              np.arange(freq_out.size),
+                              ref_freq, freq_fitted)
+        mmfs = np.mean(m, axis=0)
+
+        hdr = set_wcs(cell_deg, cell_deg,
+                      nx, ny, radec, freq_out)
+        hdr_mfs = set_wcs(cell_deg, cell_deg,
+                          nx, ny, radec, np.mean(freq_out))
+
+        save_fits(f'{basename}_fitted_model.fits', m, hdr)
+        save_fits(f'{basename}_fitted_model_mfs.fits', mmfs, hdr_mfs)
+
+
+
     else:
         print("Not fitting frequency axis", file=log)
         comps = beta
