@@ -5,7 +5,7 @@ host_address:
     address is provided and scheduler is set to distributed.
   abbreviation: ha
 nworkers:
-  dtype: int
+  dtype: Optional[int]
   abbreviation: nw
   info:
     Number of worker processes.
