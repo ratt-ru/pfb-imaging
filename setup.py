@@ -29,9 +29,9 @@ requirements = [
                 "@git+https://github.com/ratt-ru/packratt.git"
                 "@master",
 
-                # "stimela"
-                # "@git+https://github.com/caracal-pipeline/stimela2"
-                # "@issue85"
+                "stimela"
+                "@git+https://github.com/caracal-pipeline/stimela2"
+                "@issue85"
 
             ]
 
@@ -39,10 +39,10 @@ requirements = [
 # If scabha is not pre-installed, add to requirements
 # This is just a transitionary hack: next release of stimela will include scabha,
 # so when that happens, we just add a stimela>=2 dependency at the top, and don't bother with this
-try:
-    import scabha
-except ImportError:
-    requirements.append('scabha')
+# try:
+#     import scabha
+# except ImportError:
+#     requirements.append('scabha')
 
 
 setup(

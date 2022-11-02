@@ -77,6 +77,9 @@ def set_client(opts, stack, log, scheduler='distributed'):
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
     if scheduler=='distributed':
+        # TODO - investigate what difference this makes
+        # with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
+        #     client = distributed.Client()
         # set up client
         if opts.host_address is not None:
             from distributed import Client

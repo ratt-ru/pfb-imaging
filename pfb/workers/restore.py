@@ -177,4 +177,9 @@ def _restore(**kw):
         save_fits(f'{basename}{opts.postfix}.cpsf.fits', cpsf, hdr,
                   overwrite=opts.overwrite)
 
+    if opts.scheduler=='distributed':
+        from distributed import get_client
+        client = get_client()
+        client.close()
+
     print("All done here", file=log)

@@ -523,4 +523,9 @@ def _grid(**kw):
                 save_fits(f'{basename}{opts.postfix}_psf.fits', psf, hdr_psf,
                         dtype=np.float32)
 
+    if opts.scheduler=='distributed':
+        from distributed import get_client
+        client = get_client()
+        client.close()
+
     print("All done here.", file=log)

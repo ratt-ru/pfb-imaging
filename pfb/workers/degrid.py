@@ -246,5 +246,10 @@ def _degrid(**kw):
     with compute_context(opts.scheduler, opts.output_filename+'_degrid'):
         dask.compute(writes, optimize_graph=True)
 
+    if opts.scheduler=='distributed':
+        from distributed import get_client
+        client = get_client()
+        client.close()
+
     print("All done here.", file=log)
 

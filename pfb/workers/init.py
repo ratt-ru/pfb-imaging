@@ -260,4 +260,9 @@ def _init(**kw):
     with compute_context(opts.scheduler, opts.output_filename+'_init'):
         dask.compute(writes, optimize_graph=False)
 
+    if opts.scheduler=='distributed':
+        from distributed import get_client
+        client = get_client()
+        client.close()
+
     print("All done here.", file=log)

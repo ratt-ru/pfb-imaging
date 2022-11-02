@@ -326,4 +326,9 @@ def _clean(**kw):
             save_fits(f'{basename}_clean_model.fits', model, hdr)
             save_fits(f'{basename}_clean_residual.fits', residual, hdr)
 
+    if opts.scheduler=='distributed':
+        from distributed import get_client
+        client = get_client()
+        client.close()
+
     print("All done here.", file=log)
