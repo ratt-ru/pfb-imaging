@@ -413,8 +413,7 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
     ms_name     - list of ms names
     nband       - number of imaging bands (defaults to a single band)
     ipi         - integrations (i.e. unique times) per output image.
-                  Defaults to one per scan which is also the min time
-                  resolion.
+                  Defaults to one per scan.
 
     The chan <-> band mapping is determined by:
 

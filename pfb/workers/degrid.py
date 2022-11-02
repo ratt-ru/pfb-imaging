@@ -170,8 +170,6 @@ def _degrid(**kw):
         save_fits(f'{basename}_fitted_model.fits', m, hdr)
         save_fits(f'{basename}_fitted_model_mfs.fits', mmfs, hdr_mfs)
 
-
-
     else:
         print("Not fitting frequency axis", file=log)
         comps = beta
@@ -214,6 +212,7 @@ def _degrid(**kw):
             fidx = da.from_array(fbin_idx[ms][idt], chunks=1)
             fcnts = da.from_array(fbin_counts[ms][idt], chunks=1)
             uvw = ds.UVW.data
+
             vis = im2vis(uvw,
                          freq,
                          model,
