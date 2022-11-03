@@ -35,7 +35,7 @@ def single_stokes(ds=None,
         complex_type = np.complex128
 
     data = getattr(ds, opts.data_column).data
-    nrow, nchan, _ = data.shape
+    nrow, nchan, ncorr = data.shape
 
     ant1 = clone(ds.ANTENNA1.data)
     ant2 = clone(ds.ANTENNA2.data)
@@ -61,6 +61,10 @@ def single_stokes(ds=None,
         weight = 1.0/sigma**2
     elif opts.weight_column is not None:
         weight = getattr(ds, opts.weight_column).data
+        if opts.weight_column=='WEIGHT':
+            weight = da.broadcast_to(weight[:, None, :],
+                                     (nrow, nchan, ncorr),
+                                     chunks=data.chunks)
     else:
         weight = da.ones_like(data, dtype=real_type)
 
