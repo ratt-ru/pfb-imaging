@@ -18,15 +18,12 @@ requirements = [
                 'pyscilog >= 0.1.2',
                 'Click',
                 'omegaconf',
-                'bokeh',
+                'bokeh==2.4.3',
                 'graphviz',
                 'nifty7',
                 'sympy',
                 "codex-africanus[complete]",
-
-                "dask-ms[xarray, zarr, s3]"
-                "@git+https://github.com/ratt-ru/dask-ms.git"
-                "@master",
+                "dask-ms[xarray, zarr, s3]",
 
                 "packratt"
                 "@git+https://github.com/ratt-ru/packratt.git"
@@ -34,7 +31,7 @@ requirements = [
 
                 "stimela"
                 "@git+https://github.com/caracal-pipeline/stimela2"
-                "@kube"
+                "@master"
 
             ]
 

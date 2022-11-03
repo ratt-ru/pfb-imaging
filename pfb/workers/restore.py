@@ -19,10 +19,7 @@ for key in schema.restore["inputs"].keys():
 @clickify_parameters(schema.restore)
 def restore(**kw):
     '''
-    Create restored images.
-
-    Can also be used to convolve images to a common resolution
-    and/or perform a primary beam correction.
+    Create fits image data products (eg. restored images).
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
@@ -145,31 +142,44 @@ def _restore(**kw):
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq)
 
     if 'm' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.model_mfs.fits', model_mfs, hdr_mfs)
+        save_fits(f'{basename}{opts.postfix}.model_mfs.fits', model_mfs, hdr_mfs,
+                  overwrite=opts.overwrite)
 
     if 'M' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.model.fits', model, hdr)
+        save_fits(f'{basename}{opts.postfix}.model.fits', model, hdr,
+                  overwrite=opts.overwrite)
 
     # model does not get resolution info
     hdr_mfs = add_beampars(hdr_mfs, GaussPar)
     hdr = add_beampars(hdr, GaussPar, GaussPars)
 
     if 'r' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.residual_mfs.fits', residual_mfs, hdr_mfs)
+        save_fits(f'{basename}{opts.postfix}.residual_mfs.fits', residual_mfs, hdr_mfs,
+                  overwrite=opts.overwrite)
 
     if 'R' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.residual.fits', residual, hdr)
+        save_fits(f'{basename}{opts.postfix}.residual.fits', residual, hdr,
+                  overwrite=opts.overwrite)
 
     if 'i' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.image_mfs.fits', image_mfs, hdr_mfs)
+        save_fits(f'{basename}{opts.postfix}.image_mfs.fits', image_mfs, hdr_mfs,
+                  overwrite=opts.overwrite)
 
     if 'I' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.image.fits', image, hdr)
+        save_fits(f'{basename}{opts.postfix}.image.fits', image, hdr,
+                  overwrite=opts.overwrite)
 
     if 'c' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.cpsf_mfs.fits', cpsf_mfs, hdr_mfs)
+        save_fits(f'{basename}{opts.postfix}.cpsf_mfs.fits', cpsf_mfs, hdr_mfs,
+                  overwrite=opts.overwrite)
 
     if 'C' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.cpsf.fits', cpsf, hdr)
+        save_fits(f'{basename}{opts.postfix}.cpsf.fits', cpsf, hdr,
+                  overwrite=opts.overwrite)
+
+    if opts.scheduler=='distributed':
+        from distributed import get_client
+        client = get_client()
+        client.close()
 
     print("All done here", file=log)

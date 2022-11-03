@@ -173,7 +173,8 @@ def test_fwdbwd(beam_model, do_gains, tmp_path_factory):
             'GAIN_AXES': ('gain_t', 'gain_f', 'ant', 'dir', 'corr')
         }
         coords = {
-            'gain_f': (('gain_f',), freq)
+            'gain_f': (('gain_f',), freq),
+            'gain_t': (('gain_t',), utime)
 
         }
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
@@ -198,7 +199,6 @@ def test_fwdbwd(beam_model, do_gains, tmp_path_factory):
     init_args["output_filename"] = outname
     init_args["nband"] = nchan
     init_args["data_column"] = "DATA2"
-    init_args["weight_column"] = None
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = gain_path
     init_args["beam_model"] = beam_model

@@ -38,6 +38,10 @@ inputs:
     default: mMrRiI
     info: 'Output products. (m)odel, (r)esidual, (i)mage, (c)lean beam. \
           Captitals correspond to cubes.'
+  overwrite:
+    dtype: bool
+    default: false
+    info: Allow overwrite of output xds
 
 outputs:
     {}

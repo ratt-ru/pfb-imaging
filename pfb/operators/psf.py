@@ -142,8 +142,8 @@ def psf_convolve_cube(x, psfhat, beam, psfopts,
                           dtype=x.dtype)
     convim /= wsum
 
-    if sigmainv:
-        convim += x * sigmainv**2
+    if np.any(sigmainv):
+        convim += x * sigmainv
 
     if compute:
         return convim.compute()
@@ -171,6 +171,36 @@ def _hessian_reg_psf(x, beam, psfhat,
     xhat = c2r(xhat * psfhat, axes=(1, 2), forward=False,
                lastsize=lastsize, inorm=2, nthreads=nthreads)
     im = Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y]
+
+    if beam is not None:
+        im *= beam
+
+    if np.any(sigmainv):
+        return im + x * sigmainv
+    else:
+        return im
+
+def _hessian_reg_psf_slice(
+                    x, beam, psfhat,
+                    nthreads=None,
+                    sigmainv=None,
+                    padding=None,
+                    unpad_x=None,
+                    unpad_y=None,
+                    lastsize=None):
+    """
+    Tikhonov regularised Hessian approx
+    """
+
+    if beam is not None:
+        xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(0, 1))
+    else:
+        xhat = iFs(np.pad(x, padding, mode='constant'), axes=(0, 1))
+    xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
+               forward=True, inorm=0)
+    xhat = c2r(xhat * psfhat, axes=(0, 1), forward=False,
+               lastsize=lastsize, inorm=2, nthreads=nthreads)
+    im = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
 
     if beam is not None:
         im *= beam

@@ -20,7 +20,7 @@ for key in schema.fwdbwd["inputs"].keys():
 @clickify_parameters(schema.fwdbwd)
 def fwdbwd(**kw):
     '''
-    Forward backward steps
+    Implements SARA minor cycle using forward backward steps
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
@@ -75,7 +75,8 @@ def _fwdbwd(**kw):
     dds_name = f'{basename}{opts.postfix}.dds.zarr'
     mds_name = f'{basename}{opts.postfix}.mds.zarr'
 
-    dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk})
+    dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk,
+                                          'chan':-1})
     # only a single mds (for now)
     mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
     nband = mds.nband
@@ -335,5 +336,10 @@ def _fwdbwd(**kw):
             residual[fmask] /= wsums[fmask, None, None]
             save_fits(f'{basename}_residual.fits',
                     residual, hdr)
+
+    if opts.scheduler=='distributed':
+        from distributed import get_client
+        client = get_client()
+        client.close()
 
     print("All done here.", file=log)

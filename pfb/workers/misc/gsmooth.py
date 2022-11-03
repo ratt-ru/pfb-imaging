@@ -22,17 +22,22 @@ def gsmooth(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
+    opts.nband = 1  # hack!!!
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     pyscilog.log_to_file(f'tsmooth_{timestamp}.log')
     OmegaConf.set_struct(opts, True)
 
-    # TODO - prettier config printing
-    print('Input Options:', file=log)
-    for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+    with ExitStack() as stack:
+        from pfb import set_client
+        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
 
-    return _gsmooth(**opts)
+        # TODO - prettier config printing
+        print('Input Options:', file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
+
+        return _gsmooth(**opts)
 
 def _gsmooth(**kw):
     opts = OmegaConf.create(kw)
@@ -56,8 +61,10 @@ def _gsmooth(**kw):
 
     try:
         xds = xds_from_zarr(f'{str(gain_dir)}::{opts.gain_term}')
+        if not len(xds):
+            raise ValueError(f'No data at {str(gain_dir)}::{opts.gain_term}')
     except Exception as e:
-        xds = xds_from_zarr(f'{str(gain_dir)}/{opts.gain_term}')
+        raise(e)
 
 
     K = xds_from_zarr(f'{str(gain_dir)}::K')

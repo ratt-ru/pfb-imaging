@@ -1,6 +1,7 @@
 import numpy as np
 from functools import partial
 import dask.array as da
+from uuid import uuid4
 import pyscilog
 log = pyscilog.get_logger('PCG')
 
@@ -130,7 +131,7 @@ def pcg(A,
     else:
         return x, r
 
-from pfb.operators.psf import _hessian_reg_psf as hessian_psf
+from pfb.operators.psf import _hessian_reg_psf_slice as hessian_psf
 def _pcg_psf_impl(psfhat,
                   b,
                   x0,
@@ -173,10 +174,10 @@ def _pcg_psf(psfhat,
              beam,
              hessopts,
              cgopts):
-    return _pcg_psf_impl(psfhat[0][0],
+    return _pcg_psf_impl(psfhat,
                          b,
                          x0,
-                         beam[0][0],
+                         beam,
                          hessopts,
                          **cgopts)
 
@@ -185,17 +186,48 @@ def pcg_psf(psfhat,
             x0,
             beam,
             hessopts,
-            cgopts):
+            cgopts,
+            compute=True):
 
-    model = da.blockwise(_pcg_psf, ('nband', 'nbasis', 'nmax'),
-                         psfhat, ('nband', 'nx_psf', 'ny_psf'),
-                         b, ('nband', 'nbasis', 'nmax'),
-                         x0, ('nband', 'nbasis', 'nmax'),
-                         beam, ('nband', 'nx', 'ny'),
+    if not isinstance(x0, da.Array):
+        x0 = da.from_array(x0, chunks=(1, -1, -1),
+                          name="x-" + uuid4().hex)
+
+    if not isinstance(psfhat, da.Array):
+        psfhat = da.from_array(psfhat, chunks=(1, -1, -1),
+                               name="psfhat-" + uuid4().hex)
+    if not isinstance(b, da.Array):
+        b = da.from_array(b, chunks=(1, -1, -1),
+                          name="psfhat-" + uuid4().hex)
+
+    if beam is None:
+        bout = None
+    else:
+        bout = ('nb', 'nx', 'ny')
+        if beam.ndim == 2:
+            beam = beam[None]
+
+        if not isinstance(beam, da.Array):
+            beam = da.from_array(beam, chunks=(1, -1, -1),
+                                 name="beam-" + uuid4().hex)
+        if beam.shape[0] == 1:
+            beam = da.tile(beam, (psfhat.shape[0], 1, 1))
+        elif beam.shape[0] != psfhat.shape[0]:
+            raise ValueError('Beam has incorrect shape')
+
+    model = da.blockwise(_pcg_psf, ('nb', 'nx', 'ny'),
+                         psfhat, ('nb', 'nx', 'ny'),
+                         b, ('nb', 'nx', 'ny'),
+                         x0, ('nb', 'nx', 'ny'),
+                         beam, bout,
                          hessopts, None,
                          cgopts, None,
+                         align_arrays=False,
                          dtype=b.dtype)
-    return model
+    if compute:
+        return model.compute()
+    else:
+        return model
 
 
 # from pfb.operators.hessian import _hessian_reg_wgt as hessian_wgt

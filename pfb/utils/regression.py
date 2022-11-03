@@ -757,24 +757,24 @@ def func(x):
 
 
 if __name__=='__main__':
-    np.random.seed(420)
+    # np.random.seed(420)
 
-    N = 4096
+    N = 1024
     x = np.sort(np.random.random(N))
     xp = np.linspace(0, 1, 100)
     f = func(x)
     ft = func(xp)
-    sigman = np.ones(N)
-    # sigman = np.exp(np.random.randn(N)) #/10000
+    # sigman = np.ones(N)
+    sigman = 1 + np.exp(np.random.randn(N))/10
     n = sigman*np.random.randn(N)
     w = 1/sigman**2
     y = f + n
 
     # add outliers
-    for i in range(int(0.1*N)):
-        idx = np.random.randint(0, N)
-        y[idx] += 10 * np.random.randn()
-        w[idx] = 0.25
+    # for i in range(int(0.1*N)):
+    #     idx = np.random.randint(0, N)
+    #     y[idx] += 10 * np.random.randn()
+    #     w[idx] = 0.25
 
     iplot = np.where(w!=0)
 
@@ -808,19 +808,25 @@ if __name__=='__main__':
     # ti = time()
     # ms, Ps = kanterp(x, y, w, 3, nu0=2)
     # ms, Ps = kanterp2(x, y, w, 10, nu0=2)
-    ms, Ps = kanterp3(x, y, w, 3, nu0=2)
+    # ms, Ps = kanterp3(x, y, w, 3, nu0=2)
     ti = time()
-    ms, Ps = kanterp3(x, y, w, 10, nu0=2)
+    ms, Ps, wnew = kanterp3(x, y, w, 100, nu0=2)
     print(time() - ti)
     mu = ms[0, :]
     P = Ps[0, 0, :]
     # # print(time() - ti)
 
-    # quit()
+    from scipy.stats import kurtosis, skew
 
-    # mu, P = gpr(y, x, w, x)
+    wres = (y - mu)*np.sqrt(wnew)
+
+    print(skew(wnew), kurtosis(wnew))
+    print(skew(n*w), kurtosis(n*w))
 
     import matplotlib.pyplot as plt
+
+    plt.figure(1)
+    plt.hist(wres, bins='auto')
 
     plt.figure(3)
     plt.fill_between(x, mu - np.sqrt(P), mu + np.sqrt(P), color='gray', alpha=0.25)

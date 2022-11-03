@@ -9,11 +9,6 @@ inputs:
     abbreviation: gt
     info:
       Gain term name
-  postfix:
-    dtype: str
-    default: ''
-    info:
-      Postfix to attend to antenna and corr labels
   ref_ant:
     dtype: int
     default: -1
@@ -29,11 +24,6 @@ inputs:
     default: 7.5
     info:
       Discard data where abs(phase) is above this number
-  filter_size:
-    dtype: int
-    default: 5
-    info:
-      Median filter window size (larger -> more smoothing)
   do_plots:
     dtype: bool
     default: false
@@ -44,6 +34,14 @@ inputs:
     default: true
     info:
       Remove slope of phase before averaging
+  per_scan:
+    dtype: bool
+    default: false
+    info:
+      Smooth on per scan basis instead of globally
+
+  _include:
+    - (pfb.parser)dist.yml
 
 
 outputs:

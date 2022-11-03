@@ -77,6 +77,9 @@ def set_client(opts, stack, log, scheduler='distributed'):
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
     if scheduler=='distributed':
+        # TODO - investigate what difference this makes
+        # with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
+        #     client = distributed.Client()
         # set up client
         if opts.host_address is not None:
             from distributed import Client
@@ -97,7 +100,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
 
         from pfb.scheduling import install_plugin
         client.run_on_scheduler(install_plugin)
-        client.wait_for_workers(dask_opts.workers)
+        client.wait_for_workers(opts.nworkers)
     elif scheduler in ['sync', 'single-threaded']:
         import dask
         dask.config.set(scheduler=scheduler)

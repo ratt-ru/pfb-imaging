@@ -160,7 +160,8 @@ def test_clean(do_gains, algo, tmp_path_factory):
             'GAIN_AXES': ('gain_t', 'gain_f', 'ant', 'dir', 'corr')
         }
         coords = {
-            'gain_f': (('gain_f',), freq)
+            'gain_f': (('gain_f',), freq),
+            'gain_t': (('gain_t',), utime)
 
         }
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
@@ -185,10 +186,8 @@ def test_clean(do_gains, algo, tmp_path_factory):
     init_args["output_filename"] = outname
     init_args["nband"] = nchan
     init_args["data_column"] = "DATA2"
-    init_args["weight_column"] = None
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = gain_path
-    init_args["beam_model"] = None
     init_args["max_field_of_view"] = fov
     from pfb.workers.init import _init
     _init(**init_args)
@@ -222,7 +221,7 @@ def test_clean(do_gains, algo, tmp_path_factory):
     clean_args["nband"] = nchan
     clean_args["mask"] = 'mds'
     clean_args["algo"] = algo
-    clean_args["update_maks"] = False
+    clean_args["update_mask"] = False
     clean_args["dirosion"] = 0
     clean_args["do_residual"] = False
     clean_args["nmiter"] = 100

@@ -14,11 +14,14 @@ def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     # loop over active indices
     nband = xhat.size
     for b in numba.prange(nband):
+    # for b in range(nband):
         for i in range(Ip.size):
             pp = nxo2 - Ip[i]
             qq = nyo2 - Iq[i]
             A[b, i] -= xhat[b] * psf[b, pp, qq]
+            # print(b, pp, qq, psf[b, pp, qq])
     return A
+
 
 @numba.jit(parallel=True, nopython=True, nogil=True, cache=True)
 def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
@@ -56,9 +59,12 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         model[fsel, p, q] += gamma * xhat[fsel]/wsums[fsel]
         Idelp = p - Ip
         Idelq = q - Iq
+        # find where PSF overlaps with image
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
-        A = subtract(A[:, mask], psf, Idelp[mask], Idelq[mask],
+        A = subtract(A[:, mask], psf,
+                     Idelp[mask], Idelq[mask],
                      xhat, nxo2, nyo2)
+
         Asearch = np.sum(A, axis=0)**2
         pq = Asearch.argmax()
         p = Ip[pq]
@@ -79,19 +85,19 @@ def clark(ID,
           submaxit=1000,
           report_freq=1,
           verbosity=1,
-          psfopts=None):
+          psfopts=None,
+          sigmathreshold=2):
     nband, nx, ny = ID.shape
-    # initialise the PSF operator if not passed in
     _, nx_psf, ny_psf = PSF.shape
     wsums = np.amax(PSF, axis=(1,2))
     wsum = wsums.sum()
+    # normalise so the PSF always sums to 1
     ID /= wsum
     PSF /= wsum
     wsums = np.amax(PSF, axis=(1,2))
-    nx0 = nx_psf//2
-    ny0 = ny_psf//2
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
     IR = ID.copy()
+    # square avoids abs of full array
     IRsearch = np.sum(IR, axis=0)**2
     pq = IRsearch.argmax()
     p = pq//ny
@@ -109,6 +115,7 @@ def clark(ID,
                          gamma=gamma,
                          th=subth,
                          maxit=submaxit)
+        # subtract from full image (as in major cycle)
         IR = ID - psfo(model)
         IRsearch = np.sum(IR, axis=0)**2
         pq = IRsearch.argmax()
@@ -122,19 +129,24 @@ def clark(ID,
             stall_count += stall_count
 
         if not k % report_freq and verbosity > 1:
-            print("At iteration %i max residual = %f" % (k, IRmax), file=log)
+            print(f"At iteration {k} max resid = {IRmax}",
+                  file=log)
+
+    IRmfs = np.sum(IR, axis=0)
+    rms = np.std(IRmfs[~np.any(model, axis=0)])
 
     if k >= maxit:
         if verbosity:
-            print("Maximum iterations reached. Max of residual = %f." %
-                  (IRmax), file=log)
+            print(f"Max iters reached. "
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
         return model, 1
     elif stall_count >= 5:
         if verbosity:
-            print("Stalled. Max of residual = %f." %
-                  (IRmax), file=log)
+            print(f"Stalled. "
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
         return model, 1
     else:
         if verbosity:
-            print("Success, converged after %i iterations" % k, file=log)
-        return model, 0  # if tol > threshold else 1
+            print(f"Success, converged after {k} iterations. "
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+        return model, 0

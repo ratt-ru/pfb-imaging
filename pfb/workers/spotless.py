@@ -316,4 +316,9 @@ def _spotless(**kw):
             save_fits(f'{basename}_residual.fits',
                     residual, hdr)
 
+    if opts.scheduler=='distributed':
+        from distributed import get_client
+        client = get_client()
+        client.close()
+
     print("All done here.", file=log)

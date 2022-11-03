@@ -23,6 +23,7 @@ def gainspector(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
+    opts.nband = 1
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     pyscilog.log_to_file(f'gainspector_{timestamp}.log')
@@ -79,7 +80,7 @@ def _gainspector(**kw):
         try:
             G = xds_from_zarr(f'{gain}::{opts.gain_term}')
         except:
-            G = xds_from_zarr(f'{gain}/{opts.gain_term}')
+            raise ValueError(f'Failed to load gains at {gain}::{opts.gain_term}')
         for g in G:
             Gs.append(g)
 

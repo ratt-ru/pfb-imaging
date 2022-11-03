@@ -66,6 +66,8 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
                   epsilon=None,
                   double_accum=None,
                   nthreads=None):
+    if not x.any():
+        return np.zeros_like(x)
     nx, ny = x.shape
     mvis = dirty2ms(uvw=uvw,
                     freq=freq,
