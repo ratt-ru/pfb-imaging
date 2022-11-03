@@ -89,15 +89,28 @@ def _degrid(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     mds_name = f'{basename}{opts.postfix}.mds.zarr'
 
-    mds = xds_from_zarr(mds_name)[0]
-    cell_rad = mds.cell_rad
-    cell_deg = np.rad2deg(cell_rad)
-    mfreqs = mds.freq.data
-    model = getattr(mds, opts.model_name).data
-    wsums = mds.WSUM.data
-    radec = (mds.ra, mds.dec)
 
-    model, mfreqs, wsums = dask.compute(model, mfreqs, wsums)
+    if opts.model_fits is not None:
+        # get model details from fits
+        from astropy.io import fits
+        from pfb.utils.fits import load_fits, data_from_header
+        hdr = fits.getheader(opts.model_fits, 1)
+        model = load_fits(opts.model_fits, dtype=np.float64)[0]
+        # mfreqs, ref_freq = data_from_header
+        mfreqs = np.array((hdr['RESTFRQ']))
+        ref_freq = hdr['RESTFRQ']
+        cell_rad = np.abs(hdr['CDELT1'])
+        wsums = np.ones(mfreqs.size)
+    else:
+        mds = xds_from_zarr(mds_name)[0]
+        cell_rad = mds.cell_rad
+        cell_deg = np.rad2deg(cell_rad)
+        mfreqs = mds.freq.data
+        model = getattr(mds, opts.model_name).data
+        wsums = mds.WSUM.data
+        radec = (mds.ra, mds.dec)
+
+        model, mfreqs, wsums = dask.compute(model, mfreqs, wsums)
 
     if not np.any(model):
         raise ValueError('Model is empty')

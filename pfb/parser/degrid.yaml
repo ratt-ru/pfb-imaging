@@ -2,54 +2,66 @@ inputs:
   ms:
     dtype: str
     required: true
-    info: 'Path to measurement set.'
     abbreviation: ms
+    info:
+      Path to measurement set.
   output_filename:
     dtype: str
     required: true
-    info: 'Basename of output'
     metavar: BASENAME
     abbreviation: o
+    info:
+      Basename of output
   model_column:
     dtype: str
     default: MODEL_DATA
-    info: "Column to write model data to"
+    info:
+      Column to write model data to
   nband:
     dtype: int
     required: true
     abbreviation: nb
-    info: 'Number of imaging bands'
+    info:
+      Number of imaging bands in input model
   nband_out:
     dtype: int
     abbreviation: nbo
-    info: Interpolate model to this many output bands before degridding
+    info:
+      Interpolate model to this many output bands before degridding
   spectral_poly_order:
     dtype: int
     abbreviation: spo
-    info: "Order of interpolating polynomial for frequency axis"
+    info:
+      Order of interpolating polynomial for frequency axis
   postfix:
     dtype: str
     default: ''
-    info: 'Can be used to specify a custom name for the image space data \
-          products'
+    info:
+      Can be used to specify a custom name for the image space data products
   product:
     dtype: str
     abbreviation: p
     default: I
-    info: 'Imaging products to degrid. Options are I, Q, U, V. \
-          Only single Stokes products are currently supported'
+    info:
+      Imaging products to degrid. Options are I, Q, U, V.
+      Only single Stokes products are currently supported.
   model_name:
     dtype: str
     default: MODEL
     abbreviation: mname
-    info: 'Name of model in mds'
+    info:
+      Name of model in mds
+  model_fits:
+    dtype: str
+    info:
+      Specify to degrid from a fits file
   utimes_per_chunk:
     dtype: int
     default: -1
     abbreviation: utpc
     info:
       Number of unique times per chunk to degrid.
-      Default (-1, 0, None) degrids per scan.
+      Default -1 (equivalently 0 or None) implies degrid per scan.
 
   _include:
     - (pfb.parser)gridding.yml

@@ -31,7 +31,7 @@ requirements = [
 
                 "stimela"
                 "@git+https://github.com/caracal-pipeline/stimela2"
-                "@issue85"
+                "@master"
 
             ]
 

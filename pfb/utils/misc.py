@@ -491,9 +491,9 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
             radecs[ms][idt] = field.PHASE_DIR.data.squeeze()
 
             spw = spws[ds.DATA_DESC_ID]
-            freqs[ms][idt] = spw.CHAN_FREQ.data.squeeze()
-            chan_widths[ms][idt] = spw.CHAN_WIDTH.data.squeeze()
-            times[ms][idt] = ds.TIME.data.squeeze()
+            freqs[ms][idt] = da.atleast_1d(spw.CHAN_FREQ.data.squeeze())
+            chan_widths[ms][idt] = da.atleast_1d(spw.CHAN_WIDTH.data.squeeze())
+            times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
             uvw = ds.UVW.data
             u_max = abs(uvw[:, 0].max())
             v_max = abs(uvw[:, 1]).max()

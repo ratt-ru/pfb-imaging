@@ -158,9 +158,8 @@ def _init(**kw):
     elif opts.weight_column is not None:
         print(f"Using weights from {opts.weight_column} column", file=log)
         columns += (opts.weight_column,)
-        if opts.weight_column == 'WEIGHT':
-            schema[opts.weight_column] = {'dims': ('corr')}
-        else:
+        # hack for https://github.com/ratt-ru/dask-ms/issues/268
+        if opts.weight_column != 'WEIGHT':
             schema[opts.weight_column] = {'dims': ('chan', 'corr')}
     else:
         print(f"No weights provided, using unity weights", file=log)
