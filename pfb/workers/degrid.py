@@ -97,7 +97,7 @@ def _degrid(**kw):
         hdr = fits.getheader(opts.model_fits, 1)
         model = load_fits(opts.model_fits, dtype=np.float64)[0]
         # mfreqs, ref_freq = data_from_header
-        mfreqs = np.array((hdr['RESTFRQ']))
+        mfreqs = np.atleast_1d(np.array((hdr['RESTFRQ'])))
         ref_freq = hdr['RESTFRQ']
         cell_rad = np.abs(hdr['CDELT1'])
         wsums = np.ones(mfreqs.size)
