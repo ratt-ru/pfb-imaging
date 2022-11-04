@@ -11,39 +11,17 @@ inputs:
     abbreviation: nb
     info:
       Number of imaging bands
-  postfix:
-    dtype: str
-    default: ''
-    info:
-      Can be used to specify a custom name for the image space data products
   overwrite:
     dtype: bool
     default: false
     info:
       Allow overwriting of image space data products.
       Specify postfix to create a new data set.
-  imaging_weight_column:
+  transfer_model_from:
     dtype: str
-    default: IMWEIGHT
-    abbreviation: iwc
+    abbreviation: tmf
     info:
-      Column containing imaging weights. Must be the same across MSs
-  from_model:
-    dtype: str
-    info:
-      Name of model dataset to use for initialisation
-  model_name:
-    dtype: str
-    default: MODEL
-    abbreviation: mname
-    info:
-      Name of model in mds to use for residual computation
-  hard_threshold:
-    dtype: float
-    default: 0
-    abbreviation: hthresh
-    info:
-      Amount to hard threshold the input model by
+      Name of dataset to use for model initialisation
   robustness:
     dtype: float
     abbreviation: rob
@@ -56,11 +34,6 @@ inputs:
     info:
       Imaging products to produce. Options are I, Q, U, V.
       Only single Stokes products are currently supported
-  concat:
-    dtype: bool
-    default: True
-    info:
-      Concatenate datasets by row
   fits_mfs:
     dtype: bool
     default: true
@@ -87,16 +60,6 @@ inputs:
     default: true
     info:
       Compute the dirty image
-  reset_model:
-    dtype: bool
-    default: false
-    info:
-      Force reset model to zero
-  residual:
-    dtype: bool
-    default: true
-    info:
-      Compute the residual image
   weight:
     dtype: bool
     default: true

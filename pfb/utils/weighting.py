@@ -146,6 +146,10 @@ def _counts_to_weights(counts, uvw, freq, nx, ny,
     nchan = freq.size
     nrow = uvw.shape[0]
 
+    weights = np.zeros((nrow, nchan), dtype=counts.dtype)
+    if not counts.any():
+        return weights
+
     # Briggs weighting factor
     if robust > -2:
         numsqrt = 5*10**(-robust)
@@ -154,7 +158,6 @@ def _counts_to_weights(counts, uvw, freq, nx, ny,
         counts = 1 + counts * ssq
 
     normfreq = freq / lightspeed
-    weights = np.zeros((nrow, nchan), dtype=counts.dtype)
     for r in range(nrow):
         uvw_row = uvw[r]
         for c in range(nchan):

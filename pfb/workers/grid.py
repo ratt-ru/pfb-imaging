@@ -77,41 +77,14 @@ def _grid(**kw):
     from uuid import uuid4
     from daskms.optimisation import inlined_array
 
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    # xds contains vis products, no imaging weights applied
+    xds_name = f'{opts.output_filename}_{opts.product.upper()}.xds.zarr'
+    # dds contains image space products including imaging weights and uvw
+    basename = f'{opts.output_filename}_{opts.product.upper()}_{opts.robustness}'
+    dds_name = f'{basename}.dds.zarr'
 
-    xds_name = f'{basename}.xds.zarr'
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
-    mds_name = f'{basename}{opts.postfix}.mds.zarr'
-
-    # necessary to exclude imaging weight column if changing from Briggs
-    # to natural for example
-    columns = ('UVW', 'WEIGHT', 'VIS', 'WSUM', 'MASK', 'FREQ', 'BEAM')
-    if opts.robustness is not None:
-        columns += (opts.imaging_weight_column,)
-
-    xdsp = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1},
-                        columns=columns)
-    real_type = xdsp[0].WEIGHT.dtype
-    if opts.concat:
-        # this is required because concat will try to mush different
-        # imaging bands together if they are not split upfront
-        print('Concatenating datasets along row dimension', file=log)
-        xds = []
-        for b in range(opts.nband):
-            xdsb = []
-            for ds in xdsp:
-                if ds.bandid == b:
-                    xdsb.append(ds)
-            xds.append(xr.concat(xdsb, dim='row',
-                                 data_vars='minimal',
-                                 coords='minimal').chunk({'row':-1}))
-        try:
-            assert len(xds) == opts.nband
-        except Exception as e:
-            raise RuntimeError('Something went wrong during concatenation.'
-                               'This is probably a bug.')
-    else:
-        xds = xdsp
+    xds = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
+    real_type = xds[0].WEIGHT.dtype
 
     # max uv coords over all datasets
     uv_maxs = []
@@ -123,6 +96,7 @@ def _grid(**kw):
         uv_maxs.append(da.maximum(u_max, v_max))
         max_freqs.append(ds.FREQ.data.max())
 
+    # early compute necessary to set image size
     uv_maxs, max_freqs = dask.compute(uv_maxs, max_freqs)
     uv_max = max(uv_maxs)
     max_freq = max(max_freqs)
@@ -157,7 +131,7 @@ def _grid(**kw):
 
     nband = opts.nband
     if opts.dirty:
-        print(f"Image size set to ({nband}, {nx}, {ny})", file=log)
+        print(f"Image size = ({nband}, {nx}, {ny})", file=log)
 
     nx_psf = good_size(int(opts.psf_oversize * nx))
     while nx_psf % 2:
@@ -170,7 +144,7 @@ def _grid(**kw):
         ny_psf = good_size(ny_psf)
 
     if opts.psf:
-        print(f"PSF size set to ({nband}, {nx_psf}, {ny_psf})", file=log)
+        print(f"PSF size = ({nband}, {nx_psf}, {ny_psf})", file=log)
 
     if os.path.isdir(dds_name):
         if opts.overwrite:
@@ -179,13 +153,7 @@ def _grid(**kw):
             shutil.rmtree(dds_name)
         else:
             raise RuntimeError(f'Not overwriting {dds_name}, directory exists. '
-                               f'Set overwrite flag or specify a different '
-                               'postfix to create a new data set')
-
-    if os.path.isdir(mds_name) and opts.reset_model:
-        print(f'Removing {mds_name}', file=log)
-        import shutil
-        shutil.rmtree(mds_name)
+                               f'Set overwrite flag if you mean to overwrite.')
 
     print(f'Data products will be stored in {dds_name}.', file=log)
 
@@ -206,11 +174,9 @@ def _grid(**kw):
             counts = [da.zeros((nx, ny), chunks=(-1, -1),
                             name="zeros-"+uuid4().hex) for _ in range(nband)]
             # first loop over data to compute counts
-            nchan = 0
             for ds in xds:
                 uvw = ds.UVW.data
                 freq = ds.FREQ.data
-                nchan += freq.size
                 mask = ds.MASK.data
                 wgt = ds.WEIGHT.data
                 bandid = ds.bandid
@@ -242,8 +208,6 @@ def _grid(**kw):
             counts = dask.compute(counts, writes)[0]
             counts = da.from_array(counts, chunks=(1, -1, -1))
 
-
-
         # get rid of artificially high weights corresponding to
         # nearly empty cells
         if opts.filter_extreme_counts:
@@ -251,37 +215,35 @@ def _grid(**kw):
                                            nlevel=opts.filter_level)
 
     # check if model exists
-    if opts.from_model is not None:
-        minit = opts.from_model
-    else:
-        minit = mds_name
-    try:
-        mds = xds_from_zarr(minit, chunks={'band':1})[0]
-        print(f"Using {opts.model_name} for residual computation. ",
-                file=log)
-        model = mds.get(opts.model_name).data
-        if opts.hard_threshold:
-            print(f'Hard thresholding model by {opts.hard_threshold}',
-                  file=log)
-            from pfb.utils.misc import lthreshold
-            model = model.map_blocks(lthreshold,
-                                     sigma=opts.hard_threshold,
-                                     kind='l1',
-                                     dtype=real_type)
+    if opts.transfer_model_from is not None:
+        try:
+            mds = xds_from_zarr(opts.transfer_model_from,
+                                chunks={'x':-1, 'y':-1})
+        except Exception as e:
+            raise ValueError(f"No dataset found at {opts.transfer_model_from}")
+        try:
+            assert len(mds) == len(xds)
+            for ms, ds in zip(mds, xds):
+                assert ms.bandid == ds.bandid
+        except Exception as e:
+            raise ValueError("Transfer from dataset mismatched. "
+                             "This is not currently supported.")
+        try:
+            assert 'MODEL' in mds[0]
+        except Exception as e:
+            raise ValueError(f"No MODEL variable in {opts.transfer_model_from}")
 
-    except Exception as e:
-        print(f"No model found at {minit}, initialising empty model",
+        print(f"Found MODEL in {opts.transfer_model_from}. ",
               file=log)
-        # noop in hessian when model is empty
-        model = da.zeros((nband, nx, ny),
-                         chunks=(1, -1, -1),
-                         dtype=real_type)
+        has_model = True
+    else:
+        has_model = False
 
     writes = []
     freq_out = []
     wsums = [da.zeros(1, chunks=(1),
                       name="zeros-"+uuid4().hex) for _ in range(nband)]
-    for ds in xds:
+    for i, ds in enumerate(xds):
         uvw = ds.UVW.data
         freq = ds.FREQ.data
         vis = ds.VIS.data
@@ -294,7 +256,7 @@ def _grid(**kw):
                                       cell_rad, cell_rad,
                                       opts.robustness)
             wgt *= imwgt
-
+        # This is a vis space mask (see wgridder convention)
         mask = ds.MASK.data
         dvars = {}
         if opts.dirty:
@@ -340,7 +302,6 @@ def _grid(**kw):
 
         dvars['FREQ'] = (('chan',), freq)
         dvars['UVW'] = (('row', 'three'), uvw)
-        mask = mask
         dvars['MASK'] = (('row', 'chan'), mask)
         wsum = wgt[mask.astype(bool)].sum()
         dvars['WSUM'] = (('scalar',), da.atleast_1d(wsum))
@@ -354,7 +315,10 @@ def _grid(**kw):
 
         dvars['BEAM'] = (('x', 'y'), bvals)
 
-        if opts.residual:
+        # only make residual if model exists
+        if has_model:
+            model = mds[i].MODEL.data
+            dvars['MODEL'] = (('x', 'y'), model)
             from pfb.operators.hessian import hessian
             hessopts = {
                 'cell': cell_rad,
@@ -364,8 +328,8 @@ def _grid(**kw):
                 'nthreads': opts.nvthreads
             }
             # we only want to apply the beam once here
-            residual = dirty - hessian(bvals * model[ds.bandid], uvw, wgt,
-                                        mask, freq, None, hessopts)
+            residual = dirty - hessian(bvals * model, uvw, wgt,
+                                       mask, freq, None, hessopts)
             residual = inlined_array(residual, [uvw, freq])
             dvars['RESIDUAL'] = (('x', 'y'), residual)
 
@@ -390,41 +354,23 @@ def _grid(**kw):
         freq_out.append(ds.freq_out)
         wsums[ds.bandid] += wsum
 
+    writes = xds_to_zarr(writes, dds_name, columns='ALL')
 
-
-    # dask.visualize(writes, color="order", cmap="autumn",
-    #                node_attr={"penwidth": "4"},
-    #                filename=f'{basename}_grid_ordered_graph.pdf',
-    #                optimize_graph=False)
-    # dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
-    #                optimize_graph=False)
+    dask.visualize(writes, color="order", cmap="autumn",
+                   node_attr={"penwidth": "4"},
+                   filename=f'{basename}_grid_ordered_graph.pdf',
+                   optimize_graph=False)
+    dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
+                   optimize_graph=False)
 
     print("Computing image space data products", file=log)
     with compute_context(opts.scheduler, opts.output_filename+'_grid'):
-        writes = xds_to_zarr(writes, dds_name, columns='ALL')
         wsums = dask.compute(writes, wsums)[1]
-
-    freq_out = np.unique(np.stack(freq_out))
-    wsums = np.stack(wsums).squeeze()
-
-    print("Initialising model ds", file=log)
-    attrs = {'nband': nband,
-            'nx': nx,
-            'ny': ny,
-            'ra': xds[0].ra,
-            'dec': xds[0].dec,
-            'cell_rad': cell_rad}
-    coords = {'freq': freq_out}
-    real_type = np.float64 if opts.precision=='double' else np.float32
-    mask = model.any(axis=0)
-    data_vars = {'MODEL': (('band', 'x', 'y'), model),
-                'MASK': (('x', 'y'), mask),
-                'WSUM': (('band',), da.from_array(wsums, chunks=1))}
-    mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
-    dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
 
     # convert to fits files
     if opts.fits_mfs or opts.fits_cubes:
+        freq_out = np.unique(np.stack(freq_out))
+        wsums = np.stack(wsums).squeeze()
         xds = xds_from_zarr(dds_name)
         radec = (xds[0].ra, xds[0].dec)
         if opts.dirty:
@@ -450,18 +396,19 @@ def _grid(**kw):
             dirty_mfs = np.sum(dirty, axis=0, keepdims=True)/wsum
 
             if opts.fits_mfs:
-                save_fits(f'{basename}{opts.postfix}_dirty_mfs.fits',
+                save_fits(f'{basename}_dirty_mfs.fits',
                           dirty_mfs, hdr_mfs, dtype=np.float32)
 
             if opts.fits_cubes:
                 fmask = wsums > 0
                 dirty[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}{opts.postfix}_dirty.fits', dirty, hdr,
+                save_fits(f'{basename}_dirty.fits', dirty, hdr,
                         dtype=np.float32)
 
-        if opts.residual:
+        if has_model:
             print("Saving residual as fits", file=log)
             residual = np.zeros((nband, nx, ny), dtype=np.float32)
+            model = np.zeros((nband, nx, ny), dtype=np.float32)
             wsums = np.zeros(nband, dtype=np.float32)
 
             hdr = set_wcs(cell_size / 3600, cell_size / 3600,
@@ -473,6 +420,7 @@ def _grid(**kw):
                 b = ds.bandid
                 residual[b] += ds.RESIDUAL.values
                 wsums[b] += ds.WSUM.values
+                model[b] += ds.MODEL.values
 
             for b, w in enumerate(wsums):
                 hdr[f'WSUM{b}'] = w
@@ -480,15 +428,20 @@ def _grid(**kw):
             hdr_mfs[f'WSUM'] = wsum
 
             residual_mfs = np.sum(residual, axis=0, keepdims=True)/wsum
+            model_mfs = np.mean(model, axis=0)
 
             if opts.fits_mfs:
-                save_fits(f'{basename}{opts.postfix}_residual_mfs.fits',
+                save_fits(f'{basename}_residual_mfs.fits',
                           residual_mfs, hdr_mfs, dtype=np.float32)
+                save_fits(f'{basename}_model_mfs.fits',
+                          model_mfs, hdr_mfs, dtype=np.float32)
 
             if opts.fits_cubes:
                 fmask = wsums > 0
                 residual[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}{opts.postfix}_residual.fits', residual,
+                save_fits(f'{basename}_residual.fits', residual,
+                          hdr, dtype=np.float32)
+                save_fits(f'{basename}_model.fits', model,
                           hdr, dtype=np.float32)
 
         if opts.psf:
@@ -514,13 +467,13 @@ def _grid(**kw):
             psf_mfs = np.sum(psf, axis=0, keepdims=True)/wsum
 
             if opts.fits_mfs:
-                save_fits(f'{basename}{opts.postfix}_psf_mfs.fits', psf_mfs,
+                save_fits(f'{basename}_psf_mfs.fits', psf_mfs,
                           hdr_psf_mfs, dtype=np.float32)
 
             if opts.fits_cubes:
                 fmask = wsums > 0
                 psf[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}{opts.postfix}_psf.fits', psf, hdr_psf,
+                save_fits(f'{basename}_psf.fits', psf, hdr_psf,
                         dtype=np.float32)
 
     if opts.scheduler=='distributed':

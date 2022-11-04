@@ -242,19 +242,40 @@ def _init(**kw):
                     if out_ds is not None:
                         out_datasets.append(out_ds)
 
+    if opts.concat:
+        # this is required because concat will try to mush different
+        # imaging bands together if they are not split upfront
+        print('Concatenating datasets along row dimension', file=log)
+        xds_out = []
+        for b in range(opts.nband):
+            xdsb = []
+            for ds in out_datasets:
+                if ds.bandid == b:
+                    xdsb.append(ds)
+            xds_out.append(xr.concat(xdsb, dim='row',
+                                 data_vars='minimal',
+                                 coords='minimal').chunk({'row':100000}))
+        try:
+            assert len(xds_out) == opts.nband
+        except Exception as e:
+            raise RuntimeError('Something went wrong during concatenation.'
+                               'This is probably a bug.')
+    else:
+        xds_out = out_datasets
+
     if len(out_datasets):
-        writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',
+        writes = xds_to_zarr(xds_out, f'{basename}.xds.zarr',
                              columns='ALL')
     else:
         raise ValueError('No datasets found to write. '
                          'Data completely flagged maybe?')
 
-    # dask.visualize(writes, color="order", cmap="autumn",
-    #                node_attr={"penwidth": "4"},
-    #                filename=opts.output_filename + '_writes_I_ordered_graph.pdf',
-    #                optimize_graph=False)
-    # dask.visualize(writes, filename=opts.output_filename +
-    #                '_writes_I_graph.pdf', optimize_graph=False)
+    dask.visualize(writes, color="order", cmap="autumn",
+                   node_attr={"penwidth": "4"},
+                   filename=opts.output_filename + '_writes_I_ordered_graph.pdf',
+                   optimize_graph=False)
+    dask.visualize(writes, filename=opts.output_filename +
+                   '_writes_I_graph.pdf', optimize_graph=False)
 
     with compute_context(opts.scheduler, opts.output_filename+'_init'):
         dask.compute(writes, optimize_graph=False)
