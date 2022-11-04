@@ -197,7 +197,8 @@ def single_stokes(ds=None,
         'bandid': int(bandid),
         'freq_out': freq_out,
         'timeid': int(timeid),
-        'time_out': np.mean(utime)
+        'time_out': np.mean(utime),
+        'product': opts.product
     }
 
     out_ds = Dataset(data_vars,

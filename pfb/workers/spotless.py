@@ -70,69 +70,31 @@ def _spotless(**kw):
     import pywt
     from copy import deepcopy
 
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
-
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
-    mds_name = f'{basename}{opts.postfix}.mds.zarr'
-
-    dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk})
-    # only a single mds (for now)
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    nband = mds.nband
-    nx = mds.nx
-    ny = mds.ny
-    for ds in dds:
-        assert ds.nx == nx
-        assert ds.ny == ny
+    dds = xds_from_zarr(opts.dds, chunks={'row':-1, 'chan':-1})
+    basename = f'{opts.dds.rstrip(".dds.zarr")}'
 
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
-    if opts.model_name in mds:
-        model = mds.get(opts.model_name).values
-        assert model.shape == (nband, nx, ny)
-        print(f"Initialising model from {opts.model_name} in mds", file=log)
+
+    nband = opts.nband
+    nx, ny = dds[0].nx, dds[0].ny
+    if 'MODEL' in mds[0]:
+        print(f"Found model in {opts.dds}", file=log)
     else:
         print('Initialising model to zeros', file=log)
-        model = np.zeros((nband, nx, ny), dtype=real_type)
+        for i, ds in enumerate(dds):
+            model = da.zeros((nx, ny), dtype=real_type)
+            dds[i] = ds.assign(**{'MODEL': (('x', 'y'), model)})
 
-    mask = init_mask(opts.mask, mds, dds[0].DIRTY.dtype, log)
-
-    # combine images over scan/spw for preconditioner
-    dirty = [da.zeros((nx, ny), chunks=(-1, -1),
-                         dtype=real_type) for _ in range(nband)]
-    wsums = [da.zeros(1, dtype=real_type) for _ in range(nband)]
-    nx_psf, ny_psf = dds[0].PSF.shape
-    nx_psf, nyo2_psf = dds[0].PSFHAT.shape
-    psfhat = [da.zeros((nx_psf, nyo2_psf), chunks=(-1, -1),
-                        dtype=complex_type) for _ in range(nband)]
-    mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
-                            dtype=real_type) for _ in range(nband)]
-    for ds in dds:
-        b = ds.bandid
-        dirty[b] += ds.DIRTY.data * ds.BEAM.data
-        psfhat[b] += ds.PSFHAT.data
-        mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
-        wsums[b] += ds.WSUM.data[0]
-    wsums = da.stack(wsums).squeeze()
-    wsum = wsums.sum()
-    dirty = da.stack(dirty)/wsum
-    psfhat = da.stack(psfhat)/wsum
-    mean_beam = da.stack(mean_beam)/wsums[:, None, None]
-    residual, psfhat, mean_beam, wsum = dask.compute(dirty,
-                                                     psfhat,
-                                                     mean_beam,
-                                                     wsum)
-
-    # dictionary setup
-    print("Setting up dictionary", file=log)
-    bases = tuple(opts.bases.split(','))
-    nbasis = len(bases)
-    iys, sys, ntot, nmax = wavelet_setup(residual, bases, opts.nlevels)
-    ntot = tuple(ntot)
-    psiH = partial(im2coef, bases=bases, ntot=ntot, nmax=nmax,
-                   nlevels=opts.nlevels)
-    psi = partial(coef2im, bases=bases, ntot=ntot,
-                  iy=iys, sy=sys, nx=nx, ny=ny)
+    if opts.mask is not None:
+        mask = load_fits(opts.mask, dtype=real_type).squeeze()
+        try:
+            assert mask.shape == (nx, ny)
+        except Exception as e:
+            raise ValueError(f'{opts.mask} has incorrect shape')
+        mask = da.from_array(mask).astype(real_type)
+    else:
+        mask = da.ones((nx, ny), dtype=real_type)
 
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad

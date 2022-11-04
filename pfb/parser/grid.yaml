@@ -1,10 +1,10 @@
 inputs:
-  output_filename:
+  xds:
     dtype: str
     required: true
-    abbreviation: o
+    abbreviation: xds
     info:
-      Basename of output
+      Path to dataset created by init worker
   nband:
     dtype: int
     required: true
@@ -27,13 +27,6 @@ inputs:
     abbreviation: rob
     info:
       Robustness factor for Briggs weighting. None means natural
-  product:
-    dtype: str
-    abbreviation: p
-    default: I
-    info:
-      Imaging products to produce. Options are I, Q, U, V.
-      Only single Stokes products are currently supported
   fits_mfs:
     dtype: bool
     default: true
@@ -89,11 +82,6 @@ inputs:
     dtype: int
     info:
       Number of y pixels
-  precision:
-    dtype: str
-    default: double
-    info:
-      single or double
   filter_extreme_counts:
     dtype: bool
     default: false

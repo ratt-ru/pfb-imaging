@@ -41,6 +41,7 @@ def grid(**kw):
                                     # "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
+
     OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
@@ -78,13 +79,16 @@ def _grid(**kw):
     from daskms.optimisation import inlined_array
 
     # xds contains vis products, no imaging weights applied
-    xds_name = f'{opts.output_filename}_{opts.product.upper()}.xds.zarr'
+    xds = xds_from_zarr(opts.xds, chunks={'row': -1, 'chan': -1})
     # dds contains image space products including imaging weights and uvw
-    basename = f'{opts.output_filename}_{opts.product.upper()}_{opts.robustness}'
+    basename = f'{opts.xds.rstrip(".xds.zarr")}_{opts.robustness}'
     dds_name = f'{basename}.dds.zarr'
 
-    xds = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
     real_type = xds[0].WEIGHT.dtype
+    if real_type == np.float32:
+        precision = 'single'
+    else:
+        precision = 'double'
 
     # max uv coords over all datasets
     uv_maxs = []
@@ -270,7 +274,7 @@ def _grid(**kw):
                            celly=cell_rad,
                            nthreads=opts.nvthreads,
                            epsilon=opts.epsilon,
-                           precision=opts.precision,
+                           precision=precision,
                            mask=mask,
                            do_wgridding=opts.wstack,
                            double_precision_accumulation=opts.double_accum)
@@ -287,7 +291,7 @@ def _grid(**kw):
                          celly=cell_rad,
                          nthreads=opts.nvthreads,
                          epsilon=opts.epsilon,
-                         precision=opts.precision,
+                         precision=precision,
                          mask=mask,
                          do_wgridding=opts.wstack,
                          double_precision_accumulation=opts.double_accum)

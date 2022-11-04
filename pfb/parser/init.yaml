@@ -2,24 +2,26 @@ inputs:
   ms:
     dtype: str
     required: true
-    info: 'Path to measurement set.'
-    metavar: MS
     abbreviation: ms
+    info:
+      Path to measurement set
   output_filename:
     dtype: str
     required: true
-    info: 'Basename of output'
-    metavar: BASENAME
     abbreviation: o
+    info:
+      Basename of output
   overwrite:
     dtype: bool
     default: false
-    info: Allow overwrite of output xds
+    info:
+      Allow overwrite of output xds
   nband:
     dtype: int
     required: true
     abbreviation: nb
-    info: 'Number of imaging bands'
+    info:
+      Number of imaging bands
   radec:
     dtype: Optional[List[any]]
     info:
@@ -28,42 +30,44 @@ inputs:
     dtype: str
     default: DATA
     abbreviation: dc
-    info: 'Data column to image. Must be the same across MSs'
-    metavar: COLUMN
+    info:
+      Data column to image. Must be the same across MSs
   weight_column:
     dtype: str
     # default: WEIGHT_SPECTRUM
     abbreviation: wc
-    info: 'Column containing natural weights. Must be the same across MSs'
-    metavar: COLUMN
+    info:
+      Column containing natural weights. Must be the same across MSs
   sigma_column:
     dtype: str
     abbreviation: sc
-    info: 'Column containing standard devations. \
-           Will be used to initialise natural weights if detected. \
-           Must be the same across MSs'
-    metavar: COLUMN
+    info:
+      Column containing standard devations.
+      Will be used to initialise natural weights if detected.
+      Must be the same across MSs
   flag_column:
     dtype: str
     default: FLAG
     abbreviation: fc
-    info: 'Column containing data flags. Must be the same across MSs'
-    metavar: COLUMN
+    info:
+      Column containing data flags. Must be the same across MSs
   gain_table:
     dtype: str
-    info: "Path to Quartical gain table containing NET gains.\
-          There must be a table for each MS and glob(ms) and glob(gt) \
-          should match up."
+    info:
+      Path to Quartical gain table containing NET gains.
+      There must be a table for each MS and glob(ms) and glob(gt) should match up
   gain_term:
     dtype: str
     default: NET
-    info: "Which gain term to use. Default is NET"
+    info:
+      Which gain term to use. Default is NET
   product:
     dtype: str
     abbreviation: p
     default: I
-    info: 'Imaging products to produce. Options are I, Q, U, V. \
-          Only single Stokes products are currently supported'
+    info:
+      Imaging products to produce. Options are I, Q, U, V.
+      Only single Stokes products are currently supported
   integrations_per_image:
     dtype: int
     info:
@@ -79,25 +83,32 @@ inputs:
   precision:
     dtype: str
     default: double
-    info: '"single" or "double"'
+    choices:
+      - single
+      - double
+    info:
+      Gridding precision
   bda_decorr:
     dtype: float
     default: 1.0
-    info: "BDA decorrelation factor. Only has an effect if less than one"
+    info:
+      BDA decorrelation factor.
+      Only has an effect if less than one
   beam_model:
     dtype: str
-    info: "Beam model to use"
+    info:
+      Beam model to use
   max_field_of_view:
     dtype: float
     abbreviation: fov
     default: 3.0
-    info: 'Field of view in degrees'
-    metavar: DEG
+    info:
+      Field of view in degrees
   chan_average:
     dtype: int
     default: 1
     info:
-      Average this number if chanbels together
+      Average this number if channels together
 
   _include:
     - (pfb.parser)dist.yml

@@ -100,15 +100,13 @@ def _init(**kw):
     from pfb.utils.misc import compute_context, chunkify_rows
     import xarray as xr
 
-    basename = f'{opts.output_filename}_{opts.product}'
-
-    xdsstore = DaskMSStore(f'{basename}.xds.zarr')
+    xdsstore = DaskMSStore(f'{opts.output_filename}.xds.zarr')
     if xdsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {basename}.xds.zarr", file=log)
+            print(f"Overwriting {opts.output_filename}.xds.zarr", file=log)
             xdsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.xds.zarr exists. "
+            raise ValueError(f"{opts.output_filename}.xds.zarr exists. "
                              "Set overwrite to overwrite it. ")
 
     if opts.gain_table is not None:
@@ -264,7 +262,7 @@ def _init(**kw):
         xds_out = out_datasets
 
     if len(out_datasets):
-        writes = xds_to_zarr(xds_out, f'{basename}.xds.zarr',
+        writes = xds_to_zarr(xds_out, f'{opts.output_filename}.xds.zarr',
                              columns='ALL')
     else:
         raise ValueError('No datasets found to write. '
