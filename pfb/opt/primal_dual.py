@@ -11,7 +11,7 @@ def primal_dual(
         lam,  # regulariser strength,
         psi,  # linear operator in dual domain
         psiH,  # adjoint of psi
-        weights,  # weights for l1 thresholding
+        l1weights,  # weights for l1 thresholding
         L,  # spectral norm of Hessian
         prox,  # prox of regulariser
         nu=1.0,  # spectral norm of dictionary
@@ -28,7 +28,8 @@ def primal_dual(
     v = v0.copy()
 
     # gradient function
-    def grad_func(x): return -A(xbar - x) / gamma
+    def grad_func(x):
+        return -A(xbar - x) / gamma
 
     if sigma is None:
         sigma = L / (2.0 * gamma)
@@ -47,7 +48,7 @@ def primal_dual(
 
         # dual update
         v = vtilde - sigma * prox(vtilde / sigma, lam / sigma,
-                                  weights)
+                                  l1weights)
 
         # primal update
         x = xp - tau * (psi(2 * v - vp) + grad_func(xp))

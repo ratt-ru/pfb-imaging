@@ -41,4 +41,4 @@ def power_method(
         if verbosity:
             print(f"Success, converged after {k} iterations. "
                   f"beta = {beta:.3e}", file=log)
-    return beta, bp
+    return beta, b

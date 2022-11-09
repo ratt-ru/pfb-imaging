@@ -36,12 +36,6 @@ def grid(**kw):
         else:
             opts.nworkers = 1
 
-    if opts.product.upper() not in ["I"]:
-                                    # , "Q", "U", "V", "XX", "YX", "XY",
-                                    # "YY", "RR", "RL", "LR", "LL"]:
-        raise NotImplementedError(f"Product {opts.product} not yet supported")
-
-
     OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
@@ -368,7 +362,7 @@ def _grid(**kw):
                    optimize_graph=False)
 
     print("Computing image space data products", file=log)
-    with compute_context(opts.scheduler, opts.output_filename+'_grid'):
+    with compute_context(opts.scheduler, basename+'_grid'):
         wsums = dask.compute(writes, wsums)[1]
 
     # convert to fits files
