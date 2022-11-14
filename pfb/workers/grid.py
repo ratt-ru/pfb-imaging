@@ -404,8 +404,8 @@ def _grid(**kw):
         writes = xds_to_zarr(writes, dds_name, columns='ALL')
         wsums = dask.compute(writes, wsums)[1]
 
-    freq_out = np.unique(np.stack(freq_out))
-    wsums = np.stack(wsums).squeeze()
+    freq_out = np.unique(np.array(freq_out))
+    wsums = np.concatenate(wsums)
 
     print("Initialising model ds", file=log)
     attrs = {'nband': nband,
