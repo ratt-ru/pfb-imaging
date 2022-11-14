@@ -1,6 +1,7 @@
 import numpy as np
 from functools import partial
 import dask.array as da
+from distributed import wait
 from uuid import uuid4
 import pyscilog
 log = pyscilog.get_logger('PCG')
@@ -228,6 +229,80 @@ def pcg_psf(psfhat,
         return model.compute()
     else:
         return model
+
+
+def pcg_dist(ds, **kwargs):
+    '''
+    kwargs - tol, maxit, minit, nthreads, psf_padding, unpad_x, unpad_y
+             sigmainv, lastsize, hessian
+    '''
+    maxit = kwargs['maxit']
+    minit = kwargs['minit']
+    tol = kwargs['tol']
+    wsum = kwargs['wsum']
+    A = partial(_hessian,
+                psfhat=ds.PSFHAT.values/wsum,
+                nthreads=kwargs['nthreads'],
+                sigmainv=kwargs['sigmainv'],
+                padding=kwargs['psf_padding'],
+                unpad_x=kwargs['unpad_x'],
+                unpad_y=kwargs['unpad_y'],
+                lastsize=kwargs['lastsize'])
+
+    if 'RESIDUAL' in ds:
+        b = ds.RESIDUAL.values/wsum
+    else:
+        b = ds.DIRTY.values/wsum
+    x = np.zeros_like(b)
+
+    def Mfunc(x, sigmainv):
+        return x / sigmainv
+    M = partial(Mfunc, sigmainv=kwargs['sigmainv'])
+
+    r = A(x) - b
+    y = M(r)
+    p = -y
+    rnorm = np.vdot(r, y)
+    if np.isnan(rnorm) or rnorm == 0.0:
+        eps0 = 1.0
+    else:
+        eps0 = rnorm
+    k = 0
+    eps = 1.0
+    stall_count = 0
+    while (eps > tol or k < minit) and k < maxit and stall_count < 5:
+        xp = x.copy()
+        rp = r.copy()
+        epsp = eps
+        Ap = A(p)
+        rnorm = np.vdot(r, y)
+        alpha = rnorm / np.vdot(p, Ap)
+        x = xp + alpha * p
+        r = rp + alpha * Ap
+        y = M(r)
+        rnorm_next = np.vdot(r, y)
+        while rnorm_next > rnorm:  # TODO - better line search
+            alpha *= 0.75
+            x = xp + alpha * p
+            r = rp + alpha * Ap
+            y = M(r)
+            rnorm_next = np.vdot(r, y)
+
+        beta = rnorm_next / rnorm
+        p = beta * p - y
+        # if p is zero we should stop
+        if not np.any(p):
+            break
+        rnorm = rnorm_next
+        k += 1
+        eps = rnorm / eps0
+
+        if np.abs(eps - epsp) < 1e-3*tol:
+            stall_count += 1
+
+    ds_out = ds.assign(**{'UPDATE': (('x','y'), x)})
+    print(f'Band={ds.bandid}, iters{k}, eps={eps}', file=log)
+    return ds_out
 
 
 # from pfb.operators.hessian import _hessian_reg_wgt as hessian_wgt

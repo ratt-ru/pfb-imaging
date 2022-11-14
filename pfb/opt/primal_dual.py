@@ -1,4 +1,5 @@
 import numpy as np
+from distributed import wait
 import pyscilog
 log = pyscilog.get_logger('PD')
 
@@ -74,6 +75,157 @@ def primal_dual(
             print(f"Success, converged after {k} iterations", file=log)
 
     return x, v
+
+
+
+def psiH(x, nx, ny):
+    return x.reshape(1, nx*ny)
+
+def psi(v, nx, ny):
+    return v.reshape(nx, ny)
+
+def vtilde_update(ds, **kwargs):
+    nbasis, ntot = ds.DUAL.shape
+    nx, ny = ds.MODEL.shape
+    sigma = kwargs['sigma']
+    return ds.DUAL.values + sigma * psiH(ds.MODEL.values, nx, ny)
+
+
+def get_ratio(vtildes, lam, sigma, l1weights):
+    l2_norm = np.zeros(l1weights.shape)
+    for v in vtildes:
+        l2_norm += (v/sigma)**2
+    l2_norm = np.sqrt(l2_norm)
+    l2_soft = np.maximum(l2_norm - lam*l1weights/sigma, 0.0)  # norm is positive
+    mask = l2_norm != 0
+    ratio = np.zeros(mask.shape, dtype=l1weights.dtype)
+    ratio[mask] = l2_soft[mask] / l2_norm[mask]
+    return ratio
+
+def update(ds, y, vtilde, ratio, **kwargs):
+    sigma = kwargs['sigma']
+    lam = kwargs['lam']
+    tau = kwargs['tau']
+    gamma = kwargs['gamma']
+
+    A = partial(_hessian,
+                psfhat=ds.PSFHAT.values/kwargs['wsum'],
+                nthreads=kwargs['nthreads'],
+                sigmainv=kwargs['sigmainv'],
+                padding=kwargs['psf_padding'],
+                unpad_x=kwargs['unpad_x'],
+                unpad_y=kwargs['unpad_y'],
+                lastsize=kwargs['lastsize'])
+
+    xp = ds.MODEL.values
+    vp = ds.DUAL.values
+
+    # dual
+    v = vtilde - vtilde * ratio
+
+    # primal
+    grad = -A(y - xp)/gamma
+    x = xp - tau * (psi(2 * v - vp, nx, ny) + grad)
+    if kwargs['positivity']:
+        x[x < 0] = 0.0
+
+    vtilde = v + sigma * psiH(x, nx, ny)
+
+    eps = np.linalg.norm(x-xp)/np.linalg.norm(x)
+
+    ds_out = ds.assign(**{'MODEL': (('x','y'), x),
+                          'DUAL': (('b', 'c'), v)})
+
+    return ds_out, vtilde, eps
+
+
+def sety(ds, **kwargs):
+    gamma = kwargs['gamma']
+    if 'MODEL' in ds:
+        return ds.MODEL.values + gamma * ds.UPDATE.values
+    else:
+        return gamma * ds.UPDATE.values
+
+
+def primal_dual_dist(ddsf,
+             psf_padding,
+             unpad_x,
+             unpad_y,
+             lastsize,
+             lam,  # regulariser strength,
+             L,  # spectral norm of Hessian
+             wsum,
+             l1weight,
+             nu=1.0,  # spectral norm of dictionary
+             sigma=None,  # step size of dual update
+             tol=1e-5,
+             maxit=100,
+             positivity=True,
+             gamma=1.0,
+             verbosity=1):
+
+    client = get_client()
+
+    names = [w['name'] for w in client.scheduler_info()['workers'].values()]
+
+    if sigma is None:
+        sigma = L / (2.0 * gamma)
+
+    # stepsize control
+    tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
+
+    yf = client.map(sety, ddsf, gamma=gamma)
+
+    # we need to do this upfront only at the outset
+    vtildes = client.map(vtilde_update, ddsf, sigma=sigma)
+
+    eps = 1.0
+    for k in range(maxit):
+        # TODO - should get one ratio per basis
+        # split over different workers
+        ratio = client.submit(get_ratio,
+                              vtildes, lam, sigma, l1weight,
+                              workers=[names[0]], pure=False)
+
+        wait(ratio)
+
+        future = client.map(update,
+                            ddsf, yf, vtildes, [ratio]*len(dds),
+                            pure=False,
+                            wsum=wsum,
+                            sigma=sigma,
+                            tau=tau,
+                            lam=lam,
+                            gamma=gamma,
+                            nthreads=2,
+                            sigmainv=1e-8,
+                            psf_padding=psf_padding,
+                            unpad_x=unpad_x,
+                            unpad_y=unpad_y,
+                            lastsize=lastsize,
+                            positivity=positivity)
+
+        wait(future)
+
+        ddsf = client.map(getitem, future, [0]*len(future),
+                          pure=False)
+        vtildes = client.map(getitem, future, [1]*len(future),
+                             pure=False)
+        epsf = client.map(getitem, future, [2]*len(future),
+                          pure=False)
+
+        eps = []
+        for f in as_completed(epsf):
+            eps.append(f.result())
+        eps = np.maximum(eps)
+        if eps < tol:
+            print(f'Converged after {k} iterations', file=log)
+            break
+
+    if k >= maxit:
+        print(f'Maximum iterations reached. eps={eps}', file=log)
+
+    return ddsf
 
 
 primal_dual.__doc__ = r"""
