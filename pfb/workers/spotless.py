@@ -60,7 +60,10 @@ def _spotless(**kw):
     from pfb.opt.primal_dual import primal_dual_dist as primal_dual
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
-    from pfb.utils.dist import get_resid_and_stats, accum_wsums
+    from pfb.utils.dist import (get_resid_and_stats, accum_wsums,
+                                compute_residual, init_dual_and_model,
+                                get_eps)
+    from pfb.operators.psf import _hessian_reg_psf_slice
     # from pfb.operators.psi import im2coef, coef2im
     from pfb.prox.prox_21m import prox_21m
     from pfb.prox.prox_21 import prox_21
@@ -75,7 +78,7 @@ def _spotless(**kw):
     client = get_client()
     names = [w['name'] for w in client.scheduler_info()['workers'].values()]
 
-    dds = client.persist(client)
+    # dds = client.persist(client)
     ddsf = client.scatter(dds)
 
     real_type = dds[0].DIRTY.dtype
@@ -89,7 +92,7 @@ def _spotless(**kw):
     npad_xr = nx_psf - nx - npad_xl
     npad_yl = (ny_psf - ny)//2
     npad_yr = ny_psf - ny - npad_yl
-    psf_padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+    psf_padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
     unpad_x = slice(npad_xl, -npad_xr)
     unpad_y = slice(npad_yl, -npad_yr)
     lastsize = ny + np.sum(psf_padding[-1])
@@ -100,7 +103,7 @@ def _spotless(**kw):
     radec = [ra, dec]
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
-    freq_out = np.array((nband))
+    freq_out = np.zeros((nband))
     for ds in dds:
         b = ds.bandid
         freq_out[b] = ds.freq_out
@@ -109,121 +112,125 @@ def _spotless(**kw):
     # assumed to stay the same
     wsum = client.submit(accum_wsums, ddsf).result()
 
+    # manually persist psfhat and beam on workers
+    psfhatf = client.map(lambda ds: ds.PSFHAT.values, ddsf)
+    beamf = client.map(lambda ds: ds.BEAM.values, ddsf)
+
+    # this makes for cleaner algorithms but is it a bad pattern?
+    Afs = []
+    for psfhat, beam in zip(psfhatf, beamf):
+        Af = client.submit(partial,
+                           _hessian_reg_psf_slice,
+                           psfhat=psfhat,
+                           beam=beam,
+                           wsum=wsum,
+                           nthreads=opts.nthreads,
+                           sigmainv=opts.sigmainv,
+                           padding=psf_padding,
+                           unpad_x=unpad_x,
+                           unpad_y=unpad_y,
+                           lastsize=lastsize)
+        Afs.append(Af)
+
     # initialise for backward step
     ddsf = client.map(init_dual_and_model, ddsf, nx=nx, ny=ny, pure=False)
+
     # TODO - we want to put the l1weights for each basis on the same worker
     # that ratio is computed on
     l1weight = client.submit(np.ones, (1, nx*ny), workers=[names[0]])
 
     print('Getting spectral norm of Hessian approximation', file=log)
-    hessnorm = power_method(ddsf, nx, ny, nband, opts.nvthreads,
-                            psf_padding, unpad_x, unpad_y,
-                            lastsize, sigmainv, wsum).result()
+    hessnorm = power_method(Afs, nx, ny, nband).result()
+    print(f'hessnorm = {hessnorm:.3e}', file=log)
 
-    # this future contains residual and stats
-    residf = get_resid_and_stats(dds, wsum)
-    residual_mfs = client.sumbit(getitem, residf, 0)
-    rms = client.sumbit(getitem, residf, 1).result()
-    rmax = client.sumbit(getitem, residf, 2).result()
+    # future contains mfs residual and stats
+    residf = client.submit(get_resid_and_stats, ddsf, wsum)
+    residual_mfs = client.submit(getitem, residf, 0)
+    rms = client.submit(getitem, residf, 1).result()
+    rmax = client.submit(getitem, residf, 2).result()
     print(f"It {0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for i in range(opts.niter):
         print('Getting update', file=log)
-        ddsf = client.map(pcg, ddsf,
+        ddsf = client.map(pcg, ddsf, Afs,
                           pure=False,
                           wsum=wsum,
+                          sigmainv=opts.sigmainv,
                           tol=opts.cg_tol,
                           maxit=opts.cg_maxit,
-                          minit=opts.cg_minit,
-                          nthreads=opts.nvthreads,
-                          sigmainv=opts.sigmainv,
-                          psf_padding=psf_padding,
-                          unpad_x=unpad_x,
-                          unpad_y=unpad_y,
-                          lastsize=lastsize)
+                          minit=opts.cg_minit)
 
+        wait(ddsf)
         # save_fits(f'{basename}_update_{i}.fits', update, hdr)
         # save_fits(f'{basename}_fwd_resid_{i}.fits', fwd_resid, hdr)
 
         print('Getting model', file=log)
-        ddsf = primal_dual(ddsf,
-                           psf_padding, unpad_x, unpad_y, lastsize,
-                           opts.sigma21, hessnorm, wsum, l1weight)
+        modelp = client.map(lambda ds: ds.MODEL.values, ddsf)
+        ddsf = primal_dual(ddsf, Afs,
+                           opts.sigma21,
+                           hessnorm,
+                           wsum,
+                           l1weight)
 
-        # reweight
-        l2_norm = np.linalg.norm(psiH(model), axis=0)
-        for m in range(nbasis):
-            weight[m] = opts.alpha/(opts.alpha + l2_norm[m])
-
-        model_dask = da.from_array(model, chunks=(1, -1, -1))
+        # # reweight
+        # l2_norm = np.linalg.norm(psiH(model), axis=0)
+        # for m in range(nbasis):
+        #     weight[m] = opts.alpha/(opts.alpha + l2_norm[m])
 
         print('Computing residual', file=log)
-        # first write it to disk per dataset
-        out_ds = []
-        for ds in dds:
-            dirty = ds.DIRTY.data
-            wgt = ds.WEIGHT.data
-            uvw = ds.UVW.data
-            freq = ds.FREQ.data
-            beam = ds.BEAM.data
-            vis_mask = ds.MASK.data
-            b = ds.bandid
-            # we only want to apply the beam once here
-            residual = dirty - hessian(beam * model_dask[b], uvw, wgt,
-                                       vis_mask, freq, None, hessopts)
-            ds = ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
-            out_ds.append(ds)
+        ddsf = client.map(compute_residual, ddsf,
+                          pure=False,
+                          cell=cell_rad,
+                          wstack=opts.wstack,
+                          epsilon=opts.epsilon,
+                          double_accum=opts.double_accum,
+                          nthreads=opts.nvthreads)
 
-        writes = xds_to_zarr(out_ds, dds_name, columns='RESIDUAL')
-        dask.compute(writes)
+        wait(ddsf)
 
-        # reconstruct from disk
-        dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk})
-        residual = [da.zeros((nx, ny), chunks=(-1, -1),
-                    dtype=real_type) for _ in range(nband)]
-        for ds in dds:
-            b = ds.bandid
-            # we ave to apply the beam here in case it varies with ds
-            # the mask will be applied prior to massing into PCG
-            residual[b] += ds.RESIDUAL.data * ds.BEAM.data
-        residual = da.stack(residual)/wsum
-        residual = residual.compute()
-        residual_mfs = np.sum(residual, axis=0)
-        rms = np.std(residual_mfs)
-        rmax = residual_mfs.max()
-        eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
+        residf = client.submit(get_resid_and_stats, ddsf, wsum)
+        residual_mfs = client.submit(getitem, residf, 0)
+        rms = client.submit(getitem, residf, 1).result()
+        rmax = client.submit(getitem, residf, 2).result()
+        eps = client.submit(get_eps, modelp, ddsf).result()
         print(f"It {i+1}: max resid = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
         if eps < opts.tol:
             break
 
+    # future to collection
+    print('Writing results', file=log)
+    dds = dask.delayed(lambda x: x)(ddsf).compute()
+    writes = xds_to_zarr(dds2,
+                         '/home/landman/testing/pfb/out/test2.dds.zarr',
+                         columns=('MODEL','DUAL','UPDATE')).compute()
+
     if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)
-        dds = xds_from_zarr(dds_name)
 
         # construct a header from xds attrs
-        ra = mds.ra
-        dec = mds.dec
+        ra = dds[0].ra
+        dec = dds[0].dec
         radec = [ra, dec]
 
-        cell_rad = mds.cell_rad
+        cell_rad = dds[0].cell_rad
         cell_deg = np.rad2deg(cell_rad)
 
-        freq_out = mds.band.values
         ref_freq = np.mean(freq_out)
         hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
-        model_mfs = np.mean(model, axis=0)
-        save_fits(f'{basename}_model_mfs.fits', model_mfs, hdr_mfs)
-
-        residual = np.zeros((nband, nx, ny), dtype=dds[0].DIRTY.dtype)
+        residual = np.zeros((nband, nx, ny), dtype=real_type)
+        model = np.zeros((nband, nx, ny), dtype=real_type)
         wsums = np.zeros(nband)
         for ds in dds:
             b = ds.bandid
             wsums[b] += ds.WSUM.values[0]
             residual[b] += ds.RESIDUAL.values
+            model[b] = ds.MODEL.values
         wsum = np.sum(wsums)
         residual_mfs = np.sum(residual, axis=0)/wsum
+        model_mfs = np.mean(model, axis=0)
         save_fits(f'{basename}_residual_mfs.fits', residual_mfs, hdr_mfs)
+        save_fits(f'{basename}_model_mfs.fits', model_mfs, hdr_mfs)
 
         if opts.fits_cubes:
             # need residual in Jy/beam

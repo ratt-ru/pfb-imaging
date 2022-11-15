@@ -1,5 +1,6 @@
 import numpy as np
-from distributed import wait
+from operator import getitem
+from distributed import wait, get_client
 from scipy.linalg import norm
 import pyscilog
 log = pyscilog.get_logger('PM')
@@ -45,15 +46,7 @@ def power_method(
     return beta, b
 
 
-def power(ds, bp, **kwargs):
-    A = partial(_hessian,
-                psfhat=ds.PSFHAT.values/kwargs['wsum'],
-                nthreads=kwargs['nthreads'],
-                sigmainv=kwargs['sigmainv'],
-                padding=kwargs['psf_padding'],
-                unpad_x=kwargs['unpad_x'],
-                unpad_y=kwargs['unpad_y'],
-                lastsize=kwargs['lastsize'])
+def power(A, bp, **kwargs):
     bp /= kwargs['bnorm']
     b = A(bp)
     bsumsq = np.sum(b**2)
@@ -68,22 +61,15 @@ def sumsq(b):
 def bnormf(bsumsq):
     return np.sqrt(np.sum(bsumsq))
 
-def betaf(beta_num, beta_det):
-    return np.sum(beta_num)/np.sum(beta_det)
+def betaf(beta_num, beta_den):
+    return np.sum(beta_num)/np.sum(beta_den)
 
-def power_method_dist(ddsf,
-                 nx,
-                 ny,
-                 nband,
-                 nthreads,
-                 psf_padding,
-                 unpad_x,
-                 unpad_y,
-                 lastsize,
-                 sigmainv,
-                 wsum,
-                 tol=1e-5,
-                 maxit=200):
+def power_method_dist(Af,
+                      nx,
+                      ny,
+                      nband,
+                      tol=1e-5,
+                      maxit=200):
 
     client = get_client()
 
@@ -97,30 +83,22 @@ def power_method_dist(ddsf,
     bssq = client.map(sumsq, b)
     bnorm = client.submit(bnormf, bssq,
                           workers=[names[0]], pure=False).result()
-
     for k in range(maxit):
-        fut = client.map(power, ddsf, b,
+        fut = client.map(power, Af, b,
                          pure=False,
-                         wsum=wsum,
-                         bnorm=bnorm,
-                         nthreads=nthreads,
-                         psf_padding=psf_padding,
-                         unpad_x=unpad_x,
-                         unpad_y=unpad_y,
-                         lastsize=lastsize,
-                         sigmainv=sigmainv)
+                         bnorm=bnorm)
 
         b = client.map(getitem, fut, [0]*len(fut), pure=False)
         bssq = client.map(getitem, fut, [1]*len(fut), pure=False)
         bnum = client.map(getitem, fut, [2]*len(fut), pure=False)
-        bdet = client.map(getitem, fut, [3]*len(fut), pure=False)
+        bden = client.map(getitem, fut, [3]*len(fut), pure=False)
 
         bnorm = client.submit(bnormf, bssq,
                               workers=[names[0]], pure=False)
 
-        beta = client.submit(betaf, bnum, bdet,
+        beta = client.submit(betaf, bnum, bden,
                              workers=[names[1]], pure=False)
 
-        wait(b, bnorm, beta)
+        wait([b, bnorm, beta])
 
     return beta

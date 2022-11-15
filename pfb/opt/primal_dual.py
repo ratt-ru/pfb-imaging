@@ -1,5 +1,6 @@
 import numpy as np
-from distributed import wait
+from distributed import wait, get_client, as_completed
+from operator import getitem
 import pyscilog
 log = pyscilog.get_logger('PD')
 
@@ -102,22 +103,14 @@ def get_ratio(vtildes, lam, sigma, l1weights):
     ratio[mask] = l2_soft[mask] / l2_norm[mask]
     return ratio
 
-def update(ds, y, vtilde, ratio, **kwargs):
+def update(ds, A, y, vtilde, ratio, **kwargs):
     sigma = kwargs['sigma']
     lam = kwargs['lam']
     tau = kwargs['tau']
     gamma = kwargs['gamma']
 
-    A = partial(_hessian,
-                psfhat=ds.PSFHAT.values/kwargs['wsum'],
-                nthreads=kwargs['nthreads'],
-                sigmainv=kwargs['sigmainv'],
-                padding=kwargs['psf_padding'],
-                unpad_x=kwargs['unpad_x'],
-                unpad_y=kwargs['unpad_y'],
-                lastsize=kwargs['lastsize'])
-
     xp = ds.MODEL.values
+    nx, ny = ds.MODEL.shape
     vp = ds.DUAL.values
 
     # dual
@@ -147,22 +140,20 @@ def sety(ds, **kwargs):
         return gamma * ds.UPDATE.values
 
 
-def primal_dual_dist(ddsf,
-             psf_padding,
-             unpad_x,
-             unpad_y,
-             lastsize,
-             lam,  # regulariser strength,
-             L,  # spectral norm of Hessian
-             wsum,
-             l1weight,
-             nu=1.0,  # spectral norm of dictionary
-             sigma=None,  # step size of dual update
-             tol=1e-5,
-             maxit=100,
-             positivity=True,
-             gamma=1.0,
-             verbosity=1):
+def primal_dual_dist(
+            ddsf,
+            Af,
+            lam,  # regulariser strength,
+            L,  # spectral norm of Hessian
+            wsum,
+            l1weight,
+            nu=1.0,  # spectral norm of dictionary
+            sigma=None,  # step size of dual update
+            tol=1e-5,
+            maxit=100,
+            positivity=True,
+            gamma=1.0,
+            verbosity=1):
 
     client = get_client()
 
@@ -187,22 +178,16 @@ def primal_dual_dist(ddsf,
                               vtildes, lam, sigma, l1weight,
                               workers=[names[0]], pure=False)
 
-        wait(ratio)
+        wait([ratio])
 
         future = client.map(update,
-                            ddsf, yf, vtildes, [ratio]*len(dds),
+                            ddsf, Af, yf, vtildes, [ratio]*len(ddsf),
                             pure=False,
                             wsum=wsum,
                             sigma=sigma,
                             tau=tau,
                             lam=lam,
                             gamma=gamma,
-                            nthreads=2,
-                            sigmainv=1e-8,
-                            psf_padding=psf_padding,
-                            unpad_x=unpad_x,
-                            unpad_y=unpad_y,
-                            lastsize=lastsize,
                             positivity=positivity)
 
         wait(future)
@@ -217,9 +202,8 @@ def primal_dual_dist(ddsf,
         eps = []
         for f in as_completed(epsf):
             eps.append(f.result())
-        eps = np.maximum(eps)
-        if eps < tol:
-            print(f'Converged after {k} iterations', file=log)
+        eps = np.array(eps)
+        if eps.max() < tol:
             break
 
     if k >= maxit:

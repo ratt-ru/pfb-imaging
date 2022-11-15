@@ -8,7 +8,7 @@ inputs:
   dds:
     dtype: str
     required: true
-    abbreviation: xds
+    abbreviation: dds
     info:
       Path to dataset created by grid worker
   nband:
