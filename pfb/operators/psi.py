@@ -106,3 +106,46 @@ def im2coef(x, bases, ntot, nmax, nlevels, compute=True):
         return graph.compute()
     else:
         return graph
+
+
+@numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)
+def im2coef_dist(x, bases, ntot, nmax, nlevels):
+    '''
+    Per band image to coefficients
+    '''
+    nbasis = len(bases)
+    alpha = np.zeros((nbasis, nmax), dtype=x.dtype)
+    for b in numba.prange(nbasis):
+        base = bases[b]
+        if base == 'self':
+            # ravel and pad
+            alpha[l, b] = pad(x.ravel(), nmax-ntot[b]) #, mode='constant')
+        else:
+            # decompose
+            alpha_tmp = wavedecn(x, base, mode='zero', level=nlevels)
+            # ravel and pad
+            alpha_tmp, _, _ = ravel_coeffs(alpha_tmp)
+            alpha[b] = pad(alpha_tmp, nmax-ntot[b])  #, mode='constant')
+
+    return alpha
+
+
+@numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)
+def coef2im_dist(alpha, bases, ntot, iy, sy, nx, ny):
+    '''
+    Per band coefficients to image
+    '''
+    nbasis = len(bases)
+    x = np.zeros((nbasis, nx, ny), dtype=alpha.dtype)
+    for b in numba.prange(nbasis):
+        base = bases[b]
+        a = alpha[b, 0:ntot[b]]
+        if base == 'self':
+            wave = a.reshape(nx, ny)
+        else:
+            alpha_rec = unravel_coeffs(
+                a, iy[base], sy[base], output_format='wavedecn')
+            wave = waverecn(alpha_rec, base, mode='zero')
+
+        x[b] = wave
+    return np.sum(x, axis=0)

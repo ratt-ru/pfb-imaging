@@ -35,7 +35,7 @@ def init_dual_and_model(ds, **kwargs):
         model = np.zeros((kwargs['nx'], kwargs['ny']))
         dct['MODEL'] = (('x', 'y'), model)
     if 'DUAL' not in ds:
-        dual = np.zeros((1, kwargs['nx']*kwargs['ny']))
+        dual = np.zeros((kwargs['nbasis'], kwargs['nmax']))
         dct['DUAL'] = (('b', 'c'), dual)
     ds_out = ds.assign(**dct)
     return ds_out

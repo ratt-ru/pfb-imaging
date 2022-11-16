@@ -71,6 +71,7 @@ def _spotless(**kw):
     import pywt
     from copy import deepcopy
     from operator import getitem
+    from pfb.wavelets.wavelets import wavedecn
 
     dds = xds_from_zarr(opts.dds, chunks={'row':-1, 'chan':-1})
     basename = f'{opts.dds.rstrip(".dds.zarr")}'
@@ -80,6 +81,12 @@ def _spotless(**kw):
 
     # dds = client.persist(client)
     ddsf = client.scatter(dds)
+    # names={}
+    # for ds in ddsf:
+    #     b = ds.result().bandid
+    #     tmp = client.who_has(ds)
+    #     for key in tmp.keys():
+    #         names[b] = tmp[key]
 
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
@@ -119,6 +126,7 @@ def _spotless(**kw):
     # this makes for cleaner algorithms but is it a bad pattern?
     Afs = []
     for psfhat, beam in zip(psfhatf, beamf):
+        tmp = client.who_has(psfhat)
         Af = client.submit(partial,
                            _hessian_reg_psf_slice,
                            psfhat=psfhat,
@@ -129,15 +137,50 @@ def _spotless(**kw):
                            padding=psf_padding,
                            unpad_x=unpad_x,
                            unpad_y=unpad_y,
-                           lastsize=lastsize)
+                           lastsize=lastsize,
+                           worker=list(tmp.values())[0])
         Afs.append(Af)
 
+    # dictionary setup
+    print("Setting up dictionary", file=log)
+    bases = tuple(opts.bases.split(','))
+    nbasis = len(bases)
+    x = np.zeros((nx, ny), dtype=real_type)
+    for base in bases:
+        if base == 'self':
+            continue
+        alpha = wavedecn(x, base, mode='zero', level=nlevels)
+        y, iy, sy = ravel_coeffs(alpha)
+        iys[base] = iy
+        sys[base] = sy
+        ntot.append(y.size)
+        nmax = np.maximum(nmax, y.size)
+    ntot = tuple(ntot)
+    # we only want to transfer these once
+    psiHf = client.map(partial, [im2coef]*len(ddsf),
+                       bases=bases,
+                       ntot=ntot,
+                       nmax=nmax,
+                       nlevels=opts.nlevels)
+    psif = client.map(partial, [coef2im]*len(ddsf),
+                      bases=bases,
+                      ntot=ntot,
+                      iy=iys,
+                      sy=sys,
+                      nx=nx,
+                      ny=ny)
+
     # initialise for backward step
-    ddsf = client.map(init_dual_and_model, ddsf, nx=nx, ny=ny, pure=False)
+    ddsf = client.map(init_dual_and_model, ddsf,
+                      nx=nx,
+                      ny=ny,
+                      nbasis=nbasis,
+                      nmax=nmax,
+                      pure=False)
 
     # TODO - we want to put the l1weights for each basis on the same worker
     # that ratio is computed on
-    l1weight = client.submit(np.ones, (1, nx*ny), workers=[names[0]])
+    l1weight = client.submit(np.ones, (nbasis, nmax), workers=[names[0]])
 
     print('Getting spectral norm of Hessian approximation', file=log)
     hessnorm = power_method(Afs, nx, ny, nband).result()
@@ -166,6 +209,7 @@ def _spotless(**kw):
         print('Getting model', file=log)
         modelp = client.map(lambda ds: ds.MODEL.values, ddsf)
         ddsf = primal_dual(ddsf, Afs,
+                           psif, psiHf,
                            rms, #opts.sigma21,
                            hessnorm,
                            wsum,

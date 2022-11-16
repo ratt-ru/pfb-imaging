@@ -78,18 +78,11 @@ def primal_dual(
     return x, v
 
 
-
-def psiH(x, nx, ny):
-    return x.reshape(1, nx*ny)
-
-def psi(v, nx, ny):
-    return v.reshape(nx, ny)
-
-def vtilde_update(ds, **kwargs):
+def vtilde_update(ds, psiH, **kwargs):
     nbasis, ntot = ds.DUAL.shape
     nx, ny = ds.MODEL.shape
     sigma = kwargs['sigma']
-    return ds.DUAL.values + sigma * psiH(ds.MODEL.values, nx, ny)
+    return ds.DUAL.values + sigma * psiH(ds.MODEL.values)
 
 
 def get_ratio(vtildes, lam, sigma, l1weights):
@@ -108,14 +101,13 @@ def get_ratio(vtildes, lam, sigma, l1weights):
     ratio[mask] = l2_soft[mask] / l2_norm[mask]
     return ratio
 
-def update(ds, A, y, vtilde, ratio, **kwargs):
+def update(ds, A, y, vtilde, ratio, psi, psiH, **kwargs):
     sigma = kwargs['sigma']
     lam = kwargs['lam']
     tau = kwargs['tau']
     gamma = kwargs['gamma']
 
     xp = ds.MODEL.values
-    nx, ny = ds.MODEL.shape
     vp = ds.DUAL.values
 
     # dual
@@ -123,11 +115,11 @@ def update(ds, A, y, vtilde, ratio, **kwargs):
 
     # primal
     grad = -A(y - xp)/gamma
-    x = xp - tau * (psi(2 * v - vp, nx, ny) + grad)
+    x = xp - tau * (psi(2 * v - vp) + grad)
     if kwargs['positivity']:
         x[x < 0] = 0.0
 
-    vtilde = v + sigma * psiH(x, nx, ny)
+    vtilde = v + sigma * psiH(x)
 
     eps = np.linalg.norm(x-xp)/np.linalg.norm(x)
 
@@ -148,6 +140,8 @@ def sety(ds, **kwargs):
 def primal_dual_dist(
             ddsf,
             Af,
+            psif,
+            psiHf,
             lam,  # regulariser strength,
             L,  # spectral norm of Hessian
             wsum,
@@ -173,7 +167,7 @@ def primal_dual_dist(
     yf = client.map(sety, ddsf, gamma=gamma)
 
     # we need to do this upfront only at the outset
-    vtildes = client.map(vtilde_update, ddsf, sigma=sigma)
+    vtildes = client.map(vtilde_update, ddsf, psiHf, sigma=sigma)
 
     eps = 1.0
     for k in range(maxit):
@@ -187,6 +181,7 @@ def primal_dual_dist(
 
         future = client.map(update,
                             ddsf, Af, yf, vtildes, [ratio]*len(ddsf),
+                            psif, psiHf,
                             pure=False,
                             wsum=wsum,
                             sigma=sigma,
