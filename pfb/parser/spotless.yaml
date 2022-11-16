@@ -47,6 +47,11 @@ inputs:
     abbreviation: alpha
     info:
       L21 reweighting parameter
+  gamma:
+    dtype: float
+    default: 1.0
+    info:
+      Step size of update
   positivity:
     dtype: bool
     default: True

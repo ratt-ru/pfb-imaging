@@ -166,15 +166,15 @@ def _spotless(**kw):
         print('Getting model', file=log)
         modelp = client.map(lambda ds: ds.MODEL.values, ddsf)
         ddsf = primal_dual(ddsf, Afs,
-                           opts.sigma21,
+                           rms, #opts.sigma21,
                            hessnorm,
                            wsum,
-                           l1weight)
-
-        # # reweight
-        # l2_norm = np.linalg.norm(psiH(model), axis=0)
-        # for m in range(nbasis):
-        #     weight[m] = opts.alpha/(opts.alpha + l2_norm[m])
+                           l1weight,
+                           tol=opts.pd_tol,
+                           maxit=opts.pd_maxit,
+                           positivity=opts.positivity,
+                           gamma=opts.gamma,
+                           verbosity=opts.pd_verbose)
 
         print('Computing residual', file=log)
         ddsf = client.map(compute_residual, ddsf,
@@ -194,15 +194,25 @@ def _spotless(**kw):
         eps = client.submit(get_eps, modelp, ddsf).result()
         print(f"It {i+1}: max resid = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
+
+        # # reweight
+        # l2_norm = np.linalg.norm(psiH(model), axis=0)
+        # for m in range(nbasis):
+        #     l1weight[m] = opts.alpha/(opts.alpha + l2_norm[m])
+
+        # investigate reweight of the form
+        # l1weight[m] = agro_factor/(1 + l2_norm[m]/rms[m])
+
         if eps < opts.tol:
             break
 
-    # future to collection
-    print('Writing results', file=log)
-    dds = dask.delayed(lambda x: x)(ddsf).compute()
-    writes = xds_to_zarr(dds2,
-                         '/home/landman/testing/pfb/out/test2.dds.zarr',
-                         columns=('MODEL','DUAL','UPDATE')).compute()
+    # # future to collection
+    # print('Writing results', file=log)
+    dds = dask.delayed(Idty)(ddsf).compute()
+    # writes = xds_to_zarr(dds,
+    #                      '/home/landman/testing/pfb/out/test2.dds.zarr',
+    #                      columns=('MODEL','DUAL','UPDATE'))
+    # dask.compute(writes)
 
     if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)
@@ -250,3 +260,5 @@ def _spotless(**kw):
     return
 
 
+def Idty(x):
+    return x

@@ -94,10 +94,15 @@ def vtilde_update(ds, **kwargs):
 
 def get_ratio(vtildes, lam, sigma, l1weights):
     l2_norm = np.zeros(l1weights.shape)
+    nbasis = 0
     for v in vtildes:
-        l2_norm += (v/sigma)**2
-    l2_norm = np.sqrt(l2_norm)
-    l2_soft = np.maximum(l2_norm - lam*l1weights/sigma, 0.0)  # norm is positive
+        # l2_norm += (v/sigma)**2
+        l2_norm += v/sigma
+        nbasis += 1
+    # l2_norm = np.sqrt(l2_norm)
+    l2_norm /= nbasis
+    l2_soft = np.maximum(np.abs(l2_norm) - lam*l1weights/sigma, 0.0)  # norm is positive
+    # l2_soft = np.where(np.abs(l2_norm) >= lam/sigma, l2_norm, 0.0)
     mask = l2_norm != 0
     ratio = np.zeros(mask.shape, dtype=l1weights.dtype)
     ratio[mask] = l2_soft[mask] / l2_norm[mask]
