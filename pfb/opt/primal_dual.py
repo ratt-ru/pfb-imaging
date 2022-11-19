@@ -78,22 +78,23 @@ def primal_dual(
     return x, v
 
 
-def vtilde_update(ds, psiH, **kwargs):
+def vtilde_update(ds, **kwargs):
     nbasis, ntot = ds.DUAL.shape
     nx, ny = ds.MODEL.shape
     sigma = kwargs['sigma']
+    psiH = kwargs['psiH']
     return ds.DUAL.values + sigma * psiH(ds.MODEL.values)
 
 
 def get_ratio(vtildes, lam, sigma, l1weights):
     l2_norm = np.zeros(l1weights.shape)
-    nbasis = 0
+    nband = 0
     for v in vtildes:
         # l2_norm += (v/sigma)**2
         l2_norm += v/sigma
-        nbasis += 1
+        # nband += 1
     # l2_norm = np.sqrt(l2_norm)
-    l2_norm /= nbasis
+    # l2_norm /= nband
     l2_soft = np.maximum(np.abs(l2_norm) - lam*l1weights/sigma, 0.0)  # norm is positive
     # l2_soft = np.where(np.abs(l2_norm) >= lam/sigma, l2_norm, 0.0)
     mask = l2_norm != 0
@@ -101,11 +102,13 @@ def get_ratio(vtildes, lam, sigma, l1weights):
     ratio[mask] = l2_soft[mask] / l2_norm[mask]
     return ratio
 
-def update(ds, A, y, vtilde, ratio, psi, psiH, **kwargs):
+def update(ds, A, y, vtilde, ratio, **kwargs):
     sigma = kwargs['sigma']
     lam = kwargs['lam']
     tau = kwargs['tau']
     gamma = kwargs['gamma']
+    psi = kwargs['psi']
+    psiH = kwargs['psiH']
 
     xp = ds.MODEL.values
     vp = ds.DUAL.values
@@ -140,8 +143,8 @@ def sety(ds, **kwargs):
 def primal_dual_dist(
             ddsf,
             Af,
-            psif,
-            psiHf,
+            psi,
+            psiH,
             lam,  # regulariser strength,
             L,  # spectral norm of Hessian
             wsum,
@@ -167,7 +170,7 @@ def primal_dual_dist(
     yf = client.map(sety, ddsf, gamma=gamma)
 
     # we need to do this upfront only at the outset
-    vtildes = client.map(vtilde_update, ddsf, psiHf, sigma=sigma)
+    vtildes = client.map(vtilde_update, ddsf, psiH=psiH, sigma=sigma)
 
     eps = 1.0
     for k in range(maxit):
@@ -181,7 +184,8 @@ def primal_dual_dist(
 
         future = client.map(update,
                             ddsf, Af, yf, vtildes, [ratio]*len(ddsf),
-                            psif, psiHf,
+                            psi=psi,
+                            psiH=psiH,
                             pure=False,
                             wsum=wsum,
                             sigma=sigma,

@@ -62,16 +62,17 @@ def _spotless(**kw):
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
     from pfb.utils.dist import (get_resid_and_stats, accum_wsums,
                                 compute_residual, init_dual_and_model,
-                                get_eps)
+                                get_eps, l1reweight, get_cbeam_area)
     from pfb.operators.psf import _hessian_reg_psf_slice
-    # from pfb.operators.psi import im2coef, coef2im
+    from pfb.operators.psi import im2coef_dist as im2coef
+    from pfb.operators.psi import coef2im_dist as coef2im
     from pfb.prox.prox_21m import prox_21m
     from pfb.prox.prox_21 import prox_21
     from pfb.wavelets.wavelets import wavelet_setup
     import pywt
     from copy import deepcopy
     from operator import getitem
-    from pfb.wavelets.wavelets import wavedecn
+    from pfb.wavelets.wavelets import wavelet_setup
 
     dds = xds_from_zarr(opts.dds, chunks={'row':-1, 'chan':-1})
     basename = f'{opts.dds.rstrip(".dds.zarr")}'
@@ -118,6 +119,7 @@ def _spotless(**kw):
 
     # assumed to stay the same
     wsum = client.submit(accum_wsums, ddsf).result()
+    pix_per_beam = client.submit(get_cbeam_area, ddsf, wsum).result()
 
     # manually persist psfhat and beam on workers
     psfhatf = client.map(lambda ds: ds.PSFHAT.values, ddsf)
@@ -138,37 +140,38 @@ def _spotless(**kw):
                            unpad_x=unpad_x,
                            unpad_y=unpad_y,
                            lastsize=lastsize,
-                           worker=list(tmp.values())[0])
+                           workers=list(tmp.values())[0])
         Afs.append(Af)
 
     # dictionary setup
     print("Setting up dictionary", file=log)
     bases = tuple(opts.bases.split(','))
     nbasis = len(bases)
-    x = np.zeros((nx, ny), dtype=real_type)
-    for base in bases:
-        if base == 'self':
-            continue
-        alpha = wavedecn(x, base, mode='zero', level=nlevels)
-        y, iy, sy = ravel_coeffs(alpha)
-        iys[base] = iy
-        sys[base] = sy
-        ntot.append(y.size)
-        nmax = np.maximum(nmax, y.size)
+    iy, sy, ntot, nmax = wavelet_setup(
+                                np.zeros((1, nx, ny), dtype=real_type),
+                                bases, opts.nlevels)
     ntot = tuple(ntot)
     # we only want to transfer these once
-    psiHf = client.map(partial, [im2coef]*len(ddsf),
-                       bases=bases,
-                       ntot=ntot,
-                       nmax=nmax,
-                       nlevels=opts.nlevels)
-    psif = client.map(partial, [coef2im]*len(ddsf),
-                      bases=bases,
-                      ntot=ntot,
-                      iy=iys,
-                      sy=sys,
-                      nx=nx,
-                      ny=ny)
+    psiH = partial(im2coef,
+                   bases=bases,
+                   ntot=ntot,
+                   nmax=nmax,
+                   nlevels=opts.nlevels)
+
+    psi = partial(coef2im,
+                  bases=bases,
+                  ntot=ntot,
+                  iy=None,  #iy,
+                  sy=None,  #sy,
+                  nx=nx,
+                  ny=ny)
+
+    # compile these before sending them to each worker?
+    alphatmp = np.zeros((nbasis, nmax), dtype=real_type)
+    xtmp = psi(alphatmp)
+    alphatmp = psiH(xtmp)
+
+    del xtmp, alphatmp
 
     # initialise for backward step
     ddsf = client.map(init_dual_and_model, ddsf,
@@ -182,8 +185,11 @@ def _spotless(**kw):
     # that ratio is computed on
     l1weight = client.submit(np.ones, (nbasis, nmax), workers=[names[0]])
 
-    print('Getting spectral norm of Hessian approximation', file=log)
-    hessnorm = power_method(Afs, nx, ny, nband).result()
+    if opts.hessnorm is None:
+        print('Getting spectral norm of Hessian approximation', file=log)
+        hessnorm = power_method(Afs, nx, ny, nband).result()
+    else:
+        hessnorm = opts.hessnorm
     print(f'hessnorm = {hessnorm:.3e}', file=log)
 
     # future contains mfs residual and stats
@@ -209,8 +215,8 @@ def _spotless(**kw):
         print('Getting model', file=log)
         modelp = client.map(lambda ds: ds.MODEL.values, ddsf)
         ddsf = primal_dual(ddsf, Afs,
-                           psif, psiHf,
-                           rms, #opts.sigma21,
+                           psi, psiH,
+                           opts.rmsfactor*rms, #opts.sigma21,
                            hessnorm,
                            wsum,
                            l1weight,
@@ -239,13 +245,12 @@ def _spotless(**kw):
         print(f"It {i+1}: max resid = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
 
-        # # reweight
-        # l2_norm = np.linalg.norm(psiH(model), axis=0)
-        # for m in range(nbasis):
-        #     l1weight[m] = opts.alpha/(opts.alpha + l2_norm[m])
-
-        # investigate reweight of the form
-        # l1weight[m] = agro_factor/(1 + l2_norm[m]/rms[m])
+        # l1reweighting
+        if i+1 >= opts.l1reweight_from:
+            print('L1 reweighting', file=log)
+            l1weight = client.submit(l1reweight, ddsf, l1weight,
+                                     psiH, wsum, pix_per_beam)
+            # import pdb; pdb.set_trace()
 
         if eps < opts.tol:
             break

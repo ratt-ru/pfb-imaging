@@ -1,4 +1,5 @@
 import numpy as np
+from pfb.utils.misc import fitcleanbeam
 
 # submit on these
 def get_resid_and_stats(dds, wsum):
@@ -27,6 +28,30 @@ def get_eps(modelp, dds):
         eps.append(np.linalg.norm(x-xp)/np.linalg.norm(x))
     eps = np.array(eps)
     return eps.max()
+
+def l1reweight(dds, l1weight, psiH, wsum, pix_per_beam, alpha=2):
+    # get norm of model and residual
+    l2mod = np.zeros(l1weight.shape, l1weight.dtype)
+    l2res = np.zeros(l1weight.shape, l1weight.dtype)
+    nbasis = l1weight.shape[0]
+    nband = 0
+    for ds in dds:
+        l2mod += psiH(ds.MODEL.values)
+        # Jy/beam -> Jy/pixel
+        l2res += psiH(ds.RESIDUAL.values/wsum/pix_per_beam)
+        nband += 1
+    l2mod /= nband
+    rms = np.std(l2res, axis=-1)
+    return alpha/(1 + np.abs(l2mod)/rms[:, None])
+
+def get_cbeam_area(dds, wsum):
+    psf_mfs = np.zeros(dds[0].PSF.shape, dtype=dds[0].PSF.dtype)
+    for ds in dds:
+        psf_mfs += ds.PSF.values/wsum
+    # beam pars in pixel units
+    GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
+    return GaussPar[0]*GaussPar[1]*np.pi/4
+
 
 # map on everything below
 def init_dual_and_model(ds, **kwargs):

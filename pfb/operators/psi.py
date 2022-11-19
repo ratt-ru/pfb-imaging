@@ -119,13 +119,14 @@ def im2coef_dist(x, bases, ntot, nmax, nlevels):
         base = bases[b]
         if base == 'self':
             # ravel and pad
-            alpha[l, b] = pad(x.ravel(), nmax-ntot[b]) #, mode='constant')
+            alpha[b] = pad(x.ravel(), nmax-ntot[b]) #, mode='constant')
         else:
-            # decompose
-            alpha_tmp = wavedecn(x, base, mode='zero', level=nlevels)
-            # ravel and pad
-            alpha_tmp, _, _ = ravel_coeffs(alpha_tmp)
-            alpha[b] = pad(alpha_tmp, nmax-ntot[b])  #, mode='constant')
+            continue
+            # # decompose
+            # alpha_tmp = wavedecn(x, base, mode='zero', level=nlevels)
+            # # ravel and pad
+            # alpha_tmp, _, _ = ravel_coeffs(alpha_tmp)
+            # alpha[b] = pad(alpha_tmp, nmax-ntot[b])  #, mode='constant')
 
     return alpha
 
@@ -143,9 +144,10 @@ def coef2im_dist(alpha, bases, ntot, iy, sy, nx, ny):
         if base == 'self':
             wave = a.reshape(nx, ny)
         else:
-            alpha_rec = unravel_coeffs(
-                a, iy[base], sy[base], output_format='wavedecn')
-            wave = waverecn(alpha_rec, base, mode='zero')
+            continue
+            # alpha_rec = unravel_coeffs(
+            #     a, iy[base], sy[base], output_format='wavedecn')
+            # wave = waverecn(alpha_rec, base, mode='zero')
 
         x[b] = wave
     return np.sum(x, axis=0)

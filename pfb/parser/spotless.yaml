@@ -28,8 +28,21 @@ inputs:
     abbreviation: sinv
     info:
       Standard deviation of assumed GRF prior
-  inverter:
-    default: pcg
+  bases:
+    dtype: str
+    info: 'Wavelet bases to use. Give as comma separated str eg. '
+    default: 'self,db1,db2'
+    abbreviation: bases
+  nlevels:
+    dtype: int
+    info: 'Wavelet decomposition level'
+    default: 3
+    abbreviation: nlevels
+  l1reweight_from:
+    dtype: int
+    default: 5
+    info:
+      Start doing l1reweights after this many iterations
   hessnorm:
     dtype: float
     abbreviation: hessnorm
@@ -37,16 +50,14 @@ inputs:
       Spectral norm of hessian approximation
   sigma21:
     dtype: float
-    required: true
     abbreviation: sig21
     info:
       Thresholding level
-  alpha:
+  rmsfactor:
     dtype: float
-    required: true
-    abbreviation: alpha
+    default: 1.25
     info:
-      L21 reweighting parameter
+      By default will threshold by rmsfactor*rms at every iteration
   gamma:
     dtype: float
     default: 1.0
