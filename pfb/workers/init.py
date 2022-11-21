@@ -270,12 +270,12 @@ def _init(**kw):
         raise ValueError('No datasets found to write. '
                          'Data completely flagged maybe?')
 
-    dask.visualize(writes, color="order", cmap="autumn",
-                   node_attr={"penwidth": "4"},
-                   filename=basename + '_writes_I_ordered_graph.pdf',
-                   optimize_graph=False)
-    dask.visualize(writes, filename=basename +
-                   '_writes_I_graph.pdf', optimize_graph=False)
+    # dask.visualize(writes, color="order", cmap="autumn",
+    #                node_attr={"penwidth": "4"},
+    #                filename=basename + '_writes_I_ordered_graph.pdf',
+    #                optimize_graph=False)
+    # dask.visualize(writes, filename=basename +
+    #                '_writes_I_graph.pdf', optimize_graph=False)
 
     with compute_context(opts.scheduler, basename+'_init'):
         dask.compute(writes, optimize_graph=False)
