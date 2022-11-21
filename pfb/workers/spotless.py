@@ -52,6 +52,7 @@ def _spotless(**kw):
     OmegaConf.set_struct(opts, True)
 
     import numpy as np
+    import xarray as xr
     import dask
     import dask.array as da
     from distributed import Client, wait, get_client
@@ -144,8 +145,7 @@ def _spotless(**kw):
                            padding=psf_padding,
                            unpad_x=unpad_x,
                            unpad_y=unpad_y,
-                           lastsize=lastsize,
-                           workers=list(tmp.values())[0])
+                           lastsize=lastsize) # workers=list(tmp.values())[0])
         Afs.append(Af)
 
     # dictionary setup
@@ -186,9 +186,16 @@ def _spotless(**kw):
                       nmax=nmax,
                       pure=False)
 
-    # TODO - we want to put the l1weights for each basis on the same worker
-    # that ratio is computed on
-    l1weight = client.submit(np.ones, (nbasis, nmax), workers=[names[0]])
+    try:
+        l1ds = xds_from_zarr(f'{dds_name}::L1WEIGHT', chunks={'b':-1,'c':-1})
+        if 'L1WEIGHT' in l1ds:
+            l1weight = client.submit(lambda ds: ds[0].L1WEIGHT.values, l1ds, workers=[names[0]])
+        else:
+            raise
+    except Exception as e:
+        print(f'Did not find l1weights at {dds_name}/L1WEIGHT. '
+              'Initialising to unity', file=log)
+        l1weight = client.submit(np.ones, (nbasis, nmax), workers=[names[0]])
 
     if opts.hessnorm is None:
         print('Getting spectral norm of Hessian approximation', file=log)
@@ -204,7 +211,7 @@ def _spotless(**kw):
     rmax = client.submit(getitem, residf, 2).result()
     print(f"It {0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for i in range(opts.niter):
-        print('Getting update', file=log)
+        print('Solving for update', file=log)
         ddsf = client.map(pcg, ddsf, Afs,
                           pure=False,
                           wsum=wsum,
@@ -217,7 +224,7 @@ def _spotless(**kw):
         # save_fits(f'{basename}_update_{i}.fits', update, hdr)
         # save_fits(f'{basename}_fwd_resid_{i}.fits', fwd_resid, hdr)
 
-        print('Getting model', file=log)
+        print('Solving for model', file=log)
         modelp = client.map(lambda ds: ds.MODEL.values, ddsf)
         ddsf = primal_dual(ddsf, Afs,
                            psi, psiH,
@@ -260,13 +267,17 @@ def _spotless(**kw):
         if eps < opts.tol:
             break
 
-    # # future to collection
-    # print('Writing results', file=log)
+    # future to collection
+    print('Writing results', file=log)
     dds = dask.delayed(Idty)(ddsf).compute()
-    # writes = xds_to_zarr(dds,
-    #                      '/home/landman/testing/pfb/out/test2.dds.zarr',
-    #                      columns=('MODEL','DUAL','UPDATE'))
-    # dask.compute(writes)
+    writes = xds_to_zarr(dds, dds_name,
+                         columns=('MODEL','DUAL','UPDATE','RESIDUAL'))
+    l1weight = da.from_array(l1weight.result(), chunks='auto')
+    dvars = {}
+    dvars['L1WEIGHT'] = (('b','c'), l1weight)
+    l1ds = xr.Dataset(dvars)
+    l1writes = xds_to_zarr(l1ds, f'{dds_name}::L1WEIGHT')
+    dask.compute(writes, l1writes)
 
     if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)
