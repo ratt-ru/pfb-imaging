@@ -1,4 +1,5 @@
 import numpy as np
+import dask.array as da
 from pfb.utils.misc import fitcleanbeam
 
 # submit on these
@@ -57,10 +58,10 @@ def get_cbeam_area(dds, wsum):
 def init_dual_and_model(ds, **kwargs):
     dct = {}
     if 'MODEL' not in ds:
-        model = np.zeros((kwargs['nx'], kwargs['ny']))
+        model = da.zeros((kwargs['nx'], kwargs['ny']), chunks=(-1, -1))
         dct['MODEL'] = (('x', 'y'), model)
     if 'DUAL' not in ds:
-        dual = np.zeros((kwargs['nbasis'], kwargs['nmax']))
+        dual = da.zeros((kwargs['nbasis'], kwargs['nmax']), chunks=(-1,-1))
         dct['DUAL'] = (('b', 'c'), dual)
     ds_out = ds.assign(**dct)
     return ds_out
@@ -85,5 +86,5 @@ def compute_residual(ds, **kwargs):
                                      epsilon=kwargs['epsilon'],
                                      double_accum=kwargs['double_accum'],
                                      nthreads=kwargs['nthreads'])
-    ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
+    ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), da.from_array(residual))})
     return ds_out

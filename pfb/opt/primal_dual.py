@@ -1,4 +1,5 @@
 import numpy as np
+import dask.array as da
 from distributed import wait, get_client, as_completed
 from operator import getitem
 import pyscilog
@@ -124,8 +125,8 @@ def update(ds, A, y, vtilde, ratio, **kwargs):
 
     eps = np.linalg.norm(x-xp)/np.linalg.norm(x)
 
-    ds_out = ds.assign(**{'MODEL': (('x','y'), x),
-                          'DUAL': (('b', 'c'), v)})
+    ds_out = ds.assign(**{'MODEL': (('x','y'), da.from_array(x)),
+                          'DUAL': (('b', 'c'), da.from_array(v))})
 
     return ds_out, vtilde, eps
 

@@ -292,6 +292,6 @@ def pcg_dist(ds, A, **kwargs):
         if np.abs(eps - epsp) < 1e-3*tol:
             stall_count += 1
 
-    ds_out = ds.assign(**{'UPDATE': (('x','y'), x)})
+    ds_out = ds.assign(**{'UPDATE': (('x','y'), da.from_array(x))})
     print(f'Band={ds.bandid}, iters{k}, eps={eps}', file=log)
     return ds_out
