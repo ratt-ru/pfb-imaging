@@ -98,8 +98,8 @@ def set_client(opts, stack, log, scheduler='distributed'):
             cluster = stack.enter_context(cluster)
             client = stack.enter_context(Client(cluster))
 
-        # from pfb.scheduling import install_plugin
-        # client.run_on_scheduler(install_plugin)
+        from pfb.scheduling import install_plugin
+        client.run_on_scheduler(install_plugin)
         client.wait_for_workers(opts.nworkers)
     elif scheduler in ['sync', 'single-threaded']:
         import dask
