@@ -74,11 +74,16 @@ def _spotless(**kw):
     from operator import getitem
     from pfb.wavelets.wavelets import wavelet_setup
 
-    dds = xds_from_zarr(opts.dds, chunks={'row':-1, 'chan':-1})
-    basename = f'{opts.dds.rstrip(".dds.zarr")}'
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    dds_name = f'{basename}{opts.postfix}.dds.zarr'
 
     client = get_client()
     names = [w['name'] for w in client.scheduler_info()['workers'].values()]
+
+    dds = xds_from_zarr(dds_name, chunks={'row':-1,
+                                          'chan':-1})
+    if opts.memory_greedy:
+        dds = dask.persist(dds)
 
     # dds = client.persist(client)
     ddsf = client.scatter(dds)
@@ -216,7 +221,7 @@ def _spotless(**kw):
         modelp = client.map(lambda ds: ds.MODEL.values, ddsf)
         ddsf = primal_dual(ddsf, Afs,
                            psi, psiH,
-                           opts.rmsfactor*rms, #opts.sigma21,
+                           opts.rmsfactor*rms,
                            hessnorm,
                            wsum,
                            l1weight,

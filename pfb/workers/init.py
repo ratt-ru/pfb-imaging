@@ -100,13 +100,15 @@ def _init(**kw):
     from pfb.utils.misc import compute_context, chunkify_rows
     import xarray as xr
 
-    xdsstore = DaskMSStore(f'{opts.output_filename}.xds.zarr')
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
+
+    xdsstore = DaskMSStore(f'{basename}.xds.zarr')
     if xdsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {opts.output_filename}.xds.zarr", file=log)
+            print(f"Overwriting {basename}.xds.zarr", file=log)
             xdsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{opts.output_filename}.xds.zarr exists. "
+            raise ValueError(f"{basename}.xds.zarr exists. "
                              "Set overwrite to overwrite it. ")
 
     if opts.gain_table is not None:
@@ -262,7 +264,7 @@ def _init(**kw):
         xds_out = out_datasets
 
     if len(out_datasets):
-        writes = xds_to_zarr(xds_out, f'{opts.output_filename}.xds.zarr',
+        writes = xds_to_zarr(xds_out, f'{basename}.xds.zarr',
                              columns='ALL')
     else:
         raise ValueError('No datasets found to write. '
@@ -270,12 +272,12 @@ def _init(**kw):
 
     dask.visualize(writes, color="order", cmap="autumn",
                    node_attr={"penwidth": "4"},
-                   filename=opts.output_filename + '_writes_I_ordered_graph.pdf',
+                   filename=basename + '_writes_I_ordered_graph.pdf',
                    optimize_graph=False)
-    dask.visualize(writes, filename=opts.output_filename +
+    dask.visualize(writes, filename=basename +
                    '_writes_I_graph.pdf', optimize_graph=False)
 
-    with compute_context(opts.scheduler, opts.output_filename+'_init'):
+    with compute_context(opts.scheduler, basename+'_init'):
         dask.compute(writes, optimize_graph=False)
 
     if opts.scheduler=='distributed':

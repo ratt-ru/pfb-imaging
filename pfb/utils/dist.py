@@ -42,7 +42,7 @@ def l1reweight(dds, l1weight, psiH, wsum, pix_per_beam, alpha=2):
         nband += 1
     l2mod /= nband
     rms = np.std(l2res, axis=-1)
-    return alpha/(1 + np.abs(l2mod)/rms[:, None])
+    return alpha/(1 + (l2mod/rms[:, None])**2)
 
 def get_cbeam_area(dds, wsum):
     psf_mfs = np.zeros(dds[0].PSF.shape, dtype=dds[0].PSF.dtype)

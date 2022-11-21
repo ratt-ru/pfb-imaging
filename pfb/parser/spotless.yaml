@@ -5,18 +5,30 @@ inputs:
     - (pfb.parser)pmopts.yml
     - (pfb.parser)cgopts.yml
     - (pfb.parser)dist.yml
-  dds:
-    dtype: str
-    required: true
-    abbreviation: dds
-    info:
-      Path to dataset created by grid worker
   nband:
     dtype: int
     required: true
     abbreviation: nb
     info:
       Number of imaging bands
+  output_filename:
+    dtype: str
+    required: true
+    abbreviation: o
+    info:
+      Basename of output
+  postfix:
+    dtype: str
+    default: ''
+    info:
+      Can be used to specify a custom name for the image space data products
+  product:
+    dtype: str
+    abbreviation: p
+    default: I
+    info:
+      Imaging products to produce. Options are I, Q, U, V.
+      Only single Stokes products are currently supported
   mask:
     dtype: str
     abbreviation: mask
@@ -55,7 +67,7 @@ inputs:
       Thresholding level
   rmsfactor:
     dtype: float
-    default: 1.25
+    default: 3.0
     info:
       By default will threshold by rmsfactor*rms at every iteration
   gamma:
@@ -91,6 +103,11 @@ inputs:
     default: false
     info:
       Output fits cubes
+  memory_greedy:
+    dtype: bool
+    default: false
+    info:
+      Holds data in memory if set
 
 outputs:
   {}

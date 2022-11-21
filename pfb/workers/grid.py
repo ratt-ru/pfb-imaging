@@ -72,11 +72,13 @@ def _grid(**kw):
     from uuid import uuid4
     from daskms.optimisation import inlined_array
 
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
+
     # xds contains vis products, no imaging weights applied
-    xds = xds_from_zarr(opts.xds, chunks={'row': -1, 'chan': -1})
+    xds_name = f'{basename}.xds.zarr'
+    xds = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
     # dds contains image space products including imaging weights and uvw
-    basename = f'{opts.xds.rstrip(".xds.zarr")}_{opts.robustness}'
-    dds_name = f'{basename}.dds.zarr'
+    dds_name = f'{basename}{opts.postfix}.dds.zarr'
 
     real_type = xds[0].WEIGHT.dtype
     if real_type == np.float32:
