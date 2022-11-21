@@ -87,8 +87,8 @@ def spotless(**kw):
                       file=log)
             from dask.distributed import Client, LocalCluster
             print("Initialising client with LocalCluster.", file=log)
-            cluster = LocalCluster(processes=True, n_workers=nworkers,
-                                   threads_per_worker=nthreads_per_worker,
+            cluster = LocalCluster(processes=True, n_workers=opts.nworkers,
+                                   threads_per_worker=opts.nthreads_per_worker,
                                    memory_limit=0)  # str(mem_limit/nworkers)+'GB'
             cluster = stack.enter_context(cluster)
             client = stack.enter_context(Client(cluster))
