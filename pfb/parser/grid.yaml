@@ -23,6 +23,11 @@ inputs:
     info:
       Imaging products to produce. Options are I, Q, U, V.
       Only single Stokes products are currently supported
+  concat:
+    dtype: bool
+    default: True
+    info:
+      Concatenate datasets by row
   overwrite:
     dtype: bool
     default: false

@@ -75,11 +75,6 @@ inputs:
       Default (-1, 0, None) makes an image per scan.
     abbreviation: ipi
     default: -1
-  concat:
-    dtype: bool
-    default: True
-    info:
-      Concatenate datasets by row
   precision:
     dtype: str
     default: double

@@ -76,9 +76,30 @@ def _grid(**kw):
 
     # xds contains vis products, no imaging weights applied
     xds_name = f'{basename}.xds.zarr'
-    xds = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
+    xdsp = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
     # dds contains image space products including imaging weights and uvw
     dds_name = f'{basename}{opts.postfix}.dds.zarr'
+
+    if opts.concat:
+        # this is required because concat will try to mush different
+        # imaging bands together if they are not split upfront
+        print('Concatenating datasets along row dimension', file=log)
+        xds = []
+        for b in range(opts.nband):
+            xdsb = []
+            for ds in xdsp:
+                if ds.bandid == b:
+                    xdsb.append(ds)
+            xds.append(xr.concat(xdsb, dim='row',
+                                 data_vars='minimal',
+                                 coords='minimal').chunk({'row':-1}))
+        try:
+            assert len(xds) == opts.nband
+        except Exception as e:
+            raise RuntimeError('Something went wrong during concatenation.'
+                               'This is probably a bug.')
+    else:
+        xds = xdsp
 
     real_type = xds[0].WEIGHT.dtype
     if real_type == np.float32:
