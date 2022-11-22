@@ -9,6 +9,15 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('SPOTLESS')
 
+from numba import njit
+@njit
+def showtys(iy):
+    print(len(iy), iy)
+    # for n in range(1, len(tys)):
+    #     for k, v in tys[n].items():
+    #         print(k, v)
+    return
+
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
@@ -207,10 +216,14 @@ def _spotless(**kw):
     print("Setting up dictionary", file=log)
     bases = tuple(opts.bases.split(','))
     nbasis = len(bases)
-    iy, sy, ntot, nmax = wavelet_setup(
+    iy, sy, tys, ntot, nmax = wavelet_setup(
                                 np.zeros((1, nx, ny), dtype=real_type),
                                 bases, opts.nlevels)
     ntot = tuple(ntot)
+
+
+    showtys(tys)
+    import pdb; pdb.set_trace()
     # we only want to transfer these once
     psiH = partial(im2coef,
                    bases=bases,
@@ -228,6 +241,7 @@ def _spotless(**kw):
 
     # compile these before sending them to each worker?
     alphatmp = np.zeros((nbasis, nmax), dtype=real_type)
+
     xtmp = psi(alphatmp)
     alphatmp = psiH(xtmp)
 
@@ -317,22 +331,23 @@ def _spotless(**kw):
             print('L1 reweighting', file=log)
             l1weight = client.submit(l1reweight, ddsf, l1weight,
                                      psiH, wsum, pix_per_beam)
-            # import pdb; pdb.set_trace()
+
+
+        # dump results so we can continue from if needs be
+        print('Writing results', file=log)
+        dds = dask.delayed(Idty)(ddsf).compute()  # future to collection
+        writes = xds_to_zarr(dds, dds_name,
+                             columns=('MODEL','DUAL','UPDATE','RESIDUAL'))
+        l1weight = da.from_array(l1weight.result(), chunks='auto')
+        dvars = {}
+        dvars['L1WEIGHT'] = (('b','c'), l1weight)
+        l1ds = xr.Dataset(dvars)
+        l1writes = xds_to_zarr(l1ds, f'{dds_name}::L1WEIGHT')
+        dask.compute(writes, l1writes)
+
 
         if eps < opts.tol:
             break
-
-    # future to collection
-    print('Writing results', file=log)
-    dds = dask.delayed(Idty)(ddsf).compute()
-    writes = xds_to_zarr(dds, dds_name,
-                         columns=('MODEL','DUAL','UPDATE','RESIDUAL'))
-    l1weight = da.from_array(l1weight.result(), chunks='auto')
-    dvars = {}
-    dvars['L1WEIGHT'] = (('b','c'), l1weight)
-    l1ds = xr.Dataset(dvars)
-    l1writes = xds_to_zarr(l1ds, f'{dds_name}::L1WEIGHT')
-    dask.compute(writes, l1writes)
 
     if opts.fits_mfs or opts.fits_cubes:
         print("Writing fits files", file=log)
