@@ -130,7 +130,7 @@ def _spotless(**kw):
                                 get_eps, l1reweight, get_cbeam_area)
     from pfb.operators.psf import _hessian_reg_psf_slice
     from pfb.operators.psi import im2coef_dist as im2coef
-    from pfb.operators.psi import coef2im_dist as coef2im
+    from pfb.operators.psi import coef2im_wrapper as coef2im
     from pfb.prox.prox_21m import prox_21m
     from pfb.prox.prox_21 import prox_21
     from pfb.wavelets.wavelets import wavelet_setup
@@ -187,7 +187,7 @@ def _spotless(**kw):
         freq_out[b] = ds.freq_out
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
 
-    # assumed to stay the same
+    # assumed constant
     wsum = client.submit(accum_wsums, ddsf).result()
     pix_per_beam = client.submit(get_cbeam_area, ddsf, wsum).result()
 
@@ -216,36 +216,28 @@ def _spotless(**kw):
     print("Setting up dictionary", file=log)
     bases = tuple(opts.bases.split(','))
     nbasis = len(bases)
-    iy, sy, tys, ntot, nmax = wavelet_setup(
+    iy, sy, ntot, nmax = wavelet_setup(
                                 np.zeros((1, nx, ny), dtype=real_type),
                                 bases, opts.nlevels)
     ntot = tuple(ntot)
 
 
-    showtys(tys)
+    psiHf = client.map(partial, [im2coef]*len(ddsf),
+                       bases=bases,
+                       ntot=ntot,
+                       nmax=nmax,
+                       nlevels=opts.nlevels)
+    # avoids pickling on dumba Dict
+    psif = client.map(partial, [coef2im]*len(ddsf),
+                      bases=bases,
+                      ntot=ntot,
+                      iy=dict(iy),
+                      sy=dict(sy),
+                      nx=nx,
+                      ny=ny)
+
     import pdb; pdb.set_trace()
-    # we only want to transfer these once
-    psiH = partial(im2coef,
-                   bases=bases,
-                   ntot=ntot,
-                   nmax=nmax,
-                   nlevels=opts.nlevels)
 
-    psi = partial(coef2im,
-                  bases=bases,
-                  ntot=ntot,
-                  iy=None,  #iy,
-                  sy=None,  #sy,
-                  nx=nx,
-                  ny=ny)
-
-    # compile these before sending them to each worker?
-    alphatmp = np.zeros((nbasis, nmax), dtype=real_type)
-
-    xtmp = psi(alphatmp)
-    alphatmp = psiH(xtmp)
-
-    del xtmp, alphatmp
 
     # initialise for backward step
     ddsf = client.map(init_dual_and_model, ddsf,
@@ -301,6 +293,7 @@ def _spotless(**kw):
                            hessnorm,
                            wsum,
                            l1weight,
+                           nu=len(bases),
                            tol=opts.pd_tol,
                            maxit=opts.pd_maxit,
                            positivity=opts.positivity,
@@ -337,7 +330,8 @@ def _spotless(**kw):
         print('Writing results', file=log)
         dds = dask.delayed(Idty)(ddsf).compute()  # future to collection
         writes = xds_to_zarr(dds, dds_name,
-                             columns=('MODEL','DUAL','UPDATE','RESIDUAL'))
+                             columns=('MODEL','DUAL','UPDATE','RESIDUAL'),
+                             rechunk=True)
         l1weight = da.from_array(l1weight.result(), chunks='auto')
         dvars = {}
         dvars['L1WEIGHT'] = (('b','c'), l1weight)

@@ -151,3 +151,12 @@ def coef2im_dist(alpha, bases, ntot, iy, sy, nx, ny):
 
         x[b] = wave
     return np.sum(x, axis=0)
+
+def coef2im_wrapper(alpha, bases, ntot, iy, sy, nx, ny):
+    iy2 = Dict()
+    for key, val in iy.items():
+        iy2[key] = val
+    sy2 = Dict()
+    for key, val in sy.items():
+        sy2[key] = val
+    return coef2im_dist(alpha, bases, ntot, iy2, sy2, nx, ny)

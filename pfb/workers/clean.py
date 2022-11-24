@@ -60,8 +60,8 @@ def _clean(**kw):
     import dask
     import dask.array as da
     from dask.distributed import performance_report
-    from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
-    from pfb.utils.misc import setup_image_data
+    from pfb.utils.fits import set_wcs, save_fits, dds2fits, dds2fits_mfs
+    from pfb.utils.misc import dds2cubes
     from pfb.deconv.hogbom import hogbom
     from pfb.deconv.clark import clark
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
@@ -75,28 +75,20 @@ def _clean(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     dds_name = f'{basename}{opts.postfix}.dds.zarr'
-    mds_name = f'{basename}{opts.postfix}.mds.zarr'
-
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
                                           'chan':-1})
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    nband = mds.nband
-    nx = mds.nx
-    ny = mds.ny
-    for ds in dds:
-        assert ds.nx == nx
-        assert ds.ny == ny
 
     nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
 
     # stitch dirty/psf in apparent scale
     output_type = dds[0].DIRTY.dtype
-    dirty, residual, wsum, psf, psfhat, _ = setup_image_data(dds,
-                                                             opts,
-                                                             apparent=True,
-                                                             log=log)
+    dirty, model, residual, wsum, psf, psfhat, _ = dds2cubes(
+                                                            dds,
+                                                            opts,
+                                                            apparent=True,
+                                                            log=log)
     psf_mfs = np.sum(psf, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
     dirty_mfs = np.sum(dirty, axis=0)
@@ -105,18 +97,19 @@ def _clean(**kw):
         residual_mfs = dirty_mfs.copy()
     else:
         residual_mfs = np.sum(residual, axis=0)
-    try:
-        model = getattr(mds, opts.model_name).values
-    except Exception as e:
-        raise e
 
     # for intermediary results (not currently written)
+    freq_out = []
+    for ds in dds:
+        freq_out.append(ds.freq_out)
+    freq_out = np.unique(np.array(freq_out))
+    nx = dds[0].nx
+    ny = dds[0].ny
     ra = dds[0].ra
     dec = dds[0].dec
     radec = [ra, dec]
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
-    freq_out = mds.freq.data
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
@@ -184,6 +177,7 @@ def _clean(**kw):
         threshold = opts.threshold
 
     print("Iter %i: peak residual = %f, rms = %f" % (0, rmax, rms), file=log)
+    import pdb; pdb.set_trace()
     for k in range(opts.nmiter):
         if opts.algo.lower() == 'clark':
             print("Running Clark", file=log)
@@ -275,56 +269,40 @@ def _clean(**kw):
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
               file=log)
 
+        print("Updating results", file=log)
+        dds_out = []
+        for ds in dds:
+            b = ds.bandid
+            wsum = ds.WSUM.values[0]
+            r = da.from_array(residual[b]*wsum)
+            m = da.from_array(model[b])
+            ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
+                                  'MODEL': (('x', 'y'), m)})
+            dds_out.append(ds_out)
+        writes = xds_to_zarr(dds_out, dds_name,
+                             columns=('RESIDUAL', 'MODEL'), rechunk=True)
+        dask.compute(writes)
 
         if rmax <= threshold:
             print("Terminating because final threshold has been reached",
                   file=log)
             break
 
-    print("Saving results", file=log)
-    if opts.update_mask:
-        mask = np.any(model > rms, axis=0)
-        if opts.dirosion:
-            struct = ndimage.generate_binary_structure(2, opts.dirosion)
-            mask = ndimage.binary_dilation(mask, structure=struct)
-            mask = ndimage.binary_erosion(mask, structure=struct)
-        if 'MASK' in mds:
-            mask = np.logical_or(mask, mds.MASK.values)
-        mds = mds.assign(**{
-                'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
-        })
+    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
 
+    # convert to fits files
+    fitsout = []
+    if opts.fits_mfs:
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
 
-    model = da.from_array(model, chunks=(1, -1, -1))
-    mds = mds.assign(**{
-            'CLEAN_MODEL': (('band', 'x', 'y'), model)
-    })
+    if opts.fits_cubes:
+        fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
 
-    dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
-
-    if opts.fits_mfs or opts.fits_cubes:
-        print("Writing fits files", file=log)
-        # construct a header from xds attrs
-        ra = dds[0].ra
-        dec = dds[0].dec
-        radec = [ra, dec]
-        cell_rad = dds[0].cell_rad
-        cell_deg = np.rad2deg(cell_rad)
-        freq_out = mds.freq.data
-        ref_freq = np.mean(freq_out)
-        hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-
-        model_mfs = np.mean(model, axis=0)
-
-        save_fits(f'{basename}_clean_model_mfs.fits', model_mfs, hdr_mfs)
-        save_fits(f'{basename}_clean_residual_mfs.fits',
-                    residual_mfs, hdr_mfs)
-
-        if opts.fits_cubes:
-            # need residual in Jy/beam
-            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
-            save_fits(f'{basename}_clean_model.fits', model, hdr)
-            save_fits(f'{basename}_clean_residual.fits', residual, hdr)
+    if len(fitsout):
+        print("Writing fits", file=log)
+        dask.compute(fitsout)
 
     if opts.scheduler=='distributed':
         from distributed import get_client

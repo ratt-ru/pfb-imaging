@@ -820,13 +820,15 @@ def coerce_literal(func, literals):
     return
 
 
-def setup_image_data(dds, opts, apparent=False, log=None):
+def dds2cubes(dds, opts, apparent=False, log=None):
     nband = opts.nband
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
     nx, ny = dds[0].DIRTY.shape
     dirty = [da.zeros((nx, ny), chunks=(-1, -1),
-                         dtype=real_type) for _ in range(nband)]
+                      dtype=real_type) for _ in range(nband)]
+    model = [da.zeros((nx, ny), chunks=(-1, -1),
+                      dtype=real_type) for _ in range(nband)]
     if opts.residual_name in dds[0]:
         residual = [da.zeros((nx, ny), chunks=(-1, -1),
                             dtype=real_type) for _ in range(nband)]
@@ -858,11 +860,14 @@ def setup_image_data(dds, opts, apparent=False, log=None):
         if 'PSF' in ds:
             psf[b] += ds.PSF.data
             psfhat[b] += ds.PSFHAT.data
+        if 'MODEL' in ds:
+            model[b] = ds.MODEL.data
         mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
         wsums[b] += ds.WSUM.data[0]
     wsums = da.stack(wsums).squeeze()
     wsum = wsums.sum()
     dirty = da.stack(dirty)/wsum
+    model = da.stack(model)
     if opts.residual_name in ds:
         residual = da.stack(residual)/wsum
     if 'PSF' in ds:
@@ -871,13 +876,16 @@ def setup_image_data(dds, opts, apparent=False, log=None):
     for b in range(nband):
         if wsums[b]:
             mean_beam[b] /= wsums[b]
-    dirty, residual, psf, psfhat, mean_beam, wsum = dask.compute(dirty,
-                                                                 residual,
-                                                                 psf,
-                                                                 psfhat,
-                                                                 mean_beam,
-                                                                 wsum)
-    return dirty, residual, wsum, psf, psfhat, mean_beam
+
+    dirty, model, residual, psf, psfhat, mean_beam, wsum = dask.compute(
+                                                                dirty,
+                                                                model,
+                                                                residual,
+                                                                psf,
+                                                                psfhat,
+                                                                mean_beam,
+                                                                wsum)
+    return dirty, model, residual, wsum, psf, psfhat, mean_beam
 
 
 def interp_gain_grid(gdct, ant_names):

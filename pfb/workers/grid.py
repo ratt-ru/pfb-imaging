@@ -61,7 +61,7 @@ def _grid(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.fits import set_wcs, save_fits
+    from pfb.utils.fits import dds2fits, dds2fits_mfs
     from pfb.utils.misc import compute_context
     from pfb.operators.gridder import vis2im
     from pfb.operators.fft import fft2d
@@ -87,12 +87,22 @@ def _grid(**kw):
         xds = []
         for b in range(opts.nband):
             xdsb = []
+            times = []
+            timeids = []
             for ds in xdsp:
                 if ds.bandid == b:
                     xdsb.append(ds)
-            xds.append(xr.concat(xdsb, dim='row',
-                                 data_vars='minimal',
-                                 coords='minimal').chunk({'row':-1}))
+                    times.append(ds.time_out)
+                    timeids.append(ds.timeid)
+            xdso = xr.concat(xdsb, dim='row',
+                             data_vars='minimal',
+                             coords='minimal').chunk({'row':-1})
+            tid = np.array(timeids).min()
+            tout = np.mean(np.array(times))
+            xdso.assign_attrs(
+                {'time_out': tout, 'timeid': tid}
+            )
+            xds.append(xdso)
         try:
             assert len(xds) == opts.nband
         except Exception as e:
@@ -260,10 +270,7 @@ def _grid(**kw):
     else:
         has_model = False
 
-    writes = []
-    freq_out = []
-    wsums = [da.zeros(1, chunks=(1),
-                      name="zeros-"+uuid4().hex) for _ in range(nband)]
+    dds_out = []
     for i, ds in enumerate(xds):
         uvw = ds.UVW.data
         freq = ds.FREQ.data
@@ -364,18 +371,17 @@ def _grid(**kw):
             'dec': xds[0].dec,
             'cell_rad': cell_rad,
             'bandid': ds.bandid,
-            'scanid': ds.scanid,
+            'timeid': ds.timeid,
             'freq_out': ds.freq_out,
+            'time_out': ds.time_out,
             'robustness': opts.robustness
         }
 
         out_ds = xr.Dataset(dvars, attrs=attrs).chunk({'row':100000,
                                                        'chan':128})
-        writes.append(out_ds.unify_chunks())
-        freq_out.append(ds.freq_out)
-        wsums[ds.bandid] += wsum
+        dds_out.append(out_ds.unify_chunks())
 
-    writes = xds_to_zarr(writes, dds_name, columns='ALL')
+    writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
 
     # dask.visualize(writes, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
@@ -386,116 +392,33 @@ def _grid(**kw):
 
     print("Computing image space data products", file=log)
     with compute_context(opts.scheduler, basename+'_grid'):
-        wsums = dask.compute(writes, wsums)[1]
+        dask.compute(writes)
+
+    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
 
     # convert to fits files
-    if opts.fits_mfs or opts.fits_cubes:
-        freq_out = np.unique(np.stack(freq_out))
-        wsums = np.stack(wsums).squeeze()
-        xds = xds_from_zarr(dds_name)
-        radec = (xds[0].ra, xds[0].dec)
+    fitsout = []
+    if opts.fits_mfs:
         if opts.dirty:
-            print("Saving dirty as fits", file=log)
-            dirty = np.zeros((nband, nx, ny), dtype=np.float32)
-            wsums = np.zeros(nband, dtype=np.float32)
-
-            hdr = set_wcs(cell_size / 3600, cell_size / 3600,
-                          nx, ny, radec, freq_out)
-            hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600,
-                              nx, ny, radec, np.mean(freq_out))
-
-            for ds in xds:
-                b = ds.bandid
-                dirty[b] += ds.DIRTY.values
-                wsums[b] += ds.WSUM.values
-
-            for b, w in enumerate(wsums):
-                hdr[f'WSUM{b}'] = w
-            wsum = np.sum(wsums)
-            hdr_mfs[f'WSUM'] = wsum
-
-            dirty_mfs = np.sum(dirty, axis=0, keepdims=True)/wsum
-
-            if opts.fits_mfs:
-                save_fits(f'{basename}_dirty_mfs.fits',
-                          dirty_mfs, hdr_mfs, dtype=np.float32)
-
-            if opts.fits_cubes:
-                fmask = wsums > 0
-                dirty[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}_dirty.fits', dirty, hdr,
-                        dtype=np.float32)
-
-        if has_model:
-            print("Saving residual as fits", file=log)
-            residual = np.zeros((nband, nx, ny), dtype=np.float32)
-            model = np.zeros((nband, nx, ny), dtype=np.float32)
-            wsums = np.zeros(nband, dtype=np.float32)
-
-            hdr = set_wcs(cell_size / 3600, cell_size / 3600,
-                          nx, ny, radec, freq_out)
-            hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600,
-                              nx, ny, radec, np.mean(freq_out))
-
-            for ds in xds:
-                b = ds.bandid
-                residual[b] += ds.RESIDUAL.values
-                wsums[b] += ds.WSUM.values
-                model[b] += ds.MODEL.values
-
-            for b, w in enumerate(wsums):
-                hdr[f'WSUM{b}'] = w
-            wsum = np.sum(wsums)
-            hdr_mfs[f'WSUM'] = wsum
-
-            residual_mfs = np.sum(residual, axis=0, keepdims=True)/wsum
-            model_mfs = np.mean(model, axis=0)
-
-            if opts.fits_mfs:
-                save_fits(f'{basename}_residual_mfs.fits',
-                          residual_mfs, hdr_mfs, dtype=np.float32)
-                save_fits(f'{basename}_model_mfs.fits',
-                          model_mfs, hdr_mfs, dtype=np.float32)
-
-            if opts.fits_cubes:
-                fmask = wsums > 0
-                residual[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}_residual.fits', residual,
-                          hdr, dtype=np.float32)
-                save_fits(f'{basename}_model.fits', model,
-                          hdr, dtype=np.float32)
-
+            fitsout.append(dds2fits_mfs(dds, 'DIRTY', basename, norm_wsum=True))
         if opts.psf:
-            print("Saving PSF as fits", file=log)
-            psf = np.zeros((nband, nx_psf, ny_psf), dtype=np.float32)
-            wsums = np.zeros(nband, dtype=np.float32)
+            fitsout.append(dds2fits_mfs(dds, 'PSF', basename, norm_wsum=True))
+        if has_model:
+            fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
+            fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
 
-            hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf,
-                              ny_psf, radec, freq_out)
-            hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf,
-                                  ny_psf, radec, np.mean(freq_out))
+    if opts.fits_cubes:
+        if opts.dirty:
+            fitsout.append(dds2fits(dds, 'DIRTY', basename, norm_wsum=True))
+        if opts.psf:
+            fitsout.append(dds2fits(dds, 'PSF', basename, norm_wsum=True))
+        if has_model:
+            fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
+            fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
 
-            for ds in xds:
-                b = ds.bandid
-                psf[b] += ds.PSF.values
-                wsums[b] += ds.WSUM.values
-
-            for b, w in enumerate(wsums):
-                hdr_psf[f'WSUM{b}'] = w
-            wsum = np.sum(wsums)
-            hdr_psf_mfs[f'WSUM'] = wsum
-
-            psf_mfs = np.sum(psf, axis=0, keepdims=True)/wsum
-
-            if opts.fits_mfs:
-                save_fits(f'{basename}_psf_mfs.fits', psf_mfs,
-                          hdr_psf_mfs, dtype=np.float32)
-
-            if opts.fits_cubes:
-                fmask = wsums > 0
-                psf[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}_psf.fits', psf, hdr_psf,
-                        dtype=np.float32)
+    if len(fitsout):
+        print("Writing fits", file=log)
+        dask.compute(fitsout)
 
     if opts.scheduler=='distributed':
         from distributed import get_client
