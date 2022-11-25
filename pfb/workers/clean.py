@@ -85,11 +85,12 @@ def _clean(**kw):
 
     # stitch dirty/psf in apparent scale
     output_type = dds[0].DIRTY.dtype
-    dirty, model, residual, wsum, psf, psfhat, _, wsum = dds2cubes(
+    dirty, model, residual, psf, psfhat, _, wsums = dds2cubes(
                                                             dds,
                                                             opts,
                                                             apparent=True,
                                                             log=log)
+    wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
     dirty_mfs = np.sum(dirty, axis=0)

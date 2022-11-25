@@ -710,7 +710,7 @@ def fitcleanbeam(psf: np.ndarray,
     for v in range(nband):
         # make sure psf is normalised
         psfv = psf[v] / psf[v].max()
-        # find regions where psf is non-zero
+        # find regions where psf is above level
         mask = np.where(psfv > level, 1.0, 0)
 
         # label all islands and find center
@@ -877,15 +877,15 @@ def dds2cubes(dds, opts, apparent=False, log=None):
         if wsums[b]:
             mean_beam[b] /= wsums[b]
 
-    dirty, model, residual, psf, psfhat, mean_beam, wsum = dask.compute(
+    dirty, model, residual, psf, psfhat, mean_beam, wsums = dask.compute(
                                                                 dirty,
                                                                 model,
                                                                 residual,
                                                                 psf,
                                                                 psfhat,
                                                                 mean_beam,
-                                                                wsum)
-    return dirty, model, residual, wsum, psf, psfhat, mean_beam, wsum
+                                                                wsums)
+    return dirty, model, residual, psf, psfhat, mean_beam, wsums
 
 
 def interp_gain_grid(gdct, ant_names):
