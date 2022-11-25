@@ -39,8 +39,7 @@ inputs:
     dtype: str
     abbreviation: mask
     info:
-      Either path to mask.fits or set to mds
-      to use the mask contained in the mds
+      Path to mask.fits
   algo:
     dtype: str
     default: clark
@@ -49,11 +48,6 @@ inputs:
       - clark
     info:
       Which minor cycle to use
-  update_mask:
-    dtype: bool
-    default: false
-    info:
-      Will create a mask from clean components and write it to the mds
   dirosion:
     dtype: int
     default: 1
@@ -69,11 +63,6 @@ inputs:
     default: false
     info:
       Output fits cubes
-  do_residual:
-    dtype: bool
-    default: false
-    info:
-      Make final residual
   mop_flux:
     dtype: bool
     default: true

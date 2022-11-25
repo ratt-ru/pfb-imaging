@@ -219,9 +219,7 @@ def test_clean(do_gains, algo, tmp_path_factory):
     clean_args["output_filename"] = outname
     clean_args["postfix"] = postfix
     clean_args["nband"] = nchan
-    clean_args["mask"] = 'mds'
     clean_args["algo"] = algo
-    clean_args["update_mask"] = False
     clean_args["dirosion"] = 0
     clean_args["do_residual"] = False
     clean_args["nmiter"] = 100
@@ -235,7 +233,7 @@ def test_clean(do_gains, algo, tmp_path_factory):
     clean_args["scheduler"] = 'sync'
     clean_args["wstack"] = True
     clean_args["epsilon"] = epsilon
-    clean_args["mop_flux"] = False
+    clean_args["mop_flux"] = True
     clean_args["fits_mfs"] = False
     from pfb.workers.clean import _clean
     _clean(**clean_args)

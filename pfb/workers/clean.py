@@ -60,7 +60,8 @@ def _clean(**kw):
     import dask
     import dask.array as da
     from dask.distributed import performance_report
-    from pfb.utils.fits import set_wcs, save_fits, dds2fits, dds2fits_mfs
+    from pfb.utils.fits import (set_wcs, save_fits, dds2fits,
+                                dds2fits_mfs, load_fits)
     from pfb.utils.misc import dds2cubes
     from pfb.deconv.hogbom import hogbom
     from pfb.deconv.clark import clark
@@ -113,6 +114,16 @@ def _clean(**kw):
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
+    # TODO - check coordinates match
+    # Add option to interp onto coordinates?
+    if opts.mask is not None:
+        mask = load_fits(mask, dtype=output_type).squeeze()
+        assert mask.shape == (nx, ny)
+        mask = mask.astype(output_type)
+        print('Using provided fits mask', file=log)
+    else:
+        mask = np.ones((nx, ny), dtype=output_type)
+
     # set up vis space Hessian
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
@@ -121,8 +132,10 @@ def _clean(**kw):
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads
     # always clean in apparent scale so no beam
+    # mask is applied to residual after hessian application
     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
-                   wsum=wsum, sigmainv=0, mask=np.ones_like(dirty_mfs),
+                   wsum=wsum, sigmainv=0,
+                   mask=np.ones((nx, ny), dtype=output_type),
                    compute=True, use_beam=False)
 
     # set up image space Hessian
@@ -152,7 +165,7 @@ def _clean(**kw):
     hess2opts['sigmainv'] = 1e-8
 
     padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
-    psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
+    psfo = partial(_hessian_reg_psf, beam=mask[None, :, :], psfhat=psfhat,
                     nthreads=opts.nthreads, sigmainv=0,
                     padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
                     lastsize = lastsize)
@@ -182,16 +195,16 @@ def _clean(**kw):
             print("Running Clark", file=log)
             # import cProfile
             # with cProfile.Profile() as pr:
-            x, status = clark(residual, psf, psfo,
-                            threshold=threshold,
-                            gamma=opts.gamma,
-                            pf=opts.peak_factor,
-                            maxit=opts.clark_maxit,
-                            subpf=opts.sub_peak_factor,
-                            submaxit=opts.sub_maxit,
-                            verbosity=opts.verbose,
-                            report_freq=opts.report_freq,
-                            sigmathreshold=opts.sigmathreshold)
+            x, status = clark(mask*residual, psf, psfo,
+                              threshold=threshold,
+                              gamma=opts.gamma,
+                              pf=opts.peak_factor,
+                              maxit=opts.clark_maxit,
+                              subpf=opts.sub_peak_factor,
+                              submaxit=opts.sub_maxit,
+                              verbosity=opts.verbose,
+                              report_freq=opts.report_freq,
+                              sigmathreshold=opts.sigmathreshold)
             # pr.print_stats(sort='cumtime')
             # quit()
 
@@ -216,6 +229,7 @@ def _clean(**kw):
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
 
+        # report rms where there aren;t any model components
         tmp_mask = ~np.any(model, axis=0)
         rms = np.std(residual_mfs[tmp_mask])
         rmax = np.abs(residual_mfs).max()
@@ -225,22 +239,22 @@ def _clean(**kw):
         else:
             threshold = opts.threshold
 
-        # do flux mop if clean has stalled, not converged or
+        # trigger flux mop if clean has stalled, not converged or
         # we have reached the final iteration/threshold
         status |= k == opts.nmiter-1
         status |= rmax <= threshold
         if opts.mop_flux and status:
             print(f"Mopping flux at iter {k+1}", file=log)
-            mask = np.any(model, axis=0)
+            mopmask = np.any(model, axis=0)
             if opts.dirosion:
                 struct = ndimage.generate_binary_structure(2, opts.dirosion)
-                mask = ndimage.binary_dilation(mask, structure=struct)
-                mask = ndimage.binary_erosion(mask, structure=struct)
+                mopmask = ndimage.binary_dilation(mopmask, structure=struct)
+                mopmask = ndimage.binary_erosion(mopmask, structure=struct)
             # hess2opts['sigmainv'] = 1e-8
             x0 = np.zeros_like(x)
-            x0[:, mask] = residual_mfs[mask]
-            mask = mask[None, :, :].astype(residual.dtype)
-            x = pcg_psf(psfhat, mask*residual, x0,
+            x0[:, mopmask] = residual_mfs[mopmask]
+            mopmask = mopmask[None, :, :].astype(residual.dtype)
+            x = pcg_psf(psfhat, mopmask*residual, x0,
                         mask, hess2opts, cgopts)
 
             model += x
