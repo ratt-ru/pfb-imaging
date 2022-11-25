@@ -130,7 +130,7 @@ def _spotless(**kw):
                                 get_eps, l1reweight, get_cbeam_area)
     from pfb.operators.psf import _hessian_reg_psf_slice
     from pfb.operators.psi import im2coef_dist as im2coef
-    from pfb.operators.psi import coef2im_wrapper as coef2im
+    from pfb.operators.psi import coef2im_dist as coef2im
     from pfb.prox.prox_21m import prox_21m
     from pfb.prox.prox_21 import prox_21
     from pfb.wavelets.wavelets import wavelet_setup
@@ -138,6 +138,7 @@ def _spotless(**kw):
     from copy import deepcopy
     from operator import getitem
     from pfb.wavelets.wavelets import wavelet_setup
+    from itertools import cycle
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}{opts.postfix}.dds.zarr'
@@ -148,10 +149,12 @@ def _spotless(**kw):
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
                                           'chan':-1})
     if opts.memory_greedy:
-        dds = dask.persist(dds)
+        # note the set here
+        ddsf = [ds.persist(workers={names[i]})
+                for ds, i in zip(dds, cycle(range(opts.nworkers)))]
+    else:
+        ddsf = client.scatter(dds)
 
-    # dds = client.persist(client)
-    ddsf = client.scatter(dds)
     # names={}
     # for ds in ddsf:
     #     b = ds.result().bandid
@@ -222,21 +225,19 @@ def _spotless(**kw):
     ntot = tuple(ntot)
 
 
-    psiHf = client.map(partial, [im2coef]*len(ddsf),
-                       bases=bases,
-                       ntot=ntot,
-                       nmax=nmax,
-                       nlevels=opts.nlevels)
+    psiH = partial(im2coef,
+                    bases=bases,
+                    ntot=ntot,
+                    nmax=nmax,
+                    nlevels=opts.nlevels)
     # avoids pickling on dumba Dict
-    psif = client.map(partial, [coef2im]*len(ddsf),
-                      bases=bases,
-                      ntot=ntot,
-                      iy=dict(iy),
-                      sy=dict(sy),
-                      nx=nx,
-                      ny=ny)
-
-    import pdb; pdb.set_trace()
+    psi = partial(coef2im,
+                    bases=bases,
+                    ntot=ntot,
+                    iy=None,  #dict(iy),
+                    sy=None,  #dict(sy),
+                    nx=nx,
+                    ny=ny)
 
 
     # initialise for backward step
@@ -250,13 +251,14 @@ def _spotless(**kw):
     try:
         l1ds = xds_from_zarr(f'{dds_name}::L1WEIGHT', chunks={'b':-1,'c':-1})
         if 'L1WEIGHT' in l1ds:
-            l1weight = client.submit(lambda ds: ds[0].L1WEIGHT.values, l1ds, workers=[names[0]])
+            l1weight = client.submit(lambda ds: ds[0].L1WEIGHT.values, l1ds,
+                                     workers={names[0]})
         else:
             raise
     except Exception as e:
         print(f'Did not find l1weights at {dds_name}/L1WEIGHT. '
               'Initialising to unity', file=log)
-        l1weight = client.submit(np.ones, (nbasis, nmax), workers=[names[0]])
+        l1weight = client.submit(np.ones, (nbasis, nmax), workers={names[0]})
 
     if opts.hessnorm is None:
         print('Getting spectral norm of Hessian approximation', file=log)
@@ -266,7 +268,8 @@ def _spotless(**kw):
     print(f'hessnorm = {hessnorm:.3e}', file=log)
 
     # future contains mfs residual and stats
-    residf = client.submit(get_resid_and_stats, ddsf, wsum)
+    residf = client.submit(get_resid_and_stats, ddsf, wsum,
+                           workers={0})
     residual_mfs = client.submit(getitem, residf, 0)
     rms = client.submit(getitem, residf, 1).result()
     rmax = client.submit(getitem, residf, 2).result()
@@ -327,7 +330,7 @@ def _spotless(**kw):
 
 
         # dump results so we can continue from if needs be
-        print('Writing results', file=log)
+        print('Updating results', file=log)
         dds = dask.delayed(Idty)(ddsf).compute()  # future to collection
         writes = xds_to_zarr(dds, dds_name,
                              columns=('MODEL','DUAL','UPDATE','RESIDUAL'),
