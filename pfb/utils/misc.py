@@ -885,7 +885,7 @@ def dds2cubes(dds, opts, apparent=False, log=None):
                                                                 psfhat,
                                                                 mean_beam,
                                                                 wsum)
-    return dirty, model, residual, wsum, psf, psfhat, mean_beam
+    return dirty, model, residual, wsum, psf, psfhat, mean_beam, wsum
 
 
 def interp_gain_grid(gdct, ant_names):

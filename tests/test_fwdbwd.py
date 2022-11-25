@@ -267,8 +267,13 @@ def test_fwdbwd(beam_model, do_gains, tmp_path_factory):
     _fwdbwd(**fwdbwd_args)
 
     # get inferred model
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    model_inferred = mds.MODEL.values
+    basename = f'{outname}_I'
+    dds_name = f'{basename}{postfix}.dds.zarr'
+    dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
+    model_inferred = np.zeros((nchan, nx, ny))
+    for ds in dds:
+        b = ds.bandid
+        model_inferred[b] = ds.MODEL.values
 
     # we do not expect a perfect match after a handful of iterations
     # hence larger tolerance of 5e-6

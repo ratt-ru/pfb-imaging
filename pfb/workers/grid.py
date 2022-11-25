@@ -394,24 +394,6 @@ def _grid(**kw):
     with compute_context(opts.scheduler, basename+'_grid'):
         dask.compute(writes)
 
-    freq_out = np.unique(np.array(freq_out))
-    wsums = np.concatenate(wsums)
-
-    print("Initialising model ds", file=log)
-    attrs = {'nband': nband,
-            'nx': nx,
-            'ny': ny,
-            'ra': xds[0].ra,
-            'dec': xds[0].dec,
-            'cell_rad': cell_rad}
-    coords = {'freq': freq_out}
-    real_type = np.float64 if opts.precision=='double' else np.float32
-    mask = model.any(axis=0)
-    data_vars = {'MODEL': (('band', 'x', 'y'), model),
-                'MASK': (('x', 'y'), mask),
-                'WSUM': (('band',), da.from_array(wsums, chunks=1))}
-    mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
-    dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
     dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
 
     # convert to fits files

@@ -80,7 +80,7 @@ def test_clean(do_gains, algo, tmp_path_factory):
         model[:, Ix[i], Iy[i]] = I0[i] * (freq/freq0) ** alpha[i]
 
     # model vis
-    epsilon = 1e-7  # tests take too long if smaller
+    epsilon = 1e-7
     from ducc0.wgridder import dirty2ms
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
@@ -242,9 +242,12 @@ def test_clean(do_gains, algo, tmp_path_factory):
 
     # get inferred model
     basename = f'{outname}_I'
-    mds_name = f'{basename}{postfix}.mds.zarr'
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    model_inferred = mds.CLEAN_MODEL.values
+    dds_name = f'{basename}{postfix}.dds.zarr'
+    dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
+    model_inferred = np.zeros((nchan, nx, ny))
+    for ds in dds:
+        b = ds.bandid
+        model_inferred[b] = ds.MODEL.values
 
     for i in range(nsource):
         assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -

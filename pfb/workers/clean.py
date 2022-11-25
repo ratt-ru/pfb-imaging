@@ -84,7 +84,7 @@ def _clean(**kw):
 
     # stitch dirty/psf in apparent scale
     output_type = dds[0].DIRTY.dtype
-    dirty, model, residual, wsum, psf, psfhat, _ = dds2cubes(
+    dirty, model, residual, wsum, psf, psfhat, _, wsum = dds2cubes(
                                                             dds,
                                                             opts,
                                                             apparent=True,
@@ -177,7 +177,6 @@ def _clean(**kw):
         threshold = opts.threshold
 
     print("Iter %i: peak residual = %f, rms = %f" % (0, rmax, rms), file=log)
-    import pdb; pdb.set_trace()
     for k in range(opts.nmiter):
         if opts.algo.lower() == 'clark':
             print("Running Clark", file=log)
@@ -273,7 +272,6 @@ def _clean(**kw):
         dds_out = []
         for ds in dds:
             b = ds.bandid
-            wsum = ds.WSUM.values[0]
             r = da.from_array(residual[b]*wsum)
             m = da.from_array(model[b])
             ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
