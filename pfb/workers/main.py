@@ -7,5 +7,4 @@ def cli():
     pass
 
 
-from pfb.workers import (init, grid, degrid,
-                         clean, restore, fwdbwd, spotless)
+from pfb.workers import init, grid, degrid, clean, restore

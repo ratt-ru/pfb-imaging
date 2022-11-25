@@ -189,7 +189,8 @@ def _clean(**kw):
     else:
         threshold = opts.threshold
 
-    print("Iter %i: peak residual = %f, rms = %f" % (0, rmax, rms), file=log)
+    print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
+          file=log)
     for k in range(opts.nmiter):
         if opts.algo.lower() == 'clark':
             print("Running Clark", file=log)
@@ -255,7 +256,7 @@ def _clean(**kw):
             x0[:, mopmask] = residual_mfs[mopmask]
             mopmask = mopmask[None, :, :].astype(residual.dtype)
             x = pcg_psf(psfhat, mopmask*residual, x0,
-                        mask, hess2opts, cgopts)
+                        mopmask, hess2opts, cgopts)
 
             model += x
 
