@@ -378,7 +378,12 @@ def _grid(**kw):
         }
 
         out_ds = xr.Dataset(dvars, attrs=attrs).chunk({'row':100000,
-                                                       'chan':128})
+                                                       'chan':128,
+                                                       'x':4096,
+                                                       'y':4096,
+                                                       'x_psf': 4096,
+                                                       'y_psf':4096,
+                                                       'yo2': 2048})
         dds_out.append(out_ds.unify_chunks())
 
     writes = xds_to_zarr(dds_out, dds_name, columns='ALL')

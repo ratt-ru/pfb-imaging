@@ -102,7 +102,10 @@ def _degrid(**kw):
         cell_rad = np.abs(hdr['CDELT1'])
         wsums = np.ones(mfreqs.size)
     else:
-        dds = xds_from_zarr(dds_name)
+        dds = xds_from_zarr(dds_name,
+                            columns=(opts.model_name,),
+                            chunks={'x':-1,
+                                    'y':-1})
         cell_rad = dds[0].cell_rad
         cell_deg = np.rad2deg(cell_rad)
         mfreqs = []

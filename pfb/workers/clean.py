@@ -77,7 +77,12 @@ def _clean(**kw):
 
     dds_name = f'{basename}{opts.postfix}.dds.zarr'
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                          'chan':-1})
+                                          'chan':-1,
+                                          'x':-1,
+                                          'y':-1,
+                                          'x_psf':-1,
+                                          'y_psf':-1,
+                                          'yo2':-1})
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
 
