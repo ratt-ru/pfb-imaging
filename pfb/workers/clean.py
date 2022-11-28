@@ -60,8 +60,9 @@ def _clean(**kw):
     import dask
     import dask.array as da
     from dask.distributed import performance_report
-    from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
-    from pfb.utils.misc import setup_image_data
+    from pfb.utils.fits import (set_wcs, save_fits, dds2fits,
+                                dds2fits_mfs, load_fits)
+    from pfb.utils.misc import dds2cubes
     from pfb.deconv.hogbom import hogbom
     from pfb.deconv.clark import clark
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
@@ -75,28 +76,26 @@ def _clean(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     dds_name = f'{basename}{opts.postfix}.dds.zarr'
-    mds_name = f'{basename}{opts.postfix}.mds.zarr'
-
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                          'chan':-1})
+                                          'chan':-1,
+                                          'x':-1,
+                                          'y':-1,
+                                          'x_psf':-1,
+                                          'y_psf':-1,
+                                          'yo2':-1})
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    nband = mds.nband
-    nx = mds.nx
-    ny = mds.ny
-    for ds in dds:
-        assert ds.nx == nx
-        assert ds.ny == ny
 
     nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
 
     # stitch dirty/psf in apparent scale
     output_type = dds[0].DIRTY.dtype
-    dirty, residual, wsum, psf, psfhat, _ = setup_image_data(dds,
-                                                             opts,
-                                                             apparent=True,
-                                                             log=log)
+    dirty, model, residual, psf, psfhat, _, wsums = dds2cubes(
+                                                            dds,
+                                                            opts,
+                                                            apparent=True,
+                                                            log=log)
+    wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
     dirty_mfs = np.sum(dirty, axis=0)
@@ -105,20 +104,31 @@ def _clean(**kw):
         residual_mfs = dirty_mfs.copy()
     else:
         residual_mfs = np.sum(residual, axis=0)
-    try:
-        model = getattr(mds, opts.model_name).values
-    except Exception as e:
-        raise e
 
     # for intermediary results (not currently written)
+    freq_out = []
+    for ds in dds:
+        freq_out.append(ds.freq_out)
+    freq_out = np.unique(np.array(freq_out))
+    nx = dds[0].nx
+    ny = dds[0].ny
     ra = dds[0].ra
     dec = dds[0].dec
     radec = [ra, dec]
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
-    freq_out = mds.freq.data
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+
+    # TODO - check coordinates match
+    # Add option to interp onto coordinates?
+    if opts.mask is not None:
+        mask = load_fits(mask, dtype=output_type).squeeze()
+        assert mask.shape == (nx, ny)
+        mask = mask.astype(output_type)
+        print('Using provided fits mask', file=log)
+    else:
+        mask = np.ones((nx, ny), dtype=output_type)
 
     # set up vis space Hessian
     hessopts = {}
@@ -128,8 +138,10 @@ def _clean(**kw):
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads
     # always clean in apparent scale so no beam
+    # mask is applied to residual after hessian application
     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
-                   wsum=wsum, sigmainv=0, mask=np.ones_like(dirty_mfs),
+                   wsum=wsum, sigmainv=0,
+                   mask=np.ones((nx, ny), dtype=output_type),
                    compute=True, use_beam=False)
 
     # set up image space Hessian
@@ -159,7 +171,7 @@ def _clean(**kw):
     hess2opts['sigmainv'] = 1e-8
 
     padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
-    psfo = partial(_hessian_reg_psf, beam=None, psfhat=psfhat,
+    psfo = partial(_hessian_reg_psf, beam=mask[None, :, :], psfhat=psfhat,
                     nthreads=opts.nthreads, sigmainv=0,
                     padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
                     lastsize = lastsize)
@@ -183,22 +195,23 @@ def _clean(**kw):
     else:
         threshold = opts.threshold
 
-    print("Iter %i: peak residual = %f, rms = %f" % (0, rmax, rms), file=log)
+    print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
+          file=log)
     for k in range(opts.nmiter):
         if opts.algo.lower() == 'clark':
             print("Running Clark", file=log)
             # import cProfile
             # with cProfile.Profile() as pr:
-            x, status = clark(residual, psf, psfo,
-                            threshold=threshold,
-                            gamma=opts.gamma,
-                            pf=opts.peak_factor,
-                            maxit=opts.clark_maxit,
-                            subpf=opts.sub_peak_factor,
-                            submaxit=opts.sub_maxit,
-                            verbosity=opts.verbose,
-                            report_freq=opts.report_freq,
-                            sigmathreshold=opts.sigmathreshold)
+            x, status = clark(mask*residual, psf, psfo,
+                              threshold=threshold,
+                              gamma=opts.gamma,
+                              pf=opts.peak_factor,
+                              maxit=opts.clark_maxit,
+                              subpf=opts.sub_peak_factor,
+                              submaxit=opts.sub_maxit,
+                              verbosity=opts.verbose,
+                              report_freq=opts.report_freq,
+                              sigmathreshold=opts.sigmathreshold)
             # pr.print_stats(sort='cumtime')
             # quit()
 
@@ -223,6 +236,7 @@ def _clean(**kw):
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
 
+        # report rms where there aren;t any model components
         tmp_mask = ~np.any(model, axis=0)
         rms = np.std(residual_mfs[tmp_mask])
         rmax = np.abs(residual_mfs).max()
@@ -232,23 +246,24 @@ def _clean(**kw):
         else:
             threshold = opts.threshold
 
-        # do flux mop if clean has stalled, not converged or
+        # trigger flux mop if clean has stalled, not converged or
         # we have reached the final iteration/threshold
         status |= k == opts.nmiter-1
         status |= rmax <= threshold
         if opts.mop_flux and status:
             print(f"Mopping flux at iter {k+1}", file=log)
-            mask = np.any(model, axis=0)
+            mopmask = np.any(model, axis=0)
             if opts.dirosion:
                 struct = ndimage.generate_binary_structure(2, opts.dirosion)
-                mask = ndimage.binary_dilation(mask, structure=struct)
-                mask = ndimage.binary_erosion(mask, structure=struct)
+                mopmask = ndimage.binary_dilation(mopmask, structure=struct)
+                mopmask = ndimage.binary_erosion(mopmask, structure=struct)
             # hess2opts['sigmainv'] = 1e-8
             x0 = np.zeros_like(x)
-            x0[:, mask] = residual_mfs[mask]
-            mask = mask[None, :, :].astype(residual.dtype)
-            x = pcg_psf(psfhat, mask*residual, x0,
-                        mask, hess2opts, cgopts)
+            x0[:, mopmask] = residual_mfs[mopmask]
+            mopmask = mopmask[None, :, :].astype(residual.dtype)
+            hess2opts['sigmainv'] = rmax
+            x = pcg_psf(psfhat, mopmask*residual, x0,
+                        mopmask, hess2opts, cgopts)
 
             model += x
 
@@ -275,56 +290,39 @@ def _clean(**kw):
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
               file=log)
 
+        print("Updating results", file=log)
+        dds_out = []
+        for ds in dds:
+            b = ds.bandid
+            r = da.from_array(residual[b]*wsum)
+            m = da.from_array(model[b])
+            ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
+                                  'MODEL': (('x', 'y'), m)})
+            dds_out.append(ds_out)
+        writes = xds_to_zarr(dds_out, dds_name,
+                             columns=('RESIDUAL', 'MODEL'), rechunk=True)
+        dask.compute(writes)
 
         if rmax <= threshold:
             print("Terminating because final threshold has been reached",
                   file=log)
             break
 
-    print("Saving results", file=log)
-    if opts.update_mask:
-        mask = np.any(model > rms, axis=0)
-        if opts.dirosion:
-            struct = ndimage.generate_binary_structure(2, opts.dirosion)
-            mask = ndimage.binary_dilation(mask, structure=struct)
-            mask = ndimage.binary_erosion(mask, structure=struct)
-        if 'MASK' in mds:
-            mask = np.logical_or(mask, mds.MASK.values)
-        mds = mds.assign(**{
-                'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1)))
-        })
+    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
 
+    # convert to fits files
+    fitsout = []
+    if opts.fits_mfs:
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
 
-    model = da.from_array(model, chunks=(1, -1, -1))
-    mds = mds.assign(**{
-            'CLEAN_MODEL': (('band', 'x', 'y'), model)
-    })
+    if opts.fits_cubes:
+        fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
 
-    dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
-
-    if opts.fits_mfs or opts.fits_cubes:
-        print("Writing fits files", file=log)
-        # construct a header from xds attrs
-        ra = dds[0].ra
-        dec = dds[0].dec
-        radec = [ra, dec]
-        cell_rad = dds[0].cell_rad
-        cell_deg = np.rad2deg(cell_rad)
-        freq_out = mds.freq.data
-        ref_freq = np.mean(freq_out)
-        hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-
-        model_mfs = np.mean(model, axis=0)
-
-        save_fits(f'{basename}_clean_model_mfs.fits', model_mfs, hdr_mfs)
-        save_fits(f'{basename}_clean_residual_mfs.fits',
-                    residual_mfs, hdr_mfs)
-
-        if opts.fits_cubes:
-            # need residual in Jy/beam
-            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
-            save_fits(f'{basename}_clean_model.fits', model, hdr)
-            save_fits(f'{basename}_clean_residual.fits', residual, hdr)
+    if len(fitsout):
+        print("Writing fits", file=log)
+        dask.compute(fitsout)
 
     if opts.scheduler=='distributed':
         from distributed import get_client

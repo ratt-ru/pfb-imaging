@@ -48,42 +48,36 @@ def _restore(**kw):
 
     import numpy as np
     from daskms.experimental.zarr import xds_from_zarr
-    from pfb.utils.fits import save_fits, add_beampars, set_wcs
-    from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres
+    from pfb.utils.fits import (save_fits, add_beampars, set_wcs,
+                                dds2fits, dds2fits_mfs)
+    from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres, dds2cubes
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-
     dds_name = f'{basename}{opts.postfix}.dds.zarr'
-    mds_name = f'{basename}{opts.postfix}.mds.zarr'
 
     dds = xds_from_zarr(dds_name)
-    # only a single mds (for now)
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    nband = mds.nband
-    nx = mds.nx
-    ny = mds.ny
-    cell_rad = mds.cell_rad
+    nband = opts.nband
+    nx = dds[0].nx
+    ny = dds[0].ny
+    cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
-    freq = mds.freq.data
-    nx_psf = dds[0].nx_psf
-    ny_psf = dds[0].ny_psf
+    freq = []
     for ds in dds:
+        freq.append(ds.freq_out)
         assert ds.nx == nx
         assert ds.ny == ny
+    freq = np.unique(np.array(freq))
+    assert freq.size == opts.nband
+    nx_psf = dds[0].nx_psf
+    ny_psf = dds[0].ny_psf
 
-    try:
-        output_type = dds[0].get(opts.residual_name).dtype
-    except:
-        raise ValueError(f"{opts.residual_name} dot in dds")
-    residual = np.zeros((nband, nx, ny), dtype=output_type)
-    psf = np.zeros((nband, nx_psf, ny_psf), dtype=output_type)
-    wsums = np.zeros(nband)
-    for ds in dds:
-        b = ds.bandid
-        residual[b] += ds.get(opts.residual_name).values
-        psf[b] += ds.PSF.values
-        wsums[b] += ds.WSUM.values[0]
-    wsum = wsums.sum()
+
+    dirty, model, residual, psf, _, _, wsums = dds2cubes(dds,
+                                                         opts,
+                                                         apparent=True,
+                                                         log=log)
+    wsum = np.sum(wsums)
+    output_type = dirty.dtype
     psf_mfs = np.sum(psf, axis=0)/wsum
     residual_mfs = np.sum(residual, axis=0)/wsum
     fmask = wsums > 0
@@ -109,7 +103,6 @@ def _restore(**kw):
     for v in range(opts.nband):
         cpsf[v] = Gaussian2D(xx, yy, GaussPars[v], normalise=False)
 
-    model = mds.get(opts.model_name).values
     if not model.any():
         print("Warning - model is empty", file=log)
     model_mfs = np.mean(model, axis=0)
@@ -137,7 +130,7 @@ def _restore(**kw):
     GaussPars = tuple(GaussPars)
 
     # init fits headers
-    radec = (mds.ra, mds.dec)
+    radec = (dds[0].ra, dds[0].dec)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, np.mean(freq))
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq)
 

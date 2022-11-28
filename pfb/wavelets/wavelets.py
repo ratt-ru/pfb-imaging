@@ -588,18 +588,19 @@ def ravel_coeffs(coeffs):
     coeff_arr[a_slice] = a_coeffs.ravel()
 
     # initialize list of coefficient slices
-    coeff_slices = List()
+    coeff_tuples = List()
     coeff_shapes = List()
     tmp1 = Dict()
-    tmp1['aa'] = a_slice
-    coeff_slices.append(tmp1)
+    tmp1['aa'] = (0, a_size)
+    coeff_tuples.append(tmp1)
     tmp2 = Dict()
     tmp2['aa'] = a_coeffs.shape
     coeff_shapes.append(tmp2)
     coeff_shapes[-1]['aa'] = a_coeffs.shape
 
+
     if len(coeffs) == 1:
-        return coeff_arr, coeff_slices, coeff_shapes
+        return coeff_arr, coeff_tuples, coeff_shapes
 
     # loop over the detail cofficients, embedding them in coeff_arr
     offset = a_size
@@ -612,32 +613,33 @@ def ravel_coeffs(coeffs):
         keys = sorted(coeff_dict.keys())
         for i, key in enumerate(keys):
             d = coeff_dict[key]
-            sl = slice(offset, offset + d.size)
-            offset += d.size
-            coeff_arr[sl] = d.ravel()
-            tmp1[key] = sl
+            tmp1[key] = (offset, offset + d.size)
+            coeff_arr[offset:offset + d.size] = d.ravel()
             tmp2[key] = d.shape
+            offset += d.size
 
-        coeff_slices.append(tmp1)
+        coeff_tuples.append(tmp1)
         coeff_shapes.append(tmp2)
-    return coeff_arr, coeff_slices, coeff_shapes
+
+    return coeff_arr, coeff_tuples, coeff_shapes
 
 
 @numba.njit(nogil=True, fastmath=True, cache=True)
-def unravel_coeffs(arr, coeff_slices, coeff_shapes, output_format='wavedecn'):
+def unravel_coeffs(arr, coeff_tuples, coeff_shapes, output_format='wavedecn'):
     arr = np.asarray(arr)
     coeffs = List()
     tmp = Dict()
-    tmp['aa'] = arr[coeff_slices[0]['aa']].reshape(coeff_shapes[0]['aa'])
+    start, stop = coeff_tuples[0]['aa']
+    tmp['aa'] = arr[start:stop].reshape(coeff_shapes[0]['aa'])
     coeffs.append(tmp)
 
     # difference coefficients at each level
-    for n in range(1, len(coeff_slices)):
-        slice_dict = coeff_slices[n]
+    for n in range(1, len(coeff_tuples)):
         shape_dict = coeff_shapes[n]
         d = Dict()
-        for k, v in coeff_slices[n].items():
-            d[k] = arr[v].reshape(shape_dict[k])
+        for k, v in coeff_tuples[n].items():
+            start, stop = v
+            d[k] = arr[start:stop].reshape(shape_dict[k])
         coeffs.append(d)
     return coeffs
 
@@ -645,7 +647,7 @@ def unravel_coeffs(arr, coeff_slices, coeff_shapes, output_format='wavedecn'):
 @numba.njit(nogil=True, fastmath=True, cache=True)
 def wavelet_setup(x, bases, nlevels):
     # set up dictionary info
-    iys = Dict()
+    tys = Dict()
     sys = Dict()
     nmax = x[0].ravel().size
     ntot = List()
@@ -654,10 +656,11 @@ def wavelet_setup(x, bases, nlevels):
         if base == 'self':
             continue
         alpha = wavedecn(x[0], base, mode='zero', level=nlevels)
-        y, iy, sy = ravel_coeffs(alpha)
-        iys[base] = iy
+        y, ty, sy = ravel_coeffs(alpha)
+        tys[base] = ty
         sys[base] = sy
+
         ntot.append(y.size)
         nmax = np.maximum(nmax, y.size)
 
-    return iys, sys, ntot, nmax
+    return tys, sys, ntot, nmax

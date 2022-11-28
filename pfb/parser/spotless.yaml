@@ -5,50 +5,41 @@ inputs:
     - (pfb.parser)pmopts.yml
     - (pfb.parser)cgopts.yml
     - (pfb.parser)dist.yml
-  model_name:
-    dtype: str
-    abbreviation: mname
-    default: MODEL
-    info: 'Name of model in mds'
-  mask:
-    dtype: str
-    abbreviation: mask
-    info: 'Either path to mask.fits or set to mds to use \
-          the mask contained in the mds.'
   nband:
     dtype: int
     required: true
     abbreviation: nb
-    info: 'Number of imaging bands'
+    info:
+      Number of imaging bands
   output_filename:
     dtype: str
     required: true
-    info: 'Basename of output'
-    metavar: BASENAME
     abbreviation: o
+    info:
+      Basename of output
   postfix:
     dtype: str
     default: ''
-    info: 'Can be used to specify a custom name for the image space data \
-          products'
+    info:
+      Can be used to specify a custom name for the image space data products
   product:
     dtype: str
     abbreviation: p
     default: I
-    info: 'Imaging products to produce. Options are I, Q, U, V. \
-          Only single Stokes products are currently supported'
-  row_chunk:
-    dtype: int
-    info: 'Number of rows in a chunk in output dataset'
-    abbreviation: rc
-    default: -1
+    info:
+      Imaging products to produce. Options are I, Q, U, V.
+      Only single Stokes products are currently supported
+  mask:
+    dtype: str
+    abbreviation: mask
+    info:
+      Path to mask.fits
   sigmainv:
     dtype: float
-    info: 'Standard deviation of assumed GRF prior'
     default: 1e-5
     abbreviation: sinv
-  inverter:
-    default: pcg
+    info:
+      Standard deviation of assumed GRF prior
   bases:
     dtype: str
     info: 'Wavelet bases to use. Give as comma separated str eg. '
@@ -59,43 +50,64 @@ inputs:
     info: 'Wavelet decomposition level'
     default: 3
     abbreviation: nlevels
+  l1reweight_from:
+    dtype: int
+    default: 5
+    info:
+      Start doing l1reweights after this many iterations
   hessnorm:
     dtype: float
-    info: 'Spectral norm of th ehessian approximation'
     abbreviation: hessnorm
+    info:
+      Spectral norm of hessian approximation
   sigma21:
     dtype: float
-    required: true
-    info: 'Wavelet thresholding level'
     abbreviation: sig21
-  alpha:
+    info:
+      Thresholding level
+  rmsfactor:
     dtype: float
-    required: true
-    info: 'L21 reweighting parameter'
-    abbreviation: alpha
+    default: 3.0
+    info:
+      By default will threshold by rmsfactor*rms at every iteration
+  gamma:
+    dtype: float
+    default: 1.0
+    info:
+      Step size of update
   positivity:
     dtype: bool
-    info: Apply positivity constraint
     default: True
+    info:
+      Apply positivity constraint
   niter:
     dtype: int
     default: 5
-    info: Number of iterations. L21 reweighting will take place after every iteration
     abbreviation: niter
+    info:
+      Number of iterations.
+      L21 reweighting will take place after every iteration
   tol:
     dtype: float
-    default: 1e-5
+    default: 1e-3
     info:
       Tolerance at which to terminate algorithm.
       Will stop when norm(x-xp)/norm(x) < tol
   fits_mfs:
     dtype: bool
     default: true
-    info: "Output MFS fits files"
+    info:
+      Output MFS fits files
   fits_cubes:
     dtype: bool
     default: false
-    info: "Output fits cubes"
+    info:
+      Output fits cubes
+  memory_greedy:
+    dtype: bool
+    default: false
+    info:
+      Holds data in memory if set
 
 outputs:
   {}

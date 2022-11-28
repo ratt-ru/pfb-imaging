@@ -30,6 +30,7 @@ inputs:
       Interpolate model to this many output bands before degridding
   spectral_poly_order:
     dtype: int
+    default: 4
     abbreviation: spo
     info:
       Order of interpolating polynomial for frequency axis

@@ -1,6 +1,7 @@
 import numpy as np
 from functools import partial
 import dask.array as da
+from distributed import wait
 from uuid import uuid4
 import pyscilog
 log = pyscilog.get_logger('PCG')
@@ -230,110 +231,69 @@ def pcg_psf(psfhat,
         return model
 
 
-# from pfb.operators.hessian import _hessian_reg_wgt as hessian_wgt
-# def _pcg_wgt_impl(uvw,
-#                   weight,
-#                   b,
-#                   x0,
-#                   beam,
-#                   freq,
-#                   freq_bin_idx,
-#                   freq_bin_counts,
-#                   hessopts,
-#                   waveopts,
-#                   tol=1e-5,
-#                   maxit=500,
-#                   minit=100,
-#                   verbosity=1,
-#                   report_freq=10,
-#                   backtrack=True):
-#     '''
-#     A specialised distributed version of pcg when the operator implements
-#     the diagonalised hessian (+ L2 regularisation by sigma**2)
-#     '''
-#     nband, nbasis, nmax = b.shape
-#     model = np.zeros((nband, nbasis, nmax), dtype=b.dtype)
-#     sigmainvsq = hessopts['sigmainv']**2
-#     # PCG preconditioner
-#     if sigmainvsq > 0:
-#         def M(x): return x / sigmainvsq
-#     else:
-#         M = None
+def pcg_dist(ds, A, **kwargs):
+    '''
+    kwargs - tol, maxit, minit, nthreads, psf_padding, unpad_x, unpad_y
+             sigmainv, lastsize, hessian
+    '''
+    maxit = kwargs['maxit']
+    minit = kwargs['minit']
+    tol = kwargs['tol']
+    wsum = kwargs['wsum']
 
-#     freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
-#     for k in range(nband):
-#         indl = freq_bin_idx2[k]
-#         indu = freq_bin_idx2[k] + freq_bin_counts[k]
-#         A = partial(hessian_wgt,
-#                     beam=beam[k],
-#                     uvw=uvw,
-#                     weight=weight[:, indl:indu],
-#                     freq=freq[indl:indu],
-#                     **hessopts,
-#                     **waveopts)
+    if 'RESIDUAL' in ds:
+        b = ds.RESIDUAL.values/wsum
+    else:
+        b = ds.DIRTY.values/wsum
+    x = np.zeros_like(b)
 
+    def Mfunc(x, sigmainv):
+        return x / sigmainv
+    M = partial(Mfunc, sigmainv=kwargs['sigmainv'])
 
-#         model[k] = pcg(A,
-#                        b[k],
-#                        x0[k],
-#                        M=M,
-#                        tol=tol,
-#                        maxit=maxit,
-#                        minit=minit,
-#                        verbosity=verbosity,
-#                        report_freq=report_freq,
-#                        backtrack=backtrack)
+    r = A(x) - b
+    y = M(r)
+    p = -y
+    rnorm = np.vdot(r, y)
+    if np.isnan(rnorm) or rnorm == 0.0:
+        eps0 = 1.0
+    else:
+        eps0 = rnorm
+    k = 0
+    eps = 1.0
+    stall_count = 0
+    while (eps > tol or k < minit) and k < maxit and stall_count < 5:
+        xp = x.copy()
+        rp = r.copy()
+        epsp = eps
+        Ap = A(p)
+        rnorm = np.vdot(r, y)
+        alpha = rnorm / np.vdot(p, Ap)
+        x = xp + alpha * p
+        r = rp + alpha * Ap
+        y = M(r)
+        rnorm_next = np.vdot(r, y)
+        while rnorm_next > rnorm:  # TODO - better line search
+            alpha *= 0.75
+            x = xp + alpha * p
+            r = rp + alpha * Ap
+            y = M(r)
+            rnorm_next = np.vdot(r, y)
 
-#     return model
+        beta = rnorm_next / rnorm
+        p = beta * p - y
+        # if p is zero we should stop
+        if not np.any(p):
+            break
+        rnorm = rnorm_next
+        k += 1
+        eps = rnorm / eps0
 
-# def _pcg_wgt(uvw,
-#             weight,
-#             b,
-#             x0,
-#             beam,
-#             freq,
-#             freq_bin_idx,
-#             freq_bin_counts,
-#             hessopts,
-#             waveopts,
-#             cgopts):
-#     return _pcg_wgt_impl(uvw[0][0],
-#                          weight[0],
-#                          b,
-#                          x0,
-#                          beam[0][0],
-#                          freq,
-#                          freq_bin_idx,
-#                          freq_bin_counts,
-#                          hessopts,
-#                          waveopts,
-#                          **cgopts)
+        if np.abs(eps - epsp) < 1e-3*tol:
+            stall_count += 1
 
-# def pcg_wgt(uvw,
-#             weight,
-#             b,
-#             x0,
-#             beam,
-#             freq,
-#             freq_bin_idx,
-#             freq_bin_counts,
-#             hessopts,
-#             waveopts,
-#             cgopts):
+    ds_out = ds.assign(**{'UPDATE': (('x','y'), da.from_array(x))})
+    print(f'Band={ds.bandid}, iters{k}, eps={eps}', file=log)
+    return ds_out
 
 
-#     return da.blockwise(_pcg_wgt, ('nchan', 'nbasis', 'nmax'),
-#                         uvw, ('nrow', 'three'),
-#                         weight, ('nrow', 'nchan'),
-#                         b, ('nchan', 'nbasis', 'nmax'),
-#                         x0, ('nchan', 'nbasis', 'nmax'),
-#                         beam, ('nchan', 'nx', 'ny'),
-#                         freq, ('nchan',),
-#                         freq_bin_idx, ('nchan',),
-#                         freq_bin_counts, ('nchan',),
-#                         hessopts, None,
-#                         waveopts, None,
-#                         cgopts, None,
-#                         align_arrays=False,
-#                         adjust_chunks={'nchan': b.chunks[0]},
-#                         dtype=b.dtype)

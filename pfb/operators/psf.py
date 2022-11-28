@@ -161,6 +161,10 @@ def _hessian_reg_psf(x, beam, psfhat,
     """
     Tikhonov regularised Hessian approx
     """
+    if isinstance(psfhat, da.Array):
+        psfhat = psfhat.compute()
+    if isinstance(beam, da.Array):
+        beam = beam.compute()
 
     if beam is not None:
         xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(1, 2))
@@ -181,24 +185,30 @@ def _hessian_reg_psf(x, beam, psfhat,
         return im
 
 def _hessian_reg_psf_slice(
-                    x, beam, psfhat,
+                    x,
+                    psfhat=None,
+                    beam=None,
                     nthreads=None,
                     sigmainv=None,
                     padding=None,
                     unpad_x=None,
                     unpad_y=None,
-                    lastsize=None):
+                    lastsize=None,
+                    wsum=1.0):
     """
     Tikhonov regularised Hessian approx
     """
-
+    if isinstance(psfhat, da.Array):
+        psfhat = psfhat.compute()
+    if isinstance(beam, da.Array):
+        beam = beam.compute()
     if beam is not None:
         xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(0, 1))
     else:
         xhat = iFs(np.pad(x, padding, mode='constant'), axes=(0, 1))
     xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
                forward=True, inorm=0)
-    xhat = c2r(xhat * psfhat, axes=(0, 1), forward=False,
+    xhat = c2r(xhat * psfhat/wsum, axes=(0, 1), forward=False,
                lastsize=lastsize, inorm=2, nthreads=nthreads)
     im = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
 

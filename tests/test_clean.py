@@ -80,7 +80,7 @@ def test_clean(do_gains, algo, tmp_path_factory):
         model[:, Ix[i], Iy[i]] = I0[i] * (freq/freq0) ** alpha[i]
 
     # model vis
-    epsilon = 1e-7  # tests take too long if smaller
+    epsilon = 1e-7
     from ducc0.wgridder import dirty2ms
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
@@ -219,9 +219,7 @@ def test_clean(do_gains, algo, tmp_path_factory):
     clean_args["output_filename"] = outname
     clean_args["postfix"] = postfix
     clean_args["nband"] = nchan
-    clean_args["mask"] = 'mds'
     clean_args["algo"] = algo
-    clean_args["update_mask"] = False
     clean_args["dirosion"] = 0
     clean_args["do_residual"] = False
     clean_args["nmiter"] = 100
@@ -235,16 +233,19 @@ def test_clean(do_gains, algo, tmp_path_factory):
     clean_args["scheduler"] = 'sync'
     clean_args["wstack"] = True
     clean_args["epsilon"] = epsilon
-    clean_args["mop_flux"] = False
+    clean_args["mop_flux"] = True
     clean_args["fits_mfs"] = False
     from pfb.workers.clean import _clean
     _clean(**clean_args)
 
     # get inferred model
     basename = f'{outname}_I'
-    mds_name = f'{basename}{postfix}.mds.zarr'
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    model_inferred = mds.CLEAN_MODEL.values
+    dds_name = f'{basename}{postfix}.dds.zarr'
+    dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
+    model_inferred = np.zeros((nchan, nx, ny))
+    for ds in dds:
+        b = ds.bandid
+        model_inferred[b] = ds.MODEL.values
 
     for i in range(nsource):
         assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -

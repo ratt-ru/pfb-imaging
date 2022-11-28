@@ -1,4 +1,6 @@
 import numpy as np
+from operator import getitem
+from distributed import wait, get_client
 from scipy.linalg import norm
 import pyscilog
 log = pyscilog.get_logger('PM')
@@ -41,4 +43,62 @@ def power_method(
         if verbosity:
             print(f"Success, converged after {k} iterations. "
                   f"beta = {beta:.3e}", file=log)
-    return beta, bp
+    return beta, b
+
+
+def power(A, bp, **kwargs):
+    bp /= kwargs['bnorm']
+    b = A(bp)
+    bsumsq = np.sum(b**2)
+    beta_num = np.vdot(b, bp)
+    beta_den = np.vdot(bp, bp)
+
+    return b, bsumsq, beta_num, beta_den
+
+def sumsq(b):
+    return np.sum(b**2)
+
+def bnormf(bsumsq):
+    return np.sqrt(np.sum(bsumsq))
+
+def betaf(beta_num, beta_den):
+    return np.sum(beta_num)/np.sum(beta_den)
+
+def power_method_dist(Af,
+                      nx,
+                      ny,
+                      nband,
+                      tol=1e-5,
+                      maxit=200):
+
+    client = get_client()
+
+    names = [w['name'] for w in client.scheduler_info()['workers'].values()]
+
+    b = []
+    for _ in range(nband):
+        f = client.submit(np.random.randn, nx, ny)
+        b.append(f)
+
+    bssq = client.map(sumsq, b)
+    bnorm = client.submit(bnormf, bssq,
+                          workers=[names[0]], pure=False).result()
+    for k in range(maxit):
+        fut = client.map(power, Af, b,
+                         pure=False,
+                         bnorm=bnorm)
+
+        b = client.map(getitem, fut, [0]*len(fut), pure=False)
+        bssq = client.map(getitem, fut, [1]*len(fut), pure=False)
+        bnum = client.map(getitem, fut, [2]*len(fut), pure=False)
+        bden = client.map(getitem, fut, [3]*len(fut), pure=False)
+
+        bnorm = client.submit(bnormf, bssq,
+                              workers=[names[0]], pure=False)
+
+        beta = client.submit(betaf, bnum, bden,
+                             workers=[names[1]], pure=False)
+
+        wait([b, bnorm, beta])
+
+    return beta

@@ -1,4 +1,7 @@
 import numpy as np
+import dask.array as da
+from distributed import wait, get_client, as_completed
+from operator import getitem
 import pyscilog
 log = pyscilog.get_logger('PD')
 
@@ -11,7 +14,7 @@ def primal_dual(
         lam,  # regulariser strength,
         psi,  # linear operator in dual domain
         psiH,  # adjoint of psi
-        weights,  # weights for l1 thresholding
+        l1weights,  # weights for l1 thresholding
         L,  # spectral norm of Hessian
         prox,  # prox of regulariser
         nu=1.0,  # spectral norm of dictionary
@@ -28,7 +31,8 @@ def primal_dual(
     v = v0.copy()
 
     # gradient function
-    def grad_func(x): return -A(xbar - x) / gamma
+    def grad_func(x):
+        return -A(xbar - x) / gamma
 
     if sigma is None:
         sigma = L / (2.0 * gamma)
@@ -47,7 +51,7 @@ def primal_dual(
 
         # dual update
         v = vtilde - sigma * prox(vtilde / sigma, lam / sigma,
-                                  weights)
+                                  l1weights)
 
         # primal update
         x = xp - tau * (psi(2 * v - vp) + grad_func(xp))
@@ -73,6 +77,142 @@ def primal_dual(
             print(f"Success, converged after {k} iterations", file=log)
 
     return x, v
+
+
+def vtilde_update(ds, **kwargs):
+    nbasis, ntot = ds.DUAL.shape
+    nx, ny = ds.MODEL.shape
+    sigma = kwargs['sigma']
+    psiH = kwargs['psiH']
+    return ds.DUAL.values + sigma * psiH(ds.MODEL.values)
+
+
+def get_ratio(vtildes, lam, sigma, l1weights):
+    vmfs = np.zeros(l1weights.shape)
+    nband = 0
+    for v in vtildes:
+        # l2_norm += (v/sigma)**2
+        vmfs += v/sigma
+    # l2_norm = np.sqrt(l2_norm)
+    vsoft = np.maximum(np.abs(vmfs) - lam*l1weights/sigma, 0.0)  # norm is positive
+    # l2_soft = np.where(np.abs(l2_norm) >= lam/sigma, l2_norm, 0.0)
+    mask = vmfs != 0
+    ratio = np.zeros(mask.shape, dtype=l1weights.dtype)
+    ratio[mask] = vsoft[mask] / vmfs[mask]
+    return ratio
+
+def update(ds, A, y, vtilde, ratio, psi, psiH, **kwargs):
+    sigma = kwargs['sigma']
+    lam = kwargs['lam']
+    tau = kwargs['tau']
+    gamma = kwargs['gamma']
+    # psi = kwargs['psi']
+    # psiH = kwargs['psiH']
+
+    xp = ds.MODEL.values
+    vp = ds.DUAL.values
+
+    # dual
+    v = vtilde - vtilde * ratio
+
+    # primal
+    grad = -A(y - xp)/gamma
+    x = xp - tau * (psi(2 * v - vp) + grad)
+    if kwargs['positivity']:
+        x[x < 0] = 0.0
+
+    vtilde = v + sigma * psiH(x)
+
+    eps = np.linalg.norm(x-xp)/np.linalg.norm(x)
+
+    ds_out = ds.assign(**{'MODEL': (('x','y'), da.from_array(x)),
+                          'DUAL': (('b', 'c'), da.from_array(v))})
+
+    return ds_out, vtilde, eps
+
+
+def sety(ds, **kwargs):
+    gamma = kwargs['gamma']
+    if 'MODEL' in ds:
+        return ds.MODEL.values + gamma * ds.UPDATE.values
+    else:
+        return gamma * ds.UPDATE.values
+
+
+def primal_dual_dist(
+            ddsf,
+            Af,
+            psi,
+            psiH,
+            lam,  # regulariser strength,
+            L,  # spectral norm of Hessian
+            wsum,
+            l1weight,
+            nu=1.0,  # spectral norm of dictionary
+            sigma=None,  # step size of dual update
+            tol=1e-5,
+            maxit=100,
+            positivity=True,
+            gamma=1.0,
+            verbosity=1):
+
+    client = get_client()
+
+    names = [w['name'] for w in client.scheduler_info()['workers'].values()]
+
+    if sigma is None:
+        sigma = L / (2.0 * gamma)
+
+    # stepsize control
+    tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
+
+    yf = client.map(sety, ddsf, gamma=gamma)
+
+    # we need to do this upfront only at the outset
+    vtildes = client.map(vtilde_update, ddsf, psiH=psiH, sigma=sigma)
+
+    eps = 1.0
+    for k in range(maxit):
+        # TODO - should get one ratio per basis
+        # split over different workers
+        ratio = client.submit(get_ratio,
+                              vtildes, lam, sigma, l1weight,
+                              workers=[names[0]], pure=False)
+
+        wait([ratio])
+
+        future = client.map(update,
+                            ddsf, Af, yf, vtildes, [ratio]*len(ddsf), psif, psiHf,
+                            # psi=psi,
+                            # psiH=psiH,
+                            pure=False,
+                            wsum=wsum,
+                            sigma=sigma,
+                            tau=tau,
+                            lam=lam,
+                            gamma=gamma,
+                            positivity=positivity)
+
+        wait(future)
+
+        ddsf = client.map(getitem, future, [0]*len(future),
+                          pure=False)
+        vtildes = client.map(getitem, future, [1]*len(future),
+                             pure=False)
+        epsf = client.map(getitem, future, [2]*len(future),
+                          pure=False)
+
+        eps = []
+        for f in as_completed(epsf):
+            eps.append(f.result())
+        eps = np.array(eps)
+        if eps.max() < tol:
+            break
+
+    if k >= maxit:
+        print(f'Maximum iterations reached. eps={eps}', file=log)
+
+    return ddsf
 
 
 primal_dual.__doc__ = r"""

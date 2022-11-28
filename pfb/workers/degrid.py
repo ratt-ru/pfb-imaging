@@ -87,7 +87,7 @@ def _degrid(**kw):
     from pfb.utils.misc import compute_context
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-    mds_name = f'{basename}{opts.postfix}.mds.zarr'
+    dds_name = f'{basename}{opts.postfix}.dds.zarr'
 
 
     if opts.model_fits is not None:
@@ -102,15 +102,29 @@ def _degrid(**kw):
         cell_rad = np.abs(hdr['CDELT1'])
         wsums = np.ones(mfreqs.size)
     else:
-        mds = xds_from_zarr(mds_name)[0]
-        cell_rad = mds.cell_rad
+        dds = xds_from_zarr(dds_name,
+                            columns=(opts.model_name,),
+                            chunks={'x':-1,
+                                    'y':-1})
+        cell_rad = dds[0].cell_rad
         cell_deg = np.rad2deg(cell_rad)
-        mfreqs = mds.freq.data
-        model = getattr(mds, opts.model_name).data
-        wsums = mds.WSUM.data
-        radec = (mds.ra, mds.dec)
-
-        model, mfreqs, wsums = dask.compute(model, mfreqs, wsums)
+        mfreqs = []
+        for ds in dds:
+            mfreqs.append(ds.freq_out)
+        mfreqs = np.unique(np.array(mfreqs))
+        assert mfreqs.size == opts.nband
+        nx = dds[0].nx
+        ny = dds[0].ny
+        model = [da.zeros((nx, ny)) for _ in range(opts.nband)]
+        wsums = [da.zeros(1) for _ in range(opts.nband)]
+        for ds in dds:
+            b = ds.bandid
+            model[b] = getattr(ds, opts.model_name).data
+            wsums[b] += ds.WSUM.data[0]
+        model = da.stack(model)
+        wsums = da.stack(wsums).squeeze()
+        model, wsums = dask.compute(model, wsums)
+        radec = (dds[0].ra, dds[0].dec)
 
     if not np.any(model):
         raise ValueError('Model is empty')
@@ -140,7 +154,7 @@ def _degrid(**kw):
 
     # components excluding zeros
     beta = model[:, Ix, Iy]
-    if opts.spectral_poly_order:
+    if nband_out != nband:
         order = opts.spectral_poly_order
         print(f"Fitting integrated polynomial of order {order}", file=log)
         if order > mfreqs.size:
@@ -249,15 +263,15 @@ def _degrid(**kw):
                                    columns=[opts.model_column],
                                    rechunk=True))
 
-    # dask.visualize(writes, color="order", cmap="autumn",
-    #                node_attr={"penwidth": "4"},
-    #                filename=opts.output_filename + '_degrid_writes_I_ordered_graph.pdf',
-    #                optimize_graph=False)
-    # dask.visualize(writes, filename=opts.output_filename +
-    #                '_degrid_writes_I_graph.pdf', optimize_graph=False)
+    dask.visualize(writes, color="order", cmap="autumn",
+                   node_attr={"penwidth": "4"},
+                   filename=opts.output_filename + '_degrid_writes_I_ordered_graph.pdf',
+                   optimize_graph=False)
+    dask.visualize(writes, filename=opts.output_filename +
+                   '_degrid_writes_I_graph.pdf', optimize_graph=False)
 
     with compute_context(opts.scheduler, opts.output_filename+'_degrid'):
-        dask.compute(writes, optimize_graph=True)
+        dask.compute(writes, optimize_graph=False)
 
     if opts.scheduler=='distributed':
         from distributed import get_client
