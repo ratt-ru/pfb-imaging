@@ -147,9 +147,16 @@ def _spotless(**kw):
     names = [w['name'] for w in client.scheduler_info()['workers'].values()]
 
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                          'chan':-1})
+                                          'chan':-1,
+                                          'x':-1,
+                                          'y':-1,
+                                          'x_psf':-1,
+                                          'y_psf':-1,
+                                          'yo2':-1,
+                                          'b':-1,
+                                          'c':-1})
     if opts.memory_greedy:
-        # note the set here
+        # pass workers as set
         ddsf = [ds.persist(workers={names[i]})
                 for ds, i in zip(dds, cycle(range(opts.nworkers)))]
     else:
@@ -194,27 +201,6 @@ def _spotless(**kw):
     wsum = client.submit(accum_wsums, ddsf).result()
     pix_per_beam = client.submit(get_cbeam_area, ddsf, wsum).result()
 
-    # manually persist psfhat and beam on workers
-    psfhatf = client.map(lambda ds: ds.PSFHAT.values, ddsf)
-    beamf = client.map(lambda ds: ds.BEAM.values, ddsf)
-
-    # this makes for cleaner algorithms but is it a bad pattern?
-    Afs = []
-    for psfhat, beam in zip(psfhatf, beamf):
-        tmp = client.who_has(psfhat)
-        Af = client.submit(partial,
-                           _hessian_reg_psf_slice,
-                           psfhat=psfhat,
-                           beam=beam,
-                           wsum=wsum,
-                           nthreads=opts.nthreads,
-                           sigmainv=opts.sigmainv,
-                           padding=psf_padding,
-                           unpad_x=unpad_x,
-                           unpad_y=unpad_y,
-                           lastsize=lastsize) # workers=list(tmp.values())[0])
-        Afs.append(Af)
-
     # dictionary setup
     print("Setting up dictionary", file=log)
     bases = tuple(opts.bases.split(','))
@@ -239,6 +225,25 @@ def _spotless(**kw):
                     nx=nx,
                     ny=ny)
 
+    # this makes for cleaner algorithms but is it a bad pattern?
+    Afs = []
+    for ds in ddsf:
+        tmp = client.who_has(ds.PSFHAT)
+        wip = list(tmp.values())[0][0]
+        wid = client.scheduler_info()['workers'][wip]['id']
+        Af = client.submit(partial,
+                           _hessian_reg_psf_slice,
+                           psfhat=ds.PSFHAT.data,
+                           beam=ds.BEAM.data,
+                           wsum=wsum,
+                           nthreads=opts.nthreads,
+                           sigmainv=opts.sigmainv,
+                           padding=psf_padding,
+                           unpad_x=unpad_x,
+                           unpad_y=unpad_y,
+                           lastsize=lastsize,
+                           workers={wid})
+        Afs.append(Af)
 
     # initialise for backward step
     ddsf = client.map(init_dual_and_model, ddsf,
@@ -267,9 +272,11 @@ def _spotless(**kw):
         hessnorm = opts.hessnorm
     print(f'hessnorm = {hessnorm:.3e}', file=log)
 
+    import pdb; pdb.set_trace()
+
     # future contains mfs residual and stats
     residf = client.submit(get_resid_and_stats, ddsf, wsum,
-                           workers={0})
+                           workers={names[0]})
     residual_mfs = client.submit(getitem, residf, 0)
     rms = client.submit(getitem, residf, 1).result()
     rmax = client.submit(getitem, residf, 2).result()
@@ -334,8 +341,9 @@ def _spotless(**kw):
         dds = dask.delayed(Idty)(ddsf).compute()  # future to collection
         writes = xds_to_zarr(dds, dds_name,
                              columns=('MODEL','DUAL','UPDATE','RESIDUAL'),
+                             chunks={'b':1, 'c':4096**2},
                              rechunk=True)
-        l1weight = da.from_array(l1weight.result(), chunks='auto')
+        l1weight = da.from_array(l1weight.result(), chunks=(1, 4096**2))
         dvars = {}
         dvars['L1WEIGHT'] = (('b','c'), l1weight)
         l1ds = xr.Dataset(dvars)

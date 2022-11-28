@@ -161,6 +161,10 @@ def _hessian_reg_psf(x, beam, psfhat,
     """
     Tikhonov regularised Hessian approx
     """
+    if isinstance(psfhat, da.Array):
+        psfhat = psfhat.compute()
+    if isinstance(beam, da.Array):
+        beam = beam.compute()
 
     if beam is not None:
         xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(1, 2))
@@ -194,6 +198,10 @@ def _hessian_reg_psf_slice(
     """
     Tikhonov regularised Hessian approx
     """
+    if isinstance(psfhat, da.Array):
+        psfhat = psfhat.compute()
+    if isinstance(beam, da.Array):
+        beam = beam.compute()
     if beam is not None:
         xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(0, 1))
     else:

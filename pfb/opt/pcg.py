@@ -295,3 +295,5 @@ def pcg_dist(ds, A, **kwargs):
     ds_out = ds.assign(**{'UPDATE': (('x','y'), da.from_array(x))})
     print(f'Band={ds.bandid}, iters{k}, eps={eps}', file=log)
     return ds_out
+
+

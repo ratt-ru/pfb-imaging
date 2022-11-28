@@ -261,6 +261,7 @@ def _clean(**kw):
             x0 = np.zeros_like(x)
             x0[:, mopmask] = residual_mfs[mopmask]
             mopmask = mopmask[None, :, :].astype(residual.dtype)
+            hess2opts['sigmainv'] = rmax
             x = pcg_psf(psfhat, mopmask*residual, x0,
                         mopmask, hess2opts, cgopts)
 
