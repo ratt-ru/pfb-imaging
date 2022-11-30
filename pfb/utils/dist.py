@@ -58,11 +58,13 @@ def get_cbeam_area(dds, wsum):
 def init_dual_and_model(ds, **kwargs):
     dct = {}
     if 'MODEL' not in ds:
-        model = da.zeros((kwargs['nx'], kwargs['ny']), chunks=(-1, -1))
-        dct['MODEL'] = (('x', 'y'), model)
+        model = np.zeros((kwargs['nx'], kwargs['ny']))
+        dct['MODEL'] = (('x', 'y'), da.from_array(model, chunks=(-1, -1)))
+        # dct['MODEL'] = (('x', 'y'), model)
     if 'DUAL' not in ds:
-        dual = da.zeros((kwargs['nbasis'], kwargs['nmax']), chunks=(-1,-1))
-        dct['DUAL'] = (('b', 'c'), dual)
+        dual = np.zeros((kwargs['nbasis'], kwargs['nmax']))
+        dct['DUAL'] = (('b', 'c'), da.from_array(dual, chunks=(-1, -1)))
+        # dct['DUAL'] = (('b', 'c'), dual)
     ds_out = ds.assign(**dct)
     return ds_out
 

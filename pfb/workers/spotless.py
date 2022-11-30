@@ -103,6 +103,7 @@ def spotless(**kw):
             client = stack.enter_context(Client(cluster))
 
         client.wait_for_workers(opts.nworkers)
+        client.amm.stop()
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -155,19 +156,14 @@ def _spotless(**kw):
                                           'yo2':-1,
                                           'b':-1,
                                           'c':-1})
-    if opts.memory_greedy:
-        # pass workers as set
-        ddsf = [ds.persist(workers={names[i]})
-                for ds, i in zip(dds, cycle(range(opts.nworkers)))]
-    else:
-        ddsf = client.scatter(dds)
+    print('Scattering data', file=log)
+    ddsf = []
+    for ds, i in zip(dds, cycle(range(opts.nworkers))):
+        ddsf.append(client.persist(ds, workers={names[i]}))
+        # ddsf.append(client.compute(tmp, sync=False, workers={names[i]}))
 
-    # names={}
-    # for ds in ddsf:
-    #     b = ds.result().bandid
-    #     tmp = client.who_has(ds)
-    #     for key in tmp.keys():
-    #         names[b] = tmp[key]
+    ddsf = client.scatter(ddsf)
+    ddsf = client.compute(ddsf, sync=False)
 
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
@@ -198,8 +194,10 @@ def _spotless(**kw):
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
 
     # assumed constant
-    wsum = client.submit(accum_wsums, ddsf).result()
-    pix_per_beam = client.submit(get_cbeam_area, ddsf, wsum).result()
+    wsum = client.submit(accum_wsums, ddsf,
+                         workers={0}).result()
+    pix_per_beam = client.submit(get_cbeam_area, ddsf, wsum,
+                                 workers={0}).result()
 
     # dictionary setup
     print("Setting up dictionary", file=log)
@@ -210,13 +208,12 @@ def _spotless(**kw):
                                 bases, opts.nlevels)
     ntot = tuple(ntot)
 
-
     psiH = partial(im2coef,
                     bases=bases,
                     ntot=ntot,
                     nmax=nmax,
                     nlevels=opts.nlevels)
-    # avoids pickling on dumba Dict
+    # avoid pickling dumba Dict
     psi = partial(coef2im,
                     bases=bases,
                     ntot=ntot,
@@ -228,13 +225,13 @@ def _spotless(**kw):
     # this makes for cleaner algorithms but is it a bad pattern?
     Afs = []
     for ds in ddsf:
-        tmp = client.who_has(ds.PSFHAT)
+        tmp = client.who_has(ds)
         wip = list(tmp.values())[0][0]
         wid = client.scheduler_info()['workers'][wip]['id']
         Af = client.submit(partial,
                            _hessian_reg_psf_slice,
-                           psfhat=ds.PSFHAT.data,
-                           beam=ds.BEAM.data,
+                           psfhat=ds.result().PSFHAT.data,
+                           beam=ds.result().BEAM.data,
                            wsum=wsum,
                            nthreads=opts.nthreads,
                            sigmainv=opts.sigmainv,
@@ -271,8 +268,6 @@ def _spotless(**kw):
     else:
         hessnorm = opts.hessnorm
     print(f'hessnorm = {hessnorm:.3e}', file=log)
-
-    import pdb; pdb.set_trace()
 
     # future contains mfs residual and stats
     residf = client.submit(get_resid_and_stats, ddsf, wsum,
