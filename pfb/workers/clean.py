@@ -190,7 +190,8 @@ def _clean(**kw):
                           submaxit=opts.sub_maxit,
                           verbosity=opts.verbose,
                           report_freq=opts.report_freq,
-                          sigmathreshold=opts.sigmathreshold)
+                          sigmathreshold=opts.sigmathreshold,
+                          nthreads=opts.nthreads)
 
         model += x
 

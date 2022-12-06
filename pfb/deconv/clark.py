@@ -87,7 +87,8 @@ def clark(ID,
           report_freq=1,
           verbosity=1,
           psfopts=None,
-          sigmathreshold=2):
+          sigmathreshold=2,
+          nthreads=1):
     nband, nx, ny = ID.shape
     _, nx_psf, ny_psf = PSF.shape
     wsums = np.amax(PSF, axis=(1,2))
