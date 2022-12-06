@@ -5,6 +5,7 @@ from uuid import uuid4
 from ducc0.fft import r2c, c2r, c2c, good_size
 from uuid import uuid4
 from pfb.utils.misc import pad_and_shift, unpad_and_unshift
+from pfb.utils.misc import pad_and_shift_cube, unpad_and_unshift_cube
 import gc
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
@@ -217,3 +218,20 @@ def _hessian_reg_psf_slice(
         return im + x * sigmainv
     else:
         return im
+
+@profile
+def psf_convolve_cube2(x,     # input image, not overwritten
+                       xpad,  # preallocated array to store padded image
+                       xhat,  # preallocated array to store FTd image
+                       xout,  # preallocated array to store output image
+                       psfhat,
+                       lastsize,
+                       nthreads=1):
+    pad_and_shift_cube(x, xpad)
+    r2c(xpad, axes=(1, 2), nthreads=nthreads,
+        forward=True, inorm=0, out=xhat)
+    xhat *= psfhat
+    c2r(xhat, axes=(1, 2), forward=False, out=xpad,
+        lastsize=lastsize, inorm=2, nthreads=nthreads)
+    unpad_and_unshift_cube(xpad, xout)
+    return xout

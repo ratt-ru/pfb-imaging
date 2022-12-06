@@ -3,6 +3,7 @@ import numexpr as ne
 from functools import partial
 import numba
 import dask.array as da
+from pfb.operators.psf import psf_convolve_cube2
 import pyscilog
 log = pyscilog.get_logger('CLARK')
 
@@ -74,10 +75,10 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         k += 1
     return model
 
-
+@profile
 def clark(ID,
           PSF,
-          psfo,
+          PSFHAT,
           threshold=0,
           gamma=0.05,
           pf=0.05,
@@ -98,6 +99,13 @@ def clark(ID,
     wsums = np.amax(PSF, axis=(1,2))
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
     IR = ID.copy()
+    # pre-allocate arrays for doing FFT's
+    xout = np.empty((nband, nx, ny), dtype=x.dtype, order='C')
+    xout = np.require(xout, dtype=xhat.dtype, requirements='CAW')
+    xpad = np.empty((nband, nx_psf, ny_psf), dtype=x.dtype, order='C')
+    xpad = np.require(xpad, dtype=x.dtype, requirements='CAW')
+    xhat = np.empty((nband, nx_psf, nyo2_psf), dtype=psfhat.dtype)
+    xhat = np.require(xhat, dtype=xhat.dtype, requirements='CAW')
     # square avoids abs of full array
     IRsearch = np.sum(IR, axis=0)**2
     pq = IRsearch.argmax()
@@ -117,7 +125,13 @@ def clark(ID,
                          th=subth,
                          maxit=submaxit)
         # subtract from full image (as in major cycle)
-        IR = ID - psfo(model)
+        psf_convolve_cube2(model,
+                           xpad,
+                           xhat,
+                           xout,
+                           PSFHAT,
+                           ny_psf)
+        IR = ID - xout
         IRsearch = np.sum(IR, axis=0)**2
         pq = IRsearch.argmax()
         p = pq//ny

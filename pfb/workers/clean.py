@@ -152,29 +152,12 @@ def _clean(**kw):
     unpad_x = slice(npad_xl, -npad_xr)
     unpad_y = slice(npad_yl, -npad_yr)
     lastsize = ny + np.sum(padding[-1])
-    psfopts = {}
-    psfopts['nthreads'] = opts.nvthreads
-    psfopts['padding'] = padding
-    psfopts['unpad_x'] = unpad_x
-    psfopts['unpad_y'] = unpad_y
-    psfopts['lastsize'] = lastsize
-    # psfo = partial(psf_convolve_cube,
-    #                psfhat=da.from_array(psfhat, chunks=(1, -1, -1)),
-    #                beam=None,
-    #                psfopts=psfopts,
-    #                wsum=1,  # psf is normalised to sum to one
-    #                sigmainv=0,
-    #                compute=True)
-
-    hess2opts = copy(psfopts)
-    hess2opts['sigmainv'] = 1e-8
-
-    padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
-    psfo = partial(_hessian_reg_psf, beam=mask[None, :, :], psfhat=psfhat,
-                    nthreads=opts.nthreads, sigmainv=0,
-                    padding=padding, unpad_x=unpad_x, unpad_y=unpad_y,
-                    lastsize = lastsize)
-
+    imhessopts = {}
+    imhessopts['nthreads'] = opts.nvthreads
+    imhessopts['padding'] = padding
+    imhessopts['unpad_x'] = unpad_x
+    imhessopts['unpad_y'] = unpad_y
+    imhessopts['lastsize'] = lastsize
 
 
     cgopts = {}
@@ -197,30 +180,17 @@ def _clean(**kw):
     print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
     for k in range(opts.nmiter):
-        if opts.algo.lower() == 'clark':
-            print("Running Clark", file=log)
-            x, status = clark(mask*residual, psf, psfo,
-                              threshold=threshold,
-                              gamma=opts.gamma,
-                              pf=opts.peak_factor,
-                              maxit=opts.clark_maxit,
-                              subpf=opts.sub_peak_factor,
-                              submaxit=opts.sub_maxit,
-                              verbosity=opts.verbose,
-                              report_freq=opts.report_freq,
-                              sigmathreshold=opts.sigmathreshold)
-
-        elif opts.algo.lower() == 'hogbom':
-            print("Running Hogbom", file=log)
-            x, status = hogbom(residual, psf,
-                               threshold=threshold,
-                               gamma=opts.gamma,
-                               pf=opts.peak_factor,
-                               maxit=opts.hogbom_maxit,
-                               verbosity=opts.verbose,
-                               report_freq=opts.report_freq)
-        else:
-            raise ValueError(f'{opts.algo} is not a valid algo option')
+        print("Cleaning", file=log)
+        x, status = clark(mask*residual, psf, psfhat,
+                          threshold=threshold,
+                          gamma=opts.gamma,
+                          pf=opts.peak_factor,
+                          maxit=opts.clark_maxit,
+                          subpf=opts.sub_peak_factor,
+                          submaxit=opts.sub_maxit,
+                          verbosity=opts.verbose,
+                          report_freq=opts.report_freq,
+                          sigmathreshold=opts.sigmathreshold)
 
         model += x
 
@@ -258,7 +228,7 @@ def _clean(**kw):
             mopmask = mopmask[None, :, :].astype(residual.dtype)
             hess2opts['sigmainv'] = rmax
             x = pcg_psf(psfhat, mopmask*residual, x0,
-                        mopmask, hess2opts, cgopts)
+                        mopmask, imhessopts, cgopts)
 
             model += x
 
