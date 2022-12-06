@@ -73,9 +73,8 @@ def _restore(**kw):
 
 
     dirty, model, residual, psf, _, _, wsums = dds2cubes(dds,
-                                                         opts,
-                                                         apparent=True,
-                                                         log=log)
+                                                         nband,
+                                                         apparent=True)
     wsum = np.sum(wsums)
     output_type = dirty.dtype
     psf_mfs = np.sum(psf, axis=0)/wsum

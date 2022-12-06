@@ -92,9 +92,8 @@ def _clean(**kw):
     output_type = dds[0].DIRTY.dtype
     dirty, model, residual, psf, psfhat, _, wsums = dds2cubes(
                                                             dds,
-                                                            opts,
-                                                            apparent=True,
-                                                            log=log)
+                                                            nband,
+                                                            apparent=True)
     wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon

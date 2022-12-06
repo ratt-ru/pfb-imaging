@@ -4,6 +4,7 @@ from daskms.optimisation import inlined_array
 from uuid import uuid4
 from ducc0.fft import r2c, c2r, c2c, good_size
 from uuid import uuid4
+from pfb.utils.misc import pad_and_shift, unpad_and_unshift
 import gc
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
@@ -185,31 +186,32 @@ def _hessian_reg_psf(x, beam, psfhat,
         return im
 
 def _hessian_reg_psf_slice(
-                    x,
+                    x,  # input image, not overwritten
+                    xpad,  # preallocated array to store padded image
+                    xhat,  # preallocated array to store FTd image
+                    xout,  # preallocated array to store output image
                     psfhat=None,
                     beam=None,
-                    nthreads=None,
-                    sigmainv=None,
-                    padding=None,
-                    unpad_x=None,
-                    unpad_y=None,
+                    nthreads=1,
+                    sigmainv=0,
                     lastsize=None,
                     wsum=1.0):
     """
     Tikhonov regularised Hessian approx
     """
     if beam is not None:
-        xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(0, 1))
+        pad_and_shift(x*beam, xpad)
     else:
-        xhat = iFs(np.pad(x, padding, mode='constant'), axes=(0, 1))
-    xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
-               forward=True, inorm=0)
-    xhat = c2r(xhat * psfhat/wsum, axes=(0, 1), forward=False,
-               lastsize=lastsize, inorm=2, nthreads=nthreads)
-    im = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
+        pad_and_shift(x*beam, xpad)
+    r2c(xpad, axes=(0, 1), nthreads=nthreads,
+        forward=True, inorm=0, out=xhat)
+    xhat *= psfhat/wsum
+    c2r(xhat, axes=(0, 1), forward=False, out=xpad,
+        lastsize=lastsize, inorm=2, nthreads=nthreads)
+    unpad_and_unshift(xpad, xout)
 
     if beam is not None:
-        im *= beam
+        xout *= beam
 
     if np.any(sigmainv):
         return im + x * sigmainv
