@@ -75,7 +75,6 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         k += 1
     return model
 
-@profile
 def clark(ID,
           PSF,
           PSFHAT,

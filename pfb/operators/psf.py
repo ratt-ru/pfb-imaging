@@ -219,7 +219,6 @@ def _hessian_reg_psf_slice(
     else:
         return im
 
-@profile
 def psf_convolve_cube2(x,     # input image, not overwritten
                        xpad,  # preallocated array to store padded image
                        xhat,  # preallocated array to store FTd image
