@@ -1,7 +1,7 @@
 import sys
 import numpy as np
 import numexpr as ne
-from numba import jit, njit
+from numba import jit, njit, prange
 import dask
 import dask.array as da
 from dask.distributed import performance_report
