@@ -1155,3 +1155,56 @@ def unpad_and_unshift(x, out):
             # second to third quadrant
             out[i, nyo//2 + j] = x[padx + nxo//2 + i, j]
     return out
+
+
+@njit(nogil=True, cache=True, inline='always', parallel=True)
+def pad_and_shift_cube(x, out):
+    '''
+    Pad x with zeros so as to have the same shape as out and perform
+    ifftshift in place
+    '''
+    nband, nxi, nyi = x.shape
+    nband, nxo, nyo = out.shape
+    if nxi >= nxo or nyi >= nyo:
+        raise ValueError('Output must be larger than input')
+    padx = nxo-nxi
+    pady = nyo-nyi
+    out[...] = 0.0
+    for b in prange(nband):
+        for i in range(nxi//2):
+            for j in range(nyi//2):
+                # first to last quadrant
+                out[b, padx + nxi//2 + i, pady + nyi//2 + j] = x[b, i, j]
+                # last to first quadrant
+                out[b, i, j] = x[b, nxi//2+i, nyi//2+j]
+                # third to second quadrant
+                out[b, i, pady + nyi//2 + j] = x[b, nxi//2 + i, j]
+                # second to third quadrant
+                out[b, padx + nxi//2 + i, j] = x[b, i, nyi//2 + j]
+    return out
+
+
+@njit(nogil=True, cache=True, inline='always', parallel=True)
+def unpad_and_unshift_cube(x, out):
+    '''
+    fftshift x and unpad it into out
+    '''
+    nband, nxi, nyi = x.shape
+    nband, nxo, nyo = out.shape
+    if nxi < nxo or nyi < nyo:
+        raise ValueError('Output must be smaller than input')
+    out[...] = 0.0
+    padx = nxo-nxi
+    pady = nyo-nyi
+    for b in prange(nband):
+        for i in range(nxo//2):
+            for j in range(nyo//2):
+                # first to last quadrant
+                out[b, nxo//2+i, nyo//2+j] = x[b, i, j]
+                # last to first quadrant
+                out[b, i, j] = x[b, padx + nxo//2 + i, pady + nyo//2 + j]
+                # third to second quadrant
+                out[b, nxo//2 + i, j] = x[b, i, pady + nyo//2 + j]
+                # second to third quadrant
+                out[b, i, nyo//2 + j] = x[b, padx + nxo//2 + i, j]
+    return out
