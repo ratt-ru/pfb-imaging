@@ -99,11 +99,11 @@ def clark(ID,
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
     IR = ID.copy()
     # pre-allocate arrays for doing FFT's
-    xout = np.empty((nband, nx, ny), dtype=x.dtype, order='C')
-    xout = np.require(xout, dtype=xhat.dtype, requirements='CAW')
-    xpad = np.empty((nband, nx_psf, ny_psf), dtype=x.dtype, order='C')
-    xpad = np.require(xpad, dtype=x.dtype, requirements='CAW')
-    xhat = np.empty((nband, nx_psf, nyo2_psf), dtype=psfhat.dtype)
+    xout = np.empty((nband, nx, ny), dtype=ID.dtype, order='C')
+    xout = np.require(xout, dtype=ID.dtype, requirements='CAW')
+    xpad = np.empty((nband, nx_psf, ny_psf), dtype=ID.dtype, order='C')
+    xpad = np.require(xpad, dtype=ID.dtype, requirements='CAW')
+    xhat = np.empty((nband, nx_psf, nyo2_psf), dtype=PSFHAT.dtype)
     xhat = np.require(xhat, dtype=xhat.dtype, requirements='CAW')
     # square avoids abs of full array
     IRsearch = np.sum(IR, axis=0)**2
