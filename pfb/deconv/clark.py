@@ -130,7 +130,8 @@ def clark(ID,
                            xhat,
                            xout,
                            PSFHAT,
-                           ny_psf)
+                           ny_psf,
+                           nthreads=nthreads)
         IR = ID - xout
         IRsearch = np.sum(IR, axis=0)**2
         pq = IRsearch.argmax()
