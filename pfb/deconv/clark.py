@@ -61,6 +61,7 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         Idelq = q - Iq
         # find where PSF overlaps with image
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
+        # Ipp, Iqq = psf[:, nxo2 - Ip[mask], nyo2 - Iq[mask]]
         A = subtract(A[:, mask], psf,
                      Idelp[mask], Idelq[mask],
                      xhat, nxo2, nyo2)

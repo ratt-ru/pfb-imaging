@@ -200,8 +200,6 @@ def _clean(**kw):
     for k in range(opts.nmiter):
         if opts.algo.lower() == 'clark':
             print("Running Clark", file=log)
-            # import cProfile
-            # with cProfile.Profile() as pr:
             x, status = clark(mask*residual, psf, psfo,
                               threshold=threshold,
                               gamma=opts.gamma,
@@ -212,8 +210,6 @@ def _clean(**kw):
                               verbosity=opts.verbose,
                               report_freq=opts.report_freq,
                               sigmathreshold=opts.sigmathreshold)
-            # pr.print_stats(sort='cumtime')
-            # quit()
 
         elif opts.algo.lower() == 'hogbom':
             print("Running Hogbom", file=log)
