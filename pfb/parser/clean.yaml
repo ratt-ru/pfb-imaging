@@ -23,31 +23,11 @@ inputs:
     info:
       Imaging products to produce. Options are I, Q, U, V.
       Only single Stokes products are currently supported
-  residual_name:
-    dtype: str
-    abbreviation: rname
-    default: RESIDUAL
-    info:
-      Name of residual in dds
-  model_name:
-    dtype: str
-    abbreviation: mname
-    default: MODEL
-    info:
-      Name of model in mds
   mask:
     dtype: str
     abbreviation: mask
     info:
       Path to mask.fits
-  algo:
-    dtype: str
-    default: clark
-    choices:
-      - hogbom
-      - clark
-    info:
-      Which minor cycle to use
   dirosion:
     dtype: int
     default: 1
@@ -67,7 +47,14 @@ inputs:
     dtype: bool
     default: true
     info:
-      Run PCG based flux mop between major iterations
+      Trigger PCG based flux mop if minor cycle stalls,
+      the final threshold is reached or on the final iteration.
+  mop_gamma:
+    dtype: float
+    default: 0.65
+    info:
+      Step size for flux mop. Should be between (0,1).
+      A value of 1 is most aggressive.
   nmiter:
     dtype: int
     default: 5
@@ -103,22 +90,16 @@ inputs:
     abbreviation: spf
     info:
       Peak factor of sub-minor loop
-  hogbom_maxit:
-    dtype: int
-    default: 5000
-    abbreviation: hmaxit
-    info:
-      Maximum number of peak finding iterations between major cycles
-  clark_maxit:
+  minor_maxit:
     dtype: int
     default: 50
-    abbreviation: cmaxit
+    abbreviation: mmaxit
     info:
       Maximum number of PSF convolutions between major cycles
-  sub_maxit:
+  subminor_maxit:
     dtype: int
     default: 1000
-    abbreviation: smaxit
+    abbreviation: smmaxit
     info:
       Maximum number of iterations for the sub-minor cycle
   verbose:

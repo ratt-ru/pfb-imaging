@@ -3,7 +3,7 @@ import numexpr as ne
 from functools import partial
 import numba
 import dask.array as da
-from pfb.operators.psf import psf_convolve_cube2
+from pfb.operators.psf import psf_convolve_cube
 import pyscilog
 log = pyscilog.get_logger('CLARK')
 
@@ -101,11 +101,8 @@ def clark(ID,
     IR = ID.copy()
     # pre-allocate arrays for doing FFT's
     xout = np.empty(ID.shape, dtype=ID.dtype, order='C')
-    xout = np.require(xout, dtype=ID.dtype, requirements='CAW')
     xpad = np.empty(PSF.shape, dtype=ID.dtype, order='C')
-    xpad = np.require(xpad, dtype=ID.dtype, requirements='CAW')
     xhat = np.empty(PSFHAT.shape, dtype=PSFHAT.dtype)
-    xhat = np.require(xhat, dtype=xhat.dtype, requirements='CAW')
     # square avoids abs of full array
     IRsearch = np.sum(IR, axis=0)**2
     pq = IRsearch.argmax()
@@ -125,13 +122,14 @@ def clark(ID,
                          th=subth,
                          maxit=submaxit)
         # subtract from full image (as in major cycle)
-        psf_convolve_cube2(model,
-                           xpad,
-                           xhat,
-                           xout,
-                           PSFHAT,
-                           ny_psf,
-                           nthreads=nthreads)
+        psf_convolve_cube(
+                        xpad,
+                        xhat,
+                        xout,
+                        PSFHAT,
+                        ny_psf,
+                        model,
+                        nthreads=nthreads)
         IR = ID - xout
         IRsearch = np.sum(IR, axis=0)**2
         pq = IRsearch.argmax()

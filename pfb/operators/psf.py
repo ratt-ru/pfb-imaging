@@ -7,8 +7,41 @@ from uuid import uuid4
 from pfb.utils.misc import pad_and_shift, unpad_and_unshift
 from pfb.utils.misc import pad_and_shift_cube, unpad_and_unshift_cube
 import gc
-iFs = np.fft.ifftshift
-Fs = np.fft.fftshift
+
+
+def psf_convolve_slice(
+                    xpad,  # preallocated array to store padded image
+                    xhat,  # preallocated array to store FTd image
+                    xout,  # preallocated array to store output image
+                    psfhat,
+                    lastsize,
+                    x,  # input image, not overwritten
+                    nthreads=1):
+    pad_and_shift(x, xpad)
+    r2c(xpad, axes=(0, 1), nthreads=nthreads,
+        forward=True, inorm=0, out=xhat)
+    xhat *= psfhat
+    c2r(xhat, axes=(0, 1), forward=False, out=xpad,
+        lastsize=lastsize, inorm=2, nthreads=nthreads)
+    unpad_and_unshift(xpad, xout)
+    return xout
+
+
+def psf_convolve_cube(xpad,    # preallocated array to store padded image
+                      xhat,    # preallocated array to store FTd image
+                      xout,    # preallocated array to store output image
+                      psfhat,
+                      lastsize,
+                      x,       # input image, not overwritten
+                      nthreads=1):
+    pad_and_shift_cube(x, xpad)
+    r2c(xpad, axes=(1, 2), nthreads=nthreads,
+        forward=True, inorm=0, out=xhat)
+    xhat *= psfhat
+    c2r(xhat, axes=(1, 2), forward=False, out=xpad,
+        lastsize=lastsize, inorm=2, nthreads=nthreads)
+    unpad_and_unshift_cube(xpad, xout)
+    return xout
 
 
 def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, mask,
@@ -54,43 +87,11 @@ def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, mask,
     else:
         return convim
 
-def _psf_convolve_impl(x, psfhat, beam,
-                       nthreads=None,
-                       padding=None,
-                       unpad_x=None,
-                       unpad_y=None,
-                       lastsize=None):
-    nx, ny = x.shape
-    xhat = x if beam is None else x * beam
-    xhat = iFs(np.pad(xhat, padding, mode='constant'), axes=(0, 1))
-    xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
-                forward=True, inorm=0)
-    xhat = c2r(xhat * psfhat, axes=(0, 1), forward=False,
-               lastsize=lastsize, inorm=2, nthreads=nthreads)
-    convim = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
 
-    if beam is not None:
-        convim *= beam
 
-    return convim
 
-def _psf_convolve(x, psfhat, beam, psfopts):
-    return _psf_convolve_impl(x, psfhat, beam, **psfopts)
 
-def psf_convolve(x, psfhat, beam, psfopts):
-    if not isinstance(x, da.Array):
-        x = da.from_array(x, chunks=(-1, -1), name=False)
-    if beam is None:
-        bout = None
-    else:
-        bout = ('nx', 'ny')
-    return da.blockwise(_psf_convolve, ('nx', 'ny'),
-                        x, ('nx', 'ny'),
-                        psfhat, ('nx', 'ny'),
-                        beam, bout,
-                        psfopts, None,
-                        align_arrays=False,
-                        dtype=x.dtype)
+
 
 
 def _psf_convolve_cube_impl(x, psfhat, beam,
@@ -115,10 +116,8 @@ def _psf_convolve_cube_impl(x, psfhat, beam,
 
     return convim
 
-def _psf_convolve_cube(x, psfhat, beam, psfopts):
-    return _psf_convolve_cube_impl(x, psfhat, beam, **psfopts)
 
-def psf_convolve_cube(x, psfhat, beam, psfopts,
+def psf_convolve_cube_dask(x, psfhat, beam, psfopts,
                       wsum=1, sigmainv=None, compute=True):
     if not isinstance(x, da.Array):
         x = da.from_array(x, chunks=(1, -1, -1),
@@ -152,85 +151,17 @@ def psf_convolve_cube(x, psfhat, beam, psfopts,
     else:
         return convim
 
-
-def _hessian_reg_psf(x, beam, psfhat,
-                     nthreads=None,
-                     sigmainv=None,
-                     padding=None,
-                     unpad_x=None,
-                     unpad_y=None,
-                     lastsize=None):
-    """
-    Tikhonov regularised Hessian approx
-    """
-    if isinstance(psfhat, da.Array):
-        psfhat = psfhat.compute()
-    if isinstance(beam, da.Array):
-        beam = beam.compute()
-
-    if beam is not None:
-        xhat = iFs(np.pad(beam*x, padding, mode='constant'), axes=(1, 2))
+def psf_convolve_slice_dask(x, psfhat, beam, psfopts):
+    if not isinstance(x, da.Array):
+        x = da.from_array(x, chunks=(-1, -1), name=False)
+    if beam is None:
+        bout = None
     else:
-        xhat = iFs(np.pad(x, padding, mode='constant'), axes=(1, 2))
-    xhat = r2c(xhat, axes=(1, 2), nthreads=nthreads,
-               forward=True, inorm=0)
-    xhat = c2r(xhat * psfhat, axes=(1, 2), forward=False,
-               lastsize=lastsize, inorm=2, nthreads=nthreads)
-    im = Fs(xhat, axes=(1, 2))[:, unpad_x, unpad_y]
-
-    if beam is not None:
-        im *= beam
-
-    if np.any(sigmainv):
-        return im + x * sigmainv
-    else:
-        return im
-
-def _hessian_reg_psf_slice(
-                    x,  # input image, not overwritten
-                    xpad,  # preallocated array to store padded image
-                    xhat,  # preallocated array to store FTd image
-                    xout,  # preallocated array to store output image
-                    psfhat=None,
-                    beam=None,
-                    nthreads=1,
-                    sigmainv=0,
-                    lastsize=None,
-                    wsum=1.0):
-    """
-    Tikhonov regularised Hessian approx
-    """
-    if beam is not None:
-        pad_and_shift(x*beam, xpad)
-    else:
-        pad_and_shift(x*beam, xpad)
-    r2c(xpad, axes=(0, 1), nthreads=nthreads,
-        forward=True, inorm=0, out=xhat)
-    xhat *= psfhat/wsum
-    c2r(xhat, axes=(0, 1), forward=False, out=xpad,
-        lastsize=lastsize, inorm=2, nthreads=nthreads)
-    unpad_and_unshift(xpad, xout)
-
-    if beam is not None:
-        xout *= beam
-
-    if np.any(sigmainv):
-        return im + x * sigmainv
-    else:
-        return im
-
-def psf_convolve_cube2(x,     # input image, not overwritten
-                       xpad,  # preallocated array to store padded image
-                       xhat,  # preallocated array to store FTd image
-                       xout,  # preallocated array to store output image
-                       psfhat,
-                       lastsize,
-                       nthreads=1):
-    pad_and_shift_cube(x, xpad)
-    r2c(xpad, axes=(1, 2), nthreads=nthreads,
-        forward=True, inorm=0, out=xhat)
-    xhat *= psfhat
-    c2r(xhat, axes=(1, 2), forward=False, out=xpad,
-        lastsize=lastsize, inorm=2, nthreads=nthreads)
-    unpad_and_unshift_cube(xpad, xout)
-    return xout
+        bout = ('nx', 'ny')
+    return da.blockwise(psf_convolve_slice, ('nx', 'ny'),
+                        x, ('nx', 'ny'),
+                        psfhat, ('nx', 'ny'),
+                        beam, bout,
+                        psfopts, None,
+                        align_arrays=False,
+                        dtype=x.dtype)

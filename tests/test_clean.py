@@ -9,8 +9,7 @@ from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 @pmp('do_gains', (False, True))
-@pmp('algo', ('hogbom', 'clark'))
-def test_clean(do_gains, algo, tmp_path_factory):
+def test_clean(do_gains, tmp_path_factory):
     '''
     Here we test that clean correctly infers the fluxes of point sources
     placed at the centers of pixels in the presence of the wterm and DI gain
@@ -219,7 +218,6 @@ def test_clean(do_gains, algo, tmp_path_factory):
     clean_args["output_filename"] = outname
     clean_args["postfix"] = postfix
     clean_args["nband"] = nchan
-    clean_args["algo"] = algo
     clean_args["dirosion"] = 0
     clean_args["do_residual"] = False
     clean_args["nmiter"] = 100

@@ -66,10 +66,8 @@ def _clean(**kw):
     from pfb.deconv.hogbom import hogbom
     from pfb.deconv.clark import clark
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
-    from pfb.operators.hessian import hessian
     from pfb.opt.pcg import pcg, pcg_psf
     from pfb.operators.hessian import hessian_xds
-    from pfb.operators.psf import psf_convolve_cube, _hessian_reg_psf
     from scipy import ndimage
     from copy import copy
 
@@ -87,12 +85,13 @@ def _clean(**kw):
         dds = dask.persist(dds)[0]
 
     nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
+    lastsize = ny_psf
 
     # stitch dirty/psf in apparent scale
     output_type = dds[0].DIRTY.dtype
     dirty, model, residual, psf, psfhat, _, wsums = dds2cubes(
                                                             dds,
-                                                            nband,
+                                                            opts.nband,
                                                             apparent=True)
     wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
@@ -143,23 +142,7 @@ def _clean(**kw):
                    mask=np.ones((nx, ny), dtype=output_type),
                    compute=True, use_beam=False)
 
-    # set up image space Hessian
-    npad_xl = (nx_psf - nx)//2
-    npad_xr = nx_psf - nx - npad_xl
-    npad_yl = (ny_psf - ny)//2
-    npad_yr = ny_psf - ny - npad_yl
-    padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
-    unpad_x = slice(npad_xl, -npad_xr)
-    unpad_y = slice(npad_yl, -npad_yr)
-    lastsize = ny + np.sum(padding[-1])
-    imhessopts = {}
-    imhessopts['nthreads'] = opts.nvthreads
-    imhessopts['padding'] = padding
-    imhessopts['unpad_x'] = unpad_x
-    imhessopts['unpad_y'] = unpad_y
-    imhessopts['lastsize'] = lastsize
-
-
+    # PCG related options for flux mop
     cgopts = {}
     cgopts['tol'] = opts.cg_tol
     cgopts['maxit'] = opts.cg_maxit
@@ -185,9 +168,9 @@ def _clean(**kw):
                           threshold=threshold,
                           gamma=opts.gamma,
                           pf=opts.peak_factor,
-                          maxit=opts.clark_maxit,
+                          maxit=opts.minor_maxit,
                           subpf=opts.sub_peak_factor,
-                          submaxit=opts.sub_maxit,
+                          submaxit=opts.subminor_maxit,
                           verbosity=opts.verbose,
                           report_freq=opts.report_freq,
                           sigmathreshold=opts.sigmathreshold,
@@ -223,15 +206,20 @@ def _clean(**kw):
                 struct = ndimage.generate_binary_structure(2, opts.dirosion)
                 mopmask = ndimage.binary_dilation(mopmask, structure=struct)
                 mopmask = ndimage.binary_erosion(mopmask, structure=struct)
-            # hess2opts['sigmainv'] = 1e-8
             x0 = np.zeros_like(x)
             x0[:, mopmask] = residual_mfs[mopmask]
+            # TODO - applying mask as beam is wasteful
             mopmask = mopmask[None, :, :].astype(residual.dtype)
-            hess2opts['sigmainv'] = rmax
-            x = pcg_psf(psfhat, mopmask*residual, x0,
-                        mopmask, imhessopts, cgopts)
+            x = pcg_psf(psfhat,
+                        mopmask*residual,
+                        x0,
+                        mopmask,
+                        lastsize,
+                        opts.nvthreads,
+                        rmax,  # used as sigmainv
+                        cgopts)
 
-            model += x
+            model += opts.mop_gamma*x
 
             save_fits(f'{basename}_premop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
 

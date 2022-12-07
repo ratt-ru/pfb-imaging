@@ -5,6 +5,8 @@ import dask.array as da
 from daskms.optimisation import inlined_array
 from ducc0.wgridder import ms2dirty, dirty2ms
 from uuid import uuid4
+from pfb.operators.psf import (psf_convolve_slice,
+                               psf_convolve_cube)
 
 
 def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
@@ -90,8 +92,8 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
                       pixsize_y=cell,
                       epsilon=epsilon,
                       nthreads=nthreads,
-                      do_wstacking=wstack) #,
-                      # double_precision_accumulation=double_accum)
+                      do_wstacking=wstack,
+                      double_precision_accumulation=double_accum)
 
     if beam is not None:
         convim *= beam
@@ -117,3 +119,56 @@ def hessian(x, uvw, weight, vis_mask, freq, beam, hessopts):
                         beam, bout,
                         hessopts, None,
                         dtype=x.dtype)
+
+
+def hessian_psf_slice(
+                    xpad,  # preallocated array to store padded image
+                    xhat,  # preallocated array to store FTd image
+                    xout,  # preallocated array to store output image
+                    psfhat,
+                    beam,
+                    lastsize,
+                    x,     # input image, not overwritten
+                    nthreads=1,
+                    sigmainv=1,
+                    wsum=1):
+    """
+    Tikhonov regularised Hessian approx
+    """
+
+    if beam is not None:
+        psf_convolve_slice(xpad, xhat, xout,
+                           psfhat/wsum, lastsize, x*beam)
+    else:
+        psf_convolve_slice(xpad, xhat, xout,
+                           psfhat/wsum, lastsize, x)
+
+    if beam is not None:
+        xout *= beam
+
+    return xout + x * sigmainv
+
+
+def hessian_psf_cube(
+                    xpad,  # preallocated array to store padded image
+                    xhat,  # preallocated array to store FTd image
+                    xout,  # preallocated array to store output image
+                    beam,
+                    psfhat,
+                    lastsize,
+                    x,     # input image, not overwritten
+                    nthreads=1,
+                    sigmainv=1):
+    """
+    Tikhonov regularised Hessian approx
+    """
+
+    if beam is not None:
+        psf_convolve_cube(x*beam, xpad, xhat, xout, psfhat, lastsize)
+    else:
+        psf_convolve_cube(x, xpad, xhat, xout, psfhat, lastsize)
+
+    if beam is not None:
+        xout *= beam
+
+    return xout + x * sigmainv
