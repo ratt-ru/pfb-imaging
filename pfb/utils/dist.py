@@ -18,8 +18,9 @@ def get_resid_and_stats(dds, wsum):
 
 def accum_wsums(dds):
     wsum = 0
+    # import pdb; pdb.set_trace()
     for ds in dds:
-        wsum += ds.WSUM.values[0]
+        wsum += ds.WSUM.data[0]
     return wsum
 
 def get_eps(modelp, dds):
@@ -46,9 +47,9 @@ def l1reweight(dds, l1weight, psiH, wsum, pix_per_beam, alpha=2):
     return alpha/(1 + (l2mod/rms[:, None])**2)
 
 def get_cbeam_area(dds, wsum):
-    psf_mfs = np.zeros(dds[0].PSF.shape, dtype=dds[0].PSF.dtype)
+    psf_mfs = da.zeros(dds[0].PSF.shape, dtype=dds[0].PSF.dtype)
     for ds in dds:
-        psf_mfs += ds.PSF.values/wsum
+        psf_mfs += ds.PSF.data/wsum
     # beam pars in pixel units
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
     return GaussPar[0]*GaussPar[1]*np.pi/4
@@ -58,11 +59,13 @@ def get_cbeam_area(dds, wsum):
 def init_dual_and_model(ds, **kwargs):
     dct = {}
     if 'MODEL' not in ds:
-        model = da.zeros((kwargs['nx'], kwargs['ny']), chunks=(-1, -1))
-        dct['MODEL'] = (('x', 'y'), model)
+        model = np.zeros((kwargs['nx'], kwargs['ny']))
+        dct['MODEL'] = (('x', 'y'), da.from_array(model, chunks=(-1, -1)))
+        # dct['MODEL'] = (('x', 'y'), model)
     if 'DUAL' not in ds:
-        dual = da.zeros((kwargs['nbasis'], kwargs['nmax']), chunks=(-1,-1))
-        dct['DUAL'] = (('b', 'c'), dual)
+        dual = np.zeros((kwargs['nbasis'], kwargs['nmax']))
+        dct['DUAL'] = (('b', 'c'), da.from_array(dual, chunks=(-1, -1)))
+        # dct['DUAL'] = (('b', 'c'), dual)
     ds_out = ds.assign(**dct)
     return ds_out
 

@@ -101,13 +101,13 @@ def get_ratio(vtildes, lam, sigma, l1weights):
     ratio[mask] = vsoft[mask] / vmfs[mask]
     return ratio
 
-def update(ds, A, y, vtilde, ratio, psi, psiH, **kwargs):
+def update(ds, A, y, vtilde, ratio, **kwargs):
     sigma = kwargs['sigma']
     lam = kwargs['lam']
     tau = kwargs['tau']
     gamma = kwargs['gamma']
-    # psi = kwargs['psi']
-    # psiH = kwargs['psiH']
+    psi = kwargs['psi']
+    psiH = kwargs['psiH']
 
     xp = ds.MODEL.values
     vp = ds.DUAL.values
@@ -182,9 +182,9 @@ def primal_dual_dist(
         wait([ratio])
 
         future = client.map(update,
-                            ddsf, Af, yf, vtildes, [ratio]*len(ddsf), psif, psiHf,
-                            # psi=psi,
-                            # psiH=psiH,
+                            ddsf, Af, yf, vtildes, [ratio]*len(ddsf),
+                            psi=psi,
+                            psiH=psiH,
                             pure=False,
                             wsum=wsum,
                             sigma=sigma,

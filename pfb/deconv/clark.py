@@ -3,6 +3,7 @@ import numexpr as ne
 from functools import partial
 import numba
 import dask.array as da
+from pfb.operators.psf import psf_convolve_cube
 import pyscilog
 log = pyscilog.get_logger('CLARK')
 
@@ -61,6 +62,7 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         Idelq = q - Iq
         # find where PSF overlaps with image
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
+        # Ipp, Iqq = psf[:, nxo2 - Ip[mask], nyo2 - Iq[mask]]
         A = subtract(A[:, mask], psf,
                      Idelp[mask], Idelq[mask],
                      xhat, nxo2, nyo2)
@@ -73,10 +75,9 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         k += 1
     return model
 
-
 def clark(ID,
           PSF,
-          psfo,
+          PSFHAT,
           threshold=0,
           gamma=0.05,
           pf=0.05,
@@ -86,7 +87,8 @@ def clark(ID,
           report_freq=1,
           verbosity=1,
           psfopts=None,
-          sigmathreshold=2):
+          sigmathreshold=2,
+          nthreads=1):
     nband, nx, ny = ID.shape
     _, nx_psf, ny_psf = PSF.shape
     wsums = np.amax(PSF, axis=(1,2))
@@ -97,6 +99,10 @@ def clark(ID,
     wsums = np.amax(PSF, axis=(1,2))
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
     IR = ID.copy()
+    # pre-allocate arrays for doing FFT's
+    xout = np.empty(ID.shape, dtype=ID.dtype, order='C')
+    xpad = np.empty(PSF.shape, dtype=ID.dtype, order='C')
+    xhat = np.empty(PSFHAT.shape, dtype=PSFHAT.dtype)
     # square avoids abs of full array
     IRsearch = np.sum(IR, axis=0)**2
     pq = IRsearch.argmax()
@@ -116,7 +122,15 @@ def clark(ID,
                          th=subth,
                          maxit=submaxit)
         # subtract from full image (as in major cycle)
-        IR = ID - psfo(model)
+        psf_convolve_cube(
+                        xpad,
+                        xhat,
+                        xout,
+                        PSFHAT,
+                        ny_psf,
+                        model,
+                        nthreads=nthreads)
+        IR = ID - xout
         IRsearch = np.sum(IR, axis=0)**2
         pq = IRsearch.argmax()
         p = pq//ny

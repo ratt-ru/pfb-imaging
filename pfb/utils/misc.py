@@ -1,7 +1,7 @@
 import sys
 import numpy as np
 import numexpr as ne
-from numba import jit, njit
+from numba import jit, njit, prange
 import dask
 import dask.array as da
 from dask.distributed import performance_report
@@ -820,8 +820,7 @@ def coerce_literal(func, literals):
     return
 
 
-def dds2cubes(dds, opts, apparent=False, log=None):
-    nband = opts.nband
+def dds2cubes(dds, nband, apparent=False):
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
     nx, ny = dds[0].DIRTY.shape
@@ -829,7 +828,7 @@ def dds2cubes(dds, opts, apparent=False, log=None):
                       dtype=real_type) for _ in range(nband)]
     model = [da.zeros((nx, ny), chunks=(-1, -1),
                       dtype=real_type) for _ in range(nband)]
-    if opts.residual_name in dds[0]:
+    if 'RESIDUAL' in dds[0]:
         residual = [da.zeros((nx, ny), chunks=(-1, -1),
                             dtype=real_type) for _ in range(nband)]
     else:
@@ -851,12 +850,12 @@ def dds2cubes(dds, opts, apparent=False, log=None):
         b = ds.bandid
         if apparent:
             dirty[b] += ds.DIRTY.data
-            if opts.residual_name in ds:
-                residual[b] += ds.get(opts.residual_name).data
+            if 'RESIDUAL' in ds:
+                residual[b] += ds.RESIDUAL.data
         else:
             dirty[b] += ds.DIRTY.data * ds.BEAM.data
-            if opts.residual_name in ds:
-                residual[b] += ds.get(opts.residual_name).data * ds.BEAM.data
+            if 'RESIDUAL' in ds:
+                residual[b] += ds.RESIDUAL.data * ds.BEAM.data
         if 'PSF' in ds:
             psf[b] += ds.PSF.data
             psfhat[b] += ds.PSFHAT.data
@@ -868,7 +867,7 @@ def dds2cubes(dds, opts, apparent=False, log=None):
     wsum = wsums.sum()
     dirty = da.stack(dirty)/wsum
     model = da.stack(model)
-    if opts.residual_name in ds:
+    if 'RESIDUAL' in ds:
         residual = da.stack(residual)/wsum
     if 'PSF' in ds:
         psf = da.stack(psf)/wsum
@@ -1104,3 +1103,108 @@ def lthreshold(x, sigma, kind='l1'):
     elif kind=='l1':
         absx = np.abs(x)
         return np.where(absx > sigma, absx - sigma, 0) * np.sign(x)
+
+
+@njit(nogil=True, cache=True, inline='always')
+def pad_and_shift(x, out):
+    '''
+    Pad x with zeros so as to have the same shape as out and perform
+    ifftshift in place
+    '''
+    nxi, nyi = x.shape
+    nxo, nyo = out.shape
+    if nxi >= nxo or nyi >= nyo:
+        raise ValueError('Output must be larger than input')
+    padx = nxo-nxi
+    pady = nyo-nyi
+    out[...] = 0.0
+    # first and last quadrants
+    for i in range(nxi//2):
+        for j in range(nyi//2):
+            # first to last quadrant
+            out[padx + nxi//2 + i, pady + nyi//2 + j] = x[i, j]
+            # last to first quadrant
+            out[i, j] = x[nxi//2+i, nyi//2+j]
+            # third to second quadrant
+            out[i, pady + nyi//2 + j] = x[nxi//2 + i, j]
+            # second to third quadrant
+            out[padx + nxi//2 + i, j] = x[i, nyi//2 + j]
+    return out
+
+
+@njit(nogil=True, cache=True, inline='always')
+def unpad_and_unshift(x, out):
+    '''
+    fftshift x and unpad it into out
+    '''
+    nxi, nyi = x.shape
+    nxo, nyo = out.shape
+    if nxi < nxo or nyi < nyo:
+        raise ValueError('Output must be smaller than input')
+    out[...] = 0.0
+    padx = nxo-nxi
+    pady = nyo-nyi
+    for i in range(nxo//2):
+        for j in range(nyo//2):
+            # first to last quadrant
+            out[nxo//2+i, nyo//2+j] = x[i, j]
+            # last to first quadrant
+            out[i, j] = x[padx + nxo//2 + i, pady + nyo//2 + j]
+            # third to second quadrant
+            out[nxo//2 + i, j] = x[i, pady + nyo//2 + j]
+            # second to third quadrant
+            out[i, nyo//2 + j] = x[padx + nxo//2 + i, j]
+    return out
+
+
+@njit(nogil=True, cache=True, inline='always', parallel=True)
+def pad_and_shift_cube(x, out):
+    '''
+    Pad x with zeros so as to have the same shape as out and perform
+    ifftshift in place
+    '''
+    nband, nxi, nyi = x.shape
+    nband, nxo, nyo = out.shape
+    if nxi >= nxo or nyi >= nyo:
+        raise ValueError('Output must be larger than input')
+    padx = nxo-nxi
+    pady = nyo-nyi
+    out[...] = 0.0
+    for b in prange(nband):
+        for i in range(nxi//2):
+            for j in range(nyi//2):
+                # first to last quadrant
+                out[b, padx + nxi//2 + i, pady + nyi//2 + j] = x[b, i, j]
+                # last to first quadrant
+                out[b, i, j] = x[b, nxi//2+i, nyi//2+j]
+                # third to second quadrant
+                out[b, i, pady + nyi//2 + j] = x[b, nxi//2 + i, j]
+                # second to third quadrant
+                out[b, padx + nxi//2 + i, j] = x[b, i, nyi//2 + j]
+    return out
+
+
+@njit(nogil=True, cache=True, inline='always', parallel=True)
+def unpad_and_unshift_cube(x, out):
+    '''
+    fftshift x and unpad it into out
+    '''
+    nband, nxi, nyi = x.shape
+    nband, nxo, nyo = out.shape
+    if nxi < nxo or nyi < nyo:
+        raise ValueError('Output must be smaller than input')
+    out[...] = 0.0
+    padx = nxo-nxi
+    pady = nyo-nyi
+    for b in prange(nband):
+        for i in range(nxo//2):
+            for j in range(nyo//2):
+                # first to last quadrant
+                out[b, nxo//2+i, nyo//2+j] = x[b, i, j]
+                # last to first quadrant
+                out[b, i, j] = x[b, padx + nxo//2 + i, pady + nyo//2 + j]
+                # third to second quadrant
+                out[b, nxo//2 + i, j] = x[b, i, pady + nyo//2 + j]
+                # second to third quadrant
+                out[b, i, nyo//2 + j] = x[b, padx + nxo//2 + i, j]
+    return out

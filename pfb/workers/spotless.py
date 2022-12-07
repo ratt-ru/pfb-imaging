@@ -103,6 +103,7 @@ def spotless(**kw):
             client = stack.enter_context(Client(cluster))
 
         client.wait_for_workers(opts.nworkers)
+        client.amm.stop()
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -155,19 +156,6 @@ def _spotless(**kw):
                                           'yo2':-1,
                                           'b':-1,
                                           'c':-1})
-    if opts.memory_greedy:
-        # pass workers as set
-        ddsf = [ds.persist(workers={names[i]})
-                for ds, i in zip(dds, cycle(range(opts.nworkers)))]
-    else:
-        ddsf = client.scatter(dds)
-
-    # names={}
-    # for ds in ddsf:
-    #     b = ds.result().bandid
-    #     tmp = client.who_has(ds)
-    #     for key in tmp.keys():
-    #         names[b] = tmp[key]
 
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
@@ -197,10 +185,6 @@ def _spotless(**kw):
         freq_out[b] = ds.freq_out
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
 
-    # assumed constant
-    wsum = client.submit(accum_wsums, ddsf).result()
-    pix_per_beam = client.submit(get_cbeam_area, ddsf, wsum).result()
-
     # dictionary setup
     print("Setting up dictionary", file=log)
     bases = tuple(opts.bases.split(','))
@@ -210,13 +194,12 @@ def _spotless(**kw):
                                 bases, opts.nlevels)
     ntot = tuple(ntot)
 
-
     psiH = partial(im2coef,
                     bases=bases,
                     ntot=ntot,
                     nmax=nmax,
                     nlevels=opts.nlevels)
-    # avoids pickling on dumba Dict
+    # avoid pickling dumba Dict
     psi = partial(coef2im,
                     bases=bases,
                     ntot=ntot,
@@ -225,45 +208,61 @@ def _spotless(**kw):
                     nx=nx,
                     ny=ny)
 
+    print('Scattering data', file=log)
+    ddsf = []
+    for ds, i in zip(dds, cycle(range(opts.nworkers))):
+        if 'MODEL' not in ds:
+            model = da.zeros((ds.nx, ds.ny),
+                             chunks=(-1, -1))
+            ds = ds.assign(**{
+                'MODEL': (('x', 'y'), model)
+            })
+        if 'DUAL' not in ds:
+            dual = da.zeros((kwargs['nbasis'], kwargs['nmax']),
+                            chunks=(-1, -1))
+            ds = ds.assign(**{
+                'DUAL': (('b', 'c'), dual)
+            })
+        ds.attrs.update(**{'worker':names[i]})
+        ddsf.append(client.persist(ds, workers={names[i]}))
+
+    # assumed constant
+    wsum = accum_wsums(ddsf)
+    pix_per_beam = get_cbeam_area(ddsf, wsum)
+
+
     # this makes for cleaner algorithms but is it a bad pattern?
     Afs = []
     for ds in ddsf:
-        tmp = client.who_has(ds.PSFHAT)
-        wip = list(tmp.values())[0][0]
-        wid = client.scheduler_info()['workers'][wip]['id']
-        Af = client.submit(partial,
-                           _hessian_reg_psf_slice,
-                           psfhat=ds.PSFHAT.data,
-                           beam=ds.BEAM.data,
-                           wsum=wsum,
-                           nthreads=opts.nthreads,
-                           sigmainv=opts.sigmainv,
-                           padding=psf_padding,
-                           unpad_x=unpad_x,
-                           unpad_y=unpad_y,
-                           lastsize=lastsize,
-                           workers={wid})
+        # tmp = client.who_has(ds)
+        # wip = list(tmp.values())[0][0]
+        # wid = client.scheduler_info()['workers'][wip]['id']
+        Af = partial(_hessian_reg_psf_slice,
+                    psfhat=ds.PSFHAT.data,
+                    beam=ds.BEAM.data,
+                    wsum=wsum,
+                    nthreads=opts.nthreads,
+                    sigmainv=opts.sigmainv,
+                    padding=psf_padding,
+                    unpad_x=unpad_x,
+                    unpad_y=unpad_y,
+                    lastsize=lastsize)
         Afs.append(Af)
-
-    # initialise for backward step
-    ddsf = client.map(init_dual_and_model, ddsf,
-                      nx=nx,
-                      ny=ny,
-                      nbasis=nbasis,
-                      nmax=nmax,
-                      pure=False)
 
     try:
         l1ds = xds_from_zarr(f'{dds_name}::L1WEIGHT', chunks={'b':-1,'c':-1})
         if 'L1WEIGHT' in l1ds:
-            l1weight = client.submit(lambda ds: ds[0].L1WEIGHT.values, l1ds,
-                                     workers={names[0]})
+            l1weight = client.persist(ds[0].L1WEIGHT.data,
+                                      workers={names[0]})
         else:
             raise
     except Exception as e:
         print(f'Did not find l1weights at {dds_name}/L1WEIGHT. '
               'Initialising to unity', file=log)
-        l1weight = client.submit(np.ones, (nbasis, nmax), workers={names[0]})
+        l1weight = client.persist(da.ones((nbasis, nmax),
+                                          chunks=(-1, -1),
+                                          dtype=real_type),
+                                  workers={names[0]})
 
     if opts.hessnorm is None:
         print('Getting spectral norm of Hessian approximation', file=log)
@@ -271,8 +270,6 @@ def _spotless(**kw):
     else:
         hessnorm = opts.hessnorm
     print(f'hessnorm = {hessnorm:.3e}', file=log)
-
-    import pdb; pdb.set_trace()
 
     # future contains mfs residual and stats
     residf = client.submit(get_resid_and_stats, ddsf, wsum,
@@ -354,42 +351,19 @@ def _spotless(**kw):
         if eps < opts.tol:
             break
 
-    if opts.fits_mfs or opts.fits_cubes:
-        print("Writing fits files", file=log)
+    # convert to fits files
+    fitsout = []
+    if opts.fits_mfs:
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
 
-        # construct a header from xds attrs
-        ra = dds[0].ra
-        dec = dds[0].dec
-        radec = [ra, dec]
+    if opts.fits_cubes:
+        fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
 
-        cell_rad = dds[0].cell_rad
-        cell_deg = np.rad2deg(cell_rad)
-
-        ref_freq = np.mean(freq_out)
-        hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-
-        residual = np.zeros((nband, nx, ny), dtype=real_type)
-        model = np.zeros((nband, nx, ny), dtype=real_type)
-        wsums = np.zeros(nband)
-        for ds in dds:
-            b = ds.bandid
-            wsums[b] += ds.WSUM.values[0]
-            residual[b] += ds.RESIDUAL.values
-            model[b] = ds.MODEL.values
-        wsum = np.sum(wsums)
-        residual_mfs = np.sum(residual, axis=0)/wsum
-        model_mfs = np.mean(model, axis=0)
-        save_fits(f'{basename}_residual_mfs.fits', residual_mfs, hdr_mfs)
-        save_fits(f'{basename}_model_mfs.fits', model_mfs, hdr_mfs)
-
-        if opts.fits_cubes:
-            # need residual in Jy/beam
-            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
-            save_fits(f'{basename}_model.fits', model, hdr)
-            fmask = wsums > 0
-            residual[fmask] /= wsums[fmask, None, None]
-            save_fits(f'{basename}_residual.fits',
-                    residual, hdr)
+    if len(fitsout):
+        print("Writing fits", file=log)
+        dask.compute(fitsout)
 
     if opts.scheduler=='distributed':
         from distributed import get_client

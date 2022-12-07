@@ -132,12 +132,14 @@ def pcg(A,
     else:
         return x, r
 
-from pfb.operators.psf import _hessian_reg_psf_slice as hessian_psf
+from pfb.operators.hessian import hessian_psf_slice
 def _pcg_psf_impl(psfhat,
                   b,
                   x0,
                   beam,
-                  hessopts,
+                  lastsize,
+                  nthreads,
+                  sigmainv,
                   tol=1e-5,
                   maxit=500,
                   minit=100,
@@ -148,20 +150,26 @@ def _pcg_psf_impl(psfhat,
     A specialised distributed version of pcg when the operator implements
     convolution with the psf (+ L2 regularisation by sigma**2)
     '''
-    nband, nbasis, nmax = b.shape
-    model = np.zeros((nband, nbasis, nmax), dtype=b.dtype)
-    sigmainvsq = hessopts['sigmainv']**2
+    nband, nx, ny = b.shape
+    _, nx_psf, nyo2 = psfhat.shape
+    model = np.zeros((nband, nx, ny), dtype=b.dtype, order='C')
     # PCG preconditioner
-    if sigmainvsq > 0:
-        def M(x): return x / sigmainvsq
+    if sigmainv > 0:
+        def M(x): return x / sigmainv
     else:
         M = None
 
     for k in range(nband):
-        A = partial(hessian_psf,
-                    psfhat=psfhat[k],
-                    beam=beam[k],
-                    **hessopts)
+        A = partial(hessian_psf_slice,
+                    np.empty((nx_psf, lastsize), dtype=b.dtype, order='C'),  # xpad
+                    np.empty((nx_psf, nyo2), dtype=psfhat.dtype, order='C'), # xhat
+                    np.empty((nx, ny), dtype=b.dtype, order='C'),            # xout
+                    psfhat[k],
+                    beam[k],
+                    lastsize,
+                    nthreads=nthreads,
+                    sigmainv=sigmainv)
+
         model[k] = pcg(A, b[k], x0[k],
                        M=M, tol=tol, maxit=maxit, minit=minit,
                        verbosity=verbosity, report_freq=report_freq,
@@ -173,20 +181,26 @@ def _pcg_psf(psfhat,
              b,
              x0,
              beam,
-             hessopts,
+             lastsize,
+             nthreads,
+             sigmainv,
              cgopts):
     return _pcg_psf_impl(psfhat,
                          b,
                          x0,
                          beam,
-                         hessopts,
+                         lastsize,
+                         nthreads,
+                         sigmainv,
                          **cgopts)
 
 def pcg_psf(psfhat,
             b,
             x0,
             beam,
-            hessopts,
+            lastsize,
+            nthreads,
+            sigmainv,
             cgopts,
             compute=True):
 
@@ -221,7 +235,9 @@ def pcg_psf(psfhat,
                          b, ('nb', 'nx', 'ny'),
                          x0, ('nb', 'nx', 'ny'),
                          beam, bout,
-                         hessopts, None,
+                         lastsize, None,
+                         nthreads, None,
+                         sigmainv, None,
                          cgopts, None,
                          align_arrays=False,
                          dtype=b.dtype)
