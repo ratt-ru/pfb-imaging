@@ -77,11 +77,11 @@ def _restore(**kw):
                                                          apparent=True)
     wsum = np.sum(wsums)
     output_type = dirty.dtype
-    psf_mfs = np.sum(psf, axis=0)/wsum
-    residual_mfs = np.sum(residual, axis=0)/wsum
+    psf_mfs = np.sum(psf, axis=0)
+    residual_mfs = np.sum(residual, axis=0)
     fmask = wsums > 0
-    residual[fmask] /= wsums[fmask, None, None]
-    psf[fmask] /= wsums[fmask, None, None]
+    residual[fmask] /= wsums[fmask, None, None]/wsum
+    psf[fmask] /= wsums[fmask, None, None]/wsum
     # sanity check
     assert (psf_mfs.max() - 1.0) < 2e-7
     assert ((np.amax(psf, axis=(1,2)) - 1.0) < 2e-7).all()
