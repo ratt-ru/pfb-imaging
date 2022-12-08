@@ -1049,6 +1049,33 @@ def _estimate_delay_impl(vis_ant, freq, min_delay):
             delays[p,c] = lag[delay_idx]
     return delays
 
+from finufft import nufft1d3
+import matplotlib.pyplot as plt
+def _estimate_tec_impl(vis_ant, freq, tec_nyq, max_tec, fctr, srf=10):
+    nuinv = fctr/freq
+    npix = int(srf*max_tec/tec_nyq)
+    print(npix)
+    lag = np.linspace(-0.5*max_tec, 0.5*max_tec, npix)
+    nant, _, ncorr = vis_ant.shape
+    tecs = np.zeros((nant, ncorr), dtype=np.float64)
+    for p in range(nant):
+        for c in range(ncorr):
+            vis_fft = nufft1d3(nuinv, vis_ant[p, :, c], lag, eps=1e-8, isign=-1)
+            pspec = np.abs(vis_fft)
+            plt.plot(lag, pspec)
+            # plt.arrow(tecsin[p,c], 0, 0.0, pspec.max())
+            plt.show()
+            if not pspec.any():
+                continue
+            tec_idx = np.argmax(pspec)
+            # fm1 = lag[delay_idx-1]
+            # f0 = lag[delay_idx]
+            # fp1 = lag[delay_idx+1]
+            # delays[p,c] = 0.5*dlag*(fp1 - fm1)/(fm1 - 2*f0 + fp1)
+            # print(p, c, lag[delay_idx])
+            tecs[p,c] = lag[tec_idx]
+    return tecs
+
 
 def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):
     utimes, time_bin_counts = np.unique(time, return_counts=True)

@@ -121,7 +121,7 @@ def _spotless(**kw):
     import dask
     import dask.array as da
     from distributed import Client, wait, get_client
-    from pfb.opt.power_method import power_method_dist as power_method
+    from pfb.opt.power_method import power_method_persist as power_method
     from pfb.opt.pcg import pcg_dist as pcg
     from pfb.opt.primal_dual import primal_dual_dist as primal_dual
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
@@ -129,7 +129,7 @@ def _spotless(**kw):
     from pfb.utils.dist import (get_resid_and_stats, accum_wsums,
                                 compute_residual, init_dual_and_model,
                                 get_eps, l1reweight, get_cbeam_area)
-    from pfb.operators.psf import _hessian_reg_psf_slice
+    from pfb.operators.hessian import hessian_psf_slice
     from pfb.operators.psi import im2coef_dist as im2coef
     from pfb.operators.psi import coef2im_dist as coef2im
     from pfb.prox.prox_21m import prox_21m
@@ -138,7 +138,6 @@ def _spotless(**kw):
     import pywt
     from copy import deepcopy
     from operator import getitem
-    from pfb.wavelets.wavelets import wavelet_setup
     from itertools import cycle
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
@@ -218,7 +217,7 @@ def _spotless(**kw):
                 'MODEL': (('x', 'y'), model)
             })
         if 'DUAL' not in ds:
-            dual = da.zeros((kwargs['nbasis'], kwargs['nmax']),
+            dual = da.zeros((nbasis, nmax),
                             chunks=(-1, -1))
             ds = ds.assign(**{
                 'DUAL': (('b', 'c'), dual)
@@ -237,16 +236,16 @@ def _spotless(**kw):
         # tmp = client.who_has(ds)
         # wip = list(tmp.values())[0][0]
         # wid = client.scheduler_info()['workers'][wip]['id']
-        Af = partial(_hessian_reg_psf_slice,
-                    psfhat=ds.PSFHAT.data,
-                    beam=ds.BEAM.data,
-                    wsum=wsum,
-                    nthreads=opts.nthreads,
-                    sigmainv=opts.sigmainv,
-                    padding=psf_padding,
-                    unpad_x=unpad_x,
-                    unpad_y=unpad_y,
-                    lastsize=lastsize)
+        Af = partial(hessian_psf_slice,
+                     np.empty((nx_psf, ny_psf), dtype=real_type, order='C'),  # xpad
+                     np.empty((nx_psf, nyo2_psf), dtype=complex_type, order='C'),  # xhat
+                     np.empty((nx, ny), dtype=real_type, order='C'),  # xout
+                     ds.PSFHAT.data,
+                     ds.BEAM.data,
+                     lastsize,
+                     nthreads=opts.nvthreads,
+                     sigmainv=opts.sigmainv,
+                     wsum=wsum)
         Afs.append(Af)
 
     try:
@@ -266,10 +265,12 @@ def _spotless(**kw):
 
     if opts.hessnorm is None:
         print('Getting spectral norm of Hessian approximation', file=log)
-        hessnorm = power_method(Afs, nx, ny, nband).result()
+        hessnorm = power_method(ddsf, Afs, nx, ny, nband)
     else:
         hessnorm = opts.hessnorm
     print(f'hessnorm = {hessnorm:.3e}', file=log)
+
+    import pdb; pdb.set_trace()
 
     # future contains mfs residual and stats
     residf = client.submit(get_resid_and_stats, ddsf, wsum,

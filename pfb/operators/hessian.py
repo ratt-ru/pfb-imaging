@@ -121,6 +121,32 @@ def hessian(x, uvw, weight, vis_mask, freq, beam, hessopts):
                         dtype=x.dtype)
 
 
+def hessian_psf_slice_dask(
+                    xpad,  # preallocated array to store padded image
+                    xhat,  # preallocated array to store FTd image
+                    xout,  # preallocated array to store output image
+                    psfhat,
+                    beam,
+                    lastsize,
+                    x,     # input image, not overwritten
+                    nthreads=1,
+                    sigmainv=1,
+                    wsum=1):
+    return da.blockwise(hessian_psf_slice,
+                        xpad, 'xy',
+                        xhat, 'xy',
+                        xout, 'xy',
+                        psfhat, 'xy',
+                        beam, 'xy',
+                        lastsize, None,
+                        x, 'xy',
+                        nthreads, None,
+                        sigmainv, None,
+                        wsum, None,
+                        allign_arrays=False,
+                        dtype=xpad.dtype)
+
+
 def hessian_psf_slice(
                     xpad,  # preallocated array to store padded image
                     xhat,  # preallocated array to store FTd image

@@ -105,17 +105,7 @@ def power_method_dist(Af,
 
     return beta
 
-
-def power2(A, bp, bnorm):
-    bp /= bnorm
-    b = A(bp)
-    bsumsq = da.sum(b**2)
-    beta_num = da.vdot(b, bp)
-    beta_den = da.vdot(bp, bp)
-
-    return b, bsumsq, beta_num, beta_den
-
-
+from pfb.operators.hessian import hessian_psf_slice_dask
 def power_method_persist(ddsf,
                          Af,
                          nx,
@@ -132,20 +122,36 @@ def power_method_persist(ddsf,
         tmp = client.persist(da.random.normal(0, 1, (nx, ny)),
                              workers={wid})
         b.append(tmp)
-        bssq.append(da.sum(b**2))
+        bssq.append(da.sum(tmp**2))
 
     bssq = da.stack(bssq)
     bnorm = da.sqrt(da.sum(bssq))
     bp = deepcopy(b)
-    beta_num = [da.array()]
-
+    beta_num = [da.array(1) for _ in range(nband)]
+    beta_den = [da.array(1) for _ in range(nband)]
+    beta = 1
     for k in range(maxit):
-        for i, ds, A in enumerate(zip(ddsf, Af)):
+        for i, (ds, A) in enumerate(zip(ddsf, Af)):
             bp[i] = b[i]/bnorm
             b[i] = A(bp[i])
             bssq[i] = da.sum(b[i]**2)
-            beta_num = da.vdot(b, bp)
-            beta_den = da.vdot(bp, bp)
+            beta_num[i] = da.vdot(b[i], bp[i])
+            beta_den[i] = da.vdot(bp[i], bp[i])
+        bnorm = da.sqrt(da.sum(bssq))
+        betap = beta
+        beta = (beta_num.sum()/beta_den.sum()).compute()
+        eps = np.linalg.norm(beta - betap) / betap
+
+        if eps < tol:
+            break
+
+    if k == maxit:
+        print(f"Maximum iterations reached. "
+                f"eps = {eps:.3e}, beta = {beta:.3e}", file=log)
+    else:
+        print(f"Success, converged after {k} iterations. "
+                f"beta = {beta:.3e}", file=log)
+    return beta
 
 
 
