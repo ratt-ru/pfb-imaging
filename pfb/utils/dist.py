@@ -16,11 +16,10 @@ def get_resid_and_stats(dds, wsum):
     rmax = np.sqrt((residual_mfs**2).max())
     return residual_mfs, rms, rmax
 
-def accum_wsums(dds):
+def accum_wsums(As):
     wsum = 0
-    # import pdb; pdb.set_trace()
-    for ds in dds:
-        wsum += ds.WSUM.data[0]
+    for wid, A in As.items():
+        wsum += A.wsumb
     return wsum
 
 def get_eps(modelp, dds):
@@ -46,10 +45,11 @@ def l1reweight(dds, l1weight, psiH, wsum, pix_per_beam, alpha=2):
     rms = np.std(l2res, axis=-1)
     return alpha/(1 + (l2mod/rms[:, None])**2)
 
-def get_cbeam_area(dds, wsum):
-    psf_mfs = da.zeros(dds[0].PSF.shape, dtype=dds[0].PSF.dtype)
-    for ds in dds:
-        psf_mfs += ds.PSF.data/wsum
+def get_cbeam_area(As, wsum):
+    psf_mfs = np.zeros(As[0].psf.shape, dtype=As[0].psf.dtype)
+    for wid, A in As.items():
+        psf_mfs += A.psf
+    psf_mfs /= wsum
     # beam pars in pixel units
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
     return GaussPar[0]*GaussPar[1]*np.pi/4
@@ -91,3 +91,8 @@ def compute_residual(ds, **kwargs):
                                      nthreads=kwargs['nthreads'])
     ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), da.from_array(residual))})
     return ds_out
+
+
+def set_wsum(A, wsum):
+    A.wsum = wsum
+    return

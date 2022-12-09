@@ -121,14 +121,15 @@ def _spotless(**kw):
     import dask
     import dask.array as da
     from distributed import Client, wait, get_client
-    from pfb.opt.power_method import power_method_persist as power_method
+    from pfb.opt.power_method import power_method_dist as power_method
     from pfb.opt.pcg import pcg_dist as pcg
     from pfb.opt.primal_dual import primal_dual_dist as primal_dual
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.utils.fits import load_fits, set_wcs, save_fits, data_from_header
     from pfb.utils.dist import (get_resid_and_stats, accum_wsums,
                                 compute_residual, init_dual_and_model,
-                                get_eps, l1reweight, get_cbeam_area)
+                                get_eps, l1reweight, get_cbeam_area,
+                                set_wsum)
     from pfb.operators.hessian import hessian_psf_slice
     from pfb.operators.psi import im2coef_dist as im2coef
     from pfb.operators.psi import coef2im_dist as coef2im
@@ -208,69 +209,43 @@ def _spotless(**kw):
                     ny=ny)
 
     print('Scattering data', file=log)
-    ddsf = []
+    Afs = {}
     for ds, i in zip(dds, cycle(range(opts.nworkers))):
-        if 'MODEL' not in ds:
-            model = da.zeros((ds.nx, ds.ny),
-                             chunks=(-1, -1))
-            ds = ds.assign(**{
-                'MODEL': (('x', 'y'), model)
-            })
-        if 'DUAL' not in ds:
-            dual = da.zeros((nbasis, nmax),
-                            chunks=(-1, -1))
-            ds = ds.assign(**{
-                'DUAL': (('b', 'c'), dual)
-            })
-        ds.attrs.update(**{'worker':names[i]})
-        ddsf.append(client.persist(ds, workers={names[i]}))
+        Af = client.submit(hessian_psf_slice, ds, nbasis, nmax,
+                           opts.nvthreads,
+                           opts.sigmainv,
+                           workers={names[i]})
+        Afs[names[i]] = Af
+
+    wait(list(Afs.values()))
 
     # assumed constant
-    wsum = accum_wsums(ddsf)
-    pix_per_beam = get_cbeam_area(ddsf, wsum)
+    wsum = client.submit(accum_wsums, Afs).result()
+    pix_per_beam = client.submit(get_cbeam_area, Afs, wsum).result()
 
-
-    # this makes for cleaner algorithms but is it a bad pattern?
-    Afs = []
-    for ds in ddsf:
-        # tmp = client.who_has(ds)
-        # wip = list(tmp.values())[0][0]
-        # wid = client.scheduler_info()['workers'][wip]['id']
-        Af = partial(hessian_psf_slice,
-                     np.empty((nx_psf, ny_psf), dtype=real_type, order='C'),  # xpad
-                     np.empty((nx_psf, nyo2_psf), dtype=complex_type, order='C'),  # xhat
-                     np.empty((nx, ny), dtype=real_type, order='C'),  # xout
-                     ds.PSFHAT.data,
-                     ds.BEAM.data,
-                     lastsize,
-                     nthreads=opts.nvthreads,
-                     sigmainv=opts.sigmainv,
-                     wsum=wsum)
-        Afs.append(Af)
+    for wid, A in Afs.items():
+        client.submit(set_wsum, A, wsum,
+                      workers={wid})
 
     try:
         l1ds = xds_from_zarr(f'{dds_name}::L1WEIGHT', chunks={'b':-1,'c':-1})
         if 'L1WEIGHT' in l1ds:
-            l1weight = client.persist(ds[0].L1WEIGHT.data,
+            l1weight = client.submit(l1ds[0].L1WEIGHT.values,
                                       workers={names[0]})
         else:
             raise
     except Exception as e:
         print(f'Did not find l1weights at {dds_name}/L1WEIGHT. '
               'Initialising to unity', file=log)
-        l1weight = client.persist(da.ones((nbasis, nmax),
-                                          chunks=(-1, -1),
-                                          dtype=real_type),
-                                  workers={names[0]})
+        l1weight = client.submit(np.ones, (nbasis, nmax), dtype=real_type,
+                                 workers={names[0]})
 
     if opts.hessnorm is None:
         print('Getting spectral norm of Hessian approximation', file=log)
-        hessnorm = power_method(ddsf, Afs, nx, ny, nband)
+        hessnorm = power_method(Afs, nx, ny, nband).result()
     else:
         hessnorm = opts.hessnorm
     print(f'hessnorm = {hessnorm:.3e}', file=log)
-
-    import pdb; pdb.set_trace()
 
     # future contains mfs residual and stats
     residf = client.submit(get_resid_and_stats, ddsf, wsum,
