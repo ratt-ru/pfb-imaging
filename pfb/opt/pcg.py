@@ -247,25 +247,20 @@ def pcg_psf(psfhat,
         return model
 
 
-def pcg_dist(ds, A, **kwargs):
+def pcg_dist(A, maxit, minit, tol, sigmainv):
     '''
     kwargs - tol, maxit, minit, nthreads, psf_padding, unpad_x, unpad_y
              sigmainv, lastsize, hessian
     '''
-    maxit = kwargs['maxit']
-    minit = kwargs['minit']
-    tol = kwargs['tol']
-    wsum = kwargs['wsum']
 
-    if 'RESIDUAL' in ds:
-        b = ds.RESIDUAL.values/wsum
+    if hasattr(A, 'residual'):
+        b = A.residual/A.wsum
     else:
-        b = ds.DIRTY.values/wsum
+        b = A.dirty/A.wsum
     x = np.zeros_like(b)
 
-    def Mfunc(x, sigmainv):
+    def M(x):
         return x / sigmainv
-    M = partial(Mfunc, sigmainv=kwargs['sigmainv'])
 
     r = A(x) - b
     y = M(r)
@@ -308,8 +303,7 @@ def pcg_dist(ds, A, **kwargs):
         if np.abs(eps - epsp) < 1e-3*tol:
             stall_count += 1
 
-    ds_out = ds.assign(**{'UPDATE': (('x','y'), da.from_array(x))})
-    print(f'Band={ds.bandid}, iters{k}, eps={eps}', file=log)
-    return ds_out
+    print(f'Band={A.bandid}, iters{k}, eps={eps}', file=log)
+    return x
 
 

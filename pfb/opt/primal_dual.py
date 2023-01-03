@@ -7,17 +7,17 @@ log = pyscilog.get_logger('PD')
 
 
 def primal_dual(
-        A,
-        xbar,
-        x0,
-        v0,  # initial guess for primal and dual variables
-        lam,  # regulariser strength,
+        A,    # Hessian approximation
+        xbar, # "data" like term i.e. model + update
+        x0,  # initial guess for primal variable
+        v0,  # initial guess for dual variable
+        lam,  # regulariser strength
         psi,  # linear operator in dual domain
         psiH,  # adjoint of psi
         l1weights,  # weights for l1 thresholding
         L,  # spectral norm of Hessian
         prox,  # prox of regulariser
-        nu=1.0,  # spectral norm of dictionary
+        nu=1.0,  # spectral norm of psi
         sigma=None,  # step size of dual update
         mask=None,  # regions where mask is False will be masked
         tol=1e-5,
@@ -79,18 +79,14 @@ def primal_dual(
     return x, v
 
 
-def vtilde_update(ds, **kwargs):
-    nbasis, ntot = ds.DUAL.shape
-    nx, ny = ds.MODEL.shape
-    sigma = kwargs['sigma']
-    psiH = kwargs['psiH']
-    return ds.DUAL.values + sigma * psiH(ds.MODEL.values)
+def vtilde_update(A, sigma, psiH):
+    return A.dual + sigma * psiH(A.model)
 
 
 def get_ratio(vtildes, lam, sigma, l1weights):
     vmfs = np.zeros(l1weights.shape)
     nband = 0
-    for v in vtildes:
+    for wid, v in vtildes.items():
         # l2_norm += (v/sigma)**2
         vmfs += v/sigma
     # l2_norm = np.sqrt(l2_norm)
@@ -101,52 +97,37 @@ def get_ratio(vtildes, lam, sigma, l1weights):
     ratio[mask] = vsoft[mask] / vmfs[mask]
     return ratio
 
-def update(ds, A, y, vtilde, ratio, **kwargs):
-    sigma = kwargs['sigma']
-    lam = kwargs['lam']
-    tau = kwargs['tau']
-    gamma = kwargs['gamma']
-    psi = kwargs['psi']
-    psiH = kwargs['psiH']
-
-    xp = ds.MODEL.values
-    vp = ds.DUAL.values
-
+def update(A, y, vtilde, ratio, xp, vp, sigma, lam, tau, gamma, psi, psiH, positivity):
     # dual
     v = vtilde - vtilde * ratio
 
     # primal
     grad = -A(y - xp)/gamma
     x = xp - tau * (psi(2 * v - vp) + grad)
-    if kwargs['positivity']:
+    if positivity:
         x[x < 0] = 0.0
 
     vtilde = v + sigma * psiH(x)
 
     eps = np.linalg.norm(x-xp)/np.linalg.norm(x)
 
-    ds_out = ds.assign(**{'MODEL': (('x','y'), da.from_array(x)),
-                          'DUAL': (('b', 'c'), da.from_array(v))})
-
-    return ds_out, vtilde, eps
+    return x, v, vtilde, eps
 
 
-def sety(ds, **kwargs):
-    gamma = kwargs['gamma']
-    if 'MODEL' in ds:
-        return ds.MODEL.values + gamma * ds.UPDATE.values
+def sety(A, x, gamma):
+    if hasattr(A, 'model'):
+        return A.model + gamma * x
     else:
-        return gamma * ds.UPDATE.values
+        return gamma * x
 
 
 def primal_dual_dist(
-            ddsf,
-            Af,
+            Afs,
+            xfs,
             psi,
             psiH,
             lam,  # regulariser strength,
             L,  # spectral norm of Hessian
-            wsum,
             l1weight,
             nu=1.0,  # spectral norm of dictionary
             sigma=None,  # step size of dual update
@@ -166,53 +147,62 @@ def primal_dual_dist(
     # stepsize control
     tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
 
-    yf = client.map(sety, ddsf, gamma=gamma)
-
     # we need to do this upfront only at the outset
-    vtildes = client.map(vtilde_update, ddsf, psiH=psiH, sigma=sigma)
+    yfs = {}
+    vtildefs = {}
+    modelfs = {}
+    dualfs = {}
+    for wid, A in Afs.items():
+        yf = client.submit(sety, A, xfs[wid], gamma, workers={wid})
+        yfs[wid] = yf
+        vtildef = client.submit(vtilde_update, A, sigma, psiH, workers={wid})
+        vtildefs[wid] = vtildef
+        modelf = client.submit(getattr, A, 'model', workers={wid})
+        modelfs[wid] = modelf
+        dualf = client.submit(getattr, A, 'dual', workers={wid})
+        dualfs[wid] = dualf
 
-    eps = 1.0
+    epsfs = {}
     for k in range(maxit):
         # TODO - should get one ratio per basis
         # split over different workers
         ratio = client.submit(get_ratio,
-                              vtildes, lam, sigma, l1weight,
-                              workers=[names[0]], pure=False)
+                              vtildefs, lam, sigma, l1weight,
+                              workers={names[0]})
 
         wait([ratio])
+        for wid, A in Afs.items():
+            future = client.submit(update,
+                                   A, yfs[wid], vtildefs[wid], ratio,
+                                   modelfs[wid], dualfs[wid],
+                                   sigma,
+                                   lam,
+                                   tau,
+                                   gamma,
+                                   psi,
+                                   psiH,
+                                   positivity,
+                                   workers={wid})
+            modelfs[wid] = client.submit(getitem, future, 0, workers={wid})
+            dualfs[wid] = client.submit(getitem, future, 1, workers={wid})
+            vtildefs[wid] = client.submit(getitem, future, 2, workers={wid})
+            epsfs[wid] = client.submit(getitem, future, 3, workers={wid})
 
-        future = client.map(update,
-                            ddsf, Af, yf, vtildes, [ratio]*len(ddsf),
-                            psi=psi,
-                            psiH=psiH,
-                            pure=False,
-                            wsum=wsum,
-                            sigma=sigma,
-                            tau=tau,
-                            lam=lam,
-                            gamma=gamma,
-                            positivity=positivity)
-
-        wait(future)
-
-        ddsf = client.map(getitem, future, [0]*len(future),
-                          pure=False)
-        vtildes = client.map(getitem, future, [1]*len(future),
-                             pure=False)
-        epsf = client.map(getitem, future, [2]*len(future),
-                          pure=False)
+        wait(list(epsfs.values()))
 
         eps = []
-        for f in as_completed(epsf):
-            eps.append(f.result())
+        for wid, epsf in epsfs.items():
+            eps.append(epsf.result())
         eps = np.array(eps)
         if eps.max() < tol:
             break
 
-    if k >= maxit:
+    if k >= maxit-1:
         print(f'Maximum iterations reached. eps={eps}', file=log)
+    else:
+        print(f'Success after {k} iterations', file=log)
 
-    return ddsf
+    return modelfs, dualfs
 
 
 primal_dual.__doc__ = r"""

@@ -75,6 +75,7 @@ def power_method_dist(Afs,
                       maxit=200):
 
     client = get_client()
+    names = [w['name'] for w in client.scheduler_info()['workers'].values()]
 
     b = []
     bssq = []
@@ -90,7 +91,8 @@ def power_method_dist(Afs,
         bden.append(1)
     # wid corresponds to last worker
     bnorm = client.submit(bnormf, bssq,
-                          workers={wid}).result()
+                          workers={names[0]}).result()
+    beta = 1
     for k in range(maxit):
         for i, (wid, A) in enumerate(Afs.items()):
             fut = client.submit(power, A, b[i], bnorm,
@@ -103,10 +105,12 @@ def power_method_dist(Afs,
 
         bnorm = client.submit(bnormf, bssq,
                               workers={wid})
-
+        betap = beta
         beta = client.submit(betaf, bnum, bden,
-                             workers={wid})
+                             workers={wid}).result()
 
-        wait([b, bnorm, beta])
+        eps = np.abs(betap - beta)/betap
+        if eps < tol:
+            break
 
     return beta

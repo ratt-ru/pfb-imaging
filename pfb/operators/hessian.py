@@ -180,12 +180,17 @@ def hessian_psf_cube(
 
     return xout + x * sigmainv
 
-
+from pfb.operators.hessian import _hessian_impl
 class hessian_psf_slice(object):
-    def __init__(self, ds, nbasis, nmax, nthreads, sigmainv):
+    def __init__(self, ds, nbasis, nmax, nthreads, sigmainv, cell, wstack, epsilon, double_accum):
         self.nthreads = nthreads
         self.sigmainv = sigmainv
+        self.cell = cell
+        self.wstack = wstack
+        self.epsilon = epsilon
+        self.double_accum = double_accum
         self.lastsize = ds.PSF.shape[-1]
+        self.bandid = ds.bandid
         tmp = np.require(ds.DIRTY.values,
                          dtype=ds.DIRTY.dtype,
                          requirements='CAW')
@@ -226,6 +231,11 @@ class hessian_psf_slice(object):
             tmp = self.dirty.copy()
         self.residual = make_noncritical(tmp)
 
+        self.uvw = ds.UVW.values
+        self.wgt = ds.WEIGHT.values
+        self.vmask = ds.VIS_MASK.values
+        self.freq = ds.FREQ.values
+
         # pre-allocate tmp arrays
         tmp = np.empty(self.dirty.shape, dtype=self.dirty.dtype, order='C')
         self.xout = make_noncritical(tmp)
@@ -245,6 +255,20 @@ class hessian_psf_slice(object):
                                   nthreads=self.nthreads,
                                   sigmainv=self.sigmainv,
                                   wsum=self.wsum)
+
+    def compute_residual(self, x):
+        return self.dirty - _hessian_impl(self.beam * x,
+                                        self.uvw,
+                                        self.wgt,
+                                        self.vmask,
+                                        self.freq,
+                                        None,
+                                        cell=self.cell,
+                                        wstack=self.wstack,
+                                        epsilon=self.epsilon,
+                                        double_accum=self.double_accum,
+                                        nthreads=self.nthreads)
+
 
     def set_wsum(self, wsum):
         self.wsum = wsum
