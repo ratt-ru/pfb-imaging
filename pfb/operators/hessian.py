@@ -151,35 +151,6 @@ def _hessian_psf_slice(
 
     return xout + x * sigmainv
 
-
-def hessian_psf_cube(
-                    xpad,  # preallocated array to store padded image
-                    xhat,  # preallocated array to store FTd image
-                    xout,  # preallocated array to store output image
-                    beam,
-                    psfhat,
-                    lastsize,
-                    x,     # input image, not overwritten
-                    nthreads=1,
-                    sigmainv=1,
-                    wsum=None):
-    """
-    Tikhonov regularised Hessian approx
-    """
-
-    if beam is not None:
-        psf_convolve_cube(x*beam, xpad, xhat, xout, psfhat, lastsize)
-    else:
-        psf_convolve_cube(x, xpad, xhat, xout, psfhat, lastsize)
-
-    if beam is not None:
-        xout *= beam
-
-    if wsum is not None:
-        xout /= wsum
-
-    return xout + x * sigmainv
-
 from pfb.operators.hessian import _hessian_impl
 class hessian_psf_slice(object):
     def __init__(self, ds, nbasis, nmax, nthreads, sigmainv, cell, wstack, epsilon, double_accum):
@@ -272,3 +243,32 @@ class hessian_psf_slice(object):
 
     def set_wsum(self, wsum):
         self.wsum = wsum
+
+
+def hessian_psf_cube(
+                    xpad,  # preallocated array to store padded image
+                    xhat,  # preallocated array to store FTd image
+                    xout,  # preallocated array to store output image
+                    beam,
+                    psfhat,
+                    lastsize,
+                    x,     # input image, not overwritten
+                    nthreads=1,
+                    sigmainv=1,
+                    wsum=None):
+    """
+    Tikhonov regularised Hessian approx
+    """
+
+    if beam is not None:
+        psf_convolve_cube(x*beam, xpad, xhat, xout, psfhat, lastsize)
+    else:
+        psf_convolve_cube(x, xpad, xhat, xout, psfhat, lastsize)
+
+    if beam is not None:
+        xout *= beam
+
+    if wsum is not None:
+        xout /= wsum
+
+    return xout + x * sigmainv

@@ -109,7 +109,218 @@ def spotless(**kw):
             return _spotless_dist(**opts)
 
     else:
-        raise NotImplementedError("Only distributed currently implemented")
+        if opts.nworkers is None:
+                opts.nworkers = 1
+
+        OmegaConf.set_struct(opts, True)
+
+        with ExitStack() as stack:
+            # numpy imports have to happen after this step
+            from pfb import set_client
+            set_client(opts, stack, log, scheduler=opts.scheduler)
+
+            # TODO - prettier config printing
+            print('Input Options:', file=log)
+            for key in opts.keys():
+                print('     %25s = %s' % (key, opts[key]), file=log)
+
+            return _spotless(**opts)
+
+
+def _spotless(**kw):
+    opts = OmegaConf.create(kw)
+    OmegaConf.set_struct(opts, True)
+
+    import numpy as np
+    import xarray as xr
+    import numexpr as ne
+    import dask
+    import dask.array as da
+    from dask.distributed import performance_report
+    from pfb.utils.fits import (set_wcs, save_fits, dds2fits,
+                                dds2fits_mfs, load_fits)
+    from pfb.utils.misc import dds2cubes
+    from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
+    from pfb.opt.pcg import pcg_psf
+    from pfb.operators.hessian import hessian_xds
+    from copy import copy
+
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
+
+    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    dds = xds_from_zarr(dds_name, chunks={'row':-1,
+                                          'chan':-1,
+                                          'x':-1,
+                                          'y':-1,
+                                          'x_psf':-1,
+                                          'y_psf':-1,
+                                          'yo2':-1})
+    if opts.memory_greedy:
+        dds = dask.persist(dds)[0]
+
+    nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
+    lastsize = ny_psf
+
+    # stitch dirty/psf in apparent scale
+    output_type = dds[0].DIRTY.dtype
+    dirty, model, residual, psf, psfhat, _, wsums = dds2cubes(
+                                                            dds,
+                                                            opts.nband,
+                                                            apparent=True)
+    wsum = np.sum(wsums)
+    psf_mfs = np.sum(psf, axis=0)
+    assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
+    dirty_mfs = np.sum(dirty, axis=0)
+    if residual is None:
+        residual = dirty.copy()
+        residual_mfs = dirty_mfs.copy()
+    else:
+        residual_mfs = np.sum(residual, axis=0)
+
+    # for intermediary results (not currently written)
+    freq_out = []
+    for ds in dds:
+        freq_out.append(ds.freq_out)
+    freq_out = np.unique(np.array(freq_out))
+    nx = dds[0].nx
+    ny = dds[0].ny
+    ra = dds[0].ra
+    dec = dds[0].dec
+    radec = [ra, dec]
+    cell_rad = dds[0].cell_rad
+    cell_deg = np.rad2deg(cell_rad)
+    ref_freq = np.mean(freq_out)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+
+    # TODO - check coordinates match
+    # Add option to interp onto coordinates?
+    if opts.mask is not None:
+        mask = load_fits(mask, dtype=output_type).squeeze()
+        assert mask.shape == (nx, ny)
+        mask = mask.astype(output_type)
+        print('Using provided fits mask', file=log)
+    else:
+        mask = np.ones((nx, ny), dtype=output_type)
+
+    # set up vis space Hessian
+    hessopts = {}
+    hessopts['cell'] = dds[0].cell_rad
+    hessopts['wstack'] = opts.wstack
+    hessopts['epsilon'] = opts.epsilon
+    hessopts['double_accum'] = opts.double_accum
+    hessopts['nthreads'] = opts.nvthreads
+    # always clean in apparent scale so no beam
+    # mask is applied to residual after hessian application
+    hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
+                   wsum=wsum, sigmainv=0,
+                   mask=np.ones((nx, ny), dtype=output_type),
+                   compute=True, use_beam=False)
+
+    # PCG related options
+    cgopts = {}
+    cgopts['tol'] = opts.cg_tol
+    cgopts['maxit'] = opts.cg_maxit
+    cgopts['minit'] = opts.cg_minit
+    cgopts['verbosity'] = opts.cg_verbose
+    cgopts['report_freq'] = opts.cg_report_freq
+    cgopts['backtrack'] = opts.backtrack
+
+
+    rms = np.std(residual_mfs)
+    rmax = np.abs(residual_mfs).max()
+
+    if opts.threshold is None:
+        threshold = opts.sigmathreshold * rms
+    else:
+        threshold = opts.threshold
+
+    print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
+          file=log)
+    for k in range(opts.nmiter):
+        print("Solving for update", file=log)
+        x = pcg_psf(psfhat,
+                    residual,
+                    x0,
+                    mopmask,
+                    lastsize,
+                    opts.nvthreads,
+                    rmax,  # used as sigmainv
+                    cgopts)
+
+        print('Solving for model', file=log)
+        modelp = deepcopy(model)
+        data = model + update
+        model, dual = primal_dual(hess,
+                                  data,
+                                  model,
+                                  dual,
+                                  opts.sigma21,
+                                  psi,
+                                  psiH,
+                                  weight,
+                                  hessnorm,
+                                  prox_21,
+                                  nu=nbasis,
+                                  positivity=opts.positivity,
+                                  tol=opts.pd_tol,
+                                  maxit=opts.pd_maxit,
+                                  verbosity=opts.pd_verbose,
+                                  report_freq=opts.pd_report_freq)
+
+
+        print("Getting residual", file=log)
+        convimage = hess(model)
+        ne.evaluate('dirty - convimage', out=residual,
+                    casting='same_kind')
+        ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
+                    casting='same_kind')
+
+        rms = np.std(residual_mfs)
+        rmax = np.abs(residual_mfs).max()
+
+        if opts.threshold is None:
+            threshold = opts.sigmathreshold * rms
+        else:
+            threshold = opts.threshold
+
+        print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
+              file=log)
+
+        print("Updating results", file=log)
+        dds_out = []
+        for ds in dds:
+            b = ds.bandid
+            r = da.from_array(residual[b]*wsum)
+            m = da.from_array(model[b])
+            ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
+                                  'MODEL': (('x', 'y'), m)})
+            dds_out.append(ds_out)
+        writes = xds_to_zarr(dds_out, dds_name,
+                             columns=('RESIDUAL', 'MODEL'), rechunk=True)
+        dask.compute(writes)
+
+        if rmax <= threshold:
+            print("Terminating because final threshold has been reached",
+                  file=log)
+            break
+
+    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
+
+    # convert to fits files
+    fitsout = []
+    if opts.fits_mfs:
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
+
+    if opts.fits_cubes:
+        fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
+
+    if len(fitsout):
+        print("Writing fits", file=log)
+        dask.compute(fitsout)
+
+    print("All done here.", file=log)
 
 
 def _spotless_dist(**kw):
