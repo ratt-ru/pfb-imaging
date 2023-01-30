@@ -219,10 +219,20 @@ def _fwdbwd(**kw):
         print('Getting model', file=log)
         modelp = deepcopy(model)
         data = model + update
-        model, dual = primal_dual(hess, data, model, dual, opts.sigma21,
-                                  psi, psiH, weight, hessnorm, prox_21,
-                                  nu=nbasis, positivity=opts.positivity,
-                                  tol=opts.pd_tol, maxit=opts.pd_maxit,
+        model, dual = primal_dual(hess,
+                                  data,
+                                  model,
+                                  dual,
+                                  opts.sigma21,
+                                  psi,
+                                  psiH,
+                                  weight,
+                                  hessnorm,
+                                  prox_21,
+                                  nu=nbasis,
+                                  positivity=opts.positivity,
+                                  tol=opts.pd_tol,
+                                  maxit=opts.pd_maxit,
                                   verbosity=opts.pd_verbose,
                                   report_freq=opts.pd_report_freq)
 

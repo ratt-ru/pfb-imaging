@@ -141,9 +141,16 @@ def _spotless(**kw):
                                 dds2fits_mfs, load_fits)
     from pfb.utils.misc import dds2cubes
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
-    from pfb.opt.pcg import pcg_psf
-    from pfb.operators.hessian import hessian_xds
-    from copy import copy
+    from pfb.opt.power_method import power_method
+    from pfb.opt.pcg import pcg
+    from pfb.opt.primal_dual import primal_dual
+    from pfb.operators.hessian import hessian_xds, hessian_psf_cube
+    from pfb.operators.psi import _im2coef_impl as im2coef
+    from pfb.operators.psi import _coef2im_impl as coef2im
+    from copy import copy, deepcopy
+    from ducc0.misc import make_noncritical
+    from pfb.wavelets.wavelets import wavelet_setup
+    from pfb.prox.prox_21m import prox_21m as prox_21
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -163,10 +170,10 @@ def _spotless(**kw):
 
     # stitch dirty/psf in apparent scale
     output_type = dds[0].DIRTY.dtype
-    dirty, model, residual, psf, psfhat, _, wsums = dds2cubes(
+    dirty, model, residual, psf, psfhat, beam, wsums = dds2cubes(
                                                             dds,
                                                             opts.nband,
-                                                            apparent=True)
+                                                            apparent=False)
     wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
@@ -182,6 +189,7 @@ def _spotless(**kw):
     for ds in dds:
         freq_out.append(ds.freq_out)
     freq_out = np.unique(np.array(freq_out))
+    nband = opts.nband
     nx = dds[0].nx
     ny = dds[0].ny
     ra = dds[0].ra
@@ -216,48 +224,109 @@ def _spotless(**kw):
                    mask=np.ones((nx, ny), dtype=output_type),
                    compute=True, use_beam=False)
 
-    # PCG related options
-    cgopts = {}
-    cgopts['tol'] = opts.cg_tol
-    cgopts['maxit'] = opts.cg_maxit
-    cgopts['minit'] = opts.cg_minit
-    cgopts['verbosity'] = opts.cg_verbose
-    cgopts['report_freq'] = opts.cg_report_freq
-    cgopts['backtrack'] = opts.backtrack
+
+    # image space hessian
+    # pre-allocate arrays for doing FFT's
+    xout = np.empty(dirty.shape, dtype=dirty.dtype, order='C')
+    xout = make_noncritical(xout)
+    xpad = np.empty(psf.shape, dtype=dirty.dtype, order='C')
+    xpad = make_noncritical(xpad)
+    xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
+    xhat = make_noncritical(xhat)
+    hess_psf = partial(hessian_psf_cube, xpad, xhat, xout, beam, psfhat, lastsize,
+                       nthreads=opts.nthreads, sigmainv=opts.sigmainv)
+
+    if opts.hessnorm is None:
+        print("Finding spectral norm of Hessian approximation", file=log)
+        hessnorm, hessbeta = power_method(hess_psf, (nband, nx, ny),
+                                          tol=opts.pm_tol,
+                                          maxit=opts.pm_maxit,
+                                          verbosity=opts.pm_verbose,
+                                          report_freq=opts.pm_report_freq)
+    else:
+        hessnorm = opts.hessnorm
+
+    # # PCG related options
+    # cgopts = {}
+    # cgopts['tol'] = opts.cg_tol
+    # cgopts['maxit'] = opts.cg_maxit
+    # cgopts['minit'] = opts.cg_minit
+    # cgopts['verbosity'] = opts.cg_verbose
+    # cgopts['report_freq'] = opts.cg_report_freq
+    # cgopts['backtrack'] = opts.backtrack
+
+
+    print("Setting up dictionary", file=log)
+    bases = tuple(opts.bases.split(','))
+    nbasis = len(bases)
+    iy, sy, ntot, nmax = wavelet_setup(
+                                np.zeros((1, nx, ny), dtype=dirty.dtype),
+                                bases, opts.nlevels)
+    ntot = tuple(ntot)
+
+    psiH = partial(im2coef,
+                   bases=bases,
+                   ntot=ntot,
+                   nmax=nmax,
+                   nlevels=opts.nlevels)
+    psi = partial(coef2im,
+                  bases=bases,
+                  ntot=ntot,
+                  iy=iy,
+                  sy=sy,
+                  nx=nx,
+                  ny=ny)
+
+    # p = lambda x: psi(psiH(x))
+
+    # hessnorm, hessbeta = power_method(p, (nband, nx, ny),
+    #                                   tol=opts.pm_tol,
+    #                                   maxit=opts.pm_maxit,
+    #                                   verbosity=opts.pm_verbose,
+    #                                   report_freq=opts.pm_report_freq)
+
+    # import pdb; pdb.set_trace()
+
+    # TODO - load from dds if present
+    l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
+    dual = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
 
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
 
-    if opts.threshold is None:
-        threshold = opts.sigmathreshold * rms
-    else:
-        threshold = opts.threshold
-
     print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
-    for k in range(opts.nmiter):
+    for k in range(opts.niter):
         print("Solving for update", file=log)
-        x = pcg_psf(psfhat,
-                    residual,
-                    x0,
-                    mopmask,
-                    lastsize,
-                    opts.nvthreads,
-                    rmax,  # used as sigmainv
-                    cgopts)
+        # x = pcg_psf(psfhat,
+        #             residual,
+        #             x0,
+        #             mopmask,
+        #             lastsize,
+        #             opts.nvthreads,
+        #             rmax,  # used as sigmainv
+        #             cgopts)
+        update = pcg(hess_psf,
+                     residual,
+                     tol=opts.cg_tol,
+                     maxit=opts.cg_maxit,
+                     minit=opts.cg_minit,
+                     verbosity=opts.cg_verbose,
+                     report_freq=opts.cg_report_freq,
+                     backtrack=opts.backtrack)
 
         print('Solving for model', file=log)
         modelp = deepcopy(model)
-        data = model + update
-        model, dual = primal_dual(hess,
+        data = model + opts.gamma*update
+        model, dual = primal_dual(hess_psf,
                                   data,
                                   model,
                                   dual,
                                   opts.sigma21,
                                   psi,
                                   psiH,
-                                  weight,
+                                  l1weight,
                                   hessnorm,
                                   prox_21,
                                   nu=nbasis,
@@ -265,7 +334,8 @@ def _spotless(**kw):
                                   tol=opts.pd_tol,
                                   maxit=opts.pd_maxit,
                                   verbosity=opts.pd_verbose,
-                                  report_freq=opts.pd_report_freq)
+                                  report_freq=opts.pd_report_freq,
+                                  gamma=opts.gamma)
 
 
         print("Getting residual", file=log)
@@ -278,13 +348,12 @@ def _spotless(**kw):
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
 
-        if opts.threshold is None:
-            threshold = opts.sigmathreshold * rms
-        else:
-            threshold = opts.threshold
-
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
               file=log)
+
+        save_fits(basename + f'update_{k+1}.fits', np.mean(update, axis=0), hdr_mfs)
+        save_fits(basename + f'model_{k+1}.fits', np.mean(model, axis=0), hdr_mfs)
+        save_fits(basename + f'residual_{k+1}.fits', residual_mfs, hdr_mfs)
 
         print("Updating results", file=log)
         dds_out = []
@@ -299,10 +368,10 @@ def _spotless(**kw):
                              columns=('RESIDUAL', 'MODEL'), rechunk=True)
         dask.compute(writes)
 
-        if rmax <= threshold:
-            print("Terminating because final threshold has been reached",
-                  file=log)
-            break
+        # if rmax <= threshold:
+        #     print("Terminating because final threshold has been reached",
+        #           file=log)
+        #     break
 
     dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
 
@@ -370,7 +439,7 @@ def _spotless_dist(**kw):
 
     real_type = dds[0].DIRTY.dtype
     cell_rad = dds[0].cell_rad
-    complex_type = np.result_type(real_type, np.complex64)
+    complex_type = np.result_type(dirty.dtype, np.complex64)
 
     nband = len(dds)
     nx, ny = dds[0].nx, dds[0].ny
@@ -390,7 +459,7 @@ def _spotless_dist(**kw):
     bases = tuple(opts.bases.split(','))
     nbasis = len(bases)
     iy, sy, ntot, nmax = wavelet_setup(
-                                np.zeros((1, nx, ny), dtype=real_type),
+                                np.zeros((1, nx, ny), dtype=dirty.dtype),
                                 bases, opts.nlevels)
     ntot = tuple(ntot)
 
@@ -439,7 +508,7 @@ def _spotless_dist(**kw):
     except Exception as e:
         print(f'Did not find l1weights at {dds_name}/L1WEIGHT. '
               'Initialising to unity', file=log)
-        l1weightfs = client.submit(np.ones, (nbasis, nmax), dtype=real_type,
+        l1weightfs = client.submit(np.ones, (nbasis, nmax), dtype=dirty.dtype,
                                  workers={names[0]})
 
     if opts.hessnorm is None:

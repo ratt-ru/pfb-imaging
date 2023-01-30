@@ -58,6 +58,10 @@ def primal_dual(
         if positivity:
             x[x < 0] = 0.0
 
+
+        res = xbar - x
+        print(                    'phi = ', np.vdot(res, A(res)))
+
         # convergence check
         eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
         if eps < tol:
@@ -68,6 +72,9 @@ def primal_dual(
 
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {eps:.3e}", file=log)
+
+
+    import pdb; pdb.set_trace()
 
     if k == maxit - 1:
         if verbosity:

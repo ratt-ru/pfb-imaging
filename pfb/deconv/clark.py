@@ -97,8 +97,10 @@ def clark(ID,
     # normalise so the PSF always sums to 1
     ID /= wsum
     PSF /= wsum
+    PSFHAT /= wsum
     wsums = np.amax(PSF, axis=(1,2))
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
+    model = make_noncritical(model)
     IR = ID.copy()
     # pre-allocate arrays for doing FFT's
     xout = np.empty(ID.shape, dtype=ID.dtype, order='C')

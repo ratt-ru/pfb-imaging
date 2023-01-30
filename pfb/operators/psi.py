@@ -8,7 +8,7 @@ from pfb.wavelets.wavelets import wavedecn, waverecn, ravel_coeffs, unravel_coef
 @numba.njit(nogil=True, fastmath=True, cache=True)
 def pad(x, n):
     '''
-    pad 1D array by n
+    pad 1D array by n zeros
     '''
     return np.append(x, np.zeros(n, dtype=x.dtype))
 
@@ -21,7 +21,7 @@ def _coef2im_impl(alpha, bases, ntot, iy, sy, nx, ny):
     nband, nbasis, _ = alpha.shape
     # not chunking over basis
     x = np.zeros((nband, nbasis, nx, ny), dtype=alpha.dtype)
-    for l in range(nband):
+    for l in numba.prange(nband):
         for b in numba.prange(nbasis):
         # for b, base in enumerate(bases):
             base = bases[b]
@@ -69,13 +69,12 @@ def _im2coef_impl(x, bases, ntot, nmax, nlevels):
     nbasis = len(bases)
     nband, _, _ = x.shape
     alpha = np.zeros((nband, nbasis, nmax), dtype=x.dtype)
-    for l in range(nband):
+    for l in numba.prange(nband):
         for b in numba.prange(nbasis):
-        # for b, base in enumerate(bases):
             base = bases[b]
             if base == 'self':
                 # ravel and pad
-                alpha[l, b] = pad((x[l]).ravel(), nmax-ntot[b]) #, mode='constant')
+                alpha[l, b] = pad(x[l].ravel(), nmax-ntot[b]) #, mode='constant')
             else:
                 # decompose
                 alpha_tmp = wavedecn(x[l], base, mode='zero', level=nlevels)
