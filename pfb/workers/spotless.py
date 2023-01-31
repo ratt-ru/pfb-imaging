@@ -151,6 +151,8 @@ def _spotless(**kw):
     from ducc0.misc import make_noncritical
     from pfb.wavelets.wavelets import wavelet_setup
     from pfb.prox.prox_21m import prox_21m as prox_21
+    # from pfb.prox.prox_21 import prox_21
+    from pfb.utils.misc import fitcleanbeam
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -170,10 +172,10 @@ def _spotless(**kw):
 
     # stitch dirty/psf in apparent scale
     output_type = dds[0].DIRTY.dtype
-    dirty, model, residual, psf, psfhat, beam, wsums = dds2cubes(
-                                                            dds,
-                                                            opts.nband,
-                                                            apparent=False)
+    dirty, model, residual, psf, psfhat, beam, wsums, dual = dds2cubes(
+                                                               dds,
+                                                               opts.nband,
+                                                               apparent=False)
     wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
@@ -277,20 +279,25 @@ def _spotless(**kw):
                   nx=nx,
                   ny=ny)
 
-    # p = lambda x: psi(psiH(x))
-
-    # hessnorm, hessbeta = power_method(p, (nband, nx, ny),
-    #                                   tol=opts.pm_tol,
-    #                                   maxit=opts.pm_maxit,
-    #                                   verbosity=opts.pm_verbose,
-    #                                   report_freq=opts.pm_report_freq)
-
-    # import pdb; pdb.set_trace()
-
     # TODO - load from dds if present
-    l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
-    dual = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
+    if dual is None:
+        dual = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
+    try:
+        l1ds = xds_from_zarr(f'{dds_name}::L1WEIGHT', chunks={'b':-1,'c':-1})
+        l1weight = l1ds[0].L1WEIGHT.values
+    except:
+        l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
 
+    # get clean beam area to convert residual units during l1reweighting
+    GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
+    pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
+
+    # We do the following to set hyper-parameters in an intuitive way
+    # i) convert residual units so it is comparable to model
+    # ii) project residual into dual domain
+    # iii) compute the rms in the space where thresholding happens
+    rms_comps = np.std(np.sum(psiH(residual/pix_per_beam), axis=0),
+                       axis=-1)[:, None]  # preserve axes
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -299,16 +306,9 @@ def _spotless(**kw):
           file=log)
     for k in range(opts.niter):
         print("Solving for update", file=log)
-        # x = pcg_psf(psfhat,
-        #             residual,
-        #             x0,
-        #             mopmask,
-        #             lastsize,
-        #             opts.nvthreads,
-        #             rmax,  # used as sigmainv
-        #             cgopts)
         update = pcg(hess_psf,
                      residual,
+                     x0=residual/pix_per_beam,
                      tol=opts.cg_tol,
                      maxit=opts.cg_maxit,
                      minit=opts.cg_minit,
@@ -323,7 +323,7 @@ def _spotless(**kw):
                                   data,
                                   model,
                                   dual,
-                                  opts.sigma21,
+                                  opts.rmsfactor*rms_comps,
                                   psi,
                                   psiH,
                                   l1weight,
@@ -355,19 +355,44 @@ def _spotless(**kw):
         save_fits(basename + f'model_{k+1}.fits', np.mean(model, axis=0), hdr_mfs)
         save_fits(basename + f'residual_{k+1}.fits', residual_mfs, hdr_mfs)
 
+        if k+1 >= opts.l1reweight_from:
+            print('Computing L1 weights', file=log)
+            # convert residual units so it is comparable to model
+            rms_comps = np.std(np.sum(psiH(residual/pix_per_beam), axis=0),
+                               axis=-1)[:, None]  # preserve axes
+            mcomps = np.sum(psiH(model), axis=0)
+            # the logic here is that weights shoudl remain the same for model
+            # components that are rmsfactor times larger than the rms
+            # high SNR values should experience relatively small thresholding
+            # whereas small values should be strongly thresholded
+            l1weight = (1 + opts.rmsfactor)/(1 + (mcomps/rms_comps)**2)
+
         print("Updating results", file=log)
         dds_out = []
         for ds in dds:
             b = ds.bandid
             r = da.from_array(residual[b]*wsum)
             m = da.from_array(model[b])
+            d = da.from_array(dual[b])
             ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
-                                  'MODEL': (('x', 'y'), m)})
+                                  'MODEL': (('x', 'y'), m),
+                                  'DUAL': (('c', 'n'), d)})
             dds_out.append(ds_out)
         writes = xds_to_zarr(dds_out, dds_name,
-                             columns=('RESIDUAL', 'MODEL'), rechunk=True)
-        dask.compute(writes)
+                             columns=('RESIDUAL', 'MODEL', 'DUAL'),
+                             rechunk=True)
 
+        # l1weights do not have a band axis so need to be stored as a subtable
+        dvars = {}
+        dvars['L1WEIGHT'] = (('c','n'), da.from_array(l1weight))
+        l1ds = xr.Dataset(dvars)
+        l1writes = xds_to_zarr(l1ds, f'{dds_name}::L1WEIGHT', rechunk=True)
+        dask.compute(writes, l1writes)
+
+        eps = np.linalg.norm(model - modelp)/np.linalg.norm(modelp)
+        if eps < opts.tol:
+            print(f"Converged after {k+1} iterations.", file=log)
+            break
         # if rmax <= threshold:
         #     print("Terminating because final threshold has been reached",
         #           file=log)

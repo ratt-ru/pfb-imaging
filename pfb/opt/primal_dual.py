@@ -34,8 +34,10 @@ def primal_dual(
     def grad_func(x):
         return -A(xbar - x) / gamma
 
+    # this seems to give a good trade-off between
+    # smooth and non-smooth minimizers
     if sigma is None:
-        sigma = L / (2.0 * gamma)
+        sigma = L / (2.0 * gamma) / nu
 
     # stepsize control
     tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
@@ -56,11 +58,7 @@ def primal_dual(
         # primal update
         x = xp - tau * (psi(2 * v - vp) + grad_func(xp))
         if positivity:
-            x[x < 0] = 0.0
-
-
-        res = xbar - x
-        print(                    'phi = ', np.vdot(res, A(res)))
+            x[x < lam[0]] = 0.0
 
         # convergence check
         eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
@@ -71,10 +69,10 @@ def primal_dual(
             import pdb; pdb.set_trace()
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} eps = {eps:.3e}", file=log)
-
-
-    import pdb; pdb.set_trace()
+            res = xbar-x
+            phi = np.vdot(res, A(res))
+            print(f"At iteration {k} eps = {eps:.3e} and phi = {phi:.3e}",
+                  file=log)
 
     if k == maxit - 1:
         if verbosity:

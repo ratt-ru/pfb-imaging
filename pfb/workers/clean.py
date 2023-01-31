@@ -89,7 +89,7 @@ def _clean(**kw):
 
     # stitch dirty/psf in apparent scale
     output_type = dds[0].DIRTY.dtype
-    dirty, model, residual, psf, psfhat, _, wsums = dds2cubes(
+    dirty, model, residual, psf, psfhat, _, wsums, _ = dds2cubes(
                                                             dds,
                                                             opts.nband,
                                                             apparent=True)
