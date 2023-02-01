@@ -105,14 +105,14 @@ def pcg(A,
             break
         rnorm = rnorm_next
         k += 1
-        epsx = np.linalg.norm(x - xp) / np.linalg.norm(x)
-        epsn = rnorm / eps0
         epsp = eps
+        eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
+        # epsn = rnorm / eps0
         # eps = rnorm / eps0
-        eps = np.maximum(epsx, epsn)
+        # eps = np.maximum(epsx, epsn)
 
-        if np.abs(epsp - eps) < 1e-3*tol:
-            stall_count += 1
+        # if np.abs(epsp - eps) < 1e-3*tol:
+        #     stall_count += 1
 
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} epsx = {epsx:.3e}, epsn = {epsn:.3e}",

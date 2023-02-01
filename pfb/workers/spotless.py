@@ -289,7 +289,7 @@ def _spotless(**kw):
         l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
 
     # get clean beam area to convert residual units during l1reweighting
-    GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
+    GaussPar = fitcleanbeam(psf_mfs[None], level=0.25, pixsize=1.0)[0]
     pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
 
     # We do the following to set hyper-parameters in an intuitive way
@@ -308,7 +308,7 @@ def _spotless(**kw):
         print("Solving for update", file=log)
         update = pcg(hess_psf,
                      residual,
-                     x0=residual/pix_per_beam,
+                     x0=residual/pix_per_beam if k==0 else update,
                      tol=opts.cg_tol,
                      maxit=opts.cg_maxit,
                      minit=opts.cg_minit,
@@ -347,8 +347,10 @@ def _spotless(**kw):
 
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
+        eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
-        print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
+        print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
+              f"rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
 
         save_fits(basename + f'update_{k+1}.fits', np.mean(update, axis=0), hdr_mfs)
@@ -366,6 +368,7 @@ def _spotless(**kw):
             # high SNR values should experience relatively small thresholding
             # whereas small values should be strongly thresholded
             l1weight = (1 + opts.rmsfactor)/(1 + (mcomps/rms_comps)**2)
+            l1weight[l1weight < 1.0] = 0.0
 
         print("Updating results", file=log)
         dds_out = []
@@ -389,7 +392,6 @@ def _spotless(**kw):
         l1writes = xds_to_zarr(l1ds, f'{dds_name}::L1WEIGHT', rechunk=True)
         dask.compute(writes, l1writes)
 
-        eps = np.linalg.norm(model - modelp)/np.linalg.norm(modelp)
         if eps < opts.tol:
             print(f"Converged after {k+1} iterations.", file=log)
             break
