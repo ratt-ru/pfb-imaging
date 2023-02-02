@@ -58,7 +58,7 @@ def primal_dual(
         # primal update
         x = xp - tau * (psi(2 * v - vp) + grad_func(xp))
         if positivity:
-            x[x < 0] = 0.0
+            x[x < lam[0]] = 0.0
 
         # convergence check
         eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
