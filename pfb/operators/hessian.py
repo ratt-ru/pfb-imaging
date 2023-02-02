@@ -137,10 +137,12 @@ def _hessian_psf_slice(
     """
     if beam is not None:
         psf_convolve_slice(xpad, xhat, xout,
-                           psfhat, lastsize, x*beam)
+                           psfhat, lastsize, x*beam,
+                           nthreads=nthreads)
     else:
         psf_convolve_slice(xpad, xhat, xout,
-                           psfhat, lastsize, x)
+                           psfhat, lastsize, x,
+                           nthreads=nthreads)
 
     if beam is not None:
         xout *= beam
@@ -259,9 +261,11 @@ def hessian_psf_cube(
     Tikhonov regularised Hessian approx
     """
     if beam is not None:
-        psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x*beam, nthreads=nthreads)
+        psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x*beam,
+                          nthreads=nthreads)
     else:
-        psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x, nthreads=nthreads)
+        psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x,
+                          nthreads=nthreads)
 
     if beam is not None:
         xout *= beam

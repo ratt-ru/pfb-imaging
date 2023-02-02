@@ -3,6 +3,7 @@ from functools import partial
 import dask.array as da
 from distributed import wait
 from uuid import uuid4
+from ducc0.misc import make_noncritical
 import pyscilog
 log = pyscilog.get_logger('PCG')
 
@@ -132,7 +133,7 @@ def pcg(A,
     else:
         return x, r
 
-from pfb.operators.hessian import hessian_psf_slice
+from pfb.operators.hessian import _hessian_psf_slice
 def _pcg_psf_impl(psfhat,
                   b,
                   x0,
@@ -160,10 +161,16 @@ def _pcg_psf_impl(psfhat,
         M = None
 
     for k in range(nband):
-        A = partial(hessian_psf_slice,
-                    np.empty((nx_psf, lastsize), dtype=b.dtype, order='C'),  # xpad
-                    np.empty((nx_psf, nyo2), dtype=psfhat.dtype, order='C'), # xhat
-                    np.empty((nx, ny), dtype=b.dtype, order='C'),            # xout
+        xpad = np.empty((nx_psf, lastsize), dtype=b.dtype, order='C')
+        xpad = make_noncritical(xpad)
+        xhat = np.empty((nx_psf, nyo2), dtype=psfhat.dtype, order='C')
+        xhat = make_noncritical(xhat)
+        xout = np.empty((nx, ny), dtype=b.dtype, order='C')
+        xout = make_noncritical(xout)
+        A = partial(_hessian_psf_slice,
+                    xpad,
+                    xhat,
+                    xout,
                     psfhat[k],
                     beam[k],
                     lastsize,
