@@ -9,15 +9,6 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('SPOTLESS')
 
-from numba import njit
-@njit
-def showtys(iy):
-    print(len(iy), iy)
-    # for n in range(1, len(tys)):
-    #     for k, v in tys[n].items():
-    #         print(k, v)
-    return
-
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
@@ -321,7 +312,7 @@ def _spotless(**kw):
         data = model + opts.gamma*update
         model, dual = primal_dual(hess_psf,
                                   data,
-                                  model,
+                                  model if np.any(model) else update,
                                   dual,
                                   opts.rmsfactor*rms_comps,
                                   psi,
