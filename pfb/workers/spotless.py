@@ -321,7 +321,7 @@ def _spotless(**kw):
         data = model + opts.gamma*update
         model, dual = primal_dual(hess_psf,
                                   data,
-                                  model,
+                                  model if np.any(model) else update,
                                   dual,
                                   opts.rmsfactor*rms_comps,
                                   psi,
