@@ -41,7 +41,6 @@ def psf_convolve_cube(xpad,    # preallocated array to store padded image
     _, nx, ny = x.shape
     xpad[...] = 0.0
     xpad[:, 0:nx, 0:ny] = x
-    # pad_and_shift_cube(x, xpad)
     r2c(xpad, axes=(1, 2), nthreads=nthreads,
         forward=True, inorm=0, out=xhat)
     xhat *= psfhat
@@ -49,7 +48,6 @@ def psf_convolve_cube(xpad,    # preallocated array to store padded image
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)
     xout[...] = xpad[:, 0:nx, 0:ny]
-    # unpad_and_unshift_cube(xpad, xout)
     return xout
 
 
@@ -130,5 +128,3 @@ def psf_convolve_cube_dask(x, psfhat, beam, psfopts,
         return convim.compute()
     else:
         return convim
-
-

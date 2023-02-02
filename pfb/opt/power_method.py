@@ -114,3 +114,52 @@ def power_method_dist(Afs,
             break
 
     return beta
+
+
+def power2(A, bp, bnorm):
+    bp /= bnorm
+    b = A(bp)
+    bsumsq = da.sum(b**2)
+    beta_num = da.vdot(b, bp)
+    beta_den = da.vdot(bp, bp)
+
+    return b, bsumsq, beta_num, beta_den
+
+
+def power_method_persist(ddsf,
+                         Af,
+                         nx,
+                         ny,
+                         nband,
+                         tol=1e-5,
+                         maxit=200):
+
+    client = get_client()
+    b = []
+    bssq = []
+    for ds in ddsf:
+        wid = ds.worker
+        tmp = client.persist(da.random.normal(0, 1, (nx, ny)),
+                             workers={wid})
+        b.append(tmp)
+        bssq.append(da.sum(b**2))
+
+    bssq = da.stack(bssq)
+    bnorm = da.sqrt(da.sum(bssq))
+    bp = deepcopy(b)
+    beta_num = [da.array()]
+
+    for k in range(maxit):
+        for i, ds, A in enumerate(zip(ddsf, Af)):
+            bp[i] = b[i]/bnorm
+            b[i] = A(bp[i])
+            bssq[i] = da.sum(b[i]**2)
+            beta_num = da.vdot(b, bp)
+            beta_den = da.vdot(bp, bp)
+
+
+
+
+
+
+
