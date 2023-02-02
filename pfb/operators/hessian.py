@@ -1,9 +1,9 @@
-
 import numpy as np
 import dask
 import dask.array as da
 from daskms.optimisation import inlined_array
 from ducc0.wgridder import ms2dirty, dirty2ms
+from ducc0.misc import make_noncritical
 from uuid import uuid4
 from pfb.operators.psf import (psf_convolve_slice,
                                psf_convolve_cube)
@@ -121,7 +121,7 @@ def hessian(x, uvw, weight, vis_mask, freq, beam, hessopts):
                         dtype=x.dtype)
 
 
-def hessian_psf_slice(
+def _hessian_psf_slice(
                     xpad,  # preallocated array to store padded image
                     xhat,  # preallocated array to store FTd image
                     xout,  # preallocated array to store output image
@@ -131,22 +131,119 @@ def hessian_psf_slice(
                     x,     # input image, not overwritten
                     nthreads=1,
                     sigmainv=1,
-                    wsum=1):
+                    wsum=None):
     """
     Tikhonov regularised Hessian approx
     """
-
     if beam is not None:
         psf_convolve_slice(xpad, xhat, xout,
-                           psfhat/wsum, lastsize, x*beam)
+                           psfhat, lastsize, x*beam,
+                           nthreads=nthreads)
     else:
         psf_convolve_slice(xpad, xhat, xout,
-                           psfhat/wsum, lastsize, x)
+                           psfhat, lastsize, x,
+                           nthreads=nthreads)
 
     if beam is not None:
         xout *= beam
 
+    if wsum is not None:
+        xout /= wsum
+
     return xout + x * sigmainv
+
+from pfb.operators.hessian import _hessian_impl
+class hessian_psf_slice(object):
+    def __init__(self, ds, nbasis, nmax, nthreads, sigmainv, cell, wstack, epsilon, double_accum):
+        self.nthreads = nthreads
+        self.sigmainv = sigmainv
+        self.cell = cell
+        self.wstack = wstack
+        self.epsilon = epsilon
+        self.double_accum = double_accum
+        self.lastsize = ds.PSF.shape[-1]
+        self.bandid = ds.bandid
+        tmp = np.require(ds.DIRTY.values,
+                         dtype=ds.DIRTY.dtype,
+                         requirements='CAW')
+        self.dirty = make_noncritical(tmp)
+        tmp = np.require(ds.PSFHAT.values,
+                         dtype=ds.PSFHAT.dtype,
+                         requirements='CAW')
+        self.psfhat = make_noncritical(tmp)
+        tmp = np.require(ds.PSF.values,
+                         dtype=ds.PSF.dtype,
+                         requirements='CAW')
+        self.psf = make_noncritical(tmp)
+        tmp = np.require(ds.BEAM.values,
+                         dtype=ds.BEAM.dtype,
+                         requirements='CAW')
+        self.beam = make_noncritical(tmp)
+        self.wsumb = ds.WSUM.values[0]
+        if 'MODEL' in ds:
+            tmp = np.require(ds.MODEL.values,
+                             dtype=ds.MODEL.dtype,
+                             requirements='CAW')
+        else:
+            tmp = np.zeros_like(self.dirty)
+        self.model = make_noncritical(tmp)
+        if 'DUAL' in ds:
+            tmp = np.require(ds.DUAL.values,
+                             dtype=ds.DUAL.dtype,
+                             requirements='CAW')
+            assert tmp.shape == (nbasis, nmax)
+        else:
+            tmp = np.zeros((nbasis, nmax), dtype=self.dirty.dtype)
+        self.dual = make_noncritical(tmp)
+        if 'RESIDUAL' in ds:
+            tmp = np.require(ds.RESIDUAL.values,
+                             dtype=ds.RESIDUAL.dtype,
+                             requirements='CAW')
+        else:
+            tmp = self.dirty.copy()
+        self.residual = make_noncritical(tmp)
+
+        self.uvw = ds.UVW.values
+        self.wgt = ds.WEIGHT.values
+        self.vmask = ds.VIS_MASK.values
+        self.freq = ds.FREQ.values
+
+        # pre-allocate tmp arrays
+        tmp = np.empty(self.dirty.shape, dtype=self.dirty.dtype, order='C')
+        self.xout = make_noncritical(tmp)
+        tmp = np.empty(self.psfhat.shape, dtype=self.psfhat.dtype, order='C')
+        self.xhat = make_noncritical(tmp)
+        tmp = np.empty(self.psf.shape, dtype=self.psf.dtype, order='C')
+        self.xpad = make_noncritical(tmp)
+
+    def __call__(self, x):
+        return _hessian_psf_slice(self.xpad,
+                                  self.xhat,
+                                  self.xout,
+                                  self.psfhat,
+                                  self.beam,
+                                  self.lastsize,
+                                  x,
+                                  nthreads=self.nthreads,
+                                  sigmainv=self.sigmainv,
+                                  wsum=self.wsum)
+
+    def compute_residual(self, x):
+        return self.dirty - _hessian_impl(self.beam * x,
+                                        self.uvw,
+                                        self.wgt,
+                                        self.vmask,
+                                        self.freq,
+                                        None,
+                                        cell=self.cell,
+                                        wstack=self.wstack,
+                                        epsilon=self.epsilon,
+                                        double_accum=self.double_accum,
+                                        nthreads=self.nthreads)
+
+
+    def set_wsum(self, wsum):
+        self.wsum = wsum
 
 
 def hessian_psf_cube(
@@ -158,17 +255,22 @@ def hessian_psf_cube(
                     lastsize,
                     x,     # input image, not overwritten
                     nthreads=1,
-                    sigmainv=1):
+                    sigmainv=1,
+                    wsum=None):
     """
     Tikhonov regularised Hessian approx
     """
-
     if beam is not None:
-        psf_convolve_cube(x*beam, xpad, xhat, xout, psfhat, lastsize)
+        psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x*beam,
+                          nthreads=nthreads)
     else:
-        psf_convolve_cube(x, xpad, xhat, xout, psfhat, lastsize)
+        psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x,
+                          nthreads=nthreads)
 
     if beam is not None:
         xout *= beam
+
+    if wsum is not None:
+        xout /= wsum
 
     return xout + x * sigmainv

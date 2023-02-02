@@ -4,6 +4,7 @@ from functools import partial
 import numba
 import dask.array as da
 from pfb.operators.psf import psf_convolve_cube
+from ducc0.misc import make_noncritical
 import pyscilog
 log = pyscilog.get_logger('CLARK')
 
@@ -96,13 +97,18 @@ def clark(ID,
     # normalise so the PSF always sums to 1
     ID /= wsum
     PSF /= wsum
+    PSFHAT /= wsum
     wsums = np.amax(PSF, axis=(1,2))
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
+    model = make_noncritical(model)
     IR = ID.copy()
     # pre-allocate arrays for doing FFT's
     xout = np.empty(ID.shape, dtype=ID.dtype, order='C')
+    xout = make_noncritical(xout)
     xpad = np.empty(PSF.shape, dtype=ID.dtype, order='C')
+    xpad = make_noncritical(xpad)
     xhat = np.empty(PSFHAT.shape, dtype=PSFHAT.dtype)
+    xhat = make_noncritical(xhat)
     # square avoids abs of full array
     IRsearch = np.sum(IR, axis=0)**2
     pq = IRsearch.argmax()

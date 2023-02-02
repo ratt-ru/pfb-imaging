@@ -3,6 +3,7 @@ import dask.array as da
 from daskms.optimisation import inlined_array
 from uuid import uuid4
 from ducc0.fft import r2c, c2r, c2c, good_size
+from ducc0.misc import roll_resize_roll as rrr
 from uuid import uuid4
 from pfb.utils.misc import pad_and_shift, unpad_and_unshift
 from pfb.utils.misc import pad_and_shift_cube, unpad_and_unshift_cube
@@ -17,13 +18,16 @@ def psf_convolve_slice(
                     lastsize,
                     x,  # input image, not overwritten
                     nthreads=1):
-    pad_and_shift(x, xpad)
+    nx, ny = x.shape
+    xpad[...] = 0.0
+    xpad[0:nx, 0:ny] = x
     r2c(xpad, axes=(0, 1), nthreads=nthreads,
         forward=True, inorm=0, out=xhat)
     xhat *= psfhat
     c2r(xhat, axes=(0, 1), forward=False, out=xpad,
-        lastsize=lastsize, inorm=2, nthreads=nthreads)
-    unpad_and_unshift(xpad, xout)
+        lastsize=lastsize, inorm=2, nthreads=nthreads,
+        allow_overwriting_input=True)
+    xout[...] = xpad[0:nx, 0:ny]
     return xout
 
 
@@ -34,13 +38,16 @@ def psf_convolve_cube(xpad,    # preallocated array to store padded image
                       lastsize,
                       x,       # input image, not overwritten
                       nthreads=1):
-    pad_and_shift_cube(x, xpad)
+    _, nx, ny = x.shape
+    xpad[...] = 0.0
+    xpad[:, 0:nx, 0:ny] = x
     r2c(xpad, axes=(1, 2), nthreads=nthreads,
         forward=True, inorm=0, out=xhat)
     xhat *= psfhat
     c2r(xhat, axes=(1, 2), forward=False, out=xpad,
-        lastsize=lastsize, inorm=2, nthreads=nthreads)
-    unpad_and_unshift_cube(xpad, xout)
+        lastsize=lastsize, inorm=2, nthreads=nthreads,
+        allow_overwriting_input=True)
+    xout[...] = xpad[:, 0:nx, 0:ny]
     return xout
 
 
@@ -88,35 +95,6 @@ def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, mask,
         return convim
 
 
-
-
-
-
-
-
-def _psf_convolve_cube_impl(x, psfhat, beam,
-                            nthreads=None,
-                            padding=None,
-                            unpad_x=None,
-                            unpad_y=None,
-                            lastsize=None):
-    nb, nx, ny = x.shape
-    convim = np.zeros((nb, nx, ny), dtype=x.dtype)
-    for b in range(nb):
-        xhat = x[b] if beam is None else x[b] * beam[b]
-        xhat = iFs(np.pad(xhat, padding, mode='constant'), axes=(0, 1))
-        xhat = r2c(xhat, axes=(0, 1), nthreads=nthreads,
-                   forward=True, inorm=0)
-        xhat = c2r(xhat * psfhat[b], axes=(0, 1), forward=False,
-                   lastsize=lastsize, inorm=2, nthreads=nthreads)
-        convim[b] = Fs(xhat, axes=(0, 1))[unpad_x, unpad_y]
-
-        if beam is not None:
-            convim[b] *= beam[b]
-
-    return convim
-
-
 def psf_convolve_cube_dask(x, psfhat, beam, psfopts,
                       wsum=1, sigmainv=None, compute=True):
     if not isinstance(x, da.Array):
@@ -150,18 +128,3 @@ def psf_convolve_cube_dask(x, psfhat, beam, psfopts,
         return convim.compute()
     else:
         return convim
-
-def psf_convolve_slice_dask(x, psfhat, beam, psfopts):
-    if not isinstance(x, da.Array):
-        x = da.from_array(x, chunks=(-1, -1), name=False)
-    if beam is None:
-        bout = None
-    else:
-        bout = ('nx', 'ny')
-    return da.blockwise(psf_convolve_slice, ('nx', 'ny'),
-                        x, ('nx', 'ny'),
-                        psfhat, ('nx', 'ny'),
-                        beam, bout,
-                        psfopts, None,
-                        align_arrays=False,
-                        dtype=x.dtype)

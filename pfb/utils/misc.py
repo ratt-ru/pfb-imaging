@@ -846,6 +846,12 @@ def dds2cubes(dds, nband, apparent=False):
         psfhat = None
     mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
                             dtype=real_type) for _ in range(nband)]
+    if 'DUAL' in dds[0]:
+        nbasis, nmax = dds[0].DUAL.shape
+        dual = [da.zeros((nbasis, nmax), chunks=(-1, -1),
+                            dtype=real_type) for _ in range(nband)]
+    else:
+        dual = None
     for ds in dds:
         b = ds.bandid
         if apparent:
@@ -861,6 +867,8 @@ def dds2cubes(dds, nband, apparent=False):
             psfhat[b] += ds.PSFHAT.data
         if 'MODEL' in ds:
             model[b] = ds.MODEL.data
+        if 'DUAL' in ds:
+            dual[b] = ds.DUAL.data
         mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
         wsums[b] += ds.WSUM.data[0]
     wsums = da.stack(wsums).squeeze()
@@ -872,19 +880,22 @@ def dds2cubes(dds, nband, apparent=False):
     if 'PSF' in ds:
         psf = da.stack(psf)/wsum
         psfhat = da.stack(psfhat)/wsum
+    if 'DUAL' in ds:
+        dual = da.stack(dual)
     for b in range(nband):
         if wsums[b]:
             mean_beam[b] /= wsums[b]
-
-    dirty, model, residual, psf, psfhat, mean_beam, wsums = dask.compute(
+    mean_beam = da.stack(mean_beam)
+    dirty, model, residual, psf, psfhat, mean_beam, wsums, dual = dask.compute(
                                                                 dirty,
                                                                 model,
                                                                 residual,
                                                                 psf,
                                                                 psfhat,
                                                                 mean_beam,
-                                                                wsums)
-    return dirty, model, residual, psf, psfhat, mean_beam, wsums
+                                                                wsums,
+                                                                dual)
+    return dirty, model, residual, psf, psfhat, mean_beam, wsums, dual
 
 
 def interp_gain_grid(gdct, ant_names):
@@ -1048,6 +1059,33 @@ def _estimate_delay_impl(vis_ant, freq, min_delay):
             # print(p, c, lag[delay_idx])
             delays[p,c] = lag[delay_idx]
     return delays
+
+from finufft import nufft1d3
+import matplotlib.pyplot as plt
+def _estimate_tec_impl(vis_ant, freq, tec_nyq, max_tec, fctr, srf=10):
+    nuinv = fctr/freq
+    npix = int(srf*max_tec/tec_nyq)
+    print(npix)
+    lag = np.linspace(-0.5*max_tec, 0.5*max_tec, npix)
+    nant, _, ncorr = vis_ant.shape
+    tecs = np.zeros((nant, ncorr), dtype=np.float64)
+    for p in range(nant):
+        for c in range(ncorr):
+            vis_fft = nufft1d3(nuinv, vis_ant[p, :, c], lag, eps=1e-8, isign=-1)
+            pspec = np.abs(vis_fft)
+            plt.plot(lag, pspec)
+            # plt.arrow(tecsin[p,c], 0, 0.0, pspec.max())
+            plt.show()
+            if not pspec.any():
+                continue
+            tec_idx = np.argmax(pspec)
+            # fm1 = lag[delay_idx-1]
+            # f0 = lag[delay_idx]
+            # fp1 = lag[delay_idx+1]
+            # delays[p,c] = 0.5*dlag*(fp1 - fm1)/(fm1 - 2*f0 + fp1)
+            # print(p, c, lag[delay_idx])
+            tecs[p,c] = lag[tec_idx]
+    return tecs
 
 
 def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):

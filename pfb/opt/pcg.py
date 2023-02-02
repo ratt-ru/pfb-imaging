@@ -3,6 +3,7 @@ from functools import partial
 import dask.array as da
 from distributed import wait
 from uuid import uuid4
+from ducc0.misc import make_noncritical
 import pyscilog
 log = pyscilog.get_logger('PCG')
 
@@ -105,14 +106,14 @@ def pcg(A,
             break
         rnorm = rnorm_next
         k += 1
-        epsx = np.linalg.norm(x - xp) / np.linalg.norm(x)
-        epsn = rnorm / eps0
         epsp = eps
+        eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
+        # epsn = rnorm / eps0
         # eps = rnorm / eps0
-        eps = np.maximum(epsx, epsn)
+        # eps = np.maximum(epsx, epsn)
 
-        if np.abs(epsp - eps) < 1e-3*tol:
-            stall_count += 1
+        # if np.abs(epsp - eps) < 1e-3*tol:
+        #     stall_count += 1
 
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} epsx = {epsx:.3e}, epsn = {epsn:.3e}",
@@ -132,7 +133,7 @@ def pcg(A,
     else:
         return x, r
 
-from pfb.operators.hessian import hessian_psf_slice
+from pfb.operators.hessian import _hessian_psf_slice
 def _pcg_psf_impl(psfhat,
                   b,
                   x0,
@@ -160,10 +161,16 @@ def _pcg_psf_impl(psfhat,
         M = None
 
     for k in range(nband):
-        A = partial(hessian_psf_slice,
-                    np.empty((nx_psf, lastsize), dtype=b.dtype, order='C'),  # xpad
-                    np.empty((nx_psf, nyo2), dtype=psfhat.dtype, order='C'), # xhat
-                    np.empty((nx, ny), dtype=b.dtype, order='C'),            # xout
+        xpad = np.empty((nx_psf, lastsize), dtype=b.dtype, order='C')
+        xpad = make_noncritical(xpad)
+        xhat = np.empty((nx_psf, nyo2), dtype=psfhat.dtype, order='C')
+        xhat = make_noncritical(xhat)
+        xout = np.empty((nx, ny), dtype=b.dtype, order='C')
+        xout = make_noncritical(xout)
+        A = partial(_hessian_psf_slice,
+                    xpad,
+                    xhat,
+                    xout,
                     psfhat[k],
                     beam[k],
                     lastsize,
@@ -247,25 +254,20 @@ def pcg_psf(psfhat,
         return model
 
 
-def pcg_dist(ds, A, **kwargs):
+def pcg_dist(A, maxit, minit, tol, sigmainv):
     '''
     kwargs - tol, maxit, minit, nthreads, psf_padding, unpad_x, unpad_y
              sigmainv, lastsize, hessian
     '''
-    maxit = kwargs['maxit']
-    minit = kwargs['minit']
-    tol = kwargs['tol']
-    wsum = kwargs['wsum']
 
-    if 'RESIDUAL' in ds:
-        b = ds.RESIDUAL.values/wsum
+    if hasattr(A, 'residual'):
+        b = A.residual/A.wsum
     else:
-        b = ds.DIRTY.values/wsum
+        b = A.dirty/A.wsum
     x = np.zeros_like(b)
 
-    def Mfunc(x, sigmainv):
+    def M(x):
         return x / sigmainv
-    M = partial(Mfunc, sigmainv=kwargs['sigmainv'])
 
     r = A(x) - b
     y = M(r)
@@ -308,8 +310,7 @@ def pcg_dist(ds, A, **kwargs):
         if np.abs(eps - epsp) < 1e-3*tol:
             stall_count += 1
 
-    ds_out = ds.assign(**{'UPDATE': (('x','y'), da.from_array(x))})
-    print(f'Band={ds.bandid}, iters{k}, eps={eps}', file=log)
-    return ds_out
+    print(f'Band={A.bandid}, iters{k}, eps={eps}', file=log)
+    return x
 
 
