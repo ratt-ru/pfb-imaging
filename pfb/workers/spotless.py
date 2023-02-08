@@ -281,8 +281,12 @@ def _spotless(**kw):
                   ny=ny)
 
     # get clean beam area to convert residual units during l1reweighting
+    # TODO - could refine this with comparison between dirty and restored
+    # if contiuing the deconvolution
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.25, pixsize=1.0)[0]
     pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
+    print(f"Number of pixels per beam estimated as {pix_per_beam}",
+          file=log)
 
     # We do the following to set hyper-parameters in an intuitive way
     # i) convert residual units so it is comparable to model
@@ -326,8 +330,7 @@ def _spotless(**kw):
         data = model + opts.gamma*update
         model, dual = primal_dual(hess_psf,
                                   data,
-                                  model + update,
-                                #   model if np.any(model) else update,
+                                  model if np.any(model) else update,
                                   dual,
                                   opts.rmsfactor*rms_comps,
                                   psi,
