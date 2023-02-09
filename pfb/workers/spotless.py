@@ -151,6 +151,7 @@ def _spotless(**kw):
     from ducc0.misc import make_noncritical
     from pfb.wavelets.wavelets import wavelet_setup
     from pfb.prox.prox_21m import prox_21m as prox_21
+    from pfb.prox.prox2 import prox2
     # from pfb.prox.prox_21 import prox_21
     from pfb.utils.misc import fitcleanbeam
 
@@ -279,25 +280,35 @@ def _spotless(**kw):
                   nx=nx,
                   ny=ny)
 
-    # TODO - load from dds if present
-    if dual is None:
-        dual = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
-    try:
-        l1ds = xds_from_zarr(f'{dds_name}::L1WEIGHT', chunks={'b':-1,'c':-1})
-        l1weight = l1ds[0].L1WEIGHT.values
-    except:
-        l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
-
     # get clean beam area to convert residual units during l1reweighting
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.25, pixsize=1.0)[0]
     pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
+    print(f"Pixels per beam area = {pix_per_beam}", file=log)
 
     # We do the following to set hyper-parameters in an intuitive way
     # i) convert residual units so it is comparable to model
     # ii) project residual into dual domain
     # iii) compute the rms in the space where thresholding happens
-    rms_comps = np.std(np.sum(psiH(residual/pix_per_beam), axis=0),
+    rms_comps = np.std(np.linalg.norm(psiH(residual/pix_per_beam), axis=0),
                        axis=-1)[:, None]  # preserve axes
+
+    # TODO - load from dds if present
+    if dual is None:
+        dual = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
+        l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
+    else:
+        print('Initialising L1 weights', file=log)
+        mcomps = np.linalg.norm(psiH(model), axis=0)
+        l1weight = (1 + opts.rmsfactor)/(1 + np.abs(mcomps)/rms_comps)
+        # l1weight[l1weight < 1.0] = 0.0
+
+
+    # for generality the prox function only takes the
+    # array variable and step size as inputs
+    prox21 = partial(prox_21, weight=l1weight, axis=0)
+
+    # only need this is inverter == pd
+    dual2 = None
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -305,30 +316,58 @@ def _spotless(**kw):
     print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
     for k in range(opts.niter):
-        print("Solving for update", file=log)
-        update = pcg(hess_psf,
-                     residual,
-                     x0=residual/pix_per_beam if k==0 else update,
-                     tol=opts.cg_tol,
-                     maxit=opts.cg_maxit,
-                     minit=opts.cg_minit,
-                     verbosity=opts.cg_verbose,
-                     report_freq=opts.cg_report_freq,
-                     backtrack=opts.backtrack)
+        # print("Solving for update", file=log)
+        # if opts.inverter == 'pcg':
+        #     update = pcg(hess_psf,
+        #                 residual,
+        #                 x0=residual/pix_per_beam if k==0 else update,
+        #                 tol=opts.cg_tol,
+        #                 maxit=opts.cg_maxit,
+        #                 minit=opts.cg_minit,
+        #                 verbosity=opts.cg_verbose,
+        #                 report_freq=opts.cg_report_freq,
+        #                 backtrack=opts.backtrack)
+        # elif k==0:  #opts.inverter == 'pd':
+        #     grad2 = lambda x: hess_psf(x) - residual
+        #     if dual2 is None:
+        #         dual2 = np.zeros_like(residual)
+        #     update, dual2 = primal_dual(residual/pix_per_beam if k==0 else update,
+        #                                 dual2,
+        #                                 rms,
+        #                                 lambda x: x,
+        #                                 lambda x: x,
+        #                                 hessnorm,
+        #                                 prox2,
+        #                                 grad2,
+        #                                 nu=1,
+        #                                 sigma=1,
+        #                                 positivity=dual is None and opts.positivity,  # only at the outset
+        #                                 tol=opts.pd_tol,
+        #                                 maxit=opts.pd_maxit,
+        #                                 verbosity=opts.pd_verbose,
+        #                                 report_freq=opts.pd_report_freq,
+        #                                 gamma=1.0)
+        # else:
+        #     raise ValueError(f"{opts.inverter} is not a valid inverter")
+
+
+
+        # save_fits(basename + f'_update_{k+1}.fits', np.mean(update, axis=0), hdr_mfs)
 
         print('Solving for model', file=log)
         modelp = deepcopy(model)
-        data = model + opts.gamma*update
-        model, dual = primal_dual(hess_psf,
-                                  data,
-                                  model,
+        # data = model + opts.gamma*update
+        # grad21 = lambda x: -hess_psf(data - x)/opts.gamma
+        data = residual + hess_psf(model)
+        grad21 = lambda x: hess_psf(x) - data
+        model, dual = primal_dual(model,
                                   dual,
                                   opts.rmsfactor*rms_comps,
                                   psi,
                                   psiH,
-                                  l1weight,
                                   hessnorm,
-                                  prox_21,
+                                  prox21,
+                                  grad21,
                                   nu=nbasis,
                                   positivity=opts.positivity,
                                   tol=opts.pd_tol,
@@ -337,6 +376,7 @@ def _spotless(**kw):
                                   report_freq=opts.pd_report_freq,
                                   gamma=opts.gamma)
 
+        save_fits(basename + f'_model_{k+1}.fits', np.mean(model, axis=0), hdr_mfs)
 
         print("Getting residual", file=log)
         convimage = hess(model)
@@ -344,6 +384,8 @@ def _spotless(**kw):
                     casting='same_kind')
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
+
+        save_fits(basename + f'_residual_{k+1}.fits', residual_mfs, hdr_mfs)
 
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
@@ -353,22 +395,19 @@ def _spotless(**kw):
               f"rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
 
-        save_fits(basename + f'update_{k+1}.fits', np.mean(update, axis=0), hdr_mfs)
-        save_fits(basename + f'model_{k+1}.fits', np.mean(model, axis=0), hdr_mfs)
-        save_fits(basename + f'residual_{k+1}.fits', residual_mfs, hdr_mfs)
-
         if k+1 >= opts.l1reweight_from:
             print('Computing L1 weights', file=log)
             # convert residual units so it is comparable to model
-            rms_comps = np.std(np.sum(psiH(residual/pix_per_beam), axis=0),
+            rms_comps = np.std(np.linalg.norm(psiH(residual/pix_per_beam), axis=0),
                                axis=-1)[:, None]  # preserve axes
-            mcomps = np.sum(psiH(model), axis=0)
+            mcomps = np.linalg.norm(psiH(model), axis=0)
             # the logic here is that weights shoudl remain the same for model
             # components that are rmsfactor times larger than the rms
             # high SNR values should experience relatively small thresholding
             # whereas small values should be strongly thresholded
-            l1weight = (1 + opts.rmsfactor)/(1 + (mcomps/rms_comps)**2)
-            l1weight[l1weight < 1.0] = 0.0
+            l1weight = (1 + opts.rmsfactor)/(1 + np.abs(mcomps)/rms_comps)
+            # l1weight[l1weight < 1.0] = 0.0
+            prox = partial(prox_21, weight=l1weight, axis=0)
 
         print("Updating results", file=log)
         dds_out = []
@@ -384,13 +423,7 @@ def _spotless(**kw):
         writes = xds_to_zarr(dds_out, dds_name,
                              columns=('RESIDUAL', 'MODEL', 'DUAL'),
                              rechunk=True)
-
-        # l1weights do not have a band axis so need to be stored as a subtable
-        dvars = {}
-        dvars['L1WEIGHT'] = (('c','n'), da.from_array(l1weight))
-        l1ds = xr.Dataset(dvars)
-        l1writes = xds_to_zarr(l1ds, f'{dds_name}::L1WEIGHT', rechunk=True)
-        dask.compute(writes, l1writes)
+        dask.compute(writes)
 
         if eps < opts.tol:
             print(f"Converged after {k+1} iterations.", file=log)

@@ -7,16 +7,14 @@ log = pyscilog.get_logger('PD')
 
 
 def primal_dual(
-        A,    # Hessian approximation
-        xbar, # "data" like term i.e. model + update
         x0,  # initial guess for primal variable
         v0,  # initial guess for dual variable
         lam,  # regulariser strength
         psi,  # linear operator in dual domain
         psiH,  # adjoint of psi
-        l1weights,  # weights for l1 thresholding
         L,  # spectral norm of Hessian
         prox,  # prox of regulariser
+        grad,  # gradient of smooth term
         nu=1.0,  # spectral norm of psi
         sigma=None,  # step size of dual update
         mask=None,  # regions where mask is False will be masked
@@ -30,12 +28,12 @@ def primal_dual(
     x = x0.copy()
     v = v0.copy()
 
-    # gradient function
-    def grad_func(x):
-        return -A(xbar - x) / gamma
+    # # gradient function
+    # def grad_func(x):
+    #     return -A(xbar - x) / gamma
 
     # this seems to give a good trade-off between
-    # smooth and non-smooth minimizers
+    # primal and dual problems
     if sigma is None:
         sigma = L / (2.0 * gamma) / nu
 
@@ -52,13 +50,12 @@ def primal_dual(
         vtilde = v + sigma * psiH(xp)
 
         # dual update
-        v = vtilde - sigma * prox(vtilde / sigma, lam / sigma,
-                                  l1weights)
+        v = vtilde - sigma * prox(vtilde / sigma, lam / sigma)
 
         # primal update
-        x = xp - tau * (psi(2 * v - vp) + grad_func(xp))
+        x = xp - tau * (psi(2 * v - vp) + grad(xp))
         if positivity:
-            x[x < lam[0]] = 0.0
+            x[x < 0.0] = 0.0
 
         # convergence check
         eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
@@ -69,9 +66,9 @@ def primal_dual(
             import pdb; pdb.set_trace()
 
         if not k % report_freq and verbosity > 1:
-            res = xbar-x
-            phi = np.vdot(res, A(res))
-            print(f"At iteration {k} eps = {eps:.3e} and phi = {phi:.3e}",
+            # res = xbar-x
+            # phi = np.vdot(res, A(res))
+            print(f"At iteration {k} eps = {eps:.3e}",  # and phi = {phi:.3e}",
                   file=log)
 
     if k == maxit - 1:

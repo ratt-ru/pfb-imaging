@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def prox_21m(v, sigma, weight, axis=0):
+def prox_21m(v, sigma, weight=None, axis=0):
     """
     Computes weighted version of
 
