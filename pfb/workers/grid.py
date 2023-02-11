@@ -71,6 +71,8 @@ def _grid(**kw):
     import xarray as xr
     from uuid import uuid4
     from daskms.optimisation import inlined_array
+    from pfb.utils.astrometry import get_coordinates
+    from africanus.coordinates import radec_to_lm
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -286,6 +288,18 @@ def _grid(**kw):
             wgt *= imwgt
         # This is a vis space mask (see wgridder convention)
         mask = ds.MASK.data
+        if opts.target is not None:
+            obs_time = ds.time_out
+            tra, tdec = get_coordinates(obs_time)
+            tcoords=np.zeros((1,2))
+            tcoords[0,0] = tra
+            tcoords[0,1] = tdec
+            coords0 = np.array((ds.ra, ds.dec))
+            l0, m0 = radec_to_lm(tcoords, coords0)
+        else:
+            l0 = None
+            m0 = None
+
         dvars = {}
         if opts.dirty:
             dirty = vis2im(uvw=uvw,
@@ -296,6 +310,7 @@ def _grid(**kw):
                            ny=ny,
                            cellx=cell_rad,
                            celly=cell_rad,
+                           x0=l0, y0=m0,
                            nthreads=opts.nvthreads,
                            epsilon=opts.epsilon,
                            precision=precision,
@@ -313,6 +328,7 @@ def _grid(**kw):
                          ny=ny_psf,
                          cellx=cell_rad,
                          celly=cell_rad,
+                         x0=l0, y0=m0,
                          nthreads=opts.nvthreads,
                          epsilon=opts.epsilon,
                          precision=precision,
