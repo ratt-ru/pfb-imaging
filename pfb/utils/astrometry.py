@@ -126,7 +126,7 @@ def get_coordinates(obs_time,
     loc = EarthLocation.from_geodetic(obs_lat,obs_lon) #,obs_height,ellipsoid)
     t = Time(obs_time/86400.0,format='mjd')  # where is this factor from?
     with solar_system_ephemeris.set('builtin'):
-        sun = get_body(target, t, loc)
+        sun = get_body(target, prot, loc)
         sun_ra = sun.ra.value
         sun_dec = sun.dec.value
     sun_hms=format_coords(sun_ra,sun_dec)

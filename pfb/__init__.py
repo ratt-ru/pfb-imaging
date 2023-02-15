@@ -55,6 +55,9 @@ def set_client(opts, stack, log, scheduler='distributed'):
     else:
         nthreads_dask = nworkers * nthreads_per_worker
 
+    import pdb; pdb.set_trace()
+    print(nthreads, nthreads_dask)
+
     if opts.nvthreads is None:
         if opts.scheduler in ['single-threaded', 'sync']:
             nvthreads = nthreads

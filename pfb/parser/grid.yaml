@@ -116,10 +116,9 @@ inputs:
       The level above local mean that renders a grid weight extreme
   target:
     dtype: str
-    default: None
+    # default: None  # this will parse as 'None'
     choices:
-      - None
-      - Sol
+      - Sun
     info:
       Predefined celestial objects
   _include:

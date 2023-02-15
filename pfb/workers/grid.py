@@ -295,10 +295,12 @@ def _grid(**kw):
             tcoords[0,0] = tra
             tcoords[0,1] = tdec
             coords0 = np.array((ds.ra, ds.dec))
-            l0, m0 = radec_to_lm(tcoords, coords0)
+            lm0 = radec_to_lm(tcoords, coords0)
+            l0 = lm0[0]
+            m0 = lm0[1]
         else:
-            l0 = None
-            m0 = None
+            l0 = 0.0
+            m0 = 0.0
 
         dvars = {}
         if opts.dirty:

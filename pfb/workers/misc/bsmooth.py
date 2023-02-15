@@ -130,14 +130,14 @@ def _bsmooth(**kw):
                     idx = w>0
                     amplin = np.interp(freq, freq[idx], y[idx])
                     I = slice(128, -128)
-                    ms, Ps = kanterp(nu[I], amplin[I], w[I], niter=10, nu0=2,
+                    ms, Ps = kanterp3(nu[I], amplin[I], w[I], niter=10, nu0=2,
                                       sigmaf0=np.sqrt(nchan), sigman0=1)
                     amp[0, I, p, 0, c] = ms[0, :]
                     if p == ref_ant:
                         continue
                     y = phase[0, :, p, 0, c]
                     phaselin = np.interp(freq, freq[idx], y[idx])
-                    ms, Ps = kanterp(nu[I], phaselin[I], w[I]/amp[0, I, p, 0, c],
+                    ms, Ps = kanterp3(nu[I], phaselin[I], w[I]/amp[0, I, p, 0, c],
                                       niter=10, nu0=2, sigmaf0=np.sqrt(nchan), sigman0=1)
                     phase[0, I, p, 0, c] = ms[0, :]
 
