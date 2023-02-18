@@ -295,7 +295,7 @@ def _grid(**kw):
             tcoords[0,0] = tra
             tcoords[0,1] = tdec
             coords0 = np.array((ds.ra, ds.dec))
-            lm0 = radec_to_lm(tcoords, coords0)
+            lm0 = radec_to_lm(tcoords, coords0).squeeze()
             l0 = lm0[0]
             m0 = lm0[1]
         else:
