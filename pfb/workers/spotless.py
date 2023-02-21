@@ -362,7 +362,7 @@ def _spotless(**kw):
         grad21 = lambda x: hess_psf(x) - data
         model, dual = primal_dual(model,
                                   dual,
-                                  opts.rmsfactor*rms_comps,
+                                  opts.rmsfactor*rms,
                                   psi,
                                   psiH,
                                   hessnorm,
