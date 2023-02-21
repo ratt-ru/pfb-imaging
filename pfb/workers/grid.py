@@ -195,17 +195,15 @@ def _grid(**kw):
         try:
             counts_ds = xds_from_zarr(f'{basename}.counts.zarr',
                                       chunks={'band':1, 'x':-1, 'y':-1})
-            assert counts_ds[0].bands.size == nband
+            assert counts_ds[0].band.size == nband
             assert counts_ds[0].x.size == nx
             assert counts_ds[0].y.size == ny
-            assert counts_ds[0].bands.size == nband
             assert counts_ds[0].cell_rad == cell_rad
             print(f'Found cached gridded weights at {basename}.counts.zarr. '
                   f'Coords and cell sizes indicate that it can be reused',
                   file=log)
             counts = counts_ds.COUNTS.data
         except:
-            import pdb; pdb.set_trace()
             counts = [da.zeros((nx, ny), chunks=(-1, -1),
                             name="zeros-"+uuid4().hex) for _ in range(nband)]
             # first loop over data to compute counts
