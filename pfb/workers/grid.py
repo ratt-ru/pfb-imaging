@@ -234,7 +234,7 @@ def _grid(**kw):
             counts_ds = xr.Dataset(dvars, attrs=attrs)
             # we need to rechunk for zarr codec but subsequent usage of counts
             # array needs to be chunks as (1, -1, -1)
-            counts_ds = counts_ds.chunk({'x':'auto', 'y':'auto'})
+            counts_ds = counts_ds.chunk({'x':4096, 'y':4096})
             writes = xds_to_zarr(counts_ds, f'{basename}.counts.zarr',
                                  columns='ALL')
             print("Computing gridded weights", file=log)
