@@ -165,7 +165,7 @@ def _vis2im_impl(uvw,
 @dask.delayed
 def im2vis(uvw, freq, image, wgt, mask, cellx, celly, nthreads, epsilon,
            do_wgridding=True, flip_v=False, x0=0, y0=0, precision='single',
-           divide_by_n=False, sigma_min=1.1, sigma_max=2.6):
+           divide_by_n=True, sigma_min=1.1, sigma_max=2.6):
     uvw = np.require(uvw, dtype=np.float64)
     freq = np.require(freq, np.float64)
     if precision.lower() == 'single':

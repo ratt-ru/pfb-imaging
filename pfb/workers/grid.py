@@ -63,7 +63,7 @@ def _grid(**kw):
     from ducc0.fft import good_size
     from pfb.utils.fits import dds2fits, dds2fits_mfs
     from pfb.utils.misc import compute_context
-    from pfb.operators.gridder import vis2im
+    from pfb.operators.gridder import vis2im, im2vis
     from pfb.operators.fft import fft2d
     from pfb.utils.weighting import (compute_counts, counts_to_weights,
                                      filter_extreme_counts)
@@ -199,10 +199,9 @@ def _grid(**kw):
             assert counts_ds[0].x.size == nx
             assert counts_ds[0].y.size == ny
             assert counts_ds[0].cell_rad == cell_rad
-            print(f'Found cached gridded weights at {basename}.counts.zarr. '
-                  f'Coords and cell sizes indicate that it can be reused',
+            counts = counts_ds[0].COUNTS.data
+            print(f'Coords and cell sizes suggest that {basename}.counts.zarr can be reused',
                   file=log)
-            counts = counts_ds.COUNTS.data
         except:
             counts = [da.zeros((nx, ny), chunks=(-1, -1),
                             name="zeros-"+uuid4().hex) for _ in range(nband)]
@@ -296,12 +295,30 @@ def _grid(**kw):
             tcoords[0,1] = tdec
             coords0 = np.array((ds.ra, ds.dec))
             lm0 = radec_to_lm(tcoords, coords0).squeeze()
-            l0 = lm0[0]
-            m0 = lm0[1]
+            # LB - why the negative?
+            l0 = -lm0[0]
+            m0 = -lm0[1]
+            # print(l0, m0)
+            # l0 = 0.0
+            # m0 = 0.05
+            # import pdb; pdb.set_trace()
         else:
             l0 = 0.0
             m0 = 0.0
+            tra = ds.ra
+            tdec = ds.dec
 
+        attrs = {
+            'ra': tra,
+            'dec': tdec,
+            'l0': l0,
+            'm0': m0,
+            'cell_rad': cell_rad,
+            'bandid': ds.bandid,
+            'timeid': ds.timeid,
+            'freq_out': ds.freq_out,
+            'time_out': ds.time_out,
+        }
         dvars = {}
         if opts.dirty:
             dirty = vis2im(uvw=uvw,
@@ -321,11 +338,32 @@ def _grid(**kw):
                            double_precision_accumulation=opts.double_accum)
             dirty = inlined_array(dirty, [uvw, freq])
             dvars['DIRTY'] = (('x', 'y'), dirty)
+            attrs['nx'] = nx
+            attrs['ny'] = ny
+
 
         if opts.psf:
+            if l0 or m0:
+                im = np.zeros((128, 128), dtype=real_type)
+                im[128//2, 128//2] = 1.0
+                psf_vis = im2vis(uvw,
+                                 freq,
+                                 im,
+                                 mask,
+                                 cell_rad,
+                                 cell_rad,
+                                 opts.nvthreads,
+                                 opts.epsilon,
+                                 do_wgridding=opts.wstack,
+                                 x0=x0, y0=y0,
+                                 precision=real_type)
+                raise NotImplementedError
+            else:
+                psf_vis = np.ones_like(vis)
             psf = vis2im(uvw=uvw,
                          freq=freq,
-                         vis=wgt.astype(vis.dtype),
+                         vis=psf_vis,
+                         wgt=wgt
                          nx=nx_psf,
                          ny=ny_psf,
                          cellx=cell_rad,
@@ -342,6 +380,8 @@ def _grid(**kw):
             psfhat = fft2d(psf, nthreads=opts.nvthreads)
             dvars['PSF'] = (('x_psf', 'y_psf'), psf)
             dvars['PSFHAT'] = (('x_psf', 'yo2'), psfhat)
+            attrs['nx_psf'] = nx_psf
+            attrs['ny_psf'] = ny_psf
 
         if opts.weight:
             dvars['WEIGHT'] = (('row', 'chan'), wgt)
@@ -379,21 +419,6 @@ def _grid(**kw):
             residual = inlined_array(residual, [uvw, freq])
             dvars['RESIDUAL'] = (('x', 'y'), residual)
 
-
-        attrs = {
-            'nx': nx,
-            'ny': ny,
-            'nx_psf': nx_psf,
-            'ny_psf': ny_psf,
-            'ra': xds[0].ra,
-            'dec': xds[0].dec,
-            'cell_rad': cell_rad,
-            'bandid': ds.bandid,
-            'timeid': ds.timeid,
-            'freq_out': ds.freq_out,
-            'time_out': ds.time_out,
-            'robustness': opts.robustness
-        }
 
         out_ds = xr.Dataset(dvars, attrs=attrs).chunk({'row':100000,
                                                        'chan':128,

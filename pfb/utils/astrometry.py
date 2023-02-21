@@ -130,6 +130,6 @@ def get_coordinates(obs_time,
         sun_ra = sun.ra.value
         sun_dec = sun.dec.value
     sun_hms=format_coords(sun_ra,sun_dec)
-    print(sun_hms[0],sun_hms[1])
+    # print(sun_hms[0],sun_hms[1])
     # import pdb; pdb.set_trace()
-    return (sun_ra, sun_dec)
+    return np.deg2rad(sun_ra), np.deg2rad(sun_dec)
