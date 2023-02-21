@@ -184,6 +184,7 @@ def _grid(**kw):
             print(f'Removing {dds_name}', file=log)
             import shutil
             shutil.rmtree(dds_name)
+            # shutil.rmtree(f'{basename}.counts.zarr')
         else:
             raise RuntimeError(f'Not overwriting {dds_name}, directory exists. '
                                f'Set overwrite flag if you mean to overwrite.')
@@ -204,6 +205,7 @@ def _grid(**kw):
                   file=log)
             counts = counts_ds.COUNTS.data
         except:
+            import pdb; pdb.set_trace()
             counts = [da.zeros((nx, ny), chunks=(-1, -1),
                             name="zeros-"+uuid4().hex) for _ in range(nband)]
             # first loop over data to compute counts
