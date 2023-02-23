@@ -94,6 +94,10 @@ def _clean(**kw):
                                                             dds,
                                                             opts.nband,
                                                             apparent=True)
+    # because fuck dask
+    model = np.require(model, requirements='CAW')
+
+
     wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
     # This is onlt the case for a psf at (l=0,m=0)
@@ -181,7 +185,6 @@ def _clean(**kw):
                           report_freq=opts.report_freq,
                           sigmathreshold=opts.sigmathreshold,
                           nthreads=opts.nthreads)
-
         model += x
 
         print("Getting residual", file=log)

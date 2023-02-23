@@ -83,11 +83,11 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
                     center_y=y0,
                     epsilon=epsilon,
                     nthreads=nthreads,
-                    do_wstacking=wstack)
+                    do_wgridding=wstack)
 
     convim = vis2dirty(uvw=uvw,
                       freq=freq,
-                      ms=mvis,
+                      vis=mvis,
                       wgt=weight,
                       mask=vis_mask,
                       npix_x=nx,
@@ -98,7 +98,7 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
                       center_y=y0,
                       epsilon=epsilon,
                       nthreads=nthreads,
-                      do_wstacking=wstack,
+                      do_wgridding=wstack,
                       double_precision_accumulation=double_accum)
 
     if beam is not None:
