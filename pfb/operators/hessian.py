@@ -2,7 +2,7 @@ import numpy as np
 import dask
 import dask.array as da
 from daskms.optimisation import inlined_array
-from ducc0.wgridder import ms2dirty, dirty2ms
+from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from ducc0.misc import make_noncritical
 from uuid import uuid4
 from pfb.operators.psf import (psf_convolve_slice,
@@ -63,6 +63,8 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
 
 
 def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
+                  x0=0.0,
+                  y0=0.0,
                   cell=None,
                   wstack=None,
                   epsilon=None,
@@ -71,17 +73,19 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
     if not x.any():
         return np.zeros_like(x)
     nx, ny = x.shape
-    mvis = dirty2ms(uvw=uvw,
+    mvis = dirty2vis(uvw=uvw,
                     freq=freq,
                     mask=vis_mask,
                     dirty=x if beam is None else x * beam,
                     pixsize_x=cell,
                     pixsize_y=cell,
+                    center_x=x0,
+                    center_y=y0,
                     epsilon=epsilon,
                     nthreads=nthreads,
                     do_wstacking=wstack)
 
-    convim = ms2dirty(uvw=uvw,
+    convim = vis2dirty(uvw=uvw,
                       freq=freq,
                       ms=mvis,
                       wgt=weight,
@@ -90,6 +94,8 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
                       npix_y=ny,
                       pixsize_x=cell,
                       pixsize_y=cell,
+                      center_x=x0,
+                      center_y=y0,
                       epsilon=epsilon,
                       nthreads=nthreads,
                       do_wstacking=wstack,

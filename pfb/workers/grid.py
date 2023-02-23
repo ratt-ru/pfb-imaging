@@ -88,6 +88,7 @@ def _grid(**kw):
             print(f'Removing {dds_name}', file=log)
             import shutil
             shutil.rmtree(dds_name)
+            dds_exists = False
     else:
         dds_exists = False
 
@@ -295,11 +296,11 @@ def _grid(**kw):
             coords0 = np.array((ds.ra, ds.dec))
             lm0 = radec_to_lm(tcoords, coords0).squeeze()
             # LB - why the negative?
-            l0 = -lm0[0]
-            m0 = -lm0[1]
+            x0 = -lm0[0]
+            y0 = -lm0[1]
         else:
-            l0 = 0.0
-            m0 = 0.0
+            x0 = 0.0
+            y0 = 0.0
             tra = ds.ra
             tdec = ds.dec
 
@@ -308,8 +309,8 @@ def _grid(**kw):
             out_ds = out_ds.assign_attrs(**{
                 'ra': tra,
                 'dec': tdec,
-                'l0': l0,
-                'm0': m0,
+                'x0': x0,
+                'y0': y0,
                 'cell_rad': cell_rad,
                 'bandid': ds.bandid,
                 'timeid': ds.timeid,
@@ -326,7 +327,7 @@ def _grid(**kw):
                            ny=ny,
                            cellx=cell_rad,
                            celly=cell_rad,
-                           x0=l0, y0=m0,
+                           x0=x0, y0=y0,
                            nthreads=opts.nvthreads,
                            epsilon=opts.epsilon,
                            precision=precision,
@@ -340,8 +341,8 @@ def _grid(**kw):
             psf_vis = loc2psf_vis(uvw,
                                   freq,
                                   cell_rad,
-                                  l0,
-                                  m0,
+                                  x0,
+                                  y0,
                                   wstack=opts.wstack,
                                   epsilon=opts.epsilon,
                                   nthreads=opts.nvthreads,
@@ -354,7 +355,7 @@ def _grid(**kw):
                          ny=ny_psf,
                          cellx=cell_rad,
                          celly=cell_rad,
-                         x0=l0, y0=m0,
+                         x0=x0, y0=y0,
                          nthreads=opts.nvthreads,
                          epsilon=opts.epsilon,
                          precision=precision,
@@ -375,8 +376,8 @@ def _grid(**kw):
 
         # evaluate beam at x and y coords
         cell_deg = np.rad2deg(cell_rad)
-        l = (-(nx//2) + da.arange(nx)) * cell_deg
-        m = (-(ny//2) + da.arange(ny)) * cell_deg
+        l = (-(nx//2) + da.arange(nx)) * cell_deg + np.deg2rad(x0)
+        m = (-(ny//2) + da.arange(ny)) * cell_deg + np.deg2rad(y0)
         ll, mm = da.meshgrid(l, m, indexing='ij')
         bvals = eval_beam(ds.BEAM.data, ll, mm)
 

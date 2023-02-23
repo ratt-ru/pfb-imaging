@@ -48,6 +48,7 @@ def clean(**kw):
 
         return _clean(**opts)
 
+
 def _clean(**kw):
     opts = OmegaConf.create(kw)
     # always combine over ds during cleaning
@@ -67,7 +68,7 @@ def _clean(**kw):
     from pfb.deconv.clark import clark
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.opt.pcg import pcg, pcg_psf
-    from pfb.operators.hessian import hessian_xds
+    from pfb.operators.hessian import hessian_xds, hessian
     from scipy import ndimage
     from copy import copy
 
@@ -84,7 +85,7 @@ def _clean(**kw):
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
 
-    nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
+    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
 
     # stitch dirty/psf in apparent scale
@@ -95,7 +96,8 @@ def _clean(**kw):
                                                             apparent=True)
     wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
-    assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
+    # This is onlt the case for a psf at (l=0,m=0)
+    # assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
     dirty_mfs = np.sum(dirty, axis=0)
     if residual is None:
         residual = dirty.copy()
@@ -108,10 +110,12 @@ def _clean(**kw):
     for ds in dds:
         freq_out.append(ds.freq_out)
     freq_out = np.unique(np.array(freq_out))
-    nx = dds[0].nx
-    ny = dds[0].ny
+    nx = dds[0].x.size
+    ny = dds[0].y.size
     ra = dds[0].ra
     dec = dds[0].dec
+    x0 = dds[0].x0
+    y0 = dds[0].y0
     radec = [ra, dec]
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
@@ -135,6 +139,8 @@ def _clean(**kw):
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads
+    hessopts['x0'] = x0
+    hessopts['y0'] = y0
     # always clean in apparent scale so no beam
     # mask is applied to residual after hessian application
     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
