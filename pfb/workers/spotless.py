@@ -297,10 +297,13 @@ def _spotless(**kw):
         dual = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
         l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
     else:
-        print('Initialising L1 weights', file=log)
-        mcomps = np.linalg.norm(psiH(model), axis=0)
-        l1weight = (1 + opts.rmsfactor)/(1 + np.abs(mcomps)/rms_comps)
-        # l1weight[l1weight < 1.0] = 0.0
+        if opts.l1reweight_from == 0:
+            print('Initialising with L1 reweighted', file=log)
+            mcomps = np.linalg.norm(psiH(model), axis=0)
+            l1weight = (1 + opts.rmsfactor)/(1 + np.abs(mcomps)/rms_comps)
+            # l1weight[l1weight < 1.0] = 0.0
+        else:
+            l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
 
 
     # for generality the prox function only takes the

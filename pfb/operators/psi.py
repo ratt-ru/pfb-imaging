@@ -36,7 +36,7 @@ def _coef2im_impl(alpha, bases, ntot, iy, sy, nx, ny):
     return np.sum(x, axis=1)
 
 def _coef2im(alpha, bases, ntot, iy, sy, nx, ny):
-    return _coef2im_impl(alpha[0][0], bases, ntot,
+    return _coef2im_impl_flat(alpha[0][0], bases, ntot,
                          iy, sy, nx, ny)
 
 def coef2im(alpha, bases, ntot, iy, sy, nx, ny, compute=True):
@@ -108,7 +108,7 @@ def _im2coef_impl(x, bases, ntot, nmax, nlevels):
     return alpha
 
 def _im2coef(x, bases, ntot, nmax, nlevels):
-    return _im2coef_impl(x[0][0], bases, ntot, nmax, nlevels)
+    return _im2coef_impl_flat(x[0][0], bases, ntot, nmax, nlevels)
 
 
 def im2coef(x, bases, ntot, nmax, nlevels, compute=True):

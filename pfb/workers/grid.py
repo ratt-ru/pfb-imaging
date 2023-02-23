@@ -63,7 +63,7 @@ def _grid(**kw):
     from ducc0.fft import good_size
     from pfb.utils.fits import dds2fits, dds2fits_mfs
     from pfb.utils.misc import compute_context
-    from pfb.operators.gridder import vis2im, im2vis
+    from pfb.operators.gridder import vis2im, loc2psf_vis
     from pfb.operators.fft import fft2d
     from pfb.utils.weighting import (compute_counts, counts_to_weights,
                                      filter_extreme_counts)
@@ -343,27 +343,19 @@ def _grid(**kw):
 
 
         if opts.psf:
-            if l0 or m0:
-                im = np.zeros((128, 128), dtype=real_type)
-                im[128//2, 128//2] = 1.0
-                psf_vis = im2vis(uvw,
-                                 freq,
-                                 im,
-                                 mask,
-                                 cell_rad,
-                                 cell_rad,
-                                 opts.nvthreads,
-                                 opts.epsilon,
-                                 do_wgridding=opts.wstack,
-                                 x0=x0, y0=y0,
-                                 precision=real_type)
-                raise NotImplementedError
-            else:
-                psf_vis = np.ones_like(vis)
+            psf_vis = loc2psf_vis(uvw,
+                                  freq,
+                                  cell_rad,
+                                  l0,
+                                  m0,
+                                  wstack=opts.wstack,
+                                  epsilon=opts.epsilon,
+                                  nthreads=opts.nvthreads,
+                                  precision=precision)
             psf = vis2im(uvw=uvw,
                          freq=freq,
                          vis=psf_vis,
-                         wgt=wgt
+                         wgt=wgt,
                          nx=nx_psf,
                          ny=ny_psf,
                          cellx=cell_rad,

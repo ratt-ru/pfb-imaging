@@ -7,7 +7,8 @@ number of rows after BDA.
 import numpy as np
 import dask
 import dask.array as da
-from ducc0.wgridder.experimental import vis2dirty
+from ducc0.wgridder.experimental import vis2dirty, dirty2vis
+from africanus.constants import c as lightspeed
 
 
 def vis2im(uvw=None,
@@ -183,3 +184,99 @@ def im2vis(uvw, freq, image, wgt, mask, cellx, celly, nthreads, epsilon,
                      do_wgridding=do_wgridding, divide_by_n=divide_by_n,
                      nthreads=nthreads, sigma_min=sigma_min,
                      sigma_max=sigma_max)
+
+
+def _loc2psf_vis_impl(uvw,
+                      freq,
+                      cell,
+                      x0=0,
+                      y0=0,
+                      wstack=True,
+                      epsilon=1e-7,
+                      nthreads=1,
+                      precision='single',
+                      divide_by_n=True,
+                      convention='CASA'):
+    if x0 or y0:
+        # LB - what is wrong with this?
+        # n = np.sqrt(1 - x0**2 - y0**2)
+        # if convention.upper() == 'CASA':
+        #     freqfactor = -2j*np.pi*freq[None, :]/lightspeed
+        # else:
+        #     freqfactor = 2j*np.pi*freq[None, :]/lightspeed
+        # psf_vis = np.exp(freqfactor*(uvw[:, 0:1]*x0 +
+        #                              uvw[:, 1:2]*y0 +
+        #                              uvw[:, 2:]*(n-1)))
+        # if divide_by_n:
+        #     psf_vis /= n
+        real_type = np.float32 if precision == 'single' else np.float64
+        x = np.zeros((128,128), dtype=real_type)
+        x[64,64] = 1.0
+        psf_vis = dirty2vis(uvw=uvw,
+                            freq=freq,
+                            dirty=x,
+                            pixsize_x=cell,
+                            pixsize_y=cell,
+                            center_x=x0,
+                            center_y=y0,
+                            epsilon=1e-7,
+                            do_wgridding=wstack,
+                            nthreads=nthreads,
+                            divide_by_n=divide_by_n)
+
+    else:
+        nrow, _ = uvw.shape
+        nchan = freq.size
+        dtype = np.complex64 if precision == 'single' else np.complex128
+        psf_vis = np.ones((nrow, nchan), dtype=dtype)
+    return psf_vis
+
+
+def _loc2psf_vis(uvw,
+                 freq,
+                 cell,
+                 x0=0,
+                 y0=0,
+                 wstack=True,
+                 epsilon=1e-7,
+                 nthreads=1,
+                 precision='single',
+                 divide_by_n=True,
+                 convention='CASA'):
+    return _loc2psf_vis_impl(uvw[0],
+                             freq,
+                             cell,
+                             x0,
+                             y0,
+                             wstack,
+                             epsilon,
+                             nthreads,
+                             precision,
+                             divide_by_n,
+                             convention)
+
+
+def loc2psf_vis(uvw,
+                freq,
+                cell,
+                x0=0,
+                y0=0,
+                wstack=True,
+                epsilon=1e-7,
+                nthreads=1,
+                precision='single',
+                divide_by_n=True,
+                convention='CASA'):
+    return da.blockwise(_loc2psf_vis, 'rf',
+                        uvw, 'r3',
+                        freq, 'f',
+                        cell, None,
+                        x0, None,
+                        y0, None,
+                        wstack, None,
+                        epsilon, None,
+                        nthreads, None,
+                        precision, None,
+                        divide_by_n, None,
+                        convention, None,
+                        dtype=np.complex64 if precision == 'single' else np.complex128)
