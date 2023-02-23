@@ -75,6 +75,11 @@ inputs:
     default: true
     info:
       Compute effectve image space weights
+  residual:
+    dtype: bool
+    default: false
+    info:
+      Compute the residual image
   field_of_view:
     dtype: float
     abbreviation: fov
@@ -116,7 +121,6 @@ inputs:
       The level above local mean that renders a grid weight extreme
   target:
     dtype: str
-    # default: None  # this will parse as 'None'
     choices:
       - Sun
     info:

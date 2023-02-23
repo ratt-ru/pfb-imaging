@@ -82,7 +82,16 @@ def _grid(**kw):
     # dds contains image space products including imaging weights and uvw
     dds_name = f'{basename}{opts.postfix}.dds.zarr'
 
-    if opts.concat:
+    if os.path.isdir(dds_name):
+        dds_exists = True
+        if opts.overwrite:
+            print(f'Removing {dds_name}', file=log)
+            import shutil
+            shutil.rmtree(dds_name)
+    else:
+        dds_exists = False
+
+    if opts.concat and len(xdsp) > opts.nband:
         # this is required because concat will try to mush different
         # imaging bands together if they are not split upfront
         print('Concatenating datasets along row dimension', file=log)
@@ -110,8 +119,14 @@ def _grid(**kw):
         except Exception as e:
             raise RuntimeError('Something went wrong during concatenation.'
                                'This is probably a bug.')
+        ntime = 1
     else:
         xds = xdsp
+        ntime = len(xds) // opts.nband
+        if len(xds) < opts.nband:
+            raise RuntimeError("len(xds) < nband. Run with the same nband as init worker.")
+        elif len(xds) % ntime:
+            raise RuntimeError("len(xds) != ntime*nband. This is a bug.")
 
     real_type = xds[0].WEIGHT.dtype
     if real_type == np.float32:
@@ -179,72 +194,26 @@ def _grid(**kw):
     if opts.psf:
         print(f"PSF size = ({nband}, {nx_psf}, {ny_psf})", file=log)
 
-    if os.path.isdir(dds_name):
-        if opts.overwrite:
-            print(f'Removing {dds_name}', file=log)
-            import shutil
-            shutil.rmtree(dds_name)
-            # shutil.rmtree(f'{basename}.counts.zarr')
-        else:
-            raise RuntimeError(f'Not overwriting {dds_name}, directory exists. '
-                               f'Set overwrite flag if you mean to overwrite.')
-
-    print(f'Data products will be stored in {dds_name}.', file=log)
-
-    if opts.robustness is not None:
-        try:
-            counts_ds = xds_from_zarr(f'{basename}.counts.zarr',
-                                      chunks={'band':1, 'x':-1, 'y':-1})
-            assert counts_ds[0].band.size == nband
-            assert counts_ds[0].x.size == nx
-            assert counts_ds[0].y.size == ny
-            assert counts_ds[0].cell_rad == cell_rad
-            counts = counts_ds[0].COUNTS.data
-            print(f'Coords and cell sizes suggest that {basename}.counts.zarr can be reused',
-                  file=log)
-        except:
-            counts = [da.zeros((nx, ny), chunks=(-1, -1),
-                            name="zeros-"+uuid4().hex) for _ in range(nband)]
-            # first loop over data to compute counts
-            for ds in xds:
-                uvw = ds.UVW.data
-                freq = ds.FREQ.data
-                mask = ds.MASK.data
-                wgt = ds.WEIGHT.data
-                bandid = ds.bandid
-                count = compute_counts(
-                            uvw,
-                            freq,
-                            mask,
-                            nx,
-                            ny,
-                            cell_rad,
-                            cell_rad,
-                            wgt.dtype)
-
-                counts[bandid] += count
-            counts = da.stack(counts)
-            counts = counts.rechunk({0:1, 1:-1, 2:-1})
-            # cache counts
-            dvars = {'COUNTS': (('band', 'x', 'y'), counts)}
-            attrs = {
-                'cell_rad': cell_rad
-            }
-            counts_ds = xr.Dataset(dvars, attrs=attrs)
-            # we need to rechunk for zarr codec but subsequent usage of counts
-            # array needs to be chunks as (1, -1, -1)
-            counts_ds = counts_ds.chunk({'x':4096, 'y':4096})
-            writes = xds_to_zarr(counts_ds, f'{basename}.counts.zarr',
-                                 columns='ALL')
-            print("Computing gridded weights", file=log)
-            counts = dask.compute(counts, writes)[0]
-            counts = da.from_array(counts, chunks=(1, -1, -1))
-
-        # get rid of artificially high weights corresponding to
-        # nearly empty cells
-        if opts.filter_extreme_counts:
-            counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
-                                           nlevel=opts.filter_level)
+    # print(f'Not overwriting {dds_name}, directory exists. '
+    #               f'Set overwrite flag if you mean to overwrite.', file=log)
+    # if dds exists, check that existing dds is compatible with input
+    if dds_exists:
+        dds = xds_from_zarr(dds_name)
+        # these need to be aligned at this stage
+        for ds, out_ds in zip(xds, dds):
+            assert ds.bandid == out_ds.bandid
+            assert ds.freq_out == out_ds.freq_out
+            assert ds.timeid == out_ds.timeid
+            assert ds.time_out == out_ds.time_out
+            assert ds.ra == out_ds.ra
+            assert ds.dec == out_ds.dec
+            assert out_ds.x.size == nx
+            assert out_ds.y.size == ny
+            assert out_ds.cell_rad == cell_rad
+        print(f'As far as we can tell {dds_name} can be reused/updated.',
+              file=log)
+    else:
+        print(f'Image space data products will be stored in {dds_name}.', file=log)
 
     # check if model exists
     if opts.transfer_model_from is not None:
@@ -273,20 +242,50 @@ def _grid(**kw):
 
     dds_out = []
     for i, ds in enumerate(xds):
+        if dds_exists:
+            out_ds = dds[i]
+        else:
+            out_ds = xr.Dataset()
         uvw = ds.UVW.data
         freq = ds.FREQ.data
         vis = ds.VIS.data
         wgt = ds.WEIGHT.data
+        # This is a vis space mask (see wgridder convention)
+        mask = ds.MASK.data
         if opts.robustness is not None:
-            imwgt = counts_to_weights(counts[ds.bandid],
+            # we'll skip this if counts already exists
+            # what to do if flags have changed?
+            if 'COUNTS' not in out_ds:
+                counts = compute_counts(
+                        uvw,
+                        freq,
+                        mask,
+                        nx,
+                        ny,
+                        cell_rad,
+                        cell_rad,
+                        wgt.dtype)
+                # get rid of artificially high weights corresponding to
+                # nearly empty cells
+                if opts.filter_extreme_counts:
+                    counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
+                                                   nlevel=opts.filter_level)
+
+                # do we want the coordinates to be ug, vg rather?
+                out_ds = ds.assign(**{'COUNTS': (('x', 'y'), counts)})
+
+            # we usually want to re-evaluate this since the robustness may change
+            imwgt = counts_to_weights(out_ds.COUNTS.data,
                                       uvw,
                                       freq,
                                       nx, ny,
                                       cell_rad, cell_rad,
                                       opts.robustness)
+
             wgt *= imwgt
-        # This is a vis space mask (see wgridder convention)
-        mask = ds.MASK.data
+
+
+        # compute lm coordinates of target
         if opts.target is not None:
             obs_time = ds.time_out
             tra, tdec = get_coordinates(obs_time)
@@ -298,28 +297,26 @@ def _grid(**kw):
             # LB - why the negative?
             l0 = -lm0[0]
             m0 = -lm0[1]
-            # print(l0, m0)
-            # l0 = 0.0
-            # m0 = 0.05
-            # import pdb; pdb.set_trace()
         else:
             l0 = 0.0
             m0 = 0.0
             tra = ds.ra
             tdec = ds.dec
 
-        attrs = {
-            'ra': tra,
-            'dec': tdec,
-            'l0': l0,
-            'm0': m0,
-            'cell_rad': cell_rad,
-            'bandid': ds.bandid,
-            'timeid': ds.timeid,
-            'freq_out': ds.freq_out,
-            'time_out': ds.time_out,
-        }
-        dvars = {}
+        # TODO - assign coordinates
+        if not dds_exists:
+            out_ds = out_ds.assign_attrs(**{
+                'ra': tra,
+                'dec': tdec,
+                'l0': l0,
+                'm0': m0,
+                'cell_rad': cell_rad,
+                'bandid': ds.bandid,
+                'timeid': ds.timeid,
+                'freq_out': ds.freq_out,
+                'time_out': ds.time_out,
+            })
+
         if opts.dirty:
             dirty = vis2im(uvw=uvw,
                            freq=freq,
@@ -337,10 +334,7 @@ def _grid(**kw):
                            do_wgridding=opts.wstack,
                            double_precision_accumulation=opts.double_accum)
             dirty = inlined_array(dirty, [uvw, freq])
-            dvars['DIRTY'] = (('x', 'y'), dirty)
-            attrs['nx'] = nx
-            attrs['ny'] = ny
-
+            out_ds = out_ds.assign(**{'DIRTY': (('x', 'y'), dirty)})
 
         if opts.psf:
             psf_vis = loc2psf_vis(uvw,
@@ -370,19 +364,14 @@ def _grid(**kw):
             psf = inlined_array(psf, [uvw, freq])
             # get FT of psf
             psfhat = fft2d(psf, nthreads=opts.nvthreads)
-            dvars['PSF'] = (('x_psf', 'y_psf'), psf)
-            dvars['PSFHAT'] = (('x_psf', 'yo2'), psfhat)
-            attrs['nx_psf'] = nx_psf
-            attrs['ny_psf'] = ny_psf
+            out_ds = out_ds.assign(**{'PSF': (('x_psf', 'y_psf'), psf),
+                                      'PSFHAT': (('x_psf', 'yo2'), psfhat)})
 
+        # TODO - don't put vis space products in dds
         if opts.weight:
-            dvars['WEIGHT'] = (('row', 'chan'), wgt)
+            out_ds = out_ds.assign(**{'WEIGHT': (('row', 'chan'), wgt)})
 
-        dvars['FREQ'] = (('chan',), freq)
-        dvars['UVW'] = (('row', 'three'), uvw)
-        dvars['MASK'] = (('row', 'chan'), mask)
         wsum = wgt[mask.astype(bool)].sum()
-        dvars['WSUM'] = (('scalar',), da.atleast_1d(wsum))
 
         # evaluate beam at x and y coords
         cell_deg = np.rad2deg(cell_rad)
@@ -391,12 +380,8 @@ def _grid(**kw):
         ll, mm = da.meshgrid(l, m, indexing='ij')
         bvals = eval_beam(ds.BEAM.data, ll, mm)
 
-        dvars['BEAM'] = (('x', 'y'), bvals)
-
-        # only make residual if model exists
-        if has_model:
-            model = mds[i].MODEL.data
-            dvars['MODEL'] = (('x', 'y'), model)
+        if opts.residual and 'MODEL' in out_ds:
+            model = out_ds.MODEL.data
             from pfb.operators.hessian import hessian
             hessopts = {
                 'cell': cell_rad,
@@ -409,16 +394,27 @@ def _grid(**kw):
             residual = dirty - hessian(bvals * model, uvw, wgt,
                                        mask, freq, None, hessopts)
             residual = inlined_array(residual, [uvw, freq])
-            dvars['RESIDUAL'] = (('x', 'y'), residual)
+            out_ds = out_ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
 
 
-        out_ds = xr.Dataset(dvars, attrs=attrs).chunk({'row':100000,
-                                                       'chan':128,
-                                                       'x':4096,
-                                                       'y':4096,
-                                                       'x_psf': 4096,
-                                                       'y_psf':4096,
-                                                       'yo2': 2048})
+        out_ds = out_ds.assign(**{'FREQ': (('chan',), freq),
+                                  'UVW': (('row', 'three'), uvw),
+                                  'MASK': (('row', 'chan'), mask),
+                                  'WSUM': (('scalar',), da.atleast_1d(wsum)),
+                                  'BEAM': (('x', 'y'), bvals)})
+
+
+
+        out_ds = out_ds.chunk({'row':100000,
+                               'chan':128,
+                               'x':4096,
+                               'y':4096})
+        # necessary to make psf optional
+        if 'x_psf' in out_ds.dims:
+            out_ds = out_ds.chunk({'x_psf': 4096,
+                                   'y_psf':4096,
+                                   'yo2': 2048})
+
         dds_out.append(out_ds.unify_chunks())
 
     writes = xds_to_zarr(dds_out, dds_name, columns='ALL')

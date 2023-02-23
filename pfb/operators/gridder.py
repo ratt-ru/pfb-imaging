@@ -163,10 +163,110 @@ def _vis2im_impl(uvw,
                      double_precision_accumulation=double_precision_accumulation)
 
 
-@dask.delayed
-def im2vis(uvw, freq, image, wgt, mask, cellx, celly, nthreads, epsilon,
-           do_wgridding=True, flip_v=False, x0=0, y0=0, precision='single',
-           divide_by_n=True, sigma_min=1.1, sigma_max=2.6):
+
+def im2vis(uvw,
+           freq,
+           image,
+           wgt,
+           mask,
+           cellx,
+           celly,
+           nthreads,
+           epsilon,
+           do_wgridding=True,
+           flip_v=False,
+           x0=0, y0=0,
+           precision='single',
+           divide_by_n=True,
+           sigma_min=1.1,
+           sigma_max=2.6):
+
+    if precision.lower() == 'single':
+        complex_type = np.float32
+    elif precision.lower() == 'double':
+        complex_type = np.float64
+
+    if wgt is not None:
+        wgt_out = 'rf'
+    else:
+        wgt_out = None
+
+    if mask is not None:
+        mask_out = 'rf'
+    else:
+        mask_out = None
+
+    return da.blockwise(_im2vis, 'rf',
+                        uvw, 'r3',
+                        freq, 'f',
+                        image, 'xy',
+                        wgt, 'rf',
+                        mask, 'rf',
+                        npix_x, None,
+                        npix_y, None,
+                        cellx, None,
+                        celly, None,
+                        x0, None,
+                        y0, None,
+                        epsilon, None,
+                        flip_v, None,
+                        do_wgridding, None,
+                        divide_by_n, None,
+                        nthreads, None,
+                        sigma_min, None,
+                        sigma_max, None,
+                        dtype=complex_type)
+
+def _im2vis(uvw,
+           freq,
+           image,
+           wgt,
+           mask,
+           cellx,
+           celly,
+           nthreads,
+           epsilon,
+           do_wgridding=True,
+           flip_v=False,
+           x0=0, y0=0,
+           precision='single',
+           divide_by_n=True,
+           sigma_min=1.1,
+           sigma_max=2.6):
+
+    return _im2vis_impl(uvw[0],
+                        freq,
+                        image[0][0],
+                        wgt,
+                        cellx, celly,
+                        nthreads,
+                        epsilon,
+                        do_wgridding,
+                        flip_v,
+                        x0, y0,
+                        precision,
+                        divide_by_n,
+                        sigma_min,
+                        sigma_max)
+
+
+
+def _im2vis_impl(uvw,
+                 freq,
+                 image,
+                 wgt,
+                 cellx,
+                 celly,
+                 nthreads,
+                 epsilon,
+                 do_wgridding=True,
+                 flip_v=False,
+                 x0=0,
+                 y0=0,
+                 precision='single',
+                 divide_by_n=True,
+                 sigma_min=1.1,
+                 sigma_max=2.6):
     uvw = np.require(uvw, dtype=np.float64)
     freq = np.require(freq, np.float64)
     if precision.lower() == 'single':
@@ -175,7 +275,7 @@ def im2vis(uvw, freq, image, wgt, mask, cellx, celly, nthreads, epsilon,
     elif precision.lower() == 'double':
         real_type = np.float64
         complex_type = np.complex128
-    image = np.require(vis, dtype=real_type)
+    image = np.require(image, dtype=real_type)
     wgt = np.require(wgt, dtype=real_type)
     mask = np.require(mask, dtype=np.uint8)
     return dirty2vis(uvw=uvw, freq=freq, dirty=image, wgt=wgt, mask=mask,
@@ -184,6 +284,7 @@ def im2vis(uvw, freq, image, wgt, mask, cellx, celly, nthreads, epsilon,
                      do_wgridding=do_wgridding, divide_by_n=divide_by_n,
                      nthreads=nthreads, sigma_min=sigma_min,
                      sigma_max=sigma_max)
+
 
 
 def _loc2psf_vis_impl(uvw,
@@ -280,3 +381,5 @@ def loc2psf_vis(uvw,
                         divide_by_n, None,
                         convention, None,
                         dtype=np.complex64 if precision == 'single' else np.complex128)
+
+

@@ -204,14 +204,43 @@ def _fwdbwd(**kw):
     print(f"It {0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for i in range(opts.niter):
         print('Getting update', file=log)
-        if opts.inverter.lower()=='pcg':
-            update, fwd_resid = pcg(hess, mask[None] * residual, M=M,
-                        tol=opts.cg_tol, maxit=opts.cg_maxit,
-                        minit=opts.cg_minit, verbosity=opts.cg_verbose,
+        print("Solving for update", file=log)
+        if opts.inverter == 'pcg':
+            update = pcg(hess_psf,
+                        residual,
+                        x0=residual/pix_per_beam if k==0 else update,
+                        tol=opts.cg_tol,
+                        maxit=opts.cg_maxit,
+                        minit=opts.cg_minit,
+                        verbosity=opts.cg_verbose,
                         report_freq=opts.cg_report_freq,
-                        backtrack=opts.backtrack, return_resid=True)
-        elif opts.inverter.lower()=='pd':
-            raise NotImplementedError
+                        backtrack=opts.backtrack)
+        elif k==0:  #opts.inverter == 'pd':
+            grad2 = lambda x: hess_psf(x) - residual
+            if dual2 is None:
+                dual2 = np.zeros_like(residual)
+            update, dual2 = primal_dual(residual/pix_per_beam if k==0 else update,
+                                        dual2,
+                                        rms,
+                                        lambda x: x,
+                                        lambda x: x,
+                                        hessnorm,
+                                        prox2,
+                                        grad2,
+                                        nu=1,
+                                        sigma=1,
+                                        positivity=dual is None and opts.positivity,  # only at the outset
+                                        tol=opts.pd_tol,
+                                        maxit=opts.pd_maxit,
+                                        verbosity=opts.pd_verbose,
+                                        report_freq=opts.pd_report_freq,
+                                        gamma=1.0)
+        else:
+            raise ValueError(f"{opts.inverter} is not a valid inverter")
+
+
+
+        # save_fits(basename + f'_update_{k+1}.fits', np.mean(update, axis=0), hdr_mfs)
 
         save_fits(f'{basename}_update_{i}.fits', update, hdr)
         save_fits(f'{basename}_fwd_resid_{i}.fits', fwd_resid, hdr)

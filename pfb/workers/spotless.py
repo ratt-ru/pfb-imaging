@@ -168,7 +168,7 @@ def _spotless(**kw):
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
 
-    nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
+    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
 
     # stitch dirty/psf in apparent scale
@@ -193,8 +193,8 @@ def _spotless(**kw):
         freq_out.append(ds.freq_out)
     freq_out = np.unique(np.array(freq_out))
     nband = opts.nband
-    nx = dds[0].nx
-    ny = dds[0].ny
+    nx = dds[0].x.size
+    ny = dds[0].y.size
     ra = dds[0].ra
     dec = dds[0].dec
     radec = [ra, dec]
@@ -319,48 +319,8 @@ def _spotless(**kw):
     print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
     for k in range(opts.niter):
-        # print("Solving for update", file=log)
-        # if opts.inverter == 'pcg':
-        #     update = pcg(hess_psf,
-        #                 residual,
-        #                 x0=residual/pix_per_beam if k==0 else update,
-        #                 tol=opts.cg_tol,
-        #                 maxit=opts.cg_maxit,
-        #                 minit=opts.cg_minit,
-        #                 verbosity=opts.cg_verbose,
-        #                 report_freq=opts.cg_report_freq,
-        #                 backtrack=opts.backtrack)
-        # elif k==0:  #opts.inverter == 'pd':
-        #     grad2 = lambda x: hess_psf(x) - residual
-        #     if dual2 is None:
-        #         dual2 = np.zeros_like(residual)
-        #     update, dual2 = primal_dual(residual/pix_per_beam if k==0 else update,
-        #                                 dual2,
-        #                                 rms,
-        #                                 lambda x: x,
-        #                                 lambda x: x,
-        #                                 hessnorm,
-        #                                 prox2,
-        #                                 grad2,
-        #                                 nu=1,
-        #                                 sigma=1,
-        #                                 positivity=dual is None and opts.positivity,  # only at the outset
-        #                                 tol=opts.pd_tol,
-        #                                 maxit=opts.pd_maxit,
-        #                                 verbosity=opts.pd_verbose,
-        #                                 report_freq=opts.pd_report_freq,
-        #                                 gamma=1.0)
-        # else:
-        #     raise ValueError(f"{opts.inverter} is not a valid inverter")
-
-
-
-        # save_fits(basename + f'_update_{k+1}.fits', np.mean(update, axis=0), hdr_mfs)
-
         print('Solving for model', file=log)
         modelp = deepcopy(model)
-        # data = model + opts.gamma*update
-        # grad21 = lambda x: -hess_psf(data - x)/opts.gamma
         data = residual + hess_psf(model)
         grad21 = lambda x: hess_psf(x) - data
         model, dual = primal_dual(model,
