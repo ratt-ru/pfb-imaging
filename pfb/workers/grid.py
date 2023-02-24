@@ -80,7 +80,7 @@ def _grid(**kw):
     xds_name = f'{basename}.xds.zarr'
     xdsp = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
     # dds contains image space products including imaging weights and uvw
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
 
     if os.path.isdir(dds_name):
         dds_exists = True
@@ -437,21 +437,21 @@ def _grid(**kw):
     fitsout = []
     if opts.fits_mfs:
         if opts.dirty:
-            fitsout.append(dds2fits_mfs(dds, 'DIRTY', basename, norm_wsum=True))
+            fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
         if opts.psf:
-            fitsout.append(dds2fits_mfs(dds, 'PSF', basename, norm_wsum=True))
+            fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
         if has_model:
-            fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
-            fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
+            fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+            fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
     if opts.fits_cubes:
         if opts.dirty:
-            fitsout.append(dds2fits(dds, 'DIRTY', basename, norm_wsum=True))
+            fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
         if opts.psf:
-            fitsout.append(dds2fits(dds, 'PSF', basename, norm_wsum=True))
+            fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
         if has_model:
-            fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
-            fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
+            fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+            fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
     if len(fitsout):
         print("Writing fits", file=log)
