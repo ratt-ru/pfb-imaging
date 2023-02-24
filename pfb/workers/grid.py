@@ -247,7 +247,7 @@ def _grid(**kw):
             out_ds = dds[i]
         else:
             out_ds = xr.Dataset()
-        uvw = -ds.UVW.data
+        uvw = ds.UVW.data
         freq = ds.FREQ.data
         vis = ds.VIS.data
         wgt = ds.WEIGHT.data
@@ -296,8 +296,8 @@ def _grid(**kw):
             coords0 = np.array((ds.ra, ds.dec))
             lm0 = radec_to_lm(tcoords, coords0).squeeze()
             # LB - why the negative?
-            x0 = lm0[0]
-            y0 = lm0[1]
+            x0 = -lm0[0]
+            y0 = -lm0[1]
         else:
             x0 = 0.0
             y0 = 0.0
