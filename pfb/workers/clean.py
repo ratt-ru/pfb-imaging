@@ -74,7 +74,7 @@ def _clean(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
                                           'chan':-1,
                                           'x':-1,
@@ -230,7 +230,7 @@ def _clean(**kw):
 
             model += opts.mop_gamma*x
 
-            save_fits(f'{basename}_premop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
+            save_fits(f'{basename}_{opts.postfix}_premop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
 
             print("Getting residual", file=log)
             convimage = hess(model)
@@ -239,7 +239,7 @@ def _clean(**kw):
             ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                         casting='same_kind')
 
-            save_fits(f'{basename}_postmop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
+            save_fits(f'{basename}_{opts.postfix}_postmop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
 
             tmp_mask = ~np.any(model, axis=0)
             rms = np.std(residual_mfs[tmp_mask])
@@ -276,12 +276,12 @@ def _clean(**kw):
     # convert to fits files
     fitsout = []
     if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
     if opts.fits_cubes:
-        fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
-        fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
+        fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
     if len(fitsout):
         print("Writing fits", file=log)
