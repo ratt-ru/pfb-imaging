@@ -174,7 +174,7 @@ def _clean(**kw):
           file=log)
     for k in range(opts.nmiter):
         print("Cleaning", file=log)
-        x, status = clark(mask*residual, psf, psfhat, wsums,
+        x, status = clark(mask*residual, psf, psfhat, wsums/wsum,
                           threshold=threshold,
                           gamma=opts.gamma,
                           pf=opts.peak_factor,
