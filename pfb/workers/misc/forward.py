@@ -202,7 +202,24 @@ def hess_psf(xpad,    # preallocated array to store padded image
              x,       # input image, not overwritten
              nthreads=1,
              sigmainv=1.0):
-    _, nx, ny = x.shape
+    _, _, nx, ny = x.shape
+    xpad[...] = 0.0
+    xpad[:, :, 0:nx, 0:ny] = x
+    r2c(xpad, axes=(-2, -1), nthreads=nthreads,
+        forward=True, inorm=0, out=xhat)
+    xhat *= psfhat
+    c2r(xhat, axes=(-2, -1), forward=False, out=xpad,
+        lastsize=lastsize, inorm=2, nthreads=nthreads,
+        allow_overwriting_input=True)
+    xout[...] = xpad[:, :, 0:nx, 0:ny]
+    return xout + sigmainv*x
+
+
+def hess_vis(xds,
+             x,       # input image, not overwritten
+             nthreads=1,
+             sigmainv=1.0):
+    _, _, nx, ny = x.shape
     xpad[...] = 0.0
     xpad[:, :, 0:nx, 0:ny] = x
     r2c(xpad, axes=(-2, -1), nthreads=nthreads,
