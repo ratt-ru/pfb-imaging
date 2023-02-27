@@ -148,7 +148,7 @@ def gpr(y, x, w, xp, theta0=None, nu=3.0, niter=5):
         # degrees of freedom nu
         nu, _, _ = fmin(nufunc, nu, args=(np.mean(eta), np.mean(logeta)),
                         approx_grad=True,
-                        bounds=((1e-2, None),))
+                        bounds=((2.0, None),))
 
 
 def nufunc(nu, meaneta, meanlogeta):
@@ -363,7 +363,7 @@ def kanterp(x, y, w, niter=5, nu0=2):
         # degrees of freedom nu
         nu, _, _ = fmin(nufunc, nu, args=(np.mean(eta), np.mean(logeta)),
                         approx_grad=True,
-                        bounds=((1e-2, None),))
+                        bounds=((2.0, None),))
 
 
 @numba.njit(fastmath=True, cache=True)
@@ -605,7 +605,7 @@ def kanterp2(x, y, w, niter=5, nu0=2):
         # degrees of freedom nu
         nu, _, _ = fmin(nufunc, nu, args=(np.mean(eta), np.mean(logeta)),
                         approx_grad=True,
-                        bounds=((1e-2, None),))
+                        bounds=((2.0, None),))
 
 
 
@@ -737,7 +737,7 @@ def kanterp3(x, y, w, niter=5, nu0=2, sigmaf0=None, sigman0=1, verbose=0, window
         # degrees of freedom nu
         nu, _, _ = fmin(nufunc, nu, args=(np.mean(eta), np.mean(logeta)),
                         approx_grad=True,
-                        bounds=((1e-2, None),))
+                        bounds=((2.0, None),))
 
 def func(x):
     return 10*np.sin(20*x**2)*np.exp(-x**2/0.25) + np.exp(x)

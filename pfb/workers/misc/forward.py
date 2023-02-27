@@ -89,182 +89,127 @@ def _forward(**kw):
     import dask
     import dask.array as da
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
-    from pfb.utils.fits import load_fits, set_wcs, save_fits
-    from pfb.utils.misc import setup_image_data, init_mask
-    from pfb.operators.hessian import hessian_xds
+    from pfb.utils.fits import (set_wcs, save_fits, dds2fits,
+                                dds2fits_mfs, load_fits)
     from pfb.opt.pcg import pcg
     from astropy.io import fits
-    import pywt
-    from pfb.operators.hessian import hessian
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
-    mds_name = f'{basename}{opts.postfix}.mds.zarr'
+    xds_name = f'{basename}.xds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
 
-    dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk,
+    xds = xds_from_zarr(dds_name, chunks={'row':-1,
                                           'chan': -1})
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    nband = mds.nband
-    nx = mds.nx
-    ny = mds.ny
-    for ds in dds:
-        assert ds.nx == nx
-        assert ds.ny == ny
+    dds = xds_from_zarr(dds_name, chunks={'row':-1,
+                                          'chan': -1,
+                                          'band': 1,
+                                          'x': -1,
+                                          'y': -1})
 
     # stitch residuals after beam application
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
-    dirty, residual, wsum, _, psfhat, mean_beam = setup_image_data(dds,
-                                                                   opts,
-                                                                   log=log)
-    dirty_mfs = np.sum(dirty, axis=0)
-    if residual is None:
-        residual = dirty.copy()
-        residual_mfs = dirty_mfs.copy()
-    model = mds.MODEL.values
-    mask = init_mask(opts.mask, mds, real_type, log)
+    nband = 0
+    ntime = 0
+    for ds in dds:
+        nband = np.maximum(ds.bandid, nband)
+        ntime = np.maximum(ds.timeid, ntime)
 
-    try:
-        print("Initialising update using CLEAN_MODEL in mds", file=log)
-        x0 = mds.CLEAN_MODEL.values
-    except:
-        print("Initialising update to all zeros", file=log)
-        x0 = np.zeros((nband, nx, ny), dtype=real_type)
+    nx = ds.x.size
+    ny = ds.y.size
+    nx_psf = ds.x_psf.size
+    ny_psf = ds.y_psf.size
+    nyo2 = ds.yo2.size
 
-    hessopts = {}
-    hessopts['cell'] = dds[0].cell_rad
-    hessopts['wstack'] = opts.wstack
-    hessopts['epsilon'] = opts.epsilon
-    hessopts['double_accum'] = opts.double_accum
-    hessopts['nthreads'] = opts.nvthreads
+    dirty = np.zeros((ntime, nband, nx, ny), dtype=real_type)
+    psfhat = np.zeros((ntime, nband, nx_psf, nyo2), dtype=real_type)
+    x = np.zeros((ntime, nband, nx, ny), dtype=real_type)
+    vis = {}
+    wgt = {}
+    for dsi, dsv in zip(dds, xds):
+        t = dsi.timeid
+        assert t == dsv.bandid
+        b = dsi.bandid
+        assert b == dsv.bandid
+        vis[f'time{t}band{b}'] = dsv.VIS.values
+        wgt[f'time{t}band{b}'] = dsv.WEIGHT.values
+        dirty[t, b] = ds.DIRTY.values
+        psfhat[t, b] = ds.PSFHAT.values
+        if 'MODEL' in dsi:
+            x[t, b] = dsi.MODEL.values
 
-    if opts.use_psf:
-        print("Solving for update using image space approximation", file=log)
-        nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
-        npad_xl = (nx_psf - nx)//2
-        npad_xr = nx_psf - nx - npad_xl
-        npad_yl = (ny_psf - ny)//2
-        npad_yr = ny_psf - ny - npad_yl
-        padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
-        unpad_x = slice(npad_xl, -npad_xr)
-        unpad_y = slice(npad_yl, -npad_yr)
-        lastsize = ny + np.sum(padding[-1])
 
-        psfopts = {}
-        psfopts['padding'] = padding
-        psfopts['unpad_x'] = unpad_x
-        psfopts['unpad_y'] = unpad_y
-        psfopts['lastsize'] = lastsize
-        psfopts['nthreads'] = opts.nvthreads
+    # mask = init_mask(opts.mask, mds, real_type, log)
 
-        if opts.mean_ds:
-            print("Using mean-ds approximation", file=log)
-            from pfb.operators.psf import psf_convolve_cube
-            # the PSF is normalised so we don't need to pass wsum
-            hess = partial(psf_convolve_cube, psfhat=psfhat,
-                           beam=mean_beam * mask[None],
-                           psfopts=psfopts, sigmainv=opts.sigmainv,
-                           compute=True)
-        else:
-            from pfb.operators.psf import psf_convolve_xds
-            hess = partial(psf_convolve_xds, xds=dds, psfopts=psfopts,
-                           wsum=wsum, sigmainv=opts.sigmainv, mask=mask,
-                           compute=True)
-    else:
-        print("Solving for update using vis space approximation", file=log)
-        hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
-                       wsum=wsum, sigmainv=opts.sigmainv, mask=mask,
-                       compute=True)
-
-    # x = np.random.randn(nband, nx, ny)  #.astype(np.float32)
-    # res = hess(x)
-    # dask.visualize(res, color="order", cmap="autumn",
-    #                node_attr={"penwidth": "4"},
-    #                filename=opts.output_filename + '_hess_I_ordered_graph.pdf',
-    #                optimize_graph=False)
-    # dask.visualize(res, filename=opts.output_filename +
-    #                '_hess_I_graph.pdf', optimize_graph=False)
-
-    cgopts = {}
-    cgopts['tol'] = opts.cg_tol
-    cgopts['maxit'] = opts.cg_maxit
-    cgopts['minit'] = opts.cg_minit
-    cgopts['verbosity'] = opts.cg_verbose
-    cgopts['report_freq'] = opts.cg_report_freq
-    cgopts['backtrack'] = opts.backtrack
+    # pre-allocate arrays for doing FFT's
+    xout = np.empty(dirty.shape, dtype=ID.dtype, order='C')
+    xout = make_noncritical(xout)
+    xpad = np.empty((ntime, nband, nx_psf, nyo2), dtype=ID.dtype, order='C')
+    xpad = make_noncritical(xpad)
+    xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
+    xhat = make_noncritical(xhat)
+    hess = partial(hess_psf, xpad, xhat, xout, psfhat, lastsize)
 
     print("Solving for update", file=log)
-    update = pcg(hess, mask * residual, x0, **cgopts)
+    update = pcg(hess, residual, x,
+                 tol=opts.cg_tol,
+                 maxit= opts.cg_maxit,
+                 minit=opts.cg_minit,
+                 verbosity=opts.cg_verbose,
+                 report_freq=opts.cg_report_freq,
+                 backtracl=opts.backtrack,
+                 return_resid=False)
 
     print("Writing update.", file=log)
-    model += update
-    update = da.from_array(update, chunks=(1, -1, -1))
-    model = da.from_array(model, chunks=(1, -1, -1))
-    mds = mds.assign(**{'UPDATE': (('band', 'x', 'y'),
-                     update)})
+    dds_out = []
+    for ds in dds:
+        t = ds.timeid
+        b = ds.bandid
+        ds = ds.assign(**{'MODEL': (('x','y'), da.from_array(update[t, b]))})
+        dds_out.append(ds)
 
-    mds = mds.assign(**{'FORWARD_MODEL': (('band', 'x', 'y'),
-                     model)})
+    dask.compute(xds_to_zarr(dds_out, dds_name, columns=('MODEL',)))
 
-    dask.compute(xds_to_zarr(mds, mds_name, columns=('UPDATE', 'FORWARD_MODEL')))
+    dds = xds_from_zarr(dds_name, chunks={'row':-1,
+                                          'chan': -1,
+                                          'band': 1,
+                                          'x': -1,
+                                          'y': -1})
 
-    if opts.do_residual:
-        print('Computing final residual', file=log)
-        # first write it to disk per dataset
-        out_ds = []
-        for ds in dds:
-            dirty = ds.DIRTY.data
-            wgt = ds.WEIGHT.data
-            uvw = ds.UVW.data
-            freq = ds.FREQ.data
-            beam = ds.BEAM.data
-            vis_mask = ds.MASK.data
-            b = ds.bandid
-            # we only want to apply the beam once here
-            residual = dirty - hessian(beam * model[b], uvw, wgt,
-                                       vis_mask, freq, None, hessopts)
-            ds = ds.assign(**{'FORWARD_RESIDUAL': (('x', 'y'), residual)})
-            out_ds.append(ds)
+    # convert to fits files
+    fitsout = []
+    if opts.fits_mfs:
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
 
-        writes = xds_to_zarr(out_ds, dds_name, columns='FORWARD_RESIDUAL')
-        dask.compute(writes)
+    if opts.fits_cubes:
+        fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
 
-    if opts.fits_mfs or opts.fits_cubes:
-        print("Writing fits files", file=log)
-        # construct a header from xds attrs
-        radec = [dds[0].ra, dds[0].dec]
-        cell_rad = dds[0].cell_rad
-        cell_deg = np.rad2deg(cell_rad)
-        freq_out = mds.freq.data
-        ref_freq = np.mean(freq_out)
-        hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-
-        update_mfs = np.mean(update, axis=0)
-        save_fits(f'{basename}{opts.postfix}_update_mfs.fits', update_mfs, hdr_mfs)
-
-        if opts.do_residual:
-            dds = xds_from_zarr(dds_name)
-            residual = np.zeros((nband, nx, ny), dtype=np.float32)
-            wsums = np.zeros(nband)
-            for ds in dds:
-                b = ds.bandid
-                wsums[b] += ds.WSUM.values
-                residual[b] += ds.FORWARD_RESIDUAL.values.astype(np.float32)
-            wsum = np.sum(wsums)
-
-            residual_mfs = np.sum(residual, axis=0)/wsum
-            save_fits(f'{basename}{opts.postfix}_forward_residual_mfs.fits',
-                      residual_mfs, hdr_mfs)
-
-        if opts.fits_cubes:
-            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out)
-            save_fits(f'{basename}{opts.postfix}_update.fits', update, hdr)
-
-            if opts.do_residual:
-                fmask = wsums > 0
-                residual[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}{opts.postfix}_forward_residual.fits',
-                          residual, hdr)
+    if len(fitsout):
+        print("Writing fits", file=log)
+        dask.compute(fitsout)
 
     print("All done here.", file=log)
+
+
+def hess_psf(xpad,    # preallocated array to store padded image
+             xhat,    # preallocated array to store FTd image
+             xout,    # preallocated array to store output image
+             psfhat,
+             lastsize,
+             x,       # input image, not overwritten
+             nthreads=1,
+             sigmainv=1.0):
+    _, nx, ny = x.shape
+    xpad[...] = 0.0
+    xpad[:, :, 0:nx, 0:ny] = x
+    r2c(xpad, axes=(-2, -1), nthreads=nthreads,
+        forward=True, inorm=0, out=xhat)
+    xhat *= psfhat
+    c2r(xhat, axes=(-2, -1), forward=False, out=xpad,
+        lastsize=lastsize, inorm=2, nthreads=nthreads,
+        allow_overwriting_input=True)
+    xout[...] = xpad[:, :, 0:nx, 0:ny]
+    return xout + sigmainv*x
