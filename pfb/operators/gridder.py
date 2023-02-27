@@ -24,7 +24,7 @@ def vis2im(uvw=None,
            flip_v=False,
            x0=0, y0=0,
            precision='single',
-           divide_by_n=True,
+           divide_by_n=False,
            sigma_min=1.1, sigma_max=2.6,
            double_precision_accumulation=True):
 
@@ -177,7 +177,7 @@ def im2vis(uvw,
            flip_v=False,
            x0=0, y0=0,
            precision='single',
-           divide_by_n=True,
+           divide_by_n=False,
            sigma_min=1.1,
            sigma_max=2.6):
 
@@ -230,7 +230,7 @@ def _im2vis(uvw,
            flip_v=False,
            x0=0, y0=0,
            precision='single',
-           divide_by_n=True,
+           divide_by_n=False,
            sigma_min=1.1,
            sigma_max=2.6):
 
@@ -264,7 +264,7 @@ def _im2vis_impl(uvw,
                  x0=0,
                  y0=0,
                  precision='single',
-                 divide_by_n=True,
+                 divide_by_n=False,
                  sigma_min=1.1,
                  sigma_max=2.6):
     uvw = np.require(uvw, dtype=np.float64)
@@ -296,7 +296,7 @@ def _loc2psf_vis_impl(uvw,
                       epsilon=1e-7,
                       nthreads=1,
                       precision='single',
-                      divide_by_n=True,
+                      divide_by_n=False,
                       convention='CASA'):
     if x0 or y0:
         # LB - what is wrong with this?
@@ -342,7 +342,7 @@ def _loc2psf_vis(uvw,
                  epsilon=1e-7,
                  nthreads=1,
                  precision='single',
-                 divide_by_n=True,
+                 divide_by_n=False,
                  convention='CASA'):
     return _loc2psf_vis_impl(uvw[0],
                              freq,
@@ -366,7 +366,7 @@ def loc2psf_vis(uvw,
                 epsilon=1e-7,
                 nthreads=1,
                 precision='single',
-                divide_by_n=True,
+                divide_by_n=False,
                 convention='CASA'):
     return da.blockwise(_loc2psf_vis, 'rf',
                         uvw, 'r3',
