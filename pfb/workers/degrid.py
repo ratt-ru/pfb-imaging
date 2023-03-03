@@ -87,7 +87,7 @@ def _degrid(**kw):
     from pfb.utils.misc import compute_context
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
 
 
     if opts.model_fits is not None:
@@ -103,7 +103,6 @@ def _degrid(**kw):
         wsums = np.ones(mfreqs.size)
     else:
         dds = xds_from_zarr(dds_name,
-                            columns=(opts.model_name,),
                             chunks={'x':-1,
                                     'y':-1})
         cell_rad = dds[0].cell_rad
@@ -113,10 +112,11 @@ def _degrid(**kw):
             mfreqs.append(ds.freq_out)
         mfreqs = np.unique(np.array(mfreqs))
         assert mfreqs.size == opts.nband
-        nx = dds[0].nx
-        ny = dds[0].ny
+        nx = dds[0].x.size
+        ny = dds[0].y.size
         model = [da.zeros((nx, ny)) for _ in range(opts.nband)]
         wsums = [da.zeros(1) for _ in range(opts.nband)]
+        import pdb; pdb.set_trace()
         for ds in dds:
             b = ds.bandid
             model[b] = getattr(ds, opts.model_name).data

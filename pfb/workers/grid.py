@@ -180,7 +180,7 @@ def _grid(**kw):
 
     nband = opts.nband
     if opts.dirty:
-        print(f"Image size = ({nband}, {nx}, {ny})", file=log)
+        print(f"Image size = (ntime={ntime}, nband={nband}, nx={nx}, ny={ny})", file=log)
 
     nx_psf = good_size(int(opts.psf_oversize * nx))
     while nx_psf % 2:
@@ -193,7 +193,7 @@ def _grid(**kw):
         ny_psf = good_size(ny_psf)
 
     if opts.psf:
-        print(f"PSF size = ({nband}, {nx_psf}, {ny_psf})", file=log)
+        print(f"PSF size = (ntime={ntime}, nband={nband}, nx={nx_psf}, ny={ny_psf})", file=log)
 
     # print(f'Not overwriting {dds_name}, directory exists. '
     #               f'Set overwrite flag if you mean to overwrite.', file=log)

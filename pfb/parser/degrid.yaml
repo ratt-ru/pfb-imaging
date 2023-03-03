@@ -36,7 +36,7 @@ inputs:
       Order of interpolating polynomial for frequency axis
   postfix:
     dtype: str
-    default: ''
+    default: 'main'
     info:
       Can be used to specify a custom name for the image space data products
   product:

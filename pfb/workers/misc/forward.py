@@ -91,142 +91,109 @@ def _forward(**kw):
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.utils.fits import (set_wcs, save_fits, dds2fits,
                                 dds2fits_mfs, load_fits)
-    from pfb.opt.pcg import pcg
+    from pfb.opt.pcg import cg_dct
+    from pfb.operators.hessian import hess_vis
     from astropy.io import fits
+    from glob import glob
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
+    # ther eis only one xds
     xds_name = f'{basename}.xds.zarr'
-    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
-
-    xds = xds_from_zarr(dds_name, chunks={'row':-1,
+    xds = xds_from_zarr(xds_name, chunks={'row':-1,
                                           'chan': -1})
-    dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                          'chan': -1,
-                                          'band': 1,
-                                          'x': -1,
-                                          'y': -1})
+    xds = dask.persist(xds)[0]
 
-    # stitch residuals after beam application
-    real_type = dds[0].DIRTY.dtype
+    # get number of times and bands
+    real_type = xds[0].WEIGHT.dtype
     complex_type = np.result_type(real_type, np.complex64)
     nband = 0
     ntime = 0
-    for ds in dds:
+    for ds in xds:
         nband = np.maximum(ds.bandid, nband)
         ntime = np.maximum(ds.timeid, ntime)
 
-    nx = ds.x.size
-    ny = ds.y.size
-    nx_psf = ds.x_psf.size
-    ny_psf = ds.y_psf.size
-    nyo2 = ds.yo2.size
 
-    dirty = np.zeros((ntime, nband, nx, ny), dtype=real_type)
-    psfhat = np.zeros((ntime, nband, nx_psf, nyo2), dtype=real_type)
-    x = np.zeros((ntime, nband, nx, ny), dtype=real_type)
-    vis = {}
-    wgt = {}
-    for dsi, dsv in zip(dds, xds):
-        t = dsi.timeid
-        assert t == dsv.bandid
-        b = dsi.bandid
-        assert b == dsv.bandid
-        vis[f'time{t}band{b}'] = dsv.VIS.values
-        wgt[f'time{t}band{b}'] = dsv.WEIGHT.values
-        dirty[t, b] = ds.DIRTY.values
-        psfhat[t, b] = ds.PSFHAT.values
-        if 'MODEL' in dsi:
-            x[t, b] = dsi.MODEL.values
+    # there can be multiple ddss
+    dds_names = glob(f'{basename}_*.dds.zarr')
+    nfields = len(dds_names)
+    dds = {}
+    dirty = {}
+    x = {}
+    xout = {}
+    for name in dds_names:
+        dds[name] = {}
+        dirty[name] = {}
+        x[name] = {}
+        xout[name] = {}
+        tmpds = xds_from_zarr(name, chunks={'x': -1,
+                                            'y': -1,
+                                            'band': 1})
+        for ds in tmpds:
+            t = ds.timeid
+            b = ds.bandid
+            dds[name][f't{t}b{b}'] = {}
+            dds[name][f't{t}b{b}']['nx'] = ds.x.size
+            dds[name][f't{t}b{b}']['ny'] = ds.y.size
+            dds[name][f't{t}b{b}']['cell'] = ds.cell_rad
+            dds[name][f't{t}b{b}']['x0'] = ds.x0
+            dds[name][f't{t}b{b}']['y0'] = ds.y0
+            dirty[name][f't{t}b{b}'] = ds.DIRTY.values
+            if 'MODEL' in ds:
+                x[name][f't{t}b{b}'] = ds.MODEL.values
+            else:
+                x[name][f't{t}b{b}'] = np.zeros(ds.DIRTY.shape, dtype=real_type)
 
-
-    # mask = init_mask(opts.mask, mds, real_type, log)
 
     # pre-allocate arrays for doing FFT's
-    xout = np.empty(dirty.shape, dtype=ID.dtype, order='C')
-    xout = make_noncritical(xout)
-    xpad = np.empty((ntime, nband, nx_psf, nyo2), dtype=ID.dtype, order='C')
-    xpad = make_noncritical(xpad)
-    xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
-    xhat = make_noncritical(xhat)
-    hess = partial(hess_psf, xpad, xhat, xout, psfhat, lastsize)
+    hess = partial(hess_vis, xds, dds, xout,
+                   sigmainv=opts.sigmainv,
+                   wstack=opts.wstack,
+                   nthreads=opts.nthreads,
+                   epsilon=opts.epsilon)
 
     print("Solving for update", file=log)
-    update = pcg(hess, residual, x,
-                 tol=opts.cg_tol,
-                 maxit= opts.cg_maxit,
-                 minit=opts.cg_minit,
-                 verbosity=opts.cg_verbose,
-                 report_freq=opts.cg_report_freq,
-                 backtracl=opts.backtrack,
-                 return_resid=False)
+    update, residual = cg_dct(hess, dirty, x,
+                              tol=opts.cg_tol,
+                              maxit= opts.cg_maxit,
+                              verbosity=opts.cg_verbose,
+                              report_freq=opts.cg_report_freq)
 
-    print("Writing update.", file=log)
-    dds_out = []
-    for ds in dds:
-        t = ds.timeid
-        b = ds.bandid
-        ds = ds.assign(**{'MODEL': (('x','y'), da.from_array(update[t, b]))})
-        dds_out.append(ds)
+    for name in dds_names:
+        print(f"Writing results for {name}", file=log)
+        tmpds = xds_from_zarr(name, chunks={'x': -1,
+                                            'y': -1,
+                                            'band': 1})
+        dds_out = []
+        for ds in tmpds:
+            t = ds.timeid
+            b = ds.bandid
+            ds = ds.assign(**{'MODEL': (('x','y'), da.from_array(update[name][f't{t}b{b}'])),
+                              'RESIDUAL': (('x','y'), da.from_array(residual[name][f't{t}b{b}']))})
+            dds_out.append(ds)
 
-    dask.compute(xds_to_zarr(dds_out, dds_name, columns=('MODEL',)))
+        dask.compute(xds_to_zarr(dds_out, name, columns=('MODEL','RESIDUAL')))
 
-    dds = xds_from_zarr(dds_name, chunks={'row':-1,
+        dds = xds_from_zarr(name, chunks={'row':-1,
                                           'chan': -1,
                                           'band': 1,
                                           'x': -1,
                                           'y': -1})
 
-    # convert to fits files
-    fitsout = []
-    if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
+        outname = name.rstrip('.dds.zarr')
 
-    if opts.fits_cubes:
-        fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
-        fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
+        # convert to fits files
+        fitsout = []
+        if opts.fits_mfs:
+            fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', outname, norm_wsum=True))
+            fitsout.append(dds2fits_mfs(dds, 'MODEL', outname, norm_wsum=False))
 
-    if len(fitsout):
-        print("Writing fits", file=log)
-        dask.compute(fitsout)
+        if opts.fits_cubes:
+            fitsout.append(dds2fits(dds, 'RESIDUAL', outname, norm_wsum=True))
+            fitsout.append(dds2fits(dds, 'MODEL', outname, norm_wsum=False))
+
+        if len(fitsout):
+            print(f"Writing fits for {name}", file=log)
+            dask.compute(fitsout)
 
     print("All done here.", file=log)
-
-
-def hess_psf(xpad,    # preallocated array to store padded image
-             xhat,    # preallocated array to store FTd image
-             xout,    # preallocated array to store output image
-             psfhat,
-             lastsize,
-             x,       # input image, not overwritten
-             nthreads=1,
-             sigmainv=1.0):
-    _, _, nx, ny = x.shape
-    xpad[...] = 0.0
-    xpad[:, :, 0:nx, 0:ny] = x
-    r2c(xpad, axes=(-2, -1), nthreads=nthreads,
-        forward=True, inorm=0, out=xhat)
-    xhat *= psfhat
-    c2r(xhat, axes=(-2, -1), forward=False, out=xpad,
-        lastsize=lastsize, inorm=2, nthreads=nthreads,
-        allow_overwriting_input=True)
-    xout[...] = xpad[:, :, 0:nx, 0:ny]
-    return xout + sigmainv*x
-
-
-def hess_vis(xds,
-             x,       # input image, not overwritten
-             nthreads=1,
-             sigmainv=1.0):
-    _, _, nx, ny = x.shape
-    xpad[...] = 0.0
-    xpad[:, :, 0:nx, 0:ny] = x
-    r2c(xpad, axes=(-2, -1), nthreads=nthreads,
-        forward=True, inorm=0, out=xhat)
-    xhat *= psfhat
-    c2r(xhat, axes=(-2, -1), forward=False, out=xpad,
-        lastsize=lastsize, inorm=2, nthreads=nthreads,
-        allow_overwriting_input=True)
-    xout[...] = xpad[:, :, 0:nx, 0:ny]
-    return xout + sigmainv*x
