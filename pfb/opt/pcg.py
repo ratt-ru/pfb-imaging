@@ -219,7 +219,7 @@ def cg_dct(A,
         p = pupdate(p, r, beta=beta)
         # p = beta*p - r
         rnorm = rnorm_next
-        eps = rnorm/rnorm0
+        eps = rnorm
         # eps = norm_dct(x, b=xp) / norm_dct(x)
 
         k += 1

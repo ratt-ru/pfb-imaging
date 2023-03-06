@@ -116,6 +116,8 @@ def _forward(**kw):
 
     # there can be multiple ddss
     dds_names = glob(f'{basename}_*.dds.zarr')
+    if not len(dds_names):
+        raise ValueError(f"Could not locate dds with basename {basename}")
     nfields = len(dds_names)
     dds = {}
     dirty = {}

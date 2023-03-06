@@ -383,3 +383,125 @@ def loc2psf_vis(uvw,
                         dtype=np.complex64 if precision == 'single' else np.complex128)
 
 
+def comps2vis(uvw,
+                  freq,
+                  comps,
+                  Xdes,
+                  mask,
+                  tbin_idx, tbin_cnts,
+                  fbin_idx, fbin_cnts,
+                  cellx, celly,
+                  x0=0, y0=0,
+                  epsilon=1e-7,
+                  nthreads=1,
+                  wstack=True,
+                  divide_by_n=False,
+                  ncorr_out=4):
+
+    # determine output type
+    complex_type = da.result_type(comps, np.complex64)
+
+    return da.blockwise(_comps2vis, 'rfc',
+                        uvw, 'r3',
+                        freq, 'f',
+                        comps, None,
+                        Xdes, 'fo',
+                        mask, 'xy',
+                        tbin_idx, 'r',
+                        tbin_cnts, 'r',
+                        fbin_idx, 'f',
+                        fbin_cnts, 'f',
+                        cellx, None,
+                        celly, None,
+                        x0, None,
+                        y0, None,
+                        epsilon, None,
+                        nthreads, None,
+                        wstack, None,
+                        divide_by_n, None,
+                        ncorr_out, None,
+                        new_axes={'c': ncorr_out},
+                        # adjust_chunks={'f': freq.chunks[0], 'r': uvw.chunks[0]},
+                        dtype=complex_type,
+                        align_arrays=False)
+
+
+def _comps2vis(uvw,
+                  freq,
+                  comps,
+                  Xdes,
+                  mask,
+                  tbin_idx, tbin_cnts,
+                  fbin_idx, fbin_cnts,
+                  cellx, celly,
+                  x0=0, y0=0,
+                  epsilon=1e-7,
+                  nthreads=1,
+                  wstack=True,
+                  divide_by_n=False,
+                  ncorr_out=4):
+    return _comps2vis_impl(uvw[0],
+                              freq,
+                              comps,
+                              Xdes[0],
+                              mask[0][0],
+                              tbin_idx, tbin_cnts,
+                              fbin_idx, fbin_cnts,
+                              cellx, celly,
+                              x0, y0,
+                              epsilon,
+                              nthreads,
+                              wstack,
+                              divide_by_n,
+                              ncorr_out)
+
+
+
+def _comps2vis_impl(uvw,
+                  freq,
+                  comps,
+                  Xdes,
+                  mask,
+                  tbin_idx, tbin_cnts,
+                  fbin_idx, fbin_cnts,
+                  cellx, celly,
+                  x0=0, y0=0,
+                  epsilon=1e-7,
+                  nthreads=1,
+                  wstack=True,
+                  divide_by_n=False,
+                  ncorr_out=4):
+    # adjust for chunking
+    # need a copy here if using multiple row chunks
+    tbin_idx2 = tbin_idx - tbin_idx.min()
+    fbin_idx2 = fbin_idx - fbin_idx.min()
+
+    # currently not interpolating in time
+    ntime = tbin_idx.size
+    nband = fbin_idx.size
+    nx, ny = mask.shape
+    image = np.zeros((ntime, nband, nx, ny), dtype=comps.dtype)
+
+    # render comps to image, we assume simply polynomial in freq
+    for t in range(ntime):
+        image[t, :, mask] = Xdes.dot(comps[t]).T
+
+    nrow = uvw.shape[0]
+    nchan = freq.size
+    vis = np.zeros((nrow, nchan, ncorr_out), dtype=np.result_type(image, np.complex64))
+    for t in range(ntime):
+        indt = slice(tbin_idx2[t], tbin_idx2[t] + tbin_cnts[t])
+        for b in range(nband):
+            indf = slice(fbin_idx2[b], fbin_idx2[b] + fbin_cnts[b])
+            vis[indt, indf, 0] = dirty2vis(uvw=uvw,
+                                       freq=freq,
+                                       dirty=image[t, b],
+                                       pixsize_x=cellx, pixsize_y=celly,
+                                       center_x=x0, center_y=y0,
+                                       epsilon=epsilon,
+                                       do_wgridding=wstack,
+                                       divide_by_n=divide_by_n,
+                                       nthreads=nthreads)
+            if ncorr_out > 1:
+                vis[indt, indf, -1] = vis[indt, indf, 0]
+    return vis
