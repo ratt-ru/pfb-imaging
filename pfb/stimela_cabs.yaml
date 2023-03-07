@@ -2,7 +2,7 @@
 cabs:
   'pfb_init':
     command: pfb.workers.init.init
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -13,7 +13,7 @@ cabs:
 
   'pfb_grid':
     command: pfb.workers.grid.grid
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -24,7 +24,7 @@ cabs:
 
   'pfb_degrid':
     command: pfb.workers.degrid.degrid
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -35,7 +35,7 @@ cabs:
 
   'pfb_clean':
     command: pfb.workers.clean.clean
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -46,7 +46,7 @@ cabs:
 
   'pfb_restore':
     command: pfb.workers.restore.restore
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -57,7 +57,7 @@ cabs:
 
   'pfb_fwdbwd':
     command: pfb.workers.fwdbwd.fwdbwd
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -68,7 +68,7 @@ cabs:
 
   'pfbmisc_forward':
     command: pfb.workers.misc.forward.forward
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -79,7 +79,7 @@ cabs:
 
   'pfbmisc_backward':
     command: pfb.workers.misc.backward.backward
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -90,7 +90,7 @@ cabs:
 
   'pfbmisc_gainspector':
     command: pfb.workers.misc.gainspector.gainspector
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -101,7 +101,7 @@ cabs:
 
   'pfbmisc_ift2qc':
     command: pfb.workers.misc.ift2qc.ift2qc
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -112,7 +112,7 @@ cabs:
 
   'pfbmisc_fledges':
     command: pfb.workers.misc.fledges.fledges
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -123,7 +123,7 @@ cabs:
 
   'pfbmisc_hthresh':
     command: pfb.workers.misc.hthresh.hthresh
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -134,7 +134,7 @@ cabs:
 
   'pfbmisc_bsmooth':
     command: pfb.workers.misc.bsmooth.bsmooth
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -145,7 +145,7 @@ cabs:
 
   'pfbmisc_gsmooth':
     command: pfb.workers.misc.gsmooth.gsmooth
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -157,7 +157,7 @@ cabs:
 
   'pfbmisc_delay_init':
     command: pfb.workers.misc.delay_init.delay_init
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
@@ -168,7 +168,7 @@ cabs:
 
   'pfbmisc_zarr2fits':
     command: pfb.workers.misc.zarr2fits.zarr2fits
-    flavour: python-ext
+    flavour: python
     policies:
       pass_missing_as_none: true
       prefix: '--'
