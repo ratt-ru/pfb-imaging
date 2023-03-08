@@ -83,7 +83,6 @@ def single_stokes(ds=None,
         ntime = utime.size
         nchan = freq.size
         nant = antpos.shape[0]
-        # import pdb; pdb.set_trace()
         jones = da.ones((ntime, nchan, nant, 1, 2),
                         chunks=(-1,)*5,
                         dtype=complex_type)

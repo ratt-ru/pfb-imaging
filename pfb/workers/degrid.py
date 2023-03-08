@@ -153,7 +153,7 @@ def _degrid(**kw):
         ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms, None,
-                               opts.nband_out,
+                               nband_out,
                                opts.integrations_per_image)
 
     # interpolate model
