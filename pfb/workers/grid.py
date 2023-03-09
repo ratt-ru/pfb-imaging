@@ -298,7 +298,8 @@ def _grid(**kw):
                 c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(u.deg, u.deg))
                 tra = np.deg2rad(c.ra.value)
                 tdec = np.deg2rad(c.dec.value)
-                print(tra, tdec)
+
+            print(tra, tdec)
 
             # import pdb; pdb.set_trace()
             tcoords=np.zeros((1,2))
