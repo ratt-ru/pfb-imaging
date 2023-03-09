@@ -295,7 +295,7 @@ def _grid(**kw):
             else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
                 from astropy import units as u
                 from astropy.coordinates import SkyCoord
-                c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(u.deg, u.deg))
+                c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(u.hourangle, u.deg))
                 tra = np.deg2rad(c.ra.value)
                 tdec = np.deg2rad(c.dec.value)
 
