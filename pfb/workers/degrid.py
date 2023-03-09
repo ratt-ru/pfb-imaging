@@ -246,7 +246,6 @@ def _degrid(**kw):
             uvw = ds.UVW.data
 
             # we need to do this here because the design matrix is a function of SPW
-            # import pdb; pdb.set_trace()
             freqo = freq_out[band_mapping[ms][idt]]
             if freq_fitted:
                 w = (freqo / ref_freq).reshape(freqo.size, 1)

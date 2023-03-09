@@ -121,10 +121,9 @@ inputs:
       The level above local mean that renders a grid weight extreme
   target:
     dtype: str
-    choices:
-      - Sun
     info:
-      Predefined celestial objects
+      This can be predefined celestial objects known to astropy or a string in
+      the format HH:MM:SS,DD:MM:SS (note the , delimiter)
   _include:
     - (pfb.parser)gridding.yml
     - (pfb.parser)dist.yml

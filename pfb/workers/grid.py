@@ -111,8 +111,8 @@ def _grid(**kw):
                              coords='minimal').chunk({'row':-1})
             tid = np.array(timeids).min()
             tout = np.mean(np.array(times))
-            xdso.assign_attrs(
-                {'time_out': tout, 'timeid': tid}
+            xdso = xdso.assign_attrs(
+                        {'time_out': tout, 'timeid': tid}
             )
             xds.append(xdso)
         try:
@@ -288,8 +288,18 @@ def _grid(**kw):
 
         # compute lm coordinates of target
         if opts.target is not None:
-            obs_time = ds.time_out
-            tra, tdec = get_coordinates(obs_time)
+            tmp = opts.target.split(',')
+            if len(tmp) == 1 and tmp[0] == opts.target:
+                obs_time = ds.time_out
+                tra, tdec = get_coordinates(obs_time)
+            else:
+                from astropy import units as u
+                from astropy.coordinates import SkyCoord
+                c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(u.hourangle, u.deg))
+                tra = c.ra.value
+                tdec = c.dec.value
+
+            # import pdb; pdb.set_trace()
             tcoords=np.zeros((1,2))
             tcoords[0,0] = tra
             tcoords[0,1] = tdec
