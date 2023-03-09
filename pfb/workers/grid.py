@@ -291,13 +291,14 @@ def _grid(**kw):
             tmp = opts.target.split(',')
             if len(tmp) == 1 and tmp[0] == opts.target:
                 obs_time = ds.time_out
-                tra, tdec = get_coordinates(obs_time)
-            else:
+                tra, tdec = get_coordinates(obs_time, target=opts.target)
+            else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
                 from astropy import units as u
                 from astropy.coordinates import SkyCoord
                 c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(u.hourangle, u.deg))
                 tra = c.ra.value
                 tdec = c.dec.value
+                print(tra, tdec)
 
             # import pdb; pdb.set_trace()
             tcoords=np.zeros((1,2))
