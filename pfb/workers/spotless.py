@@ -157,7 +157,7 @@ def _spotless(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
                                           'chan':-1,
                                           'x':-1,
