@@ -20,6 +20,7 @@ from scipy.optimize import curve_fit
 from collections import namedtuple
 from scipy.interpolate import RectBivariateSpline as rbs
 from africanus.coordinates.coordinates import radec_to_lmn
+import xarray as xr
 
 def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
     nband, nx, ny = model
@@ -1246,3 +1247,72 @@ def unpad_and_unshift_cube(x, out):
                 # second to third quadrant
                 out[b, i, nyo//2 + j] = x[b, padx + nxo//2 + i, j]
     return out
+
+
+# TODO - concat functions should allow coarsening to values other than 1
+def concat_row(xds):
+    # TODO - how to compute average beam before we have access to grid?
+    ntime = 1
+    nband = 1
+    for ds in xds:
+        ntime = np.maximum(ds.timeid+1, ntime)
+        nband = np.maximum(ds.bandid+1, nband)
+
+    if ntime == 1:  # no need to concatenate
+        return xds
+
+    # this is required because concat will try to mush different
+    # imaging bands together if they are not split upfront
+    xds_out = []
+    for b in range(nband):
+        xdsb = []
+        times = []
+        timeids = []
+        for ds in xds:
+            if ds.bandid == b:
+                xdsb.append(ds)
+                times.append(ds.time_out)
+                timeids.append(ds.timeid)
+        xdso = xr.concat(xdsb, dim='row',
+                         data_vars='minimal',
+                         coords='minimal').chunk({'row':-1})
+        tid = np.array(timeids).min()
+        tout = np.mean(np.array(times))
+        xdso = xdso.assign_attrs(
+                    {'time_out': tout, 'timeid': tid}
+        )
+        xds_out.append(xdso)
+    return xds_out
+
+def concat_chan(xds):
+    ntime = 1
+    nband = 1
+    for ds in xds:
+        ntime = np.maximum(ds.timeid+1, ntime)
+        nband = np.maximum(ds.bandid+1, nband)
+
+    if nband == 1:  # no need to concatenate
+        return xds
+
+    # this is required because concat will try to mush different
+    # times together if they are not split upfront
+    xds_out = []
+    for t in range(ntime):
+        xdst = []
+        freqs = []
+        bandids = []
+        for ds in xds:
+            if ds.timeid == t:
+                xdst.append(ds)
+                freqs.append(ds.freq_out)
+                bandids.append(ds.bandid)
+        xdso = xr.concat(xdst, dim='chan',
+                         data_vars='minimal',
+                         coords='minimal').chunk({'chan':-1})
+        bid = np.array(bandids).min()
+        fout = np.mean(np.array(freqs))
+        xdso = xdso.assign_attrs(
+                    {'freq_out': fout, 'bandid': bid}
+        )
+        xds_out.append(xdso)
+    return xds_out

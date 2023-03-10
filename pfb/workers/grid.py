@@ -78,7 +78,7 @@ def _grid(**kw):
 
     # xds contains vis products, no imaging weights applied
     xds_name = f'{basename}.xds.zarr'
-    xdsp = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
+    xds = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
     # dds contains image space products including imaging weights and uvw
     dds_name = f'{basename}_{opts.postfix}.dds.zarr'
 
@@ -92,42 +92,39 @@ def _grid(**kw):
     else:
         dds_exists = False
 
-    if opts.concat and len(xdsp) > opts.nband:
-        # this is required because concat will try to mush different
-        # imaging bands together if they are not split upfront
+    ntime_in = 1
+    nband_in = 1
+    for ds in xds:
+        ntime_in = np.maximum(ds.timeid+1, ntime_in)
+        nband_in = np.maximum(ds.bandid+1, nband_in)
+
+    if opts.concat_row and len(xds) > nband_in:
         print('Concatenating datasets along row dimension', file=log)
-        xds = []
-        for b in range(opts.nband):
-            xdsb = []
-            times = []
-            timeids = []
-            for ds in xdsp:
-                if ds.bandid == b:
-                    xdsb.append(ds)
-                    times.append(ds.time_out)
-                    timeids.append(ds.timeid)
-            xdso = xr.concat(xdsb, dim='row',
-                             data_vars='minimal',
-                             coords='minimal').chunk({'row':-1})
-            tid = np.array(timeids).min()
-            tout = np.mean(np.array(times))
-            xdso = xdso.assign_attrs(
-                        {'time_out': tout, 'timeid': tid}
-            )
-            xds.append(xdso)
+        from pfb.utils.misc import concat_row
+        xds = concat_row(xds)
         try:
-            assert len(xds) == opts.nband
+            assert len(xds) == nband_in
         except Exception as e:
-            raise RuntimeError('Something went wrong during concatenation.'
+            raise RuntimeError('Something went wrong during row concatenation.'
                                'This is probably a bug.')
         ntime = 1
     else:
-        xds = xdsp
-        ntime = len(xds) // opts.nband
-        if len(xds) < opts.nband:
-            raise RuntimeError("len(xds) < nband. Run with the same nband as init worker.")
-        elif len(xds) % ntime:
-            raise RuntimeError("len(xds) != ntime*nband. This is a bug.")
+        ntime = ntime_in
+
+    if opts.concat_chan and len(xds) > ntime:
+        print('Concatenating datasets along chan dimension', file=log)
+        from pfb.utils.misc import concat_chan
+        xds = concat_chan(xds)
+        try:
+            assert len(xds) == ntime
+        except Exception as e:
+            raise RuntimeError('Something went wrong during chan concatenation.'
+                               'This is probably a bug.')
+        nband = 1
+    else:
+        nband = nband_in
+
+
 
     real_type = xds[0].WEIGHT.dtype
     if real_type == np.float32:
@@ -178,7 +175,6 @@ def _grid(**kw):
         nx = opts.nx
         ny = opts.ny if opts.ny is not None else nx
 
-    nband = opts.nband
     if opts.dirty:
         print(f"Image size = (ntime={ntime}, nband={nband}, nx={nx}, ny={ny})", file=log)
 
@@ -299,9 +295,6 @@ def _grid(**kw):
                 tra = np.deg2rad(c.ra.value)
                 tdec = np.deg2rad(c.dec.value)
 
-            print(tra, tdec)
-
-            # import pdb; pdb.set_trace()
             tcoords=np.zeros((1,2))
             tcoords[0,0] = tra
             tcoords[0,1] = tdec

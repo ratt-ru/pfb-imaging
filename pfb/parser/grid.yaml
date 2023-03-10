@@ -23,9 +23,14 @@ inputs:
     info:
       Imaging products to produce. Options are I, Q, U, V.
       Only single Stokes products are currently supported
-  concat:
+  concat_row:
     dtype: bool
     default: True
+    info:
+      Concatenate datasets by row
+  concat_chan:
+    dtype: bool
+    default: False
     info:
       Concatenate datasets by row
   overwrite:
@@ -123,7 +128,7 @@ inputs:
     dtype: str
     info:
       This can be predefined celestial objects known to astropy or a string in
-      the format HH:MM:SS,DD:MM:SS (note the , delimiter)
+      the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
   _include:
     - (pfb.parser)gridding.yml
     - (pfb.parser)dist.yml
