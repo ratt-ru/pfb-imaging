@@ -74,11 +74,15 @@ def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
 
     return modelout
 
-def compute_context(scheduler, output_filename):
+def compute_context(scheduler, output_filename, boring=True):
     if scheduler == "distributed":
         return performance_report(filename=output_filename + "_dask_report.html")
     else:
-        return ProgressBar()
+        if boring:
+            from contextlib import nullcontext
+            return nullcontext()
+        else:
+            return ProgressBar()
 
 def estimate_data_size(nant, nhr, nsec, nchan, ncorr, nbytes):
     '''

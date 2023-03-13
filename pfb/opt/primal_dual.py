@@ -20,6 +20,7 @@ def primal_dual(
         mask=None,  # regions where mask is False will be masked
         tol=1e-5,
         maxit=1000,
+        minit=10,
         positivity=True,
         report_freq=10,
         gamma=1.0,
@@ -27,10 +28,6 @@ def primal_dual(
     # initialise
     x = x0.copy()
     v = v0.copy()
-
-    # # gradient function
-    # def grad_func(x):
-    #     return -A(xbar - x) / gamma
 
     # this seems to give a good trade-off between
     # primal and dual problems
@@ -42,7 +39,8 @@ def primal_dual(
 
     # start iterations
     eps = 1.0
-    for k in range(maxit):
+    k = 0
+    while (eps > tol or k < minit) and k < maxit:
         xp = x.copy()
         vp = v.copy()
 
@@ -59,8 +57,6 @@ def primal_dual(
 
         # convergence check
         eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
-        if eps < tol:
-            break
 
         if np.isnan(eps) or np.isinf(eps):
             import pdb; pdb.set_trace()
@@ -70,6 +66,7 @@ def primal_dual(
             # phi = np.vdot(res, A(res))
             print(f"At iteration {k} eps = {eps:.3e}",  # and phi = {phi:.3e}",
                   file=log)
+        k += 1
 
     if k == maxit - 1:
         if verbosity:
