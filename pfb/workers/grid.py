@@ -124,8 +124,6 @@ def _grid(**kw):
     else:
         nband = nband_in
 
-
-
     real_type = xds[0].WEIGHT.dtype
     if real_type == np.float32:
         precision = 'single'
@@ -191,8 +189,6 @@ def _grid(**kw):
     if opts.psf:
         print(f"PSF size = (ntime={ntime}, nband={nband}, nx={nx_psf}, ny={ny_psf})", file=log)
 
-    # print(f'Not overwriting {dds_name}, directory exists. '
-    #               f'Set overwrite flag if you mean to overwrite.', file=log)
     # if dds exists, check that existing dds is compatible with input
     if dds_exists:
         dds = xds_from_zarr(dds_name)
@@ -268,8 +264,10 @@ def _grid(**kw):
                     counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
                                                    nlevel=opts.filter_level)
 
+                # counts = inlined_array(counts, [uvw, freq, mask])
+
                 # do we want the coordinates to be ug, vg rather?
-                out_ds = ds.assign(**{'COUNTS': (('x', 'y'), counts)})
+                out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
 
             # we usually want to re-evaluate this since the robustness may change
             imwgt = counts_to_weights(out_ds.COUNTS.data,
@@ -279,8 +277,9 @@ def _grid(**kw):
                                       cell_rad, cell_rad,
                                       opts.robustness)
 
-            wgt *= imwgt
+            # imwgt = inlined_array(imwgt, [uvw, freq])
 
+            wgt *= imwgt
 
         # compute lm coordinates of target
         if opts.target is not None:
@@ -310,18 +309,18 @@ def _grid(**kw):
             tdec = ds.dec
 
         # TODO - assign coordinates
-        if not dds_exists:
-            out_ds = out_ds.assign_attrs(**{
-                'ra': tra,
-                'dec': tdec,
-                'x0': x0,
-                'y0': y0,
-                'cell_rad': cell_rad,
-                'bandid': ds.bandid,
-                'timeid': ds.timeid,
-                'freq_out': ds.freq_out,
-                'time_out': ds.time_out,
-            })
+        out_ds = out_ds.assign_attrs(**{
+            'ra': tra,
+            'dec': tdec,
+            'x0': x0,
+            'y0': y0,
+            'cell_rad': cell_rad,
+            'bandid': ds.bandid,
+            'timeid': ds.timeid,
+            'freq_out': ds.freq_out,
+            'time_out': ds.time_out,
+            'robustness': opts.robustness
+        })
 
         if opts.dirty:
             dirty = vis2im(uvw=uvw,
@@ -339,7 +338,7 @@ def _grid(**kw):
                            mask=mask,
                            do_wgridding=opts.wstack,
                            double_precision_accumulation=opts.double_accum)
-            dirty = inlined_array(dirty, [uvw, freq])
+            dirty = inlined_array(dirty, [uvw, freq, mask])
             out_ds = out_ds.assign(**{'DIRTY': (('x', 'y'), dirty)})
 
         if opts.psf:
@@ -352,6 +351,7 @@ def _grid(**kw):
                                   epsilon=opts.epsilon,
                                   nthreads=opts.nvthreads,
                                   precision=precision)
+            psf_vis = inlined_array(psf_vis, [uvw, freq])
             psf = vis2im(uvw=uvw,
                          freq=freq,
                          vis=psf_vis,
@@ -367,7 +367,7 @@ def _grid(**kw):
                          mask=mask,
                          do_wgridding=opts.wstack,
                          double_precision_accumulation=opts.double_accum)
-            psf = inlined_array(psf, [uvw, freq])
+            psf = inlined_array(psf, [uvw, freq, mask])
             # get FT of psf
             psfhat = fft2d(psf, nthreads=opts.nvthreads)
             out_ds = out_ds.assign(**{'PSF': (('x_psf', 'y_psf'), psf),
@@ -378,6 +378,8 @@ def _grid(**kw):
             out_ds = out_ds.assign(**{'WEIGHT': (('row', 'chan'), wgt)})
 
         wsum = wgt[mask.astype(bool)].sum()
+
+        # wsum = inlined_array(wsum, [uvw, wgt, freq, mask])
 
         # evaluate beam at x and y coords
         cell_deg = np.rad2deg(cell_rad)
@@ -411,26 +413,26 @@ def _grid(**kw):
 
 
 
-        out_ds = out_ds.chunk({'row':100000,
-                               'chan':128,
-                               'x':4096,
-                               'y':4096})
-        # necessary to make psf optional
-        if 'x_psf' in out_ds.dims:
-            out_ds = out_ds.chunk({'x_psf': 4096,
-                                   'y_psf':4096,
-                                   'yo2': 2048})
+        # out_ds = out_ds.chunk({'row':100000,
+        #                        'chan':128,
+        #                        'x':4096,
+        #                        'y':4096})
+        # # necessary to make psf optional
+        # if 'x_psf' in out_ds.dims:
+        #     out_ds = out_ds.chunk({'x_psf': 4096,
+        #                            'y_psf':4096,
+        #                            'yo2': 2048})
 
         dds_out.append(out_ds.unify_chunks())
 
     writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
 
-    # dask.visualize(writes, color="order", cmap="autumn",
-    #                node_attr={"penwidth": "4"},
-    #                filename=f'{basename}_grid_ordered_graph.pdf',
-    #                optimize_graph=False)
-    # dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
-    #                optimize_graph=False)
+    dask.visualize(writes, color="order", cmap="autumn",
+                   node_attr={"penwidth": "4"},
+                   filename=f'{basename}_grid_ordered_graph.pdf',
+                   optimize_graph=False)
+    dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
+                   optimize_graph=False)
 
     print("Computing image space data products", file=log)
     with compute_context(opts.scheduler, basename+'_grid'):
