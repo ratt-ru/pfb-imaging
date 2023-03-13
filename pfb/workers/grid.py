@@ -257,7 +257,8 @@ def _grid(**kw):
                         ny,
                         cell_rad,
                         cell_rad,
-                        wgt.dtype)
+                        wgt.dtype,
+                        ngrid=opts.nvthreads)
                 # get rid of artificially high weights corresponding to
                 # nearly empty cells
                 if opts.filter_extreme_counts:
@@ -413,26 +414,26 @@ def _grid(**kw):
 
 
 
-        # out_ds = out_ds.chunk({'row':100000,
-        #                        'chan':128,
-        #                        'x':4096,
-        #                        'y':4096})
-        # # necessary to make psf optional
-        # if 'x_psf' in out_ds.dims:
-        #     out_ds = out_ds.chunk({'x_psf': 4096,
-        #                            'y_psf':4096,
-        #                            'yo2': 2048})
+        out_ds = out_ds.chunk({'row':100000,
+                               'chan':128,
+                               'x':4096,
+                               'y':4096})
+        # necessary to make psf optional
+        if 'x_psf' in out_ds.dims:
+            out_ds = out_ds.chunk({'x_psf': 4096,
+                                   'y_psf':4096,
+                                   'yo2': 2048})
 
         dds_out.append(out_ds.unify_chunks())
 
     writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
 
-    dask.visualize(writes, color="order", cmap="autumn",
-                   node_attr={"penwidth": "4"},
-                   filename=f'{basename}_grid_ordered_graph.pdf',
-                   optimize_graph=False)
-    dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
-                   optimize_graph=False)
+    # dask.visualize(writes, color="order", cmap="autumn",
+    #                node_attr={"penwidth": "4"},
+    #                filename=f'{basename}_grid_ordered_graph.pdf',
+    #                optimize_graph=False)
+    # dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
+    #                optimize_graph=False)
 
     print("Computing image space data products", file=log)
     with compute_context(opts.scheduler, basename+'_grid'):

@@ -462,7 +462,7 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
     antpos = {}
     poltype = {}
     uv_maxs = []
-    idts = []
+    idts = {}
     for ims, ms in enumerate(ms_name):
         xds = xds_from_ms(ms, chunks={"row": -1}, columns=('TIME','UVW'),
                           group_cols=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'])
@@ -477,7 +477,7 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
         antpos[ms] = ants[0].POSITION.data
         poltype[ms] = fetch_poltype(pols[0].CORR_TYPE.data.squeeze())
 
-
+        idts[ms] = []
         if gain_name is not None:
             gain = xds_from_zarr(gain_name[ims])
             gain_times[ms] = {}
@@ -491,7 +491,7 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
         chan_widths[ms] = {}
         for ids, ds in enumerate(xds):
             idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
-            idts.append(idt)
+            idts[ms].append(idt)
             field = fields[ds.FIELD_ID]
             radecs[ms][idt] = field.PHASE_DIR.data.squeeze()
 
@@ -525,7 +525,7 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
     ntimes_out = 0
     for ms in ms_name:
         utimes[ms] = {}
-        for idt in idts:
+        for idt in idts[ms]:
             freq = freqs[ms][idt]
             if gain_name is not None:
                 try:
@@ -583,7 +583,7 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
         fbin_idx[ms] = {}
         fbin_counts[ms] = {}
         band_mapping[ms] = {}
-        for idt in idts:
+        for idt in idts[ms]:
             freq = freqs[ms][idt]
             band_map = np.zeros(freq.size, dtype=np.int32)
             for band in range(nband):
@@ -613,7 +613,7 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
         time_mapping[ms] = {}
         ms_chunks[ms] = []
         gain_chunks[ms] = []
-        for idt in idts:
+        for idt in idts[ms]:
             time = times[ms][idt]
             # has to be here since scans not same length
             ntime = utimes[ms][idt].size
