@@ -10,12 +10,7 @@ Fs = np.fft.fftshift
 
 
 def compute_counts(uvw, freq, mask, nx, ny,
-                   cell_size_x, cell_size_y, dtype, wgt=None, k=6, ngrid=1):
-
-    if wgt is not None:
-        wgt_out = ('row', 'chan')
-    else:
-        wgt_out = None
+                   cell_size_x, cell_size_y, dtype, k=6, ngrid=1):
 
     counts = da.blockwise(compute_counts_wrapper, ('row', 'nx', 'ny'),
                           uvw, ('row', 'three'),
@@ -26,7 +21,6 @@ def compute_counts(uvw, freq, mask, nx, ny,
                           cell_size_x, None,
                           cell_size_y, None,
                           dtype, None,
-                          wgt, wgt_out,
                           k, None,
                           ngrid, None,
                           new_axes={"nx": nx, "ny": ny},
@@ -38,18 +32,16 @@ def compute_counts(uvw, freq, mask, nx, ny,
 
 
 def compute_counts_wrapper(uvw, freq, mask, nx, ny,
-                           cell_size_x, cell_size_y, dtype, wgt, k, ngrid):
-    if wgt is not None:
-        wgt = wgt[0]
+                           cell_size_x, cell_size_y, dtype, k, ngrid):
     return _compute_counts(uvw[0], freq[0], mask[0], nx, ny,
-                        cell_size_x, cell_size_y, dtype, wgt, k, ngrid)
+                        cell_size_x, cell_size_y, dtype, k, ngrid)
 
 
 
 @njit(nogil=True, fastmath=True, cache=True, parallel=True)
 def _compute_counts(uvw, freq, mask, nx, ny,
                     cell_size_x, cell_size_y, dtype,
-                    wgt=None, k=6, ngrid=1):  # support hardcoded for now
+                    k=6, ngrid=1):  # support hardcoded for now
     # ufreq
     u_cell = 1/(nx*cell_size_x)
     # shifts fftfreq such that they start at zero
@@ -68,26 +60,20 @@ def _compute_counts(uvw, freq, mask, nx, ny,
     nrow = uvw.shape[0]
     nchan = freq.size
     bin_counts = [nrow // ngrid + (1 if x < nrow % ngrid else 0)  for x in range (ngrid)]
-    bin_idx = np.zeros(ngrid)
+    bin_idx = np.zeros(ngrid, dtype=np.int64)
     bin_counts = np.asarray(bin_counts).astype(bin_idx.dtype)
     bin_idx[1:] = np.cumsum(bin_counts)[0:-1]
-
-
-    if wgt is None:
-        wgt = np.ones((nrow, nchan))
 
     normfreq = freq / lightspeed
     ko2 = k//2
     ko2sq = ko2**2
 
-    for i in prange(ngrid):
-        for r in range(bin_idx[i], bin_idx[i] + bin_counts[i]):
+    for g in prange(ngrid):
+        for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
             uvw_row = uvw[r]
-            wgt_row = wgt[r]
             for c in range(nchan):
                 if not mask[r, c]:
                     continue
-                wgt_row_chan = wgt_row[c]
                 # current uv coords
                 chan_normfreq = normfreq[c]
                 u_tmp = uvw_row[0] * chan_normfreq
@@ -102,17 +88,17 @@ def _compute_counts(uvw, freq, mask, nx, ny,
                     for i in range(-ko2, ko2):
                         x_idx = i + u_idx
                         x = x_idx - ug + 0.5
-                        val = _es_kernel(x/ko2, 2.3, k) * wgt_row_chan
+                        val = _es_kernel(x/ko2, 2.3, k)
                         for j in range(-ko2, ko2):
                             y_idx = j + v_idx
                             y = y_idx - vg + 0.5
-                            counts[i, x_idx, y_idx] += val * _es_kernel(y/ko2, 2.3, k)
+                            counts[g, x_idx, y_idx] += val * _es_kernel(y/ko2, 2.3, k)
                 else:  # nearest neighbour
                     # indices
                     u_idx = int(np.floor(ug))
                     v_idx = int(np.floor(vg))
-                    counts[i, u_idx, v_idx] += wgt_row_chan
-    return counts
+                    counts[g, u_idx, v_idx] += 1.0
+    return counts  #.sum(axis=0, keepdims=True)
 
 @njit(nogil=True, fastmath=True, cache=True, inline='always')
 def _es_kernel(x, beta, k):
