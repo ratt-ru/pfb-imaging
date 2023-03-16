@@ -19,7 +19,6 @@ def _coef2im_impl(alpha, bases, ntot, iy, sy, nx, ny):
     Per band coefficients to image
     '''
     nband, nbasis, _ = alpha.shape
-    # not chunking over basis
     x = np.zeros((nband, nbasis, nx, ny), dtype=alpha.dtype)
     for l in numba.prange(nband):
         for b in range(nbasis):
@@ -34,6 +33,31 @@ def _coef2im_impl(alpha, bases, ntot, iy, sy, nx, ny):
 
             x[l, b] = wave
     return np.sum(x, axis=1)
+
+
+@numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)
+def _coef2im_impl_flat(alpha, bases, ntot, iy, sy, nx, ny):
+    '''
+    Per band coefficients to image
+    '''
+    nband, nbasis, nmax = alpha.shape
+    x = np.zeros((nband*nbasis, nx, ny), dtype=alpha.dtype)
+    alpha = alpha.reshape(nband*nbasis, nmax)
+    for i in numba.prange(nband*nbasis):
+        l = i//nbasis
+        b = i - l*nbasis
+        base = bases[b]
+        a = alpha[i, 0:ntot[b]]
+        if base == 'self':
+            wave = a.reshape(nx, ny)
+        else:
+            alpha_rec = unravel_coeffs(
+                a, iy[base], sy[base], output_format='wavedecn')
+            wave = waverecn(alpha_rec, base, mode='zero')
+
+        x[i] = wave
+    return np.sum(x.reshape(nband, nbasis, nx, ny), axis=1)
+
 
 def _coef2im(alpha, bases, ntot, iy, sy, nx, ny):
     return _coef2im_impl_flat(alpha[0][0], bases, ntot,
@@ -96,12 +120,9 @@ def _im2coef_impl(x, bases, ntot, nmax, nlevels):
         for b in range(nbasis):
             base = bases[b]
             if base == 'self':
-                # ravel and pad
                 alpha[l, b] = pad(x[l].ravel(), nmax-ntot[b]) #, mode='constant')
             else:
-                # decompose
                 alpha_tmp = wavedecn(x[l], base, mode='zero', level=nlevels)
-                # ravel and pad
                 alpha_tmp, _, _ = ravel_coeffs(alpha_tmp)
                 alpha[l, b] = pad(alpha_tmp, nmax-ntot[b])  #, mode='constant')
 
@@ -143,12 +164,9 @@ def _im2coef_impl_flat(x, bases, ntot, nmax, nlevels):
         b = i - l*nbasis
         base = bases[b]
         if base == 'self':
-            # ravel and pad
             alpha[i] = pad(x[l].ravel(), nmax-ntot[b]) #, mode='constant')
         else:
-            # decompose
             alpha_tmp = wavedecn(x[l], base, mode='zero', level=nlevels)
-            # ravel and pad
             alpha_tmp, _, _ = ravel_coeffs(alpha_tmp)
             alpha[i] = pad(alpha_tmp, nmax-ntot[b])  #, mode='constant')
 
