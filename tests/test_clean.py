@@ -246,7 +246,6 @@ def test_clean(do_gains, tmp_path_factory):
         model_inferred[b] = ds.MODEL.values
 
     # we actually reconstruct I/n(l,m) so we need to correct for that
-    import pdb; pdb.set_trace()
     l, m = np.meshgrid(dds[0].x.values, dds[0].y.values,
                        indexing='ij')
     eps = l**2+m**2
