@@ -66,7 +66,7 @@ def _grid(**kw):
     from pfb.operators.gridder import vis2im, loc2psf_vis
     from pfb.operators.fft import fft2d
     from pfb.utils.weighting import (compute_counts, counts_to_weights,
-                                     filter_extreme_counts)
+                                     filter_extreme_counts, l2reweight)
     from pfb.utils.beam import eval_beam
     import xarray as xr
     from uuid import uuid4
@@ -242,45 +242,8 @@ def _grid(**kw):
         uvw = ds.UVW.data
         freq = ds.FREQ.data
         vis = ds.VIS.data
-        wgt = ds.WEIGHT.data
         # This is a vis space mask (see wgridder convention)
         mask = ds.MASK.data
-        if opts.robustness is not None:
-            # we'll skip this if counts already exists
-            # what to do if flags have changed?
-            if 'COUNTS' not in out_ds:
-                counts = compute_counts(
-                        uvw,
-                        freq,
-                        mask,
-                        nx,
-                        ny,
-                        cell_rad,
-                        cell_rad,
-                        wgt.dtype,
-                        ngrid=opts.nvthreads)
-                # get rid of artificially high weights corresponding to
-                # nearly empty cells
-                if opts.filter_extreme_counts:
-                    counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
-                                                   nlevel=opts.filter_level)
-
-                # counts = inlined_array(counts, [uvw, freq, mask])
-
-                # do we want the coordinates to be ug, vg rather?
-                out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
-
-            # we usually want to re-evaluate this since the robustness may change
-            imwgt = counts_to_weights(out_ds.COUNTS.data,
-                                      uvw,
-                                      freq,
-                                      nx, ny,
-                                      cell_rad, cell_rad,
-                                      opts.robustness)
-
-            # imwgt = inlined_array(imwgt, [uvw, freq])
-
-            wgt *= imwgt
 
         # compute lm coordinates of target
         if opts.target is not None:
@@ -328,6 +291,59 @@ def _grid(**kw):
            'x': x,
            'y': y
         })
+
+        # evaluate beam at x and y coords
+        cell_deg = np.rad2deg(cell_rad)
+        l = (-(nx//2) + da.arange(nx)) * cell_deg + np.deg2rad(x0)
+        m = (-(ny//2) + da.arange(ny)) * cell_deg + np.deg2rad(y0)
+        ll, mm = da.meshgrid(l, m, indexing='ij')
+        bvals = eval_beam(ds.BEAM.data, ll, mm)
+        out_ds = out_ds.assign(**{'BEAM': (('x', 'y'), bvals)})
+
+
+        if opts.l2reweight and model in out_ds:
+            wgt, res = l2reweight(ds, out_ds,
+                             opts.epsilon,
+                             opts.nvthreads,
+                             opts.wstack,
+                             precision)
+        else:
+            wgt = ds.WEIGHT.data
+            res = None
+
+        if opts.robustness is not None:
+            # we'll skip this if counts already exists
+            # what to do if flags have changed?
+            if 'COUNTS' not in out_ds:
+                counts = compute_counts(
+                        uvw,
+                        freq,
+                        mask,
+                        nx,
+                        ny,
+                        cell_rad,
+                        cell_rad,
+                        wgt.dtype,
+                        ngrid=opts.nvthreads)
+                # get rid of artificially high weights corresponding to
+                # nearly empty cells
+                if opts.filter_extreme_counts:
+                    counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
+                                                   nlevel=opts.filter_level)
+
+                # counts = inlined_array(counts, [uvw, freq, mask])
+
+                # do we want the coordinates to be ug, vg rather?
+                out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
+
+            # we usually want to re-evaluate this since the robustness may change
+            imwgt = counts_to_weights(out_ds.COUNTS.data,
+                                      uvw,
+                                      freq,
+                                      nx, ny,
+                                      cell_rad, cell_rad,
+                                      opts.robustness)
+            wgt *= imwgt
 
         if opts.dirty:
             dirty = vis2im(uvw=uvw,
@@ -388,36 +404,46 @@ def _grid(**kw):
 
         # wsum = inlined_array(wsum, [uvw, wgt, freq, mask])
 
-        # evaluate beam at x and y coords
-        cell_deg = np.rad2deg(cell_rad)
-        l = (-(nx//2) + da.arange(nx)) * cell_deg + np.deg2rad(x0)
-        m = (-(ny//2) + da.arange(ny)) * cell_deg + np.deg2rad(y0)
-        ll, mm = da.meshgrid(l, m, indexing='ij')
-        bvals = eval_beam(ds.BEAM.data, ll, mm)
+
 
         if opts.residual and 'MODEL' in out_ds:
             model = out_ds.MODEL.data
-            from pfb.operators.hessian import hessian
-            hessopts = {
-                'cell': cell_rad,
-                'wstack': opts.wstack,
-                'epsilon': opts.epsilon,
-                'double_accum': opts.double_accum,
-                'nthreads': opts.nvthreads
-            }
-            # we only want to apply the beam once here
-            residual = dirty - hessian(bvals * model, uvw, wgt,
-                                       mask, freq, None, hessopts)
-            residual = inlined_array(residual, [uvw, freq])
+            if res is not None:
+                residual = vis2im(uvw=uvw,
+                           freq=freq,
+                           vis=res,
+                           wgt=wgt,
+                           nx=nx,
+                           ny=ny,
+                           cellx=cell_rad,
+                           celly=cell_rad,
+                           x0=x0, y0=y0,
+                           nthreads=opts.nvthreads,
+                           epsilon=opts.epsilon,
+                           precision=precision,
+                           mask=mask,
+                           do_wgridding=opts.wstack,
+                           double_precision_accumulation=opts.double_accum)
+            else:
+                from pfb.operators.hessian import hessian
+                hessopts = {
+                    'cell': cell_rad,
+                    'wstack': opts.wstack,
+                    'epsilon': opts.epsilon,
+                    'double_accum': opts.double_accum,
+                    'nthreads': opts.nvthreads
+                }
+                # we only want to apply the beam once here
+                residual = dirty - hessian(bvals * model, uvw, wgt,
+                                        mask, freq, None, hessopts)
+            residual = inlined_array(residual, [uvw, freq, mask])
             out_ds = out_ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
 
 
         out_ds = out_ds.assign(**{'FREQ': (('chan',), freq),
                                   'UVW': (('row', 'three'), uvw),
                                   'MASK': (('row', 'chan'), mask),
-                                  'WSUM': (('scalar',), da.atleast_1d(wsum)),
-                                  'BEAM': (('x', 'y'), bvals)})
-
+                                  'WSUM': (('scalar',), da.atleast_1d(wsum))})
 
 
         out_ds = out_ds.chunk({'row':100000,
