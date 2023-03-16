@@ -287,7 +287,6 @@ def _spotless(**kw):
     rms_comps = np.std(np.linalg.norm(psiH(residual/pix_per_beam), axis=0),
                        axis=-1)[:, None]  # preserve axes
 
-<<<<<<< HEAD
     # TODO - load from dds if present
     if dual is None:
         dual = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
@@ -308,52 +307,17 @@ def _spotless(**kw):
 
     # only need this is inverter == pd
     dual2 = None
-=======
-    # Initialise dual and weights
-    if dual is None:  # starting from scratch
-        dual = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
-        l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
-    else:  # continuing
-        # need to recompute the l1weights anyway if rmsfactor has changed
-        print('Computing L1 weights', file=log)
-        mcomps = np.sum(psiH(model), axis=0)
-        l1weight = (1 + opts.rmsfactor)/(1 + (mcomps/rms_comps)**2)
-        # do not penalise components above threshold
-        l1weight[l1weight < 1.0] = 0.0
->>>>>>> master
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
     print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
     for k in range(opts.niter):
-<<<<<<< HEAD
         print('Solving for model', file=log)
         modelp = deepcopy(model)
         data = residual + hess_psf(model)
         grad21 = lambda x: hess_psf(x) - data
         model, dual = primal_dual(model,
-=======
-        print("Solving for update", file=log)
-        update = pcg(hess_psf,
-                     residual,
-                     x0=residual/pix_per_beam if k==0 else update,
-                     tol=opts.cg_tol,
-                     maxit=opts.cg_maxit,
-                     minit=opts.cg_minit,
-                     verbosity=opts.cg_verbose,
-                     report_freq=opts.cg_report_freq,
-                     backtrack=opts.backtrack)
-
-        save_fits(basename + f'update_{k+1}.fits', np.mean(update, axis=0), hdr_mfs)
-
-        print('Solving for model', file=log)
-        modelp = deepcopy(model)
-        data = model + opts.gamma*update
-        model, dual = primal_dual(hess_psf,
-                                  data,
-                                  model if np.any(model) else update,
->>>>>>> master
                                   dual,
                                   opts.rmsfactor*rms,
                                   psi,
@@ -369,11 +333,7 @@ def _spotless(**kw):
                                   report_freq=opts.pd_report_freq,
                                   gamma=opts.gamma)
 
-<<<<<<< HEAD
         save_fits(basename + f'_model_{k+1}.fits', np.mean(model, axis=0), hdr_mfs)
-=======
-        save_fits(basename + f'model_{k+1}.fits', np.mean(model, axis=0), hdr_mfs)
->>>>>>> master
 
         print("Getting residual", file=log)
         convimage = hess(model)
@@ -392,11 +352,6 @@ def _spotless(**kw):
               f"rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
 
-<<<<<<< HEAD
-=======
-        save_fits(basename + f'residual_{k+1}.fits', residual_mfs, hdr_mfs)
-
->>>>>>> master
         if k+1 >= opts.l1reweight_from:
             print('Computing L1 weights', file=log)
             # convert residual units so it is comparable to model
@@ -405,19 +360,11 @@ def _spotless(**kw):
             mcomps = np.linalg.norm(psiH(model), axis=0)
             # the logic here is that weights shoudl remain the same for model
             # components that are rmsfactor times larger than the rms
-<<<<<<< HEAD
             # high SNR values should experience relatively small thresholding
             # whereas small values should be strongly thresholded
             l1weight = (1 + opts.rmsfactor)/(1 + np.abs(mcomps)/rms_comps)
             # l1weight[l1weight < 1.0] = 0.0
             prox = partial(prox_21, weight=l1weight, axis=0)
-=======
-            # high SNR values should experience relatively small or no
-            # thresholding whereas small values should be strongly thresholded
-            l1weight = (1 + opts.rmsfactor)/(1 + (mcomps/rms_comps)**2)
-            # do not penalise components above threshold
-            l1weight[l1weight < 1.0] = 0.0
->>>>>>> master
 
         print("Updating results", file=log)
         dds_out = []
