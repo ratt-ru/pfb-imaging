@@ -285,12 +285,12 @@ def _degrid(**kw):
                                    columns=[opts.model_column],
                                    rechunk=True))
 
-    dask.visualize(writes, color="order", cmap="autumn",
-                   node_attr={"penwidth": "4"},
-                   filename=opts.output_filename + '_degrid_writes_I_ordered_graph.pdf',
-                   optimize_graph=False)
-    dask.visualize(writes, filename=opts.output_filename +
-                   '_degrid_writes_I_graph.pdf', optimize_graph=False)
+    # dask.visualize(writes, color="order", cmap="autumn",
+    #                node_attr={"penwidth": "4"},
+    #                filename=opts.output_filename + '_degrid_writes_I_ordered_graph.pdf',
+    #                optimize_graph=False)
+    # dask.visualize(writes, filename=opts.output_filename +
+    #                '_degrid_writes_I_graph.pdf', optimize_graph=False)
 
     with compute_context(opts.scheduler, opts.output_filename+'_degrid'):
         dask.compute(writes, optimize_graph=False)
