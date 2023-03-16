@@ -309,7 +309,6 @@ def _grid(**kw):
             tra = ds.ra
             tdec = ds.dec
 
-        # TODO - assign coordinates
         out_ds = out_ds.assign_attrs(**{
             'ra': tra,
             'dec': tdec,
@@ -321,6 +320,13 @@ def _grid(**kw):
             'freq_out': ds.freq_out,
             'time_out': ds.time_out,
             'robustness': opts.robustness
+        })
+        # TODO - assign ug,vg-coordinates
+        x = (-nx/2 + np.arange(nx)) * cell_rad + x0
+        y = (-ny/2 + np.arange(ny)) * cell_rad + y0
+        out_ds = out_ds.assign_coords(**{
+           'x': x,
+           'y': y
         })
 
         if opts.dirty:

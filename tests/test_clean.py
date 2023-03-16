@@ -173,7 +173,7 @@ def test_clean(do_gains, tmp_path_factory):
         gain_path = None
 
 
-    postfix = ""
+    postfix = "main"
     # set defaults from schema
     from pfb.parser.schemas import schema
     init_args = {}
@@ -238,15 +238,21 @@ def test_clean(do_gains, tmp_path_factory):
 
     # get inferred model
     basename = f'{outname}_I'
-    dds_name = f'{basename}{postfix}.dds.zarr'
+    dds_name = f'{basename}_{postfix}.dds.zarr'
     dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
     model_inferred = np.zeros((nchan, nx, ny))
     for ds in dds:
         b = ds.bandid
         model_inferred[b] = ds.MODEL.values
 
+    # we actually reconstruct I/n(l,m) so we need to correct for that
+    import pdb; pdb.set_trace()
+    l, m = np.meshgrid(dds[0].x.values, dds[0].y.values,
+                       indexing='ij')
+    eps = l**2+m**2
+    n = -eps/(np.sqrt(1.-eps)+1.) + 1  # more stable form
     for i in range(nsource):
-        assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -
+        assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] * n[Ix[i], Iy[i]] -
                         model[:, Ix[i], Iy[i]], 1.0,
                         atol=5*threshold)
 
