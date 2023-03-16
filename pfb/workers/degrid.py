@@ -269,6 +269,9 @@ def _degrid(**kw):
                             epsilon=opts.epsilon,
                             wstack=opts.wstack)
 
+            # convert to single precision to write to MS
+            vis = vis.astype(np.complex64)
+
             if opts.accumulate:
                 vis += getattr(ds, opts.model_column).data
 

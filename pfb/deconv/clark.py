@@ -97,7 +97,7 @@ def clark(ID,
     # and that we get units of Jy/beam when we take the sum over the frequency
     # axis i.e. the MFS image is in units of Jy/beam
     wsum = wsums.sum()
-    assert wsum == 1
+    assert np.allclose(wsum, 1)
     # ID /= wsum
     # PSF /= wsum
     # PSFHAT /= wsum
