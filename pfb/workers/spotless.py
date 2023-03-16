@@ -284,7 +284,7 @@ def _spotless(**kw):
     # i) convert residual units so it is comparable to model
     # ii) project residual into dual domain
     # iii) compute the rms in the space where thresholding happens
-    rms_comps = np.std(np.linalg.norm(psiH(residual/pix_per_beam), axis=0),
+    rms_comps = np.std(np.sum(psiH(residual/pix_per_beam), axis=0),
                        axis=-1)[:, None]  # preserve axes
 
     # TODO - load from dds if present
@@ -294,7 +294,7 @@ def _spotless(**kw):
     else:
         if opts.l1reweight_from == 0:
             print('Initialising with L1 reweighted', file=log)
-            mcomps = np.linalg.norm(psiH(model), axis=0)
+            mcomps = np.sum(psiH(model), axis=0)
             l1weight = (1 + opts.rmsfactor)/(1 + np.abs(mcomps)/rms_comps)
             # l1weight[l1weight < 1.0] = 0.0
         else:
@@ -355,9 +355,9 @@ def _spotless(**kw):
         if k+1 >= opts.l1reweight_from:
             print('Computing L1 weights', file=log)
             # convert residual units so it is comparable to model
-            rms_comps = np.std(np.linalg.norm(psiH(residual/pix_per_beam), axis=0),
+            rms_comps = np.std(np.sum(psiH(residual/pix_per_beam), axis=0),
                                axis=-1)[:, None]  # preserve axes
-            mcomps = np.linalg.norm(psiH(model), axis=0)
+            mcomps = np.sum(psiH(model), axis=0)
             # the logic here is that weights shoudl remain the same for model
             # components that are rmsfactor times larger than the rms
             # high SNR values should experience relatively small thresholding
