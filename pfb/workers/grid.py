@@ -239,6 +239,8 @@ def _grid(**kw):
             out_ds = dds[i]
         else:
             out_ds = xr.Dataset()
+        if opts.transfer_model_from is not None:
+            out_ds = out_ds.assign(**{'MODEL': (('x', 'y'), mds[i].MODEL.data)})
         uvw = ds.UVW.data
         freq = ds.FREQ.data
         vis = ds.VIS.data
