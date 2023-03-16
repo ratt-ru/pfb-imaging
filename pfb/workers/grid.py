@@ -301,12 +301,13 @@ def _grid(**kw):
         out_ds = out_ds.assign(**{'BEAM': (('x', 'y'), bvals)})
 
 
-        if opts.l2reweight and model in out_ds:
+        if opts.l2reweight_dof and 'MODEL' in out_ds:
             wgt, res = l2reweight(ds, out_ds,
                              opts.epsilon,
                              opts.nvthreads,
                              opts.wstack,
-                             precision)
+                             precision,
+                             dof=opts.l2reweight_dof)
         else:
             wgt = ds.WEIGHT.data
             res = None
@@ -480,7 +481,7 @@ def _grid(**kw):
             fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
         if opts.psf:
             fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
-        if has_model:
+        if opts.residual and 'MODEL' in dds[0]:
             fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
             fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
@@ -489,7 +490,7 @@ def _grid(**kw):
             fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
         if opts.psf:
             fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
-        if has_model:
+        if opts.residual and 'MODEL' in dds[0]:
             fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
             fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 

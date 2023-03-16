@@ -129,6 +129,14 @@ inputs:
     info:
       This can be predefined celestial objects known to astropy or a string in
       the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+  l2reweight_dof:
+    dtype: float
+    info:
+      The degrees of freedom parameter for L2 reweighting.
+      The default (None) means no reweighting.
+      A sensible value for this parameter depends on the level of RFI in the data.
+      Small values (eg. 2) result in aggressive reweighting and should be avoided
+      if the model is still incomplete.
   _include:
     - (pfb.parser)gridding.yml
     - (pfb.parser)dist.yml

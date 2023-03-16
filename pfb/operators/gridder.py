@@ -181,6 +181,8 @@ def im2vis(uvw=None,
            sigma_min=1.1,
            sigma_max=2.6):
 
+    # import pdb; pdb.set_trace()
+
     if precision.lower() == 'single':
         complex_type = np.float32
     elif precision.lower() == 'double':
@@ -200,10 +202,8 @@ def im2vis(uvw=None,
                         uvw, 'r3',
                         freq, 'f',
                         image, 'xy',
-                        wgt, 'rf',
-                        mask, 'rf',
-                        npix_x, None,
-                        npix_y, None,
+                        wgt, wgt_out,
+                        mask, mask_out,
                         cellx, None,
                         celly, None,
                         x0, None,
@@ -211,6 +211,7 @@ def im2vis(uvw=None,
                         epsilon, None,
                         flip_v, None,
                         do_wgridding, None,
+                        precision, None,
                         divide_by_n, None,
                         nthreads, None,
                         sigma_min, None,
@@ -224,13 +225,13 @@ def _im2vis(uvw,
            mask,
            cellx,
            celly,
-           nthreads,
-           epsilon,
-           do_wgridding=True,
-           flip_v=False,
            x0=0, y0=0,
+           epsilon=1e-7,
+           flip_v=False,
+           do_wgridding=True,
            precision='single',
            divide_by_n=False,
+           nthreads=1,
            sigma_min=1.1,
            sigma_max=2.6):
 
@@ -238,14 +239,15 @@ def _im2vis(uvw,
                         freq,
                         image[0][0],
                         wgt,
+                        mask,
                         cellx, celly,
-                        nthreads,
-                        epsilon,
-                        do_wgridding,
-                        flip_v,
                         x0, y0,
+                        epsilon,
+                        flip_v,
+                        do_wgridding,
                         precision,
                         divide_by_n,
+                        nthreads,
                         sigma_min,
                         sigma_max)
 
@@ -255,16 +257,16 @@ def _im2vis_impl(uvw,
                  freq,
                  image,
                  wgt,
+                 mask,
                  cellx,
                  celly,
-                 nthreads,
-                 epsilon,
-                 do_wgridding=True,
+                 x0=0, y0=0,
+                 epsilon=1e-7,
                  flip_v=False,
-                 x0=0,
-                 y0=0,
+                 do_wgridding=True,
                  precision='single',
                  divide_by_n=False,
+                 nthreads=1,
                  sigma_min=1.1,
                  sigma_max=2.6):
     uvw = np.require(uvw, dtype=np.float64)
@@ -276,10 +278,12 @@ def _im2vis_impl(uvw,
         real_type = np.float64
         complex_type = np.complex128
     image = np.require(image, dtype=real_type)
-    wgt = np.require(wgt, dtype=real_type)
-    mask = np.require(mask, dtype=np.uint8)
+    if wgt is not None:
+        wgt = np.require(wgt, dtype=real_type)
+    if mask is not None:
+        mask = np.require(mask, dtype=np.uint8)
     return dirty2vis(uvw=uvw, freq=freq, dirty=image, wgt=wgt, mask=mask,
-                     npix_x=nx, npix_y=ny, pixsize_x=cellx, pixsize_y=celly,
+                     pixsize_x=cellx, pixsize_y=celly,
                      center_x=x0, center_y=y0, epsilon=epsilon, flip_v=flip_v,
                      do_wgridding=do_wgridding, divide_by_n=divide_by_n,
                      nthreads=nthreads, sigma_min=sigma_min,
