@@ -32,7 +32,7 @@ inputs:
     dtype: bool
     default: False
     info:
-      Concatenate datasets by row
+      Concatenate datasets by channel
   overwrite:
     dtype: bool
     default: false
