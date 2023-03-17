@@ -19,7 +19,7 @@ def _coef2im_impl(alpha, bases, ntot, iy, sy, nx, ny):
     Per band coefficients to image
     '''
     nband, nbasis, _ = alpha.shape
-    x = np.zeros((nband, nx, ny), dtype=alpha.dtype)
+    x = np.zeros((nband, nbasis, nx, ny), dtype=alpha.dtype)
     for l in numba.prange(nband):
         for b in range(nbasis):
             base = bases[b]
@@ -31,8 +31,8 @@ def _coef2im_impl(alpha, bases, ntot, iy, sy, nx, ny):
                     a, iy[base], sy[base], output_format='wavedecn')
                 wave = waverecn(alpha_rec, base, mode='zero')
 
-            x[l] += wave
-    return x
+            x[l, b] = wave
+    return x.sum(axis=1)
 
 
 @numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)

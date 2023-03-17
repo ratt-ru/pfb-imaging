@@ -3,7 +3,8 @@ from functools import partial
 import dask.array as da
 from numpy.testing import assert_array_almost_equal
 from pfb.prox.prox_21 import prox_21
-from pfb.operators.psi import im2coef, coef2im
+from pfb.operators.psi import _im2coef_impl_flat as im2coef
+from pfb.operators.psi import _coef2im_impl_flat as coef2im
 import pywt
 import pytest
 from numba.typed import Dict
@@ -29,13 +30,15 @@ def test_psi(nx, ny, nband, nlevels):
     # set up dictionary
     bases = ('self','db1','db2','db3','db4','db5')
     nbasis = len(bases)
-    iys, sys, ntot, nmax = wavelet_setup(x, bases, nlevels)
+    iys, sys, ntot, nmax = wavelet_setup(x[0:1], bases, nlevels)
     ntot = tuple(ntot)
+
     psiH = partial(im2coef, bases=bases, ntot=ntot, nmax=nmax,
                    nlevels=nlevels)
     psi = partial(coef2im, bases=bases, ntot=ntot,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
+    # import pdb; pdb.set_trace()
     # decompose
     alpha = psiH(x)
     # reconstruct

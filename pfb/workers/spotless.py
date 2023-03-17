@@ -136,8 +136,8 @@ def _spotless(**kw):
     from pfb.opt.pcg import pcg
     from pfb.opt.primal_dual import primal_dual
     from pfb.operators.hessian import hessian_xds, hessian_psf_cube
-    from pfb.operators.psi import _im2coef_impl as im2coef
-    from pfb.operators.psi import _coef2im_impl as coef2im
+    from pfb.operators.psi import _im2coef_impl_flat as im2coef
+    from pfb.operators.psi import _coef2im_impl_flat as coef2im
     from copy import copy, deepcopy
     from ducc0.misc import make_noncritical
     from pfb.wavelets.wavelets import wavelet_setup
