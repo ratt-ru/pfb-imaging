@@ -68,7 +68,7 @@ def primal_dual(
                   file=log)
         k += 1
 
-    if k == maxit - 1:
+    if k == maxit:
         if verbosity:
             print(f"Max iters reached. eps = {eps:.3e}", file=log)
     else:
