@@ -305,9 +305,6 @@ def _spotless(**kw):
     # array variable and step size as inputs
     prox21 = partial(prox_21, weight=l1weight, axis=0)
 
-    # only need this is inverter == pd
-    dual2 = None
-
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
     print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",

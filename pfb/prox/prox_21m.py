@@ -1,4 +1,5 @@
 import numpy as np
+from numba import njit, prange
 
 
 def prox_21m(v, sigma, weight=None, axis=0):
@@ -19,3 +20,36 @@ def prox_21m(v, sigma, weight=None, axis=0):
     ratio = np.zeros(mask.shape, dtype=v.dtype)
     ratio[mask] = l2_soft[mask] / l2_norm[mask]
     return v * np.expand_dims(ratio, axis=axis)  # restores axis
+
+
+@njit(nogil=True, fastmath=True, cache=True, parallel=True)
+def prox_21m_numba(v, sigma, weight=None, axis=0):
+    """
+    Computes weighted version of
+
+    prox_{sigma * || . ||_{21}}(v)
+
+    Assumed that v has shape (nband, nbasis, ntot) where
+
+    nband   - number of imaging bands
+    nbasis  - number of orthogonal bases
+    ntot    - total number of coefficients for each basis (must be equal)
+    """
+    nband, nbasis, ntot = v.shape
+    # sum over band axis upfront?
+    # vsum = np.sum(v, axis=0)
+    result = np.zeros((nband, nbasis, ntot))
+    for b in prange(nbasis):
+        vb = v[:, b]
+        weightb = weight[b]
+        resultb = result[:, b]
+        for i in range(ntot):
+            vbisum = np.sum(vb[:, i])
+            if not vbisum:
+                continue
+            absvbi = np.abs(vbisum)
+            softvbi = np.maximum(absvbi - sigma*weightb[i], 0.0) #* vbisum/absvbi
+            if softvbi:
+                resultb[:, i] = vb[:, i] * softvbi / absvbi
+
+    return result

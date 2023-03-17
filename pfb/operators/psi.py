@@ -19,7 +19,7 @@ def _coef2im_impl(alpha, bases, ntot, iy, sy, nx, ny):
     Per band coefficients to image
     '''
     nband, nbasis, _ = alpha.shape
-    x = np.zeros((nband, nbasis, nx, ny), dtype=alpha.dtype)
+    x = np.zeros((nband, nx, ny), dtype=alpha.dtype)
     for l in numba.prange(nband):
         for b in range(nbasis):
             base = bases[b]
@@ -31,8 +31,8 @@ def _coef2im_impl(alpha, bases, ntot, iy, sy, nx, ny):
                     a, iy[base], sy[base], output_format='wavedecn')
                 wave = waverecn(alpha_rec, base, mode='zero')
 
-            x[l, b] = wave
-    return np.sum(x, axis=1)
+                x[l] += wave
+    return x
 
 
 @numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)
@@ -60,7 +60,7 @@ def _coef2im_impl_flat(alpha, bases, ntot, iy, sy, nx, ny):
 
 
 def _coef2im(alpha, bases, ntot, iy, sy, nx, ny):
-    return _coef2im_impl_flat(alpha[0][0], bases, ntot,
+    return _coef2im_impl(alpha[0][0], bases, ntot,
                          iy, sy, nx, ny)
 
 def coef2im(alpha, bases, ntot, iy, sy, nx, ny, compute=True):
@@ -85,30 +85,6 @@ def coef2im(alpha, bases, ntot, iy, sy, nx, ny, compute=True):
 
 
 @numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)
-def _coef2im_impl_flat(alpha, bases, ntot, iy, sy, nx, ny):
-    '''
-    Per band coefficients to image
-    '''
-    nband, nbasis, _ = alpha.shape
-    # not chunking over basis
-    x = np.zeros((nband*nbasis, nx, ny), dtype=alpha.dtype)
-    for i in numba.prange(nband*nbasis):
-        l = i//nbasis
-        b = i - l*nbasis
-        base = bases[b]
-        a = alpha[l, b, 0:ntot[b]]
-        if base == 'self':
-            wave = a.reshape(nx, ny)
-        else:
-            alpha_rec = unravel_coeffs(
-                a, iy[base], sy[base], output_format='wavedecn')
-            wave = waverecn(alpha_rec, base, mode='zero')
-
-        x[i] = wave
-    return np.sum(x.reshape(nband, nbasis, nx, ny), axis=1)
-
-
-@numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)
 def _im2coef_impl(x, bases, ntot, nmax, nlevels):
     '''
     Per band image to coefficients
@@ -129,7 +105,7 @@ def _im2coef_impl(x, bases, ntot, nmax, nlevels):
     return alpha
 
 def _im2coef(x, bases, ntot, nmax, nlevels):
-    return _im2coef_impl_flat(x[0][0], bases, ntot, nmax, nlevels)
+    return _im2coef_impl(x[0][0], bases, ntot, nmax, nlevels)
 
 
 def im2coef(x, bases, ntot, nmax, nlevels, compute=True):
