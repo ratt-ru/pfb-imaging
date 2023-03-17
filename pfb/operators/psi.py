@@ -31,7 +31,7 @@ def _coef2im_impl(alpha, bases, ntot, iy, sy, nx, ny):
                     a, iy[base], sy[base], output_format='wavedecn')
                 wave = waverecn(alpha_rec, base, mode='zero')
 
-                x[l] += wave
+            x[l] += wave
     return x
 
 
