@@ -5,8 +5,8 @@ from numpy.testing import assert_array_almost_equal
 from pfb.prox.prox_21 import prox_21
 from pfb.prox.prox_21m import prox_21m
 from pfb.prox.prox_21m import prox_21m_numba
-from pfb.operators.psi import _im2coef_impl_flat as im2coef
-from pfb.operators.psi import _coef2im_impl_flat as coef2im
+from pfb.operators.psi import im2coef
+from pfb.operators.psi import coef2im
 import pywt
 import pytest
 from numba.typed import Dict
@@ -40,11 +40,13 @@ def test_psi(nx, ny, nband, nlevels):
     psi = partial(coef2im, bases=bases, ntot=ntot,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
-    # import pdb; pdb.set_trace()
+    alpha = np.zeros((nband, nbasis, nmax), dtype=x.dtype)
+    xrec = np.zeros((nband, nx, ny), dtype=x.dtype)
+
     # decompose
-    alpha = psiH(x)
+    psiH(x, alpha)
     # reconstruct
-    xrec = psi(alpha)
+    psi(alpha, xrec)
 
     # the nbasis is required here because the operator is not normalised
     assert_array_almost_equal(nbasis*x, xrec, decimal=12)
@@ -76,11 +78,14 @@ def test_prox21(nx, ny, nband, nlevels):
     weights_21 = np.ones((nbasis, nmax))
     sig_21 = 0.0
 
-    alpha = psiH(x)
+    alpha = np.zeros((nband, nbasis, nmax), dtype=x.dtype)
+    xrec = np.zeros((nband, nx, ny), dtype=x.dtype)
+
+    psiH(x, alpha)
 
     y = prox_21(alpha, sig_21, weights_21)
 
-    xrec = psi(y)
+    psi(y, xrec)
 
     # the nbasis is required here because the operator is not normalised
     assert_array_almost_equal(nbasis*x, xrec, decimal=12)
