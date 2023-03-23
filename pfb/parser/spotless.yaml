@@ -3,7 +3,6 @@ inputs:
     - (pfb.parser)gridding.yml
     - (pfb.parser)pdopts.yml
     - (pfb.parser)pmopts.yml
-    - (pfb.parser)cgopts.yml
     - (pfb.parser)dist.yml
   nband:
     dtype: int
@@ -108,14 +107,6 @@ inputs:
     default: false
     info:
       Holds data in memory if set
-  inverter:
-    dtype: str
-    default: pcg
-    choices:
-      - pcg
-      - pd
-    info:
-      Which algorithm to use for inverting Hessian
 
 outputs:
   {}

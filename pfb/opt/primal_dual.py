@@ -3,6 +3,7 @@ import numexpr as ne
 import dask.array as da
 from distributed import wait, get_client, as_completed
 from operator import getitem
+from ducc0.misc import make_noncritical
 import pyscilog
 log = pyscilog.get_logger('PD')
 

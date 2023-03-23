@@ -1,5 +1,7 @@
 import numpy as np
 import numba
+import numexpr as ne
+import concurrent.futures as cf
 import pywt
 import dask.array as da
 from pfb.wavelets.wavelets import wavedecn, waverecn, ravel_coeffs, unravel_coeffs
@@ -23,7 +25,7 @@ def _coef2im_impl(a, base, l, iy, sy, nx, ny):
     return wave, l
 
 
-def coef2im(alpha, x, bases, ntot, iy, sy, nx, ny):
+def coef2im(alpha, x, bases, ntot, iy, sy, nx, ny, nthreads=1):
     '''
     Per band coefficients to image
     '''
@@ -61,7 +63,7 @@ def _im2coef_impl(x, base, l, b, nlevels):
     return wave, l, b
 
 
-def im2coef(x, alpha, bases, ntot, nmax, nlevels):
+def im2coef(x, alpha, bases, ntot, nmax, nlevels, nthreads=1):
     '''
     Per band image to coefficients
     '''

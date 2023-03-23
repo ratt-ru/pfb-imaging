@@ -22,7 +22,7 @@ def prox_21m(v, sigma, weight=None, axis=0):
     return v * np.expand_dims(ratio, axis=axis)  # restores axis
 
 
-@numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)
+@njit(nogil=True, fastmath=True, cache=True, parallel=True)
 def prox_21m_numba(v, result, lam, sigma=1.0, weight=None):
     """
     Computes weighted version of
@@ -43,7 +43,7 @@ def prox_21m_numba(v, result, lam, sigma=1.0, weight=None):
         vb = v[:, b]
         weightb = weight[b]
         resultb = result[:, b]
-        for i in numba.prange(ntot):
+        for i in prange(ntot):
             vbisum = np.sum(vb[:, i])/sigma
             if not vbisum:
                 resultb[:, i] = 0.0

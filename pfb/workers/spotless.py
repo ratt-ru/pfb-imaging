@@ -264,14 +264,16 @@ def _spotless(**kw):
                    bases=bases,
                    ntot=ntot,
                    nmax=nmax,
-                   nlevels=opts.nlevels)
+                   nlevels=opts.nlevels,
+                   nthreads=opts.nthreads)
     psi = partial(coef2im,
                   bases=bases,
                   ntot=ntot,
                   iy=iy,
                   sy=sy,
                   nx=nx,
-                  ny=ny)
+                  ny=ny,
+                  nthreads=opts.nthreads)
 
     # get clean beam area to convert residual units during l1reweighting
     # TODO - could refine this with comparison between dirty and restored
@@ -285,7 +287,9 @@ def _spotless(**kw):
     # i) convert residual units so it is comparable to model
     # ii) project residual into dual domain
     # iii) compute the rms in the space where thresholding happens
-    rms_comps = np.std(np.sum(psiH(residual/pix_per_beam), axis=0),
+    tmp = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
+    psiH(residual/pix_per_beam, tmp)
+    rms_comps = np.std(np.sum(tmp, axis=0),
                        axis=-1)[:, None]  # preserve axes
 
     # TODO - load from dds if present
@@ -295,8 +299,9 @@ def _spotless(**kw):
     else:
         if opts.l1reweight_from == 0:
             print('Initialising with L1 reweighted', file=log)
-            mcomps = np.sum(psiH(model), axis=0)
-            l1weight = (1 + opts.rmsfactor)/(1 + np.abs(mcomps)/rms_comps)
+            psiH(model, tmp)
+            mcomps = np.sum(tmp, axis=0)
+            l1weight = (1 + opts.rmsfactor)/(1 + (np.abs(mcomps)/rms_comps)**2)
             # l1weight[l1weight < 1.0] = 0.0
         else:
             l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
@@ -304,7 +309,7 @@ def _spotless(**kw):
 
     # for generality the prox function only takes the
     # array variable and step size as inputs
-    prox21 = partial(prox_21, weight=l1weight, axis=0)
+    prox21 = partial(prox_21, weight=l1weight)
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -313,8 +318,8 @@ def _spotless(**kw):
     for k in range(opts.niter):
         print('Solving for model', file=log)
         modelp = deepcopy(model)
-        data = residual + hess_psf(model)
-        grad21 = lambda x: hess_psf(x) - data
+        data = residual + psf_convolve(model)
+        grad21 = lambda x: psf_convolve(x) - data
         model, dual = primal_dual(model,
                                   dual,
                                   opts.rmsfactor*rms,
@@ -353,14 +358,16 @@ def _spotless(**kw):
         if k+1 >= opts.l1reweight_from:
             print('Computing L1 weights', file=log)
             # convert residual units so it is comparable to model
-            rms_comps = np.std(np.sum(psiH(residual/pix_per_beam), axis=0),
+            psiH(residual/pix_per_beam, tmp)
+            rms_comps = np.std(np.sum(tmp, axis=0),
                                axis=-1)[:, None]  # preserve axes
-            mcomps = np.sum(psiH(model), axis=0)
+            psiH(model, tmp)
+            mcomps = np.sum(tmp, axis=0)
             # the logic here is that weights shoudl remain the same for model
             # components that are rmsfactor times larger than the rms
             # high SNR values should experience relatively small thresholding
             # whereas small values should be strongly thresholded
-            l1weight = (1 + opts.rmsfactor)/(1 + np.abs(mcomps)/rms_comps)
+            l1weight = (1 + opts.rmsfactor)/(1 + (np.abs(mcomps)/rms_comps)**2)
             # l1weight[l1weight < 1.0] = 0.0
             prox = partial(prox_21, weight=l1weight, axis=0)
 
