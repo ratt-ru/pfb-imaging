@@ -4,7 +4,6 @@ from operator import getitem
 from distributed import wait, get_client, as_completed
 from scipy.linalg import norm
 from copy import deepcopy
-from pfb.operators.hessian import hessian_psf_slice
 import pyscilog
 log = pyscilog.get_logger('PM')
 
@@ -25,8 +24,8 @@ def power_method(
     beta = 1.0
     eps = 1.0
     k = 0
+    bp = b.copy()
     while eps > tol and k < maxit:
-        bp = b
         b = A(bp)
         bnorm = np.linalg.norm(b)
         betap = beta
@@ -34,6 +33,7 @@ def power_method(
         b /= bnorm
         eps = np.linalg.norm(beta - betap) / betap
         k += 1
+        bp[...] = b[...]
 
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {eps:.3e}", file=log)

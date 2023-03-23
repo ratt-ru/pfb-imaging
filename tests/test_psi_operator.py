@@ -3,6 +3,8 @@ from functools import partial
 import dask.array as da
 from numpy.testing import assert_array_almost_equal
 from pfb.prox.prox_21 import prox_21
+from pfb.prox.prox_21m import prox_21m
+from pfb.prox.prox_21m import prox_21m_numba
 from pfb.operators.psi import _im2coef_impl_flat as im2coef
 from pfb.operators.psi import _coef2im_impl_flat as coef2im
 import pywt
@@ -82,3 +84,18 @@ def test_prox21(nx, ny, nband, nlevels):
 
     # the nbasis is required here because the operator is not normalised
     assert_array_almost_equal(nbasis*x, xrec, decimal=12)
+
+@pmp("nmax", [1234, 240])
+@pmp("nbasis", [1, 5])
+@pmp("nband", [1, 3, 6])
+def test_prox21m(nband, nbasis, nmax):
+    # check numba implementation matches numpy even when output contains random
+    # numbers initially
+    v = np.random.randn(nband, nbasis, nmax)
+    vout = np.random.randn(nband, nbasis, nmax)
+    l1weight = np.ones((nbasis, nmax))
+    sigma = 1e-3
+    res = prox_21m(v, sigma, weight=l1weight)
+    prox_21m_numba(v, vout, sigma, weight=l1weight)
+
+    assert_array_almost_equal(res, vout, decimal=12)

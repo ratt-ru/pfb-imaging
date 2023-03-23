@@ -134,14 +134,15 @@ def _spotless(**kw):
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
-    from pfb.opt.primal_dual import primal_dual
-    from pfb.operators.hessian import hessian_xds, hessian_psf_cube
-    from pfb.operators.psi import _im2coef_impl_flat as im2coef
-    from pfb.operators.psi import _coef2im_impl_flat as coef2im
+    from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
+    from pfb.operators.hessian import hessian_xds
+    from pfb.operators.psf import psf_convolve_cube
+    from pfb.operators.psi import im2coef
+    from pfb.operators.psi import coef2im
     from copy import copy, deepcopy
     from ducc0.misc import make_noncritical
     from pfb.wavelets.wavelets import wavelet_setup
-    from pfb.prox.prox_21m import prox_21m as prox_21
+    from pfb.prox.prox_21m import prox_21m_numba as prox_21
     from pfb.prox.prox2 import prox2
     # from pfb.prox.prox_21 import prox_21
     from pfb.utils.misc import fitcleanbeam
@@ -227,12 +228,12 @@ def _spotless(**kw):
     xpad = make_noncritical(xpad)
     xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
     xhat = make_noncritical(xhat)
-    hess_psf = partial(hessian_psf_cube, xpad, xhat, xout, beam, psfhat, lastsize,
-                       nthreads=opts.nthreads, sigmainv=opts.sigmainv)
+    psf_convolve = partial(psf_convolve_cube, xpad, xhat, xout, psfhat, lastsize,
+                       nthreads=opts.nthreads)
 
     if opts.hessnorm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
-        hessnorm, hessbeta = power_method(hess_psf, (nband, nx, ny),
+        hessnorm, hessbeta = power_method(psf_convolve, (nband, nx, ny),
                                           tol=opts.pm_tol,
                                           maxit=opts.pm_maxit,
                                           verbosity=opts.pm_verbose,

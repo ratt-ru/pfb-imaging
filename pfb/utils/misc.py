@@ -1090,6 +1090,7 @@ def _estimate_tec_impl(vis_ant, freq, tec_nyq, max_tec, fctr, srf=10):
             # delays[p,c] = 0.5*dlag*(fp1 - fm1)/(fm1 - 2*f0 + fp1)
             # print(p, c, lag[delay_idx])
             tecs[p,c] = lag[tec_idx]
+            print(f'TEC for antenna {p} and correlation {c} = {lag[tec_idx]}')
     return tecs
 
 

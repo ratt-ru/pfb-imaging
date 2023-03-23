@@ -272,7 +272,7 @@ def hessian_psf_cube(
         psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x*beam,
                           nthreads=nthreads)
     else:
-        psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x,
+        xout = psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x,
                           nthreads=nthreads)
 
     if beam is not None:

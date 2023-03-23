@@ -22,8 +22,8 @@ def prox_21m(v, sigma, weight=None, axis=0):
     return v * np.expand_dims(ratio, axis=axis)  # restores axis
 
 
-@njit(nogil=True, fastmath=True, cache=True, parallel=True)
-def prox_21m_numba(v, sigma, weight=None, axis=0):
+@numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)
+def prox_21m_numba(v, result, lam, sigma=1.0, weight=None):
     """
     Computes weighted version of
 
@@ -38,18 +38,16 @@ def prox_21m_numba(v, sigma, weight=None, axis=0):
     nband, nbasis, ntot = v.shape
     # sum over band axis upfront?
     # vsum = np.sum(v, axis=0)
-    result = np.zeros((nband, nbasis, ntot))
-    for b in prange(nbasis):
+    # result = np.zeros((nband, nbasis, ntot))
+    for b in range(nbasis):
         vb = v[:, b]
         weightb = weight[b]
         resultb = result[:, b]
-        for i in range(ntot):
-            vbisum = np.sum(vb[:, i])
+        for i in numba.prange(ntot):
+            vbisum = np.sum(vb[:, i])/sigma
             if not vbisum:
+                resultb[:, i] = 0.0
                 continue
             absvbi = np.abs(vbisum)
-            softvbi = np.maximum(absvbi - sigma*weightb[i], 0.0) #* vbisum/absvbi
-            if softvbi:
-                resultb[:, i] = vb[:, i] * softvbi / absvbi
-
-    return result
+            softvbi = np.maximum(absvbi - lam*weightb[i]/sigma, 0.0) #* vbisum/absvbi
+            resultb[:, i] = vb[:, i] * softvbi / absvbi /sigma

@@ -1,4 +1,5 @@
 import numpy as np
+import numexpr as ne
 import dask.array as da
 from distributed import wait, get_client, as_completed
 from operator import getitem
@@ -7,8 +8,8 @@ log = pyscilog.get_logger('PD')
 
 
 def primal_dual(
-        x0,  # initial guess for primal variable
-        v0,  # initial guess for dual variable
+        x,  # initial guess for primal variable
+        v,  # initial guess for dual variable
         lam,  # regulariser strength
         psi,  # linear operator in dual domain
         psiH,  # adjoint of psi
@@ -26,8 +27,10 @@ def primal_dual(
         gamma=1.0,
         verbosity=1):
     # initialise
-    x = x0.copy()
-    v = v0.copy()
+    xp = x.copy()
+    vp = v.copy()
+    vtilde = np.zeros_like(v)
+    vout = np.zeros_like(v)
 
     # this seems to give a good trade-off between
     # primal and dual problems
@@ -41,9 +44,6 @@ def primal_dual(
     eps = 1.0
     k = 0
     while (eps > tol or k < minit) and k < maxit:
-        xp = x.copy()
-        vp = v.copy()
-
         # tmp prox variable
         vtilde = v + sigma * psiH(xp)
 
@@ -58,6 +58,10 @@ def primal_dual(
         # convergence check
         eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
 
+        # copy contents to avoid allocating new memory
+        xp[...] = x[...]
+        vp[...] = v[...]
+
         if np.isnan(eps) or np.isinf(eps):
             import pdb; pdb.set_trace()
 
@@ -66,6 +70,96 @@ def primal_dual(
             # phi = np.vdot(res, A(res))
             print(f"At iteration {k} eps = {eps:.3e}",  # and phi = {phi:.3e}",
                   file=log)
+        k += 1
+
+    if k == maxit:
+        if verbosity:
+            print(f"Max iters reached. eps = {eps:.3e}", file=log)
+    else:
+        if verbosity:
+            print(f"Success, converged after {k} iterations", file=log)
+
+    return x, v
+
+
+def primal_dual_optimised(
+        x,  # initial guess for primal variable
+        v,  # initial guess for dual variable
+        lam,  # regulariser strength
+        psi,  # linear operator in dual domain
+        psiH,  # adjoint of psi
+        L,  # spectral norm of Hessian
+        prox,  # prox of regulariser
+        grad,  # gradient of smooth term
+        nu=1.0,  # spectral norm of psi
+        sigma=None,  # step size of dual update
+        mask=None,  # regions where mask is False will be masked
+        tol=1e-5,
+        maxit=1000,
+        minit=10,
+        positivity=True,
+        report_freq=10,
+        gamma=1.0,
+        verbosity=1):
+    # initialise
+    xp = x.copy()
+    xp = make_noncritical(xp)
+    vp = v.copy()
+    vp = make_noncritical(vp)
+    vtilde = np.zeros_like(v)
+    vtilde = make_noncritical(vtilde)
+    vout = np.zeros_like(v)
+    vout = make_noncritical(vout)
+    xout = np.zeros_like(x)
+    xout = make_noncritical(xout)
+
+    # this seems to give a good trade-off between
+    # primal and dual problems
+    if sigma is None:
+        sigma = L / (2.0 * gamma) / nu
+
+    # stepsize control
+    tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
+
+    # start iterations
+    eps = 1.0
+    k = 0
+    while (eps > tol or k < minit) and k < maxit:
+        # tmp prox variable
+        # vtilde = v + sigma * psiH(xp)
+        psiH(xp, vtilde)
+        ne.evaluate('v + sigma * vtilde', out=vtilde)  #, casting='same_kind')
+
+        # dual update
+        # v = vtilde - sigma * prox(vtilde / sigma, lam / sigma)
+        prox(vtilde, vout, lam, sigma)
+        ne.evaluate('vtilde - sigma*vout', out=v)  #, casting='same_kind')
+
+        # primal update
+        # x = xp - tau * (psi(2 * v - vp) + grad(xp))
+        ne.evaluate('2.0 * v - vp', out=vout)  #, casting='same_kind')
+        psi(vout, xout)
+        xout += grad(xp)
+        ne.evaluate('xp - tau * xout', out=x)  #, casting='same_kind')
+
+        if positivity:
+            x[x < 0.0] = 0.0
+
+        # convergence check
+        eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
+
+        # copy contents to avoid allocating new memory
+        # this is not faster but it allows us to see where the time is spent
+        np.copyto(xp, x)
+        np.copyto(vp, v)
+        # xp[...] = x[...]
+        # vp[...] = v[...]
+
+        if np.isnan(eps) or np.isinf(eps):
+            import pdb; pdb.set_trace()
+
+        if not k % report_freq and verbosity > 1:
+            print(f"At iteration {k} eps = {eps:.3e}", file=log)
         k += 1
 
     if k == maxit:
