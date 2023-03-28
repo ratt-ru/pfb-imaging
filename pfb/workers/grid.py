@@ -236,7 +236,10 @@ def _grid(**kw):
     dds_out = []
     for i, ds in enumerate(xds):
         if dds_exists:
-            out_ds = dds[i]
+            out_ds = dds[i].chunk({'row':-1,
+                                   'chan':-1,
+                                   'x':-1,
+                                   'y':-1})
         else:
             out_ds = xr.Dataset()
         if opts.transfer_model_from is not None:

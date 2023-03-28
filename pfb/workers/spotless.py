@@ -288,7 +288,10 @@ def _spotless(**kw):
     # ii) project residual into dual domain
     # iii) compute the rms in the space where thresholding happens
     tmp = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
-    psiH(residual/pix_per_beam, tmp)
+    fsel = wsums > 0
+    tmp2 = residual.copy()
+    tmp2[fsel] *= wsum/wsums[fsel, None, None]
+    psiH(tmp2/pix_per_beam, tmp)
     rms_comps = np.std(np.sum(tmp, axis=0),
                        axis=-1)[:, None]  # preserve axes
 
@@ -358,7 +361,8 @@ def _spotless(**kw):
         if k+1 >= opts.l1reweight_from:
             print('Computing L1 weights', file=log)
             # convert residual units so it is comparable to model
-            psiH(residual/pix_per_beam, tmp)
+            tmp2[fsel] = residual[fsel] * wsum/wsums[fsel, None, None]
+            psiH(tmp2/pix_per_beam, tmp)
             rms_comps = np.std(np.sum(tmp, axis=0),
                                axis=-1)[:, None]  # preserve axes
             psiH(model, tmp)

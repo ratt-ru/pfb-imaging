@@ -241,12 +241,13 @@ def l2reweight(dsv, dsi, epsilon, nthreads, wstack, precision, dof=2):
                     y0=y0,
                     precision=precision)
     res = vis - mvis
+    res *= vis_mask
 
     # Mahalanobis distance
     ressq = (res*res.conj()).real
 
     # overall variance factor
-    ovar = ressq.sum()/res.size
+    ovar = ressq.sum()/vis_mask.sum()
 
     # new precision variables
     eta = (dof + 1)/(dof + ressq/ovar)

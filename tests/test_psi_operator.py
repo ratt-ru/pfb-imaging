@@ -40,8 +40,9 @@ def test_psi(nx, ny, nband, nlevels):
     psi = partial(coef2im, bases=bases, ntot=ntot,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
-    alpha = np.zeros((nband, nbasis, nmax), dtype=x.dtype)
-    xrec = np.zeros((nband, nx, ny), dtype=x.dtype)
+    # make sure this works even when output arrays are randomly populated
+    alpha = np.random.randn(nband, nbasis, nmax)  #, dtype=x.dtype)
+    xrec = np.random.randn(nband, nx, ny)  #, dtype=x.dtype)
 
     # decompose
     psiH(x, alpha)
@@ -75,7 +76,7 @@ def test_prox21(nx, ny, nband, nlevels):
     psi = partial(coef2im, bases=bases, ntot=ntot,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
-    weights_21 = np.ones((nbasis, nmax))
+    weights_21 = np.random.random(nbasis*nmax).reshape(nbasis, nmax)
     sig_21 = 0.0
 
     alpha = np.zeros((nband, nbasis, nmax), dtype=x.dtype)
@@ -90,17 +91,65 @@ def test_prox21(nx, ny, nband, nlevels):
     # the nbasis is required here because the operator is not normalised
     assert_array_almost_equal(nbasis*x, xrec, decimal=12)
 
-@pmp("nmax", [1234, 240])
+
+@pmp("nx", [1202, 240])
+@pmp("ny", [324, 1506])
+@pmp("nband", [1, 3, 6])
+@pmp("nlevels", [1, 2])
+def test_prox21m(nx, ny, nband, nlevels):
+    """
+    Check that applying the prox with zero step size is the identity
+    """
+    image = np.random.randn(nx, ny)
+
+    nu = 1.0  + 0.1 * np.arange(nband)
+
+    x = image[None, :, :] * nu[:, None, None] ** (-0.7)
+
+    # set up dictionary info
+    bases = ('self','db1','db2','db3','db4','db5')
+    nbasis = len(bases)
+    iys, sys, ntot, nmax = wavelet_setup(x, bases, nlevels)
+    ntot = tuple(ntot)
+    psiH = partial(im2coef, bases=bases, ntot=ntot, nmax=nmax,
+                   nlevels=nlevels)
+    psi = partial(coef2im, bases=bases, ntot=ntot,
+                  iy=iys, sy=sys, nx=nx, ny=ny)
+
+    weights_21 = np.random.random(nbasis*nmax).reshape(nbasis, nmax)
+    sig_21 = 0.0
+
+    alpha = np.zeros((nband, nbasis, nmax), dtype=x.dtype)
+    xrec = np.zeros((nband, nx, ny), dtype=x.dtype)
+
+    psiH(x, alpha)
+
+    y = prox_21m(alpha, sig_21, weight=weights_21)
+
+    psi(y, xrec)
+
+    # the nbasis is required here because the operator is not normalised
+    assert_array_almost_equal(nbasis*x, xrec, decimal=12)
+
+
+@pmp("nmax", [1234, 240, 8765])
 @pmp("nbasis", [1, 5])
 @pmp("nband", [1, 3, 6])
-def test_prox21m(nband, nbasis, nmax):
+@pmp("lam", [1.0, 1e-1, 1e-3])
+@pmp("sigma", [75.0, 1.0, 1e-3])
+def test_prox21m_numba(nband, nbasis, nmax, lam, sigma):
     # check numba implementation matches numpy even when output contains random
     # numbers initially
     v = np.random.randn(nband, nbasis, nmax)
     vout = np.random.randn(nband, nbasis, nmax)
-    l1weight = np.ones((nbasis, nmax))
+    l1weight = np.random.random(nbasis*nmax).reshape(nbasis, nmax)
     sigma = 1e-3
-    res = prox_21m(v, sigma, weight=l1weight)
-    prox_21m_numba(v, vout, sigma, weight=l1weight)
+    res = prox_21m(v, lam, weight=l1weight)
+    prox_21m_numba(v, vout, lam, weight=l1weight)
 
     assert_array_almost_equal(res, vout, decimal=12)
+
+    res = prox_21m(v/sigma, lam/sigma, weight=l1weight)
+    prox_21m_numba(v, vout, lam, sigma=sigma, weight=l1weight)
+
+    assert_array_almost_equal(res, vout, decimal=9)
