@@ -1321,3 +1321,15 @@ def concat_chan(xds):
         )
         xds_out.append(xdso)
     return xds_out
+
+
+@njit(nogil=True, cache=True)
+# from numba import guvectorize, float64
+# @guvectorize()
+def copyto3D(dest, source):
+    nx, ny, nz = source.shape
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                dest[i,j,k] = source[i,j,k]
+

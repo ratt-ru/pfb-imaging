@@ -116,7 +116,7 @@ def pcg(A,
         #     stall_count += 1
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} epsx = {epsx:.3e}, epsn = {epsn:.3e}",
+            print(f"At iteration {k} epsx = {eps:.3e}",
                   file=log)
 
     if k >= maxit:

@@ -344,7 +344,7 @@ def idwt_axis(approx_coeffs, detail_coeffs,
 
 
 @numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
-def dwt(data, wavelet, mode="symmetric", axis=None):
+def dwt(data, wavelet, mode="zero", axis=None):
 
     if isinstance(data, nbtypes.misc.Optional):
         if not isinstance(data.type, nbtypes.npytypes.Array):
@@ -354,7 +354,7 @@ def dwt(data, wavelet, mode="symmetric", axis=None):
 
     have_axis = not is_nonelike(axis)
 
-    def impl(data, wavelet, mode="symmetric", axis=None):
+    def impl(data, wavelet, mode="zero", axis=None):
         if not have_axis:
             axis = List(range(data.ndim))
 
@@ -407,11 +407,11 @@ def coeff_product(args, repeat=1):
 
 
 @numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
-def idwt(coeffs, wavelet, mode='symmetric', axis=None):
+def idwt(coeffs, wavelet, mode='zero', axis=None):
 
     have_axis = not is_nonelike(axis)
 
-    def impl(coeffs, wavelet, mode='symmetric', axis=None):
+    def impl(coeffs, wavelet, mode='zero', axis=None):
         ndim_transform = max([len(key) for key in coeffs.keys()])
         coeff_shapes = [v.shape for v in coeffs.values()]
 
@@ -493,10 +493,10 @@ def promote_level(sizes, dec_lens, level=None):
 
 
 @numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
-def wavedecn(data, wavelet, mode='symmetric', level=None, axis=None):
+def wavedecn(data, wavelet, mode='zero', level=None, axis=None):
     have_axis = not is_nonelike(axis)
 
-    def impl(data, wavelet, mode='symmetric', level=None, axis=None):
+    def impl(data, wavelet, mode='zero', level=None, axis=None):
         if not have_axis:
             axis = List(range(data.ndim))
 
@@ -528,7 +528,7 @@ def wavedecn(data, wavelet, mode='symmetric', level=None, axis=None):
 
 
 @numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
-def waverecn(coeffs, wavelet, mode='symmetric', axis=None):
+def waverecn(coeffs, wavelet, mode='zero', axis=None):
     # ca = coeffs[0]['aa']
     # if not isinstance(ca, nbtypes.npytypes.Array):
     #     raise TypeError("ca must be an ndarray")
@@ -536,7 +536,7 @@ def waverecn(coeffs, wavelet, mode='symmetric', axis=None):
     have_axis = not is_nonelike(axis)
     # ndim_slices = (slice(None),) * ca.ndim
 
-    def impl(coeffs, wavelet, mode='symmetric', axis=None):
+    def impl(coeffs, wavelet, mode='zero', axis=None):
         ca = coeffs[0]['aa']
         if len(coeffs) == 1:
             return ca
