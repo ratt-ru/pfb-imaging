@@ -187,6 +187,8 @@ def single_stokes(ds=None,
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
     data_vars['BEAM'] = (('scalar'), beam)
 
+    coords = {'chan': freq}
+
     # TODO - provide time and freq centroids
     attrs = {
         'ra' : radec[0],
@@ -201,7 +203,7 @@ def single_stokes(ds=None,
         'product': opts.product
     }
 
-    out_ds = Dataset(data_vars,
+    out_ds = Dataset(data_vars, coords=coords,
                      attrs=attrs).chunk({'row':100000,
                                          'chan':128})
 

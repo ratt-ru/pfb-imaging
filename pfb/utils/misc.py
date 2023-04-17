@@ -565,10 +565,12 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
         freq_out[band] = np.mean(ufreqs[indl&indu])
         chan_count += ufreqs[indl&indu].size
 
+
     if chan_count < nchan:
         raise RuntimeError("Something has gone wrong with the chan <-> band "
                            "mapping. This is probably a bug.")
 
+    # this logic does not currently handle overlapping spws
     band_mapping = {}
     fbin_idx = {}
     fbin_counts = {}
@@ -578,7 +580,7 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
         band_mapping[ms] = {}
         for idt in idts:
             freq = freqs[ms][idt]
-            band_map = np.zeros(freq.size, dtype=np.int32)
+            band_map = np.empty(freq.size, dtype=np.int32)
             for band in range(nband):
                 indl = freq >= fbins[band]
                 if band == nband-1:

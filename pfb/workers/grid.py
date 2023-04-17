@@ -89,20 +89,40 @@ def _grid(**kw):
             xdsb = []
             times = []
             timeids = []
+            dvars = {}
+            uvws = {}
             for ds in xdsp:
                 if ds.bandid == b:
-                    xdsb.append(ds)
+                    nrow, nchan = ds.VIS.shape
+                    dvars.setdefault(nrow, [])
+                    dvars[nrow].append(ds.drop(('UVW', 'BEAM')))
+                    # UVW and BEAM should be duplicated on these datasets
+                    # and xarray does not know how to concatenate them because
+                    # they don't have a chan axis. So we'll add them back manually
+                    uvws.setdefault(nrow, {})
+                    uvws[nrow]['UVW'] = ds.UVW
+                    uvws[nrow]['BEAM'] = ds.BEAM
                     times.append(ds.time_out)
                     timeids.append(ds.timeid)
+            # first concatenate along chan axis where nrows match
+            for nrow, val in dvars.items():
+                xdso = xr.concat(val, dim='chan',
+                                 data_vars='minimal',
+                                 coords='minimal').chunk({'chan':-1})
+                xdso['UVW'] = uvws[nrow]['UVW']
+                xdso['BEAM'] = uvws[nrow]['BEAM']
+                xdsb.append(xdso)
+
+            # now concatenate along the row axis since nchans should match
             xdso = xr.concat(xdsb, dim='row',
                              data_vars='minimal',
                              coords='minimal').chunk({'row':-1})
             tid = np.array(timeids).min()
-            tout = np.mean(np.array(times))
-            xdso.assign_attrs(
-                {'time_out': tout, 'timeid': tid}
+            tout = np.round(np.mean(np.array(times)), 5)  # avoid precision issues
+            xdso = xdso.assign_attrs(
+                {'time_out': tout, 'timeid': 0}
             )
-            xds.append(xdso)
+            xds.append(xdso.sortby('chan'))
         try:
             assert len(xds) == opts.nband
         except Exception as e:
