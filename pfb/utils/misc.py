@@ -148,8 +148,9 @@ def to4d(data):
 
 def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     S0, S1, PA = GaussPar
-    Smaj = np.maximum(S0, S1)
-    Smin = np.minimum(S0, S1)
+    Smaj = S0  #np.maximum(S0, S1)
+    Smin = S1  #np.minimum(S0, S1)
+    print(f'using ex = {Smaj}, ey = {Smin}')
     A = np.array([[1. / Smin ** 2, 0],
                   [0, 1. / Smaj ** 2]])
 

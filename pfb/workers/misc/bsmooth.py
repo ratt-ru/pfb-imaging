@@ -53,7 +53,7 @@ def _bsmooth(**kw):
     import dask.array as da
     import dask
     from scipy.ndimage import median_filter
-    from pfb.utils.regression import kanterp3, kanterp2, kanterp
+    from smoove.kanterp import kanterp
 
     gain_dir = Path(opts.gain_dir).resolve()
 
@@ -82,8 +82,8 @@ def _bsmooth(**kw):
     fmin = freq.min()
     fmax = freq.max()
     nu = (freq - fmin)/(fmax - fmin)
-    nu += 0.01
-    nu *= 0.99/nu.max()
+    nu += 0.1
+    nu *= 0.9/nu.max()
 
     bamp = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
     bphase = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
@@ -113,7 +113,7 @@ def _bsmooth(**kw):
                     if idx.size < 2:
                         continue
                     # enforce zero offset and slope
-                    w = np.sqrt(jhj[0, idx, p, 0, c])
+                    w = np.sqrt(jhj[0, idx, p, 0, c])  # polyfit convention
                     y = phase[0, idx, p, 0, c]
                     f = freq[idx]
                     coeffs = np.polyfit(f, y, 1, w=w)
@@ -130,16 +130,16 @@ def _bsmooth(**kw):
                     idx = w>0
                     amplin = np.interp(freq, freq[idx], y[idx])
                     I = slice(128, -128)
-                    ms, Ps = kanterp(nu[I], amplin[I], w[I], niter=10, nu0=2)
+                    _, ms, Ps = kanterp(nu[I], amplin[I], w[I], niter=10, nu=2)
                                     #  ,sigmaf0=np.sqrt(nchan), sigman0=1)
-                    amp[0, I, p, 0, c] = ms[0, :]
+                    amp[0, I, p, 0, c] = ms
                     if p == ref_ant:
                         continue
                     y = phase[0, :, p, 0, c]
                     phaselin = np.interp(freq, freq[idx], y[idx])
-                    ms, Ps = kanterp(nu[I], phaselin[I], w[I]/amp[0, I, p, 0, c],
-                                      niter=10, nu0=2) #, sigmaf0=np.sqrt(nchan), sigman0=1)
-                    phase[0, I, p, 0, c] = ms[0, :]
+                    _, ms, Ps = kanterp(nu[I], phaselin[I], w[I]/amp[0, I, p, 0, c],
+                                      niter=10, nu=2) #, sigmaf0=np.sqrt(nchan), sigman0=1)
+                    phase[0, I, p, 0, c] = ms
 
 
             bpass = amp * np.exp(1.0j*phase)
@@ -172,16 +172,15 @@ def _bsmooth(**kw):
                 amp = bamp[0, :, p, 0, c]
                 amplin = np.interp(freq, freq[idx], amp[idx])
                 I = slice(128, -128)
-                ms, Ps = kanterp(nu[I], amplin[I], w[I], niter=10, nu0=2)
+                _, ms, Ps = kanterp(nu[I], amplin[I], w[I], niter=10, nu=2)
                                 #  ,sigmaf0=np.sqrt(nchan), sigman0=1)
-                samp[0, I, p, 0, c] = ms[0, :]
+                samp[0, I, p, 0, c] = ms
                 if p == ref_ant:
                     continue
                 phase = bphase[0, :, p, 0, c]
                 phaselin = np.interp(freq, freq[idx], phase[idx])
-                ms, Ps = kanterp(nu[I], phaselin[I], w[I]/samp[0, I, p, 0, c]) #,
-                                #   niter=10, nu0=2, sigmaf0=np.sqrt(nchan), sigman0=1)
-                sphase[0, I, p, 0, c] = ms[0, :]
+                _, ms, Ps = kanterp(nu[I], phaselin[I], w[I]/samp[0, I, p, 0, c], niter=10, nu=2)
+                sphase[0, I, p, 0, c] = ms
 
 
         bpass = samp * np.exp(1.0j*sphase)
@@ -260,3 +259,54 @@ def _bsmooth(**kw):
             plt.close('all')
 
     print("All done here", file=log)
+
+
+def smooth_ant(amp, phase, w, f, nu, p, c, do_phase=True):
+    print(f" p = {p}, c = {c}", file=log)
+    idx = ~f
+    if idx.sum() < 2:
+        return np.ones(amp.size)
+    amplin = np.interp(nu, nu[idx], amp[idx])
+    _, samp, _ = kanterp(nu, amplin, w, niter=10, nu=2)
+    if do_phase:
+        phaselin = np.interp(nu, nu[idx], phase[idx])
+        _, sphase, _ = kanterp(nu[I], phaselin[I], w[I]/samp[0, I, p, 0, c], niter=10, nu=2)
+    else:
+        sphase = np.zeros(phase.size)
+    return samp * np.exp(1.0j*sphase), p, c
+
+
+def plot_ant(bamp, samp, bphase, sphase, xds, freq, p,c):
+    print(f" p = {p}, c = {c}")
+    fig, ax = plt.subplots(nrows=1, ncols=2,
+                           figsize=(18, 18))
+    fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
+
+    for s, ds in enumerate(xds):
+        jhj = ds.jhj.values.real[0, :, p, 0, c]
+        f = ds.gain_flags.values[0, :, p, 0]
+        flag = np.logical_or(jhj==0, f)
+        tamp = np.abs(xds[s].gains.values[0, :, p, 0, c])
+        tphase = (np.angle(xds[s].gains.values[0, :, p, 0, c]) -
+                    np.angle(xds[s].gains.values[0, :, opts.ref_ant, 0, c]))
+        tamp[flag] = np.nan
+        tphase[flag] = np.nan
+
+        ax[0].plot(freq, tamp, label=f'scan-{s}', alpha=0.5, linewidth=1)
+        ax[1].plot(freq, np.rad2deg(tphase), label=f'scan-{s}', alpha=0.5, linewidth=1)
+
+
+    ax[0].plot(freq, bamp[0, :, p, 0, c], 'k', label='inf', linewidth=1)
+    ax[0].plot(freq, samp[0, :, p, 0, c], 'r', label='smooth', linewidth=1)
+    ax[0].legend()
+    ax[0].set_xlabel('freq / [MHz]')
+
+    ax[1].plot(freq, np.rad2deg(bphase[0, :, p, 0, c]), 'k', label='inf', linewidth=1)
+    ax[1].plot(freq, np.rad2deg(sphase[0, :, p, 0, c]), 'r', label='smooth', linewidth=1)
+    ax[1].legend()
+    ax[1].set_xlabel('freq / [MHz]')
+
+    fig.tight_layout()
+    name = f'{str(gain_dir)}/{opts.gain_term}_Antenna{p}corr{c}.png'
+    plt.savefig(name, dpi=250, bbox_inches='tight')
+    plt.close('all')
