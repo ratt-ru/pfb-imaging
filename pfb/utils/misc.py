@@ -463,14 +463,14 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
                           group_cols=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'])
 
         # subtables
-        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")
-        fields = xds_from_table(ms + "::FIELD")
-        spws = xds_from_table(ms + "::SPECTRAL_WINDOW")
-        pols = xds_from_table(ms + "::POLARIZATION")
-        ants = xds_from_table(ms + "::ANTENNA")
+        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")[0]
+        fields = xds_from_table(ms + "::FIELD")[0]
+        spws = xds_from_table(ms + "::SPECTRAL_WINDOW")[0]
+        pols = xds_from_table(ms + "::POLARIZATION")[0]
+        ants = xds_from_table(ms + "::ANTENNA")[0]
 
-        antpos[ms] = ants[0].POSITION.data
-        poltype[ms] = fetch_poltype(pols[0].CORR_TYPE.data.squeeze())
+        antpos[ms] = ants.POSITION.data
+        poltype[ms] = fetch_poltype(pols.CORR_TYPE.data.squeeze())
 
 
         if gain_name is not None:
@@ -487,12 +487,10 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
         for ids, ds in enumerate(xds):
             idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
             idts.append(idt)
-            field = fields[ds.FIELD_ID]
-            radecs[ms][idt] = field.PHASE_DIR.data.squeeze()
+            radecs[ms][idt] = fields.PHASE_DIR.data[ds.FIELD_ID].squeeze()
 
-            spw = spws[ds.DATA_DESC_ID]
-            freqs[ms][idt] = da.atleast_1d(spw.CHAN_FREQ.data.squeeze())
-            chan_widths[ms][idt] = da.atleast_1d(spw.CHAN_WIDTH.data.squeeze())
+            freqs[ms][idt] = spws.CHAN_FREQ.data[ds.DATA_DESC_ID]
+            chan_widths[ms][idt] = spws.CHAN_WIDTH.data[ds.DATA_DESC_ID]
             times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
             uvw = ds.UVW.data
             u_max = abs(uvw[:, 0].max())
