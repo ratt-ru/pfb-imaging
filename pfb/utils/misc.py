@@ -795,7 +795,7 @@ def _model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
     return model
 
 
-def init_mask(mask, mds, output_type, log):
+def init_mask(mask, model, output_type, log):
     if mask is None:
         print("No mask provided", file=log)
         mask = np.ones((mds.nx, mds.ny), dtype=output_type)
@@ -807,13 +807,9 @@ def init_mask(mask, mds, output_type, log):
         except Exception as e:
             print(f"No mask found at {mask}", file=log)
             raise e
-    elif mask.lower() == 'mds':
-        try:
-            mask = mds.MASK.values.astype(output_type)
-            print('Using mask in mds', file=log)
-        except:
-            print(f"No mask in mds", file=log)
-            raise e
+    elif mask.lower() == 'model':
+        mask = np.any(model, axis=0)
+        print('Using model to construct mask', file=log)
     else:
         raise ValueError(f'Unsupported masking option {mask}')
     return mask
