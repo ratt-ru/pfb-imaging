@@ -36,7 +36,7 @@ requirements = [
 
                 "smoove"
                 "@git+https://github.com/landmanbester/smoove.git"
-                "@master"
+                "@test_ci"
             ]
 
 
