@@ -41,7 +41,7 @@ def _restimator(**kw):
     import numpy as np
     import dask
     import dask.array as da
-    from daskms import xds_from_ms
+    from daskms import xds_from_storage_ms as xds_from_ms
     from pathlib import Path
 
     ms_path = Path(opts.ms).resolve()
