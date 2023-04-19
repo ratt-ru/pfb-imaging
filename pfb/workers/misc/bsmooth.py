@@ -54,6 +54,7 @@ def _bsmooth(**kw):
     import dask
     from scipy.ndimage import median_filter
     from smoove.kanterp import kanterp
+    import concurrent.futures as cf
 
     gain_dir = Path(opts.gain_dir).resolve()
 
@@ -162,25 +163,25 @@ def _bsmooth(**kw):
 
         samp = np.zeros_like(bamp)
         sphase = np.zeros_like(bamp)
-        for p in range(nant):
-            for c in range(ncorr):
+        futures = []
+        with cf.ProcessPoolExecutor(max_workers=opts.nthreads) as executor:
+            for p in range(nant):
+                for c in range(ncorr):
+                    f = flag[0, :, p, 0]
+                    w = wgt[0, :, p, 0, c]
+                    amp = bamp[0, :, p, 0, c]
+                    phase = bphase[0, :, p, 0, c]
+                    do_phase = p != ref_ant
+                    future = executor.submit(smooth_ant, amp, phase,
+                                             w, f, nu, p, c,
+                                             do_phase=do_phase)
+                    futures.append(future)
+
+            for future in cf.as_completed(futures):
+                sa, sp, p, c = future.result()
                 print(f" p = {p}, c = {c}", file=log)
-                idx = ~flag[0, :, p, 0]
-                if idx.sum() < 2:
-                    continue
-                w = wgt[0, :, p, 0, c]
-                amp = bamp[0, :, p, 0, c]
-                amplin = np.interp(freq, freq[idx], amp[idx])
-                I = slice(128, -128)
-                _, ms, Ps = kanterp(nu[I], amplin[I], w[I], niter=10, nu=2)
-                                #  ,sigmaf0=np.sqrt(nchan), sigman0=1)
-                samp[0, I, p, 0, c] = ms
-                if p == ref_ant:
-                    continue
-                phase = bphase[0, :, p, 0, c]
-                phaselin = np.interp(freq, freq[idx], phase[idx])
-                _, ms, Ps = kanterp(nu[I], phaselin[I], w[I]/samp[0, I, p, 0, c], niter=10, nu=2)
-                sphase[0, I, p, 0, c] = ms
+                samp[0, I, p, 0, c] = sa
+                sphase[0, I, p, 0, c] = sp
 
 
         bpass = samp * np.exp(1.0j*sphase)
@@ -214,69 +215,71 @@ def _bsmooth(**kw):
     # sphase = np.where(wgt > 0, sphase, np.nan)
 
     # load the original data for comparitive plotting
+    # need to redo since xds was overwritten
     try:
         xds = xds_from_zarr(f'{str(gain_dir)}::{opts.gain_term}')
     except Exception as e:
         raise(e)
 
+    freq = xds[0].gain_f/1e6  # MHz
+    with cf.ProcessPoolExecutor(max_workers=opts.nthreads) as executor:
+        for p in range(nant):
+            for c in range(ncorr):
+                print(f" p = {p}, c = {c}")
+                fig, ax = plt.subplots(nrows=1, ncols=2,
+                                    figsize=(18, 18))
+                fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
+
+                for s, ds in enumerate(xds):
+                    jhj = ds.jhj.values.real[0, :, p, 0, c]
+                    f = ds.gain_flags.values[0, :, p, 0]
+                    flag = np.logical_or(jhj==0, f)
+                    tamp = np.abs(xds[s].gains.values[0, :, p, 0, c])
+                    tphase = (np.angle(xds[s].gains.values[0, :, p, 0, c]) -
+                            np.angle(xds[s].gains.values[0, :, opts.ref_ant, 0, c]))
+                    tamp[flag] = np.nan
+                    tphase[flag] = np.nan
+
+                    ax[0].plot(freq, tamp, label=f'scan-{s}', alpha=0.5, linewidth=1)
+                    ax[1].plot(freq, np.rad2deg(tphase), label=f'scan-{s}', alpha=0.5, linewidth=1)
 
 
-    freq = xds[0].gain_f/1e6
-    for p in range(nant):
-        for c in range(ncorr):
-            print(f" p = {p}, c = {c}")
-            fig, ax = plt.subplots(nrows=1, ncols=2,
-                                figsize=(18, 18))
-            fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
+                ax[0].plot(freq, bamp[0, :, p, 0, c], 'k', label='inf', linewidth=1)
+                ax[0].plot(freq, samp[0, :, p, 0, c], 'r', label='smooth', linewidth=1)
+                ax[0].legend()
+                ax[0].set_xlabel('freq / [MHz]')
 
-            for s, ds in enumerate(xds):
-                jhj = ds.jhj.values.real[0, :, p, 0, c]
-                f = ds.gain_flags.values[0, :, p, 0]
-                flag = np.logical_or(jhj==0, f)
-                tamp = np.abs(xds[s].gains.values[0, :, p, 0, c])
-                tphase = (np.angle(xds[s].gains.values[0, :, p, 0, c]) -
-                          np.angle(xds[s].gains.values[0, :, opts.ref_ant, 0, c]))
-                tamp[flag] = np.nan
-                tphase[flag] = np.nan
+                ax[1].plot(freq, np.rad2deg(bphase[0, :, p, 0, c]), 'k', label='inf', linewidth=1)
+                ax[1].plot(freq, np.rad2deg(sphase[0, :, p, 0, c]), 'r', label='smooth', linewidth=1)
+                ax[1].legend()
+                ax[1].set_xlabel('freq / [MHz]')
 
-                ax[0].plot(freq, tamp, label=f'scan-{s}', alpha=0.5, linewidth=1)
-                ax[1].plot(freq, np.rad2deg(tphase), label=f'scan-{s}', alpha=0.5, linewidth=1)
-
-
-            ax[0].plot(freq, bamp[0, :, p, 0, c], 'k', label='inf', linewidth=1)
-            ax[0].plot(freq, samp[0, :, p, 0, c], 'r', label='smooth', linewidth=1)
-            ax[0].legend()
-            ax[0].set_xlabel('freq / [MHz]')
-
-            ax[1].plot(freq, np.rad2deg(bphase[0, :, p, 0, c]), 'k', label='inf', linewidth=1)
-            ax[1].plot(freq, np.rad2deg(sphase[0, :, p, 0, c]), 'r', label='smooth', linewidth=1)
-            ax[1].legend()
-            ax[1].set_xlabel('freq / [MHz]')
-
-            fig.tight_layout()
-            name = f'{str(gain_dir)}/{opts.gain_term}_Antenna{p}corr{c}.png'
-            plt.savefig(name, dpi=250, bbox_inches='tight')
-            plt.close('all')
+                fig.tight_layout()
+                name = f'{str(gain_dir)}/{opts.gain_term}_Antenna{p}corr{c}.png'
+                plt.savefig(name, dpi=250, bbox_inches='tight')
+                plt.close('all')
 
     print("All done here", file=log)
 
 
-def smooth_ant(amp, phase, w, f, nu, p, c, do_phase=True):
-    print(f" p = {p}, c = {c}", file=log)
+def smooth_ant(amp, phase, w, f, nu, p, c,
+               do_phase=True, niter=10, dof=2):
     idx = ~f
+    # we need at least two points to smooth
     if idx.sum() < 2:
-        return np.ones(amp.size)
+        return np.ones(amp.size), np.zeros(phase.size), p, c
     amplin = np.interp(nu, nu[idx], amp[idx])
-    _, samp, _ = kanterp(nu, amplin, w, niter=10, nu=2)
+    _, samp, _ = kanterp(nu, amplin, w, niter=niter, nu=dof)
     if do_phase:
         phaselin = np.interp(nu, nu[idx], phase[idx])
-        _, sphase, _ = kanterp(nu[I], phaselin[I], w[I]/samp[0, I, p, 0, c], niter=10, nu=2)
+        _, sphase, _ = kanterp(nu, phaselin, w/samp[0, :, p, 0, c],
+                               niter=niter, nu=dof)
     else:
         sphase = np.zeros(phase.size)
-    return samp * np.exp(1.0j*sphase), p, c
+    return samp, sphase, p, c
 
 
-def plot_ant(bamp, samp, bphase, sphase, xds, freq, p,c):
+def plot_ant(bamp, samp, bphase, sphase, xds, freq, p, c, opts):
     print(f" p = {p}, c = {c}")
     fig, ax = plt.subplots(nrows=1, ncols=2,
                            figsize=(18, 18))
@@ -309,4 +312,4 @@ def plot_ant(bamp, samp, bphase, sphase, xds, freq, p,c):
     fig.tight_layout()
     name = f'{str(gain_dir)}/{opts.gain_term}_Antenna{p}corr{c}.png'
     plt.savefig(name, dpi=250, bbox_inches='tight')
-    plt.close('all')
+    plt.close(fig)

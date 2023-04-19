@@ -167,9 +167,9 @@ def _gsmooth(**kw):
 
 
     samp = np.zeros_like(gamp)
-    # sampcov = np.zeros_like(gamp)
+    sampcov = np.zeros_like(gamp)
     sphase = np.zeros_like(gphase)
-    # sphasecov = np.zeros_like(gamp)
+    sphasecov = np.zeros_like(gamp)
     kernel = mat52()
     theta0 = np.ones(3)
     for p in range(nant):
@@ -184,7 +184,7 @@ def _gsmooth(**kw):
             theta0[1] = 0.25*t.max()
             _, mus, covs = emterp(theta0, t, amp, kernel, w=w, niter=opts.niter, nu=2)
             samp[:, 0, p, 0, c] = mus
-            # sampcov[:, 0, p, 0, c] = covs
+            sampcov[:, 0, p, 0, c] = covs
             if p == ref_ant:
                 continue
             phase = gphase[:, 0, p, 0, c]
@@ -193,7 +193,7 @@ def _gsmooth(**kw):
             theta0[1] = 0.05*t.max()
             _, mus, covs = emterp(theta0, t, phase, kernel, w=wp, niter=opts.niter, nu=2)
             sphase[:, 0, p, 0, c] = mus
-            # sphasecov[:, 0, p, 0, c] = covs
+            sphasecov[:, 0, p, 0, c] = covs
 
 
     gs = samp * np.exp(1.0j*sphase)
@@ -229,20 +229,20 @@ def _gsmooth(**kw):
 
             sigma = 1.0/np.sqrt(jhj[:, 0, p, 0, c])
             amp = gamp[:, 0, p, 0, c]
-            ax[0].errorbar(time, amp, sigma, fmt='xr', label='raw')
-            ax[0].errorbar(time, samp[:, 0, p, 0, c],
+            ax[0].errorbar(t, amp, sigma, fmt='xr', label='raw')
+            ax[0].errorbar(t, samp[:, 0, p, 0, c],
                            np.sqrt(sampcov[:, 0, p, 0, c]),
-                           fmt='ok', label='smooth')
+                           fmt='ok', label='smooth', alpha=0.5)
             ax[0].legend()
             ax[0].set_xlabel('time')
 
             sigmap = sigma/amp
             phase = gphase[:, 0, p, 0, c]
-            ax[1].errorbar(time, np.rad2deg(phase), sigmap, fmt='xr')
+            ax[1].errorbar(t, np.rad2deg(phase), sigmap, fmt='xr')
             phase = sphase[:, 0, p, 0, c]
-            ax[1].errorbar(time, np.rad2deg(phase),
+            ax[1].errorbar(t, np.rad2deg(phase),
                            np.rad2deg(np.sqrt(sphasecov[:, 0, p, 0, c])),
-                           fmt='ok', label='smooth')
+                           fmt='ok', label='smooth', alpha=0.5)
             ax[1].legend()
             ax[1].set_xlabel('time')
 
