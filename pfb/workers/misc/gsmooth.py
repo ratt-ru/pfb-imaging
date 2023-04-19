@@ -55,7 +55,8 @@ def _gsmooth(**kw):
     import dask
     from scipy.ndimage import median_filter
     import xarray as xr
-    from pfb.utils.regression import gpr, kanterp, kanterp3
+    from smoove.gpr import emterp
+    from smoove.kernels.mattern52 import mat52
 
     gain_dir = Path(opts.gain_dir).resolve()
 
@@ -77,6 +78,11 @@ def _gsmooth(**kw):
         ntime = gain.shape[0]
         It.append(slice(ti, ti+ntime))
         ti += ntime
+        try:
+            assert dsk.params.shape[0] == 1
+        except:
+            # TODO - interpolate offset to resolution of G
+            raise NotImplementedError('Only scalar offset can be transfered atm')
         offset = dsk.params.values[0, 0, :, 0, 0]
         # K = exp(1.0j*(offset + 2pi*slope*freq))
         gain[:, :, :, :, 0] = (dsg.gains.values[:, :, :, :, 0] *
@@ -140,6 +146,7 @@ def _gsmooth(**kw):
     else:
         ref_ant = opts.ref_ant
 
+    # manual unwrap required?
     gamp = np.abs(g)
     gphase = np.angle(g*g[:, :, ref_ant].conj()[:, :, None])
     gphase = np.unwrap(gphase, axis=0, discont=0.9*2*np.pi)
@@ -153,22 +160,18 @@ def _gsmooth(**kw):
                     gphase[I, 0, p, 0, c] -= 2*np.pi*np.sign(tmp)
 
 
-    time = xds_concat.gain_t.values
-    # the coordinate needs to be scaled to lie in (0, 1)
-    tmin = time.min()
-    tmax = time.max()
-    t = (time - tmin)/(tmax - tmin)
-    t += 0.01
-    t *= 0.99/t.max()
-
-    samp = gamp
-    sphase = gphase
+    t = xds_concat.gain_t.values
+    # scale t to lie in [0, 1]
+    t -= t.min()
+    t /= t.max()
 
 
     samp = np.zeros_like(gamp)
-    sampcov = np.zeros_like(gamp)
+    # sampcov = np.zeros_like(gamp)
     sphase = np.zeros_like(gphase)
-    sphasecov = np.zeros_like(gamp)
+    # sphasecov = np.zeros_like(gamp)
+    kernel = mat52()
+    theta0 = np.ones(3)
     for p in range(nant):
         for c in range(ncorr):
             print(f" p = {p}, c = {c}")
@@ -177,16 +180,20 @@ def _gsmooth(**kw):
                 continue
             w = jhj[:, 0, p, 0, c]
             amp = gamp[:, 0, p, 0, c]
-            mus, covs = kanterp3(t, amp, w, opts.niter, nu0=2)
-            samp[:, 0, p, 0, c] = mus[0, :]
-            sampcov[:, 0, p, 0, c] = covs[0, 0, :]
+            theta0[0] = np.std(amp[w!=0])
+            theta0[1] = 0.25*t.max()
+            _, mus, covs = emterp(theta0, t, amp, kernel, w=w, niter=opts.niter, nu=2)
+            samp[:, 0, p, 0, c] = mus
+            # sampcov[:, 0, p, 0, c] = covs
             if p == ref_ant:
                 continue
             phase = gphase[:, 0, p, 0, c]
             wp = w/samp[:, 0, p, 0, c]
-            mus, covs = kanterp3(t, phase, wp, opts.niter, nu0=2)
-            sphase[:, 0, p, 0, c] = mus[0, :]
-            sphasecov[:, 0, p, 0, c] = covs[0, 0, :]
+            theta0[0] = np.std(phase[wp!=0])
+            theta0[1] = 0.05*t.max()
+            _, mus, covs = emterp(theta0, t, phase, kernel, w=wp, niter=opts.niter, nu=2)
+            sphase[:, 0, p, 0, c] = mus
+            # sphasecov[:, 0, p, 0, c] = covs
 
 
     gs = samp * np.exp(1.0j*sphase)
