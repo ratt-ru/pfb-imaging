@@ -23,6 +23,11 @@ inputs:
     default: 5
     info:
       Number of reweighting iterations (larger -> more smoothing)
+  do_smooth:
+    dtype: bool
+    default: true
+    info:
+      Whether to smooth the G solutions (otherwise just tranfer K offset amd plot)
   do_plots:
     dtype: bool
     default: false

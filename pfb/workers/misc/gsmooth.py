@@ -1,3 +1,25 @@
+import os
+os.environ["OMP_NUM_THREADS"] = str(1)
+os.environ["OPENBLAS_NUM_THREADS"] = str(1)
+os.environ["MKL_NUM_THREADS"] = str(1)
+os.environ["VECLIB_MAXIMUM_THREADS"] = str(1)
+os.environ["NUMBA_NUM_THREADS"] = str(1)
+import numpy as np
+import dask
+dask.config.set(**{'array.slicing.split_large_chunks': False})
+from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
+from pathlib import Path
+import matplotlib as mpl
+mpl.rcParams.update({'font.size': 18, 'font.family': 'serif'})
+import matplotlib.pyplot as plt
+import dask.array as da
+import dask
+from scipy.ndimage import median_filter
+import xarray as xr
+from smoove.gpr import emterp
+from smoove.kernels.mattern52 import mat52
+import concurrent.futures as cf
+from pfb.utils.misc import smooth_ant
 from contextlib import ExitStack
 from pfb.workers.experimental import cli
 import click
@@ -32,23 +54,6 @@ def gsmooth(**kw):
     print('Input Options:', file=log)
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
-
-    import numpy as np
-    import dask
-    dask.config.set(**{'array.slicing.split_large_chunks': False})
-    from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
-    from pathlib import Path
-    import matplotlib as mpl
-    mpl.rcParams.update({'font.size': 18, 'font.family': 'serif'})
-    import matplotlib.pyplot as plt
-    import dask.array as da
-    import dask
-    from scipy.ndimage import median_filter
-    import xarray as xr
-    from smoove.gpr import emterp
-    from smoove.kernels.mattern52 import mat52
-    import concurrent.futures as cf
-    from pfb.utils.misc import smooth_ant
 
     gain_dir = Path(opts.gain_dir).resolve()
 
@@ -114,77 +119,110 @@ def gsmooth(**kw):
 
     dask.compute(writes)
 
-
-    xds_concat = xr.concat(xds, dim='gain_t').sortby('gain_t')
-
-    ntime, nchan, nant, ndir, ncorr = xds_concat.gains.data.shape
-    if nchan > 1:
-        raise ValueError("Only time smoothing currently supported")
-    if ndir > 1:
-        raise ValueError("Only time smoothing currently supported")
-
-
-    jhj = np.abs(xds_concat.jhj.values)
-    g = xds_concat.gains.values
-    f = xds_concat.gain_flags.values
-    flag = np.any(jhj == 0, axis=-1)
-    flag = np.logical_or(flag, f)
-
-    for c in range(ncorr):
-        jhj[flag, c] = 0.0
-
     if opts.ref_ant == -1:
         ref_ant = nant-1
     else:
         ref_ant = opts.ref_ant
 
+
+    if opts.do_smooth:
+        xdso = []
+        for ds in xds:
+            print(f'Doing scan {ds.SCAN_NUMBER}', file=log)
+            ntime, nchan, nant, ndir, ncorr = ds.gains.data.shape
+            if nchan > 1:
+                raise ValueError("Only time smoothing currently supported")
+            if ndir > 1:
+                raise ValueError("Only time smoothing currently supported")
+
+            jhj = ds.jhj.values.real
+            g = ds.gains.values
+            f = ds.gain_flags.values
+            flag = np.logical_or(jhj==0, f[:, :, :, :, None])
+            jhj = np.where(flag, 0.0, jhj)
+
+            # manual unwrap required?
+            gamp = np.abs(g)
+            gphase = np.angle(g*g[:, :, ref_ant].conj()[:, :, None])
+            gphase = np.unwrap(gphase, axis=0, discont=0.9*2*np.pi)
+
+            t = ds.gain_t.values.copy()
+            # scale t to lie in (0, 1)
+            t -= t.min()
+            t /= t.max()
+            t += 0.1
+            t *= 0.9/t.max()
+
+            samp = np.zeros_like(gamp)
+            sphase = np.zeros_like(gphase)
+
+            futures = []
+            with cf.ProcessPoolExecutor(max_workers=opts.nthreads) as executor:
+                for p in range(nant):
+                    for c in range(ncorr):
+                        w = jhj[:, 0, p, 0, c]
+                        amp = gamp[:, 0, p, 0, c]
+                        phase = gphase[:, 0, p, 0, c]
+                        do_phase = p != ref_ant
+                        future = executor.submit(smooth_ant, amp, phase,
+                                                w, t, p, c,
+                                                do_phase=do_phase)
+                        futures.append(future)
+
+                for future in cf.as_completed(futures):
+                    sa, sp, p, c = future.result()
+                    samp[:, 0, p, 0, c] = sa
+                    sphase[:, 0, p, 0, c] = sp
+
+            gs = samp * np.exp(1.0j*sphase)
+            gs = da.from_array(gs, chunks=(-1, -1, -1, -1, -1))
+            dso = ds.assign(**{'gains': (ds.GAIN_AXES, gs)})
+            xdso.append(dso)
+
+        print(f"Writing smoothed gains to {str(gain_dir)}/"
+            f"smoothed.qc::{opts.gain_term}", file=log)
+        writes = xds_to_zarr(xdso,
+                            f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
+                            columns='ALL')
+
+        dask.compute(writes)
+    else:
+        xdso = xds
+
+    if not opts.do_plots:
+        print("Not doing plots", file=log)
+        print("All done here", file=log)
+        quit()
+
+    # concatenate for plotting
+    xds_concat = xr.concat(xds, dim='gain_t').sortby('gain_t')
+    xdso_concat = xr.concat(xdso, dim='gain_t').sortby('gain_t')
+    jhj = xds_concat.jhj.values.real
+    g = xds_concat.gains.values
+    gs = xdso_concat.gains.values
+    f = xds_concat.gain_flags.values
+    flag = np.logical_or(jhj==0, f[:, :, :, :, None])
+    jhj = np.where(flag, 0.0, jhj)
+
+
     # manual unwrap required?
     gamp = np.abs(g)
+    samp = np.abs(gs)
     gphase = np.angle(g*g[:, :, ref_ant].conj()[:, :, None])
     gphase = np.unwrap(gphase, axis=0, discont=0.9*2*np.pi)
-    medvals0 = np.median(gphase[It[0], 0, :, 0, :], axis=0)
-    for I in It[1:]:
-        medvals = np.median(gphase[I, 0, :, 0, :], axis=0)
-        for p in range(nant):
-            for c in range(ncorr):
-                tmp = medvals[p, c] - medvals0[p, c]
-                if np.abs(tmp) > 0.9*2*np.pi:
-                    gphase[I, 0, p, 0, c] -= 2*np.pi*np.sign(tmp)
+    sphase = np.angle(gs*gs[:, :, ref_ant].conj()[:, :, None])
+    sphase = np.unwrap(sphase, axis=0, discont=0.9*2*np.pi)
+    # medvals0 = np.median(gphase[It[0], 0, :, 0, :], axis=0)
+    # for I in It[1:]:
+    #     medvals = np.median(gphase[I, 0, :, 0, :], axis=0)
+    #     for p in range(nant):
+    #         for c in range(ncorr):
+    #             tmp = medvals[p, c] - medvals0[p, c]
+    #             if np.abs(tmp) > 0.9*2*np.pi:
+    #                 gphase[I, 0, p, 0, c] -= 2*np.pi*np.sign(tmp)
 
 
     t = xds_concat.gain_t.values
-    # scale t to lie in (0, 1)
-    t -= t.min()
-    t /= t.max()
-    t += 0.1
-    t *= 0.9/t.max()
-
-
-    samp = np.zeros_like(gamp)
-    sampcov = np.zeros_like(gamp)
-    sphase = np.zeros_like(gphase)
-    sphasecov = np.zeros_like(gamp)
-
-
-    futures = []
-    with cf.ProcessPoolExecutor(max_workers=opts.nthreads) as executor:
-        for p in range(nant):
-            for c in range(ncorr):
-                w = jhj[:, 0, p, 0, c]
-                amp = gamp[:, 0, p, 0, c]
-                phase = gphase[:, 0, p, 0, c]
-                do_phase = p != ref_ant
-                future = executor.submit(smooth_ant, amp, phase,
-                                         w, t, p, c,
-                                         do_phase=do_phase)
-                futures.append(future)
-
-        for future in cf.as_completed(futures):
-            sa, sp, p, c = future.result()
-            print(f" p = {p}, c = {c}", file=log)
-            samp[:, 0, p, 0, c] = sa
-            sphase[:, 0, p, 0, c] = sp
-
 
     # kernel = mat52()
     # theta0 = np.ones(3)
@@ -212,57 +250,54 @@ def gsmooth(**kw):
     #         sphasecov[:, 0, p, 0, c] = covs
 
 
-    gs = samp * np.exp(1.0j*sphase)
-    gs = da.from_array(gs, chunks=(-1, -1, -1, -1, -1))
-    for i, ds in enumerate(xds):
-        gsi = gs[It[i]]
-        xds[i] = ds.assign(**{'gains': (ds.GAIN_AXES, gsi)})
-
-    print(f"Writing smoothed gains to {str(gain_dir)}/"
-          f"smoothed.qc::{opts.gain_term}", file=log)
-    writes = xds_to_zarr(xds,
-                         f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
-                         columns='ALL')
-
-    dask.compute(writes)
-
-    if not opts.do_plots:
-        print("Not doing plots", file=log)
-        print("All done here", file=log)
-        quit()
 
     # set to NaN's for plotting
     gamp = np.where(jhj > 0, gamp, np.nan)
     gphase = np.where(jhj > 0, gphase, np.nan)
 
+    samp = np.where(jhj > 0, samp, np.nan)
+    sphase = np.where(jhj > 0, sphase, np.nan)
+
     print("Plotting results", file=log)
-    for p in range(nant):
-        for c in range(ncorr):
-            print(f" p = {p}, c = {c}")
-            fig, ax = plt.subplots(nrows=1, ncols=2,
-                                figsize=(18, 18))
-            fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
+    futures = []
+    with cf.ProcessPoolExecutor(max_workers=opts.nthreads) as executor:
+        for p in range(nant):
+            for c in range(ncorr):
+                ga = gamp[:, 0, p, 0, c]
+                sa = samp[:, 0, p, 0, c]
+                gp = gphase[:, 0, p, 0, c]
+                sp = sphase[:, 0, p, 0, c]
+                w = jhj[:, 0, p, 0, c]
+                future = executor.submit(plot_ant, ga, sa, gp, sp, w,
+                                         t, p, c, opts, gain_dir)
+                futures.append(future)
 
-            sigma = 1.0/np.sqrt(jhj[:, 0, p, 0, c])
-            amp = gamp[:, 0, p, 0, c]
-            ax[0].errorbar(t, amp, sigma, fmt='xr', label='raw')
-            ax[0].plot(t, samp[:, 0, p, 0, c], 'ko', label='smooth')
-            ax[0].legend()
-            ax[0].set_xlabel('time')
-
-            sigmap = sigma/amp
-            phase = gphase[:, 0, p, 0, c]
-            ax[1].errorbar(t, np.rad2deg(phase), sigmap, fmt='xr', label='raw')
-            phase = sphase[:, 0, p, 0, c]
-            ax[1].plot(t, np.rad2deg(phase), 'ko', label='smooth')
-            ax[1].legend()
-            ax[1].set_xlabel('time')
-
-            fig.tight_layout()
-            name = f'{str(gain_dir)}/{opts.gain_term}_Antenna{p}corr{c}.png'
-            plt.savefig(name, dpi=250, bbox_inches='tight')
-            plt.close('all')
+        for future in cf.as_completed(futures):
+            future.result()
 
     print("All done here.", file=log)
 
 
+def plot_ant(gamp, samp, gphase, sphase, jhj,
+             t, p, c, opts, gain_dir):
+    fig, ax = plt.subplots(nrows=1, ncols=2,
+                                figsize=(18, 18))
+    fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
+    sigma = np.where(jhj > 0, 1.0/np.sqrt(jhj), np.nan)
+    ax[0].errorbar(t, gamp, sigma, fmt='xr', label='raw')
+    ax[0].plot(t, samp, 'ko', label='smooth')
+    ax[0].legend()
+    ax[0].set_xlabel('time')
+
+    sigmap = sigma/samp
+    ax[1].errorbar(t, np.rad2deg(gphase), sigmap, fmt='xr', label='raw')
+    ax[1].plot(t, np.rad2deg(sphase), 'ko', label='smooth')
+    ax[1].legend()
+    ax[1].set_xlabel('time')
+
+    fig.tight_layout()
+    name = f'{str(gain_dir)}/{opts.gain_term}_Antenna{p}corr{c}.png'
+    plt.savefig(name, dpi=250, bbox_inches='tight')
+    plt.close(fig)
+
+    print(f"Saved plot {name}", file=log)
