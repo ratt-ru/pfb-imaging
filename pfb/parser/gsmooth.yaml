@@ -9,6 +9,10 @@ inputs:
     abbreviation: gt
     info:
       Gain term name
+  nthreads:
+    dtype: int
+    default: 8
+    abbreviation: nthreads
   ref_ant:
     dtype: int
     default: -1
@@ -24,9 +28,6 @@ inputs:
     default: false
     info:
       Make per antenna plots
-
-  _include:
-    - (pfb.parser)dist.yml
 
 
 outputs:

@@ -28,20 +28,10 @@ def gsmooth(**kw):
     pyscilog.log_to_file(f'tsmooth_{timestamp}.log')
     OmegaConf.set_struct(opts, True)
 
-    with ExitStack() as stack:
-        from pfb import set_client
-        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
-
-        # TODO - prettier config printing
-        print('Input Options:', file=log)
-        for key in opts.keys():
-            print('     %25s = %s' % (key, opts[key]), file=log)
-
-        return _gsmooth(**opts)
-
-def _gsmooth(**kw):
-    opts = OmegaConf.create(kw)
-    OmegaConf.set_struct(opts, True)
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
 
     import numpy as np
     import dask
@@ -57,6 +47,8 @@ def _gsmooth(**kw):
     import xarray as xr
     from smoove.gpr import emterp
     from smoove.kernels.mattern52 import mat52
+    import concurrent.futures as cf
+    from pfb.utils.misc import smooth_ant
 
     gain_dir = Path(opts.gain_dir).resolve()
 
@@ -161,39 +153,63 @@ def _gsmooth(**kw):
 
 
     t = xds_concat.gain_t.values
-    # scale t to lie in [0, 1]
+    # scale t to lie in (0, 1)
     t -= t.min()
     t /= t.max()
+    t += 0.1
+    t *= 0.9/t.max()
 
 
     samp = np.zeros_like(gamp)
     sampcov = np.zeros_like(gamp)
     sphase = np.zeros_like(gphase)
     sphasecov = np.zeros_like(gamp)
-    kernel = mat52()
-    theta0 = np.ones(3)
-    for p in range(nant):
-        for c in range(ncorr):
-            print(f" p = {p}, c = {c}")
-            idx = np.where(jhj[:, 0, p, 0, c] > 0)[0]
-            if idx.size < 2:
-                continue
-            w = jhj[:, 0, p, 0, c]
-            amp = gamp[:, 0, p, 0, c]
-            theta0[0] = np.std(amp[w!=0])
-            theta0[1] = 0.25*t.max()
-            _, mus, covs = emterp(theta0, t, amp, kernel, w=w, niter=opts.niter, nu=2)
-            samp[:, 0, p, 0, c] = mus
-            sampcov[:, 0, p, 0, c] = covs
-            if p == ref_ant:
-                continue
-            phase = gphase[:, 0, p, 0, c]
-            wp = w/samp[:, 0, p, 0, c]
-            theta0[0] = np.std(phase[wp!=0])
-            theta0[1] = 0.05*t.max()
-            _, mus, covs = emterp(theta0, t, phase, kernel, w=wp, niter=opts.niter, nu=2)
-            sphase[:, 0, p, 0, c] = mus
-            sphasecov[:, 0, p, 0, c] = covs
+
+
+    futures = []
+    with cf.ProcessPoolExecutor(max_workers=opts.nthreads) as executor:
+        for p in range(nant):
+            for c in range(ncorr):
+                w = jhj[:, 0, p, 0, c]
+                amp = gamp[:, 0, p, 0, c]
+                phase = gphase[:, 0, p, 0, c]
+                do_phase = p != ref_ant
+                future = executor.submit(smooth_ant, amp, phase,
+                                         w, t, p, c,
+                                         do_phase=do_phase)
+                futures.append(future)
+
+        for future in cf.as_completed(futures):
+            sa, sp, p, c = future.result()
+            print(f" p = {p}, c = {c}", file=log)
+            samp[:, 0, p, 0, c] = sa
+            sphase[:, 0, p, 0, c] = sp
+
+
+    # kernel = mat52()
+    # theta0 = np.ones(3)
+    # for p in range(nant):
+    #     for c in range(ncorr):
+    #         print(f" p = {p}, c = {c}")
+    #         idx = np.where(jhj[:, 0, p, 0, c] > 0)[0]
+    #         if idx.size < 2:
+    #             continue
+    #         w = jhj[:, 0, p, 0, c]
+    #         amp = gamp[:, 0, p, 0, c]
+    #         theta0[0] = np.std(amp[w!=0])
+    #         theta0[1] = 0.25*t.max()
+    #         _, mus, covs = emterp(theta0, t, amp, kernel, w=w, niter=opts.niter, nu=2)
+    #         samp[:, 0, p, 0, c] = mus
+    #         sampcov[:, 0, p, 0, c] = covs
+    #         if p == ref_ant:
+    #             continue
+    #         phase = gphase[:, 0, p, 0, c]
+    #         wp = w/samp[:, 0, p, 0, c]
+    #         theta0[0] = np.std(phase[wp!=0])
+    #         theta0[1] = 0.05*t.max()
+    #         _, mus, covs = emterp(theta0, t, phase, kernel, w=wp, niter=opts.niter, nu=2)
+    #         sphase[:, 0, p, 0, c] = mus
+    #         sphasecov[:, 0, p, 0, c] = covs
 
 
     gs = samp * np.exp(1.0j*sphase)
@@ -230,19 +246,15 @@ def _gsmooth(**kw):
             sigma = 1.0/np.sqrt(jhj[:, 0, p, 0, c])
             amp = gamp[:, 0, p, 0, c]
             ax[0].errorbar(t, amp, sigma, fmt='xr', label='raw')
-            ax[0].errorbar(t, samp[:, 0, p, 0, c],
-                           np.sqrt(sampcov[:, 0, p, 0, c]),
-                           fmt='ok', label='smooth', alpha=0.5)
+            ax[0].plot(t, samp[:, 0, p, 0, c], 'ko', label='smooth')
             ax[0].legend()
             ax[0].set_xlabel('time')
 
             sigmap = sigma/amp
             phase = gphase[:, 0, p, 0, c]
-            ax[1].errorbar(t, np.rad2deg(phase), sigmap, fmt='xr')
+            ax[1].errorbar(t, np.rad2deg(phase), sigmap, fmt='xr', label='raw')
             phase = sphase[:, 0, p, 0, c]
-            ax[1].errorbar(t, np.rad2deg(phase),
-                           np.rad2deg(np.sqrt(sphasecov[:, 0, p, 0, c])),
-                           fmt='ok', label='smooth', alpha=0.5)
+            ax[1].plot(t, np.rad2deg(phase), 'ko', label='smooth')
             ax[1].legend()
             ax[1].set_xlabel('time')
 

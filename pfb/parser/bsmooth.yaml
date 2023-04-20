@@ -9,6 +9,10 @@ inputs:
     abbreviation: gt
     info:
       Gain term name
+  nthreads:
+    dtype: int
+    default: 8
+    abbreviation: nthreads
   ref_ant:
     dtype: int
     default: -1
@@ -39,9 +43,6 @@ inputs:
     default: false
     info:
       Smooth on per scan basis instead of globally
-
-  _include:
-    - (pfb.parser)dist.yml
 
 
 outputs:

@@ -21,6 +21,22 @@ from collections import namedtuple
 from scipy.interpolate import RectBivariateSpline as rbs
 from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
+from smoove.kanterp import kanterp
+import pdb
+
+class ForkedPdb(pdb.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
+
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
+
 
 def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
     nband, nx, ny = model
@@ -1320,13 +1336,18 @@ def concat_chan(xds):
     return xds_out
 
 
-@njit(nogil=True, cache=True)
-# from numba import guvectorize, float64
-# @guvectorize()
-def copyto3D(dest, source):
-    nx, ny, nz = source.shape
-    for i in range(nx):
-        for j in range(ny):
-            for k in range(nz):
-                dest[i,j,k] = source[i,j,k]
-
+def smooth_ant(amp, phase, w, xcoord, p, c,
+               do_phase=True, niter=10, dof=2):
+    idx = w > 0.0
+    # we need at least two points to smooth
+    if idx.sum() < 2:
+        return np.ones(amp.size), np.zeros(phase.size), p, c
+    amplin = np.interp(xcoord, xcoord[idx], amp[idx])
+    _, samp, _ = kanterp(xcoord, amplin, w, niter=niter, nu=dof)
+    if do_phase:
+        phaselin = np.interp(xcoord, xcoord[idx], phase[idx])
+        _, sphase, _ = kanterp(xcoord, phaselin, w/samp,
+                               niter=niter, nu=dof)
+    else:
+        sphase = np.zeros(phase.size)
+    return samp, sphase, p, c
