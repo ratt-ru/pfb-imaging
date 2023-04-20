@@ -196,6 +196,7 @@ def gsmooth(**kw):
 
     # concatenate for plotting
     xds_concat = xr.concat(xds, dim='gain_t').sortby('gain_t')
+    ntime, nchan, nant, ndir, ncorr = xds_concat.gains.data.shape
     xdso_concat = xr.concat(xdso, dim='gain_t').sortby('gain_t')
     jhj = xds_concat.jhj.values.real
     g = xds_concat.gains.values
