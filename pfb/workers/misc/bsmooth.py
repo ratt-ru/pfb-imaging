@@ -151,9 +151,6 @@ def bsmooth(**kw):
         print("Smoothing over all scans", file=log)
         bamp = np.where(wgt > 0, bamp/wgt, 0)
         bphase = np.where(wgt > 0, bphase/wgt, 0)
-        flag = wgt == 0
-        # flag has no corr axis
-        flag = np.any(flag, axis=-1)
 
         samp = np.zeros_like(bamp)
         sphase = np.zeros_like(bamp)
@@ -161,8 +158,7 @@ def bsmooth(**kw):
         with cf.ProcessPoolExecutor(max_workers=opts.nthreads) as executor:
             for p in range(nant):
                 for c in range(ncorr):
-                    f = flag[0, :, p, 0]
-                    w = np.where(~f, wgt[0, :, p, 0, c], 0.0)
+                    w = wgt[0, :, p, 0, c]
                     amp = bamp[0, :, p, 0, c]
                     phase = bphase[0, :, p, 0, c]
                     do_phase = p != ref_ant
@@ -205,8 +201,8 @@ def bsmooth(**kw):
 
     samp = np.abs(bpass)
     sphase = np.angle(bpass)
-    # samp = np.where(wgt > 0, samp, np.nan)
-    # sphase = np.where(wgt > 0, sphase, np.nan)
+    samp = np.where(wgt > 0, samp, np.nan)
+    sphase = np.where(wgt > 0, sphase, np.nan)
 
     # load the original data for comparitive plotting
     # need to redo since xds was overwritten
