@@ -179,15 +179,15 @@ def gsmooth(**kw):
             dso = ds.assign(**{'gains': (ds.GAIN_AXES, gs)})
             xdso.append(dso)
 
-        print(f"Writing smoothed gains to {str(gain_dir)}/"
-            f"smoothed.qc::{opts.gain_term}", file=log)
-        writes = xds_to_zarr(xdso,
-                            f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
-                            columns='ALL')
-
         dask.compute(writes)
     else:
         xdso = xds
+
+    print(f"Writing smoothed gains to {str(gain_dir)}/"
+            f"smoothed.qc::{opts.gain_term}", file=log)
+    writes = xds_to_zarr(xdso,
+                        f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
+                        columns='ALL')
 
     if not opts.do_plots:
         print("Not doing plots", file=log)

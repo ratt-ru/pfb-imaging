@@ -364,14 +364,12 @@ def plot_ant_scan(bamp, samp, bphase, sphase, wgt,
         # smooth
         amp = np.where(w>0, samp[s], np.nan)
         phase = np.where(w>0, sphase[s] - ref_phase[s], np.nan)
-        ax[0].plot(xcoord, amp, c=color, label=f'scan-{s}', alpha=0.5, linewidth=1)
+        ax[0].plot(xcoord, amp, c=color, alpha=0.5, linewidth=1)
         ax[1].plot(xcoord, np.rad2deg(phase), c=color, alpha=0.5, linewidth=1)
 
 
     ax[0].legend()
     ax[0].set_xlabel('freq / [MHz]')
-
-    ax[1].legend()
     ax[1].set_xlabel('freq / [MHz]')
 
     fig.tight_layout()
