@@ -115,7 +115,7 @@ def gsmooth(**kw):
     print(f"Writing pure delays (i.e. offset removed) to {str(gain_dir)}/"
           f"smoothed.qc::K", file=log)
     writes = xds_to_zarr(K, f'{str(gain_dir)}/smoothed.qc::K',
-                         columns=('gains', 'params'))
+                         columns=('gains', 'params', 'gain_flags'))
 
     dask.compute(writes)
 
@@ -185,7 +185,7 @@ def gsmooth(**kw):
             f"smoothed.qc::{opts.gain_term}", file=log)
     writes = xds_to_zarr(xdso,
                         f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
-                        columns=('gains',))
+                        columns=('gains','gain_flags'))
     dask.compute(writes)
 
     if not opts.do_plots:

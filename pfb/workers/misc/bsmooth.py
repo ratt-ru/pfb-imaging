@@ -130,7 +130,7 @@ def bsmooth(**kw):
         print(f"Writing smoothed gains to {str(gain_dir)}/"
               f"smoothed.qc::{opts.gain_term}", file=log)
         writes = xds_to_zarr(xds, f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
-                             columns=('gains',))
+                             columns=('gains','gain_flags'))
 
         dask.compute(writes)
 
