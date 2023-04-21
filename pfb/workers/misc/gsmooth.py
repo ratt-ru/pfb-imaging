@@ -178,8 +178,6 @@ def gsmooth(**kw):
             gs = da.from_array(gs, chunks=(-1, -1, -1, -1, -1))
             dso = ds.assign(**{'gains': (ds.GAIN_AXES, gs)})
             xdso.append(dso)
-
-        dask.compute(writes)
     else:
         xdso = xds
 
@@ -188,6 +186,7 @@ def gsmooth(**kw):
     writes = xds_to_zarr(xdso,
                         f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
                         columns=('gains',))
+    dask.compute(writes)
 
     if not opts.do_plots:
         print("Not doing plots", file=log)
