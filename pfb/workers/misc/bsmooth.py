@@ -71,83 +71,139 @@ def bsmooth(**kw):
     else:
         ref_ant = opts.ref_ant
 
-    # we assume the freq range is the same per ds
-    freq = xds[0].gain_f.values
-    # the smoothing coordinate needs to be normalised to lie between (0, 1)
-    fmin = freq.min()
-    fmax = freq.max()
-    nu = (freq - fmin)/(fmax - fmin)
-    nu += 0.1
-    nu *= 0.9/nu.max()
+    if opts.per_scan:
+        nscan = len(xds)  # assumed
+        bamp = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
+        bphase = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
+        samp = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
+        sphase = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
+        wgt = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
+        for i, ds in enumerate(xds[0:1]):
+            freq = ds.gain_f.values
+            # the smoothing coordinate needs to be normalised to lie between (0, 1)
+            fmin = freq.min()
+            fmax = freq.max()
+            nu = (freq - fmin)/(fmax - fmin)
+            nu += 0.1
+            nu *= 0.9/nu.max()
+            jhj = ds.jhj.values.real
+            g = ds.gains.values
+            f = ds.gain_flags.values
+            flag = np.logical_or(jhj == 0, f[:, :, :, :, None])
+            jhj = np.where(flag, 0.0, jhj)
 
-    bamp = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
-    bphase = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
-    wgt = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
-    for i, ds in enumerate(xds):
-        jhj = np.abs(ds.jhj.values)
-        g = ds.gains.values
-        f = ds.gain_flags.values
-        flag = np.any(jhj == 0, axis=-1)
-        flag = np.logical_or(flag, f)# [:, :, :, :, None]
+            amp = np.abs(g)
+            jhj = np.where(amp < opts.reject_amp_thresh, jhj, 0)
 
-        for c in range(ncorr):
-            jhj[flag, c] = 0.0
+            phase = np.angle(g) - np.angle(g[:, :, ref_ant])[:, :, None]
+            jhj = np.where(np.abs(phase) < np.deg2rad(opts.reject_phase_thresh),
+                            jhj, 0)
 
-        amp = np.abs(g)
-        jhj = np.where(amp < opts.reject_amp_thresh, jhj, 0)
+            bamp[i] = np.where(jhj > 0, amp, np.nan)
+            bphase[i] = np.where(jhj > 0, phase, np.nan)
+            wgt[i] = jhj
 
-        phase = np.angle(g) - np.angle(g[:, :, ref_ant])[:, :, None]
-        jhj = np.where(np.abs(phase) < np.deg2rad(opts.reject_phase_thresh),
-                       jhj, 0)
-
-        # remove slope BEFORE averaging
-        if opts.detrend:
-            for p in range(nant):
-                for c in range(ncorr):
-                    idx = np.where(jhj[0, :, p, 0, c] > 0)[0]
-                    if idx.size < 2:
-                        continue
-                    # enforce zero offset and slope
-                    w = np.sqrt(jhj[0, idx, p, 0, c])  # polyfit convention
-                    y = phase[0, idx, p, 0, c]
-                    f = freq[idx]
-                    coeffs = np.polyfit(f, y, 1, w=w)
-                    phase[0, idx, p, 0, c] -= np.polyval(coeffs, f)
-
-                    # TODO - move slope into K
-
-        if opts.per_scan:
             print(f"Smoothing scan {i}", file=log)
-            for p in range(nant):
-                for c in range(ncorr):
-                    w = np.sqrt(jhj[0, :, p, 0, c])
-                    y = amp[0, :, p, 0, c]
-                    idx = w>0
-                    amplin = np.interp(freq, freq[idx], y[idx])
-                    I = slice(128, -128)
-                    _, ms, Ps = kanterp(nu[I], amplin[I], w[I], niter=10, nu=2)
-                                    #  ,sigmaf0=np.sqrt(nchan), sigman0=1)
-                    amp[0, I, p, 0, c] = ms
-                    if p == ref_ant:
-                        continue
-                    y = phase[0, :, p, 0, c]
-                    phaselin = np.interp(freq, freq[idx], y[idx])
-                    _, ms, Ps = kanterp(nu[I], phaselin[I], w[I]/amp[0, I, p, 0, c],
-                                      niter=10, nu=2) #, sigmaf0=np.sqrt(nchan), sigman0=1)
-                    phase[0, I, p, 0, c] = ms
+            futures = []
+            with cf.ProcessPoolExecutor(max_workers=opts.nthreads) as executor:
+                for p in range(nant):
+                    for c in range(ncorr):
+                        w = jhj[0, :, p, 0, c]
+                        do_phase = p != ref_ant
+                        future = executor.submit(smooth_ant,
+                                                 amp[0, :, p, 0, c],
+                                                 phase[0, :, p, 0, c],
+                                                 w, nu, p, c,
+                                                 do_phase=do_phase)
+                        futures.append(future)
 
+                for future in cf.as_completed(futures):
+                    sa, sp, p, c = future.result()
+                    # print(f" p = {p}, c = {c}", file=log)
+                    samp[i, 0, :, p, 0, c] = sa
+                    sphase[i, 0, :, p, 0, c] = sp
 
-            bpass = amp * np.exp(1.0j*phase)
+            bpass = samp[i] * np.exp(1.0j*sphase[i])
             bpass = da.from_array(bpass, chunks=(-1, -1, -1, -1, -1))
             xds[i] = ds.assign(**{'gains': (ds.GAIN_AXES, bpass)})
 
+        print(f"Writing smoothed gains to {str(gain_dir)}/"
+              f"smoothed.qc::{opts.gain_term}", file=log)
+        writes = xds_to_zarr(xds, f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
+                             columns=('gains',))
 
-        else:
+        dask.compute(writes)
+
+        futures = []
+        with cf.ProcessPoolExecutor(max_workers=opts.nthreads) as executor:
+            for p in range(nant):
+                for c in range(ncorr):
+                    future = executor.submit(plot_ant_scan,
+                                             bamp[:, 0, :, p, 0, c],
+                                             samp[:, 0, :, p, 0, c],
+                                             bphase[:, 0, :, p, 0, c],
+                                             sphase[:, 0, :, p, 0, c],
+                                             wgt[:, 0, :, p, 0, c],
+                                             nu, p, c,
+                                             bphase[:, 0, :, ref_ant, 0, c],
+                                             opts, gain_dir)
+                    futures.append(future)
+
+            for future in cf.as_completed(futures):
+                future.result()
+
+    else:
+        # we assume the freq range is the same per ds
+        freq = xds[0].gain_f.values
+        # the smoothing coordinate needs to be normalised to lie between (0, 1)
+        fmin = freq.min()
+        fmax = freq.max()
+        nu = (freq - fmin)/(fmax - fmin)
+        nu += 0.1
+        nu *= 0.9/nu.max()
+
+        bamp = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
+        bphase = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
+        wgt = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
+        for i, ds in enumerate(xds):
+            jhj = np.abs(ds.jhj.values)
+            g = ds.gains.values
+            f = ds.gain_flags.values
+            flag = np.any(jhj == 0, axis=-1)
+            flag = np.logical_or(flag, f)# [:, :, :, :, None]
+
+            for c in range(ncorr):
+                jhj[flag, c] = 0.0
+
+            amp = np.abs(g)
+            jhj = np.where(amp < opts.reject_amp_thresh, jhj, 0)
+
+            phase = np.angle(g) - np.angle(g[:, :, ref_ant])[:, :, None]
+            jhj = np.where(np.abs(phase) < np.deg2rad(opts.reject_phase_thresh),
+                        jhj, 0)
+
+            # remove slope BEFORE averaging
+            if opts.detrend:
+                for p in range(nant):
+                    for c in range(ncorr):
+                        idx = np.where(jhj[0, :, p, 0, c] > 0)[0]
+                        if idx.size < 2:
+                            continue
+                        # enforce zero offset and slope
+                        w = np.sqrt(jhj[0, idx, p, 0, c])  # polyfit convention
+                        y = phase[0, idx, p, 0, c]
+                        f = freq[idx]
+                        coeffs = np.polyfit(f, y, 1, w=w)
+                        phase[0, idx, p, 0, c] -= np.polyval(coeffs, f)
+
+                        # TODO - move slope into K
+
+            # to compute weighted sum
             bamp += amp*jhj
             bphase += phase*jhj
             wgt += jhj
 
-    if not opts.per_scan:
+
         print("Smoothing over all scans", file=log)
         bamp = np.where(wgt > 0, bamp/wgt, 0)
         bphase = np.where(wgt > 0, bphase/wgt, 0)
@@ -163,8 +219,8 @@ def bsmooth(**kw):
                     phase = bphase[0, :, p, 0, c]
                     do_phase = p != ref_ant
                     future = executor.submit(smooth_ant, amp, phase,
-                                             w, nu, p, c,
-                                             do_phase=do_phase)
+                                            w, nu, p, c,
+                                            do_phase=do_phase)
                     futures.append(future)
 
             for future in cf.as_completed(futures):
@@ -179,74 +235,69 @@ def bsmooth(**kw):
         flag = da.from_array(flag, chunks=(-1, -1, -1, -1))
         for i, ds in enumerate(xds):
             xds[i] = ds.assign(**{'gains': (ds.GAIN_AXES, bpass),
-                                  'gain_flags': (ds.GAIN_AXES[0:-1],
+                                'gain_flags': (ds.GAIN_AXES[0:-1],
                                                 flag.astype(bool))})
 
 
-    print(f"Writing smoothed gains to {str(gain_dir)}/"
-        f"smoothed.qc::{opts.gain_term}", file=log)
-    writes = xds_to_zarr(xds, f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
-                         columns='ALL')
+        print(f"Writing smoothed gains to {str(gain_dir)}/"
+            f"smoothed.qc::{opts.gain_term}", file=log)
+        writes = xds_to_zarr(xds, f'{str(gain_dir)}/smoothed.qc::{opts.gain_term}',
+                            columns='ALL')
 
-    bpass = dask.compute(bpass, writes)[0]
+        bpass = dask.compute(bpass, writes)[0]
 
-    if not opts.do_plots:
-        print("Not doing plots", file=log)
-        print("All done here", file=log)
-        quit()
+        # set to NaN's for plotting
+        bamp = np.where(wgt > 0, bamp, np.nan)
+        bphase = np.where(wgt > 0, bphase, np.nan)
 
-    # set to NaN's for plotting
-    bamp = np.where(wgt > 0, bamp, np.nan)
-    bphase = np.where(wgt > 0, bphase, np.nan)
+        samp = np.abs(bpass)
+        sphase = np.angle(bpass)
+        samp = np.where(wgt > 0, samp, np.nan)
+        sphase = np.where(wgt > 0, sphase, np.nan)
 
-    samp = np.abs(bpass)
-    sphase = np.angle(bpass)
-    samp = np.where(wgt > 0, samp, np.nan)
-    sphase = np.where(wgt > 0, sphase, np.nan)
+        # load the original data for comparitive plotting
+        # need to redo since xds was overwritten
+        try:
+            xds = xds_from_zarr(f'{str(gain_dir)}::{opts.gain_term}')
+        except Exception as e:
+            raise(e)
 
-    # load the original data for comparitive plotting
-    # need to redo since xds was overwritten
-    try:
-        xds = xds_from_zarr(f'{str(gain_dir)}::{opts.gain_term}')
-    except Exception as e:
-        raise(e)
-
-    # we want to avoid repeatedly reading these from disk while plotting
-    flags = {}
-    gains = {}
-    for s, ds in enumerate(xds):
-        jf = ds.jhj.values.real == 0.0
-        f = ds.gain_flags.values
-        flag = np.logical_or(jf, f[:, :, :, :, None])
-        gain = ds.gains.values
-        for p in range(nant):
-            for c in range(ncorr):
-                gains.setdefault(f'{p}_{c}', {})
-                gains[f'{p}_{c}'][s] = gain[0, :, p, 0, c]
-                flags.setdefault(f'{p}_{c}', {})
-                flags[f'{p}_{c}'][s] = flag[0, :, p, 0, c]
+        # we want to avoid repeatedly reading these from disk while plotting
+        flags = {}
+        gains = {}
+        for s, ds in enumerate(xds):
+            jf = ds.jhj.values.real == 0.0
+            f = ds.gain_flags.values
+            flag = np.logical_or(jf, f[:, :, :, :, None])
+            gain = ds.gains.values
+            for p in range(nant):
+                for c in range(ncorr):
+                    gains.setdefault(f'{p}_{c}', {})
+                    gains[f'{p}_{c}'][s] = gain[0, :, p, 0, c]
+                    flags.setdefault(f'{p}_{c}', {})
+                    flags[f'{p}_{c}'][s] = flag[0, :, p, 0, c]
 
 
-    freq = xds[0].gain_f/1e6  # MHz
-    futures = []
-    with cf.ProcessPoolExecutor(max_workers=opts.nthreads) as executor:
-        for p in range(nant):
-            for c in range(ncorr):
-                future = executor.submit(plot_ant,
-                                        bamp[0, :, p, 0, c],
-                                        samp[0, :, p, 0, c],
-                                        bphase[0, :, p, 0, c],
-                                        sphase[0, :, p, 0, c],
-                                        gains[f'{p}_{c}'],
-                                        flags[f'{p}_{c}'],
-                                        freq, p, c,
-                                        gains[f'{opts.ref_ant}_{c}'],
-                                        opts, gain_dir)
+        freq = xds[0].gain_f/1e6  # MHz
+        futures = []
+        with cf.ProcessPoolExecutor(max_workers=opts.nthreads) as executor:
+            for p in range(nant):
+                for c in range(ncorr):
+                    future = executor.submit(plot_ant,
+                                            bamp[0, :, p, 0, c],
+                                            samp[0, :, p, 0, c],
+                                            bphase[0, :, p, 0, c],
+                                            sphase[0, :, p, 0, c],
+                                            gains[f'{p}_{c}'],
+                                            flags[f'{p}_{c}'],
+                                            freq, p, c,
+                                            gains[f'{opts.ref_ant}_{c}'],
+                                            opts, gain_dir)
 
-                futures.append(future)
+                    futures.append(future)
 
-        for future in cf.as_completed(futures):
-            future.result()
+            for future in cf.as_completed(futures):
+                future.result()
 
     print("All done here", file=log)
 
@@ -278,6 +329,48 @@ def plot_ant(bamp, samp, bphase, sphase, gains, flags,
 
     ax[1].plot(xcoord, np.rad2deg(bphase), 'k', label='inf', linewidth=1)
     ax[1].plot(xcoord, np.rad2deg(sphase), 'r', label='smooth', linewidth=1)
+    ax[1].legend()
+    ax[1].set_xlabel('freq / [MHz]')
+
+    fig.tight_layout()
+    name = f'{str(gain_dir)}/{opts.gain_term}_Antenna{p}corr{c}.png'
+    plt.savefig(name, dpi=250, bbox_inches='tight')
+    plt.close(fig)
+
+    print(f"Saved plot {name}", file=log)
+
+
+def plot_ant_scan(bamp, samp, bphase, sphase, wgt,
+                  xcoord, p, c, ref_phase, opts, gain_dir):
+
+    # ForkedPdb().set_trace()
+    fig, ax = plt.subplots(nrows=1, ncols=2,
+                           figsize=(18, 18))
+    fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
+
+    nscan = bamp.shape[0]
+
+    for s in range(nscan):
+        color = np.random.rand(3,)
+
+        w = wgt[s]
+
+        # raw
+        amp = np.where(w>0, bamp[s], np.nan)
+        phase = np.where(w>0, bphase[s] - ref_phase[s], np.nan)
+        ax[0].plot(xcoord, amp, c=color, label=f'scan-{s}', alpha=0.5, linewidth=1)
+        ax[1].plot(xcoord, np.rad2deg(phase), c=color, label=f'scan-{s}', alpha=0.5, linewidth=1)
+
+        # smooth
+        amp = np.where(w>0, samp[s], np.nan)
+        phase = np.where(w>0, sphase[s] - ref_phase[s], np.nan)
+        ax[0].plot(xcoord, amp, c=color, label=f'scan-{s}', alpha=0.5, linewidth=1)
+        ax[1].plot(xcoord, np.rad2deg(phase), c=color, label=f'scan-{s}', alpha=0.5, linewidth=1)
+
+
+    ax[0].legend()
+    ax[0].set_xlabel('freq / [MHz]')
+
     ax[1].legend()
     ax[1].set_xlabel('freq / [MHz]')
 
