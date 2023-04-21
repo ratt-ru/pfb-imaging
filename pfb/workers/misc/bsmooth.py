@@ -78,7 +78,7 @@ def bsmooth(**kw):
         samp = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
         sphase = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
         wgt = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
-        for i, ds in enumerate(xds[0:1]):
+        for i, ds in enumerate(xds):
             freq = ds.gain_f.values
             # the smoothing coordinate needs to be normalised to lie between (0, 1)
             fmin = freq.min()
