@@ -72,7 +72,7 @@ def _fledges(**kw):
 
         ds = ds.assign(**{'FLAG': (('row','chan','corr'), flag)})
 
-        writes.append(xds_to_table(ds, opts.ms, columns="FLAG"))
+        writes.append(xds_to_table(ds, opts.ms, columns="FLAG", rechunk=True))
 
     dask.compute(writes)
 
