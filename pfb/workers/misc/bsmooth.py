@@ -79,7 +79,7 @@ def bsmooth(**kw):
         sphase = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
         wgt = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
         for i, ds in enumerate(xds):
-            freq = ds.gain_f.values
+            freq = ds.gain_f.values.copy()
             # the smoothing coordinate needs to be normalised to lie between (0, 1)
             fmin = freq.min()
             fmax = freq.max()
@@ -154,7 +154,7 @@ def bsmooth(**kw):
 
     else:
         # we assume the freq range is the same per ds
-        freq = xds[0].gain_f.values
+        freq = xds[0].gain_f.values.copy()
         # the smoothing coordinate needs to be normalised to lie between (0, 1)
         fmin = freq.min()
         fmax = freq.max()

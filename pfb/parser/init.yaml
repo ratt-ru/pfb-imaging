@@ -72,7 +72,7 @@ inputs:
     dtype: int
     info:
       Number of time integrations per image.
-      Default (-1, 0, None) makes an image per scan.
+      Default (-1, 0, None) -> dataset per scan.
     abbreviation: ipi
     default: -1
   precision:

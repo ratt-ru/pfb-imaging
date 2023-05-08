@@ -45,7 +45,8 @@ def _fledges(**kw):
     import dask
     dask.config.set(pool=ThreadPool(opts.nthreads))
     import dask.array as da
-    from daskms import xds_from_ms, xds_to_table, xds_from_table
+    from daskms import xds_from_storage_ms as xds_from_ms
+    from daskms import xds_to_storage_table as xds_to_table
     import numpy as np
     import re
 
