@@ -70,9 +70,9 @@ def _fledges(**kw):
                             I, 'f',
                             dtype=bool)
 
-        ds = ds.assign(**{'FLAG': (('row','chan','corr'), flag)})
+        dso = ds.assign(**{'FLAG': (('row','chan','corr'), flag)})
 
-        writes.append(xds_to_table(ds, opts.ms, columns="FLAG", rechunk=True))
+        writes.append(xds_to_table(dso, opts.ms, columns="FLAG", rechunk=True))
 
     dask.compute(writes)
 
