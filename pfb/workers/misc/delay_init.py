@@ -112,7 +112,7 @@ def _delay_init(**kw):
             'DATA_DESC_ID': int(ddid),
             'FIELD_ID': int(fid),
             'FIELD_NAME': fname,
-            'GAIN_AXES': ('gain_t', 'gain_f', 'ant', 'dir', 'corr'),
+            'GAIN_AXES': ('gain_time', 'gain_freq', 'antenna', 'direction', 'correlation'),
             'GAIN_SPEC': gain_spec_tup(tchunk=(int(ntime),),
                                         fchunk=(int(nchan),),
                                         achunk=(int(nant),),

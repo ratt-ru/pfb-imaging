@@ -98,7 +98,7 @@ def gsmooth(**kw):
         params = dsk.params.values
         params[:, :, :, :, 0] = 0.0
         params[:, :, :, :, 2] = 0.0
-        freq = dsk.gain_f.values[None, :, None, None, None]
+        freq = dsk.gain_freq.values[None, :, None, None, None]
         # this works because the offsets have been zeroed
         gain = np.exp(2.0j*np.pi*params[:, :, :, :, (1,3)] * freq)
         dsk = dsk.assign(
@@ -146,7 +146,7 @@ def gsmooth(**kw):
             gphase = np.angle(g*g[:, :, ref_ant].conj()[:, :, None])
             gphase = np.unwrap(gphase, axis=0, discont=0.9*2*np.pi)
 
-            t = ds.gain_t.values.copy()
+            t = ds.gain_time.values.copy()
             # scale t to lie in (0, 1)
             t -= t.min()
             t /= t.max()
@@ -194,9 +194,9 @@ def gsmooth(**kw):
         quit()
 
     # concatenate for plotting
-    xds_concat = xr.concat(xds, dim='gain_t').sortby('gain_t')
+    xds_concat = xr.concat(xds, dim='gain_time').sortby('gain_time')
     ntime, nchan, nant, ndir, ncorr = xds_concat.gains.data.shape
-    xdso_concat = xr.concat(xdso, dim='gain_t').sortby('gain_t')
+    xdso_concat = xr.concat(xdso, dim='gain_time').sortby('gain_time')
     jhj = xds_concat.jhj.values.real
     g = xds_concat.gains.values
     gs = xdso_concat.gains.values
@@ -222,7 +222,7 @@ def gsmooth(**kw):
     #                 gphase[I, 0, p, 0, c] -= 2*np.pi*np.sign(tmp)
 
 
-    t = xds_concat.gain_t.values
+    t = xds_concat.gain_time.values
 
     # kernel = mat52()
     # theta0 = np.ones(3)

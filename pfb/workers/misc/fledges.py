@@ -62,7 +62,7 @@ def _fledges(**kw):
         I[slice(ilow, ihigh)] = True
 
     I = da.from_array(I, chunks=-1)
-    writes = []
+    xdso = []
     for ds in xds:
         flag = ds.FLAG.data
         flag = da.blockwise(set_flags, 'rfc',
@@ -71,8 +71,9 @@ def _fledges(**kw):
                             dtype=bool)
 
         dso = ds.assign(**{'FLAG': (('row','chan','corr'), flag)})
+        xdso.append(dso)
 
-        writes.append(xds_to_table(dso, opts.ms, columns="FLAG", rechunk=True))
+    writes = xds_to_table(xdso, opts.ms, columns="FLAG", rechunk=True)
 
     dask.compute(writes)
 

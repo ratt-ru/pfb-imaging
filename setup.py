@@ -5,7 +5,7 @@ with open("README.rst", "r") as fh:
     long_description = fh.read()
 
 requirements = [
-                'numpy==1.22',
+                'numpy',
                 'tornado==6.1',
                 'matplotlib',
                 'ipython',

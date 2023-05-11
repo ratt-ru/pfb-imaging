@@ -5,6 +5,7 @@ os.environ["MKL_NUM_THREADS"] = str(1)
 os.environ["VECLIB_MAXIMUM_THREADS"] = str(1)
 os.environ["NUMBA_NUM_THREADS"] = str(1)
 import numpy as np
+from scipy.stats import median_abs_deviation as mad
 from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
 from pathlib import Path
 import matplotlib as mpl
@@ -71,15 +72,15 @@ def bsmooth(**kw):
     else:
         ref_ant = opts.ref_ant
 
+    nscan = len(xds)  # assumed
     if opts.per_scan:
-        nscan = len(xds)  # assumed
         bamp = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
         bphase = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
         samp = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
         sphase = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
         wgt = np.zeros((nscan, ntime, nchan, nant, ndir, ncorr), dtype=np.float64)
         for i, ds in enumerate(xds):
-            freq = ds.gain_f.values.copy()
+            freq = ds.gain_freq.values.copy()
             # the smoothing coordinate needs to be normalised to lie between (0, 1)
             fmin = freq.min()
             fmax = freq.max()
@@ -154,7 +155,7 @@ def bsmooth(**kw):
 
     else:
         # we assume the freq range is the same per ds
-        freq = xds[0].gain_f.values.copy()
+        freq = xds[0].gain_freq.values.copy()
         # the smoothing coordinate needs to be normalised to lie between (0, 1)
         fmin = freq.min()
         fmax = freq.max()
@@ -278,7 +279,7 @@ def bsmooth(**kw):
                     flags[f'{p}_{c}'][s] = flag[0, :, p, 0, c]
 
 
-        freq = xds[0].gain_f/1e6  # MHz
+        freq = xds[0].gain_freq/1e6  # MHz
         futures = []
         with cf.ProcessPoolExecutor(max_workers=opts.nthreads) as executor:
             for p in range(nant):
@@ -310,6 +311,10 @@ def plot_ant(bamp, samp, bphase, sphase, gains, flags,
                            figsize=(18, 18))
     fig.suptitle(f'Antenna {p}, corr {c}', fontsize=24)
 
+    majorLocator = MultipleLocator(256)
+    majorFormatter = FormatStrFormatter('%d')
+
+
     for s in gains.keys():
         flag = flags[s]
         gain = gains[s]
@@ -324,11 +329,19 @@ def plot_ant(bamp, samp, bphase, sphase, gains, flags,
 
     ax[0].plot(xcoord, bamp, 'k', label='inf', linewidth=1)
     ax[0].plot(xcoord, samp, 'r', label='smooth', linewidth=1)
+    ax2 = ax[0].twiny()
+    ax2.set_xticks(range(xcoord.size))
+    ax2.xaxis.set_major_locator(majorLocator)
+    ax2.xaxis.set_major_formatter(majorFormatter)
     ax[0].legend()
     ax[0].set_xlabel('freq / [MHz]')
 
     ax[1].plot(xcoord, np.rad2deg(bphase), 'k', label='inf', linewidth=1)
     ax[1].plot(xcoord, np.rad2deg(sphase), 'r', label='smooth', linewidth=1)
+    ax2 = ax[1].twiny()
+    ax2.set_xticks(range(xcoord.size))
+    ax2.xaxis.set_major_locator(majorLocator)
+    ax2.xaxis.set_major_formatter(majorFormatter)
     ax[1].legend()
     ax[1].set_xlabel('freq / [MHz]')
 

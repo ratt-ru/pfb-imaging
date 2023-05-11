@@ -199,7 +199,7 @@ def _init(**kw):
                     subds = ds[{'row': Irow, 'chan': Inu}]
                     if opts.gain_table is not None:
                         # Only DI gains currently supported
-                        jones = gds[ids][{'gain_t': It, 'gain_f': Inu}].gains.data
+                        jones = gds[ids][{'gain_time': It, 'gain_freq': Inu}].gains.data
                     else:
                         jones = None
 
