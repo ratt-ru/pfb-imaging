@@ -10,6 +10,7 @@ from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
 from pathlib import Path
 import matplotlib as mpl
 mpl.rcParams.update({'font.size': 18, 'font.family': 'serif'})
+from matplotlib.ticker import MultipleLocator, FormatStrFormatter
 import matplotlib.pyplot as plt
 import dask.array as da
 import dask

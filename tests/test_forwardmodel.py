@@ -170,11 +170,11 @@
 #                                        achunk=(int(nant),),
 #                                        dchunk=(int(1),),
 #                                        cchunk=(int(ncorr),)),
-#             'GAIN_AXES': ('gain_t', 'gain_f', 'ant', 'dir', 'corr')
+#             'GAIN_AXES': ('gain_time', 'gain_freq', 'antenna', 'direction', 'correlation')
 #         }
 #         coords = {
-#             'gain_f': (('gain_f',), freq),
-#             'gain_t': (('gain_t',), utime)
+#             'gain_f': (('gain_freq',), freq),
+#             'gain_t': (('gain_time',), utime)
 
 #         }
 #         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
