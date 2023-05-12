@@ -85,12 +85,12 @@ def _gainspector(**kw):
             Gs.append(g)
 
     if opts.join_times:
-        Gs = [xr.concat(Gs, dim='gain_t')]
+        Gs = [xr.concat(Gs, dim='gain_time')]
 
     for s, G in enumerate(Gs):
-        gain = G.gains.sortby('gain_t')
+        gain = G.gains.sortby('gain_time')
         try:
-            flag = G.gain_flags.sortby('gain_t')
+            flag = G.gain_flags.sortby('gain_time')
         except:
             flag = None
             print('No gain flags found', file=log)
@@ -200,7 +200,7 @@ def _gainspector(**kw):
                         dpi=100, bbox_inches='tight')
             plt.close()
             try:
-                jhj = G.jhj.sortby('gain_t')
+                jhj = G.jhj.sortby('gain_time')
                 fig, axs = plt.subplots(nrows=nant, ncols=1,
                                         figsize=(10, nant*tlength))
                 for i, ax in enumerate(axs.ravel()):

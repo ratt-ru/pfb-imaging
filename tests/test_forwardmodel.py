@@ -154,8 +154,8 @@
 #         g = da.from_array(jones)
 #         gflags = da.zeros((ntime, nchan, nant, 1))
 #         data_vars = {
-#             'gains':(('gain_t', 'gain_f', 'ant', 'dir', 'corr'), g),
-#             'gain_flags':(('gain_t', 'gain_f', 'ant', 'dir'), gflags)
+#             'gains':(('gain_time', 'gain_freq', 'antenna', 'direction', 'correlation'), g),
+#             'gain_flags':(('gain_time', 'gain_freq', 'antenna', 'direction'), gflags)
 #         }
 #         gain_spec_tup = namedtuple('gains_spec_tup', 'tchunk fchunk achunk dchunk cchunk')
 #         attrs = {
@@ -173,8 +173,8 @@
 #             'GAIN_AXES': ('gain_time', 'gain_freq', 'antenna', 'direction', 'correlation')
 #         }
 #         coords = {
-#             'gain_f': (('gain_freq',), freq),
-#             'gain_t': (('gain_time',), utime)
+#             'gain_freq': (('gain_freq',), freq),
+#             'gain_time': (('gain_time',), utime)
 
 #         }
 #         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)

@@ -83,7 +83,7 @@ def _init(**kw):
     import os
     from pathlib import Path
     import numpy as np
-    from pfb.utils.misc import chan_to_band_mapping, construct_mappings
+    from pfb.utils.misc import construct_mappings
     import dask
     dask.config.set(**{'array.slicing.split_large_chunks': False})
     from dask.graph_manipulation import clone

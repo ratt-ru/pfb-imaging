@@ -9,15 +9,15 @@ from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 @pmp('do_gains', (False, True))
-def test_clean(do_gains, tmp_path_factory):
+def test_clean(do_gains):  #, tmp_path_factory):
     '''
     Here we test that clean correctly infers the fluxes of point sources
     placed at the centers of pixels in the presence of the wterm and DI gain
     corruptions.
     TODO - add per scan PB variations
     '''
-    test_dir = tmp_path_factory.mktemp("test_pfb")
-    # test_dir = Path('/home/landman/data/')
+    # test_dir = tmp_path_factory.mktemp("test_pfb")
+    test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
@@ -140,8 +140,8 @@ def test_clean(do_gains, tmp_path_factory):
         g = da.from_array(jones)
         gflags = da.zeros((ntime, nchan, nant, 1))
         data_vars = {
-            'gains':(('gain_t', 'gain_f', 'ant', 'dir', 'corr'), g),
-            'gain_flags':(('gain_t', 'gain_f', 'ant', 'dir'), gflags)
+            'gains':(('gain_time', 'gain_freq', 'antenna', 'direction', 'correlation'), g),
+            'gain_flags':(('gain_time', 'gain_freq', 'antenna', 'direction'), gflags)
         }
         gain_spec_tup = namedtuple('gains_spec_tup', 'tchunk fchunk achunk dchunk cchunk')
         attrs = {
@@ -159,8 +159,8 @@ def test_clean(do_gains, tmp_path_factory):
             'GAIN_AXES': ('gain_time', 'gain_freq', 'antenna', 'direction', 'correlation')
         }
         coords = {
-            'gain_f': (('gain_freq',), freq),
-            'gain_t': (('gain_time',), utime)
+            'gain_freq': (('gain_freq',), freq),
+            'gain_time': (('gain_time',), utime)
 
         }
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
@@ -188,6 +188,7 @@ def test_clean(do_gains, tmp_path_factory):
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = gain_path
     init_args["max_field_of_view"] = fov
+    init_args["overwrite"] = True
     from pfb.workers.init import _init
     _init(**init_args)
 
@@ -200,7 +201,7 @@ def test_clean(do_gains, tmp_path_factory):
     grid_args["postfix"] = postfix
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
-    grid_args["fits_mfs"] = False
+    grid_args["fits_mfs"] = True
     grid_args["psf"] = True
     grid_args["residual"] = False
     grid_args["nthreads"] = 8  # has to be set when calling _grid
@@ -210,6 +211,8 @@ def test_clean(do_gains, tmp_path_factory):
     grid_args["wstack"] = True
     from pfb.workers.grid import _grid
     _grid(**grid_args)
+
+    quit()
 
     # run clean
     clean_args = {}
@@ -256,4 +259,4 @@ def test_clean(do_gains, tmp_path_factory):
                         atol=5*threshold)
 
  # do_gains, algo
-# test_clean(False, 'agroclean')
+test_clean(True)

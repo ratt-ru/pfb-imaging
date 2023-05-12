@@ -103,8 +103,8 @@ def _delay_init(**kw):
         gain = da.rechunk(gain, (-1, -1, -1, -1, -1))
         gflags = da.zeros((ntime, nchan, nant, ndir), chunks=(-1, -1, -1, -1), dtype=np.int8)
         data_vars = {
-            'gains':(('gain_t', 'gain_f', 'ant', 'dir', 'corr'), gain),
-            'gain_flags':(('gain_t', 'gain_f', 'ant', 'dir'), gflags)
+            'gains':(('gain_time', 'gain_freq', 'antenna', 'direction', 'correlation'), gain),
+            'gain_flags':(('gain_time', 'gain_freq', 'antenna', 'direction'), gflags)
         }
         from collections import namedtuple
         gain_spec_tup = namedtuple('gains_spec_tup', 'tchunk fchunk achunk dchunk cchunk')
@@ -127,11 +127,11 @@ def _delay_init(**kw):
         elif ncorr==2:
             corrs = np.array(['XX', 'YY'], dtype=object)
         coords = {
-            'gain_f': (('gain_f',), freq),
-            'gain_t': (('gain_t',), utime),
-            'ant': (('ant'), ant_names),
-            'corr': (('corr'), corrs),
-            'dir': (('dir'), np.array([0], dtype=np.int32)),
+            'gain_freq': (('gain_freq',), freq),
+            'gain_time': (('gain_time',), utime),
+            'antenna': (('ant'), ant_names),
+            'correlation': (('corr'), corrs),
+            'direction': (('dir'), np.array([0], dtype=np.int32)),
             'f_chunk': (('f_chunk'), np.array([0], dtype=np.int32)),
             't_chunk': (('t_chunk'), np.array([0], dtype=np.int32))
         }
