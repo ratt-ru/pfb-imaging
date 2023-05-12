@@ -9,15 +9,15 @@ from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 @pmp('do_gains', (False, True))
-def test_clean(do_gains):  #, tmp_path_factory):
+def test_clean(do_gains, tmp_path_factory):
     '''
     Here we test that clean correctly infers the fluxes of point sources
     placed at the centers of pixels in the presence of the wterm and DI gain
     corruptions.
     TODO - add per scan PB variations
     '''
-    # test_dir = tmp_path_factory.mktemp("test_pfb")
-    test_dir = Path('/home/landman/data/')
+    test_dir = tmp_path_factory.mktemp("test_pfb")
+    # test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
@@ -212,8 +212,6 @@ def test_clean(do_gains):  #, tmp_path_factory):
     from pfb.workers.grid import _grid
     _grid(**grid_args)
 
-    quit()
-
     # run clean
     clean_args = {}
     for key in schema.clean["inputs"].keys():
@@ -259,4 +257,4 @@ def test_clean(do_gains):  #, tmp_path_factory):
                         atol=5*threshold)
 
  # do_gains, algo
-test_clean(True)
+# test_clean(True)
