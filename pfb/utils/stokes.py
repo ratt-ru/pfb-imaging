@@ -186,6 +186,8 @@ def single_stokes(ds=None,
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
     data_vars['BEAM'] = (('scalar'), beam)
 
+    coords = {'chan': freq}
+
     # TODO - provide time and freq centroids
     attrs = {
         'ra' : radec[0],
@@ -200,7 +202,7 @@ def single_stokes(ds=None,
         'product': opts.product
     }
 
-    out_ds = Dataset(data_vars,
+    out_ds = Dataset(data_vars, coords=coords,
                      attrs=attrs).chunk({'row':100000,
                                          'chan':128})
 
@@ -283,8 +285,6 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
 
 
 def stokes_funcs(data, jones, product, pol):
-    if pol != literal('linear'):
-        raise NotImplementedError("Circular polarisation not yet supported")
     # The expressions for DIAG_DIAG and DIAG mode are essentially the same
     if jones.ndim == 5:
         # I and Q have identical weights
@@ -314,6 +314,9 @@ def stokes_funcs(data, jones, product, pol):
                         W3*gq11*v11*np.conjugate(gp11))
 
         elif product == literal('Q'):
+            if pol != literal('linear'):
+                msg = "Stokes I not currently supported for circular pol"
+                raise NotImplementedError(msg)
             @njit(nogil=True, fastmath=True, inline='always')
             def vfunc(gp, gq, W, V):
                 gp00 = gp[0]
