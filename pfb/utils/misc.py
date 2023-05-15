@@ -386,7 +386,7 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
         chan_widths[ms] = {}
         for ids, ds in enumerate(xds):
             idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
-            idts.append(idt)
+            idts[ms].append(idt)
             radecs[ms][idt] = fields.PHASE_DIR.data[ds.FIELD_ID].squeeze()
 
             freqs[ms][idt] = spws.CHAN_FREQ.data[ds.DATA_DESC_ID]
