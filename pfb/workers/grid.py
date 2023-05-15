@@ -30,12 +30,6 @@ def grid(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     pyscilog.log_to_file(f'grid_{timestamp}.log')
 
-    if opts.nworkers is None:
-        if opts.scheduler=='distributed':
-            opts.nworkers = opts.nband
-        else:
-            opts.nworkers = 1
-
     OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
@@ -92,11 +86,17 @@ def _grid(**kw):
     else:
         dds_exists = False
 
-    ntime_in = 1
-    nband_in = 1
+    times_in = []
+    freqs_in = []
     for ds in xds:
-        ntime_in = np.maximum(ds.timeid+1, ntime_in)
-        nband_in = np.maximum(ds.bandid+1, nband_in)
+        times_in.append(ds.time_out)
+        freqs_in.append(ds.freq_out)
+
+    times_in = np.unique(times_in)
+    freqs_in = np.unique(freqs_in)
+
+    ntime_in = times_in.size
+    nband_in = freqs_in.size
 
     if opts.concat_row and len(xds) > nband_in:
         print('Concatenating datasets along row dimension', file=log)
@@ -108,6 +108,7 @@ def _grid(**kw):
             raise RuntimeError('Something went wrong during row concatenation.'
                                'This is probably a bug.')
         ntime = 1
+        times_in = np.array((xds[0].time_out,))
     else:
         ntime = ntime_in
 
@@ -121,6 +122,7 @@ def _grid(**kw):
             raise RuntimeError('Something went wrong during chan concatenation.'
                                'This is probably a bug.')
         nband = 1
+        freqs_in = np.array((xds[0].freq_out,))
     else:
         nband = nband_in
 
@@ -194,9 +196,7 @@ def _grid(**kw):
         dds = xds_from_zarr(dds_name)
         # these need to be aligned at this stage
         for ds, out_ds in zip(xds, dds):
-            assert ds.bandid == out_ds.bandid
             assert ds.freq_out == out_ds.freq_out
-            assert ds.timeid == out_ds.timeid
             assert ds.time_out == out_ds.time_out
             assert ds.ra == out_ds.ra
             assert ds.dec == out_ds.dec
@@ -216,8 +216,8 @@ def _grid(**kw):
         except Exception as e:
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
         try:
-            assert len(mds) == len(xds)
-            for ms, ds in zip(mds, xds):
+            assert len(mds) == len(dds)
+            for ms, ds in zip(mds, dds):
                 assert ms.bandid == ds.bandid
         except Exception as e:
             raise ValueError("Transfer from dataset mismatched. "
@@ -249,6 +249,8 @@ def _grid(**kw):
         vis = ds.VIS.data
         # This is a vis space mask (see wgridder convention)
         mask = ds.MASK.data
+        bandid = np.where(freqs_in == ds.freq_out)[0][0]
+        timeid = np.where(times_in == ds.time_out)[0][0]
 
         # compute lm coordinates of target
         if opts.target is not None:
@@ -283,8 +285,8 @@ def _grid(**kw):
             'x0': x0,
             'y0': y0,
             'cell_rad': cell_rad,
-            'bandid': ds.bandid,
-            'timeid': ds.timeid,
+            'bandid': bandid,
+            'timeid': timeid,
             'freq_out': ds.freq_out,
             'time_out': ds.time_out,
             'robustness': opts.robustness

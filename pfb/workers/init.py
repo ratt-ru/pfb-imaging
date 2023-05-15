@@ -35,12 +35,6 @@ def init(**kw):
     except:
         raise ValueError(f"No MS at {opts.ms}")
 
-    if opts.nworkers is None:
-        if opts.scheduler=='distributed':
-            opts.nworkers = opts.nband
-        else:
-            opts.nworkers = 1
-
     if opts.gain_table is not None:
         gainstore = DaskMSStore(opts.gain_table.rstrip('/'))
         gt = gainstore.fs.glob(opts.gain_table.rstrip('/'))
@@ -116,13 +110,21 @@ def _init(**kw):
         gain_names = list(map(tmpf, opts.gain_table))
     else:
         gain_names = None
-    freqs, fbin_idx, fbin_counts, band_mapping, freq_out, \
-        utimes, tbin_idx, tbin_counts, time_mapping, \
-        ms_chunks, gain_chunks, radecs, \
+    # freqs, fbin_idx, fbin_counts, band_mapping, freq_out, \
+    #     utimes, tbin_idx, tbin_counts, time_mapping, \
+    #     ms_chunks, gain_chunks, radecs, \
+    #     chan_widths, uv_max, antpos, poltype = \
+    #         construct_mappings(opts.ms, gain_names,
+    #                            opts.nband,
+    #                            opts.integrations_per_image)
+
+    row_mapping, freq_mapping, time_mapping, \
+        freqs, utimes, ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype = \
-            construct_mappings(opts.ms, gain_names,
-                               opts.nband,
-                               opts.integrations_per_image)
+            construct_mappings(opts.ms,
+                               gain_names,
+                               ipi=opts.integrations_per_image,
+                               cpi=opts.channels_per_image)
 
     max_freq = 0
     for ms in opts.ms:
@@ -137,7 +139,7 @@ def _init(**kw):
     # if opts.radec is not None:
     #     raise NotImplementedError()
 
-    # this is not optional but we can always concatenate later if needs be
+    # this is not optional, concatenate during gridding stage if desired
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
     # assumes measurement sets have the same columns
@@ -171,8 +173,9 @@ def _init(**kw):
 
         if opts.gain_table is not None:
             gds = xds_from_zarr(gain_names[ims],
-                              chunks=gain_chunks[ms])
+                                chunks=gain_chunks[ms])
 
+        ndatasets = 0
         for ids, ds in enumerate(xds):
             fid = ds.FIELD_ID
             ddid = ds.DATA_DESC_ID
@@ -182,19 +185,21 @@ def _init(**kw):
             nchan = ds.dims['chan']
             ncorr = ds.dims['corr']
 
-            for t, (tlow, thigh, tid) in enumerate(zip(
-                                        time_mapping[ms][idt]['low'],
-                                        time_mapping[ms][idt]['high'],
-                                        time_mapping[ms][idt]['time_id'])):
-                It = slice(tlow, thigh)
-                Irow = slice(tbin_idx[ms][idt][tlow],
-                             tbin_idx[ms][idt][tlow] +
-                             ms_chunks[ms][ids]['row'][t])
+            for ti, (tlow, tcounts) in enumerate(zip(time_mapping[ms][idt]['start_indices'],
+                                           time_mapping[ms][idt]['counts'])):
 
-                for b, band_id in enumerate(band_mapping[ms][idt]):
-                    f0 = fbin_idx[ms][idt][b]
-                    ff = f0 + fbin_counts[ms][idt][b]
-                    Inu = slice(f0, ff)
+                ndatasets += 1
+
+                It = slice(tlow, tlow + tcounts)
+                ridx = row_mapping[ms][idt]['start_indices'][It]
+                rcnts = row_mapping[ms][idt]['counts'][It]
+                # select all rows for output dataset
+                Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
+
+                for fi, (flow, fcounts) in enumerate(zip(freq_mapping[ms][idt]['start_indices'],
+                                                     freq_mapping[ms][idt]['counts'])):
+                    Inu = slice(flow, flow + fcounts)
+                    ndatasets += 1
 
                     subds = ds[{'row': Irow, 'chan': Inu}]
                     if opts.gain_table is not None:
@@ -210,11 +215,9 @@ def _init(**kw):
                             opts=opts,
                             freq=freqs[ms][idt][Inu],
                             chan_width=chan_widths[ms][idt][Inu],
-                            bandid=band_id,
                             utime=utimes[ms][idt][It],
-                            tbin_idx=tbin_idx[ms][idt][It],
-                            tbin_counts=tbin_counts[ms][idt][It],
-                            timeid=tid,
+                            tbin_idx=ridx,
+                            tbin_counts=rcnts,
                             cell_rad=cell_rad,
                             radec=radecs[ms][idt],
                             antpos=antpos[ms],
@@ -227,11 +230,9 @@ def _init(**kw):
                             opts=opts,
                             freq=freqs[ms][idt][Inu],
                             chan_width=chan_widths[ms][idt][Inu],
-                            bandid=band_id,
                             utimes=utimes[ms][idt][It],
-                            tbin_idx=tbin_idx[ms][idt][It],
-                            tbin_counts=tbin_counts[ms][idt][It],
-                            timeid=tid,
+                            tbin_idx=ridx,
+                            tbin_counts=rcnts,
                             cell_rad=cell_rad,
                             radec=radecs[ms][idt])
                     else:

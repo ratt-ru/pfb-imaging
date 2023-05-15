@@ -16,12 +16,6 @@ inputs:
     default: false
     info:
       Allow overwrite of output xds
-  nband:
-    dtype: int
-    required: true
-    abbreviation: nb
-    info:
-      Number of imaging bands
   radec:
     dtype: Optional[List[any]]
     info:
@@ -74,6 +68,13 @@ inputs:
       Number of time integrations per image.
       Default (-1, 0, None) -> dataset per scan.
     abbreviation: ipi
+    default: -1
+  channels_per_image:
+    dtype: int
+    info:
+      Number of channels per image.
+      Default (-1, 0, None) -> dataset per spw.
+    abbreviation: cpi
     default: -1
   precision:
     dtype: str

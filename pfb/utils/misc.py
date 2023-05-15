@@ -304,7 +304,10 @@ def fetch_poltype(corr_type):
         return 'circular'
 
 
-def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
+def construct_mappings(ms_name,
+                       gain_name=None,
+                       ipi=None,
+                       cpi=None):
     '''
     Construct dictionaries containing per MS, FIELD, DDID and SCAN
     time and frequency mappings.
@@ -312,9 +315,9 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
     Input:
     ms_name     - list of ms names
     gain_name   - list of paths to gains, must be in same order as ms_names
-    nband       - number of imaging bands (defaults to a single band)
     ipi         - integrations (i.e. unique times) per output image.
                   Defaults to one per scan.
+    cpi         - Channels per image. Defaults to one per spw.
 
     The chan <-> band mapping is determined by:
 
@@ -413,13 +416,21 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
 
     uv_max = max(uv_maxs)
 
-    # Is this sufficient to make sure the MSs and gains are aligned?
     all_freqs = []
+    all_times = []
+    freq_mapping = {}
+    row_mapping = {}
+    time_mapping = {}
     utimes = {}
-    ntimes_out = 0
+    ms_chunks = {}
+    gain_chunks = {}
     for ms in ms_name:
+        freq_mapping[ms] = {}
+        row_mapping[ms] = {}
+        time_mapping[ms] = {}
         utimes[ms] = {}
-        processed_scans = []
+        ms_chunks[ms] = []
+        gain_chunks[ms] = []
         for idt in idts[ms]:
             freq = freqs[ms][idt]
             if gain_name is not None:
@@ -429,133 +440,62 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
                     raise ValueError(f'Mismatch between gain and MS '
                                      f'frequencies for {ms} at {idt}')
             all_freqs.append(freq)
-            utime = np.unique(times[ms][idt])
+            nchan = freq.size
+            if cpi in [-1, 0, None]:
+                cpit = nchan
+            else:
+                cpit = np.minimum(cpi, nchan)
+            freq_mapping[ms][idt] = {}
+            tmp = np.arange(0, nchan, cpit)
+            freq_mapping[ms][idt]['start_indices'] = tmp
+            if cpit != nchan:
+                tmp2 = np.append(tmp, [nchan])
+                freq_mapping[ms][idt]['counts'] = tmp2[1:] - tmp2[0:-1]
+            else:
+                freq_mapping[ms][idt]['counts'] = np.array((nchan,), dtype=int)
+
+            time = times[ms][idt]
+            utime = np.unique(time)
             if gain_name is not None:
                 try:
                     assert (gain_times[ms][idt] == utime).all()
                 except Exception as e:
                     raise ValueError(f'Mismatch between gain and MS '
-                                     f'utimes for {ms} at {idt}')  #WTF!!
+                                     f'utimes for {ms} at {idt}')
             utimes[ms][idt] = utime
+            all_times.append(utime)
 
-            # we do not want to duplicate this for every FIELD and SPW
-            sidx = idt.find('SCAN') + 4
-            sid = idt[sidx:]
-            if sid not in processed_scans:
-                if ipi in [0, -1, None]:
-                    ntimes_out += 1
-                    processed_scans.append(sid)
-                else:
-                    ntimes_out += np.ceil(utime.size/ipi)
-                    processed_scans.append(sid)
-
-    # freq mapping
-    ufreqs = np.unique(all_freqs)  # sorted ascending
-    nchan = ufreqs.size
-    if nband is None:
-        nband = 1
-    else:
-       nband = nband
-
-    # should we use bin edges here? what about inhomogeneous channel widths?
-    fmin = ufreqs[0]
-    fmax = ufreqs[-1]
-    fbins = np.linspace(fmin, fmax, nband + 1)
-
-    freq_out = np.zeros(nband)
-    chan_count = 0
-    for band in range(nband):
-        indl = ufreqs >= fbins[band]
-        # inclusive except for the last one
-        if band == nband-1:
-            indu = ufreqs <= fbins[band + 1]
-        else:
-            indu = ufreqs < fbins[band + 1]
-        freq_out[band] = np.mean(ufreqs[indl&indu])
-        chan_count += ufreqs[indl&indu].size
-
-
-    if chan_count < nchan:
-        raise RuntimeError("Something has gone wrong with the chan <-> band "
-                           "mapping. This is probably a bug.")
-
-    # this logic does not currently handle overlapping spws
-    band_mapping = {}
-    fbin_idx = {}
-    fbin_counts = {}
-    for ms in ms_name:
-        fbin_idx[ms] = {}
-        fbin_counts[ms] = {}
-        band_mapping[ms] = {}
-        for idt in idts[ms]:
-            freq = freqs[ms][idt]
-            band_map = np.empty(freq.size, dtype=np.int32)
-            for band in range(nband):
-                indl = freq >= fbins[band]
-                if band == nband-1:
-                    indu = freq <= fbins[band + 1]
-                else:
-                    indu = freq < fbins[band + 1]
-                band_map = np.where(indl & indu, band, band_map)
-
-            bands, bin_counts = np.unique(band_map, return_counts=True)
-            band_mapping[ms][idt] = bands
-            bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
-            fbin_idx[ms][idt] = bin_idx
-            fbin_counts[ms][idt] = bin_counts
-
-    # This logic does not currently handle overlapping scans
-    tbin_idx = {}
-    tbin_counts = {}
-    time_mapping = {}
-    ms_chunks = {}
-    gain_chunks = {}
-    ti = 0
-    for ims, ms in enumerate(ms_name):
-        tbin_idx[ms] = {}
-        tbin_counts[ms] = {}
-        time_mapping[ms] = {}
-        ms_chunks[ms] = []
-        gain_chunks[ms] = []
-        for idt in idts[ms]:
-            time = times[ms][idt]
-            # has to be here since scans not same length
             ntime = utimes[ms][idt].size
             if ipi in [0, -1, None]:
                 ipit = ntime
             else:
-                ipit = ipi
-            row_chunks, tidx, tcounts = chunkify_rows(time, ipit,
+                ipit = np.minimum(ipi, ntime)
+            row_chunks, ridx, rcounts = chunkify_rows(time, ipit,
                                                       daskify_idx=False)
-            tbin_idx[ms][idt] = tidx
-            tbin_counts[ms][idt] = tcounts
-            time_mapping[ms][idt] = {}
-            time_mapping[ms][idt]['low'] = np.arange(0, ntime, ipit)
-            hmap = np.append(np.arange(ipit, ntime, ipit), ntime)
-            time_mapping[ms][idt]['high'] = hmap
-            time_mapping[ms][idt]['time_id'] = np.arange(ti, ti + hmap.size)
-            # we do not want to duplicate this for every FIELD and SPW
-            sidx = idt.find('SCAN') + 4
-            sid = idt[sidx:]
-            if sid not in processed_scans:
-                ti += hmap.size
-                processed_scans.append(sid)
+            row_mapping[ms][idt] = {}
+            row_mapping[ms][idt]['start_indices'] = ridx
+            row_mapping[ms][idt]['counts'] = rcounts
 
             ms_chunks[ms].append({'row': row_chunks,
-                                  'chan': tuple(fbin_counts[ms][idt])})
+                                  'chan': tuple(freq_mapping[ms][idt]['counts'])})
 
+            time_mapping[ms][idt] = {}
+            tmp = np.arange(0, ntime, ipit)
+            time_mapping[ms][idt]['start_indices'] = tmp
+            if ipit != ntime:
+                tmp2 = np.append(tmp, [ntime])
+                time_mapping[ms][idt]['counts'] = tmp2[1:] - tmp2[0:-1]
+            else:
+                time_mapping[ms][idt]['counts'] = np.array((ntime,))
+
+            # we may need to rechunk gains in time and freq to line up with MS
             if gain_name is not None:
                 tmp_dict = {}
                 for name, val in zip(gain_axes[ms][idt], gain_spec[ms][idt]):
                     if name == 'gain_time':
-                        ntimes = gain_times[ms][idt].size
-                        nchunksm1 = ntimes//ipit
-                        rem = ntimes - nchunksm1*ipit
-                        tmp_dict[name] = (ipit,)*nchunksm1
-                        if rem:
-                            tmp_dict[name] += (rem,)
+                        tmp = tuple(time_mapping[ms][idt]['counts'])
                     elif name == 'gain_freq':
-                        tmp_dict[name] = tuple(fbin_counts[ms][idt])
+                        tmp_dict[name] = tuple(freq_mapping[ms][idt]['counts'])
                     elif name == 'direction':
                         if len(val) > 1:
                             raise ValueError("DD gains not supported yet")
@@ -566,6 +506,105 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
                         tmp_dict[name] = tuple(val)
 
                 gain_chunks[ms].append(tmp_dict)
+
+    return row_mapping, freq_mapping, time_mapping, \
+           freqs, utimes, ms_chunks, gain_chunks, radecs, \
+           chan_widths, uv_max, antpos, poltype
+
+    # # Now figure out which datasets map to which times and bands
+    # # freq <-> band mapping
+    # ufreqs = np.unique(all_freqs)  # sorted ascending
+    # nchan = ufreqs.size
+    # if nband is None:
+    #     nband = 1
+    # else:
+    #    nband = nband
+
+    # # should we use bin edges here? what about inhomogeneous channel widths?
+    # fmin = ufreqs[0]
+    # fmax = ufreqs[-1]
+    # fbins = np.linspace(fmin, fmax, nband + 1)
+
+    # freq_out = np.zeros(nband)
+    # chan_count = 0
+    # for band in range(nband):
+    #     indl = ufreqs >= fbins[band]
+    #     # inclusive except for the last one
+    #     if band == nband-1:
+    #         indu = ufreqs <= fbins[band + 1]
+    #     else:
+    #         indu = ufreqs < fbins[band + 1]
+    #     freq_out[band] = np.mean(ufreqs[indl&indu])
+    #     chan_count += ufreqs[indl&indu].size
+
+
+    # if chan_count < nchan:
+    #     raise RuntimeError("Something has gone wrong with the chan <-> band "
+    #                        "mapping. This is probably a bug.")
+
+    # band_mapping = {}
+    # fbin_idx = {}
+    # fbin_counts = {}
+    # for ms in ms_name:
+    #     fbin_idx[ms] = {}
+    #     fbin_counts[ms] = {}
+    #     band_mapping[ms] = {}
+    #     for idt in idts[ms]:
+    #         freq = freqs[ms][idt]
+    #         band_map = np.empty(freq.size, dtype=np.int32)
+    #         for band in range(nband):
+    #             indl = freq >= fbins[band]
+    #             if band == nband-1:
+    #                 indu = freq <= fbins[band + 1]
+    #             else:
+    #                 indu = freq < fbins[band + 1]
+    #             band_map = np.where(indl & indu, band, band_map)
+
+    #         bands, bin_counts = np.unique(band_map, return_counts=True)
+    #         band_mapping[ms][idt] = bands
+    #         bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
+    #         fbin_idx[ms][idt] = bin_idx
+    #         fbin_counts[ms][idt] = bin_counts
+
+    # # This logic does not currently handle overlapping scans
+    # tbin_idx = {}
+    # tbin_counts = {}
+    # time_mapping = {}
+    # ms_chunks = {}
+    # gain_chunks = {}
+    # ti = 0
+    # for ims, ms in enumerate(ms_name):
+    #     tbin_idx[ms] = {}
+    #     tbin_counts[ms] = {}
+    #     time_mapping[ms] = {}
+    #     ms_chunks[ms] = []
+    #     gain_chunks[ms] = []
+    #     for idt in idts[ms]:
+    #         time = times[ms][idt]
+    #         # has to be here since scans not same length
+    #         ntime = utimes[ms][idt].size
+    #         if ipi in [0, -1, None]:
+    #             ipit = ntime
+    #         else:
+    #             ipit = ipi
+    #         row_chunks, tidx, tcounts = chunkify_rows(time, ipit,
+    #                                                   daskify_idx=False)
+    #         tbin_idx[ms][idt] = tidx
+    #         tbin_counts[ms][idt] = tcounts
+    #         time_mapping[ms][idt] = {}
+    #         time_mapping[ms][idt]['low'] = np.arange(0, ntime, ipit)
+    #         hmap = np.append(np.arange(ipit, ntime, ipit), ntime)
+    #         time_mapping[ms][idt]['high'] = hmap
+    #         time_mapping[ms][idt]['time_id'] = np.arange(ti, ti + hmap.size)
+    #         # we do not want to duplicate this for every FIELD and SPW
+    #         sidx = idt.find('SCAN') + 4
+    #         sid = idt[sidx:]
+    #         if sid not in processed_scans:
+    #             ti += hmap.size
+    #             processed_scans.append(sid)
+
+
+
 
     return freqs, fbin_idx, fbin_counts, band_mapping, freq_out, \
         utimes, tbin_idx, tbin_counts, time_mapping, \
@@ -1162,13 +1201,19 @@ def unpad_and_unshift_cube(x, out):
 # TODO - concat functions should allow coarsening to values other than 1
 def concat_row(xds):
     # TODO - how to compute average beam before we have access to grid?
-    ntime = 1
-    nband = 1
+    times_in = []
+    freqs = []
     for ds in xds:
-        ntime = np.maximum(ds.timeid+1, ntime)
-        nband = np.maximum(ds.bandid+1, nband)
+        times_in.append(ds.time_out)
+        freqs.append(ds.freq_out)
 
-    if ntime == 1:  # no need to concatenate
+    times_in = np.unique(times_in)
+    freqs = np.unique(freqs)
+
+    nband = freqs.size
+    ntime_in = times_in.size
+
+    if ntime_in == 1:  # no need to concatenate
         return xds
 
     # this is required because concat will try to mush different
@@ -1177,31 +1222,35 @@ def concat_row(xds):
     for b in range(nband):
         xdsb = []
         times = []
-        timeids = []
+        nu = freqs[b]
         for ds in xds:
-            if ds.bandid == b:
+            if ds.freq_out == nu:
                 xdsb.append(ds)
                 times.append(ds.time_out)
-                timeids.append(ds.timeid)
         xdso = xr.concat(xdsb, dim='row',
                          data_vars='minimal',
                          coords='minimal').chunk({'row':-1})
-        tid = np.array(timeids).min()
-        tout = tout = np.round(np.mean(np.array(times)), 5)  # avoid precision issues
+        tout = np.round(np.mean(np.array(times)), 5)  # avoid precision issues
         xdso = xdso.assign_attrs(
-                    {'time_out': tout, 'timeid': tid}
+                    {'time_out': tout, 'timeid': 0}
         )
         xds_out.append(xdso)
     return xds_out
 
 def concat_chan(xds):
-    ntime = 1
-    nband = 1
+    times = []
+    freqs_in = []
     for ds in xds:
-        ntime = np.maximum(ds.timeid+1, ntime)
-        nband = np.maximum(ds.bandid+1, nband)
+        times.append(ds.time_out)
+        freqs_in.append(ds.freq_out)
 
-    if nband == 1:  # no need to concatenate
+    times = np.unique(times)
+    freqs_in = np.unique(freqs_in)
+
+    nband_in = freqs_in.size
+    ntime = times.size
+
+    if nband_in == 1:  # no need to concatenate
         return xds
 
     # this is required because concat will try to mush different
@@ -1210,19 +1259,17 @@ def concat_chan(xds):
     for t in range(ntime):
         xdst = []
         freqs = []
-        bandids = []
+        time = times[t]
         for ds in xds:
-            if ds.timeid == t:
+            if ds.time_out == time:
                 xdst.append(ds)
                 freqs.append(ds.freq_out)
-                bandids.append(ds.bandid)
         xdso = xr.concat(xdst, dim='chan',
                          data_vars='minimal',
                          coords='minimal').chunk({'chan':-1})
-        bid = np.array(bandids).min()
-        fout = np.mean(np.array(freqs))
+        fout = np.round(np.mean(np.array(freqs)), 5)  # avoid precision issues
         xdso = xdso.assign_attrs(
-                    {'freq_out': fout, 'bandid': bid}
+                    {'freq_out': fout, 'bandid': 0}
         )
         xds_out.append(xdso)
     return xds_out

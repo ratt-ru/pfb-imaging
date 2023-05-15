@@ -17,12 +17,10 @@ def single_stokes(ds=None,
                   opts=None,
                   freq=None,
                   chan_width=None,
-                  bandid=None,
                   cell_rad=None,
                   utime=None,
                   tbin_idx=None,
                   tbin_counts=None,
-                  timeid=None,
                   radec=None,
                   antpos=None,
                   poltype=None):
@@ -186,7 +184,8 @@ def single_stokes(ds=None,
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
     data_vars['BEAM'] = (('scalar'), beam)
 
-    coords = {'chan': freq}
+    coords = {'chan': freq,
+              'row': ds.ROWID.data}
 
     # TODO - provide time and freq centroids
     attrs = {
@@ -195,9 +194,7 @@ def single_stokes(ds=None,
         'fieldid': ds.FIELD_ID,
         'ddid': ds.DATA_DESC_ID,
         'scanid': ds.SCAN_NUMBER,
-        'bandid': int(bandid),
         'freq_out': freq_out,
-        'timeid': int(timeid),
         'time_out': np.mean(utime),
         'product': opts.product
     }
