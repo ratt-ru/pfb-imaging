@@ -311,6 +311,7 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
 
     Input:
     ms_name     - list of ms names
+    gain_name   - list of paths to gains, must be in same order as ms_names
     nband       - number of imaging bands (defaults to a single band)
     ipi         - integrations (i.e. unique times) per output image.
                   Defaults to one per scan.
@@ -418,6 +419,7 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
     ntimes_out = 0
     for ms in ms_name:
         utimes[ms] = {}
+        processed_scans = []
         for idt in idts[ms]:
             freq = freqs[ms][idt]
             if gain_name is not None:
@@ -435,10 +437,17 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
                     raise ValueError(f'Mismatch between gain and MS '
                                      f'utimes for {ms} at {idt}')  #WTF!!
             utimes[ms][idt] = utime
-            if ipi in [0, -1, None]:
-                ntimes_out += 1
-            else:
-                ntimes_out += np.ceil(utime.size/ipi)
+
+            # we do not want to duplicate this for every FIELD and SPW
+            sidx = idt.find('SCAN') + 4
+            sid = idt[sidx:]
+            if sid not in processed_scans:
+                if ipi in [0, -1, None]:
+                    ntimes_out += 1
+                    processed_scans.append(sid)
+                else:
+                    ntimes_out += np.ceil(utime.size/ipi)
+                    processed_scans.append(sid)
 
     # freq mapping
     ufreqs = np.unique(all_freqs)  # sorted ascending
@@ -525,7 +534,12 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
             hmap = np.append(np.arange(ipit, ntime, ipit), ntime)
             time_mapping[ms][idt]['high'] = hmap
             time_mapping[ms][idt]['time_id'] = np.arange(ti, ti + hmap.size)
-            ti += hmap.size
+            # we do not want to duplicate this for every FIELD and SPW
+            sidx = idt.find('SCAN') + 4
+            sid = idt[sidx:]
+            if sid not in processed_scans:
+                ti += hmap.size
+                processed_scans.append(sid)
 
             ms_chunks[ms].append({'row': row_chunks,
                                   'chan': tuple(fbin_counts[ms][idt])})
@@ -533,16 +547,16 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
             if gain_name is not None:
                 tmp_dict = {}
                 for name, val in zip(gain_axes[ms][idt], gain_spec[ms][idt]):
-                    if name == 'gain_t':
+                    if name == 'gain_time':
                         ntimes = gain_times[ms][idt].size
                         nchunksm1 = ntimes//ipit
                         rem = ntimes - nchunksm1*ipit
                         tmp_dict[name] = (ipit,)*nchunksm1
                         if rem:
                             tmp_dict[name] += (rem,)
-                    elif name == 'gain_f':
+                    elif name == 'gain_freq':
                         tmp_dict[name] = tuple(fbin_counts[ms][idt])
-                    elif name == 'dir':
+                    elif name == 'direction':
                         if len(val) > 1:
                             raise ValueError("DD gains not supported yet")
                         if val[0] > 1:
@@ -1173,7 +1187,7 @@ def concat_row(xds):
                          data_vars='minimal',
                          coords='minimal').chunk({'row':-1})
         tid = np.array(timeids).min()
-        tout = np.mean(np.array(times))
+        tout = tout = np.round(np.mean(np.array(times)), 5)  # avoid precision issues
         xdso = xdso.assign_attrs(
                     {'time_out': tout, 'timeid': tid}
         )
