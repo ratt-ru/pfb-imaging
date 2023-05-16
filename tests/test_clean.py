@@ -183,12 +183,12 @@ def test_clean(do_gains, tmp_path_factory):
     outname = str(test_dir / 'test')
     init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
     init_args["output_filename"] = outname
-    init_args["nband"] = nchan
     init_args["data_column"] = "DATA2"
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = gain_path
     init_args["max_field_of_view"] = fov
     init_args["overwrite"] = True
+    init_args["channels_per_image"] = 1
     from pfb.workers.init import _init
     _init(**init_args)
 
