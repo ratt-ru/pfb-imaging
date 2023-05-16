@@ -1271,6 +1271,7 @@ def concat_chan(xds, nband_out=1):
                     xdst.append(ds)
             xdso = xr.concat(xdst, dim='chan',
                             data_vars='minimal',
+                            compat='override',
                             coords='minimal').chunk({'chan':-1})
             fout = np.round(np.mean(np.array(freqs)), 5)  # avoid precision issues
             xdso = xdso.assign_attrs(
