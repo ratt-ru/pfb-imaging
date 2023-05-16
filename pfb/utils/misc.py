@@ -1237,7 +1237,7 @@ def concat_row(xds):
         xds_out.append(xdso)
     return xds_out
 
-def concat_chan(xds):
+def concat_chan(xds, nband_out=1):
     times = []
     freqs_in = []
     for ds in xds:
@@ -1250,28 +1250,33 @@ def concat_chan(xds):
     nband_in = freqs_in.size
     ntime = times.size
 
-    if nband_in == 1:  # no need to concatenate
+    if nband_in == nband_out or nband_in == 1:  # no need to concatenate
         return xds
+    elif not nband_in % nband_out:
+        bfactor = nband_in // nband_out
+    else:
+        raise NotImplementedError("Cannot coarsen band axis to specified resolution. "
+                                  "nband must evenly divide the number of input bands.")
 
     # this is required because concat will try to mush different
     # times together if they are not split upfront
     xds_out = []
     for t in range(ntime):
-        xdst = []
-        freqs = []
         time = times[t]
-        for ds in xds:
-            if ds.time_out == time:
-                xdst.append(ds)
-                freqs.append(ds.freq_out)
-        xdso = xr.concat(xdst, dim='chan',
-                         data_vars='minimal',
-                         coords='minimal').chunk({'chan':-1})
-        fout = np.round(np.mean(np.array(freqs)), 5)  # avoid precision issues
-        xdso = xdso.assign_attrs(
-                    {'freq_out': fout, 'bandid': 0}
-        )
-        xds_out.append(xdso)
+        for b in range(nband_out):
+            xdst = []
+            freqs = freqs_in[b*bfactor:(b+1)*bfactor]
+            for ds in xds:
+                if ds.time_out == time and ds.freq_out in freqs:
+                    xdst.append(ds)
+            xdso = xr.concat(xdst, dim='chan',
+                            data_vars='minimal',
+                            coords='minimal').chunk({'chan':-1})
+            fout = np.round(np.mean(np.array(freqs)), 5)  # avoid precision issues
+            xdso = xdso.assign_attrs(
+                        {'freq_out': fout, 'bandid': b}
+            )
+            xds_out.append(xdso)
     return xds_out
 
 

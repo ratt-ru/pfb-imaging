@@ -28,11 +28,6 @@ inputs:
     default: True
     info:
       Concatenate datasets by row
-  concat_chan:
-    dtype: bool
-    default: False
-    info:
-      Concatenate datasets by channel
   overwrite:
     dtype: bool
     default: false

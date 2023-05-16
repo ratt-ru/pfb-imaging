@@ -112,19 +112,24 @@ def _grid(**kw):
     else:
         ntime = ntime_in
 
-    if opts.concat_chan and len(xds) > ntime:
-        print('Concatenating datasets along chan dimension', file=log)
+    if opts.nband != nband_in and len(xds) > ntime:
+        print('Concatenating datasets along chan dimension. '
+              f'Mapping {nband_in} datasets to {opts.nband} bands', file=log)
         from pfb.utils.misc import concat_chan
-        xds = concat_chan(xds)
+        xds = concat_chan(xds, nband_out=opts.nband)
         try:
-            assert len(xds) == ntime
+            assert len(xds) == ntime * opts.nband
         except Exception as e:
             raise RuntimeError('Something went wrong during chan concatenation.'
                                'This is probably a bug.')
-        nband = 1
-        freqs_in = np.array((xds[0].freq_out,))
+        nband = opts.nband
+        freqs_out = []
+        for ds in xds:
+            freqs_out.append(ds.freq_out)
+        freqs_out = np.unique(freqs_out)
     else:
         nband = nband_in
+        freqs_out = freqs_in
 
     real_type = xds[0].WEIGHT.dtype
     if real_type == np.float32:
@@ -249,7 +254,7 @@ def _grid(**kw):
         vis = ds.VIS.data
         # This is a vis space mask (see wgridder convention)
         mask = ds.MASK.data
-        bandid = np.where(freqs_in == ds.freq_out)[0][0]
+        bandid = np.where(freqs_out == ds.freq_out)[0][0]
         timeid = np.where(times_in == ds.time_out)[0][0]
 
         # compute lm coordinates of target
