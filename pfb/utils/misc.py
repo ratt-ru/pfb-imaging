@@ -1227,9 +1227,10 @@ def concat_row(xds):
             if ds.freq_out == nu:
                 xdsb.append(ds)
                 times.append(ds.time_out)
-        xdso = xr.concat(xdsb, dim='row',
-                         data_vars='minimal',
-                         coords='minimal').chunk({'row':-1})
+        xdso = xr.combine_by_coords(xdsb,
+                                    compat='override',
+                                    coords='minimal',
+                                    combine_attrs='override').chunk({'row':-1})
         tout = np.round(np.mean(np.array(times)), 5)  # avoid precision issues
         xdso = xdso.assign_attrs(
                     {'time_out': tout, 'timeid': 0}
@@ -1269,10 +1270,10 @@ def concat_chan(xds, nband_out=1):
             for ds in xds:
                 if ds.time_out == time and ds.freq_out in freqs:
                     xdst.append(ds)
-            xdso = xr.concat(xdst, dim='chan',
-                            data_vars='minimal',
-                            compat='override',
-                            coords='minimal').chunk({'chan':-1})
+            xdso = xr.combine_by_coords(xdst,
+                                        compat='override',
+                                        coords='minimal',
+                                        combine_attrs='override').chunk({'chan':-1})
             fout = np.round(np.mean(np.array(freqs)), 5)  # avoid precision issues
             xdso = xdso.assign_attrs(
                         {'freq_out': fout, 'bandid': b}
