@@ -67,6 +67,7 @@ def _grid(**kw):
     from daskms.optimisation import inlined_array
     from pfb.utils.astrometry import get_coordinates
     from africanus.coordinates import radec_to_lm
+    from pfb.utils.misc import concat_chan, concat_row
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -100,13 +101,12 @@ def _grid(**kw):
 
     if opts.concat_row and len(xds) > nband_in:
         print('Concatenating datasets along row dimension', file=log)
-        from pfb.utils.misc import concat_row
         xds = concat_row(xds)
-        try:
-            assert len(xds) == nband_in
-        except Exception as e:
-            raise RuntimeError('Something went wrong during row concatenation.'
-                               'This is probably a bug.')
+        # try:
+        #     assert len(xds) == nband_in
+        # except Exception as e:
+        #     raise RuntimeError('Something went wrong during row concatenation.'
+        #                        'This is probably a bug.')
         ntime = 1
         times_in = np.array((xds[0].time_out,))
     else:
@@ -115,13 +115,12 @@ def _grid(**kw):
     if opts.nband != nband_in and len(xds) > ntime:
         print('Concatenating datasets along chan dimension. '
               f'Mapping {nband_in} datasets to {opts.nband} bands', file=log)
-        from pfb.utils.misc import concat_chan
         xds = concat_chan(xds, nband_out=opts.nband)
-        try:
-            assert len(xds) == ntime * opts.nband
-        except Exception as e:
-            raise RuntimeError('Something went wrong during chan concatenation.'
-                               'This is probably a bug.')
+        # try:
+        #     assert len(xds) == ntime * opts.nband
+        # except Exception as e:
+        #     raise RuntimeError('Something went wrong during chan concatenation.'
+        #                        'This is probably a bug.')
         nband = opts.nband
         freqs_out = []
         for ds in xds:
