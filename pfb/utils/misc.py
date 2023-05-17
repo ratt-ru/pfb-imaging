@@ -21,20 +21,20 @@ from collections import namedtuple
 from scipy.interpolate import RectBivariateSpline as rbs
 from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
-from smoove.kanterp import kanterp
+from smoove.kanterp import kanterpFforked
 
-class ForkedPdb(pdb.Pdb):
-    """A Pdb subclass that may be used
-    from a forked multiprocessing child
+# class ForkedPdb(pdb.Pdb):
+#     """A Pdb subclass that may be used
+#     from a forked multiprocessing child
 
-    """
-    def interaction(self, *args, **kwargs):
-        _stdin = sys.stdin
-        try:
-            sys.stdin = open('/dev/stdin')
-            pdb.Pdb.interaction(self, *args, **kwargs)
-        finally:
-            sys.stdin = _stdin
+#     """
+#     def interaction(self, *args, **kwargs):
+#         _stdin = sys.stdin
+#         try:
+#             sys.stdin = open('/dev/stdin')
+#             pdb.Pdb.interaction(self, *args, **kwargs)
+#         finally:
+#             sys.stdin = _stdin
 
 
 def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
