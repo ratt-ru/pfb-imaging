@@ -6,8 +6,6 @@ from uuid import uuid4
 from ducc0.fft import r2c, c2r, c2c, good_size
 from ducc0.misc import roll_resize_roll as rrr
 from uuid import uuid4
-from pfb.utils.misc import pad_and_shift, unpad_and_unshift
-from pfb.utils.misc import pad_and_shift_cube, unpad_and_unshift_cube
 import gc
 
 
