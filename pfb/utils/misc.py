@@ -1238,48 +1238,137 @@ def concat_row(xds):
         xds_out.append(xdso)
     return xds_out
 
+
+from quartical.utils.dask import Blocker
 def concat_chan(xds, nband_out=1):
     times = []
     freqs_in = []
+    freqs_min = []
+    freqs_max = []
+    all_freqs = []
     for ds in xds:
         times.append(ds.time_out)
         freqs_in.append(ds.freq_out)
+        freqs_min.append(ds.freq_min)
+        freqs_max.append(ds.freq_max)
+        all_freqs.append(ds.chan)
 
     times = np.unique(times)
     freqs_in = np.unique(freqs_in)
+    freqs_min = np.unique(freqs_min)
+    freqs_max = np.unique(freqs_max)
+    all_freqs = np.unique(all_freqs)
 
     nband_in = freqs_in.size
     ntime = times.size
 
     if nband_in == nband_out or nband_in == 1:  # no need to concatenate
         return xds
-    elif not nband_in % nband_out:
-        bfactor = nband_in // nband_out
-    else:
-        raise NotImplementedError("Cannot coarsen band axis to specified resolution. "
-                                  "nband must evenly divide the number of input bands.")
 
-    # this is required because concat will try to mush different
-    # times together if they are not split upfront
+    # currently assuming linearly spaced frequencies
+    freq_bins = np.linspace(freqs_min.min(), freqs_max.max(), nband_out+1)
+    bin_centers = (freq_bins[1:] + freq_bins[0:-1])/2
+
     xds_out = []
     for t in range(ntime):
         time = times[t]
         for b in range(nband_out):
             xdst = []
-            freqs = freqs_in[b*bfactor:(b+1)*bfactor]
+            flow = freq_bins[b]
+            fhigh = freq_bins[b+1]
+            freqsb = all_freqs[all_freqs >= flow]
+            freqsb = freqsb[freqsb < fhigh]
             for ds in xds:
-                if ds.time_out == time and ds.freq_out in freqs:
+                # ds overlaps output if either ds.freq_min or ds.freq_max lies in the bin
+                low_in = ds.freq_min > flow and ds.freq_min < fhigh
+                high_in = ds.freq_max > flow and ds.freq_max < fhigh
+                if ds.time_out == time and (low_in or high_in):
                     xdst.append(ds)
-            xdso = xr.combine_by_coords(xdst,
-                                        compat='override',
-                                        coords='minimal',
-                                        combine_attrs='override').chunk({'chan':-1})
-            fout = np.round(np.mean(np.array(freqs)), 5)  # avoid precision issues
-            xdso = xdso.assign_attrs(
-                        {'freq_out': fout, 'bandid': b}
-            )
+
+            # LB - we should be able to avoid this stack operation by using Jon's *() magic
+            wgt = da.stack([ds.WEIGHT.data for ds in xdst]).rechunk(-1, -1, -1)
+            vis = da.stack([ds.VIS.data for ds in xdst]).rechunk(-1, -1, -1)
+            mask = da.stack([ds.MASK.data for ds in xdst]).rechunk(-1, -1, -1)
+            freq = da.stack([ds.FREQ.data for ds in xdst]).rechunk(-1, -1)
+
+            # import ipdb; ipdb.set_trace()
+
+            nrow = xdst[0].row.size
+            nchan = freqsb.size
+
+            freqs_dask = da.from_array(freqsb, chunks=nchan)
+            blocker = Blocker(sum_overlap, 's')
+            blocker.add_input('vis', vis, 'src')
+            blocker.add_input('wgt', wgt, 'src')
+            blocker.add_input('mask', mask, 'src')
+            blocker.add_input('freq', freq, 'sc')
+            blocker.add_input('ufreq', freqs_dask, 'f')
+            blocker.add_input('flow', flow, None)
+            blocker.add_input('fhigh', fhigh, None)
+            blocker.add_output('viso', 'rf', ((nrow,), (nchan,)), vis.dtype)
+            blocker.add_output('wgto', 'rf', ((nrow,), (nchan,)), wgt.dtype)
+            blocker.add_output('masko', 'rf', ((nrow,), (nchan,)), mask.dtype)
+
+            out_dict = blocker.get_dask_outputs()
+
+            data_vars = {
+                'VIS': (('row', 'chan'), out_dict['viso']),
+                'WEIGHT': (('row', 'chan'), out_dict['wgto']),
+                'MASK': (('row', 'chan'), out_dict['masko']),
+                'FREQ': (('chan',), freqs_dask),
+                'UVW': (('row', 'three'), xdst[0].UVW.data), # should be the same across data sets
+                'BEAM': (('scalar',), xdst[0].BEAM.data)  # need to pass in the grid to do this properly
+            }
+
+            coords = {
+                'chan': (('chan',), freqsb)
+            }
+
+            fout = np.round(bin_centers[b], 5)  # avoid precision issues
+            attrs = {
+                'freq_out': fout,
+                'bandid': b,
+                'dec': xdst[0].dec,
+                'ra': xdst[0].ra,
+                'time_out': time
+            }
+
+            xdso = xr.Dataset(data_vars=data_vars,
+                              attrs=attrs)
+
             xds_out.append(xdso)
     return xds_out
+
+
+def sum_overlap(vis, wgt, mask, freq, ufreq, flow, fhigh):
+    nds = vis.shape[0]
+
+    # output grids
+    nchan = ufreq.size
+    nrow = vis.shape[1]
+    viso = np.zeros((nrow, nchan), dtype=vis.dtype)
+    wgto = np.zeros((nrow, nchan), dtype=wgt.dtype)
+    masko = np.zeros((nrow, nchan), dtype=mask.dtype)
+
+    # weighted sum at overlap
+    for i in range(nds):
+        nu = freq[i]
+        _, idx0, idx1 = np.intersect1d(nu, ufreq, assume_unique=True, return_indices=True)
+        viso[:, idx1] += vis[i][:, idx0] * wgt[i][:, idx0] * mask[i][:, idx0]
+        wgto[:, idx1] += wgt[i][:, idx0] * mask[i][:, idx0]
+        masko[:, idx1] += mask[i][:, idx0]
+
+    # unmasked where at least one data point is unflagged
+    masko = np.where(masko < nds, 1, 0)
+    viso[masko.astype(bool)] = viso[masko.astype(bool)]/wgto[masko.astype(bool)]
+
+    # blocker expects a dictionary as output
+    out_dict = {}
+    out_dict['viso'] = viso
+    out_dict['wgto'] = wgto
+    out_dict['masko'] = masko
+
+    return out_dict
 
 
 def smooth_ant(amp, phase, w, xcoord, p, c,

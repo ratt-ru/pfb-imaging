@@ -184,8 +184,8 @@ def single_stokes(ds=None,
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
     data_vars['BEAM'] = (('scalar'), beam)
 
-    coords = {'chan': freq,
-              'row': ds.ROWID.data}
+    coords = {'chan': (('chan',), freq)} #,
+            #   'row': (('row',), ds.ROWID.values)}
 
     # TODO - provide time and freq centroids
     attrs = {
@@ -195,7 +195,11 @@ def single_stokes(ds=None,
         'ddid': ds.DATA_DESC_ID,
         'scanid': ds.SCAN_NUMBER,
         'freq_out': freq_out,
+        'freq_min': freq.min(),
+        'freq_max': freq.max(),
         'time_out': np.mean(utime),
+        'time_min': utime.min(),
+        'time_max': utime.max(),
         'product': opts.product
     }
 
