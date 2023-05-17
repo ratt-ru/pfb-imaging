@@ -167,6 +167,7 @@ def _init(**kw):
         print(f"No weights provided, using unity weights", file=log)
 
     out_datasets = []
+    row_id_start = 0
     for ims, ms in enumerate(opts.ms):
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
                           table_schema=schema, group_cols=group_by)

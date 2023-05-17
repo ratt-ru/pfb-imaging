@@ -1093,111 +1093,6 @@ def lthreshold(x, sigma, kind='l1'):
         return np.where(absx > sigma, absx - sigma, 0) * np.sign(x)
 
 
-@njit(nogil=True, cache=True, inline='always')
-def pad_and_shift(x, out):
-    '''
-    Pad x with zeros so as to have the same shape as out and perform
-    ifftshift in place
-    '''
-    nxi, nyi = x.shape
-    nxo, nyo = out.shape
-    if nxi >= nxo or nyi >= nyo:
-        raise ValueError('Output must be larger than input')
-    padx = nxo-nxi
-    pady = nyo-nyi
-    out[...] = 0.0
-    # first and last quadrants
-    for i in range(nxi//2):
-        for j in range(nyi//2):
-            # first to last quadrant
-            out[padx + nxi//2 + i, pady + nyi//2 + j] = x[i, j]
-            # last to first quadrant
-            out[i, j] = x[nxi//2+i, nyi//2+j]
-            # third to second quadrant
-            out[i, pady + nyi//2 + j] = x[nxi//2 + i, j]
-            # second to third quadrant
-            out[padx + nxi//2 + i, j] = x[i, nyi//2 + j]
-    return out
-
-
-@njit(nogil=True, cache=True, inline='always')
-def unpad_and_unshift(x, out):
-    '''
-    fftshift x and unpad it into out
-    '''
-    nxi, nyi = x.shape
-    nxo, nyo = out.shape
-    if nxi < nxo or nyi < nyo:
-        raise ValueError('Output must be smaller than input')
-    out[...] = 0.0
-    padx = nxo-nxi
-    pady = nyo-nyi
-    for i in range(nxo//2):
-        for j in range(nyo//2):
-            # first to last quadrant
-            out[nxo//2+i, nyo//2+j] = x[i, j]
-            # last to first quadrant
-            out[i, j] = x[padx + nxo//2 + i, pady + nyo//2 + j]
-            # third to second quadrant
-            out[nxo//2 + i, j] = x[i, pady + nyo//2 + j]
-            # second to third quadrant
-            out[i, nyo//2 + j] = x[padx + nxo//2 + i, j]
-    return out
-
-
-@njit(nogil=True, cache=True, inline='always', parallel=True)
-def pad_and_shift_cube(x, out):
-    '''
-    Pad x with zeros so as to have the same shape as out and perform
-    ifftshift in place
-    '''
-    nband, nxi, nyi = x.shape
-    nband, nxo, nyo = out.shape
-    if nxi >= nxo or nyi >= nyo:
-        raise ValueError('Output must be larger than input')
-    padx = nxo-nxi
-    pady = nyo-nyi
-    out[...] = 0.0
-    for b in prange(nband):
-        for i in range(nxi//2):
-            for j in range(nyi//2):
-                # first to last quadrant
-                out[b, padx + nxi//2 + i, pady + nyi//2 + j] = x[b, i, j]
-                # last to first quadrant
-                out[b, i, j] = x[b, nxi//2+i, nyi//2+j]
-                # third to second quadrant
-                out[b, i, pady + nyi//2 + j] = x[b, nxi//2 + i, j]
-                # second to third quadrant
-                out[b, padx + nxi//2 + i, j] = x[b, i, nyi//2 + j]
-    return out
-
-
-@njit(nogil=True, cache=True, inline='always', parallel=True)
-def unpad_and_unshift_cube(x, out):
-    '''
-    fftshift x and unpad it into out
-    '''
-    nband, nxi, nyi = x.shape
-    nband, nxo, nyo = out.shape
-    if nxi < nxo or nyi < nyo:
-        raise ValueError('Output must be smaller than input')
-    out[...] = 0.0
-    padx = nxo-nxi
-    pady = nyo-nyi
-    for b in prange(nband):
-        for i in range(nxo//2):
-            for j in range(nyo//2):
-                # first to last quadrant
-                out[b, nxo//2+i, nyo//2+j] = x[b, i, j]
-                # last to first quadrant
-                out[b, i, j] = x[b, padx + nxo//2 + i, pady + nyo//2 + j]
-                # third to second quadrant
-                out[b, nxo//2 + i, j] = x[b, i, pady + nyo//2 + j]
-                # second to third quadrant
-                out[b, i, nyo//2 + j] = x[b, padx + nxo//2 + i, j]
-    return out
-
-
 # TODO - concat functions should allow coarsening to values other than 1
 def concat_row(xds):
     # TODO - how to compute average beam before we have access to grid?
@@ -1216,8 +1111,8 @@ def concat_row(xds):
     if ntime_in == 1:  # no need to concatenate
         return xds
 
-    # this is required because concat will try to mush different
-    # imaging bands together if they are not split upfront
+    # do merge manually because different variables require different
+    # treatment anyway eg. the BEAM should be computed as a weighted sum
     xds_out = []
     for b in range(nband):
         xdsb = []
@@ -1227,14 +1122,40 @@ def concat_row(xds):
             if ds.freq_out == nu:
                 xdsb.append(ds)
                 times.append(ds.time_out)
-        xdso = xr.combine_by_coords(xdsb,
-                                    compat='override',
-                                    coords='minimal',
-                                    combine_attrs='override').chunk({'row':-1})
-        tout = np.round(np.mean(np.array(times)), 5)  # avoid precision issues
-        xdso = xdso.assign_attrs(
-                    {'time_out': tout, 'timeid': 0}
-        )
+
+        wgt = [ds.WEIGHT for ds in xdsb]
+        vis = [ds.VIS for ds in xdsb]
+        mask = [ds.MASK for ds in xdsb]
+        uvw = [ds.UVW for ds in xdsb]
+
+        wgto = xr.concat(wgt, dim='row')
+        viso = xr.concat(vis, dim='row')
+        masko = xr.concat(mask, dim='row')
+        uvwo = xr.concat(uvw, dim='row')
+
+        xdso = xr.merge((wgto, viso, masko, uvwo))
+        xdso['BEAM'] = xdsb[0].BEAM  # we need the grid to do this properly
+        xdso['FREQ'] = xdsb[0].FREQ  # is this always going to be the case?
+
+        xdso = xdso.chunk({'row':-1})
+
+        xdso = xdso.assign_coords({
+            'chan': (('chan',), xdsb[0].chan.data)
+        })
+
+        times = np.array(times)
+        tout = np.round(np.mean(times), 5)  # avoid precision issues
+        xdso = xdso.assign_attrs({
+            'dec': xdsb[0].dec,  # always the case?
+            'ra': xdsb[0].ra,    # always the case?
+            'time_out': tout,
+            'time_max': times.max(),
+            'time_min': times.min(),
+            'timeid': 0,
+            'freq_out': nu,
+            'freq_max': xdsb[0].freq_max,
+            'freq_min': xdsb[0].freq_min,
+        })
         xds_out.append(xdso)
     return xds_out
 
