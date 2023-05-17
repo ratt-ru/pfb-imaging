@@ -22,7 +22,6 @@ from scipy.interpolate import RectBivariateSpline as rbs
 from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
 from smoove.kanterp import kanterp
-import pdb
 
 class ForkedPdb(pdb.Pdb):
     """A Pdb subclass that may be used
@@ -1211,8 +1210,6 @@ def concat_chan(xds, nband_out=1):
             vis = da.stack([ds.VIS.data for ds in xdst]).rechunk(-1, -1, -1)
             mask = da.stack([ds.MASK.data for ds in xdst]).rechunk(-1, -1, -1)
             freq = da.stack([ds.FREQ.data for ds in xdst]).rechunk(-1, -1)
-
-            # import ipdb; ipdb.set_trace()
 
             nrow = xdst[0].row.size
             nchan = freqsb.size
