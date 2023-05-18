@@ -23,18 +23,18 @@ from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
 from smoove.kanterp import kanterp
 
-# class ForkedPdb(pdb.Pdb):
-#     """A Pdb subclass that may be used
-#     from a forked multiprocessing child
+class ForkedPdb(pdb.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
 
-#     """
-#     def interaction(self, *args, **kwargs):
-#         _stdin = sys.stdin
-#         try:
-#             sys.stdin = open('/dev/stdin')
-#             pdb.Pdb.interaction(self, *args, **kwargs)
-#         finally:
-#             sys.stdin = _stdin
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
 
 
 def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
@@ -509,106 +509,6 @@ def construct_mappings(ms_name,
     return row_mapping, freq_mapping, time_mapping, \
            freqs, utimes, ms_chunks, gain_chunks, radecs, \
            chan_widths, uv_max, antpos, poltype
-
-    # # Now figure out which datasets map to which times and bands
-    # # freq <-> band mapping
-    # ufreqs = np.unique(all_freqs)  # sorted ascending
-    # nchan = ufreqs.size
-    # if nband is None:
-    #     nband = 1
-    # else:
-    #    nband = nband
-
-    # # should we use bin edges here? what about inhomogeneous channel widths?
-    # fmin = ufreqs[0]
-    # fmax = ufreqs[-1]
-    # fbins = np.linspace(fmin, fmax, nband + 1)
-
-    # freq_out = np.zeros(nband)
-    # chan_count = 0
-    # for band in range(nband):
-    #     indl = ufreqs >= fbins[band]
-    #     # inclusive except for the last one
-    #     if band == nband-1:
-    #         indu = ufreqs <= fbins[band + 1]
-    #     else:
-    #         indu = ufreqs < fbins[band + 1]
-    #     freq_out[band] = np.mean(ufreqs[indl&indu])
-    #     chan_count += ufreqs[indl&indu].size
-
-
-    # if chan_count < nchan:
-    #     raise RuntimeError("Something has gone wrong with the chan <-> band "
-    #                        "mapping. This is probably a bug.")
-
-    # band_mapping = {}
-    # fbin_idx = {}
-    # fbin_counts = {}
-    # for ms in ms_name:
-    #     fbin_idx[ms] = {}
-    #     fbin_counts[ms] = {}
-    #     band_mapping[ms] = {}
-    #     for idt in idts[ms]:
-    #         freq = freqs[ms][idt]
-    #         band_map = np.empty(freq.size, dtype=np.int32)
-    #         for band in range(nband):
-    #             indl = freq >= fbins[band]
-    #             if band == nband-1:
-    #                 indu = freq <= fbins[band + 1]
-    #             else:
-    #                 indu = freq < fbins[band + 1]
-    #             band_map = np.where(indl & indu, band, band_map)
-
-    #         bands, bin_counts = np.unique(band_map, return_counts=True)
-    #         band_mapping[ms][idt] = bands
-    #         bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
-    #         fbin_idx[ms][idt] = bin_idx
-    #         fbin_counts[ms][idt] = bin_counts
-
-    # # This logic does not currently handle overlapping scans
-    # tbin_idx = {}
-    # tbin_counts = {}
-    # time_mapping = {}
-    # ms_chunks = {}
-    # gain_chunks = {}
-    # ti = 0
-    # for ims, ms in enumerate(ms_name):
-    #     tbin_idx[ms] = {}
-    #     tbin_counts[ms] = {}
-    #     time_mapping[ms] = {}
-    #     ms_chunks[ms] = []
-    #     gain_chunks[ms] = []
-    #     for idt in idts[ms]:
-    #         time = times[ms][idt]
-    #         # has to be here since scans not same length
-    #         ntime = utimes[ms][idt].size
-    #         if ipi in [0, -1, None]:
-    #             ipit = ntime
-    #         else:
-    #             ipit = ipi
-    #         row_chunks, tidx, tcounts = chunkify_rows(time, ipit,
-    #                                                   daskify_idx=False)
-    #         tbin_idx[ms][idt] = tidx
-    #         tbin_counts[ms][idt] = tcounts
-    #         time_mapping[ms][idt] = {}
-    #         time_mapping[ms][idt]['low'] = np.arange(0, ntime, ipit)
-    #         hmap = np.append(np.arange(ipit, ntime, ipit), ntime)
-    #         time_mapping[ms][idt]['high'] = hmap
-    #         time_mapping[ms][idt]['time_id'] = np.arange(ti, ti + hmap.size)
-    #         # we do not want to duplicate this for every FIELD and SPW
-    #         sidx = idt.find('SCAN') + 4
-    #         sid = idt[sidx:]
-    #         if sid not in processed_scans:
-    #             ti += hmap.size
-    #             processed_scans.append(sid)
-
-
-
-
-    return freqs, fbin_idx, fbin_counts, band_mapping, freq_out, \
-        utimes, tbin_idx, tbin_counts, time_mapping, \
-        ms_chunks, gain_chunks, radecs, \
-        chan_widths, uv_max, antpos, poltype
 
 
 def restore_corrs(vis, ncorr):
