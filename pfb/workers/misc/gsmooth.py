@@ -47,7 +47,7 @@ def gsmooth(**kw):
     opts.nband = 1  # hack!!!
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'tsmooth_{timestamp}.log')
+    pyscilog.log_to_file(f'gsmooth_{timestamp}.log')
     OmegaConf.set_struct(opts, True)
 
     # TODO - prettier config printing
@@ -115,7 +115,13 @@ def gsmooth(**kw):
     print(f"Writing pure delays (i.e. offset removed) to {str(gain_dir)}/"
           f"smoothed.qc::K", file=log)
     writes = xds_to_zarr(K, f'{str(gain_dir)}/smoothed.qc::K',
-                         columns=('gains', 'params', 'gain_flags'))
+                         columns=('gains',
+                                  'gain_flags',
+                                  'params',
+                                  'param_flags',
+                                  'jhj',
+                                  'conv_iter',
+                                  'conv_perc'))
 
     dask.compute(writes)
 
