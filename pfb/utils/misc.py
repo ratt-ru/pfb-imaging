@@ -1277,7 +1277,7 @@ def sum_overlap(vis, wgt, mask, freq, ufreq, flow, fhigh):
         masko[:, idx1] += mask[i][:, idx0]
 
     # unmasked where at least one data point is unflagged
-    masko = np.where(masko < nds, 1, 0)
+    masko = np.where(masko > 0, 1, 0)
     viso[masko.astype(bool)] = viso[masko.astype(bool)]/wgto[masko.astype(bool)]
 
     # blocker expects a dictionary as output
