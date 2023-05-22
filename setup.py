@@ -25,6 +25,8 @@ requirements = [
                 "codex-africanus[complete]",
                 "dask-ms[xarray, zarr, s3]",
                 "finufft",
+                "stimela==2.0rc4",
+
                 "QuartiCal"
                 "@git+https://github.com/ratt-ru/QuartiCal.git"
                 "@v0.2.0-dev",
@@ -33,9 +35,9 @@ requirements = [
                 "@git+https://github.com/ratt-ru/packratt.git"
                 "@master",
 
-                "stimela"
-                "@git+https://github.com/caracal-pipeline/stimela2"
-                "@master",
+                # "stimela"
+                # "@git+https://github.com/caracal-pipeline/stimela2"
+                # "@master",
 
                 "smoove"
                 "@git+https://github.com/landmanbester/smoove.git"
