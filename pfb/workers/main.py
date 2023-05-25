@@ -8,4 +8,5 @@ def cli():
 
 
 from pfb.workers import (init, grid, degrid,
-                         clean, restore, fwdbwd, spotless)
+                         clean, restore, fwdbwd,
+                         spotless)
