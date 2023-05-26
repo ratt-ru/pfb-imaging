@@ -6,7 +6,6 @@ with open("README.rst", "r") as fh:
 
 requirements = [
                 'numpy',
-                'tornado',
                 'matplotlib',
                 'ipython',
                 'scikit-image',
@@ -18,13 +17,8 @@ requirements = [
                 'pyscilog >= 0.1.2',
                 'Click',
                 'omegaconf',
-                'bokeh==2.4.3',
-                'graphviz',
-                'nifty7',
-                'sympy',
                 "codex-africanus[complete]",
                 "dask-ms[xarray, zarr, s3]",
-                "finufft",
                 "stimela==2.0rc4",
 
                 "QuartiCal"
