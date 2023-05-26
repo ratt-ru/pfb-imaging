@@ -140,8 +140,8 @@ def test_clean(do_gains, tmp_path_factory):
         g = da.from_array(jones)
         gflags = da.zeros((ntime, nchan, nant, 1))
         data_vars = {
-            'gains':(('gain_t', 'gain_f', 'ant', 'dir', 'corr'), g),
-            'gain_flags':(('gain_t', 'gain_f', 'ant', 'dir'), gflags)
+            'gains':(('gain_time', 'gain_freq', 'antenna', 'direction', 'correlation'), g),
+            'gain_flags':(('gain_time', 'gain_freq', 'antenna', 'direction'), gflags)
         }
         gain_spec_tup = namedtuple('gains_spec_tup', 'tchunk fchunk achunk dchunk cchunk')
         attrs = {
@@ -156,11 +156,11 @@ def test_clean(do_gains, tmp_path_factory):
                                        achunk=(int(nant),),
                                        dchunk=(int(1),),
                                        cchunk=(int(ncorr),)),
-            'GAIN_AXES': ('gain_t', 'gain_f', 'ant', 'dir', 'corr')
+            'GAIN_AXES': ('gain_time', 'gain_freq', 'antenna', 'direction', 'correlation')
         }
         coords = {
-            'gain_f': (('gain_f',), freq),
-            'gain_t': (('gain_t',), utime)
+            'gain_freq': (('gain_freq',), freq),
+            'gain_time': (('gain_time',), utime)
 
         }
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
@@ -173,7 +173,7 @@ def test_clean(do_gains, tmp_path_factory):
         gain_path = None
 
 
-    postfix = ""
+    postfix = "main"
     # set defaults from schema
     from pfb.parser.schemas import schema
     init_args = {}
@@ -183,11 +183,12 @@ def test_clean(do_gains, tmp_path_factory):
     outname = str(test_dir / 'test')
     init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
     init_args["output_filename"] = outname
-    init_args["nband"] = nchan
     init_args["data_column"] = "DATA2"
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = gain_path
     init_args["max_field_of_view"] = fov
+    init_args["overwrite"] = True
+    init_args["channels_per_image"] = 1
     from pfb.workers.init import _init
     _init(**init_args)
 
@@ -200,7 +201,7 @@ def test_clean(do_gains, tmp_path_factory):
     grid_args["postfix"] = postfix
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
-    grid_args["fits_mfs"] = False
+    grid_args["fits_mfs"] = True
     grid_args["psf"] = True
     grid_args["residual"] = False
     grid_args["nthreads"] = 8  # has to be set when calling _grid
@@ -238,17 +239,22 @@ def test_clean(do_gains, tmp_path_factory):
 
     # get inferred model
     basename = f'{outname}_I'
-    dds_name = f'{basename}{postfix}.dds.zarr'
+    dds_name = f'{basename}_{postfix}.dds.zarr'
     dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
     model_inferred = np.zeros((nchan, nx, ny))
     for ds in dds:
         b = ds.bandid
         model_inferred[b] = ds.MODEL.values
 
+    # we actually reconstruct I/n(l,m) so we need to correct for that
+    l, m = np.meshgrid(dds[0].x.values, dds[0].y.values,
+                       indexing='ij')
+    eps = l**2+m**2
+    n = -eps/(np.sqrt(1.-eps)+1.) + 1  # more stable form
     for i in range(nsource):
-        assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] -
+        assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] * n[Ix[i], Iy[i]] -
                         model[:, Ix[i], Iy[i]], 1.0,
                         atol=5*threshold)
 
  # do_gains, algo
-# test_clean(False, 'agroclean')
+# test_clean(True)

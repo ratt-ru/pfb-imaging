@@ -5,8 +5,7 @@ with open("README.rst", "r") as fh:
     long_description = fh.read()
 
 requirements = [
-                'numpy==1.22',
-                'tornado==6.1',
+                'numpy',
                 'matplotlib',
                 'ipython',
                 'scikit-image',
@@ -18,22 +17,25 @@ requirements = [
                 'pyscilog >= 0.1.2',
                 'Click',
                 'omegaconf',
-                'bokeh==2.4.3',
-                'graphviz',
-                'nifty7',
-                'sympy',
                 "codex-africanus[complete]",
                 "dask-ms[xarray, zarr, s3]",
-                "finufft",
+                "stimela==2.0rc4",
+
+                "QuartiCal"
+                "@git+https://github.com/ratt-ru/QuartiCal.git"
+                "@v0.2.0-dev",
 
                 "packratt"
                 "@git+https://github.com/ratt-ru/packratt.git"
                 "@master",
 
-                "stimela"
-                "@git+https://github.com/caracal-pipeline/stimela2"
-                "@master"
+                # "stimela"
+                # "@git+https://github.com/caracal-pipeline/stimela2"
+                # "@master",
 
+                "smoove"
+                "@git+https://github.com/landmanbester/smoove.git"
+                "@test_ci"
             ]
 
 
@@ -68,7 +70,6 @@ setup(
      ],
      entry_points={'console_scripts':[
         'pfb = pfb.workers.main:cli',
-        'pfbmisc = pfb.workers.experimental:cli'
         ]
      }
 

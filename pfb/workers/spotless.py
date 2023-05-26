@@ -9,15 +9,6 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('SPOTLESS')
 
-from numba import njit
-@njit
-def showtys(iy):
-    print(len(iy), iy)
-    # for n in range(1, len(tys)):
-    #     for k, v in tys[n].items():
-    #         print(k, v)
-    return
-
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
@@ -143,20 +134,22 @@ def _spotless(**kw):
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
-    from pfb.opt.primal_dual import primal_dual
-    from pfb.operators.hessian import hessian_xds, hessian_psf_cube
-    from pfb.operators.psi import _im2coef_impl as im2coef
-    from pfb.operators.psi import _coef2im_impl as coef2im
+    from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
+    from pfb.operators.hessian import hessian_xds
+    from pfb.operators.psf import psf_convolve_cube
+    from pfb.operators.psi import im2coef
+    from pfb.operators.psi import coef2im
     from copy import copy, deepcopy
     from ducc0.misc import make_noncritical
     from pfb.wavelets.wavelets import wavelet_setup
-    from pfb.prox.prox_21m import prox_21m as prox_21
+    from pfb.prox.prox_21m import prox_21m_numba as prox_21
+    from pfb.prox.prox2 import prox2
     # from pfb.prox.prox_21 import prox_21
     from pfb.utils.misc import fitcleanbeam
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
                                           'chan':-1,
                                           'x':-1,
@@ -167,7 +160,7 @@ def _spotless(**kw):
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
 
-    nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
+    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
 
     # stitch dirty/psf in apparent scale
@@ -192,8 +185,8 @@ def _spotless(**kw):
         freq_out.append(ds.freq_out)
     freq_out = np.unique(np.array(freq_out))
     nband = opts.nband
-    nx = dds[0].nx
-    ny = dds[0].ny
+    nx = dds[0].x.size
+    ny = dds[0].y.size
     ra = dds[0].ra
     dec = dds[0].dec
     radec = [ra, dec]
@@ -235,12 +228,12 @@ def _spotless(**kw):
     xpad = make_noncritical(xpad)
     xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
     xhat = make_noncritical(xhat)
-    hess_psf = partial(hessian_psf_cube, xpad, xhat, xout, beam, psfhat, lastsize,
-                       nthreads=opts.nthreads, sigmainv=opts.sigmainv)
+    psf_convolve = partial(psf_convolve_cube, xpad, xhat, xout, psfhat, lastsize,
+                       nthreads=opts.nthreads)
 
     if opts.hessnorm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
-        hessnorm, hessbeta = power_method(hess_psf, (nband, nx, ny),
+        hessnorm, hessbeta = power_method(psf_convolve, (nband, nx, ny),
                                           tol=opts.pm_tol,
                                           maxit=opts.pm_maxit,
                                           verbosity=opts.pm_verbose,
@@ -271,14 +264,16 @@ def _spotless(**kw):
                    bases=bases,
                    ntot=ntot,
                    nmax=nmax,
-                   nlevels=opts.nlevels)
+                   nlevels=opts.nlevels,
+                   nthreads=opts.nthreads)
     psi = partial(coef2im,
                   bases=bases,
                   ntot=ntot,
                   iy=iy,
                   sy=sy,
                   nx=nx,
-                  ny=ny)
+                  ny=ny,
+                  nthreads=opts.nthreads)
 
     # get clean beam area to convert residual units during l1reweighting
     # TODO - could refine this with comparison between dirty and restored
@@ -292,52 +287,50 @@ def _spotless(**kw):
     # i) convert residual units so it is comparable to model
     # ii) project residual into dual domain
     # iii) compute the rms in the space where thresholding happens
-    rms_comps = np.std(np.sum(psiH(residual/pix_per_beam), axis=0),
+    tmp = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
+    fsel = wsums > 0
+    tmp2 = residual.copy()
+    tmp2[fsel] *= wsum/wsums[fsel, None, None]
+    psiH(tmp2/pix_per_beam, tmp)
+    rms_comps = np.std(np.sum(tmp, axis=0),
                        axis=-1)[:, None]  # preserve axes
 
-    # Initialise dual and weights
-    if dual is None:  # starting from scratch
+    # TODO - load from dds if present
+    if dual is None:
         dual = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
         l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
-    else:  # continuing
-        # need to recompute the l1weights anyway if rmsfactor has changed
-        print('Computing L1 weights', file=log)
-        mcomps = np.sum(psiH(model), axis=0)
-        l1weight = (1 + opts.rmsfactor)/(1 + (mcomps/rms_comps)**2)
-        # do not penalise components above threshold
-        l1weight[l1weight < 1.0] = 0.0
+    else:
+        if opts.l1reweight_from == 0:
+            print('Initialising with L1 reweighted', file=log)
+            psiH(model, tmp)
+            mcomps = np.sum(tmp, axis=0)
+            l1weight = (1 + opts.rmsfactor)/(1 + (np.abs(mcomps)/rms_comps)**2)
+            # l1weight[l1weight < 1.0] = 0.0
+        else:
+            l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
+
+
+    # for generality the prox function only takes the
+    # array variable and step size as inputs
+    prox21 = partial(prox_21, weight=l1weight)
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
     print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
     for k in range(opts.niter):
-        print("Solving for update", file=log)
-        update = pcg(hess_psf,
-                     residual,
-                     x0=residual/pix_per_beam if k==0 else update,
-                     tol=opts.cg_tol,
-                     maxit=opts.cg_maxit,
-                     minit=opts.cg_minit,
-                     verbosity=opts.cg_verbose,
-                     report_freq=opts.cg_report_freq,
-                     backtrack=opts.backtrack)
-
-        save_fits(basename + f'update_{k+1}.fits', np.mean(update, axis=0), hdr_mfs)
-
         print('Solving for model', file=log)
         modelp = deepcopy(model)
-        data = model + opts.gamma*update
-        model, dual = primal_dual(hess_psf,
-                                  data,
-                                  model if np.any(model) else update,
+        data = residual + psf_convolve(model)
+        grad21 = lambda x: psf_convolve(x) - data
+        model, dual = primal_dual(model,
                                   dual,
-                                  opts.rmsfactor*rms_comps,
+                                  opts.rmsfactor*rms,
                                   psi,
                                   psiH,
-                                  l1weight,
                                   hessnorm,
-                                  prox_21,
+                                  prox21,
+                                  grad21,
                                   nu=nbasis,
                                   positivity=opts.positivity,
                                   tol=opts.pd_tol,
@@ -346,7 +339,7 @@ def _spotless(**kw):
                                   report_freq=opts.pd_report_freq,
                                   gamma=opts.gamma)
 
-        save_fits(basename + f'model_{k+1}.fits', np.mean(model, axis=0), hdr_mfs)
+        save_fits(basename + f'_model_{k+1}.fits', np.mean(model, axis=0), hdr_mfs)
 
         print("Getting residual", file=log)
         convimage = hess(model)
@@ -354,6 +347,8 @@ def _spotless(**kw):
                     casting='same_kind')
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
+
+        save_fits(basename + f'_residual_{k+1}.fits', residual_mfs, hdr_mfs)
 
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
@@ -363,21 +358,22 @@ def _spotless(**kw):
               f"rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
 
-        save_fits(basename + f'residual_{k+1}.fits', residual_mfs, hdr_mfs)
-
         if k+1 >= opts.l1reweight_from:
             print('Computing L1 weights', file=log)
             # convert residual units so it is comparable to model
-            rms_comps = np.std(np.sum(psiH(residual/pix_per_beam), axis=0),
+            tmp2[fsel] = residual[fsel] * wsum/wsums[fsel, None, None]
+            psiH(tmp2/pix_per_beam, tmp)
+            rms_comps = np.std(np.sum(tmp, axis=0),
                                axis=-1)[:, None]  # preserve axes
-            mcomps = np.sum(psiH(model), axis=0)
+            psiH(model, tmp)
+            mcomps = np.sum(tmp, axis=0)
             # the logic here is that weights shoudl remain the same for model
             # components that are rmsfactor times larger than the rms
-            # high SNR values should experience relatively small or no
-            # thresholding whereas small values should be strongly thresholded
-            l1weight = (1 + opts.rmsfactor)/(1 + (mcomps/rms_comps)**2)
-            # do not penalise components above threshold
-            l1weight[l1weight < 1.0] = 0.0
+            # high SNR values should experience relatively small thresholding
+            # whereas small values should be strongly thresholded
+            l1weight = (1 + opts.rmsfactor)/(1 + (np.abs(mcomps)/rms_comps)**2)
+            # l1weight[l1weight < 1.0] = 0.0
+            prox = partial(prox_21, weight=l1weight, axis=0)
 
         print("Updating results", file=log)
         dds_out = []
@@ -452,7 +448,7 @@ def _spotless_dist(**kw):
     from itertools import cycle
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
 
     client = get_client()
     names = [w['name'] for w in client.scheduler_info()['workers'].values()]

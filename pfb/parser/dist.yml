@@ -6,11 +6,13 @@ host_address:
   abbreviation: ha
 nworkers:
   dtype: int
+  default: 1
   abbreviation: nw
   info:
     Number of worker processes.
 nthreads_per_worker:
   dtype: int
+  default: 1
   info:
     Number of threads per worker process.
   abbreviation: ntpw

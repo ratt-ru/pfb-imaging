@@ -2,7 +2,7 @@ import numpy as np
 import dask
 import dask.array as da
 from daskms.optimisation import inlined_array
-from ducc0.wgridder import ms2dirty, dirty2ms
+from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from ducc0.misc import make_noncritical
 from uuid import uuid4
 from pfb.operators.psf import (psf_convolve_slice,
@@ -63,6 +63,8 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
 
 
 def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
+                  x0=0.0,
+                  y0=0.0,
                   cell=None,
                   wstack=None,
                   epsilon=None,
@@ -71,29 +73,35 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
     if not x.any():
         return np.zeros_like(x)
     nx, ny = x.shape
-    mvis = dirty2ms(uvw=uvw,
+    mvis = dirty2vis(uvw=uvw,
                     freq=freq,
                     mask=vis_mask,
                     dirty=x if beam is None else x * beam,
                     pixsize_x=cell,
                     pixsize_y=cell,
+                    center_x=x0,
+                    center_y=y0,
                     epsilon=epsilon,
                     nthreads=nthreads,
-                    do_wstacking=wstack)
+                    do_wgridding=wstack,
+                    divide_by_n=False)
 
-    convim = ms2dirty(uvw=uvw,
+    convim = vis2dirty(uvw=uvw,
                       freq=freq,
-                      ms=mvis,
+                      vis=mvis,
                       wgt=weight,
                       mask=vis_mask,
                       npix_x=nx,
                       npix_y=ny,
                       pixsize_x=cell,
                       pixsize_y=cell,
+                      center_x=x0,
+                      center_y=y0,
                       epsilon=epsilon,
                       nthreads=nthreads,
-                      do_wstacking=wstack,
-                      double_precision_accumulation=double_accum)
+                      do_wgridding=wstack,
+                      double_precision_accumulation=double_accum,
+                      divide_by_n=False)
 
     if beam is not None:
         convim *= beam
@@ -264,7 +272,7 @@ def hessian_psf_cube(
         psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x*beam,
                           nthreads=nthreads)
     else:
-        psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x,
+        xout = psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x,
                           nthreads=nthreads)
 
     if beam is not None:
@@ -274,3 +282,88 @@ def hessian_psf_cube(
         xout /= wsum
 
     return xout + x * sigmainv
+
+
+# from ducc0.fft import r2c, c2r
+# def hess_psf(xpad,    # preallocated array to store padded image
+#              xhat,    # preallocated array to store FTd image
+#              xout,    # preallocated array to store output image
+#              psfhat,
+#              lastsize,
+#              x,       # input image, not overwritten
+#              nthreads=1,
+#              sigmainv=1.0):
+#     _, _, nx, ny = x.shape
+#     xpad[...] = 0.0
+#     xpad[:, :, 0:nx, 0:ny] = x
+#     r2c(xpad, axes=(-2, -1), nthreads=nthreads,
+#         forward=True, inorm=0, out=xhat)
+#     xhat *= psfhat
+#     c2r(xhat, axes=(-2, -1), forward=False, out=xpad,
+#         lastsize=lastsize, inorm=2, nthreads=nthreads,
+#         allow_overwriting_input=True)
+#     xout[...] = xpad[:, :, 0:nx, 0:ny]
+#     return xout + sigmainv*x
+
+
+def hess_vis(xds,
+             dds,
+             xout,
+             x,
+             sigmainv=1.0,
+             wstack=True,
+             nthreads=1,
+             epsilon=1e-7,
+             divide_by_n=False):
+    for ds in xds:
+        b = ds.bandid
+        t = ds.timeid
+        vis_mask = ds.MASK.values
+        if np.all(vis_mask == 0):
+            continue
+
+        # accumulate model vis for this band and time
+        mvis = np.zeros(ds.VIS.data.shape, dtype=ds.VIS.dtype)
+        for field in dds.keys():
+
+            x0 = dds[field][f't{t}b{b}']['x0']
+            y0 = dds[field][f't{t}b{b}']['y0']
+            cell = dds[field][f't{t}b{b}']['cell']
+            nx = dds[field][f't{t}b{b}']['nx']
+            ny = dds[field][f't{t}b{b}']['ny']
+
+            mvis += dirty2vis(uvw=ds.UVW.values,
+                              freq=ds.FREQ.values,
+                              dirty=x[field][f't{t}b{b}'],
+                              pixsize_x=cell,
+                              pixsize_y=cell,
+                              center_x=x0,
+                              center_y=y0,
+                              epsilon=epsilon,
+                              do_wgridding=wstack,
+                              nthreads=nthreads,
+                              divide_by_n=divide_by_n)
+
+        # project to image space
+        for field in dds.keys():
+            x0 = dds[field][f't{t}b{b}']['x0']
+            y0 = dds[field][f't{t}b{b}']['y0']
+            cell = dds[field][f't{t}b{b}']['cell']
+            nx = dds[field][f't{t}b{b}']['nx']
+            ny = dds[field][f't{t}b{b}']['ny']
+            xout[field][f't{t}b{b}'] = vis2dirty(uvw=ds.UVW.values,
+                                                freq=ds.FREQ.values,
+                                                vis=mvis,
+                                                wgt=ds.WEIGHT.values,
+                                                npix_x=nx,
+                                                npix_y=ny,
+                                                pixsize_x=cell,
+                                                pixsize_y=cell,
+                                                center_x=x0,
+                                                center_y=y0,
+                                                epsilon=epsilon,
+                                                do_wgridding=wstack,
+                                                nthreads=nthreads,
+                                                divide_by_n=divide_by_n)
+            xout[field][f't{t}b{b}'] += sigmainv * x[field][f't{t}b{b}']
+    return xout

@@ -20,79 +20,33 @@ from scipy.optimize import curve_fit
 from collections import namedtuple
 from scipy.interpolate import RectBivariateSpline as rbs
 from africanus.coordinates.coordinates import radec_to_lmn
+import xarray as xr
+from smoove.kanterp import kanterp
+import pdb
 
-def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
-    nband, nx, ny = model
-    mask = np.any(model, axis=0)
-    # components excluding zeros
-    beta = model[:, mask]
-    if spectral_poly_order > infreqs.size:
-        raise ValueError("spectral-poly-order can't be larger than nband")
+class ForkedPdb(pdb.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
 
-    # we are given frequencies at bin centers, convert to bin edges
-    delta_freq = infreqs[1] - infreqs[0]
-    wlow = (infreqs - delta_freq/2.0)/ref_freq
-    whigh = (infreqs + delta_freq/2.0)/ref_freq
-    wdiff = whigh - wlow
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
 
-    # set design matrix for each component
-    # look at Offringa and Smirnov 1706.06786
-    Xfit = np.zeros([nband, order])
-    for i in range(1, order+1):
-        Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
 
-    # we want to fit a function modeli = Xfit comps
-    # where Xfit is the design matrix corresponding to an integrated
-    # polynomial model. The normal equations tells us
-    # comps = (Xfit.T wsums Xfit)**{-1} Xfit.T wsums modeli
-    # (Xfit.T wsums Xfit) == hesscomps
-    # Xfit.T wsums modeli == dirty_comps
-
-    dirty_comps = Xfit.T.dot(wsums*beta)
-
-    hess_comps = Xfit.T.dot(wsums*Xfit)
-
-    comps = np.linalg.solve(hess_comps, dirty_comps)
-
-    # now we want to evaluate the unintegrated polynomial coefficients
-    # the corresponding design matrix is constructed for a polynomial of
-    # the form
-    # modeli = comps[0]*1 + comps[1] * w + comps[2] w**2 + ...
-    # where w = outfreqs/ref_freq
-    w = outfreqs/ref_freq
-    # nchan = outfreqs
-    # Xeval = np.zeros((nchan, order))
-    # for c in range(nchan):
-    #     Xeval[:, c] = w**c
-    Xeval = np.tile(w, order)**np.arange(order)
-
-    betaout = Xeval.dot(comps)
-
-    modelout = np.zeros((nchan, nx, ny))
-    modelout[:, mask] = betaout
-
-    return modelout
-
-def compute_context(scheduler, output_filename):
+def compute_context(scheduler, output_filename, boring=True):
     if scheduler == "distributed":
         return performance_report(filename=output_filename + "_dask_report.html")
     else:
-        return ProgressBar()
-
-def estimate_data_size(nant, nhr, nsec, nchan, ncorr, nbytes):
-    '''
-    Estimates size of data in GB where:
-
-    nant    - number of antennas
-    nhr     - length of observation in hours
-    nsec    - integration time in seconds
-    nchan   - number of channels
-    ncorr   - number of correlations
-    nbytes  - bytes per item (eg. 8 for complex64)
-    '''
-    nbl = nant * (nant - 1) // 2
-    ntime = nhr * 3600 // nsec
-    return nbl * ntime * nchan * ncorr * nbytes / 1e9
+        if boring:
+            from contextlib import nullcontext
+            return nullcontext()
+        else:
+            return ProgressBar()
 
 
 def kron_matvec(A, b):
@@ -143,8 +97,9 @@ def to4d(data):
 
 def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     S0, S1, PA = GaussPar
-    Smaj = np.maximum(S0, S1)
-    Smin = np.minimum(S0, S1)
+    Smaj = S0  #np.maximum(S0, S1)
+    Smin = S1  #np.minimum(S0, S1)
+    print(f'using ex = {Smaj}, ey = {Smin}')
     A = np.array([[1. / Smin ** 2, 0],
                   [0, 1. / Smaj ** 2]])
 
@@ -272,128 +227,6 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
 
     return image
 
-def chan_to_band_mapping(ms_name, nband=None,
-                         group_by=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']):
-    '''
-    Construct dictionaries containing per MS and SPW channel to band mapping.
-    Currently assumes we are only imaging field 0 of the first MS.
-
-    Input:
-    ms_name     - list of ms names
-    nband       - number of imaging bands
-    group_by    - dataset grouping
-
-    Output:
-    freqs           - dict[MS][IDENTITY] chunked dask arrays of the freq to band mapping
-    freq_bin_idx    - dict[MS][IDENTITY] chunked dask arrays of bin starting indices
-    freq_bin_counts - dict[MS][IDENTITY] chunked dask arrays of counts in each bin
-    freq_out        - frequencies of average
-    band_mapping    - dict[MS][IDENTITY] identifying imaging bands going into degridder
-    chan_chunks     - dict[MS][IDENTITY] specifies dask chunking scheme over channel
-
-    where IDENTITY is constructed from the FIELD/DDID and SCAN ID's.
-    '''
-
-    if not isinstance(ms_name, list) and not isinstance(ms_name, ListConfig) :
-        ms_name = [ms_name]
-
-    # first pass through data to determine freq_mapping
-    radec = None
-    freqs = {}
-    all_freqs = []
-    for ims in ms_name:
-        xds = xds_from_ms(ims, chunks={"row": -1}, columns=('TIME',),
-                          group_cols=group_by)
-
-        # subtables
-        ddids = xds_from_table(ims + "::DATA_DESCRIPTION")
-        fields = xds_from_table(ims + "::FIELD")
-        spws_table = xds_from_table(ims + "::SPECTRAL_WINDOW")
-        pols = xds_from_table(ims + "::POLARIZATION")
-
-        # subtable data
-        ddids = dask.compute(ddids)[0]
-        fields = dask.compute(fields)[0]
-        spws_table = dask.compute(spws_table)[0]
-        pols = dask.compute(pols)[0]
-
-        freqs[ims] = {}
-        for ds in xds:
-            identity = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
-            field = fields[ds.FIELD_ID]
-
-            # check fields match
-            if radec is None:
-                radec = field.PHASE_DIR.data.squeeze()
-
-            if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
-                continue
-
-            spw = spws_table[ds.DATA_DESC_ID]
-            tmp_freq = spw.CHAN_FREQ.data.squeeze()
-            freqs[ims][identity] = tmp_freq
-            all_freqs.append(list([tmp_freq]))
-
-
-    # freq mapping
-    all_freqs = dask.compute(all_freqs)
-    ufreqs = np.unique(all_freqs)  # sorted ascending
-    nchan = ufreqs.size
-    if nband in [None, -1]:
-        nband = nchan
-    else:
-       nband = nband
-
-    # bin edges
-    fmin = ufreqs[0]
-    fmax = ufreqs[-1]
-    fbins = np.linspace(fmin, fmax, nband + 1)
-    freq_out = np.zeros(nband)
-    chan_count = 0
-    for band in range(nband):
-        indl = ufreqs >= fbins[band]
-        # inclusive except for the last one
-        if band == nband-1:
-            indu = ufreqs <= fbins[band + 1]
-        else:
-            indu = ufreqs < fbins[band + 1]
-        freq_out[band] = np.mean(ufreqs[indl&indu])
-        chan_count += ufreqs[indl&indu].size
-
-    if chan_count < nchan:
-        raise RuntimeError("Something has gone wrong with the chan <-> band "
-                           "mapping. This is probably a bug.")
-
-    # chan <-> band mapping
-    band_mapping = {}
-    chan_chunks = {}
-    freq_bin_idx = {}
-    freq_bin_counts = {}
-    for ims in freqs:
-        freq_bin_idx[ims] = {}
-        freq_bin_counts[ims] = {}
-        band_mapping[ims] = {}
-        chan_chunks[ims] = {}
-        for idt in freqs[ims]:
-            freq = np.atleast_1d(dask.compute(freqs[ims][idt])[0])
-            band_map = np.zeros(freq.size, dtype=np.int32)
-            for band in range(nband):
-                indl = freq >= fbins[band]
-                if band == nband-1:
-                    indu = freq <= fbins[band + 1]
-                else:
-                    indu = freq < fbins[band + 1]
-                band_map = np.where(indl & indu, band, band_map)
-            # to dask arrays
-            bands, bin_counts = np.unique(band_map, return_counts=True)
-            band_mapping[ims][idt] = da.from_array(bands, chunks=1)
-            chan_chunks[ims][idt] = tuple(bin_counts)
-            freqs[ims][idt] = da.from_array(freq, chunks=tuple(bin_counts))
-            bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
-            freq_bin_idx[ims][idt] = da.from_array(bin_idx, chunks=1)
-            freq_bin_counts[ims][idt] = da.from_array(bin_counts, chunks=1)
-
-    return freqs, freq_bin_idx, freq_bin_counts, freq_out, band_mapping, chan_chunks
 
 @dask.delayed
 def fetch_poltype(corr_type):
@@ -404,16 +237,20 @@ def fetch_poltype(corr_type):
         return 'circular'
 
 
-def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
+def construct_mappings(ms_name,
+                       gain_name=None,
+                       ipi=None,
+                       cpi=None):
     '''
     Construct dictionaries containing per MS, FIELD, DDID and SCAN
     time and frequency mappings.
 
     Input:
     ms_name     - list of ms names
-    nband       - number of imaging bands (defaults to a single band)
+    gain_name   - list of paths to gains, must be in same order as ms_names
     ipi         - integrations (i.e. unique times) per output image.
                   Defaults to one per scan.
+    cpi         - Channels per image. Defaults to one per spw.
 
     The chan <-> band mapping is determined by:
 
@@ -457,22 +294,22 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
     antpos = {}
     poltype = {}
     uv_maxs = []
-    idts = []
+    idts = {}
     for ims, ms in enumerate(ms_name):
         xds = xds_from_ms(ms, chunks={"row": -1}, columns=('TIME','UVW'),
                           group_cols=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'])
 
         # subtables
-        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")
-        fields = xds_from_table(ms + "::FIELD")
-        spws = xds_from_table(ms + "::SPECTRAL_WINDOW")
-        pols = xds_from_table(ms + "::POLARIZATION")
-        ants = xds_from_table(ms + "::ANTENNA")
+        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")[0]
+        fields = xds_from_table(ms + "::FIELD")[0]
+        spws = xds_from_table(ms + "::SPECTRAL_WINDOW")[0]
+        pols = xds_from_table(ms + "::POLARIZATION")[0]
+        ants = xds_from_table(ms + "::ANTENNA")[0]
 
-        antpos[ms] = ants[0].POSITION.data
-        poltype[ms] = fetch_poltype(pols[0].CORR_TYPE.data.squeeze())
+        antpos[ms] = ants.POSITION.data
+        poltype[ms] = fetch_poltype(pols.CORR_TYPE.data.squeeze())
 
-
+        idts[ms] = []
         if gain_name is not None:
             gain = xds_from_zarr(gain_name[ims])
             gain_times[ms] = {}
@@ -486,13 +323,11 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
         chan_widths[ms] = {}
         for ids, ds in enumerate(xds):
             idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
-            idts.append(idt)
-            field = fields[ds.FIELD_ID]
-            radecs[ms][idt] = field.PHASE_DIR.data.squeeze()
+            idts[ms].append(idt)
+            radecs[ms][idt] = fields.PHASE_DIR.data[ds.FIELD_ID].squeeze()
 
-            spw = spws[ds.DATA_DESC_ID]
-            freqs[ms][idt] = da.atleast_1d(spw.CHAN_FREQ.data.squeeze())
-            chan_widths[ms][idt] = da.atleast_1d(spw.CHAN_WIDTH.data.squeeze())
+            freqs[ms][idt] = spws.CHAN_FREQ.data[ds.DATA_DESC_ID]
+            chan_widths[ms][idt] = spws.CHAN_WIDTH.data[ds.DATA_DESC_ID]
             times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
             uvw = ds.UVW.data
             u_max = abs(uvw[:, 0].max())
@@ -500,8 +335,8 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
             uv_maxs.append(da.maximum(u_max, v_max))
 
             if gain_name is not None:
-                gain_times[ms][idt] = gain[ids].gain_t.data
-                gain_freqs[ms][idt] = gain[ids].gain_f.data
+                gain_times[ms][idt] = gain[ids].gain_time.data
+                gain_freqs[ms][idt] = gain[ids].gain_freq.data
                 gain_axes[ms][idt] = gain[ids].GAIN_AXES
                 gain_spec[ms][idt] = gain[ids].GAIN_SPEC
 
@@ -514,13 +349,22 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
 
     uv_max = max(uv_maxs)
 
-    # Is this sufficient to make sure the MSs and gains are aligned?
     all_freqs = []
+    all_times = []
+    freq_mapping = {}
+    row_mapping = {}
+    time_mapping = {}
     utimes = {}
-    ntimes_out = 0
+    ms_chunks = {}
+    gain_chunks = {}
     for ms in ms_name:
+        freq_mapping[ms] = {}
+        row_mapping[ms] = {}
+        time_mapping[ms] = {}
         utimes[ms] = {}
-        for idt in idts:
+        ms_chunks[ms] = []
+        gain_chunks[ms] = []
+        for idt in idts[ms]:
             freq = freqs[ms][idt]
             if gain_name is not None:
                 try:
@@ -529,120 +373,63 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
                     raise ValueError(f'Mismatch between gain and MS '
                                      f'frequencies for {ms} at {idt}')
             all_freqs.append(freq)
-            utime = np.unique(times[ms][idt])
+            nchan = freq.size
+            if cpi in [-1, 0, None]:
+                cpit = nchan
+            else:
+                cpit = np.minimum(cpi, nchan)
+            freq_mapping[ms][idt] = {}
+            tmp = np.arange(0, nchan, cpit)
+            freq_mapping[ms][idt]['start_indices'] = tmp
+            if cpit != nchan:
+                tmp2 = np.append(tmp, [nchan])
+                freq_mapping[ms][idt]['counts'] = tmp2[1:] - tmp2[0:-1]
+            else:
+                freq_mapping[ms][idt]['counts'] = np.array((nchan,), dtype=int)
+
+            time = times[ms][idt]
+            utime = np.unique(time)
             if gain_name is not None:
                 try:
                     assert (gain_times[ms][idt] == utime).all()
                 except Exception as e:
                     raise ValueError(f'Mismatch between gain and MS '
-                                     f'utimes for {ms} at {idt}')  #WTF!!
+                                     f'utimes for {ms} at {idt}')
             utimes[ms][idt] = utime
-            if ipi in [0, -1, None]:
-                ntimes_out += 1
-            else:
-                ntimes_out += np.ceil(utime.size/ipi)
+            all_times.append(utime)
 
-    # freq mapping
-    ufreqs = np.unique(all_freqs)  # sorted ascending
-    nchan = ufreqs.size
-    if nband is None:
-        nband = 1
-    else:
-       nband = nband
-
-    # should we use bin edges here? what about inhomogeneous channel widths?
-    fmin = ufreqs[0]
-    fmax = ufreqs[-1]
-    fbins = np.linspace(fmin, fmax, nband + 1)
-
-    freq_out = np.zeros(nband)
-    chan_count = 0
-    for band in range(nband):
-        indl = ufreqs >= fbins[band]
-        # inclusive except for the last one
-        if band == nband-1:
-            indu = ufreqs <= fbins[band + 1]
-        else:
-            indu = ufreqs < fbins[band + 1]
-        freq_out[band] = np.mean(ufreqs[indl&indu])
-        chan_count += ufreqs[indl&indu].size
-
-    if chan_count < nchan:
-        raise RuntimeError("Something has gone wrong with the chan <-> band "
-                           "mapping. This is probably a bug.")
-
-    band_mapping = {}
-    fbin_idx = {}
-    fbin_counts = {}
-    for ms in ms_name:
-        fbin_idx[ms] = {}
-        fbin_counts[ms] = {}
-        band_mapping[ms] = {}
-        for idt in idts:
-            freq = freqs[ms][idt]
-            band_map = np.zeros(freq.size, dtype=np.int32)
-            for band in range(nband):
-                indl = freq >= fbins[band]
-                if band == nband-1:
-                    indu = freq <= fbins[band + 1]
-                else:
-                    indu = freq < fbins[band + 1]
-                band_map = np.where(indl & indu, band, band_map)
-
-            bands, bin_counts = np.unique(band_map, return_counts=True)
-            band_mapping[ms][idt] = bands
-            bin_idx = np.append(np.array([0]), np.cumsum(bin_counts))[0:-1]
-            fbin_idx[ms][idt] = bin_idx
-            fbin_counts[ms][idt] = bin_counts
-
-    # This logic does not currently handle overlapping scans
-    tbin_idx = {}
-    tbin_counts = {}
-    time_mapping = {}
-    ms_chunks = {}
-    gain_chunks = {}
-    ti = 0
-    for ims, ms in enumerate(ms_name):
-        tbin_idx[ms] = {}
-        tbin_counts[ms] = {}
-        time_mapping[ms] = {}
-        ms_chunks[ms] = []
-        gain_chunks[ms] = []
-        for idt in idts:
-            time = times[ms][idt]
-            # has to be here since scans not same length
             ntime = utimes[ms][idt].size
             if ipi in [0, -1, None]:
                 ipit = ntime
             else:
-                ipit = ipi
-            row_chunks, tidx, tcounts = chunkify_rows(time, ipit,
+                ipit = np.minimum(ipi, ntime)
+            row_chunks, ridx, rcounts = chunkify_rows(time, ipit,
                                                       daskify_idx=False)
-            tbin_idx[ms][idt] = tidx
-            tbin_counts[ms][idt] = tcounts
-            time_mapping[ms][idt] = {}
-            time_mapping[ms][idt]['low'] = np.arange(0, ntime, ipit)
-            hmap = np.append(np.arange(ipit, ntime, ipit), ntime)
-            time_mapping[ms][idt]['high'] = hmap
-            time_mapping[ms][idt]['time_id'] = np.arange(ti, ti + hmap.size)
-            ti += hmap.size
+            row_mapping[ms][idt] = {}
+            row_mapping[ms][idt]['start_indices'] = ridx
+            row_mapping[ms][idt]['counts'] = rcounts
 
             ms_chunks[ms].append({'row': row_chunks,
-                                  'chan': tuple(fbin_counts[ms][idt])})
+                                  'chan': tuple(freq_mapping[ms][idt]['counts'])})
 
+            time_mapping[ms][idt] = {}
+            tmp = np.arange(0, ntime, ipit)
+            time_mapping[ms][idt]['start_indices'] = tmp
+            if ipit != ntime:
+                tmp2 = np.append(tmp, [ntime])
+                time_mapping[ms][idt]['counts'] = tmp2[1:] - tmp2[0:-1]
+            else:
+                time_mapping[ms][idt]['counts'] = np.array((ntime,))
+
+            # we may need to rechunk gains in time and freq to line up with MS
             if gain_name is not None:
                 tmp_dict = {}
                 for name, val in zip(gain_axes[ms][idt], gain_spec[ms][idt]):
-                    if name == 'gain_t':
-                        ntimes = gain_times[ms][idt].size
-                        nchunksm1 = ntimes//ipit
-                        rem = ntimes - nchunksm1*ipit
-                        tmp_dict[name] = (ipit,)*nchunksm1
-                        if rem:
-                            tmp_dict[name] += (rem,)
-                    elif name == 'gain_f':
-                        tmp_dict[name] = tuple(fbin_counts[ms][idt])
-                    elif name == 'dir':
+                    if name == 'gain_time':
+                        tmp = tuple(time_mapping[ms][idt]['counts'])
+                    elif name == 'gain_freq':
+                        tmp_dict[name] = tuple(freq_mapping[ms][idt]['counts'])
+                    elif name == 'direction':
                         if len(val) > 1:
                             raise ValueError("DD gains not supported yet")
                         if val[0] > 1:
@@ -653,10 +440,9 @@ def construct_mappings(ms_name, gain_name=None, nband=None, ipi=None):
 
                 gain_chunks[ms].append(tmp_dict)
 
-    return freqs, fbin_idx, fbin_counts, band_mapping, freq_out, \
-        utimes, tbin_idx, tbin_counts, time_mapping, \
-        ms_chunks, gain_chunks, radecs, \
-        chan_widths, uv_max, antpos, poltype
+    return row_mapping, freq_mapping, time_mapping, \
+           freqs, utimes, ms_chunks, gain_chunks, radecs, \
+           chan_widths, uv_max, antpos, poltype
 
 
 def restore_corrs(vis, ncorr):
@@ -789,7 +575,7 @@ def _model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
     return model
 
 
-def init_mask(mask, mds, output_type, log):
+def init_mask(mask, model, output_type, log):
     if mask is None:
         print("No mask provided", file=log)
         mask = np.ones((mds.nx, mds.ny), dtype=output_type)
@@ -801,13 +587,9 @@ def init_mask(mask, mds, output_type, log):
         except Exception as e:
             print(f"No mask found at {mask}", file=log)
             raise e
-    elif mask.lower() == 'mds':
-        try:
-            mask = mds.MASK.values.astype(output_type)
-            print('Using mask in mds', file=log)
-        except:
-            print(f"No mask in mds", file=log)
-            raise e
+    elif mask.lower() == 'model':
+        mask = np.any(model, axis=0)
+        print('Using model to construct mask', file=log)
     else:
         raise ValueError(f'Unsupported masking option {mask}')
     return mask
@@ -871,7 +653,7 @@ def dds2cubes(dds, nband, apparent=False):
             dual[b] = ds.DUAL.data
         mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
         wsums[b] += ds.WSUM.data[0]
-    wsums = da.stack(wsums).squeeze()
+    wsums = da.stack(wsums).reshape(nband)
     wsum = wsums.sum()
     dirty = da.stack(dirty)/wsum
     model = da.stack(model)
@@ -898,196 +680,6 @@ def dds2cubes(dds, nband, apparent=False):
     return dirty, model, residual, psf, psfhat, mean_beam, wsums, dual
 
 
-def interp_gain_grid(gdct, ant_names):
-    nant = ant_names.size
-    ncorr, ntime, nfreq = gdct[ant_names[0]].shape
-    time = gdct['time']
-    assert time.size==ntime
-    freq = gdct['frequencies']
-    assert freq.size==nfreq
-
-    gain = np.zeros((ntime, nfreq, nant, 1, ncorr), dtype=np.complex128)
-
-    # get axes in qcal order
-    for p, name in enumerate(ant_names):
-        gain[:, :, p, 0, :] = np.moveaxis(gdct[name], 0, -1)
-
-    # fit spline to time and freq axes
-    gobj_amp = np.zeros((nant, 1, ncorr), dtype=object)
-    gobj_phase = np.zeros((nant, 1, ncorr), dtype=object)
-    for p in range(nant):
-        for c in range(ncorr):
-            gobj_amp[p, 0, c] = rbs(time, freq, np.abs(gain[:, :, p, 0, c]))
-            unwrapped_phase = np.unwrap(np.unwrap(np.angle(gain[:, :, p, 0, c]), axis=0), axis=1)
-            gobj_phase[p, 0, c] = rbs(time, freq, unwrapped_phase)
-    return gobj_amp, gobj_phase
-
-
-def array2qcal_ds(gobj_amp, gobj_phase, time, freq, ant_names, fid, ddid, sid, fname):
-    nant, ndir, ncorr = gobj_amp.shape
-    ntime = time.size
-    nchan = freq.size
-    # gains not chunked on disk
-    gain = np.zeros((ntime, nchan, nant, ndir, ncorr), dtype=np.complex128)
-    for p in range(nant):
-        for c in range(ncorr):
-            gain[:, :, p, 0, c] = gobj_amp[p, 0, c](time, freq)*np.exp(1.0j*gobj_phase[p, 0, c](time, freq))
-    gain = da.from_array(gain, chunks=(-1, -1, -1, -1, -1))
-    gflags = da.zeros((ntime, nchan, nant, ndir), chunks=(-1, -1, -1, -1), dtype=np.int8)
-    data_vars = {
-        'gains':(('gain_t', 'gain_f', 'ant', 'dir', 'corr'), gain),
-        'gain_flags':(('gain_t', 'gain_f', 'ant', 'dir'), gflags)
-    }
-    gain_spec_tup = namedtuple('gains_spec_tup', 'tchunk fchunk achunk dchunk cchunk')
-    attrs = {
-        'DATA_DESC_ID': int(ddid),
-        'FIELD_ID': int(fid),
-        'FIELD_NAME': fname,
-        'GAIN_AXES': ('gain_t', 'gain_f', 'ant', 'dir', 'corr'),
-        'GAIN_SPEC': gain_spec_tup(tchunk=(int(ntime),),
-                                    fchunk=(int(nchan),),
-                                    achunk=(int(nant),),
-                                    dchunk=(int(1),),
-                                    cchunk=(int(ncorr),)),
-        'NAME': 'NET',
-        'SCAN_NUMBER': int(sid),
-        'TYPE': 'complex'
-    }
-    if ncorr==1:
-        corrs = np.array(['XX'], dtype=object)
-    elif ncorr==2:
-        corrs = np.array(['XX', 'YY'], dtype=object)
-    coords = {
-        'gain_f': (('gain_f',), freq),
-        'gain_t': (('gain_t',), time),
-        'ant': (('ant'), ant_names),
-        'corr': (('corr'), corrs),
-        'dir': (('dir'), np.array([0], dtype=np.int32)),
-        'f_chunk': (('f_chunk'), np.array([0], dtype=np.int32)),
-        't_chunk': (('t_chunk'), np.array([0], dtype=np.int32))
-    }
-    return xr.Dataset(data_vars, coords=coords, attrs=attrs)
-
-
-# not currently chunking over time
-def accum_vis(data, flag, ant1, ant2, nant, ref_ant=-1):
-    return da.blockwise(_accum_vis, 'afc',
-                        data, 'rfc',
-                        flag, 'rfc',
-                        ant1, 'r',
-                        ant2, 'r',
-                        ref_ant, None,
-                        new_axes={'a':nant},
-                        dtype=np.complex128)
-
-
-def _accum_vis(data, flag, ant1, ant2, ref_ant):
-    return _accum_vis_impl(data[0], flag[0], ant1[0], ant2[0], ref_ant)
-
-# @jit(nopython=True, fastmath=True, parallel=False, cache=True, nogil=True)
-def _accum_vis_impl(data, flag, ant1, ant2, ref_ant):
-    # select out reference antenna
-    I = np.where((ant1==ref_ant) | (ant2==ref_ant))[0]
-    data = data[I]
-    flag = flag[I]
-    ant1 = ant1[I]
-    ant2 = ant2[I]
-
-    # we can zero flagged data because they won't contribute to the FT
-    data = np.where(flag, 0j, data)
-    nrow, nchan, ncorr = data.shape
-    nant = np.maximum(ant1.max(), ant2.max()) + 1
-    if ref_ant == -1:
-        ref_ant = nant-1
-    ncorr = data.shape[-1]
-    vis = np.zeros((nant, nchan, ncorr), dtype=np.complex128)
-    counts = np.zeros((nant, nchan, ncorr), dtype=np.float64)
-    for row in range(nrow):
-        p = int(ant1[row])
-        q = int(ant2[row])
-        if p == ref_ant:
-            vis[q] += data[row].astype(np.complex128).conj()
-            counts[q] += flag[row].astype(np.float64)
-        elif q == ref_ant:
-            vis[p] += data[row].astype(np.complex128)
-            counts[p] += flag[row].astype(np.float64)
-    valid = counts > 0
-    vis[valid] = vis[valid]/counts[valid]
-    return vis
-
-def estimate_delay(vis_ant, freq, min_delay):
-    return da.blockwise(_estimate_delay, 'ac',
-                        vis_ant, 'afc',
-                        freq, 'f',
-                        min_delay, None,
-                        dtype=np.float64)
-
-
-def _estimate_delay(vis_ant, freq, min_delay):
-    return _estimate_delay_impl(vis_ant[0], freq[0], min_delay)
-
-def _estimate_delay_impl(vis_ant, freq, min_delay):
-    delta_freq = 1.0/min_delay
-    nchan = freq.size
-    fmax = freq.min() + delta_freq
-    fexcess = fmax - freq.max()
-    freq_cell = freq[1]-freq[0]
-    if fexcess > 0:
-        npad = np.int(np.ceil(fexcess/freq_cell))
-        npix = (nchan + npad)
-    else:
-        npix = nchan
-    while npix%2:
-        npix = good_size(npix+1)
-    npad = npix - nchan
-    lag = np.fft.fftfreq(npix, freq_cell)
-    lag = Fs(lag)
-    dlag = lag[1] - lag[0]
-    nant, _, ncorr = vis_ant.shape
-    delays = np.zeros((nant, ncorr), dtype=np.float64)
-    for p in range(nant):
-        for c in range(ncorr):
-            vis_fft = np.fft.fft(vis_ant[p, :, c], npix)
-            pspec = np.abs(Fs(vis_fft))
-            if not pspec.any():
-                continue
-            delay_idx = np.argmax(pspec)
-            # fm1 = lag[delay_idx-1]
-            # f0 = lag[delay_idx]
-            # fp1 = lag[delay_idx+1]
-            # delays[p,c] = 0.5*dlag*(fp1 - fm1)/(fm1 - 2*f0 + fp1)
-            # print(p, c, lag[delay_idx])
-            delays[p,c] = lag[delay_idx]
-    return delays
-
-from finufft import nufft1d3
-import matplotlib.pyplot as plt
-def _estimate_tec_impl(vis_ant, freq, tec_nyq, max_tec, fctr, srf=10):
-    nuinv = fctr/freq
-    npix = int(srf*max_tec/tec_nyq)
-    print(npix)
-    lag = np.linspace(-0.5*max_tec, 0.5*max_tec, npix)
-    nant, _, ncorr = vis_ant.shape
-    tecs = np.zeros((nant, ncorr), dtype=np.float64)
-    for p in range(nant):
-        for c in range(ncorr):
-            vis_fft = nufft1d3(nuinv, vis_ant[p, :, c], lag, eps=1e-8, isign=-1)
-            pspec = np.abs(vis_fft)
-            plt.plot(lag, pspec)
-            # plt.arrow(tecsin[p,c], 0, 0.0, pspec.max())
-            plt.show()
-            if not pspec.any():
-                continue
-            tec_idx = np.argmax(pspec)
-            # fm1 = lag[delay_idx-1]
-            # f0 = lag[delay_idx]
-            # fp1 = lag[delay_idx+1]
-            # delays[p,c] = 0.5*dlag*(fp1 - fm1)/(fm1 - 2*f0 + fp1)
-            # print(p, c, lag[delay_idx])
-            tecs[p,c] = lag[tec_idx]
-    return tecs
-
-
 def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):
     utimes, time_bin_counts = np.unique(time, return_counts=True)
     n_time = len(utimes)
@@ -1103,20 +695,6 @@ def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):
         time_bin_indices = da.from_array(time_bin_indices, chunks=utimes_per_chunk)
         time_bin_counts = da.from_array(time_bin_counts, chunks=utimes_per_chunk)
     return tuple(row_chunks), time_bin_indices, time_bin_counts
-
-
-def add_column(ms, col_name, like_col="DATA", like_type=None):
-    if col_name not in ms.colnames():
-        desc = ms.getcoldesc(like_col)
-        desc['name'] = col_name
-        desc['comment'] = desc['comment'].replace(" ", "_")  # got this from Cyril, not sure why
-        dminfo = ms.getdminfo(like_col)
-        dminfo["NAME"] =  "{}-{}".format(dminfo["NAME"], col_name)
-        # if a different type is specified, insert that
-        if like_type:
-            desc['valueType'] = like_type
-        ms.addcols(desc, dminfo)
-    return ms
 
 
 def rephase_vis(vis, uvw, radec_in, radec_out):
@@ -1135,114 +713,198 @@ def _rephase_vis(vis, uvw, radec_in, radec_out):
                             uvw[:, 2]*(n_out-n_in)))
 
 
-def lthreshold(x, sigma, kind='l1'):
-    if kind=='l0':
-        return np.where(np.abs(x) > sigma, x, 0) * np.sign(x)
-    elif kind=='l1':
-        absx = np.abs(x)
-        return np.where(absx > sigma, absx - sigma, 0) * np.sign(x)
+# TODO - concat functions should allow coarsening to values other than 1
+def concat_row(xds):
+    # TODO - how to compute average beam before we have access to grid?
+    times_in = []
+    freqs = []
+    for ds in xds:
+        times_in.append(ds.time_out)
+        freqs.append(ds.freq_out)
+
+    times_in = np.unique(times_in)
+    freqs = np.unique(freqs)
+
+    nband = freqs.size
+    ntime_in = times_in.size
+
+    if ntime_in == 1:  # no need to concatenate
+        return xds
+
+    # do merge manually because different variables require different
+    # treatment anyway eg. the BEAM should be computed as a weighted sum
+    xds_out = []
+    for b in range(nband):
+        xdsb = []
+        times = []
+        nu = freqs[b]
+        for ds in xds:
+            if ds.freq_out == nu:
+                xdsb.append(ds)
+                times.append(ds.time_out)
+
+        wgt = [ds.WEIGHT for ds in xdsb]
+        vis = [ds.VIS for ds in xdsb]
+        mask = [ds.MASK for ds in xdsb]
+        uvw = [ds.UVW for ds in xdsb]
+
+        wgto = xr.concat(wgt, dim='row')
+        viso = xr.concat(vis, dim='row')
+        masko = xr.concat(mask, dim='row')
+        uvwo = xr.concat(uvw, dim='row')
+
+        xdso = xr.merge((wgto, viso, masko, uvwo))
+        xdso['BEAM'] = xdsb[0].BEAM  # we need the grid to do this properly
+        xdso['FREQ'] = xdsb[0].FREQ  # is this always going to be the case?
+
+        xdso = xdso.chunk({'row':-1})
+
+        xdso = xdso.assign_coords({
+            'chan': (('chan',), xdsb[0].chan.data)
+        })
+
+        times = np.array(times)
+        tout = np.round(np.mean(times), 5)  # avoid precision issues
+        xdso = xdso.assign_attrs({
+            'dec': xdsb[0].dec,  # always the case?
+            'ra': xdsb[0].ra,    # always the case?
+            'time_out': tout,
+            'time_max': times.max(),
+            'time_min': times.min(),
+            'timeid': 0,
+            'freq_out': nu,
+            'freq_max': xdsb[0].freq_max,
+            'freq_min': xdsb[0].freq_min,
+        })
+        xds_out.append(xdso)
+    return xds_out
 
 
-@njit(nogil=True, cache=True, inline='always')
-def pad_and_shift(x, out):
-    '''
-    Pad x with zeros so as to have the same shape as out and perform
-    ifftshift in place
-    '''
-    nxi, nyi = x.shape
-    nxo, nyo = out.shape
-    if nxi >= nxo or nyi >= nyo:
-        raise ValueError('Output must be larger than input')
-    padx = nxo-nxi
-    pady = nyo-nyi
-    out[...] = 0.0
-    # first and last quadrants
-    for i in range(nxi//2):
-        for j in range(nyi//2):
-            # first to last quadrant
-            out[padx + nxi//2 + i, pady + nyi//2 + j] = x[i, j]
-            # last to first quadrant
-            out[i, j] = x[nxi//2+i, nyi//2+j]
-            # third to second quadrant
-            out[i, pady + nyi//2 + j] = x[nxi//2 + i, j]
-            # second to third quadrant
-            out[padx + nxi//2 + i, j] = x[i, nyi//2 + j]
-    return out
+from quartical.utils.dask import Blocker
+def concat_chan(xds, nband_out=1):
+    times = []
+    freqs_in = []
+    freqs_min = []
+    freqs_max = []
+    all_freqs = []
+    for ds in xds:
+        times.append(ds.time_out)
+        freqs_in.append(ds.freq_out)
+        freqs_min.append(ds.freq_min)
+        freqs_max.append(ds.freq_max)
+        all_freqs.append(ds.chan)
+
+    times = np.unique(times)
+    freqs_in = np.unique(freqs_in)
+    freqs_min = np.unique(freqs_min)
+    freqs_max = np.unique(freqs_max)
+    all_freqs = np.unique(all_freqs)
+
+    nband_in = freqs_in.size
+    ntime = times.size
+
+    if nband_in == nband_out or nband_in == 1:  # no need to concatenate
+        return xds
+
+    # currently assuming linearly spaced frequencies
+    freq_bins = np.linspace(freqs_min.min(), freqs_max.max(), nband_out+1)
+    bin_centers = (freq_bins[1:] + freq_bins[0:-1])/2
+
+    xds_out = []
+    for t in range(ntime):
+        time = times[t]
+        for b in range(nband_out):
+            xdst = []
+            flow = freq_bins[b]
+            fhigh = freq_bins[b+1]
+            freqsb = all_freqs[all_freqs >= flow]
+            freqsb = freqsb[freqsb < fhigh]
+            for ds in xds:
+                # ds overlaps output if either ds.freq_min or ds.freq_max lies in the bin
+                low_in = ds.freq_min > flow and ds.freq_min < fhigh
+                high_in = ds.freq_max > flow and ds.freq_max < fhigh
+                if ds.time_out == time and (low_in or high_in):
+                    xdst.append(ds)
+
+            # LB - we should be able to avoid this stack operation by using Jon's *() magic
+            wgt = da.stack([ds.WEIGHT.data for ds in xdst]).rechunk(-1, -1, -1)
+            vis = da.stack([ds.VIS.data for ds in xdst]).rechunk(-1, -1, -1)
+            mask = da.stack([ds.MASK.data for ds in xdst]).rechunk(-1, -1, -1)
+            freq = da.stack([ds.FREQ.data for ds in xdst]).rechunk(-1, -1)
+
+            nrow = xdst[0].row.size
+            nchan = freqsb.size
+
+            freqs_dask = da.from_array(freqsb, chunks=nchan)
+            blocker = Blocker(sum_overlap, 's')
+            blocker.add_input('vis', vis, 'src')
+            blocker.add_input('wgt', wgt, 'src')
+            blocker.add_input('mask', mask, 'src')
+            blocker.add_input('freq', freq, 'sc')
+            blocker.add_input('ufreq', freqs_dask, 'f')
+            blocker.add_input('flow', flow, None)
+            blocker.add_input('fhigh', fhigh, None)
+            blocker.add_output('viso', 'rf', ((nrow,), (nchan,)), vis.dtype)
+            blocker.add_output('wgto', 'rf', ((nrow,), (nchan,)), wgt.dtype)
+            blocker.add_output('masko', 'rf', ((nrow,), (nchan,)), mask.dtype)
+
+            out_dict = blocker.get_dask_outputs()
+
+            data_vars = {
+                'VIS': (('row', 'chan'), out_dict['viso']),
+                'WEIGHT': (('row', 'chan'), out_dict['wgto']),
+                'MASK': (('row', 'chan'), out_dict['masko']),
+                'FREQ': (('chan',), freqs_dask),
+                'UVW': (('row', 'three'), xdst[0].UVW.data), # should be the same across data sets
+                'BEAM': (('scalar',), xdst[0].BEAM.data)  # need to pass in the grid to do this properly
+            }
+
+            coords = {
+                'chan': (('chan',), freqsb)
+            }
+
+            fout = np.round(bin_centers[b], 5)  # avoid precision issues
+            attrs = {
+                'freq_out': fout,
+                'bandid': b,
+                'dec': xdst[0].dec,
+                'ra': xdst[0].ra,
+                'time_out': time
+            }
+
+            xdso = xr.Dataset(data_vars=data_vars,
+                              attrs=attrs)
+
+            xds_out.append(xdso)
+    return xds_out
 
 
-@njit(nogil=True, cache=True, inline='always')
-def unpad_and_unshift(x, out):
-    '''
-    fftshift x and unpad it into out
-    '''
-    nxi, nyi = x.shape
-    nxo, nyo = out.shape
-    if nxi < nxo or nyi < nyo:
-        raise ValueError('Output must be smaller than input')
-    out[...] = 0.0
-    padx = nxo-nxi
-    pady = nyo-nyi
-    for i in range(nxo//2):
-        for j in range(nyo//2):
-            # first to last quadrant
-            out[nxo//2+i, nyo//2+j] = x[i, j]
-            # last to first quadrant
-            out[i, j] = x[padx + nxo//2 + i, pady + nyo//2 + j]
-            # third to second quadrant
-            out[nxo//2 + i, j] = x[i, pady + nyo//2 + j]
-            # second to third quadrant
-            out[i, nyo//2 + j] = x[padx + nxo//2 + i, j]
-    return out
+def sum_overlap(vis, wgt, mask, freq, ufreq, flow, fhigh):
+    nds = vis.shape[0]
 
+    # output grids
+    nchan = ufreq.size
+    nrow = vis.shape[1]
+    viso = np.zeros((nrow, nchan), dtype=vis.dtype)
+    wgto = np.zeros((nrow, nchan), dtype=wgt.dtype)
+    masko = np.zeros((nrow, nchan), dtype=mask.dtype)
 
-@njit(nogil=True, cache=True, inline='always', parallel=True)
-def pad_and_shift_cube(x, out):
-    '''
-    Pad x with zeros so as to have the same shape as out and perform
-    ifftshift in place
-    '''
-    nband, nxi, nyi = x.shape
-    nband, nxo, nyo = out.shape
-    if nxi >= nxo or nyi >= nyo:
-        raise ValueError('Output must be larger than input')
-    padx = nxo-nxi
-    pady = nyo-nyi
-    out[...] = 0.0
-    for b in prange(nband):
-        for i in range(nxi//2):
-            for j in range(nyi//2):
-                # first to last quadrant
-                out[b, padx + nxi//2 + i, pady + nyi//2 + j] = x[b, i, j]
-                # last to first quadrant
-                out[b, i, j] = x[b, nxi//2+i, nyi//2+j]
-                # third to second quadrant
-                out[b, i, pady + nyi//2 + j] = x[b, nxi//2 + i, j]
-                # second to third quadrant
-                out[b, padx + nxi//2 + i, j] = x[b, i, nyi//2 + j]
-    return out
+    # weighted sum at overlap
+    for i in range(nds):
+        nu = freq[i]
+        _, idx0, idx1 = np.intersect1d(nu, ufreq, assume_unique=True, return_indices=True)
+        viso[:, idx1] += vis[i][:, idx0] * wgt[i][:, idx0] * mask[i][:, idx0]
+        wgto[:, idx1] += wgt[i][:, idx0] * mask[i][:, idx0]
+        masko[:, idx1] += mask[i][:, idx0]
 
+    # unmasked where at least one data point is unflagged
+    masko = np.where(masko > 0, 1, 0)
+    viso[masko.astype(bool)] = viso[masko.astype(bool)]/wgto[masko.astype(bool)]
 
-@njit(nogil=True, cache=True, inline='always', parallel=True)
-def unpad_and_unshift_cube(x, out):
-    '''
-    fftshift x and unpad it into out
-    '''
-    nband, nxi, nyi = x.shape
-    nband, nxo, nyo = out.shape
-    if nxi < nxo or nyi < nyo:
-        raise ValueError('Output must be smaller than input')
-    out[...] = 0.0
-    padx = nxo-nxi
-    pady = nyo-nyi
-    for b in prange(nband):
-        for i in range(nxo//2):
-            for j in range(nyo//2):
-                # first to last quadrant
-                out[b, nxo//2+i, nyo//2+j] = x[b, i, j]
-                # last to first quadrant
-                out[b, i, j] = x[b, padx + nxo//2 + i, pady + nyo//2 + j]
-                # third to second quadrant
-                out[b, nxo//2 + i, j] = x[b, i, pady + nyo//2 + j]
-                # second to third quadrant
-                out[b, i, nyo//2 + j] = x[b, padx + nxo//2 + i, j]
-    return out
+    # blocker expects a dictionary as output
+    out_dict = {}
+    out_dict['viso'] = viso
+    out_dict['wgto'] = wgto
+    out_dict['masko'] = masko
+
+    return out_dict

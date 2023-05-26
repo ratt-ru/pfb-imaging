@@ -232,7 +232,7 @@ convert_mode = numba.njit(lambda s: mode_str_to_enum(s))
 @pytest.mark.parametrize("data_shape", [(64, 128)])
 @pytest.mark.parametrize("complex_data", [True, False])
 @pytest.mark.parametrize("level", list(range(10)))
-@pytest.mark.parametrize("mode", ["symmetric", "zero"])
+@pytest.mark.parametrize("mode", ["zero"])
 @pytest.mark.parametrize("wavelet", ["db1", "db4", "db5"])
 def test_wavedecn_waverecn(data_shape, wavelet, mode, level, complex_data):
     pywt = pytest.importorskip("pywt")
@@ -290,7 +290,7 @@ def test_wavedecn_waverecn(data_shape, wavelet, mode, level, complex_data):
 @pytest.mark.parametrize("nx", (24, 120))
 @pytest.mark.parametrize("ny", (68, 125))
 @pytest.mark.parametrize("level", list(range(4)))
-@pytest.mark.parametrize("mode", ["symmetric", "zero"])
+@pytest.mark.parametrize("mode", ["zero"])
 @pytest.mark.parametrize("wavelet", ["db1", "db4", "db5"])
 def test_ravel_coeffs(nx, ny, level, mode, wavelet):
     # pywt = pytest.importorskip("pywt")

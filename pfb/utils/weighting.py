@@ -10,12 +10,7 @@ Fs = np.fft.fftshift
 
 
 def compute_counts(uvw, freq, mask, nx, ny,
-                   cell_size_x, cell_size_y, dtype, wgt=None, k=6):
-
-    if wgt is not None:
-        wgt_out = ('row', 'chan')
-    else:
-        wgt_out = None
+                   cell_size_x, cell_size_y, dtype, k=6, ngrid=1):
 
     counts = da.blockwise(compute_counts_wrapper, ('row', 'nx', 'ny'),
                           uvw, ('row', 'three'),
@@ -26,10 +21,10 @@ def compute_counts(uvw, freq, mask, nx, ny,
                           cell_size_x, None,
                           cell_size_y, None,
                           dtype, None,
-                          wgt, wgt_out,
                           k, None,
+                          ngrid, None,
                           new_axes={"nx": nx, "ny": ny},
-                          adjust_chunks={'row': 1},
+                          adjust_chunks={'row': ngrid},
                           align_arrays=False,
                           dtype=dtype)
 
@@ -37,18 +32,16 @@ def compute_counts(uvw, freq, mask, nx, ny,
 
 
 def compute_counts_wrapper(uvw, freq, mask, nx, ny,
-                           cell_size_x, cell_size_y, dtype, wgt, k):
-    if wgt is not None:
-        wgt = wgt[0]
+                           cell_size_x, cell_size_y, dtype, k, ngrid):
     return _compute_counts(uvw[0], freq[0], mask[0], nx, ny,
-                        cell_size_x, cell_size_y, dtype, wgt, k)
+                        cell_size_x, cell_size_y, dtype, k, ngrid)
 
 
 
-@njit(nogil=True, fastmath=True, cache=True)
+@njit(nogil=True, fastmath=True, cache=True, parallel=True)
 def _compute_counts(uvw, freq, mask, nx, ny,
                     cell_size_x, cell_size_y, dtype,
-                    wgt=None, k=6):  # support hardcoded for now
+                    k=6, ngrid=1):  # support hardcoded for now
     # ufreq
     u_cell = 1/(nx*cell_size_x)
     # shifts fftfreq such that they start at zero
@@ -61,49 +54,51 @@ def _compute_counts(uvw, freq, mask, nx, ny,
 
     # initialise array to store counts
     # the additional axis is to allow chunking over row
-    counts = np.zeros((1, nx, ny), dtype=dtype)
+    counts = np.zeros((ngrid, nx, ny), dtype=dtype)
 
     # accumulate counts
     nrow = uvw.shape[0]
     nchan = freq.size
-    if wgt is None:
-        wgt = np.ones((nrow, nchan))
+    bin_counts = [nrow // ngrid + (1 if x < nrow % ngrid else 0)  for x in range (ngrid)]
+    bin_idx = np.zeros(ngrid, dtype=np.int64)
+    bin_counts = np.asarray(bin_counts).astype(bin_idx.dtype)
+    bin_idx[1:] = np.cumsum(bin_counts)[0:-1]
 
     normfreq = freq / lightspeed
     ko2 = k//2
     ko2sq = ko2**2
-    for r in range(nrow):
-        uvw_row = uvw[r]
-        wgt_row = wgt[r]
-        for c in range(nchan):
-            if not mask[r, c]:
-                continue
-            wgt_row_chan = wgt_row[c]
-            # current uv coords
-            chan_normfreq = normfreq[c]
-            u_tmp = uvw_row[0] * chan_normfreq
-            v_tmp = uvw_row[1] * chan_normfreq
-            # pixel coordinates
-            ug = (u_tmp + umax)/u_cell
-            vg = (v_tmp + vmax)/v_cell
-            if k:
-                # indices
-                u_idx = int(np.round(ug))
-                v_idx = int(np.round(vg))
-                for i in range(-ko2, ko2):
-                    x_idx = i + u_idx
-                    x = x_idx - ug + 0.5
-                    val = _es_kernel(x/ko2, 2.3, k) * wgt_row_chan
-                    for j in range(-ko2, ko2):
-                        y_idx = j + v_idx
-                        y = y_idx - vg + 0.5
-                        counts[0, x_idx, y_idx] += val * _es_kernel(y/ko2, 2.3, k)
-            else:  # nearest neighbour
-                # indices
-                u_idx = int(np.floor(ug))
-                v_idx = int(np.floor(vg))
-                counts[0, u_idx, v_idx] += wgt_row_chan
-    return counts
+
+    for g in prange(ngrid):
+        for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
+            uvw_row = uvw[r]
+            for c in range(nchan):
+                if not mask[r, c]:
+                    continue
+                # current uv coords
+                chan_normfreq = normfreq[c]
+                u_tmp = uvw_row[0] * chan_normfreq
+                v_tmp = uvw_row[1] * chan_normfreq
+                # pixel coordinates
+                ug = (u_tmp + umax)/u_cell
+                vg = (v_tmp + vmax)/v_cell
+                if k:
+                    # indices
+                    u_idx = int(np.round(ug))
+                    v_idx = int(np.round(vg))
+                    for i in range(-ko2, ko2):
+                        x_idx = i + u_idx
+                        x = x_idx - ug + 0.5
+                        val = _es_kernel(x/ko2, 2.3, k)
+                        for j in range(-ko2, ko2):
+                            y_idx = j + v_idx
+                            y = y_idx - vg + 0.5
+                            counts[g, x_idx, y_idx] += val * _es_kernel(y/ko2, 2.3, k)
+                else:  # nearest neighbour
+                    # indices
+                    u_idx = int(np.floor(ug))
+                    v_idx = int(np.floor(vg))
+                    counts[g, u_idx, v_idx] += 1.0
+    return counts  #.sum(axis=0, keepdims=True)
 
 @njit(nogil=True, fastmath=True, cache=True, inline='always')
 def _es_kernel(x, beta, k):
@@ -176,8 +171,8 @@ def _counts_to_weights(counts, uvw, freq, nx, ny,
 
 def filter_extreme_counts(counts, nbox=16, nlevel=10):
 
-    return da.blockwise(_filter_extreme_counts, 'bxy',
-                        counts, 'bxy',
+    return da.blockwise(_filter_extreme_counts, 'xy',
+                        counts, 'xy',
                         nbox, None,
                         nlevel, None,
                         dtype=counts.dtype)
@@ -189,24 +184,89 @@ def _filter_extreme_counts(counts, nbox=16, level=10):
     '''
     Replaces extreme counts by local mean computed i
     '''
-    nband, nx, ny = counts.shape
-    for b in range(nband):
-        cb = counts[b]
-        I, J = np.where(cb>0)
-        for i, j in zip(I, J):
-            ilow = np.maximum(0, i-nbox//2)
-            ihigh = np.minimum(nx, i+nbox//2)
-            jlow = np.maximum(0, j-nbox//2)
-            jhigh = np.minimum(ny, j+nbox//2)
-            tmp = cb[ilow:ihigh, jlow:jhigh]
-            ix, iy = np.where(tmp)
-            # check if there are too few values to compare to
-            if ix.size < nbox:
-                counts[b, i, j] = 0
-                continue
-            local_mean = np.mean(tmp[ix, iy])
-            if cb[i,j] < local_mean/level:
-                counts[b, i, j] = local_mean
+    nx, ny = counts.shape
+    I, J = np.where(counts>0)
+    for i, j in zip(I, J):
+        ilow = np.maximum(0, i-nbox//2)
+        ihigh = np.minimum(nx, i+nbox//2)
+        jlow = np.maximum(0, j-nbox//2)
+        jhigh = np.minimum(ny, j+nbox//2)
+        tmp = counts[ilow:ihigh, jlow:jhigh]
+        ix, iy = np.where(tmp)
+        # check if there are too few values to compare to
+        if ix.size < nbox:
+            counts[i, j] = 0
+            continue
+        local_mean = np.mean(tmp[ix, iy])
+        if counts[i,j] < local_mean/level:
+            counts[i, j] = local_mean
     return counts
 
 
+from scipy.special import polygamma
+import dask
+@dask.delayed()
+def etaf(ressq, ovar, dof):
+    eta = (dof + 1)/(dof + ressq/ovar)
+    logeta = polygamma(0, dof+1) - np.log(dof + ressq/ovar)
+    return eta, logeta
+
+
+from pfb.operators.gridder import im2vis, vis2im, loc2psf_vis
+from pfb.operators.fft import fft2d
+def l2reweight(dsv, dsi, epsilon, nthreads, wstack, precision, dof=2):
+    # vis data products
+    uvw = dsv.UVW.data
+    freq = dsv.FREQ.data
+    vis = dsv.VIS.data
+    vis_mask = dsv.MASK.data
+
+    # image data products
+    model = dsi.MODEL.data
+    cell_rad = dsi.cell_rad
+    x0 = dsi.x0
+    y0 = dsi.y0
+    beam = dsi.BEAM.data
+
+    # residual from model visibilities
+    mvis = im2vis(uvw=uvw,
+                    freq=freq,
+                    image=model*beam,
+                    cellx=cell_rad,
+                    celly=cell_rad,
+                    nthreads=nthreads,
+                    epsilon=epsilon,
+                    do_wgridding=wstack,
+                    x0=x0,
+                    y0=y0,
+                    precision=precision)
+    res = vis - mvis
+    res *= vis_mask
+
+    # Mahalanobis distance
+    ressq = (res*res.conj()).real
+
+    # overall variance factor
+    ovar = ressq.sum()/vis_mask.sum()
+
+    # new precision variables
+    eta = (dof + 1)/(dof + ressq/ovar)
+    # eta, logeta = etaf(ressq, ovar, dof)
+
+    return eta/ovar, res
+
+
+def test_reweight(sigma, N=1000, dof=2):
+    res = sigma*np.random.randn(N) + 1.0j*sigma*np.random.randn(N)
+    ovar = np.var(res)
+    ressq = (res*res.conj()).real
+
+    eta = (dof + 1)/(dof + ressq/ovar)
+
+    print(np.mean(eta), np.mean(ressq/ovar), ovar)
+
+    wgt = eta / ovar
+
+    # import pdb; pdb.set_trace()
+
+    print(np.sum((res*res.conj()).real), np.sum((res*wgt*res.conj()).real), 2*N)

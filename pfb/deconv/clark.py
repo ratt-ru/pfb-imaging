@@ -79,6 +79,7 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
 def clark(ID,
           PSF,
           PSFHAT,
+          wsums,
           threshold=0,
           gamma=0.05,
           pf=0.05,
@@ -92,13 +93,15 @@ def clark(ID,
           nthreads=1):
     nband, nx, ny = ID.shape
     _, nx_psf, ny_psf = PSF.shape
-    wsums = np.amax(PSF, axis=(1,2))
+    # we assume that the dirty image and PSF have been normalised by wsum
+    # and that we get units of Jy/beam when we take the sum over the frequency
+    # axis i.e. the MFS image is in units of Jy/beam
     wsum = wsums.sum()
-    # normalise so the PSF always sums to 1
-    ID /= wsum
-    PSF /= wsum
-    PSFHAT /= wsum
-    wsums = np.amax(PSF, axis=(1,2))
+    assert np.allclose(wsum, 1)
+    # ID /= wsum
+    # PSF /= wsum
+    # PSFHAT /= wsum
+    # wsums = wsums/wsum
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
     model = make_noncritical(model)
     IR = ID.copy()

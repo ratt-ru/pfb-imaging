@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def prox_21(v, sigma, weights, axis=0):
+def prox_21(v, sigma, weight=None, axis=0):
     """
     Computes weighted version of
 
@@ -14,7 +14,7 @@ def prox_21(v, sigma, weights, axis=0):
     ntot    - total number of coefficients for each basis (must be equal)
     """
     l2_norm = np.linalg.norm(v, axis=axis)  # drops axis
-    l2_soft = np.maximum(l2_norm - sigma * weights, 0.0)  # norm positive
+    l2_soft = np.maximum(l2_norm - sigma * weight, 0.0)  # norm positive
     mask = l2_norm != 0
     ratio = np.zeros(mask.shape, dtype=v.dtype)
     ratio[mask] = l2_soft[mask] / l2_norm[mask]
