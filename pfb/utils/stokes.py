@@ -17,12 +17,10 @@ def single_stokes(ds=None,
                   opts=None,
                   freq=None,
                   chan_width=None,
-                  bandid=None,
                   cell_rad=None,
                   utime=None,
                   tbin_idx=None,
                   tbin_counts=None,
-                  timeid=None,
                   radec=None,
                   antpos=None,
                   poltype=None):
@@ -83,7 +81,6 @@ def single_stokes(ds=None,
         ntime = utime.size
         nchan = freq.size
         nant = antpos.shape[0]
-        # import pdb; pdb.set_trace()
         jones = da.ones((ntime, nchan, nant, 1, 2),
                         chunks=(-1,)*5,
                         dtype=complex_type)
@@ -187,6 +184,9 @@ def single_stokes(ds=None,
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
     data_vars['BEAM'] = (('scalar'), beam)
 
+    coords = {'chan': (('chan',), freq)} #,
+            #   'row': (('row',), ds.ROWID.values)}
+
     # TODO - provide time and freq centroids
     attrs = {
         'ra' : radec[0],
@@ -194,14 +194,16 @@ def single_stokes(ds=None,
         'fieldid': ds.FIELD_ID,
         'ddid': ds.DATA_DESC_ID,
         'scanid': ds.SCAN_NUMBER,
-        'bandid': int(bandid),
         'freq_out': freq_out,
-        'timeid': int(timeid),
+        'freq_min': freq.min(),
+        'freq_max': freq.max(),
         'time_out': np.mean(utime),
+        'time_min': utime.min(),
+        'time_max': utime.max(),
         'product': opts.product
     }
 
-    out_ds = Dataset(data_vars,
+    out_ds = Dataset(data_vars, coords=coords,
                      attrs=attrs).chunk({'row':100000,
                                          'chan':128})
 
@@ -284,8 +286,6 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
 
 
 def stokes_funcs(data, jones, product, pol):
-    if pol != literal('linear'):
-        raise NotImplementedError("Circular polarisation not yet supported")
     # The expressions for DIAG_DIAG and DIAG mode are essentially the same
     if jones.ndim == 5:
         # I and Q have identical weights
@@ -315,6 +315,9 @@ def stokes_funcs(data, jones, product, pol):
                         W3*gq11*v11*np.conjugate(gp11))
 
         elif product == literal('Q'):
+            if pol != literal('linear'):
+                msg = "Stokes I not currently supported for circular pol"
+                raise NotImplementedError(msg)
             @njit(nogil=True, fastmath=True, inline='always')
             def vfunc(gp, gq, W, V):
                 gp00 = gp[0]

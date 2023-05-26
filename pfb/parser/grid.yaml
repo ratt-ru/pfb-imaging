@@ -13,7 +13,7 @@ inputs:
       Basename of output
   postfix:
     dtype: str
-    default: ''
+    default: 'main'
     info:
       Can be used to specify a custom name for the image space data products
   product:
@@ -23,7 +23,7 @@ inputs:
     info:
       Imaging products to produce. Options are I, Q, U, V.
       Only single Stokes products are currently supported
-  concat:
+  concat_row:
     dtype: bool
     default: True
     info:
@@ -75,6 +75,11 @@ inputs:
     default: true
     info:
       Compute effectve image space weights
+  residual:
+    dtype: bool
+    default: false
+    info:
+      Compute the residual image
   field_of_view:
     dtype: float
     abbreviation: fov
@@ -114,6 +119,19 @@ inputs:
     default: 10
     info:
       The level above local mean that renders a grid weight extreme
+  target:
+    dtype: str
+    info:
+      This can be predefined celestial objects known to astropy or a string in
+      the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+  l2reweight_dof:
+    dtype: float
+    info:
+      The degrees of freedom parameter for L2 reweighting.
+      The default (None) means no reweighting.
+      A sensible value for this parameter depends on the level of RFI in the data.
+      Small values (eg. 2) result in aggressive reweighting and should be avoided
+      if the model is still incomplete.
   _include:
     - (pfb.parser)gridding.yml
     - (pfb.parser)dist.yml

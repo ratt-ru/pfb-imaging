@@ -48,6 +48,7 @@ def clean(**kw):
 
         return _clean(**opts)
 
+
 def _clean(**kw):
     opts = OmegaConf.create(kw)
     # always combine over ds during cleaning
@@ -67,13 +68,13 @@ def _clean(**kw):
     from pfb.deconv.clark import clark
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.opt.pcg import pcg, pcg_psf
-    from pfb.operators.hessian import hessian_xds
+    from pfb.operators.hessian import hessian_xds, hessian
     from scipy import ndimage
     from copy import copy
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
                                           'chan':-1,
                                           'x':-1,
@@ -84,7 +85,7 @@ def _clean(**kw):
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
 
-    nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
+    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
 
     # stitch dirty/psf in apparent scale
@@ -93,9 +94,14 @@ def _clean(**kw):
                                                             dds,
                                                             opts.nband,
                                                             apparent=True)
+    # because fuck dask
+    model = np.require(model, requirements='CAW')
+
+
     wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
-    assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
+    # This is onlt the case for a psf at (l=0,m=0)
+    # assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
     dirty_mfs = np.sum(dirty, axis=0)
     if residual is None:
         residual = dirty.copy()
@@ -108,10 +114,12 @@ def _clean(**kw):
     for ds in dds:
         freq_out.append(ds.freq_out)
     freq_out = np.unique(np.array(freq_out))
-    nx = dds[0].nx
-    ny = dds[0].ny
+    nx = dds[0].x.size
+    ny = dds[0].y.size
     ra = dds[0].ra
     dec = dds[0].dec
+    x0 = dds[0].x0
+    y0 = dds[0].y0
     radec = [ra, dec]
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
@@ -135,6 +143,8 @@ def _clean(**kw):
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads
+    hessopts['x0'] = x0
+    hessopts['y0'] = y0
     # always clean in apparent scale so no beam
     # mask is applied to residual after hessian application
     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
@@ -164,7 +174,7 @@ def _clean(**kw):
           file=log)
     for k in range(opts.nmiter):
         print("Cleaning", file=log)
-        x, status = clark(mask*residual, psf, psfhat,
+        x, status = clark(mask*residual, psf, psfhat, wsums/wsum,
                           threshold=threshold,
                           gamma=opts.gamma,
                           pf=opts.peak_factor,
@@ -175,7 +185,6 @@ def _clean(**kw):
                           report_freq=opts.report_freq,
                           sigmathreshold=opts.sigmathreshold,
                           nthreads=opts.nthreads)
-
         model += x
 
         print("Getting residual", file=log)
@@ -221,7 +230,7 @@ def _clean(**kw):
 
             model += opts.mop_gamma*x
 
-            save_fits(f'{basename}_premop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
+            save_fits(f'{basename}_{opts.postfix}_premop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
 
             print("Getting residual", file=log)
             convimage = hess(model)
@@ -230,7 +239,7 @@ def _clean(**kw):
             ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                         casting='same_kind')
 
-            save_fits(f'{basename}_postmop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
+            save_fits(f'{basename}_{opts.postfix}_postmop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
 
             tmp_mask = ~np.any(model, axis=0)
             rms = np.std(residual_mfs[tmp_mask])
@@ -267,12 +276,12 @@ def _clean(**kw):
     # convert to fits files
     fitsout = []
     if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
     if opts.fits_cubes:
-        fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
-        fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
+        fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
     if len(fitsout):
         print("Writing fits", file=log)

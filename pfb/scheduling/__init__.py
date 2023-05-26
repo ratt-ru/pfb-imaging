@@ -156,4 +156,4 @@ class AutoRestrictor(SchedulerPlugin):
                 if task.worker_restrictions is None:
                     task.worker_restrictions = set()
                 task.worker_restrictions |= {assignee}
-                task.loose_restrictions = False
+                task.loose_restrictions = False  # try setting to True

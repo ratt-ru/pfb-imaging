@@ -53,28 +53,28 @@ def _restore(**kw):
     from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres, dds2cubes
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
 
     dds = xds_from_zarr(dds_name)
     nband = opts.nband
-    nx = dds[0].nx
-    ny = dds[0].ny
+    nx = dds[0].x.size
+    ny = dds[0].y.size
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
     freq = []
     for ds in dds:
         freq.append(ds.freq_out)
-        assert ds.nx == nx
-        assert ds.ny == ny
+        assert ds.x.size == nx
+        assert ds.y.size == ny
     freq = np.unique(np.array(freq))
     assert freq.size == opts.nband
-    nx_psf = dds[0].nx_psf
-    ny_psf = dds[0].ny_psf
+    nx_psf = dds[0].x_psf.size
+    ny_psf = dds[0].y_psf.size
 
 
-    dirty, model, residual, psf, _, _, wsums = dds2cubes(dds,
-                                                         nband,
-                                                         apparent=True)
+    dirty, model, residual, psf, _, _, wsums, _ = dds2cubes(dds,
+                                                            nband,
+                                                            apparent=True)
     wsum = np.sum(wsums)
     output_type = dirty.dtype
     psf_mfs = np.sum(psf, axis=0)
@@ -134,11 +134,11 @@ def _restore(**kw):
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq)
 
     if 'm' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.model_mfs.fits', model_mfs, hdr_mfs,
+        save_fits(f'{basename}_{opts.postfix}.model_mfs.fits', model_mfs, hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'M' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.model.fits', model, hdr,
+        save_fits(f'{basename}_{opts.postfix}.model.fits', model, hdr,
                   overwrite=opts.overwrite)
 
     # model does not get resolution info
@@ -146,27 +146,27 @@ def _restore(**kw):
     hdr = add_beampars(hdr, GaussPar, GaussPars)
 
     if 'r' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.residual_mfs.fits', residual_mfs, hdr_mfs,
+        save_fits(f'{basename}_{opts.postfix}.residual_mfs.fits', residual_mfs, hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'R' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.residual.fits', residual, hdr,
+        save_fits(f'{basename}_{opts.postfix}.residual.fits', residual, hdr,
                   overwrite=opts.overwrite)
 
     if 'i' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.image_mfs.fits', image_mfs, hdr_mfs,
+        save_fits(f'{basename}_{opts.postfix}.image_mfs.fits', image_mfs, hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'I' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.image.fits', image, hdr,
+        save_fits(f'{basename}_{opts.postfix}.image.fits', image, hdr,
                   overwrite=opts.overwrite)
 
     if 'c' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.cpsf_mfs.fits', cpsf_mfs, hdr_mfs,
+        save_fits(f'{basename}_{opts.postfix}.cpsf_mfs.fits', cpsf_mfs, hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'C' in opts.outputs:
-        save_fits(f'{basename}{opts.postfix}.cpsf.fits', cpsf, hdr,
+        save_fits(f'{basename}_{opts.postfix}.cpsf.fits', cpsf, hdr,
                   overwrite=opts.overwrite)
 
     if opts.scheduler=='distributed':

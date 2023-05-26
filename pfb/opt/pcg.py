@@ -116,7 +116,7 @@ def pcg(A,
         #     stall_count += 1
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} epsx = {epsx:.3e}, epsn = {epsn:.3e}",
+            print(f"At iteration {k} epsx = {eps:.3e}",
                   file=log)
 
     if k >= maxit:
@@ -132,6 +132,110 @@ def pcg(A,
         return x
     else:
         return x, r
+
+
+def cg_dct(A,
+           b,
+           x,
+           tol=1e-5,
+           maxit=500,
+           verbosity=1,
+           report_freq=10):
+    '''
+    A specialised version of the pcg that doesn't need x to live on a
+    single grid. As a result x is nested a dictionary keyed on field
+    name and then on time and freq. There is currently no support for
+    overlapping fields i.e. fields need to be distinct. This simplified
+    version does not yet support bactracking or pre-conditioning so it
+    will probably only work if A is a very good approximation of Ax=b
+    '''
+
+    def residual(Ax, b, r, p):
+        for field in Ax.keys():
+            for i in Ax[field].keys():
+                r[field][i] = Ax[field][i] - b[field][i]
+                p[field][i] = -r[field][i]
+        return r, p
+
+    def vdot_dct(a, b):
+        res = 0.0
+        for field in a.keys():
+            for i in a[field].keys():
+                res += np.vdot(a[field][i], b[field][i])
+        return res
+
+    def pluseq_dct(a, b, alpha=1.0):
+        # implement a += alpha * b
+        for field in a.keys():
+            for i in a[field].keys():
+                a[field][i] += alpha * b[field][i]
+        return a
+
+    def pupdate(p, r, beta=1):
+        # implement p = beta * p - r
+        for field in p.keys():
+            for i in p[field].keys():
+                p[field][i] = beta * p[field][i] - r[field][i]
+        return p
+
+    def norm_dct(a, b=None):
+        norm = 0.0
+        for field in a.keys():
+            for i in a[field].keys():
+                if b is not None:
+                    norm += np.linalg.norm(a[field][i] - b[field][i])
+                else:
+                    norm += np.linalg.norm(a[field][i])
+        return norm
+
+    # initial residual
+    Ax = A(x)
+    r = {}
+    p = {}
+    for field in Ax.keys():
+        r[field] = {}
+        p[field] = {}
+        for i in Ax[field].keys():
+            r[field][i] = Ax[field][i] - b[field][i]
+            p[field][i] = -r[field][i]
+
+
+    rnorm = vdot_dct(r, r)
+    rnorm0 = rnorm
+    eps = rnorm
+    k = 0
+    while eps > tol and k < maxit:
+        xp = x
+        rp = r
+        Ap = A(p)
+        pAp = vdot_dct(p, Ap)
+        alpha = rnorm/pAp  #np.vdot(p, Ap)
+        x = pluseq_dct(x, p, alpha=alpha)
+        r = pluseq_dct(r, Ap, alpha=alpha)
+        # x += alpha * p
+        # r += alpha * Ap
+        rnorm_next = vdot_dct(r, r)
+        beta = rnorm_next/rnorm
+        p = pupdate(p, r, beta=beta)
+        # p = beta*p - r
+        rnorm = rnorm_next
+        eps = rnorm
+        # eps = norm_dct(x, b=xp) / norm_dct(x)
+
+        k += 1
+
+        if not k % report_freq and verbosity > 1:
+            print(f"At iteration {k} eps = {eps:.3e}",
+                  file=log)
+
+    if k >= maxit:
+        if verbosity:
+            print(f"Max iters reached. eps = {eps:.3e}", file=log)
+    else:
+        if verbosity:
+            print(f"Success, converged after {k} iterations", file=log)
+    return x, r
+
 
 from pfb.operators.hessian import _hessian_psf_slice
 def _pcg_psf_impl(psfhat,

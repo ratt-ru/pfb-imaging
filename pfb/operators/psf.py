@@ -1,12 +1,11 @@
 import numpy as np
+import numexpr as ne
 import dask.array as da
 from daskms.optimisation import inlined_array
 from uuid import uuid4
 from ducc0.fft import r2c, c2r, c2c, good_size
 from ducc0.misc import roll_resize_roll as rrr
 from uuid import uuid4
-from pfb.utils.misc import pad_and_shift, unpad_and_unshift
-from pfb.utils.misc import pad_and_shift_cube, unpad_and_unshift_cube
 import gc
 
 
@@ -38,16 +37,23 @@ def psf_convolve_cube(xpad,    # preallocated array to store padded image
                       lastsize,
                       x,       # input image, not overwritten
                       nthreads=1):
+    '''
+    The copyto is not necessarily faster it just allows us to see where time is spent
+    '''
     _, nx, ny = x.shape
-    xpad[...] = 0.0
-    xpad[:, 0:nx, 0:ny] = x
+    # xpad[...] = 0.0
+    np.copyto(xpad, 0.0)
+    # xpad[:, 0:nx, 0:ny] = x
+    np.copyto(xpad[:, 0:nx, 0:ny], x)
     r2c(xpad, axes=(1, 2), nthreads=nthreads,
         forward=True, inorm=0, out=xhat)
-    xhat *= psfhat
+    # xhat *= psfhat
+    ne.evaluate('xhat*psfhat', out=xhat, casting='unsafe')
     c2r(xhat, axes=(1, 2), forward=False, out=xpad,
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)
-    xout[...] = xpad[:, 0:nx, 0:ny]
+    # xout[...] = xpad[:, 0:nx, 0:ny]
+    np.copyto(xout, xpad[:, 0:nx, 0:ny])
     return xout
 
 

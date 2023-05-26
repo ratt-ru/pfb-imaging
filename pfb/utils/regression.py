@@ -148,7 +148,7 @@ def gpr(y, x, w, xp, theta0=None, nu=3.0, niter=5):
         # degrees of freedom nu
         nu, _, _ = fmin(nufunc, nu, args=(np.mean(eta), np.mean(logeta)),
                         approx_grad=True,
-                        bounds=((1e-2, None),))
+                        bounds=((2.0, None),))
 
 
 def nufunc(nu, meaneta, meanlogeta):
@@ -208,35 +208,14 @@ def evidence(theta, y, x, H, Rinv):
         if w[k]:
 
             v = y[k] - H @ mp
-
-
-            # a = Pp[0, 0]
-            # b = Pp[0, 1]
-            # c = Pp[1, 0]
-            # d = Pp[1, 1]
-            # det = a*d - b*c
-            # Ppinv = np.array(((d, -b), (-c, a)), dtype=np.float64)/det
-
             # Use WMI to write inverse ito weights (not variance)
             Ppinv = np.linalg.inv(Pp)
-
-            # import pdb; pdb.set_trace()
             tmp = Ppinv + H.T @ (w[k] * H)
             tmpinv = np.linalg.inv(tmp)
-
-            # a2 = tmp[0, 0]
-            # b2 = tmp[0, 1]
-            # c2 = tmp[1, 0]
-            # d2 = tmp[1, 1]
-
-            # det = a2*d2 - b2*c2
-
-            # tmpinv = np.array(((d2, -b2), (-c2, a2)), dtype=np.float64)/det
-
-            # import pdb; pdb.set_trace()
-
             Sinv = w[k] - w[k] * H @ tmpinv @ (H.T * w[k])
 
+            if Sinv <= 0:
+                import pdb; pdb.set_trace()
             Z += 0.5*np.log(2*np.pi/Sinv) + 0.5*v*v*Sinv
 
             K = Pp @ H.T @ Sinv
@@ -274,6 +253,8 @@ def Kfilter(m0, P0, x, y, H, Rinv, sigmaf):
             tmp = Ppinv + H.T @ (Rinv[k] * H)
             tmpinv = np.linalg.inv(tmp)
             Sinv = Rinv[k] - Rinv[k] * H @ tmpinv @ (H.T * Rinv[k])
+            if Sinv <= 0:
+                import pdb; pdb.set_trace()
 
             K = Pp @ H.T @ Sinv
 
@@ -330,7 +311,7 @@ def kanterp(x, y, w, niter=5, nu0=2):
             (1e-5, None),
             (1e-5, None),
             (1e-5, 2*N),
-            (1e-5, 5))
+            (1, 50))
 
     # theta, fval, dinfo = fmin(evidence, theta, args=(y, x, w),
     #                           approx_grad=True,
@@ -382,7 +363,7 @@ def kanterp(x, y, w, niter=5, nu0=2):
         # degrees of freedom nu
         nu, _, _ = fmin(nufunc, nu, args=(np.mean(eta), np.mean(logeta)),
                         approx_grad=True,
-                        bounds=((1e-2, None),))
+                        bounds=((2.0, None),))
 
 
 @numba.njit(fastmath=True, cache=True)
@@ -551,10 +532,14 @@ def RTSsmoother_fast(m, P, x, sigmaf):
         ms[0, k] = m[0, k] + g00 * (ms[0, k+1] - mp0) + g01 * (ms[1, k+1] - mp1)
         ms[1, k] = m[1, k] + g10 * (ms[0, k+1] - mp0) + g11 * (ms[1, k+1] - mp1)
 
-        Ps[0, 0, k] = P[0, 0, k] - g00*(g00*(pp00 - Ps[0, 0, k+1]) + g01*(pp01 - Ps[0, 1, k+1])) - g01*(g00*(pp01 - Ps[0, 1, k+1]) + g01*(pp11 - Ps[1, 1, k+1]))
-        Ps[0, 1, k] = P[0, 1, k] - g10*(g00*(pp00 - Ps[0, 0, k+1]) + g01*(pp01 - Ps[0, 1, k+1])) - g11*(g00*(pp01 - Ps[0, 1, k+1]) + g01*(pp11 - Ps[1, 1, k+1]))
-        Ps[1, 0, k] = P[1, 0, k] - g00*(g10*(pp00 - Ps[0, 0, k+1]) + g11*(pp01 - Ps[0, 1, k+1])) - g01*(g10*(pp01 - Ps[0, 1, k+1]) + g11*(pp11 - Ps[1, 1, k+1]))
-        Ps[1, 1, k] = P[1, 1, k] - g10*(g10*(pp00 - Ps[0, 0, k+1]) + g11*(pp01 - Ps[0, 1, k+1])) - g11*(g10*(pp01 - Ps[0, 1, k+1]) + g11*(pp11 - Ps[1, 1, k+1]))
+        Ps[0, 0, k] = P[0, 0, k] - g00*(g00*(pp00 - Ps[0, 0, k+1]) + g01*(pp01 - Ps[0, 1, k+1])) \
+                                 - g01*(g00*(pp01 - Ps[0, 1, k+1]) + g01*(pp11 - Ps[1, 1, k+1]))
+        Ps[0, 1, k] = P[0, 1, k] - g10*(g00*(pp00 - Ps[0, 0, k+1]) + g01*(pp01 - Ps[0, 1, k+1])) \
+                                 - g11*(g00*(pp01 - Ps[0, 1, k+1]) + g01*(pp11 - Ps[1, 1, k+1]))
+        Ps[1, 0, k] = P[1, 0, k] - g00*(g10*(pp00 - Ps[0, 0, k+1]) + g11*(pp01 - Ps[0, 1, k+1])) \
+                                 - g01*(g10*(pp01 - Ps[0, 1, k+1]) + g11*(pp11 - Ps[1, 1, k+1]))
+        Ps[1, 1, k] = P[1, 1, k] - g10*(g10*(pp00 - Ps[0, 0, k+1]) + g11*(pp01 - Ps[0, 1, k+1])) \
+                                 - g11*(g10*(pp01 - Ps[0, 1, k+1]) + g11*(pp11 - Ps[1, 1, k+1]))
 
     return ms, Ps
 
@@ -572,7 +557,7 @@ def kanterp2(x, y, w, niter=5, nu0=2):
             (1e-5, None),
             (1e-5, None),
             (1e-5, 2*N),
-            (1e-5, 5))
+            (1, 50))
 
     # theta, fval, dinfo = fmin(evidence2, theta, args=(y, x, H, w),
     #                           approx_grad=True,
@@ -620,7 +605,7 @@ def kanterp2(x, y, w, niter=5, nu0=2):
         # degrees of freedom nu
         nu, _, _ = fmin(nufunc, nu, args=(np.mean(eta), np.mean(logeta)),
                         approx_grad=True,
-                        bounds=((1e-2, None),))
+                        bounds=((2.0, None),))
 
 
 
@@ -633,6 +618,8 @@ def evidence3(theta, y, x, Rinv, m0, m1, p00, p01, p11, sigman):
     delta = x[1:] - x[0:-1]
 
     sigmaf = theta[0]
+
+    print(sigmaf, m0, m1, p00, p01, p11, sigman)
 
     Z = 0
     w = Rinv / sigman**2
@@ -750,7 +737,7 @@ def kanterp3(x, y, w, niter=5, nu0=2, sigmaf0=None, sigman0=1, verbose=0, window
         # degrees of freedom nu
         nu, _, _ = fmin(nufunc, nu, args=(np.mean(eta), np.mean(logeta)),
                         approx_grad=True,
-                        bounds=((1e-2, None),))
+                        bounds=((2.0, None),))
 
 def func(x):
     return 10*np.sin(20*x**2)*np.exp(-x**2/0.25) + np.exp(x)

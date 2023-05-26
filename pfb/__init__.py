@@ -35,31 +35,15 @@ def set_client(opts, stack, log, scheduler='distributed'):
     # else:
     #     mem_limit = int(opts.mem_limit)
 
-    if opts.nworkers is None:
-        raise ValueError("You have to specify the number of workers")
-    else:
-        nworkers = opts.nworkers
-
-    if opts.nthreads_per_worker is None:
-        nthreads_per_worker = 1
-        with open_dict(opts):
-            opts.nthreads_per_worker = nthreads_per_worker
-    else:
-        nthreads_per_worker = int(opts.nthreads_per_worker)
-
     # the number of chunks being read in simultaneously is equal to
     # the number of dask threads
-    if opts.scheduler == 'threads':
-        # if using threads we use one dask thread per band
-        nthreads_dask = opts.nband
-    else:
-        nthreads_dask = nworkers * nthreads_per_worker
+    nthreads_dask = opts.nworkers * opts.nthreads_per_worker
 
     if opts.nvthreads is None:
         if opts.scheduler in ['single-threaded', 'sync']:
             nvthreads = nthreads
         elif opts.host_address is not None:
-            nvthreads = max(nthreads//nthreads_per_worker, 1)
+            nvthreads = max(nthreads//opts.nthreads_per_worker, 1)
         else:
             nvthreads = max(nthreads//nthreads_dask, 1)
         with open_dict(opts):
@@ -69,11 +53,11 @@ def set_client(opts, stack, log, scheduler='distributed'):
     os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
-    os.environ["NUMBA_NUM_THREADS"] = str(opts.nband)
+    os.environ["NUMBA_NUM_THREADS"] = str(opts.nthreads)
     # avoids numexpr error, probably don't want more than 10 vthreads for ne anyway
     import numexpr as ne
     max_cores = ne.detect_number_of_cores()
-    ne_threads = min(max_cores, opts.nband)
+    ne_threads = min(max_cores, opts.nthreads)
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
     if scheduler=='distributed':
@@ -92,8 +76,8 @@ def set_client(opts, stack, log, scheduler='distributed'):
                       file=log)
             from dask.distributed import Client, LocalCluster
             print("Initialising client with LocalCluster.", file=log)
-            cluster = LocalCluster(processes=True, n_workers=nworkers,
-                                   threads_per_worker=nthreads_per_worker,
+            cluster = LocalCluster(processes=True, n_workers=opts.nworkers,
+                                   threads_per_worker=ops.nthreads_per_worker,
                                    memory_limit=0)  # str(mem_limit/nworkers)+'GB'
             cluster = stack.enter_context(cluster)
             client = stack.enter_context(Client(cluster))
