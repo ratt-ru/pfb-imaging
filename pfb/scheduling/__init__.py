@@ -153,7 +153,7 @@ class AutoRestrictor(SchedulerPlugin):
                     task = tasks[task_name]
                 except KeyError:  # Keys may not have an assosciated task.
                     continue
-                if task._worker_restrictions is None:
-                    task._worker_restrictions = set()
-                task._worker_restrictions |= {assignee}
-                task._loose_restrictions = False
+                if task.worker_restrictions is None:
+                    task.worker_restrictions = set()
+                task.worker_restrictions |= {assignee}
+                task.loose_restrictions = False  # try setting to True

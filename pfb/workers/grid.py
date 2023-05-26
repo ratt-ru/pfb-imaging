@@ -7,560 +7,511 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('GRID')
 
+from scabha.schema_utils import clickify_parameters
+from pfb.parser.schemas import schema
+
+# create default parameters from schema
+defaults = {}
+for key in schema.grid["inputs"].keys():
+    defaults[key] = schema.grid["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@click.option('-ms', '--ms', required=True,
-              help='Path to measurement set.')
-@click.option('-dc', '--data-column', default='DATA',
-              help="Data or residual column to image."
-              "Must be the same across MSs")
-@click.option('-wc', '--weight-column', default=None,
-              help="Column containing natural weights."
-              "Must be the same across MSs")
-@click.option('-iwc', '--imaging-weight-column',
-              help="Column containing imaging weights. "
-              "Must be the same across MSs")
-@click.option('-fc', '--flag-column', default='FLAG',
-              help="Column containing data flags."
-              "Must be the same across MSs")
-@click.option('-gt', '--gain-table',
-              help="Path to Quartical gain table containing NET gains."
-              "There must be a table for each MS and glob(ms) and glob(gt) "
-              "should match up.")
-@click.option('-p', '--product', default='I',
-              help='Currently supports I, Q, U, and V. '
-              'Only single Stokes products currently supported.')
-@click.option('-utpc', '--utimes-per-chunk', type=int, default=-1,
-              help="Number of unique times in a chunk.")
-@click.option('-rochunk', '--row-out-chunk', type=int, default=10000,
-              help="Size of row chunks for output weights and uvw")
-@click.option('-eps', '--epsilon', type=float, default=1e-7,
-              help='Gridder accuracy')
-@click.option('-precision', '--precision', default='double',
-              help='Either single or double')
-@click.option('--group-by-field/--no-group-by-field', default=True)
-@click.option('--group-by-ddid/--no-group-by-ddid', default=True)
-@click.option('--group-by-scan/--no-group-by-scan', default=True)
-@click.option('--wstack/--no-wstack', default=True)
-@click.option('--double-accum/--no-double-accum', default=True)
-@click.option('--fits-mfs/--no-fits-mfs', default=True)
-@click.option('--no-fits-cubes/--fits-cubes', default=True)
-@click.option('--psf/--no-psf', default=True)
-@click.option('--dirty/--no-dirty', default=True)
-@click.option('--weights/--no-weights', default=True)
-@click.option('--bda-weights/--no-bda-weights', default=False)
-@click.option('--do-beam/--no-do-beam', default=False)
-@click.option('-o', '--output-filename', type=str, required=True,
-              help="Basename of output.")
-@click.option('-nb', '--nband', type=int, required=True,
-              help="Number of imaging bands")
-@click.option('-fov', '--field-of-view', type=float,
-              help="Field of view in degrees")
-@click.option('-srf', '--super-resolution-factor', type=float,
-              help="Will over-sample Nyquist by this factor at max frequency")
-@click.option('-psfo', '--psf-oversize', type=float, default=2.0,
-              help='Size of the PSF relative to the dirty image.')
-@click.option('-cs', '--cell-size', type=float,
-              help='Cell size in arcseconds')
-@click.option('-nx', '--nx', type=int,
-              help="Number of x pixels")
-@click.option('-ny', '--ny', type=int,
-              help="Number of x pixels")
-@click.option('-ha', '--host-address',
-              help='Address where the distributed client lives. '
-              'Will use a local cluster if no address is provided')
-@click.option('-nw', '--nworkers', type=int,
-              help='Number of workers for the client.')
-@click.option('-ntpw', '--nthreads-per-worker', type=int,
-              help='Number of dask threads per worker.')
-@click.option('-nvt', '--nvthreads', type=int,
-              help="Total number of threads to use for vertical scaling "
-                   "(eg. gridder, fft's etc.)")
-@click.option('-mem', '--mem-limit', type=int,
-              help="Memory limit in GB. Default uses all available memory")
-@click.option('-nthreads', '--nthreads', type=int,
-              help="Total available threads. "
-              "Default uses all available threads")
-@click.option('-scheduler', '--scheduler', default='distributed',
-              help="distributed or single-threaded (for debugging)")
+@clickify_parameters(schema.grid)
 def grid(**kw):
     '''
-    Create a dirty image, psf and weights from a list of measurement
-    sets. Image cubes are not normalised by wsum as this destroyes
-    information. MFS images are written out in units of Jy/beam.
+    Compute imaging weights and create a dirty image, psf etc.
     By default only the MFS images are converted to fits files.
     Set the --fits-cubes flag to also produce fits cubes.
 
-    If a host address is provided the computation can be distributed
-    over imaging band and row. When using a distributed scheduler both
-    mem-limit and nthreads is per node and have to be specified.
-
-    When using a local cluster, mem-limit and nthreads refer to the global
-    memory and threads available, respectively. By default the gridder will
-    use all available resources.
-
-    On a local cluster, the default is to use:
-
-        nworkers = nband
-        nthreads-per-worker = 1
-
-    They have to be specified in ~.config/dask/jobqueue.yaml in the
-    distributed case.
-
-    if LocalCluster:
-        nvthreads = nthreads//(nworkers*nthreads_per_worker)
-    else:
-        nvthreads = nthreads//nthreads-per-worker
-
-    where nvthreads refers to the number of threads used to scale vertically
-    (eg. the number threads given to each gridder instance).
-
     '''
-    args = OmegaConf.create(kw)
-    pyscilog.log_to_file(args.output_filename + '.log')
-    from glob import glob
-    ms = glob(args.ms)
-    try:
-        assert len(ms) > 0
-        args.ms = ms
-    except:
-        raise ValueError(f"No MS at {args.ms}")
+    defaults.update(kw)
+    opts = OmegaConf.create(defaults)
+    import time
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    pyscilog.log_to_file(f'grid_{timestamp}.log')
 
-    if args.nworkers is None:
-        if args.scheduler=='distributed':
-            args.nworkers = args.nband
-        else:
-            args.nworkers = 1
-
-    if args.gain_table is not None:
-        gt = glob(args.gain_table)
-        try:
-            assert len(gt) > 0
-            args.gain_table = gt
-        except Exception as e:
-            raise ValueError(f"No gain table  at {args.gain_table}")
-
-    if args.product not in ["I", "Q", "U", "V"]:
-        raise NotImplementedError(f"Product {args.product} not yet supported")
-
-    OmegaConf.set_struct(args, True)
+    OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
         from pfb import set_client
-        args = set_client(args, stack, log, scheduler=args.scheduler)
+        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
-        for key in args.keys():
-            print('     %25s = %s' % (key, args[key]), file=log)
+        for key in opts.keys():
+            print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _grid(**args)
+        return _grid(**opts)
 
 def _grid(**kw):
-    args = OmegaConf.create(kw)
-    from omegaconf import ListConfig
-    if not isinstance(args.ms, list) and not isinstance(args.ms, ListConfig):
-        args.ms = [args.ms]
-    if not isinstance(args.gain_table, list) and not isinstance(args.gain_table, ListConfig):
-        args.gain_table = [args.gain_table]
-    OmegaConf.set_struct(args, True)
+    opts = OmegaConf.create(kw)
+    OmegaConf.set_struct(opts, True)
 
     import os
-    from pathlib import Path
     import numpy as np
-    from pfb.utils.misc import chan_to_band_mapping
     import dask
-    from dask.graph_manipulation import clone
-    from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms import xds_from_storage_table as xds_from_table
+    dask.config.set(**{'array.slicing.split_large_chunks': False})
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
     import dask.array as da
     from africanus.constants import c as lightspeed
-    from africanus.calibration.utils import chunkify_rows
     from ducc0.fft import good_size
-    from pfb.utils.misc import stitch_images
-    from pfb.utils.fits import set_wcs, save_fits
-    from pfb.utils.stokes import single_stokes
+    from pfb.utils.fits import dds2fits, dds2fits_mfs
     from pfb.utils.misc import compute_context
+    from pfb.operators.gridder import vis2im, loc2psf_vis
+    from pfb.operators.fft import fft2d
+    from pfb.utils.weighting import (compute_counts, counts_to_weights,
+                                     filter_extreme_counts, l2reweight)
+    from pfb.utils.beam import eval_beam
     import xarray as xr
+    from uuid import uuid4
+    from daskms.optimisation import inlined_array
+    from pfb.utils.astrometry import get_coordinates
+    from africanus.coordinates import radec_to_lm
+    from pfb.utils.misc import concat_chan, concat_row
 
-    # TODO - optional grouping.
-    # We need to construct an identifier between
-    # dataset and field/spw/scan identifiers
-    group_by = []
-    if args.group_by_field:
-        group_by.append('FIELD_ID')
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
+
+    # xds contains vis products, no imaging weights applied
+    xds_name = f'{basename}.xds.zarr'
+    xds = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
+    # dds contains image space products including imaging weights and uvw
+    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
+
+    if os.path.isdir(dds_name):
+        dds_exists = True
+        if opts.overwrite:
+            print(f'Removing {dds_name}', file=log)
+            import shutil
+            shutil.rmtree(dds_name)
+            dds_exists = False
     else:
-        raise NotImplementedError("Grouping by field is currently mandatory")
+        dds_exists = False
 
-    if args.group_by_ddid:
-        group_by.append('DATA_DESC_ID')
+    times_in = []
+    freqs_in = []
+    for ds in xds:
+        times_in.append(ds.time_out)
+        freqs_in.append(ds.freq_out)
+
+    times_in = np.unique(times_in)
+    freqs_in = np.unique(freqs_in)
+
+    ntime_in = times_in.size
+    nband_in = freqs_in.size
+
+    if opts.concat_row and len(xds) > nband_in:
+        print('Concatenating datasets along row dimension', file=log)
+        xds = concat_row(xds)
+        # try:
+        #     assert len(xds) == nband_in
+        # except Exception as e:
+        #     raise RuntimeError('Something went wrong during row concatenation.'
+        #                        'This is probably a bug.')
+        ntime = 1
+        times_in = np.array((xds[0].time_out,))
     else:
-        raise NotImplementedError("Grouping by DDID is currently mandatory")
+        ntime = ntime_in
 
-    if args.group_by_scan:
-        group_by.append('SCAN_NUMBER')
-    else:
-        raise NotImplementedError("Grouping by scan is currently mandatory")
-
-    # chan <-> band mapping
-    nband = args.nband
-    freqs, fbin_idx, fbin_counts, freq_out, band_mapping, chan_chunks = \
-        chan_to_band_mapping(args.ms, nband=args.nband, group_by=group_by)
-
-    # gridder memory budget (TODO)
-    max_chan_chunk = 0
-    max_freq = 0
-    for ms in args.ms:
-        for spw in freqs[ms]:
-            counts = fbin_counts[ms][spw].compute()
-            freq = freqs[ms][spw].compute()
-            max_chan_chunk = np.maximum(max_chan_chunk, counts.max())
-            max_freq = np.maximum(max_freq, freq.max())
-
-    # assumes measurement sets have the same columns
-    xds = xds_from_ms(args.ms[0])
-    columns = (args.data_column,
-               args.flag_column,
-               'UVW', 'ANTENNA1',
-               'ANTENNA2', 'TIME', 'INTERVAL')
-    schema = {}
-    schema[args.data_column] = {'dims': ('chan', 'corr')}
-    schema[args.flag_column] = {'dims': ('chan', 'corr')}
-
-    # only WEIGHT column gets special treatment
-    # any other column must have channel axis
-    if args.weight_column is not None:
-        columns += (args.weight_column,)
-        if args.weight_column == 'WEIGHT':
-            schema[args.weight_column] = {'dims': ('corr')}
-        else:
-            schema[args.weight_column] = {'dims': ('chan', 'corr')}
-
-    # flag row
-    if 'FLAG_ROW' in xds[0]:
-        columns += ('FLAG_ROW',)
-
-    # imaging weights
-    if args.imaging_weight_column is not None:
-        columns += (args.imaging_weight_column,)
-        schema[args.imaging_weight_column] = {'dims': ('chan', 'corr')}
-
-    # get max uv coords over all datasets
-    uvw = []
-    u_max = 0.0
-    v_max = 0.0
-    for ms in args.ms:
-        xds = xds_from_ms(ms, columns=('UVW'), chunks={'row': -1},
-                          group_cols=group_by)
-
+    if opts.nband != nband_in and len(xds) > ntime:
+        print('Concatenating datasets along chan dimension. '
+              f'Mapping {nband_in} datasets to {opts.nband} bands', file=log)
+        xds = concat_chan(xds, nband_out=opts.nband)
+        # try:
+        #     assert len(xds) == ntime * opts.nband
+        # except Exception as e:
+        #     raise RuntimeError('Something went wrong during chan concatenation.'
+        #                        'This is probably a bug.')
+        nband = opts.nband
+        freqs_out = []
         for ds in xds:
-            uvw = ds.UVW.data
-            u_max = da.maximum(u_max, abs(uvw[:, 0]).max())
-            v_max = da.maximum(v_max, abs(uvw[:, 1]).max())
-            uv_max = da.maximum(u_max, v_max)
+            freqs_out.append(ds.freq_out)
+        freqs_out = np.unique(freqs_out)
+    else:
+        nband = nband_in
+        freqs_out = freqs_in
 
-    uv_max = uv_max.compute()
-    del uvw
+    real_type = xds[0].WEIGHT.dtype
+    if real_type == np.float32:
+        precision = 'single'
+    else:
+        precision = 'double'
 
-    # image size
+    # max uv coords over all datasets
+    uv_maxs = []
+    max_freqs = []
+    for ds in xds:
+        uvw = ds.UVW.data
+        u_max = abs(uvw[:, 0]).max()
+        v_max = abs(uvw[:, 1]).max()
+        uv_maxs.append(da.maximum(u_max, v_max))
+        max_freqs.append(ds.FREQ.data.max())
+
+    # early compute necessary to set image size
+    uv_maxs, max_freqs = dask.compute(uv_maxs, max_freqs)
+    uv_max = max(uv_maxs)
+    max_freq = max(max_freqs)
+
+    # max cell size
     cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
 
-    if args.cell_size is not None:
-        cell_size = args.cell_size
+    if opts.cell_size is not None:
+        cell_size = opts.cell_size
         cell_rad = cell_size * np.pi / 60 / 60 / 180
         if cell_N / cell_rad < 1:
             raise ValueError("Requested cell size too small. "
                              "Super resolution factor = ", cell_N / cell_rad)
         print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
     else:
-        cell_rad = cell_N / args.super_resolution_factor
+        cell_rad = cell_N / opts.super_resolution_factor
         cell_size = cell_rad * 60 * 60 * 180 / np.pi
         print(f"Cell size set to {cell_size} arcseconds", file=log)
 
-    if args.nx is None:
-        fov = args.field_of_view * 3600
+    if opts.nx is None:
+        fov = opts.field_of_view * 3600
         npix = int(fov / cell_size)
         npix = good_size(npix)
-        if npix % 2:
+        while npix % 2:
             npix += 1
+            npix = good_size(npix)
         nx = npix
         ny = npix
     else:
-        nx = args.nx
-        ny = args.ny if args.ny is not None else nx
+        nx = opts.nx
+        ny = opts.ny if opts.ny is not None else nx
 
-    print(f"Image size set to ({nband}, {nx}, {ny})", file=log)
+    if opts.dirty:
+        print(f"Image size = (ntime={ntime}, nband={nband}, nx={nx}, ny={ny})", file=log)
 
-    nx_psf = good_size(int(args.psf_oversize * nx))
-    if nx_psf % 2:
+    nx_psf = good_size(int(opts.psf_oversize * nx))
+    while nx_psf % 2:
         nx_psf += 1
+        nx_psf = good_size(nx_psf)
 
-    ny_psf = good_size(int(args.psf_oversize * ny))
-    if ny_psf % 2:
+    ny_psf = good_size(int(opts.psf_oversize * ny))
+    while ny_psf % 2:
         ny_psf += 1
+        ny_psf = good_size(ny_psf)
 
-    print(f"PSF size set to ({nband}, {nx_psf}, {ny_psf})", file=log)
+    if opts.psf:
+        print(f"PSF size = (ntime={ntime}, nband={nband}, nx={nx_psf}, ny={ny_psf})", file=log)
 
-    ms_chunks = {}
-    gain_chunks = {}
-    tbin_idx = {}
-    tbin_counts = {}
-    ncorr = None
-    for ims, ms in enumerate(args.ms):
-        xds = xds_from_ms(ms, group_cols=group_by)
-        ms_chunks[ms] = []  # daskms expects a list per ds
-        gain_chunks[ms] = []
-        tbin_idx[ms] = {}
-        tbin_counts[ms] = {}
-        if args.gain_table[ims] is not None:
-            G = xds_from_zarr(args.gain_table[ims].rstrip('/') + '::NET')
+    # if dds exists, check that existing dds is compatible with input
+    if dds_exists:
+        dds = xds_from_zarr(dds_name)
+        # these need to be aligned at this stage
+        for ds, out_ds in zip(xds, dds):
+            assert ds.freq_out == out_ds.freq_out
+            assert ds.time_out == out_ds.time_out
+            assert ds.ra == out_ds.ra
+            assert ds.dec == out_ds.dec
+            assert out_ds.x.size == nx
+            assert out_ds.y.size == ny
+            assert out_ds.cell_rad == cell_rad
+        print(f'As far as we can tell {dds_name} can be reused/updated.',
+              file=log)
+    else:
+        print(f'Image space data products will be stored in {dds_name}.', file=log)
 
-        for ids, ds in enumerate(xds):
-            fid = ds.FIELD_ID
-            ddid = ds.DATA_DESC_ID
-            scanid = ds.SCAN_NUMBER
-            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+    # check if model exists
+    if opts.transfer_model_from is not None:
+        try:
+            mds = xds_from_zarr(opts.transfer_model_from,
+                                chunks={'x':-1, 'y':-1})
+        except Exception as e:
+            raise ValueError(f"No dataset found at {opts.transfer_model_from}")
+        try:
+            assert len(mds) == len(dds)
+            for ms, ds in zip(mds, dds):
+                assert ms.bandid == ds.bandid
+        except Exception as e:
+            raise ValueError("Transfer from dataset mismatched. "
+                             "This is not currently supported.")
+        try:
+            assert 'MODEL' in mds[0]
+        except Exception as e:
+            raise ValueError(f"No MODEL variable in {opts.transfer_model_from}")
 
-            if ncorr is None:
-                ncorr = ds.dims['corr']
-            else:
-                try:
-                    assert ncorr == ds.dims['corr']
-                except Exception as e:
-                    raise ValueError("All data sets must have the same "
-                                     "number of correlations")
-            time = ds.TIME.values
-            if args.utimes_per_chunk in [0, -1, None]:
-                utpc = np.unique(time).size
-            else:
-                utpc = args.utimes_per_chunk
+        print(f"Found MODEL in {opts.transfer_model_from}. ",
+              file=log)
+        has_model = True
+    else:
+        has_model = False
 
-            rchunks, tidx, tcounts = chunkify_rows(time,
-                                                   utimes_per_chunk=utpc,
-                                                   daskify_idx=True)
-
-            tbin_idx[ms][idt] = tidx
-            tbin_counts[ms][idt] = tcounts
-
-            ms_chunks[ms].append({'row': rchunks,
-                                  'chan': chan_chunks[ms][idt]})
-
-            if args.gain_table[ims] is not None:
-                gain = G[ids]  # TODO - how to make sure they are aligned?
-                tmp_dict = {}
-                for name, val in zip(gain.GAIN_AXES, gain.GAIN_SPEC):
-                    if name == 'gain_t':
-                        tmp_dict[name] = (utpc,)
-                    elif name == 'gain_f':
-                        tmp_dict[name] = chan_chunks[ms][idt]
-                    elif name == 'dir':
-                        if len(val) > 1:
-                            raise ValueError("DD gains not supported yet")
-                        if val[0] > 1:
-                            raise ValueError("DD gains not supported yet")
-                        tmp_dict[name] = val
-                    else:
-                        tmp_dict[name] = val
-                gain_chunks[ms].append(tmp_dict)
-
-    out_datasets = []
-    radec = None  # assumes we are only imaging field 0 of first MS
-    for ims, ms in enumerate(args.ms):
-        xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
-                          table_schema=schema, group_cols=group_by)
-
-        if args.gain_table[ims] is not None:
-            G = xds_from_zarr(args.gain_table[ims].rstrip('/') + '::NET',
-                              chunks=gain_chunks[ms])
-
-        # subtables
-        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")
-        fields = xds_from_table(ms + "::FIELD")
-        spws = xds_from_table(ms + "::SPECTRAL_WINDOW")
-        pols = xds_from_table(ms + "::POLARIZATION")
-
-        # subtable data
-        ddids = dask.compute(ddids)[0]
-        fields = dask.compute(fields)[0]
-        # spws = dask.compute(spws)[0]
-        pols = dask.compute(pols)[0]
-
-
-        corr_type = set(tuple(pols[0].CORR_TYPE.data.squeeze()))
-        if corr_type.issubset(set([9, 10, 11, 12])):
-            pol_type = 'linear'
-        elif corr_type.issubset(set([5, 6, 7, 8])):
-            pol_type = 'circular'
+    dds_out = []
+    for i, ds in enumerate(xds):
+        if dds_exists:
+            out_ds = dds[i].chunk({'row':-1,
+                                   'chan':-1,
+                                   'x':-1,
+                                   'y':-1})
         else:
-            raise ValueError(f"Cannot determine polarisation type "
-                             f"from correlations {pols[0].CORR_TYPE.data}")
+            out_ds = xr.Dataset()
+        if opts.transfer_model_from is not None:
+            out_ds = out_ds.assign(**{'MODEL': (('x', 'y'), mds[i].MODEL.data)})
+        uvw = ds.UVW.data
+        freq = ds.FREQ.data
+        vis = ds.VIS.data
+        # This is a vis space mask (see wgridder convention)
+        mask = ds.MASK.data
+        bandid = np.where(freqs_out == ds.freq_out)[0][0]
+        timeid = np.where(times_in == ds.time_out)[0][0]
 
-        for ids, ds in enumerate(xds):
-            fid = ds.FIELD_ID
-            ddid = ds.DATA_DESC_ID
-            scanid = ds.SCAN_NUMBER
-            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
-            nrow = ds.dims['row']
-            nchan = ds.dims['chan']
-            ncorr = ds.dims['corr']
+        # compute lm coordinates of target
+        if opts.target is not None:
+            tmp = opts.target.split(',')
+            if len(tmp) == 1 and tmp[0] == opts.target:
+                obs_time = ds.time_out
+                tra, tdec = get_coordinates(obs_time, target=opts.target)
+            else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
+                from astropy import units as u
+                from astropy.coordinates import SkyCoord
+                c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(u.hourangle, u.deg))
+                tra = np.deg2rad(c.ra.value)
+                tdec = np.deg2rad(c.dec.value)
 
-            field = fields[fid]
+            tcoords=np.zeros((1,2))
+            tcoords[0,0] = tra
+            tcoords[0,1] = tdec
+            coords0 = np.array((ds.ra, ds.dec))
+            lm0 = radec_to_lm(tcoords, coords0).squeeze()
+            # LB - why the negative?
+            x0 = -lm0[0]
+            y0 = -lm0[1]
+        else:
+            x0 = 0.0
+            y0 = 0.0
+            tra = ds.ra
+            tdec = ds.dec
 
-            # check fields match
-            if radec is None:
-                radec = field.PHASE_DIR.data.squeeze()
+        out_ds = out_ds.assign_attrs(**{
+            'ra': tra,
+            'dec': tdec,
+            'x0': x0,
+            'y0': y0,
+            'cell_rad': cell_rad,
+            'bandid': bandid,
+            'timeid': timeid,
+            'freq_out': ds.freq_out,
+            'time_out': ds.time_out,
+            'robustness': opts.robustness
+        })
+        # TODO - assign ug,vg-coordinates
+        x = (-nx/2 + np.arange(nx)) * cell_rad + x0
+        y = (-ny/2 + np.arange(ny)) * cell_rad + y0
+        out_ds = out_ds.assign_coords(**{
+           'x': x,
+           'y': y
+        })
 
-            if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
-                # TODO - phase shift visibilities
-                continue
+        # evaluate beam at x and y coords
+        cell_deg = np.rad2deg(cell_rad)
+        l = (-(nx//2) + da.arange(nx)) * cell_deg + np.deg2rad(x0)
+        m = (-(ny//2) + da.arange(ny)) * cell_deg + np.deg2rad(y0)
+        ll, mm = da.meshgrid(l, m, indexing='ij')
+        bvals = eval_beam(ds.BEAM.data, ll, mm)
+        out_ds = out_ds.assign(**{'BEAM': (('x', 'y'), bvals)})
 
-            spw = spws[ddid]
-            chan_width = spw.CHAN_WIDTH.data.squeeze()
-            chan_width = chan_width.rechunk(freqs[ms][idt].chunks)
 
-            universal_opts = {
-                'tbin_idx':tbin_idx[ms][idt],
-                'tbin_counts':tbin_counts[ms][idt],
-                'nx':nx,
-                'ny':ny,
-                'nx_psf':nx_psf,
-                'ny_psf':ny_psf,
-                'cell_rad':cell_rad,
-                'radec':radec
-            }
+        if opts.l2reweight_dof and 'MODEL' in out_ds:
+            wgt, res = l2reweight(ds, out_ds,
+                             opts.epsilon,
+                             opts.nvthreads,
+                             opts.wstack,
+                             precision,
+                             dof=opts.l2reweight_dof)
+        else:
+            wgt = ds.WEIGHT.data
+            res = None
 
-            nband = fbin_idx[ms][idt].size
-            for b, band_id in enumerate(band_mapping[ms][idt].compute()):
-                f0 = fbin_idx[ms][idt][b].compute()
-                ff = f0 + fbin_counts[ms][idt][b].compute()
-                Inu = slice(f0, ff)
+        if opts.robustness is not None:
+            # we'll skip this if counts already exists
+            # what to do if flags have changed?
+            if 'COUNTS' not in out_ds:
+                counts = compute_counts(
+                        uvw,
+                        freq,
+                        mask,
+                        nx,
+                        ny,
+                        cell_rad,
+                        cell_rad,
+                        wgt.dtype,
+                        ngrid=opts.nvthreads)
+                # get rid of artificially high weights corresponding to
+                # nearly empty cells
+                if opts.filter_extreme_counts:
+                    counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
+                                                   nlevel=opts.filter_level)
 
-                subds = ds[{'chan': Inu}]
-                if args.gain_table[ims] is not None:
-                    # Only DI gains currently supported
-                    jones = G[ids][{'gain_f': Inu}].gains.data
-                else:
-                    jones = None
+                # counts = inlined_array(counts, [uvw, freq, mask])
 
-                out_ds = single_stokes(ds=subds,
-                                       jones=jones,
-                                       args=args,
-                                       freq=freqs[ms][idt][Inu],
-                                       freq_out=freq_out[band_id],
-                                       chan_width=chan_width[Inu],
-                                       bandid=band_id,
-                                       **universal_opts)
-                out_datasets.append(out_ds)
+                # do we want the coordinates to be ug, vg rather?
+                out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
 
-    writes = xds_to_zarr(out_datasets, args.output_filename +
-                         f'_{args.product.upper()}.xds.zarr',
-                         columns='ALL')
+            # we usually want to re-evaluate this since the robustness may change
+            imwgt = counts_to_weights(out_ds.COUNTS.data,
+                                      uvw,
+                                      freq,
+                                      nx, ny,
+                                      cell_rad, cell_rad,
+                                      opts.robustness)
+            wgt *= imwgt
+
+        if opts.dirty:
+            dirty = vis2im(uvw=uvw,
+                           freq=freq,
+                           vis=vis,
+                           wgt=wgt,
+                           nx=nx,
+                           ny=ny,
+                           cellx=cell_rad,
+                           celly=cell_rad,
+                           x0=x0, y0=y0,
+                           nthreads=opts.nvthreads,
+                           epsilon=opts.epsilon,
+                           precision=precision,
+                           mask=mask,
+                           do_wgridding=opts.wstack,
+                           double_precision_accumulation=opts.double_accum)
+            dirty = inlined_array(dirty, [uvw, freq, mask])
+            out_ds = out_ds.assign(**{'DIRTY': (('x', 'y'), dirty)})
+
+        if opts.psf:
+            psf_vis = loc2psf_vis(uvw,
+                                  freq,
+                                  cell_rad,
+                                  x0,
+                                  y0,
+                                  wstack=opts.wstack,
+                                  epsilon=opts.epsilon,
+                                  nthreads=opts.nvthreads,
+                                  precision=precision)
+            psf_vis = inlined_array(psf_vis, [uvw, freq])
+            psf = vis2im(uvw=uvw,
+                         freq=freq,
+                         vis=psf_vis,
+                         wgt=wgt,
+                         nx=nx_psf,
+                         ny=ny_psf,
+                         cellx=cell_rad,
+                         celly=cell_rad,
+                         x0=x0, y0=y0,
+                         nthreads=opts.nvthreads,
+                         epsilon=opts.epsilon,
+                         precision=precision,
+                         mask=mask,
+                         do_wgridding=opts.wstack,
+                         double_precision_accumulation=opts.double_accum)
+            psf = inlined_array(psf, [uvw, freq, mask])
+            # get FT of psf
+            psfhat = fft2d(psf, nthreads=opts.nvthreads)
+            out_ds = out_ds.assign(**{'PSF': (('x_psf', 'y_psf'), psf),
+                                      'PSFHAT': (('x_psf', 'yo2'), psfhat)})
+
+        # TODO - don't put vis space products in dds
+        if opts.weight:
+            out_ds = out_ds.assign(**{'WEIGHT': (('row', 'chan'), wgt)})
+
+        wsum = wgt[mask.astype(bool)].sum()
+
+        # wsum = inlined_array(wsum, [uvw, wgt, freq, mask])
+
+
+
+        if opts.residual and 'MODEL' in out_ds:
+            model = out_ds.MODEL.data
+            if res is not None:
+                residual = vis2im(uvw=uvw,
+                           freq=freq,
+                           vis=res,
+                           wgt=wgt,
+                           nx=nx,
+                           ny=ny,
+                           cellx=cell_rad,
+                           celly=cell_rad,
+                           x0=x0, y0=y0,
+                           nthreads=opts.nvthreads,
+                           epsilon=opts.epsilon,
+                           precision=precision,
+                           mask=mask,
+                           do_wgridding=opts.wstack,
+                           double_precision_accumulation=opts.double_accum)
+            else:
+                from pfb.operators.hessian import hessian
+                hessopts = {
+                    'cell': cell_rad,
+                    'wstack': opts.wstack,
+                    'epsilon': opts.epsilon,
+                    'double_accum': opts.double_accum,
+                    'nthreads': opts.nvthreads
+                }
+                # we only want to apply the beam once here
+                residual = dirty - hessian(bvals * model, uvw, wgt,
+                                        mask, freq, None, hessopts)
+            residual = inlined_array(residual, [uvw, freq, mask])
+            out_ds = out_ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
+
+
+        out_ds = out_ds.assign(**{'FREQ': (('chan',), freq),
+                                  'UVW': (('row', 'three'), uvw),
+                                  'MASK': (('row', 'chan'), mask),
+                                  'WSUM': (('scalar',), da.atleast_1d(wsum))})
+
+
+        out_ds = out_ds.chunk({'row':100000,
+                               'chan':128,
+                               'x':4096,
+                               'y':4096})
+        # necessary to make psf optional
+        if 'x_psf' in out_ds.dims:
+            out_ds = out_ds.chunk({'x_psf': 4096,
+                                   'y_psf':4096,
+                                   'yo2': 2048})
+
+        dds_out.append(out_ds.unify_chunks())
+
+    writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
 
     # dask.visualize(writes, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
-    #                filename=args.output_filename + '_writes_I_ordered_graph.pdf',
+    #                filename=f'{basename}_grid_ordered_graph.pdf',
     #                optimize_graph=False)
-    # dask.visualize(writes, filename=args.output_filename +
-    #                '_writes_I_graph.pdf', optimize_graph=False)
+    # dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
+    #                optimize_graph=False)
 
-    with compute_context(args.scheduler, args.output_filename):
-        dask.compute(writes,
-                     optimize_graph=False,
-                     scheduler=args.scheduler)
+    print("Computing image space data products", file=log)
+    with compute_context(opts.scheduler, basename+'_grid'):
+        dask.compute(writes, optimize_graph=False)
 
-    print("Initialising model", file=log)
-    # TODO - allow non-zero input model
-    attrs = {'nband': nband,
-             'nx': nx,
-             'ny': ny,
-             'ra': radec[0],
-             'dec': radec[1],
-             'cell_rad': cell_rad}
-    coords = {'freq': freq_out}
-    real_type = np.float64 if args.precision=='double' else np.float32
-    model = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
-    data_vars = {'MODEL': (('band', 'x', 'y'), model),
-                 'MASK': (('x', 'y'), np.zeros((nx, ny), dtype=bool))}
-    mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
-    mds_name = f'{args.output_filename}_{args.product.upper()}.mds.zarr'
-    dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
+    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
 
     # convert to fits files
-    if args.fits_mfs or not args.no_fits_cubes:
-        if args.dirty:
-            print("Saving dirty as fits", file=log)
-            dirty = np.zeros((nband, nx, ny), dtype=np.float32)
-            wsums = np.zeros(nband, dtype=np.float32)
+    fitsout = []
+    if opts.fits_mfs:
+        if opts.dirty:
+            fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
+        if opts.psf:
+            fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
+        if opts.residual and 'MODEL' in dds[0]:
+            fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+            fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
-            hdr = set_wcs(cell_size / 3600, cell_size / 3600,
-                          nx, ny, radec, freq_out)
-            hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600,
-                              nx, ny, radec, np.mean(freq_out))
+    if opts.fits_cubes:
+        if opts.dirty:
+            fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
+        if opts.psf:
+            fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
+        if opts.residual and 'MODEL' in dds[0]:
+            fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+            fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
-            xds = xds_from_zarr(args.output_filename +
-                                f'_{args.product.upper()}.xds.zarr')
+    if len(fitsout):
+        print("Writing fits", file=log)
+        dask.compute(fitsout)
 
-            for ds in xds:
-                b = ds.bandid
-                dirty[b] += ds.DIRTY.values
-                wsums[b] += ds.WSUM.values
-
-            for b, w in enumerate(wsums):
-                hdr[f'WSUM{b}'] = w
-            wsum = np.sum(wsums)
-            hdr_mfs[f'WSUM'] = wsum
-
-            dirty_mfs = np.sum(dirty, axis=0, keepdims=True)/wsum
-
-            if args.fits_mfs:
-                save_fits(args.output_filename +
-                          f'_{args.product.upper()}_dirty_mfs.fits',
-                          dirty_mfs, hdr_mfs, dtype=np.float32)
-
-            if not args.no_fits_cubes:
-                fmask = wsums > 0
-                dirty[fmask] /= wsums[fmask, None, None]
-                save_fits(args.output_filename +
-                          f'_{args.product.upper()}_dirty.fits', dirty, hdr,
-                        dtype=np.float32)
-
-        if args.psf:
-            print("Saving PSF as fits", file=log)
-            psf = np.zeros((nband, nx_psf, ny_psf), dtype=np.float32)
-            wsums = np.zeros(nband, dtype=np.float32)
-
-            hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf,
-                              ny_psf, radec, freq_out)
-            hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf,
-                                  ny_psf, radec, np.mean(freq_out))
-
-            xds = xds_from_zarr(args.output_filename +
-                                f'_{args.product.upper()}.xds.zarr')
-
-            # TODO - add logic to select which spw and scan to reduce over
-            for ds in xds:
-                b = ds.bandid
-                psf[b] += ds.PSF.values
-                wsums[b] += ds.WSUM.values
-
-            for b, w in enumerate(wsums):
-                hdr_psf[f'WSUM{b}'] = w
-            wsum = np.sum(wsums)
-            hdr_psf_mfs[f'WSUM'] = wsum
-
-            psf_mfs = np.sum(psf, axis=0, keepdims=True)/wsum
-
-            if args.fits_mfs:
-                save_fits(args.output_filename +
-                          f'_{args.product.upper()}_psf_mfs.fits', psf_mfs,
-                          hdr_psf_mfs, dtype=np.float32)
-
-            if not args.no_fits_cubes:
-                fmask = wsums > 0
-                psf[fmask] /= wsums[fmask, None, None]
-                save_fits(args.output_filename +
-                          f'_{args.product.upper()}_psf.fits', psf, hdr_psf,
-                        dtype=np.float32)
+    if opts.scheduler=='distributed':
+        from distributed import get_client
+        client = get_client()
+        client.close()
 
     print("All done here.", file=log)

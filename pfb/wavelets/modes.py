@@ -75,6 +75,12 @@ def promote_mode(mode, naxis):
             return numba.typed.List([mode_str_to_enum(mode)
                                      for _ in range(naxis)])
 
+    elif isinstance(mode, nbtypes.misc.StringLiteral):
+        literal_mode = mode.literal_value
+        def impl(mode, naxis):
+            return numba.typed.List([mode_str_to_enum(literal_mode)
+                                     for _ in range(naxis)])
+
     elif (isinstance(mode, NUMBA_SEQUENCE_TYPES) and
             isinstance(mode.dtype, nbtypes.misc.UnicodeType)):
 
@@ -83,7 +89,9 @@ def promote_mode(mode, naxis):
                 raise ValueError("len(mode) != len(axis)")
 
             return numba.typed.List([mode_str_to_enum(m) for m in mode])
+
     else:
+
         raise TypeError("mode must be a string, "
                         "a list of strings "
                         "or a tuple of strings. "

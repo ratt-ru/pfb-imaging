@@ -3,9 +3,15 @@ from functools import partial
 import dask.array as da
 from numpy.testing import assert_array_almost_equal
 from pfb.prox.prox_21 import prox_21
-from pfb.operators.psi import im2coef, coef2im
+from pfb.prox.prox_21m import prox_21m
+from pfb.prox.prox_21m import prox_21m_numba
+from pfb.operators.psi import im2coef
+from pfb.operators.psi import coef2im
 import pywt
 import pytest
+from numba.typed import Dict
+from pfb.wavelets.wavelets import (wavedecn, waverecn, unravel_coeffs,
+                                   ravel_coeffs, wavelet_setup)
 
 pmp = pytest.mark.parametrize
 
@@ -17,51 +23,34 @@ def test_psi(nx, ny, nband, nlevels):
     """
     Check that decomposition + reconstruction is the identity
     """
-    image = pywt.data.aero()
-
+    # image = pywt.data.aero()
+    image = np.random.randn(nx, ny)
     nu = 1.0  + 0.1 * np.arange(nband)
 
     x = image[None, 0:nx, 0:ny] * nu[:, None, None] ** (-0.7)
 
-    # set up dictionary info
-    bases = ['self','db1']
-    ntots = []
-    iys = {}
-    sys = {}
-    for base in bases:
-        if base == 'self':
-            y, iy, sy = x[0].ravel(), 0, 0
-        else:
-            alpha = pywt.wavedecn(x[0], base, mode='zero',
-                                  level=nlevels)
-            y, iy, sy = pywt.ravel_coeffs(alpha)
-        iys[base] = iy
-        sys[base] = sy
-        ntots.append(y.size)
+    # set up dictionary
+    bases = ('self','db1','db2','db3','db4','db5')
+    nbasis = len(bases)
+    iys, sys, ntot, nmax = wavelet_setup(x[0:1], bases, nlevels)
+    ntot = tuple(ntot)
 
-    # get padding info
-    nmax = np.asarray(ntots).max()
-    padding = []
-    nbasis = len(ntots)
-    for i in range(nbasis):
-        padding.append(slice(0, ntots[i]))
-
-    bases = da.from_array(np.array(bases, dtype=object), chunks=-1)
-    ntots = da.from_array(np.array(ntots, dtype=object), chunks=-1)
-    padding = da.from_array(np.array(padding, dtype=object), chunks=-1)
-    psiH = partial(im2coef, bases=bases, ntot=ntots, nmax=nmax,
+    psiH = partial(im2coef, bases=bases, ntot=ntot, nmax=nmax,
                    nlevels=nlevels)
-    psi = partial(coef2im, bases=bases, padding=padding,
+    psi = partial(coef2im, bases=bases, ntot=ntot,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
-    # decompose
-    alpha = psiH(x)
-    # reconstruct
-    xrec = psi(alpha)
+    # make sure this works even when output arrays are randomly populated
+    alpha = np.random.randn(nband, nbasis, nmax)  #, dtype=x.dtype)
+    xrec = np.random.randn(nband, nx, ny)  #, dtype=x.dtype)
 
-    # the two is required here because the operator is not normalised
-    # to have a spectral norm of one and there are two bases
-    assert_array_almost_equal(2*x, xrec, decimal=12)
+    # decompose
+    psiH(x, alpha)
+    # reconstruct
+    psi(alpha, xrec)
+
+    # the nbasis is required here because the operator is not normalised
+    assert_array_almost_equal(nbasis*x, xrec, decimal=12)
 
 @pmp("nx", [120, 240])
 @pmp("ny", [32, 150])
@@ -78,45 +67,89 @@ def test_prox21(nx, ny, nband, nlevels):
     x = image[None, 0:nx, 0:ny] * nu[:, None, None] ** (-0.7)
 
     # set up dictionary info
-    bases = ['self','db1']
-    ntots = []
-    iys = {}
-    sys = {}
-    for base in bases:
-        if base == 'self':
-            y, iy, sy = x[0].ravel(), 0, 0
-        else:
-            alpha = pywt.wavedecn(x[0], base, mode='zero',
-                                  level=nlevels)
-            y, iy, sy = pywt.ravel_coeffs(alpha)
-        iys[base] = iy
-        sys[base] = sy
-        ntots.append(y.size)
-
-    # get padding info
-    nmax = np.asarray(ntots).max()
-    padding = []
-    nbasis = len(ntots)
-    for i in range(nbasis):
-        padding.append(slice(0, ntots[i]))
-
-    bases = da.from_array(np.array(bases, dtype=object), chunks=-1)
-    ntots = da.from_array(np.array(ntots, dtype=object), chunks=-1)
-    padding = da.from_array(np.array(padding, dtype=object), chunks=-1)
-    psiH = partial(im2coef, bases=bases, ntot=ntots, nmax=nmax,
+    bases = ('self','db1','db2','db3','db4','db5')
+    nbasis = len(bases)
+    iys, sys, ntot, nmax = wavelet_setup(x, bases, nlevels)
+    ntot = tuple(ntot)
+    psiH = partial(im2coef, bases=bases, ntot=ntot, nmax=nmax,
                    nlevels=nlevels)
-    psi = partial(coef2im, bases=bases, padding=padding,
+    psi = partial(coef2im, bases=bases, ntot=ntot,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
-    weights_21 = np.ones((nbasis, nmax))
+    weights_21 = np.random.random(nbasis*nmax).reshape(nbasis, nmax)
     sig_21 = 0.0
 
-    alpha = psiH(x)
+    alpha = np.zeros((nband, nbasis, nmax), dtype=x.dtype)
+    xrec = np.zeros((nband, nx, ny), dtype=x.dtype)
+
+    psiH(x, alpha)
 
     y = prox_21(alpha, sig_21, weights_21)
 
-    xrec = psi(y)
+    psi(y, xrec)
 
-    # the two is required here because the operator is not normalised
-    # to have a spectral norm of one and there are two bases
-    assert_array_almost_equal(2*x, xrec, decimal=12)
+    # the nbasis is required here because the operator is not normalised
+    assert_array_almost_equal(nbasis*x, xrec, decimal=12)
+
+
+@pmp("nx", [1202, 240])
+@pmp("ny", [324, 1506])
+@pmp("nband", [1, 3, 6])
+@pmp("nlevels", [1, 2])
+def test_prox21m(nx, ny, nband, nlevels):
+    """
+    Check that applying the prox with zero step size is the identity
+    """
+    image = np.random.randn(nx, ny)
+
+    nu = 1.0  + 0.1 * np.arange(nband)
+
+    x = image[None, :, :] * nu[:, None, None] ** (-0.7)
+
+    # set up dictionary info
+    bases = ('self','db1','db2','db3','db4','db5')
+    nbasis = len(bases)
+    iys, sys, ntot, nmax = wavelet_setup(x, bases, nlevels)
+    ntot = tuple(ntot)
+    psiH = partial(im2coef, bases=bases, ntot=ntot, nmax=nmax,
+                   nlevels=nlevels)
+    psi = partial(coef2im, bases=bases, ntot=ntot,
+                  iy=iys, sy=sys, nx=nx, ny=ny)
+
+    weights_21 = np.random.random(nbasis*nmax).reshape(nbasis, nmax)
+    sig_21 = 0.0
+
+    alpha = np.zeros((nband, nbasis, nmax), dtype=x.dtype)
+    xrec = np.zeros((nband, nx, ny), dtype=x.dtype)
+
+    psiH(x, alpha)
+
+    y = prox_21m(alpha, sig_21, weight=weights_21)
+
+    psi(y, xrec)
+
+    # the nbasis is required here because the operator is not normalised
+    assert_array_almost_equal(nbasis*x, xrec, decimal=12)
+
+
+@pmp("nmax", [1234, 240, 8765])
+@pmp("nbasis", [1, 5])
+@pmp("nband", [1, 3, 6])
+@pmp("lam", [1.0, 1e-1, 1e-3])
+@pmp("sigma", [75.0, 1.0, 1e-3])
+def test_prox21m_numba(nband, nbasis, nmax, lam, sigma):
+    # check numba implementation matches numpy even when output contains random
+    # numbers initially
+    v = np.random.randn(nband, nbasis, nmax)
+    vout = np.random.randn(nband, nbasis, nmax)
+    l1weight = np.random.random(nbasis*nmax).reshape(nbasis, nmax)
+    sigma = 1e-3
+    res = prox_21m(v, lam, weight=l1weight)
+    prox_21m_numba(v, vout, lam, weight=l1weight)
+
+    assert_array_almost_equal(res, vout, decimal=12)
+
+    res = prox_21m(v/sigma, lam/sigma, weight=l1weight)
+    prox_21m_numba(v, vout, lam, sigma=sigma, weight=l1weight)
+
+    assert_array_almost_equal(res, vout, decimal=9)

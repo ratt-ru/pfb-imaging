@@ -5,8 +5,8 @@ from pfb.wavelets.modes import Modes
 
 @numba.njit(nogil=True, cache=True)
 def upsampling_convolution_valid_sf(input, filter, output, mode):
-    if mode is Modes.periodisation:
-        raise NotImplementedError("periodisation upsampling not implemented")
+    if mode is not Modes.zeropad:
+        raise NotImplementedError("Only zeropad mode supported")
 
     N = input.shape[0]
     F = filter.shape[0]
@@ -41,8 +41,8 @@ def upsampling_convolution_valid_sf(input, filter, output, mode):
 
 @numba.njit(nogil=True, cache=True)
 def downsampling_convolution(input, output, filter, mode, step):
-    if mode is Modes.periodisation:
-        raise NotImplementedError("periodisation downsampling not implemented")
+    if mode is not Modes.zeropad:
+        raise NotImplementedError("Only zeropad mode supported")
 
     i = step - 1
     o = 0
@@ -60,41 +60,6 @@ def downsampling_convolution(input, output, filter, mode, step):
         while j <= i:
             fsum += filter[j] * input[i - j]
             j += 1
-
-        if mode is Modes.symmetric:
-            k = 0
-
-            while k < N and j < F:
-                fsum += filter[j] * input[k]
-                j += 1
-                k += 1
-
-            k = 0
-
-            while k < N and j < F:
-                fsum += filter[j] * input[N - 1 - k]
-                j += 1
-                k += 1
-
-        elif mode is Modes.asymmetric:
-            raise NotImplementedError(
-                "asymmetric downsampling not implemented")
-        elif mode is Modes.reflect:
-            raise NotImplementedError("reflect downsampling not implemented")
-        elif mode is Modes.antireflect:
-            raise NotImplementedError(
-                "antireflect downsampling not implemented")
-        elif mode is Modes.constant_edge:
-            raise NotImplementedError(
-                "constant_edge downsampling not implemented")
-        elif mode is Modes.smooth:
-            raise NotImplementedError("smooth downsampling not implemented")
-        elif mode is Modes.periodic:
-            raise NotImplementedError("periodic downsampling not implemented")
-        elif mode is Modes.zeropad:
-            pass
-        else:
-            raise ValueError("Unknown mode")
 
         output[o] = fsum
 
@@ -119,82 +84,11 @@ def downsampling_convolution(input, output, filter, mode, step):
     while i < F:
         fsum = input.dtype.type(0)
         j = 0
-
-        if mode is Modes.symmetric:
-            while i - j >= N:
-                k = 0
-
-                while k < N and i - j >= N:
-                    fsum += filter[i - N - j] * input[N - 1 - k]
-                    j += 1
-                    k += 1
-
-                k = 0
-
-                while k < N and i - j >= N:
-                    fsum += filter[i - N - j] * input[k]
-                    j += 1
-                    k += 1
-
-        elif mode is Modes.asymmetric:
-            raise NotImplementedError(
-                "asymmetric downsampling not implemented")
-        elif mode is Modes.reflect:
-            raise NotImplementedError("reflect downsampling not implemented")
-        elif mode is Modes.antireflect:
-            raise NotImplementedError(
-                "antireflect downsampling not implemented")
-        elif mode is Modes.constant_edge:
-            raise NotImplementedError(
-                "constant_edge downsampling not implemented")
-        elif mode is Modes.smooth:
-            raise NotImplementedError("smooth downsampling not implemented")
-        elif mode is Modes.periodic:
-            raise NotImplementedError("periodic downsampling not implemented")
-        elif mode is Modes.zeropad:
-            j = i - N + 1
-        else:
-            raise ValueError("Unknown mode")
+        j = i - N + 1
 
         while j <= i:
             fsum += filter[j] * input[i - j]
             j += 1
-
-        if mode is Modes.symmetric:
-            while j < F:
-                k = 0
-
-                while k < N and j < F:
-                    fsum += filter[j] * input[k]
-                    j += 1
-                    k += 1
-
-                k = 0
-
-                while k < N and j < F:
-                    fsum += filter[j] * input[N - 1 - k]
-                    j += 1
-                    k += 1
-
-        elif mode is Modes.asymmetric:
-            raise NotImplementedError(
-                "asymmetric downsampling not implemented")
-        elif mode is Modes.reflect:
-            raise NotImplementedError("reflect downsampling not implemented")
-        elif mode is Modes.antireflect:
-            raise NotImplementedError(
-                "antireflect downsampling not implemented")
-        elif mode is Modes.constant_edge:
-            raise NotImplementedError(
-                "constant_edge downsampling not implemented")
-        elif mode is Modes.smooth:
-            raise NotImplementedError("smooth downsampling not implemented")
-        elif mode is Modes.periodic:
-            raise NotImplementedError("periodic downsampling not implemented")
-        elif mode is Modes.zeropad:
-            pass
-        else:
-            raise ValueError("Unknown mode")
 
         output[o] = fsum
 
@@ -205,42 +99,7 @@ def downsampling_convolution(input, output, filter, mode, step):
     while i < N + F - 1:
         fsum = input.dtype.type(0)
         j = 0
-
-        if mode is Modes.symmetric:
-            while i - j >= N:
-                k = 0
-
-                while k < N and i - j >= N:
-                    fsum += filter[i - N - j] * input[N - 1 - k]
-                    j += 1
-                    k += 1
-
-                k = 0
-
-                while k < N and i - j >= N:
-                    fsum += filter[i - N - j] * input[k]
-                    j += 1
-                    k += 1
-
-        elif mode is Modes.asymmetric:
-            raise NotImplementedError(
-                "asymmetric downsampling not implemented")
-        elif mode is Modes.reflect:
-            raise NotImplementedError("reflect downsampling not implemented")
-        elif mode is Modes.antireflect:
-            raise NotImplementedError(
-                "antireflect downsampling not implemented")
-        elif mode is Modes.constant_edge:
-            raise NotImplementedError(
-                "constant_edge downsampling not implemented")
-        elif mode is Modes.smooth:
-            raise NotImplementedError("smooth downsampling not implemented")
-        elif mode is Modes.periodic:
-            raise NotImplementedError("periodic downsampling not implemented")
-        elif mode is Modes.zeropad:
-            j = i - N + 1
-        else:
-            raise ValueError("Unknown mode")
+        j = i - N + 1
 
         while j < F:
             fsum += filter[j] * input[i - j]

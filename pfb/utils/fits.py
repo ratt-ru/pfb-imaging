@@ -2,6 +2,10 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 from pfb.utils.misc import to4d
+import dask.array as da
+from dask import delayed
+from datetime import datetime
+from casacore.quanta import quantity
 
 
 def data_from_header(hdr, axis=3):
@@ -25,11 +29,12 @@ def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
     hdu.writeto(name, overwrite=overwrite)
 
 
-def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
+def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
+            unit='Jy/beam', GuassPar=None, unix_time=None):
     """
     cell_x/y - cell sizes in degrees
     nx/y - number of x and y pixels
-    radec - right ascention and declination in degrees
+    radec - right ascention and declination in radians
     freq - frequencies in Hz
     """
 
@@ -66,6 +71,8 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq, unit='Jy/beam'):
     header['BTYPE'] = 'Intensity'
     header['BUNIT'] = unit
     header['SPECSYS'] = 'TOPOCENT'
+    if unix_time is not None:
+        header['UTC_TIME'] = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
 
     return header
 
@@ -98,9 +105,9 @@ def add_beampars(hdr, GaussPar, GaussPars=None):
 
     if GaussPars is not None:
         for i in range(len(GaussPars)):
-            hdr['BMAJ' + str(i)] = GaussPars[i][0]
-            hdr['BMIN' + str(i)] = GaussPars[i][1]
-            hdr['PA' + str(i)] = GaussPars[i][2]
+            hdr['BMAJ' + str(i+1)] = GaussPars[i][0]
+            hdr['BMIN' + str(i+1)] = GaussPars[i][1]
+            hdr['PA' + str(i+1)] = GaussPars[i][2]
 
     return hdr
 
@@ -129,3 +136,75 @@ def set_header_info(mhdr, ref_freq, freq_axis, args, beampars):
     new_hdr = fits.Header(new_hdr)
 
     return new_hdr
+
+@delayed
+def normwsum(data, wsum):
+    if wsum > 0:
+        data /= wsum
+    return data
+
+def dds2fits(dds, column, outname, norm_wsum=True, otype=np.float32):
+    imsout = []
+    basename = outname + '_' + column.lower()
+    for ds in dds:
+        t = ds.timeid
+        b = ds.bandid
+        name = basename + f'_time{t:04d}_band{b:04d}.fits'
+        data = ds.get(column).data
+        if norm_wsum:
+            data = normwsum(data, ds.WSUM.data[0])
+            unit = 'Jy/beam'
+        else:
+            unit = 'Jy/pixel'
+        radec = (ds.ra, ds.dec)
+        cell_deg = np.rad2deg(ds.cell_rad)
+        nx, ny = ds.get(column).shape
+        unix_time = quantity(f'{ds.time_out}s').to_unix_time()
+        hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, ds.freq_out,
+                      unit=unit, unix_time=unix_time)
+        imout = delayed(save_fits)(name, data, hdr, overwrite=True,
+                                   dtype=np.float32)
+        imsout.append(imout)
+    return imsout
+
+
+def dds2fits_mfs(dds, column, outname, norm_wsum=True, otype=np.float32):
+    times_out = []
+    freqs = []
+    for ds in dds:
+        times_out.append(ds.time_out)
+        freqs.append(ds.freq_out)
+    times_out = np.unique(np.array(times_out))
+    ntimes_out = times_out.size
+    freq_out = np.mean(np.unique(np.array(freqs)))
+    basename = outname + '_' + column.lower()
+    imsout = []
+    nx, ny = dds[0].get(column).shape
+    datas = [da.zeros((nx, ny), chunks=(-1, -1),
+                dtype=otype) for _ in range(ntimes_out)]
+    wsums = [da.zeros(1) for _ in range(ntimes_out)]
+    counts = [da.zeros(1) for _ in range(ntimes_out)]
+    radecs = [[] for _ in range(ntimes_out)]
+    cell_deg = np.rad2deg(dds[0].cell_rad)
+    for ds in dds:
+        t = ds.timeid
+        datas[t] += ds.get(column).data
+        wsums[t] += ds.WSUM.data[0]
+        counts[t] += 1
+        radecs[t] = (ds.ra, ds.dec)
+    for t in range(ntimes_out):
+        name = basename + f'_time{t:04d}_mfs.fits'
+        if norm_wsum:
+            data = normwsum(datas[t], wsums[t])
+            unit = 'Jy/beam'
+        else:
+            data = normwsum(datas[t], counts[t])
+            unit = 'Jy/pixel'
+        unix_time = quantity(f'{times_out[t]}s').to_unix_time()
+        hdr = set_wcs(cell_deg, cell_deg, nx, ny, radecs[t], freq_out,
+                      unit=unit, unix_time=unix_time)
+        imout = delayed(save_fits)(name, data, hdr, overwrite=True,
+                                   dtype=np.float32)
+        imsout.append(imout)
+
+    return imsout

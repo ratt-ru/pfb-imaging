@@ -1,17 +1,21 @@
 import packratt
 import pytest
 from pathlib import Path
-from daskms import Dataset
+from xarray import Dataset
 from collections import namedtuple
 import dask
 import dask.array as da
 from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
-@pmp('do_beam', (False, True,))
 @pmp('do_gains', (False, True))
-@pmp('wstack', (False, True))
-def test_hessian(do_beam, do_gains, wstack, tmp_path_factory):
+def test_clean(do_gains, tmp_path_factory):
+    '''
+    Here we test that clean correctly infers the fluxes of point sources
+    placed at the centers of pixels in the presence of the wterm and DI gain
+    corruptions.
+    TODO - add per scan PB variations
+    '''
     test_dir = tmp_path_factory.mktemp("test_pfb")
     # test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
@@ -52,7 +56,8 @@ def test_hessian(do_beam, do_gains, wstack, tmp_path_factory):
     print("Cell size set to %5.5e arcseconds" % cell_size)
 
     from ducc0.fft import good_size
-    fov = 2.0
+    # the test will fail in intrinsic if sources fall near beam sidelobes
+    fov = 1.0
     npix = good_size(int(fov / cell_deg))
     while npix % 2:
         npix += 1
@@ -73,21 +78,14 @@ def test_hessian(do_beam, do_gains, wstack, tmp_path_factory):
     for i in range(nsource):
         model[:, Ix[i], Iy[i]] = I0[i] * (freq/freq0) ** alpha[i]
 
-    # TODO - interpolate beam
-    if do_beam:
-        from pfb.utils.beam import _katbeam_impl
-        beam = _katbeam_impl(freq, nx, ny, np.rad2deg(cell_rad), np.float64)
-    else:
-        beam = np.ones((nchan, nx, ny), dtype=float)
-
     # model vis
-    epsilon = 1e-10
+    epsilon = 1e-7
     from ducc0.wgridder import dirty2ms
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
-        model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], beam[c]*model[c],
+        model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], model[c],
                                     pixsize_x=cell_rad, pixsize_y=cell_rad,
-                                    epsilon=epsilon, do_wstacking=wstack, nthreads=8)
+                                    epsilon=epsilon, do_wstacking=True, nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]
 
     desc = ms.getcoldesc('DATA')
@@ -127,7 +125,7 @@ def test_hessian(do_beam, do_gains, wstack, tmp_path_factory):
 
         # corrupted vis
         model_vis = model_vis.reshape(nrow, nchan, 1, 2, 2)
-        from africanus.calibration.utils import chunkify_rows
+        from pfb.utils.misc import chunkify_rows
         time = ms.getcol('TIME')
         row_chunks, tbin_idx, tbin_counts = chunkify_rows(time, ntime)
         ant1 = ms.getcol('ANTENNA1')
@@ -142,8 +140,8 @@ def test_hessian(do_beam, do_gains, wstack, tmp_path_factory):
         g = da.from_array(jones)
         gflags = da.zeros((ntime, nchan, nant, 1))
         data_vars = {
-            'gains':(('gain_t', 'gain_f', 'ant', 'dir', 'corr'), g),
-            'gain_flags':(('gain_t', 'gain_f', 'ant', 'dir'), gflags)
+            'gains':(('gain_time', 'gain_freq', 'antenna', 'direction', 'correlation'), g),
+            'gain_flags':(('gain_time', 'gain_freq', 'antenna', 'direction'), gflags)
         }
         gain_spec_tup = namedtuple('gains_spec_tup', 'tchunk fchunk achunk dchunk cchunk')
         attrs = {
@@ -158,10 +156,11 @@ def test_hessian(do_beam, do_gains, wstack, tmp_path_factory):
                                        achunk=(int(nant),),
                                        dchunk=(int(1),),
                                        cchunk=(int(ncorr),)),
-            'GAIN_AXES': ('gain_t', 'gain_f', 'ant', 'dir', 'corr')
+            'GAIN_AXES': ('gain_time', 'gain_freq', 'antenna', 'direction', 'correlation')
         }
         coords = {
-            'gain_f': (('gain_f',), freq)
+            'gain_freq': (('gain_freq',), freq),
+            'gain_time': (('gain_time',), utime)
 
         }
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
@@ -173,90 +172,89 @@ def test_hessian(do_beam, do_gains, wstack, tmp_path_factory):
         ms.putcol('DATA2', model_vis)
         gain_path = None
 
-    from pfb.workers.grid import _grid
+
+    postfix = "main"
+    # set defaults from schema
+    from pfb.parser.schemas import schema
+    init_args = {}
+    for key in schema.init["inputs"].keys():
+        init_args[key] = schema.init["inputs"][key]["default"]
+    # overwrite defaults
     outname = str(test_dir / 'test')
-    _grid(ms=str(test_dir / 'test_ascii_1h60.0s.MS'),
-          data_column="DATA2", weight_column=None, imaging_weight_column=None,
-          flag_column='FLAG', gain_table=gain_path, product='I',
-          utimes_per_chunk=-1, row_out_chunk=10000, epsilon=epsilon,
-          precision='double', group_by_field=True, group_by_scan=True,
-          group_by_ddid=True, wstack=wstack, double_accum=True,
-          fits_mfs=False, no_fits_cubes=True, psf=False, dirty=True,
-          weights=True, bda_weights=False, do_beam=do_beam,
-          output_filename=outname, nband=nchan,
-          field_of_view=fov, super_resolution_factor=srf,
-          psf_oversize=2, cell_size=float(cell_size), nx=nx, ny=ny, nworkers=1,
-          nthreads_per_worker=1, nvthreads=8, mem_limit=8, nthreads=8,
-          host_address=None, scheduler='single-threaded')
+    init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+    init_args["output_filename"] = outname
+    init_args["data_column"] = "DATA2"
+    init_args["flag_column"] = 'FLAG'
+    init_args["gain_table"] = gain_path
+    init_args["max_field_of_view"] = fov
+    init_args["overwrite"] = True
+    init_args["channels_per_image"] = 1
+    from pfb.workers.init import _init
+    _init(**init_args)
 
+    # grid data to produce dirty image
+    grid_args = {}
+    for key in schema.grid["inputs"].keys():
+        grid_args[key] = schema.grid["inputs"][key]["default"]
+    # overwrite defaults
+    grid_args["output_filename"] = outname
+    grid_args["postfix"] = postfix
+    grid_args["nband"] = nchan
+    grid_args["field_of_view"] = fov
+    grid_args["fits_mfs"] = True
+    grid_args["psf"] = True
+    grid_args["residual"] = False
+    grid_args["nthreads"] = 8  # has to be set when calling _grid
+    grid_args["nvthreads"] = 8
+    grid_args["overwrite"] = True
+    grid_args["robustness"] = 0.0
+    grid_args["wstack"] = True
+    from pfb.workers.grid import _grid
+    _grid(**grid_args)
+
+    # run clean
+    clean_args = {}
+    for key in schema.clean["inputs"].keys():
+        clean_args[key] = schema.clean["inputs"][key]["default"]
+    clean_args["output_filename"] = outname
+    clean_args["postfix"] = postfix
+    clean_args["nband"] = nchan
+    clean_args["dirosion"] = 0
+    clean_args["do_residual"] = False
+    clean_args["nmiter"] = 100
+    threshold = 1e-5
+    clean_args["threshold"] = threshold
+    clean_args["gamma"] = 0.1
+    clean_args["peak_factor"] = 0.75
+    clean_args["sub_peak_factor"] = 0.75
+    clean_args["nthreads"] = 8
+    clean_args["nvthreads"] = 8
+    clean_args["scheduler"] = 'sync'
+    clean_args["wstack"] = True
+    clean_args["epsilon"] = epsilon
+    clean_args["mop_flux"] = True
+    clean_args["fits_mfs"] = False
+    from pfb.workers.clean import _clean
+    _clean(**clean_args)
+
+    # get inferred model
     basename = f'{outname}_I'
-    xds_name = f'{basename}.xds.zarr'
-    xds = xds_from_zarr(xds_name, chunks={'band':1, 'row':-1})
-    # required because of https://github.com/ska-sa/dask-ms/issues/181
-    for i, ds in enumerate(xds):
-        xds[i] = ds.chunk({'row':-1})
-
-    wsum = 0.0
-    ID = np.zeros((nchan, nx, ny), dtype=float)
-    for ds in xds:
+    dds_name = f'{basename}_{postfix}.dds.zarr'
+    dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
+    model_inferred = np.zeros((nchan, nx, ny))
+    for ds in dds:
         b = ds.bandid
-        wsum += ds.WSUM.values
-        ID[b] += ds.DIRTY.values
-    ID /= wsum
+        model_inferred[b] = ds.MODEL.values
 
-    mds_name = f'{basename}.mds.zarr'
-    mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-    mask = np.any(model, axis=0)
-    mds = mds.assign(**{
-                'MASK': (('x', 'y'), da.from_array(mask, chunks=(-1, -1))),
-                'MODEL': (('band', 'x', 'y'), da.from_array(model, chunks=(1, -1, -1)))
-        })
-    dask.compute(xds_to_zarr(mds, mds_name, columns='ALL'))
+    # we actually reconstruct I/n(l,m) so we need to correct for that
+    l, m = np.meshgrid(dds[0].x.values, dds[0].y.values,
+                       indexing='ij')
+    eps = l**2+m**2
+    n = -eps/(np.sqrt(1.-eps)+1.) + 1  # more stable form
+    for i in range(nsource):
+        assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] * n[Ix[i], Iy[i]] -
+                        model[:, Ix[i], Iy[i]], 1.0,
+                        atol=5*threshold)
 
-    from pfb.operators.hessian import hessian_xds
-    hessopts = {}
-    hessopts['cell'] = cell_rad
-    hessopts['wstack'] = wstack
-    hessopts['epsilon'] = epsilon
-    hessopts['double_accum'] = True
-    hessopts['nthreads'] = 8
-    Iconv = hessian_xds(model, xds, hessopts, wsum, 0.0, np.ones((nx, ny)),
-                        compute=True, use_beam=do_beam)
-
-    # TODO - why doesn't the beam work when wstack is False below?
-    # if wstack:
-    #     from pfb.operators.hessian import hessian_xds
-    #     hessopts = {}
-    #     hessopts['cell'] = cell_rad
-    #     hessopts['wstack'] = wstack
-    #     hessopts['epsilon'] = epsilon
-    #     hessopts['double_accum'] = True
-    #     hessopts['nthreads'] = 8
-    #     Iconv = hessian_xds(model, xds, hessopts, wsum, 0.0, np.ones((nx, ny)),
-    #                         compute=True, use_beam=do_beam)
-    # else:
-    #     from pfb.operators.psf import psf_convolve_xds
-    #     nx_psf, ny_psf = xds[0].nx_psf, xds[0].ny_psf
-    #     npad_xl = (nx_psf - nx)//2
-    #     npad_xr = nx_psf - nx - npad_xl
-    #     npad_yl = (ny_psf - ny)//2
-    #     npad_yr = ny_psf - ny - npad_yl
-    #     padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
-    #     unpad_x = slice(npad_xl, -npad_xr)
-    #     unpad_y = slice(npad_yl, -npad_yr)
-    #     lastsize = ny + np.sum(padding[-1])
-
-    #     psfopts = {}
-    #     psfopts['padding'] = padding
-    #     psfopts['unpad_x'] = unpad_x
-    #     psfopts['unpad_y'] = unpad_y
-    #     psfopts['lastsize'] = lastsize
-    #     psfopts['nthreads'] = 8
-
-    #     Iconv = psf_convolve_xds(model, xds, psfopts, wsum, 0.0, np.ones((nx, ny)),
-    #                              compute=True, use_beam=do_beam)
-
-    # we should have ID == hess(model)
-    assert_allclose(1.0 + beam*ID - Iconv, 1.0, atol=10*epsilon)
-
-# test_hessian(False, False, True)
+ # do_gains, algo
+# test_clean(True)

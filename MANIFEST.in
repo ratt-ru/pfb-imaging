@@ -1,1 +1,3 @@
-include pfb/parser/default_config.yaml
+include pfb/stimela_cabs.yaml
+include pfb/parser/*.yml
+include pfb/parser/*.yaml

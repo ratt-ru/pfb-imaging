@@ -1,0 +1,21 @@
+pd_tol:
+  dtype: float
+  default: 1e-3
+  info: 'Tolreance of primal dual algorithm'
+  abbreviation: pdtol
+pd_maxit:
+  dtype: int
+  default: 250
+  info: 'Maximum iterations for primal dual algorithm'
+  abbreviation: pdmaxit
+pd_verbose:
+  dtype: int
+  default: 1
+  info: 'Verbosity of primal dual algorithm. Set to > 1 for \
+        debugging, 0 for silence'
+  abbreviation: pdverb
+pd_report_freq:
+  dtype: int
+  default: 10
+  info: 'Report frequency of primal dual algorithm'
+  abbreviation: pdrf
