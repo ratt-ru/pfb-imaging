@@ -6,7 +6,7 @@ with open("README.rst", "r") as fh:
 
 requirements = [
                 'numpy',
-                'tornado==6.1',
+                'tornado',
                 'matplotlib',
                 'ipython',
                 'scikit-image',
