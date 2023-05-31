@@ -21,7 +21,6 @@ from collections import namedtuple
 from scipy.interpolate import RectBivariateSpline as rbs
 from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
-from smoove.kanterp import kanterp
 import pdb
 
 class ForkedPdb(pdb.Pdb):
