@@ -426,7 +426,7 @@ def construct_mappings(ms_name,
                 tmp_dict = {}
                 for name, val in zip(gain_axes[ms][idt], gain_spec[ms][idt]):
                     if name == 'gain_time':
-                        tmp = tuple(time_mapping[ms][idt]['counts'])
+                        tmp_dict[name] = tuple(time_mapping[ms][idt]['counts'])
                     elif name == 'gain_freq':
                         tmp_dict[name] = tuple(freq_mapping[ms][idt]['counts'])
                     elif name == 'direction':
