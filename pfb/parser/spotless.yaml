@@ -28,17 +28,6 @@ inputs:
     info:
       Imaging products to produce. Options are I, Q, U, V.
       Only single Stokes products are currently supported
-  mask:
-    dtype: str
-    abbreviation: mask
-    info:
-      Path to mask.fits
-  sigmainv:
-    dtype: float
-    default: 1e-5
-    abbreviation: sinv
-    info:
-      Standard deviation of assumed GRF prior
   bases:
     dtype: str
     info: 'Wavelet bases to use. Give as comma separated str eg. '
@@ -59,11 +48,6 @@ inputs:
     abbreviation: hessnorm
     info:
       Spectral norm of hessian approximation
-  sigma21:
-    dtype: float
-    abbreviation: sig21
-    info:
-      Thresholding level
   rmsfactor:
     dtype: float
     default: 3.0
