@@ -110,14 +110,8 @@ def _init(**kw):
         gain_names = list(map(tmpf, opts.gain_table))
     else:
         gain_names = None
-    # freqs, fbin_idx, fbin_counts, band_mapping, freq_out, \
-    #     utimes, tbin_idx, tbin_counts, time_mapping, \
-    #     ms_chunks, gain_chunks, radecs, \
-    #     chan_widths, uv_max, antpos, poltype = \
-    #         construct_mappings(opts.ms, gain_names,
-    #                            opts.nband,
-    #                            opts.integrations_per_image)
 
+    print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype = \
