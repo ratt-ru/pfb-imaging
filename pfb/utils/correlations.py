@@ -5,7 +5,7 @@ from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
-from pfb.utils.misc import coerce_literal
+from quartical.utils.numba import coerce_literal
 from daskms.optimisation import inlined_array
 from operator import getitem
 from pfb.utils.beam import interp_beam

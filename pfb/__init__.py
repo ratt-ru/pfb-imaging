@@ -5,7 +5,7 @@ author - Landman Bester
 email  - lbester@ska.ac.za
 date   - 31/03/2020
 """
-__version__ = '0.0.2'
+__version__ = '0.0.1'
 
 import os
 
@@ -82,7 +82,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
             cluster = stack.enter_context(cluster)
             client = stack.enter_context(Client(cluster))
 
-        from pfb.scheduling import install_plugin
+        from quartical.scheduling import install_plugin
         client.run_on_scheduler(install_plugin)
         client.wait_for_workers(opts.nworkers)
     elif scheduler in ['sync', 'single-threaded']:

@@ -9,8 +9,6 @@ from dask.diagnostics import ProgressBar
 from ducc0.fft import r2c, c2r, good_size
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
-from numba.core.extending import SentryLiteralArgs
-import inspect
 from daskms import xds_from_storage_ms as xds_from_ms
 from daskms import xds_from_storage_table as xds_from_table
 from daskms.experimental.zarr import xds_from_zarr
@@ -592,13 +590,6 @@ def init_mask(mask, model, output_type, log):
     else:
         raise ValueError(f'Unsupported masking option {mask}')
     return mask
-
-
-def coerce_literal(func, literals):
-    func_locals = inspect.stack()[1].frame.f_locals  # One frame up.
-    arg_types = [func_locals[k] for k in inspect.signature(func).parameters]
-    SentryLiteralArgs(literals).for_function(func).bind(*arg_types)
-    return
 
 
 def dds2cubes(dds, nband, apparent=False):

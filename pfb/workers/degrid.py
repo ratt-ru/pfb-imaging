@@ -148,13 +148,22 @@ def _degrid(**kw):
 
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
-    freqs, fbin_idx, fbin_counts, band_mapping, freq_out, \
-        utimes, tbin_idx, tbin_counts, time_mapping, \
-        ms_chunks, gain_chunks, radecs, \
+    # freqs, fbin_idx, fbin_counts, band_mapping, freq_out, \
+    #     utimes, tbin_idx, tbin_counts, time_mapping, \
+    #     ms_chunks, gain_chunks, radecs, \
+    #     chan_widths, uv_max, antpos, poltype = \
+    #         construct_mappings(opts.ms, None,
+    #                            nband_out,
+    #                            opts.integrations_per_image)
+
+    print('Constructing mapping', file=log)
+    row_mapping, freq_mapping, time_mapping, \
+        freqs, utimes, ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype = \
-            construct_mappings(opts.ms, None,
-                               nband_out,
-                               opts.integrations_per_image)
+            construct_mappings(opts.ms,
+                               gain_names,
+                               ipi=opts.integrations_per_image,
+                               cpi=opts.channels_per_image)
 
     # interpolate model
     mask = np.any(model, axis=(0,1))
@@ -241,8 +250,8 @@ def _degrid(**kw):
             # always
             freq = da.from_array(freqs[ms][idt],
                                  chunks=tuple(fbin_counts[ms][idt]))
-            fidx = da.from_array(fbin_idx[ms][idt], chunks=1)
-            fcnts = da.from_array(fbin_counts[ms][idt], chunks=1)
+            fidx = da.from_array(freq_mapping[ms][idt]['start_indices'], chunks=1)
+            fcnts = da.from_array(freq_mapping[ms][idt]['counts'], chunks=1)
             uvw = ds.UVW.data
 
             # we need to do this here because the design matrix is a function of SPW

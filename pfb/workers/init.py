@@ -191,8 +191,8 @@ def _init(**kw):
                 # select all rows for output dataset
                 Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
 
-                for fi, (flow, fcounts) in enumerate(zip(freq_mapping[ms][idt]['start_indices'],
-                                                     freq_mapping[ms][idt]['counts'])):
+                for flow, fcounts in zip(freq_mapping[ms][idt]['start_indices'],
+                                         freq_mapping[ms][idt]['counts']):
                     Inu = slice(flow, flow + fcounts)
                     ndatasets += 1
 
