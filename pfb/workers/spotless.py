@@ -25,97 +25,24 @@ def spotless(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
+    OmegaConf.set_struct(opts, True)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     pyscilog.log_to_file(f'spotless_{timestamp}.log')
 
-    if opts.scheduler=='distributed':
-        raise NotImplementedError("Deconv algorithm not yet distributed")
-        # total number of threads
-        if opts.nthreads is None:
-            if opts.host_address is not None:
-                raise ValueError("You have to specify nthreads in the "
-                                 "distributed case")  # not
-            import multiprocessing
-            nthreads = multiprocessing.cpu_count()
-            opts.nthreads = nthreads
-
-        if opts.nworkers is None:
-            opts.nworkers = opts.nband
-
-        if opts.nthreads_per_worker is None:
-            nthreads_per_worker = 1
-            opts.nthreads_per_worker = nthreads_per_worker
-
-        nthreads_dask = opts.nworkers * opts.nthreads_per_worker
-
-        if opts.nvthreads is None:
-            if opts.scheduler in ['single-threaded', 'sync']:
-                nvthreads = nthreads
-            elif opts.host_address is not None:
-                nvthreads = max(nthreads//nthreads_per_worker, 1)
-            else:
-                nvthreads = max(nthreads//nthreads_dask, 1)
-            opts.nvthreads = nvthreads
-
-        OmegaConf.set_struct(opts, True)
+    with ExitStack() as stack:
+        # numpy imports have to happen after this step
+        from pfb import set_client
+        set_client(opts, stack, log, scheduler=opts.scheduler)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        with ExitStack() as stack:
-            os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
-            os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
-            os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
-            os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
-            os.environ["NUMBA_NUM_THREADS"] = str(opts.nband)
-            # avoids numexpr error, probably don't want more than 10 vthreads for ne anyway
-            import numexpr as ne
-            max_cores = ne.detect_number_of_cores()
-            ne_threads = min(max_cores, opts.nband)
-            os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
-
-            if opts.host_address is not None:
-                from distributed import Client
-                print(f"Initialising distributed client at {opts.host_address}",
-                      file=log)
-                client = stack.enter_context(Client(opts.host_address))
-            else:
-                if nthreads_dask * opts.nvthreads > opts.nthreads:
-                    print("Warning - you are attempting to use more threads than "
-                          "available. This may lead to suboptimal performance.",
-                        file=log)
-                from dask.distributed import Client, LocalCluster
-                print("Initialising client with LocalCluster.", file=log)
-                cluster = LocalCluster(processes=True, n_workers=opts.nworkers,
-                                    threads_per_worker=opts.nthreads_per_worker,
-                                    memory_limit=0)  # str(mem_limit/nworkers)+'GB'
-                cluster = stack.enter_context(cluster)
-                client = stack.enter_context(Client(cluster))
-
-            client.wait_for_workers(opts.nworkers)
-            client.amm.stop()
-
+        if opts.scheduler=='distributed':
             return _spotless_dist(**opts)
-
-    else:
-        if opts.nworkers is None:
-                opts.nworkers = 1
-
-        OmegaConf.set_struct(opts, True)
-
-        with ExitStack() as stack:
-            # numpy imports have to happen after this step
-            from pfb import set_client
-            set_client(opts, stack, log, scheduler=opts.scheduler)
-
-            # TODO - prettier config printing
-            print('Input Options:', file=log)
-            for key in opts.keys():
-                print('     %25s = %s' % (key, opts[key]), file=log)
-
+        else:
             return _spotless(**opts)
 
 
@@ -230,7 +157,7 @@ def _spotless(**kw):
     xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
     xhat = make_noncritical(xhat)
     psf_convolve = partial(psf_convolve_cube, xpad, xhat, xout, psfhat, lastsize,
-                       nthreads=opts.nthreads)
+                       nthreads=opts.nvthreads)
 
     if opts.hessnorm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
@@ -256,7 +183,7 @@ def _spotless(**kw):
                    ntot=ntot,
                    nmax=nmax,
                    nlevels=opts.nlevels,
-                   nthreads=opts.nthreads)
+                   nthreads=opts.nvthreads)
     psi = partial(coef2im,
                   bases=bases,
                   ntot=ntot,
@@ -264,7 +191,7 @@ def _spotless(**kw):
                   sy=sy,
                   nx=nx,
                   ny=ny,
-                  nthreads=opts.nthreads)
+                  nthreads=opts.nvthreads)
 
     # get clean beam area to convert residual units during l1reweighting
     # TODO - could refine this with comparison between dirty and restored

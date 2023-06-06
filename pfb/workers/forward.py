@@ -139,7 +139,7 @@ def _forward(**kw):
         xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
         xhat = make_noncritical(xhat)
         psf_convolve = partial(psf_convolve_cube, xpad, xhat, xout, psfhat, lastsize,
-                        nthreads=opts.nthreads)
+                        nthreads=opts.nvthreads)
     else:
         print("Solving for update using vis space hessian approximation",
               file=log)

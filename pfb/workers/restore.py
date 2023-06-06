@@ -107,13 +107,13 @@ def _restore(**kw):
     model_mfs = np.mean(model, axis=0)
 
     image_mfs = convolve2gaussres(model_mfs[None], xx, yy,
-                                  GaussPar[0], opts.nthreads,
+                                  GaussPar[0], opts.nvthreads,
                                   norm_kernel=False)[0]  # peak of kernel set to unity
     image_mfs += residual_mfs
     image = np.zeros_like(model)
     for b in range(nband):
         image[b:b+1] = convolve2gaussres(model[b:b+1], xx, yy,
-                                         GaussPars[b], opts.nthreads,
+                                         GaussPars[b], opts.nvthreads,
                                          norm_kernel=False)  # peak of kernel set to unity
         image[b] += residual[b]
 

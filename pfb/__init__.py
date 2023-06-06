@@ -12,52 +12,30 @@ import os
 def set_client(opts, stack, log, scheduler='distributed'):
 
     from omegaconf import open_dict
-    # number of threads per worker
-    if opts.nthreads is None:
-        if opts.host_address is not None:
-            raise ValueError("You have to specify nthreads when using a distributed scheduler")
-        import multiprocessing
-        nthreads = multiprocessing.cpu_count()
-        with open_dict(opts):
-            opts.nthreads = nthreads
-    else:
-        nthreads = int(opts.nthreads)
-
-    # deprecated for now
-    # # configure memory limit
-    # if opts.mem_limit is None:
-    #     if opts.host_address is not None:
-    #         raise ValueError("You have to specify mem-limit when using a distributed scheduler")
-    #     import psutil
-    #     mem_limit = int(psutil.virtual_memory()[1]/1e9)  # all available memory by default
-    #     with open_dict(opts):
-    #         opts.mem_limit = mem_limit
-    # else:
-    #     mem_limit = int(opts.mem_limit)
-
-    # the number of chunks being read in simultaneously is equal to
-    # the number of dask threads
-    nthreads_dask = opts.nworkers * opts.nthreads_per_worker
-
+    # attempt somewhat intelligent default setup
+    import multiprocessing
+    nthreads_max = max(multiprocessing.cpu_count(), 1)
     if opts.nvthreads is None:
+        # we allocate half by default
+        nthreads_tot = max(nthreads_max//2, 1)
         if opts.scheduler in ['single-threaded', 'sync']:
-            nvthreads = nthreads
-        elif opts.host_address is not None:
-            nvthreads = max(nthreads//opts.nthreads_per_worker, 1)
+            with open_dict(opts):
+                opts.nvthreads = nthreads_tot
         else:
-            nvthreads = max(nthreads//nthreads_dask, 1)
-        with open_dict(opts):
-            opts.nvthreads = nvthreads
+            ndask_chunks = opts.nthreads_dask*opts.nworkers
+            nvthreads = max(nthreads_tot//ndask_chunks, 1)
+            with open_dict(opts):
+                opts.nvthreads = nvthreads
 
     os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
-    os.environ["NUMBA_NUM_THREADS"] = str(opts.nthreads)
+    os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
     # avoids numexpr error, probably don't want more than 10 vthreads for ne anyway
     import numexpr as ne
     max_cores = ne.detect_number_of_cores()
-    ne_threads = min(max_cores, opts.nthreads)
+    ne_threads = min(max_cores, opts.nvthreads)
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
     if scheduler=='distributed':
@@ -70,14 +48,14 @@ def set_client(opts, stack, log, scheduler='distributed'):
             print("Initialising distributed client.", file=log)
             client = stack.enter_context(Client(opts.host_address))
         else:
-            if nthreads_dask * opts.nvthreads > opts.nthreads:
+            if opts.nthreads_dask * opts.nvthreads > nthreads_max:
                 print("Warning - you are attempting to use more threads than "
                       "available. This may lead to suboptimal performance.",
                       file=log)
             from dask.distributed import Client, LocalCluster
             print("Initialising client with LocalCluster.", file=log)
             cluster = LocalCluster(processes=True, n_workers=opts.nworkers,
-                                   threads_per_worker=opts.nthreads_per_worker,
+                                   threads_per_worker=opts.nthreads_dask,
                                    memory_limit=0)  # str(mem_limit/nworkers)+'GB'
             cluster = stack.enter_context(cluster)
             client = stack.enter_context(Client(cluster))
@@ -93,7 +71,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
     elif scheduler=='threads':
         import dask
         from multiprocessing.pool import ThreadPool
-        dask.config.set(pool=ThreadPool(nthreads_dask))
+        dask.config.set(pool=ThreadPool(opts.nthreads_dask))
         print(f"Initialising ThreadPool with {nthreads_dask} threads",
               file=log)
     else:

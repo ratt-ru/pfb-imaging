@@ -137,8 +137,6 @@ def _degrid(**kw):
         raise ValueError('Model is empty')
     radec = (dds[0].ra, dds[0].dec)
 
-
-
     ref_freq = mfreqs[0]
 
     if opts.nband_out is None:
@@ -161,7 +159,7 @@ def _degrid(**kw):
         freqs, utimes, ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms,
-                               gain_names,
+                               None,
                                ipi=opts.integrations_per_image,
                                cpi=opts.channels_per_image)
 

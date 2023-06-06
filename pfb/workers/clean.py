@@ -184,7 +184,7 @@ def _clean(**kw):
                           verbosity=opts.verbose,
                           report_freq=opts.report_freq,
                           sigmathreshold=opts.sigmathreshold,
-                          nthreads=opts.nthreads)
+                          nthreads=opts.nvthreads)
         model += x
 
         print("Getting residual", file=log)
