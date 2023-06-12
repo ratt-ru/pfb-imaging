@@ -72,7 +72,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
         import dask
         from multiprocessing.pool import ThreadPool
         dask.config.set(pool=ThreadPool(opts.nthreads_dask))
-        print(f"Initialising ThreadPool with {nthreads_dask} threads",
+        print(f"Initialising ThreadPool with {opts.nthreads_dask} threads",
               file=log)
     else:
         raise ValueError(f"Unknown scheduler option {opts.scheduler}")

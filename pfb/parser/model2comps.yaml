@@ -1,10 +1,4 @@
 inputs:
-  ms:
-    dtype: str
-    required: true
-    abbreviation: ms
-    info:
-      Path to measurement set.
   output_filename:
     dtype: str
     required: true
@@ -12,15 +6,16 @@ inputs:
     abbreviation: o
     info:
       Basename of output
-  model_column:
-    dtype: str
-    default: MODEL_DATA
-    info:
-      Column to write model data to
   spectral_poly_order:
     dtype: int
     default: 4
     abbreviation: spo
+    info:
+      Order of interpolating polynomial for frequency axis
+  temporal_poly_order:
+    dtype: int
+    default: 4
+    abbreviation: tpo
     info:
       Order of interpolating polynomial for frequency axis
   postfix:
@@ -45,28 +40,8 @@ inputs:
     dtype: str
     info:
       Specify to degrid from a fits file
-  integrations_per_image:
-    dtype: int
-    default: -1
-    abbreviation: ipi
-    info:
-      Number of time integrations corresponding to each image.
-      Default -1 (equivalently 0 or None) implies degrid per scan.
-  channels_per_image:
-    dtype: int
-    abbreviation: cpi
-    default: -1
-    info:
-      Number of channels per image.
-      Default (-1, 0, None) -> dataset per spw.
-  accumulate:
-    dtype: bool
-    default: false
-    info:
-      Accumulate onto model column
 
   _include:
-    - (pfb.parser)gridding.yml
     - (pfb.parser)dist.yml
 
 outputs:

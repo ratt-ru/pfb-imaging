@@ -28,7 +28,6 @@ inputs:
       Data column to image. Must be the same across MSs
   weight_column:
     dtype: str
-    # default: WEIGHT_SPECTRUM
     abbreviation: wc
     info:
       Column containing natural weights. Must be the same across MSs

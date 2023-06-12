@@ -388,19 +388,19 @@ def loc2psf_vis(uvw,
 
 
 def comps2vis(uvw,
-                  freq,
-                  comps,
-                  Xdes,
-                  mask,
-                  tbin_idx, tbin_cnts,
-                  fbin_idx, fbin_cnts,
-                  cellx, celly,
-                  x0=0, y0=0,
-                  epsilon=1e-7,
-                  nthreads=1,
-                  wstack=True,
-                  divide_by_n=False,
-                  ncorr_out=4):
+              freq,
+              comps,
+              Xdes,
+              mask,
+              tbin_idx, tbin_cnts,
+              fbin_idx, fbin_cnts,
+              cellx, celly,
+              x0=0, y0=0,
+              epsilon=1e-7,
+              nthreads=1,
+              wstack=True,
+              divide_by_n=False,
+              ncorr_out=4):
 
     # determine output type
     complex_type = da.result_type(comps, np.complex64)
