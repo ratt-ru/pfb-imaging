@@ -75,9 +75,8 @@ def _degrid(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import model as im2vis
-    from pfb.operators.gridder import comps2vis
+    from pfb.operators.gridder import comps2vis, _comps2vis_impl
     from pfb.utils.fits import load_fits, data_from_header
-    from pfb.utils.misc import restore_corrs, model_from_comps
     from astropy.io import fits
     from pfb.utils.misc import compute_context
     import xarray as xr
@@ -88,27 +87,27 @@ def _degrid(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     mds_name = f'{basename}_{opts.postfix}.coeffs.zarr'
     mds = xds_from_zarr(mds_name)[0]
-    cell_rad = mds[0].cell_rad
+
+    # grid spec
+    cell_rad = mds.cell_rad_x
     cell_deg = np.rad2deg(cell_rad)
+    nx = mds.npix_x
+    ny = mds.npix_y
+    x0 = mds.center_x
+    y0 = mds.center_y
+    radec = (mds.ra, mds.dec)
 
-    # stack cube
-    nx = mds.x.size
-    ny = mds.y.size
-    x0 = mds.x0
-    y0 = mds.y0
-
-    if not np.any(model):
-        raise ValueError('Model is empty')
-    radec = (mds[0].ra, mds[0].dec)
-
+    # model func
     ref_freq = mds.ref_freq
-    ref_time = mds.ref_times
-
-    params = sm.symbols('t,f')
+    ref_time = mds.ref_time
+    params = sm.symbols(('t','f'))
     params += sm.symbols(tuple(mds.params.values))
     symexpr = parse_expr(mds.parametrisation)
-    # signature (t, f, *params)
     modelf = lambdify(params, symexpr)
+    # signature (t, f, *params) with
+    # t = utime/ref_time
+    # f = freq/ref_freq
+
 
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
@@ -124,6 +123,10 @@ def _degrid(**kw):
 
     print("Computing model visibilities", file=log)
     writes = []
+    # avoid reading these more than once
+    coeffs = mds.coefficients.values
+    locx = mds.location_x.values
+    locy = mds.location_y.values
     for ms in opts.ms:
         xds = xds_from_ms(ms,
                           chunks=ms_chunks[ms],
@@ -140,7 +143,7 @@ def _degrid(**kw):
             scanid = ds.SCAN_NUMBER
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
 
-            # needed for interpolation in time
+            # time <-> row mapping
             utime = da.from_array(utimes[ms][idt],
                                   chunks=opts.integrations_per_image)
             tidx = da.from_array(time_mapping[ms][idt]['start_indices'],
@@ -148,7 +151,12 @@ def _degrid(**kw):
             tcnts = da.from_array(time_mapping[ms][idt]['counts'],
                                   chunks=1)
 
-            # needed for interpolation in freq
+            ridx = da.from_array(row_mapping[ms][idt]['start_indices'],
+                                 chunks=opts.integrations_per_image)
+            rcnts = da.from_array(row_mapping[ms][idt]['counts'],
+                                  chunks=opts.integrations_per_image)
+
+            # freq <-> band mapping
             freq = da.from_array(freqs[ms][idt],
                                  chunks=opts.channels_per_image)
             fidx = da.from_array(freq_mapping[ms][idt]['start_indices'],
@@ -158,39 +166,25 @@ def _degrid(**kw):
 
             # number of chunks need to math in mapping and coord
             ntime_out = len(tidx.chunks[0])
-            assert len(utimes.chunks[0]) == ntime_out
+            assert len(utime.chunks[0]) == ntime_out
             nfreq_out = len(fidx.chunks[0])
             assert len(freq.chunks[0]) == nfreq_out
             # and they need to match the number of row chunks
             uvw = ds.UVW.data
             assert len(uvw.chunks[0]) == len(tidx.chunks[0])
 
-            # construct design matrix for this SPW
-            cpi = opts.channels_per_image
-            if nfreq_out == freq.size:
-                freq_out = freq
-            else:
-                freq_out = np.zeros(nfreq_out)
-                for b in range(nfreq_out):
-                    nf = np.minimum(freq.size, (i+1)*cpi)
-                    freq_out[b] = np.mean(freq[i*cpi:nf])
-
-            if freq_fitted:
-                w = (freq_out / ref_freq).reshape(nfreq_out, 1)
-                Xdes = np.tile(w, order) ** np.arange(0, order)  # simple polynomial
-            else:
-                Xdes = np.eye(freqo.size)
-            Xdes = da.from_array(Xdes, chunks=(1, -1))
-
             vis = comps2vis(uvw,
+                            utime,
                             freq,
-                            comps,
-                            Xdes,
-                            mask,
-                            tidx,
-                            tcnts,
-                            fidx,
-                            fcnts,
+                            ridx, rcnts,
+                            tidx, tcnts,
+                            fidx, fcnts,
+                            coeffs,
+                            locx, locy,
+                            modelf,
+                            ref_time,
+                            ref_freq,
+                            nx, ny,
                             cell_rad, cell_rad,
                             x0=x0, y0=y0,
                             nthreads=opts.nvthreads,

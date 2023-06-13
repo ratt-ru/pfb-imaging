@@ -51,6 +51,7 @@ def _model2comps(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
+    import os
     import numpy as np
     from pfb.utils.misc import construct_mappings
     import dask
@@ -69,6 +70,13 @@ def _model2comps(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.postfix}.dds.zarr'
     coeff_name = f'{basename}_{opts.postfix}.coeffs.zarr'
+
+    if os.path.isdir(coeff_name):
+        if opts.overwrite:
+            print(f'Removing {coeff_name}', file=log)
+            import shutil
+            shutil.rmtree(coeff_name)
+
     dds = xds_from_zarr(dds_name,
                         chunks={'x':-1,
                                 'y':-1})
@@ -185,7 +193,8 @@ def _model2comps(**kw):
 
             comps[:, b] = np.linalg.solve(hess_comps, dirty_comps)
     else:
-        raise NotImplementedError("Interpolation is currently mandatory")
+        if ntime > 1:
+            raise NotImplementedError("Time interpolation is currently mandatory")
         print("Not fitting time axis", file=log)
         comps = comps
         time_fitted = False
@@ -206,8 +215,7 @@ def _model2comps(**kw):
         thetasf.append(thetaf)
 
     polysym = sum(co*f**j for j, co in enumerate(thetasf))
-    # polyfunc = lambdify(params, polysym)
-    # import ipdb; ipdb.set_trace()
+
 
     # save interpolated dataset
     data_vars = {
@@ -216,9 +224,13 @@ def _model2comps(**kw):
     coords = {
         'location_x': (('location_x',), Ix),
         'location_y': (('location_y',), Iy),
-        'params': (('params',), list(map(str, params)))
+        # 'shape_x':,
+        'params': (('params',), list(map(str, params))),
+        'times': (('times',), mtimes),  # to allow rendering to original grid
+        'freqs': (('freqs',), mfreqs)
     }
     attrs = {
+        'spec': 'genesis',
         'cell_rad_x': cell_rad,
         'cell_rad_y': cell_rad,
         'npix_x': nx,
@@ -229,7 +241,7 @@ def _model2comps(**kw):
         'center_y': y0,
         'ra': dds[0].ra,
         'dec': dds[0].dec,
-        'stokes': opts.product,
+        'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
         'parametrisation': str(polysym)
     }
 

@@ -139,7 +139,7 @@ def _spotless(**kw):
     hessopts['wstack'] = opts.wstack
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
-    hessopts['nthreads'] = opts.nvthreads
+    hessopts['nthreads'] = opts.nvthreads  # nvthreads since dask parallel over band
     # always clean in apparent scale so no beam
     # mask is applied to residual after hessian application
     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
@@ -157,7 +157,7 @@ def _spotless(**kw):
     xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
     xhat = make_noncritical(xhat)
     psf_convolve = partial(psf_convolve_cube, xpad, xhat, xout, psfhat, lastsize,
-                       nthreads=opts.nvthreads)
+                           nthreads=opts.nvthreads*opts.nthreads_dask)  # nthreads = nvthreads*nthreads_dask because dask not involved
 
     if opts.hessnorm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
@@ -183,7 +183,7 @@ def _spotless(**kw):
                    ntot=ntot,
                    nmax=nmax,
                    nlevels=opts.nlevels,
-                   nthreads=opts.nvthreads)
+                   nthreads=opts.nvthreads*opts.nthreads_dask) # nthreads = nvthreads*nthreads_dask because dask not involved
     psi = partial(coef2im,
                   bases=bases,
                   ntot=ntot,
@@ -191,7 +191,7 @@ def _spotless(**kw):
                   sy=sy,
                   nx=nx,
                   ny=ny,
-                  nthreads=opts.nvthreads)
+                  nthreads=opts.nvthreads*opts.nthreads_dask) # nthreads = nvthreads*nthreads_dask because dask not involved
 
     # get clean beam area to convert residual units during l1reweighting
     # TODO - could refine this with comparison between dirty and restored

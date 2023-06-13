@@ -402,6 +402,8 @@ def construct_mappings(ms_name,
                 ipit = np.minimum(ipi, ntime)
             row_chunks, ridx, rcounts = chunkify_rows(time, ipit,
                                                       daskify_idx=False)
+            # these are for applying gains
+            # essentially the number of rows per unique time
             row_mapping[ms][idt] = {}
             row_mapping[ms][idt]['start_indices'] = ridx
             row_mapping[ms][idt]['counts'] = rcounts

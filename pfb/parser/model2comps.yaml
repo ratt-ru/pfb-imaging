@@ -6,6 +6,11 @@ inputs:
     abbreviation: o
     info:
       Basename of output
+  overwrite:
+    dtype: bool
+    default: false
+    info:
+      Allow overwrite of existing model
   spectral_poly_order:
     dtype: int
     default: 4
@@ -14,7 +19,7 @@ inputs:
       Order of interpolating polynomial for frequency axis
   temporal_poly_order:
     dtype: int
-    default: 4
+    # default: 4
     abbreviation: tpo
     info:
       Order of interpolating polynomial for frequency axis

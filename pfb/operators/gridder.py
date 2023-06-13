@@ -388,12 +388,17 @@ def loc2psf_vis(uvw,
 
 
 def comps2vis(uvw,
+              utime,
               freq,
-              comps,
-              Xdes,
-              mask,
+              rbin_idx, rbin_cnts,
               tbin_idx, tbin_cnts,
               fbin_idx, fbin_cnts,
+              comps,
+              Ix, Iy,
+              modelf,
+              ref_time,
+              ref_freq,
+              nx, ny,
               cellx, celly,
               x0=0, y0=0,
               epsilon=1e-7,
@@ -407,14 +412,22 @@ def comps2vis(uvw,
 
     return da.blockwise(_comps2vis, 'rfc',
                         uvw, 'r3',
+                        utime, 'r',
                         freq, 'f',
-                        comps, None,
-                        Xdes, 'fo',
-                        mask, 'xy',
+                        rbin_idx, 'r',
+                        rbin_cnts, 'r',
                         tbin_idx, 'r',
                         tbin_cnts, 'r',
                         fbin_idx, 'f',
                         fbin_cnts, 'f',
+                        comps, None,
+                        Ix, None,
+                        Iy, None,
+                        modelf, None,
+                        ref_time, None,
+                        ref_freq, None,
+                        nx, None,
+                        ny, None,
                         cellx, None,
                         celly, None,
                         x0, None,
@@ -425,87 +438,107 @@ def comps2vis(uvw,
                         divide_by_n, None,
                         ncorr_out, None,
                         new_axes={'c': ncorr_out},
-                        # adjust_chunks={'f': freq.chunks[0], 'r': uvw.chunks[0]},
+                        # it should be pulling these from uvw and freq so shouldn't need this?
+                        adjust_chunks={'r': uvw.chunks[0]},
                         dtype=complex_type,
                         align_arrays=False)
 
 
 def _comps2vis(uvw,
-                  freq,
-                  comps,
-                  Xdes,
-                  mask,
-                  tbin_idx, tbin_cnts,
-                  fbin_idx, fbin_cnts,
-                  cellx, celly,
-                  x0=0, y0=0,
-                  epsilon=1e-7,
-                  nthreads=1,
-                  wstack=True,
-                  divide_by_n=False,
-                  ncorr_out=4):
+                utime,
+                freq,
+                rbin_idx, rbin_cnts,
+                tbin_idx, tbin_cnts,
+                fbin_idx, fbin_cnts,
+                comps,
+                Ix, Iy,
+                modelf,
+                ref_time,
+                ref_freq,
+                nx, ny,
+                cellx, celly,
+                x0=0, y0=0,
+                epsilon=1e-7,
+                nthreads=1,
+                wstack=True,
+                divide_by_n=False,
+                ncorr_out=4):
     return _comps2vis_impl(uvw[0],
-                              freq,
-                              comps,
-                              Xdes[0],
-                              mask[0][0],
-                              tbin_idx, tbin_cnts,
-                              fbin_idx, fbin_cnts,
-                              cellx, celly,
-                              x0, y0,
-                              epsilon,
-                              nthreads,
-                              wstack,
-                              divide_by_n,
-                              ncorr_out)
+                           utime,
+                           freq,
+                           rbin_idx, rbin_cnts,
+                           tbin_idx, tbin_cnts,
+                           fbin_idx, fbin_cnts,
+                           comps,
+                           Ix, Iy,
+                           modelf,
+                           ref_time,
+                           ref_freq,
+                           nx, ny,
+                           cellx, celly,
+                           x0=x0, y0=y0,
+                           epsilon=epsilon,
+                           nthreads=nthreads,
+                           wstack=wstack,
+                           divide_by_n=divide_by_n,
+                           ncorr_out=ncorr_out)
 
 
 
 def _comps2vis_impl(uvw,
-                  freq,
-                  comps,
-                  Xdes,
-                  mask,
-                  tbin_idx, tbin_cnts,
-                  fbin_idx, fbin_cnts,
-                  cellx, celly,
-                  x0=0, y0=0,
-                  epsilon=1e-7,
-                  nthreads=1,
-                  wstack=True,
-                  divide_by_n=False,
-                  ncorr_out=4):
+                    utime,
+                    freq,
+                    rbin_idx, rbin_cnts,
+                    tbin_idx, tbin_cnts,
+                    fbin_idx, fbin_cnts,
+                    comps,
+                    Ix, Iy,
+                    modelf,
+                    ref_time,
+                    ref_freq,
+                    nx, ny,
+                    cellx, celly,
+                    x0=0, y0=0,
+                    epsilon=1e-7,
+                    nthreads=1,
+                    wstack=True,
+                    divide_by_n=False,
+                    ncorr_out=4):
     # adjust for chunking
     # need a copy here if using multiple row chunks
+    rbin_idx2 = rbin_idx - rbin_idx.min()
     tbin_idx2 = tbin_idx - tbin_idx.min()
     fbin_idx2 = fbin_idx - fbin_idx.min()
 
     # currently not interpolating in time
     ntime = tbin_idx.size
     nband = fbin_idx.size
-    nx, ny = mask.shape
-    image = np.zeros((ntime, nband, nx, ny), dtype=comps.dtype)
-
-    # render comps to image, we assume simply polynomial in freq
-    for t in range(ntime):
-        image[t, :, mask] = Xdes.dot(comps[t]).T
 
     nrow = uvw.shape[0]
     nchan = freq.size
-    vis = np.zeros((nrow, nchan, ncorr_out), dtype=np.result_type(image, np.complex64))
+    vis = np.zeros((nrow, nchan, ncorr_out), dtype=np.result_type(comps, np.complex64))
     for t in range(ntime):
         indt = slice(tbin_idx2[t], tbin_idx2[t] + tbin_cnts[t])
+        # TODO - clean up this logic. row_mapping holds the number of rows per
+        # utime and there are multiple utimes per row chunk
+        indr = slice(rbin_idx2[indt][0], rbin_idx2[indt][-1] + rbin_cnts[indt][-1])
         for b in range(nband):
             indf = slice(fbin_idx2[b], fbin_idx2[b] + fbin_cnts[b])
-            vis[indt, indf, 0] = dirty2vis(uvw=uvw,
-                                       freq=freq,
-                                       dirty=image[t, b],
-                                       pixsize_x=cellx, pixsize_y=celly,
-                                       center_x=x0, center_y=y0,
-                                       epsilon=epsilon,
-                                       do_wgridding=wstack,
-                                       divide_by_n=divide_by_n,
-                                       nthreads=nthreads)
+            # render components to image
+            # we want to do this on each worker
+            fout = np.mean(freq[indf])/ref_freq
+            tout = np.mean(utime[indt])/ref_time
+            image = np.zeros((nx, ny), dtype=comps.dtype)
+            image[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
+            vis[indr, indf, 0] = dirty2vis(uvw=uvw,
+                                           freq=freq[indf],
+                                           dirty=image,
+                                           pixsize_x=cellx, pixsize_y=celly,
+                                           center_x=x0, center_y=y0,
+                                           epsilon=epsilon,
+                                           do_wgridding=wstack,
+                                           divide_by_n=divide_by_n,
+                                           nthreads=nthreads)
             if ncorr_out > 1:
-                vis[indt, indf, -1] = vis[indt, indf, 0]
+                vis[indr, indf, -1] = vis[indr, indf, 0]
     return vis
