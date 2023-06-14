@@ -38,6 +38,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
     ne_threads = min(max_cores, opts.nvthreads)
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
+    import dask
     if scheduler=='distributed':
         # TODO - investigate what difference this makes
         # with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
@@ -54,22 +55,21 @@ def set_client(opts, stack, log, scheduler='distributed'):
                       file=log)
             from dask.distributed import Client, LocalCluster
             print("Initialising client with LocalCluster.", file=log)
-            cluster = LocalCluster(processes=True, n_workers=opts.nworkers,
-                                   threads_per_worker=opts.nthreads_dask,
-                                   memory_limit=0)  # str(mem_limit/nworkers)+'GB'
-            cluster = stack.enter_context(cluster)
-            client = stack.enter_context(Client(cluster))
+            with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
+                cluster = LocalCluster(processes=True, n_workers=opts.nworkers,
+                                    threads_per_worker=opts.nthreads_dask,
+                                    memory_limit=0)  # str(mem_limit/nworkers)+'GB'
+                cluster = stack.enter_context(cluster)
+                client = stack.enter_context(Client(cluster))
 
         from quartical.scheduling import install_plugin
         client.run_on_scheduler(install_plugin)
         client.wait_for_workers(opts.nworkers)
     elif scheduler in ['sync', 'single-threaded']:
-        import dask
         dask.config.set(scheduler=scheduler)
         print(f"Initialising with synchronous scheduler",
               file=log)
     elif scheduler=='threads':
-        import dask
         from multiprocessing.pool import ThreadPool
         dask.config.set(pool=ThreadPool(opts.nthreads_dask))
         print(f"Initialising ThreadPool with {opts.nthreads_dask} threads",

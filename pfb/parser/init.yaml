@@ -11,6 +11,21 @@ inputs:
     abbreviation: o
     info:
       Basename of output
+  scans:
+    dtype: List[int]
+    info:
+      List of SCAN_NUMBERS to image. Defaults to all.
+      Input as string eg. '[0,2]' if running from CLI
+  ddids:
+    dtype: List[int]
+    info:
+      List of DATA_DESC_ID's to images. Defaults to all.
+      Input as string eg. '[0,1]' if running from CLI
+  fields:
+    dtype: List[int]
+    info:
+      List of FIELD_ID's to image. Defaults to all.
+      Input as string eg. '[0,1,2]' if running from CLI
   overwrite:
     dtype: bool
     default: false

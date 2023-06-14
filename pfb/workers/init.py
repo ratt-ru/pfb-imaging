@@ -175,6 +175,21 @@ def _init(**kw):
             fid = ds.FIELD_ID
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
+            # TODO - cleaner syntax
+            if opts.fields is not None:
+                fields = opts.fields.strip(' ')  # strip white space
+                if fid not in list(map(int, fields[1:-1].split(','))):
+                    continue
+            if opts.ddids is not None:
+                ddids = opts.ddids.strip(' ')
+                if ddid not in list(map(int, ddids[1:-1].split(','))):
+                    continue
+            if opts.scans is not None:
+                scans = opts.scans.strip(' ')
+                if scanid not in list(map(int, scans[1:-1].split(','))):
+                    continue
+
+
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
             nrow = ds.dims['row']
             nchan = ds.dims['chan']
