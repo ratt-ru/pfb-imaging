@@ -900,3 +900,17 @@ def sum_overlap(vis, wgt, mask, freq, ufreq, flow, fhigh):
     out_dict['masko'] = masko
 
     return out_dict
+
+
+def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model):
+    '''
+    The logic here is that weights should remain the same for model
+    components that are rmsfactor times larger than the rms.
+    High SNR values should experience relatively small thresholding
+    whereas small values should be strongly thresholded
+    '''
+    psiH(model, outvar)
+    mcomps = np.sum(outvar, axis=0)
+    # the **2 here results in more agressive reweighting
+    return (1 + rmsfactor)/(1 + mcomps**4/rms_comps**4)
+

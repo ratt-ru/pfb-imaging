@@ -63,6 +63,8 @@ def _spotless(**kw):
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
     from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
+    from pfb.opt.primal_dual import primal_dual_exp
+    from pfb.utils.misc import l1reweight_func
     from pfb.operators.hessian import hessian_xds
     from pfb.operators.psf import psf_convolve_cube
     from pfb.operators.psi import im2coef
@@ -71,7 +73,6 @@ def _spotless(**kw):
     from ducc0.misc import make_noncritical
     from pfb.wavelets.wavelets import wavelet_setup
     from pfb.prox.prox_21m import prox_21m_numba as prox_21
-    from pfb.prox.prox2 import prox2
     # from pfb.prox.prox_21 import prox_21
     from pfb.utils.misc import fitcleanbeam
 
@@ -205,32 +206,33 @@ def _spotless(**kw):
     # i) convert residual units so it is comparable to model
     # ii) project residual into dual domain
     # iii) compute the rms in the space where thresholding happens
-    tmp = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
+    psiHoutvar = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
     fsel = wsums > 0
     tmp2 = residual.copy()
     tmp2[fsel] *= wsum/wsums[fsel, None, None]
-    psiH(tmp2/pix_per_beam, tmp)
-    rms_comps = np.std(np.sum(tmp, axis=0),
+    psiH(tmp2/pix_per_beam, psiHoutvar)
+    rms_comps = np.std(np.sum(psiHoutvar, axis=0),
                        axis=-1)[:, None]  # preserve axes
 
     # TODO - load from dds if present
     if dual is None:
         dual = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
         l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
+        reweighter = None
     else:
         if opts.l1reweight_from == 0:
             print('Initialising with L1 reweighted', file=log)
-            psiH(model, tmp)
-            mcomps = np.sum(tmp, axis=0)
-            l1weight = (1 + opts.rmsfactor)/(1 + (np.abs(mcomps)/rms_comps)**2)
+            reweighter = partial(l1reweight_func, psiH, psiHoutvar, opts.rmsfactor, rms_comps)
+            l1weight = reweighter(model)
             # l1weight[l1weight < 1.0] = 0.0
         else:
             l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
+            reweighter = None
 
 
     # for generality the prox function only takes the
     # array variable and step size as inputs
-    prox21 = partial(prox_21, weight=l1weight)
+    # prox21 = partial(prox_21, weight=l1weight)
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -241,13 +243,31 @@ def _spotless(**kw):
         modelp = deepcopy(model)
         data = residual + psf_convolve(model)
         grad21 = lambda x: psf_convolve(x) - data
-        model, dual = primal_dual(model,
+        # model, dual = primal_dual(model,
+        #                           dual,
+        #                           opts.rmsfactor*rms,
+        #                           psi,
+        #                           psiH,
+        #                           hessnorm,
+        #                           prox21,
+        #                           grad21,
+        #                           nu=nbasis,
+        #                           positivity=opts.positivity,
+        #                           tol=opts.pd_tol,
+        #                           maxit=opts.pd_maxit,
+        #                           verbosity=opts.pd_verbose,
+        #                           report_freq=opts.pd_report_freq,
+        #                           gamma=opts.gamma)
+
+        model, dual = primal_dual_exp(model,
                                   dual,
                                   opts.rmsfactor*rms,
                                   psi,
                                   psiH,
                                   hessnorm,
-                                  prox21,
+                                  prox_21,
+                                  l1weight,
+                                  reweighter,
                                   grad21,
                                   nu=nbasis,
                                   positivity=opts.positivity,
@@ -280,18 +300,14 @@ def _spotless(**kw):
             print('Computing L1 weights', file=log)
             # convert residual units so it is comparable to model
             tmp2[fsel] = residual[fsel] * wsum/wsums[fsel, None, None]
-            psiH(tmp2/pix_per_beam, tmp)
-            rms_comps = np.std(np.sum(tmp, axis=0),
+            psiH(tmp2/pix_per_beam, psiHoutvar)
+            rms_comps = np.std(np.sum(psiHoutvar, axis=0),
                                axis=-1)[:, None]  # preserve axes
-            psiH(model, tmp)
-            mcomps = np.sum(tmp, axis=0)
-            # the logic here is that weights shoudl remain the same for model
-            # components that are rmsfactor times larger than the rms
-            # high SNR values should experience relatively small thresholding
-            # whereas small values should be strongly thresholded
-            l1weight = (1 + opts.rmsfactor)/(1 + (np.abs(mcomps)/rms_comps)**2)
+            # we redefine the reweighter here since the rms has changed
+            reweighter = partial(l1reweight_func, psiH, psiHoutvar, opts.rmsfactor, rms_comps)
+            l1weight = reweighter(model)
             # l1weight[l1weight < 1.0] = 0.0
-            prox = partial(prox_21, weight=l1weight, axis=0)
+            # prox21 = partial(prox_21, weight=l1weight, axis=0)
 
         print("Updating results", file=log)
         dds_out = []
