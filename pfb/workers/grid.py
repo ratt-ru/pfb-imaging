@@ -158,7 +158,7 @@ def _grid(**kw):
         cell_size = opts.cell_size
         cell_rad = cell_size * np.pi / 60 / 60 / 180
         if cell_N / cell_rad < 1:
-            raise ValueError("Requested cell size too small. "
+            raise ValueError("Requested cell size too large. "
                              "Super resolution factor = ", cell_N / cell_rad)
         print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
     else:

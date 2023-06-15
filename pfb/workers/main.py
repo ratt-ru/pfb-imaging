@@ -9,4 +9,5 @@ def cli():
 
 from pfb.workers import (init, grid, degrid,
                          clean, restore, fwdbwd,
-                         spotless, model2comps)
+                         spotless, model2comps,
+                         newalgo)
