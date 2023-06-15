@@ -95,6 +95,11 @@ def _newalgo(**kw):
     else:
         residual_mfs = np.sum(residual, axis=0)
 
+    # note mfs images are in Jy/beam
+    # to covert the cubes to Jy/beam do something like this
+    # fsel = wsums > 0
+    # dirty_cube[fsel] *= wsum/wsums[fsel, None, None]
+
     # for intermediary results (not currently written)
     freq_out = []
     for ds in dds:
@@ -164,10 +169,6 @@ def _newalgo(**kw):
     pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
     print(f"Number of pixels per beam estimated as {pix_per_beam}",
           file=log)
-
-    # for generality the prox function only takes the
-    # array variable and step size as inputs
-    # prox21 = partial(prox_21, weight=l1weight)
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
