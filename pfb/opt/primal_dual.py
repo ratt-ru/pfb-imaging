@@ -102,17 +102,20 @@ def primal_dual_optimised(
         report_freq=10,
         gamma=1.0,
         verbosity=1):
+    # TODO - we can use make_noncritical because it sometimes returns an
+    # array that is not explicitly c-contiguous. How does this impact
+    # performance?
     # initialise
     xp = x.copy()
-    xp = make_noncritical(xp)
+    # xp = make_noncritical(xp)
     vp = v.copy()
-    vp = make_noncritical(vp)
+    # vp = make_noncritical(vp)
     vtilde = np.zeros_like(v)
-    vtilde = make_noncritical(vtilde)
+    # vtilde = make_noncritical(vtilde)
     vout = np.zeros_like(v)
-    vout = make_noncritical(vout)
+    # vout = make_noncritical(vout)
     xout = np.zeros_like(x)
-    xout = make_noncritical(xout)
+    # xout = make_noncritical(xout)
 
     # this seems to give a good trade-off between
     # primal and dual problems
@@ -194,17 +197,21 @@ def primal_dual_exp(
         gamma=1.0,
         verbosity=1,
         maxreweight=50):
+    # TODO - we can use make_noncritical because it sometimes returns an
+    # array that is not explicitly c-contiguous. How does this impact
+    # performance?
     # initialise
     xp = x.copy()
-    xp = make_noncritical(xp)
+    # xp = make_noncritical(xp)
     vp = v.copy()
-    vp = make_noncritical(vp)
+    # vp = make_noncritical(vp)
     vtilde = np.zeros_like(v)
-    vtilde = make_noncritical(vtilde)
+    # vtilde = make_noncritical(vtilde)
     vout = np.zeros_like(v)
-    vout = make_noncritical(vout)
+    # vout = make_noncritical(vout)
     xout = np.zeros_like(x)
-    xout = make_noncritical(xout)
+    # xout = make_noncritical(xout)
+
 
     # this seems to give a good trade-off between
     # primal and dual problems

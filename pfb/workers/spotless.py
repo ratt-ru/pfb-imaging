@@ -93,6 +93,7 @@ def _spotless(**kw):
     lastsize = ny_psf
 
     # stitch dirty/psf in apparent scale
+    print("Combining slices into cubes", file=log)
     output_type = dds[0].DIRTY.dtype
     dirty, model, residual, psf, psfhat, beam, wsums, dual = dds2cubes(
                                                                dds,

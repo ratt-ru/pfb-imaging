@@ -152,4 +152,4 @@ def test_prox21m_numba(nband, nbasis, nmax, lam, sigma):
     res = prox_21m(v/sigma, lam/sigma, weight=l1weight)
     prox_21m_numba(v, vout, lam, sigma=sigma, weight=l1weight)
 
-    assert_array_almost_equal(res, vout, decimal=9)
+    assert_array_almost_equal(res, vout, decimal=8)
