@@ -461,9 +461,13 @@ def _restore_corrs(vis, ncorr):
 
 def fitcleanbeam(psf: np.ndarray,
                  level: float = 0.5,
-                 pixsize: float = 1.0):
+                 pixsize: float = 1.0,
+                 extent: float = 5.0):
     """
-    Find the Gaussian that approximates the main lobe of the PSF.
+    Find the Gaussian that approximates the PSF.
+    First find the main lobe by identifying where PSF > level
+    then fit Gaussian out to a radius of extent * max(x, y) where
+    x and y are the coordinates where PSF > level.
     """
 
 
@@ -502,13 +506,20 @@ def fitcleanbeam(psf: np.ndarray,
         islands = label(mask)
         ncenter = islands[nx // 2, ny // 2]
 
-        # select psf main lobe
-        psfv = psfv[islands == ncenter]
+        # get extend of main lobe
         x = xx[islands == ncenter]
         y = yy[islands == ncenter]
-        xy = np.vstack((x, y))
         xdiff = x.max() - x.min()
         ydiff = y.max() - y.min()
+        rsq = np.abs(x).max()**2 + np.abs(y).max()**2
+        rrsq = xx**2 + yy**2
+        idxs = rrsq < extent * rsq
+
+        # select psf main lobe
+        psfv = psfv[idxs]
+        x = xx[idxs]
+        y = yy[idxs]
+        xy = np.vstack((x, y))
         emaj0 = np.maximum(xdiff, ydiff)
         emin0 = np.minimum(xdiff, ydiff)
         p, _ = curve_fit(func, xy, psfv, p0=(emaj0, emin0, 0.0))
