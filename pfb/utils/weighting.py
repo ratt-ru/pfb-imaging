@@ -212,8 +212,7 @@ def etaf(ressq, ovar, dof):
     return eta, logeta
 
 
-from pfb.operators.gridder import im2vis, vis2im, loc2psf_vis
-from pfb.operators.fft import fft2d
+from pfb.operators.gridder import im2vis
 def l2reweight(dsv, dsi, epsilon, nthreads, wstack, precision, dof=2):
     # vis data products
     uvw = dsv.UVW.data
@@ -255,18 +254,6 @@ def l2reweight(dsv, dsi, epsilon, nthreads, wstack, precision, dof=2):
 
     return eta/ovar, res
 
+# def l2reweight(dsv, dsi, epsilon, nthreads, wstack, precision, dof=2):
+#     return
 
-def test_reweight(sigma, N=1000, dof=2):
-    res = sigma*np.random.randn(N) + 1.0j*sigma*np.random.randn(N)
-    ovar = np.var(res)
-    ressq = (res*res.conj()).real
-
-    eta = (dof + 1)/(dof + ressq/ovar)
-
-    print(np.mean(eta), np.mean(ressq/ovar), ovar)
-
-    wgt = eta / ovar
-
-    # import pdb; pdb.set_trace()
-
-    print(np.sum((res*res.conj()).real), np.sum((res*wgt*res.conj()).real), 2*N)

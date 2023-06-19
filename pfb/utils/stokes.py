@@ -1,5 +1,5 @@
 import numpy as np
-from numba import generated_jit, njit
+from numba import generated_jit, njit, prange
 from numba.types import literal
 from dask.graph_manipulation import clone
 import dask.array as da
@@ -247,7 +247,7 @@ def _weight_data(data, weight, jones, tbin_idx, tbin_counts,
                              tbin_idx, tbin_counts,
                              ant1, ant2, pol, product)
 
-@generated_jit(nopython=True, nogil=True, cache=True)
+@generated_jit(nopython=True, nogil=True, cache=True, parallel=True)
 def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product):
 
@@ -265,7 +265,7 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
         vis = np.zeros((nrow, nchan), dtype=data.dtype)
         wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
 
-        for t in range(nt):
+        for t in prange(nt):
             for row in range(tbin_idx[t],
                              tbin_idx[t] + tbin_counts[t]):
                 p = int(ant1[row])
