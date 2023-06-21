@@ -278,7 +278,7 @@ def _spotless(**kw):
                                   report_freq=opts.pd_report_freq,
                                   gamma=opts.gamma)
 
-        save_fits(basename + f'_model_{k+1}.fits', np.mean(model, axis=0), hdr_mfs)
+        save_fits(basename + f'_{opts.postfix}_model_{k+1}.fits', np.mean(model, axis=0), hdr_mfs)
 
         print("Getting residual", file=log)
         convimage = hess(model)
@@ -287,7 +287,7 @@ def _spotless(**kw):
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
 
-        save_fits(basename + f'_residual_{k+1}.fits', residual_mfs, hdr_mfs)
+        save_fits(basename + f'_{opts.postfix}_residual_{k+1}.fits', residual_mfs, hdr_mfs)
 
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
@@ -339,12 +339,12 @@ def _spotless(**kw):
     # convert to fits files
     fitsout = []
     if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
     if opts.fits_cubes:
-        fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
-        fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
+        fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
     if len(fitsout):
         print("Writing fits", file=log)
