@@ -4,7 +4,7 @@ import dask.array as da
 from ducc0.wgridder.experimental import vis2dirty
 from ducc0.fft import c2c, genuine_hartley
 from africanus.constants import c as lightspeed
-from skimage.measure import block_reduce
+from quartical.utils.dask import Blocker
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
@@ -246,14 +246,20 @@ def l2reweight(dsv, dsi, epsilon, nthreads, wstack, precision, dof=2):
     ressq = (res*res.conj()).real
 
     # overall variance factor
-    ovar = ressq.sum()/vis_mask.sum()
+    eta = da.map_blocks(update_eta,
+                        ressq,
+                        vis_mask,
+                        dof,
+                        chunks=ressq.chunks)
 
-    # new precision variables
-    eta = (dof + 1)/(dof + ressq/ovar)
-    # eta, logeta = etaf(ressq, ovar, dof)
+    return eta, res
 
-    return eta/ovar, res
 
-# def l2reweight(dsv, dsi, epsilon, nthreads, wstack, precision, dof=2):
-#     return
-
+def update_eta(ressq, vis_mask, dof):
+    wcount = vis_mask.sum()
+    if wcount:
+        ovar = ressq.sum()/wcount
+        eta = (dof + 1)/(dof + ressq/ovar)
+        return eta/ovar
+    else:
+        return np.zeros_like(ressq)

@@ -20,6 +20,8 @@ from scipy.interpolate import RectBivariateSpline as rbs
 from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
 import pdb
+from quartical.utils.dask import Blocker
+
 
 class ForkedPdb(pdb.Pdb):
     """A Pdb subclass that may be used
@@ -783,7 +785,6 @@ def concat_row(xds):
     return xds_out
 
 
-from quartical.utils.dask import Blocker
 def concat_chan(xds, nband_out=1):
     times = []
     freqs_in = []

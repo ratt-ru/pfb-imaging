@@ -106,6 +106,8 @@ def single_stokes(ds=None,
     # do this before casting to dask array otherwise
     # serialisation of attrs fails
     freq_out = np.mean(freq)
+    freq_min = freq.min()
+    freq_max = freq.max()
 
     # simple average over channels
     if opts.chan_average > 1:
@@ -195,8 +197,8 @@ def single_stokes(ds=None,
         'ddid': ds.DATA_DESC_ID,
         'scanid': ds.SCAN_NUMBER,
         'freq_out': freq_out,
-        'freq_min': freq.min(),
-        'freq_max': freq.max(),
+        'freq_min': freq_min,
+        'freq_max': freq_max,
         'time_out': np.mean(utime),
         'time_min': utime.min(),
         'time_max': utime.max(),
