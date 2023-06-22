@@ -34,6 +34,11 @@ inputs:
     abbreviation: sinv
     info:
       Standard deviation of assumed GRF prior
+  gamma:
+    dtype: float
+    default: 1.0
+    info:
+      Step size of update
   use_psf:
     dtype: bool
     default: true

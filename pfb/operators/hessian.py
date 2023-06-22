@@ -272,7 +272,7 @@ def hessian_psf_cube(
         psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x*beam,
                           nthreads=nthreads)
     else:
-        xout = psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x,
+        psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x,
                           nthreads=nthreads)
 
     if beam is not None:
@@ -282,28 +282,6 @@ def hessian_psf_cube(
         xout /= wsum
 
     return xout + x * sigmainv
-
-
-# from ducc0.fft import r2c, c2r
-# def hess_psf(xpad,    # preallocated array to store padded image
-#              xhat,    # preallocated array to store FTd image
-#              xout,    # preallocated array to store output image
-#              psfhat,
-#              lastsize,
-#              x,       # input image, not overwritten
-#              nthreads=1,
-#              sigmainv=1.0):
-#     _, _, nx, ny = x.shape
-#     xpad[...] = 0.0
-#     xpad[:, :, 0:nx, 0:ny] = x
-#     r2c(xpad, axes=(-2, -1), nthreads=nthreads,
-#         forward=True, inorm=0, out=xhat)
-#     xhat *= psfhat
-#     c2r(xhat, axes=(-2, -1), forward=False, out=xpad,
-#         lastsize=lastsize, inorm=2, nthreads=nthreads,
-#         allow_overwriting_input=True)
-#     xout[...] = xpad[:, :, 0:nx, 0:ny]
-#     return xout + sigmainv*x
 
 
 def hess_vis(xds,
