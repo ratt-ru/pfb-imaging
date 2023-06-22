@@ -17,6 +17,10 @@ inputs:
     abbreviation: spo
     info:
       Order of interpolating polynomial for frequency axis
+  min_val:
+    dtype: float
+    info:
+      Only fit components above this flux level
   temporal_poly_order:
     dtype: int
     # default: 4

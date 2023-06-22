@@ -128,6 +128,8 @@ def _model2comps(**kw):
     ref_time = mtimes[0]
 
     # interpolate model in frequency
+    if opts.min_val is not None:
+        model[model < opts.min_val] = 0.0
     mask = np.any(model, axis=(0,1))
     Ix, Iy = np.where(mask)
     ncomps = Ix.size
