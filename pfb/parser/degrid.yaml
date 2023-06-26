@@ -17,12 +17,6 @@ inputs:
     default: MODEL_DATA
     info:
       Column to write model data to
-  spectral_poly_order:
-    dtype: int
-    default: 4
-    abbreviation: spo
-    info:
-      Order of interpolating polynomial for frequency axis
   postfix:
     dtype: str
     default: 'main'

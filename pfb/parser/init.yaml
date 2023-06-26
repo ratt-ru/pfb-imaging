@@ -26,6 +26,11 @@ inputs:
     info:
       List of FIELD_ID's to image. Defaults to all.
       Input as string eg. '[0,1,2]' if running from CLI
+  freq_range:
+    dtype: str
+    info:
+      Frequency range to image in Hz.
+      Specify as a string with colon delimiter eg. '1e9:1.1e9'
   overwrite:
     dtype: bool
     default: false

@@ -481,7 +481,7 @@ def _grid(**kw):
 
     print("Computing image space data products", file=log)
     with compute_context(opts.scheduler, basename+'_grid'):
-        dask.compute(writes, optimize_graph=False)
+        dask.compute(writes, optimize_graph=True)
 
     dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
 

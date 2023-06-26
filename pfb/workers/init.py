@@ -111,6 +111,17 @@ def _init(**kw):
     else:
         gain_names = None
 
+    if opts.freq_range is not None:
+        fmin, fmax = opts.freq_range.strip(' ').split(':')
+        if len(fmin) > 0:
+            freq_min = float(fmin)
+        else:
+            freq_min = None
+        if len(fmax) > 0:
+            freq_max = float(fmax)
+        else:
+            freq_max = None
+
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gain_chunks, radecs, \
@@ -118,7 +129,9 @@ def _init(**kw):
             construct_mappings(opts.ms,
                                gain_names,
                                ipi=opts.integrations_per_image,
-                               cpi=opts.channels_per_image)
+                               cpi=opts.channels_per_image,
+                               freq_min=freq_min,
+                               freq_max=freq_max)
 
     max_freq = 0
     for ms in opts.ms:
@@ -170,7 +183,6 @@ def _init(**kw):
             gds = xds_from_zarr(gain_names[ims],
                                 chunks=gain_chunks[ms])
 
-        ndatasets = 0
         for ids, ds in enumerate(xds):
             fid = ds.FIELD_ID
             ddid = ds.DATA_DESC_ID
@@ -192,13 +204,16 @@ def _init(**kw):
 
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
             nrow = ds.dims['row']
-            nchan = ds.dims['chan']
             ncorr = ds.dims['corr']
+
+            idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
+            if not idx.any():
+                continue
+
+            nchan = idx.sum()
 
             for ti, (tlow, tcounts) in enumerate(zip(time_mapping[ms][idt]['start_indices'],
                                            time_mapping[ms][idt]['counts'])):
-
-                ndatasets += 1
 
                 It = slice(tlow, tlow + tcounts)
                 ridx = row_mapping[ms][idt]['start_indices'][It]
@@ -209,7 +224,6 @@ def _init(**kw):
                 for flow, fcounts in zip(freq_mapping[ms][idt]['start_indices'],
                                          freq_mapping[ms][idt]['counts']):
                     Inu = slice(flow, flow + fcounts)
-                    ndatasets += 1
 
                     subds = ds[{'row': Irow, 'chan': Inu}]
                     if opts.gain_table is not None:

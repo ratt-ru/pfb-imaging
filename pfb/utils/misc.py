@@ -239,7 +239,9 @@ def fetch_poltype(corr_type):
 def construct_mappings(ms_name,
                        gain_name=None,
                        ipi=None,
-                       cpi=None):
+                       cpi=None,
+                       freq_min=-np.inf,
+                       freq_max=np.inf):
     '''
     Construct dictionaries containing per MS, FIELD, DDID and SCAN
     time and frequency mappings.
@@ -347,7 +349,6 @@ def construct_mappings(ms_name,
         uv_maxs, antpos, poltype)
 
     uv_max = max(uv_maxs)
-
     all_freqs = []
     all_times = []
     freq_mapping = {}
@@ -371,6 +372,13 @@ def construct_mappings(ms_name,
                 except Exception as e:
                     raise ValueError(f'Mismatch between gain and MS '
                                      f'frequencies for {ms} at {idt}')
+
+            idx = (freq>=freq_min) & (freq<=freq_max)
+            if not idx.any():
+                continue
+            idx0 = idx.argmax()  # returns index of first True element
+            freq = freq[idx]
+
             all_freqs.append(freq)
             nchan = freq.size
             if cpi in [-1, 0, None]:
@@ -378,7 +386,7 @@ def construct_mappings(ms_name,
             else:
                 cpit = np.minimum(cpi, nchan)
             freq_mapping[ms][idt] = {}
-            tmp = np.arange(0, nchan, cpit)
+            tmp = np.arange(idx0, idx0 + nchan, cpit)
             freq_mapping[ms][idt]['start_indices'] = tmp
             if cpit != nchan:
                 tmp2 = np.append(tmp, [nchan])

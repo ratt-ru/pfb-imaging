@@ -1,4 +1,5 @@
 import numpy as np
+import numexpr as ne
 from numba import generated_jit, njit, prange
 from numba.types import literal
 from dask.graph_manipulation import clone
@@ -10,6 +11,12 @@ from daskms.optimisation import inlined_array
 from operator import getitem
 from pfb.utils.beam import interp_beam
 import dask
+
+
+def weight_from_sigma(sigma):
+    weight = ne.evaluate('1.0/(sigma*sigma)',
+                         casting='same_kind')
+    return weight
 
 
 def single_stokes(ds=None,
@@ -56,7 +63,10 @@ def single_stokes(ds=None,
 
     if opts.sigma_column is not None:
         sigma = getattr(ds, opts.sigma_column).data
-        weight = 1.0/sigma**2
+        # weight = 1.0/sigma**2
+        weight = da.map_blocks(weight_from_sigma,
+                               sigma,
+                               chunks=sigma.chunks)
     elif opts.weight_column is not None:
         weight = getattr(ds, opts.weight_column).data
         if opts.weight_column=='WEIGHT':
