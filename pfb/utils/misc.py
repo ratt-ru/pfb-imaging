@@ -376,7 +376,7 @@ def construct_mappings(ms_name,
             idx = (freq>=freq_min) & (freq<=freq_max)
             if not idx.any():
                 continue
-            idx0 = np.searchsorted(idx) # returns index of first True element
+            idx0 = np.searchsorted(idx, True) # returns index of first True element
             assert idx0 != freq.size    # sanity check
             freq = freq[idx]
 

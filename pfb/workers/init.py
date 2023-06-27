@@ -116,14 +116,14 @@ def _init(**kw):
         if len(fmin) > 0:
             freq_min = float(fmin)
         else:
-            freq_min = None
+            freq_min = -np.inf
         if len(fmax) > 0:
             freq_max = float(fmax)
         else:
-            freq_max = None
+            freq_max = np.inf
     else:
-        freq_min = None
-        freq_max = None
+        freq_min = -np.inf
+        freq_max = np.inf
 
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
