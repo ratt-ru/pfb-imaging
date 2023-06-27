@@ -121,6 +121,9 @@ def _init(**kw):
             freq_max = float(fmax)
         else:
             freq_max = None
+    else:
+        freq_min = None
+        freq_max = None
 
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
