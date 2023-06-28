@@ -13,6 +13,10 @@ def prox_21m(v, sigma, weight=None, axis=0):
     nband   - number of imaging bands
     nbasis  - number of orthogonal bases
     ntot    - total number of coefficients for each basis (must be equal)
+
+    sigma  - scalar setting overall threshold level
+    weight  - (nbasis, ntot) setting relative weights per components in the
+              "MFS" cube
     """
     l2_norm = np.sum(v, axis=axis)  # drops axis
     l2_soft = np.maximum(np.abs(l2_norm) - sigma * weight, 0.0) * np.sign(l2_norm)

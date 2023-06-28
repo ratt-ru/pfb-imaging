@@ -27,6 +27,9 @@ inputs:
     abbreviation: tpo
     info:
       Order of interpolating polynomial for frequency axis
+  fit_mode:
+    dtype: str
+    default: 'ipoly'
   postfix:
     dtype: str
     default: 'main'

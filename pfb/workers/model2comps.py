@@ -130,7 +130,7 @@ def _model2comps(**kw):
     # interpolate model in frequency
     if opts.min_val is not None:
         model[model < opts.min_val] = 0.0
-    mask = np.any(model, axis=(0,1))
+    mask = np.any(model, axis=(0,1))  # over t and f axes
     Ix, Iy = np.where(mask)
     ncomps = Ix.size
 
@@ -140,17 +140,22 @@ def _model2comps(**kw):
         orderf = opts.spectral_poly_order
         if orderf > nband:
             raise ValueError("spectral-poly-order can't be larger than nband")
-        print(f"Fitting freq axis with polynomial of order {orderf}", file=log)
-        # we are given frequencies at bin centers, convert to bin edges
-        delta_freq = mfreqs[1] - mfreqs[0]
-        wlow = (mfreqs - delta_freq/2.0)/ref_freq
-        whigh = (mfreqs + delta_freq/2.0)/ref_freq
-        wdiff = whigh - wlow
+        if opts.fit_mode=='ipoly':
+            print(f"Fitting freq axis with polynomial of order {orderf}", file=log)
+            # we are given frequencies at bin centers, convert to bin edges
+            delta_freq = mfreqs[1] - mfreqs[0]
+            wlow = (mfreqs - delta_freq/2.0)/ref_freq
+            whigh = (mfreqs + delta_freq/2.0)/ref_freq
+            wdiff = whigh - wlow
 
-        # set design matrix for each component
-        Xfit = np.zeros([mfreqs.size, orderf])
-        for i in range(1, orderf+1):
-            Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+            # set design matrix for each component
+            Xfit = np.zeros([mfreqs.size, orderf])
+            for i in range(1, orderf+1):
+                Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+
+        elif opts.fit_mode=='poly':
+            w = mfreqs/ref_freq
+            Xfit = np.tile(w[:, None], (1, orderf))**np.arange(orderf)
 
         comps = np.zeros((ntime, orderf, Ix.size))
         freq_fitted = True
