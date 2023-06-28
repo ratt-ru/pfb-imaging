@@ -216,26 +216,32 @@ def _grid(**kw):
     if opts.transfer_model_from is not None:
         try:
             mds = xds_from_zarr(opts.transfer_model_from,
-                                chunks={'x':-1, 'y':-1})
+                                chunks={'x':-1, 'y':-1})[0]
         except Exception as e:
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
-        try:
-            assert len(mds) == len(dds)
-            for ms, ds in zip(mds, dds):
-                assert ms.bandid == ds.bandid
-        except Exception as e:
-            raise ValueError("Transfer from dataset mismatched. "
-                             "This is not currently supported.")
-        try:
-            assert 'MODEL' in mds[0]
-        except Exception as e:
-            raise ValueError(f"No MODEL variable in {opts.transfer_model_from}")
 
-        print(f"Found MODEL in {opts.transfer_model_from}. ",
+        # check grid spec TODO - allow interpolation of spatial axes
+        assert cell_rad == mds.cell_rad_x
+        assert nx == mds.npix_x
+        assert ny == mds.npix_y
+        assert x0 == mds.center_x
+        assert y0 == mds.center_y
+
+        # model func
+        ref_freq = mds.ref_freq
+        ref_time = mds.ref_time
+        params = sm.symbols(('t','f'))
+        params += sm.symbols(tuple(mds.params.values))
+        symexpr = parse_expr(mds.parametrisation)
+        modelf = lambdify(params, symexpr)
+
+        # model coeffs
+        coeffs = mds.coefficients.values
+        locx = mds.location_x.values
+        locy = mds.location_y.values
+
+        print(f"Loading MODEL from {opts.transfer_model_from}. ",
               file=log)
-        has_model = True
-    else:
-        has_model = False
 
     dds_out = []
     for i, ds in enumerate(xds):
