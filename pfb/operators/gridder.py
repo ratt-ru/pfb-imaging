@@ -9,6 +9,7 @@ import dask
 import dask.array as da
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from africanus.constants import c as lightspeed
+from quartical.utils.dask import Blocker
 
 
 def vis2im(uvw=None,
@@ -542,3 +543,51 @@ def _comps2vis_impl(uvw,
             if ncorr_out > 1:
                 vis[indr, indf, -1] = vis[indr, indf, 0]
     return vis
+
+
+def image_data_products(uvw,
+                        freq,
+                        vis,
+                        wgt,
+                        mask,
+                        model,
+                        nx, ny,
+                        nx_psf, ny_psf,
+                        cellx, celly,
+                        x0, y0,
+                        nthreads,
+                        epsilon,
+                        precision,
+                        do_wgridding,
+                        double_accum,
+                        l2reweight_dof,
+                        do_dirty,
+                        do_psf,
+                        do_weight,
+                        do_residual):
+    '''
+    Function to compute image space data products viz.
+        dirty
+        psf
+        psfhat
+        imweight
+        residual
+        wsum
+    '''
+
+    if do_dirty:
+        dirty = vis2dirty(uvw=uvw,
+                          freq=freq,
+                          vis=vis,
+                          wgt=wgt,
+                          mask=mask,
+                          npix_x=nx, npix_y=ny,
+                          pixsize_x=cellx, pixsize_y=celly,
+                          center_x=x0, center_y=y0,
+                          epsilon=epsilon,
+                          flip_v=False,  # hardcoded for now
+                          do_wgridding=do_wgridding,
+                          divide_by_n=divide_by_n,  # hardcoded for now
+                          nthreads=nthreads,
+                          sigma_min=1.1, sigma_max=3.0,
+                          double_precision_accumulation=double_accum)

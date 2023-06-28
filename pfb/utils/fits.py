@@ -22,11 +22,12 @@ def load_fits(name, dtype=np.float32):
     return np.require(data, dtype=dtype, requirements='C')
 
 
-def save_fits(name, data, hdr, overwrite=True, dtype=np.float32):
+def save_fits(data, name, hdr, overwrite=True, dtype=np.float32):
     hdu = fits.PrimaryHDU(header=hdr)
     data = np.transpose(to4d(data), axes=(0, 1, 3, 2))[:, :, ::-1]
     hdu.data = np.require(data, dtype=dtype, requirements='F')
     hdu.writeto(name, overwrite=overwrite)
+    return np.ones((1,), dtype=bool)  # so we can use map_blocks
 
 
 def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
@@ -51,7 +52,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
     else:
         ref_freq = freq
     w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
-    # LB - y axis treated differently because of stupid fits convention
+    # LB - y axis treated differently because of stupid fits convention?
     w.wcs.crpix = [1 + nx//2, ny//2, 1, 1]
 
     if np.size(freq) > 1:
@@ -137,11 +138,12 @@ def set_header_info(mhdr, ref_freq, freq_axis, args, beampars):
 
     return new_hdr
 
-@delayed
+
 def normwsum(data, wsum):
     if wsum > 0:
         data /= wsum
     return data
+
 
 def dds2fits(dds, column, outname, norm_wsum=True, otype=np.float32):
     imsout = []
@@ -152,7 +154,10 @@ def dds2fits(dds, column, outname, norm_wsum=True, otype=np.float32):
         name = basename + f'_time{t:04d}_band{b:04d}.fits'
         data = ds.get(column).data
         if norm_wsum:
-            data = normwsum(data, ds.WSUM.data[0])
+            data = da.map_blocks(normwsum,
+                                 data,
+                                 ds.WSUM.data[0],
+                                 chunks=data.chunks)
             unit = 'Jy/beam'
         else:
             unit = 'Jy/pixel'
@@ -162,8 +167,14 @@ def dds2fits(dds, column, outname, norm_wsum=True, otype=np.float32):
         unix_time = quantity(f'{ds.time_out}s').to_unix_time()
         hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, ds.freq_out,
                       unit=unit, unix_time=unix_time)
-        imout = delayed(save_fits)(name, data, hdr, overwrite=True,
-                                   dtype=np.float32)
+        imout = da.map_blocks(save_fits,
+                             data,
+                             name,
+                             hdr,
+                             overwrite=True,
+                             chunks=(1,),
+                             drop_axis=tuple(np.arange(1,len(data.shape))),
+                             meta=np.empty((0,), dtype=bool))
         imsout.append(imout)
     return imsout
 
@@ -195,16 +206,28 @@ def dds2fits_mfs(dds, column, outname, norm_wsum=True, otype=np.float32):
     for t in range(ntimes_out):
         name = basename + f'_time{t:04d}_mfs.fits'
         if norm_wsum:
-            data = normwsum(datas[t], wsums[t])
+            data = da.map_blocks(normwsum,
+                                 datas[t],
+                                 wsums[t],
+                                 chunks=datas[t].chunks)
             unit = 'Jy/beam'
         else:
-            data = normwsum(datas[t], counts[t])
+            data = da.map_blocks(normwsum,
+                                 datas[t],
+                                 counts[t],
+                                 chunks=datas[t].chunks)
             unit = 'Jy/pixel'
         unix_time = quantity(f'{times_out[t]}s').to_unix_time()
         hdr = set_wcs(cell_deg, cell_deg, nx, ny, radecs[t], freq_out,
                       unit=unit, unix_time=unix_time)
-        imout = delayed(save_fits)(name, data, hdr, overwrite=True,
-                                   dtype=np.float32)
+        imout = da.map_blocks(save_fits,
+                             data,
+                             name,
+                             hdr,
+                             overwrite=True,
+                             chunks=(1,),
+                             drop_axis=tuple(np.arange(1,len(data.shape))),
+                             meta=np.empty((0,), dtype=bool))
         imsout.append(imout)
 
     return imsout

@@ -134,11 +134,15 @@ def _restore(**kw):
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq)
 
     if 'm' in opts.outputs:
-        save_fits(f'{basename}_{opts.postfix}.model_mfs.fits', model_mfs, hdr_mfs,
+        save_fits(model_mfs,
+                  f'{basename}_{opts.postfix}.model_mfs.fits',
+                  hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'M' in opts.outputs:
-        save_fits(f'{basename}_{opts.postfix}.model.fits', model, hdr,
+        save_fits(model,
+                  f'{basename}_{opts.postfix}.model.fits',
+                  hdr,
                   overwrite=opts.overwrite)
 
     # model does not get resolution info
@@ -146,27 +150,39 @@ def _restore(**kw):
     hdr = add_beampars(hdr, GaussPar, GaussPars)
 
     if 'r' in opts.outputs:
-        save_fits(f'{basename}_{opts.postfix}.residual_mfs.fits', residual_mfs, hdr_mfs,
+        save_fits(residual_mfs,
+                  f'{basename}_{opts.postfix}.residual_mfs.fits',
+                  hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'R' in opts.outputs:
-        save_fits(f'{basename}_{opts.postfix}.residual.fits', residual, hdr,
+        save_fits(residual,
+                  f'{basename}_{opts.postfix}.residual.fits',
+                  hdr,
                   overwrite=opts.overwrite)
 
     if 'i' in opts.outputs:
-        save_fits(f'{basename}_{opts.postfix}.image_mfs.fits', image_mfs, hdr_mfs,
+        save_fits(image_mfs,
+                  f'{basename}_{opts.postfix}.image_mfs.fits',
+                  hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'I' in opts.outputs:
-        save_fits(f'{basename}_{opts.postfix}.image.fits', image, hdr,
+        save_fits(image,
+                  f'{basename}_{opts.postfix}.image.fits',
+                  hdr,
                   overwrite=opts.overwrite)
 
     if 'c' in opts.outputs:
-        save_fits(f'{basename}_{opts.postfix}.cpsf_mfs.fits', cpsf_mfs, hdr_mfs,
+        save_fits(cpsf_mfs,
+                  f'{basename}_{opts.postfix}.cpsf_mfs.fits',
+                  hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'C' in opts.outputs:
-        save_fits(f'{basename}_{opts.postfix}.cpsf.fits', cpsf, hdr,
+        save_fits(cpsf,
+                  f'{basename}_{opts.postfix}.cpsf.fits',
+                  hdr,
                   overwrite=opts.overwrite)
 
     if opts.scheduler=='distributed':

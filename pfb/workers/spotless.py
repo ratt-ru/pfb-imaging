@@ -278,7 +278,9 @@ def _spotless(**kw):
                                   report_freq=opts.pd_report_freq,
                                   gamma=opts.gamma)
 
-        save_fits(basename + f'_{opts.postfix}_model_{k+1}.fits', np.mean(model, axis=0), hdr_mfs)
+        save_fits(np.mean(model, axis=0),
+                  basename + f'_{opts.postfix}_model_{k+1}.fits',
+                  hdr_mfs)
 
         print("Getting residual", file=log)
         convimage = hess(model)
@@ -287,7 +289,9 @@ def _spotless(**kw):
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
 
-        save_fits(basename + f'_{opts.postfix}_residual_{k+1}.fits', residual_mfs, hdr_mfs)
+        save_fits(residual_mfs,
+                  basename + f'_{opts.postfix}_residual_{k+1}.fits',
+                  hdr_mfs)
 
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
