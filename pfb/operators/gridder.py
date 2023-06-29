@@ -550,7 +550,9 @@ def image_data_products(uvw,
                         vis,
                         wgt,
                         mask,
+                        counts,
                         model,
+                        robustness,
                         nx, ny,
                         nx_psf, ny_psf,
                         cellx, celly,
@@ -574,6 +576,33 @@ def image_data_products(uvw,
         residual
         wsum
     '''
+    # if opts.l2reweight_dof and model is not None:
+    #     # do not apply weights in this direction
+    #     model_vis = dirty2vis(uvw=uvw,
+    #                           freq=freq,
+    #                           dirty=model,
+    #                           mask=mask,
+    #                           pixsize_x=cellx,
+    #                           pixsize_y=celly,
+    #                           center_x=x0,
+    #                           center_y=y0,
+    #                           epsilon=epsilon,
+    #                           do_wgridding=do_wgridding,
+    #                           flip_v=False,
+    #                           nthreads=nthreads,
+    #                           divide_by_n=False,
+    #                           sigma_min=1.1, sigma_max=3.0)
+    #     residual_vis = vis*mask - model_vis
+    #     ressq = (residual_vis*residual_vis.conj()).real
+    #     wcount = mask.sum()
+    #     if wcount:
+
+
+
+
+    # if robustness is not None:
+
+
 
     if do_dirty:
         dirty = vis2dirty(uvw=uvw,
