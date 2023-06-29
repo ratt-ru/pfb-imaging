@@ -176,5 +176,59 @@ def test_spotless(tmp_path_factory):
     from pfb.workers.spotless import _spotless
     _spotless(**spotless_args)
 
+    # model2comps_args = {}
+    # for key in schema.model2comps["inputs"].keys():
+    #     model2comps_args[key] = schema.model2comps["inputs"][key]["default"]
+    # model2comps_args["output_filename"] = outname
+    # model2comps_args["spectral_poly_order"] = nchan
+    # model2comps_args["fit_mode"] = 'poly'
+    # model2comps_args["overwrite"] = True
+    # from pfb.workers.model2comps import _model2comps
+    # _model2comps(**model2comps_args)
+
+
+
+    # mds_name = f'{basename}_main.coeffs.zarr'
+    # mds = xds_from_zarr(mds_name)[0]
+
+    # # grid spec
+    # cell_rad = mds.cell_rad_x
+    # cell_deg = np.rad2deg(cell_rad)
+    # nx = mds.npix_x
+    # ny = mds.npix_y
+    # x0 = mds.center_x
+    # y0 = mds.center_y
+    # radec = (mds.ra, mds.dec)
+
+    # # model func
+    # ref_freq = mds.ref_freq
+    # ref_time = mds.ref_time
+    # params = sm.symbols(('t','f'))
+    # params += sm.symbols(tuple(mds.params.values))
+    # symexpr = parse_expr(mds.parametrisation)
+    # modelf = lambdify(params, symexpr)
+
+    # # model coeffs
+    # coeffs = mds.coefficients.values
+    # locx = mds.location_x.values
+    # locy = mds.location_y.values
+
+    # model_test = np.zeros((nchan, nx, ny), dtype=float)
+    # tout = np.mean(utime)/ref_time
+    # for b in range(nchan):
+    #     fout = freq[b]/ref_freq
+    #     model_test[b,locx,locy] = modelf(tout, fout, *coeffs[:, :])
+
+    # import pdb; pdb.set_trace()
+
+    # # we actually reconstruct I/n(l,m) so we need to correct for that
+    # l, m = np.meshgrid(dds[0].x.values, dds[0].y.values,
+    #                    indexing='ij')
+    # eps = l**2+m**2
+    # n = -eps/(np.sqrt(1.-eps)+1.) + 1  # more stable form
+    # for i in range(nsource):
+    #     assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] * n[Ix[i], Iy[i]] -
+    #                     model[:, Ix[i], Iy[i]], 1.0,
+    #                     atol=5*threshold)
     # TODO - currently we just check that this runs through.
     # What should the passing criteria be?

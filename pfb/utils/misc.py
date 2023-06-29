@@ -473,18 +473,16 @@ def _restore_corrs(vis, ncorr):
 def fitcleanbeam(psf: np.ndarray,
                  level: float = 0.5,
                  pixsize: float = 1.0,
-                 extent: float = 5.0):
+                 extent: float = 15.0):
     """
     Find the Gaussian that approximates the PSF.
     First find the main lobe by identifying where PSF > level
     then fit Gaussian out to a radius of extent * max(x, y) where
     x and y are the coordinates where PSF > level.
     """
-
-
     nband, nx, ny = psf.shape
 
-    # coordinates
+    # pixel coordinates
     x = np.arange(-nx / 2, nx / 2)
     y = np.arange(-ny / 2, ny / 2)
     xx, yy = np.meshgrid(x, y, indexing='ij')
@@ -727,7 +725,7 @@ def _rephase_vis(vis, uvw, radec_in, radec_out):
                             uvw[:, 2]*(n_out-n_in)))
 
 
-# TODO - concat functions should allow coarsening to values other than 1
+# TODO - should allow coarsening to values other than 1
 def concat_row(xds):
     # TODO - how to compute average beam before we have access to grid?
     times_in = []
@@ -935,3 +933,220 @@ def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model):
     # the **2 here results in more agressive reweighting
     return (1 + rmsfactor)/(1 + mcomps**4/rms_comps**4)
 
+
+# TODO - this can be done in parallel by splitting the image into facets
+def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None, method='poly'):
+    '''
+    Fit the time and frequency axes of an image cube where
+
+    image   - (ntime, nband, nx, ny) pixelated image
+    wgt     - (ntime, nband) optional per time and frequency weights
+    nbasist - number of time basis functions
+    nbasisf - number of frequency basis functions
+    method  - method to use for fitting
+
+    If wgt is not supplied equal weights are assumed.
+    If nbasist/f are not supplied we return the coefficients
+    of a bilinear fit regardless of method.
+
+    methods:
+    poly    - fit a monomials in time and frequency
+
+
+    returns:
+    coeffs  - fitted coefficients
+    locx    - x pixel values
+    locy    - y pixel values
+    expr    - a string representing the symbolic expression describing the fit
+    params  - tuple of str, parameters to pass into function (excluding t and f)
+    ref_time    - reference time
+    ref_freq    - reference frequency
+
+
+    The fit is performed in scaled coordinates (t=time/ref_time,f=freq/ref_freq)
+    '''
+    ntime = time.size
+    nband = freq.size
+    ref_time = time[0]
+    ref_freq = freq[0]
+    import sympy as sm
+    from sympy.abc import a, t, f
+
+    if nbasist is None:
+        nbasist = ntime
+    else:
+        assert nbasist <= ntime
+    if nbasisf is None:
+        nbasisf = nband
+    else:
+        assert nbasisf <= nband
+
+    mask = np.any(image, axis=(0,1))  # over t and f axes
+    Ix, Iy = np.where(mask)
+    ncomps = Ix.size
+
+    # components excluding zeros
+    beta = image[:, :, Ix, Iy].reshape(ntime*nband, ncomps)
+    if wgt is not None:
+        wgt = wgt.reshape(ntime*nband, 1)
+    else:
+        wgt = np.ones((ntime*nband, 1), dtype=float)
+    # nothing to fit
+    if ntime==1 and nband==1:
+        coeffs = beta
+        expr = a
+        params = (a,)
+    elif method=='poly':
+        wt = time/ref_time
+        Xfit = np.tile(wt[:, None], (nbasisf, nbasist))**np.arange(nbasist)
+        params = sm.symbols(f't(0:{nbasist})')
+        expr = sum(co*t**i for i, co in enumerate(params))
+        # the costant offset will always be included since nbasist is at least one
+        if nband > 1:
+            wf = freq/ref_freq
+            Xf = np.tile(wf[:, None], (nbasist, nbasisf-1))**np.arange(1, nbasisf)
+            # import ipdb; ipdb.set_trace()
+            Xfit = np.hstack((Xfit, Xf))
+            paramsf = sm.symbols(f'f(1:{nbasisf})')
+            expr += sum(co*f**(i+1) for i, co in enumerate(paramsf))
+            params += paramsf
+
+    elif method=='ipoly':
+        raise NotImplementedError("Sorry")
+        print(f"Fitting freq axis with polynomial of order {orderf}", file=log)
+        # we are given frequencies at bin centers, convert to bin edges
+        delta_freq = freq[1] - freq[0]
+        wlow = (freq - delta_freq/2.0)/ref_freq
+        whigh = (freq + delta_freq/2.0)/ref_freq
+        wdiff = whigh - wlow
+
+        # set design matrix for each component
+        Xfit = np.zeros([freq.size, nbasisf])
+        for i in range(1, nbasisf+1):
+            Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+
+    dirty_coeffs = Xfit.T.dot(wgt*beta)
+    hess_coeffs = Xfit.T.dot(wgt*Xfit)
+    coeffs = np.linalg.solve(hess_coeffs, dirty_coeffs)
+
+    return coeffs, Ix, Iy, str(expr), list(map(str,params)), ref_freq, ref_time
+
+
+def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy, expr, paramf, ref_freq, ref_time):
+    ntime = time.size
+    nfreq = freq.size
+
+    image = np.zeros((ntime, nfreq, nx, ny), dtype=float)
+
+    import sympy as sm
+    from sympy.utilities.lambdify import lambdify
+    from sympy.parsing.sympy_parser import parse_expr
+    params = sm.symbols(('t','f'))
+    params += sm.symbols(tuple(paramf))
+    symexpr = parse_expr(expr)
+    modelf = lambdify(params, symexpr)
+    for i, tval in enumerate(time):
+        for j, fval in enumerate(freq):
+            image[i, j, Ix, Iy] = modelf(tval/ref_time, fval/ref_freq, *coeffs)
+
+    return image
+
+# First attempt at sequential interpolation in terms of integrated polynomial
+# ref_freq = mfreqs[0]
+# ref_time = mtimes[0]
+
+# # interpolate model in frequency
+# if opts.min_val is not None:
+#     model[model < opts.min_val] = 0.0
+# mask = np.any(model, axis=(0,1))  # over t and f axes
+# Ix, Iy = np.where(mask)
+# ncomps = Ix.size
+
+# # components excluding zeros
+# beta = model[:, :, Ix, Iy]
+# if opts.spectral_poly_order is not None and nband > 1:
+#     orderf = opts.spectral_poly_order
+#     if orderf > nband:
+#         raise ValueError("spectral-poly-order can't be larger than nband")
+#     if opts.fit_mode=='ipoly':
+#         print(f"Fitting freq axis with polynomial of order {orderf}", file=log)
+#         # we are given frequencies at bin centers, convert to bin edges
+#         delta_freq = mfreqs[1] - mfreqs[0]
+#         wlow = (mfreqs - delta_freq/2.0)/ref_freq
+#         whigh = (mfreqs + delta_freq/2.0)/ref_freq
+#         wdiff = whigh - wlow
+
+#         # set design matrix for each component
+#         Xfit = np.zeros([mfreqs.size, orderf])
+#         for i in range(1, orderf+1):
+#             Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+
+#     elif opts.fit_mode=='poly':
+#         w = mfreqs/ref_freq
+#         Xfit = np.tile(w[:, None], (1, orderf))**np.arange(orderf)
+
+#     comps = np.zeros((ntime, orderf, Ix.size))
+#     freq_fitted = True
+#     for t in range(ntime):
+#         dirty_comps = Xfit.T.dot(wsums[t, :, None]*beta[t])
+
+#         hess_comps = Xfit.T.dot(wsums[t, :, None]*Xfit)
+
+#         comps[t] = np.linalg.solve(hess_comps, dirty_comps)
+
+# else:
+#     raise NotImplementedError("Interpolation is currently mandatory")
+#     print("Not fitting frequency axis", file=log)
+#     comps = beta
+#     freq_fitted = False
+#     orderf = mfreqs.size
+
+# if opts.temporal_poly_order is not None and ntime > 1:
+#     ordert = opts.temporal_poly_order
+#     if order > ntime:
+#         raise ValueError("temporal-poly-order can't be larger than ntime")
+#     print(f"Fitting time axis with polynomial of order {orderf}", file=log)
+#     # we are given times at bin centers, convert to bin edges
+#     delta_time = mtimes[1] - mtimes[0]
+#     wlow = (mtimes - delta_times/2.0)/ref_time
+#     whigh = (mfreqs + delta_freq/2.0)/ref_time
+#     wdiff = whigh - wlow
+
+#     # set design matrix for each component
+#     Xfit = np.zeros([mtimes.size, ordert])
+#     for i in range(1, ordert+1):
+#         Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+
+#     if freq_fitted:
+#         compsnu = comps.copy()
+#     comps = np.zeros((ordert, opts.spectral_poly_order, Ix.size))
+#     time_fitted = True
+#     for b in range(orderf):
+#         dirty_comps = Xfit.T.dot(wsums[:, b, None]*compsnu[b])
+
+#         hess_comps = Xfit.T.dot(wsums[:, b, None]*Xfit)
+
+#         comps[:, b] = np.linalg.solve(hess_comps, dirty_comps)
+# else:
+#     if ntime > 1:
+#         raise NotImplementedError("Time interpolation is currently mandatory")
+#     print("Not fitting time axis", file=log)
+#     comps = comps
+#     time_fitted = False
+#     ordert = mtimes.size
+
+
+# # construct symbolic expression
+# from sympy.abc import t, f
+# from sympy import symbols
+
+# thetasf = []
+# params = ()
+# for i in range(orderf):
+#     coefft = symbols(f't(0:{ordert})_f{i}')
+#     # the reshape on comps needs to be consistent with the ordering in params
+#     params += coefft
+#     thetaf = sum(co*t**j for j, co in enumerate(coefft))
+#     thetasf.append(thetaf)
+
+# polysym = sum(co*f**j for j, co in enumerate(thetasf))
