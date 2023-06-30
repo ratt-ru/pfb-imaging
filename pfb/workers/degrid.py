@@ -104,6 +104,12 @@ def _degrid(**kw):
     params += sm.symbols(tuple(mds.params.values))
     symexpr = parse_expr(mds.parametrisation)
     modelf = lambdify(params, symexpr)
+    texpr = parse_expr(mds.texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(mds.fexpr)
+    ffunc = lambdify(params[1], fexpr)
+
+
     # signature (t, f, *params) with
     # t = utime/ref_time
     # f = freq/ref_freq
@@ -182,8 +188,8 @@ def _degrid(**kw):
                             coeffs,
                             locx, locy,
                             modelf,
-                            ref_time,
-                            ref_freq,
+                            tfunc,
+                            ffunc,
                             nx, ny,
                             cell_rad, cell_rad,
                             x0=x0, y0=y0,

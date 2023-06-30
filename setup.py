@@ -21,6 +21,7 @@ requirements = [
                 "dask-ms[xarray, zarr, s3]",
                 "stimela==2.0rc4",
                 "QuartiCal",
+                "sympy",
 
                 "packratt"
                 "@git+https://github.com/ratt-ru/packratt.git"

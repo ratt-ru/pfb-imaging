@@ -11,25 +11,22 @@ inputs:
     default: false
     info:
       Allow overwrite of existing model
-  spectral_poly_order:
+  nbasisf:
     dtype: int
     default: 4
-    abbreviation: spo
     info:
       Order of interpolating polynomial for frequency axis
-  min_val:
-    dtype: float
-    info:
-      Only fit components above this flux level
-  temporal_poly_order:
+  nbasist:
     dtype: int
-    # default: 4
-    abbreviation: tpo
     info:
       Order of interpolating polynomial for frequency axis
   fit_mode:
     dtype: str
-    default: 'ipoly'
+    default: 'poly'
+  min_val:
+    dtype: float
+    info:
+      Only fit components above this flux level
   postfix:
     dtype: str
     default: 'main'
@@ -52,6 +49,16 @@ inputs:
     dtype: str
     info:
       Specify to degrid from a fits file
+  use_wsum:
+    dtype: bool
+    default: true
+    info:
+      Use wsum as weights during fit
+  sigmasq:
+    dtype: float
+    default: 1e-10
+    info:
+      Multiple of the identity to add to the hessian for stability
 
   _include:
     - (pfb.parser)dist.yml

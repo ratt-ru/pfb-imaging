@@ -57,7 +57,7 @@ def _grid(**kw):
     from ducc0.fft import good_size
     from pfb.utils.fits import dds2fits, dds2fits_mfs
     from pfb.utils.misc import compute_context
-    from pfb.operators.gridder import vis2im, loc2psf_vis
+    from pfb.operators.gridder import vis2im, loc2psf_vis #, image_data_products
     from pfb.operators.fft import fft2d
     from pfb.utils.weighting import (compute_counts, counts_to_weights,
                                      filter_extreme_counts, l2reweight)
@@ -108,9 +108,10 @@ def _grid(**kw):
         #     raise RuntimeError('Something went wrong during row concatenation.'
         #                        'This is probably a bug.')
         ntime = 1
-        times_in = np.array((xds[0].time_out,))
+        times_out = np.array((xds[0].time_out,))
     else:
         ntime = ntime_in
+        times_out = times_in
 
     if opts.nband != nband_in and len(xds) > ntime:
         print('Concatenating datasets along chan dimension. '
@@ -233,14 +234,14 @@ def _grid(**kw):
         params = sm.symbols(('t','f'))
         params += sm.symbols(tuple(mds.params.values))
         symexpr = parse_expr(mds.parametrisation)
-        modelf = lambdify(params, symexpr)
+        model_func = lambdify(params, symexpr)
 
         # model coeffs
-        coeffs = mds.coefficients.values
+        model_coeffs = mds.coefficients.values
         locx = mds.location_x.values
         locy = mds.location_y.values
 
-        print(f"Loading MODEL from {opts.transfer_model_from}. ",
+        print(f"Loading model from {opts.transfer_model_from}. ",
               file=log)
 
     dds_out = []
@@ -252,15 +253,14 @@ def _grid(**kw):
                                    'y':-1})
         else:
             out_ds = xr.Dataset()
-        if opts.transfer_model_from is not None:
-            out_ds = out_ds.assign(**{'MODEL': (('x', 'y'), mds[i].MODEL.data)})
         uvw = ds.UVW.data
         freq = ds.FREQ.data
         vis = ds.VIS.data
+        wgt = ds.WEIGHT.data
         # This is a vis space mask (see wgridder convention)
         mask = ds.MASK.data
         bandid = np.where(freqs_out == ds.freq_out)[0][0]
-        timeid = np.where(times_in == ds.time_out)[0][0]
+        timeid = np.where(times_out == ds.time_out)[0][0]
 
         # compute lm coordinates of target
         if opts.target is not None:
@@ -317,17 +317,17 @@ def _grid(**kw):
         bvals = eval_beam(ds.BEAM.data, ll, mm)
         out_ds = out_ds.assign(**{'BEAM': (('x', 'y'), bvals)})
 
-
-        if opts.l2reweight_dof and 'MODEL' in out_ds:
-            wgt, res = l2reweight(ds, out_ds,
-                             opts.epsilon,
-                             opts.nvthreads,
-                             opts.wstack,
-                             precision,
-                             dof=opts.l2reweight_dof)
+        # get the model
+        if opts.transfer_model_from is not None:
+            model = np.zeros((nx, ny), dtype=float)
+            model[locx, locy] = model_func(ds.time_out/ref_time,
+                                           ds.freq_out/ref_freq,
+                                           *model_coeffs)
+            model = da.from_array(model, chunks=(-1,-1))
+        elif 'MODEL' in out_ds:
+            model = out_ds.MODEL.data
         else:
-            wgt = ds.WEIGHT.data
-            res = None
+            model = None
 
         if opts.robustness is not None:
             # we'll skip this if counts already exists
@@ -353,15 +353,47 @@ def _grid(**kw):
 
                 # do we want the coordinates to be ug, vg rather?
                 out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
+        else:
+            counts = None
 
-            # we usually want to re-evaluate this since the robustness may change
-            imwgt = counts_to_weights(out_ds.COUNTS.data,
-                                      uvw,
-                                      freq,
-                                      nx, ny,
-                                      cell_rad, cell_rad,
-                                      opts.robustness)
-            wgt *= imwgt
+
+        # image_dict = image_space_data_products(
+        #     uvw,
+        #     freq,
+        #     vis,
+        #     wgt,
+        #     mask,
+        #     counts,
+        #     nx, ny,
+        #     nx_psf, ny_psf,
+        #     cellx, celly,
+        #     model=None,
+        #     robustness=None,
+        #     x0=0.0, y0=0.0,
+        #     nthreads=1,
+        #     epsilon=1e-7,
+        #     precision='double',
+        #     do_wgridding=True,
+        #     double_accum=True,
+        #     l2reweight_dof=None,
+        #     do_dirty=True,
+        #     do_psf=True,
+        #     do_weight=True,
+        #     do_residual=False
+        # )
+
+
+        if opts.l2reweight_dof and 'MODEL' in out_ds:
+            wgt, res = l2reweight(ds, out_ds,
+                             opts.epsilon,
+                             opts.nvthreads,
+                             opts.wstack,
+                             precision,
+                             dof=opts.l2reweight_dof)
+        else:
+            wgt = ds.WEIGHT.data
+            res = None
+
 
         if opts.dirty:
             dirty = vis2im(uvw=uvw,

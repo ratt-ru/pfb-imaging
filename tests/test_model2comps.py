@@ -10,6 +10,10 @@ pmp = pytest.mark.parametrize
 
 
 def test_model2comps(tmp_path_factory):
+    '''
+    TODO - This only tests the separate function implementations
+    not the workers. Tested by spotless workflow?
+    '''
     test_dir = tmp_path_factory.mktemp("test_pfb")
     # test_dir = Path('/home/landman/data/')
     packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
@@ -91,12 +95,14 @@ def test_model2comps(tmp_path_factory):
 
 
     from pfb.utils.misc import fit_image_cube, eval_coeffs_to_cube
-    coeffs, Ix, Iy, expr, params, ref_freq, ref_time = \
-        fit_image_cube(mtimes, mfreqs, model[None, :, :, :], nbasisf=nchan)
+    coeffs, Ix, Iy, expr, params, tfunc, ffunc = \
+        fit_image_cube(mtimes, mfreqs, model[None, :, :, :], nbasisf=nchan,
+                       sigmasq=0.0, method='Legendre')
     image = eval_coeffs_to_cube(mtimes, mfreqs, nx, ny, coeffs, Ix, Iy,
-                                expr, params, ref_freq, ref_time)
+                                expr, params, tfunc, ffunc)
 
     image = image[0]  # no time axis for now
     mask = model > 0
     assert_allclose(image[mask], model[mask], atol=1e-7)
 
+# test_model2comps()

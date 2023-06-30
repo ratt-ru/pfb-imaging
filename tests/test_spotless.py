@@ -11,8 +11,8 @@ pmp = pytest.mark.parametrize
 
 def test_spotless(tmp_path_factory):
     '''
-    Here we test that the workers involved in a typical spotless pipeline
-    all perform as expected.
+    # TODO - currently we just check that this runs through.
+    # What should the passing criteria be?
     '''
     test_dir = tmp_path_factory.mktemp("test_pfb")
     # test_dir = Path('/home/landman/data/')
@@ -24,6 +24,17 @@ def test_spotless(tmp_path_factory):
     from pyrap.tables import table
     from pfb.utils.misc import Gaussian2D, give_edges
     import matplotlib.pyplot as plt
+    from africanus.constants import c as lightspeed
+    from ducc0.fft import good_size
+    from ducc0.wgridder.experimental import dirty2vis
+    from pfb.parser.schemas import schema
+    from pfb.workers.init import _init
+    from pfb.workers.grid import _grid
+    from pfb.workers.spotless import _spotless
+    from pfb.workers.model2comps import _model2comps
+    import sympy as sm
+    from sympy.utilities.lambdify import lambdify
+    from sympy.parsing.sympy_parser import parse_expr
 
     ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
     spw = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW'))
@@ -46,7 +57,6 @@ def test_spotless(tmp_path_factory):
     uv_max = np.maximum(u_max, v_max)
 
     # image size
-    from africanus.constants import c as lightspeed
     cell_N = 1.0 / (2 * uv_max * freq.max() / lightspeed)
 
     srf = 2.0
@@ -55,7 +65,6 @@ def test_spotless(tmp_path_factory):
     cell_size = cell_deg * 3600
     print("Cell size set to %5.5e arcseconds" % cell_size)
 
-    from ducc0.fft import good_size
     # the test will fail in intrinsic if sources fall near beam sidelobes
     fov = 1.0
     npix = good_size(int(fov / cell_deg))
@@ -92,7 +101,6 @@ def test_spotless(tmp_path_factory):
 
     # model vis
     epsilon = 1e-7
-    from ducc0.wgridder.experimental import dirty2vis
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
         model_vis[:, c:c+1, 0] = dirty2vis(uvw=uvw,
@@ -115,7 +123,6 @@ def test_spotless(tmp_path_factory):
     ms.putcol('DATA', model_vis)
 
     # set defaults from schema
-    from pfb.parser.schemas import schema
     init_args = {}
     for key in schema.init["inputs"].keys():
         init_args[key] = schema.init["inputs"][key]["default"]
@@ -130,7 +137,6 @@ def test_spotless(tmp_path_factory):
     init_args["max_field_of_view"] = fov
     init_args["overwrite"] = True
     init_args["channels_per_image"] = 1
-    from pfb.workers.init import _init
     _init(**init_args)
 
     # grid data to produce dirty image
@@ -149,7 +155,6 @@ def test_spotless(tmp_path_factory):
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
     grid_args["wstack"] = True
-    from pfb.workers.grid import _grid
     _grid(**grid_args)
 
     # run clean
@@ -158,12 +163,12 @@ def test_spotless(tmp_path_factory):
         spotless_args[key] = schema.spotless["inputs"][key]["default"]
     spotless_args["output_filename"] = outname
     spotless_args["nband"] = nchan
-    spotless_args["niter"] = 10
+    spotless_args["niter"] = 3
     tol = 1e-5
     spotless_args["tol"] = tol
     spotless_args["gamma"] = 1.0
     spotless_args["pd_tol"] = 5e-4
-    spotless_args["rmsfactor"] = 0.85
+    spotless_args["rmsfactor"] = 0.1
     spotless_args["l1reweight_from"] = 5
     spotless_args["bases"] = 'self,db1,db2,db3'
     spotless_args["nlevels"] = 3
@@ -173,62 +178,74 @@ def test_spotless(tmp_path_factory):
     spotless_args["wstack"] = True
     spotless_args["epsilon"] = epsilon
     spotless_args["fits_mfs"] = False
-    from pfb.workers.spotless import _spotless
     _spotless(**spotless_args)
 
-    # model2comps_args = {}
-    # for key in schema.model2comps["inputs"].keys():
-    #     model2comps_args[key] = schema.model2comps["inputs"][key]["default"]
-    # model2comps_args["output_filename"] = outname
-    # model2comps_args["spectral_poly_order"] = nchan
-    # model2comps_args["fit_mode"] = 'poly'
-    # model2comps_args["overwrite"] = True
-    # from pfb.workers.model2comps import _model2comps
-    # _model2comps(**model2comps_args)
 
+    # get the inferred model
+    dds = xds_from_zarr(f'{outname}_I_main.dds.zarr')
+    freqs_dds = []
+    times_dds = []
+    for ds in dds:
+        freqs_dds.append(ds.freq_out)
+        times_dds.append(ds.time_out)
 
+    # import ipdb; ipdb.set_trace()
+    freqs_dds = np.array(freqs_dds)
+    times_dds = np.array(times_dds)
+    freqs_dds = np.unique(freqs_dds)
+    times_dds = np.unique(times_dds)
+    ntime_dds = times_dds.size
+    nfreq_dds = freqs_dds.size
 
-    # mds_name = f'{basename}_main.coeffs.zarr'
-    # mds = xds_from_zarr(mds_name)[0]
+    model_inferred = np.zeros((ntime_dds, nfreq_dds, nx, ny))
+    for ds in dds:
+        model_inferred[ds.timeid, ds.bandid, :, :] = ds.MODEL.values
 
-    # # grid spec
-    # cell_rad = mds.cell_rad_x
-    # cell_deg = np.rad2deg(cell_rad)
-    # nx = mds.npix_x
-    # ny = mds.npix_y
-    # x0 = mds.center_x
-    # y0 = mds.center_y
-    # radec = (mds.ra, mds.dec)
+    model2comps_args = {}
+    for key in schema.model2comps["inputs"].keys():
+        model2comps_args[key] = schema.model2comps["inputs"][key]["default"]
+    model2comps_args["output_filename"] = outname
+    model2comps_args["nbasisf"] = nchan
+    model2comps_args["fit_mode"] = 'Legendre'
+    model2comps_args["overwrite"] = True
+    model2comps_args["use_wsum"] = False
+    model2comps_args["sigmasq"] = 1e-14
+    _model2comps(**model2comps_args)
 
-    # # model func
-    # ref_freq = mds.ref_freq
-    # ref_time = mds.ref_time
-    # params = sm.symbols(('t','f'))
-    # params += sm.symbols(tuple(mds.params.values))
-    # symexpr = parse_expr(mds.parametrisation)
-    # modelf = lambdify(params, symexpr)
+    mds_name = f'{outname}_I_main_model.coeffs.zarr'
+    mds = xds_from_zarr(mds_name)[0]
 
-    # # model coeffs
-    # coeffs = mds.coefficients.values
-    # locx = mds.location_x.values
-    # locy = mds.location_y.values
+    # grid spec
+    cell_rad = mds.cell_rad_x
+    cell_deg = np.rad2deg(cell_rad)
+    nx = mds.npix_x
+    ny = mds.npix_y
+    x0 = mds.center_x
+    y0 = mds.center_y
+    radec = (mds.ra, mds.dec)
 
-    # model_test = np.zeros((nchan, nx, ny), dtype=float)
-    # tout = np.mean(utime)/ref_time
-    # for b in range(nchan):
-    #     fout = freq[b]/ref_freq
-    #     model_test[b,locx,locy] = modelf(tout, fout, *coeffs[:, :])
+    # model func
+    params = sm.symbols(('t','f'))
+    params += sm.symbols(tuple(mds.params.values))
+    symexpr = parse_expr(mds.parametrisation)
+    modelf = lambdify(params, symexpr)
+    texpr = parse_expr(mds.texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(mds.fexpr)
+    ffunc = lambdify(params[1], fexpr)
 
-    # import pdb; pdb.set_trace()
+    # model coeffs
+    coeffs = mds.coefficients.values
+    locx = mds.location_x.values
+    locy = mds.location_y.values
 
-    # # we actually reconstruct I/n(l,m) so we need to correct for that
-    # l, m = np.meshgrid(dds[0].x.values, dds[0].y.values,
-    #                    indexing='ij')
-    # eps = l**2+m**2
-    # n = -eps/(np.sqrt(1.-eps)+1.) + 1  # more stable form
-    # for i in range(nsource):
-    #     assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] * n[Ix[i], Iy[i]] -
-    #                     model[:, Ix[i], Iy[i]], 1.0,
-    #                     atol=5*threshold)
-    # TODO - currently we just check that this runs through.
-    # What should the passing criteria be?
+    model_test = np.zeros((ntime_dds, nfreq_dds, nx, ny), dtype=float)
+    for i in range(ntime_dds):
+        tout = tfunc(times_dds[i])
+        for j in range(nchan):
+            fout = ffunc(freqs_dds[j])
+            model_test[i,j,locx,locy] = modelf(tout, fout, *coeffs)
+
+    assert_allclose(1 + model_test, 1 + model_inferred)
+
+# test_spotless()

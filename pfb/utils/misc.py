@@ -935,7 +935,8 @@ def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model):
 
 
 # TODO - this can be done in parallel by splitting the image into facets
-def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None, method='poly'):
+def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
+                   method='poly', sigmasq=0):
     '''
     Fit the time and frequency axes of an image cube where
 
@@ -998,41 +999,76 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None, meth
         params = (a,)
     elif method=='poly':
         wt = time/ref_time
+        tfunc = t/ref_time
         Xfit = np.tile(wt[:, None], (nbasisf, nbasist))**np.arange(nbasist)
         params = sm.symbols(f't(0:{nbasist})')
         expr = sum(co*t**i for i, co in enumerate(params))
         # the costant offset will always be included since nbasist is at least one
         if nband > 1:
             wf = freq/ref_freq
+            ffunc = f/ref_freq
             Xf = np.tile(wf[:, None], (nbasist, nbasisf-1))**np.arange(1, nbasisf)
-            # import ipdb; ipdb.set_trace()
             Xfit = np.hstack((Xfit, Xf))
             paramsf = sm.symbols(f'f(1:{nbasisf})')
             expr += sum(co*f**(i+1) for i, co in enumerate(paramsf))
             params += paramsf
 
-    elif method=='ipoly':
-        raise NotImplementedError("Sorry")
-        print(f"Fitting freq axis with polynomial of order {orderf}", file=log)
-        # we are given frequencies at bin centers, convert to bin edges
-        delta_freq = freq[1] - freq[0]
-        wlow = (freq - delta_freq/2.0)/ref_freq
-        whigh = (freq + delta_freq/2.0)/ref_freq
-        wdiff = whigh - wlow
-
-        # set design matrix for each component
-        Xfit = np.zeros([freq.size, nbasisf])
-        for i in range(1, nbasisf+1):
-            Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+    elif method=='Legendre':
+        # scale to lie between -1,1 for stability
+        if ntime > 1:
+            tmax = time.max()
+            tmin = time.min()
+            wt = (time - (tmax + tmin)/2)
+            wtmax = wt.max()
+            wt /= wtmax
+            # function to convert time to interp domain
+            tfunc = (t - (tmax + tmin)/2)/wtmax
+        else:
+            wt = time
+            tfunc = t
+        Xt = np.zeros((ntime, nbasist), dtype=float)
+        params = sm.symbols(f't(0:{nbasist})')
+        if nbasist > 1:
+            expr = 0
+            for i in range(nbasist):
+                vals = np.polynomial.Legendre.basis(i)(wt)
+                Xt[:, i] = vals
+                expr += sm.polys.orthopolys.legendre_poly(i, t)*params[i]
+        else:
+            Xt[...] = 1.0
+            expr = params[0]
+        Xfit = np.tile(Xt, (nbasisf, 1))
+        paramsf = sm.symbols(f'f(1:{nbasisf})')
+        if nband > 1:
+            Xf = np.zeros((nband, nbasisf - 1))
+            fmax = freq.max()
+            fmin = freq.min()
+            wf = freq - (fmax + fmin)/2
+            wfmax = wf.max()
+            wf /= wfmax
+            ffunc = (f - (fmax + fmin)/2)/wfmax
+            for i in range(1, nbasisf):
+                vals = np.polynomial.Legendre.basis(i)(wf)
+                Xf[:, i-1] = vals
+                expr += sm.polys.orthopolys.legendre_poly(i, f)*paramsf[i-1]
+            Xf = np.tile(Xf, (nbasist, 1))
+            Xfit = np.hstack((Xfit, Xf))
+            params += paramsf
+    else:
+        raise NotImplementedError("Please help us!")
 
     dirty_coeffs = Xfit.T.dot(wgt*beta)
     hess_coeffs = Xfit.T.dot(wgt*Xfit)
+    # to improve conditioning
+    if sigmasq:
+        hess_coeffs += sigmasq*np.eye(hess_coeffs.shape[0])
     coeffs = np.linalg.solve(hess_coeffs, dirty_coeffs)
 
-    return coeffs, Ix, Iy, str(expr), list(map(str,params)), ref_freq, ref_time
+
+    return coeffs, Ix, Iy, str(expr), list(map(str,params)), str(tfunc),str(ffunc)
 
 
-def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy, expr, paramf, ref_freq, ref_time):
+def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy, expr, paramf, texpr, fexpr):
     ntime = time.size
     nfreq = freq.size
 
@@ -1045,9 +1081,13 @@ def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy, expr, paramf, ref_fr
     params += sm.symbols(tuple(paramf))
     symexpr = parse_expr(expr)
     modelf = lambdify(params, symexpr)
+    texpr = parse_expr(texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(fexpr)
+    ffunc = lambdify(params[1], fexpr)
     for i, tval in enumerate(time):
         for j, fval in enumerate(freq):
-            image[i, j, Ix, Iy] = modelf(tval/ref_time, fval/ref_freq, *coeffs)
+            image[i, j, Ix, Iy] = modelf(tfunc(tval), ffunc(fval), *coeffs)
 
     return image
 

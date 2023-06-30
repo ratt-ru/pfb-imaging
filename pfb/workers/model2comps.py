@@ -61,14 +61,12 @@ def _model2comps(**kw):
     from africanus.constants import c as lightspeed
     from pfb.utils.fits import load_fits, data_from_header
     from astropy.io import fits
-    from pfb.utils.misc import compute_context
+    from pfb.utils.misc import compute_context, fit_image_cube
     import xarray as xr
-    from sympy.utilities.lambdify import lambdify
-    from sympy.parsing.sympy_parser import parse_expr
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.postfix}.dds.zarr'
-    coeff_name = f'{basename}_{opts.postfix}.coeffs.zarr'
+    coeff_name = f'{basename}_{opts.postfix}_{opts.model_name.lower()}.coeffs.zarr'
 
     if os.path.isdir(coeff_name):
         if opts.overwrite:
@@ -109,12 +107,14 @@ def _model2comps(**kw):
     # wsums = [da.zeros(1) for _ in range(opts.nband)]
     model = np.zeros((ntime, nband, nx, ny), dtype=np.float64)
     wsums = np.zeros((ntime, nband), dtype=np.float64)
-    mask = np.zeros((nx, ny), dtype=bool)
     for ds in dds:
         b = ds.bandid
         t = ds.timeid
         model[t, b] = getattr(ds, opts.model_name).values
         wsums[t, b] += ds.WSUM.values[0]
+
+    if not opts.use_wsum:
+        wsums[...] = 1.0
 
     # model = da.stack(model)
     # wsums = da.stack(wsums).squeeze()
@@ -123,13 +123,18 @@ def _model2comps(**kw):
         raise ValueError('Model is empty')
     radec = (dds[0].ra, dds[0].dec)
 
-    coeffs, Ix, Iy, expr, params, ref_freq, ref_time = \
-        fit_image_cube(mtimes, mfreqs, model[None, :, :, :], nbasisf=nchan)
+    coeffs, Ix, Iy, expr, params, texpr, fexpr = \
+        fit_image_cube(mtimes, mfreqs, model, wgt=wsums,
+                       nbasisf=opts.nbasisf, method=opts.fit_mode)
 
+    # from pfb.utils.misc import eval_coeffs_to_cube
+    # image = eval_coeffs_to_cube(mtimes, mfreqs, nx, ny, coeffs, Ix, Iy, expr, params, texpr, fexpr)
+    # import pdb; pdb.set_trace()
 
     # save interpolated dataset
     data_vars = {
-        'coefficients': (('params', 'comps'), coeffs)
+        'coefficients': (('params', 'comps'), coeffs),
+        'MODEL': (('times', 'freqs', 'x', 'y'), model)
     }
     coords = {
         'location_x': (('location_x',), Ix),
@@ -145,14 +150,14 @@ def _model2comps(**kw):
         'cell_rad_y': cell_rad,
         'npix_x': nx,
         'npix_y': ny,
-        'ref_freq': ref_freq,
-        'ref_time': ref_time,
+        'texpr': texpr,
+        'fexpr': fexpr,
         'center_x': x0,
         'center_y': y0,
         'ra': dds[0].ra,
         'dec': dds[0].dec,
         'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
-        'parametrisation': polysym  # already converted to str
+        'parametrisation': expr  # already converted to str
     }
 
 
@@ -160,7 +165,7 @@ def _model2comps(**kw):
                                coords=coords,
                                attrs=attrs)
     writes = xds_to_zarr(coeff_dataset,
-                         f'{basename}_{opts.postfix}.coeffs.zarr',
+                         coeff_name,
                          columns='ALL')
     print(f'Writing interpolated model to {basename}_{opts.postfix}.coeffs.zarr',
           file=log)
