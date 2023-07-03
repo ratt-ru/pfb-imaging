@@ -1004,15 +1004,16 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
     elif method=='poly':
         wt = time/ref_time
         tfunc = t/ref_time
-        Xfit = np.tile(wt[:, None], (nbasisf, nbasist))**np.arange(nbasist)
+        Xfit = np.tile(wt[:, None], (nband, nbasist))**np.arange(nbasist)
         params = sm.symbols(f't(0:{nbasist})')
         expr = sum(co*t**i for i, co in enumerate(params))
         # the costant offset will always be included since nbasist is at least one
         if nband > 1:
             wf = freq/ref_freq
             ffunc = f/ref_freq
-            Xf = np.tile(wf[:, None], (nbasist, nbasisf-1))**np.arange(1, nbasisf)
+            Xf = np.tile(wf[:, None], (ntime, nbasisf-1))**np.arange(1, nbasisf)
             Xfit = np.hstack((Xfit, Xf))
+            import ipdb; ipdb.set_trace()
             paramsf = sm.symbols(f'f(1:{nbasisf})')
             expr += sum(co*f**(i+1) for i, co in enumerate(paramsf))
             params += paramsf
@@ -1041,7 +1042,7 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
         else:
             Xt[...] = 1.0
             expr = params[0]
-        Xfit = np.tile(Xt, (nbasisf, 1))
+        Xfit = np.tile(Xt, (nband, 1))
         paramsf = sm.symbols(f'f(1:{nbasisf})')
         if nband > 1:
             Xf = np.zeros((nband, nbasisf - 1))
@@ -1055,7 +1056,7 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
                 vals = np.polynomial.Legendre.basis(i)(wf)
                 Xf[:, i-1] = vals
                 expr += sm.polys.orthopolys.legendre_poly(i, f)*paramsf[i-1]
-            Xf = np.tile(Xf, (nbasist, 1))
+            Xf = np.tile(Xf, (ntime, 1))
             Xfit = np.hstack((Xfit, Xf))
             params += paramsf
     else:
@@ -1094,6 +1095,15 @@ def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy, expr, paramf, texpr,
             image[i, j, Ix, Iy] = modelf(tfunc(tval), ffunc(fval), *coeffs)
 
     return image
+
+
+# y = X x
+# y00 = a0 + a1 t + b0 + b1 t + b2
+# y01
+# y02
+# y10
+# y11
+# y12
 
 # First attempt at sequential interpolation in terms of integrated polynomial
 # ref_freq = mfreqs[0]
