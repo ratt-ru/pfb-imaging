@@ -130,7 +130,6 @@ def _model2comps(**kw):
     # save interpolated dataset
     data_vars = {
         'coefficients': (('params', 'comps'), coeffs),
-        'MODEL': (('times', 'freqs', 'x', 'y'), model)
     }
     coords = {
         'location_x': (('location_x',), Ix),
