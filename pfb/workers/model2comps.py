@@ -127,10 +127,6 @@ def _model2comps(**kw):
         fit_image_cube(mtimes, mfreqs, model, wgt=wsums,
                        nbasisf=opts.nbasisf, method=opts.fit_mode)
 
-    # from pfb.utils.misc import eval_coeffs_to_cube
-    # image = eval_coeffs_to_cube(mtimes, mfreqs, nx, ny, coeffs, Ix, Iy, expr, params, texpr, fexpr)
-    # import pdb; pdb.set_trace()
-
     # save interpolated dataset
     data_vars = {
         'coefficients': (('params', 'comps'), coeffs),
@@ -167,7 +163,7 @@ def _model2comps(**kw):
     writes = xds_to_zarr(coeff_dataset,
                          coeff_name,
                          columns='ALL')
-    print(f'Writing interpolated model to {basename}_{opts.postfix}.coeffs.zarr',
+    print(f'Writing interpolated model to {coeff_name}',
           file=log)
     dask.compute(writes)
 

@@ -103,6 +103,6 @@ def test_model2comps(tmp_path_factory):
 
     image = image[0]  # no time axis for now
     mask = model > 0
-    assert_allclose(image[mask], model[mask], atol=1e-7)
+    assert_allclose(image[mask], model[mask], atol=1e-10)
 
 # test_model2comps()

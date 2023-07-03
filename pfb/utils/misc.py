@@ -829,7 +829,11 @@ def concat_chan(xds, nband_out=1):
             flow = freq_bins[b]
             fhigh = freq_bins[b+1]
             freqsb = all_freqs[all_freqs >= flow]
-            freqsb = freqsb[freqsb < fhigh]
+            # exlusive except for the last one
+            if b==nband_out-1:
+                freqsb = freqsb[freqsb <= fhigh]
+            else:
+                freqsb = freqsb[freqsb < fhigh]
             for ds in xds:
                 # ds overlaps output if either ds.freq_min or ds.freq_max lies in the bin
                 low_in = ds.freq_min > flow and ds.freq_min < fhigh
@@ -909,14 +913,14 @@ def sum_overlap(vis, wgt, mask, freq, ufreq, flow, fhigh):
         masko[:, idx1] += mask[i][:, idx0]
 
     # unmasked where at least one data point is unflagged
-    masko = np.where(masko > 0, 1, 0)
-    viso[masko.astype(bool)] = viso[masko.astype(bool)]/wgto[masko.astype(bool)]
+    masko = np.where(masko > 0, True, False)
+    viso[masko] = viso[masko]/wgto[masko]
 
     # blocker expects a dictionary as output
     out_dict = {}
     out_dict['viso'] = viso
     out_dict['wgto'] = wgto
-    out_dict['masko'] = masko
+    out_dict['masko'] = masko.astype(np.uint8)
 
     return out_dict
 

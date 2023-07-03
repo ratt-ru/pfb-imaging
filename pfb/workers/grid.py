@@ -68,6 +68,10 @@ def _grid(**kw):
     from pfb.utils.astrometry import get_coordinates
     from africanus.coordinates import radec_to_lm
     from pfb.utils.misc import concat_chan, concat_row
+    import sympy as sm
+    from sympy.utilities.lambdify import lambdify
+    from sympy.parsing.sympy_parser import parse_expr
+
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -225,16 +229,17 @@ def _grid(**kw):
         assert cell_rad == mds.cell_rad_x
         assert nx == mds.npix_x
         assert ny == mds.npix_y
-        assert x0 == mds.center_x
-        assert y0 == mds.center_y
 
         # model func
-        ref_freq = mds.ref_freq
-        ref_time = mds.ref_time
         params = sm.symbols(('t','f'))
         params += sm.symbols(tuple(mds.params.values))
         symexpr = parse_expr(mds.parametrisation)
         model_func = lambdify(params, symexpr)
+        texpr = parse_expr(mds.texpr)
+        tfunc = lambdify(params[0], texpr)
+        fexpr = parse_expr(mds.fexpr)
+        ffunc = lambdify(params[1], fexpr)
+
 
         # model coeffs
         model_coeffs = mds.coefficients.values
@@ -256,7 +261,6 @@ def _grid(**kw):
         uvw = ds.UVW.data
         freq = ds.FREQ.data
         vis = ds.VIS.data
-        wgt = ds.WEIGHT.data
         # This is a vis space mask (see wgridder convention)
         mask = ds.MASK.data
         bandid = np.where(freqs_out == ds.freq_out)[0][0]
@@ -319,15 +323,33 @@ def _grid(**kw):
 
         # get the model
         if opts.transfer_model_from is not None:
-            model = np.zeros((nx, ny), dtype=float)
-            model[locx, locy] = model_func(ds.time_out/ref_time,
-                                           ds.freq_out/ref_freq,
+            assert x0 == mds.center_x
+            assert y0 == mds.center_y
+            model = np.zeros((nx, ny),
+                             dtype=ds.WEIGHT.data.dtype)
+            model[locx, locy] = model_func(tfunc(ds.time_out),
+                                           ffunc(ds.freq_out),
                                            *model_coeffs)
             model = da.from_array(model, chunks=(-1,-1))
+            out_ds = out_ds.assign(**{'MODEL': (('x', 'y'), model)})
+
         elif 'MODEL' in out_ds:
             model = out_ds.MODEL.data
         else:
             model = None
+
+
+        if opts.l2reweight_dof and model is not None:
+            wgt, res = l2reweight(ds, out_ds,
+                             opts.epsilon,
+                             opts.nvthreads,
+                             opts.wstack,
+                             precision,
+                             dof=opts.l2reweight_dof)
+        else:
+            wgt = ds.WEIGHT.data
+            res = None
+
 
         if opts.robustness is not None:
             # we'll skip this if counts already exists
@@ -349,10 +371,18 @@ def _grid(**kw):
                     counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
                                                    nlevel=opts.filter_level)
 
-                # counts = inlined_array(counts, [uvw, freq, mask])
-
                 # do we want the coordinates to be ug, vg rather?
                 out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
+            # counts = inlined_array(counts, [uvw, freq, mask])
+            imwgt = counts_to_weights(
+                                out_ds.COUNTS.data,
+                                uvw,
+                                freq,
+                                nx, ny,
+                                cell_rad, cell_rad,
+                                opts.robustness)
+
+            wgt *= imwgt
         else:
             counts = None
 
@@ -383,18 +413,6 @@ def _grid(**kw):
         # )
 
 
-        if opts.l2reweight_dof and 'MODEL' in out_ds:
-            wgt, res = l2reweight(ds, out_ds,
-                             opts.epsilon,
-                             opts.nvthreads,
-                             opts.wstack,
-                             precision,
-                             dof=opts.l2reweight_dof)
-        else:
-            wgt = ds.WEIGHT.data
-            res = None
-
-
         if opts.dirty:
             dirty = vis2im(uvw=uvw,
                            freq=freq,
@@ -411,7 +429,7 @@ def _grid(**kw):
                            mask=mask,
                            do_wgridding=opts.wstack,
                            double_precision_accumulation=opts.double_accum)
-            dirty = inlined_array(dirty, [uvw, freq, mask])
+            # dirty = inlined_array(dirty, [uvw, freq, mask])
             out_ds = out_ds.assign(**{'DIRTY': (('x', 'y'), dirty)})
 
         if opts.psf:
@@ -424,7 +442,7 @@ def _grid(**kw):
                                   epsilon=opts.epsilon,
                                   nthreads=opts.nvthreads,
                                   precision=precision)
-            psf_vis = inlined_array(psf_vis, [uvw, freq])
+            # psf_vis = inlined_array(psf_vis, [uvw, freq])
             psf = vis2im(uvw=uvw,
                          freq=freq,
                          vis=psf_vis,
@@ -440,13 +458,14 @@ def _grid(**kw):
                          mask=mask,
                          do_wgridding=opts.wstack,
                          double_precision_accumulation=opts.double_accum)
-            psf = inlined_array(psf, [uvw, freq, mask])
+            # psf = inlined_array(psf, [uvw, freq, mask])
             # get FT of psf
             psfhat = fft2d(psf, nthreads=opts.nvthreads)
             out_ds = out_ds.assign(**{'PSF': (('x_psf', 'y_psf'), psf),
                                       'PSFHAT': (('x_psf', 'yo2'), psfhat)})
 
         # TODO - don't put vis space products in dds
+        # but how apply imaging weights in that case?
         if opts.weight:
             out_ds = out_ds.assign(**{'WEIGHT': (('row', 'chan'), wgt)})
 
@@ -454,10 +473,8 @@ def _grid(**kw):
 
         # wsum = inlined_array(wsum, [uvw, wgt, freq, mask])
 
-
-
-        if opts.residual and 'MODEL' in out_ds:
-            model = out_ds.MODEL.data
+        if opts.residual and model is not None:
+            # model = out_ds.MODEL.data
             if res is not None:
                 residual = vis2im(uvw=uvw,
                            freq=freq,
@@ -486,7 +503,7 @@ def _grid(**kw):
                 # we only want to apply the beam once here
                 residual = dirty - hessian(bvals * model, uvw, wgt,
                                         mask, freq, None, hessopts)
-            residual = inlined_array(residual, [uvw, freq, mask])
+            # residual = inlined_array(residual, [uvw, freq, mask])
             out_ds = out_ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
 
 
@@ -530,7 +547,7 @@ def _grid(**kw):
             fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
         if opts.psf:
             fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
-        if opts.residual and 'MODEL' in dds[0]:
+        if opts.residual and model is not None:
             fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
             fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
@@ -539,7 +556,7 @@ def _grid(**kw):
             fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
         if opts.psf:
             fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
-        if opts.residual and 'MODEL' in dds[0]:
+        if opts.residual and model is not None:
             fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
             fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 

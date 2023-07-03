@@ -21,7 +21,8 @@ def test_spotless(tmp_path_factory):
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
-    from pyrap.tables import table
+    import dask
+    from daskms import xds_from_ms, xds_from_table, xds_to_table
     from pfb.utils.misc import Gaussian2D, give_edges
     import matplotlib.pyplot as plt
     from africanus.constants import c as lightspeed
@@ -32,25 +33,35 @@ def test_spotless(tmp_path_factory):
     from pfb.workers.grid import _grid
     from pfb.workers.spotless import _spotless
     from pfb.workers.model2comps import _model2comps
+    from pfb.workers.degrid import _degrid
     import sympy as sm
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
 
-    ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
-    spw = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW'))
 
-    utime = np.unique(ms.getcol('TIME'))
+    ms_name = str(test_dir / 'test_ascii_1h60.0s.MS')
+    xds = xds_from_ms(ms_name,
+                      chunks={'row': -1, 'chan': -1})[0]
+    spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]
+    # ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
+    # spw = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW'))
 
-    freq = spw.getcol('CHAN_FREQ').squeeze()
+    # utime = np.unique(ms.getcol('TIME'))
+    utime = np.unique(xds.TIME.values)
+    freq = spw.CHAN_FREQ.values.squeeze()
+    # freq = spw.getcol('CHAN_FREQ').squeeze()
     freq0 = np.mean(freq)
 
     ntime = utime.size
     nchan = freq.size
-    nant = np.maximum(ms.getcol('ANTENNA1').max(), ms.getcol('ANTENNA2').max()) + 1
+    # nant = np.maximum(ms.getcol('ANTENNA1').max(), ms.getcol('ANTENNA2').max()) + 1
+    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA1.values.max()) + 1
 
-    ncorr = ms.getcol('FLAG').shape[-1]
+    # ncorr = ms.getcol('FLAG').shape[-1]
+    ncorr = xds.corr.size
 
-    uvw = ms.getcol('UVW')
+    # uvw = ms.getcol('UVW')
+    uvw = xds.UVW.values
     nrow = uvw.shape[0]
     u_max = abs(uvw[:, 0]).max()
     v_max = abs(uvw[:, 1]).max()
@@ -120,7 +131,10 @@ def test_spotless(tmp_path_factory):
     model_vis += (np.random.randn(nrow, nchan, ncorr) +
                   1.0j*np.random.randn(nrow, nchan, ncorr))
 
-    ms.putcol('DATA', model_vis)
+    model_vis = da.from_array(model_vis, chunks=(-1,-1,-1))
+    xds['DATA'] = (('row','chan','coor'), model_vis)
+    writes = [xds_to_table(xds, ms_name, columns='DATA')]
+    dask.compute(writes)
 
     # set defaults from schema
     init_args = {}
@@ -163,7 +177,7 @@ def test_spotless(tmp_path_factory):
         spotless_args[key] = schema.spotless["inputs"][key]["default"]
     spotless_args["output_filename"] = outname
     spotless_args["nband"] = nchan
-    spotless_args["niter"] = 3
+    spotless_args["niter"] = 2
     tol = 1e-5
     spotless_args["tol"] = tol
     spotless_args["gamma"] = 1.0
@@ -189,7 +203,6 @@ def test_spotless(tmp_path_factory):
         freqs_dds.append(ds.freq_out)
         times_dds.append(ds.time_out)
 
-    # import ipdb; ipdb.set_trace()
     freqs_dds = np.array(freqs_dds)
     times_dds = np.array(times_dds)
     freqs_dds = np.unique(freqs_dds)
@@ -246,6 +259,49 @@ def test_spotless(tmp_path_factory):
             fout = ffunc(freqs_dds[j])
             model_test[i,j,locx,locy] = modelf(tout, fout, *coeffs)
 
+    # models need to match exactly
     assert_allclose(1 + model_test, 1 + model_inferred)
+
+    # degrid from coeffs
+    degrid_args = {}
+    for key in schema.degrid["inputs"].keys():
+        degrid_args[key] = schema.degrid["inputs"][key]["default"]
+    # overwrite defaults
+    degrid_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+    degrid_args["output_filename"] = outname
+    degrid_args["channels_per_image"] = 1
+    degrid_args["nthreads_dask"] = 1
+    degrid_args["nvthreads"] = 8
+    degrid_args["wstack"] = True
+    _degrid(**degrid_args)
+
+    # manually place residual in CORRECTED_DATA
+    resid = xds.DATA.data - xds.MODEL_DATA.data
+    xds['DATA'] = (('row','chan','coor'), resid)
+    writes = [xds_to_table(xds, ms_name, columns='DATA')]
+    dask.compute(writes)
+
+    # gridding CORRECTED_DATA should return identical residuals
+    # overwrite defaults
+    grid_args['DATA_COLUMN'] = 'CORRECTED_DATA'
+    grid_args["output_filename"] = outname
+    grid_args["postfix"] = 'resid'
+    grid_args["nband"] = nchan
+    grid_args["field_of_view"] = fov
+    grid_args["fits_mfs"] = False
+    grid_args["psf"] = False
+    grid_args["weight"] = False
+    grid_args["residual"] = False
+    grid_args["nthreads_dask"] = 1
+    grid_args["nvthreads"] = 8
+    grid_args["overwrite"] = True
+    grid_args["robustness"] = 0.0
+    grid_args["wstack"] = True
+    _grid(**grid_args)
+
+    ddso = xds_from_zarr(f'{outname}_I_resid.dds.zarr')
+    for dso, ds in zip(ddso, dds):
+        assert_allclose(1 + np.abs(dso.DIRTY.values),
+                        1 + np.abs(ds.DIRTY.values))
 
 # test_spotless()

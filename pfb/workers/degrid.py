@@ -85,7 +85,7 @@ def _degrid(**kw):
     from sympy.parsing.sympy_parser import parse_expr
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-    mds_name = f'{basename}_{opts.postfix}.coeffs.zarr'
+    mds_name = f'{basename}_{opts.postfix}_{opts.model_name.lower()}.coeffs.zarr'
     mds = xds_from_zarr(mds_name)[0]
 
     # grid spec
@@ -98,8 +98,6 @@ def _degrid(**kw):
     radec = (mds.ra, mds.dec)
 
     # model func
-    ref_freq = mds.ref_freq
-    ref_time = mds.ref_time
     params = sm.symbols(('t','f'))
     params += sm.symbols(tuple(mds.params.values))
     symexpr = parse_expr(mds.parametrisation)
