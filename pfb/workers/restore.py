@@ -131,12 +131,12 @@ def _restore(**kw):
                                             norm_kernel=False)  # peak of kernel set to unity
             image[b] += residual[b]
 
-            # convert pixel units to deg
-            GaussPar[0][0] *= cell_deg
-            GaussPar[0][1] *= cell_deg
+        # convert pixel units to deg
+        GaussPar[0][0] *= cell_deg
+        GaussPar[0][1] *= cell_deg
 
-            for i, gp in enumerate(GaussPars):
-                GaussPars[i] = [gp[0]*cell_deg, gp[1]*cell_deg, gp[2]]
+        for i, gp in enumerate(GaussPars):
+            GaussPars[i] = [gp[0]*cell_deg, gp[1]*cell_deg, gp[2]]
 
         hdr_mfs = add_beampars(hdr_mfs, GaussPar)
         hdr = add_beampars(hdr, GaussPar, GaussPars)
