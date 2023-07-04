@@ -8,9 +8,12 @@ import numpy as np
 import dask
 import dask.array as da
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
+from ducc0.fft import c2r, r2c
 from africanus.constants import c as lightspeed
 from quartical.utils.dask import Blocker
 # from pfb.utils.weighting import _counts_to_weights
+iFs = np.fft.ifftshift
+Fs = np.fft.fftshift
 
 def vis2im(uvw=None,
            freq=None,
@@ -545,93 +548,178 @@ def _comps2vis_impl(uvw,
     return vis
 
 
-# def image_data_products(uvw,
-#                         freq,
-#                         vis,
-#                         wgt,
-#                         mask,
-#                         counts,
-#                         nx, ny,
-#                         nx_psf, ny_psf,
-#                         cellx, celly,
-#                         model=None,
-#                         robustness=None,
-#                         x0=0.0, y0=0.0,
-#                         nthreads=1,
-#                         epsilon=1e-7,
-#                         precision='double',
-#                         do_wgridding=True,
-#                         double_accum=True,
-#                         l2reweight_dof=None,
-#                         do_dirty=True,
-#                         do_psf=True,
-#                         do_weight=True,
-#                         do_residual=False):
-#     '''
-#     Function to compute image space data products viz.
-#         dirty
-#         psf
-#         psfhat
-#         imweight
-#         residual
-#         wsum
-#     '''
-#     if opts.l2reweight_dof:
-#         if model is None:
-#             raise ValueError('l2reweight_dof set but no model passed in. '
-#                              'Perhaps you want to transfer a model from somewhere?')
-#         # do not apply weights in this direction
-#         model_vis = dirty2vis(uvw=uvw,
-#                               freq=freq,
-#                               dirty=model,
-#                               mask=mask,
-#                               pixsize_x=cellx,
-#                               pixsize_y=celly,
-#                               center_x=x0,
-#                               center_y=y0,
-#                               epsilon=epsilon,
-#                               do_wgridding=do_wgridding,
-#                               flip_v=False,
-#                               nthreads=nthreads,
-#                               divide_by_n=False,
-#                               sigma_min=1.1, sigma_max=3.0)
-#         residual_vis = vis*mask - model_vis
-#         ressq = (residual_vis*residual_vis.conj()).real
-#         wcount = mask.sum()
-#         if wcount:
-#             ovar = ressq.sum()/wcount
-#             wgt = (dof + 1)/(dof + ressq/ovar)/ovar
+def image_data_products(uvw,
+                        freq,
+                        vis,
+                        wgt,
+                        mask,
+                        counts,
+                        nx, ny,
+                        nx_psf, ny_psf,
+                        cellx, celly,
+                        model=None,
+                        robustness=None,
+                        x0=0.0, y0=0.0,
+                        nthreads=1,
+                        epsilon=1e-7,
+                        precision='double',
+                        do_wgridding=True,
+                        double_accum=True,
+                        l2reweight_dof=None,
+                        do_dirty=True,
+                        do_psf=True,
+                        do_weight=True,
+                        do_residual=False):
+    '''
+    Function to compute image space data products in one go
+        dirty
+        psf
+        psfhat
+        imweight
+        residual
+        wsum
+    '''
+    out_dict = {}
+
+    if model is None:
+        if l2reweight_dof:
+            raise ValueError('Requested l2 reweight but no model passed in. '
+                             'Perhaps transfer model from somewhere?')
+    else:
+        # do not apply weights in this direction
+        model_vis = dirty2vis(
+            uvw=uvw,
+            freq=freq,
+            dirty=model,
+            pixsize_x=cellx,
+            pixsize_y=celly,
+            center_x=x0,
+            center_y=y0,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            flip_v=False,
+            nthreads=nthreads,
+            divide_by_n=False,
+            sigma_min=1.1, sigma_max=3.0)
+
+        residual_vis = vis - model_vis
+        # apply mask to both
+        residual_vis *= mask
+
+    if l2reweight_dof:
+        ressq = (residual_vis*residual_vis.conj()).real
+        wcount = mask.sum()
+        if wcount:
+            ovar = ressq.sum()/wcount
+            wgt = (dof + 1)/(dof + ressq/ovar)/ovar
+
+    # we usually want to re-evaluate this since the robustness may change
+    if robustness is not None:
+        if counts is None:
+            raise ValueError('counts are None but robustness specified. '
+                             'This is probably a bug!')
+        imwgt = _counts_to_weights(
+            counts,
+            uvw,
+            freq,
+            nx, ny,
+            cellx, celly,
+            robustness)
+
+        wgt *= imwgt
+
+    wsum = wgt[mask.astype(bool)].sum()
+
+    if do_dirty:
+        dirty = vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=vis,
+            wgt=wgt,
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cellx, pixsize_y=celly,
+            center_x=x0, center_y=y0,
+            epsilon=epsilon,
+            flip_v=False,  # hardcoded for now
+            do_wgridding=do_wgridding,
+            divide_by_n=False,  # hardcoded for now
+            nthreads=nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=double_accum)
+
+    if do_psf:
+        if x0 or y0:
+        # LB - what is wrong with this?
+        # n = np.sqrt(1 - x0**2 - y0**2)
+        # if convention.upper() == 'CASA':
+        #     freqfactor = -2j*np.pi*freq[None, :]/lightspeed
+        # else:
+        #     freqfactor = 2j*np.pi*freq[None, :]/lightspeed
+        # psf_vis = np.exp(freqfactor*(uvw[:, 0:1]*x0 +
+        #                              uvw[:, 1:2]*y0 +
+        #                              uvw[:, 2:]*(n-1)))
+        # if divide_by_n:
+        #     psf_vis /= n
+            x = np.zeros((128,128), dtype=wgt.dtype)
+            x[64,64] = 1.0
+            psf_vis = dirty2vis(
+                uvw=uvw,
+                freq=freq,
+                dirty=x,
+                pixsize_x=cellx,
+                pixsize_y=celly,
+                center_x=x0,
+                center_y=y0,
+                epsilon=1e-7,
+                do_wgridding=wstack,
+                nthreads=nthreads,
+                divide_by_n=False,
+                flip_v=False,  # hardcoded for now
+                sigma_min=1.1, sigma_max=3.0)
+
+        else:
+            nrow, _ = uvw.shape
+            nchan = freq.size
+            psf_vis = np.ones((nrow, nchan), dtype=vis.dtype)
+
+        psf = vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=psf_vis,
+            wgt=wgt,
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cellx, pixsize_y=celly,
+            center_x=x0, center_y=y0,
+            epsilon=epsilon,
+            flip_v=False,  # hardcoded for now
+            do_wgridding=do_wgridding,
+            divide_by_n=divide_by_n,  # hardcoded for now
+            nthreads=nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=double_accum)
+
+        # get FT of psf
+        psfhat = r2c(iFs(psf, axes=(0, 1)), axes=(0, 1),
+                     nthreads=nthreads,
+                     forward=True, inorm=0)
 
 
-#     # we usually want to re-evaluate this since the robustness may change
-#     if robustness is not None:
-#         if counts is None:
-#             raise ValueError('Got None for counts even though robustness specified. '
-#                              'This is probably a bug!')
-#         imwgt = _counts_to_weights(counts,
-#                                    uvw,
-#                                    freq,
-#                                    nx, ny,
-#                                    cell_rad, cell_rad,
-#                                    robustness)
-#         wgt *= imwgt
-
-
-
-
-#     if do_dirty:
-#         dirty = vis2dirty(uvw=uvw,
-#                           freq=freq,
-#                           vis=vis,
-#                           wgt=wgt,
-#                           mask=mask,
-#                           npix_x=nx, npix_y=ny,
-#                           pixsize_x=cellx, pixsize_y=celly,
-#                           center_x=x0, center_y=y0,
-#                           epsilon=epsilon,
-#                           flip_v=False,  # hardcoded for now
-#                           do_wgridding=do_wgridding,
-#                           divide_by_n=divide_by_n,  # hardcoded for now
-#                           nthreads=nthreads,
-#                           sigma_min=1.1, sigma_max=3.0,
-#                           double_precision_accumulation=double_accum)
+    if do_residual and model is not None:
+        residual = vis2im(
+            uvw=uvw,
+            freq=freq,
+            vis=residual_vis,
+            wgt=wgt,
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cellx, pixsize_y=celly,
+            center_x=x0, center_y=y0,
+            epsilon=epsilon,
+            flip_v=False,  # hardcoded for now
+            do_wgridding=do_wgridding,
+            divide_by_n=False,  # hardcoded for now
+            nthreads=nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=double_accum)
