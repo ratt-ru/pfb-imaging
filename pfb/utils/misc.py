@@ -111,9 +111,7 @@ def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     extent = (nsigma * Smaj)**2
     xflat = xin.squeeze()
     yflat = yin.squeeze()
-    ind = np.argwhere(xflat**2 + yflat**2 <= extent).squeeze()
-    idx = ind[:, 0]
-    idy = ind[:, 1]
+    idx, idy = np.where(xflat**2 + yflat**2 <= extent)
     x = np.array([xflat[idx, idy].ravel(), yflat[idx, idy].ravel()])
     R = np.einsum('nb,bc,cn->n', x.T, A, x)
     # need to adjust for the fact that GaussPar corresponds to FWHM
@@ -504,7 +502,7 @@ def fitcleanbeam(psf: np.ndarray,
         fwhm_conv = 2 * np.sqrt(2 * np.log(2))
         return np.exp(-fwhm_conv * R)
 
-    Gausspars = ()
+    Gausspars = []
     for v in range(nband):
         # make sure psf is normalised
         psfv = psf[v] / psf[v].max()
@@ -532,7 +530,7 @@ def fitcleanbeam(psf: np.ndarray,
         emaj0 = np.maximum(xdiff, ydiff)
         emin0 = np.minimum(xdiff, ydiff)
         p, _ = curve_fit(func, xy, psfv, p0=(emaj0, emin0, 0.0))
-        Gausspars += ((p[0] * pixsize, p[1] * pixsize, p[2]),)
+        Gausspars.append([p[0] * pixsize, p[1] * pixsize, p[2]])
 
     return Gausspars
 

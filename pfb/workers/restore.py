@@ -132,15 +132,11 @@ def _restore(**kw):
             image[b] += residual[b]
 
             # convert pixel units to deg
-            GaussPar = list(GaussPar[0])
-            GaussPar[0] *= cell_deg
-            GaussPar[1] *= cell_deg
-            GaussPar = tuple(GaussPar)
+            GaussPar[0][0] *= cell_deg
+            GaussPar[0][1] *= cell_deg
 
-            GaussPars = list(GaussPars)
             for i, gp in enumerate(GaussPars):
-                GaussPars[i] = (gp[0]*cell_deg, gp[1]*cell_deg, gp[2])
-            GaussPars = tuple(GaussPars)
+                GaussPars[i] = [gp[0]*cell_deg, gp[1]*cell_deg, gp[2]]
 
         hdr_mfs = add_beampars(hdr_mfs, GaussPar)
         hdr = add_beampars(hdr, GaussPar, GaussPars)
