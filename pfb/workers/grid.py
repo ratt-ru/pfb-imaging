@@ -64,7 +64,7 @@ def _grid(**kw):
     from pfb.utils.beam import eval_beam
     import xarray as xr
     from uuid import uuid4
-    from daskms.optimisation import inlined_array
+    from dask.graph_manipulation import clone
     from pfb.utils.astrometry import get_coordinates
     from africanus.coordinates import radec_to_lm
     from pfb.utils.misc import concat_chan, concat_row
@@ -356,7 +356,7 @@ def _grid(**kw):
             # what to do if flags have changed?
             if 'COUNTS' not in out_ds:
                 counts = compute_counts(
-                        uvw,
+                        clone(uvw),
                         freq,
                         mask,
                         nx,
@@ -373,10 +373,10 @@ def _grid(**kw):
 
                 # do we want the coordinates to be ug, vg rather?
                 out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
-            # counts = inlined_array(counts, [uvw, freq, mask])
+
             imwgt = counts_to_weights(
                                 out_ds.COUNTS.data,
-                                uvw,
+                                clone(uvw),
                                 freq,
                                 nx, ny,
                                 cell_rad, cell_rad,
@@ -414,7 +414,7 @@ def _grid(**kw):
 
 
         if opts.dirty:
-            dirty = vis2im(uvw=uvw,
+            dirty = vis2im(uvw=clone(uvw),
                            freq=freq,
                            vis=vis,
                            wgt=wgt,
@@ -429,11 +429,10 @@ def _grid(**kw):
                            mask=mask,
                            do_wgridding=opts.wstack,
                            double_precision_accumulation=opts.double_accum)
-            # dirty = inlined_array(dirty, [uvw, freq, mask])
             out_ds = out_ds.assign(**{'DIRTY': (('x', 'y'), dirty)})
 
         if opts.psf:
-            psf_vis = loc2psf_vis(uvw,
+            psf_vis = loc2psf_vis(clone(uvw),
                                   freq,
                                   cell_rad,
                                   x0,
@@ -442,8 +441,7 @@ def _grid(**kw):
                                   epsilon=opts.epsilon,
                                   nthreads=opts.nvthreads,
                                   precision=precision)
-            # psf_vis = inlined_array(psf_vis, [uvw, freq])
-            psf = vis2im(uvw=uvw,
+            psf = vis2im(uvw=clone(uvw),
                          freq=freq,
                          vis=psf_vis,
                          wgt=wgt,
@@ -458,7 +456,6 @@ def _grid(**kw):
                          mask=mask,
                          do_wgridding=opts.wstack,
                          double_precision_accumulation=opts.double_accum)
-            # psf = inlined_array(psf, [uvw, freq, mask])
             # get FT of psf
             psfhat = fft2d(psf, nthreads=opts.nvthreads)
             out_ds = out_ds.assign(**{'PSF': (('x_psf', 'y_psf'), psf),
@@ -471,26 +468,25 @@ def _grid(**kw):
 
         wsum = wgt[mask.astype(bool)].sum()
 
-        # wsum = inlined_array(wsum, [uvw, wgt, freq, mask])
-
         if opts.residual and model is not None:
             # model = out_ds.MODEL.data
             if res is not None:
-                residual = vis2im(uvw=uvw,
-                           freq=freq,
-                           vis=res,
-                           wgt=wgt,
-                           nx=nx,
-                           ny=ny,
-                           cellx=cell_rad,
-                           celly=cell_rad,
-                           x0=x0, y0=y0,
-                           nthreads=opts.nvthreads,
-                           epsilon=opts.epsilon,
-                           precision=precision,
-                           mask=mask,
-                           do_wgridding=opts.wstack,
-                           double_precision_accumulation=opts.double_accum)
+                residual = vis2im(
+                        uvw=clone(uvw),
+                        freq=freq,
+                        vis=res,
+                        wgt=wgt,
+                        nx=nx,
+                        ny=ny,
+                        cellx=cell_rad,
+                        celly=cell_rad,
+                        x0=x0, y0=y0,
+                        nthreads=opts.nvthreads,
+                        epsilon=opts.epsilon,
+                        precision=precision,
+                        mask=mask,
+                        do_wgridding=opts.wstack,
+                        double_precision_accumulation=opts.double_accum)
             else:
                 from pfb.operators.hessian import hessian
                 hessopts = {
@@ -501,9 +497,14 @@ def _grid(**kw):
                     'nthreads': opts.nvthreads
                 }
                 # we only want to apply the beam once here
-                residual = dirty - hessian(bvals * model, uvw, wgt,
-                                        mask, freq, None, hessopts)
-            # residual = inlined_array(residual, [uvw, freq, mask])
+                residual = dirty - hessian(
+                                        bvals * model,
+                                        clone(uvw),
+                                        wgt,
+                                        mask,
+                                        freq,
+                                        None,
+                                        hessopts)
             out_ds = out_ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
 
 

@@ -80,7 +80,6 @@ def _init(**kw):
     from pfb.utils.misc import construct_mappings
     import dask
     dask.config.set(**{'array.slicing.split_large_chunks': False})
-    from dask.graph_manipulation import clone
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
