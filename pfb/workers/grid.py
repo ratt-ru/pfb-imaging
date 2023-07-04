@@ -339,18 +339,6 @@ def _grid(**kw):
             model = None
 
 
-        if opts.l2reweight_dof and model is not None:
-            wgt, res = l2reweight(ds, out_ds,
-                             opts.epsilon,
-                             opts.nvthreads,
-                             opts.wstack,
-                             precision,
-                             dof=opts.l2reweight_dof)
-        else:
-            wgt = ds.WEIGHT.data
-            res = None
-
-
         if opts.robustness is not None:
             # we'll skip this if counts already exists
             # what to do if flags have changed?
@@ -373,144 +361,66 @@ def _grid(**kw):
 
                 # do we want the coordinates to be ug, vg rather?
                 out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
-            # counts = inlined_array(counts, [uvw, freq, mask])
-            imwgt = counts_to_weights(
-                                out_ds.COUNTS.data,
-                                uvw,
-                                freq,
-                                nx, ny,
-                                cell_rad, cell_rad,
-                                opts.robustness)
-
-            wgt *= imwgt
         else:
             counts = None
 
 
-        # image_dict = image_space_data_products(
-        #     uvw,
-        #     freq,
-        #     vis,
-        #     wgt,
-        #     mask,
-        #     counts,
-        #     nx, ny,
-        #     nx_psf, ny_psf,
-        #     cellx, celly,
-        #     model=None,
-        #     robustness=None,
-        #     x0=0.0, y0=0.0,
-        #     nthreads=1,
-        #     epsilon=1e-7,
-        #     precision='double',
-        #     do_wgridding=True,
-        #     double_accum=True,
-        #     l2reweight_dof=None,
-        #     do_dirty=True,
-        #     do_psf=True,
-        #     do_weight=True,
-        #     do_residual=False
-        # )
+        image_dict = image_space_data_products(
+            uvw,
+            freq,
+            vis,
+            wgt,
+            mask,
+            counts,
+            nx, ny,
+            nx_psf, ny_psf,
+            cell_rad, cell_rad,
+            model=model,
+            robustness=opts.robustness,
+            x0=x0, y0=y0,
+            nthreads=opts.nvthreads,
+            epsilon=opts.epsilon,
+            precision=opts.precision,
+            do_wgridding=opts.wstack,
+            double_accum=opts.double_accum,
+            l2reweight_dof=opts.l2reweight_dof,
+            do_psf=opts.psf,
+            do_weight=opts.weight,
+            do_residual=opts.residual
+        )
 
-
-        if opts.dirty:
-            dirty = vis2im(uvw=uvw,
-                           freq=freq,
-                           vis=vis,
-                           wgt=wgt,
-                           nx=nx,
-                           ny=ny,
-                           cellx=cell_rad,
-                           celly=cell_rad,
-                           x0=x0, y0=y0,
-                           nthreads=opts.nvthreads,
-                           epsilon=opts.epsilon,
-                           precision=precision,
-                           mask=mask,
-                           do_wgridding=opts.wstack,
-                           double_precision_accumulation=opts.double_accum)
-            # dirty = inlined_array(dirty, [uvw, freq, mask])
-            out_ds = out_ds.assign(**{'DIRTY': (('x', 'y'), dirty)})
+        # This
+        out_ds = out_ds.assign(**{
+            'DIRTY': (('x', 'y'), image_dict['DIRTY'])
+            })
 
         if opts.psf:
-            psf_vis = loc2psf_vis(uvw,
-                                  freq,
-                                  cell_rad,
-                                  x0,
-                                  y0,
-                                  wstack=opts.wstack,
-                                  epsilon=opts.epsilon,
-                                  nthreads=opts.nvthreads,
-                                  precision=precision)
-            # psf_vis = inlined_array(psf_vis, [uvw, freq])
-            psf = vis2im(uvw=uvw,
-                         freq=freq,
-                         vis=psf_vis,
-                         wgt=wgt,
-                         nx=nx_psf,
-                         ny=ny_psf,
-                         cellx=cell_rad,
-                         celly=cell_rad,
-                         x0=x0, y0=y0,
-                         nthreads=opts.nvthreads,
-                         epsilon=opts.epsilon,
-                         precision=precision,
-                         mask=mask,
-                         do_wgridding=opts.wstack,
-                         double_precision_accumulation=opts.double_accum)
-            # psf = inlined_array(psf, [uvw, freq, mask])
-            # get FT of psf
-            psfhat = fft2d(psf, nthreads=opts.nvthreads)
-            out_ds = out_ds.assign(**{'PSF': (('x_psf', 'y_psf'), psf),
-                                      'PSFHAT': (('x_psf', 'yo2'), psfhat)})
+            out_ds = out_ds.assign(**{
+                'PSF': (('x_psf', 'y_psf'), image_dict['PSF']),
+                'PSFHAT': (('x_psf', 'yo2'), image_dict['PSFHAT'])
+                })
 
         # TODO - don't put vis space products in dds
         # but how apply imaging weights in that case?
         if opts.weight:
-            out_ds = out_ds.assign(**{'WEIGHT': (('row', 'chan'), wgt)})
+            out_ds = out_ds.assign(**{
+                'WEIGHT': (('row', 'chan'), image_dict['WEIGHT'])
+                })
 
         wsum = wgt[mask.astype(bool)].sum()
 
-        # wsum = inlined_array(wsum, [uvw, wgt, freq, mask])
-
-        if opts.residual and model is not None:
-            # model = out_ds.MODEL.data
-            if res is not None:
-                residual = vis2im(uvw=uvw,
-                           freq=freq,
-                           vis=res,
-                           wgt=wgt,
-                           nx=nx,
-                           ny=ny,
-                           cellx=cell_rad,
-                           celly=cell_rad,
-                           x0=x0, y0=y0,
-                           nthreads=opts.nvthreads,
-                           epsilon=opts.epsilon,
-                           precision=precision,
-                           mask=mask,
-                           do_wgridding=opts.wstack,
-                           double_precision_accumulation=opts.double_accum)
-            else:
-                from pfb.operators.hessian import hessian
-                hessopts = {
-                    'cell': cell_rad,
-                    'wstack': opts.wstack,
-                    'epsilon': opts.epsilon,
-                    'double_accum': opts.double_accum,
-                    'nthreads': opts.nvthreads
-                }
-                # we only want to apply the beam once here
-                residual = dirty - hessian(bvals * model, uvw, wgt,
-                                        mask, freq, None, hessopts)
-            # residual = inlined_array(residual, [uvw, freq, mask])
-            out_ds = out_ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
+        if opts.residual:
+            out_ds = out_ds.assign(**{
+                'RESIDUAL': (('x', 'y'), image_dict['RESIDUAL'])
+                })
 
 
-        out_ds = out_ds.assign(**{'FREQ': (('chan',), freq),
-                                  'UVW': (('row', 'three'), uvw),
-                                  'MASK': (('row', 'chan'), mask),
-                                  'WSUM': (('scalar',), da.atleast_1d(wsum))})
+        out_ds = out_ds.assign(**{
+            'FREQ': (('chan',), freq),
+            'UVW': (('row', 'three'), uvw),
+            'MASK': (('row', 'chan'), mask),
+            'WSUM': (('scalar',), image_dict['WSUM'])
+            })
 
 
         out_ds = out_ds.chunk({'row':100000,

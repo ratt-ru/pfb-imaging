@@ -570,6 +570,42 @@ def image_data_products(uvw,
                         do_psf=True,
                         do_weight=True,
                         do_residual=False):
+
+    # we might want to chunk over row chan in the future but
+    # for now these will always have chunks=(-1,-1)
+    blocker = Blocker(_image_data_products, ('row', 'chan'))
+    blocker.add_input('uvw', uvw, ('row','three'))
+    blocker.add_input('freq', freq, ('chan',))
+    blocker.add_input('vis', vis, ('row','chan'))
+    blocker.add_input('wgt', wgt, ('row','chan'))
+    blocker.add_input('mask', mask, ('row','chan'))
+    if counts is not None:
+        blocker.add_input(counts, ('x','y'))
+
+
+
+def _image_data_products(uvw,
+                        freq,
+                        vis,
+                        wgt,
+                        mask,
+                        counts,
+                        nx, ny,
+                        nx_psf, ny_psf,
+                        cellx, celly,
+                        model=None,
+                        robustness=None,
+                        x0=0.0, y0=0.0,
+                        nthreads=1,
+                        epsilon=1e-7,
+                        precision='double',
+                        do_wgridding=True,
+                        double_accum=True,
+                        l2reweight_dof=None,
+                        do_dirty=True,
+                        do_psf=True,
+                        do_weight=True,
+                        do_residual=False):
     '''
     Function to compute image space data products in one go
         dirty
