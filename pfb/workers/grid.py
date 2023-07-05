@@ -325,7 +325,7 @@ def _grid(**kw):
                 params,
                 mds.texpr,
                 mds.fexpr,
-                mds.nx, mds.ny,
+                mds.npix_x, mds.npix_y,
                 mds.cell_rad_x, mds.cell_rad_y,
                 mds.x0, mds.y0,
                 nx, ny,
