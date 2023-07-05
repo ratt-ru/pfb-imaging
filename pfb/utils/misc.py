@@ -1015,7 +1015,6 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
             ffunc = f/ref_freq
             Xf = np.tile(wf[:, None], (ntime, nbasisf-1))**np.arange(1, nbasisf)
             Xfit = np.hstack((Xfit, Xf))
-            import ipdb; ipdb.set_trace()
             paramsf = sm.symbols(f'f(1:{nbasisf})')
             expr += sum(co*f**(i+1) for i, co in enumerate(paramsf))
             params += paramsf
@@ -1145,7 +1144,6 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
     do_pad |= npadyl > 0
     do_pad |= npadyu > 0
     if do_pad:
-        # import ipdb; ipdb.set_trace()
         image_in = np.pad(image_in,
                         ((npadxl, npadxu), (npadyl, npadyu)),
                         mode='constant')
@@ -1154,8 +1152,6 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
         nxi = nxi + npadxl + npadxu
         yin = (-(nyi//2+npadyl) + np.arange(nyi + npadyl + npadyu))*cellyi + y0i
         nyi = nyi + npadyl + npadyu
-
-    # import ipdb; ipdb.set_trace()
 
     do_interp = cellxi != cellxo
     do_interp |= cellyi != cellyo
