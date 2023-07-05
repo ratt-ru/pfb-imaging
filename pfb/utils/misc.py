@@ -16,13 +16,16 @@ from omegaconf import ListConfig
 from skimage.morphology import label
 from scipy.optimize import curve_fit
 from collections import namedtuple
-from scipy.interpolate import RectBivariateSpline as rbs
 from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
-import pdb
 from quartical.utils.dask import Blocker
+from scipy.interpolate import RegularGridInterpolator
+import sympy as sm
+from sympy.utilities.lambdify import lambdify
+from sympy.parsing.sympy_parser import parse_expr
 
 
+import pdb
 class ForkedPdb(pdb.Pdb):
     """A Pdb subclass that may be used
     from a forked multiprocessing child
@@ -1071,15 +1074,12 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
     return coeffs, Ix, Iy, str(expr), list(map(str,params)), str(tfunc),str(ffunc)
 
 
-def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy, expr, paramf, texpr, fexpr):
+def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy,
+                        expr, paramf, texpr, fexpr):
     ntime = time.size
     nfreq = freq.size
 
     image = np.zeros((ntime, nfreq, nx, ny), dtype=float)
-
-    import sympy as sm
-    from sympy.utilities.lambdify import lambdify
-    from sympy.parsing.sympy_parser import parse_expr
     params = sm.symbols(('t','f'))
     params += sm.symbols(tuple(paramf))
     symexpr = parse_expr(expr)
@@ -1095,110 +1095,49 @@ def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy, expr, paramf, texpr,
     return image
 
 
-# y = X x
-# y00 = a0 + a1 t + b0 + b1 t + b2
-# y01
-# y02
-# y10
-# y11
-# y12
+def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
+                         expr, paramf, texpr, fexpr,
+                         nxi, nyi, cellxi, cellyi, x0i, y0i,
+                         nxo, nyo, cellxo, cellyo, x0o, y0o):
 
-# First attempt at sequential interpolation in terms of integrated polynomial
-# ref_freq = mfreqs[0]
-# ref_time = mtimes[0]
+    xin = (-(nxi//2) + np.arange(nxi))*cellxi + x0i
+    yin = (-(nyi//2) + np.arange(nyi))*cellyi + y0i
+    xo = (-(nxo//2) + np.arange(nxo))*cellxo + x0o
+    yo = (-(nyo//2) + np.arange(nyo))*cellyo + y0o
+    # import ipdb; ipdb.set_trace()
+    try:
+        assert (xo.min() >= xin.min()) and (xo.max() <= xin.max())
+    except:
+        raise ValueError('Extrapolation is not possible.')
+    try:
+        assert (yo.min() >= yin.min()) and (yo.max() <= yin.max())
+    except:
+        raise ValueError('Extrapolation is not possible.')
 
-# # interpolate model in frequency
-# if opts.min_val is not None:
-#     model[model < opts.min_val] = 0.0
-# mask = np.any(model, axis=(0,1))  # over t and f axes
-# Ix, Iy = np.where(mask)
-# ncomps = Ix.size
+    image_in = np.zeros((nxi, nyi), dtype=float)
+    params = sm.symbols(('t','f'))
+    params += sm.symbols(tuple(paramf))
+    symexpr = parse_expr(expr)
+    modelf = lambdify(params, symexpr)
+    texpr = parse_expr(texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(fexpr)
+    ffunc = lambdify(params[1], fexpr)
+    image_in[Ix, Iy] = modelf(tfunc(time), ffunc(freq), *coeffs)
 
-# # components excluding zeros
-# beta = model[:, :, Ix, Iy]
-# if opts.spectral_poly_order is not None and nband > 1:
-#     orderf = opts.spectral_poly_order
-#     if orderf > nband:
-#         raise ValueError("spectral-poly-order can't be larger than nband")
-#     if opts.fit_mode=='ipoly':
-#         print(f"Fitting freq axis with polynomial of order {orderf}", file=log)
-#         # we are given frequencies at bin centers, convert to bin edges
-#         delta_freq = mfreqs[1] - mfreqs[0]
-#         wlow = (mfreqs - delta_freq/2.0)/ref_freq
-#         whigh = (mfreqs + delta_freq/2.0)/ref_freq
-#         wdiff = whigh - wlow
-
-#         # set design matrix for each component
-#         Xfit = np.zeros([mfreqs.size, orderf])
-#         for i in range(1, orderf+1):
-#             Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
-
-#     elif opts.fit_mode=='poly':
-#         w = mfreqs/ref_freq
-#         Xfit = np.tile(w[:, None], (1, orderf))**np.arange(orderf)
-
-#     comps = np.zeros((ntime, orderf, Ix.size))
-#     freq_fitted = True
-#     for t in range(ntime):
-#         dirty_comps = Xfit.T.dot(wsums[t, :, None]*beta[t])
-
-#         hess_comps = Xfit.T.dot(wsums[t, :, None]*Xfit)
-
-#         comps[t] = np.linalg.solve(hess_comps, dirty_comps)
-
-# else:
-#     raise NotImplementedError("Interpolation is currently mandatory")
-#     print("Not fitting frequency axis", file=log)
-#     comps = beta
-#     freq_fitted = False
-#     orderf = mfreqs.size
-
-# if opts.temporal_poly_order is not None and ntime > 1:
-#     ordert = opts.temporal_poly_order
-#     if order > ntime:
-#         raise ValueError("temporal-poly-order can't be larger than ntime")
-#     print(f"Fitting time axis with polynomial of order {orderf}", file=log)
-#     # we are given times at bin centers, convert to bin edges
-#     delta_time = mtimes[1] - mtimes[0]
-#     wlow = (mtimes - delta_times/2.0)/ref_time
-#     whigh = (mfreqs + delta_freq/2.0)/ref_time
-#     wdiff = whigh - wlow
-
-#     # set design matrix for each component
-#     Xfit = np.zeros([mtimes.size, ordert])
-#     for i in range(1, ordert+1):
-#         Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
-
-#     if freq_fitted:
-#         compsnu = comps.copy()
-#     comps = np.zeros((ordert, opts.spectral_poly_order, Ix.size))
-#     time_fitted = True
-#     for b in range(orderf):
-#         dirty_comps = Xfit.T.dot(wsums[:, b, None]*compsnu[b])
-
-#         hess_comps = Xfit.T.dot(wsums[:, b, None]*Xfit)
-
-#         comps[:, b] = np.linalg.solve(hess_comps, dirty_comps)
-# else:
-#     if ntime > 1:
-#         raise NotImplementedError("Time interpolation is currently mandatory")
-#     print("Not fitting time axis", file=log)
-#     comps = comps
-#     time_fitted = False
-#     ordert = mtimes.size
-
-
-# # construct symbolic expression
-# from sympy.abc import t, f
-# from sympy import symbols
-
-# thetasf = []
-# params = ()
-# for i in range(orderf):
-#     coefft = symbols(f't(0:{ordert})_f{i}')
-#     # the reshape on comps needs to be consistent with the ordering in params
-#     params += coefft
-#     thetaf = sum(co*t**j for j, co in enumerate(coefft))
-#     thetasf.append(thetaf)
-
-# polysym = sum(co*f**j for j, co in enumerate(thetasf))
+    do_interp = cellxi != cellxo
+    do_interp |= cellyi != cellyo
+    do_interp |= x0i != x0o
+    do_interp |= y0i != y0o
+    if do_interp:
+        interpo = RegularGridInterpolator((xin, yin), image_in,
+                                          bounds_error=False, method='linear')
+        xx, yy = np.meshgrid(xo, yo, indexing='ij')
+        return interpo((xx, yy))
+    elif (nxi != nxo) or (nyi != nyo):
+        # only need the overlap in this case
+        _, idx0, idx1 = np.intersect1d(xin, xo, assume_unique=True, return_indices=True)
+        _, idy0, idy1 = np.intersect1d(yin, yo, assume_unique=True, return_indices=True)
+        return image[idx0, idy0]
+    else:
+        return image

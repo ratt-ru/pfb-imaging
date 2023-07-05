@@ -215,26 +215,24 @@ def _grid(**kw):
         except Exception as e:
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
 
-        # check grid spec TODO - allow interpolation of spatial axes
-        assert cell_rad == mds.cell_rad_x
-        assert nx == mds.npix_x
-        assert ny == mds.npix_y
-
-        # model func
-        params = sm.symbols(('t','f'))
-        params += sm.symbols(tuple(mds.params.values))
-        symexpr = parse_expr(mds.parametrisation)
-        model_func = lambdify(params, symexpr)
-        texpr = parse_expr(mds.texpr)
-        tfunc = lambdify(params[0], texpr)
-        fexpr = parse_expr(mds.fexpr)
-        ffunc = lambdify(params[1], fexpr)
+        # should we construct the model func outside
+        # of eval_coeffs_to_slice?
+        # params = sm.symbols(('t','f'))
+        # params += sm.symbols(tuple(mds.params.values))
+        # symexpr = parse_expr(mds.parametrisation)
+        # model_func = lambdify(params, symexpr)
+        # texpr = parse_expr(mds.texpr)
+        # tfunc = lambdify(params[0], texpr)
+        # fexpr = parse_expr(mds.fexpr)
+        # ffunc = lambdify(params[1], fexpr)
 
 
-        # model coeffs
+        # we only want to load these once
         model_coeffs = mds.coefficients.values
         locx = mds.location_x.values
         locy = mds.location_y.values
+        params = mds.params.values
+        coeffs = mds.coefficients.values
 
         print(f"Loading model from {opts.transfer_model_from}. ",
               file=log)
@@ -313,13 +311,23 @@ def _grid(**kw):
 
         # get the model
         if opts.transfer_model_from is not None:
-            assert x0 == mds.center_x
-            assert y0 == mds.center_y
-            model = np.zeros((nx, ny),
-                             dtype=ds.WEIGHT.data.dtype)
-            model[locx, locy] = model_func(tfunc(ds.time_out),
-                                           ffunc(ds.freq_out),
-                                           *model_coeffs)
+            from pfb.utils.misc import eval_coeffs_to_slice
+            model = eval_coeffs_to_slice(
+                ds.freq_out,
+                ds.time_out,
+                model_coeffs,
+                locx, locy,
+                mds.parametrisation,
+                params,
+                mds.texpr,
+                mds.fexpr,
+                mds.nx, mds.ny,
+                mds.cell_rad_x, mds.cell_rad_y,
+                mds.x0, mds.y0,
+                nx, ny,
+                cell_rad, cell_rad,
+                x0, y0
+            )
             model = da.from_array(model, chunks=(-1,-1))
             out_ds = out_ds.assign(**{'MODEL': (('x', 'y'), model)})
 
