@@ -581,6 +581,8 @@ def image_data_products(uvw,
     blocker.add_input('mask', mask, ('row','chan'))
     if counts is not None:
         blocker.add_input(counts, ('x','y'))
+    else:
+        blocker.add_input('counts', None)
 
 
 
