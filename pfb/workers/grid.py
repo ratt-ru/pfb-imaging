@@ -77,7 +77,7 @@ def _grid(**kw):
 
     # xds contains vis products, no imaging weights applied
     xds_name = f'{basename}.xds.zarr'
-    xds = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
+    xds = xds_from_zarr(xds_name, chunks={'row': -1})
     # dds contains image space products including imaging weights and uvw
     dds_name = f'{basename}_{opts.postfix}.dds.zarr'
 
@@ -106,11 +106,6 @@ def _grid(**kw):
     if opts.concat_row and len(xds) > nband_in:
         print('Concatenating datasets along row dimension', file=log)
         xds = concat_row(xds)
-        # try:
-        #     assert len(xds) == nband_in
-        # except Exception as e:
-        #     raise RuntimeError('Something went wrong during row concatenation.'
-        #                        'This is probably a bug.')
         ntime = 1
         times_out = np.array((xds[0].time_out,))
     else:
@@ -121,11 +116,6 @@ def _grid(**kw):
         print('Concatenating datasets along chan dimension. '
               f'Mapping {nband_in} datasets to {opts.nband} bands', file=log)
         xds = concat_chan(xds, nband_out=opts.nband)
-        # try:
-        #     assert len(xds) == ntime * opts.nband
-        # except Exception as e:
-        #     raise RuntimeError('Something went wrong during chan concatenation.'
-        #                        'This is probably a bug.')
         nband = opts.nband
         freqs_out = []
         for ds in xds:

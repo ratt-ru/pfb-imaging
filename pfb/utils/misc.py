@@ -840,10 +840,10 @@ def concat_chan(xds, nband_out=1):
                     xdst.append(ds)
 
             # LB - we should be able to avoid this stack operation by using Jon's *() magic
-            wgt = da.stack([ds.WEIGHT.data for ds in xdst]).rechunk(-1, -1, -1)
-            vis = da.stack([ds.VIS.data for ds in xdst]).rechunk(-1, -1, -1)
-            mask = da.stack([ds.MASK.data for ds in xdst]).rechunk(-1, -1, -1)
-            freq = da.stack([ds.FREQ.data for ds in xdst]).rechunk(-1, -1)
+            wgt = da.stack([ds.WEIGHT.data for ds in xdst]).rechunk(-1, -1) # verify chunking over freq axis
+            vis = da.stack([ds.VIS.data for ds in xdst]).rechunk(-1, -1)
+            mask = da.stack([ds.MASK.data for ds in xdst]).rechunk(-1, -1)
+            freq = da.stack([ds.FREQ.data for ds in xdst]).rechunk(-1)
 
             nrow = xdst[0].row.size
             nchan = freqsb.size
