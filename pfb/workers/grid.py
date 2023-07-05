@@ -125,6 +125,9 @@ def _grid(**kw):
         nband = nband_in
         freqs_out = freqs_in
 
+    # do this after concatenation (to check)
+    xds = xds.chunk({'chan': -1})
+
     real_type = xds[0].WEIGHT.dtype
     if real_type == np.float32:
         precision = 'single'
@@ -211,7 +214,7 @@ def _grid(**kw):
     if opts.transfer_model_from is not None:
         try:
             mds = xds_from_zarr(opts.transfer_model_from,
-                                chunks={'x':-1, 'y':-1})[0]
+                                chunks={'params':-1, 'comps':-1})[0]
         except Exception as e:
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
 
