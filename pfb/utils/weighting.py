@@ -213,7 +213,7 @@ def etaf(ressq, ovar, dof):
 
 
 from pfb.operators.gridder import im2vis
-def l2reweight(dsv, dsi, epsilon, nthreads, wstack, precision, dof=2):
+def l2reweight(dsv, dsi, model, epsilon, nthreads, wstack, precision, dof=2):
     # vis data products
     uvw = dsv.UVW.data
     freq = dsv.FREQ.data
@@ -221,7 +221,7 @@ def l2reweight(dsv, dsi, epsilon, nthreads, wstack, precision, dof=2):
     vis_mask = dsv.MASK.data
 
     # image data products
-    model = dsi.MODEL.data
+    # model = dsi.MODEL.data
     cell_rad = dsi.cell_rad
     x0 = dsi.x0
     y0 = dsi.y0

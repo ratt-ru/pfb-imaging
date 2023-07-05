@@ -115,29 +115,25 @@ def test_model2comps(tmp_path_factory):
     x0 = cell_deg*xshift
     yshift = -10
     y0 = cell_deg*yshift
-    nxo = 100
-    nyo = 100
-    imout = eval_coeffs_to_slice(mtimes[0],
-                                 mfreqs[0],
-                                 coeffs,
-                                 Ix, Iy,
-                                 expr,
-                                 params,
-                                 tfunc,
-                                 ffunc,
-                                 nx, ny,
-                                 cell_deg, cell_deg,
-                                 0.0, 0.0,
-                                 nxo, nyo,
-                                 cell_deg, cell_deg,
-                                 x0, y0)
-    xlow = nx//2 - nxo//2 + xshift
-    xhigh = nx//2 + nxo//2 + xshift
-    ylow = ny//2 - nyo//2 + yshift
-    yhigh = ny//2 + nyo//2 + yshift
+    for npix in [100, nx, 2*nx]:
+        imout = eval_coeffs_to_slice(mtimes[0],
+                                    mfreqs[0],
+                                    coeffs,
+                                    Ix, Iy,
+                                    expr,
+                                    params,
+                                    tfunc,
+                                    ffunc,
+                                    nx, ny,
+                                    cell_deg, cell_deg,
+                                    0.0, 0.0,
+                                    npix, npix,
+                                    cell_deg, cell_deg,
+                                    x0, y0)
 
-    subim = model[0, xlow:xhigh, ylow:yhigh]
-    mask = subim > 0
-    assert_allclose(imout[mask], subim[mask])
+        mx, my, gx, gy = give_edges(npix//2 - xshift,
+                                    npix//2 - yshift, npix, npix, nx, ny)
+
+        assert_allclose(1.0 + imout[mx, my], 1.0 + model[0, gx, gy])
 
 # test_model2comps()

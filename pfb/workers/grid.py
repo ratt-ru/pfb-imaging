@@ -238,6 +238,9 @@ def _grid(**kw):
         params = mds.params.values
         coeffs = mds.coefficients.values
 
+        # regular grid interpolator doesn't work with small values
+        cell_scaling = 1.0/np.minimum(mds.cell_rad_x, mds.cell_rad_y)
+
         print(f"Loading model from {opts.transfer_model_from}. ",
               file=log)
 
@@ -317,8 +320,8 @@ def _grid(**kw):
         if opts.transfer_model_from is not None:
             from pfb.utils.misc import eval_coeffs_to_slice
             model = eval_coeffs_to_slice(
-                ds.freq_out,
                 ds.time_out,
+                ds.freq_out,
                 model_coeffs,
                 locx, locy,
                 mds.parametrisation,
@@ -342,7 +345,7 @@ def _grid(**kw):
 
 
         if opts.l2reweight_dof and model is not None:
-            wgt, res = l2reweight(ds, out_ds,
+            wgt, res = l2reweight(ds, out_ds, model,
                              opts.epsilon,
                              opts.nvthreads,
                              opts.wstack,
@@ -471,7 +474,6 @@ def _grid(**kw):
         wsum = wgt[mask.astype(bool)].sum()
 
         if opts.residual and model is not None:
-            # model = out_ds.MODEL.data
             if res is not None:
                 residual = vis2im(
                         uvw=clone(uvw),

@@ -68,8 +68,6 @@ def _restore(**kw):
         assert ds.y.size == ny
     freq = np.unique(np.array(freq))
     assert freq.size == opts.nband
-    nx_psf = dds[0].x_psf.size
-    ny_psf = dds[0].y_psf.size
 
     # init fits headers
     radec = (dds[0].ra, dds[0].dec)
@@ -97,6 +95,8 @@ def _restore(**kw):
     model_mfs = np.mean(model, axis=0)
 
     if psf is not None:
+        nx_psf = dds[0].x_psf.size
+        ny_psf = dds[0].y_psf.size
         psf_mfs = np.sum(psf, axis=0)
         psf[fmask] /= wsums[fmask, None, None]/wsum
         # sanity check

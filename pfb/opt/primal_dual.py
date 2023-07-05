@@ -153,7 +153,7 @@ def primal_dual_optimised(
             # this is stricter and should result
             # in more homogeneous resolution
             msk = np.any(x<=0, axis=0)
-            x[:, mask] = 0.0
+            x[:, msk] = 0.0
             # x[x < 0.0] = 0.0
 
         # convergence check

@@ -217,8 +217,9 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
             thiskernhat = r2c(iFs(thiskern, axes=ax), axes=ax, forward=True,
                               nthreads=nthreads, inorm=0)
 
-            convkernhat = np.where(np.abs(thiskernhat) > 0.0,
-                                   gausskernhat / thiskernhat, 0.0)
+            convkernhat = np.zeros_like(thiskernhat)
+            msk = np.abs(thiskernhat) > 0.0
+            convkernhat[msk] = gausskernhat[msk]/thiskernhat[msk]
 
             imhat[i] *= convkernhat[0]
 
@@ -1100,20 +1101,6 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
                          nxi, nyi, cellxi, cellyi, x0i, y0i,
                          nxo, nyo, cellxo, cellyo, x0o, y0o):
 
-    xin = (-(nxi//2) + np.arange(nxi))*cellxi + x0i
-    yin = (-(nyi//2) + np.arange(nyi))*cellyi + y0i
-    xo = (-(nxo//2) + np.arange(nxo))*cellxo + x0o
-    yo = (-(nyo//2) + np.arange(nyo))*cellyo + y0o
-    # import ipdb; ipdb.set_trace()
-    try:
-        assert (xo.min() >= xin.min()) and (xo.max() <= xin.max())
-    except:
-        raise ValueError('Extrapolation is not possible.')
-    try:
-        assert (yo.min() >= yin.min()) and (yo.max() <= yin.max())
-    except:
-        raise ValueError('Extrapolation is not possible.')
-
     image_in = np.zeros((nxi, nyi), dtype=float)
     params = sm.symbols(('t','f'))
     params += sm.symbols(tuple(paramf))
@@ -1125,19 +1112,66 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
     ffunc = lambdify(params[1], fexpr)
     image_in[Ix, Iy] = modelf(tfunc(time), ffunc(freq), *coeffs)
 
+    xin = (-(nxi//2) + np.arange(nxi))*cellxi + x0i
+    yin = (-(nyi//2) + np.arange(nyi))*cellyi + y0i
+    xo = (-(nxo//2) + np.arange(nxo))*cellxo + x0o
+    yo = (-(nyo//2) + np.arange(nyo))*cellyo + y0o
+
+    # how many pixels to pad by to extrapolate with zeros
+    xldiff = xin.min() - xo.min()
+    if xldiff > 0.0:
+        npadxl = int(np.ceil(xldiff/cellxi))
+    else:
+        npadxl = 0
+    yldiff = yin.min() - yo.min()
+    if yldiff > 0.0:
+        npadyl = int(np.ceil(yldiff/cellyi))
+    else:
+        npadyl = 0
+
+    xudiff = xo.max() - xin.max()
+    if xudiff > 0.0:
+        npadxu = int(np.ceil(xudiff/cellxi))
+    else:
+        npadxu = 0
+    yudiff = yo.max() - yin.max()
+    if yudiff > 0.0:
+        npadyu = int(np.ceil(yudiff/cellyi))
+    else:
+        npadyu = 0
+
+    do_pad = npadxl > 0
+    do_pad |= npadxu > 0
+    do_pad |= npadyl > 0
+    do_pad |= npadyu > 0
+    if do_pad:
+        # import ipdb; ipdb.set_trace()
+        image_in = np.pad(image_in,
+                        ((npadxl, npadxu), (npadyl, npadyu)),
+                        mode='constant')
+
+        xin = (-(nxi//2+npadxl) + np.arange(nxi + npadxl + npadxu))*cellxi + x0i
+        nxi = nxi + npadxl + npadxu
+        yin = (-(nyi//2+npadyl) + np.arange(nyi + npadyl + npadyu))*cellyi + y0i
+        nyi = nyi + npadyl + npadyu
+
+    # import ipdb; ipdb.set_trace()
+
     do_interp = cellxi != cellxo
     do_interp |= cellyi != cellyo
     do_interp |= x0i != x0o
     do_interp |= y0i != y0o
+    do_interp |= nxi != nxo
+    do_interp |= nyi != nyo
     if do_interp:
         interpo = RegularGridInterpolator((xin, yin), image_in,
-                                          bounds_error=False, method='linear')
+                                          bounds_error=True, method='linear')
         xx, yy = np.meshgrid(xo, yo, indexing='ij')
         return interpo((xx, yy))
-    elif (nxi != nxo) or (nyi != nyo):
-        # only need the overlap in this case
-        _, idx0, idx1 = np.intersect1d(xin, xo, assume_unique=True, return_indices=True)
-        _, idy0, idy1 = np.intersect1d(yin, yo, assume_unique=True, return_indices=True)
-        return image[idx0, idy0]
+    # elif (nxi != nxo) or (nyi != nyo):
+    #     # only need the overlap in this case
+    #     _, idx0, idx1 = np.intersect1d(xin, xo, assume_unique=True, return_indices=True)
+    #     _, idy0, idy1 = np.intersect1d(yin, yo, assume_unique=True, return_indices=True)
+    #     return image[idx0, idy0]
     else:
-        return image
+        return image_in
