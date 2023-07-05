@@ -126,7 +126,8 @@ def _grid(**kw):
         freqs_out = freqs_in
 
     # do this after concatenation (to check)
-    xds = xds.chunk({'chan': -1})
+    for i, ds in enumerate(xds):
+        xds[i] = ds.chunk({'chan': -1})
 
     real_type = xds[0].WEIGHT.dtype
     if real_type == np.float32:
