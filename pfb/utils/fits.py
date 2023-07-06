@@ -148,8 +148,9 @@ def set_header_info(mhdr, ref_freq, freq_axis, args, beampars):
 
 def normwsum(data, wsum):
     if wsum > 0:
-        data /= wsum
-    return data
+        return data / wsum
+    else:
+        return data
 
 
 def dds2fits(dds, column, outname, norm_wsum=True, otype=np.float32):

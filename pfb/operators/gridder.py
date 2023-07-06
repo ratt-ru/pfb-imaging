@@ -182,8 +182,6 @@ def im2vis(uvw=None,
            sigma_min=1.1,
            sigma_max=2.6):
 
-    # import pdb; pdb.set_trace()
-
     if precision.lower() == 'single':
         complex_type = np.float32
     elif precision.lower() == 'double':
