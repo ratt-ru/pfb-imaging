@@ -20,10 +20,7 @@ requirements = [
                 "codex-africanus[complete]",
                 "dask-ms[xarray, zarr, s3]",
                 "stimela==2.0rc4",
-
-                "QuartiCal"
-                "@git+https://github.com/ratt-ru/QuartiCal.git"
-                "@v0.2.0-dev",
+                "QuartiCal",
 
                 "packratt"
                 "@git+https://github.com/ratt-ru/packratt.git"
