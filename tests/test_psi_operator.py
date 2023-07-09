@@ -4,7 +4,7 @@ import dask.array as da
 from numpy.testing import assert_array_almost_equal
 from pfb.prox.prox_21 import prox_21
 from pfb.prox.prox_21m import prox_21m
-from pfb.prox.prox_21m import prox_21m_numba
+from pfb.prox.prox_21m import prox_21m_numba, dual_update, dual_update_numba
 from pfb.operators.psi import im2coef
 from pfb.operators.psi import coef2im
 import pywt
@@ -153,3 +153,45 @@ def test_prox21m_numba(nband, nbasis, nmax, lam, sigma):
     prox_21m_numba(v, vout, lam, sigma=sigma, weight=l1weight)
 
     assert_array_almost_equal(res, vout, decimal=8)
+
+
+@pmp("nx", [1202, 240])
+@pmp("ny", [324, 1506])
+@pmp("nband", [1, 3, 6])
+@pmp("nlevels", [1, 2])
+def test_dual_update(nx, ny, nband, nlevels):
+    """
+    Compare numpy to numba optimised dual update
+    """
+    image = np.random.randn(nx, ny)
+
+    nu = 1.0  + 0.1 * np.arange(nband)
+
+    x = image[None, :, :] * nu[:, None, None] ** (-0.7)
+
+    xp = x.copy()
+
+    # set up dictionary info
+    bases = ('self','db1','db2','db3','db4','db5')
+    nbasis = len(bases)
+    iys, sys, ntot, nmax = wavelet_setup(x, bases, nlevels)
+    ntot = tuple(ntot)
+    psiH = partial(im2coef, bases=bases, ntot=ntot, nmax=nmax,
+                   nlevels=nlevels)
+    psi = partial(coef2im, bases=bases, ntot=ntot,
+                  iy=iys, sy=sys, nx=nx, ny=ny)
+
+    weight21 = np.ones((nbasis, nmax)) # np.random.random(nbasis*nmax).reshape(nbasis, nmax)
+    lam21 = 0.1
+    sigma = 1.0
+
+    v = np.random.randn(nband, nbasis, nmax)
+    vp = v.copy()
+    res1 = dual_update(v, x, psiH, lam21, sigma=sigma, weight=weight21)
+
+    # initialise v with psiH(x)
+    psiH(xp, v)
+    dual_update_numba(vp, v, lam21, sigma=sigma, weight=weight21)
+    assert_array_almost_equal(1 + res1,1 + v, decimal=12)
+
+# test_dual_update(1024, 2056, 3, 2)
