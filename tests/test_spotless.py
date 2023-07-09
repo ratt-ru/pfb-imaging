@@ -196,7 +196,7 @@ def test_spotless(tmp_path_factory):
 
 
     # get the inferred model
-    dds = xds_from_zarr(f'{outname}_I_main.dds.zarr')
+    dds = xds_from_zarr(f'{outname}_I_main.dds')
     freqs_dds = []
     times_dds = []
     for ds in dds:
@@ -225,7 +225,7 @@ def test_spotless(tmp_path_factory):
     model2comps_args["sigmasq"] = 1e-14
     _model2comps(**model2comps_args)
 
-    mds_name = f'{outname}_I_main_model.coeffs.zarr'
+    mds_name = f'{outname}_I_main_model.mds'
     mds = xds_from_zarr(mds_name)[0]
 
     # grid spec
@@ -268,7 +268,7 @@ def test_spotless(tmp_path_factory):
         degrid_args[key] = schema.degrid["inputs"][key]["default"]
     # overwrite defaults
     degrid_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
-    degrid_args["output_filename"] = outname
+    degrid_args["mds"] = f'{outname}_I_main_model.mds'
     degrid_args["channels_per_image"] = 1
     degrid_args["nthreads_dask"] = 1
     degrid_args["nvthreads"] = 8
@@ -299,7 +299,7 @@ def test_spotless(tmp_path_factory):
     grid_args["wstack"] = True
     _grid(**grid_args)
 
-    ddso = xds_from_zarr(f'{outname}_I_resid.dds.zarr')
+    ddso = xds_from_zarr(f'{outname}_I_resid.dds')
     for dso, ds in zip(ddso, dds):
         assert_allclose(1 + np.abs(dso.DIRTY.values),
                         1 + np.abs(ds.DIRTY.values))

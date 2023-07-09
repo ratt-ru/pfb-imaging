@@ -77,10 +77,10 @@ def _grid(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     # xds contains vis products, no imaging weights applied
-    xds_name = f'{basename}.xds.zarr'
+    xds_name = f'{basename}.xds'
     xdsp = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
     # dds contains image space products including imaging weights and uvw
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds'
 
     if os.path.isdir(dds_name):
         dds_exists = True

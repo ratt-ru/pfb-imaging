@@ -53,7 +53,7 @@ def _restore(**kw):
     from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres, dds2cubes
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds'
 
     dds = xds_from_zarr(dds_name)
     nband = opts.nband

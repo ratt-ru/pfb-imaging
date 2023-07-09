@@ -239,7 +239,7 @@ def test_clean(do_gains, tmp_path_factory):
 
     # get inferred model
     basename = f'{outname}_I'
-    dds_name = f'{basename}_{postfix}.dds.zarr'
+    dds_name = f'{basename}_{postfix}.dds'
     dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
     model_inferred = np.zeros((nchan, nx, ny))
     for ds in dds:

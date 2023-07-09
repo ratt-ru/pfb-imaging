@@ -77,7 +77,7 @@ def _spotless(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds'
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
                                           'chan':-1,
                                           'x':-1,
@@ -370,7 +370,7 @@ def _spotless(**kw):
 #     from itertools import cycle
 
 #     basename = f'{opts.output_filename}_{opts.product.upper()}'
-#     dds_name = f'{basename}_{opts.postfix}.dds.zarr'
+#     dds_name = f'{basename}_{opts.postfix}.dds'
 
 #     client = get_client()
 #     names = [w['name'] for w in client.scheduler_info()['workers'].values()]

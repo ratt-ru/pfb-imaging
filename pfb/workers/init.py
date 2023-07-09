@@ -94,13 +94,13 @@ def _init(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    xdsstore = DaskMSStore(f'{basename}.xds.zarr')
+    xdsstore = DaskMSStore(f'{basename}.xds')
     if xdsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {basename}.xds.zarr", file=log)
+            print(f"Overwriting {basename}.xds", file=log)
             xdsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.xds.zarr exists. "
+            raise ValueError(f"{basename}.xds exists. "
                              "Set overwrite to overwrite it. ")
 
     if opts.gain_table is not None:
@@ -269,7 +269,7 @@ def _init(**kw):
                         out_datasets.append(out_ds)
 
     if len(out_datasets):
-        writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',
+        writes = xds_to_zarr(out_datasets, f'{basename}.xds',
                              columns='ALL')
     else:
         raise ValueError('No datasets found to write. '

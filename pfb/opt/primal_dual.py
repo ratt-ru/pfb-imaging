@@ -23,7 +23,7 @@ def primal_dual(
         tol=1e-5,
         maxit=1000,
         minit=10,
-        positivity=True,
+        positivity=1,
         report_freq=10,
         gamma=1.0,
         verbosity=1):
@@ -53,8 +53,11 @@ def primal_dual(
 
         # primal update
         x = xp - tau * (psi(2 * v - vp) + grad(xp))
-        if positivity:
+        if positivity == 1:
             x[x < 0.0] = 0.0
+        elif positivity == 2:
+            msk = np.any(x<=0, axis=0)
+            x[:, msk] = 0.0
 
         # convergence check
         eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
@@ -99,7 +102,7 @@ def primal_dual_optimised(
         mask=None,  # regions where mask is False will be masked
         tol=1e-5,
         maxit=1000,
-        positivity=True,
+        positivity=1,
         report_freq=10,
         gamma=1.0,
         verbosity=1,
@@ -149,12 +152,11 @@ def primal_dual_optimised(
         xout += grad(xp)
         ne.evaluate('xp - tau * xout', out=x)  #, casting='same_kind')
 
-        if positivity:
-            # this is stricter and should result
-            # in more homogeneous resolution
+        if positivity == 1:
+            x[x < 0.0] = 0.0
+        elif positivity == 2:
             msk = np.any(x<=0, axis=0)
             x[:, msk] = 0.0
-            # x[x < 0.0] = 0.0
 
         # convergence check
         eps = np.linalg.norm(x - xp) / np.linalg.norm(x)

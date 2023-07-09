@@ -59,10 +59,17 @@ inputs:
     info:
       Step size of update
   positivity:
-    dtype: bool
-    default: True
+    dtype: int
+    default: 1
+    # choices:
+    #   - 0
+    #   - 1
+    #   - 2
     info:
-      Apply positivity constraint
+      How to apply positivity constraint
+      0 -> no positivity,
+      1 -> normal positivity constraint
+      and 2 -> strong positivity i.e. all pixels in a band > 0
   niter:
     dtype: int
     default: 5

@@ -84,9 +84,7 @@ def _degrid(**kw):
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
 
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
-    mds_name = f'{basename}_{opts.postfix}_{opts.model_name.lower()}.coeffs.zarr'
-    mds = xds_from_zarr(mds_name)[0]
+    mds = xds_from_zarr(opts.mds)[0]
 
     # grid spec
     cell_rad = mds.cell_rad_x
