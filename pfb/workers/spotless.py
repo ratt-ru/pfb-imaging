@@ -62,7 +62,7 @@ def _spotless(**kw):
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
-    from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
+    from pfb.opt.primal_dual import primal_dual_optimised2 as primal_dual
     from pfb.utils.misc import l1reweight_func
     from pfb.operators.hessian import hessian_xds
     from pfb.operators.psf import psf_convolve_cube

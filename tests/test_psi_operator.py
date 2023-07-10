@@ -181,9 +181,9 @@ def test_dual_update(nx, ny, nband, nlevels):
     psi = partial(coef2im, bases=bases, ntot=ntot,
                   iy=iys, sy=sys, nx=nx, ny=ny)
 
-    weight21 = np.ones((nbasis, nmax)) # np.random.random(nbasis*nmax).reshape(nbasis, nmax)
+    weight21 = np.random.random(nbasis*nmax).reshape(nbasis, nmax)
     lam21 = 0.1
-    sigma = 1.0
+    sigma = 1.75
 
     v = np.random.randn(nband, nbasis, nmax)
     vp = v.copy()
@@ -194,4 +194,4 @@ def test_dual_update(nx, ny, nband, nlevels):
     dual_update_numba(vp, v, lam21, sigma=sigma, weight=weight21)
     assert_array_almost_equal(1 + res1,1 + v, decimal=12)
 
-# test_dual_update(1024, 2056, 3, 2)
+test_dual_update(1024, 2056, 3, 2)

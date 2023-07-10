@@ -236,18 +236,8 @@ def primal_dual_optimised2(
     eps = 1.0
     numreweight = 0
     for k in range(maxit):
-        # tmp prox variable
-        # vtilde = v + sigma * psiH(xp)
-        psiH(xp, vtilde)
-        ne.evaluate('v + sigma * vtilde', out=vtilde)  #, casting='same_kind')
-
-        # dual update
-        # v = vtilde - sigma * prox(vtilde / sigma, lam / sigma)
-        prox(vtilde, vout, lam, sigma, weight=l1weight)
-        ne.evaluate('vtilde - sigma*vout', out=v)  #, casting='same_kind')
-
-        # primal update
-        # x = xp - tau * (psi(2 * v - vp) + grad(xp))
+        psiH(xp, v)
+        dual_update_numba(vp, v, lam, sigma=sigma, weight=l1weight)
         ne.evaluate('2.0 * v - vp', out=vp)  #, casting='same_kind')
         psi(vp, xout)
         xout += grad(xp)

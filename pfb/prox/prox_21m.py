@@ -92,5 +92,5 @@ def dual_update_numba(vp, v, lam, sigma=1.0, weight=None):
             absvbisum = np.abs(np.sum(vtildebi)/sigma)
             v[:, b, i] = vtildebi
             if absvbisum:
-                softvbi = np.maximum(absvbisum - lam*weightb[i]/sigma, 0.0) #* vbisum/absvbi
-                v[:, b, i] *= (1-softvbi / absvbisum / sigma)
+                softvbi = np.maximum(absvbisum - lam*weightb[i]/sigma, 0.0)
+                v[:, b, i] *= (1-softvbi / absvbisum)
