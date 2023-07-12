@@ -54,6 +54,11 @@ inputs:
     default: false
     info:
       Output fits cubes
+  dirty:
+    dtype: bool
+    default: true
+    info:
+      Compute the dirty image
   psf:
     dtype: bool
     default: true

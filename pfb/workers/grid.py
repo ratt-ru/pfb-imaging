@@ -71,6 +71,7 @@ def _grid(**kw):
     import sympy as sm
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
+    from quartical.utils.dask import Blocker
 
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
@@ -256,6 +257,7 @@ def _grid(**kw):
         uvw = ds.UVW.data
         freq = ds.FREQ.data
         vis = ds.VIS.data
+        wgt = ds.WEIGHT.data
         # This is a vis space mask (see wgridder convention)
         mask = ds.MASK.data
         bandid = np.where(freqs_out == ds.freq_out)[0][0]
@@ -356,7 +358,7 @@ def _grid(**kw):
                         ny,
                         cell_rad,
                         cell_rad,
-                        wgt.dtype,
+                        real_type,
                         ngrid=opts.nvthreads)
                 # get rid of artificially high weights corresponding to
                 # nearly empty cells
@@ -371,7 +373,7 @@ def _grid(**kw):
 
         # we might want to chunk over row chan in the future but
         # for now these will always have chunks=(-1,-1)
-        blocker = Blocker(_image_data_products, ('row', 'chan'))
+        blocker = Blocker(image_data_products, ('row', 'chan'))
         blocker.add_input('uvw', uvw, ('row','three'))
         blocker.add_input('freq', freq, ('chan',))
         blocker.add_input('vis', vis, ('row','chan'))
@@ -385,18 +387,17 @@ def _grid(**kw):
         blocker.add_input('ny', ny)
         blocker.add_input('nx_psf', nx_psf)
         blocker.add_input('ny_psf', ny_psf)
-        blocker.add_input('cellx', cellx)
-        blocker.add_input('celly', celly)
+        blocker.add_input('cellx', cell_rad)
+        blocker.add_input('celly', cell_rad)
         if model is not None:
             blocker.add_input('model', ('x', 'y'))
         else:
             blocker.add_input('model', None)
-        blocker.add_input('robustness', robustness)
+        blocker.add_input('robustness', opts.robustness)
         blocker.add_input('x0', x0)
         blocker.add_input('y0', y0)
         blocker.add_input('nthreads', opts.nvthreads)
         blocker.add_input('epsilon', opts.epsilon)
-        blocker.add_input('precision', opts.precision)
         blocker.add_input('do_wgridding', opts.wstack)
         blocker.add_input('double_accum', opts.double_accum)
         blocker.add_input('l2reweight_dof', opts.l2reweight_dof)
@@ -405,58 +406,46 @@ def _grid(**kw):
         blocker.add_input('do_residual', opts.residual)
 
         blocker.add_output(
-            'dirty',
+            'DIRTY',
             ('x', 'y'),
             ((nx,), (ny,)),
             wgt.dtype)
 
+        blocker.add_output(
+            'WSUM',
+            ('scalar',),
+            ((1,),),
+            wgt.dtype)
+
         if opts.residual:
             blocker.add_output(
-                'residual',
+                'RESIDUAL',
                 ('x', 'y'),
                 ((nx,), (ny,)),
                 wgt.dtype)
 
         if opts.psf:
             blocker.add_output(
-                'psf',
+                'PSF',
                 ('x_psf', 'y_psf'),
+                ((nx_psf,), (ny_psf,)),
+                wgt.dtype)
+            blocker.add_output(
+                'PSFHAT',
+                ('x_psf', 'yo2'),
                 ((nx_psf,), (ny_psf,)),
                 wgt.dtype)
 
         if opts.weight:
             blocker.add_output(
-                'weight',
+                'WEIGHT',
                 ('row', 'chan'),
                 wgt.chunks,
                 wgt.dtype)
 
         output_dict = blocker.get_dask_outputs()
 
-
-        image_dict = image_space_data_products(
-            uvw,
-            freq,
-            vis,
-            wgt,
-            mask,
-            counts,
-            nx, ny,
-            nx_psf, ny_psf,
-            cell_rad, cell_rad,
-            model=model,
-            robustness=opts.robustness,
-            x0=x0, y0=y0,
-            nthreads=opts.nvthreads,
-            epsilon=opts.epsilon,
-            precision=opts.precision,
-            do_wgridding=opts.wstack,
-            double_accum=opts.double_accum,
-            l2reweight_dof=opts.l2reweight_dof,
-            do_psf=opts.psf,
-            do_weight=opts.weight,
-            do_residual=opts.residual
-        )
+        # import ipdb; ipdb.set_trace()
 
         # This
         out_ds = out_ds.assign(**{
@@ -473,14 +462,12 @@ def _grid(**kw):
         # but how apply imaging weights in that case?
         if opts.weight:
             out_ds = out_ds.assign(**{
-                'WEIGHT': (('row', 'chan'), image_dict['WEIGHT'])
+                'WEIGHT': (('row', 'chan'), output_dict['WEIGHT'])
                 })
-
-        wsum = wgt[mask.astype(bool)].sum()
 
         if opts.residual:
             out_ds = out_ds.assign(**{
-                'RESIDUAL': (('x', 'y'), image_dict['RESIDUAL'])
+                'RESIDUAL': (('x', 'y'), output_dict['RESIDUAL'])
                 })
 
 
@@ -488,7 +475,7 @@ def _grid(**kw):
             'FREQ': (('chan',), freq),
             'UVW': (('row', 'three'), uvw),
             'MASK': (('row', 'chan'), mask),
-            'WSUM': (('scalar',), image_dict['WSUM'])
+            'WSUM': (('scalar',), output_dict['WSUM'])
             })
 
 
@@ -504,6 +491,7 @@ def _grid(**kw):
 
         dds_out.append(out_ds.unify_chunks())
 
+    import ipdb; ipdb.set_trace()
     writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
 
     # dask.visualize(writes, color="order", cmap="autumn",

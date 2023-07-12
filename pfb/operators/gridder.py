@@ -560,7 +560,6 @@ def image_data_products(uvw,
                         x0=0.0, y0=0.0,
                         nthreads=1,
                         epsilon=1e-7,
-                        precision='double',
                         do_wgridding=True,
                         double_accum=True,
                         l2reweight_dof=None,
@@ -627,24 +626,25 @@ def image_data_products(uvw,
         wgt *= imwgt
 
     wsum = wgt[mask.astype(bool)].sum()
+    out_dict['WSUM'] = wsum
 
-    if do_dirty:
-        dirty = vis2dirty(
-            uvw=uvw,
-            freq=freq,
-            vis=vis,
-            wgt=wgt,
-            mask=mask,
-            npix_x=nx, npix_y=ny,
-            pixsize_x=cellx, pixsize_y=celly,
-            center_x=x0, center_y=y0,
-            epsilon=epsilon,
-            flip_v=False,  # hardcoded for now
-            do_wgridding=do_wgridding,
-            divide_by_n=False,  # hardcoded for now
-            nthreads=nthreads,
-            sigma_min=1.1, sigma_max=3.0,
-            double_precision_accumulation=double_accum)
+    dirty = vis2dirty(
+        uvw=uvw,
+        freq=freq,
+        vis=vis,
+        wgt=wgt,
+        mask=mask,
+        npix_x=nx, npix_y=ny,
+        pixsize_x=cellx, pixsize_y=celly,
+        center_x=x0, center_y=y0,
+        epsilon=epsilon,
+        flip_v=False,  # hardcoded for now
+        do_wgridding=do_wgridding,
+        divide_by_n=False,  # hardcoded for now
+        nthreads=nthreads,
+        sigma_min=1.1, sigma_max=3.0,
+        double_precision_accumulation=double_accum)
+    out_dict['DIRTY'] = dirty
 
     if do_psf:
         if x0 or y0:
@@ -703,9 +703,12 @@ def image_data_products(uvw,
                      nthreads=nthreads,
                      forward=True, inorm=0)
 
+        out_dict["PSF"] = psf
+        out_dict["PSFHAT"] = psfhat
+
 
     if do_residual and model is not None:
-        residual = vis2im(
+        residual = vis2dirty(
             uvw=uvw,
             freq=freq,
             vis=residual_vis,
@@ -721,3 +724,7 @@ def image_data_products(uvw,
             nthreads=nthreads,
             sigma_min=1.1, sigma_max=3.0,
             double_precision_accumulation=double_accum)
+
+        out_dict['RESIDUAL'] = residual
+
+    return out_dict
