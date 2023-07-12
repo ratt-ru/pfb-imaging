@@ -4,6 +4,7 @@ import dask.array as da
 from distributed import wait, get_client, as_completed
 from operator import getitem
 from ducc0.misc import make_noncritical
+from pfb.utils.misc import norm_diff
 import pyscilog
 log = pyscilog.get_logger('PD')
 
@@ -250,7 +251,9 @@ def primal_dual_optimised2(
             x[:, msk] = 0.0
 
         # convergence check
-        eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
+        # LB - why is numpy timing so inconsistent?
+        # eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
+        eps = norm_diff(x, xp)
         if eps < tol:
             if reweighter is not None and numreweight < maxreweight:
                 l1weight = reweighter(x)

@@ -1171,3 +1171,16 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
     #     return image[idx0, idy0]
     else:
         return image_in
+
+
+@njit(nogil=True, fastmath=True, cache=True,)
+def norm_diff(x, xp):
+    nband, nx, ny = x.shape
+    num = 0.0
+    den = 0.0
+    for b in range(nband):
+        for i in range(nx):
+            for j in range(ny):
+                num += (x[b, i, j] - xp[b, i, j])**2
+                den += x[b, i, j]**2
+    return np.sqrt(num/den)
