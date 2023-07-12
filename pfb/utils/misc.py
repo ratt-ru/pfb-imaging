@@ -1184,3 +1184,14 @@ def norm_diff(x, xp):
                 num += (x[b, i, j] - xp[b, i, j])**2
                 den += x[b, i, j]**2
     return np.sqrt(num/den)
+
+
+def remove_large_islands(x, max_island_size=100):
+    islands = label(x.squeeze())
+    num_islands = islands.max()
+    for i in range(1,num_islands+1):
+        msk = islands == i
+        num_pix = np.sum(msk)
+        if num_pix > max_island_size:
+            x[msk] = 0.0
+    return x
