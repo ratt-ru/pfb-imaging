@@ -57,10 +57,10 @@ def _grid(**kw):
     from ducc0.fft import good_size
     from pfb.utils.fits import dds2fits, dds2fits_mfs
     from pfb.utils.misc import compute_context
-    from pfb.operators.gridder import vis2im, loc2psf_vis #, image_data_products
+    from pfb.operators.gridder import image_data_products
     from pfb.operators.fft import fft2d
-    from pfb.utils.weighting import (compute_counts, counts_to_weights,
-                                     filter_extreme_counts, l2reweight)
+    from pfb.utils.weighting import (compute_counts,
+                                     filter_extreme_counts)
     from pfb.utils.beam import eval_beam
     import xarray as xr
     from uuid import uuid4
@@ -369,6 +369,70 @@ def _grid(**kw):
         else:
             counts = None
 
+        # we might want to chunk over row chan in the future but
+        # for now these will always have chunks=(-1,-1)
+        blocker = Blocker(_image_data_products, ('row', 'chan'))
+        blocker.add_input('uvw', uvw, ('row','three'))
+        blocker.add_input('freq', freq, ('chan',))
+        blocker.add_input('vis', vis, ('row','chan'))
+        blocker.add_input('wgt', wgt, ('row','chan'))
+        blocker.add_input('mask', mask, ('row','chan'))
+        if counts is not None:
+            blocker.add_input(counts, ('x','y'))
+        else:
+            blocker.add_input('counts', None)
+        blocker.add_input('nx', nx)
+        blocker.add_input('ny', ny)
+        blocker.add_input('nx_psf', nx_psf)
+        blocker.add_input('ny_psf', ny_psf)
+        blocker.add_input('cellx', cellx)
+        blocker.add_input('celly', celly)
+        if model is not None:
+            blocker.add_input('model', ('x', 'y'))
+        else:
+            blocker.add_input('model', None)
+        blocker.add_input('robustness', robustness)
+        blocker.add_input('x0', x0)
+        blocker.add_input('y0', y0)
+        blocker.add_input('nthreads', opts.nvthreads)
+        blocker.add_input('epsilon', opts.epsilon)
+        blocker.add_input('precision', opts.precision)
+        blocker.add_input('do_wgridding', opts.wstack)
+        blocker.add_input('double_accum', opts.double_accum)
+        blocker.add_input('l2reweight_dof', opts.l2reweight_dof)
+        blocker.add_input('do_psf', opts.psf)
+        blocker.add_input('do_weight', opts.weight)
+        blocker.add_input('do_residual', opts.residual)
+
+        blocker.add_output(
+            'dirty',
+            ('x', 'y'),
+            ((nx,), (ny,)),
+            wgt.dtype)
+
+        if opts.residual:
+            blocker.add_output(
+                'residual',
+                ('x', 'y'),
+                ((nx,), (ny,)),
+                wgt.dtype)
+
+        if opts.psf:
+            blocker.add_output(
+                'psf',
+                ('x_psf', 'y_psf'),
+                ((nx_psf,), (ny_psf,)),
+                wgt.dtype)
+
+        if opts.weight:
+            blocker.add_output(
+                'weight',
+                ('row', 'chan'),
+                wgt.chunks,
+                wgt.dtype)
+
+        output_dict = blocker.get_dask_outputs()
+
 
         image_dict = image_space_data_products(
             uvw,
@@ -396,13 +460,13 @@ def _grid(**kw):
 
         # This
         out_ds = out_ds.assign(**{
-            'DIRTY': (('x', 'y'), image_dict['DIRTY'])
+            'DIRTY': (('x', 'y'), output_dict['DIRTY'])
             })
 
         if opts.psf:
             out_ds = out_ds.assign(**{
-                'PSF': (('x_psf', 'y_psf'), image_dict['PSF']),
-                'PSFHAT': (('x_psf', 'yo2'), image_dict['PSFHAT'])
+                'PSF': (('x_psf', 'y_psf'), output_dict['PSF']),
+                'PSFHAT': (('x_psf', 'yo2'), output_dict['PSFHAT'])
                 })
 
         # TODO - don't put vis space products in dds

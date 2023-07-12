@@ -568,64 +568,6 @@ def image_data_products(uvw,
                         do_psf=True,
                         do_weight=True,
                         do_residual=False):
-
-    # we might want to chunk over row chan in the future but
-    # for now these will always have chunks=(-1,-1)
-    blocker = Blocker(_image_data_products, ('row', 'chan'))
-    blocker.add_input('uvw', uvw, ('row','three'))
-    blocker.add_input('freq', freq, ('chan',))
-    blocker.add_input('vis', vis, ('row','chan'))
-    blocker.add_input('wgt', wgt, ('row','chan'))
-    blocker.add_input('mask', mask, ('row','chan'))
-    if counts is not None:
-        blocker.add_input(counts, ('x','y'))
-    else:
-        blocker.add_input('counts', None)
-    blocker.add_input('nx', nx)
-    blocker.add_input('ny', ny)
-    blocker.add_input('nx_psf', nx_psf)
-    blocker.add_input('ny_psf', ny_psf)
-    blocker.add_input('cellx', cellx)
-    blocker.add_input('celly', celly)
-    if model is not None:
-        blocker.add_input('model', ('x', 'y'))
-    else:
-        blocker.add_input('model', None)
-    blocker.add_input('robustness', robustness)
-    blocker.add_input('x0', x0)
-    blocker.add_input('y0', y0)
-    blocker.add_input('nthreads', nthreads)
-    blocker.add_input('epsilon', epsilon)
-    blocker.add_input('precision', precision)
-    blocker.add_input('do_wgridding', do_wgridding)
-    blocker.add_input('double_accum', douv)
-
-
-
-
-
-def _image_data_products(uvw,
-                        freq,
-                        vis,
-                        wgt,
-                        mask,
-                        counts,
-                        nx, ny,
-                        nx_psf, ny_psf,
-                        cellx, celly,
-                        model=None,
-                        robustness=None,
-                        x0=0.0, y0=0.0,
-                        nthreads=1,
-                        epsilon=1e-7,
-                        precision='double',
-                        do_wgridding=True,
-                        double_accum=True,
-                        l2reweight_dof=None,
-                        do_dirty=True,
-                        do_psf=True,
-                        do_weight=True,
-                        do_residual=False):
     '''
     Function to compute image space data products in one go
         dirty
