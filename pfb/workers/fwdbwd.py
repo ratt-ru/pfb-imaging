@@ -72,8 +72,8 @@ def _fwdbwd(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
-    mds_name = f'{basename}{opts.postfix}.mds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds'
+    mds_name = f'{basename}_{opts.postfix}.mds'
 
     dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk,
                                           'chan':-1})

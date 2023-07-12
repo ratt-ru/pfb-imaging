@@ -80,7 +80,6 @@ def _init(**kw):
     from pfb.utils.misc import construct_mappings
     import dask
     dask.config.set(**{'array.slicing.split_large_chunks': False})
-    from dask.graph_manipulation import clone
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
@@ -95,13 +94,13 @@ def _init(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    xdsstore = DaskMSStore(f'{basename}.xds.zarr')
+    xdsstore = DaskMSStore(f'{basename}.xds')
     if xdsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {basename}.xds.zarr", file=log)
+            print(f"Overwriting {basename}.xds", file=log)
             xdsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.xds.zarr exists. "
+            raise ValueError(f"{basename}.xds exists. "
                              "Set overwrite to overwrite it. ")
 
     if opts.gain_table is not None:
@@ -270,7 +269,7 @@ def _init(**kw):
                         out_datasets.append(out_ds)
 
     if len(out_datasets):
-        writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',
+        writes = xds_to_zarr(out_datasets, f'{basename}.xds',
                              columns='ALL')
     else:
         raise ValueError('No datasets found to write. '

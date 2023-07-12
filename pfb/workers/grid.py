@@ -64,7 +64,7 @@ def _grid(**kw):
     from pfb.utils.beam import eval_beam
     import xarray as xr
     from uuid import uuid4
-    from daskms.optimisation import inlined_array
+    from dask.graph_manipulation import clone
     from pfb.utils.astrometry import get_coordinates
     from africanus.coordinates import radec_to_lm
     from pfb.utils.misc import concat_chan, concat_row
@@ -76,10 +76,10 @@ def _grid(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     # xds contains vis products, no imaging weights applied
-    xds_name = f'{basename}.xds.zarr'
-    xds = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
+    xds_name = f'{basename}.xds'
+    xds = xds_from_zarr(xds_name, chunks={'row': -1})
     # dds contains image space products including imaging weights and uvw
-    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds'
 
     if os.path.isdir(dds_name):
         dds_exists = True
@@ -106,11 +106,6 @@ def _grid(**kw):
     if opts.concat_row and len(xds) > nband_in:
         print('Concatenating datasets along row dimension', file=log)
         xds = concat_row(xds)
-        # try:
-        #     assert len(xds) == nband_in
-        # except Exception as e:
-        #     raise RuntimeError('Something went wrong during row concatenation.'
-        #                        'This is probably a bug.')
         ntime = 1
         times_out = np.array((xds[0].time_out,))
     else:
@@ -121,11 +116,6 @@ def _grid(**kw):
         print('Concatenating datasets along chan dimension. '
               f'Mapping {nband_in} datasets to {opts.nband} bands', file=log)
         xds = concat_chan(xds, nband_out=opts.nband)
-        # try:
-        #     assert len(xds) == ntime * opts.nband
-        # except Exception as e:
-        #     raise RuntimeError('Something went wrong during chan concatenation.'
-        #                        'This is probably a bug.')
         nband = opts.nband
         freqs_out = []
         for ds in xds:
@@ -134,6 +124,10 @@ def _grid(**kw):
     else:
         nband = nband_in
         freqs_out = freqs_in
+
+    # do this after concatenation (to check)
+    for i, ds in enumerate(xds):
+        xds[i] = ds.chunk({'chan': -1})
 
     real_type = xds[0].WEIGHT.dtype
     if real_type == np.float32:
@@ -221,30 +215,31 @@ def _grid(**kw):
     if opts.transfer_model_from is not None:
         try:
             mds = xds_from_zarr(opts.transfer_model_from,
-                                chunks={'x':-1, 'y':-1})[0]
+                                chunks={'params':-1, 'comps':-1})[0]
         except Exception as e:
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
 
-        # check grid spec TODO - allow interpolation of spatial axes
-        assert cell_rad == mds.cell_rad_x
-        assert nx == mds.npix_x
-        assert ny == mds.npix_y
-
-        # model func
-        params = sm.symbols(('t','f'))
-        params += sm.symbols(tuple(mds.params.values))
-        symexpr = parse_expr(mds.parametrisation)
-        model_func = lambdify(params, symexpr)
-        texpr = parse_expr(mds.texpr)
-        tfunc = lambdify(params[0], texpr)
-        fexpr = parse_expr(mds.fexpr)
-        ffunc = lambdify(params[1], fexpr)
+        # should we construct the model func outside
+        # of eval_coeffs_to_slice?
+        # params = sm.symbols(('t','f'))
+        # params += sm.symbols(tuple(mds.params.values))
+        # symexpr = parse_expr(mds.parametrisation)
+        # model_func = lambdify(params, symexpr)
+        # texpr = parse_expr(mds.texpr)
+        # tfunc = lambdify(params[0], texpr)
+        # fexpr = parse_expr(mds.fexpr)
+        # ffunc = lambdify(params[1], fexpr)
 
 
-        # model coeffs
+        # we only want to load these once
         model_coeffs = mds.coefficients.values
         locx = mds.location_x.values
         locy = mds.location_y.values
+        params = mds.params.values
+        coeffs = mds.coefficients.values
+
+        # regular grid interpolator doesn't work with small values
+        cell_scaling = 1.0/np.minimum(mds.cell_rad_x, mds.cell_rad_y)
 
         print(f"Loading model from {opts.transfer_model_from}. ",
               file=log)
@@ -323,13 +318,23 @@ def _grid(**kw):
 
         # get the model
         if opts.transfer_model_from is not None:
-            assert x0 == mds.center_x
-            assert y0 == mds.center_y
-            model = np.zeros((nx, ny),
-                             dtype=ds.WEIGHT.data.dtype)
-            model[locx, locy] = model_func(tfunc(ds.time_out),
-                                           ffunc(ds.freq_out),
-                                           *model_coeffs)
+            from pfb.utils.misc import eval_coeffs_to_slice
+            model = eval_coeffs_to_slice(
+                ds.time_out,
+                ds.freq_out,
+                model_coeffs,
+                locx, locy,
+                mds.parametrisation,
+                params,
+                mds.texpr,
+                mds.fexpr,
+                mds.npix_x, mds.npix_y,
+                mds.cell_rad_x, mds.cell_rad_y,
+                mds.center_x, mds.center_y,
+                nx, ny,
+                cell_rad, cell_rad,
+                x0, y0
+            )
             model = da.from_array(model, chunks=(-1,-1))
             out_ds = out_ds.assign(**{'MODEL': (('x', 'y'), model)})
 
@@ -344,7 +349,7 @@ def _grid(**kw):
             # what to do if flags have changed?
             if 'COUNTS' not in out_ds:
                 counts = compute_counts(
-                        uvw,
+                        clone(uvw),
                         freq,
                         mask,
                         nx,

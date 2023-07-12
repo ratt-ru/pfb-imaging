@@ -69,6 +69,7 @@ def im2coef(x, alpha, bases, ntot, nmax, nlevels, nthreads=1):
     '''
     nbasis = len(bases)
     nband, _, _ = x.shape
+    alpha[...] = 0.0
     futures = []
     with cf.ThreadPoolExecutor(max_workers=nthreads) as executor:
         for l in range(nband):

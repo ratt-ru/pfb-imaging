@@ -100,9 +100,16 @@ def add_beampars(hdr, GaussPar, GaussPars=None):
     GaussPar - MFS beam pars
     GaussPars - beam pars for cube
     """
-    hdr['BMAJ'] = GaussPar[0]
-    hdr['BMIN'] = GaussPar[1]
-    hdr['BPA'] = GaussPar[2]
+    if len(GaussPar) == 3:
+        hdr['BMAJ'] = GaussPar[0]
+        hdr['BMIN'] = GaussPar[1]
+        hdr['BPA'] = GaussPar[2]
+    elif len(GaussPar) == 1:
+        hdr['BMAJ'] = GaussPar[0][0]
+        hdr['BMIN'] = GaussPar[0][1]
+        hdr['BPA'] = GaussPar[0][2]
+    else:
+        raise ValueError('Invalid value for GaussPar')
 
     if GaussPars is not None:
         for i in range(len(GaussPars)):
@@ -141,8 +148,9 @@ def set_header_info(mhdr, ref_freq, freq_axis, args, beampars):
 
 def normwsum(data, wsum):
     if wsum > 0:
-        data /= wsum
-    return data
+        return data / wsum
+    else:
+        return data
 
 
 def dds2fits(dds, column, outname, norm_wsum=True, otype=np.float32):

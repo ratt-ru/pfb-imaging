@@ -185,8 +185,6 @@ def im2vis(uvw=None,
            sigma_min=1.1,
            sigma_max=2.6):
 
-    # import pdb; pdb.set_trace()
-
     if precision.lower() == 'single':
         complex_type = np.float32
     elif precision.lower() == 'double':
@@ -583,6 +581,26 @@ def image_data_products(uvw,
         blocker.add_input(counts, ('x','y'))
     else:
         blocker.add_input('counts', None)
+    blocker.add_input('nx', nx)
+    blocker.add_input('ny', ny)
+    blocker.add_input('nx_psf', nx_psf)
+    blocker.add_input('ny_psf', ny_psf)
+    blocker.add_input('cellx', cellx)
+    blocker.add_input('celly', celly)
+    if model is not None:
+        blocker.add_input('model', ('x', 'y'))
+    else:
+        blocker.add_input('model', None)
+    blocker.add_input('robustness', robustness)
+    blocker.add_input('x0', x0)
+    blocker.add_input('y0', y0)
+    blocker.add_input('nthreads', nthreads)
+    blocker.add_input('epsilon', epsilon)
+    blocker.add_input('precision', precision)
+    blocker.add_input('do_wgridding', do_wgridding)
+    blocker.add_input('double_accum', douv)
+
+
 
 
 

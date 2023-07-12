@@ -65,8 +65,8 @@ def _model2comps(**kw):
     import xarray as xr
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
-    coeff_name = f'{basename}_{opts.postfix}_{opts.model_name.lower()}.coeffs.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds'
+    coeff_name = f'{basename}_{opts.postfix}_{opts.model_name.lower()}.mds'
 
     if os.path.isdir(coeff_name):
         if opts.overwrite:

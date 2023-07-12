@@ -62,8 +62,7 @@ def _spotless(**kw):
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
-    from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
-    from pfb.opt.primal_dual import primal_dual_exp
+    from pfb.opt.primal_dual import primal_dual_optimised2 as primal_dual
     from pfb.utils.misc import l1reweight_func
     from pfb.operators.hessian import hessian_xds
     from pfb.operators.psf import psf_convolve_cube
@@ -78,7 +77,7 @@ def _spotless(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds'
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
                                           'chan':-1,
                                           'x':-1,
@@ -244,23 +243,7 @@ def _spotless(**kw):
         modelp = deepcopy(model)
         data = residual + psf_convolve(model)
         grad21 = lambda x: psf_convolve(x) - data
-        # model, dual = primal_dual(model,
-        #                           dual,
-        #                           opts.rmsfactor*rms,
-        #                           psi,
-        #                           psiH,
-        #                           hessnorm,
-        #                           prox21,
-        #                           grad21,
-        #                           nu=nbasis,
-        #                           positivity=opts.positivity,
-        #                           tol=opts.pd_tol,
-        #                           maxit=opts.pd_maxit,
-        #                           verbosity=opts.pd_verbose,
-        #                           report_freq=opts.pd_report_freq,
-        #                           gamma=opts.gamma)
-
-        model, dual = primal_dual_exp(model,
+        model, dual = primal_dual(model,
                                   dual,
                                   opts.rmsfactor*rms,
                                   psi,
@@ -387,7 +370,7 @@ def _spotless(**kw):
 #     from itertools import cycle
 
 #     basename = f'{opts.output_filename}_{opts.product.upper()}'
-#     dds_name = f'{basename}_{opts.postfix}.dds.zarr'
+#     dds_name = f'{basename}_{opts.postfix}.dds'
 
 #     client = get_client()
 #     names = [w['name'] for w in client.scheduler_info()['workers'].values()]

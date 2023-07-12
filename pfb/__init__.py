@@ -31,12 +31,11 @@ def set_client(opts, stack, log, scheduler='distributed'):
     os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
-    os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
-    # avoids numexpr error, probably don't want more than 10 vthreads for ne anyway
     import numexpr as ne
     max_cores = ne.detect_number_of_cores()
-    ne_threads = min(max_cores, opts.nvthreads)
-    os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
+    # ne_threads = min(max_cores, opts.nvthreads)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(max_cores)
+    os.environ["NUMBA_NUM_THREADS"] = str(max_cores)
 
     import dask
     if scheduler=='distributed':

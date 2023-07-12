@@ -16,13 +16,16 @@ from omegaconf import ListConfig
 from skimage.morphology import label
 from scipy.optimize import curve_fit
 from collections import namedtuple
-from scipy.interpolate import RectBivariateSpline as rbs
 from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
-import pdb
 from quartical.utils.dask import Blocker
+from scipy.interpolate import RegularGridInterpolator
+import sympy as sm
+from sympy.utilities.lambdify import lambdify
+from sympy.parsing.sympy_parser import parse_expr
 
 
+import pdb
 class ForkedPdb(pdb.Pdb):
     """A Pdb subclass that may be used
     from a forked multiprocessing child
@@ -111,9 +114,7 @@ def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     extent = (nsigma * Smaj)**2
     xflat = xin.squeeze()
     yflat = yin.squeeze()
-    ind = np.argwhere(xflat**2 + yflat**2 <= extent).squeeze()
-    idx = ind[:, 0]
-    idy = ind[:, 1]
+    idx, idy = np.where(xflat**2 + yflat**2 <= extent)
     x = np.array([xflat[idx, idy].ravel(), yflat[idx, idy].ravel()])
     R = np.einsum('nb,bc,cn->n', x.T, A, x)
     # need to adjust for the fact that GaussPar corresponds to FWHM
@@ -216,8 +217,9 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
             thiskernhat = r2c(iFs(thiskern, axes=ax), axes=ax, forward=True,
                               nthreads=nthreads, inorm=0)
 
-            convkernhat = np.where(np.abs(thiskernhat) > 0.0,
-                                   gausskernhat / thiskernhat, 0.0)
+            convkernhat = np.zeros_like(thiskernhat)
+            msk = np.abs(thiskernhat) > 0.0
+            convkernhat[msk] = gausskernhat[msk]/thiskernhat[msk]
 
             imhat[i] *= convkernhat[0]
 
@@ -504,7 +506,7 @@ def fitcleanbeam(psf: np.ndarray,
         fwhm_conv = 2 * np.sqrt(2 * np.log(2))
         return np.exp(-fwhm_conv * R)
 
-    Gausspars = ()
+    Gausspars = []
     for v in range(nband):
         # make sure psf is normalised
         psfv = psf[v] / psf[v].max()
@@ -532,7 +534,7 @@ def fitcleanbeam(psf: np.ndarray,
         emaj0 = np.maximum(xdiff, ydiff)
         emin0 = np.minimum(xdiff, ydiff)
         p, _ = curve_fit(func, xy, psfv, p0=(emaj0, emin0, 0.0))
-        Gausspars += ((p[0] * pixsize, p[1] * pixsize, p[2]),)
+        Gausspars.append([p[0] * pixsize, p[1] * pixsize, p[2]])
 
     return Gausspars
 
@@ -842,10 +844,10 @@ def concat_chan(xds, nband_out=1):
                     xdst.append(ds)
 
             # LB - we should be able to avoid this stack operation by using Jon's *() magic
-            wgt = da.stack([ds.WEIGHT.data for ds in xdst]).rechunk(-1, -1, -1)
-            vis = da.stack([ds.VIS.data for ds in xdst]).rechunk(-1, -1, -1)
-            mask = da.stack([ds.MASK.data for ds in xdst]).rechunk(-1, -1, -1)
-            freq = da.stack([ds.FREQ.data for ds in xdst]).rechunk(-1, -1)
+            wgt = da.stack([ds.WEIGHT.data for ds in xdst]).rechunk(-1, -1) # verify chunking over freq axis
+            vis = da.stack([ds.VIS.data for ds in xdst]).rechunk(-1, -1)
+            mask = da.stack([ds.MASK.data for ds in xdst]).rechunk(-1, -1)
+            freq = da.stack([ds.FREQ.data for ds in xdst]).rechunk(-1)
 
             nrow = xdst[0].row.size
             nchan = freqsb.size
@@ -1013,7 +1015,6 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
             ffunc = f/ref_freq
             Xf = np.tile(wf[:, None], (ntime, nbasisf-1))**np.arange(1, nbasisf)
             Xfit = np.hstack((Xfit, Xf))
-            import ipdb; ipdb.set_trace()
             paramsf = sm.symbols(f'f(1:{nbasisf})')
             expr += sum(co*f**(i+1) for i, co in enumerate(paramsf))
             params += paramsf
@@ -1073,15 +1074,12 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
     return coeffs, Ix, Iy, str(expr), list(map(str,params)), str(tfunc),str(ffunc)
 
 
-def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy, expr, paramf, texpr, fexpr):
+def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy,
+                        expr, paramf, texpr, fexpr):
     ntime = time.size
     nfreq = freq.size
 
     image = np.zeros((ntime, nfreq, nx, ny), dtype=float)
-
-    import sympy as sm
-    from sympy.utilities.lambdify import lambdify
-    from sympy.parsing.sympy_parser import parse_expr
     params = sm.symbols(('t','f'))
     params += sm.symbols(tuple(paramf))
     symexpr = parse_expr(expr)
@@ -1097,110 +1095,103 @@ def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy, expr, paramf, texpr,
     return image
 
 
-# y = X x
-# y00 = a0 + a1 t + b0 + b1 t + b2
-# y01
-# y02
-# y10
-# y11
-# y12
+def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
+                         expr, paramf, texpr, fexpr,
+                         nxi, nyi, cellxi, cellyi, x0i, y0i,
+                         nxo, nyo, cellxo, cellyo, x0o, y0o):
 
-# First attempt at sequential interpolation in terms of integrated polynomial
-# ref_freq = mfreqs[0]
-# ref_time = mtimes[0]
+    image_in = np.zeros((nxi, nyi), dtype=float)
+    params = sm.symbols(('t','f'))
+    params += sm.symbols(tuple(paramf))
+    symexpr = parse_expr(expr)
+    modelf = lambdify(params, symexpr)
+    texpr = parse_expr(texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(fexpr)
+    ffunc = lambdify(params[1], fexpr)
+    image_in[Ix, Iy] = modelf(tfunc(time), ffunc(freq), *coeffs)
 
-# # interpolate model in frequency
-# if opts.min_val is not None:
-#     model[model < opts.min_val] = 0.0
-# mask = np.any(model, axis=(0,1))  # over t and f axes
-# Ix, Iy = np.where(mask)
-# ncomps = Ix.size
+    xin = (-(nxi//2) + np.arange(nxi))*cellxi + x0i
+    yin = (-(nyi//2) + np.arange(nyi))*cellyi + y0i
+    xo = (-(nxo//2) + np.arange(nxo))*cellxo + x0o
+    yo = (-(nyo//2) + np.arange(nyo))*cellyo + y0o
 
-# # components excluding zeros
-# beta = model[:, :, Ix, Iy]
-# if opts.spectral_poly_order is not None and nband > 1:
-#     orderf = opts.spectral_poly_order
-#     if orderf > nband:
-#         raise ValueError("spectral-poly-order can't be larger than nband")
-#     if opts.fit_mode=='ipoly':
-#         print(f"Fitting freq axis with polynomial of order {orderf}", file=log)
-#         # we are given frequencies at bin centers, convert to bin edges
-#         delta_freq = mfreqs[1] - mfreqs[0]
-#         wlow = (mfreqs - delta_freq/2.0)/ref_freq
-#         whigh = (mfreqs + delta_freq/2.0)/ref_freq
-#         wdiff = whigh - wlow
+    # how many pixels to pad by to extrapolate with zeros
+    xldiff = xin.min() - xo.min()
+    if xldiff > 0.0:
+        npadxl = int(np.ceil(xldiff/cellxi))
+    else:
+        npadxl = 0
+    yldiff = yin.min() - yo.min()
+    if yldiff > 0.0:
+        npadyl = int(np.ceil(yldiff/cellyi))
+    else:
+        npadyl = 0
 
-#         # set design matrix for each component
-#         Xfit = np.zeros([mfreqs.size, orderf])
-#         for i in range(1, orderf+1):
-#             Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
+    xudiff = xo.max() - xin.max()
+    if xudiff > 0.0:
+        npadxu = int(np.ceil(xudiff/cellxi))
+    else:
+        npadxu = 0
+    yudiff = yo.max() - yin.max()
+    if yudiff > 0.0:
+        npadyu = int(np.ceil(yudiff/cellyi))
+    else:
+        npadyu = 0
 
-#     elif opts.fit_mode=='poly':
-#         w = mfreqs/ref_freq
-#         Xfit = np.tile(w[:, None], (1, orderf))**np.arange(orderf)
+    do_pad = npadxl > 0
+    do_pad |= npadxu > 0
+    do_pad |= npadyl > 0
+    do_pad |= npadyu > 0
+    if do_pad:
+        image_in = np.pad(image_in,
+                        ((npadxl, npadxu), (npadyl, npadyu)),
+                        mode='constant')
 
-#     comps = np.zeros((ntime, orderf, Ix.size))
-#     freq_fitted = True
-#     for t in range(ntime):
-#         dirty_comps = Xfit.T.dot(wsums[t, :, None]*beta[t])
+        xin = (-(nxi//2+npadxl) + np.arange(nxi + npadxl + npadxu))*cellxi + x0i
+        nxi = nxi + npadxl + npadxu
+        yin = (-(nyi//2+npadyl) + np.arange(nyi + npadyl + npadyu))*cellyi + y0i
+        nyi = nyi + npadyl + npadyu
 
-#         hess_comps = Xfit.T.dot(wsums[t, :, None]*Xfit)
-
-#         comps[t] = np.linalg.solve(hess_comps, dirty_comps)
-
-# else:
-#     raise NotImplementedError("Interpolation is currently mandatory")
-#     print("Not fitting frequency axis", file=log)
-#     comps = beta
-#     freq_fitted = False
-#     orderf = mfreqs.size
-
-# if opts.temporal_poly_order is not None and ntime > 1:
-#     ordert = opts.temporal_poly_order
-#     if order > ntime:
-#         raise ValueError("temporal-poly-order can't be larger than ntime")
-#     print(f"Fitting time axis with polynomial of order {orderf}", file=log)
-#     # we are given times at bin centers, convert to bin edges
-#     delta_time = mtimes[1] - mtimes[0]
-#     wlow = (mtimes - delta_times/2.0)/ref_time
-#     whigh = (mfreqs + delta_freq/2.0)/ref_time
-#     wdiff = whigh - wlow
-
-#     # set design matrix for each component
-#     Xfit = np.zeros([mtimes.size, ordert])
-#     for i in range(1, ordert+1):
-#         Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
-
-#     if freq_fitted:
-#         compsnu = comps.copy()
-#     comps = np.zeros((ordert, opts.spectral_poly_order, Ix.size))
-#     time_fitted = True
-#     for b in range(orderf):
-#         dirty_comps = Xfit.T.dot(wsums[:, b, None]*compsnu[b])
-
-#         hess_comps = Xfit.T.dot(wsums[:, b, None]*Xfit)
-
-#         comps[:, b] = np.linalg.solve(hess_comps, dirty_comps)
-# else:
-#     if ntime > 1:
-#         raise NotImplementedError("Time interpolation is currently mandatory")
-#     print("Not fitting time axis", file=log)
-#     comps = comps
-#     time_fitted = False
-#     ordert = mtimes.size
+    do_interp = cellxi != cellxo
+    do_interp |= cellyi != cellyo
+    do_interp |= x0i != x0o
+    do_interp |= y0i != y0o
+    do_interp |= nxi != nxo
+    do_interp |= nyi != nyo
+    if do_interp:
+        interpo = RegularGridInterpolator((xin, yin), image_in,
+                                          bounds_error=True, method='linear')
+        xx, yy = np.meshgrid(xo, yo, indexing='ij')
+        return interpo((xx, yy))
+    # elif (nxi != nxo) or (nyi != nyo):
+    #     # only need the overlap in this case
+    #     _, idx0, idx1 = np.intersect1d(xin, xo, assume_unique=True, return_indices=True)
+    #     _, idy0, idy1 = np.intersect1d(yin, yo, assume_unique=True, return_indices=True)
+    #     return image[idx0, idy0]
+    else:
+        return image_in
 
 
-# # construct symbolic expression
-# from sympy.abc import t, f
-# from sympy import symbols
+@njit(nogil=True, fastmath=True, cache=True,)
+def norm_diff(x, xp):
+    nband, nx, ny = x.shape
+    num = 0.0
+    den = 0.0
+    for b in range(nband):
+        for i in range(nx):
+            for j in range(ny):
+                num += (x[b, i, j] - xp[b, i, j])**2
+                den += x[b, i, j]**2
+    return np.sqrt(num/den)
 
-# thetasf = []
-# params = ()
-# for i in range(orderf):
-#     coefft = symbols(f't(0:{ordert})_f{i}')
-#     # the reshape on comps needs to be consistent with the ordering in params
-#     params += coefft
-#     thetaf = sum(co*t**j for j, co in enumerate(coefft))
-#     thetasf.append(thetaf)
 
-# polysym = sum(co*f**j for j, co in enumerate(thetasf))
+def remove_large_islands(x, max_island_size=100):
+    islands = label(x.squeeze())
+    num_islands = islands.max()
+    for i in range(1,num_islands+1):
+        msk = islands == i
+        num_pix = np.sum(msk)
+        if num_pix > max_island_size:
+            x[msk] = 0.0
+    return x

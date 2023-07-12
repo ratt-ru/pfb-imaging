@@ -24,6 +24,9 @@ def test_model2comps(tmp_path_factory):
     from pyrap.tables import table
     from pfb.utils.misc import Gaussian2D, give_edges
     import matplotlib.pyplot as plt
+    from pfb.utils.misc import (fit_image_cube,
+                                eval_coeffs_to_cube,
+                                eval_coeffs_to_slice)
 
     ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
     spw = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW'))
@@ -94,7 +97,7 @@ def test_model2comps(tmp_path_factory):
     mtimes = utime[0:1]  # arbitrary for now
 
 
-    from pfb.utils.misc import fit_image_cube, eval_coeffs_to_cube
+
     coeffs, Ix, Iy, expr, params, tfunc, ffunc = \
         fit_image_cube(mtimes, mfreqs, model[None, :, :, :], nbasisf=nchan,
                        sigmasq=0.0, method='Legendre')
@@ -104,5 +107,33 @@ def test_model2comps(tmp_path_factory):
     image = image[0]  # no time axis for now
     mask = model > 0
     assert_allclose(image[mask], model[mask], atol=1e-10)
+
+    # test spatial interpolation
+    # if we shift the center by an integer number of pixels
+    # the pixel centers should stay the same
+    xshift = 25
+    x0 = cell_deg*xshift
+    yshift = -10
+    y0 = cell_deg*yshift
+    for npix in [100, nx, 2*nx]:
+        imout = eval_coeffs_to_slice(mtimes[0],
+                                    mfreqs[0],
+                                    coeffs,
+                                    Ix, Iy,
+                                    expr,
+                                    params,
+                                    tfunc,
+                                    ffunc,
+                                    nx, ny,
+                                    cell_deg, cell_deg,
+                                    0.0, 0.0,
+                                    npix, npix,
+                                    cell_deg, cell_deg,
+                                    x0, y0)
+
+        mx, my, gx, gy = give_edges(npix//2 - xshift,
+                                    npix//2 - yshift, npix, npix, nx, ny)
+
+        assert_allclose(1.0 + imout[mx, my], 1.0 + model[0, gx, gy])
 
 # test_model2comps()
