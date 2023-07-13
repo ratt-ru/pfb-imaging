@@ -11,7 +11,7 @@ from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from ducc0.fft import c2r, r2c
 from africanus.constants import c as lightspeed
 from quartical.utils.dask import Blocker
-# from pfb.utils.weighting import _counts_to_weights
+from pfb.utils.weighting import _counts_to_weights
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
@@ -562,6 +562,7 @@ def image_data_products(uvw,
                         epsilon=1e-7,
                         do_wgridding=True,
                         double_accum=True,
+                        # divide_by_n=False,
                         l2reweight_dof=None,
                         do_dirty=True,
                         do_psf=True,
@@ -626,7 +627,7 @@ def image_data_products(uvw,
         wgt *= imwgt
 
     wsum = wgt[mask.astype(bool)].sum()
-    out_dict['WSUM'] = wsum
+    out_dict['WSUM'] = np.atleast_1d(wsum)
 
     dirty = vis2dirty(
         uvw=uvw,
@@ -693,7 +694,7 @@ def image_data_products(uvw,
             epsilon=epsilon,
             flip_v=False,  # hardcoded for now
             do_wgridding=do_wgridding,
-            divide_by_n=divide_by_n,  # hardcoded for now
+            divide_by_n=False,  # hardcoded for now
             nthreads=nthreads,
             sigma_min=1.1, sigma_max=3.0,
             double_precision_accumulation=double_accum)

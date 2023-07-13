@@ -380,7 +380,7 @@ def _grid(**kw):
         blocker.add_input('wgt', wgt, ('row','chan'))
         blocker.add_input('mask', mask, ('row','chan'))
         if counts is not None:
-            blocker.add_input(counts, ('x','y'))
+            blocker.add_input('counts', counts, ('x','y'))
         else:
             blocker.add_input('counts', None)
         blocker.add_input('nx', nx)
@@ -390,7 +390,7 @@ def _grid(**kw):
         blocker.add_input('cellx', cell_rad)
         blocker.add_input('celly', cell_rad)
         if model is not None:
-            blocker.add_input('model', ('x', 'y'))
+            blocker.add_input('model', model, ('x', 'y'))
         else:
             blocker.add_input('model', None)
         blocker.add_input('robustness', opts.robustness)
@@ -445,8 +445,6 @@ def _grid(**kw):
 
         output_dict = blocker.get_dask_outputs()
 
-        # import ipdb; ipdb.set_trace()
-
         # This
         out_ds = out_ds.assign(**{
             'DIRTY': (('x', 'y'), output_dict['DIRTY'])
@@ -491,7 +489,6 @@ def _grid(**kw):
 
         dds_out.append(out_ds.unify_chunks())
 
-    import ipdb; ipdb.set_trace()
     writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
 
     # dask.visualize(writes, color="order", cmap="autumn",

@@ -1,8 +1,7 @@
 import numpy as np
 from numba import njit, prange
 import dask.array as da
-from ducc0.wgridder.experimental import vis2dirty
-from ducc0.fft import c2c, genuine_hartley
+from ducc0.fft import c2c
 from africanus.constants import c as lightspeed
 from quartical.utils.dask import Blocker
 iFs = np.fft.ifftshift
