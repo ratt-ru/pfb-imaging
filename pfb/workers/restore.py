@@ -105,41 +105,37 @@ def _restore(**kw):
 
         # fit restoring psf
         GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)
-        GaussPars = fitcleanbeam(psf, level=0.5, pixsize=1.0)  # pixel units
-
         cpsf_mfs = np.zeros(residual_mfs.shape, dtype=output_type)
-        cpsf = np.zeros(residual.shape, dtype=output_type)
-
         lpsf = -(nx//2) + np.arange(nx)
         mpsf = -(ny//2) + np.arange(ny)
         xx, yy = np.meshgrid(lpsf, mpsf, indexing='ij')
-
         cpsf_mfs = Gaussian2D(xx, yy, GaussPar[0], normalise=False)
-
-        for v in range(opts.nband):
-            cpsf[v] = Gaussian2D(xx, yy, GaussPars[v], normalise=False)
-
-
         image_mfs = convolve2gaussres(model_mfs[None], xx, yy,
                                     GaussPar[0], opts.nvthreads,
                                     norm_kernel=False)[0]  # peak of kernel set to unity
         image_mfs += residual_mfs
-        image = np.zeros_like(model)
-        for b in range(nband):
-            image[b:b+1] = convolve2gaussres(model[b:b+1], xx, yy,
-                                            GaussPars[b], opts.nvthreads,
-                                            norm_kernel=False)  # peak of kernel set to unity
-            image[b] += residual[b]
-
         # convert pixel units to deg
         GaussPar[0][0] *= cell_deg
         GaussPar[0][1] *= cell_deg
-
-        for i, gp in enumerate(GaussPars):
-            GaussPars[i] = [gp[0]*cell_deg, gp[1]*cell_deg, gp[2]]
-
         hdr_mfs = add_beampars(hdr_mfs, GaussPar)
-        hdr = add_beampars(hdr, GaussPar, GaussPars)
+
+        if any([i.isupper() for i in opts.outputs]):
+            GaussPars = fitcleanbeam(psf, level=0.5, pixsize=1.0)  # pixel units
+            cpsf = np.zeros(residual.shape, dtype=output_type)
+            for v in range(opts.nband):
+                cpsf[v] = Gaussian2D(xx, yy, GaussPars[v], normalise=False)
+
+            image = np.zeros_like(model)
+            for b in range(nband):
+                image[b:b+1] = convolve2gaussres(model[b:b+1], xx, yy,
+                                                GaussPars[b], opts.nvthreads,
+                                                norm_kernel=False)  # peak of kernel set to unity
+                image[b] += residual[b]
+
+            for i, gp in enumerate(GaussPars):
+                GaussPars[i] = [gp[0]*cell_deg, gp[1]*cell_deg, gp[2]]
+
+            hdr = add_beampars(hdr, GaussPar, GaussPars)
     else:
         print('Warning, no psf in dds. '
               'Unable to add resolution info or make restored image. ',
