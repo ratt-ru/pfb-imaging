@@ -390,8 +390,10 @@ def construct_mappings(ms_name,
             nchan = freq.size
             if cpi in [-1, 0, None]:
                 cpit = nchan
+                cpi = nchan_in
             else:
                 cpit = np.minimum(cpi, nchan)
+                cpi = np.minimum(cpi, nchan_in)
             freq_mapping[ms][idt] = {}
             tmp = np.arange(idx0, idx0 + nchan, cpit)
             freq_mapping[ms][idt]['start_indices'] = tmp
@@ -424,6 +426,7 @@ def construct_mappings(ms_name,
             row_mapping[ms][idt] = {}
             row_mapping[ms][idt]['start_indices'] = ridx
             row_mapping[ms][idt]['counts'] = rcounts
+
             nfreq_chunks = nchan_in // cpi
             freq_chunks = (cpi,)*nfreq_chunks
             rem = nchan_in - nfreq_chunks * cpi
