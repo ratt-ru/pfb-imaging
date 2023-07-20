@@ -375,6 +375,7 @@ def construct_mappings(ms_name,
                     raise ValueError(f'Mismatch between gain and MS '
                                      f'frequencies for {ms} at {idt}')
 
+            nchan_in = freq.size
             idx = (freq>=freq_min) & (freq<=freq_max)
             if not idx.any():
                 continue
@@ -386,8 +387,6 @@ def construct_mappings(ms_name,
             except Exception as e:
                 continue
             freq = freq[idx]
-
-            all_freqs.append(freq)
             nchan = freq.size
             if cpi in [-1, 0, None]:
                 cpit = nchan
@@ -397,7 +396,7 @@ def construct_mappings(ms_name,
             tmp = np.arange(idx0, idx0 + nchan, cpit)
             freq_mapping[ms][idt]['start_indices'] = tmp
             if cpit != nchan:
-                tmp2 = np.append(tmp, [nchan])
+                tmp2 = np.append(tmp, [idx0 + nchan])
                 freq_mapping[ms][idt]['counts'] = tmp2[1:] - tmp2[0:-1]
             else:
                 freq_mapping[ms][idt]['counts'] = np.array((nchan,), dtype=int)
@@ -425,9 +424,14 @@ def construct_mappings(ms_name,
             row_mapping[ms][idt] = {}
             row_mapping[ms][idt]['start_indices'] = ridx
             row_mapping[ms][idt]['counts'] = rcounts
+            nfreq_chunks = nchan_in // cpi
+            freq_chunks = (cpi,)*nfreq_chunks
+            rem = nchan_in - nfreq_chunks * cpi
+            if rem:
+                freq_chunks += (rem,)
 
             ms_chunks[ms].append({'row': row_chunks,
-                                  'chan': tuple(freq_mapping[ms][idt]['counts'])})
+                                  'chan': freq_chunks})
 
             time_mapping[ms][idt] = {}
             tmp = np.arange(0, ntime, ipit)
@@ -445,7 +449,7 @@ def construct_mappings(ms_name,
                     if name == 'gain_time':
                         tmp_dict[name] = tuple(time_mapping[ms][idt]['counts'])
                     elif name == 'gain_freq':
-                        tmp_dict[name] = tuple(freq_mapping[ms][idt]['counts'])
+                        tmp_dict[name] = freq_chunks
                     elif name == 'direction':
                         if len(val) > 1:
                             raise ValueError("DD gains not supported yet")
