@@ -1,4 +1,3 @@
-import packratt
 import pytest
 from pathlib import Path
 from xarray import Dataset
@@ -8,45 +7,45 @@ import dask.array as da
 from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
-@pmp('do_gains', (False, True))
-def test_clean(do_gains, tmp_path_factory):
+@pmp('do_gains', (True, False))
+def test_clean(do_gains, ms_name):
     '''
     Here we test that clean correctly infers the fluxes of point sources
     placed at the centers of pixels in the presence of the wterm and DI gain
     corruptions.
     TODO - add per scan PB variations
     '''
-    test_dir = tmp_path_factory.mktemp("test_pfb")
-    # test_dir = Path('/home/landman/data/')
-    packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
-    from pyrap.tables import table
+    from daskms import xds_from_ms, xds_from_table, xds_to_table
+    from daskms.experimental.zarr import xds_to_zarr
+    from africanus.constants import c as lightspeed
 
-    ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
-    spw = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW'))
 
-    utime = np.unique(ms.getcol('TIME'))
+    test_dir = Path(ms_name).resolve().parent
+    xds = xds_from_ms(ms_name,
+                      chunks={'row': -1, 'chan': -1})[0]
+    spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]
 
-    freq = spw.getcol('CHAN_FREQ').squeeze()
+    utime = np.unique(xds.TIME.values)
+    freq = spw.CHAN_FREQ.values.squeeze()
     freq0 = np.mean(freq)
 
     ntime = utime.size
     nchan = freq.size
-    nant = np.maximum(ms.getcol('ANTENNA1').max(), ms.getcol('ANTENNA2').max()) + 1
+    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA1.values.max()) + 1
 
-    ncorr = ms.getcol('FLAG').shape[-1]
+    ncorr = xds.corr.size
 
-    uvw = ms.getcol('UVW')
+    uvw = xds.UVW.values
     nrow = uvw.shape[0]
     u_max = abs(uvw[:, 0]).max()
     v_max = abs(uvw[:, 1]).max()
     uv_max = np.maximum(u_max, v_max)
 
     # image size
-    from africanus.constants import c as lightspeed
     cell_N = 1.0 / (2 * uv_max * freq.max() / lightspeed)
 
     srf = 2.0
@@ -88,14 +87,7 @@ def test_clean(do_gains, tmp_path_factory):
                                     epsilon=epsilon, do_wstacking=True, nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]
 
-    desc = ms.getcoldesc('DATA')
-    desc['name'] = 'DATA2'
-    desc['valueType'] = 'dcomplex'
-    desc['comment'] = desc['comment'].replace(" ", "_")
-    dminfo = ms.getdminfo('DATA')
-    dminfo["NAME"] =  "{}-{}".format(dminfo["NAME"], 'DATA2')
-    ms.addcols(desc, dminfo)
-
+    writes = []
     if do_gains:
         t = (utime-utime.min())/(utime.max() - utime.min())
         nu = 2.5*(freq/freq0 - 1.0)
@@ -113,7 +105,7 @@ def test_clean(do_gains, tmp_path_factory):
 
         from pfb.utils.misc import kron_matvec
 
-        jones = np.zeros((ntime, nchan, nant, 1, ncorr), dtype=np.complex128)
+        jones = np.zeros((ntime, nchan, nant, 1, 2), dtype=np.complex128)
         for p in range(nant):
             for c in [0, -1]:  # for now only diagonal
                 xi_amp = np.random.randn(ntime, nchan)
@@ -126,15 +118,19 @@ def test_clean(do_gains, tmp_path_factory):
         # corrupted vis
         model_vis = model_vis.reshape(nrow, nchan, 1, 2, 2)
         from pfb.utils.misc import chunkify_rows
-        time = ms.getcol('TIME')
+        time = xds.TIME.values
         row_chunks, tbin_idx, tbin_counts = chunkify_rows(time, ntime)
-        ant1 = ms.getcol('ANTENNA1')
-        ant2 = ms.getcol('ANTENNA2')
+        ant1 = xds.ANTENNA1.values
+        ant2 = xds.ANTENNA2.values
 
         from africanus.calibration.utils import corrupt_vis
         vis = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2,
                           np.swapaxes(jones, 1, 2), model_vis).reshape(nrow, nchan, ncorr)
-        ms.putcol('DATA2', vis)
+
+
+        xds['DATA'] = (('row','chan','coor'),
+                       da.from_array(vis, chunks=(-1,-1,-1)))
+        writes.append(xds_to_table(xds, ms_name, columns='DATA'))
 
         # cast gain to QuartiCal format
         g = da.from_array(jones)
@@ -155,7 +151,7 @@ def test_clean(do_gains, tmp_path_factory):
                                        fchunk=(int(nchan),),
                                        achunk=(int(nant),),
                                        dchunk=(int(1),),
-                                       cchunk=(int(ncorr),)),
+                                       cchunk=(int(2),)),
             'GAIN_AXES': ('gain_time', 'gain_freq', 'antenna', 'direction', 'correlation')
         }
         coords = {
@@ -166,12 +162,15 @@ def test_clean(do_gains, tmp_path_factory):
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
         gain_path = str(test_dir / Path("gains.qc"))
         out_path = f'{gain_path}::NET'
-        dask.compute(xds_to_zarr(net_xds_list, out_path))
+        writes.append(xds_to_zarr(net_xds_list, out_path))
 
     else:
-        ms.putcol('DATA2', model_vis)
+        xds['DATA'] = (('row','chan','coor'),
+                       da.from_array(model_vis, chunks=(-1,-1,-1)))
+        writes.append(xds_to_table(xds, ms_name, columns='DATA'))
         gain_path = None
 
+    dask.compute(writes)
 
     postfix = "main"
     # set defaults from schema
@@ -183,7 +182,7 @@ def test_clean(do_gains, tmp_path_factory):
     outname = str(test_dir / 'test')
     init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
     init_args["output_filename"] = outname
-    init_args["data_column"] = "DATA2"
+    init_args["data_column"] = "DATA"
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = gain_path
     init_args["max_field_of_view"] = fov

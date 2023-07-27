@@ -23,10 +23,6 @@ requirements = [
                 "QuartiCal",
                 "sympy",
 
-                "packratt"
-                "@git+https://github.com/ratt-ru/packratt.git"
-                "@master",
-
             ]
 
 

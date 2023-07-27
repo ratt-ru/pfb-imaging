@@ -1,4 +1,3 @@
-import packratt
 import pytest
 from pathlib import Path
 from xarray import Dataset
@@ -9,47 +8,45 @@ from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 
-def test_model2comps(tmp_path_factory):
+def test_model2comps(ms_name):
     '''
     TODO - This only tests the separate function implementations
     not the workers. Tested by spotless workflow?
     '''
-    test_dir = tmp_path_factory.mktemp("test_pfb")
-    # test_dir = Path('/home/landman/data/')
-    packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
-    from pyrap.tables import table
+    from daskms import xds_from_ms, xds_from_table, xds_to_table
+    from daskms.experimental.zarr import xds_to_zarr
     from pfb.utils.misc import Gaussian2D, give_edges
     import matplotlib.pyplot as plt
     from pfb.utils.misc import (fit_image_cube,
                                 eval_coeffs_to_cube,
                                 eval_coeffs_to_slice)
 
-    ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
-    spw = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW'))
+    test_dir = Path(ms_name).resolve().parent
+    xds = xds_from_ms(ms_name,
+                      chunks={'row': -1, 'chan': -1})[0]
+    spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]
 
-    utime = np.unique(ms.getcol('TIME'))
-
-    freq = spw.getcol('CHAN_FREQ').squeeze()
+    utime = np.unique(xds.TIME.values)
+    freq = spw.CHAN_FREQ.values.squeeze()
     freq0 = np.mean(freq)
 
     ntime = utime.size
     nchan = freq.size
-    nant = np.maximum(ms.getcol('ANTENNA1').max(), ms.getcol('ANTENNA2').max()) + 1
+    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA1.values.max()) + 1
 
-    ncorr = ms.getcol('FLAG').shape[-1]
+    ncorr = xds.corr.size
 
-    uvw = ms.getcol('UVW')
+    uvw = xds.UVW.values
     nrow = uvw.shape[0]
     u_max = abs(uvw[:, 0]).max()
     v_max = abs(uvw[:, 1]).max()
     uv_max = np.maximum(u_max, v_max)
 
     # image size
-    from africanus.constants import c as lightspeed
     cell_N = 1.0 / (2 * uv_max * freq.max() / lightspeed)
 
     srf = 2.0

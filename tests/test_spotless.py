@@ -1,4 +1,3 @@
-import packratt
 import pytest
 from pathlib import Path
 from xarray import Dataset
@@ -9,14 +8,11 @@ from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 
-def test_spotless(tmp_path_factory):
+def test_spotless(ms_name):
     '''
     # TODO - currently we just check that this runs through.
     # What should the passing criteria be?
     '''
-    test_dir = tmp_path_factory.mktemp("test_pfb")
-    # test_dir = Path('/home/landman/data/')
-    packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
     np.random.seed(420)
@@ -39,7 +35,7 @@ def test_spotless(tmp_path_factory):
     from sympy.parsing.sympy_parser import parse_expr
 
 
-    ms_name = str(test_dir / 'test_ascii_1h60.0s.MS')
+    test_dir = Path(ms_name).resolve().parent
     xds = xds_from_ms(ms_name,
                       chunks={'row': -1, 'chan': -1})[0]
     spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]

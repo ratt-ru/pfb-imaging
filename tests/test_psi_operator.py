@@ -194,4 +194,4 @@ def test_dual_update(nx, ny, nband, nlevels):
     dual_update_numba(vp, v, lam21, sigma=sigma, weight=weight21)
     assert_array_almost_equal(1 + res1,1 + v, decimal=12)
 
-test_dual_update(1024, 2056, 3, 2)
+# test_dual_update(1024, 2056, 3, 2)

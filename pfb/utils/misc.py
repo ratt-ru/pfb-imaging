@@ -2,6 +2,7 @@ import sys
 import numpy as np
 import numexpr as ne
 from numba import jit, njit, prange
+from numba.extending import overload
 import dask
 import dask.array as da
 from dask.distributed import performance_report
@@ -24,6 +25,11 @@ import sympy as sm
 from sympy.utilities.lambdify import lambdify
 from sympy.parsing.sympy_parser import parse_expr
 
+JIT_OPTIONS = {
+    "nogil": True,
+    "fastmath": True,
+    "cache": True
+}
 
 import pdb
 class ForkedPdb(pdb.Pdb):
@@ -1185,17 +1191,43 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
         return image_in
 
 
-@njit(nogil=True, fastmath=True, cache=True,)
+@njit(**JIT_OPTIONS)
 def norm_diff(x, xp):
-    nband, nx, ny = x.shape
-    num = 0.0
-    den = 0.0
-    for b in range(nband):
-        for i in range(nx):
-            for j in range(ny):
-                num += (x[b, i, j] - xp[b, i, j])**2
-                den += x[b, i, j]**2
-    return np.sqrt(num/den)
+    return norm_diff_impl(x, xp)
+
+
+def norm_diff_impl(x, xp):
+    return NotImplementedError
+
+
+@overload(norm_diff_impl, jit_options=JIT_OPTIONS)
+def nb_norm_diff_impl(x, xp):
+    if x.ndim==3:
+        def impl(x, xp):
+            nband, nx, ny = x.shape
+            num = 0.0
+            den = 0.0
+            for b in range(nband):
+                for i in range(nx):
+                    for j in range(ny):
+                        num += (x[b, i, j] - xp[b, i, j])**2
+                        den += x[b, i, j]**2
+            return np.sqrt(num/den)
+    elif x.ndim==2:
+        def impl(x, xp):
+            nx, ny = x.shape
+            num = 0.0
+            den = 0.0
+            for i in range(nx):
+                for j in range(ny):
+                    num += (x[i, j] - xp[i, j])**2
+                    den += x[i, j]**2
+            return np.sqrt(num/den)
+    else:
+        raise ValueError("norm_diff is only implemented for 2D or 3D arrays")
+
+    return impl
+
 
 
 def remove_large_islands(x, max_island_size=100):

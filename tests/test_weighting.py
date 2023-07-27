@@ -1,4 +1,3 @@
-import packratt
 import pytest
 from pathlib import Path
 from pfb.utils.weighting import (_compute_counts, _counts_to_weights,
@@ -6,38 +5,48 @@ from pfb.utils.weighting import (_compute_counts, _counts_to_weights,
 
 pmp = pytest.mark.parametrize
 
-def test_counts(tmp_path_factory):
+def test_counts(ms_name):
     '''
     Compares _compute_counts to memory greedy numpy implementation
     '''
-    test_dir = tmp_path_factory.mktemp("test_weighting")
-    # test_dir = Path('/home/landman/data/')
-    packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
-    from pyrap.tables import table
+    from daskms import xds_from_ms, xds_from_table, xds_to_table
 
-    ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
-    freq = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW')).getcol('CHAN_FREQ').squeeze()
+    test_dir = Path(ms_name).resolve().parent
+    xds = xds_from_ms(ms_name,
+                      chunks={'row': -1, 'chan': -1})[0]
+    spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]
+
+    utime = np.unique(xds.TIME.values)
+    freq = spw.CHAN_FREQ.values.squeeze()
+    freq0 = np.mean(freq)
+
+    ntime = utime.size
     nchan = freq.size
-    uvw = ms.getcol('UVW')
+    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA1.values.max()) + 1
+
+    ncorr = xds.corr.size
+
+    uvw = xds.UVW.values
     nrow = uvw.shape[0]
     u_max = abs(uvw[:, 0]).max()
     v_max = abs(uvw[:, 1]).max()
     uv_max = np.maximum(u_max, v_max)
 
     # image size
-    from africanus.constants import c as lightspeed
     cell_N = 1.0 / (2 * uv_max * freq.max() / lightspeed)
 
     srf = 2.0
     cell_rad = cell_N / srf
     cell_deg = cell_rad * 180 / np.pi
     cell_size = cell_deg * 3600
+    print("Cell size set to %5.5e arcseconds" % cell_size)
 
     from ducc0.fft import good_size
+    # the test will fail in intrinsic if sources fall near beam sidelobes
     fov = 1.0
     npix = good_size(int(fov / cell_deg))
     while npix % 2:
@@ -46,6 +55,9 @@ def test_counts(tmp_path_factory):
 
     nx = npix
     ny = npix
+
+    print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
+
 
     mask = np.ones((nrow, nchan), dtype=bool)
     counts = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
@@ -68,13 +80,10 @@ def test_counts(tmp_path_factory):
     assert_allclose(counts, counts2)
 
 
-def test_counts_dask(tmp_path_factory):
+def test_counts_dask(ms_name):
     '''
     Compares dask compute_counts to numba implementation
     '''
-    test_dir = tmp_path_factory.mktemp("test_weighting")
-    # test_dir = Path('/home/landman/data/')
-    packratt.get('/test/ms/2021-06-24/elwood/test_ascii_1h60.0s.MS.tar', str(test_dir))
 
     import numpy as np
     np.random.seed(420)
@@ -84,25 +93,38 @@ def test_counts_dask(tmp_path_factory):
     import dask
     dask.config.set(scheduler='sync')
 
-    ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
-    freq = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW')).getcol('CHAN_FREQ').squeeze()
+    test_dir = Path(ms_name).resolve().parent
+    xds = xds_from_ms(ms_name,
+                      chunks={'row': -1, 'chan': -1})[0]
+    spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]
+
+    utime = np.unique(xds.TIME.values)
+    freq = spw.CHAN_FREQ.values.squeeze()
+    freq0 = np.mean(freq)
+
+    ntime = utime.size
     nchan = freq.size
-    uvw = ms.getcol('UVW')
+    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA1.values.max()) + 1
+
+    ncorr = xds.corr.size
+
+    uvw = xds.UVW.values
     nrow = uvw.shape[0]
     u_max = abs(uvw[:, 0]).max()
     v_max = abs(uvw[:, 1]).max()
     uv_max = np.maximum(u_max, v_max)
 
     # image size
-    from africanus.constants import c as lightspeed
     cell_N = 1.0 / (2 * uv_max * freq.max() / lightspeed)
 
     srf = 2.0
     cell_rad = cell_N / srf
     cell_deg = cell_rad * 180 / np.pi
     cell_size = cell_deg * 3600
+    print("Cell size set to %5.5e arcseconds" % cell_size)
 
     from ducc0.fft import good_size
+    # the test will fail in intrinsic if sources fall near beam sidelobes
     fov = 1.0
     npix = good_size(int(fov / cell_deg))
     while npix % 2:
@@ -112,6 +134,7 @@ def test_counts_dask(tmp_path_factory):
     nx = npix
     ny = npix
 
+    print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
     mask = np.ones((nrow, nchan), dtype=bool)
     counts = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
                              np.float64, k=0).squeeze()
