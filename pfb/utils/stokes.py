@@ -91,7 +91,7 @@ def single_stokes(ds=None,
         ntime = utime.size
         nchan = freq.size
         nant = antpos.shape[0]
-        jones = da.ones((ntime, nchan, nant, 1, 2),
+        jones = da.ones((ntime, nant, nchan, 1, 2),
                         chunks=(-1,)*5,
                         dtype=complex_type)
 
@@ -254,7 +254,6 @@ def weight_data(data, weight, jones, tbin_idx, tbin_counts,
 
 def _weight_data(data, weight, jones, tbin_idx, tbin_counts,
                  ant1, ant2, pol, product):
-
     return _weight_data_impl(data[0], weight[0], jones[0][0][0],
                              tbin_idx, tbin_counts,
                              ant1, ant2, pol, product)

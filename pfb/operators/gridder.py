@@ -626,6 +626,9 @@ def image_data_products(uvw,
 
         wgt *= imwgt
 
+    if do_weight:
+        out_dict['WEIGHT'] = wgt
+
     wsum = wgt[mask.astype(bool)].sum()
     out_dict['WSUM'] = np.atleast_1d(wsum)
 
@@ -688,7 +691,7 @@ def image_data_products(uvw,
             vis=psf_vis,
             wgt=wgt,
             mask=mask,
-            npix_x=nx, npix_y=ny,
+            npix_x=nx_psf, npix_y=ny_psf,
             pixsize_x=cellx, pixsize_y=celly,
             center_x=x0, center_y=y0,
             epsilon=epsilon,

@@ -191,6 +191,7 @@ def _grid(**kw):
     while ny_psf % 2:
         ny_psf += 1
         ny_psf = good_size(ny_psf)
+    nyo2 = ny_psf//2 + 1
 
     if opts.psf:
         print(f"PSF size = (ntime={ntime}, nband={nband}, nx={nx_psf}, ny={ny_psf})", file=log)
@@ -433,7 +434,7 @@ def _grid(**kw):
             blocker.add_output(
                 'PSFHAT',
                 ('x_psf', 'yo2'),
-                ((nx_psf,), (ny_psf,)),
+                ((nx_psf,), (nyo2,)),
                 wgt.dtype)
 
         if opts.weight:
@@ -444,8 +445,7 @@ def _grid(**kw):
                 wgt.dtype)
 
         output_dict = blocker.get_dask_outputs()
-
-        # This
+        # import ipdb; ipdb.set_trace()
         out_ds = out_ds.assign(**{
             'DIRTY': (('x', 'y'), output_dict['DIRTY'])
             })
