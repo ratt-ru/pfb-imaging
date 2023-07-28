@@ -35,7 +35,7 @@ def test_clean(do_gains, ms_name):
 
     ntime = utime.size
     nchan = freq.size
-    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA1.values.max()) + 1
+    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA2.values.max()) + 1
 
     ncorr = xds.corr.size
 
@@ -87,7 +87,7 @@ def test_clean(do_gains, ms_name):
                                     epsilon=epsilon, do_wstacking=True, nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]
 
-    writes = []
+
     if do_gains:
         t = (utime-utime.min())/(utime.max() - utime.min())
         nu = 2.5*(freq/freq0 - 1.0)
@@ -104,7 +104,6 @@ def test_clean(do_gains, ms_name):
         L = (Lt, Lv)
 
         from pfb.utils.misc import kron_matvec
-
         jones = np.zeros((ntime, nchan, nant, 1, 2), dtype=np.complex128)
         for p in range(nant):
             for c in [0, -1]:  # for now only diagonal
@@ -113,7 +112,6 @@ def test_clean(do_gains, ms_name):
                 xi_phase = np.random.randn(ntime, nchan)
                 phase = kron_matvec(L, xi_phase)
                 jones[:, :, p, 0, c] = amp * np.exp(1.0j * phase)
-
 
         # corrupted vis
         model_vis = model_vis.reshape(nrow, nchan, 1, 2, 2)
@@ -124,13 +122,14 @@ def test_clean(do_gains, ms_name):
         ant2 = xds.ANTENNA2.values
 
         from africanus.calibration.utils import corrupt_vis
+        gains = np.swapaxes(jones, 1, 2).copy()
         vis = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2,
-                          np.swapaxes(jones, 1, 2), model_vis).reshape(nrow, nchan, ncorr)
+                          gains, model_vis).reshape(nrow, nchan, ncorr)
 
 
-        xds['DATA'] = (('row','chan','coor'),
+        xds['DATA'] = (('row','chan','corr'),
                        da.from_array(vis, chunks=(-1,-1,-1)))
-        writes.append(xds_to_table(xds, ms_name, columns='DATA'))
+        dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
 
         # cast gain to QuartiCal format
         g = da.from_array(jones)
@@ -162,15 +161,13 @@ def test_clean(do_gains, ms_name):
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
         gain_path = str(test_dir / Path("gains.qc"))
         out_path = f'{gain_path}::NET'
-        writes.append(xds_to_zarr(net_xds_list, out_path))
+        dask.compute(xds_to_zarr(net_xds_list, out_path))
 
     else:
-        xds['DATA'] = (('row','chan','coor'),
+        xds['DATA'] = (('row','chan','corr'),
                        da.from_array(model_vis, chunks=(-1,-1,-1)))
-        writes.append(xds_to_table(xds, ms_name, columns='DATA'))
+        dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
         gain_path = None
-
-    dask.compute(writes)
 
     postfix = "main"
     # set defaults from schema
@@ -254,6 +251,3 @@ def test_clean(do_gains, ms_name):
         assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] * n[Ix[i], Iy[i]] -
                         model[:, Ix[i], Iy[i]], 1.0,
                         atol=5*threshold)
-
- # do_gains, algo
-# test_clean(True)

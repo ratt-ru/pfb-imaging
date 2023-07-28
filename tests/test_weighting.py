@@ -104,7 +104,7 @@ def test_counts_dask(ms_name):
 
     ntime = utime.size
     nchan = freq.size
-    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA1.values.max()) + 1
+    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA2.values.max()) + 1
 
     ncorr = xds.corr.size
 

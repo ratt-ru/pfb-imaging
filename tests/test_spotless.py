@@ -51,7 +51,7 @@ def test_spotless(ms_name):
     ntime = utime.size
     nchan = freq.size
     # nant = np.maximum(ms.getcol('ANTENNA1').max(), ms.getcol('ANTENNA2').max()) + 1
-    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA1.values.max()) + 1
+    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA2.values.max()) + 1
 
     # ncorr = ms.getcol('FLAG').shape[-1]
     ncorr = xds.corr.size

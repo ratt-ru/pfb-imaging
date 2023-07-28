@@ -22,7 +22,7 @@ inputs:
       Order of interpolating polynomial for frequency axis
   fit_mode:
     dtype: str
-    default: 'poly'
+    default: Legendre
   min_val:
     dtype: float
     info:

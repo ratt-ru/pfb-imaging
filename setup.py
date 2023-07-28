@@ -17,7 +17,7 @@ requirements = [
                 'pyscilog >= 0.1.2',
                 'Click',
                 'omegaconf',
-                "codex-africanus[complete]",
+                "codex-africanus[dask, scipy, astropy, python-casacore, ducc0]",
                 "dask-ms[xarray, zarr, s3]",
                 "stimela==2.0rc4",
                 "QuartiCal",
