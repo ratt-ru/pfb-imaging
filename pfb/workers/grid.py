@@ -238,9 +238,6 @@ def _grid(**kw):
         params = mds.params.values
         coeffs = mds.coefficients.values
 
-        # regular grid interpolator doesn't work with small values
-        cell_scaling = 1.0/np.minimum(mds.cell_rad_x, mds.cell_rad_y)
-
         print(f"Loading model from {opts.transfer_model_from}. ",
               file=log)
 
