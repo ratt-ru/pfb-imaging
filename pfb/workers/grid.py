@@ -57,10 +57,10 @@ def _grid(**kw):
     from ducc0.fft import good_size
     from pfb.utils.fits import dds2fits, dds2fits_mfs
     from pfb.utils.misc import compute_context
-    from pfb.operators.gridder import vis2im, loc2psf_vis #, image_data_products
+    from pfb.operators.gridder import image_data_products
     from pfb.operators.fft import fft2d
-    from pfb.utils.weighting import (compute_counts, counts_to_weights,
-                                     filter_extreme_counts, l2reweight)
+    from pfb.utils.weighting import (compute_counts,
+                                     filter_extreme_counts)
     from pfb.utils.beam import eval_beam
     import xarray as xr
     from uuid import uuid4
@@ -71,6 +71,7 @@ def _grid(**kw):
     import sympy as sm
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
+    from quartical.utils.dask import Blocker
 
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
@@ -190,6 +191,7 @@ def _grid(**kw):
     while ny_psf % 2:
         ny_psf += 1
         ny_psf = good_size(ny_psf)
+    nyo2 = ny_psf//2 + 1
 
     if opts.psf:
         print(f"PSF size = (ntime={ntime}, nband={nband}, nx={nx_psf}, ny={ny_psf})", file=log)
@@ -253,6 +255,7 @@ def _grid(**kw):
         uvw = ds.UVW.data
         freq = ds.FREQ.data
         vis = ds.VIS.data
+        wgt = ds.WEIGHT.data
         # This is a vis space mask (see wgridder convention)
         mask = ds.MASK.data
         bandid = np.where(freqs_out == ds.freq_out)[0][0]
@@ -341,18 +344,6 @@ def _grid(**kw):
             model = None
 
 
-        if opts.l2reweight_dof and model is not None:
-            wgt, res = l2reweight(ds, out_ds, model,
-                             opts.epsilon,
-                             opts.nvthreads,
-                             opts.wstack,
-                             precision,
-                             dof=opts.l2reweight_dof)
-        else:
-            wgt = ds.WEIGHT.data
-            res = None
-
-
         if opts.robustness is not None:
             # we'll skip this if counts already exists
             # what to do if flags have changed?
@@ -365,7 +356,7 @@ def _grid(**kw):
                         ny,
                         cell_rad,
                         cell_rad,
-                        wgt.dtype,
+                        real_type,
                         ngrid=opts.nvthreads)
                 # get rid of artificially high weights corresponding to
                 # nearly empty cells
@@ -375,144 +366,112 @@ def _grid(**kw):
 
                 # do we want the coordinates to be ug, vg rather?
                 out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
-
-            imwgt = counts_to_weights(
-                                out_ds.COUNTS.data,
-                                clone(uvw),
-                                freq,
-                                nx, ny,
-                                cell_rad, cell_rad,
-                                opts.robustness)
-
-            wgt *= imwgt
         else:
             counts = None
 
+        # we might want to chunk over row chan in the future but
+        # for now these will always have chunks=(-1,-1)
+        blocker = Blocker(image_data_products, ('row', 'chan'))
+        blocker.add_input('uvw', uvw, ('row','three'))
+        blocker.add_input('freq', freq, ('chan',))
+        blocker.add_input('vis', vis, ('row','chan'))
+        blocker.add_input('wgt', wgt, ('row','chan'))
+        blocker.add_input('mask', mask, ('row','chan'))
+        if counts is not None:
+            blocker.add_input('counts', counts, ('x','y'))
+        else:
+            blocker.add_input('counts', None)
+        blocker.add_input('nx', nx)
+        blocker.add_input('ny', ny)
+        blocker.add_input('nx_psf', nx_psf)
+        blocker.add_input('ny_psf', ny_psf)
+        blocker.add_input('cellx', cell_rad)
+        blocker.add_input('celly', cell_rad)
+        if model is not None:
+            blocker.add_input('model', model, ('x', 'y'))
+        else:
+            blocker.add_input('model', None)
+        blocker.add_input('robustness', opts.robustness)
+        blocker.add_input('x0', x0)
+        blocker.add_input('y0', y0)
+        blocker.add_input('nthreads', opts.nvthreads)
+        blocker.add_input('epsilon', opts.epsilon)
+        blocker.add_input('do_wgridding', opts.wstack)
+        blocker.add_input('double_accum', opts.double_accum)
+        blocker.add_input('l2reweight_dof', opts.l2reweight_dof)
+        blocker.add_input('do_psf', opts.psf)
+        blocker.add_input('do_weight', opts.weight)
+        blocker.add_input('do_residual', opts.residual)
 
-        # image_dict = image_space_data_products(
-        #     uvw,
-        #     freq,
-        #     vis,
-        #     wgt,
-        #     mask,
-        #     counts,
-        #     nx, ny,
-        #     nx_psf, ny_psf,
-        #     cellx, celly,
-        #     model=None,
-        #     robustness=None,
-        #     x0=0.0, y0=0.0,
-        #     nthreads=1,
-        #     epsilon=1e-7,
-        #     precision='double',
-        #     do_wgridding=True,
-        #     double_accum=True,
-        #     l2reweight_dof=None,
-        #     do_dirty=True,
-        #     do_psf=True,
-        #     do_weight=True,
-        #     do_residual=False
-        # )
+        blocker.add_output(
+            'DIRTY',
+            ('x', 'y'),
+            ((nx,), (ny,)),
+            wgt.dtype)
 
+        blocker.add_output(
+            'WSUM',
+            ('scalar',),
+            ((1,),),
+            wgt.dtype)
 
-        if opts.dirty:
-            dirty = vis2im(uvw=clone(uvw),
-                           freq=freq,
-                           vis=vis,
-                           wgt=wgt,
-                           nx=nx,
-                           ny=ny,
-                           cellx=cell_rad,
-                           celly=cell_rad,
-                           x0=x0, y0=y0,
-                           nthreads=opts.nvthreads,
-                           epsilon=opts.epsilon,
-                           precision=precision,
-                           mask=mask,
-                           do_wgridding=opts.wstack,
-                           double_precision_accumulation=opts.double_accum)
-            out_ds = out_ds.assign(**{'DIRTY': (('x', 'y'), dirty)})
+        if opts.residual:
+            blocker.add_output(
+                'RESIDUAL',
+                ('x', 'y'),
+                ((nx,), (ny,)),
+                wgt.dtype)
 
         if opts.psf:
-            psf_vis = loc2psf_vis(clone(uvw),
-                                  freq,
-                                  cell_rad,
-                                  x0,
-                                  y0,
-                                  wstack=opts.wstack,
-                                  epsilon=opts.epsilon,
-                                  nthreads=opts.nvthreads,
-                                  precision=precision)
-            psf = vis2im(uvw=clone(uvw),
-                         freq=freq,
-                         vis=psf_vis,
-                         wgt=wgt,
-                         nx=nx_psf,
-                         ny=ny_psf,
-                         cellx=cell_rad,
-                         celly=cell_rad,
-                         x0=x0, y0=y0,
-                         nthreads=opts.nvthreads,
-                         epsilon=opts.epsilon,
-                         precision=precision,
-                         mask=mask,
-                         do_wgridding=opts.wstack,
-                         double_precision_accumulation=opts.double_accum)
-            # get FT of psf
-            psfhat = fft2d(psf, nthreads=opts.nvthreads)
-            out_ds = out_ds.assign(**{'PSF': (('x_psf', 'y_psf'), psf),
-                                      'PSFHAT': (('x_psf', 'yo2'), psfhat)})
+            blocker.add_output(
+                'PSF',
+                ('x_psf', 'y_psf'),
+                ((nx_psf,), (ny_psf,)),
+                wgt.dtype)
+            blocker.add_output(
+                'PSFHAT',
+                ('x_psf', 'yo2'),
+                ((nx_psf,), (nyo2,)),
+                wgt.dtype)
+
+        if opts.weight:
+            blocker.add_output(
+                'WEIGHT',
+                ('row', 'chan'),
+                wgt.chunks,
+                wgt.dtype)
+
+        output_dict = blocker.get_dask_outputs()
+        # import ipdb; ipdb.set_trace()
+        out_ds = out_ds.assign(**{
+            'DIRTY': (('x', 'y'), output_dict['DIRTY'])
+            })
+
+        if opts.psf:
+            out_ds = out_ds.assign(**{
+                'PSF': (('x_psf', 'y_psf'), output_dict['PSF']),
+                'PSFHAT': (('x_psf', 'yo2'), output_dict['PSFHAT'])
+                })
 
         # TODO - don't put vis space products in dds
         # but how apply imaging weights in that case?
         if opts.weight:
-            out_ds = out_ds.assign(**{'WEIGHT': (('row', 'chan'), wgt)})
+            out_ds = out_ds.assign(**{
+                'WEIGHT': (('row', 'chan'), output_dict['WEIGHT'])
+                })
 
-        wsum = wgt[mask.astype(bool)].sum()
-
-        if opts.residual and model is not None:
-            if res is not None:
-                residual = vis2im(
-                        uvw=clone(uvw),
-                        freq=freq,
-                        vis=res,
-                        wgt=wgt,
-                        nx=nx,
-                        ny=ny,
-                        cellx=cell_rad,
-                        celly=cell_rad,
-                        x0=x0, y0=y0,
-                        nthreads=opts.nvthreads,
-                        epsilon=opts.epsilon,
-                        precision=precision,
-                        mask=mask,
-                        do_wgridding=opts.wstack,
-                        double_precision_accumulation=opts.double_accum)
-            else:
-                from pfb.operators.hessian import hessian
-                hessopts = {
-                    'cell': cell_rad,
-                    'wstack': opts.wstack,
-                    'epsilon': opts.epsilon,
-                    'double_accum': opts.double_accum,
-                    'nthreads': opts.nvthreads
-                }
-                # we only want to apply the beam once here
-                residual = dirty - hessian(
-                                        bvals * model,
-                                        clone(uvw),
-                                        wgt,
-                                        mask,
-                                        freq,
-                                        None,
-                                        hessopts)
-            out_ds = out_ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
+        if opts.residual:
+            out_ds = out_ds.assign(**{
+                'RESIDUAL': (('x', 'y'), output_dict['RESIDUAL'])
+                })
 
 
-        out_ds = out_ds.assign(**{'FREQ': (('chan',), freq),
-                                  'UVW': (('row', 'three'), uvw),
-                                  'MASK': (('row', 'chan'), mask),
-                                  'WSUM': (('scalar',), da.atleast_1d(wsum))})
+        out_ds = out_ds.assign(**{
+            'FREQ': (('chan',), freq),
+            'UVW': (('row', 'three'), uvw),
+            'MASK': (('row', 'chan'), mask),
+            'WSUM': (('scalar',), output_dict['WSUM'])
+            })
 
 
         out_ds = out_ds.chunk({'row':100000,
