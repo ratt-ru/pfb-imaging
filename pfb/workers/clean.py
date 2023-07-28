@@ -74,7 +74,7 @@ def _clean(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds'
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
                                           'chan':-1,
                                           'x':-1,
@@ -184,7 +184,7 @@ def _clean(**kw):
                           verbosity=opts.verbose,
                           report_freq=opts.report_freq,
                           sigmathreshold=opts.sigmathreshold,
-                          nthreads=opts.nthreads)
+                          nthreads=opts.nvthreads)
         model += x
 
         print("Getting residual", file=log)
@@ -230,7 +230,9 @@ def _clean(**kw):
 
             model += opts.mop_gamma*x
 
-            save_fits(f'{basename}_{opts.postfix}_premop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
+            save_fits(residual_mfs,
+                      f'{basename}_{opts.postfix}_premop{k}_resid_mfs.fits',
+                      hdr_mfs)
 
             print("Getting residual", file=log)
             convimage = hess(model)
@@ -239,7 +241,9 @@ def _clean(**kw):
             ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                         casting='same_kind')
 
-            save_fits(f'{basename}_{opts.postfix}_postmop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
+            save_fits(residual_mfs,
+                      f'{basename}_{opts.postfix}_postmop{k}_resid_mfs.fits',
+                      hdr_mfs)
 
             tmp_mask = ~np.any(model, axis=0)
             rms = np.std(residual_mfs[tmp_mask])

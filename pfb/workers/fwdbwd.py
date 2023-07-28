@@ -72,8 +72,8 @@ def _fwdbwd(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
-    mds_name = f'{basename}{opts.postfix}.mds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds'
+    mds_name = f'{basename}_{opts.postfix}.mds'
 
     dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk,
                                           'chan':-1})
@@ -166,7 +166,7 @@ def _fwdbwd(**kw):
         M = None
     # the PSF is normalised so we don't need to pass wsum
     hess = partial(_hessian_reg_psf, beam=mean_beam * mask[None],
-                   psfhat=psfhat, nthreads=opts.nthreads,
+                   psfhat=psfhat, nthreads=opts.nvthreads,
                    sigmainv=sigmainv, padding=psf_padding,
                    unpad_x=unpad_x, unpad_y=unpad_y, lastsize=lastsize)
 

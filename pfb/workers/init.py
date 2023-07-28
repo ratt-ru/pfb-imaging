@@ -80,7 +80,6 @@ def _init(**kw):
     from pfb.utils.misc import construct_mappings
     import dask
     dask.config.set(**{'array.slicing.split_large_chunks': False})
-    from dask.graph_manipulation import clone
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
@@ -88,7 +87,6 @@ def _init(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.fits import set_wcs, save_fits
     from pfb.utils.stokes import single_stokes
     from pfb.utils.correlations import single_corr
     from pfb.utils.misc import compute_context, chunkify_rows
@@ -96,13 +94,13 @@ def _init(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    xdsstore = DaskMSStore(f'{basename}.xds.zarr')
+    xdsstore = DaskMSStore(f'{basename}.xds')
     if xdsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {basename}.xds.zarr", file=log)
+            print(f"Overwriting {basename}.xds", file=log)
             xdsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.xds.zarr exists. "
+            raise ValueError(f"{basename}.xds exists. "
                              "Set overwrite to overwrite it. ")
 
     if opts.gain_table is not None:
@@ -110,21 +108,31 @@ def _init(**kw):
         gain_names = list(map(tmpf, opts.gain_table))
     else:
         gain_names = None
-    # freqs, fbin_idx, fbin_counts, band_mapping, freq_out, \
-    #     utimes, tbin_idx, tbin_counts, time_mapping, \
-    #     ms_chunks, gain_chunks, radecs, \
-    #     chan_widths, uv_max, antpos, poltype = \
-    #         construct_mappings(opts.ms, gain_names,
-    #                            opts.nband,
-    #                            opts.integrations_per_image)
 
+    if opts.freq_range is not None:
+        fmin, fmax = opts.freq_range.strip(' ').split(':')
+        if len(fmin) > 0:
+            freq_min = float(fmin)
+        else:
+            freq_min = -np.inf
+        if len(fmax) > 0:
+            freq_max = float(fmax)
+        else:
+            freq_max = np.inf
+    else:
+        freq_min = -np.inf
+        freq_max = np.inf
+
+    print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms,
                                gain_names,
                                ipi=opts.integrations_per_image,
-                               cpi=opts.channels_per_image)
+                               cpi=opts.channels_per_image,
+                               freq_min=freq_min,
+                               freq_max=freq_max)
 
     max_freq = 0
     for ms in opts.ms:
@@ -176,20 +184,37 @@ def _init(**kw):
             gds = xds_from_zarr(gain_names[ims],
                                 chunks=gain_chunks[ms])
 
-        ndatasets = 0
         for ids, ds in enumerate(xds):
             fid = ds.FIELD_ID
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
+            # TODO - cleaner syntax
+            if opts.fields is not None:
+                fields = opts.fields.strip(' ')  # strip white space
+                if fid not in list(map(int, fields[1:-1].split(','))):
+                    continue
+            if opts.ddids is not None:
+                ddids = opts.ddids.strip(' ')
+                if ddid not in list(map(int, ddids[1:-1].split(','))):
+                    continue
+            if opts.scans is not None:
+                scans = opts.scans.strip(' ')
+                if scanid not in list(map(int, scans[1:-1].split(','))):
+                    continue
+
+
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
             nrow = ds.dims['row']
-            nchan = ds.dims['chan']
             ncorr = ds.dims['corr']
+
+            idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
+            if not idx.any():
+                continue
+
+            nchan = idx.sum()
 
             for ti, (tlow, tcounts) in enumerate(zip(time_mapping[ms][idt]['start_indices'],
                                            time_mapping[ms][idt]['counts'])):
-
-                ndatasets += 1
 
                 It = slice(tlow, tlow + tcounts)
                 ridx = row_mapping[ms][idt]['start_indices'][It]
@@ -197,10 +222,9 @@ def _init(**kw):
                 # select all rows for output dataset
                 Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
 
-                for fi, (flow, fcounts) in enumerate(zip(freq_mapping[ms][idt]['start_indices'],
-                                                     freq_mapping[ms][idt]['counts'])):
+                for flow, fcounts in zip(freq_mapping[ms][idt]['start_indices'],
+                                         freq_mapping[ms][idt]['counts']):
                     Inu = slice(flow, flow + fcounts)
-                    ndatasets += 1
 
                     subds = ds[{'row': Irow, 'chan': Inu}]
                     if opts.gain_table is not None:
@@ -245,7 +269,7 @@ def _init(**kw):
                         out_datasets.append(out_ds)
 
     if len(out_datasets):
-        writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',
+        writes = xds_to_zarr(out_datasets, f'{basename}.xds',
                              columns='ALL')
     else:
         raise ValueError('No datasets found to write. '

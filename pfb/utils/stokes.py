@@ -1,15 +1,22 @@
 import numpy as np
-from numba import generated_jit, njit
+import numexpr as ne
+from numba import generated_jit, njit, prange
 from numba.types import literal
 from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
-from pfb.utils.misc import coerce_literal
+from quartical.utils.numba import coerce_literal
 from daskms.optimisation import inlined_array
 from operator import getitem
 from pfb.utils.beam import interp_beam
 import dask
+
+
+def weight_from_sigma(sigma):
+    weight = ne.evaluate('1.0/(sigma*sigma)',
+                         casting='same_kind')
+    return weight
 
 
 def single_stokes(ds=None,
@@ -56,7 +63,10 @@ def single_stokes(ds=None,
 
     if opts.sigma_column is not None:
         sigma = getattr(ds, opts.sigma_column).data
-        weight = 1.0/sigma**2
+        # weight = 1.0/sigma**2
+        weight = da.map_blocks(weight_from_sigma,
+                               sigma,
+                               chunks=sigma.chunks)
     elif opts.weight_column is not None:
         weight = getattr(ds, opts.weight_column).data
         if opts.weight_column=='WEIGHT':
@@ -81,7 +91,7 @@ def single_stokes(ds=None,
         ntime = utime.size
         nchan = freq.size
         nant = antpos.shape[0]
-        jones = da.ones((ntime, nchan, nant, 1, 2),
+        jones = da.ones((ntime, nant, nchan, 1, 2),
                         chunks=(-1,)*5,
                         dtype=complex_type)
 
@@ -106,6 +116,8 @@ def single_stokes(ds=None,
     # do this before casting to dask array otherwise
     # serialisation of attrs fails
     freq_out = np.mean(freq)
+    freq_min = freq.min()
+    freq_max = freq.max()
 
     # simple average over channels
     if opts.chan_average > 1:
@@ -195,8 +207,8 @@ def single_stokes(ds=None,
         'ddid': ds.DATA_DESC_ID,
         'scanid': ds.SCAN_NUMBER,
         'freq_out': freq_out,
-        'freq_min': freq.min(),
-        'freq_max': freq.max(),
+        'freq_min': freq_min,
+        'freq_max': freq_max,
         'time_out': np.mean(utime),
         'time_min': utime.min(),
         'time_max': utime.max(),
@@ -242,12 +254,11 @@ def weight_data(data, weight, jones, tbin_idx, tbin_counts,
 
 def _weight_data(data, weight, jones, tbin_idx, tbin_counts,
                  ant1, ant2, pol, product):
-
     return _weight_data_impl(data[0], weight[0], jones[0][0][0],
                              tbin_idx, tbin_counts,
                              ant1, ant2, pol, product)
 
-@generated_jit(nopython=True, nogil=True, cache=True)
+@generated_jit(nopython=True, nogil=True, cache=True, parallel=True)
 def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product):
 
@@ -265,7 +276,7 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
         vis = np.zeros((nrow, nchan), dtype=data.dtype)
         wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
 
-        for t in range(nt):
+        for t in prange(nt):
             for row in range(tbin_idx[t],
                              tbin_idx[t] + tbin_counts[t]):
                 p = int(ant1[row])

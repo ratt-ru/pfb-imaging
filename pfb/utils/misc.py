@@ -2,6 +2,7 @@ import sys
 import numpy as np
 import numexpr as ne
 from numba import jit, njit, prange
+from numba.extending import overload
 import dask
 import dask.array as da
 from dask.distributed import performance_report
@@ -9,8 +10,6 @@ from dask.diagnostics import ProgressBar
 from ducc0.fft import r2c, c2r, good_size
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
-from numba.core.extending import SentryLiteralArgs
-import inspect
 from daskms import xds_from_storage_ms as xds_from_ms
 from daskms import xds_from_storage_table as xds_from_table
 from daskms.experimental.zarr import xds_from_zarr
@@ -18,12 +17,21 @@ from omegaconf import ListConfig
 from skimage.morphology import label
 from scipy.optimize import curve_fit
 from collections import namedtuple
-from scipy.interpolate import RectBivariateSpline as rbs
 from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
-from smoove.kanterp import kanterp
-import pdb
+from quartical.utils.dask import Blocker
+from scipy.interpolate import RegularGridInterpolator
+import sympy as sm
+from sympy.utilities.lambdify import lambdify
+from sympy.parsing.sympy_parser import parse_expr
 
+JIT_OPTIONS = {
+    "nogil": True,
+    "fastmath": True,
+    "cache": True
+}
+
+import pdb
 class ForkedPdb(pdb.Pdb):
     """A Pdb subclass that may be used
     from a forked multiprocessing child
@@ -99,7 +107,7 @@ def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     S0, S1, PA = GaussPar
     Smaj = S0  #np.maximum(S0, S1)
     Smin = S1  #np.minimum(S0, S1)
-    print(f'using ex = {Smaj}, ey = {Smin}')
+    # print(f'using ex = {Smaj}, ey = {Smin}')
     A = np.array([[1. / Smin ** 2, 0],
                   [0, 1. / Smaj ** 2]])
 
@@ -112,9 +120,7 @@ def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     extent = (nsigma * Smaj)**2
     xflat = xin.squeeze()
     yflat = yin.squeeze()
-    ind = np.argwhere(xflat**2 + yflat**2 <= extent).squeeze()
-    idx = ind[:, 0]
-    idy = ind[:, 1]
+    idx, idy = np.where(xflat**2 + yflat**2 <= extent)
     x = np.array([xflat[idx, idy].ravel(), yflat[idx, idy].ravel()])
     R = np.einsum('nb,bc,cn->n', x.T, A, x)
     # need to adjust for the fact that GaussPar corresponds to FWHM
@@ -217,8 +223,9 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
             thiskernhat = r2c(iFs(thiskern, axes=ax), axes=ax, forward=True,
                               nthreads=nthreads, inorm=0)
 
-            convkernhat = np.where(np.abs(thiskernhat) > 0.0,
-                                   gausskernhat / thiskernhat, 0.0)
+            convkernhat = np.zeros_like(thiskernhat)
+            msk = np.abs(thiskernhat) > 0.0
+            convkernhat[msk] = gausskernhat[msk]/thiskernhat[msk]
 
             imhat[i] *= convkernhat[0]
 
@@ -240,7 +247,9 @@ def fetch_poltype(corr_type):
 def construct_mappings(ms_name,
                        gain_name=None,
                        ipi=None,
-                       cpi=None):
+                       cpi=None,
+                       freq_min=-np.inf,
+                       freq_max=np.inf):
     '''
     Construct dictionaries containing per MS, FIELD, DDID and SCAN
     time and frequency mappings.
@@ -348,7 +357,6 @@ def construct_mappings(ms_name,
         uv_maxs, antpos, poltype)
 
     uv_max = max(uv_maxs)
-
     all_freqs = []
     all_times = []
     freq_mapping = {}
@@ -372,17 +380,31 @@ def construct_mappings(ms_name,
                 except Exception as e:
                     raise ValueError(f'Mismatch between gain and MS '
                                      f'frequencies for {ms} at {idt}')
-            all_freqs.append(freq)
+
+            nchan_in = freq.size
+            idx = (freq>=freq_min) & (freq<=freq_max)
+            if not idx.any():
+                continue
+            idx0 = np.argmax(idx) # returns index of first True element
+            # np.searchsorted here?
+            try:
+                # returns zero if not idx.any()
+                assert idx[idx0]
+            except Exception as e:
+                continue
+            freq = freq[idx]
             nchan = freq.size
             if cpi in [-1, 0, None]:
                 cpit = nchan
+                cpi = nchan_in
             else:
                 cpit = np.minimum(cpi, nchan)
+                cpi = np.minimum(cpi, nchan_in)
             freq_mapping[ms][idt] = {}
-            tmp = np.arange(0, nchan, cpit)
+            tmp = np.arange(idx0, idx0 + nchan, cpit)
             freq_mapping[ms][idt]['start_indices'] = tmp
             if cpit != nchan:
-                tmp2 = np.append(tmp, [nchan])
+                tmp2 = np.append(tmp, [idx0 + nchan])
                 freq_mapping[ms][idt]['counts'] = tmp2[1:] - tmp2[0:-1]
             else:
                 freq_mapping[ms][idt]['counts'] = np.array((nchan,), dtype=int)
@@ -405,12 +427,20 @@ def construct_mappings(ms_name,
                 ipit = np.minimum(ipi, ntime)
             row_chunks, ridx, rcounts = chunkify_rows(time, ipit,
                                                       daskify_idx=False)
+            # these are for applying gains
+            # essentially the number of rows per unique time
             row_mapping[ms][idt] = {}
             row_mapping[ms][idt]['start_indices'] = ridx
             row_mapping[ms][idt]['counts'] = rcounts
 
+            nfreq_chunks = nchan_in // cpi
+            freq_chunks = (cpi,)*nfreq_chunks
+            rem = nchan_in - nfreq_chunks * cpi
+            if rem:
+                freq_chunks += (rem,)
+
             ms_chunks[ms].append({'row': row_chunks,
-                                  'chan': tuple(freq_mapping[ms][idt]['counts'])})
+                                  'chan': freq_chunks})
 
             time_mapping[ms][idt] = {}
             tmp = np.arange(0, ntime, ipit)
@@ -428,7 +458,7 @@ def construct_mappings(ms_name,
                     if name == 'gain_time':
                         tmp_dict[name] = tuple(time_mapping[ms][idt]['counts'])
                     elif name == 'gain_freq':
-                        tmp_dict[name] = tuple(freq_mapping[ms][idt]['counts'])
+                        tmp_dict[name] = freq_chunks
                     elif name == 'direction':
                         if len(val) > 1:
                             raise ValueError("DD gains not supported yet")
@@ -462,15 +492,17 @@ def _restore_corrs(vis, ncorr):
 
 def fitcleanbeam(psf: np.ndarray,
                  level: float = 0.5,
-                 pixsize: float = 1.0):
+                 pixsize: float = 1.0,
+                 extent: float = 15.0):
     """
-    Find the Gaussian that approximates the main lobe of the PSF.
+    Find the Gaussian that approximates the PSF.
+    First find the main lobe by identifying where PSF > level
+    then fit Gaussian out to a radius of extent * max(x, y) where
+    x and y are the coordinates where PSF > level.
     """
-
-
     nband, nx, ny = psf.shape
 
-    # coordinates
+    # pixel coordinates
     x = np.arange(-nx / 2, nx / 2)
     y = np.arange(-ny / 2, ny / 2)
     xx, yy = np.meshgrid(x, y, indexing='ij')
@@ -492,7 +524,7 @@ def fitcleanbeam(psf: np.ndarray,
         fwhm_conv = 2 * np.sqrt(2 * np.log(2))
         return np.exp(-fwhm_conv * R)
 
-    Gausspars = ()
+    Gausspars = []
     for v in range(nband):
         # make sure psf is normalised
         psfv = psf[v] / psf[v].max()
@@ -503,17 +535,24 @@ def fitcleanbeam(psf: np.ndarray,
         islands = label(mask)
         ncenter = islands[nx // 2, ny // 2]
 
-        # select psf main lobe
-        psfv = psfv[islands == ncenter]
+        # get extend of main lobe
         x = xx[islands == ncenter]
         y = yy[islands == ncenter]
-        xy = np.vstack((x, y))
         xdiff = x.max() - x.min()
         ydiff = y.max() - y.min()
+        rsq = np.abs(x).max()**2 + np.abs(y).max()**2
+        rrsq = xx**2 + yy**2
+        idxs = rrsq < extent * rsq
+
+        # select psf main lobe
+        psfv = psfv[idxs]
+        x = xx[idxs]
+        y = yy[idxs]
+        xy = np.vstack((x, y))
         emaj0 = np.maximum(xdiff, ydiff)
         emin0 = np.minimum(xdiff, ydiff)
         p, _ = curve_fit(func, xy, psfv, p0=(emaj0, emin0, 0.0))
-        Gausspars += ((p[0] * pixsize, p[1] * pixsize, p[2]),)
+        Gausspars.append([p[0] * pixsize, p[1] * pixsize, p[2]])
 
     return Gausspars
 
@@ -593,13 +632,6 @@ def init_mask(mask, model, output_type, log):
     else:
         raise ValueError(f'Unsupported masking option {mask}')
     return mask
-
-
-def coerce_literal(func, literals):
-    func_locals = inspect.stack()[1].frame.f_locals  # One frame up.
-    arg_types = [func_locals[k] for k in inspect.signature(func).parameters]
-    SentryLiteralArgs(literals).for_function(func).bind(*arg_types)
-    return
 
 
 def dds2cubes(dds, nband, apparent=False):
@@ -713,7 +745,7 @@ def _rephase_vis(vis, uvw, radec_in, radec_out):
                             uvw[:, 2]*(n_out-n_in)))
 
 
-# TODO - concat functions should allow coarsening to values other than 1
+# TODO - should allow coarsening to values other than 1
 def concat_row(xds):
     # TODO - how to compute average beam before we have access to grid?
     times_in = []
@@ -780,7 +812,6 @@ def concat_row(xds):
     return xds_out
 
 
-from quartical.utils.dask import Blocker
 def concat_chan(xds, nband_out=1):
     times = []
     freqs_in = []
@@ -818,7 +849,11 @@ def concat_chan(xds, nband_out=1):
             flow = freq_bins[b]
             fhigh = freq_bins[b+1]
             freqsb = all_freqs[all_freqs >= flow]
-            freqsb = freqsb[freqsb < fhigh]
+            # exlusive except for the last one
+            if b==nband_out-1:
+                freqsb = freqsb[freqsb <= fhigh]
+            else:
+                freqsb = freqsb[freqsb < fhigh]
             for ds in xds:
                 # ds overlaps output if either ds.freq_min or ds.freq_max lies in the bin
                 low_in = ds.freq_min > flow and ds.freq_min < fhigh
@@ -827,10 +862,10 @@ def concat_chan(xds, nband_out=1):
                     xdst.append(ds)
 
             # LB - we should be able to avoid this stack operation by using Jon's *() magic
-            wgt = da.stack([ds.WEIGHT.data for ds in xdst]).rechunk(-1, -1, -1)
-            vis = da.stack([ds.VIS.data for ds in xdst]).rechunk(-1, -1, -1)
-            mask = da.stack([ds.MASK.data for ds in xdst]).rechunk(-1, -1, -1)
-            freq = da.stack([ds.FREQ.data for ds in xdst]).rechunk(-1, -1)
+            wgt = da.stack([ds.WEIGHT.data for ds in xdst]).rechunk(-1, -1) # verify chunking over freq axis
+            vis = da.stack([ds.VIS.data for ds in xdst]).rechunk(-1, -1)
+            mask = da.stack([ds.MASK.data for ds in xdst]).rechunk(-1, -1)
+            freq = da.stack([ds.FREQ.data for ds in xdst]).rechunk(-1)
 
             nrow = xdst[0].row.size
             nchan = freqsb.size
@@ -898,13 +933,309 @@ def sum_overlap(vis, wgt, mask, freq, ufreq, flow, fhigh):
         masko[:, idx1] += mask[i][:, idx0]
 
     # unmasked where at least one data point is unflagged
-    masko = np.where(masko > 0, 1, 0)
-    viso[masko.astype(bool)] = viso[masko.astype(bool)]/wgto[masko.astype(bool)]
+    masko = np.where(masko > 0, True, False)
+    viso[masko] = viso[masko]/wgto[masko]
 
     # blocker expects a dictionary as output
     out_dict = {}
     out_dict['viso'] = viso
     out_dict['wgto'] = wgto
-    out_dict['masko'] = masko
+    out_dict['masko'] = masko.astype(np.uint8)
 
     return out_dict
+
+
+def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model):
+    '''
+    The logic here is that weights should remain the same for model
+    components that are rmsfactor times larger than the rms.
+    High SNR values should experience relatively small thresholding
+    whereas small values should be strongly thresholded
+    '''
+    psiH(model, outvar)
+    mcomps = np.sum(outvar, axis=0)
+    # the **2 here results in more agressive reweighting
+    return (1 + rmsfactor)/(1 + mcomps**4/rms_comps**4)
+
+
+# TODO - this can be done in parallel by splitting the image into facets
+def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
+                   method='poly', sigmasq=0):
+    '''
+    Fit the time and frequency axes of an image cube where
+
+    image   - (ntime, nband, nx, ny) pixelated image
+    wgt     - (ntime, nband) optional per time and frequency weights
+    nbasist - number of time basis functions
+    nbasisf - number of frequency basis functions
+    method  - method to use for fitting
+
+    If wgt is not supplied equal weights are assumed.
+    If nbasist/f are not supplied we return the coefficients
+    of a bilinear fit regardless of method.
+
+    methods:
+    poly    - fit a monomials in time and frequency
+
+
+    returns:
+    coeffs  - fitted coefficients
+    locx    - x pixel values
+    locy    - y pixel values
+    expr    - a string representing the symbolic expression describing the fit
+    params  - tuple of str, parameters to pass into function (excluding t and f)
+    ref_time    - reference time
+    ref_freq    - reference frequency
+
+
+    The fit is performed in scaled coordinates (t=time/ref_time,f=freq/ref_freq)
+    '''
+    ntime = time.size
+    nband = freq.size
+    ref_time = time[0]
+    ref_freq = freq[0]
+    import sympy as sm
+    from sympy.abc import a, t, f
+
+    if nbasist is None:
+        nbasist = ntime
+    else:
+        assert nbasist <= ntime
+    if nbasisf is None:
+        nbasisf = nband
+    else:
+        assert nbasisf <= nband
+
+    mask = np.any(image, axis=(0,1))  # over t and f axes
+    Ix, Iy = np.where(mask)
+    ncomps = Ix.size
+
+    # components excluding zeros
+    beta = image[:, :, Ix, Iy].reshape(ntime*nband, ncomps)
+    if wgt is not None:
+        wgt = wgt.reshape(ntime*nband, 1)
+    else:
+        wgt = np.ones((ntime*nband, 1), dtype=float)
+    # nothing to fit
+    if ntime==1 and nband==1:
+        coeffs = beta
+        expr = a
+        params = (a,)
+    elif method=='poly':
+        wt = time/ref_time
+        tfunc = t/ref_time
+        Xfit = np.tile(wt[:, None], (nband, nbasist))**np.arange(nbasist)
+        params = sm.symbols(f't(0:{nbasist})')
+        expr = sum(co*t**i for i, co in enumerate(params))
+        # the costant offset will always be included since nbasist is at least one
+        if nband > 1:
+            wf = freq/ref_freq
+            ffunc = f/ref_freq
+            Xf = np.tile(wf[:, None], (ntime, nbasisf-1))**np.arange(1, nbasisf)
+            Xfit = np.hstack((Xfit, Xf))
+            paramsf = sm.symbols(f'f(1:{nbasisf})')
+            expr += sum(co*f**(i+1) for i, co in enumerate(paramsf))
+            params += paramsf
+
+    elif method=='Legendre':
+        # scale to lie between -1,1 for stability
+        if ntime > 1:
+            tmax = time.max()
+            tmin = time.min()
+            wt = (time - (tmax + tmin)/2)
+            wtmax = wt.max()
+            wt /= wtmax
+            # function to convert time to interp domain
+            tfunc = (t - (tmax + tmin)/2)/wtmax
+        else:
+            wt = time
+            tfunc = t
+        Xt = np.zeros((ntime, nbasist), dtype=float)
+        params = sm.symbols(f't(0:{nbasist})')
+        if nbasist > 1:
+            expr = 0
+            for i in range(nbasist):
+                vals = np.polynomial.Legendre.basis(i)(wt)
+                Xt[:, i] = vals
+                expr += sm.polys.orthopolys.legendre_poly(i, t)*params[i]
+        else:
+            Xt[...] = 1.0
+            expr = params[0]
+        Xfit = np.tile(Xt, (nband, 1))
+        paramsf = sm.symbols(f'f(1:{nbasisf})')
+        if nband > 1:
+            Xf = np.zeros((nband, nbasisf - 1))
+            fmax = freq.max()
+            fmin = freq.min()
+            wf = freq - (fmax + fmin)/2
+            wfmax = wf.max()
+            wf /= wfmax
+            ffunc = (f - (fmax + fmin)/2)/wfmax
+            for i in range(1, nbasisf):
+                vals = np.polynomial.Legendre.basis(i)(wf)
+                Xf[:, i-1] = vals
+                expr += sm.polys.orthopolys.legendre_poly(i, f)*paramsf[i-1]
+            Xf = np.tile(Xf, (ntime, 1))
+            Xfit = np.hstack((Xfit, Xf))
+            params += paramsf
+    else:
+        raise NotImplementedError("Please help us!")
+
+    dirty_coeffs = Xfit.T.dot(wgt*beta)
+    hess_coeffs = Xfit.T.dot(wgt*Xfit)
+    # to improve conditioning
+    if sigmasq:
+        hess_coeffs += sigmasq*np.eye(hess_coeffs.shape[0])
+    coeffs = np.linalg.solve(hess_coeffs, dirty_coeffs)
+
+
+    return coeffs, Ix, Iy, str(expr), list(map(str,params)), str(tfunc),str(ffunc)
+
+
+def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy,
+                        expr, paramf, texpr, fexpr):
+    ntime = time.size
+    nfreq = freq.size
+
+    image = np.zeros((ntime, nfreq, nx, ny), dtype=float)
+    params = sm.symbols(('t','f'))
+    params += sm.symbols(tuple(paramf))
+    symexpr = parse_expr(expr)
+    modelf = lambdify(params, symexpr)
+    texpr = parse_expr(texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(fexpr)
+    ffunc = lambdify(params[1], fexpr)
+    for i, tval in enumerate(time):
+        for j, fval in enumerate(freq):
+            image[i, j, Ix, Iy] = modelf(tfunc(tval), ffunc(fval), *coeffs)
+
+    return image
+
+
+def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
+                         expr, paramf, texpr, fexpr,
+                         nxi, nyi, cellxi, cellyi, x0i, y0i,
+                         nxo, nyo, cellxo, cellyo, x0o, y0o):
+
+    image_in = np.zeros((nxi, nyi), dtype=float)
+    params = sm.symbols(('t','f'))
+    params += sm.symbols(tuple(paramf))
+    symexpr = parse_expr(expr)
+    modelf = lambdify(params, symexpr)
+    texpr = parse_expr(texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(fexpr)
+    ffunc = lambdify(params[1], fexpr)
+    image_in[Ix, Iy] = modelf(tfunc(time), ffunc(freq), *coeffs)
+
+    xin = (-(nxi//2) + np.arange(nxi))*cellxi + x0i
+    yin = (-(nyi//2) + np.arange(nyi))*cellyi + y0i
+    xo = (-(nxo//2) + np.arange(nxo))*cellxo + x0o
+    yo = (-(nyo//2) + np.arange(nyo))*cellyo + y0o
+
+    # how many pixels to pad by to extrapolate with zeros
+    xldiff = xin.min() - xo.min()
+    if xldiff > 0.0:
+        npadxl = int(np.ceil(xldiff/cellxi))
+    else:
+        npadxl = 0
+    yldiff = yin.min() - yo.min()
+    if yldiff > 0.0:
+        npadyl = int(np.ceil(yldiff/cellyi))
+    else:
+        npadyl = 0
+
+    xudiff = xo.max() - xin.max()
+    if xudiff > 0.0:
+        npadxu = int(np.ceil(xudiff/cellxi))
+    else:
+        npadxu = 0
+    yudiff = yo.max() - yin.max()
+    if yudiff > 0.0:
+        npadyu = int(np.ceil(yudiff/cellyi))
+    else:
+        npadyu = 0
+
+    do_pad = npadxl > 0
+    do_pad |= npadxu > 0
+    do_pad |= npadyl > 0
+    do_pad |= npadyu > 0
+    if do_pad:
+        image_in = np.pad(image_in,
+                        ((npadxl, npadxu), (npadyl, npadyu)),
+                        mode='constant')
+
+        xin = (-(nxi//2+npadxl) + np.arange(nxi + npadxl + npadxu))*cellxi + x0i
+        nxi = nxi + npadxl + npadxu
+        yin = (-(nyi//2+npadyl) + np.arange(nyi + npadyl + npadyu))*cellyi + y0i
+        nyi = nyi + npadyl + npadyu
+
+    do_interp = cellxi != cellxo
+    do_interp |= cellyi != cellyo
+    do_interp |= x0i != x0o
+    do_interp |= y0i != y0o
+    do_interp |= nxi != nxo
+    do_interp |= nyi != nyo
+    if do_interp:
+        interpo = RegularGridInterpolator((xin, yin), image_in,
+                                          bounds_error=True, method='linear')
+        xx, yy = np.meshgrid(xo, yo, indexing='ij')
+        return interpo((xx, yy))
+    # elif (nxi != nxo) or (nyi != nyo):
+    #     # only need the overlap in this case
+    #     _, idx0, idx1 = np.intersect1d(xin, xo, assume_unique=True, return_indices=True)
+    #     _, idy0, idy1 = np.intersect1d(yin, yo, assume_unique=True, return_indices=True)
+    #     return image[idx0, idy0]
+    else:
+        return image_in
+
+
+@njit(**JIT_OPTIONS)
+def norm_diff(x, xp):
+    return norm_diff_impl(x, xp)
+
+
+def norm_diff_impl(x, xp):
+    return NotImplementedError
+
+
+@overload(norm_diff_impl, jit_options=JIT_OPTIONS)
+def nb_norm_diff_impl(x, xp):
+    if x.ndim==3:
+        def impl(x, xp):
+            nband, nx, ny = x.shape
+            num = 0.0
+            den = 0.0
+            for b in range(nband):
+                for i in range(nx):
+                    for j in range(ny):
+                        num += (x[b, i, j] - xp[b, i, j])**2
+                        den += x[b, i, j]**2
+            return np.sqrt(num/den)
+    elif x.ndim==2:
+        def impl(x, xp):
+            nx, ny = x.shape
+            num = 0.0
+            den = 0.0
+            for i in range(nx):
+                for j in range(ny):
+                    num += (x[i, j] - xp[i, j])**2
+                    den += x[i, j]**2
+            return np.sqrt(num/den)
+    else:
+        raise ValueError("norm_diff is only implemented for 2D or 3D arrays")
+
+    return impl
+
+
+
+def remove_large_islands(x, max_island_size=100):
+    islands = label(x.squeeze())
+    num_islands = islands.max()
+    for i in range(1,num_islands+1):
+        msk = islands == i
+        num_pix = np.sum(msk)
+        if num_pix > max_island_size:
+            x[msk] = 0.0
+    return x

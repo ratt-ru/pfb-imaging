@@ -11,6 +11,26 @@ inputs:
     abbreviation: o
     info:
       Basename of output
+  scans:
+    dtype: List[int]
+    info:
+      List of SCAN_NUMBERS to image. Defaults to all.
+      Input as string eg. '[0,2]' if running from CLI
+  ddids:
+    dtype: List[int]
+    info:
+      List of DATA_DESC_ID's to images. Defaults to all.
+      Input as string eg. '[0,1]' if running from CLI
+  fields:
+    dtype: List[int]
+    info:
+      List of FIELD_ID's to image. Defaults to all.
+      Input as string eg. '[0,1,2]' if running from CLI
+  freq_range:
+    dtype: str
+    info:
+      Frequency range to image in Hz.
+      Specify as a string with colon delimiter eg. '1e9:1.1e9'
   overwrite:
     dtype: bool
     default: false
@@ -28,7 +48,6 @@ inputs:
       Data column to image. Must be the same across MSs
   weight_column:
     dtype: str
-    # default: WEIGHT_SPECTRUM
     abbreviation: wc
     info:
       Column containing natural weights. Must be the same across MSs
@@ -64,18 +83,18 @@ inputs:
       Only single Stokes products are currently supported
   integrations_per_image:
     dtype: int
+    abbreviation: ipi
+    default: -1
     info:
       Number of time integrations per image.
       Default (-1, 0, None) -> dataset per scan.
-    abbreviation: ipi
-    default: -1
   channels_per_image:
     dtype: int
+    abbreviation: cpi
+    default: -1
     info:
       Number of channels per image.
       Default (-1, 0, None) -> dataset per spw.
-    abbreviation: cpi
-    default: -1
   precision:
     dtype: str
     default: double

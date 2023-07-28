@@ -37,12 +37,6 @@ def degrid(**kw):
     except:
         raise ValueError(f"No MS at {opts.ms}")
 
-    if opts.nworkers is None:
-        if opts.scheduler=='distributed':
-            opts.nworkers = opts.nband
-        else:
-            opts.nworkers = 1
-
     OmegaConf.set_struct(opts, True)
 
     if opts.product.upper() not in ["I"]:
@@ -81,142 +75,60 @@ def _degrid(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import model as im2vis
-    from pfb.operators.gridder import comps2vis
+    from pfb.operators.gridder import comps2vis, _comps2vis_impl
     from pfb.utils.fits import load_fits, data_from_header
-    from pfb.utils.misc import restore_corrs, model_from_comps
     from astropy.io import fits
     from pfb.utils.misc import compute_context
+    import xarray as xr
+    import sympy as sm
+    from sympy.utilities.lambdify import lambdify
+    from sympy.parsing.sympy_parser import parse_expr
 
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
-    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
-    dds = xds_from_zarr(dds_name,
-                        chunks={'x':-1,
-                                'y':-1})
-    cell_rad = dds[0].cell_rad
+    mds = xds_from_zarr(opts.mds)[0]
+
+    # grid spec
+    cell_rad = mds.cell_rad_x
     cell_deg = np.rad2deg(cell_rad)
+    nx = mds.npix_x
+    ny = mds.npix_y
+    x0 = mds.center_x
+    y0 = mds.center_y
+    radec = (mds.ra, mds.dec)
 
-    # get cube info
-    nband = 0
-    ntime = 0
-    mfreqs = []
-    mtimes = []
-    for ds in dds:
-        nband = np.maximum(ds.bandid+1, nband)
-        ntime = np.maximum(ds.timeid+1, ntime)
-        mfreqs.append(ds.freq_out)
-        mtimes.append(ds.time_out)
-    mfreqs = np.unique(np.array(mfreqs))
-    mtimes = np.unique(np.array(mtimes))
-    assert nband == opts.nband
-    assert mfreqs.size == nband
-    assert mtimes.size == ntime
-    assert len(dds) == nband*ntime
-
-    # stack cube
-    nx = dds[0].x.size
-    ny = dds[0].y.size
-    x0 = dds[0].x0
-    y0 = dds[0].y0
-
-    # TODO - do this as a dask graph
-    # model = [da.zeros((nx, ny)) for _ in range(opts.nband)]
-    # wsums = [da.zeros(1) for _ in range(opts.nband)]
-    model = np.zeros((ntime, nband, nx, ny), dtype=np.float64)
-    wsums = np.zeros((ntime, nband), dtype=np.float64)
-    mask = np.zeros((nx, ny), dtype=bool)
-    for ds in dds:
-        b = ds.bandid
-        t = ds.timeid
-        model[t, b] = getattr(ds, opts.model_name).values
-        wsums[t, b] += ds.WSUM.values[0]
-
-    # model = da.stack(model)
-    # wsums = da.stack(wsums).squeeze()
-    # model, wsums = dask.compute(model, wsums)
-    if not np.any(model):
-        raise ValueError('Model is empty')
-    radec = (dds[0].ra, dds[0].dec)
+    # model func
+    params = sm.symbols(('t','f'))
+    params += sm.symbols(tuple(mds.params.values))
+    symexpr = parse_expr(mds.parametrisation)
+    modelf = lambdify(params, symexpr)
+    texpr = parse_expr(mds.texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(mds.fexpr)
+    ffunc = lambdify(params[1], fexpr)
 
 
+    # signature (t, f, *params) with
+    # t = utime/ref_time
+    # f = freq/ref_freq
 
-    ref_freq = mfreqs[0]
-
-    if opts.nband_out is None:
-        nband_out = nband
-    else:
-        nband_out = opts.nband_out
 
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
-    freqs, fbin_idx, fbin_counts, band_mapping, freq_out, \
-        utimes, tbin_idx, tbin_counts, time_mapping, \
-        ms_chunks, gain_chunks, radecs, \
+    print('Constructing mapping', file=log)
+    row_mapping, freq_mapping, time_mapping, \
+        freqs, utimes, ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype = \
-            construct_mappings(opts.ms, None,
-                               nband_out,
-                               opts.integrations_per_image)
-
-    # interpolate model
-    mask = np.any(model, axis=(0,1))
-    Ix, Iy = np.where(mask)
-    ncomps = Ix.size
-
-    # components excluding zeros
-    beta = model[:, :, Ix, Iy]
-    if nband_out != nband:
-        order = opts.spectral_poly_order
-        print(f"Fitting integrated polynomial of order {order}", file=log)
-        if order > nband:
-            raise ValueError("spectral-poly-order can't be larger than nband")
-
-        # we are given frequencies at bin centers, convert to bin edges
-        delta_freq = mfreqs[1] - mfreqs[0]
-        wlow = (mfreqs - delta_freq/2.0)/ref_freq
-        whigh = (mfreqs + delta_freq/2.0)/ref_freq
-        wdiff = whigh - wlow
-
-        # set design matrix for each component
-        Xfit = np.zeros([mfreqs.size, order])
-        for i in range(1, order+1):
-            Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
-
-        comps = np.zeros((ntime, order, Ix.size))
-        from pfb.utils.misc import _model_from_comps
-        from pfb.utils.fits import set_wcs
-        from pfb.utils.fits import save_fits
-        freq_fitted = True
-        for t in range(ntime):
-            dirty_comps = Xfit.T.dot(wsums[t, :, None]*beta[t])
-
-            hess_comps = Xfit.T.dot(wsums[t, :, None]*Xfit)
-
-            comps[t] = np.linalg.solve(hess_comps, dirty_comps)
-
-            m = _model_from_comps(comps[t], freq_out, mask,
-                                np.arange(freq_out.size),
-                                ref_freq, freq_fitted)
-            mmfs = np.mean(m, axis=0)
-
-            hdr = set_wcs(cell_deg, cell_deg,
-                        nx, ny, radec, freq_out)
-            hdr_mfs = set_wcs(cell_deg, cell_deg,
-                            nx, ny, radec, np.mean(freq_out))
-
-            save_fits(f'{basename}_fitted_model_time{t:04d}.fits', m, hdr)
-            save_fits(f'{basename}_fitted_model_time{t:04d}_mfs.fits', mmfs, hdr_mfs)
-
-    else:
-        print("Not fitting frequency axis", file=log)
-        comps = beta
-        freq_fitted = False
+            construct_mappings(opts.ms,
+                               None,
+                               ipi=opts.integrations_per_image,
+                               cpi=opts.channels_per_image)
 
 
     print("Computing model visibilities", file=log)
-    mask = da.from_array(mask, chunks=(nx, ny), name=False)
-    # comps = da.from_array(comps,
-    #                       chunks=(-1, ncomps), name=False)
-    # freq_out = da.from_array(freq_out, chunks=-1, name=False)
     writes = []
+    # avoid reading these more than once
+    coeffs = mds.coefficients.values
+    locx = mds.location_x.values
+    locy = mds.location_y.values
     for ms in opts.ms:
         xds = xds_from_ms(ms,
                           chunks=ms_chunks[ms],
@@ -233,36 +145,48 @@ def _degrid(**kw):
             scanid = ds.SCAN_NUMBER
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
 
-            # currently no interpolation in time
-            tmap = time_mapping[ms][idt]
-            tidx = da.from_array(tbin_idx[ms][idt][tmap['low']], chunks=1)
-            tcnts = da.from_array(np.array(ms_chunks[ms][0]['row']), chunks=1)
+            # time <-> row mapping
+            utime = da.from_array(utimes[ms][idt],
+                                  chunks=opts.integrations_per_image)
+            tidx = da.from_array(time_mapping[ms][idt]['start_indices'],
+                                 chunks=1)
+            tcnts = da.from_array(time_mapping[ms][idt]['counts'],
+                                  chunks=1)
 
-            # always
+            ridx = da.from_array(row_mapping[ms][idt]['start_indices'],
+                                 chunks=opts.integrations_per_image)
+            rcnts = da.from_array(row_mapping[ms][idt]['counts'],
+                                  chunks=opts.integrations_per_image)
+
+            # freq <-> band mapping
             freq = da.from_array(freqs[ms][idt],
-                                 chunks=tuple(fbin_counts[ms][idt]))
-            fidx = da.from_array(fbin_idx[ms][idt], chunks=1)
-            fcnts = da.from_array(fbin_counts[ms][idt], chunks=1)
-            uvw = ds.UVW.data
+                                 chunks=opts.channels_per_image)
+            fidx = da.from_array(freq_mapping[ms][idt]['start_indices'],
+                                 chunks=1)
+            fcnts = da.from_array(freq_mapping[ms][idt]['counts'],
+                                  chunks=1)
 
-            # we need to do this here because the design matrix is a function of SPW
-            freqo = freq_out[band_mapping[ms][idt]]
-            if freq_fitted:
-                w = (freqo / ref_freq).reshape(freqo.size, 1)
-                Xdes = np.tile(w, order) ** np.arange(0, order)  # simple polynomial
-            else:
-                Xdes = np.eye(freqo.size)
-            Xdes = da.from_array(Xdes, chunks=(1, -1))
+            # number of chunks need to math in mapping and coord
+            ntime_out = len(tidx.chunks[0])
+            assert len(utime.chunks[0]) == ntime_out
+            nfreq_out = len(fidx.chunks[0])
+            assert len(freq.chunks[0]) == nfreq_out
+            # and they need to match the number of row chunks
+            uvw = ds.UVW.data
+            assert len(uvw.chunks[0]) == len(tidx.chunks[0])
 
             vis = comps2vis(uvw,
+                            utime,
                             freq,
-                            comps,
-                            Xdes,
-                            mask,
-                            tidx,
-                            tcnts,
-                            fidx,
-                            fcnts,
+                            ridx, rcnts,
+                            tidx, tcnts,
+                            fidx, fcnts,
+                            coeffs,
+                            locx, locy,
+                            modelf,
+                            tfunc,
+                            ffunc,
+                            nx, ny,
                             cell_rad, cell_rad,
                             x0=x0, y0=y0,
                             nthreads=opts.nvthreads,
@@ -292,7 +216,7 @@ def _degrid(**kw):
     # dask.visualize(writes, filename=opts.output_filename +
     #                '_degrid_writes_I_graph.pdf', optimize_graph=False)
 
-    with compute_context(opts.scheduler, opts.output_filename+'_degrid'):
+    with compute_context(opts.scheduler, opts.mds+'_degrid'):
         dask.compute(writes, optimize_graph=False)
 
     if opts.scheduler=='distributed':
