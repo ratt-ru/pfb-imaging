@@ -442,7 +442,6 @@ def _grid(**kw):
                 wgt.dtype)
 
         output_dict = blocker.get_dask_outputs()
-        # import ipdb; ipdb.set_trace()
         out_ds = out_ds.assign(**{
             'DIRTY': (('x', 'y'), output_dict['DIRTY'])
             })
