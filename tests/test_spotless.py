@@ -20,7 +20,6 @@ def test_spotless(ms_name):
     import dask
     from daskms import xds_from_ms, xds_from_table, xds_to_table
     from pfb.utils.misc import Gaussian2D, give_edges
-    import matplotlib.pyplot as plt
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
     from ducc0.wgridder.experimental import dirty2vis

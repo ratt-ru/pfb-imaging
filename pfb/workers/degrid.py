@@ -216,7 +216,7 @@ def _degrid(**kw):
     # dask.visualize(writes, filename=opts.output_filename +
     #                '_degrid_writes_I_graph.pdf', optimize_graph=False)
 
-    with compute_context(opts.scheduler, opts.output_filename+'_degrid'):
+    with compute_context(opts.scheduler, opts.mds+'_degrid'):
         dask.compute(writes, optimize_graph=False)
 
     if opts.scheduler=='distributed':

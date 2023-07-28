@@ -20,7 +20,7 @@ def test_model2comps(ms_name):
     from daskms import xds_from_ms, xds_from_table, xds_to_table
     from daskms.experimental.zarr import xds_to_zarr
     from pfb.utils.misc import Gaussian2D, give_edges
-    import matplotlib.pyplot as plt
+    from africanus.constants import c as lightspeed
     from pfb.utils.misc import (fit_image_cube,
                                 eval_coeffs_to_cube,
                                 eval_coeffs_to_slice)

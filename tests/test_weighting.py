@@ -13,7 +13,8 @@ def test_counts(ms_name):
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
-    from daskms import xds_from_ms, xds_from_table, xds_to_table
+    from daskms import xds_from_ms, xds_from_table
+    from africanus.constants import c as lightspeed
 
     test_dir = Path(ms_name).resolve().parent
     xds = xds_from_ms(ms_name,
@@ -88,7 +89,8 @@ def test_counts_dask(ms_name):
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
-    from pyrap.tables import table
+    from daskms import xds_from_ms, xds_from_table
+    from africanus.constants import c as lightspeed
     import dask.array as da
     import dask
     dask.config.set(scheduler='sync')
