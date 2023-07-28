@@ -5,7 +5,7 @@ author - Landman Bester
 email  - lbester@ska.ac.za
 date   - 31/03/2020
 """
-__version__ = '0.0.2'
+__version__ = '0.0.4'
 
 import os
 
