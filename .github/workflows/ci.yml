@@ -54,6 +54,14 @@ jobs:
       - name: Build distributions
         run: python setup.py sdist bdist_wheel
 
+      - name: Publish distribution to Test PyPI
+        uses: pypa/gh-action-pypi-publish@v1.8.6
+        with:
+          user: __token__
+          password: ${{ secrets.TESTTOKEN }}
+          repository_url: https://test.pypi.org/legacy/
+        continue-on-error: false
+
       - name: Publish distribution 📦 to PyPI
         uses: pypa/gh-action-pypi-publish@master
         with:
