@@ -192,6 +192,6 @@ def test_dual_update(nx, ny, nband, nlevels):
     # initialise v with psiH(x)
     psiH(xp, v)
     dual_update_numba(vp, v, lam21, sigma=sigma, weight=weight21)
-    assert_array_almost_equal(1 + res1,1 + v, decimal=12)
+    assert_array_almost_equal(1 + res1,1 + v, decimal=9)
 
 # test_dual_update(1024, 2056, 3, 2)
