@@ -116,11 +116,11 @@ def _model2comps(**kw):
     if not opts.use_wsum:
         wsums[...] = 1.0
 
-    # model = da.stack(model)
-    # wsums = da.stack(wsums).squeeze()
-    # model, wsums = dask.compute(model, wsums)
+    if opts.min_val is not None:
+        model = np.where(model >= opts.min_val, model, 0.0)
+
     if not np.any(model):
-        raise ValueError('Model is empty')
+        raise ValueError(f'Model is empty or has no components above {opts.min_val}')
     radec = (dds[0].ra, dds[0].dec)
 
     coeffs, Ix, Iy, expr, params, texpr, fexpr = \
