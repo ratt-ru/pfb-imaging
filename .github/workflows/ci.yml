@@ -51,7 +51,7 @@ jobs:
         run: python3 -m pip install -U pip setuptools wheel
 
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
         with:
           fetch-depth: 1
 
@@ -67,7 +67,7 @@ jobs:
         continue-on-error: false
 
       - name: Publish distribution 📦 to PyPI
-        uses: pypa/gh-action-pypi-publish@master
+        uses: pypa/gh-action-pypi-publish@1.8.6
         with:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
