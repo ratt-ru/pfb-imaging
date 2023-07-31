@@ -21,42 +21,6 @@ for key in schema.degrid["inputs"].keys():
 def degrid(**kw):
     '''
     Predict model visibilities to measurement sets.
-    Currently only predicts from .fits files which can optionally be interpolated
-    along the frequency axis.
-
-    By default the real-type argument specifies the type of the
-    output unless --output-dtype is explicitly set.
-
-    The row chunk size is determined automatically from mem_limit
-    unless it is specified explicitly.
-
-    The chan chunk size is determined automatically from chan <-> band
-    mapping unless it is specified explicitly.
-
-    If a host address is provided the computation can be distributed
-    over imaging band and row. When using a distributed scheduler both
-    mem-limit and nthreads is per node and have to be specified.
-
-    When using a local cluster, mem-limit and nthreads refer to the global
-    memory and threads available, respectively. By default the gridder will
-    use all available resources.
-
-    On a local cluster, the default is to use:
-
-        nworkers = nband
-        nthreads-per-worker = 1
-
-    They have to be specified in ~.config/dask/jobqueue.yaml in the
-    distributed case.
-
-    if LocalCluster:
-        nvthreads = nthreads//(nworkers*nthreads_per_worker)
-    else:
-        nvthreads = nthreads//nthreads-per-worker
-
-    where nvthreads refers to the number of threads used to scale vertically
-    (eg. the number threads given to each gridder instance).
-
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
@@ -73,15 +37,11 @@ def degrid(**kw):
     except:
         raise ValueError(f"No MS at {opts.ms}")
 
-    if opts.nworkers is None:
-        if opts.scheduler=='distributed':
-            opts.nworkers = opts.nband
-        else:
-            opts.nworkers = 1
-
     OmegaConf.set_struct(opts, True)
 
-    if opts.product.upper() not in ["I", "Q", "U", "V", "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
+    if opts.product.upper() not in ["I"]:
+                                    # , "Q", "U", "V", "XX", "YX", "XY",
+                                    # "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
     with ExitStack() as stack:
@@ -103,7 +63,7 @@ def _degrid(**kw):
     OmegaConf.set_struct(opts, True)
 
     import numpy as np
-    from pfb.utils.misc import chan_to_band_mapping
+    from pfb.utils.misc import construct_mappings
     import dask
     from dask.distributed import performance_report
     from dask.graph_manipulation import clone
@@ -111,216 +71,158 @@ def _degrid(**kw):
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms import xds_to_storage_table as xds_to_table
+    from daskms.optimisation import inlined_array
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import model as im2vis
+    from pfb.operators.gridder import comps2vis, _comps2vis_impl
     from pfb.utils.fits import load_fits, data_from_header
-    from pfb.utils.misc import restore_corrs, model_from_comps
     from astropy.io import fits
+    from pfb.utils.misc import compute_context
+    import xarray as xr
+    import sympy as sm
+    from sympy.utilities.lambdify import lambdify
+    from sympy.parsing.sympy_parser import parse_expr
 
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
-    mds_name = f'{basename}{opts.postfix}.mds.zarr'
-    mds = xds_from_zarr(mds_name)[0]
-    cell_rad = mds.cell_rad
-    mfreqs = mds.freq.values
-    ref_freq = mfreqs[0]
-    model = mds.MODEL.values
-    nband, nx, ny = model.shape
-    wsums = mds.WSUM.values
+    mds = xds_from_zarr(opts.mds)[0]
 
-    if opts.nband_out is None:
-        nband_out = nband
-    else:
-        nband_out = opts.nband_out
+    # grid spec
+    cell_rad = mds.cell_rad_x
+    cell_deg = np.rad2deg(cell_rad)
+    nx = mds.npix_x
+    ny = mds.npix_y
+    x0 = mds.center_x
+    y0 = mds.center_y
+    radec = (mds.ra, mds.dec)
 
-    # TODO - optional grouping. We need to construct an identifier between
-    # dataset and field/spw/scan identifiers
-    group_by = []
-    if opts.group_by_field:
-        group_by.append('FIELD_ID')
-    else:
-        raise NotImplementedError("Grouping by field is currently mandatory")
+    # model func
+    params = sm.symbols(('t','f'))
+    params += sm.symbols(tuple(mds.params.values))
+    symexpr = parse_expr(mds.parametrisation)
+    modelf = lambdify(params, symexpr)
+    texpr = parse_expr(mds.texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(mds.fexpr)
+    ffunc = lambdify(params[1], fexpr)
 
-    if opts.group_by_ddid:
-        group_by.append('DATA_DESC_ID')
-    else:
-        raise NotImplementedError("Grouping by DDID is currently mandatory")
 
-    if opts.group_by_scan:
-        group_by.append('SCAN_NUMBER')
-    else:
-        raise NotImplementedError("Grouping by scan is currently mandatory")
+    # signature (t, f, *params) with
+    # t = utime/ref_time
+    # f = freq/ref_freq
 
-    # chan <-> band mapping
-    freqs, fbin_idx, fbin_counts, freq_out, band_mapping, chan_chunks = \
-        chan_to_band_mapping(opts.ms, nband=nband_out, group_by=group_by)
 
-    # if mstype == 'zarr':
-    #     if opts.model_column in xds[0].keys():
-    #         model_chunks = getattr(xds[0], opts.model_column).data.chunks
-    #     else:
-    #         model_chunks = xds[0].DATA.data.chunks
-    #         print('Chunking model same as data', file=log)
+    group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
-    ms_chunks = {}
-    ncorr = None
-    for ms in opts.ms:
-        xds = xds_from_ms(ms, group_cols=group_by)
-        ms_chunks[ms] = []  # daskms expects a list per ds
-
-        for ds in xds:
-            idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
-
-            if ncorr is None:
-                ncorr = ds.dims['corr']
-            else:
-                try:
-                    assert ncorr == ds.dims['corr']
-                except Exception as e:
-                    raise ValueError("All data sets must have the same number of correlations")
-
-            if opts.row_chunk in [0, -1, None]:
-                rchunks = ds.dims['row']
-            else:
-                rchunks = opts.row_chunk
-
-            ms_chunks[ms].append({'row': rchunks,
-                                  'chan': chan_chunks[ms][idt]})
-
-    # interpolate model
-    mask = np.any(model, axis=0)
-    Ix, Iy = np.where(mask)
-    ncomps = Ix.size
-
-    # components excluding zeros
-    beta = model[:, Ix, Iy]
-    if opts.spectral_poly_order:
-        order = opts.spectral_poly_order
-        print(f"Fitting integrated polynomial of order {order}", file=log)
-        if order > mfreqs.size:
-            raise ValueError("spectral-poly-order can't be larger than nband")
-
-        # we are given frequencies at bin centers, convert to bin edges
-        delta_freq = mfreqs[1] - mfreqs[0]
-        wlow = (mfreqs - delta_freq/2.0)/ref_freq
-        whigh = (mfreqs + delta_freq/2.0)/ref_freq
-        wdiff = whigh - wlow
-
-        # set design matrix for each component
-        Xfit = np.zeros([mfreqs.size, order])
-        for i in range(1, order+1):
-            Xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
-
-        dirty_comps = Xfit.T.dot(wsums[:, None]*beta)
-
-        hess_comps = Xfit.T.dot(wsums[:, None]*Xfit)
-
-        comps = np.linalg.solve(hess_comps, dirty_comps)
-        freq_fitted = True
-    else:
-        print("Not fitting frequency axis", file=log)
-        comps = beta
-        freq_fitted = False
-
-    # # this is a hack to get on disk chunks when MODEL_DATA does not exits
-    # on_disk_chunks = {}
-    # for ms in opts.ms:
-    #     xds = xds_from_ms(ms)
-    #     rc = xds[0].chunks['row'][0]
-    #     fc = xds[0].chunks['chan'][0]
-    #     cc = xds[0].chunks['corr'][0]
-    #     on_disk_chunks[ms] = {0:rc, 1:fc, 2: cc}
+    print('Constructing mapping', file=log)
+    row_mapping, freq_mapping, time_mapping, \
+        freqs, utimes, ms_chunks, gain_chunks, radecs, \
+        chan_widths, uv_max, antpos, poltype = \
+            construct_mappings(opts.ms,
+                               None,
+                               ipi=opts.integrations_per_image,
+                               cpi=opts.channels_per_image)
 
 
     print("Computing model visibilities", file=log)
-    mask = da.from_array(mask, chunks=(nx, ny), name=False)
-    comps = da.from_array(comps,
-                          chunks=(-1, ncomps), name=False)
-    freq_out = da.from_array(freq_out, chunks=-1, name=False)
     writes = []
-    radec = None  # assumes we are only imaging field 0 of first MS
+    # avoid reading these more than once
+    coeffs = mds.coefficients.values
+    locx = mds.location_x.values
+    locy = mds.location_y.values
     for ms in opts.ms:
-        # DATA used to get required type since MODEL_DATA may not exist yet
-        xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=('UVW','DATA'),
+        xds = xds_from_ms(ms,
+                          chunks=ms_chunks[ms],
                           group_cols=group_by)
-
-        # subtables
-        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")
-        fields = xds_from_table(ms + "::FIELD")
-        spws = xds_from_table(ms + "::SPECTRAL_WINDOW")
-        pols = xds_from_table(ms + "::POLARIZATION")
-
-        # subtable data
-        ddids = dask.compute(ddids)[0]
-        fields = dask.compute(fields)[0]
-        spws = dask.compute(spws)[0]
-        pols = dask.compute(pols)[0]
 
         out_data = []
         for ds in xds:
-            field = fields[ds.FIELD_ID]
-            radec = field.PHASE_DIR.data.squeeze()
+            # TODO - rephase if fields don't match
+            # radec = radecs[ms][idt]
+            # if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
+            #     continue
+            fid = ds.FIELD_ID
+            ddid = ds.DATA_DESC_ID
+            scanid = ds.SCAN_NUMBER
+            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
 
-            # check fields match
-            if radec is None:
-                radec = field.PHASE_DIR.data.squeeze()
+            # time <-> row mapping
+            utime = da.from_array(utimes[ms][idt],
+                                  chunks=opts.integrations_per_image)
+            tidx = da.from_array(time_mapping[ms][idt]['start_indices'],
+                                 chunks=1)
+            tcnts = da.from_array(time_mapping[ms][idt]['counts'],
+                                  chunks=1)
 
-            # TODO - rephase if fields don't match, requires PB model
-            if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
-                continue
+            ridx = da.from_array(row_mapping[ms][idt]['start_indices'],
+                                 chunks=opts.integrations_per_image)
+            rcnts = da.from_array(row_mapping[ms][idt]['counts'],
+                                  chunks=opts.integrations_per_image)
 
-            idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
+            # freq <-> band mapping
+            freq = da.from_array(freqs[ms][idt],
+                                 chunks=opts.channels_per_image)
+            fidx = da.from_array(freq_mapping[ms][idt]['start_indices'],
+                                 chunks=1)
+            fcnts = da.from_array(freq_mapping[ms][idt]['counts'],
+                                  chunks=1)
 
-            model = model_from_comps(comps, freq_out, mask,
-                                     band_mapping[ms][idt],
-                                     ref_freq, freq_fitted)
-
+            # number of chunks need to math in mapping and coord
+            ntime_out = len(tidx.chunks[0])
+            assert len(utime.chunks[0]) == ntime_out
+            nfreq_out = len(fidx.chunks[0])
+            assert len(freq.chunks[0]) == nfreq_out
+            # and they need to match the number of row chunks
             uvw = ds.UVW.data
-            vis_I = im2vis(uvw,
-                           freqs[ms][idt],
-                           model,
-                           fbin_idx[ms][idt],
-                           fbin_counts[ms][idt],
-                           cell_rad,
-                           nthreads=opts.nvthreads,
-                           epsilon=opts.epsilon,
-                           do_wstacking=opts.wstack)
+            assert len(uvw.chunks[0]) == len(tidx.chunks[0])
 
-            # vis_Q = im2vis(uvw,
-            #              freqs[ms][idt],
-            #              model[1],
-            #              fbin_idx[ms][idt],
-            #              fbin_counts[ms][idt],
-            #              cell_rad,
-            #              nthreads=ngridder_threads,
-            #              epsilon=opts.epsilon,
-            #              do_wstacking=opts.wstack)
+            vis = comps2vis(uvw,
+                            utime,
+                            freq,
+                            ridx, rcnts,
+                            tidx, tcnts,
+                            fidx, fcnts,
+                            coeffs,
+                            locx, locy,
+                            modelf,
+                            tfunc,
+                            ffunc,
+                            nx, ny,
+                            cell_rad, cell_rad,
+                            x0=x0, y0=y0,
+                            nthreads=opts.nvthreads,
+                            epsilon=opts.epsilon,
+                            wstack=opts.wstack)
 
-            vis_I = vis_I.astype(ds.DATA.dtype)
-            model_vis = restore_corrs(vis_I, ncorr)
+            # convert to single precision to write to MS
+            vis = vis.astype(np.complex64)
 
-            # In case MODEL_DATA does not exist we need to chunk it like DATA
-            # if not model_exists[ms]:  # we rechunk
-            # model_vis = model_vis.rechunk(on_disk_chunks[ms])
+            if opts.accumulate:
+                vis += getattr(ds, opts.model_column).data
 
-            out_ds = ds.assign(**{opts.model_column: (("row", "chan", "corr"), model_vis)})
+            vis = inlined_array(vis, [uvw])
+
+            out_ds = ds.assign(**{opts.model_column:
+                                 (("row", "chan", "corr"), vis)})
             out_data.append(out_ds)
 
-        writes.append(xds_to_table(out_data, ms, columns=[opts.model_column], rechunk=True))
+        writes.append(xds_to_table(out_data, ms,
+                                   columns=[opts.model_column],
+                                   rechunk=True))
 
-    # dask.visualize(*writes, filename=opts.output_filename + '_predict_graph.pdf',
-    #                optimize_graph=False, collapse_outputs=True)
+    # dask.visualize(writes, color="order", cmap="autumn",
+    #                node_attr={"penwidth": "4"},
+    #                filename=opts.output_filename + '_degrid_writes_I_ordered_graph.pdf',
+    #                optimize_graph=False)
+    # dask.visualize(writes, filename=opts.output_filename +
+    #                '_degrid_writes_I_graph.pdf', optimize_graph=False)
 
-    # if not opts.mock:
-    #     with performance_report(filename=opts.output_filename + '_predict_per.html'):
-    #         dask.compute(writes, optimize_graph=False)
+    with compute_context(opts.scheduler, opts.mds+'_degrid'):
+        dask.compute(writes, optimize_graph=False)
 
-    dask.compute(writes)
-    # from pfb.utils.misc import compute_context
-    # with compute_context(opts.scheduler, opts.output_filename):
-    #     dask.compute(writes,
-    #                  optimize_graph=False,
-    #                  scheduler=opts.scheduler)
+    if opts.scheduler=='distributed':
+        from distributed import get_client
+        client = get_client()
+        client.close()
 
     print("All done here.", file=log)
 

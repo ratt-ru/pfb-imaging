@@ -25,16 +25,17 @@ if schema is None:
 
     tmp = configuratt.load_nested(files,
                                   structured=structured,
-                                  config_class="PfbCleanCabs")
+                                  config_class="PfbCleanCabs",
+                                  use_cache=False)
 
-    # this is required since upgrade of scabha to caching branch.
+    # this is required since upgrade of scabha to caching branch
     # tmp is a tuple containing the config object as the first element
     # and a set containing locations of .yaml configs for pfb workers
     schema = OmegaConf.create(tmp[0])
 
     for worker in schema.keys():
         for param in schema[worker]['inputs']:
-            if schema[worker]['inputs'][param]['default'] == '<UNSET>':
+            if schema[worker]['inputs'][param]['default'] == '<UNSET DEFAULT VALUE>':
                 schema[worker]['inputs'][param]['default'] = None
 
 

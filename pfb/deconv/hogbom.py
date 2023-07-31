@@ -54,19 +54,23 @@ def hogbom(
         if not k % report_freq and verbosity > 1:
             print("At iteration %i max residual = %f" % (k, IRmax), file=log)
 
+    IRmfs = np.sum(IR, axis=0)
+    rms = np.std(IRmfs[~np.any(x, axis=0)])
+
     if k >= maxit:
         if verbosity:
-            print("Maximum iterations reached. Max of residual = %f." %
-                  (IRmax), file=log)
-        return model, 1
+            print(f"Max iters reached. "
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+        return x, 1
     elif stall_count >= 5:
         if verbosity:
-            print("Stalled. Max of residual = %f." %
-                  (IRmax), file=log)
-        return model, 1
+            print(f"Stalled. "
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+        return x, 1
     else:
         if verbosity:
-            print("Success, converged after %i iterations" % k, file=log)
+            print(f"Success, converged after {k} iterations. "
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
         return x, 0
 
 

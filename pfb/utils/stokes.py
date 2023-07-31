@@ -1,26 +1,36 @@
 import numpy as np
-from numba import generated_jit, njit
+import numexpr as ne
+from numba import generated_jit, njit, prange
 from numba.types import literal
 from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
-from pfb.utils.misc import coerce_literal
+from quartical.utils.numba import coerce_literal
 from daskms.optimisation import inlined_array
 from operator import getitem
 from pfb.utils.beam import interp_beam
+import dask
+
+
+def weight_from_sigma(sigma):
+    weight = ne.evaluate('1.0/(sigma*sigma)',
+                         casting='same_kind')
+    return weight
+
 
 def single_stokes(ds=None,
                   jones=None,
                   opts=None,
                   freq=None,
-                  freq_out=None,
                   chan_width=None,
-                  bandid=None,
                   cell_rad=None,
+                  utime=None,
                   tbin_idx=None,
                   tbin_counts=None,
-                  radec=None):
+                  radec=None,
+                  antpos=None,
+                  poltype=None):
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -30,14 +40,15 @@ def single_stokes(ds=None,
         complex_type = np.complex128
 
     data = getattr(ds, opts.data_column).data
-    nrow, nchan, _ = data.shape
+    nrow, nchan, ncorr = data.shape
 
-    ant1 = ds.ANTENNA1.data
-    ant2 = ds.ANTENNA2.data
+    ant1 = clone(ds.ANTENNA1.data)
+    ant2 = clone(ds.ANTENNA2.data)
+    uvw = clone(ds.UVW.data)
 
     # MS may contain auto-correlations
     if 'FLAG_ROW' in ds:
-        frow = ds.FLAG_ROW.data | (ant1 == ant2)
+        frow = clone(ds.FLAG_ROW.data) | (ant1 == ant2)
     else:
         frow = (ant1 == ant2)
 
@@ -50,15 +61,18 @@ def single_stokes(ds=None,
     else:
         flag = da.broadcast_to(frow[:, None], (nrow, nchan))
 
-    # Does this trigger an early compute()?
-    if flag.all():
-        return
-
     if opts.sigma_column is not None:
         sigma = getattr(ds, opts.sigma_column).data
-        weight = 1.0/sigma**2
+        # weight = 1.0/sigma**2
+        weight = da.map_blocks(weight_from_sigma,
+                               sigma,
+                               chunks=sigma.chunks)
     elif opts.weight_column is not None:
         weight = getattr(ds, opts.weight_column).data
+        if opts.weight_column=='WEIGHT':
+            weight = da.broadcast_to(weight[:, None, :],
+                                     (nrow, nchan, ncorr),
+                                     chunks=data.chunks)
     else:
         weight = da.ones_like(data, dtype=real_type)
 
@@ -68,93 +82,144 @@ def single_stokes(ds=None,
     if weight.dtype != real_type:
         weight = weight.astype(real_type)
 
-    if jones is None:
-        # TODO - remove unnecessary jones multiplies
-        ntime = tbin_idx.size
-        nant = da.maximum(ant1.max(), ant2.max()).compute() + 1
-        jones = da.ones((ntime, nchan, nant, 1, 2),
-                        chunks=(tbin_idx.chunks[0][0], -1, -1, 1, 2),
+    if jones is not None:
+        if jones.dtype != complex_type:
+            jones = jones.astype(complex_type)
+        # qcal has chan and ant axes reversed compared to pfb implementation
+        jones = da.swapaxes(jones, 1, 2)
+    else:
+        ntime = utime.size
+        nchan = freq.size
+        nant = antpos.shape[0]
+        jones = da.ones((ntime, nant, nchan, 1, 2),
+                        chunks=(-1,)*5,
                         dtype=complex_type)
-    elif jones.dtype != complex_type:
-        jones = jones.astype(complex_type)
 
-    # qcal has chan and ant axes reversed compared to pfb implementation
-    jones = da.swapaxes(jones, 1, 2)
-
+    # Note we do not chunk at this level since all the chunking happens upfront
+    # we cast to dask arrays simply to defer the compute
+    tbin_idx = da.from_array(tbin_idx, chunks=(-1))
+    tbin_counts = da.from_array(tbin_counts, chunks=(-1))
     vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                           ant1, ant2, pol='linear', product=opts.product)
+                        ant1, ant2, pol=poltype, product=opts.product)
 
     vis = inlined_array(vis, [ant1, ant2, tbin_idx, tbin_counts, jones])
     wgt = inlined_array(wgt, [ant1, ant2, tbin_idx, tbin_counts, jones])
 
+    if isinstance(opts.radec, str):
+        raise NotImplementedError()
+    elif isinstance(opts.radec, np.ndarray) and not np.array_equal(radec, opts.radec):
+        raise NotImplementedError()
+
+
+    flag = inlined_array(flag, [frow])
+
+    # do this before casting to dask array otherwise
+    # serialisation of attrs fails
+    freq_out = np.mean(freq)
+    freq_min = freq.min()
+    freq_max = freq.max()
+
+    # simple average over channels
+    if opts.chan_average > 1:
+        from africanus.averaging.dask import time_and_channel
+
+        res = time_and_channel(
+                    ds.TIME.data,
+                    ds.INTERVAL.data,
+                    ant1,
+                    ant2,
+                    uvw=uvw,
+                    flag=flag[:, :, None],
+                    weight_spectrum=wgt[:, :, None],
+                    visibilities=vis[:, :, None],
+                    chan_freq=da.from_array(freq, chunks=-1),
+                    chan_width=da.from_array(chan_width, chunks=-1),
+                    time_bin_secs=1e-15,
+                    chan_bin_size=opts.chan_average)
+
+        # map_blocks to deal with nan row chunks.
+        # only freq average -> row chunks are preserved
+        cchunk = nchan//opts.chan_average
+        vis = res.visibilities.map_blocks(lambda x: x,
+                                          chunks=(nrow, cchunk, 1))[:, :, 0]
+        wgt = res.weight_spectrum.map_blocks(lambda x: x,
+                                             chunks=(nrow, cchunk, 1))[:, :, 0]
+        flag = res.flag.map_blocks(lambda x: x,
+                                   chunks=(nrow, cchunk, 1))[:, :, 0]
+        uvw = res.uvw.map_blocks(lambda x: x,
+                                 chunks=(nrow, 3))
+
+        freq = res.chan_freq.map_blocks(lambda x: x, chunks=(cchunk,))
+
+    # if opts.bda_decorr < 1:
+    #     wgt = da.where(mask, wgt, 0.0)
+    #     from africanus.averaging.dask import bda
+
+    #     w_avs = []
+    #     uvw = uvw.compute()
+    #     t = time.compute()
+    #     a1 = ant1.compute()
+    #     a2 = ant2.compute()
+    #     intv = interval.compute()
+    #     fr = frow.compute()[:, None, None]
+
+    #     res = bda(ds.TIME.data,
+    #                 ds.INTERVAL.data,
+    #                 ant1, ant2,
+    #                 uvw=uvw,
+    #                 flag=f[:, :, None],
+    #                 weight_spectrum=wgt[:, :, None],
+    #                 chan_freq=freq,
+    #                 chan_width=chan_width,
+    #                 decorrelation=0.95,
+    #                 min_nchan=freq.size)
+
+    #     uvw = res.uvw.reshape(-1, nchan, 3)[:, 0, :]
+    #     wgt = res.weight_spectrum.reshape(-1, nchan).squeeze()
+
+    #     uvw = uvw.rechunk({0:opts.row_out_chunk})
+
     mask = ~flag
-    mask = inlined_array(mask, [frow])
-    uvw = ds.UVW.data
 
-    data_vars = {'FREQ': (('chan',), freq)}
-
-    wsum = da.sum(wgt[mask])
-    data_vars['WSUM'] = (('scalar'), da.array((wsum,)))
+    data_vars = {}
+    data_vars['FREQ'] = (('chan',), freq)
     data_vars['WEIGHT'] = (('row', 'chan'), wgt)
     data_vars['UVW'] = (('row', 'uvw'), uvw)
     data_vars['VIS'] = (('row', 'chan'), vis)
     data_vars['MASK'] = (('row', 'chan'), mask.astype(np.uint8))
 
-    # if opts.weight:
-    #     wgt = da.where(mask, wgt, 0.0)
-    #     # TODO - BDA over frequency
-    #     if opts.bda_decorr < 1:
-    #         raise NotImplementedError("BDA not working yet")
-    #         from africanus.averaging.dask import bda
-
-    #         w_avs = []
-    #         uvw = uvw.compute()
-    #         t = time.compute()
-    #         a1 = ant1.compute()
-    #         a2 = ant2.compute()
-    #         intv = interval.compute()
-    #         fr = frow.compute()[:, None, None]
-
-    #         res = bda(ds.TIME.data,
-    #                   ds.INTERVAL.data,
-    #                   ant1, ant2,
-    #                   uvw=uvw,
-    #                   flag=f[:, :, None],
-    #                   weight_spectrum=wgt[:, :, None],
-    #                   chan_freq=freq,
-    #                   chan_width=chan_width,
-    #                   decorrelation=0.95,
-    #                   min_nchan=freq.size)
-
-    #         uvw = res.uvw.reshape(-1, nchan, 3)[:, 0, :]
-    #         wgt = res.weight_spectrum.reshape(-1, nchan).squeeze()
-
-    #         uvw = uvw.rechunk({0:opts.row_out_chunk})
-    #         data_vars['UVW'] = (('row', 'uvw'), uvw)
-
-    #     wgt = wgt.rechunk({0:opts.row_out_chunk})
-    #     data_vars['WEIGHT'] = (('row', 'chan'), wgt)
-
-
-    # TODO - interpolate beam in time and freq
+    # TODO - interpolate beam in time and frequency
+    # Instead of BEAM we should have a pre-init step which computes
+    # per facet best approximations to smooth beams as described in
+    # https://www.overleaf.com/read/yzrsrdwxhxrd
     npix = int(np.deg2rad(opts.max_field_of_view)/cell_rad)
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
-
     data_vars['BEAM'] = (('scalar'), beam)
 
+    coords = {'chan': (('chan',), freq)} #,
+            #   'row': (('row',), ds.ROWID.values)}
+
+    # TODO - provide time and freq centroids
     attrs = {
         'ra' : radec[0],
         'dec': radec[1],
         'fieldid': ds.FIELD_ID,
         'ddid': ds.DATA_DESC_ID,
         'scanid': ds.SCAN_NUMBER,
-        'bandid': int(bandid),
-        'freq_out': freq_out
+        'freq_out': freq_out,
+        'freq_min': freq_min,
+        'freq_max': freq_max,
+        'time_out': np.mean(utime),
+        'time_min': utime.min(),
+        'time_max': utime.max(),
+        'product': opts.product
     }
 
-    out_ds = Dataset(data_vars, attrs=attrs)
+    out_ds = Dataset(data_vars, coords=coords,
+                     attrs=attrs).chunk({'row':100000,
+                                         'chan':128})
 
-    return out_ds
+    return out_ds.unify_chunks()
 
 
 def weight_data(data, weight, jones, tbin_idx, tbin_counts,
@@ -188,11 +253,12 @@ def weight_data(data, weight, jones, tbin_idx, tbin_counts,
     return vis, wgt
 
 def _weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                      ant1, ant2, pol, product):
+                 ant1, ant2, pol, product):
     return _weight_data_impl(data[0], weight[0], jones[0][0][0],
-                             tbin_idx, tbin_counts, ant1, ant2, pol, product)
+                             tbin_idx, tbin_counts,
+                             ant1, ant2, pol, product)
 
-@generated_jit(nopython=True, nogil=True, cache=True)
+@generated_jit(nopython=True, nogil=True, cache=True, parallel=True)
 def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product):
 
@@ -210,7 +276,7 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
         vis = np.zeros((nrow, nchan), dtype=data.dtype)
         wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
 
-        for t in range(nt):
+        for t in prange(nt):
             for row in range(tbin_idx[t],
                              tbin_idx[t] + tbin_counts[t]):
                 p = int(ant1[row])
@@ -231,8 +297,6 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
 
 
 def stokes_funcs(data, jones, product, pol):
-    if pol != literal('linear'):
-        raise NotImplementedError("Circular polarisation not yet supported")
     # The expressions for DIAG_DIAG and DIAG mode are essentially the same
     if jones.ndim == 5:
         # I and Q have identical weights
@@ -262,6 +326,9 @@ def stokes_funcs(data, jones, product, pol):
                         W3*gq11*v11*np.conjugate(gp11))
 
         elif product == literal('Q'):
+            if pol != literal('linear'):
+                msg = "Stokes I not currently supported for circular pol"
+                raise NotImplementedError(msg)
             @njit(nogil=True, fastmath=True, inline='always')
             def vfunc(gp, gq, W, V):
                 gp00 = gp[0]

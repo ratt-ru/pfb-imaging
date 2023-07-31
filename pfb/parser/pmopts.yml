@@ -1,6 +1,6 @@
 pm_tol:
   dtype: float
-  default: 1e-5
+  default: 1e-3
   info: 'Tolreance of power method'
   abbreviation: pmol
 pm_maxit:

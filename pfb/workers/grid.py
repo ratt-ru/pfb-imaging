@@ -19,33 +19,9 @@ for key in schema.grid["inputs"].keys():
 @clickify_parameters(schema.grid)
 def grid(**kw):
     '''
-    Compute imaging weights and create a dirty image, psf from xds.
+    Compute imaging weights and create a dirty image, psf etc.
     By default only the MFS images are converted to fits files.
     Set the --fits-cubes flag to also produce fits cubes.
-
-    If a host address is provided the computation can be distributed
-    over imaging band and row. When using a distributed scheduler both
-    mem-limit and nthreads is per node and have to be specified.
-
-    When using a local cluster, mem-limit and nthreads refer to the global
-    memory and threads available, respectively. By default the gridder will
-    use all available resources.
-
-    On a local cluster, the default is to use:
-
-        nworkers = nband
-        nthreads-per-worker = 1
-
-    They have to be specified in ~.config/dask/jobqueue.yaml in the
-    distributed case.
-
-    if LocalCluster:
-        nvthreads = nthreads//(nworkers*nthreads_per_worker)
-    else:
-        nvthreads = nthreads//nthreads-per-worker
-
-    where nvthreads refers to the number of threads used to scale vertically
-    (eg. the number threads given to each gridder instance).
 
     '''
     defaults.update(kw)
@@ -53,15 +29,6 @@ def grid(**kw):
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     pyscilog.log_to_file(f'grid_{timestamp}.log')
-
-    if opts.nworkers is None:
-        if opts.scheduler=='distributed':
-            opts.nworkers = opts.nband
-        else:
-            opts.nworkers = 1
-
-    if opts.product.upper() not in ["I", "Q", "U", "V", "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
-        raise NotImplementedError(f"Product {opts.product} not yet supported")
 
     OmegaConf.set_struct(opts, True)
 
@@ -88,46 +55,101 @@ def _grid(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.fits import set_wcs, save_fits
+    from pfb.utils.fits import dds2fits, dds2fits_mfs
     from pfb.utils.misc import compute_context
-    from pfb.operators.gridder import vis2im
+    from pfb.operators.gridder import image_data_products
     from pfb.operators.fft import fft2d
-    from pfb.utils.weighting import (compute_counts, counts_to_weights,
+    from pfb.utils.weighting import (compute_counts,
                                      filter_extreme_counts)
     from pfb.utils.beam import eval_beam
     import xarray as xr
     from uuid import uuid4
-    from daskms.optimisation import inlined_array
+    from dask.graph_manipulation import clone
+    from pfb.utils.astrometry import get_coordinates
+    from africanus.coordinates import radec_to_lm
+    from pfb.utils.misc import concat_chan, concat_row
+    import sympy as sm
+    from sympy.utilities.lambdify import lambdify
+    from sympy.parsing.sympy_parser import parse_expr
+    from quartical.utils.dask import Blocker
+
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    xds_name = f'{basename}.xds.zarr'
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
-    mds_name = f'{basename}{opts.postfix}.mds.zarr'
+    # xds contains vis products, no imaging weights applied
+    xds_name = f'{basename}.xds'
+    xds = xds_from_zarr(xds_name, chunks={'row': -1})
+    # dds contains image space products including imaging weights and uvw
+    dds_name = f'{basename}_{opts.postfix}.dds'
 
-    # necessary to exclude imaging weight column if changing from Briggs
-    # to natural for example
-    columns = ('UVW', 'WEIGHT', 'VIS', 'WSUM', 'MASK', 'FREQ', 'BEAM')
-    if opts.robustness is not None:
-        columns += (opts.imaging_weight_column,)
+    if os.path.isdir(dds_name):
+        dds_exists = True
+        if opts.overwrite:
+            print(f'Removing {dds_name}', file=log)
+            import shutil
+            shutil.rmtree(dds_name)
+            dds_exists = False
+    else:
+        dds_exists = False
 
-    xds = xds_from_zarr(xds_name, chunks={'row': -1},
-                        columns=columns)
+    times_in = []
+    freqs_in = []
+    for ds in xds:
+        times_in.append(ds.time_out)
+        freqs_in.append(ds.freq_out)
 
-    # get max uv coords over all datasets
-    uvw = []
-    u_max = 0.0
-    v_max = 0.0
-    max_freq = 0.0
+    times_in = np.unique(times_in)
+    freqs_in = np.unique(freqs_in)
+
+    ntime_in = times_in.size
+    nband_in = freqs_in.size
+
+    if opts.concat_row and len(xds) > nband_in:
+        print('Concatenating datasets along row dimension', file=log)
+        xds = concat_row(xds)
+        ntime = 1
+        times_out = np.array((xds[0].time_out,))
+    else:
+        ntime = ntime_in
+        times_out = times_in
+
+    if opts.nband != nband_in and len(xds) > ntime:
+        print('Concatenating datasets along chan dimension. '
+              f'Mapping {nband_in} datasets to {opts.nband} bands', file=log)
+        xds = concat_chan(xds, nband_out=opts.nband)
+        nband = opts.nband
+        freqs_out = []
+        for ds in xds:
+            freqs_out.append(ds.freq_out)
+        freqs_out = np.unique(freqs_out)
+    else:
+        nband = nband_in
+        freqs_out = freqs_in
+
+    # do this after concatenation (to check)
+    for i, ds in enumerate(xds):
+        xds[i] = ds.chunk({'chan': -1})
+
+    real_type = xds[0].WEIGHT.dtype
+    if real_type == np.float32:
+        precision = 'single'
+    else:
+        precision = 'double'
+
+    # max uv coords over all datasets
+    uv_maxs = []
+    max_freqs = []
     for ds in xds:
         uvw = ds.UVW.data
-        u_max = da.maximum(u_max, abs(uvw[:, 0]).max())
-        v_max = da.maximum(v_max, abs(uvw[:, 1]).max())
-        uv_max = da.maximum(u_max, v_max)
-        max_freq = da.maximum(max_freq, ds.FREQ.data.max())
+        u_max = abs(uvw[:, 0]).max()
+        v_max = abs(uvw[:, 1]).max()
+        uv_maxs.append(da.maximum(u_max, v_max))
+        max_freqs.append(ds.FREQ.data.max())
 
-    uv_max = uv_max.compute()
-    max_freq = max_freq.compute()
+    # early compute necessary to set image size
+    uv_maxs, max_freqs = dask.compute(uv_maxs, max_freqs)
+    uv_max = max(uv_maxs)
+    max_freq = max(max_freqs)
 
     # max cell size
     cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
@@ -136,7 +158,7 @@ def _grid(**kw):
         cell_size = opts.cell_size
         cell_rad = cell_size * np.pi / 60 / 60 / 180
         if cell_N / cell_rad < 1:
-            raise ValueError("Requested cell size too small. "
+            raise ValueError("Requested cell size too large. "
                              "Super resolution factor = ", cell_N / cell_rad)
         print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
     else:
@@ -157,9 +179,8 @@ def _grid(**kw):
         nx = opts.nx
         ny = opts.ny if opts.ny is not None else nx
 
-    nband = opts.nband
     if opts.dirty:
-        print(f"Image size set to ({nband}, {nx}, {ny})", file=log)
+        print(f"Image size = (ntime={ntime}, nband={nband}, nx={nx}, ny={ny})", file=log)
 
     nx_psf = good_size(int(opts.psf_oversize * nx))
     while nx_psf % 2:
@@ -170,219 +191,301 @@ def _grid(**kw):
     while ny_psf % 2:
         ny_psf += 1
         ny_psf = good_size(ny_psf)
+    nyo2 = ny_psf//2 + 1
 
     if opts.psf:
-        print(f"PSF size set to ({nband}, {nx_psf}, {ny_psf})", file=log)
+        print(f"PSF size = (ntime={ntime}, nband={nband}, nx={nx_psf}, ny={ny_psf})", file=log)
 
-    if os.path.isdir(dds_name):
-        if opts.overwrite:
-            print(f'Removing {dds_name} and {basename}.counts.zarr', file=log)
-            import shutil
-            shutil.rmtree(dds_name)
-            try:
-                shutil.rmtree(f'{basename}.counts.zarr')
-            except:
-                pass
-        else:
-            raise RuntimeError(f'Not overwriting {dds_name}, directory exists. '
-                               f'Set overwrite flag or specify a different '
-                               'postfix to create a new data set')
-
-    print(f'Data products will be stored in {dds_name}.', file=log)
-
-    # LB - what is the point of specifying name here?
-    if opts.robustness is not None:
-        try:
-            counts_ds = xds_from_zarr(f'{basename}.counts.zarr',
-                                      chunks={'band':1, 'x':-1, 'y':-1})
-            assert counts_ds[0].bands.size == nband
-            assert counts_ds[0].x.size == nx
-            assert counts_ds[0].y.size == ny
-            assert counts_ds[0].bands.size == nband
-            assert counts_ds[0].cell_rad == cell_rad
-            print(f'Found cached gridded weights at {basename}.counts.zarr. '
-                  f'Coordinats and cell sizes indicate that it can be reused',
-                  file=log)
-            counts = counts_ds.COUNTS.data
-        except:
-            counts = [da.zeros((nx, ny), chunks=(-1, -1),
-                            name="zeros-"+uuid4().hex) for _ in range(nband)]
-            # first loop over data to compute counts
-            nchan = 0
-            for ds in xds:
-                uvw = ds.UVW.data
-                freq = ds.FREQ.data
-                nchan += freq.size
-                mask = ds.MASK.data
-                wgt = ds.WEIGHT.data
-                bandid = ds.bandid
-                count = compute_counts(
-                            uvw,
-                            freq,
-                            mask,
-                            nx,
-                            ny,
-                            cell_rad,
-                            cell_rad,
-                            wgt.dtype)
-
-                counts[bandid] += count
-            counts = da.stack(counts)
-            counts = counts.rechunk({0:1, 1:-1, 2:-1})
-            # cache counts
-            dvars = {'COUNTS': (('band', 'x', 'y'), counts)}
-            attrs = {
-                'cell_rad': cell_rad
-            }
-            counts_ds = xr.Dataset(dvars, attrs=attrs)
-            # we need to rechunk for zarr codec but subsequent usage of counts
-            # array needs to be chunks as (1, -1, -1)
-            counts_ds = counts_ds.chunk({'x':'auto', 'y':'auto'})
-            writes = xds_to_zarr(counts_ds, f'{basename}.counts.zarr',
-                                 columns='ALL')
-            print("Computing gridded weights", file=log)
-            counts = dask.compute(counts, writes)[0]
-            counts = da.from_array(counts, chunks=(1, -1, -1))
-
-
-
-        # get rid of artificially high weights corresponding to nearly empty cells
-        if opts.filter_extreme_counts:
-            counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
-                                           nlevel=opts.filter_level)
+    # if dds exists, check that existing dds is compatible with input
+    if dds_exists:
+        dds = xds_from_zarr(dds_name)
+        # these need to be aligned at this stage
+        for ds, out_ds in zip(xds, dds):
+            assert ds.freq_out == out_ds.freq_out
+            assert ds.time_out == out_ds.time_out
+            assert ds.ra == out_ds.ra
+            assert ds.dec == out_ds.dec
+            assert out_ds.x.size == nx
+            assert out_ds.y.size == ny
+            assert out_ds.cell_rad == cell_rad
+        print(f'As far as we can tell {dds_name} can be reused/updated.',
+              file=log)
+    else:
+        print(f'Image space data products will be stored in {dds_name}.', file=log)
 
     # check if model exists
-    if opts.residual:
+    if opts.transfer_model_from is not None:
         try:
-            mds = xds_from_zarr(mds_name, chunks={'band':1})[0]
-            model = mds.get(opts.model_name).data
-            print(f"Using {opts.model_name} for residual computation. ", file=log)
-        except:
-            print("Cannot compute residual without a model. ", file=log)
-            model = None
-    else:
-        model = None
+            mds = xds_from_zarr(opts.transfer_model_from,
+                                chunks={'params':-1, 'comps':-1})[0]
+        except Exception as e:
+            raise ValueError(f"No dataset found at {opts.transfer_model_from}")
+
+        # should we construct the model func outside
+        # of eval_coeffs_to_slice?
+        # params = sm.symbols(('t','f'))
+        # params += sm.symbols(tuple(mds.params.values))
+        # symexpr = parse_expr(mds.parametrisation)
+        # model_func = lambdify(params, symexpr)
+        # texpr = parse_expr(mds.texpr)
+        # tfunc = lambdify(params[0], texpr)
+        # fexpr = parse_expr(mds.fexpr)
+        # ffunc = lambdify(params[1], fexpr)
 
 
-    writes = []
-    freq_out = []
-    wsums = np.zeros(nband)
-    for ds in xds:
+        # we only want to load these once
+        model_coeffs = mds.coefficients.values
+        locx = mds.location_x.values
+        locy = mds.location_y.values
+        params = mds.params.values
+        coeffs = mds.coefficients.values
+
+        print(f"Loading model from {opts.transfer_model_from}. ",
+              file=log)
+
+    dds_out = []
+    for i, ds in enumerate(xds):
+        if dds_exists:
+            out_ds = dds[i].chunk({'row':-1,
+                                   'chan':-1,
+                                   'x':-1,
+                                   'y':-1})
+        else:
+            out_ds = xr.Dataset()
         uvw = ds.UVW.data
         freq = ds.FREQ.data
         vis = ds.VIS.data
         wgt = ds.WEIGHT.data
-        wsum = ds.WSUM.data
-        if opts.robustness is not None:
-            imwgt = counts_to_weights(counts[ds.bandid],
-                                      uvw,
-                                      freq,
-                                      nx, ny,
-                                      cell_rad, cell_rad,
-                                      opts.robustness)
-            wgt *= imwgt
-
+        # This is a vis space mask (see wgridder convention)
         mask = ds.MASK.data
-        dvars = {}
-        if opts.dirty:
-            dirty = vis2im(uvw=uvw,
-                           freq=freq,
-                           vis=vis,
-                           wgt=wgt,
-                           nx=nx,
-                           ny=ny,
-                           cellx=cell_rad,
-                           celly=cell_rad,
-                           nthreads=opts.nvthreads,
-                           epsilon=opts.epsilon,
-                           precision=opts.precision,
-                           mask=mask,
-                           do_wgridding=opts.wstack,
-                           double_precision_accumulation=opts.double_accum)
-            dirty = inlined_array(dirty, [uvw, freq])
-            dvars['DIRTY'] = (('x', 'y'), dirty)
+        bandid = np.where(freqs_out == ds.freq_out)[0][0]
+        timeid = np.where(times_out == ds.time_out)[0][0]
 
-        if opts.psf:
-            psf = vis2im(uvw=uvw,
-                         freq=freq,
-                         vis=wgt.astype(vis.dtype),
-                         nx=nx_psf,
-                         ny=ny_psf,
-                         cellx=cell_rad,
-                         celly=cell_rad,
-                         nthreads=opts.nvthreads,
-                         epsilon=opts.epsilon,
-                         precision=opts.precision,
-                         mask=mask,
-                         do_wgridding=opts.wstack,
-                         double_precision_accumulation=opts.double_accum)
-            psf = inlined_array(psf, [uvw, freq])
-            # get FT of psf
-            psfhat = fft2d(psf, nthreads=opts.nvthreads)
-            dvars['PSF'] = (('x_psf', 'y_psf'), psf)
-            dvars['PSFHAT'] = (('x_psf', 'yo2'), psfhat)
+        # compute lm coordinates of target
+        if opts.target is not None:
+            tmp = opts.target.split(',')
+            if len(tmp) == 1 and tmp[0] == opts.target:
+                obs_time = ds.time_out
+                tra, tdec = get_coordinates(obs_time, target=opts.target)
+            else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
+                from astropy import units as u
+                from astropy.coordinates import SkyCoord
+                c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(u.hourangle, u.deg))
+                tra = np.deg2rad(c.ra.value)
+                tdec = np.deg2rad(c.dec.value)
 
-        if opts.weight:
-            # TODO - BDA
-            # combine weights
-            wgt = wgt.rechunk({0:opts.row_chunk, 1:-1})
-            dvars['WEIGHT'] = (('row', 'chan'), wgt)
+            tcoords=np.zeros((1,2))
+            tcoords[0,0] = tra
+            tcoords[0,1] = tdec
+            coords0 = np.array((ds.ra, ds.dec))
+            lm0 = radec_to_lm(tcoords, coords0).squeeze()
+            # LB - why the negative?
+            x0 = -lm0[0]
+            y0 = -lm0[1]
+        else:
+            x0 = 0.0
+            y0 = 0.0
+            tra = ds.ra
+            tdec = ds.dec
 
-        dvars['FREQ'] = (('chan',), freq)
-        dvars['UVW'] = (('row', 'three'), uvw.rechunk({0:opts.row_chunk, 1:-1}))
-        mask = mask.rechunk({0:opts.row_chunk, 1:-1})
-        dvars['MASK'] = (('row', 'chan'), mask)
-        wsum = wgt[mask.astype(bool)].sum()
-        dvars['WSUM'] = (('scalar',), da.atleast_1d(wsum))
+        out_ds = out_ds.assign_attrs(**{
+            'ra': tra,
+            'dec': tdec,
+            'x0': x0,
+            'y0': y0,
+            'cell_rad': cell_rad,
+            'bandid': bandid,
+            'timeid': timeid,
+            'freq_out': ds.freq_out,
+            'time_out': ds.time_out,
+            'robustness': opts.robustness
+        })
+        # TODO - assign ug,vg-coordinates
+        x = (-nx/2 + np.arange(nx)) * cell_rad + x0
+        y = (-ny/2 + np.arange(ny)) * cell_rad + y0
+        out_ds = out_ds.assign_coords(**{
+           'x': x,
+           'y': y
+        })
 
         # evaluate beam at x and y coords
         cell_deg = np.rad2deg(cell_rad)
-        l = (-(nx//2) + da.arange(nx)) * cell_deg
-        m = (-(ny//2) + da.arange(ny)) * cell_deg
+        l = (-(nx//2) + da.arange(nx)) * cell_deg + np.deg2rad(x0)
+        m = (-(ny//2) + da.arange(ny)) * cell_deg + np.deg2rad(y0)
         ll, mm = da.meshgrid(l, m, indexing='ij')
         bvals = eval_beam(ds.BEAM.data, ll, mm)
+        out_ds = out_ds.assign(**{'BEAM': (('x', 'y'), bvals)})
 
-        dvars['BEAM'] = (('x', 'y'), bvals)
+        # get the model
+        if opts.transfer_model_from is not None:
+            from pfb.utils.misc import eval_coeffs_to_slice
+            model = eval_coeffs_to_slice(
+                ds.time_out,
+                ds.freq_out,
+                model_coeffs,
+                locx, locy,
+                mds.parametrisation,
+                params,
+                mds.texpr,
+                mds.fexpr,
+                mds.npix_x, mds.npix_y,
+                mds.cell_rad_x, mds.cell_rad_y,
+                mds.center_x, mds.center_y,
+                nx, ny,
+                cell_rad, cell_rad,
+                x0, y0
+            )
+            model = da.from_array(model, chunks=(-1,-1))
+            out_ds = out_ds.assign(**{'MODEL': (('x', 'y'), model)})
+
+        elif 'MODEL' in out_ds:
+            model = out_ds.MODEL.data
+        else:
+            model = None
+
+
+        if opts.robustness is not None:
+            # we'll skip this if counts already exists
+            # what to do if flags have changed?
+            if 'COUNTS' not in out_ds:
+                counts = compute_counts(
+                        clone(uvw),
+                        freq,
+                        mask,
+                        nx,
+                        ny,
+                        cell_rad,
+                        cell_rad,
+                        real_type,
+                        ngrid=opts.nvthreads)
+                # get rid of artificially high weights corresponding to
+                # nearly empty cells
+                if opts.filter_extreme_counts:
+                    counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
+                                                   nlevel=opts.filter_level)
+
+                # do we want the coordinates to be ug, vg rather?
+                out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
+        else:
+            counts = None
+
+        # we might want to chunk over row chan in the future but
+        # for now these will always have chunks=(-1,-1)
+        blocker = Blocker(image_data_products, ('row', 'chan'))
+        blocker.add_input('uvw', uvw, ('row','three'))
+        blocker.add_input('freq', freq, ('chan',))
+        blocker.add_input('vis', vis, ('row','chan'))
+        blocker.add_input('wgt', wgt, ('row','chan'))
+        blocker.add_input('mask', mask, ('row','chan'))
+        if counts is not None:
+            blocker.add_input('counts', counts, ('x','y'))
+        else:
+            blocker.add_input('counts', None)
+        blocker.add_input('nx', nx)
+        blocker.add_input('ny', ny)
+        blocker.add_input('nx_psf', nx_psf)
+        blocker.add_input('ny_psf', ny_psf)
+        blocker.add_input('cellx', cell_rad)
+        blocker.add_input('celly', cell_rad)
+        if model is not None:
+            blocker.add_input('model', model, ('x', 'y'))
+        else:
+            blocker.add_input('model', None)
+        blocker.add_input('robustness', opts.robustness)
+        blocker.add_input('x0', x0)
+        blocker.add_input('y0', y0)
+        blocker.add_input('nthreads', opts.nvthreads)
+        blocker.add_input('epsilon', opts.epsilon)
+        blocker.add_input('do_wgridding', opts.wstack)
+        blocker.add_input('double_accum', opts.double_accum)
+        blocker.add_input('l2reweight_dof', opts.l2reweight_dof)
+        blocker.add_input('do_psf', opts.psf)
+        blocker.add_input('do_weight', opts.weight)
+        blocker.add_input('do_residual', opts.residual)
+
+        blocker.add_output(
+            'DIRTY',
+            ('x', 'y'),
+            ((nx,), (ny,)),
+            wgt.dtype)
+
+        blocker.add_output(
+            'WSUM',
+            ('scalar',),
+            ((1,),),
+            wgt.dtype)
 
         if opts.residual:
-            if model is not None and model.any():
-                from pfb.operators.hessian import hessian
-                hessopts = {
-                    'cell': cell_rad,
-                    'wstack': opts.wstack,
-                    'epsilon': opts.epsilon,
-                    'double_accum': opts.double_accum,
-                    'nthreads': opts.nvthreads
-                }
-                # we only want to apply the beam once here
-                residual = dirty - hessian(bvals * model[ds.bandid], uvw, wgt,
-                                           mask, freq, None, hessopts)
-                residual = inlined_array(residual, [uvw, freq])
-            else:
-                residual = dirty
-            dvars['RESIDUAL'] = (('x', 'y'), residual)
+            blocker.add_output(
+                'RESIDUAL',
+                ('x', 'y'),
+                ((nx,), (ny,)),
+                wgt.dtype)
+
+        if opts.psf:
+            blocker.add_output(
+                'PSF',
+                ('x_psf', 'y_psf'),
+                ((nx_psf,), (ny_psf,)),
+                wgt.dtype)
+            blocker.add_output(
+                'PSFHAT',
+                ('x_psf', 'yo2'),
+                ((nx_psf,), (nyo2,)),
+                wgt.dtype)
+
+        if opts.weight:
+            blocker.add_output(
+                'WEIGHT',
+                ('row', 'chan'),
+                wgt.chunks,
+                wgt.dtype)
+
+        output_dict = blocker.get_dask_outputs()
+        out_ds = out_ds.assign(**{
+            'DIRTY': (('x', 'y'), output_dict['DIRTY'])
+            })
+
+        if opts.psf:
+            out_ds = out_ds.assign(**{
+                'PSF': (('x_psf', 'y_psf'), output_dict['PSF']),
+                'PSFHAT': (('x_psf', 'yo2'), output_dict['PSFHAT'])
+                })
+
+        # TODO - don't put vis space products in dds
+        # but how apply imaging weights in that case?
+        if opts.weight:
+            out_ds = out_ds.assign(**{
+                'WEIGHT': (('row', 'chan'), output_dict['WEIGHT'])
+                })
+
+        if opts.residual:
+            out_ds = out_ds.assign(**{
+                'RESIDUAL': (('x', 'y'), output_dict['RESIDUAL'])
+                })
 
 
-        attrs = {
-            'nx': nx,
-            'ny': ny,
-            'nx_psf': nx_psf,
-            'ny_psf': ny_psf,
-            'ra': xds[0].ra,
-            'dec': xds[0].dec,
-            'cell_rad': cell_rad,
-            'bandid': ds.bandid,
-            'scanid': ds.scanid,
-            'freq_out': ds.freq_out,
-            'robustness': opts.robustness
-        }
+        out_ds = out_ds.assign(**{
+            'FREQ': (('chan',), freq),
+            'UVW': (('row', 'three'), uvw),
+            'MASK': (('row', 'chan'), mask),
+            'WSUM': (('scalar',), output_dict['WSUM'])
+            })
 
-        out_ds = xr.Dataset(dvars, attrs=attrs)
-        writes.append(out_ds)
-        freq_out.append(ds.freq_out)
-        wsums[ds.bandid] += wsum
 
-    freq_out = np.unique(np.stack(freq_out))
+        out_ds = out_ds.chunk({'row':100000,
+                               'chan':128,
+                               'x':4096,
+                               'y':4096})
+        # necessary to make psf optional
+        if 'x_psf' in out_ds.dims:
+            out_ds = out_ds.chunk({'x_psf': 4096,
+                                   'y_psf':4096,
+                                   'yo2': 2048})
+
+        dds_out.append(out_ds.unify_chunks())
+
+    writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
 
     # dask.visualize(writes, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
@@ -392,126 +495,38 @@ def _grid(**kw):
     #                optimize_graph=False)
 
     print("Computing image space data products", file=log)
-    with compute_context(opts.scheduler, opts.output_filename+'_grid'):
-        dask.compute(xds_to_zarr(writes, dds_name, columns='ALL'))
+    with compute_context(opts.scheduler, basename+'_grid'):
+        dask.compute(writes, optimize_graph=False)
 
-    if model is None:
-        print("Initialising model ds", file=log)
-        # TODO - allow non-zero input model
-        attrs = {'nband': nband,
-                'nx': nx,
-                'ny': ny,
-                'ra': xds[0].ra,
-                'dec': xds[0].dec,
-                'cell_rad': cell_rad}
-        coords = {'freq': freq_out}
-        real_type = np.float64 if opts.precision=='double' else np.float32
-        model = da.zeros((nband, nx, ny), chunks=(1, -1, -1), dtype=real_type)
-        mask = da.zeros((nx, ny), chunks=(-1, -1), dtype=bool)
-        data_vars = {'MODEL': (('band', 'x', 'y'), model),
-                    'MASK': (('x', 'y'), mask),
-                    'WSUM': (('band',), da.from_array(wsums, chunks=1))}
-        mds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
-        dask.compute(xds_to_zarr([mds], mds_name,columns='ALL'))
+    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
 
     # convert to fits files
-    if opts.fits_mfs or opts.fits_cubes:
-        xds = xds_from_zarr(dds_name)
-        radec = (xds[0].ra, xds[0].dec)
+    fitsout = []
+    if opts.fits_mfs:
         if opts.dirty:
-            print("Saving dirty as fits", file=log)
-            dirty = np.zeros((nband, nx, ny), dtype=np.float32)
-            wsums = np.zeros(nband, dtype=np.float32)
-
-            hdr = set_wcs(cell_size / 3600, cell_size / 3600,
-                          nx, ny, radec, freq_out)
-            hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600,
-                              nx, ny, radec, np.mean(freq_out))
-
-            for ds in xds:
-                b = ds.bandid
-                dirty[b] += ds.DIRTY.values
-                wsums[b] += ds.WSUM.values
-
-            for b, w in enumerate(wsums):
-                hdr[f'WSUM{b}'] = w
-            wsum = np.sum(wsums)
-            hdr_mfs[f'WSUM'] = wsum
-
-            dirty_mfs = np.sum(dirty, axis=0, keepdims=True)/wsum
-
-            if opts.fits_mfs:
-                save_fits(f'{basename}{opts.postfix}_dirty_mfs.fits',
-                          dirty_mfs, hdr_mfs, dtype=np.float32)
-
-            if opts.fits_cubes:
-                fmask = wsums > 0
-                dirty[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}{opts.postfix}_dirty.fits', dirty, hdr,
-                        dtype=np.float32)
-
-        if opts.residual:
-            print("Saving residual as fits", file=log)
-            residual = np.zeros((nband, nx, ny), dtype=np.float32)
-            wsums = np.zeros(nband, dtype=np.float32)
-
-            hdr = set_wcs(cell_size / 3600, cell_size / 3600,
-                          nx, ny, radec, freq_out)
-            hdr_mfs = set_wcs(cell_size / 3600, cell_size / 3600,
-                              nx, ny, radec, np.mean(freq_out))
-
-            for ds in xds:
-                b = ds.bandid
-                residual[b] += ds.RESIDUAL.values
-                wsums[b] += ds.WSUM.values
-
-            for b, w in enumerate(wsums):
-                hdr[f'WSUM{b}'] = w
-            wsum = np.sum(wsums)
-            hdr_mfs[f'WSUM'] = wsum
-
-            residual_mfs = np.sum(residual, axis=0, keepdims=True)/wsum
-
-            if opts.fits_mfs:
-                save_fits(f'{basename}{opts.postfix}_residual_mfs.fits',
-                          residual_mfs, hdr_mfs, dtype=np.float32)
-
-            if opts.fits_cubes:
-                fmask = wsums > 0
-                dirty[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}{opts.postfix}_residual.fits', residual,
-                          hdr, dtype=np.float32)
-
+            fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
         if opts.psf:
-            print("Saving PSF as fits", file=log)
-            psf = np.zeros((nband, nx_psf, ny_psf), dtype=np.float32)
-            wsums = np.zeros(nband, dtype=np.float32)
+            fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
+        if opts.residual and model is not None:
+            fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+            fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
-            hdr_psf = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf,
-                              ny_psf, radec, freq_out)
-            hdr_psf_mfs = set_wcs(cell_size / 3600, cell_size / 3600, nx_psf,
-                                  ny_psf, radec, np.mean(freq_out))
+    if opts.fits_cubes:
+        if opts.dirty:
+            fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
+        if opts.psf:
+            fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
+        if opts.residual and model is not None:
+            fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+            fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
-            for ds in xds:
-                b = ds.bandid
-                psf[b] += ds.PSF.values
-                wsums[b] += ds.WSUM.values
+    if len(fitsout):
+        print("Writing fits", file=log)
+        dask.compute(fitsout)
 
-            for b, w in enumerate(wsums):
-                hdr_psf[f'WSUM{b}'] = w
-            wsum = np.sum(wsums)
-            hdr_psf_mfs[f'WSUM'] = wsum
-
-            psf_mfs = np.sum(psf, axis=0, keepdims=True)/wsum
-
-            if opts.fits_mfs:
-                save_fits(f'{basename}{opts.postfix}_psf_mfs.fits', psf_mfs,
-                          hdr_psf_mfs, dtype=np.float32)
-
-            if opts.fits_cubes:
-                fmask = wsums > 0
-                psf[fmask] /= wsums[fmask, None, None]
-                save_fits(f'{basename}{opts.postfix}_psf.fits', psf, hdr_psf,
-                        dtype=np.float32)
+    if opts.scheduler=='distributed':
+        from distributed import get_client
+        client = get_client()
+        client.close()
 
     print("All done here.", file=log)

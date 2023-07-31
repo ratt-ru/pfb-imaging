@@ -5,22 +5,23 @@ from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
-from pfb.utils.misc import coerce_literal
+from quartical.utils.numba import coerce_literal
 from daskms.optimisation import inlined_array
 from operator import getitem
 from pfb.utils.beam import interp_beam
 
 def single_corr(ds=None,
-                  jones=None,
-                  opts=None,
-                  freq=None,
-                  freq_out=None,
-                  chan_width=None,
-                  bandid=None,
-                  cell_rad=None,
-                  tbin_idx=None,
-                  tbin_counts=None,
-                  radec=None):
+                jones=None,
+                opts=None,
+                freq=None,
+                chan_width=None,
+                bandid=None,
+                cell_rad=None,
+                utimes=None,
+                tbin_idx=None,
+                tbin_counts=None,
+                timeid=None,
+                radec=None):
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -140,6 +141,7 @@ def single_corr(ds=None,
 
     # TODO - interpolate beam in time and freq
     npix = int(np.deg2rad(opts.max_field_of_view)/cell_rad)
+    freq_out = np.mean(freq)
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
 
     data_vars['BEAM'] = (('scalar'), beam)

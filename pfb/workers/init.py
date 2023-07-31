@@ -19,35 +19,7 @@ for key in schema.init["inputs"].keys():
 @clickify_parameters(schema.init)
 def init(**kw):
     '''
-    Create a dirty image, psf and weights from a list of measurement
-    sets. MFS images are written out in units of Jy/beam.
-    By default only the MFS images are converted to fits files.
-    Set the --fits-cubes flag to also produce fits cubes.
-
-    If a host address is provided the computation can be distributed
-    over imaging band and row. When using a distributed scheduler both
-    mem-limit and nthreads is per node and have to be specified.
-
-    When using a local cluster, mem-limit and nthreads refer to the global
-    memory and threads available, respectively. All available resources
-    are used by default.
-
-    On a local cluster, the default is to use:
-
-        nworkers = nband
-        nthreads-per-worker = 1
-
-    They have to be specified in ~.config/dask/jobqueue.yaml in the
-    distributed case.
-
-    if LocalCluster:
-        nvthreads = nthreads//(nworkers*nthreads_per_worker)
-    else:
-        nvthreads = nthreads//nthreads-per-worker
-
-    where nvthreads refers to the number of threads used to scale vertically
-    (eg. the number threads given to each gridder instance).
-
+    Initialise data products for imaging
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
@@ -63,12 +35,6 @@ def init(**kw):
     except:
         raise ValueError(f"No MS at {opts.ms}")
 
-    if opts.nworkers is None:
-        if opts.scheduler=='distributed':
-            opts.nworkers = opts.nband
-        else:
-            opts.nworkers = 1
-
     if opts.gain_table is not None:
         gainstore = DaskMSStore(opts.gain_table.rstrip('/'))
         gt = gainstore.fs.glob(opts.gain_table.rstrip('/'))
@@ -78,8 +44,9 @@ def init(**kw):
         except Exception as e:
             raise ValueError(f"No gain table  at {opts.gain_table}")
 
-    if opts.product.upper() not in ["I", "Q", "U", "V", "XX", "YX", "XY",
-                                    "YY", "RR", "RL", "LR", "LL"]:
+    if opts.product.upper() not in ["I"]:
+                                    # , "Q", "U", "V", "XX", "YX", "XY",
+                                    # "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
     OmegaConf.set_struct(opts, True)
@@ -98,20 +65,21 @@ def init(**kw):
 def _init(**kw):
     opts = OmegaConf.create(kw)
     from omegaconf import ListConfig
-    if not isinstance(opts.ms, list) and not isinstance(opts.ms, ListConfig):
+    if (not isinstance(opts.ms, list) and not
+        isinstance(opts.ms, ListConfig)):
         opts.ms = [opts.ms]
-    if not isinstance(opts.gain_table, list) and not isinstance(opts.gain_table,
-                                                                ListConfig):
-        opts.gain_table = [opts.gain_table]
+    if opts.gain_table is not None:
+        if (not isinstance(opts.gain_table, list) and not
+            isinstance(opts.gain_table,ListConfig)):
+            opts.gain_table = [opts.gain_table]
     OmegaConf.set_struct(opts, True)
 
     import os
     from pathlib import Path
     import numpy as np
-    from pfb.utils.misc import chan_to_band_mapping
+    from pfb.utils.misc import construct_mappings
     import dask
     dask.config.set(**{'array.slicing.split_large_chunks': False})
-    from dask.graph_manipulation import clone
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
@@ -119,79 +87,74 @@ def _init(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.fits import set_wcs, save_fits
     from pfb.utils.stokes import single_stokes
     from pfb.utils.correlations import single_corr
     from pfb.utils.misc import compute_context, chunkify_rows
     import xarray as xr
 
-    basename = f'{opts.output_filename}_{opts.product}'
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    xdsstore = DaskMSStore(f'{basename}.xds.zarr')
+    xdsstore = DaskMSStore(f'{basename}.xds')
     if xdsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {basename}.xds.zarr", file=log)
+            print(f"Overwriting {basename}.xds", file=log)
             xdsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.xds.zarr exists. "
+            raise ValueError(f"{basename}.xds exists. "
                              "Set overwrite to overwrite it. ")
 
-    # TODO - optional grouping.
-    # We need to construct an identifier between
-    # dataset and field/spw/scan identifiers
-    group_by = []
-    if opts.group_by_field:
-        group_by.append('FIELD_ID')
+    if opts.gain_table is not None:
+        tmpf = lambda x: x.rstrip('/') + f'::{opts.gain_term}'
+        gain_names = list(map(tmpf, opts.gain_table))
     else:
-        raise NotImplementedError("Grouping by field is currently mandatory")
+        gain_names = None
 
-    if opts.group_by_ddid:
-        group_by.append('DATA_DESC_ID')
+    if opts.freq_range is not None:
+        fmin, fmax = opts.freq_range.strip(' ').split(':')
+        if len(fmin) > 0:
+            freq_min = float(fmin)
+        else:
+            freq_min = -np.inf
+        if len(fmax) > 0:
+            freq_max = float(fmax)
+        else:
+            freq_max = np.inf
     else:
-        raise NotImplementedError("Grouping by DDID is currently mandatory")
+        freq_min = -np.inf
+        freq_max = np.inf
 
-    if opts.group_by_scan:
-        group_by.append('SCAN_NUMBER')
-    else:
-        raise NotImplementedError("Grouping by scan is currently mandatory")
+    print('Constructing mapping', file=log)
+    row_mapping, freq_mapping, time_mapping, \
+        freqs, utimes, ms_chunks, gain_chunks, radecs, \
+        chan_widths, uv_max, antpos, poltype = \
+            construct_mappings(opts.ms,
+                               gain_names,
+                               ipi=opts.integrations_per_image,
+                               cpi=opts.channels_per_image,
+                               freq_min=freq_min,
+                               freq_max=freq_max)
 
-    # chan <-> band mapping
-    nband = opts.nband
-    freqs, fbin_idx, fbin_counts, freq_out, band_mapping, chan_chunks = \
-        chan_to_band_mapping(opts.ms, nband=opts.nband, group_by=group_by)
-
-    # gridder memory budget (TODO)
-    max_chan_chunk = 0
     max_freq = 0
     for ms in opts.ms:
-        for spw in freqs[ms]:
-            counts = fbin_counts[ms][spw].compute()
-            freq = freqs[ms][spw].compute()
-            max_chan_chunk = np.maximum(max_chan_chunk, counts.max())
+        for idt in freqs[ms].keys():
+            freq = freqs[ms][idt]
             max_freq = np.maximum(max_freq, freq.max())
 
-    # we need the Nyquist limit for setting up the beam interpolation
-    # get max uv coords over all datasets
-    uvw = []
-    u_max = 0.0
-    v_max = 0.0
-    for ms in opts.ms:
-        xds = xds_from_ms(ms, columns='UVW', group_cols=group_by)
-        for ds in xds:
-            uvw = ds.UVW.data
-            u_max = da.maximum(u_max, abs(uvw[:, 0]).max())
-            v_max = da.maximum(v_max, abs(uvw[:, 1]).max())
-            uv_max = da.maximum(u_max, v_max)
-
-    uv_max = uv_max.compute()
-    # approx max cell size
+    # cell size
     cell_rad = 1.0 / (2 * uv_max * max_freq / lightspeed)
+
+    # # we should rephase to the Barycenter of all datasets
+    # if opts.radec is not None:
+    #     raise NotImplementedError()
+
+    # this is not optional, concatenate during gridding stage if desired
+    group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
     # assumes measurement sets have the same columns
     columns = (opts.data_column,
                opts.flag_column,
                'UVW', 'ANTENNA1',
-               'ANTENNA2', 'TIME', 'INTERVAL')
+               'ANTENNA2', 'TIME', 'INTERVAL', 'FLAG_ROW')
     schema = {}
     schema[opts.data_column] = {'dims': ('chan', 'corr')}
     schema[opts.flag_column] = {'dims': ('chan', 'corr')}
@@ -205,200 +168,108 @@ def _init(**kw):
     elif opts.weight_column is not None:
         print(f"Using weights from {opts.weight_column} column", file=log)
         columns += (opts.weight_column,)
-        if opts.weight_column == 'WEIGHT':
-            schema[opts.weight_column] = {'dims': ('corr')}
-        else:
+        # hack for https://github.com/ratt-ru/dask-ms/issues/268
+        if opts.weight_column != 'WEIGHT':
             schema[opts.weight_column] = {'dims': ('chan', 'corr')}
     else:
         print(f"No weights provided, using unity weights", file=log)
 
-    # flag row
-    if 'FLAG_ROW' in xds[0]:
-        columns += ('FLAG_ROW',)
-
-    ms_chunks = {}
-    gain_chunks = {}
-    tbin_idx = {}
-    tbin_counts = {}
-    ncorr = None
-    for ims, ms in enumerate(opts.ms):
-        xds = xds_from_ms(ms, group_cols=group_by, columns=('TIME', 'FLAG'))
-        ms_chunks[ms] = []  # daskms expects a list per ds
-        gain_chunks[ms] = []
-        tbin_idx[ms] = {}
-        tbin_counts[ms] = {}
-        if opts.gain_table[ims] is not None:
-            try:
-                G = xds_from_zarr(opts.gain_table[ims].rstrip('/') +
-                                  f'::{opts.gain_term}')
-            except:
-                G = xds_from_zarr(opts.gain_table[ims].rstrip('/') +
-                                  f'/{opts.gain_term}')
-
-        for ids, ds in enumerate(xds):
-            fid = ds.FIELD_ID
-            ddid = ds.DATA_DESC_ID
-            scanid = ds.SCAN_NUMBER
-            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
-
-            if ncorr is None:
-                ncorr = ds.dims['corr']
-            else:
-                try:
-                    assert ncorr == ds.dims['corr']
-                except Exception as e:
-                    raise ValueError("All data sets must have the same "
-                                     "number of correlations")
-            time = ds.TIME.values
-            if opts.utimes_per_chunk in [0, -1, None]:
-                utpc = np.unique(time).size
-            else:
-                utpc = opts.utimes_per_chunk
-
-            rchunks, tidx, tcounts = chunkify_rows(time,
-                                                   utimes_per_chunk=utpc,
-                                                   daskify_idx=True)
-
-            tbin_idx[ms][idt] = tidx
-            tbin_counts[ms][idt] = tcounts
-
-            ms_chunks[ms].append({'row': rchunks,
-                                  'chan': chan_chunks[ms][idt]})
-
-            if opts.gain_table[ims] is not None:
-                gain = G[ids]  # TODO - how to make sure they are aligned?
-                tmp_dict = {}
-                for name, val in zip(gain.GAIN_AXES, gain.GAIN_SPEC):
-                    if name == 'gain_t':
-                        ntimes = gain.gain_t.size
-                        nchunksm1 = ntimes//utpc
-                        rem = ntimes - nchunksm1*utpc
-                        tmp_dict[name] = (utpc,)*nchunksm1
-                        if rem:
-                            tmp_dict[name] += (rem,)
-                    elif name == 'gain_f':
-                        tmp_dict[name] = chan_chunks[ms][idt]
-                    elif name == 'dir':
-                        if len(val) > 1:
-                            raise ValueError("DD gains not supported yet")
-                        if val[0] > 1:
-                            raise ValueError("DD gains not supported yet")
-                        tmp_dict[name] = val
-                    else:
-                        tmp_dict[name] = val
-
-                gain_chunks[ms].append(tmp_dict)
-
     out_datasets = []
-    radec = None  # assumes we are only imaging field 0 of first MS
+    row_id_start = 0
     for ims, ms in enumerate(opts.ms):
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
                           table_schema=schema, group_cols=group_by)
 
-        if opts.gain_table[ims] is not None:
-            try:
-                G = xds_from_zarr(opts.gain_table[ims].rstrip('/') +
-                                  f'::{opts.gain_term}',
-                                  chunks=gain_chunks[ms])
-            except:
-                G = xds_from_zarr(opts.gain_table[ims].rstrip('/') +
-                                  f'/{opts.gain_term}',
-                                  chunks=gain_chunks[ms])
-        # subtables
-        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")
-        fields = xds_from_table(ms + "::FIELD")
-        spws = xds_from_table(ms + "::SPECTRAL_WINDOW")
-        pols = xds_from_table(ms + "::POLARIZATION")
-
-        # subtable data
-        ddids = dask.compute(ddids)[0]
-        fields = dask.compute(fields)[0]
-        # spws = dask.compute(spws)[0]
-        pols = dask.compute(pols)[0]
-
-        # import pdb; pdb.set_trace()
-        # corr_type = set(tuple(pols[0].CORR_TYPE.data.squeeze()))
-        pol_type='linear'
-
-        # if corr_type.issubset(set([9, 10, 11, 12])):
-        #     pol_type = 'linear'
-        # elif corr_type.issubset(set([5, 6, 7, 8])):
-        #     pol_type = 'circular'
-        # else:
-        #     raise ValueError(f"Cannot determine polarisation type "
-        #                      f"from correlations {pols[0].CORR_TYPE.data}")
+        if opts.gain_table is not None:
+            gds = xds_from_zarr(gain_names[ims],
+                                chunks=gain_chunks[ms])
 
         for ids, ds in enumerate(xds):
             fid = ds.FIELD_ID
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
+            # TODO - cleaner syntax
+            if opts.fields is not None:
+                fields = opts.fields.strip(' ')  # strip white space
+                if fid not in list(map(int, fields[1:-1].split(','))):
+                    continue
+            if opts.ddids is not None:
+                ddids = opts.ddids.strip(' ')
+                if ddid not in list(map(int, ddids[1:-1].split(','))):
+                    continue
+            if opts.scans is not None:
+                scans = opts.scans.strip(' ')
+                if scanid not in list(map(int, scans[1:-1].split(','))):
+                    continue
+
+
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
             nrow = ds.dims['row']
-            nchan = ds.dims['chan']
             ncorr = ds.dims['corr']
 
-            field = fields[fid]
-
-            # check fields match
-            if radec is None:
-                radec = field.PHASE_DIR.data.squeeze()
-
-            if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
-                # TODO - phase shift visibilities
+            idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
+            if not idx.any():
                 continue
 
-            spw = spws[ddid]
-            chan_width = spw.CHAN_WIDTH.data.squeeze()
-            chan_width = chan_width.rechunk(freqs[ms][idt].chunks)
+            nchan = idx.sum()
 
-            universal_opts = {
-                'tbin_idx':tbin_idx[ms][idt],
-                'tbin_counts':tbin_counts[ms][idt],
-                'cell_rad':cell_rad,
-                'radec':radec
-            }
+            for ti, (tlow, tcounts) in enumerate(zip(time_mapping[ms][idt]['start_indices'],
+                                           time_mapping[ms][idt]['counts'])):
 
-            for b, band_id in enumerate(band_mapping[ms][idt].compute()):
-                f0 = fbin_idx[ms][idt][b].compute()
-                ff = f0 + fbin_counts[ms][idt][b].compute()
-                Inu = slice(f0, ff)
+                It = slice(tlow, tlow + tcounts)
+                ridx = row_mapping[ms][idt]['start_indices'][It]
+                rcnts = row_mapping[ms][idt]['counts'][It]
+                # select all rows for output dataset
+                Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
 
-                subds = ds[{'chan': Inu}]
-                if opts.gain_table[ims] is not None:
-                    # Only DI gains currently supported
-                    jones = G[ids][{'gain_f': Inu}].gains.data
-                else:
-                    jones = None
+                for flow, fcounts in zip(freq_mapping[ms][idt]['start_indices'],
+                                         freq_mapping[ms][idt]['counts']):
+                    Inu = slice(flow, flow + fcounts)
 
-                if opts.product.upper() in ["I", "Q", "U", "V"]:
-                    out_ds = single_stokes(ds=subds,
-                                           jones=jones,
-                                           opts=opts,
-                                           freq=freqs[ms][idt][Inu],
-                                           freq_out=freq_out[band_id],
-                                           chan_width=chan_width[Inu],
-                                           bandid=band_id,
-                                           **universal_opts)
-                elif opts.product.upper() in ["XX", "YX", "XY", "YY", "RR",
-                                              "RL", "LR", "LL"]:
-                    out_ds = single_corr(ds=subds,
-                                         jones=jones,
-                                         opts=opts,
-                                         freq=freqs[ms][idt][Inu],
-                                         freq_out=freq_out[band_id],
-                                         chan_width=chan_width[Inu],
-                                         bandid=band_id,
-                                         **universal_opts)
-                else:
-                    raise NotImplementedError(f"Product {args.product} not "
-                                              "supported yet")
-                # if all data in a dataset is flagged we return None and
-                # ignore this chunk of data
-                if out_ds is not None:
-                    out_datasets.append(out_ds)
+                    subds = ds[{'row': Irow, 'chan': Inu}]
+                    if opts.gain_table is not None:
+                        # Only DI gains currently supported
+                        jones = gds[ids][{'gain_time': It, 'gain_freq': Inu}].gains.data
+                    else:
+                        jones = None
+
+                    if opts.product.upper() in ["I", "Q", "U", "V"]:
+                        out_ds = single_stokes(
+                            ds=subds,
+                            jones=jones,
+                            opts=opts,
+                            freq=freqs[ms][idt][Inu],
+                            chan_width=chan_widths[ms][idt][Inu],
+                            utime=utimes[ms][idt][It],
+                            tbin_idx=ridx,
+                            tbin_counts=rcnts,
+                            cell_rad=cell_rad,
+                            radec=radecs[ms][idt],
+                            antpos=antpos[ms],
+                            poltype=poltype[ms])
+                    elif opts.product.upper() in ["XX", "YX", "XY", "YY",
+                                                  "RR", "RL", "LR", "LL"]:
+                        out_ds = single_corr(
+                            ds=subds,
+                            jones=jones,
+                            opts=opts,
+                            freq=freqs[ms][idt][Inu],
+                            chan_width=chan_widths[ms][idt][Inu],
+                            utimes=utimes[ms][idt][It],
+                            tbin_idx=ridx,
+                            tbin_counts=rcnts,
+                            cell_rad=cell_rad,
+                            radec=radecs[ms][idt])
+                    else:
+                        raise NotImplementedError(f"Product {args.product} not "
+                                                "supported yet")
+                    # if all data in a dataset is flagged we return None and
+                    # ignore this chunk of data
+                    if out_ds is not None:
+                        out_datasets.append(out_ds)
 
     if len(out_datasets):
-        writes = xds_to_zarr(out_datasets, f'{basename}.xds.zarr',
+        writes = xds_to_zarr(out_datasets, f'{basename}.xds',
                              columns='ALL')
     else:
         raise ValueError('No datasets found to write. '
@@ -406,13 +277,17 @@ def _init(**kw):
 
     # dask.visualize(writes, color="order", cmap="autumn",
     #                node_attr={"penwidth": "4"},
-    #                filename=opts.output_filename + '_writes_I_ordered_graph.pdf',
+    #                filename=basename + '_writes_I_ordered_graph.pdf',
     #                optimize_graph=False)
-    # dask.visualize(writes, filename=opts.output_filename +
+    # dask.visualize(writes, filename=basename +
     #                '_writes_I_graph.pdf', optimize_graph=False)
 
-    # import pdb; pdb.set_trace()
-    with compute_context(opts.scheduler, opts.output_filename+'_init'):
+    with compute_context(opts.scheduler, basename+'_init'):
         dask.compute(writes, optimize_graph=False)
+
+    if opts.scheduler=='distributed':
+        from distributed import get_client
+        client = get_client()
+        client.close()
 
     print("All done here.", file=log)

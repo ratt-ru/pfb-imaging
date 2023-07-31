@@ -2,64 +2,47 @@ inputs:
   ms:
     dtype: str
     required: true
-    info: 'Path to measurement set.'
     abbreviation: ms
-  output_filename:
+    info:
+      Path to measurement set.
+  mds:
     dtype: str
     required: true
-    info: 'Basename of output'
-    metavar: BASENAME
-    abbreviation: o
+    abbreviation: mds
+    info:
+      Path to the mds that needs to be degridded
   model_column:
     dtype: str
     default: MODEL_DATA
-    info: "Column to write model data to"
-  nband:
-    dtype: int
-    required: true
-    abbreviation: nb
-    info: 'Number of imaging bands'
-  nband_out:
-    dtype: int
-    abbreviation: nbo
-    info: Interpolate model to this many output bands before degridding
-  spectral_poly_order:
-    dtype: int
-    abbreviation: spo
-    info: "Order of interpolating polynomial for frequency axis"
-  postfix:
-    dtype: str
-    default: ''
-    info: 'Can be used to specify a custom name for the image space data \
-          products'
+    info:
+      Column to write model data to
   product:
     dtype: str
     abbreviation: p
     default: I
-    info: 'Imaging products to produce. Options are I, Q, U, V. \
-          Only single Stokes products are currently supported'
-  model_name:
-    dtype: str
-    default: MODEL
-    abbreviation: mname
-    info: 'Name of model in mds'
-  row_chunk:
+    info:
+      Imaging products to degrid. Options are I, Q, U, V.
+      Only single Stokes products are currently supported.
+  integrations_per_image:
     dtype: int
-    info: 'Number of rows in a chunk in output dataset'
-    abbreviation: rc
     default: -1
-  group_by_field:
+    abbreviation: ipi
+    info:
+      Number of time integrations corresponding to each image.
+      Default -1 (equivalently 0 or None) implies degrid per scan.
+  channels_per_image:
+    dtype: int
+    abbreviation: cpi
+    default: -1
+    info:
+      Number of channels per image.
+      Default (-1, 0, None) -> dataset per spw.
+  accumulate:
     dtype: bool
-    default: True
-    info: "Split data by field"
-  group_by_ddid:
-    dtype: bool
-    default: True
-    info: "Split data by DDID"
-  group_by_scan:
-    dtype: bool
-    default: True
-    info: "Split data by scan"
+    default: false
+    info:
+      Accumulate onto model column
+
   _include:
     - (pfb.parser)gridding.yml
     - (pfb.parser)dist.yml

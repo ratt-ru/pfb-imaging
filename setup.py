@@ -5,8 +5,7 @@ with open("README.rst", "r") as fh:
     long_description = fh.read()
 
 requirements = [
-                'numpy==1.22',
-                'tornado==6.1',
+                'numpy',
                 'matplotlib',
                 'ipython',
                 'scikit-image',
@@ -18,31 +17,13 @@ requirements = [
                 'pyscilog >= 0.1.2',
                 'Click',
                 'omegaconf',
-                'bokeh',
-                'graphviz',
-                'nifty7',
-                'sympy',
-                "codex-africanus[complete]",
+                "codex-africanus[dask, scipy, astropy, python-casacore, ducc0]",
                 "dask-ms[xarray, zarr, s3]",
-
-                "packratt"
-                "@git+https://github.com/ratt-ru/packratt.git"
-                "@master",
-
-                "stimela"
-                "@git+https://github.com/caracal-pipeline/stimela2"
-                "@kube"
+                "stimela==2.0rc6",
+                "QuartiCal",
+                "sympy",
 
             ]
-
-
-# If scabha is not pre-installed, add to requirements
-# This is just a transitionary hack: next release of stimela will include scabha,
-# so when that happens, we just add a stimela>=2 dependency at the top, and don't bother with this
-# try:
-#     import scabha
-# except ImportError:
-#     requirements.append('scabha')
 
 
 setup(
@@ -66,8 +47,7 @@ setup(
          "Topic :: Scientific/Engineering :: Astronomy",
      ],
      entry_points={'console_scripts':[
-        'pfb = pfb.workers.main:cli',
-        'pfbmisc = pfb.workers.experimental:cli'
+        'pfb = pfb.workers.main:cli'
         ]
      }
 

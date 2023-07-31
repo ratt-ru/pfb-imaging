@@ -1,30 +1,32 @@
 host_address:
   dtype: str
-  info:
-    Address where the distributed client lives. Will use a local cluster if no
-    address is provided and scheduler is set to distributed.
   abbreviation: ha
+  info:
+    Address where the distributed client lives.
+    Uses LocalCluster if no address is provided
+    and scheduler is set to distributed.
 nworkers:
   dtype: int
+  default: 1
   abbreviation: nw
   info:
     Number of worker processes.
-nthreads_per_worker:
+    Use with distributed scheduler.
+nthreads_dask:
   dtype: int
+  default: 1
+  abbreviation: ntd
   info:
-    Number of threads per worker process.
-  abbreviation: ntpw
+    Number of dask threads.
+    This will largely determine the memory footprint.
+    Used as nthreads per worker when using distributed scheduler.
 nvthreads:
   dtype: int
+  abbreviation: nvt
   info:
-    Number of threads used to scale vertically (eg. for FFTs).
-  abbreviation: nvthreads
-nthreads:
-  dtype: int
-  info:
-    Total number of threads to use between all processes.
-    Will use all available resources by default
-  abbreviation: nthreads
+    Number of threads used to scale vertically (eg. for FFTs and gridding).
+    Each dask thread can in principle spawn this many threads.
+    Will attempt to use half the available threads by default.
 scheduler:
   dtype: str
   default: threads

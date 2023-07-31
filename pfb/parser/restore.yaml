@@ -24,7 +24,7 @@ inputs:
     abbreviation: o
   postfix:
     dtype: str
-    default: ''
+    default: 'main'
     info: 'Can be used to specify a custom name for the image space data \
           products'
   product:
@@ -38,6 +38,10 @@ inputs:
     default: mMrRiI
     info: 'Output products. (m)odel, (r)esidual, (i)mage, (c)lean beam. \
           Captitals correspond to cubes.'
+  overwrite:
+    dtype: bool
+    default: false
+    info: Allow overwrite of output xds
 
 outputs:
     {}
