@@ -1,4 +1,6 @@
 
+root_dir: (pfb.parser)
+
 cabs:
   'pfb_init':
     command: pfb.workers.init.init
@@ -9,7 +11,7 @@ cabs:
       replace: {'_': '-'}
 
     _include:
-      - (pfb.parser)init.yaml
+      - '{root_dir}init.yaml'
 
   'pfb_grid':
     command: pfb.workers.grid.grid
@@ -20,7 +22,7 @@ cabs:
       replace: {'_': '-'}
 
     _include:
-      - (pfb.parser)grid.yaml
+      - '{root_dir}grid.yaml'
 
   'pfb_degrid':
     command: pfb.workers.degrid.degrid
@@ -31,7 +33,7 @@ cabs:
       replace: {'_': '-'}
 
     _include:
-      - (pfb.parser)degrid.yaml
+      - '{root_dir}degrid.yaml'
 
   'pfb_clean':
     command: pfb.workers.clean.clean
@@ -42,7 +44,7 @@ cabs:
       replace: {'_': '-'}
 
     _include:
-      - (pfb.parser)clean.yaml
+      - '{root_dir}clean.yaml'
 
   'pfb_restore':
     command: pfb.workers.restore.restore
@@ -53,7 +55,7 @@ cabs:
       replace: {'_': '-'}
 
     _include:
-      - (pfb.parser)restore.yaml
+      - '{root_dir}restore.yaml'
 
   'pfb_fwdbwd':
     command: pfb.workers.fwdbwd.fwdbwd
@@ -64,7 +66,7 @@ cabs:
       replace: {'_': '-'}
 
     _include:
-      - (pfb.parser)fwdbwd.yaml
+      - '{root_dir}fwdbwd.yaml'
 
   'pfb_forward':
     command: pfb.workers.forward.forward
@@ -75,18 +77,7 @@ cabs:
       replace: {'_': '-'}
 
     _include:
-      - (pfb.parser)forward.yaml
-
-  'pfb_backward':
-    command: pfb.workers.backward.backward
-    flavour: python
-    policies:
-      pass_missing_as_none: true
-      prefix: '--'
-      replace: {'_': '-'}
-
-    _include:
-      - (pfb.parser)backward.yaml
+      - '{root_dir}forward.yaml'
 
   'pfb_spotless':
     command: pfb.workers.spotless.spotless
@@ -97,4 +88,4 @@ cabs:
       replace: {'_': '-'}
 
     _include:
-      - (pfb.parser)spotless.yaml
+      - '{root_dir}spotless.yaml'
