@@ -1,10 +1,10 @@
 inputs:
   _include:
-    - (pfb.parser)gridding.yml
-    - (pfb.parser)pdopts.yml
-    - (pfb.parser)pmopts.yml
-    - (pfb.parser)cgopts.yml
-    - (pfb.parser)dist.yml
+    - gridding.yml
+    - pdopts.yml
+    - pmopts.yml
+    - cgopts.yml
+    - dist.yml
   model_name:
     dtype: str
     abbreviation: mname

@@ -1,6 +1,6 @@
 inputs:
   _include:
-    - (pfb.parser)dist.yml
+    - dist.yml
   model_name:
     dtype: str
     abbreviation: mname

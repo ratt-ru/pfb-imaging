@@ -23,6 +23,8 @@ if schema is None:
 
     structured = OmegaConf.structured(_CabInputsOutputs)
 
+    import ipdb; ipdb.set_trace()
+
     tmp = configuratt.load_nested(files,
                                   structured=structured,
                                   config_class="PfbCleanCabs",

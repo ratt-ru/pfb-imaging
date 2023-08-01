@@ -61,7 +61,7 @@ inputs:
       Multiple of the identity to add to the hessian for stability
 
   _include:
-    - (pfb.parser)dist.yml
+    - dist.yml
 
 outputs:
   {}

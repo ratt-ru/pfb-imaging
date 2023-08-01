@@ -126,7 +126,7 @@ inputs:
       Average this number if channels together
 
   _include:
-    - (pfb.parser)dist.yml
+    - dist.yml
 
 outputs:
     {}
