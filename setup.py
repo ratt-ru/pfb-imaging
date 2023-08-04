@@ -22,7 +22,7 @@ requirements = [
                 # "stimela==2.0rc6",
                 "QuartiCal",
                 "sympy",
-                "bokeh < 3",
+                "bokeh  >= 2.4.2, < 3",
 
                 "stimela"
                 "@git+https://github.com/caracal-pipeline/stimela.git"

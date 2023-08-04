@@ -279,8 +279,8 @@ def _init(**kw):
     # dask.visualize(writes, filename=basename +
     #                '_writes_I_graph.pdf', optimize_graph=False)
 
-    with compute_context(opts.scheduler, basename+'_init'):
-        dask.compute(writes, optimize_graph=False)
+    # with compute_context(opts.scheduler, basename+'_init'):
+    dask.compute(writes, optimize_graph=False)
 
     if opts.scheduler=='distributed':
         from distributed import get_client
