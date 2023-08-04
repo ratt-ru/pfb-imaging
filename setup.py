@@ -9,7 +9,7 @@ requirements = [
                 'matplotlib',
                 'ipython',
                 'scikit-image',
-                'dask[distributed]',
+                'dask[distributed,diagnostics]',
                 'PyWavelets',
                 'katbeam',
                 'pytest >= 6.2.2',
@@ -22,6 +22,7 @@ requirements = [
                 # "stimela==2.0rc6",
                 "QuartiCal",
                 "sympy",
+                "bokeh < 3",
 
                 "stimela"
                 "@git+https://github.com/caracal-pipeline/stimela.git"
