@@ -189,13 +189,13 @@ def _init(**kw):
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
             # TODO - cleaner syntax
-            if len(opts.fields):
+            if opts.fields is not None:
                 if fid not in opts.fields:
                     continue
-            if len(opts.ddids):
+            if opts.ddids is not None:
                 if ddid not in opts.ddids:
                     continue
-            if len(opts.scans):
+            if opts.scans is not None:
                 if scanid not in opts.scans:
                     continue
 
