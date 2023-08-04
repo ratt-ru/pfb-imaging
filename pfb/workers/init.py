@@ -175,8 +175,8 @@ def _init(**kw):
         print(f"No weights provided, using unity weights", file=log)
 
     out_datasets = []
-    row_id_start = 0
     for ims, ms in enumerate(opts.ms):
+        print(ims, ms)
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
                           table_schema=schema, group_cols=group_by)
 
@@ -185,6 +185,7 @@ def _init(**kw):
                                 chunks=gain_chunks[ms])
 
         for ids, ds in enumerate(xds):
+            print(ids, ds)
             fid = ds.FIELD_ID
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
