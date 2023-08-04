@@ -280,6 +280,7 @@ def _init(**kw):
     #                '_writes_I_graph.pdf', optimize_graph=False)
 
     # with compute_context(opts.scheduler, basename+'_init'):
+    import ipdb; ipdb.set_trace()
     dask.compute(writes, optimize_graph=False)
 
     if opts.scheduler=='distributed':

@@ -23,10 +23,11 @@ requirements = [
                 "QuartiCal",
                 "sympy",
                 "bokeh  >= 2.4.2, < 3",
+                "ipdb",
 
                 "stimela"
                 "@git+https://github.com/caracal-pipeline/stimela.git"
-                "@FIASCO3-daskjob"
+                "@FIASCO3"
 
             ]
 
