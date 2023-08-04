@@ -43,10 +43,11 @@ def set_client(opts, stack, log, scheduler='distributed'):
         # with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
         #     client = distributed.Client()
         # set up client
-        if opts.host_address is not None:
+        host_address = opts.host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
+        if host_address is not None:
             from distributed import Client
             print("Initialising distributed client.", file=log)
-            client = stack.enter_context(Client(opts.host_address))
+            client = stack.enter_context(Client(host_address))
         else:
             if opts.nthreads_dask * opts.nvthreads > nthreads_max:
                 print("Warning - you are attempting to use more threads than "

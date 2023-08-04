@@ -19,9 +19,13 @@ requirements = [
                 'omegaconf',
                 "codex-africanus[dask, scipy, astropy, python-casacore, ducc0]",
                 "dask-ms[xarray, zarr, s3]",
-                "stimela==2.0rc6",
+                # "stimela==2.0rc6",
                 "QuartiCal",
                 "sympy",
+
+                "stimela"
+                "@git+https://github.com/caracal-pipeline/stimela.git"
+                "@FIASCO3-daskjob"
 
             ]
 
