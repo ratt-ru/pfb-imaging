@@ -6,7 +6,6 @@ import dask.array as da
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
 from quartical.utils.numba import coerce_literal
-from daskms.optimisation import inlined_array
 from operator import getitem
 from pfb.utils.beam import interp_beam
 
@@ -42,8 +41,6 @@ def single_corr(ds=None,
     else:
         frow = (ant1 == ant2)
 
-    frow = inlined_array(frow, [ant1, ant2])
-
     if opts.weight_column is not None:
         weight = getattr(ds, opts.weight_column).data
     else:
@@ -71,9 +68,6 @@ def single_corr(ds=None,
     vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts,
                            ant1, ant2)
 
-    vis = inlined_array(vis, [ant1, ant2, tbin_idx, tbin_counts, jones])
-    wgt = inlined_array(wgt, [ant1, ant2, tbin_idx, tbin_counts, jones])
-
     if opts.flag_column is not None:
         flag = getattr(ds, opts.flag_column).data
         flag = da.any(flag, axis=2)
@@ -82,7 +76,6 @@ def single_corr(ds=None,
         flag = da.broadcast_to(frow[:, None], (nrow, nchan))
 
     mask = ~flag
-    mask = inlined_array(mask, [frow])
     uvw = ds.UVW.data
 
     data_vars = {'FREQ': (('chan',), freq)}

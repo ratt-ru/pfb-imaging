@@ -1,7 +1,6 @@
 import numpy as np
 import numexpr as ne
 import dask.array as da
-from daskms.optimisation import inlined_array
 from uuid import uuid4
 from ducc0.fft import r2c, c2r, c2c, good_size
 from ducc0.misc import roll_resize_roll as rrr

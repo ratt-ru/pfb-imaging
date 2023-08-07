@@ -209,8 +209,6 @@ def _init(**kw):
             if not idx.any():
                 continue
 
-            nchan = idx.sum()
-
             for ti, (tlow, tcounts) in enumerate(zip(time_mapping[ms][idt]['start_indices'],
                                            time_mapping[ms][idt]['counts'])):
 
@@ -268,7 +266,8 @@ def _init(**kw):
 
     if len(out_datasets):
         writes = xds_to_zarr(out_datasets, f'{basename}.xds',
-                             columns='ALL')
+                             columns='ALL',
+                             rechunk=True)
     else:
         raise ValueError('No datasets found to write. '
                          'Data completely flagged maybe?')

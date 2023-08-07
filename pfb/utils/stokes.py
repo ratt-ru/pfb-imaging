@@ -7,7 +7,6 @@ import dask.array as da
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
 from quartical.utils.numba import coerce_literal
-from daskms.optimisation import inlined_array
 from operator import getitem
 from pfb.utils.beam import interp_beam
 import dask
@@ -42,6 +41,7 @@ def single_stokes(ds=None,
     data = getattr(ds, opts.data_column).data
     nrow, nchan, ncorr = data.shape
 
+    # clone shared nodes
     ant1 = clone(ds.ANTENNA1.data)
     ant2 = clone(ds.ANTENNA2.data)
     uvw = clone(ds.UVW.data)
@@ -51,8 +51,6 @@ def single_stokes(ds=None,
         frow = clone(ds.FLAG_ROW.data) | (ant1 == ant2)
     else:
         frow = (ant1 == ant2)
-
-    frow = inlined_array(frow, [ant1, ant2])
 
     if opts.flag_column is not None:
         flag = getattr(ds, opts.flag_column).data
@@ -102,16 +100,10 @@ def single_stokes(ds=None,
     vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts,
                         ant1, ant2, pol=poltype, product=opts.product)
 
-    vis = inlined_array(vis, [ant1, ant2, tbin_idx, tbin_counts, jones])
-    wgt = inlined_array(wgt, [ant1, ant2, tbin_idx, tbin_counts, jones])
-
     if isinstance(opts.radec, str):
         raise NotImplementedError()
     elif isinstance(opts.radec, np.ndarray) and not np.array_equal(radec, opts.radec):
         raise NotImplementedError()
-
-
-    flag = inlined_array(flag, [frow])
 
     # do this before casting to dask array otherwise
     # serialisation of attrs fails

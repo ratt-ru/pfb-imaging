@@ -1,7 +1,6 @@
 import numpy as np
 import dask
 import dask.array as da
-from daskms.optimisation import inlined_array
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from ducc0.misc import make_noncritical
 from uuid import uuid4
@@ -46,8 +45,6 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
             beam = mask
 
         convim = hessian(x[b], uvw, wgt, vis_mask, freq, beam, hessopts)
-
-        # convim = inlined_array(convim, uvw)
 
         convims[b] += convim
 
