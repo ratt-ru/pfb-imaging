@@ -264,10 +264,13 @@ def _init(**kw):
                     if out_ds is not None:
                         out_datasets.append(out_ds)
 
+    dask.compute(out_datasets)  # this works
     if len(out_datasets):
         writes = xds_to_zarr(out_datasets, f'{basename}.xds',
                              columns='ALL',
                              rechunk=True)
+        # I never get to this breakpoint
+        import ipdb; ipdb.set_trace()
     else:
         raise ValueError('No datasets found to write. '
                          'Data completely flagged maybe?')
@@ -280,7 +283,7 @@ def _init(**kw):
     #                '_writes_I_graph.pdf', optimize_graph=False)
 
     # with compute_context(opts.scheduler, basename+'_init'):
-    import ipdb; ipdb.set_trace()
+
     dask.compute(writes, optimize_graph=False)
 
     if opts.scheduler=='distributed':
