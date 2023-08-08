@@ -176,7 +176,6 @@ def _init(**kw):
 
     out_datasets = []
     for ims, ms in enumerate(opts.ms):
-        print(ims, ms)
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
                           table_schema=schema, group_cols=group_by)
 
@@ -185,7 +184,6 @@ def _init(**kw):
                                 chunks=gain_chunks[ms])
 
         for ids, ds in enumerate(xds):
-            print(ids, ds)
             fid = ds.FIELD_ID
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
@@ -264,13 +262,10 @@ def _init(**kw):
                     if out_ds is not None:
                         out_datasets.append(out_ds)
 
-    dask.compute(out_datasets)  # this works
     if len(out_datasets):
         writes = xds_to_zarr(out_datasets, f'{basename}.xds',
                              columns='ALL',
                              rechunk=True)
-        # I never get to this breakpoint
-        import ipdb; ipdb.set_trace()
     else:
         raise ValueError('No datasets found to write. '
                          'Data completely flagged maybe?')
