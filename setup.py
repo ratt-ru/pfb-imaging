@@ -9,24 +9,15 @@ requirements = [
                 'matplotlib',
                 'ipython',
                 'scikit-image',
-                'dask[distributed,diagnostics]',
                 'PyWavelets',
                 'katbeam',
                 'pytest >= 6.2.2',
                 'numexpr',
                 'pyscilog >= 0.1.2',
                 'Click',
-                'omegaconf',
-                "codex-africanus[dask, scipy, astropy, python-casacore, ducc0]",
-                "dask-ms[xarray, zarr, s3]",
-                # "stimela==2.0rc6",
-                # "QuartiCal",
-                "sympy",
-                # "bokeh  >= 2.4.2, < 3",
-                # "bokeh  >= 3.1.1",
                 "ipdb",
 
-                "QuartiCal"
+                "QuartiCal[degrid]"
                 "@git+https://github.com/ratt-ru/QuartiCal.git"
                 "@v0.2.1-degridder"
                 # "stimela"
