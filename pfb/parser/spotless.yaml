@@ -4,30 +4,18 @@ inputs:
     - pdopts.yml
     - pmopts.yml
     - dist.yml
+    - out.yml
   nband:
     dtype: int
     required: true
     abbreviation: nb
     info:
       Number of imaging bands
-  output_filename:
-    dtype: str
-    required: true
-    abbreviation: o
-    info:
-      Basename of output
   postfix:
     dtype: str
     default: 'main'
     info:
       Can be used to specify a custom name for the image space data products
-  product:
-    dtype: str
-    abbreviation: p
-    default: I
-    info:
-      Imaging products to produce. Options are I, Q, U, V.
-      Only single Stokes products are currently supported
   bases:
     dtype: str
     info: 'Wavelet bases to use. Give as comma separated str eg. '

@@ -268,14 +268,14 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
         vis = np.zeros((nrow, nchan), dtype=data.dtype)
         wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
 
-        for t in range(nt):
+        for t in prange(nt):
             for row in range(tbin_idx[t],
                              tbin_idx[t] + tbin_counts[t]):
                 p = int(ant1[row])
                 q = int(ant2[row])
                 gp = jones[t, p, :, 0]
                 gq = jones[t, q, :, 0]
-                for chan in prange(nchan):
+                for chan in range(nchan):
                     wval = wgt_func(gp[chan], gq[chan],
                                     weight[row, chan])
                     if wval > 1e-6:

@@ -1,4 +1,6 @@
 # flake8: noqa
+import os
+from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
 import click
@@ -25,7 +27,8 @@ def init(**kw):
     opts = OmegaConf.create(defaults)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'init_{timestamp}.log')
+    ldir = Path(opts.log_directory).resolve()
+    pyscilog.log_to_file(f'{str(ldir)}/init_{timestamp}.log')
     from daskms.fsspec_store import DaskMSStore
     msstore = DaskMSStore(opts.ms.rstrip('/'))
     ms = msstore.fs.glob(opts.ms.rstrip('/'))
@@ -50,17 +53,45 @@ def init(**kw):
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
     OmegaConf.set_struct(opts, True)
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     with ExitStack() as stack:
         from pfb import set_client
         opts = set_client(opts, stack, log, scheduler=opts.scheduler)
+        import dask
+        from daskms.experimental.zarr import xds_to_zarr
+        from pfb.utils.misc import compute_context
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _init(**opts)
+        out_datasets = _init(**opts)
+        if len(out_datasets):
+            writes = xds_to_zarr(out_datasets, f'{basename}.xds',
+                                columns='ALL',
+                                rechunk=True)
+        else:
+            raise ValueError('No datasets found to write. '
+                            'Data completely flagged maybe?')
+
+        # dask.visualize(writes, color="order", cmap="autumn",
+        #                node_attr={"penwidth": "4"},
+        #                filename=basename + '_writes_I_ordered_graph.pdf',
+        #                optimize_graph=False)
+        # dask.visualize(writes, filename=basename +
+        #                '_writes_I_graph.pdf', optimize_graph=False)
+
+        with compute_context(opts.scheduler, f'{str(ldir)}/init_{timestamp}'):
+            dask.compute(writes, optimize_graph=False)
+
+        if opts.scheduler=='distributed':
+            from distributed import get_client
+            client = get_client()
+            client.close()
+
+        print("All done here.", file=log)
 
 def _init(**kw):
     opts = OmegaConf.create(kw)
@@ -74,8 +105,6 @@ def _init(**kw):
             opts.gain_table = [opts.gain_table]
     OmegaConf.set_struct(opts, True)
 
-    import os
-    from pathlib import Path
     import numpy as np
     from pfb.utils.misc import construct_mappings
     import dask
@@ -89,7 +118,7 @@ def _init(**kw):
     from ducc0.fft import good_size
     from pfb.utils.stokes import single_stokes
     from pfb.utils.correlations import single_corr
-    from pfb.utils.misc import compute_context, chunkify_rows
+    from pfb.utils.misc import chunkify_rows
     import xarray as xr
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
@@ -262,28 +291,4 @@ def _init(**kw):
                     if out_ds is not None:
                         out_datasets.append(out_ds)
 
-    if len(out_datasets):
-        writes = xds_to_zarr(out_datasets, f'{basename}.xds',
-                             columns='ALL',
-                             rechunk=True)
-    else:
-        raise ValueError('No datasets found to write. '
-                         'Data completely flagged maybe?')
-
-    # dask.visualize(writes, color="order", cmap="autumn",
-    #                node_attr={"penwidth": "4"},
-    #                filename=basename + '_writes_I_ordered_graph.pdf',
-    #                optimize_graph=False)
-    # dask.visualize(writes, filename=basename +
-    #                '_writes_I_graph.pdf', optimize_graph=False)
-
-    # with compute_context(opts.scheduler, basename+'_init'):
-
-    dask.compute(writes, optimize_graph=False)
-
-    if opts.scheduler=='distributed':
-        from distributed import get_client
-        client = get_client()
-        client.close()
-
-    print("All done here.", file=log)
+    return out_datasets

@@ -1,11 +1,4 @@
 inputs:
-  output_filename:
-    dtype: str
-    required: true
-    metavar: BASENAME
-    abbreviation: o
-    info:
-      Basename of output
   overwrite:
     dtype: bool
     default: false
@@ -32,13 +25,6 @@ inputs:
     default: 'main'
     info:
       Can be used to specify a custom name for the image space data products
-  product:
-    dtype: str
-    abbreviation: p
-    default: I
-    info:
-      Imaging products to degrid. Options are I, Q, U, V.
-      Only single Stokes products are currently supported.
   model_name:
     dtype: str
     default: MODEL

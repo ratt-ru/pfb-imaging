@@ -1,10 +1,4 @@
 inputs:
-  output_filename:
-    dtype: str
-    required: true
-    abbreviation: o
-    info:
-      Basename of output
   nband:
     dtype: int
     required: true
@@ -16,13 +10,6 @@ inputs:
     default: 'main'
     info:
       Can be used to specify a custom name for the image space data product
-  product:
-    dtype: str
-    abbreviation: p
-    default: I
-    info:
-      Imaging products to produce. Options are I, Q, U, V.
-      Only single Stokes products are currently supported
   mask:
     dtype: str
     abbreviation: mask
@@ -58,6 +45,7 @@ inputs:
     - gridding.yml
     - cgopts.yml
     - dist.yml
+    - out.yml
 
 outputs:
   {}
