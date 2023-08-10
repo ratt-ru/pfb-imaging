@@ -20,15 +20,18 @@ requirements = [
                 "codex-africanus[dask, scipy, astropy, python-casacore, ducc0]",
                 "dask-ms[xarray, zarr, s3]",
                 # "stimela==2.0rc6",
-                "QuartiCal",
+                # "QuartiCal",
                 "sympy",
                 # "bokeh  >= 2.4.2, < 3",
                 # "bokeh  >= 3.1.1",
                 "ipdb",
 
-                "stimela"
-                "@git+https://github.com/caracal-pipeline/stimela.git"
-                "@FIASCO3"
+                "QuartiCal"
+                "@git+https://github.com/ratt-ru/QuartiCal.git"
+                "@v0.2.1-degridder"
+                # "stimela"
+                # "@git+https://github.com/caracal-pipeline/stimela.git"
+                # "@FIASCO3"
 
             ]
 
