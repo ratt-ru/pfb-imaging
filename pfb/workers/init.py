@@ -28,6 +28,7 @@ def init(**kw):
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
+    opts.log_directory = ldir
     pyscilog.log_to_file(f'{str(ldir)}/init_{timestamp}.log')
     from daskms.fsspec_store import DaskMSStore
     msstore = DaskMSStore(opts.ms.rstrip('/'))
@@ -68,6 +69,8 @@ def init(**kw):
             print('     %25s = %s' % (key, opts[key]), file=log)
 
         out_datasets = _init(**opts)
+
+        # out_images = _grid(**opts.grid['ds'] = out_datasets)
         if len(out_datasets):
             writes = xds_to_zarr(out_datasets, f'{basename}.xds',
                                 columns='ALL',
