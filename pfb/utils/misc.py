@@ -829,7 +829,7 @@ def concat_chan(xds, nband_out=1):
     freqs_in = np.unique(freqs_in)
     freqs_min = np.unique(freqs_min)
     freqs_max = np.unique(freqs_max)
-    all_freqs = np.unique(all_freqs)
+    all_freqs = np.unique(np.concatenate(all_freqs))
 
     nband_in = freqs_in.size
     ntime = times.size
