@@ -433,9 +433,9 @@ def construct_mappings(ms_name,
             row_mapping[ms][idt]['start_indices'] = ridx
             row_mapping[ms][idt]['counts'] = rcounts
 
-            nfreq_chunks = nchan_in // cpi
-            freq_chunks = (cpi,)*nfreq_chunks
-            rem = nchan_in - nfreq_chunks * cpi
+            nfreq_chunks = nchan_in // cpit
+            freq_chunks = (cpit,)*nfreq_chunks
+            rem = nchan_in - nfreq_chunks * cpit
             if rem:
                 freq_chunks += (rem,)
 
