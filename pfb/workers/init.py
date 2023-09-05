@@ -254,6 +254,7 @@ def _init(**kw):
                     Inu = slice(flow, flow + fcounts)
 
                     subds = ds[{'row': Irow, 'chan': Inu}]
+                    subds = subds.chunk({'row':-1, 'chan': -1})
                     if opts.gain_table is not None:
                         # Only DI gains currently supported
                         jones = gds[ids][{'gain_time': It, 'gain_freq': Inu}].gains.data
