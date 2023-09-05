@@ -71,7 +71,7 @@ def grid(**kw):
         dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
         if 'PSF' in dds[0]:
             for i, ds in enumerate(dds):
-                ds[i] = ds.chunk({'x_psf': -1, 'y_psf': -1})
+                dds[i] = ds.chunk({'x_psf': -1, 'y_psf': -1})
 
         # convert to fits files
         fitsout = []

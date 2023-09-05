@@ -88,7 +88,7 @@ def init(**kw):
         #                '_writes_I_graph.pdf', optimize_graph=False)
 
         with compute_context(opts.scheduler, f'{ldir}/init_{timestamp}'):
-            dask.compute(writes, optimize_graph=True)
+            dask.compute(writes, optimize_graph=False)
 
         if opts.scheduler=='distributed':
             from distributed import get_client
@@ -257,7 +257,9 @@ def _init(**kw):
                     subds = subds.chunk({'row':-1, 'chan': -1})
                     if opts.gain_table is not None:
                         # Only DI gains currently supported
-                        jones = gds[ids][{'gain_time': It, 'gain_freq': Inu}].gains.data
+                        subgds = gds[ids][{'gain_time': It, 'gain_freq': Inu}]
+                        subgds = subgds.chunk({'gain_time': -1, 'gain_freq': -1})
+                        jones = subgds.gains.data
                     else:
                         jones = None
 
