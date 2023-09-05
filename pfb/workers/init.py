@@ -88,7 +88,7 @@ def init(**kw):
         #                '_writes_I_graph.pdf', optimize_graph=False)
 
         with compute_context(opts.scheduler, f'{ldir}/init_{timestamp}'):
-            dask.compute(writes, optimize_graph=False)
+            dask.compute(writes, optimize_graph=True)
 
         if opts.scheduler=='distributed':
             from distributed import get_client
