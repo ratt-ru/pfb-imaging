@@ -32,7 +32,11 @@ def grid(**kw):
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
+    ldir.mkdir(parents=True, exist_ok=True)
     pyscilog.log_to_file(f'{str(ldir)}/grid_{timestamp}.log')
+    print(f'Logs will be written to {str(ldir)}/grid_{timestamp}.log', file=log)
+    basedir = Path(opts.output_filename).resolve().parent
+    basedir.mkdir(parents=True, exist_ok=True)
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.postfix}.dds'
 
@@ -61,7 +65,7 @@ def grid(**kw):
         #                optimize_graph=False)
 
         print("Computing image space data products", file=log)
-        with compute_context(opts.scheduler, f'{ldir}/grid_{timestamp}'):
+        with compute_context(opts.scheduler, f'{str(ldir)}/grid_{timestamp}'):
             dask.compute(writes, optimize_graph=False)
 
         dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})

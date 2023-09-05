@@ -28,8 +28,9 @@ def init(**kw):
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
-    opts.log_directory = ldir
-    pyscilog.log_to_file(f'{str(ldir)}/init_{timestamp}.log')
+    ldir.mkdir(parents=True, exist_ok=True)
+    pyscilog.log_to_file(f'{ldir}/init_{timestamp}.log')
+    print(f'Logs will be written to {str(ldir)}/init_{timestamp}.log', file=log)
     from daskms.fsspec_store import DaskMSStore
     msstore = DaskMSStore(opts.ms.rstrip('/'))
     ms = msstore.fs.glob(opts.ms.rstrip('/'))
@@ -86,7 +87,7 @@ def init(**kw):
         # dask.visualize(writes, filename=basename +
         #                '_writes_I_graph.pdf', optimize_graph=False)
 
-        with compute_context(opts.scheduler, f'{str(ldir)}/init_{timestamp}'):
+        with compute_context(opts.scheduler, f'{ldir}/init_{timestamp}'):
             dask.compute(writes, optimize_graph=False)
 
         if opts.scheduler=='distributed':
