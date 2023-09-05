@@ -69,6 +69,9 @@ def grid(**kw):
             dask.compute(writes, optimize_graph=False)
 
         dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
+        if 'PSF' in dds[0]:
+            for i, ds in enumerate(dds):
+                ds[i] = ds.chunk({'x_psf': -1, 'y_psf': -1})
 
         # convert to fits files
         fitsout = []
@@ -101,7 +104,7 @@ def grid(**kw):
 
         print("All done here.", file=log)
 
-def _grid(**kw):
+def _grid(xdsi=None, **kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -135,7 +138,12 @@ def _grid(**kw):
 
     # xds contains vis products, no imaging weights applied
     xds_name = f'{basename}.xds'
-    xds = xds_from_zarr(xds_name, chunks={'row': -1})
+    if xdsi is not None:
+        xds = []
+        for ds in xdsi:
+            xds.append(ds.chunk({'row':-1}))
+    else:
+        xds = xds_from_zarr(xds_name, chunks={'row': -1})
     # dds contains image space products including imaging weights and uvw
     dds_name = f'{basename}_{opts.postfix}.dds'
 

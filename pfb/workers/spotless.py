@@ -46,7 +46,7 @@ def spotless(**kw):
             return _spotless(**opts)
 
 
-def _spotless(**kw):
+def _spotless(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -78,13 +78,24 @@ def _spotless(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     dds_name = f'{basename}_{opts.postfix}.dds'
-    dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                          'chan':-1,
-                                          'x':-1,
-                                          'y':-1,
-                                          'x_psf':-1,
-                                          'y_psf':-1,
-                                          'yo2':-1})
+    if ddsi is not None:
+        dds = []
+        for ds in ddsi:
+            dds.append(ds.chunk({'row':-1,
+                                 'chan':-1,
+                                 'x':-1,
+                                 'y':-1,
+                                 'x_psf':-1,
+                                 'y_psf':-1,
+                                 'yo2':-1}))
+    else:
+        dds = xds_from_zarr(dds_name, chunks={'row':-1,
+                                            'chan':-1,
+                                            'x':-1,
+                                            'y':-1,
+                                            'x_psf':-1,
+                                            'y_psf':-1,
+                                            'yo2':-1})
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
 

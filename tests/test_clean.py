@@ -170,13 +170,15 @@ def test_clean(do_gains, ms_name):
         gain_path = None
 
     postfix = "main"
+    outname = str(test_dir / 'test')
+    basename = f'{outname}_I'
+    dds_name = f'{basename}_{postfix}.dds'
     # set defaults from schema
     from pfb.parser.schemas import schema
     init_args = {}
     for key in schema.init["inputs"].keys():
         init_args[key] = schema.init["inputs"][key]["default"]
     # overwrite defaults
-    outname = str(test_dir / 'test')
     init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
     init_args["output_filename"] = outname
     init_args["data_column"] = "DATA"
@@ -186,7 +188,7 @@ def test_clean(do_gains, ms_name):
     init_args["overwrite"] = True
     init_args["channels_per_image"] = 1
     from pfb.workers.init import _init
-    _init(**init_args)
+    xds = _init(**init_args)
 
     # grid data to produce dirty image
     grid_args = {}
@@ -206,7 +208,7 @@ def test_clean(do_gains, ms_name):
     grid_args["robustness"] = 0.0
     grid_args["wstack"] = True
     from pfb.workers.grid import _grid
-    _grid(**grid_args)
+    dds = _grid(xdsi=xds, **grid_args)
 
     # run clean
     clean_args = {}
@@ -231,7 +233,7 @@ def test_clean(do_gains, ms_name):
     clean_args["mop_flux"] = True
     clean_args["fits_mfs"] = False
     from pfb.workers.clean import _clean
-    _clean(**clean_args)
+    _clean(ddsi=dds, **clean_args)
 
     # get inferred model
     basename = f'{outname}_I'

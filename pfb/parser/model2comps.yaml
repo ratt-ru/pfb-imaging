@@ -48,6 +48,7 @@ inputs:
 
   _include:
     - dist.yml
+    - out.yml
 
 outputs:
   {}
