@@ -28,7 +28,14 @@ def spotless(**kw):
     OmegaConf.set_struct(opts, True)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'spotless_{timestamp}.log')
+    ldir = Path(opts.log_directory).resolve()
+    ldir.mkdir(parents=True, exist_ok=True)
+    pyscilog.log_to_file(f'{str(ldir)}/spotless_{timestamp}.log')
+    print(f'Logs will be written to {str(ldir)}/spotless_{timestamp}.log', file=log)
+    basedir = Path(opts.output_filename).resolve().parent
+    basedir.mkdir(parents=True, exist_ok=True)
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    dds_name = f'{basename}_{opts.postfix}.dds'
 
     with ExitStack() as stack:
         # numpy imports have to happen after this step

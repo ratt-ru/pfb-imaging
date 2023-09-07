@@ -253,7 +253,11 @@ def primal_dual_optimised2(
         # convergence check
         # LB - why is numpy timing so inconsistent?
         # eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
-        eps = norm_diff(x, xp)
+        if x.any():
+            eps = norm_diff(x, xp)
+        else:
+            import pdb; pdb.set_trace()
+            eps = 1.0
         if eps < tol:
             if reweighter is not None and numreweight < maxreweight:
                 l1weight = reweighter(x)

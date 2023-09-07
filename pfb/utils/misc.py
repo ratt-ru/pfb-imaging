@@ -1206,7 +1206,7 @@ def nb_norm_diff_impl(x, xp):
         def impl(x, xp):
             nband, nx, ny = x.shape
             num = 0.0
-            den = 0.0
+            den = 1e-12  # avoid div by zero
             for b in range(nband):
                 for i in range(nx):
                     for j in range(ny):
@@ -1217,7 +1217,7 @@ def nb_norm_diff_impl(x, xp):
         def impl(x, xp):
             nx, ny = x.shape
             num = 0.0
-            den = 0.0
+            den = 1e-12  # avoid div by zero
             for i in range(nx):
                 for j in range(ny):
                     num += (x[i, j] - xp[i, j])**2
