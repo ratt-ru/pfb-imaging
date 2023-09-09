@@ -163,7 +163,7 @@ def test_spotless(ms_name):
     grid_args["nvthreads"] = 8
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
-    grid_args["wstack"] = True
+    grid_args["do_wgridding"] = True
     dds = _grid(xdsi=xdso, **grid_args)
 
     # LB - does this avoid duplicate gridding?
@@ -190,7 +190,7 @@ def test_spotless(ms_name):
     spotless_args["nthreads_dask"] = 1
     spotless_args["nvthreads"] = 8
     spotless_args["scheduler"] = 'sync'
-    spotless_args["wstack"] = True
+    spotless_args["do_wgridding"] = True
     spotless_args["epsilon"] = epsilon
     spotless_args["fits_mfs"] = False
     _spotless(ddsi=dds, **spotless_args)
@@ -272,7 +272,7 @@ def test_spotless(ms_name):
     degrid_args["channels_per_image"] = 1
     degrid_args["nthreads_dask"] = 1
     degrid_args["nvthreads"] = 8
-    degrid_args["wstack"] = True
+    degrid_args["do_wgridding"] = True
     _degrid(**degrid_args)
 
     # manually place residual in CORRECTED_DATA
@@ -313,7 +313,7 @@ def test_spotless(ms_name):
     grid_args["nvthreads"] = 8
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
-    grid_args["wstack"] = True
+    grid_args["do_wgridding"] = True
     dds2 = _grid(xdsi=xdso2, **grid_args)
 
     dds2 = dask.compute(dds2)[0]

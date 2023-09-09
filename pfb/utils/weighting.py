@@ -212,7 +212,7 @@ def _filter_extreme_counts(counts, nbox=16, level=10):
 
 
 # from pfb.operators.gridder import im2vis
-# def l2reweight(dsv, dsi, epsilon, nthreads, wstack, precision, dof=2):
+# def l2reweight(dsv, dsi, epsilon, nthreads, do_wgridding, precision, dof=2):
 #     # vis data products
 #     uvw = dsv.UVW.data
 #     freq = dsv.FREQ.data
@@ -234,7 +234,7 @@ def _filter_extreme_counts(counts, nbox=16, level=10):
 #                     celly=cell_rad,
 #                     nthreads=nthreads,
 #                     epsilon=epsilon,
-#                     do_wgridding=wstack,
+#                     do_wgridding=do_wgridding,
 #                     x0=x0,
 #                     y0=y0,
 #                     precision=precision)

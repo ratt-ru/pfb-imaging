@@ -3,7 +3,7 @@ epsilon:
   default: 1e-7
   info: 'Gridder accuracy'
   abbreviation: eps
-wstack:
+do_wgridding:
   dtype: bool
   default: true
   info: "Perform w-correction via improved w-stacking"

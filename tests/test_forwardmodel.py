@@ -99,7 +99,7 @@
 #     for c in range(nchan):
 #         model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], beam[c]*model[c],
 #                                     pixsize_x=cell_rad, pixsize_y=cell_rad,
-#                                     epsilon=epsilon, do_wstacking=True, nthreads=8)
+#                                     epsilon=epsilon, do_do_wgriddinging=True, nthreads=8)
 #         model_vis[:, c, -1] = model_vis[:, c, 0]
 
 #     desc = ms.getcoldesc('DATA')
@@ -222,7 +222,7 @@
 #     grid_args["nvthreads"] = 8
 #     grid_args["overwrite"] = True
 #     grid_args["robustness"] = 0.0
-#     grid_args["wstack"] = True
+#     grid_args["do_wgridding"] = True
 #     from pfb.workers.grid import _grid
 #     _grid(**grid_args)
 
@@ -249,7 +249,7 @@
 #     forward_args["nthreads"] = 8  # has to be set when calling _forward
 #     forward_args["nvthreads"] = 8
 #     forward_args["cg_tol"] = 0.5*epsilon
-#     forward_args["wstack"] = True
+#     forward_args["do_wgridding"] = True
 #     forward_args["mean_ds"] = False
 #     forward_args["fits_mfs"] = False
 #     from pfb.workers.misc.forward import _forward

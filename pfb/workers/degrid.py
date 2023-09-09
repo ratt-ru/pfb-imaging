@@ -190,7 +190,7 @@ def _degrid(**kw):
                             x0=x0, y0=y0,
                             nthreads=opts.nvthreads,
                             epsilon=opts.epsilon,
-                            wstack=opts.wstack)
+                            do_wgridding=opts.do_wgridding)
 
             # convert to single precision to write to MS
             vis = vis.astype(np.complex64)

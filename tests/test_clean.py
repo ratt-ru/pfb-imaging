@@ -84,7 +84,7 @@ def test_clean(do_gains, ms_name):
     for c in range(nchan):
         model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], model[c],
                                     pixsize_x=cell_rad, pixsize_y=cell_rad,
-                                    epsilon=epsilon, do_wstacking=True, nthreads=8)
+                                    epsilon=epsilon, do_do_wgriddinging=True, nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]
 
 
@@ -206,7 +206,7 @@ def test_clean(do_gains, ms_name):
     grid_args["nvthreads"] = 8
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
-    grid_args["wstack"] = True
+    grid_args["do_wgridding"] = True
     from pfb.workers.grid import _grid
     dds = _grid(xdsi=xds, **grid_args)
 
@@ -228,7 +228,7 @@ def test_clean(do_gains, ms_name):
     clean_args["nthreads"] = 8
     clean_args["nvthreads"] = 8
     clean_args["scheduler"] = 'sync'
-    clean_args["wstack"] = True
+    clean_args["do_wgridding"] = True
     clean_args["epsilon"] = epsilon
     clean_args["mop_flux"] = True
     clean_args["fits_mfs"] = False

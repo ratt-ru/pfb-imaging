@@ -63,7 +63,7 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
                   x0=0.0,
                   y0=0.0,
                   cell=None,
-                  wstack=None,
+                  do_wgridding=None,
                   epsilon=None,
                   double_accum=None,
                   nthreads=None):
@@ -80,7 +80,7 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
                     center_y=y0,
                     epsilon=epsilon,
                     nthreads=nthreads,
-                    do_wgridding=wstack,
+                    do_wgridding=do_wgridding,
                     divide_by_n=False)
 
     convim = vis2dirty(uvw=uvw,
@@ -96,7 +96,7 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
                       center_y=y0,
                       epsilon=epsilon,
                       nthreads=nthreads,
-                      do_wgridding=wstack,
+                      do_wgridding=do_wgridding,
                       double_precision_accumulation=double_accum,
                       divide_by_n=False)
 
@@ -159,11 +159,11 @@ def _hessian_psf_slice(
 
 from pfb.operators.hessian import _hessian_impl
 class hessian_psf_slice(object):
-    def __init__(self, ds, nbasis, nmax, nthreads, sigmainv, cell, wstack, epsilon, double_accum):
+    def __init__(self, ds, nbasis, nmax, nthreads, sigmainv, cell, do_wgridding, epsilon, double_accum):
         self.nthreads = nthreads
         self.sigmainv = sigmainv
         self.cell = cell
-        self.wstack = wstack
+        self.do_wgridding = do_wgridding
         self.epsilon = epsilon
         self.double_accum = double_accum
         self.lastsize = ds.PSF.shape[-1]
@@ -241,7 +241,7 @@ class hessian_psf_slice(object):
                                         self.freq,
                                         None,
                                         cell=self.cell,
-                                        wstack=self.wstack,
+                                        do_wgridding=self.do_wgridding,
                                         epsilon=self.epsilon,
                                         double_accum=self.double_accum,
                                         nthreads=self.nthreads)
@@ -286,7 +286,7 @@ def hess_vis(xds,
              xout,
              x,
              sigmainv=1.0,
-             wstack=True,
+             do_wgridding=True,
              nthreads=1,
              epsilon=1e-7,
              divide_by_n=False):
@@ -315,7 +315,7 @@ def hess_vis(xds,
                               center_x=x0,
                               center_y=y0,
                               epsilon=epsilon,
-                              do_wgridding=wstack,
+                              do_wgridding=do_wgridding,
                               nthreads=nthreads,
                               divide_by_n=divide_by_n)
 
@@ -337,7 +337,7 @@ def hess_vis(xds,
                                                 center_x=x0,
                                                 center_y=y0,
                                                 epsilon=epsilon,
-                                                do_wgridding=wstack,
+                                                do_wgridding=do_wgridding,
                                                 nthreads=nthreads,
                                                 divide_by_n=divide_by_n)
             xout[field][f't{t}b{b}'] += sigmainv * x[field][f't{t}b{b}']

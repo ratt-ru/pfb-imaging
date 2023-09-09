@@ -461,7 +461,7 @@ def _grid(xdsi=None, **kw):
         blocker.add_input('y0', y0)
         blocker.add_input('nthreads', opts.nvthreads)
         blocker.add_input('epsilon', opts.epsilon)
-        blocker.add_input('do_wgridding', opts.wstack)
+        blocker.add_input('do_wgridding', opts.do_wgridding)
         blocker.add_input('double_accum', opts.double_accum)
         blocker.add_input('l2reweight_dof', opts.l2reweight_dof)
         blocker.add_input('do_psf', opts.psf)
