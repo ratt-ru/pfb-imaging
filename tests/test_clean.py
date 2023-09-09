@@ -79,12 +79,17 @@ def test_clean(do_gains, ms_name):
 
     # model vis
     epsilon = 1e-7
-    from ducc0.wgridder import dirty2ms
+    from ducc0.wgridder.experimental import dirty2vis
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
-        model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], model[c],
-                                    pixsize_x=cell_rad, pixsize_y=cell_rad,
-                                    epsilon=epsilon, do_do_wgriddinging=True, nthreads=8)
+        model_vis[:, c:c+1, 0] = dirty2vis(uvw=uvw,
+                                           freq=freq[c:c+1],
+                                           dirty=model[c],
+                                           pixsize_x=cell_rad,
+                                           pixsize_y=cell_rad,
+                                           epsilon=epsilon,
+                                           do_wgridding=True,
+                                           nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]
 
 
