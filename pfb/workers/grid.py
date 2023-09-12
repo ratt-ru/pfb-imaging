@@ -363,7 +363,10 @@ def _grid(xdsi=None, **kw):
             'timeid': timeid,
             'freq_out': ds.freq_out,
             'time_out': ds.time_out,
-            'robustness': opts.robustness
+            'robustness': opts.robustness,
+            'super_resolution_factor': opts.super_resolution_factor,
+            'field_of_view': opts.field_of_view,
+            'product': opts.product
         })
         # TODO - assign ug,vg-coordinates
         x = (-nx/2 + np.arange(nx)) * cell_rad + x0
