@@ -1,9 +1,12 @@
-import packratt
+
 import pytest
 from pathlib import Path
 from xarray import Dataset
 from collections import namedtuple
 import dask
+dask.config.set(**{'array.slicing.split_large_chunks': False})
+from multiprocessing.pool import ThreadPool
+dask.config.set(pool=ThreadPool(64))
 import dask.array as da
 from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
@@ -25,23 +28,31 @@ def test_forwardmodel(gain_name, ms_name):
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
     from ducc0.wgridder.experimental import vis2dirty
-    from africanus.calibration.utils import corrupt_vis, correct_vis, chunkify_rows
+    from africanus.calibration.utils.dask import corrupt_vis, correct_vis
+    from africanus.calibration.utils import chunkify_rows
+    import xarray as xr
 
     test_dir = Path(ms_name).resolve().parent
-    xds = xds_from_ms(ms_name,
-                      chunks={'row': -1, 'chan': -1})
+    xds = xds_from_ms(ms_name)
     xds = xr.concat(xds, 'row')
-    spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]
-
-    utime = np.unique(xds.TIME.values)
-    freq = spw.CHAN_FREQ.values.squeeze()
-    freq0 = np.mean(freq)
-
+    time = xds.TIME.values
+    utime = np.unique(time)
     ntime = utime.size
-    nchan = freq.size
-    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA2.values.max()) + 1
+    utpc = 50
+    row_chunks, tbin_idx, tbin_counts = chunkify_rows(time, utpc)
+    tbin_idx = da.from_array(tbin_idx, chunks=utpc)
+    tbin_counts = da.from_array(tbin_counts, chunks=utpc)
 
-    ncorr = xds.corr.size
+    spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]
+    freq = spw.CHAN_FREQ.values.squeeze()
+    nchan = freq.size
+    cchunk = 256
+    chan_chunks = (cchunk,)*int(np.ceil(nchan/256))
+
+
+    xds = xds.chunk({'row': row_chunks, 'chan': chan_chunks})
+    xds = xds[{'corr': slice(0, 4, 3)}]
+    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA2.values.max()) + 1
 
     uvw = xds.UVW.values
     nrow = uvw.shape[0]
@@ -68,105 +79,109 @@ def test_forwardmodel(gain_name, ms_name):
 
     nx = npix
     ny = npix
-
-    print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
+    nband = 8
+    print("Image size set to (%i, %i, %i)" % (nband, nx, ny))
 
     # first make full image
-    gds = xds_from_zarr(f"{gain_name.rstrip('/')}::GK-net")
+    gds = xds_from_zarr(f"{gain_name.rstrip('/')}::GK-net",
+                        chunks={'gain_time': utpc, 'gain_freq': cchunk})
     gds = xr.concat(gds, 'gain_time')
-    jones = gds.GAIN.values
-    data = xds.DATA.values.astype(np.complex128)
-    ssp = xds.SIGMA_SPECTRUM.values.astype(np.float64)
-    wgt  = 1.0/ssp**2
-    flag = xds.FLAG.values
-    ant1 = xds.ANTENNA1.values
-    ant2 = xds.ANTENNA2.values
+    print('Loading data')
+    jones = da.swapaxes(gds.gains.data, 1, 2)
+    data = xds.DATA.data.astype(np.complex128)
+    wgt = xds.WEIGHT_SPECTRUM.data.astype(np.complex128)
+    flag = xds.FLAG.data
+    ant1 = xds.ANTENNA1.data
+    ant2 = xds.ANTENNA2.data
 
-    row_chunks, tbin_idx, tbin_counts = chunkify_rows(xds.TIME.values, -1)
-
+    ncorr = 2
     # corrupt twice for cwgt
-    if ncorr == 4:
-        mwgt = wgt.reshape(nrow, nchan, 1, 2, 2)
-    else:
-        mwgt = wgt.reshape(nrow, nchan, 1, ncorr)
-    cwgt = corrupt_vis(tbin_idx,
+    wgt = wgt.reshape(nrow, nchan, 1, ncorr)
+
+    wgt = corrupt_vis(tbin_idx,
+                      tbin_counts,
+                      ant1,
+                      ant2,
+                      jones*jones.conj(),
+                      wgt).real
+
+    # correct data
+    data = correct_vis(tbin_idx,
                        tbin_counts,
                        ant1,
                        ant2,
                        jones,
-                       mwgt)
-    cwgt = corrupt_vis(tbin_idx,
-                       tbin_counts,
-                       ant1,
-                       ant2,
-                       jones.conj(),
-                       cwgt).reshape(nrow, nchan, ncorr).real
-
-    # correct data
-    if ncorr == 4:
-        vis = data.reshape(nrow, nchan, 2, 2)
-        flag = flag.reshape(nrow, nchan, 2, 2)
-    cdata = correct_vis(tbin_idx,
-                        tbin_counts,
-                        ant1,
-                        ant2,
-                        jones,
-                        vis,
-                        flag).reshape(nrow, nchan, ncorr)
+                       data,
+                       flag).reshape(nrow, nchan, ncorr)
 
     # take weighted sum of correlations to get Stokes I vis
-    visI = cwgt[:, :, 0] * cdata[:, :, 0] + cwgt[:, :, -1] * cdata[:, :, -1]
-    wgtI = cwgt[:, :, 0] + cwgt[:, :, -1]
-    msk = wgtI > 0
-    visI[msk] = visI[msk]/wgtI[msk]
-    mask = (~(flag[:, :, 0] | flag[:, :, -1])).astype(np.uint8)
+    # data = da.map_blocks(lambda x, y: x[:, :, 0] * y[:, :, 0] + x[:, :, -1] * y[:, :, -1],
+    #                      data, wgt, chunks=data.chunks, dtype=data.dtype)
+    # wgt = wgt.map_blocks(lambda x: x[:, :, 0] + x[:, :, -1], chunks=wgt.chunks, dtype=wgt.dtype)
+    data = wgt[:, :, 0] * data[:, :, 0] + wgt[:, :, -1] * data[:, :, -1]
+    wgt = wgt[:, :, 0] + wgt[:, :, -1]
+
+
+    print("Correcting vis data products")
+    data, wgt = dask.compute(data, wgt)  #, optimize_graph=True)
+
+    msk = wgt > 0
+    data[msk] = data[msk]/wgt[msk]
+    flag = flag.reshape(nrow, nchan, ncorr)
+    mask = (~(flag[:, :, 0] | flag[:, :, -1])).astype(np.uint8).compute()
+
+    wsum0 = wgt[mask.astype(bool)].sum()
 
     # image Stokes I data
-    dirtyI = vis2dirty(uvw=xds.UVW.values,
+    print("Making dirty image")
+    dirty0 = vis2dirty(uvw=xds.UVW.values,
                        freq=freq,
-                       vis=visI,
-                       wgt=wgtI,
+                       vis=data,
+                       wgt=wgt,
                        mask=mask,
                        npix_x=nx, npix_y=ny,
                        pixsize_x=cell_rad, pixsize_y=cell_rad,
                        epsilon=1e-7,
                        do_wgridding=True,
                        divide_by_n=False,
-                       nthreads=8)
+                       nthreads=64)
 
-    psfI = vis2dirty(uvw=xds.UVW.values,
-                     freq=freq,
-                     vis=wgtI.astype(np.complex128),
-                     mask=mask,
-                     npix_x=nx, npix_y=ny,
-                     pixsize_x=cell_rad, pixsize_y=cell_rad,
-                     epsilon=1e-7,
-                     do_wgridding=True,
-                     divide_by_n=False,
-                     nthreads=8)
+    print("Making psf")
+    psf0 = vis2dirty(uvw=xds.UVW.values,
+                    freq=freq,
+                    vis=wgt.astype(np.complex128),
+                    mask=mask,
+                    npix_x=nx, npix_y=ny,
+                    pixsize_x=cell_rad, pixsize_y=cell_rad,
+                    epsilon=1e-7,
+                    do_wgridding=True,
+                    divide_by_n=False,
+                    nthreads=64)
 
+    # sanity check
+    assert np.allclose(psf0.max()/wsum0, 1.0, rtol=1e-7, atol=1e-7)
 
     # next compute via pfb workers
-
     postfix = "main"
     outname = str(test_dir / 'test')
-    basename = f'{outname}_I'
-    dds_name = f'{basename}_{postfix}.dds'
     # set defaults from schema
     from pfb.parser.schemas import schema
     init_args = {}
     for key in schema.init["inputs"].keys():
         init_args[key] = schema.init["inputs"][key]["default"]
     # overwrite defaults
-    init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+    init_args["ms"] = str(ms_name)
     init_args["output_filename"] = outname
     init_args["data_column"] = "DATA"
     init_args["flag_column"] = 'FLAG'
+    init_args["weight_column"] = 'WEIGHT_SPECTRUM'
     init_args["gain_table"] = gain_name
     init_args['gain_term'] = 'GK-net'
     init_args["max_field_of_view"] = fov
     init_args["overwrite"] = True
-    init_args["channels_per_image"] = 1
+    init_args["integrations_per_image"] = 50
+    init_args["channels_per_image"] = 128
+    init_args["nvthreads"] = 8
     from pfb.workers.init import _init
     xds = _init(**init_args)
 
@@ -177,15 +192,38 @@ def test_forwardmodel(gain_name, ms_name):
     # overwrite defaults
     grid_args["output_filename"] = outname
     grid_args["postfix"] = postfix
-    grid_args["nband"] = nchan
+    grid_args["nband"] = 8
     grid_args["field_of_view"] = fov
+    grid_args["super_resolution_factor"] = srf
     grid_args["fits_mfs"] = True
     grid_args["psf"] = True
+    grid_args["psf_oversize"] = 1.0
     grid_args["residual"] = False
     grid_args["nthreads"] = 8  # has to be set when calling _grid
-    grid_args["nvthreads"] = 8
+    grid_args["nvthreads"] = 64
     grid_args["overwrite"] = True
-    grid_args["robustness"] = 0.0
+    grid_args["robustness"] = None
     grid_args["do_wgridding"] = True
     from pfb.workers.grid import _grid
     dds = _grid(xdsi=xds, **grid_args)
+
+    dds = dask.compute(dds)[0]
+    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
+    dirty = np.zeros((nx, ny), dtype=np.float64)
+    psf = np.zeros((nx_psf, ny_psf), dtype=np.float64)
+    wsum = 0.0
+    for ds in dds:
+        dirty += ds.DIRTY.values
+        psf += ds.PSF.values
+        wsum += ds.WSUM.values
+
+    try:
+        assert np.allclose(1+np.abs(dirty0)/wsum, 1+np.abs(dirty)/wsum)
+        assert np.allclose(1+np.abs(psf0)/wsum, 1+np.abs(psf)/wsum)
+    except:
+        import ipdb; ipdb.set_trace()
+
+
+ms_name = '/scratch/bester/ms2_target_scan2.zarr'
+gain_name = '/home/bester/projects/ESO137/output/ms2_gains_scan2.qc'
+test_forwardmodel(gain_name, ms_name)
