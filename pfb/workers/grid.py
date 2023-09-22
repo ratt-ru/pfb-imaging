@@ -80,7 +80,7 @@ def grid(**kw):
                 fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
             if opts.psf:
                 fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
-            if opts.residual and model is not None:
+            if opts.residual and 'MODEL' in dds[0]:
                 fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
                 fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
@@ -89,7 +89,7 @@ def grid(**kw):
                 fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
             if opts.psf:
                 fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
-            if opts.residual and model is not None:
+            if opts.residual and 'MODEL' in dds[0]:
                 fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
                 fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
@@ -500,7 +500,7 @@ def _grid(xdsi=None, **kw):
                 'PSFHAT',
                 ('x_psf', 'yo2'),
                 ((nx_psf,), (nyo2,)),
-                wgt.dtype)
+                vis.dtype)
 
         if opts.weight:
             blocker.add_output(

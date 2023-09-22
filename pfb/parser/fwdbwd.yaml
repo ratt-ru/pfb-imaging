@@ -10,62 +10,75 @@ inputs:
     dtype: str
     abbreviation: mname
     default: MODEL
-    info: 'Name of model in mds'
+    info:
+      Name of model in mds
   mask:
     dtype: str
     abbreviation: mask
-    info: 'Either path to mask.fits or set to mds to use \
-          the mask contained in the mds.'
+    info:
+      Either path to mask.fits or set to mds to use
+      the mask contained in the mds.
   nband:
     dtype: int
     required: true
     abbreviation: nb
-    info: 'Number of imaging bands'
+    info:
+      Number of imaging bands
   postfix:
     dtype: str
-    default: ''
-    info: 'Can be used to specify a custom name for the image space data \
-          products'
-  row_chunk:
-    dtype: int
-    info: 'Number of rows in a chunk in output dataset'
-    abbreviation: rc
-    default: -1
+    default: 'main'
+    info:
+      Can be used to specify a custom name for the image space data products
   sigmainv:
     dtype: float
-    info: 'Standard deviation of assumed GRF prior'
     default: 1e-5
     abbreviation: sinv
-  inverter:
-    default: pcg
+    info:
+      Standard deviation of assumed GRF prior
   bases:
     dtype: str
-    info: 'Wavelet bases to use. Give as comma separated str eg. '
     default: 'self,db1,db2'
     abbreviation: bases
+    info:
+      Wavelet bases to use. Give as comma separated str eg. 'self,db1,db2'
   nlevels:
     dtype: int
-    info: 'Wavelet decomposition level'
     default: 3
     abbreviation: nlevels
-  hessnorm:
-    dtype: float
-    info: 'Spectral norm of th ehessian approximation'
-    abbreviation: hessnorm
+    info:
+      Wavelet decomposition level
   sigma21:
     dtype: float
-    required: true
-    info: 'Wavelet thresholding level'
     abbreviation: sig21
-  alpha:
+    info:
+      Wavelet thresholding level
+  l1reweight_from:
+    dtype: int
+    default: 5
+    info:
+      Start doing l1reweights after this many iterations
+  rmsfactor:
     dtype: float
-    required: true
-    info: 'L21 reweighting parameter'
-    abbreviation: alpha
+    default: 3.0
+    info:
+      By default will threshold by rmsfactor*rms at every iteration
+  gamma:
+    dtype: float
+    default: 0.5
+    info:
+      Step size of update
   positivity:
-    dtype: bool
-    info: Apply positivity constraint
-    default: True
+    dtype: int
+    default: 1
+    # choices:
+    #   - 0
+    #   - 1
+    #   - 2
+    info:
+      How to apply positivity constraint
+      0 -> no positivity,
+      1 -> normal positivity constraint
+      2 -> strong positivity i.e. all pixels in a band > 0
   niter:
     dtype: int
     default: 5
@@ -85,6 +98,11 @@ inputs:
     dtype: bool
     default: false
     info: "Output fits cubes"
+  memory_greedy:
+    dtype: bool
+    default: false
+    info:
+      Holds data in memory if set
 
 outputs:
   {}
