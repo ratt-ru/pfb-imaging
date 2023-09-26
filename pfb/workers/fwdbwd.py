@@ -276,7 +276,7 @@ def _fwdbwd(ddsi=None, **kw):
         print("Finding spectral norm of Hessian approximation", file=log)
         # hessian depends on x so need to do this at every iteration
         sigmainv = np.maximum(np.std(j), opts.sigmainv)
-        # hesspsf = partial(hessian_psf, psf_convolve, xp, sigmainv)
+        hesspsf = partial(hessian_psf, psf_convolve, xp, sigmainv)
         # hessnorm, hessbeta = power_method(hesspsf, (nband, nx, ny),
         #                                   b0=hessbeta,
         #                                   tol=opts.pm_tol,
@@ -372,10 +372,11 @@ def _fwdbwd(ddsi=None, **kw):
             r = da.from_array(residual[b]*wsum)
             m = da.from_array(model[b])
             d = da.from_array(dual[b])
+            xb = da.from_array(x[b])
             ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
                                   'MODEL': (('x', 'y'), m),
                                   'DUAL': (('c', 'n'), d),
-                                  'PARAM': (('x', 'y'), x)})
+                                  'PARAM': (('x', 'y'), xb)})
             dds_out.append(ds_out)
         writes = xds_to_zarr(dds_out, dds_name,
                              columns=('RESIDUAL', 'MODEL', 'DUAL', 'PARAM'),
