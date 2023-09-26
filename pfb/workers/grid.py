@@ -434,6 +434,9 @@ def _grid(xdsi=None, **kw):
 
                 # do we want the coordinates to be ug, vg rather?
                 out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
+
+            else:
+                counts = out_ds.COUNTS.data
         else:
             counts = None
 
