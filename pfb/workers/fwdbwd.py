@@ -241,9 +241,15 @@ def _fwdbwd(ddsi=None, **kw):
         dx0 = dfunc(x0)
         return 2 * dx0 * psfo(dx0 * v)  + v*sigmainv
 
-    if model.any():
+    if 'PARAM' in dds[0]:
+        print("Found existing PARAM in dds", file=log)
+        x = [ds.PARAM.data for ds in dds]
+        x = da.stack(x).compute()
+    elif model.any():
+        print("Initialsing PARAM from MODEL in dds", file=log)
         x = finv(model)
     else:
+        print("Initialising PARAM from scaled DIRTY in dds", file=log)
         x = finv(tmp2/(2.5*pix_per_beam))
 
     if dual is None:
