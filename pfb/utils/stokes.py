@@ -10,6 +10,7 @@ from quartical.utils.numba import coerce_literal
 from operator import getitem
 from pfb.utils.beam import interp_beam
 import dask
+from quartical.utils.dask import Blocker
 
 
 def weight_from_sigma(sigma):
@@ -97,8 +98,38 @@ def single_stokes(ds=None,
     # we cast to dask arrays simply to defer the compute
     tbin_idx = da.from_array(tbin_idx, chunks=(-1))
     tbin_counts = da.from_array(tbin_counts, chunks=(-1))
-    vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                        ant1, ant2, pol=poltype, product=opts.product)
+
+    # data are not necessarily 2x2 so we need separate labels
+    # for jones correlations and data/weight correlations
+    if jones.ndim == 5:
+        jout = 'rafdx'
+    elif jones.ndim == 6:
+        jout = 'rafdxx'
+        # TODO - how do we know if we should return
+        # jones[0][0][0] or jones[0][0][0][0] in function wrapper?
+        # Not required with delayed
+        raise NotImplementedError("Not yet implemented")
+
+
+    # compute Stokes data and weights
+    blocker = Blocker(weight_data, 'rf')
+    blocker.add_input("data", data, 'rfc')
+    blocker.add_input('weight', weight, 'rfc')
+    blocker.add_input('jones', jones, jout)
+    blocker.add_input('tbin_idx', tbin_idx, 'r')
+    blocker.add_input('tbin_counts', tbin_counts, 'r')
+    blocker.add_input('ant1', ant1, 'r')
+    blocker.add_input('ant2', ant2, 'r')
+    blocker.add_input('pol', poltype)
+    blocker.add_input('product', opts.product)
+
+    nrow, nchan, _ = data.shape
+    blocker.add_output('vis', 'rf', ((nrow,),(nchan,)), data.dtype)
+    blocker.add_output('wgt', 'rf', ((nrow,),(nchan,)), weight.dtype)
+
+    output_dict = blocker.get_dask_outputs()
+    vis = output_dict['vis']
+    wgt = output_dict['wgt']
 
     if isinstance(opts.radec, str):
         raise NotImplementedError()
@@ -215,46 +246,23 @@ def single_stokes(ds=None,
 
 
 def weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                ant1, ant2, pol='linear', product='I'):
-    # data are not necessarily 2x2 so we need separate labels
-    # for jones correlations and data/weight correlations
-    if jones.ndim == 5:
-        jout = 'rafdx'
-    elif jones.ndim == 6:
-        jout = 'rafdxx'
-        # TODO - how do we know if we should return
-        # jones[0][0][0] or jones[0][0][0][0] in function wrapper?
-        # Not required with delayed
-        raise NotImplementedError("Not yet implemented")
-    res = da.blockwise(_weight_data, 'rf',
-                       data, 'rfc',
-                       weight, 'rfc',
-                       jones, jout,
-                       tbin_idx, 'r',
-                       tbin_counts, 'r',
-                       ant1, 'r',
-                       ant2, 'r',
-                       pol, None,
-                       product, None,
-                       align_arrays=False,
-                       meta=np.empty((0, 0), dtype=object))
+                ant1, ant2, pol, product):
 
-    vis = da.blockwise(getitem, 'rf', res, 'rf', 0, None, dtype=data.dtype)
-    wgt = da.blockwise(getitem, 'rf', res, 'rf', 1, None, dtype=weight.dtype)
+    vis, wgt = _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
+                      ant1, ant2, pol, product)
 
-    return vis, wgt
+    out_dict = {}
+    out_dict['vis'] = vis
+    out_dict['wgt'] = wgt
 
-def _weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                 ant1, ant2, pol, product):
-    return _weight_data_impl(data[0], weight[0], jones[0][0][0],
-                             tbin_idx, tbin_counts,
-                             ant1, ant2, pol, product)
+    return out_dict
+
 
 @generated_jit(nopython=True, nogil=True, cache=True, parallel=True)
 def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product):
 
-    coerce_literal(_weight_data, ["product", "pol"])
+    coerce_literal(weight_data, ["product", "pol"])
 
     vis_func, wgt_func = stokes_funcs(data, jones, product, pol=pol)
 

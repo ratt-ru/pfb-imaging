@@ -374,10 +374,11 @@ def _fwdbwd(ddsi=None, **kw):
             d = da.from_array(dual[b])
             ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
                                   'MODEL': (('x', 'y'), m),
-                                  'DUAL': (('c', 'n'), d)})
+                                  'DUAL': (('c', 'n'), d),
+                                  'PARAM': (('x', 'y'), x)})
             dds_out.append(ds_out)
         writes = xds_to_zarr(dds_out, dds_name,
-                             columns=('RESIDUAL', 'MODEL', 'DUAL'),
+                             columns=('RESIDUAL', 'MODEL', 'DUAL', 'PARAM'),
                              rechunk=True)
         dask.compute(writes)
 
