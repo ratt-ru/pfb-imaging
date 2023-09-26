@@ -1,5 +1,7 @@
 # flake8: noqa
 import os
+import dask
+dask.config.set(**{'array.slicing.split_large_chunks': False})
 from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
@@ -44,6 +46,7 @@ def grid(**kw):
         from pfb import set_client
         opts = set_client(opts, stack, log, scheduler=opts.scheduler)
         import dask
+        dask.config.set(**{'array.slicing.split_large_chunks': False})
         from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
         from pfb.utils.misc import compute_context
         from pfb.utils.fits import dds2fits, dds2fits_mfs
@@ -111,7 +114,6 @@ def _grid(xdsi=None, **kw):
 
     import numpy as np
     import dask
-    dask.config.set(**{'array.slicing.split_large_chunks': False})
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
     import dask.array as da
     from africanus.constants import c as lightspeed

@@ -273,9 +273,9 @@ def _fwdbwd(ddsi=None, **kw):
     for k in range(opts.niter):
         xp = x.copy()
         j = -gradf(residual, xp)
-        # print("Finding spectral norm of Hessian approximation", file=log)
-        # # hessian depends on x so need to do this at every iteration
-        # sigmainv = np.maximum(np.std(j), opts.sigmainv)
+        print("Finding spectral norm of Hessian approximation", file=log)
+        # hessian depends on x so need to do this at every iteration
+        sigmainv = np.maximum(np.std(j), opts.sigmainv)
         # hesspsf = partial(hessian_psf, psf_convolve, xp, sigmainv)
         # hessnorm, hessbeta = power_method(hesspsf, (nband, nx, ny),
         #                                   b0=hessbeta,
