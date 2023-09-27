@@ -103,6 +103,17 @@ inputs:
     default: false
     info:
       Holds data in memory if set
+  non_linearity:
+    dtype: str
+    default: id
+    info:
+      The kind of non-linearity to apply
+  restart:
+    dtype: bool
+    default: false
+    info:
+      Restart the deconvolution by initialising the model to zero
+      and the residual to the dirty image
 
 outputs:
   {}

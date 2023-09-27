@@ -1239,3 +1239,37 @@ def remove_large_islands(x, max_island_size=100):
         if num_pix > max_island_size:
             x[msk] = 0.0
     return x
+
+
+def setup_non_linearity(mode='id', minval=1e-5):
+    if mode == 'id':
+        def func(x):
+            return x
+
+        def finv(x):
+            return x
+
+        def dfunc(x):
+            return 1.0
+    elif mode == 'exp':
+        def func(x):
+            return np.exp(x)
+
+        def finv(x):
+            return np.log(np.maximum(np.abs(x), minval))
+
+        def dfunc(x):
+            return np.exp(x)
+    elif mode == 'sq':
+        def func(x):
+            return x * x
+
+        def finv(x):
+            return x**0.5
+
+        def dfunc(x):
+            return 2*x
+    else:
+        raise ValueError(f"Unknown mode - {mode}")
+
+    return func, finv, dfunc
