@@ -21,6 +21,7 @@ from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
 from quartical.utils.dask import Blocker
 from scipy.interpolate import RegularGridInterpolator
+from scipy.linalg import solve_triangular
 import sympy as sm
 from sympy.utilities.lambdify import lambdify
 from sympy.parsing.sympy_parser import parse_expr
@@ -1241,35 +1242,61 @@ def remove_large_islands(x, max_island_size=100):
     return x
 
 
-def setup_non_linearity(mode='id', minval=1e-5):
+@njit(parallel=False, nogil=True, fastmath=True, inline='always')
+def freqmul(A, x, out):
+    nband, nx, ny = x.shape
+    out = np.zeros_like(x)
+    for k in range(nband):
+        for l in range(nband):
+            for i in range(nx):
+                for j in range(ny):
+                    out[k, i, j] += A[k, l] * x[l, i, j]
+    return out
+
+
+def setup_parametrisation(mode='id', minval=1e-5,
+                          sigma=1.0, freq=None, lscale=1.0):
+    '''
+    Given a parametrisation x = f(s) return:
+
+    func - operator that evaluates x
+    finv - operator that evaluates s = f^{-1}(x)
+    dfunc - operator that evaluates dx/ds at fixed x = x0
+    dhfunc - operator that evaluates the adjoint of dfunc at x = x0
+    '''
+    nu = freq/np.mean(freq)
+    nband = nu.size
+    nudiffsq = (nu[:, None] - nu[None, :])**2
+    K = sigma**2 * np.exp(-nudiffsq/(2*lscale**2))
+    L = np.linalg.cholesky(K + 1e-10*np.eye(nband))
+    LH = L.T
     if mode == 'id':
         def func(x):
-            return x
+            return freqmul(L, x)
 
         def finv(x):
-            return x
+            return solve_triangular(L, x, lower=True)
 
-        def dfunc(x):
-            return 1.0
+        def dfunc(x0, v):
+            return freqmul(L, v)
+
+        def dhfunc(x0, v):
+            return freqmul(LH, v)
     elif mode == 'exp':
         def func(x):
-            return np.exp(x)
+            return np.exp(freqmul(L, x))
 
         def finv(x):
-            return np.log(np.maximum(np.abs(x), minval))
+            tmp = solve_triangular(L, x, lower=True)
+            return np.log(np.maximum(np.abs(tmp), minval))
 
-        def dfunc(x):
-            return np.exp(x)
-    elif mode == 'sq':
-        def func(x):
-            return x * x
+        def dfunc(x0, v):
+            return np.exp(freqmul(L, x0)) * freqmul(L, v)
 
-        def finv(x):
-            return x**0.5
+        def dhfunc(x0, v):
+            return freqmul(LH, v * np.exp(freqmul(L, x0)))
 
-        def dfunc(x):
-            return 2*x
     else:
         raise ValueError(f"Unknown mode - {mode}")
 
-    return func, finv, dfunc
+    return func, finv, dfunc, dhfunc

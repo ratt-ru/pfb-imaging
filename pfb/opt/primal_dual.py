@@ -87,113 +87,8 @@ def primal_dual(
     return x, v
 
 
-def primal_dual_optimised(
-        x,  # initial guess for primal variable
-        v,  # initial guess for dual variable
-        lam,  # regulariser strength
-        psi,  # linear operator in dual domain
-        psiH,  # adjoint of psi
-        L,  # spectral norm of Hessian
-        prox,  # prox of regulariser
-        l1weight,
-        reweighter,
-        grad,  # gradient of smooth term
-        nu=1.0,  # spectral norm of psi
-        sigma=None,  # step size of dual update
-        mask=None,  # regions where mask is False will be masked
-        tol=1e-5,
-        maxit=1000,
-        positivity=1,
-        report_freq=10,
-        gamma=1.0,
-        verbosity=1,
-        maxreweight=50):
-    # TODO - we can't use make_noncritical because it sometimes returns an
-    # array that is not explicitly c-contiguous. How does this impact
-    # performance?
-    # initialise
-    xp = x.copy()
-    # xp = make_noncritical(xp)
-    vp = v.copy()
-    # vp = make_noncritical(vp)
-    vtilde = np.zeros_like(v)
-    # vtilde = make_noncritical(vtilde)
-    vout = np.zeros_like(v)
-    # vout = make_noncritical(vout)
-    xout = np.zeros_like(x)
-    # xout = make_noncritical(xout)
-
-
-    # this seems to give a good trade-off between
-    # primal and dual problems
-    if sigma is None:
-        sigma = L / (2.0 * gamma) / nu
-
-    # stepsize control
-    tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
-
-    # start iterations
-    eps = 1.0
-    numreweight = 0
-    for k in range(maxit):
-        # tmp prox variable
-        # vtilde = v + sigma * psiH(xp)
-        psiH(xp, vtilde)
-        ne.evaluate('v + sigma * vtilde', out=vtilde)  #, casting='same_kind')
-
-        # dual update
-        # v = vtilde - sigma * prox(vtilde / sigma, lam / sigma)
-        prox(vtilde, vout, lam, sigma, weight=l1weight)
-        ne.evaluate('vtilde - sigma*vout', out=v)  #, casting='same_kind')
-
-        # primal update
-        # x = xp - tau * (psi(2 * v - vp) + grad(xp))
-        ne.evaluate('2.0 * v - vp', out=vout)  #, casting='same_kind')
-        psi(vout, xout)
-        xout += grad(xp)
-        ne.evaluate('xp - tau * xout', out=x)  #, casting='same_kind')
-
-        if positivity == 1:
-            x[x < 0.0] = 0.0
-        elif positivity == 2:
-            msk = np.any(x<=0, axis=0)
-            x[:, msk] = 0.0
-
-        # convergence check
-        eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
-        if eps < tol:
-            if reweighter is not None and numreweight < maxreweight:
-                l1weight = reweighter(x)
-                numreweight += 1
-            else:
-                if numreweight >= maxreweight:
-                    print("Maximum reweighting steps reached", file=log)
-                break
-
-        # copy contents to avoid allocating new memory
-        # this is not faster but it allows us to see where the time is spent
-        np.copyto(xp, x)
-        np.copyto(vp, v)
-        # xp[...] = x[...]
-        # vp[...] = v[...]
-
-        if np.isnan(eps) or np.isinf(eps):
-            import pdb; pdb.set_trace()
-
-        if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} eps = {eps:.3e}", file=log)
-
-    if k == maxit-1:
-        if verbosity:
-            print(f"Max iters reached. eps = {eps:.3e}", file=log)
-    else:
-        if verbosity:
-            print(f"Success, converged after {k} iterations", file=log)
-
-    return x, v
-
 from pfb.prox.prox_21m import dual_update_numba
-def primal_dual_optimised2(
+def primal_dual_optimised(
         x,  # initial guess for primal variable
         v,  # initial guess for dual variable
         lam,  # regulariser strength
@@ -251,8 +146,6 @@ def primal_dual_optimised2(
             x[:, msk] = 0.0
 
         # convergence check
-        # LB - why is numpy timing so inconsistent?
-        # eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
         if x.any():
             eps = norm_diff(x, xp)
         else:
@@ -268,11 +161,8 @@ def primal_dual_optimised2(
                 break
 
         # copy contents to avoid allocating new memory
-        # this is not faster but it allows us to see where the time is spent
-        np.copyto(xp, x)
-        np.copyto(vp, v)
-        # xp[...] = x[...]
-        # vp[...] = v[...]
+        xp[...] = x[...]
+        vp[...] = v[...]
 
         if np.isnan(eps) or np.isinf(eps):
             import pdb; pdb.set_trace()

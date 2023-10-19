@@ -103,11 +103,11 @@ inputs:
     default: false
     info:
       Holds data in memory if set
-  non_linearity:
+  parametrisation:
     dtype: str
     default: id
     info:
-      The kind of non-linearity to apply
+      The kind of parametrisation to apply
   restart:
     dtype: bool
     default: false

@@ -70,7 +70,7 @@ def _spotless(ddsi=None, **kw):
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
-    from pfb.opt.primal_dual import primal_dual_optimised2 as primal_dual
+    from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
     from pfb.utils.misc import l1reweight_func
     from pfb.operators.hessian import hessian_xds
     from pfb.operators.psf import psf_convolve_cube
@@ -232,6 +232,8 @@ def _spotless(ddsi=None, **kw):
     psiH(tmp2/pix_per_beam, psiHoutvar)
     rms_comps = np.std(np.sum(psiHoutvar, axis=0),
                        axis=-1)[:, None]  # preserve axes
+    sfactor = wsum/wsums[fsel, None, None]
+    sfactor /= np.mean(sfactor)
 
     # TODO - load from dds if present
     if dual is None:
@@ -261,7 +263,11 @@ def _spotless(ddsi=None, **kw):
         print('Solving for model', file=log)
         modelp = deepcopy(model)
         data = residual + psf_convolve(model)
-        grad21 = lambda x: psf_convolve(x) - data
+        # grad21 = lambda x: psf_convolve(x) - data
+        def grad21(x):
+            res = psf_convolve(x) - data
+            res[fsel] *= sfactor
+            return res
         model, dual = primal_dual(model,
                                   dual,
                                   opts.rmsfactor*rms,

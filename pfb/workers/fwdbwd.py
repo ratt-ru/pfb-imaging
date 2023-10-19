@@ -74,8 +74,8 @@ def _fwdbwd(ddsi=None, **kw):
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
-    from pfb.opt.primal_dual import primal_dual_optimised2 as primal_dual
-    from pfb.utils.misc import l1reweight_func, setup_non_linearity
+    from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
+    from pfb.utils.misc import l1reweight_func, setup_parametrisation
     from pfb.operators.hessian import hessian_xds
     from pfb.operators.psf import psf_convolve_cube
     from pfb.operators.psi import im2coef
@@ -171,8 +171,9 @@ def _fwdbwd(ddsi=None, **kw):
     xpad = make_noncritical(xpad)
     xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
     xhat = make_noncritical(xhat)
+    # We use nthreads = nvthreads*nthreads_dask because dask not involved
     psf_convolve = partial(psf_convolve_cube, xpad, xhat, xout, psfhat, lastsize,
-                           nthreads=opts.nvthreads*opts.nthreads_dask)  # nthreads = nvthreads*nthreads_dask because dask not involved
+                           nthreads=opts.nvthreads*opts.nthreads_dask)
 
     print("Setting up dictionary", file=log)
     bases = tuple(opts.bases.split(','))
@@ -197,6 +198,21 @@ def _fwdbwd(ddsi=None, **kw):
                   ny=ny,
                   nthreads=opts.nvthreads*opts.nthreads_dask) # nthreads = nvthreads*nthreads_dask because dask not involved
 
+    def hesspsi(x):
+        tmpa = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
+        psiH(x, tmpa)
+        tmpx = np.zeros((nband, nx, ny),  dtype=dirty.dtype)
+        psi(tmpa, tmpx)
+        return tmpx
+
+    psinorm, _ = power_method(hesspsi, (nband, nx, ny),
+                              tol=opts.pm_tol,
+                              maxit=opts.pm_maxit,
+                              verbosity=opts.pm_verbose,
+                              report_freq=opts.pm_report_freq)
+
+    print(f"psinorm = {psinorm}", file=log)
+
     # get clean beam area to convert residual units during l1reweighting
     # TODO - could refine this with comparison between dirty and restored
     # if contiuing the deconvolution
@@ -217,21 +233,29 @@ def _fwdbwd(ddsi=None, **kw):
     rms_comps = np.std(np.sum(psiHoutvar, axis=0),
                        axis=-1)[:, None]  # preserve axes
 
-    func, finv, dfunc = setup_non_linearity(mode=opts.non_linearity)
+    func, finv, dfunc, dhfunc = setup_parametrisation(mode=opts.parametrisation,
+                                              minval=np.median(model[model>0]),
+                                              )
 
-    def gradf(residual, x):
-        return -2*residual * dfunc(x)
+    def gradf(residual, x, dhf):
+        return -2*residual
 
-    def hessian_psf(psfo, x0, sigmainv, v):
+    def hessian_psf(psfo, x0, sigmainv, df, dhf, v):
         '''
         psfo is the convolution operator and x0 is the fixed value of x at which
         we evaluate the operator. v is the vector to be acted on.
         '''
-        dx0 = dfunc(x0)
-        return 2 * dx0 * psfo(dx0 * v)  + v*sigmainv
+        dx0 = df(x0)
+        return 2 * dhf(psfo(df(v)))  + v*sigmainv
 
-    if 'PARAM' in dds[0] and dds[0].non_linearity == opts.non_linearity:
-        print("Found matching non-linearity for PARAM in dds", file=log)
+    def get_scaling(hessf):
+        tmpx = np.random.randn(*dirty.shape)
+        convx = hessf(tmpx)
+        convx[fsel] *= wsum/wsums[fsel, None, None]
+        return np.std(convx)
+
+    if 'PARAM' in dds[0] and dds[0].parametrisation == opts.parametrisation and not opts.restart:
+        print("Found matching parametrisation for PARAM in dds", file=log)
         x = [ds.PARAM.data for ds in dds]
         x = da.stack(x).compute()
     elif model.any() and not opts.restart:
@@ -247,14 +271,14 @@ def _fwdbwd(ddsi=None, **kw):
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
         # in this case the dual is also probably not useful
-        if dual is not None:
-            dual[...] = 0.0
+        dual = None
     else:
         print("Initialising PARAM to all zeros", file=log)
         x = np.zeros_like(dirty)
         model = func(x)
         residual = dirty.copy()
         residual_mfs = dirty_mfs.copy()
+        dual = None  # force reset
 
     if dual is None:
         dual = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
@@ -282,18 +306,19 @@ def _fwdbwd(ddsi=None, **kw):
           file=log)
     for k in range(opts.niter):
         xp = x.copy()
-        j = -gradf(residual, xp)
+        df = partial(dfunc, xp)
+        dhf = partial(dhfunc, xp)
+        j = -gradf(residual, xp, dhf)
         print("Finding spectral norm of Hessian approximation", file=log)
         # hessian depends on x and sigmainv so need to do this at every iteration
         sigmainv = np.maximum(np.std(j), opts.sigmainv)
-        hesspsf = partial(hessian_psf, psf_convolve, xp, sigmainv)
+        hesspsf = partial(hessian_psf, psf_convolve, xp, sigmainv, df, dhf)
         hessnorm, hessbeta = power_method(hesspsf, (nband, nx, ny),
                                           b0=hessbeta,
                                           tol=opts.pm_tol,
                                           maxit=opts.pm_maxit,
                                           verbosity=opts.pm_verbose,
                                           report_freq=opts.pm_report_freq)
-
 
         print(f"Solving forward step with sigmainv = {sigmainv}", file=log)
         delx = pcg(hesspsf,
@@ -309,39 +334,54 @@ def _fwdbwd(ddsi=None, **kw):
                   basename + f'_{opts.postfix}_update_{k+1}.fits',
                   hdr_mfs)
 
+        # compute scaling of the residual
+        rscale = get_scaling(hesspsf)
+        # get rms in space where thresholding happens
+        psiH(delx, psiHoutvar)
+        rmscomps = np.std(np.sum(psiHoutvar, axis=0))
+
         if opts.sigma21 is None:
-            sigma21 = opts.rmsfactor*np.std(j)
+            sigma21 = opts.rmsfactor*np.std(j/rscale)
+            # sigma21 = opts.rmsfactor*rmscomps
         else:
             sigma21 = opts.sigma21
-        print(f'Solving bacward step with sig21 = {sigma21}', file=log)
-        data = xp + opts.gamma * delx
-        if opts.non_linearity != 'id':
-            bedges = np.histogram_bin_edges(data.ravel(), bins='fd')
-            dhist, _ = np.histogram(data.ravel(), bins=bedges)
-            dmax = dhist.argmax()
-            dmode = (bedges[dmax] + bedges[dmax+1])/2.0
-            data -= dmode
-            x -= dmode
-        grad21 = lambda v: hesspsf(v - data)
-        x, dual = primal_dual(x,
-                              dual,
-                              sigma21,
-                              psi,
-                              psiH,
-                              hessnorm,
-                              prox_21,
-                              l1weight,
-                              reweighter,
-                              grad21,
-                              nu=nbasis,
-                              positivity=opts.positivity,
-                              tol=opts.pd_tol,
-                              maxit=opts.pd_maxit,
-                              verbosity=opts.pd_verbose,
-                              report_freq=opts.pd_report_freq,
-                              gamma=opts.gamma)
-        if opts.non_linearity != 'id':
-            x += dmode
+        if sigma21:
+            print(f'Solving backward step with sig21 = {sigma21}', file=log)
+            data = xp + opts.gamma * delx
+            if opts.parametrisation != 'id':
+                if xp.any():
+                    bedges = np.histogram_bin_edges(xp.ravel(), bins='fd')
+                else:
+                    bedges = np.histogram_bin_edges(data.ravel(), bins='fd')
+                dhist, _ = np.histogram(data.ravel(), bins=bedges)
+                dmax = dhist.argmax()
+                # dmode = (bedges[dmax] + bedges[dmax+1])/2.0
+                dmode = bedges[dmax]
+                print(f"Removing mode = {dmode} prior to backward step", file=log)
+                data -= dmode
+                x -= dmode
+            grad21 = lambda v: hesspsf(v - data)
+            x, dual = primal_dual(x,
+                                dual,
+                                sigma21,
+                                psi,
+                                psiH,
+                                hessnorm,
+                                prox_21,
+                                l1weight,
+                                reweighter,
+                                grad21,
+                                nu=psinorm,
+                                positivity=opts.positivity,
+                                tol=opts.pd_tol,
+                                maxit=opts.pd_maxit,
+                                verbosity=opts.pd_verbose,
+                                report_freq=opts.pd_report_freq,
+                                gamma=opts.gamma)
+            if opts.parametrisation != 'id':
+                x += dmode
+        else:
+            x = xp + opts.gamma * delx
         save_fits(np.mean(x, axis=0),
                   basename + f'_{opts.postfix}_param_{k+1}.fits',
                   hdr_mfs)
@@ -373,8 +413,10 @@ def _fwdbwd(ddsi=None, **kw):
         if k+1 >= opts.l1reweight_from:
             print('Computing L1 weights', file=log)
             # convert residual units so it is comparable to model
-            tmp2[fsel] = residual[fsel] * wsum/wsums[fsel, None, None]
-            psiH(tmp2/pix_per_beam, psiHoutvar)
+            # tmp2[fsel] = residual[fsel] * wsum/wsums[fsel, None, None]
+            # psiH(tmp2/pix_per_beam, psiHoutvar)
+            # psiH(tmp2/rscale, psiHoutvar)
+            psiH(delx, psiHoutvar)
             rms_comps = np.std(np.sum(psiHoutvar, axis=0),
                                axis=-1)[:, None]  # preserve axes
             # we redefine the reweighter here since the rms has changed
@@ -396,7 +438,7 @@ def _fwdbwd(ddsi=None, **kw):
                                   'MODEL': (('x', 'y'), m),
                                   'DUAL': (('c', 'n'), d),
                                   'PARAM': (('x', 'y'), xb)})
-            ds_out = ds_out.assign_attrs({'non_linearity': opts.non_linearity})
+            ds_out = ds_out.assign_attrs({'parametrisation': opts.parametrisation})
             dds_out.append(ds_out)
         writes = xds_to_zarr(dds_out, dds_name,
                              columns=('RESIDUAL', 'MODEL', 'DUAL', 'PARAM'),
