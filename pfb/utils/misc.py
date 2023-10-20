@@ -1243,7 +1243,7 @@ def remove_large_islands(x, max_island_size=100):
 
 
 @njit(parallel=False, nogil=True, fastmath=True, inline='always')
-def freqmul(A, x, out):
+def freqmul(A, x):
     nband, nx, ny = x.shape
     out = np.zeros_like(x)
     for k in range(nband):

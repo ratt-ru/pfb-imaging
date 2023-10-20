@@ -233,9 +233,12 @@ def _fwdbwd(ddsi=None, **kw):
     rms_comps = np.std(np.sum(psiHoutvar, axis=0),
                        axis=-1)[:, None]  # preserve axes
 
+    import ipdb; ipdb.set_trace()
     func, finv, dfunc, dhfunc = setup_parametrisation(mode=opts.parametrisation,
                                               minval=np.median(model[model>0]),
-                                              )
+                                              sigma=1.0,
+                                              freq=freq_out,
+                                              lscale=1.0)
 
     def gradf(residual, x, dhf):
         return -2*residual

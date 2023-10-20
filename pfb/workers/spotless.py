@@ -232,8 +232,13 @@ def _spotless(ddsi=None, **kw):
     psiH(tmp2/pix_per_beam, psiHoutvar)
     rms_comps = np.std(np.sum(psiHoutvar, axis=0),
                        axis=-1)[:, None]  # preserve axes
-    sfactor = wsum/wsums[fsel, None, None]
-    sfactor /= np.mean(sfactor)
+
+    # This is attempt at getting the primal-dual to converge
+    # more homogeneously when bands have very different wsums
+    # sfactor is used to scale the grad21 function below
+    sfactor = np.zeros((nband, 1, 1))
+    sfactor[fsel] = wsum/wsums[fsel, None, None]  # missing subbands
+    sfactor /= np.mean(sfactor[fsel])
 
     # TODO - load from dds if present
     if dual is None:
@@ -332,6 +337,7 @@ def _spotless(ddsi=None, **kw):
             ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
                                   'MODEL': (('x', 'y'), m),
                                   'DUAL': (('c', 'n'), d)})
+            ds_out = ds_out.assign_attrs({'parametrisation': 'id'})
             dds_out.append(ds_out)
         writes = xds_to_zarr(dds_out, dds_name,
                              columns=('RESIDUAL', 'MODEL', 'DUAL'),
