@@ -268,11 +268,11 @@ def _spotless(ddsi=None, **kw):
         print('Solving for model', file=log)
         modelp = deepcopy(model)
         data = residual + psf_convolve(model)
-        # grad21 = lambda x: psf_convolve(x) - data
-        def grad21(x):
-            res = psf_convolve(x) - data
-            res[fsel] *= sfactor
-            return res
+        grad21 = lambda x: psf_convolve(x) - data
+        # def grad21(x):
+        #     res = psf_convolve(x) - data
+        #     res[fsel] *= sfactor
+        #     return res
         model, dual = primal_dual(model,
                                   dual,
                                   opts.rmsfactor*rms,

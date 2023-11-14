@@ -131,6 +131,8 @@ def single_stokes(ds=None,
     vis = output_dict['vis']
     wgt = output_dict['wgt']
 
+    import ipdb; ipdb.set_trace()
+
     if isinstance(opts.radec, str):
         raise NotImplementedError()
     elif isinstance(opts.radec, np.ndarray) and not np.array_equal(radec, opts.radec):
@@ -217,7 +219,7 @@ def single_stokes(ds=None,
     # https://www.overleaf.com/read/yzrsrdwxhxrd
     npix = int(np.deg2rad(opts.max_field_of_view)/cell_rad)
     beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
-    data_vars['BEAM'] = (('scalar'), beam)
+    data_vars['BEAM'] = (('x','y'), beam)
 
     coords = {'chan': (('chan',), freq)} #,
             #   'row': (('row',), ds.ROWID.values)}

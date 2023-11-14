@@ -1,6 +1,6 @@
 inputs:
   ms:
-    dtype: str
+    dtype: List[str]
     required: true
     abbreviation: ms
     info:

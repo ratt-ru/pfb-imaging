@@ -32,24 +32,28 @@ def init(**kw):
     pyscilog.log_to_file(f'{ldir}/init_{timestamp}.log')
     print(f'Logs will be written to {str(ldir)}/init_{timestamp}.log', file=log)
     from daskms.fsspec_store import DaskMSStore
-    msstore = DaskMSStore(opts.ms.rstrip('/'))
-    ms = msstore.fs.glob(opts.ms.rstrip('/'))
-    try:
-        assert len(ms) > 0
-        opts.ms = list(map(msstore.fs.unstrip_protocol, ms))
-    except:
-        raise ValueError(f"No MS at {opts.ms}")
-
-    if opts.gain_table is not None:
-        gainstore = DaskMSStore(opts.gain_table.rstrip('/'))
-        gt = gainstore.fs.glob(opts.gain_table.rstrip('/'))
+    msnames = []
+    for ms in opts.ms:
+        msstore = DaskMSStore(ms.rstrip('/'))
+        mslist = msstore.fs.glob(ms.rstrip('/'))
         try:
-            assert len(gt) > 0
-            opts.gain_table = list(map(gainstore.fs.unstrip_protocol, gt))
-        except Exception as e:
-            raise ValueError(f"No gain table  at {opts.gain_table}")
-
-    if opts.product.upper() not in ["I"]:
+            assert len(mslist) > 0
+            msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
+        except:
+            raise ValueError(f"No MS at {ms}")
+    opts.ms = msnames
+    if opts.gain_table is not None:
+        gainnames = []
+        for gt in opts.gain_table:
+            gainstore = DaskMSStore(gt.rstrip('/'))
+            gtlist = gainstore.fs.glob(gt.rstrip('/'))
+            try:
+                assert len(gtlist) > 0
+                gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gt)))
+            except Exception as e:
+                raise ValueError(f"No gain table  at {gt}")
+        opts.gain_table = gainnames
+    if opts.product.upper() not in ["I","Q"]:
                                     # , "Q", "U", "V", "XX", "YX", "XY",
                                     # "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
