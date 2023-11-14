@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.interpolate import RegularGridInterpolator as RGI
 from functools import partial
 from katbeam import JimBeam
 import dask.array as da
@@ -22,7 +23,7 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
         assert freq.size == 1
         freq = freq[0]
     if btype is None:
-        beam = np.ones((nx, ny), dtype=float)
+        return np.ones((nx, ny), dtype=float)
     elif btype.endswith('.npz'):
         # these are expected to be in the format given here
         # https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
@@ -31,8 +32,6 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
         l = np.deg2rad(dct['ldeg'])
         m = np.deg2rad(dct['mdeg'])
         ll, mm = np.meshgrid(l, m, indexing='ij')
-        lm = np.vstack((ll.flatten(), mm.flatten())).T
-        beam_extents = np.array([[l.min(), l.max()], [m.min(), m.max()]])
         bfreqs = dct['freq']
         beam_amp = (beam[0, :, :, :] * beam[0, :, :, :].conj() +
                     beam[-1, :, :, :] * beam[-1, :, :, :].conj())/2.0
@@ -55,9 +54,10 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
                                                        freqMHz=freq/1e6)
         else:
             raise ValueError(f"Unknown beam model {btype}")
-        beam_amp = beam_amp[:, :, None, None, None]
+        beam_amp = beam_amp.reshape(nx, ny)[:, :, None, None, None]
+        bfreqs = np.array((freq,))
 
-    parangles = parallactic_angles(utime, ant_pos, phase_dir, backend='')
+    parangles = parallactic_angles(utime, ant_pos, phase_dir, backend='astropy')
     # mean over antanna nant -> 1
     parangles = np.mean(parangles, axis=1, keepdims=True)
     nant = 1
@@ -66,6 +66,8 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
     ntimes = utime.size
     ant_scale = np.ones((nant, nband, 2), dtype=np.float64)
     point_errs = np.zeros((ntimes, nant, nband, 2), dtype=np.float64)
+    beam_extents = np.array([[l.min(), l.max()], [m.min(), m.max()]])
+    lm = np.vstack((ll.flatten(), mm.flatten())).T
     beam_image = beam_cube_dde(np.ascontiguousarray(beam_amp),
                                beam_extents, bfreqs,
                                lm, parangles, point_errs,
@@ -81,12 +83,17 @@ def interp_beam(freq, nx, ny, cell_deg, btype,
     Frequency mapped to imaging band extenally. Result is meant to be
     passed into eval_beam below.
     '''
-    if btype.endwith('.npz'):
+    if btype is not None and btype.endswith('.npz'):
         dct = np.load(btype)
-        nx = dct['ldeg'].size
-        ny = dct['mdeg'].size
+        l = dct['ldeg']
+        m = dct['mdeg']
+        nx = l.size
+        ny = m.size
+    else:
+        l = (-(nx//2) + np.arange(nx)) * cell_deg
+        m = (-(ny//2) + np.arange(ny)) * cell_deg
 
-    return da.blockwise(_interp_beam_impl, 'xy',
+    beam_image = da.blockwise(_interp_beam_impl, 'xy',
                         freq, None,
                         nx, None,
                         ny, None,
@@ -96,36 +103,37 @@ def interp_beam(freq, nx, ny, cell_deg, btype,
                         ant_pos, None,
                         phase_dir, None,
                         new_axes={'x': nx, 'y': ny},
-                        dtype=object)
-
-def _eval_beam_impl(beam_object_array, l, m):
-    return beam_object_array[0](l, m)
-
-def _eval_beam(beam_object_array, l, m):
-    return _eval_beam_impl(beam_object_array[0], l, m)
-
-def eval_beam(beam_object_array, l, m):
-    if l.ndim == 2:
-        lout = ('nx', 'ny')
-        mout = ('nx', 'ny')
-    else:
-        lout = ('nx',)
-        mout = ('ny',)
-    return da.blockwise(_eval_beam, ('nx', 'ny'),
-                        beam_object_array, ('1',),
-                        l, lout,
-                        m, mout,
                         dtype=float)
+    l = da.from_array(l, chunks=-1)
+    m = da.from_array(m, chunks=-1)
+    return beam_image, l, m
 
 
-def get_beam_meta(msname):
-    from pyrap.tables import table
-    ms = table(msname)
-    time = ms.getcol('TIME')
-    utime = np.unique(time)
-    field = table(f'{msname}::FIELD')
-    phase_dir = field.getcol('PHASE_DIR').squeeze()
-    ant = table(f'{msname}::ANTENNA')
-    ant_pos = ant.getcol('POSITION')
+def _eval_beam(beam_image, l_in, m_in, l_out, m_out):
+    beamo = RGI((l_in, m_in), beam_image,
+                bounds_error=True, method='linear')
+    if l_out.ndim == 2:
+        ll = l_out
+        mm = m_out
+    elif l_out.ndim == 1:
+        ll, mm = np.meshgrid(l_out, m_out, indexing='ij')
+    else:
+        msg = 'Only 1 or 2D coordinates supported for beam evaluation'
+        raise ValueError(msg)
+    return beamo((ll, mm))
 
-    return utime, phase_dir, ant_pos
+
+def eval_beam(beam_image, l_in, m_in, l_out, m_out):
+    if lin.ndim == 2:
+        lout_dims = 'xy'
+        mout_dims = 'xy'
+    else:
+        lout_dims = 'x'
+        mout_dims = 'y'
+    return da.blockwise(_eval_beam, 'xy',
+                        beam_image, 'xy',
+                        l_in, 'x',
+                        m_in, 'y',
+                        l_out, lout_dims,
+                        m_out, mout_dims,
+                        dtype=float)

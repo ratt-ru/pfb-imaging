@@ -131,8 +131,6 @@ def single_stokes(ds=None,
     vis = output_dict['vis']
     wgt = output_dict['wgt']
 
-    import ipdb; ipdb.set_trace()
-
     if isinstance(opts.radec, str):
         raise NotImplementedError()
     elif isinstance(opts.radec, np.ndarray) and not np.array_equal(radec, opts.radec):
@@ -218,10 +216,17 @@ def single_stokes(ds=None,
     # per facet best approximations to smooth beams as described in
     # https://www.overleaf.com/read/yzrsrdwxhxrd
     npix = int(np.deg2rad(opts.max_field_of_view)/cell_rad)
-    beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
-    data_vars['BEAM'] = (('x','y'), beam)
+    beam, l_beam, m_beam = interp_beam(freq_out/1e6, npix, npix,
+                                       np.rad2deg(cell_rad),
+                                       opts.beam_model,
+                                       utime=utime,
+                                       ant_pos=antpos,
+                                       phase_dir=radec)
+    data_vars['BEAM'] = (('l_beam','m_beam'), beam)
 
-    coords = {'chan': (('chan',), freq)} #,
+    coords = {'chan': (('chan',), freq),
+              'l_beam': (('l_beam',), l_beam),
+              'm_beam': (('m_beam',), m_beam)}
             #   'row': (('row',), ds.ROWID.values)}
 
     # TODO - provide time and freq centroids
