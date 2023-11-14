@@ -59,7 +59,7 @@ inputs:
     info:
       Column containing data flags. Must be the same across MSs
   gain_table:
-    dtype: str
+    dtype: List[str]
     info:
       Path to Quartical gain table containing NET gains.
       There must be a table for each MS and glob(ms) and glob(gt) should match up
