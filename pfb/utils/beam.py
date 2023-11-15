@@ -124,16 +124,12 @@ def _eval_beam(beam_image, l_in, m_in, l_out, m_out):
 
 
 def eval_beam(beam_image, l_in, m_in, l_out, m_out):
-    if lin.ndim == 2:
-        lout_dims = 'xy'
-        mout_dims = 'xy'
-    else:
-        lout_dims = 'x'
-        mout_dims = 'y'
+    nxo, nyo = l_out.shape
     return da.blockwise(_eval_beam, 'xy',
                         beam_image, 'xy',
-                        l_in, 'x',
-                        m_in, 'y',
-                        l_out, lout_dims,
-                        m_out, mout_dims,
+                        l_in, None,
+                        m_in, None,
+                        l_out, None,
+                        m_out, None,
+                        adjust_chunks={'x': nxo, 'y': nyo},
                         dtype=float)

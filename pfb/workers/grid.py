@@ -383,7 +383,9 @@ def _grid(xdsi=None, **kw):
         l = (-(nx//2) + da.arange(nx)) * cell_deg + np.deg2rad(x0)
         m = (-(ny//2) + da.arange(ny)) * cell_deg + np.deg2rad(y0)
         ll, mm = da.meshgrid(l, m, indexing='ij')
-        bvals = eval_beam(ds.BEAM.data, ll, mm)
+        l_beam = ds.l_beam.data
+        m_beam = ds.m_beam.data
+        bvals = eval_beam(ds.BEAM.data, l_beam, m_beam, ll, mm)
         out_ds = out_ds.assign(**{'BEAM': (('x', 'y'), bvals)})
 
         # get the model

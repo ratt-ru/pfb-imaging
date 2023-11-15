@@ -49,7 +49,7 @@ def init(**kw):
             gtlist = gainstore.fs.glob(gt.rstrip('/'))
             try:
                 assert len(gtlist) > 0
-                gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gt)))
+                gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
             except Exception as e:
                 raise ValueError(f"No gain table  at {gt}")
         opts.gain_table = gainnames
