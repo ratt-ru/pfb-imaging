@@ -56,9 +56,11 @@ def set_client(opts, stack, log, scheduler='distributed'):
             from dask.distributed import Client, LocalCluster
             print("Initialising client with LocalCluster.", file=log)
             with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
-                cluster = LocalCluster(processes=True, n_workers=opts.nworkers,
-                                    threads_per_worker=opts.nthreads_dask,
-                                    memory_limit=0)  # str(mem_limit/nworkers)+'GB'
+                cluster = LocalCluster(processes=opts.nworkers > 1,
+                                       n_workers=opts.nworkers,
+                                       threads_per_worker=opts.nthreads_dask,
+                                       memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                                       asynchronous=True)
                 cluster = stack.enter_context(cluster)
                 client = stack.enter_context(Client(cluster))
 
