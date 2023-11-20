@@ -20,7 +20,7 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
     passed into eval_beam below.
     '''
     if isinstance(freq, np.ndarray):
-        assert freq.size == 1
+        assert freq.size == 1, "Only single frequency interpolation currently supported"
         freq = freq[0]
     if btype is None:
         return np.ones((nx, ny), dtype=float)
@@ -57,6 +57,9 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
         beam_amp = beam_amp.reshape(nx, ny)[:, :, None, None, None]
         bfreqs = np.array((freq,))
 
+    if utime is None:
+        return beam_amp.squeeze()
+
     parangles = parallactic_angles(utime, ant_pos, phase_dir, backend='astropy')
     # mean over antanna nant -> 1
     parangles = np.mean(parangles, axis=1, keepdims=True)
@@ -69,9 +72,9 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
     beam_extents = np.array([[l.min(), l.max()], [m.min(), m.max()]])
     lm = np.vstack((ll.flatten(), mm.flatten())).T
     beam_image = beam_cube_dde(np.ascontiguousarray(beam_amp),
-                               beam_extents, bfreqs,
-                               lm, parangles, point_errs,
-                               ant_scale, np.array((freq,))).squeeze()
+                            beam_extents, bfreqs,
+                            lm, parangles, point_errs,
+                            ant_scale, np.array((freq,))).squeeze()
     return beam_image
 
 
@@ -89,6 +92,8 @@ def interp_beam(freq, nx, ny, cell_deg, btype,
         m = dct['mdeg']
         nx = l.size
         ny = m.size
+        cell_deg = l[1] - l[0]
+        assert cell_deg == m[1] - m[0], 'Beam coords must be on a square grid'
     else:
         l = (-(nx//2) + np.arange(nx)) * cell_deg
         m = (-(ny//2) + np.arange(ny)) * cell_deg
@@ -104,8 +109,8 @@ def interp_beam(freq, nx, ny, cell_deg, btype,
                         phase_dir, None,
                         new_axes={'x': nx, 'y': ny},
                         dtype=float)
-    l = da.from_array(l, chunks=-1)
-    m = da.from_array(m, chunks=-1)
+    # l = da.from_array(l, chunks=-1)
+    # m = da.from_array(m, chunks=-1)
     return beam_image, l, m
 
 
