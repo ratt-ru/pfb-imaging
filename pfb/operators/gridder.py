@@ -647,8 +647,7 @@ def image_data_products(uvw,
         divide_by_n=False,  # hardcoded for now
         nthreads=nthreads,
         sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=double_accum,
-        verbosity=2)
+        double_precision_accumulation=double_accum)
     out_dict['DIRTY'] = dirty
 
     if do_psf:

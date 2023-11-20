@@ -60,7 +60,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
                                        n_workers=opts.nworkers,
                                        threads_per_worker=opts.nthreads_dask,
                                        memory_limit=0,  # str(mem_limit/nworkers)+'GB'
-                                       asynchronous=True)
+                                       asynchronous=False)
                 cluster = stack.enter_context(cluster)
                 client = stack.enter_context(Client(cluster))
 
@@ -75,6 +75,12 @@ def set_client(opts, stack, log, scheduler='distributed'):
         from multiprocessing.pool import ThreadPool
         dask.config.set(pool=ThreadPool(opts.nthreads_dask))
         print(f"Initialising ThreadPool with {opts.nthreads_dask} threads",
+              file=log)
+    elif scheduler=='processes':
+        # TODO - why is the performance so terrible in this case?
+        from multiprocessing.pool import Pool
+        dask.config.set(pool=Pool(opts.nthreads_dask))
+        print(f"Initialising Pool with {opts.nthreads_dask} processes",
               file=log)
     else:
         raise ValueError(f"Unknown scheduler option {opts.scheduler}")

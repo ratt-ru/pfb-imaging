@@ -30,7 +30,7 @@ nvthreads:
 scheduler:
   dtype: str
   default: threads
-  choices: ["threads", "single-threaded", "sync", "distributed"]
+  choices: ["threads", "single-threaded", "sync", "distributed", "processes"]
   abbreviation: scheduler
   info:
     Which dask scheduler to use.
