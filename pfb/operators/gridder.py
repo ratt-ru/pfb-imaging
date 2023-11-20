@@ -609,7 +609,7 @@ def image_data_products(uvw,
         wcount = mask.sum()
         if wcount:
             ovar = ressq.sum()/wcount
-            wgt = (dof + 1)/(dof + ressq/ovar)/ovar
+            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
 
     # we usually want to re-evaluate this since the robustness may change
     if robustness is not None:
@@ -647,7 +647,8 @@ def image_data_products(uvw,
         divide_by_n=False,  # hardcoded for now
         nthreads=nthreads,
         sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=double_accum)
+        double_precision_accumulation=double_accum,
+        verbosity=2)
     out_dict['DIRTY'] = dirty
 
     if do_psf:

@@ -914,6 +914,17 @@ def concat_chan(xds, nband_out=1):
 
             out_dict = blocker.get_dask_outputs()
 
+            # import dask
+            # dask.visualize(out_dict, color="order", cmap="autumn",
+            #             node_attr={"penwidth": "4"},
+            #             filename='/home/landman/testing/pfb/out/outdict_ordered_graph.pdf',
+            #             optimize_graph=False,
+            #             engine='cytoscape')
+            # dask.visualize(out_dict,
+            #             filename='/home/landman/testing/pfb/out/outdict_graph.pdf',
+            #             optimize_graph=False, engine='cytoscape')
+            # quit()
+
             # get weighted sum of beam
             beam = sum_beam(xdst)
             l_beam = xdst[0].l_beam.data
