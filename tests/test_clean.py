@@ -189,7 +189,7 @@ def test_clean(do_gains, ms_name):
     init_args["data_column"] = "DATA"
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = gain_path
-    init_args["max_field_of_view"] = fov
+    init_args["max_field_of_view"] = fov*1.1
     init_args["overwrite"] = True
     init_args["channels_per_image"] = 1
     from pfb.workers.init import _init

@@ -293,7 +293,7 @@ def test_spotless(ms_name):
     # init_args["weight_column"] = 'WEIGHT_SPECTRUM'
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = None
-    init_args["max_field_of_view"] = fov
+    init_args["max_field_of_view"] = fov*1.1
     init_args["overwrite"] = True
     init_args["channels_per_image"] = 1
     xdso2 = _init(**init_args)

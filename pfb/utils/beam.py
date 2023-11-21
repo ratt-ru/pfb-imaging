@@ -9,7 +9,9 @@ with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=NumbaDeprecationWarning)
     from africanus.rime.fast_beam_cubes import beam_cube_dde
     from africanus.rime import parallactic_angles
-
+import pyscilog
+pyscilog.init('pfb')
+log = pyscilog.get_logger('BEAM')
 
 def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
                       utime=None, ant_pos=None, phase_dir=None):
@@ -75,7 +77,8 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
                             beam_extents, bfreqs,
                             lm, parangles, point_errs,
                             ant_scale, np.array((freq,))).squeeze()
-    return beam_image
+    import ipdb; ipdb.set_trace()
+    return beam_image.squeeze()
 
 
 def interp_beam(freq, nx, ny, cell_deg, btype,
@@ -115,8 +118,15 @@ def interp_beam(freq, nx, ny, cell_deg, btype,
 
 
 def _eval_beam(beam_image, l_in, m_in, l_out, m_out):
-    beamo = RGI((l_in, m_in), beam_image,
-                bounds_error=True, method='linear')
+    try:
+        beamo = RGI((l_in, m_in), beam_image,
+                    bounds_error=True, method='linear')
+    except:
+        print("Bounds error raised in beam evaluation. "
+              "Consider setting init.max_field_of_view >  grid.field_of_view",
+              file=log)
+        beamo = RGI((l_in, m_in), beam_image,
+                    bounds_error=False, method='linear', fill_value=None)
     if l_out.ndim == 2:
         ll = l_out
         mm = m_out
@@ -129,7 +139,8 @@ def _eval_beam(beam_image, l_in, m_in, l_out, m_out):
 
 
 def eval_beam(beam_image, l_in, m_in, l_out, m_out):
-    nxo, nyo = l_out.shape
+    nxo = l_out.shape[0]
+    nyo = m_out.shape[-1]
     return da.blockwise(_eval_beam, 'xy',
                         beam_image, 'xy',
                         l_in, None,
