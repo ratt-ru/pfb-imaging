@@ -351,66 +351,28 @@ def stokes_funcs(data, jones, product, pol):
     if jones.ndim == 6:  # Full mode
         if product == literal('I'):
             i = 0
-            Wsymb = lambdify((gp00, gp01, gp10, gp11,
-                              gq00, gq01, gq10, gq11,
-                              w0, w1, w2, w3),
-                              sm.simplify(W[i,i]))
-            Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
-
-
-            Dsymb = lambdify((gp00, gp01, gp10, gp11,
-                              gq00, gq01, gq10, gq11,
-                              w0, w1, w2, w3,
-                              v00, v01, v10, v11),
-                              sm.simplify(C[i]))
-            Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
-
         elif product == literal('Q'):
             i = 1
-            Wsymb = lambdify((gp00, gp01, gp10, gp11,
-                              gq00, gq01, gq10, gq11,
-                              w0, w1, w2, w3),
-                              sm.simplify(W[i,i]))
-            Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
-
-            Dsymb = lambdify((gp00, gp01, gp10, gp11,
-                              gq00, gq01, gq10, gq11,
-                              w0, w1, w2, w3,
-                              v00, v01, v10, v11),
-                              sm.simplify(C[i]))
-            Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
-
         elif product == literal('U'):
             i = 2
-            Wsymb = lambdify((gp00, gp01, gp10, gp11,
-                              gq00, gq01, gq10, gq11,
-                              w0, w1, w2, w3),
-                              sm.simplify(W[i,i]))
-            Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
-            Dsymb = lambdify((gp00, gp01, gp10, gp11,
-                              gq00, gq01, gq10, gq11,
-                              w0, w1, w2, w3,
-                              v00, v01, v10, v11),
-                              sm.simplify(C[i]))
-            Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
-
         elif product == literal('V'):
             i = 3
-            Wsymb = lambdify((gp00, gp01, gp10, gp11,
-                              gq00, gq01, gq10, gq11,
-                              w0, w1, w2, w3),
-                              sm.simplify(W[i,i]))
-            Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
-
-            Dsymb = lambdify((gp00, gp01, gp10, gp11,
-                              gq00, gq01, gq10, gq11,
-                              w0, w1, w2, w3,
-                              v00, v01, v10, v11),
-                              sm.simplify(D[i]))
-            Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
-
         else:
             raise ValueError(f"Unknown polarisation product {product}")
+
+        Wsymb = lambdify((gp00, gp01, gp10, gp11,
+                            gq00, gq01, gq10, gq11,
+                            w0, w1, w2, w3),
+                            sm.simplify(sm.expand(W[i,i])))
+        Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
+
+
+        Dsymb = lambdify((gp00, gp01, gp10, gp11,
+                            gq00, gq01, gq10, gq11,
+                            w0, w1, w2, w3,
+                            v00, v01, v10, v11),
+                            sm.simplify(smexpand(C[i])))
+        Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
 
         @njit(nogil=True, fastmath=True, inline='always')
         def wfunc(gp, gq, W):
@@ -465,66 +427,28 @@ def stokes_funcs(data, jones, product, pol):
 
         if product == literal('I'):
             i = 0
-            Wsymb = lambdify((gp00, gp11,
-                              gq00, gq11,
-                              w0, w1, w2, w3),
-                              sm.simplify(W[i,i]))
-            Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
-
-
-            Dsymb = lambdify((gp00, gp11,
-                              gq00, gq11,
-                              w0, w1, w2, w3,
-                              v00, v01, v10, v11),
-                              sm.simplify(C[i]))
-            Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
-
         elif product == literal('Q'):
             i = 1
-            Wsymb = lambdify((gp00, gp11,
-                              gq00, gq11,
-                              w0, w1, w2, w3),
-                              sm.simplify(W[i,i]))
-            Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
-
-            Dsymb = lambdify((gp00, gp11,
-                              gq00, gq11,
-                              w0, w1, w2, w3,
-                              v00, v01, v10, v11),
-                              sm.simplify(C[i]))
-            Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
-
         elif product == literal('U'):
             i = 2
-            Wsymb = lambdify((gp00, gp11,
-                              gq00, gq11,
-                              w0, w1, w2, w3),
-                             sm.simplify(W[i,i]))
-            Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
-
-            Dsymb = lambdify((gp00, gp11,
-                              gq00, gq11,
-                              w0, w1, w2, w3,
-                              v00, v01, v10, v11),
-                              sm.simplify(C[i]))
-            Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
-
         elif product == literal('V'):
             i = 3
-            Wsymb = lambdify((gp00, gp11,
-                              gq00, gq11,
-                              w0, w1, w2, w3),
-                              sm.simplify(W[i,i]))
-            Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
-
-            Dsymb = lambdify((gp00, gp11,
-                              gq00, gq11,
-                              w0, w1, w2, w3,
-                              v00, v01, v10, v11),
-                              sm.simplify(C[i]))
-            Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
         else:
             raise ValueError(f"Unknown polarisation product {product}")
+
+        Wsymb = lambdify((gp00, gp11,
+                            gq00, gq11,
+                            w0, w1, w2, w3),
+                            sm.simplify(sm.expand(W[i,i])))
+        Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
+
+
+        Dsymb = lambdify((gp00, gp11,
+                            gq00, gq11,
+                            w0, w1, w2, w3,
+                            v00, v01, v10, v11),
+                            sm.simplify(sm.expand(C[i])))
+        Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
 
         @njit(nogil=True, fastmath=True, inline='always')
         def wfunc(gp, gq, W):
