@@ -53,9 +53,8 @@ def init(**kw):
             except Exception as e:
                 raise ValueError(f"No gain table  at {gt}")
         opts.gain_table = gainnames
-    if opts.product.upper() not in ["I","Q"]:
-                                    # , "Q", "U", "V", "XX", "YX", "XY",
-                                    # "YY", "RR", "RL", "LR", "LL"]:
+    if opts.product.upper() not in ["I","Q", "U", "V"]:
+            # "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
     OmegaConf.set_struct(opts, True)
@@ -281,19 +280,19 @@ def _init(**kw):
                             radec=radecs[ms][idt],
                             antpos=antpos[ms],
                             poltype=poltype[ms])
-                    elif opts.product.upper() in ["XX", "YX", "XY", "YY",
-                                                  "RR", "RL", "LR", "LL"]:
-                        out_ds = single_corr(
-                            ds=subds,
-                            jones=jones,
-                            opts=opts,
-                            freq=freqs[ms][idt][Inu],
-                            chan_width=chan_widths[ms][idt][Inu],
-                            utimes=utimes[ms][idt][It],
-                            tbin_idx=ridx,
-                            tbin_counts=rcnts,
-                            cell_rad=cell_rad,
-                            radec=radecs[ms][idt])
+                    # elif opts.product.upper() in ["XX", "YX", "XY", "YY",
+                    #                               "RR", "RL", "LR", "LL"]:
+                    #     out_ds = single_corr(
+                    #         ds=subds,
+                    #         jones=jones,
+                    #         opts=opts,
+                    #         freq=freqs[ms][idt][Inu],
+                    #         chan_width=chan_widths[ms][idt][Inu],
+                    #         utimes=utimes[ms][idt][It],
+                    #         tbin_idx=ridx,
+                    #         tbin_counts=rcnts,
+                    #         cell_rad=cell_rad,
+                    #         radec=radecs[ms][idt])
                     else:
                         raise NotImplementedError(f"Product {args.product} not "
                                                 "supported yet")

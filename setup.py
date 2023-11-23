@@ -20,9 +20,6 @@ requirements = [
                 "QuartiCal[degrid]"
                 "@git+https://github.com/ratt-ru/QuartiCal.git"
                 "@bandpass_smoothing"
-                # "stimela"
-                # "@git+https://github.com/caracal-pipeline/stimela.git"
-                # "@FIASCO3"
 
             ]
 
