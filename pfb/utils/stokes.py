@@ -288,13 +288,11 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                 gp = jones[t, p, :, 0]
                 gq = jones[t, q, :, 0]
                 for chan in range(nchan):
-                    wval = wgt_func(gp[chan], gq[chan],
-                                    weight[row, chan])
-                    if wval > 1e-6:
-                        wgt[row, chan] = wval
-                        vis[row, chan] = vis_func(gp[chan], gq[chan],
-                                                weight[row, chan],
-                                                data[row, chan])/wval
+                    wgt[row, chan] = wgt_func(gp[chan], gq[chan],
+                                              weight[row, chan])
+                    vis[row, chan] = vis_func(gp[chan], gq[chan],
+                                              weight[row, chan],
+                                              data[row, chan])
 
         return vis, wgt
     return _impl
@@ -414,7 +412,7 @@ def stokes_funcs(data, jones, product, pol):
         else:
             raise ValueError(f"Unknown polarisation product {product}")
 
-
+        @njit(nogil=True, fastmath=True, inline='always')
         def wfunc(gp, gq, W):
             gp00 = gp[0,0]
             gp01 = gp[0,1]
@@ -432,6 +430,7 @@ def stokes_funcs(data, jones, product, pol):
                         gq00, gq01, gq10, gq11,
                         W00, W01, W10, W11).real
 
+        @njit(nogil=True, fastmath=True, inline='always')
         def vfunc(gp, gq, W, V):
             gp00 = gp[0,0]
             gp01 = gp[0,1]
@@ -527,6 +526,7 @@ def stokes_funcs(data, jones, product, pol):
         else:
             raise ValueError(f"Unknown polarisation product {product}")
 
+        @njit(nogil=True, fastmath=True, inline='always')
         def wfunc(gp, gq, W):
             gp00 = gp[0]
             gp11 = gp[1]
@@ -540,6 +540,7 @@ def stokes_funcs(data, jones, product, pol):
                         gq00, gq11,
                         W00, W01, W10, W11).real
 
+        @njit(nogil=True, fastmath=True, inline='always')
         def vfunc(gp, gq, W, V):
             gp00 = gp[0]
             gp11 = gp[1]
