@@ -351,7 +351,8 @@ def stokes_funcs(data, jones, product, pol):
     Winv = Tinv * Mpqinv * S * Mpqinv.H * Tinv.H
 
     # Full Stokes coherencies
-    C = Winv * (T.H * (Mpq.H * (Sinv * Vpq)))
+    # C = Winv * (T.H * (Mpq.H * (Sinv * Vpq)))
+    C = T.H * (Mpq.H * (Sinv * Vpq))
 
     if jones.ndim == 6:  # Full mode
         if product == literal('I'):

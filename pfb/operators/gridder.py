@@ -636,7 +636,7 @@ def image_data_products(uvw,
         uvw=uvw,
         freq=freq,
         vis=vis,
-        wgt=wgt,
+        wgt=imwgt,  # data have already been naturally weighted
         mask=mask,
         npix_x=nx, npix_y=ny,
         pixsize_x=cellx, pixsize_y=celly,
