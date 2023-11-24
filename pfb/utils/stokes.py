@@ -86,6 +86,13 @@ def single_stokes(ds=None,
             jones = jones.astype(complex_type)
         # qcal has chan and ant axes reversed compared to pfb implementation
         jones = da.swapaxes(jones, 1, 2)
+        # data are not necessarily 2x2 so we need separate labels
+        # for jones correlations and data/weight correlations
+        if jones.ndim == 5:
+            jout = 'rafdx'
+        elif jones.ndim == 6:
+            jout = 'rafdxx'
+            jones = jones.reshape(-1, nchan, 2, 2)
     else:
         ntime = utime.size
         nchan = freq.size
@@ -93,19 +100,13 @@ def single_stokes(ds=None,
         jones = da.ones((ntime, nant, nchan, 1, 2),
                         chunks=(-1,)*5,
                         dtype=complex_type)
+        jout = 'rafdx'
 
     # Note we do not chunk at this level since all the chunking happens upfront
     # we cast to dask arrays simply to defer the compute
     tbin_idx = da.from_array(tbin_idx, chunks=(-1))
     tbin_counts = da.from_array(tbin_counts, chunks=(-1))
 
-    # data are not necessarily 2x2 so we need separate labels
-    # for jones correlations and data/weight correlations
-    if jones.ndim == 5:
-        jout = 'rafdx'
-    elif jones.ndim == 6:
-        jout = 'rafdxx'
-        raise NotImplementedError("Not yet implemented")
 
 
     # compute Stokes data and weights
@@ -346,7 +347,7 @@ def stokes_funcs(data, jones, product, pol):
     Winv = Tinv * Mpqinv * S * Mpqinv.H * Tinv.H
 
     # Full Stokes coherencies
-    C = Winv * T.H * Mpq.H * Sinv * Vpq
+    C = Winv * (T.H * (Mpq.H * (Sinv * Vpq)))
 
     if jones.ndim == 6:  # Full mode
         if product == literal('I'):
