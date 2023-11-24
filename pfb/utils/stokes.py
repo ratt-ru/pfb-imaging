@@ -113,6 +113,7 @@ def single_stokes(ds=None,
     blocker = Blocker(weight_data, 'rf')
     blocker.add_input("data", data, 'rfc')
     blocker.add_input('weight', weight, 'rfc')
+    blocker.add_input('flag', flag, 'rf')
     blocker.add_input('jones', jones, jout)
     blocker.add_input('tbin_idx', tbin_idx, 'r')
     blocker.add_input('tbin_counts', tbin_counts, 'r')
@@ -250,11 +251,12 @@ def single_stokes(ds=None,
     return out_ds.unify_chunks()
 
 
-def weight_data(data, weight, jones, tbin_idx, tbin_counts,
+def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
                 ant1, ant2, pol, product):
 
-    vis, wgt = _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
-                      ant1, ant2, pol, product)
+    vis, wgt = _weight_data_impl(data, weight, flag, jones,
+                                 tbin_idx, tbin_counts,
+                                 ant1, ant2, pol, product)
 
     out_dict = {}
     out_dict['vis'] = vis
@@ -264,14 +266,14 @@ def weight_data(data, weight, jones, tbin_idx, tbin_counts,
 
 
 @generated_jit(nopython=True, nogil=True, cache=True, parallel=True)
-def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
+def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product):
 
     coerce_literal(weight_data, ["product", "pol"])
 
     vis_func, wgt_func = stokes_funcs(data, jones, product, pol=pol)
 
-    def _impl(data, weight, jones, tbin_idx, tbin_counts,
+    def _impl(data, weight, flag, jones, tbin_idx, tbin_counts,
               ant1, ant2, pol, product):
         # for dask arrays we need to adjust the chunks to
         # start counting from zero
@@ -289,6 +291,8 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                 gp = jones[t, p, :, 0]
                 gq = jones[t, q, :, 0]
                 for chan in range(nchan):
+                    if flag[row, chan]:
+                        continue
                     wgt[row, chan] = wgt_func(gp[chan], gq[chan],
                                               weight[row, chan])
                     vis[row, chan] = vis_func(gp[chan], gq[chan],
