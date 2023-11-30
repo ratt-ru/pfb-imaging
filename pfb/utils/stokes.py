@@ -88,13 +88,18 @@ def single_stokes(ds=None,
             jones = jones.astype(complex_type)
         # qcal has chan and ant axes reversed compared to pfb implementation
         jones = da.swapaxes(jones, 1, 2)
-        # data are not necessarily 2x2 so we need separate labels
+        # data are not 2x2 so we need separate labels
         # for jones correlations and data/weight correlations
-        if jones.ndim == 5:
+        # reshape to dispatch with generated_jit
+        jones_ncorr = jones.shape[-1]
+        if jones_ncorr == 2:
             jout = 'rafdx'
-        elif jones.ndim == 6:
+        elif jones_ncorr == 4:
             jout = 'rafdxx'
             jones = jones.reshape(ntime, nant, nchan, 1, 2, 2)
+        else:
+            raise ValueError("Incorrect number of correlations of "
+                             f"{jones_ncorr} for product {opts.product}")
     else:
         jones = da.ones((ntime, nant, nchan, 1, 2),
                         chunks=(-1,)*5,
@@ -118,8 +123,6 @@ def single_stokes(ds=None,
     blocker.add_input('ant2', ant2, 'r')
     blocker.add_input('pol', poltype)
     blocker.add_input('product', opts.product)
-
-    nrow, nchan, _ = data.shape
     blocker.add_output('vis', 'rf', ((nrow,),(nchan,)), data.dtype)
     blocker.add_output('wgt', 'rf', ((nrow,),(nchan,)), weight.dtype)
 
