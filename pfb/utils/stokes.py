@@ -41,6 +41,8 @@ def single_stokes(ds=None,
 
     data = getattr(ds, opts.data_column).data
     nrow, nchan, ncorr = data.shape
+    ntime = utime.size
+    nant = antpos.shape[0]
 
     # clone shared nodes
     ant1 = clone(ds.ANTENNA1.data)
@@ -92,11 +94,8 @@ def single_stokes(ds=None,
             jout = 'rafdx'
         elif jones.ndim == 6:
             jout = 'rafdxx'
-            jones = jones.reshape(-1, nchan, 2, 2)
+            jones = jones.reshape(ntime, nant, nchan, 1, 2, 2)
     else:
-        ntime = utime.size
-        nchan = freq.size
-        nant = antpos.shape[0]
         jones = da.ones((ntime, nant, nchan, 1, 2),
                         chunks=(-1,)*5,
                         dtype=complex_type)
@@ -106,8 +105,6 @@ def single_stokes(ds=None,
     # we cast to dask arrays simply to defer the compute
     tbin_idx = da.from_array(tbin_idx, chunks=(-1))
     tbin_counts = da.from_array(tbin_counts, chunks=(-1))
-
-
 
     # compute Stokes data and weights
     blocker = Blocker(weight_data, 'rf')
@@ -354,30 +351,30 @@ def stokes_funcs(data, jones, product, pol):
     # C = Winv * (T.H * (Mpq.H * (Sinv * Vpq)))
     C = T.H * (Mpq.H * (Sinv * Vpq))
 
-    if jones.ndim == 6:  # Full mode
-        if product == literal('I'):
-            i = 0
-        elif product == literal('Q'):
-            i = 1
-        elif product == literal('U'):
-            i = 2
-        elif product == literal('V'):
-            i = 3
-        else:
-            raise ValueError(f"Unknown polarisation product {product}")
+    if product == literal('I'):
+        i = 0
+    elif product == literal('Q'):
+        i = 1
+    elif product == literal('U'):
+        i = 2
+    elif product == literal('V'):
+        i = 3
+    else:
+        raise ValueError(f"Unknown polarisation product {product}")
 
+    if jones.ndim == 6:  # Full mode
         Wsymb = lambdify((gp00, gp01, gp10, gp11,
-                            gq00, gq01, gq10, gq11,
-                            w0, w1, w2, w3),
-                            sm.simplify(sm.expand(W[i,i])))
+                          gq00, gq01, gq10, gq11,
+                          w0, w1, w2, w3),
+                          sm.simplify(sm.expand(W[i,i])))
         Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
 
 
         Dsymb = lambdify((gp00, gp01, gp10, gp11,
-                            gq00, gq01, gq10, gq11,
-                            w0, w1, w2, w3,
-                            v00, v01, v10, v11),
-                            sm.simplify(smexpand(C[i])))
+                          gq00, gq01, gq10, gq11,
+                          w0, w1, w2, w3,
+                          v00, v01, v10, v11),
+                          sm.simplify(sm.expand(C[i])))
         Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
 
         @njit(nogil=True, fastmath=True, inline='always')
@@ -431,29 +428,18 @@ def stokes_funcs(data, jones, product, pol):
         C = C.subs(gq10, 0)
         C = C.subs(gq01, 0)
 
-        if product == literal('I'):
-            i = 0
-        elif product == literal('Q'):
-            i = 1
-        elif product == literal('U'):
-            i = 2
-        elif product == literal('V'):
-            i = 3
-        else:
-            raise ValueError(f"Unknown polarisation product {product}")
-
         Wsymb = lambdify((gp00, gp11,
-                            gq00, gq11,
-                            w0, w1, w2, w3),
-                            sm.simplify(sm.expand(W[i,i])))
+                          gq00, gq11,
+                          w0, w1, w2, w3),
+                          sm.simplify(sm.expand(W[i,i])))
         Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
 
 
         Dsymb = lambdify((gp00, gp11,
-                            gq00, gq11,
-                            w0, w1, w2, w3,
-                            v00, v01, v10, v11),
-                            sm.simplify(sm.expand(C[i])))
+                          gq00, gq11,
+                          w0, w1, w2, w3,
+                          v00, v01, v10, v11),
+                          sm.simplify(sm.expand(C[i])))
         Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
 
         @njit(nogil=True, fastmath=True, inline='always')
