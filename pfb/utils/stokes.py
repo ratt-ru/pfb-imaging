@@ -335,20 +335,20 @@ def stokes_funcs(data, jones, product, pol):
     # Is this the only difference between linear and circular pol?
     # What about paralactic angle rotation?
     if pol == literal('linear'):
-        T = sm.Matrix([[1.0, -1.0, 0, 0],
+        T = sm.Matrix([[1.0, 1.0, 0, 0],
                        [0, 0, 1.0, -1.0j],
                        [0, 0, 1.0, 1.0j],
-                       [1.0, 1, 0, 0]])
+                       [1.0, -1.0, 0, 0]])
     elif pol == literal('circular'):
         T = sm.Matrix([[1.0, 0, 0, 1.0],
                        [0, 1.0, 1.0j, 0],
                        [0, 1.0, -1.0j, 0],
-                       [1, 0, 0, -1]])
-    Tinv = T.inv()
+                       [1.0, 0, 0, -1.0]])
+    # Tinv = T.inv()
 
     # Full Stokes weights
     W = T.H * Mpq.H * Sinv * Mpq * T
-    Winv = Tinv * Mpqinv * S * Mpqinv.H * Tinv.H
+    # Winv = Tinv * Mpqinv * S * Mpqinv.H * Tinv.H
 
     # Full Stokes coherencies
     # C = Winv * (T.H * (Mpq.H * (Sinv * Vpq)))
