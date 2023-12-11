@@ -636,6 +636,8 @@ def image_data_products(uvw,
 
         # wgt*imwgt*l2wgt required for PSF
         wgt *= imwgt
+    else:
+        imwgt = None
 
     if do_weight:
         out_dict['WEIGHT'] = wgt
