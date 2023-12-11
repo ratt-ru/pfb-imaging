@@ -609,7 +609,12 @@ def image_data_products(uvw,
         wcount = mask.sum()
         if wcount:
             ovar = ressq.sum()/wcount
-            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+            l2wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+        else:
+            l2wgt = None
+    else:
+        l2wgt = None
+
 
     # we usually want to re-evaluate this since the robustness may change
     if robustness is not None:
@@ -624,6 +629,12 @@ def image_data_products(uvw,
             cellx, celly,
             robustness)
 
+        # this is necessitated by the way the weighting is done i.e.
+        # wgt applied to vis@init so only imwgt*l2wgt needs to be applied
+        if l2wgt is not None:
+            imwgt *= l2wgt
+
+        # wgt*imwgt*l2wgt required for PSF
         wgt *= imwgt
 
     if do_weight:
@@ -636,7 +647,7 @@ def image_data_products(uvw,
         uvw=uvw,
         freq=freq,
         vis=vis,
-        wgt=imwgt,  # data have already been naturally weighted
+        wgt=imwgt,  # data already naturally weighted
         mask=mask,
         npix_x=nx, npix_y=ny,
         pixsize_x=cellx, pixsize_y=celly,

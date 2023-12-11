@@ -143,9 +143,15 @@ def _grid(xdsi=None, **kw):
     if xdsi is not None:
         xds = []
         for ds in xdsi:
-            xds.append(ds.chunk({'row':-1}))
+            xds.append(ds.chunk({'row':-1,
+                                 'chan': -1,
+                                 'l_beam': -1,
+                                 'm_beam': -1}))
     else:
-        xds = xds_from_zarr(xds_name, chunks={'row': -1})
+        xds = xds_from_zarr(xds_name, chunks={'row': -1,
+                                              'chan': -1,
+                                              'l_beam': -1,
+                                              'm_beam': -1})
     # dds contains image space products including imaging weights and uvw
     dds_name = f'{basename}_{opts.postfix}.dds'
 
