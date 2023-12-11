@@ -273,6 +273,13 @@ def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
 
     vis_func, wgt_func = stokes_funcs(data, jones, product, pol=pol)
 
+    import inspect
+    print(inspect.getsource(vis_func))
+    print(inspect.getsource(wgt_func))
+
+    quit()
+
+
     def _impl(data, weight, flag, jones, tbin_idx, tbin_counts,
               ant1, ant2, pol, product):
         # for dask arrays we need to adjust the chunks to
