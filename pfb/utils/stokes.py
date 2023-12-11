@@ -273,13 +273,6 @@ def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
 
     vis_func, wgt_func = stokes_funcs(data, jones, product, pol=pol)
 
-    import inspect
-    print(inspect.getsource(vis_func))
-    print(inspect.getsource(wgt_func))
-
-    quit()
-
-
     def _impl(data, weight, flag, jones, tbin_idx, tbin_counts,
               ant1, ant2, pol, product):
         # for dask arrays we need to adjust the chunks to
@@ -342,10 +335,10 @@ def stokes_funcs(data, jones, product, pol):
     # Is this the only difference between linear and circular pol?
     # What about paralactic angle rotation?
     if pol == literal('linear'):
-        T = sm.Matrix([[1.0, 1.0, 0, 0],
+        T = sm.Matrix([[1.0, -1.0, 0, 0],
                        [0, 0, 1.0, -1.0j],
                        [0, 0, 1.0, 1.0j],
-                       [1, -1, 0, 0]])
+                       [1.0, 1, 0, 0]])
     elif pol == literal('circular'):
         T = sm.Matrix([[1.0, 0, 0, 1.0],
                        [0, 1.0, 1.0j, 0],
@@ -487,5 +480,11 @@ def stokes_funcs(data, jones, product, pol):
 
     else:
         raise ValueError(f"Jones term has incorrect number of dimensions")
+
+    # import inspect
+    # print(inspect.getsource(Djfn))
+    # print(inspect.getsource(Wjfn))
+
+    # quit()
 
     return vfunc, wfunc
