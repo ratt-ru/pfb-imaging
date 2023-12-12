@@ -336,8 +336,8 @@ def stokes_funcs(data, jones, product, pol):
     # What about paralactic angle rotation?
     if pol == literal('linear'):
         T = sm.Matrix([[1.0, 1.0, 0, 0],
-                       [0, 0, 1.0, -1.0j],
                        [0, 0, 1.0, 1.0j],
+                       [0, 0, 1.0, -1.0j],
                        [1.0, -1.0, 0, 0]])
     elif pol == literal('circular'):
         T = sm.Matrix([[1.0, 0, 0, 1.0],
