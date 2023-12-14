@@ -649,7 +649,8 @@ def image_data_products(uvw,
         uvw=uvw,
         freq=freq,
         vis=vis,
-        wgt=imwgt,  # data already naturally weighted
+        wgt=wgt,
+        # wgt=imwgt,  # data already naturally weighted
         mask=mask,
         npix_x=nx, npix_y=ny,
         pixsize_x=cellx, pixsize_y=celly,
