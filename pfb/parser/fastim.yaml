@@ -1,0 +1,120 @@
+inputs:
+  ms:
+    dtype: List[str]
+    required: true
+    abbreviation: ms
+    info:
+      Path to measurement set
+  scans:
+    dtype: List[int]
+    info:
+      List of SCAN_NUMBERS to image. Defaults to all.
+      Input as string eg. '[0,2]' if running from CLI
+  ddids:
+    dtype: List[int]
+    info:
+      List of DATA_DESC_ID's to images. Defaults to all.
+      Input as string eg. '[0,1]' if running from CLI
+  fields:
+    dtype: List[int]
+    info:
+      List of FIELD_ID's to image. Defaults to all.
+      Input as string eg. '[0,1,2]' if running from CLI
+  freq_range:
+    dtype: str
+    info:
+      Frequency range to image in Hz.
+      Specify as a string with colon delimiter eg. '1e9:1.1e9'
+  overwrite:
+    dtype: bool
+    default: false
+    info:
+      Allow overwrite of output xds
+  radec:
+    dtype: Optional[List[any]]
+    info:
+      Rephase all images to this radec specified in radians
+  data_column:
+    dtype: str
+    default: DATA
+    abbreviation: dc
+    info:
+      Data column to image. Must be the same across MSs
+  weight_column:
+    dtype: str
+    abbreviation: wc
+    info:
+      Column containing natural weights. Must be the same across MSs
+  sigma_column:
+    dtype: str
+    abbreviation: sc
+    info:
+      Column containing standard devations.
+      Will be used to initialise natural weights if detected.
+      Must be the same across MSs
+  flag_column:
+    dtype: str
+    default: FLAG
+    abbreviation: fc
+    info:
+      Column containing data flags. Must be the same across MSs
+  gain_table:
+    dtype: List[str]
+    info:
+      Path to Quartical gain table containing NET gains.
+      There must be a table for each MS and glob(ms) and glob(gt) should match up
+  gain_term:
+    dtype: str
+    default: NET
+    info:
+      Which gain term to use. Default is NET
+  integrations_per_image:
+    dtype: int
+    abbreviation: ipi
+    default: -1
+    info:
+      Number of time integrations per image.
+      Default (-1, 0, None) -> dataset per scan.
+  channels_per_image:
+    dtype: int
+    abbreviation: cpi
+    default: -1
+    info:
+      Number of channels per image.
+      Default (-1, 0, None) -> dataset per spw.
+  precision:
+    dtype: str
+    default: double
+    choices:
+      - single
+      - double
+    info:
+      Gridding precision
+  bda_decorr:
+    dtype: float
+    default: 1.0
+    info:
+      BDA decorrelation factor.
+      Only has an effect if less than one
+  beam_model:
+    dtype: str
+    info:
+      Beam model to use
+  max_field_of_view:
+    dtype: float
+    abbreviation: fov
+    default: 3.0
+    info:
+      Field of view in degrees
+  chan_average:
+    dtype: int
+    default: 1
+    info:
+      Average this number if channels together
+
+  _include:
+    - dist.yml
+    - out.yml
+
+outputs:
+    {}
