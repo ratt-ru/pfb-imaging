@@ -312,12 +312,21 @@ def construct_mappings(ms_name,
         # subtables
         ddids = xds_from_table(ms + "::DATA_DESCRIPTION")[0]
         fields = xds_from_table(ms + "::FIELD")[0]
+        feeds = xds_from_table(ms + "::FEED")[0]
         spws = xds_from_table(ms + "::SPECTRAL_WINDOW")[0]
         pols = xds_from_table(ms + "::POLARIZATION")[0]
         ants = xds_from_table(ms + "::ANTENNA")[0]
 
         antpos[ms] = ants.POSITION.data
         poltype[ms] = fetch_poltype(pols.CORR_TYPE.data.squeeze())
+        unique_feeds = np.unique(feeds.POLARIZATION_TYPE.values)
+
+        if np.all([feed in "XxYy" for feed in unique_feeds]):
+            feed_type = "linear"
+        elif np.all([feed in "LlRr" for feed in unique_feeds]):
+            feed_type = "circular"
+        else:
+            raise ValueError("Unsupported feed type/configuration.")
 
         idts[ms] = []
         if gain_name is not None:

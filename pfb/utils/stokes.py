@@ -319,7 +319,7 @@ def stokes_funcs(data, jones, product, pol):
 
     # Mueller matrix (row major form)
     Mpq = TensorProduct(Gp, Gq.conjugate())
-    Mpqinv = TensorProduct(Gq.conjugate().inv(), Gp.inv())
+    Mpqinv = TensorProduct(Gp.inv(), Gq.conjugate().inv())
 
     # inverse noise covariance
     Sinv = sm.Matrix([[w0, 0, 0, 0],
@@ -344,15 +344,15 @@ def stokes_funcs(data, jones, product, pol):
                        [0, 1.0, 1.0j, 0],
                        [0, 1.0, -1.0j, 0],
                        [1.0, 0, 0, -1.0]])
-    # Tinv = T.inv()
+    Tinv = T.inv()
 
     # Full Stokes weights
     W = T.H * Mpq.H * Sinv * Mpq * T
-    # Winv = Tinv * Mpqinv * S * Mpqinv.H * Tinv.H
+    Winv = Tinv * Mpqinv * S * Mpqinv.H * Tinv.H
 
     # Full Stokes coherencies
-    # C = Winv * (T.H * (Mpq.H * (Sinv * Vpq)))
-    C = T.H * (Mpq.H * (Sinv * Vpq))
+    C = Winv * (T.H * (Mpq.H * (Sinv * Vpq)))
+    # C = T.H * (Mpq.H * (Sinv * Vpq))
 
     if product == literal('I'):
         i = 0
