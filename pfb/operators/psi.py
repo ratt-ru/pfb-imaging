@@ -49,10 +49,11 @@ def coef2im(alpha, x, bases, ntot, iy, sy, nx, ny, nthreads=1):
 
         for f in cf.as_completed(futures):
             wave, l = f.result()
-            ne.evaluate('x + wave', local_dict={
-                        'x': x[l],
-                        'wave': wave/sqrtP},
-                        out=x[l], casting='same_kind')
+            # ne.evaluate('x + wave', local_dict={
+            #             'x': x[l],
+            #             'wave': wave/sqrtP},
+            #             out=x[l], casting='same_kind')
+            x[l] += wave
 
 
 def _im2coef_impl(x, base, l, b, nlevels):

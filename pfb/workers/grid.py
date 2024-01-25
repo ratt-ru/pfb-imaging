@@ -251,6 +251,10 @@ def _grid(xdsi=None, **kw):
     else:
         nx = opts.nx
         ny = opts.ny if opts.ny is not None else nx
+        cell_deg = np.rad2deg(cell_rad)
+        fovx = nx*cell_deg
+        fovy = ny*cell_deg
+        print(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
 
     if opts.dirty:
         print(f"Image size = (ntime={ntime}, nband={nband}, nx={nx}, ny={ny})", file=log)
