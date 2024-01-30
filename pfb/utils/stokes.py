@@ -452,9 +452,9 @@ def stokes_funcs(data, jones, product, pol):
             gq00 = gq[0]
             gq11 = gq[1]
             W00 = W[0]
-            W01 = W[1]
-            W10 = W[2]
-            W11 = W[3]
+            W01 = 1.0 #W[1]
+            W10 = 1.0 #W[2]
+            W11 = W[-1]
             return Wjfn(gp00, gp11,
                         gq00, gq11,
                         W00, W01, W10, W11).real
@@ -466,13 +466,13 @@ def stokes_funcs(data, jones, product, pol):
             gq00 = gq[0]
             gq11 = gq[1]
             W00 = W[0]
-            W01 = W[1]
-            W10 = W[2]
-            W11 = W[3]
+            W01 = 1.0  #W[1]
+            W10 = 1.0  #W[2]
+            W11 = W[-1]
             V00 = V[0]
-            V01 = V[1]
-            V10 = V[2]
-            V11 = V[3]
+            V01 = 0j  #V[1]
+            V10 = 0j  #V[2]
+            V11 = V[-1]
             return Djfn(gp00, gp11,
                         gq00, gq11,
                         W00, W01, W10, W11,
