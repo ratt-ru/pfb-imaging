@@ -608,12 +608,10 @@ def image_data_products(uvw,
         ressq = (residual_vis*residual_vis.conj()).real
         wcount = mask.sum()
         if wcount:
-            ovar = ressq.sum()/wcount
-            l2wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+            ovar = ressq.sum()/wcount  # use 67% quantile?
+            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
         else:
-            l2wgt = None
-    else:
-        l2wgt = None
+            wgt = None
 
 
     # we usually want to re-evaluate this since the robustness may change
@@ -628,16 +626,7 @@ def image_data_products(uvw,
             nx, ny,
             cellx, celly,
             robustness)
-
-        # this is necessitated by the way the weighting is done i.e.
-        # wgt applied to vis@init so only imwgt*l2wgt needs to be applied
-        if l2wgt is not None:
-            imwgt *= l2wgt
-
-        # wgt*imwgt*l2wgt required for PSF
         wgt *= imwgt
-    else:
-        imwgt = None
 
     if do_weight:
         out_dict['WEIGHT'] = wgt
@@ -650,7 +639,6 @@ def image_data_products(uvw,
         freq=freq,
         vis=vis,
         wgt=wgt,
-        # wgt=imwgt,  # data already naturally weighted
         mask=mask,
         npix_x=nx, npix_y=ny,
         pixsize_x=cellx, pixsize_y=celly,

@@ -291,7 +291,7 @@ def _grid(xdsi=None, **kw):
         print(f'Image space data products will be stored in {dds_name}.', file=log)
 
     # check if model exists
-    if opts.transfer_model_from is not None:
+    if opts.transfer_model_from:
         try:
             mds = xds_from_zarr(opts.transfer_model_from,
                                 chunks={'params':-1, 'comps':-1})[0]
@@ -399,7 +399,7 @@ def _grid(xdsi=None, **kw):
         out_ds = out_ds.assign(**{'BEAM': (('x', 'y'), bvals)})
 
         # get the model
-        if opts.transfer_model_from is not None:
+        if opts.transfer_model_from:
             from pfb.utils.misc import eval_coeffs_to_slice
             model = eval_coeffs_to_slice(
                 ds.time_out,
