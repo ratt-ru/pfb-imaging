@@ -27,7 +27,10 @@ def model2comps(**kw):
     opts = OmegaConf.create(defaults)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'model2comps_{timestamp}.log')
+    ldir = Path(opts.log_directory).resolve()
+    ldir.mkdir(parents=True, exist_ok=True)
+    pyscilog.log_to_file(f'{ldir}/model2comps_{timestamp}.log')
+    print(f'Logs will be written to {str(ldir)}/model2comps_{timestamp}.log', file=log)
 
     OmegaConf.set_struct(opts, True)
 
