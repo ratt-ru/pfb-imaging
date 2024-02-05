@@ -503,11 +503,11 @@ def stokes_funcs(data, jones, product, pol, nc):
                 W00 = W[0]
                 W01 = 1.0
                 W10 = 1.0
-                W11 = W[3]
+                W11 = W[-1]
                 V00 = V[0]
                 V01 = 0j
                 V10 = 0j
-                V11 = V[3]
+                V11 = V[-1]
                 return Djfn(gp00, gp11,
                             gq00, gq11,
                             W00, W01, W10, W11,
