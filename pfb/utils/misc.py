@@ -1050,7 +1050,7 @@ def sum_overlap(ufreq, flow, fhigh, **kwargs):
     return out_dict
 
 
-def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model):
+def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model, alpha=4):
     '''
     The logic here is that weights should remain the same for model
     components that are rmsfactor times larger than the rms.
@@ -1059,8 +1059,8 @@ def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model):
     '''
     psiH(model, outvar)
     mcomps = np.sum(outvar, axis=0)
-    # the **2 here results in more agressive reweighting
-    return (1 + rmsfactor)/(1 + mcomps**4/rms_comps**4)
+    # the **alpha here results in more agressive reweighting
+    return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
 
 
 # TODO - this can be done in parallel by splitting the image into facets

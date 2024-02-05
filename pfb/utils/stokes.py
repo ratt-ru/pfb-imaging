@@ -123,6 +123,7 @@ def single_stokes(ds=None,
     blocker.add_input('ant2', ant2, 'r')
     blocker.add_input('pol', poltype)
     blocker.add_input('product', opts.product)
+    blocker.add_input('nc', str(ncorr))  # dispatch based on ncorr to deal with dual pol
     blocker.add_output('vis', 'rf', ((nrow,),(nchan,)), data.dtype)
     blocker.add_output('wgt', 'rf', ((nrow,),(nchan,)), weight.dtype)
 
@@ -252,11 +253,11 @@ def single_stokes(ds=None,
 
 
 def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
-                ant1, ant2, pol, product):
+                ant1, ant2, pol, product, nc):
 
     vis, wgt = _weight_data_impl(data, weight, flag, jones,
                                  tbin_idx, tbin_counts,
-                                 ant1, ant2, pol, product)
+                                 ant1, ant2, pol, product, nc)
 
     out_dict = {}
     out_dict['vis'] = vis
@@ -267,11 +268,11 @@ def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
 
 @generated_jit(nopython=True, nogil=True, cache=True, parallel=True)
 def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
-                      ant1, ant2, pol, product):
+                      ant1, ant2, pol, product, nc):
 
-    coerce_literal(weight_data, ["product", "pol"])
+    coerce_literal(weight_data, ["product", "pol", "nc"])
 
-    vis_func, wgt_func = stokes_funcs(data, jones, product, pol=pol)
+    vis_func, wgt_func = stokes_funcs(data, jones, product, pol, ncorr)
 
     def _impl(data, weight, flag, jones, tbin_idx, tbin_counts,
               ant1, ant2, pol, product):
@@ -303,7 +304,7 @@ def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
     return _impl
 
 
-def stokes_funcs(data, jones, product, pol):
+def stokes_funcs(data, jones, product, pol, nc):
     import sympy as sm
     from sympy.physics.quantum import TensorProduct
     from sympy.utilities.lambdify import lambdify
@@ -445,38 +446,77 @@ def stokes_funcs(data, jones, product, pol):
                           sm.simplify(sm.expand(C[i])))
         Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
 
-        @njit(nogil=True, fastmath=True, inline='always')
-        def wfunc(gp, gq, W):
-            gp00 = gp[0]
-            gp11 = gp[1]
-            gq00 = gq[0]
-            gq11 = gq[1]
-            W00 = W[0]
-            W01 = 1.0 #W[1]
-            W10 = 1.0 #W[2]
-            W11 = W[-1]
-            return Wjfn(gp00, gp11,
-                        gq00, gq11,
-                        W00, W01, W10, W11).real
+        nc = int(nc)
+        if nc==4:
+            @njit(nogil=True, fastmath=True, inline='always')
+            def wfunc(gp, gq, W):
+                gp00 = gp[0]
+                gp11 = gp[1]
+                gq00 = gq[0]
+                gq11 = gq[1]
+                W00 = W[0]
+                W01 = W[1]
+                W10 = W[2]
+                W11 = W[3]
+                return Wjfn(gp00, gp11,
+                            gq00, gq11,
+                            W00, W01, W10, W11).real
 
-        @njit(nogil=True, fastmath=True, inline='always')
-        def vfunc(gp, gq, W, V):
-            gp00 = gp[0]
-            gp11 = gp[1]
-            gq00 = gq[0]
-            gq11 = gq[1]
-            W00 = W[0]
-            W01 = 1.0  #W[1]
-            W10 = 1.0  #W[2]
-            W11 = W[-1]
-            V00 = V[0]
-            V01 = 0j  #V[1]
-            V10 = 0j  #V[2]
-            V11 = V[-1]
-            return Djfn(gp00, gp11,
-                        gq00, gq11,
-                        W00, W01, W10, W11,
-                        V00, V01, V10, V11)
+            @njit(nogil=True, fastmath=True, inline='always')
+            def vfunc(gp, gq, W, V):
+                gp00 = gp[0]
+                gp11 = gp[1]
+                gq00 = gq[0]
+                gq11 = gq[1]
+                W00 = W[0]
+                W01 = W[1]
+                W10 = W[2]
+                W11 = W[3]
+                V00 = V[0]
+                V01 = V[1]
+                V10 = V[2]
+                V11 = V[3]
+                return Djfn(gp00, gp11,
+                            gq00, gq11,
+                            W00, W01, W10, W11,
+                            V00, V01, V10, V11)
+        elif nc==2:
+            @njit(nogil=True, fastmath=True, inline='always')
+            def wfunc(gp, gq, W):
+                gp00 = gp[0]
+                gp11 = gp[1]
+                gq00 = gq[0]
+                gq11 = gq[1]
+                W00 = W[0]
+                W01 = 1.0
+                W10 = 1.0
+                W11 = W[-1]
+                return Wjfn(gp00, gp11,
+                            gq00, gq11,
+                            W00, W01, W10, W11).real
+
+            @njit(nogil=True, fastmath=True, inline='always')
+            def vfunc(gp, gq, W, V):
+                gp00 = gp[0]
+                gp11 = gp[1]
+                gq00 = gq[0]
+                gq11 = gq[1]
+                W00 = W[0]
+                W01 = 1.0
+                W10 = 1.0
+                W11 = W[3]
+                V00 = V[0]
+                V01 = 0j
+                V10 = 0j
+                V11 = V[3]
+                return Djfn(gp00, gp11,
+                            gq00, gq11,
+                            W00, W01, W10, W11,
+                            V00, V01, V10, V11)
+        else:
+            raise ValueError(f"Selected product is only available from 2 or 4"
+                             f"correlation data while you have ncorr={nc}.")
+
 
     else:
         raise ValueError(f"Jones term has incorrect number of dimensions")
