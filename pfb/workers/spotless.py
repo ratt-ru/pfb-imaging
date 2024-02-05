@@ -1,5 +1,6 @@
 # flake8: noqa
 import os
+from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
 from functools import partial
@@ -28,7 +29,18 @@ def spotless(**kw):
     OmegaConf.set_struct(opts, True)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
+<<<<<<< HEAD
     pyscilog.log_to_file(f'spotless_{timestamp}.log')
+=======
+    ldir = Path(opts.log_directory).resolve()
+    ldir.mkdir(parents=True, exist_ok=True)
+    pyscilog.log_to_file(f'{str(ldir)}/spotless_{timestamp}.log')
+    print(f'Logs will be written to {str(ldir)}/spotless_{timestamp}.log', file=log)
+    basedir = Path(opts.output_filename).resolve().parent
+    basedir.mkdir(parents=True, exist_ok=True)
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    dds_name = f'{basename}_{opts.postfix}.dds'
+>>>>>>> awskube
 
     with ExitStack() as stack:
         # numpy imports have to happen after this step
@@ -46,7 +58,7 @@ def spotless(**kw):
             return _spotless(**opts)
 
 
-def _spotless(**kw):
+def _spotless(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -63,7 +75,10 @@ def _spotless(**kw):
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
     from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
+<<<<<<< HEAD
     from pfb.opt.primal_dual import primal_dual_exp
+=======
+>>>>>>> awskube
     from pfb.utils.misc import l1reweight_func
     from pfb.operators.hessian import hessian_xds
     from pfb.operators.psf import psf_convolve_cube
@@ -78,14 +93,25 @@ def _spotless(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
-    dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                          'chan':-1,
-                                          'x':-1,
-                                          'y':-1,
-                                          'x_psf':-1,
-                                          'y_psf':-1,
-                                          'yo2':-1})
+    dds_name = f'{basename}_{opts.postfix}.dds'
+    if ddsi is not None:
+        dds = []
+        for ds in ddsi:
+            dds.append(ds.chunk({'row':-1,
+                                 'chan':-1,
+                                 'x':-1,
+                                 'y':-1,
+                                 'x_psf':-1,
+                                 'y_psf':-1,
+                                 'yo2':-1}))
+    else:
+        dds = xds_from_zarr(dds_name, chunks={'row':-1,
+                                            'chan':-1,
+                                            'x':-1,
+                                            'y':-1,
+                                            'x_psf':-1,
+                                            'y_psf':-1,
+                                            'yo2':-1})
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
 
@@ -93,6 +119,7 @@ def _spotless(**kw):
     lastsize = ny_psf
 
     # stitch dirty/psf in apparent scale
+    print("Combining slices into cubes", file=log)
     output_type = dds[0].DIRTY.dtype
     dirty, model, residual, psf, psfhat, beam, wsums, dual = dds2cubes(
                                                                dds,
@@ -137,7 +164,7 @@ def _spotless(**kw):
     # set up vis space Hessian
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
-    hessopts['wstack'] = opts.wstack
+    hessopts['do_wgridding'] = opts.do_wgridding
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads  # nvthreads since dask parallel over band
@@ -197,7 +224,7 @@ def _spotless(**kw):
     # get clean beam area to convert residual units during l1reweighting
     # TODO - could refine this with comparison between dirty and restored
     # if contiuing the deconvolution
-    GaussPar = fitcleanbeam(psf_mfs[None], level=0.25, pixsize=1.0)[0]
+    GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
     pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
     print(f"Number of pixels per beam estimated as {pix_per_beam}",
           file=log)
@@ -213,6 +240,13 @@ def _spotless(**kw):
     psiH(tmp2/pix_per_beam, psiHoutvar)
     rms_comps = np.std(np.sum(psiHoutvar, axis=0),
                        axis=-1)[:, None]  # preserve axes
+
+    # This is attempt at getting the primal-dual to converge
+    # more homogeneously when bands have very different wsums
+    # sfactor is used to scale the grad21 function below
+    sfactor = np.zeros((nband, 1, 1))
+    sfactor[fsel] = wsum/wsums[fsel, None, None]  # missing subbands
+    sfactor /= np.mean(sfactor[fsel])
 
     # TODO - load from dds if present
     if dual is None:
@@ -243,6 +277,7 @@ def _spotless(**kw):
         modelp = deepcopy(model)
         data = residual + psf_convolve(model)
         grad21 = lambda x: psf_convolve(x) - data
+<<<<<<< HEAD
         # model, dual = primal_dual(model,
         #                           dual,
         #                           opts.rmsfactor*rms,
@@ -260,6 +295,13 @@ def _spotless(**kw):
         #                           gamma=opts.gamma)
 
         model, dual = primal_dual_exp(model,
+=======
+        # def grad21(x):
+        #     res = psf_convolve(x) - data
+        #     res[fsel] *= sfactor
+        #     return res
+        model, dual = primal_dual(model,
+>>>>>>> awskube
                                   dual,
                                   opts.rmsfactor*rms,
                                   psi,
@@ -277,7 +319,9 @@ def _spotless(**kw):
                                   report_freq=opts.pd_report_freq,
                                   gamma=opts.gamma)
 
-        save_fits(basename + f'_model_{k+1}.fits', np.mean(model, axis=0), hdr_mfs)
+        save_fits(np.mean(model, axis=0),
+                  basename + f'_{opts.postfix}_model_{k+1}.fits',
+                  hdr_mfs)
 
         print("Getting residual", file=log)
         convimage = hess(model)
@@ -286,7 +330,9 @@ def _spotless(**kw):
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
 
-        save_fits(basename + f'_residual_{k+1}.fits', residual_mfs, hdr_mfs)
+        save_fits(residual_mfs,
+                  basename + f'_{opts.postfix}_residual_{k+1}.fits',
+                  hdr_mfs)
 
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
@@ -319,6 +365,7 @@ def _spotless(**kw):
             ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
                                   'MODEL': (('x', 'y'), m),
                                   'DUAL': (('c', 'n'), d)})
+            ds_out = ds_out.assign_attrs({'parametrisation': 'id'})
             dds_out.append(ds_out)
         writes = xds_to_zarr(dds_out, dds_name,
                              columns=('RESIDUAL', 'MODEL', 'DUAL'),
@@ -338,12 +385,12 @@ def _spotless(**kw):
     # convert to fits files
     fitsout = []
     if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
     if opts.fits_cubes:
-        fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
-        fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
+        fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
     if len(fitsout):
         print("Writing fits", file=log)
@@ -382,7 +429,11 @@ def _spotless(**kw):
 #     from itertools import cycle
 
 #     basename = f'{opts.output_filename}_{opts.product.upper()}'
+<<<<<<< HEAD
 #     dds_name = f'{basename}_{opts.postfix}.dds.zarr'
+=======
+#     dds_name = f'{basename}_{opts.postfix}.dds'
+>>>>>>> awskube
 
 #     client = get_client()
 #     names = [w['name'] for w in client.scheduler_info()['workers'].values()]

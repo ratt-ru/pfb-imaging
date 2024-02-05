@@ -49,7 +49,7 @@ def clean(**kw):
         return _clean(**opts)
 
 
-def _clean(**kw):
+def _clean(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
     # always combine over ds during cleaning
     opts['mean_ds'] = True
@@ -74,14 +74,25 @@ def _clean(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
-    dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                          'chan':-1,
-                                          'x':-1,
-                                          'y':-1,
-                                          'x_psf':-1,
-                                          'y_psf':-1,
-                                          'yo2':-1})
+    dds_name = f'{basename}_{opts.postfix}.dds'
+    if ddsi is not None:
+        dds = []
+        for ds in ddsi:
+            dds.append(ds.chunk({'row':-1,
+                                 'chan':-1,
+                                 'x':-1,
+                                 'y':-1,
+                                 'x_psf':-1,
+                                 'y_psf':-1,
+                                 'yo2':-1}))
+    else:
+        dds = xds_from_zarr(dds_name, chunks={'row':-1,
+                                            'chan':-1,
+                                            'x':-1,
+                                            'y':-1,
+                                            'x_psf':-1,
+                                            'y_psf':-1,
+                                            'yo2':-1})
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
 
@@ -139,7 +150,7 @@ def _clean(**kw):
     # set up vis space Hessian
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
-    hessopts['wstack'] = opts.wstack
+    hessopts['do_wgridding'] = opts.do_wgridding
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads
@@ -230,7 +241,9 @@ def _clean(**kw):
 
             model += opts.mop_gamma*x
 
-            save_fits(f'{basename}_{opts.postfix}_premop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
+            save_fits(residual_mfs,
+                      f'{basename}_{opts.postfix}_premop{k}_resid_mfs.fits',
+                      hdr_mfs)
 
             print("Getting residual", file=log)
             convimage = hess(model)
@@ -239,7 +252,9 @@ def _clean(**kw):
             ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                         casting='same_kind')
 
-            save_fits(f'{basename}_{opts.postfix}_postmop{k}_resid_mfs.fits', residual_mfs, hdr_mfs)
+            save_fits(residual_mfs,
+                      f'{basename}_{opts.postfix}_postmop{k}_resid_mfs.fits',
+                      hdr_mfs)
 
             tmp_mask = ~np.any(model, axis=0)
             rms = np.std(residual_mfs[tmp_mask])

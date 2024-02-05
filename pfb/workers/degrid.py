@@ -71,7 +71,6 @@ def _degrid(**kw):
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms import xds_to_storage_table as xds_to_table
-    from daskms.optimisation import inlined_array
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import model as im2vis
@@ -84,9 +83,7 @@ def _degrid(**kw):
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
 
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
-    mds_name = f'{basename}_{opts.postfix}.coeffs.zarr'
-    mds = xds_from_zarr(mds_name)[0]
+    mds = xds_from_zarr(opts.mds)[0]
 
     # grid spec
     cell_rad = mds.cell_rad_x
@@ -98,12 +95,16 @@ def _degrid(**kw):
     radec = (mds.ra, mds.dec)
 
     # model func
-    ref_freq = mds.ref_freq
-    ref_time = mds.ref_time
     params = sm.symbols(('t','f'))
     params += sm.symbols(tuple(mds.params.values))
     symexpr = parse_expr(mds.parametrisation)
     modelf = lambdify(params, symexpr)
+    texpr = parse_expr(mds.texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(mds.fexpr)
+    ffunc = lambdify(params[1], fexpr)
+
+
     # signature (t, f, *params) with
     # t = utime/ref_time
     # f = freq/ref_freq
@@ -170,7 +171,7 @@ def _degrid(**kw):
             nfreq_out = len(fidx.chunks[0])
             assert len(freq.chunks[0]) == nfreq_out
             # and they need to match the number of row chunks
-            uvw = ds.UVW.data
+            uvw = clone(ds.UVW.data)
             assert len(uvw.chunks[0]) == len(tidx.chunks[0])
 
             vis = comps2vis(uvw,
@@ -182,22 +183,20 @@ def _degrid(**kw):
                             coeffs,
                             locx, locy,
                             modelf,
-                            ref_time,
-                            ref_freq,
+                            tfunc,
+                            ffunc,
                             nx, ny,
                             cell_rad, cell_rad,
                             x0=x0, y0=y0,
                             nthreads=opts.nvthreads,
                             epsilon=opts.epsilon,
-                            wstack=opts.wstack)
+                            do_wgridding=opts.do_wgridding)
 
             # convert to single precision to write to MS
             vis = vis.astype(np.complex64)
 
             if opts.accumulate:
                 vis += getattr(ds, opts.model_column).data
-
-            vis = inlined_array(vis, [uvw])
 
             out_ds = ds.assign(**{opts.model_column:
                                  (("row", "chan", "corr"), vis)})
@@ -214,7 +213,7 @@ def _degrid(**kw):
     # dask.visualize(writes, filename=opts.output_filename +
     #                '_degrid_writes_I_graph.pdf', optimize_graph=False)
 
-    with compute_context(opts.scheduler, opts.output_filename+'_degrid'):
+    with compute_context(opts.scheduler, opts.mds+'_degrid'):
         dask.compute(writes, optimize_graph=False)
 
     if opts.scheduler=='distributed':

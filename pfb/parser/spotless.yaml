@@ -1,33 +1,21 @@
 inputs:
   _include:
-    - (pfb.parser)gridding.yml
-    - (pfb.parser)pdopts.yml
-    - (pfb.parser)pmopts.yml
-    - (pfb.parser)dist.yml
+    - gridding.yml
+    - pdopts.yml
+    - pmopts.yml
+    - dist.yml
+    - out.yml
   nband:
     dtype: int
     required: true
     abbreviation: nb
     info:
       Number of imaging bands
-  output_filename:
-    dtype: str
-    required: true
-    abbreviation: o
-    info:
-      Basename of output
   postfix:
     dtype: str
     default: 'main'
     info:
       Can be used to specify a custom name for the image space data products
-  product:
-    dtype: str
-    abbreviation: p
-    default: I
-    info:
-      Imaging products to produce. Options are I, Q, U, V.
-      Only single Stokes products are currently supported
   bases:
     dtype: str
     info: 'Wavelet bases to use. Give as comma separated str eg. '
@@ -59,10 +47,17 @@ inputs:
     info:
       Step size of update
   positivity:
-    dtype: bool
-    default: True
+    dtype: int
+    default: 1
+    # choices:
+    #   - 0
+    #   - 1
+    #   - 2
     info:
-      Apply positivity constraint
+      How to apply positivity constraint
+      0 -> no positivity,
+      1 -> normal positivity constraint
+      and 2 -> strong positivity i.e. all pixels in a band > 0
   niter:
     dtype: int
     default: 5

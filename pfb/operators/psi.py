@@ -30,6 +30,7 @@ def coef2im(alpha, x, bases, ntot, iy, sy, nx, ny, nthreads=1):
     Per band coefficients to image
     '''
     nband, nbasis, nmax = alpha.shape
+    sqrtP = 1.0  #np.sqrt(nbasis)
     futures = []
     x[...] = 0.0
     with cf.ThreadPoolExecutor(max_workers=nthreads) as executor:
@@ -48,10 +49,11 @@ def coef2im(alpha, x, bases, ntot, iy, sy, nx, ny, nthreads=1):
 
         for f in cf.as_completed(futures):
             wave, l = f.result()
-            ne.evaluate('x + wave', local_dict={
-                        'x': x[l],
-                        'wave': wave},
-                        out=x[l], casting='same_kind')
+            # ne.evaluate('x + wave', local_dict={
+            #             'x': x[l],
+            #             'wave': wave/sqrtP},
+            #             out=x[l], casting='same_kind')
+            x[l] += wave
 
 
 def _im2coef_impl(x, base, l, b, nlevels):
@@ -68,7 +70,9 @@ def im2coef(x, alpha, bases, ntot, nmax, nlevels, nthreads=1):
     Per band image to coefficients
     '''
     nbasis = len(bases)
+    sqrtP = 1.0  #np.sqrt(nbasis)
     nband, _, _ = x.shape
+    alpha[...] = 0.0
     futures = []
     with cf.ThreadPoolExecutor(max_workers=nthreads) as executor:
         for l in range(nband):
@@ -79,7 +83,7 @@ def im2coef(x, alpha, bases, ntot, nmax, nlevels, nthreads=1):
 
         for f in cf.as_completed(futures):
             wave, l, b = f.result()
-            alpha[l, b, 0:ntot[b]] = wave
+            alpha[l, b, 0:ntot[b]] = wave/sqrtP
 
 
 # TODO - compare threadpool with dask versions

@@ -2,6 +2,7 @@ import sys
 import numpy as np
 import numexpr as ne
 from numba import jit, njit, prange
+from numba.extending import overload
 import dask
 import dask.array as da
 from dask.distributed import performance_report
@@ -16,11 +17,26 @@ from omegaconf import ListConfig
 from skimage.morphology import label
 from scipy.optimize import curve_fit
 from collections import namedtuple
-from scipy.interpolate import RectBivariateSpline as rbs
 from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
+<<<<<<< HEAD
 import pdb
+=======
+from quartical.utils.dask import Blocker
+from scipy.interpolate import RegularGridInterpolator
+from scipy.linalg import solve_triangular
+import sympy as sm
+from sympy.utilities.lambdify import lambdify
+from sympy.parsing.sympy_parser import parse_expr
 
+JIT_OPTIONS = {
+    "nogil": True,
+    "fastmath": True,
+    "cache": True
+}
+>>>>>>> awskube
+
+import pdb
 class ForkedPdb(pdb.Pdb):
     """A Pdb subclass that may be used
     from a forked multiprocessing child
@@ -96,7 +112,7 @@ def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     S0, S1, PA = GaussPar
     Smaj = S0  #np.maximum(S0, S1)
     Smin = S1  #np.minimum(S0, S1)
-    print(f'using ex = {Smaj}, ey = {Smin}')
+    # print(f'using ex = {Smaj}, ey = {Smin}')
     A = np.array([[1. / Smin ** 2, 0],
                   [0, 1. / Smaj ** 2]])
 
@@ -109,9 +125,7 @@ def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     extent = (nsigma * Smaj)**2
     xflat = xin.squeeze()
     yflat = yin.squeeze()
-    ind = np.argwhere(xflat**2 + yflat**2 <= extent).squeeze()
-    idx = ind[:, 0]
-    idy = ind[:, 1]
+    idx, idy = np.where(xflat**2 + yflat**2 <= extent)
     x = np.array([xflat[idx, idy].ravel(), yflat[idx, idy].ravel()])
     R = np.einsum('nb,bc,cn->n', x.T, A, x)
     # need to adjust for the fact that GaussPar corresponds to FWHM
@@ -214,8 +228,9 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
             thiskernhat = r2c(iFs(thiskern, axes=ax), axes=ax, forward=True,
                               nthreads=nthreads, inorm=0)
 
-            convkernhat = np.where(np.abs(thiskernhat) > 0.0,
-                                   gausskernhat / thiskernhat, 0.0)
+            convkernhat = np.zeros_like(thiskernhat)
+            msk = np.abs(thiskernhat) > 0.0
+            convkernhat[msk] = gausskernhat[msk]/thiskernhat[msk]
 
             imhat[i] *= convkernhat[0]
 
@@ -237,7 +252,9 @@ def fetch_poltype(corr_type):
 def construct_mappings(ms_name,
                        gain_name=None,
                        ipi=None,
-                       cpi=None):
+                       cpi=None,
+                       freq_min=-np.inf,
+                       freq_max=np.inf):
     '''
     Construct dictionaries containing per MS, FIELD, DDID and SCAN
     time and frequency mappings.
@@ -299,12 +316,21 @@ def construct_mappings(ms_name,
         # subtables
         ddids = xds_from_table(ms + "::DATA_DESCRIPTION")[0]
         fields = xds_from_table(ms + "::FIELD")[0]
+        feeds = xds_from_table(ms + "::FEED")[0]
         spws = xds_from_table(ms + "::SPECTRAL_WINDOW")[0]
         pols = xds_from_table(ms + "::POLARIZATION")[0]
         ants = xds_from_table(ms + "::ANTENNA")[0]
 
         antpos[ms] = ants.POSITION.data
         poltype[ms] = fetch_poltype(pols.CORR_TYPE.data.squeeze())
+        unique_feeds = np.unique(feeds.POLARIZATION_TYPE.values)
+
+        if np.all([feed in "XxYy" for feed in unique_feeds]):
+            feed_type = "linear"
+        elif np.all([feed in "LlRr" for feed in unique_feeds]):
+            feed_type = "circular"
+        else:
+            raise ValueError("Unsupported feed type/configuration.")
 
         idts[ms] = []
         if gain_name is not None:
@@ -345,7 +371,6 @@ def construct_mappings(ms_name,
         uv_maxs, antpos, poltype)
 
     uv_max = max(uv_maxs)
-
     all_freqs = []
     all_times = []
     freq_mapping = {}
@@ -369,17 +394,31 @@ def construct_mappings(ms_name,
                 except Exception as e:
                     raise ValueError(f'Mismatch between gain and MS '
                                      f'frequencies for {ms} at {idt}')
-            all_freqs.append(freq)
+
+            nchan_in = freq.size
+            idx = (freq>=freq_min) & (freq<=freq_max)
+            if not idx.any():
+                continue
+            idx0 = np.argmax(idx) # returns index of first True element
+            # np.searchsorted here?
+            try:
+                # returns zero if not idx.any()
+                assert idx[idx0]
+            except Exception as e:
+                continue
+            freq = freq[idx]
             nchan = freq.size
             if cpi in [-1, 0, None]:
                 cpit = nchan
+                cpi = nchan_in
             else:
                 cpit = np.minimum(cpi, nchan)
+                cpi = np.minimum(cpi, nchan_in)
             freq_mapping[ms][idt] = {}
-            tmp = np.arange(0, nchan, cpit)
+            tmp = np.arange(idx0, idx0 + nchan, cpit)
             freq_mapping[ms][idt]['start_indices'] = tmp
             if cpit != nchan:
-                tmp2 = np.append(tmp, [nchan])
+                tmp2 = np.append(tmp, [idx0 + nchan])
                 freq_mapping[ms][idt]['counts'] = tmp2[1:] - tmp2[0:-1]
             else:
                 freq_mapping[ms][idt]['counts'] = np.array((nchan,), dtype=int)
@@ -408,8 +447,14 @@ def construct_mappings(ms_name,
             row_mapping[ms][idt]['start_indices'] = ridx
             row_mapping[ms][idt]['counts'] = rcounts
 
+            nfreq_chunks = nchan_in // cpit
+            freq_chunks = (cpit,)*nfreq_chunks
+            rem = nchan_in - nfreq_chunks * cpit
+            if rem:
+                freq_chunks += (rem,)
+
             ms_chunks[ms].append({'row': row_chunks,
-                                  'chan': tuple(freq_mapping[ms][idt]['counts'])})
+                                  'chan': freq_chunks})
 
             time_mapping[ms][idt] = {}
             tmp = np.arange(0, ntime, ipit)
@@ -427,7 +472,7 @@ def construct_mappings(ms_name,
                     if name == 'gain_time':
                         tmp_dict[name] = tuple(time_mapping[ms][idt]['counts'])
                     elif name == 'gain_freq':
-                        tmp_dict[name] = tuple(freq_mapping[ms][idt]['counts'])
+                        tmp_dict[name] = freq_chunks
                     elif name == 'direction':
                         if len(val) > 1:
                             raise ValueError("DD gains not supported yet")
@@ -461,15 +506,17 @@ def _restore_corrs(vis, ncorr):
 
 def fitcleanbeam(psf: np.ndarray,
                  level: float = 0.5,
-                 pixsize: float = 1.0):
+                 pixsize: float = 1.0,
+                 extent: float = 15.0):
     """
-    Find the Gaussian that approximates the main lobe of the PSF.
+    Find the Gaussian that approximates the PSF.
+    First find the main lobe by identifying where PSF > level
+    then fit Gaussian out to a radius of extent * max(x, y) where
+    x and y are the coordinates where PSF > level.
     """
-
-
     nband, nx, ny = psf.shape
 
-    # coordinates
+    # pixel coordinates
     x = np.arange(-nx / 2, nx / 2)
     y = np.arange(-ny / 2, ny / 2)
     xx, yy = np.meshgrid(x, y, indexing='ij')
@@ -491,7 +538,7 @@ def fitcleanbeam(psf: np.ndarray,
         fwhm_conv = 2 * np.sqrt(2 * np.log(2))
         return np.exp(-fwhm_conv * R)
 
-    Gausspars = ()
+    Gausspars = []
     for v in range(nband):
         # make sure psf is normalised
         psfv = psf[v] / psf[v].max()
@@ -502,17 +549,24 @@ def fitcleanbeam(psf: np.ndarray,
         islands = label(mask)
         ncenter = islands[nx // 2, ny // 2]
 
-        # select psf main lobe
-        psfv = psfv[islands == ncenter]
+        # get extend of main lobe
         x = xx[islands == ncenter]
         y = yy[islands == ncenter]
-        xy = np.vstack((x, y))
         xdiff = x.max() - x.min()
         ydiff = y.max() - y.min()
+        rsq = np.abs(x).max()**2 + np.abs(y).max()**2
+        rrsq = xx**2 + yy**2
+        idxs = rrsq < extent * rsq
+
+        # select psf main lobe
+        psfv = psfv[idxs]
+        x = xx[idxs]
+        y = yy[idxs]
+        xy = np.vstack((x, y))
         emaj0 = np.maximum(xdiff, ydiff)
         emin0 = np.minimum(xdiff, ydiff)
         p, _ = curve_fit(func, xy, psfv, p0=(emaj0, emin0, 0.0))
-        Gausspars += ((p[0] * pixsize, p[1] * pixsize, p[2]),)
+        Gausspars.append([p[0] * pixsize, p[1] * pixsize, p[2]])
 
     return Gausspars
 
@@ -705,9 +759,8 @@ def _rephase_vis(vis, uvw, radec_in, radec_out):
                             uvw[:, 2]*(n_out-n_in)))
 
 
-# TODO - concat functions should allow coarsening to values other than 1
+# TODO - should allow coarsening to values other than 1
 def concat_row(xds):
-    # TODO - how to compute average beam before we have access to grid?
     times_in = []
     freqs = []
     for ds in xds:
@@ -729,16 +782,29 @@ def concat_row(xds):
     for b in range(nband):
         xdsb = []
         times = []
+        freq_max = []
+        freq_min = []
+        time_max = []
+        time_min = []
         nu = freqs[b]
         for ds in xds:
             if ds.freq_out == nu:
                 xdsb.append(ds)
                 times.append(ds.time_out)
+                freq_max.append(ds.freq_max)
+                freq_min.append(ds.freq_min)
+                time_max.append(ds.time_max)
+                time_min.append(ds.time_min)
 
         wgt = [ds.WEIGHT for ds in xdsb]
         vis = [ds.VIS for ds in xdsb]
         mask = [ds.MASK for ds in xdsb]
         uvw = [ds.UVW for ds in xdsb]
+
+        # get weighted sum of beams
+        beam = sum_beam(xdsb)
+        l_beam = xdsb[0].l_beam.data
+        m_beam = xdsb[0].m_beam.data
 
         wgto = xr.concat(wgt, dim='row')
         viso = xr.concat(vis, dim='row')
@@ -746,33 +812,38 @@ def concat_row(xds):
         uvwo = xr.concat(uvw, dim='row')
 
         xdso = xr.merge((wgto, viso, masko, uvwo))
-        xdso['BEAM'] = xdsb[0].BEAM  # we need the grid to do this properly
+        xdso = xdso.assign({'BEAM': (('l_beam', 'm_beam'), beam)})
         xdso['FREQ'] = xdsb[0].FREQ  # is this always going to be the case?
 
-        xdso = xdso.chunk({'row':-1})
+        xdso = xdso.chunk({'row':-1, 'l_beam':-1, 'm_beam':-1})
 
         xdso = xdso.assign_coords({
-            'chan': (('chan',), xdsb[0].chan.data)
+            'chan': (('chan',), xdsb[0].chan.data),
+            'l_beam': (('l_beam',), l_beam),
+            'm_beam': (('m_beam',), m_beam)
         })
 
         times = np.array(times)
+        freq_max = np.array(freq_max)
+        freq_min = np.array(freq_min)
+        time_max = np.array(time_max)
+        time_min = np.array(time_min)
         tout = np.round(np.mean(times), 5)  # avoid precision issues
         xdso = xdso.assign_attrs({
             'dec': xdsb[0].dec,  # always the case?
             'ra': xdsb[0].ra,    # always the case?
             'time_out': tout,
-            'time_max': times.max(),
-            'time_min': times.min(),
+            'time_max': time_max.max(),
+            'time_min': time_min.min(),
             'timeid': 0,
             'freq_out': nu,
-            'freq_max': xdsb[0].freq_max,
-            'freq_min': xdsb[0].freq_min,
+            'freq_max': freq_max.max(),
+            'freq_min': freq_min.min(),
         })
         xds_out.append(xdso)
     return xds_out
 
 
-from quartical.utils.dask import Blocker
 def concat_chan(xds, nband_out=1):
     times = []
     freqs_in = []
@@ -790,7 +861,7 @@ def concat_chan(xds, nband_out=1):
     freqs_in = np.unique(freqs_in)
     freqs_min = np.unique(freqs_min)
     freqs_max = np.unique(freqs_max)
-    all_freqs = np.unique(all_freqs)
+    all_freqs = np.unique(np.concatenate(all_freqs))
 
     nband_in = freqs_in.size
     ntime = times.size
@@ -810,37 +881,60 @@ def concat_chan(xds, nband_out=1):
             flow = freq_bins[b]
             fhigh = freq_bins[b+1]
             freqsb = all_freqs[all_freqs >= flow]
-            freqsb = freqsb[freqsb < fhigh]
+            # exlusive except for the last one
+            if b==nband_out-1:
+                freqsb = freqsb[freqsb <= fhigh]
+            else:
+                freqsb = freqsb[freqsb < fhigh]
+            time_max = []
+            time_min = []
             for ds in xds:
                 # ds overlaps output if either ds.freq_min or ds.freq_max lies in the bin
                 low_in = ds.freq_min > flow and ds.freq_min < fhigh
                 high_in = ds.freq_max > flow and ds.freq_max < fhigh
+
                 if ds.time_out == time and (low_in or high_in):
                     xdst.append(ds)
-
-            # LB - we should be able to avoid this stack operation by using Jon's *() magic
-            wgt = da.stack([ds.WEIGHT.data for ds in xdst]).rechunk(-1, -1, -1)
-            vis = da.stack([ds.VIS.data for ds in xdst]).rechunk(-1, -1, -1)
-            mask = da.stack([ds.MASK.data for ds in xdst]).rechunk(-1, -1, -1)
-            freq = da.stack([ds.FREQ.data for ds in xdst]).rechunk(-1, -1)
+                    time_max.append(ds.time_max)
+                    time_min.append(ds.time_min)
 
             nrow = xdst[0].row.size
             nchan = freqsb.size
 
             freqs_dask = da.from_array(freqsb, chunks=nchan)
-            blocker = Blocker(sum_overlap, 's')
-            blocker.add_input('vis', vis, 'src')
-            blocker.add_input('wgt', wgt, 'src')
-            blocker.add_input('mask', mask, 'src')
-            blocker.add_input('freq', freq, 'sc')
+            blocker = Blocker(sum_overlap, 'rc')
             blocker.add_input('ufreq', freqs_dask, 'f')
             blocker.add_input('flow', flow, None)
             blocker.add_input('fhigh', fhigh, None)
-            blocker.add_output('viso', 'rf', ((nrow,), (nchan,)), vis.dtype)
-            blocker.add_output('wgto', 'rf', ((nrow,), (nchan,)), wgt.dtype)
-            blocker.add_output('masko', 'rf', ((nrow,), (nchan,)), mask.dtype)
+
+            for i, ds in enumerate(xdst):
+                ds = ds.chunk({'row':-1, 'chan':-1})
+                blocker.add_input(f'vis{i}', ds.VIS.data, 'rc')
+                blocker.add_input(f'wgt{i}', ds.WEIGHT.data, 'rc')
+                blocker.add_input(f'mask{i}', ds.MASK.data, 'rc')
+                blocker.add_input(f'freq{i}', ds.FREQ.data, 'c')
+
+            blocker.add_output('viso', 'rf', ((nrow,), (nchan,)), xdst[0].VIS.dtype)
+            blocker.add_output('wgto', 'rf', ((nrow,), (nchan,)), xdst[0].WEIGHT.dtype)
+            blocker.add_output('masko', 'rf', ((nrow,), (nchan,)), xdst[0].MASK.dtype)
 
             out_dict = blocker.get_dask_outputs()
+
+            # import dask
+            # dask.visualize(out_dict, color="order", cmap="autumn",
+            #             node_attr={"penwidth": "4"},
+            #             filename='/home/landman/testing/pfb/out/outdict_ordered_graph.pdf',
+            #             optimize_graph=False,
+            #             engine='cytoscape')
+            # dask.visualize(out_dict,
+            #             filename='/home/landman/testing/pfb/out/outdict_graph.pdf',
+            #             optimize_graph=False, engine='cytoscape')
+            # quit()
+
+            # get weighted sum of beam
+            beam = sum_beam(xdst)
+            l_beam = xdst[0].l_beam.data
+            m_beam = xdst[0].m_beam.data
 
             data_vars = {
                 'VIS': (('row', 'chan'), out_dict['viso']),
@@ -848,61 +942,119 @@ def concat_chan(xds, nband_out=1):
                 'MASK': (('row', 'chan'), out_dict['masko']),
                 'FREQ': (('chan',), freqs_dask),
                 'UVW': (('row', 'three'), xdst[0].UVW.data), # should be the same across data sets
-                'BEAM': (('scalar',), xdst[0].BEAM.data)  # need to pass in the grid to do this properly
+                'BEAM': (('l_beam', 'm_beam'), beam)
             }
 
             coords = {
-                'chan': (('chan',), freqsb)
+                'chan': (('chan',), freqsb),
+                'l_beam': (('l_beam',), l_beam),
+                'm_beam': (('m_beam',), m_beam)
             }
 
             fout = np.round(bin_centers[b], 5)  # avoid precision issues
+            time_max = np.array(time_max)
+            time_min = np.array(time_min)
             attrs = {
                 'freq_out': fout,
+                'freq_max': fhigh,
+                'freq_min': flow,
                 'bandid': b,
                 'dec': xdst[0].dec,
                 'ra': xdst[0].ra,
-                'time_out': time
+                'time_out': time,
+                'time_max': time_max.max(),
+                'time_min': time_min.min()
             }
 
             xdso = xr.Dataset(data_vars=data_vars,
+                              coords=coords,
                               attrs=attrs)
 
             xds_out.append(xdso)
     return xds_out
 
 
-def sum_overlap(vis, wgt, mask, freq, ufreq, flow, fhigh):
-    nds = vis.shape[0]
+def sum_beam(xds):
+    '''
+    Compute the weighted sum of the beams contained in xds
+    weighting by the sum of the weights in each ds
+    '''
+    nx, ny = xds[0].BEAM.shape
+    btype = xds[0].BEAM.dtype
+    blocker = Blocker(_sum_beam, 'xy')
+    blocker.add_input('nx', nx, None)
+    blocker.add_input('ny', ny, None)
+    blocker.add_input('btype', btype, None)
+    for i, ds in enumerate(xds):
+        blocker.add_input(f'beam{i}', ds.BEAM.data, 'xy')
+        blocker.add_input(f'wgt{i}', ds.WEIGHT.data, 'rf')
+
+    blocker.add_output('beam', 'xy', ((nx,),(ny,)), btype)
+    out_dict = blocker.get_dask_outputs()
+    return out_dict['beam']
+
+def _sum_beam(nx, ny, btype, **kwargs):
+    beam = np.zeros((nx, ny), dtype=btype)
+    # need to separate the different variables in kwargs
+    # i.e. beam, wgt -> nvars=2
+    nitems = len(kwargs)//2
+    wsum = 0.0
+    for i in range(nitems):
+        wgti = kwargs[f'wgt{i}']
+        wsumi = wgti.sum()
+        beam += wsumi * kwargs[f'beam{i}']
+        wsum += wsumi
+
+    if wsum:
+        beam /= wsum
+
+    # blocker expects dict as output
+    out_dict = {}
+    out_dict['beam'] = beam
+
+    return out_dict
+
+def sum_overlap(ufreq, flow, fhigh, **kwargs):
+    # need to separate the different variables in kwargs
+    # i.e. vis, wgt, mask, freq -> nvars=4
+    nitems = len(kwargs)//4
 
     # output grids
     nchan = ufreq.size
-    nrow = vis.shape[1]
-    viso = np.zeros((nrow, nchan), dtype=vis.dtype)
-    wgto = np.zeros((nrow, nchan), dtype=wgt.dtype)
-    masko = np.zeros((nrow, nchan), dtype=mask.dtype)
+    nrow = kwargs['vis0'].shape[0]
+    viso = np.zeros((nrow, nchan), dtype=kwargs['vis0'].dtype)
+    wgto = np.zeros((nrow, nchan), dtype=kwargs['wgt0'].dtype)
+    masko = np.zeros((nrow, nchan), dtype=kwargs['mask0'].dtype)
 
     # weighted sum at overlap
-    for i in range(nds):
-        nu = freq[i]
+    for i in range(nitems):
+        vis = kwargs[f'vis{i}']
+        wgt = kwargs[f'wgt{i}']
+        mask = kwargs[f'mask{i}']
+        nu = kwargs[f'freq{i}']
         _, idx0, idx1 = np.intersect1d(nu, ufreq, assume_unique=True, return_indices=True)
-        viso[:, idx1] += vis[i][:, idx0] * wgt[i][:, idx0] * mask[i][:, idx0]
-        wgto[:, idx1] += wgt[i][:, idx0] * mask[i][:, idx0]
-        masko[:, idx1] += mask[i][:, idx0]
+        viso[:, idx1] += vis[:, idx0] * wgt[:, idx0] * mask[:, idx0]
+        wgto[:, idx1] += wgt[:, idx0] * mask[:, idx0]
+        masko[:, idx1] += mask[:, idx0]
 
     # unmasked where at least one data point is unflagged
-    masko = np.where(masko > 0, 1, 0)
-    viso[masko.astype(bool)] = viso[masko.astype(bool)]/wgto[masko.astype(bool)]
+    masko = np.where(masko > 0, True, False)
+    # TODO - why does this get trigerred?
+    # if (wgto[masko]==0).any():
+    #     print(np.where(wgto[masko]==0))
+    #     raise ValueError("Weights are zero at unflagged location")
+    viso[masko] = viso[masko]/wgto[masko]
 
     # blocker expects a dictionary as output
     out_dict = {}
     out_dict['viso'] = viso
     out_dict['wgto'] = wgto
-    out_dict['masko'] = masko
+    out_dict['masko'] = masko.astype(np.uint8)
 
     return out_dict
 
 
-def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model):
+def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model, alpha=4):
     '''
     The logic here is that weights should remain the same for model
     components that are rmsfactor times larger than the rms.
@@ -911,6 +1063,348 @@ def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model):
     '''
     psiH(model, outvar)
     mcomps = np.sum(outvar, axis=0)
-    # the **2 here results in more agressive reweighting
-    return (1 + rmsfactor)/(1 + mcomps**4/rms_comps**4)
+    # the **alpha here results in more agressive reweighting
+    return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
 
+
+# TODO - this can be done in parallel by splitting the image into facets
+def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
+                   method='poly', sigmasq=0):
+    '''
+    Fit the time and frequency axes of an image cube where
+
+    image   - (ntime, nband, nx, ny) pixelated image
+    wgt     - (ntime, nband) optional per time and frequency weights
+    nbasist - number of time basis functions
+    nbasisf - number of frequency basis functions
+    method  - method to use for fitting
+
+    If wgt is not supplied equal weights are assumed.
+    If nbasist/f are not supplied we return the coefficients
+    of a bilinear fit regardless of method.
+
+    methods:
+    poly    - fit a monomials in time and frequency
+
+
+    returns:
+    coeffs  - fitted coefficients
+    locx    - x pixel values
+    locy    - y pixel values
+    expr    - a string representing the symbolic expression describing the fit
+    params  - tuple of str, parameters to pass into function (excluding t and f)
+    ref_time    - reference time
+    ref_freq    - reference frequency
+
+
+    The fit is performed in scaled coordinates (t=time/ref_time,f=freq/ref_freq)
+    '''
+    ntime = time.size
+    nband = freq.size
+    ref_time = time[0]
+    ref_freq = freq[0]
+    import sympy as sm
+    from sympy.abc import a, t, f
+
+    if nbasist is None:
+        nbasist = ntime
+    else:
+        assert nbasist <= ntime
+    if nbasisf is None:
+        nbasisf = nband
+    else:
+        assert nbasisf <= nband
+
+    mask = np.any(image, axis=(0,1))  # over t and f axes
+    Ix, Iy = np.where(mask)
+    ncomps = Ix.size
+
+    # components excluding zeros
+    beta = image[:, :, Ix, Iy].reshape(ntime*nband, ncomps)
+    if wgt is not None:
+        wgt = wgt.reshape(ntime*nband, 1)
+    else:
+        wgt = np.ones((ntime*nband, 1), dtype=float)
+    # nothing to fit
+    if ntime==1 and nband==1:
+        coeffs = beta
+        expr = a
+        params = (a,)
+    elif method=='poly':
+        wt = time/ref_time
+        tfunc = t/ref_time
+        Xfit = np.tile(wt[:, None], (nband, nbasist))**np.arange(nbasist)
+        params = sm.symbols(f't(0:{nbasist})')
+        expr = sum(co*t**i for i, co in enumerate(params))
+        # the costant offset will always be included since nbasist is at least one
+        if nband > 1:
+            wf = freq/ref_freq
+            ffunc = f/ref_freq
+            Xf = np.tile(wf[:, None], (ntime, nbasisf-1))**np.arange(1, nbasisf)
+            Xfit = np.hstack((Xfit, Xf))
+            paramsf = sm.symbols(f'f(1:{nbasisf})')
+            expr += sum(co*f**(i+1) for i, co in enumerate(paramsf))
+            params += paramsf
+
+    elif method=='Legendre':
+        # scale to lie between -1,1 for stability
+        if ntime > 1:
+            tmax = time.max()
+            tmin = time.min()
+            wt = (time - (tmax + tmin)/2)
+            wtmax = wt.max()
+            wt /= wtmax
+            # function to convert time to interp domain
+            tfunc = (t - (tmax + tmin)/2)/wtmax
+        else:
+            wt = time
+            tfunc = t
+        Xt = np.zeros((ntime, nbasist), dtype=float)
+        params = sm.symbols(f't(0:{nbasist})')
+        if nbasist > 1:
+            expr = 0
+            for i in range(nbasist):
+                vals = np.polynomial.Legendre.basis(i)(wt)
+                Xt[:, i] = vals
+                expr += sm.polys.orthopolys.legendre_poly(i, t)*params[i]
+        else:
+            Xt[...] = 1.0
+            expr = params[0]
+        Xfit = np.tile(Xt, (nband, 1))
+        paramsf = sm.symbols(f'f(1:{nbasisf})')
+        if nband > 1:
+            Xf = np.zeros((nband, nbasisf - 1))
+            fmax = freq.max()
+            fmin = freq.min()
+            wf = freq - (fmax + fmin)/2
+            wfmax = wf.max()
+            wf /= wfmax
+            ffunc = (f - (fmax + fmin)/2)/wfmax
+            for i in range(1, nbasisf):
+                vals = np.polynomial.Legendre.basis(i)(wf)
+                Xf[:, i-1] = vals
+                expr += sm.polys.orthopolys.legendre_poly(i, f)*paramsf[i-1]
+            Xf = np.tile(Xf, (ntime, 1))
+            Xfit = np.hstack((Xfit, Xf))
+            params += paramsf
+    else:
+        raise NotImplementedError("Please help us!")
+
+    dirty_coeffs = Xfit.T.dot(wgt*beta)
+    hess_coeffs = Xfit.T.dot(wgt*Xfit)
+    # to improve conditioning
+    if sigmasq:
+        hess_coeffs += sigmasq*np.eye(hess_coeffs.shape[0])
+    coeffs = np.linalg.solve(hess_coeffs, dirty_coeffs)
+
+
+    return coeffs, Ix, Iy, str(expr), list(map(str,params)), str(tfunc),str(ffunc)
+
+
+def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy,
+                        expr, paramf, texpr, fexpr):
+    ntime = time.size
+    nfreq = freq.size
+
+    image = np.zeros((ntime, nfreq, nx, ny), dtype=float)
+    params = sm.symbols(('t','f'))
+    params += sm.symbols(tuple(paramf))
+    symexpr = parse_expr(expr)
+    modelf = lambdify(params, symexpr)
+    texpr = parse_expr(texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(fexpr)
+    ffunc = lambdify(params[1], fexpr)
+    for i, tval in enumerate(time):
+        for j, fval in enumerate(freq):
+            image[i, j, Ix, Iy] = modelf(tfunc(tval), ffunc(fval), *coeffs)
+
+    return image
+
+
+def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
+                         expr, paramf, texpr, fexpr,
+                         nxi, nyi, cellxi, cellyi, x0i, y0i,
+                         nxo, nyo, cellxo, cellyo, x0o, y0o):
+
+    image_in = np.zeros((nxi, nyi), dtype=float)
+    params = sm.symbols(('t','f'))
+    params += sm.symbols(tuple(paramf))
+    symexpr = parse_expr(expr)
+    modelf = lambdify(params, symexpr)
+    texpr = parse_expr(texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(fexpr)
+    ffunc = lambdify(params[1], fexpr)
+    image_in[Ix, Iy] = modelf(tfunc(time), ffunc(freq), *coeffs)
+
+    xin = (-(nxi//2) + np.arange(nxi))*cellxi + x0i
+    yin = (-(nyi//2) + np.arange(nyi))*cellyi + y0i
+    xo = (-(nxo//2) + np.arange(nxo))*cellxo + x0o
+    yo = (-(nyo//2) + np.arange(nyo))*cellyo + y0o
+
+    # how many pixels to pad by to extrapolate with zeros
+    xldiff = xin.min() - xo.min()
+    if xldiff > 0.0:
+        npadxl = int(np.ceil(xldiff/cellxi))
+    else:
+        npadxl = 0
+    yldiff = yin.min() - yo.min()
+    if yldiff > 0.0:
+        npadyl = int(np.ceil(yldiff/cellyi))
+    else:
+        npadyl = 0
+
+    xudiff = xo.max() - xin.max()
+    if xudiff > 0.0:
+        npadxu = int(np.ceil(xudiff/cellxi))
+    else:
+        npadxu = 0
+    yudiff = yo.max() - yin.max()
+    if yudiff > 0.0:
+        npadyu = int(np.ceil(yudiff/cellyi))
+    else:
+        npadyu = 0
+
+    do_pad = npadxl > 0
+    do_pad |= npadxu > 0
+    do_pad |= npadyl > 0
+    do_pad |= npadyu > 0
+    if do_pad:
+        image_in = np.pad(image_in,
+                        ((npadxl, npadxu), (npadyl, npadyu)),
+                        mode='constant')
+
+        xin = (-(nxi//2+npadxl) + np.arange(nxi + npadxl + npadxu))*cellxi + x0i
+        nxi = nxi + npadxl + npadxu
+        yin = (-(nyi//2+npadyl) + np.arange(nyi + npadyl + npadyu))*cellyi + y0i
+        nyi = nyi + npadyl + npadyu
+
+    do_interp = cellxi != cellxo
+    do_interp |= cellyi != cellyo
+    do_interp |= x0i != x0o
+    do_interp |= y0i != y0o
+    do_interp |= nxi != nxo
+    do_interp |= nyi != nyo
+    if do_interp:
+        interpo = RegularGridInterpolator((xin, yin), image_in,
+                                          bounds_error=True, method='linear')
+        xx, yy = np.meshgrid(xo, yo, indexing='ij')
+        return interpo((xx, yy))
+    # elif (nxi != nxo) or (nyi != nyo):
+    #     # only need the overlap in this case
+    #     _, idx0, idx1 = np.intersect1d(xin, xo, assume_unique=True, return_indices=True)
+    #     _, idy0, idy1 = np.intersect1d(yin, yo, assume_unique=True, return_indices=True)
+    #     return image[idx0, idy0]
+    else:
+        return image_in
+
+
+@njit(**JIT_OPTIONS)
+def norm_diff(x, xp):
+    return norm_diff_impl(x, xp)
+
+
+def norm_diff_impl(x, xp):
+    return NotImplementedError
+
+
+@overload(norm_diff_impl, jit_options=JIT_OPTIONS)
+def nb_norm_diff_impl(x, xp):
+    if x.ndim==3:
+        def impl(x, xp):
+            nband, nx, ny = x.shape
+            num = 0.0
+            den = 1e-12  # avoid div by zero
+            for b in range(nband):
+                for i in range(nx):
+                    for j in range(ny):
+                        num += (x[b, i, j] - xp[b, i, j])**2
+                        den += x[b, i, j]**2
+            return np.sqrt(num/den)
+    elif x.ndim==2:
+        def impl(x, xp):
+            nx, ny = x.shape
+            num = 0.0
+            den = 1e-12  # avoid div by zero
+            for i in range(nx):
+                for j in range(ny):
+                    num += (x[i, j] - xp[i, j])**2
+                    den += x[i, j]**2
+            return np.sqrt(num/den)
+    else:
+        raise ValueError("norm_diff is only implemented for 2D or 3D arrays")
+
+    return impl
+
+
+
+def remove_large_islands(x, max_island_size=100):
+    islands = label(x.squeeze())
+    num_islands = islands.max()
+    for i in range(1,num_islands+1):
+        msk = islands == i
+        num_pix = np.sum(msk)
+        if num_pix > max_island_size:
+            x[msk] = 0.0
+    return x
+
+
+@njit(parallel=False, nogil=True, fastmath=True, inline='always')
+def freqmul(A, x):
+    nband, nx, ny = x.shape
+    out = np.zeros_like(x)
+    for k in range(nband):
+        for l in range(nband):
+            for i in range(nx):
+                for j in range(ny):
+                    out[k, i, j] += A[k, l] * x[l, i, j]
+    return out
+
+
+def setup_parametrisation(mode='id', minval=1e-5,
+                          sigma=1.0, freq=None, lscale=1.0):
+    '''
+    Given a parametrisation x = f(s) return:
+
+    func - operator that evaluates x
+    finv - operator that evaluates s = f^{-1}(x)
+    dfunc - operator that evaluates dx/ds at fixed x = x0
+    dhfunc - operator that evaluates the adjoint of dfunc at x = x0
+    '''
+    nu = freq/np.mean(freq)
+    nband = nu.size
+    nudiffsq = (nu[:, None] - nu[None, :])**2
+    K = sigma**2 * np.exp(-nudiffsq/(2*lscale**2))
+    L = np.linalg.cholesky(K + 1e-10*np.eye(nband))
+    LH = L.T
+    if mode == 'id':
+        def func(x):
+            return freqmul(L, x)
+
+        def finv(x):
+            return solve_triangular(L, x, lower=True)
+
+        def dfunc(x0, v):
+            return freqmul(L, v)
+
+        def dhfunc(x0, v):
+            return freqmul(LH, v)
+    elif mode == 'exp':
+        def func(x):
+            return np.exp(freqmul(L, x))
+
+        def finv(x):
+            tmp = solve_triangular(L, x, lower=True)
+            return np.log(np.maximum(np.abs(tmp), minval))
+
+        def dfunc(x0, v):
+            return np.exp(freqmul(L, x0)) * freqmul(L, v)
+
+        def dhfunc(x0, v):
+            return freqmul(LH, v * np.exp(freqmul(L, x0)))
+
+    else:
+        raise ValueError(f"Unknown mode - {mode}")
+
+    return func, finv, dfunc, dhfunc

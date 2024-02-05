@@ -4,6 +4,7 @@ import dask.array as da
 from distributed import wait
 from uuid import uuid4
 from ducc0.misc import make_noncritical
+from pfb.utils.misc import norm_diff
 import pyscilog
 log = pyscilog.get_logger('PCG')
 
@@ -107,7 +108,8 @@ def pcg(A,
         rnorm = rnorm_next
         k += 1
         epsp = eps
-        eps = np.linalg.norm(x - xp) / np.linalg.norm(x)
+        eps = norm_diff(x, xp)
+        # np.linalg.norm(x - xp) / np.linalg.norm(x)
         # epsn = rnorm / eps0
         # eps = rnorm / eps0
         # eps = np.maximum(epsx, epsn)

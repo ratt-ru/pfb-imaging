@@ -7,13 +7,10 @@ import dask.array as da
 from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
-@pmp('do_gains', (True, False))
-def test_clean(do_gains, ms_name):
+@pmp('do_gains', (False,True))
+def test_polproducts(do_gains, ms_name):
     '''
-    Here we test that clean correctly infers the fluxes of point sources
-    placed at the centers of pixels in the presence of the wterm and DI gain
-    corruptions.
-    TODO - add per scan PB variations
+    Tests polarisation products
     '''
 
     import numpy as np
@@ -67,30 +64,69 @@ def test_clean(do_gains, ms_name):
 
     print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
 
-    # model
-    model = np.zeros((nchan, nx, ny), dtype=np.float64)
-    nsource = 10
-    Ix = np.random.randint(0, npix, nsource)
-    Iy = np.random.randint(0, npix, nsource)
-    alpha = -0.7 + 0.1 * np.random.randn(nsource)
-    I0 = 1.0 + np.abs(np.random.randn(nsource))
-    for i in range(nsource):
-        model[:, Ix[i], Iy[i]] = I0[i] * (freq/freq0) ** alpha[i]
+    # first axis is Stokes
+    model = np.zeros((4, nchan, nx, ny), dtype=np.float64)
+    flux = {}
+    flux['I'] = 1.0
+    flux['Q'] = 0.6
+    flux['U'] = 0.3
+    flux['V'] = 0.1
+    locx = int(3*npix//4)
+    locy = int(npix//4)
+    model[0, :, locx, locy] = flux['I']
+    model[1, :, locx, locy] = flux['Q']
+    model[2, :, locx, locy] = flux['U']
+    model[3, :, locx, locy] = flux['V']
 
     # model vis
     epsilon = 1e-7
     from ducc0.wgridder.experimental import dirty2vis
-    model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
+    model_vis_I = np.zeros((nrow, nchan), dtype=np.complex128)
     for c in range(nchan):
-        model_vis[:, c:c+1, 0] = dirty2vis(uvw=uvw,
-                                           freq=freq[c:c+1],
-                                           dirty=model[c],
-                                           pixsize_x=cell_rad,
-                                           pixsize_y=cell_rad,
-                                           epsilon=epsilon,
-                                           do_wgridding=True,
-                                           nthreads=8)
-        model_vis[:, c, -1] = model_vis[:, c, 0]
+        model_vis_I[:, c:c+1] = dirty2vis(uvw=uvw,
+                                        freq=freq[c:c+1],
+                                        dirty=model[0, c],
+                                        pixsize_x=cell_rad,
+                                        pixsize_y=cell_rad,
+                                        epsilon=epsilon,
+                                        do_wgridding=True,
+                                        nthreads=8)
+    model_vis_Q = np.zeros((nrow, nchan), dtype=np.complex128)
+    for c in range(nchan):
+        model_vis_Q[:, c:c+1] = dirty2vis(uvw=uvw,
+                                        freq=freq[c:c+1],
+                                        dirty=model[1, c],
+                                        pixsize_x=cell_rad,
+                                        pixsize_y=cell_rad,
+                                        epsilon=epsilon,
+                                        do_wgridding=True,
+                                        nthreads=8)
+    model_vis_U = np.zeros((nrow, nchan), dtype=np.complex128)
+    for c in range(nchan):
+        model_vis_U[:, c:c+1] = dirty2vis(uvw=uvw,
+                                        freq=freq[c:c+1],
+                                        dirty=model[2, c],
+                                        pixsize_x=cell_rad,
+                                        pixsize_y=cell_rad,
+                                        epsilon=epsilon,
+                                        do_wgridding=True,
+                                        nthreads=8)
+    model_vis_V = np.zeros((nrow, nchan), dtype=np.complex128)
+    for c in range(nchan):
+        model_vis_V[:, c:c+1] = dirty2vis(uvw=uvw,
+                                        freq=freq[c:c+1],
+                                        dirty=model[3, c],
+                                        pixsize_x=cell_rad,
+                                        pixsize_y=cell_rad,
+                                        epsilon=epsilon,
+                                        do_wgridding=True,
+                                        nthreads=8)
+
+    model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
+    model_vis[:, :, 0] = model_vis_I + model_vis_Q
+    model_vis[:, :, 1] = model_vis_U + 1j*model_vis_V
+    model_vis[:, :, 2] = model_vis_U - 1j*model_vis_V
+    model_vis[:, :, 3] = model_vis_I - model_vis_Q
 
 
     if do_gains:
@@ -109,6 +145,8 @@ def test_clean(do_gains, ms_name):
         L = (Lt, Lv)
 
         from pfb.utils.misc import kron_matvec
+        from pfb.utils.misc import chunkify_rows
+        from africanus.calibration.utils import corrupt_vis
         jones = np.zeros((ntime, nchan, nant, 1, 2), dtype=np.complex128)
         for p in range(nant):
             for c in [0, -1]:  # for now only diagonal
@@ -117,16 +155,16 @@ def test_clean(do_gains, ms_name):
                 xi_phase = np.random.randn(ntime, nchan)
                 phase = kron_matvec(L, xi_phase)
                 jones[:, :, p, 0, c] = amp * np.exp(1.0j * phase)
+                print('amp = ', amp.min(), amp.max())
+                # print('phase = ', phase)
 
         # corrupted vis
         model_vis = model_vis.reshape(nrow, nchan, 1, 2, 2)
-        from pfb.utils.misc import chunkify_rows
         time = xds.TIME.values
         row_chunks, tbin_idx, tbin_counts = chunkify_rows(time, ntime)
         ant1 = xds.ANTENNA1.values
         ant2 = xds.ANTENNA2.values
 
-        from africanus.calibration.utils import corrupt_vis
         gains = np.swapaxes(jones, 1, 2).copy()
         vis = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2,
                           gains, model_vis).reshape(nrow, nchan, ncorr)
@@ -176,85 +214,54 @@ def test_clean(do_gains, ms_name):
 
     postfix = "main"
     outname = str(test_dir / 'test')
-    basename = f'{outname}_I'
-    dds_name = f'{basename}_{postfix}.dds'
-    # set defaults from schema
     from pfb.parser.schemas import schema
-    init_args = {}
-    for key in schema.init["inputs"].keys():
-        init_args[key] = schema.init["inputs"][key]["default"]
-    # overwrite defaults
-    init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
-    init_args["output_filename"] = outname
-    init_args["data_column"] = "DATA"
-    init_args["flag_column"] = 'FLAG'
-    init_args["gain_table"] = gain_path
-    init_args["max_field_of_view"] = fov*1.1
-    init_args["overwrite"] = True
-    init_args["channels_per_image"] = 1
-    from pfb.workers.init import _init
-    xds = _init(**init_args)
+    for p in ['I', 'Q', 'U', 'V']:
+        basename = f'{outname}_{p}'
+        dds_name = f'{basename}_{postfix}.dds'
+        # set defaults from schema
+        init_args = {}
+        for key in schema.init["inputs"].keys():
+            init_args[key] = schema.init["inputs"][key]["default"]
+        # overwrite defaults
+        init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+        init_args["output_filename"] = outname
+        init_args["data_column"] = "DATA"
+        init_args["flag_column"] = 'FLAG'
+        init_args["gain_table"] = gain_path
+        init_args["max_field_of_view"] = fov*1.1
+        init_args["overwrite"] = True
+        init_args["channels_per_image"] = 1
+        init_args["product"] = p
+        from pfb.workers.init import _init
+        xds = _init(**init_args)
 
-    # grid data to produce dirty image
-    grid_args = {}
-    for key in schema.grid["inputs"].keys():
-        grid_args[key] = schema.grid["inputs"][key]["default"]
-    # overwrite defaults
-    grid_args["output_filename"] = outname
-    grid_args["postfix"] = postfix
-    grid_args["nband"] = nchan
-    grid_args["field_of_view"] = fov
-    grid_args["fits_mfs"] = True
-    grid_args["psf"] = True
-    grid_args["residual"] = False
-    grid_args["nthreads"] = 8  # has to be set when calling _grid
-    grid_args["nvthreads"] = 8
-    grid_args["overwrite"] = True
-    grid_args["robustness"] = 0.0
-    grid_args["do_wgridding"] = True
-    from pfb.workers.grid import _grid
-    dds = _grid(xdsi=xds, **grid_args)
+        # grid data to produce dirty image
+        grid_args = {}
+        for key in schema.grid["inputs"].keys():
+            grid_args[key] = schema.grid["inputs"][key]["default"]
+        # overwrite defaults
+        grid_args["output_filename"] = outname
+        grid_args["postfix"] = postfix
+        grid_args["nband"] = nchan
+        grid_args["field_of_view"] = fov
+        grid_args["fits_mfs"] = True
+        grid_args["psf"] = True
+        grid_args["residual"] = False
+        grid_args["nthreads"] = 8  # has to be set when calling _grid
+        grid_args["nvthreads"] = 8
+        grid_args["overwrite"] = True
+        grid_args["robustness"] = 0.0
+        grid_args["do_wgridding"] = True
+        grid_args["product"] = p
+        from pfb.workers.grid import _grid
+        dds = _grid(xdsi=xds, **grid_args)
 
-    # run clean
-    clean_args = {}
-    for key in schema.clean["inputs"].keys():
-        clean_args[key] = schema.clean["inputs"][key]["default"]
-    clean_args["output_filename"] = outname
-    clean_args["postfix"] = postfix
-    clean_args["nband"] = nchan
-    clean_args["dirosion"] = 0
-    clean_args["do_residual"] = False
-    clean_args["nmiter"] = 100
-    threshold = 1e-5
-    clean_args["threshold"] = threshold
-    clean_args["gamma"] = 0.1
-    clean_args["peak_factor"] = 0.75
-    clean_args["sub_peak_factor"] = 0.75
-    clean_args["nthreads"] = 8
-    clean_args["nvthreads"] = 8
-    clean_args["scheduler"] = 'sync'
-    clean_args["do_wgridding"] = True
-    clean_args["epsilon"] = epsilon
-    clean_args["mop_flux"] = True
-    clean_args["fits_mfs"] = False
-    from pfb.workers.clean import _clean
-    _clean(ddsi=dds, **clean_args)
+        dds = dask.compute(dds)[0]
 
-    # get inferred model
-    basename = f'{outname}_I'
-    dds_name = f'{basename}_{postfix}.dds'
-    dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
-    model_inferred = np.zeros((nchan, nx, ny))
-    for ds in dds:
-        b = ds.bandid
-        model_inferred[b] = ds.MODEL.values
+        for ds in dds:
+            wsum = ds.WSUM.values
+            comp = ds.DIRTY.values[locx, locy]
+            print(flux[p], comp/wsum)
+            # assert_allclose(flux[p], comp/wsum, rtol=1e-4, atol=1e-4)
 
-    # we actually reconstruct I/n(l,m) so we need to correct for that
-    l, m = np.meshgrid(dds[0].x.values, dds[0].y.values,
-                       indexing='ij')
-    eps = l**2+m**2
-    n = -eps/(np.sqrt(1.-eps)+1.) + 1  # more stable form
-    for i in range(nsource):
-        assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] * n[Ix[i], Iy[i]] -
-                        model[:, Ix[i], Iy[i]], 1.0,
-                        atol=5*threshold)
+

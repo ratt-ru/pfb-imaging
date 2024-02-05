@@ -5,18 +5,18 @@ inputs:
     abbreviation: ms
     info:
       Path to measurement set.
-  output_filename:
+  mds:
     dtype: str
     required: true
-    metavar: BASENAME
-    abbreviation: o
+    abbreviation: mds
     info:
-      Basename of output
+      Path to the mds that needs to be degridded
   model_column:
     dtype: str
     default: MODEL_DATA
     info:
       Column to write model data to
+<<<<<<< HEAD
   spectral_poly_order:
     dtype: int
     default: 4
@@ -28,6 +28,8 @@ inputs:
     default: 'main'
     info:
       Can be used to specify a custom name for the image space data products
+=======
+>>>>>>> awskube
   product:
     dtype: str
     abbreviation: p
@@ -35,16 +37,6 @@ inputs:
     info:
       Imaging products to degrid. Options are I, Q, U, V.
       Only single Stokes products are currently supported.
-  model_name:
-    dtype: str
-    default: MODEL
-    abbreviation: mname
-    info:
-      Name of model in mds
-  model_fits:
-    dtype: str
-    info:
-      Specify to degrid from a fits file
   integrations_per_image:
     dtype: int
     default: -1
@@ -66,8 +58,8 @@ inputs:
       Accumulate onto model column
 
   _include:
-    - (pfb.parser)gridding.yml
-    - (pfb.parser)dist.yml
+    - gridding.yml
+    - dist.yml
 
 outputs:
   {}

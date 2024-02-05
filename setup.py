@@ -9,25 +9,17 @@ requirements = [
                 'matplotlib',
                 'ipython',
                 'scikit-image',
-                'dask[distributed]',
                 'PyWavelets',
                 'katbeam',
                 'pytest >= 6.2.2',
                 'numexpr',
                 'pyscilog >= 0.1.2',
                 'Click',
-                'omegaconf',
-                "codex-africanus[complete]",
-                "dask-ms[xarray, zarr, s3]",
-                "stimela==2.0rc4",
-
-                "QuartiCal"
+                "ipdb",
+                "numba < 0.59",
+                "QuartiCal[degrid]"
                 "@git+https://github.com/ratt-ru/QuartiCal.git"
-                "@v0.2.0-dev",
-
-                "packratt"
-                "@git+https://github.com/ratt-ru/packratt.git"
-                "@master",
+                "@bandpass_smoothing"
 
             ]
 
@@ -44,7 +36,7 @@ setup(
      packages=find_packages(),
      include_package_data=True,
      zip_safe=False,
-     python_requires='>=3.8',
+     python_requires='>=3.9',
      install_requires=requirements,
      classifiers=[
          "Programming Language :: Python :: 3",

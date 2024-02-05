@@ -1,6 +1,7 @@
 inputs:
   _include:
-    - (pfb.parser)dist.yml
+    - dist.yml
+    - out.yml
   model_name:
     dtype: str
     abbreviation: mname
@@ -16,23 +17,11 @@ inputs:
     required: true
     abbreviation: nb
     info: 'Number of imaging bands'
-  output_filename:
-    dtype: str
-    required: true
-    info: 'Basename of output'
-    metavar: BASENAME
-    abbreviation: o
   postfix:
     dtype: str
     default: 'main'
     info: 'Can be used to specify a custom name for the image space data \
           products'
-  product:
-    dtype: str
-    abbreviation: p
-    default: I
-    info: 'Imaging products to produce. Options are I, Q, U, V. \
-          Only single Stokes products are currently supported'
   outputs:
     dtype: str
     default: mMrRiI

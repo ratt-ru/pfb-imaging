@@ -8,8 +8,12 @@ import numpy as np
 import dask
 import dask.array as da
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
+from ducc0.fft import c2r, r2c
 from africanus.constants import c as lightspeed
-
+from quartical.utils.dask import Blocker
+from pfb.utils.weighting import _counts_to_weights
+iFs = np.fft.ifftshift
+Fs = np.fft.fftshift
 
 def vis2im(uvw=None,
            freq=None,
@@ -181,8 +185,6 @@ def im2vis(uvw=None,
            sigma_min=1.1,
            sigma_max=2.6):
 
-    # import pdb; pdb.set_trace()
-
     if precision.lower() == 'single':
         complex_type = np.float32
     elif precision.lower() == 'double':
@@ -296,7 +298,7 @@ def _loc2psf_vis_impl(uvw,
                       cell,
                       x0=0,
                       y0=0,
-                      wstack=True,
+                      do_wgridding=True,
                       epsilon=1e-7,
                       nthreads=1,
                       precision='single',
@@ -325,7 +327,7 @@ def _loc2psf_vis_impl(uvw,
                             center_x=x0,
                             center_y=y0,
                             epsilon=1e-7,
-                            do_wgridding=wstack,
+                            do_wgridding=do_wgridding,
                             nthreads=nthreads,
                             divide_by_n=divide_by_n)
 
@@ -342,7 +344,7 @@ def _loc2psf_vis(uvw,
                  cell,
                  x0=0,
                  y0=0,
-                 wstack=True,
+                 do_wgridding=True,
                  epsilon=1e-7,
                  nthreads=1,
                  precision='single',
@@ -353,7 +355,7 @@ def _loc2psf_vis(uvw,
                              cell,
                              x0,
                              y0,
-                             wstack,
+                             do_wgridding,
                              epsilon,
                              nthreads,
                              precision,
@@ -366,7 +368,7 @@ def loc2psf_vis(uvw,
                 cell,
                 x0=0,
                 y0=0,
-                wstack=True,
+                do_wgridding=True,
                 epsilon=1e-7,
                 nthreads=1,
                 precision='single',
@@ -378,7 +380,7 @@ def loc2psf_vis(uvw,
                         cell, None,
                         x0, None,
                         y0, None,
-                        wstack, None,
+                        do_wgridding, None,
                         epsilon, None,
                         nthreads, None,
                         precision, None,
@@ -396,14 +398,14 @@ def comps2vis(uvw,
               comps,
               Ix, Iy,
               modelf,
-              ref_time,
-              ref_freq,
+              tfunc,
+              ffunc,
               nx, ny,
               cellx, celly,
               x0=0, y0=0,
               epsilon=1e-7,
               nthreads=1,
-              wstack=True,
+              do_wgridding=True,
               divide_by_n=False,
               ncorr_out=4):
 
@@ -424,8 +426,8 @@ def comps2vis(uvw,
                         Ix, None,
                         Iy, None,
                         modelf, None,
-                        ref_time, None,
-                        ref_freq, None,
+                        tfunc, None,
+                        ffunc, None,
                         nx, None,
                         ny, None,
                         cellx, None,
@@ -434,7 +436,7 @@ def comps2vis(uvw,
                         y0, None,
                         epsilon, None,
                         nthreads, None,
-                        wstack, None,
+                        do_wgridding, None,
                         divide_by_n, None,
                         ncorr_out, None,
                         new_axes={'c': ncorr_out},
@@ -453,14 +455,14 @@ def _comps2vis(uvw,
                 comps,
                 Ix, Iy,
                 modelf,
-                ref_time,
-                ref_freq,
+                tfunc,
+                ffunc,
                 nx, ny,
                 cellx, celly,
                 x0=0, y0=0,
                 epsilon=1e-7,
                 nthreads=1,
-                wstack=True,
+                do_wgridding=True,
                 divide_by_n=False,
                 ncorr_out=4):
     return _comps2vis_impl(uvw[0],
@@ -472,14 +474,14 @@ def _comps2vis(uvw,
                            comps,
                            Ix, Iy,
                            modelf,
-                           ref_time,
-                           ref_freq,
+                           tfunc,
+                           ffunc,
                            nx, ny,
                            cellx, celly,
                            x0=x0, y0=y0,
                            epsilon=epsilon,
                            nthreads=nthreads,
-                           wstack=wstack,
+                           do_wgridding=do_wgridding,
                            divide_by_n=divide_by_n,
                            ncorr_out=ncorr_out)
 
@@ -494,14 +496,14 @@ def _comps2vis_impl(uvw,
                     comps,
                     Ix, Iy,
                     modelf,
-                    ref_time,
-                    ref_freq,
+                    tfunc,
+                    ffunc,
                     nx, ny,
                     cellx, celly,
                     x0=0, y0=0,
                     epsilon=1e-7,
                     nthreads=1,
-                    wstack=True,
+                    do_wgridding=True,
                     divide_by_n=False,
                     ncorr_out=4):
     # adjust for chunking
@@ -526,8 +528,8 @@ def _comps2vis_impl(uvw,
             indf = slice(fbin_idx2[b], fbin_idx2[b] + fbin_cnts[b])
             # render components to image
             # we want to do this on each worker
-            fout = np.mean(freq[indf])/ref_freq
-            tout = np.mean(utime[indt])/ref_time
+            tout = tfunc(np.mean(utime[indt]))
+            fout = ffunc(np.mean(freq[indf]))
             image = np.zeros((nx, ny), dtype=comps.dtype)
             image[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
             vis[indr, indf, 0] = dirty2vis(uvw=uvw,
@@ -536,9 +538,199 @@ def _comps2vis_impl(uvw,
                                            pixsize_x=cellx, pixsize_y=celly,
                                            center_x=x0, center_y=y0,
                                            epsilon=epsilon,
-                                           do_wgridding=wstack,
+                                           do_wgridding=do_wgridding,
                                            divide_by_n=divide_by_n,
                                            nthreads=nthreads)
             if ncorr_out > 1:
                 vis[indr, indf, -1] = vis[indr, indf, 0]
     return vis
+
+
+def image_data_products(uvw,
+                        freq,
+                        vis,
+                        wgt,
+                        mask,
+                        counts,
+                        nx, ny,
+                        nx_psf, ny_psf,
+                        cellx, celly,
+                        model=None,
+                        robustness=None,
+                        x0=0.0, y0=0.0,
+                        nthreads=1,
+                        epsilon=1e-7,
+                        do_wgridding=True,
+                        double_accum=True,
+                        # divide_by_n=False,
+                        l2reweight_dof=None,
+                        do_dirty=True,
+                        do_psf=True,
+                        do_weight=True,
+                        do_residual=False):
+    '''
+    Function to compute image space data products in one go
+        dirty
+        psf
+        psfhat
+        imweight
+        residual
+        wsum
+    '''
+    out_dict = {}
+
+    if model is None:
+        if l2reweight_dof:
+            raise ValueError('Requested l2 reweight but no model passed in. '
+                             'Perhaps transfer model from somewhere?')
+    else:
+        # do not apply weights in this direction
+        model_vis = dirty2vis(
+            uvw=uvw,
+            freq=freq,
+            dirty=model,
+            pixsize_x=cellx,
+            pixsize_y=celly,
+            center_x=x0,
+            center_y=y0,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            flip_v=False,
+            nthreads=nthreads,
+            divide_by_n=False,
+            sigma_min=1.1, sigma_max=3.0)
+
+        residual_vis = vis - model_vis
+        # apply mask to both
+        residual_vis *= mask
+
+    if l2reweight_dof:
+        ressq = (residual_vis*residual_vis.conj()).real
+        wcount = mask.sum()
+        if wcount:
+            ovar = ressq.sum()/wcount  # use 67% quantile?
+            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+        else:
+            wgt = None
+
+
+    # we usually want to re-evaluate this since the robustness may change
+    if robustness is not None:
+        if counts is None:
+            raise ValueError('counts are None but robustness specified. '
+                             'This is probably a bug!')
+        imwgt = _counts_to_weights(
+            counts,
+            uvw,
+            freq,
+            nx, ny,
+            cellx, celly,
+            robustness)
+        wgt *= imwgt
+
+    if do_weight:
+        out_dict['WEIGHT'] = wgt
+
+    wsum = wgt[mask.astype(bool)].sum()
+    out_dict['WSUM'] = np.atleast_1d(wsum)
+
+    dirty = vis2dirty(
+        uvw=uvw,
+        freq=freq,
+        vis=vis,
+        wgt=wgt,
+        mask=mask,
+        npix_x=nx, npix_y=ny,
+        pixsize_x=cellx, pixsize_y=celly,
+        center_x=x0, center_y=y0,
+        epsilon=epsilon,
+        flip_v=False,  # hardcoded for now
+        do_wgridding=do_wgridding,
+        divide_by_n=False,  # hardcoded for now
+        nthreads=nthreads,
+        sigma_min=1.1, sigma_max=3.0,
+        double_precision_accumulation=double_accum)
+    out_dict['DIRTY'] = dirty
+
+    if do_psf:
+        if x0 or y0:
+        # LB - what is wrong with this?
+        # n = np.sqrt(1 - x0**2 - y0**2)
+        # if convention.upper() == 'CASA':
+        #     freqfactor = -2j*np.pi*freq[None, :]/lightspeed
+        # else:
+        #     freqfactor = 2j*np.pi*freq[None, :]/lightspeed
+        # psf_vis = np.exp(freqfactor*(uvw[:, 0:1]*x0 +
+        #                              uvw[:, 1:2]*y0 +
+        #                              uvw[:, 2:]*(n-1)))
+        # if divide_by_n:
+        #     psf_vis /= n
+            x = np.zeros((128,128), dtype=wgt.dtype)
+            x[64,64] = 1.0
+            psf_vis = dirty2vis(
+                uvw=uvw,
+                freq=freq,
+                dirty=x,
+                pixsize_x=cellx,
+                pixsize_y=celly,
+                center_x=x0,
+                center_y=y0,
+                epsilon=1e-7,
+                do_wgridding=do_wgridding,
+                nthreads=nthreads,
+                divide_by_n=False,
+                flip_v=False,  # hardcoded for now
+                sigma_min=1.1, sigma_max=3.0)
+
+        else:
+            nrow, _ = uvw.shape
+            nchan = freq.size
+            psf_vis = np.ones((nrow, nchan), dtype=vis.dtype)
+
+        psf = vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=psf_vis,
+            wgt=wgt,
+            mask=mask,
+            npix_x=nx_psf, npix_y=ny_psf,
+            pixsize_x=cellx, pixsize_y=celly,
+            center_x=x0, center_y=y0,
+            epsilon=epsilon,
+            flip_v=False,  # hardcoded for now
+            do_wgridding=do_wgridding,
+            divide_by_n=False,  # hardcoded for now
+            nthreads=nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=double_accum)
+
+        # get FT of psf
+        psfhat = r2c(iFs(psf, axes=(0, 1)), axes=(0, 1),
+                     nthreads=nthreads,
+                     forward=True, inorm=0)
+
+        out_dict["PSF"] = psf
+        out_dict["PSFHAT"] = psfhat
+
+
+    if do_residual and model is not None:
+        residual = vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=residual_vis,
+            wgt=wgt,
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cellx, pixsize_y=celly,
+            center_x=x0, center_y=y0,
+            epsilon=epsilon,
+            flip_v=False,  # hardcoded for now
+            do_wgridding=do_wgridding,
+            divide_by_n=False,  # hardcoded for now
+            nthreads=nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=double_accum)
+
+        out_dict['RESIDUAL'] = residual
+
+    return out_dict

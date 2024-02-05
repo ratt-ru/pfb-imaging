@@ -1,15 +1,22 @@
 import numpy as np
-from numba import generated_jit, njit
+import numexpr as ne
+from numba import generated_jit, njit, prange
 from numba.types import literal
 from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
 from quartical.utils.numba import coerce_literal
-from daskms.optimisation import inlined_array
 from operator import getitem
 from pfb.utils.beam import interp_beam
 import dask
+from quartical.utils.dask import Blocker
+
+
+def weight_from_sigma(sigma):
+    weight = ne.evaluate('1.0/(sigma*sigma)',
+                         casting='same_kind')
+    return weight
 
 
 def single_stokes(ds=None,
@@ -34,7 +41,10 @@ def single_stokes(ds=None,
 
     data = getattr(ds, opts.data_column).data
     nrow, nchan, ncorr = data.shape
+    ntime = utime.size
+    nant = antpos.shape[0]
 
+    # clone shared nodes
     ant1 = clone(ds.ANTENNA1.data)
     ant2 = clone(ds.ANTENNA2.data)
     uvw = clone(ds.UVW.data)
@@ -45,8 +55,6 @@ def single_stokes(ds=None,
     else:
         frow = (ant1 == ant2)
 
-    frow = inlined_array(frow, [ant1, ant2])
-
     if opts.flag_column is not None:
         flag = getattr(ds, opts.flag_column).data
         flag = da.any(flag, axis=2)
@@ -56,7 +64,10 @@ def single_stokes(ds=None,
 
     if opts.sigma_column is not None:
         sigma = getattr(ds, opts.sigma_column).data
-        weight = 1.0/sigma**2
+        # weight = 1.0/sigma**2
+        weight = da.map_blocks(weight_from_sigma,
+                               sigma,
+                               chunks=sigma.chunks)
     elif opts.weight_column is not None:
         weight = getattr(ds, opts.weight_column).data
         if opts.weight_column=='WEIGHT':
@@ -77,35 +88,59 @@ def single_stokes(ds=None,
             jones = jones.astype(complex_type)
         # qcal has chan and ant axes reversed compared to pfb implementation
         jones = da.swapaxes(jones, 1, 2)
+        # data are not 2x2 so we need separate labels
+        # for jones correlations and data/weight correlations
+        # reshape to dispatch with generated_jit
+        jones_ncorr = jones.shape[-1]
+        if jones_ncorr == 2:
+            jout = 'rafdx'
+        elif jones_ncorr == 4:
+            jout = 'rafdxx'
+            jones = jones.reshape(ntime, nant, nchan, 1, 2, 2)
+        else:
+            raise ValueError("Incorrect number of correlations of "
+                             f"{jones_ncorr} for product {opts.product}")
     else:
-        ntime = utime.size
-        nchan = freq.size
-        nant = antpos.shape[0]
-        jones = da.ones((ntime, nchan, nant, 1, 2),
+        jones = da.ones((ntime, nant, nchan, 1, 2),
                         chunks=(-1,)*5,
                         dtype=complex_type)
+        jout = 'rafdx'
 
     # Note we do not chunk at this level since all the chunking happens upfront
     # we cast to dask arrays simply to defer the compute
     tbin_idx = da.from_array(tbin_idx, chunks=(-1))
     tbin_counts = da.from_array(tbin_counts, chunks=(-1))
-    vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                        ant1, ant2, pol=poltype, product=opts.product)
 
-    vis = inlined_array(vis, [ant1, ant2, tbin_idx, tbin_counts, jones])
-    wgt = inlined_array(wgt, [ant1, ant2, tbin_idx, tbin_counts, jones])
+    # compute Stokes data and weights
+    blocker = Blocker(weight_data, 'rf')
+    blocker.add_input("data", data, 'rfc')
+    blocker.add_input('weight', weight, 'rfc')
+    blocker.add_input('flag', flag, 'rf')
+    blocker.add_input('jones', jones, jout)
+    blocker.add_input('tbin_idx', tbin_idx, 'r')
+    blocker.add_input('tbin_counts', tbin_counts, 'r')
+    blocker.add_input('ant1', ant1, 'r')
+    blocker.add_input('ant2', ant2, 'r')
+    blocker.add_input('pol', poltype)
+    blocker.add_input('product', opts.product)
+    blocker.add_input('nc', str(ncorr))  # dispatch based on ncorr to deal with dual pol
+    blocker.add_output('vis', 'rf', ((nrow,),(nchan,)), data.dtype)
+    blocker.add_output('wgt', 'rf', ((nrow,),(nchan,)), weight.dtype)
+
+    output_dict = blocker.get_dask_outputs()
+    vis = output_dict['vis']
+    wgt = output_dict['wgt']
 
     if isinstance(opts.radec, str):
         raise NotImplementedError()
     elif isinstance(opts.radec, np.ndarray) and not np.array_equal(radec, opts.radec):
         raise NotImplementedError()
 
-
-    flag = inlined_array(flag, [frow])
-
     # do this before casting to dask array otherwise
     # serialisation of attrs fails
     freq_out = np.mean(freq)
+    freq_min = freq.min()
+    freq_max = freq.max()
 
     # simple average over channels
     if opts.chan_average > 1:
@@ -181,10 +216,17 @@ def single_stokes(ds=None,
     # per facet best approximations to smooth beams as described in
     # https://www.overleaf.com/read/yzrsrdwxhxrd
     npix = int(np.deg2rad(opts.max_field_of_view)/cell_rad)
-    beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
-    data_vars['BEAM'] = (('scalar'), beam)
+    beam, l_beam, m_beam = interp_beam(freq_out/1e6, npix, npix,
+                                       np.rad2deg(cell_rad),
+                                       opts.beam_model,
+                                       utime=utime,
+                                       ant_pos=antpos,
+                                       phase_dir=radec)
+    data_vars['BEAM'] = (('l_beam','m_beam'), beam)
 
-    coords = {'chan': (('chan',), freq)} #,
+    coords = {'chan': (('chan',), freq),
+              'l_beam': (('l_beam',), l_beam),
+              'm_beam': (('m_beam',), m_beam)}
             #   'row': (('row',), ds.ROWID.values)}
 
     # TODO - provide time and freq centroids
@@ -195,8 +237,8 @@ def single_stokes(ds=None,
         'ddid': ds.DATA_DESC_ID,
         'scanid': ds.SCAN_NUMBER,
         'freq_out': freq_out,
-        'freq_min': freq.min(),
-        'freq_max': freq.max(),
+        'freq_min': freq_min,
+        'freq_max': freq_max,
         'time_out': np.mean(utime),
         'time_min': utime.min(),
         'time_max': utime.max(),
@@ -210,52 +252,29 @@ def single_stokes(ds=None,
     return out_ds.unify_chunks()
 
 
-def weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                ant1, ant2, pol='linear', product='I'):
-    # data are not necessarily 2x2 so we need separate labels
-    # for jones correlations and data/weight correlations
-    if jones.ndim == 5:
-        jout = 'rafdx'
-    elif jones.ndim == 6:
-        jout = 'rafdxx'
-        # TODO - how do we know if we should return
-        # jones[0][0][0] or jones[0][0][0][0] in function wrapper?
-        # Not required with delayed
-        raise NotImplementedError("Not yet implemented")
-    res = da.blockwise(_weight_data, 'rf',
-                       data, 'rfc',
-                       weight, 'rfc',
-                       jones, jout,
-                       tbin_idx, 'r',
-                       tbin_counts, 'r',
-                       ant1, 'r',
-                       ant2, 'r',
-                       pol, None,
-                       product, None,
-                       align_arrays=False,
-                       meta=np.empty((0, 0), dtype=object))
+def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
+                ant1, ant2, pol, product, nc):
 
-    vis = da.blockwise(getitem, 'rf', res, 'rf', 0, None, dtype=data.dtype)
-    wgt = da.blockwise(getitem, 'rf', res, 'rf', 1, None, dtype=weight.dtype)
+    vis, wgt = _weight_data_impl(data, weight, flag, jones,
+                                 tbin_idx, tbin_counts,
+                                 ant1, ant2, pol, product, nc)
 
-    return vis, wgt
+    out_dict = {}
+    out_dict['vis'] = vis
+    out_dict['wgt'] = wgt
 
-def _weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                 ant1, ant2, pol, product):
+    return out_dict
 
-    return _weight_data_impl(data[0], weight[0], jones[0][0][0],
-                             tbin_idx, tbin_counts,
-                             ant1, ant2, pol, product)
 
-@generated_jit(nopython=True, nogil=True, cache=True)
-def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
-                      ant1, ant2, pol, product):
+@generated_jit(nopython=True, nogil=True, cache=True, parallel=True)
+def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
+                      ant1, ant2, pol, product, nc):
 
-    coerce_literal(_weight_data, ["product", "pol"])
+    coerce_literal(weight_data, ["product", "pol", "nc"])
 
-    vis_func, wgt_func = stokes_funcs(data, jones, product, pol=pol)
+    vis_func, wgt_func = stokes_funcs(data, jones, product, pol, ncorr)
 
-    def _impl(data, weight, jones, tbin_idx, tbin_counts,
+    def _impl(data, weight, flag, jones, tbin_idx, tbin_counts,
               ant1, ant2, pol, product):
         # for dask arrays we need to adjust the chunks to
         # start counting from zero
@@ -265,7 +284,7 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
         vis = np.zeros((nrow, nchan), dtype=data.dtype)
         wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
 
-        for t in range(nt):
+        for t in prange(nt):
             for row in range(tbin_idx[t],
                              tbin_idx[t] + tbin_counts[t]):
                 p = int(ant1[row])
@@ -273,72 +292,239 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                 gp = jones[t, p, :, 0]
                 gq = jones[t, q, :, 0]
                 for chan in range(nchan):
-                    wval = wgt_func(gp[chan], gq[chan],
-                                    weight[row, chan])
-                    if wval > 1e-6:
-                        wgt[row, chan] = wval
-                        vis[row, chan] = vis_func(gp[chan], gq[chan],
-                                                weight[row, chan],
-                                                data[row, chan])/wval
+                    if flag[row, chan]:
+                        continue
+                    wgt[row, chan] = wgt_func(gp[chan], gq[chan],
+                                              weight[row, chan])
+                    vis[row, chan] = vis_func(gp[chan], gq[chan],
+                                              weight[row, chan],
+                                              data[row, chan])
 
         return vis, wgt
     return _impl
 
 
-def stokes_funcs(data, jones, product, pol):
-    # The expressions for DIAG_DIAG and DIAG mode are essentially the same
-    if jones.ndim == 5:
-        # I and Q have identical weights
+def stokes_funcs(data, jones, product, pol, nc):
+    import sympy as sm
+    from sympy.physics.quantum import TensorProduct
+    from sympy.utilities.lambdify import lambdify
+    # set up symbolic expressions
+    gp00, gp10, gp01, gp11 = sm.symbols("gp00 gp10 gp01 gp11", real=False)
+    gq00, gq10, gq01, gq11 = sm.symbols("gq00 gq10 gq01 gq11", real=False)
+    w0, w1, w2, w3 = sm.symbols("W0 W1 W2 W3", real=True)
+    v00, v10, v01, v11 = sm.symbols("v00 v10 v01 v11", real=False)
+
+    # Jones matrices
+    Gp = sm.Matrix([[gp00, gp01],[gp10, gp11]])
+    Gq = sm.Matrix([[gq00, gq01],[gq10, gq11]])
+
+    # Mueller matrix (row major form)
+    Mpq = TensorProduct(Gp, Gq.conjugate())
+    Mpqinv = TensorProduct(Gp.inv(), Gq.conjugate().inv())
+
+    # inverse noise covariance
+    Sinv = sm.Matrix([[w0, 0, 0, 0],
+                      [0, w1, 0, 0],
+                      [0, 0, w2, 0],
+                      [0, 0, 0, w3]])
+    S = Sinv.inv()
+
+    # visibilities
+    Vpq = sm.Matrix([[v00], [v01], [v10], [v11]])
+
+    # Full Stokes to corr operator
+    # Is this the only difference between linear and circular pol?
+    # What about paralactic angle rotation?
+    if pol == literal('linear'):
+        T = sm.Matrix([[1.0, 1.0, 0, 0],
+                       [0, 0, 1.0, 1.0j],
+                       [0, 0, 1.0, -1.0j],
+                       [1.0, -1.0, 0, 0]])
+    elif pol == literal('circular'):
+        T = sm.Matrix([[1.0, 0, 0, 1.0],
+                       [0, 1.0, 1.0j, 0],
+                       [0, 1.0, -1.0j, 0],
+                       [1.0, 0, 0, -1.0]])
+    Tinv = T.inv()
+
+    # Full Stokes weights
+    W = T.H * Mpq.H * Sinv * Mpq * T
+    Winv = Tinv * Mpqinv * S * Mpqinv.H * Tinv.H
+
+    # Full Stokes coherencies
+    C = Winv * (T.H * (Mpq.H * (Sinv * Vpq)))
+    # C = T.H * (Mpq.H * (Sinv * Vpq))
+
+    if product == literal('I'):
+        i = 0
+    elif product == literal('Q'):
+        i = 1
+    elif product == literal('U'):
+        i = 2
+    elif product == literal('V'):
+        i = 3
+    else:
+        raise ValueError(f"Unknown polarisation product {product}")
+
+    if jones.ndim == 6:  # Full mode
+        Wsymb = lambdify((gp00, gp01, gp10, gp11,
+                          gq00, gq01, gq10, gq11,
+                          w0, w1, w2, w3),
+                          sm.simplify(sm.expand(W[i,i])))
+        Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
+
+
+        Dsymb = lambdify((gp00, gp01, gp10, gp11,
+                          gq00, gq01, gq10, gq11,
+                          w0, w1, w2, w3,
+                          v00, v01, v10, v11),
+                          sm.simplify(sm.expand(C[i])))
+        Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
+
         @njit(nogil=True, fastmath=True, inline='always')
         def wfunc(gp, gq, W):
-            gp00 = gp[0]
-            gp11 = gp[1]
-            gq00 = gq[0]
-            gq11 = gq[1]
-            W0 = W[0]
-            W3 = W[-1]
-            return np.real(W0*gp00*gq00*np.conjugate(gp00)*np.conjugate(gq00) +
-                    W3*gp11*gq11*np.conjugate(gp11)*np.conjugate(gq11))
+            gp00 = gp[0,0]
+            gp01 = gp[0,1]
+            gp10 = gp[1,0]
+            gp11 = gp[1,1]
+            gq00 = gq[0,0]
+            gq01 = gq[0,1]
+            gq10 = gq[1,0]
+            gq11 = gq[1,1]
+            W00 = W[0]
+            W01 = W[1]
+            W10 = W[2]
+            W11 = W[3]
+            return Wjfn(gp00, gp01, gp10, gp11,
+                        gq00, gq01, gq10, gq11,
+                        W00, W01, W10, W11).real
 
-        if product == literal('I'):
+        @njit(nogil=True, fastmath=True, inline='always')
+        def vfunc(gp, gq, W, V):
+            gp00 = gp[0,0]
+            gp01 = gp[0,1]
+            gp10 = gp[1,0]
+            gp11 = gp[1,1]
+            gq00 = gq[0,0]
+            gq01 = gq[0,1]
+            gq10 = gq[1,0]
+            gq11 = gq[1,1]
+            W00 = W[0]
+            W01 = W[1]
+            W10 = W[2]
+            W11 = W[3]
+            V00 = V[0]
+            V01 = V[1]
+            V10 = V[2]
+            V11 = V[3]
+            return Djfn(gp00, gp01, gp10, gp11,
+                        gq00, gq01, gq10, gq11,
+                        W00, W01, W10, W11,
+                        V00, V01, V10, V11)
+
+    elif jones.ndim == 5:  # DIAG mode
+        W = W.subs(gp10, 0)
+        W = W.subs(gp01, 0)
+        W = W.subs(gq10, 0)
+        W = W.subs(gq01, 0)
+        C = C.subs(gp10, 0)
+        C = C.subs(gp01, 0)
+        C = C.subs(gq10, 0)
+        C = C.subs(gq01, 0)
+
+        Wsymb = lambdify((gp00, gp11,
+                          gq00, gq11,
+                          w0, w1, w2, w3),
+                          sm.simplify(sm.expand(W[i,i])))
+        Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
+
+
+        Dsymb = lambdify((gp00, gp11,
+                          gq00, gq11,
+                          w0, w1, w2, w3,
+                          v00, v01, v10, v11),
+                          sm.simplify(sm.expand(C[i])))
+        Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
+
+        nc = int(nc)
+        if nc==4:
+            @njit(nogil=True, fastmath=True, inline='always')
+            def wfunc(gp, gq, W):
+                gp00 = gp[0]
+                gp11 = gp[1]
+                gq00 = gq[0]
+                gq11 = gq[1]
+                W00 = W[0]
+                W01 = W[1]
+                W10 = W[2]
+                W11 = W[3]
+                return Wjfn(gp00, gp11,
+                            gq00, gq11,
+                            W00, W01, W10, W11).real
+
             @njit(nogil=True, fastmath=True, inline='always')
             def vfunc(gp, gq, W, V):
                 gp00 = gp[0]
                 gp11 = gp[1]
                 gq00 = gq[0]
                 gq11 = gq[1]
-                W0 = W[0]
-                W3 = W[-1]
-                v00 = V[0]
-                v11 = V[-1]
-                return (W0*gq00*v00*np.conjugate(gp00) +
-                        W3*gq11*v11*np.conjugate(gp11))
+                W00 = W[0]
+                W01 = W[1]
+                W10 = W[2]
+                W11 = W[3]
+                V00 = V[0]
+                V01 = V[1]
+                V10 = V[2]
+                V11 = V[3]
+                return Djfn(gp00, gp11,
+                            gq00, gq11,
+                            W00, W01, W10, W11,
+                            V00, V01, V10, V11)
+        elif nc==2:
+            @njit(nogil=True, fastmath=True, inline='always')
+            def wfunc(gp, gq, W):
+                gp00 = gp[0]
+                gp11 = gp[1]
+                gq00 = gq[0]
+                gq11 = gq[1]
+                W00 = W[0]
+                W01 = 1.0
+                W10 = 1.0
+                W11 = W[-1]
+                return Wjfn(gp00, gp11,
+                            gq00, gq11,
+                            W00, W01, W10, W11).real
 
-        elif product == literal('Q'):
-            if pol != literal('linear'):
-                msg = "Stokes I not currently supported for circular pol"
-                raise NotImplementedError(msg)
             @njit(nogil=True, fastmath=True, inline='always')
             def vfunc(gp, gq, W, V):
                 gp00 = gp[0]
                 gp11 = gp[1]
                 gq00 = gq[0]
                 gq11 = gq[1]
-                W0 = W[0]
-                W3 = W[-1]
-                v00 = V[0]
-                v11 = V[-1]
-                return (W0*gq00*v00*np.conjugate(gp00) -
-                        W3*gq11*v11*np.conjugate(gp11))
-
+                W00 = W[0]
+                W01 = 1.0
+                W10 = 1.0
+                W11 = W[3]
+                V00 = V[0]
+                V01 = 0j
+                V10 = 0j
+                V11 = V[3]
+                return Djfn(gp00, gp11,
+                            gq00, gq11,
+                            W00, W01, W10, W11,
+                            V00, V01, V10, V11)
         else:
-            raise ValueError("The requested product is not available from input data")
+            raise ValueError(f"Selected product is only available from 2 or 4"
+                             f"correlation data while you have ncorr={nc}.")
 
-        return vfunc, wfunc
-
-    # Full mode
-    elif jones.ndim == 6:
-        raise NotImplementedError("Full polarisation imaging not yet supported")
 
     else:
-        raise ValueError("jones array has an unsupported number of dimensions")
+        raise ValueError(f"Jones term has incorrect number of dimensions")
+
+    # import inspect
+    # print(inspect.getsource(Djfn))
+    # print(inspect.getsource(Wjfn))
+
+    # quit()
+
+    return vfunc, wfunc

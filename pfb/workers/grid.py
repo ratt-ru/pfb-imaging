@@ -1,4 +1,8 @@
 # flake8: noqa
+import os
+import dask
+dask.config.set(**{'array.slicing.split_large_chunks': False})
+from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
 import click
@@ -26,56 +30,130 @@ def grid(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
+    OmegaConf.set_struct(opts, True)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'grid_{timestamp}.log')
-
-    OmegaConf.set_struct(opts, True)
+    ldir = Path(opts.log_directory).resolve()
+    ldir.mkdir(parents=True, exist_ok=True)
+    pyscilog.log_to_file(f'{str(ldir)}/grid_{timestamp}.log')
+    print(f'Logs will be written to {str(ldir)}/grid_{timestamp}.log', file=log)
+    basedir = Path(opts.output_filename).resolve().parent
+    basedir.mkdir(parents=True, exist_ok=True)
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    dds_name = f'{basename}_{opts.postfix}.dds'
 
     with ExitStack() as stack:
         from pfb import set_client
         opts = set_client(opts, stack, log, scheduler=opts.scheduler)
+        import dask
+        dask.config.set(**{'array.slicing.split_large_chunks': False})
+        from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
+        from pfb.utils.misc import compute_context
+        from pfb.utils.fits import dds2fits, dds2fits_mfs
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _grid(**opts)
+        dds_out = _grid(**opts)
 
-def _grid(**kw):
+        writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
+
+        # dask.visualize(writes, color="order", cmap="autumn",
+        #                node_attr={"penwidth": "4"},
+        #                filename=f'{basename}_grid_ordered_graph.pdf',
+        #                optimize_graph=False)
+        # dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
+        #                optimize_graph=False)
+
+        print("Computing image space data products", file=log)
+        with compute_context(opts.scheduler, f'{str(ldir)}/grid_{timestamp}'):
+            dask.compute(writes, optimize_graph=False)
+
+        dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
+        if 'PSF' in dds[0]:
+            for i, ds in enumerate(dds):
+                dds[i] = ds.chunk({'x_psf': -1, 'y_psf': -1})
+
+        # convert to fits files
+        fitsout = []
+        if opts.fits_mfs:
+            if opts.dirty:
+                fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
+            if opts.psf:
+                fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
+            if opts.residual and 'MODEL' in dds[0]:
+                fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+                fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
+
+        if opts.fits_cubes:
+            if opts.dirty:
+                fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
+            if opts.psf:
+                fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
+            if opts.residual and 'MODEL' in dds[0]:
+                fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+                fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
+
+        if len(fitsout):
+            print("Writing fits", file=log)
+            dask.compute(fitsout)
+
+        if opts.scheduler=='distributed':
+            from distributed import get_client
+            client = get_client()
+            client.close()
+
+        print("All done here.", file=log)
+
+def _grid(xdsi=None, **kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
-    import os
+
     import numpy as np
     import dask
-    dask.config.set(**{'array.slicing.split_large_chunks': False})
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.fits import dds2fits, dds2fits_mfs
     from pfb.utils.misc import compute_context
-    from pfb.operators.gridder import vis2im, loc2psf_vis
+    from pfb.operators.gridder import image_data_products
     from pfb.operators.fft import fft2d
-    from pfb.utils.weighting import (compute_counts, counts_to_weights,
-                                     filter_extreme_counts, l2reweight)
+    from pfb.utils.weighting import (compute_counts,
+                                     filter_extreme_counts)
     from pfb.utils.beam import eval_beam
     import xarray as xr
     from uuid import uuid4
-    from daskms.optimisation import inlined_array
+    from dask.graph_manipulation import clone
     from pfb.utils.astrometry import get_coordinates
     from africanus.coordinates import radec_to_lm
     from pfb.utils.misc import concat_chan, concat_row
+    import sympy as sm
+    from sympy.utilities.lambdify import lambdify
+    from sympy.parsing.sympy_parser import parse_expr
+    from quartical.utils.dask import Blocker
+
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     # xds contains vis products, no imaging weights applied
-    xds_name = f'{basename}.xds.zarr'
-    xds = xds_from_zarr(xds_name, chunks={'row': -1, 'chan': -1})
+    xds_name = f'{basename}.xds'
+    if xdsi is not None:
+        xds = []
+        for ds in xdsi:
+            xds.append(ds.chunk({'row':-1,
+                                 'chan': -1,
+                                 'l_beam': -1,
+                                 'm_beam': -1}))
+    else:
+        xds = xds_from_zarr(xds_name, chunks={'row': -1,
+                                              'chan': -1,
+                                              'l_beam': -1,
+                                              'm_beam': -1})
     # dds contains image space products including imaging weights and uvw
-    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds'
 
     if os.path.isdir(dds_name):
         dds_exists = True
@@ -102,25 +180,16 @@ def _grid(**kw):
     if opts.concat_row and len(xds) > nband_in:
         print('Concatenating datasets along row dimension', file=log)
         xds = concat_row(xds)
-        # try:
-        #     assert len(xds) == nband_in
-        # except Exception as e:
-        #     raise RuntimeError('Something went wrong during row concatenation.'
-        #                        'This is probably a bug.')
         ntime = 1
-        times_in = np.array((xds[0].time_out,))
+        times_out = np.array((xds[0].time_out,))
     else:
         ntime = ntime_in
+        times_out = times_in
 
     if opts.nband != nband_in and len(xds) > ntime:
         print('Concatenating datasets along chan dimension. '
               f'Mapping {nband_in} datasets to {opts.nband} bands', file=log)
         xds = concat_chan(xds, nband_out=opts.nband)
-        # try:
-        #     assert len(xds) == ntime * opts.nband
-        # except Exception as e:
-        #     raise RuntimeError('Something went wrong during chan concatenation.'
-        #                        'This is probably a bug.')
         nband = opts.nband
         freqs_out = []
         for ds in xds:
@@ -129,6 +198,10 @@ def _grid(**kw):
     else:
         nband = nband_in
         freqs_out = freqs_in
+
+    # do this after concatenation (to check)
+    for i, ds in enumerate(xds):
+        xds[i] = ds.chunk({'chan': -1})
 
     real_type = xds[0].WEIGHT.dtype
     if real_type == np.float32:
@@ -178,6 +251,10 @@ def _grid(**kw):
     else:
         nx = opts.nx
         ny = opts.ny if opts.ny is not None else nx
+        cell_deg = np.rad2deg(cell_rad)
+        fovx = nx*cell_deg
+        fovy = ny*cell_deg
+        print(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
 
     if opts.dirty:
         print(f"Image size = (ntime={ntime}, nband={nband}, nx={nx}, ny={ny})", file=log)
@@ -191,6 +268,7 @@ def _grid(**kw):
     while ny_psf % 2:
         ny_psf += 1
         ny_psf = good_size(ny_psf)
+    nyo2 = ny_psf//2 + 1
 
     if opts.psf:
         print(f"PSF size = (ntime={ntime}, nband={nband}, nx={nx_psf}, ny={ny_psf})", file=log)
@@ -213,29 +291,34 @@ def _grid(**kw):
         print(f'Image space data products will be stored in {dds_name}.', file=log)
 
     # check if model exists
-    if opts.transfer_model_from is not None:
+    if opts.transfer_model_from:
         try:
             mds = xds_from_zarr(opts.transfer_model_from,
-                                chunks={'x':-1, 'y':-1})
+                                chunks={'params':-1, 'comps':-1})[0]
         except Exception as e:
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
-        try:
-            assert len(mds) == len(dds)
-            for ms, ds in zip(mds, dds):
-                assert ms.bandid == ds.bandid
-        except Exception as e:
-            raise ValueError("Transfer from dataset mismatched. "
-                             "This is not currently supported.")
-        try:
-            assert 'MODEL' in mds[0]
-        except Exception as e:
-            raise ValueError(f"No MODEL variable in {opts.transfer_model_from}")
 
-        print(f"Found MODEL in {opts.transfer_model_from}. ",
+        # should we construct the model func outside
+        # of eval_coeffs_to_slice?
+        # params = sm.symbols(('t','f'))
+        # params += sm.symbols(tuple(mds.params.values))
+        # symexpr = parse_expr(mds.parametrisation)
+        # model_func = lambdify(params, symexpr)
+        # texpr = parse_expr(mds.texpr)
+        # tfunc = lambdify(params[0], texpr)
+        # fexpr = parse_expr(mds.fexpr)
+        # ffunc = lambdify(params[1], fexpr)
+
+
+        # we only want to load these once
+        model_coeffs = mds.coefficients.values
+        locx = mds.location_x.values
+        locy = mds.location_y.values
+        params = mds.params.values
+        coeffs = mds.coefficients.values
+
+        print(f"Loading model from {opts.transfer_model_from}. ",
               file=log)
-        has_model = True
-    else:
-        has_model = False
 
     dds_out = []
     for i, ds in enumerate(xds):
@@ -246,15 +329,14 @@ def _grid(**kw):
                                    'y':-1})
         else:
             out_ds = xr.Dataset()
-        if opts.transfer_model_from is not None:
-            out_ds = out_ds.assign(**{'MODEL': (('x', 'y'), mds[i].MODEL.data)})
         uvw = ds.UVW.data
         freq = ds.FREQ.data
         vis = ds.VIS.data
+        wgt = ds.WEIGHT.data
         # This is a vis space mask (see wgridder convention)
         mask = ds.MASK.data
         bandid = np.where(freqs_out == ds.freq_out)[0][0]
-        timeid = np.where(times_in == ds.time_out)[0][0]
+        timeid = np.where(times_out == ds.time_out)[0][0]
 
         # compute lm coordinates of target
         if opts.target is not None:
@@ -293,7 +375,10 @@ def _grid(**kw):
             'timeid': timeid,
             'freq_out': ds.freq_out,
             'time_out': ds.time_out,
-            'robustness': opts.robustness
+            'robustness': opts.robustness,
+            'super_resolution_factor': opts.super_resolution_factor,
+            'field_of_view': opts.field_of_view,
+            'product': opts.product
         })
         # TODO - assign ug,vg-coordinates
         x = (-nx/2 + np.arange(nx)) * cell_rad + x0
@@ -307,35 +392,53 @@ def _grid(**kw):
         cell_deg = np.rad2deg(cell_rad)
         l = (-(nx//2) + da.arange(nx)) * cell_deg + np.deg2rad(x0)
         m = (-(ny//2) + da.arange(ny)) * cell_deg + np.deg2rad(y0)
-        ll, mm = da.meshgrid(l, m, indexing='ij')
-        bvals = eval_beam(ds.BEAM.data, ll, mm)
+        # ll, mm = da.meshgrid(l, m, indexing='ij')
+        l_beam = ds.l_beam.data
+        m_beam = ds.m_beam.data
+        bvals = eval_beam(ds.BEAM.data, l_beam, m_beam, l, m)
         out_ds = out_ds.assign(**{'BEAM': (('x', 'y'), bvals)})
 
+        # get the model
+        if opts.transfer_model_from:
+            from pfb.utils.misc import eval_coeffs_to_slice
+            model = eval_coeffs_to_slice(
+                ds.time_out,
+                ds.freq_out,
+                model_coeffs,
+                locx, locy,
+                mds.parametrisation,
+                params,
+                mds.texpr,
+                mds.fexpr,
+                mds.npix_x, mds.npix_y,
+                mds.cell_rad_x, mds.cell_rad_y,
+                mds.center_x, mds.center_y,
+                nx, ny,
+                cell_rad, cell_rad,
+                x0, y0
+            )
+            model = da.from_array(model, chunks=(-1,-1))
+            out_ds = out_ds.assign(**{'MODEL': (('x', 'y'), model)})
 
-        if opts.l2reweight_dof and 'MODEL' in out_ds:
-            wgt, res = l2reweight(ds, out_ds,
-                             opts.epsilon,
-                             opts.nvthreads,
-                             opts.wstack,
-                             precision,
-                             dof=opts.l2reweight_dof)
+        elif 'MODEL' in out_ds:
+            model = out_ds.MODEL.data
         else:
-            wgt = ds.WEIGHT.data
-            res = None
+            model = None
+
 
         if opts.robustness is not None:
             # we'll skip this if counts already exists
             # what to do if flags have changed?
             if 'COUNTS' not in out_ds:
                 counts = compute_counts(
-                        uvw,
+                        clone(uvw),
                         freq,
                         mask,
                         nx,
                         ny,
                         cell_rad,
                         cell_rad,
-                        wgt.dtype,
+                        real_type,
                         ngrid=opts.nvthreads)
                 # get rid of artificially high weights corresponding to
                 # nearly empty cells
@@ -343,119 +446,116 @@ def _grid(**kw):
                     counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
                                                    nlevel=opts.filter_level)
 
-                # counts = inlined_array(counts, [uvw, freq, mask])
-
                 # do we want the coordinates to be ug, vg rather?
                 out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
 
-            # we usually want to re-evaluate this since the robustness may change
-            imwgt = counts_to_weights(out_ds.COUNTS.data,
-                                      uvw,
-                                      freq,
-                                      nx, ny,
-                                      cell_rad, cell_rad,
-                                      opts.robustness)
-            wgt *= imwgt
+            else:
+                counts = out_ds.COUNTS.data
+        else:
+            counts = None
 
-        if opts.dirty:
-            dirty = vis2im(uvw=uvw,
-                           freq=freq,
-                           vis=vis,
-                           wgt=wgt,
-                           nx=nx,
-                           ny=ny,
-                           cellx=cell_rad,
-                           celly=cell_rad,
-                           x0=x0, y0=y0,
-                           nthreads=opts.nvthreads,
-                           epsilon=opts.epsilon,
-                           precision=precision,
-                           mask=mask,
-                           do_wgridding=opts.wstack,
-                           double_precision_accumulation=opts.double_accum)
-            dirty = inlined_array(dirty, [uvw, freq, mask])
-            out_ds = out_ds.assign(**{'DIRTY': (('x', 'y'), dirty)})
+        # we might want to chunk over row chan in the future but
+        # for now these will always have chunks=(-1,-1)
+        blocker = Blocker(image_data_products, ('row', 'chan'))
+        blocker.add_input('uvw', uvw, ('row','three'))
+        blocker.add_input('freq', freq, ('chan',))
+        blocker.add_input('vis', vis, ('row','chan'))
+        blocker.add_input('wgt', wgt, ('row','chan'))
+        blocker.add_input('mask', mask, ('row','chan'))
+        if counts is not None:
+            blocker.add_input('counts', counts, ('x','y'))
+        else:
+            blocker.add_input('counts', None)
+        blocker.add_input('nx', nx)
+        blocker.add_input('ny', ny)
+        blocker.add_input('nx_psf', nx_psf)
+        blocker.add_input('ny_psf', ny_psf)
+        blocker.add_input('cellx', cell_rad)
+        blocker.add_input('celly', cell_rad)
+        if model is not None:
+            blocker.add_input('model', model, ('x', 'y'))
+        else:
+            blocker.add_input('model', None)
+        blocker.add_input('robustness', opts.robustness)
+        blocker.add_input('x0', x0)
+        blocker.add_input('y0', y0)
+        blocker.add_input('nthreads', opts.nvthreads)
+        blocker.add_input('epsilon', opts.epsilon)
+        blocker.add_input('do_wgridding', opts.do_wgridding)
+        blocker.add_input('double_accum', opts.double_accum)
+        blocker.add_input('l2reweight_dof', opts.l2reweight_dof)
+        blocker.add_input('do_psf', opts.psf)
+        blocker.add_input('do_weight', opts.weight)
+        blocker.add_input('do_residual', opts.residual)
+
+        blocker.add_output(
+            'DIRTY',
+            ('x', 'y'),
+            ((nx,), (ny,)),
+            wgt.dtype)
+
+        blocker.add_output(
+            'WSUM',
+            ('scalar',),
+            ((1,),),
+            wgt.dtype)
+
+        if opts.residual:
+            blocker.add_output(
+                'RESIDUAL',
+                ('x', 'y'),
+                ((nx,), (ny,)),
+                wgt.dtype)
 
         if opts.psf:
-            psf_vis = loc2psf_vis(uvw,
-                                  freq,
-                                  cell_rad,
-                                  x0,
-                                  y0,
-                                  wstack=opts.wstack,
-                                  epsilon=opts.epsilon,
-                                  nthreads=opts.nvthreads,
-                                  precision=precision)
-            psf_vis = inlined_array(psf_vis, [uvw, freq])
-            psf = vis2im(uvw=uvw,
-                         freq=freq,
-                         vis=psf_vis,
-                         wgt=wgt,
-                         nx=nx_psf,
-                         ny=ny_psf,
-                         cellx=cell_rad,
-                         celly=cell_rad,
-                         x0=x0, y0=y0,
-                         nthreads=opts.nvthreads,
-                         epsilon=opts.epsilon,
-                         precision=precision,
-                         mask=mask,
-                         do_wgridding=opts.wstack,
-                         double_precision_accumulation=opts.double_accum)
-            psf = inlined_array(psf, [uvw, freq, mask])
-            # get FT of psf
-            psfhat = fft2d(psf, nthreads=opts.nvthreads)
-            out_ds = out_ds.assign(**{'PSF': (('x_psf', 'y_psf'), psf),
-                                      'PSFHAT': (('x_psf', 'yo2'), psfhat)})
+            blocker.add_output(
+                'PSF',
+                ('x_psf', 'y_psf'),
+                ((nx_psf,), (ny_psf,)),
+                wgt.dtype)
+            blocker.add_output(
+                'PSFHAT',
+                ('x_psf', 'yo2'),
+                ((nx_psf,), (nyo2,)),
+                vis.dtype)
+
+        if opts.weight:
+            blocker.add_output(
+                'WEIGHT',
+                ('row', 'chan'),
+                wgt.chunks,
+                wgt.dtype)
+
+        output_dict = blocker.get_dask_outputs()
+        out_ds = out_ds.assign(**{
+            'DIRTY': (('x', 'y'), output_dict['DIRTY'])
+            })
+
+        if opts.psf:
+            out_ds = out_ds.assign(**{
+                'PSF': (('x_psf', 'y_psf'), output_dict['PSF']),
+                'PSFHAT': (('x_psf', 'yo2'), output_dict['PSFHAT'])
+                })
 
         # TODO - don't put vis space products in dds
+        # but how apply imaging weights in that case?
         if opts.weight:
-            out_ds = out_ds.assign(**{'WEIGHT': (('row', 'chan'), wgt)})
+            out_ds = out_ds.assign(**{
+                'WEIGHT': (('row', 'chan'), output_dict['WEIGHT'])
+                })
 
-        wsum = wgt[mask.astype(bool)].sum()
-
-        # wsum = inlined_array(wsum, [uvw, wgt, freq, mask])
-
-
-
-        if opts.residual and 'MODEL' in out_ds:
-            model = out_ds.MODEL.data
-            if res is not None:
-                residual = vis2im(uvw=uvw,
-                           freq=freq,
-                           vis=res,
-                           wgt=wgt,
-                           nx=nx,
-                           ny=ny,
-                           cellx=cell_rad,
-                           celly=cell_rad,
-                           x0=x0, y0=y0,
-                           nthreads=opts.nvthreads,
-                           epsilon=opts.epsilon,
-                           precision=precision,
-                           mask=mask,
-                           do_wgridding=opts.wstack,
-                           double_precision_accumulation=opts.double_accum)
-            else:
-                from pfb.operators.hessian import hessian
-                hessopts = {
-                    'cell': cell_rad,
-                    'wstack': opts.wstack,
-                    'epsilon': opts.epsilon,
-                    'double_accum': opts.double_accum,
-                    'nthreads': opts.nvthreads
-                }
-                # we only want to apply the beam once here
-                residual = dirty - hessian(bvals * model, uvw, wgt,
-                                        mask, freq, None, hessopts)
-            residual = inlined_array(residual, [uvw, freq, mask])
-            out_ds = out_ds.assign(**{'RESIDUAL': (('x', 'y'), residual)})
+        if opts.residual:
+            out_ds = out_ds.assign(**{
+                'RESIDUAL': (('x', 'y'), output_dict['RESIDUAL'])
+                })
 
 
-        out_ds = out_ds.assign(**{'FREQ': (('chan',), freq),
-                                  'UVW': (('row', 'three'), uvw),
-                                  'MASK': (('row', 'chan'), mask),
-                                  'WSUM': (('scalar',), da.atleast_1d(wsum))})
+        out_ds = out_ds.assign(**{
+            'FREQ': (('chan',), freq),
+            'UVW': (('row', 'three'), uvw),
+            'MASK': (('row', 'chan'), mask),
+            'WSUM': (('scalar',), output_dict['WSUM'])
+            })
 
 
         out_ds = out_ds.chunk({'row':100000,
@@ -470,48 +570,4 @@ def _grid(**kw):
 
         dds_out.append(out_ds.unify_chunks())
 
-    writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
-
-    # dask.visualize(writes, color="order", cmap="autumn",
-    #                node_attr={"penwidth": "4"},
-    #                filename=f'{basename}_grid_ordered_graph.pdf',
-    #                optimize_graph=False)
-    # dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
-    #                optimize_graph=False)
-
-    print("Computing image space data products", file=log)
-    with compute_context(opts.scheduler, basename+'_grid'):
-        dask.compute(writes, optimize_graph=False)
-
-    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
-
-    # convert to fits files
-    fitsout = []
-    if opts.fits_mfs:
-        if opts.dirty:
-            fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
-        if opts.psf:
-            fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
-        if opts.residual and 'MODEL' in dds[0]:
-            fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-            fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
-
-    if opts.fits_cubes:
-        if opts.dirty:
-            fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
-        if opts.psf:
-            fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
-        if opts.residual and 'MODEL' in dds[0]:
-            fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-            fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
-
-    if len(fitsout):
-        print("Writing fits", file=log)
-        dask.compute(fitsout)
-
-    if opts.scheduler=='distributed':
-        from distributed import get_client
-        client = get_client()
-        client.close()
-
-    print("All done here.", file=log)
+    return dds_out

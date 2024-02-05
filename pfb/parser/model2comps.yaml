@@ -1,40 +1,30 @@
 inputs:
-  output_filename:
-    dtype: str
-    required: true
-    metavar: BASENAME
-    abbreviation: o
-    info:
-      Basename of output
   overwrite:
     dtype: bool
     default: false
     info:
       Allow overwrite of existing model
-  spectral_poly_order:
+  nbasisf:
     dtype: int
     default: 4
-    abbreviation: spo
     info:
       Order of interpolating polynomial for frequency axis
-  temporal_poly_order:
+  nbasist:
     dtype: int
-    # default: 4
-    abbreviation: tpo
     info:
       Order of interpolating polynomial for frequency axis
+  fit_mode:
+    dtype: str
+    default: Legendre
+  min_val:
+    dtype: float
+    info:
+      Only fit components above this flux level
   postfix:
     dtype: str
     default: 'main'
     info:
       Can be used to specify a custom name for the image space data products
-  product:
-    dtype: str
-    abbreviation: p
-    default: I
-    info:
-      Imaging products to degrid. Options are I, Q, U, V.
-      Only single Stokes products are currently supported.
   model_name:
     dtype: str
     default: MODEL
@@ -45,9 +35,20 @@ inputs:
     dtype: str
     info:
       Specify to degrid from a fits file
+  use_wsum:
+    dtype: bool
+    default: true
+    info:
+      Use wsum as weights during fit
+  sigmasq:
+    dtype: float
+    default: 1e-10
+    info:
+      Multiple of the identity to add to the hessian for stability
 
   _include:
-    - (pfb.parser)dist.yml
+    - dist.yml
+    - out.yml
 
 outputs:
   {}

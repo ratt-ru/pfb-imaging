@@ -1,10 +1,9 @@
 import numpy as np
 from numba import njit, prange
 import dask.array as da
-from ducc0.wgridder.experimental import vis2dirty
-from ducc0.fft import c2c, genuine_hartley
+from ducc0.fft import c2c
 from africanus.constants import c as lightspeed
-from skimage.measure import block_reduce
+from quartical.utils.dask import Blocker
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
@@ -203,70 +202,63 @@ def _filter_extreme_counts(counts, nbox=16, level=10):
     return counts
 
 
-from scipy.special import polygamma
-import dask
-@dask.delayed()
-def etaf(ressq, ovar, dof):
-    eta = (dof + 1)/(dof + ressq/ovar)
-    logeta = polygamma(0, dof+1) - np.log(dof + ressq/ovar)
-    return eta, logeta
+# from scipy.special import polygamma
+# import dask
+# @dask.delayed()
+# def etaf(ressq, ovar, dof):
+#     eta = (dof + 1)/(dof + ressq/ovar)
+#     logeta = polygamma(0, dof+1) - np.log(dof + ressq/ovar)
+#     return eta, logeta
 
 
-from pfb.operators.gridder import im2vis, vis2im, loc2psf_vis
-from pfb.operators.fft import fft2d
-def l2reweight(dsv, dsi, epsilon, nthreads, wstack, precision, dof=2):
-    # vis data products
-    uvw = dsv.UVW.data
-    freq = dsv.FREQ.data
-    vis = dsv.VIS.data
-    vis_mask = dsv.MASK.data
+# from pfb.operators.gridder import im2vis
+# def l2reweight(dsv, dsi, epsilon, nthreads, do_wgridding, precision, dof=2):
+#     # vis data products
+#     uvw = dsv.UVW.data
+#     freq = dsv.FREQ.data
+#     vis = dsv.VIS.data
+#     vis_mask = dsv.MASK.data
 
-    # image data products
-    model = dsi.MODEL.data
-    cell_rad = dsi.cell_rad
-    x0 = dsi.x0
-    y0 = dsi.y0
-    beam = dsi.BEAM.data
+#     # image data products
+#     model = dsi.MODEL.data
+#     cell_rad = dsi.cell_rad
+#     x0 = dsi.x0
+#     y0 = dsi.y0
+#     beam = dsi.BEAM.data
 
-    # residual from model visibilities
-    mvis = im2vis(uvw=uvw,
-                    freq=freq,
-                    image=model*beam,
-                    cellx=cell_rad,
-                    celly=cell_rad,
-                    nthreads=nthreads,
-                    epsilon=epsilon,
-                    do_wgridding=wstack,
-                    x0=x0,
-                    y0=y0,
-                    precision=precision)
-    res = vis - mvis
-    res *= vis_mask
+#     # residual from model visibilities
+#     mvis = im2vis(uvw=uvw,
+#                     freq=freq,
+#                     image=model*beam,
+#                     cellx=cell_rad,
+#                     celly=cell_rad,
+#                     nthreads=nthreads,
+#                     epsilon=epsilon,
+#                     do_wgridding=do_wgridding,
+#                     x0=x0,
+#                     y0=y0,
+#                     precision=precision)
+#     res = vis - mvis
+#     res *= vis_mask
 
-    # Mahalanobis distance
-    ressq = (res*res.conj()).real
+#     # Mahalanobis distance
+#     ressq = (res*res.conj()).real
 
-    # overall variance factor
-    ovar = ressq.sum()/vis_mask.sum()
+#     # overall variance factor
+#     eta = da.map_blocks(update_eta,
+#                         ressq,
+#                         vis_mask,
+#                         dof,
+#                         chunks=ressq.chunks)
 
-    # new precision variables
-    eta = (dof + 1)/(dof + ressq/ovar)
-    # eta, logeta = etaf(ressq, ovar, dof)
-
-    return eta/ovar, res
+#     return eta, res
 
 
-def test_reweight(sigma, N=1000, dof=2):
-    res = sigma*np.random.randn(N) + 1.0j*sigma*np.random.randn(N)
-    ovar = np.var(res)
-    ressq = (res*res.conj()).real
-
-    eta = (dof + 1)/(dof + ressq/ovar)
-
-    print(np.mean(eta), np.mean(ressq/ovar), ovar)
-
-    wgt = eta / ovar
-
-    # import pdb; pdb.set_trace()
-
-    print(np.sum((res*res.conj()).real), np.sum((res*wgt*res.conj()).real), 2*N)
+# def update_eta(ressq, vis_mask, dof):
+#     wcount = vis_mask.sum()
+#     if wcount:
+#         ovar = ressq.sum()/wcount
+#         eta = (dof + 1)/(dof + ressq/ovar)
+#         return eta/ovar
+#     else:
+#         return np.zeros_like(ressq)
