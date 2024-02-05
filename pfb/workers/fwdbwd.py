@@ -276,16 +276,6 @@ def _fwdbwd(ddsi=None, **kw):
         # in this case the dual is also probably not useful
         dual = None
     else:
-<<<<<<< HEAD
-        M = None
-    # the PSF is normalised so we don't need to pass wsum
-    hess = partial(_hessian_reg_psf, beam=mean_beam * mask[None],
-                   psfhat=psfhat, nthreads=opts.nvthreads,
-                   sigmainv=sigmainv, padding=psf_padding,
-                   unpad_x=unpad_x, unpad_y=unpad_y, lastsize=lastsize)
-
-    if opts.hessnorm is None:
-=======
         print("Initialising PARAM to all zeros", file=log)
         x = np.zeros_like(dirty)
         model = func(x)
@@ -322,7 +312,6 @@ def _fwdbwd(ddsi=None, **kw):
         df = partial(dfunc, xp)
         dhf = partial(dhfunc, xp)
         j = -gradf(residual, xp, dhf)
->>>>>>> awskube
         print("Finding spectral norm of Hessian approximation", file=log)
         # hessian depends on x and sigmainv so need to do this at every iteration
         sigmainv = np.maximum(np.std(j), opts.sigmainv)
