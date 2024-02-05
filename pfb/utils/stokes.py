@@ -75,7 +75,10 @@ def single_stokes(ds=None,
                                      (nrow, nchan, ncorr),
                                      chunks=data.chunks)
     else:
-        weight = da.ones_like(data, dtype=real_type)
+        # weight = da.ones_like(data, dtype=real_type)
+        weight = da.ones((nrow, nchan, ncorr),
+                         chunks=data.chunks,
+                         dtype=real_type)
 
     if data.dtype != complex_type:
         data = data.astype(complex_type)
@@ -272,10 +275,10 @@ def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
 
     coerce_literal(weight_data, ["product", "pol", "nc"])
 
-    vis_func, wgt_func = stokes_funcs(data, jones, product, pol, ncorr)
+    vis_func, wgt_func = stokes_funcs(data, jones, product, pol, nc)
 
     def _impl(data, weight, flag, jones, tbin_idx, tbin_counts,
-              ant1, ant2, pol, product):
+              ant1, ant2, pol, product, nc):
         # for dask arrays we need to adjust the chunks to
         # start counting from zero
         tbin_idx -= tbin_idx.min()
@@ -446,8 +449,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                           sm.simplify(sm.expand(C[i])))
         Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
 
-        nc = int(nc)
-        if nc==4:
+        if nc==literal('4'):
             @njit(nogil=True, fastmath=True, inline='always')
             def wfunc(gp, gq, W):
                 gp00 = gp[0]
@@ -480,7 +482,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                             gq00, gq11,
                             W00, W01, W10, W11,
                             V00, V01, V10, V11)
-        elif nc==2:
+        elif nc==literal('2'):
             @njit(nogil=True, fastmath=True, inline='always')
             def wfunc(gp, gq, W):
                 gp00 = gp[0]
@@ -504,11 +506,11 @@ def stokes_funcs(data, jones, product, pol, nc):
                 W00 = W[0]
                 W01 = 1.0
                 W10 = 1.0
-                W11 = W[3]
+                W11 = W[-1]
                 V00 = V[0]
                 V01 = 0j
                 V10 = 0j
-                V11 = V[3]
+                V11 = V[-1]
                 return Djfn(gp00, gp11,
                             gq00, gq11,
                             W00, W01, W10, W11,
