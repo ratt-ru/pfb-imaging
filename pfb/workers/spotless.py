@@ -277,31 +277,11 @@ def _spotless(ddsi=None, **kw):
         modelp = deepcopy(model)
         data = residual + psf_convolve(model)
         grad21 = lambda x: psf_convolve(x) - data
-<<<<<<< HEAD
-        # model, dual = primal_dual(model,
-        #                           dual,
-        #                           opts.rmsfactor*rms,
-        #                           psi,
-        #                           psiH,
-        #                           hessnorm,
-        #                           prox21,
-        #                           grad21,
-        #                           nu=nbasis,
-        #                           positivity=opts.positivity,
-        #                           tol=opts.pd_tol,
-        #                           maxit=opts.pd_maxit,
-        #                           verbosity=opts.pd_verbose,
-        #                           report_freq=opts.pd_report_freq,
-        #                           gamma=opts.gamma)
-
-        model, dual = primal_dual_exp(model,
-=======
         # def grad21(x):
         #     res = psf_convolve(x) - data
         #     res[fsel] *= sfactor
         #     return res
         model, dual = primal_dual(model,
->>>>>>> awskube
                                   dual,
                                   opts.rmsfactor*rms,
                                   psi,

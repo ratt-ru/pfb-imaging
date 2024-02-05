@@ -166,10 +166,6 @@ def _forward(**kw):
         xpad = make_noncritical(xpad)
         xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
         xhat = make_noncritical(xhat)
-<<<<<<< HEAD
-        psf_convolve = partial(psf_convolve_cube, xpad, xhat, xout, psfhat, lastsize,
-                        nthreads=opts.nvthreads)
-=======
         hess_pcg = partial(hessian_psf_cube,
                            xpad,
                            xhat,
@@ -179,7 +175,6 @@ def _forward(**kw):
                            lastsize,
                            nthreads=opts.nvthreads*opts.nthreads_dask,  # not using dask parallelism
                            sigmainv=opts.sigmainv)
->>>>>>> awskube
     else:
         print("Solving for update using vis space hessian approximation",
               file=log)

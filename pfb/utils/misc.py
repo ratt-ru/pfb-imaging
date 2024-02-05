@@ -19,9 +19,6 @@ from scipy.optimize import curve_fit
 from collections import namedtuple
 from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
-<<<<<<< HEAD
-import pdb
-=======
 from quartical.utils.dask import Blocker
 from scipy.interpolate import RegularGridInterpolator
 from scipy.linalg import solve_triangular
@@ -34,7 +31,6 @@ JIT_OPTIONS = {
     "fastmath": True,
     "cache": True
 }
->>>>>>> awskube
 
 import pdb
 class ForkedPdb(pdb.Pdb):
