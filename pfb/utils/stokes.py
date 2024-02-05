@@ -272,7 +272,7 @@ def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
 
     coerce_literal(weight_data, ["product", "pol", "nc"])
 
-    vis_func, wgt_func = stokes_funcs(data, jones, product, pol, ncorr)
+    vis_func, wgt_func = stokes_funcs(data, jones, product, pol, nc)
 
     def _impl(data, weight, flag, jones, tbin_idx, tbin_counts,
               ant1, ant2, pol, product):
