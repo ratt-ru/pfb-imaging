@@ -75,7 +75,10 @@ def single_stokes(ds=None,
                                      (nrow, nchan, ncorr),
                                      chunks=data.chunks)
     else:
-        weight = da.ones_like(data, dtype=real_type)
+        # weight = da.ones_like(data, dtype=real_type)
+        weight = da.ones((nrow, nchan, ncorr),
+                         chunks=data.chunks,
+                         dtype=real_type)
 
     if data.dtype != complex_type:
         data = data.astype(complex_type)
