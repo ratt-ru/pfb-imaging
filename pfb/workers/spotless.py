@@ -29,9 +29,6 @@ def spotless(**kw):
     OmegaConf.set_struct(opts, True)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-<<<<<<< HEAD
-    pyscilog.log_to_file(f'spotless_{timestamp}.log')
-=======
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
     pyscilog.log_to_file(f'{str(ldir)}/spotless_{timestamp}.log')
@@ -40,7 +37,6 @@ def spotless(**kw):
     basedir.mkdir(parents=True, exist_ok=True)
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.postfix}.dds'
->>>>>>> awskube
 
     with ExitStack() as stack:
         # numpy imports have to happen after this step
@@ -75,10 +71,6 @@ def _spotless(ddsi=None, **kw):
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
     from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
-<<<<<<< HEAD
-    from pfb.opt.primal_dual import primal_dual_exp
-=======
->>>>>>> awskube
     from pfb.utils.misc import l1reweight_func
     from pfb.operators.hessian import hessian_xds
     from pfb.operators.psf import psf_convolve_cube
@@ -409,11 +401,7 @@ def _spotless(ddsi=None, **kw):
 #     from itertools import cycle
 
 #     basename = f'{opts.output_filename}_{opts.product.upper()}'
-<<<<<<< HEAD
-#     dds_name = f'{basename}_{opts.postfix}.dds.zarr'
-=======
 #     dds_name = f'{basename}_{opts.postfix}.dds'
->>>>>>> awskube
 
 #     client = get_client()
 #     names = [w['name'] for w in client.scheduler_info()['workers'].values()]
