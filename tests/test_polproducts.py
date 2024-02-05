@@ -155,8 +155,6 @@ def test_polproducts(do_gains, ms_name):
                 xi_phase = np.random.randn(ntime, nchan)
                 phase = kron_matvec(L, xi_phase)
                 jones[:, :, p, 0, c] = amp * np.exp(1.0j * phase)
-                print('amp = ', amp.min(), amp.max())
-                # print('phase = ', phase)
 
         # corrupted vis
         model_vis = model_vis.reshape(nrow, nchan, 1, 2, 2)
@@ -261,7 +259,7 @@ def test_polproducts(do_gains, ms_name):
         for ds in dds:
             wsum = ds.WSUM.values
             comp = ds.DIRTY.values[locx, locy]
-            print(flux[p], comp/wsum)
-            # assert_allclose(flux[p], comp/wsum, rtol=1e-4, atol=1e-4)
+            # print(flux[p], comp/wsum)
+            assert_allclose(flux[p], comp/wsum, rtol=1e-4, atol=1e-4)
 
 
