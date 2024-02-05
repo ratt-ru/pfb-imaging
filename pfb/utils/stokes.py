@@ -479,7 +479,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                             gq00, gq11,
                             W00, W01, W10, W11,
                             V00, V01, V10, V11)
-        elif nc==litearl('2'):
+        elif nc==literal('2'):
             @njit(nogil=True, fastmath=True, inline='always')
             def wfunc(gp, gq, W):
                 gp00 = gp[0]
