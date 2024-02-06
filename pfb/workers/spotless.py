@@ -262,6 +262,10 @@ def _spotless(ddsi=None, **kw):
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
+    best_rms = rms
+    best_rmax = rmax
+    best_model = model.copy()
+    diverge_count = 0
     print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
     for k in range(opts.niter):
@@ -306,9 +310,16 @@ def _spotless(ddsi=None, **kw):
                   basename + f'_{opts.postfix}_residual_{k+1}.fits',
                   hdr_mfs)
 
+        rmsp = rms
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
+
+        # base this on rmax?
+        if rms < best_rms:
+            best_rms = rms
+            best_rmax = rmax
+            best_model = model.copy()
 
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
               f"rms = {rms:.3e}, eps = {eps:.3e}",
@@ -334,13 +345,18 @@ def _spotless(ddsi=None, **kw):
             r = da.from_array(residual[b]*wsum)
             m = da.from_array(model[b])
             d = da.from_array(dual[b])
+            mbest = da.from_array(best_model[b])
             ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
                                   'MODEL': (('x', 'y'), m),
-                                  'DUAL': (('c', 'n'), d)})
-            ds_out = ds_out.assign_attrs({'parametrisation': 'id'})
+                                  'DUAL': (('c', 'n'), d),
+                                  'MODEL_BEST': (('x', 'y'), mbest)})
+            ds_out = ds_out.assign_attrs({'parametrisation': 'id',
+                                          'best_rms': best_rms,
+                                          'best_rmax': best_rmax})
             dds_out.append(ds_out)
         writes = xds_to_zarr(dds_out, dds_name,
-                             columns=('RESIDUAL', 'MODEL', 'DUAL'),
+                             columns=('RESIDUAL', 'MODEL',
+                                      'DUAL', 'MODEL_BEST'),
                              rechunk=True)
         dask.compute(writes)
 
@@ -351,6 +367,12 @@ def _spotless(ddsi=None, **kw):
         #     print("Terminating because final threshold has been reached",
         #           file=log)
         #     break
+
+        if rms > rmsp:
+            diverging += 1
+            if diverging > 3:
+                print("Algorithm is diverging. Terminating.", file=log)
+                break
 
     dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
 
