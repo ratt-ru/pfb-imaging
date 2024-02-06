@@ -17,8 +17,10 @@ requirements = [
                 'Click',
                 "ipdb",
                 "numba < 0.59",
-                "QuartiCal"
-
+                "QuartiCal",
+                "torch",
+                "torchvision",
+                "torchaudio"
             ]
 
 
