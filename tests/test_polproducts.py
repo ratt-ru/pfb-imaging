@@ -128,7 +128,6 @@ def test_polproducts(do_gains, ms_name):
     model_vis[:, :, 2] = model_vis_U - 1j*model_vis_V
     model_vis[:, :, 3] = model_vis_I - model_vis_Q
 
-
     if do_gains:
         t = (utime-utime.min())/(utime.max() - utime.min())
         nu = 2.5*(freq/freq0 - 1.0)
@@ -167,6 +166,9 @@ def test_polproducts(do_gains, ms_name):
         vis = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2,
                           gains, model_vis).reshape(nrow, nchan, ncorr)
 
+        # add iid noise
+        # vis += (np.random.randn(nrow, nchan, ncorr) +
+        #         1j*np.random.randn(nrow, nchan, ncorr))/np.sqrt(2)
 
         xds['DATA'] = (('row','chan','corr'),
                        da.from_array(vis, chunks=(-1,-1,-1)))
@@ -205,6 +207,10 @@ def test_polproducts(do_gains, ms_name):
         dask.compute(xds_to_zarr(net_xds_list, out_path))
 
     else:
+        # # add iid noise
+        # model_vis += (np.random.randn(nrow, nchan, ncorr) +
+        #               1j*np.random.randn(nrow, nchan, ncorr))/np.sqrt(2)
+
         xds['DATA'] = (('row','chan','corr'),
                        da.from_array(model_vis, chunks=(-1,-1,-1)))
         dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
