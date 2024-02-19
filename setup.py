@@ -18,8 +18,8 @@ requirements = [
                 # "ipdb",
                 "numba < 0.59",
                 "QuartiCal[degrid]"
-                "@git+https://github.com/ratt-ru/QuartiCal.git"
-                "@bandpass_smoothing"
+                # "@git+https://github.com/ratt-ru/QuartiCal.git"
+                # "@bandpass_smoothing"
 
             ]
 
