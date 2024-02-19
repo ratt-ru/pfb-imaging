@@ -61,6 +61,7 @@ def _newalgo(**kw):
     from copy import copy, deepcopy
     from ducc0.misc import make_noncritical
     from pfb.utils.misc import fitcleanbeam
+    from taivas.drivers.predict_windowed import main as taivas
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -200,6 +201,7 @@ def _newalgo(**kw):
         # residual = dirty - hess(model)
 
         # point to insert deconvolution algo
+        # model = taivas(residual, psf, ...)
 
         import ipdb; ipdb.set_trace()
 
