@@ -6,12 +6,12 @@ with open("README.rst", "r") as fh:
 
 requirements = [
                 'numpy',
-                'matplotlib',
-                'ipython',
+                # 'matplotlib',
+                # 'ipython',
                 'scikit-image',
                 'PyWavelets',
                 'katbeam',
-                'pytest >= 6.2.2',
+                # 'pytest<=7.4.4, >=7.3.1',
                 'numexpr',
                 'pyscilog >= 0.1.2',
                 'Click',
