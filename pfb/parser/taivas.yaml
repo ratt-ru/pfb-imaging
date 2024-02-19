@@ -1,0 +1,64 @@
+inputs:
+  _include:
+    - (pfb.parser)gridding.yml
+    - (pfb.parser)dist.yml
+  nband:
+    dtype: int
+    required: true
+    abbreviation: nb
+    info:
+      Number of imaging bands
+  output_filename:
+    dtype: str
+    required: true
+    abbreviation: o
+    info:
+      Basename of output
+  postfix:
+    dtype: str
+    default: 'main'
+    info:
+      Can be used to specify a custom name for the image space data products
+  product:
+    dtype: str
+    abbreviation: p
+    default: I
+    info:
+      Imaging products to produce. Options are I, Q, U, V.
+      Only single Stokes products are currently supported
+  niter:
+    dtype: int
+    default: 5
+    abbreviation: niter
+    info:
+      Number of iterations.
+      L21 reweighting will take place after every iteration
+  tol:
+    dtype: float
+    default: 1e-3
+    info:
+      Tolerance at which to terminate algorithm.
+      Will stop when norm(x-xp)/norm(x) < tol
+  fits_mfs:
+    dtype: bool
+    default: true
+    info:
+      Output MFS fits files
+  fits_cubes:
+    dtype: bool
+    default: false
+    info:
+      Output fits cubes
+  memory_greedy:
+    dtype: bool
+    default: false
+    info:
+      Holds data in memory if set
+  new_param:
+    dtype: int
+    default: 0
+    info:
+      This is a new parameter
+
+outputs:
+  {}
