@@ -3,96 +3,96 @@ pfb_init:
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: '--'
-    replace: {'_': '-'}
+    prefix: --
+    replace: {_: '-'}
 
   _include:
-    - 'init.yaml'
+    - init.yaml
 
 pfb_grid:
   command: pfb.workers.grid.grid
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: '--'
-    replace: {'_': '-'}
+    prefix: --
+    replace: {_: '-'}
 
   _include:
-    - 'grid.yaml'
+    - grid.yaml
 
 pfb_degrid:
   command: pfb.workers.degrid.degrid
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: '--'
-    replace: {'_': '-'}
+    prefix: --
+    replace: {_: '-'}
 
   _include:
-    - 'degrid.yaml'
+    - degrid.yaml
 
 pfb_clean:
   command: pfb.workers.clean.clean
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: '--'
-    replace: {'_': '-'}
+    prefix: --
+    replace: {_: '-'}
 
   _include:
-    - 'clean.yaml'
+    - clean.yaml
 
 pfb_restore:
   command: pfb.workers.restore.restore
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: '--'
-    replace: {'_': '-'}
+    prefix: --
+    replace: {_: '-'}
 
   _include:
-    - 'restore.yaml'
+    - restore.yaml
 
 pfb_fwdbwd:
   command: pfb.workers.fwdbwd.fwdbwd
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: '--'
-    replace: {'_': '-'}
+    prefix: --
+    replace: {_: '-'}
 
   _include:
-    - 'fwdbwd.yaml'
+    - fwdbwd.yaml
 
 pfb_forward:
   command: pfb.workers.forward.forward
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: '--'
-    replace: {'_': '-'}
+    prefix: --
+    replace: {_: '-'}
 
   _include:
-    - 'forward.yaml'
+    - forward.yaml
 
 pfb_spotless:
   command: pfb.workers.spotless.spotless
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: '--'
-    replace: {'_': '-'}
+    prefix: --
+    replace: {_: '-'}
 
   _include:
-    - 'spotless.yaml'
+    - spotless.yaml
 
 pfb_model2comps:
   command: pfb.workers.model2comps.model2comps
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: '--'
-    replace: {'_': '-'}
+    prefix: --
+    replace: {_: '-'}
 
   _include:
-    - 'model2comps.yaml'
+    - model2comps.yaml
