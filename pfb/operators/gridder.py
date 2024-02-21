@@ -626,7 +626,10 @@ def image_data_products(uvw,
             nx, ny,
             cellx, celly,
             robustness)
-        wgt *= imwgt
+        if wgt is not None:
+            wgt *= imwgt
+        else:
+            wgt = imwgt
 
     if do_weight:
         out_dict['WEIGHT'] = wgt

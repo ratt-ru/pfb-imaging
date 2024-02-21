@@ -18,10 +18,10 @@ requirements = [
                 # "ipdb",
                 "numba < 0.59",
                 "ducc0",
-                "QuartiCal"
+                "QuartiCal",
                 # "@git+https://github.com/ratt-ru/QuartiCal.git"
                 # "@bandpass_smoothing"
-
+                "sympy"
             ]
 
 
