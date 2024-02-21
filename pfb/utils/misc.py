@@ -28,7 +28,6 @@ from sympy.parsing.sympy_parser import parse_expr
 
 JIT_OPTIONS = {
     "nogil": True,
-    "fastmath": True,
     "cache": True
 }
 
@@ -71,7 +70,7 @@ def kron_matvec(A, b):
         x = Z.ravel()
     return x.reshape(b.shape)
 
-@jit(nopython=True, fastmath=True, parallel=False, cache=True, nogil=True)
+@njit(parallel=False, cache=True, nogil=True)
 def kron_matvec2(A, b):
     D = len(A)
     N = b.size
@@ -1346,7 +1345,7 @@ def remove_large_islands(x, max_island_size=100):
     return x
 
 
-@njit(parallel=False, nogil=True, fastmath=True, inline='always')
+@njit(parallel=False, nogil=True, cache=True, inline='always')
 def freqmul(A, x):
     nband, nx, ny = x.shape
     out = np.zeros_like(x)

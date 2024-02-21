@@ -227,14 +227,14 @@ def corr_funcs(data, jones):
     # The expressions for DIAG_DIAG and DIAG mode are essentially the same
     if jones.ndim == 5:
         # I and Q have identical weights
-        @njit(nogil=True, fastmath=True, inline='always')
+        @njit(nogil=True, cache=True, inline='always')
         def wfunc(gp, gq, W):
             gp00 = gp[0]
             gq00 = gq[0]
             W0 = W[0]
             return np.real(W0*gp00*gq00*np.conjugate(gp00)*np.conjugate(gq00))
 
-        @njit(nogil=True, fastmath=True, inline='always')
+        @njit(nogil=True, cache=True, inline='always')
         def vfunc(gp, gq, W, V):
             gp00 = gp[0]
             gq00 = gq[0]

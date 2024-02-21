@@ -26,7 +26,7 @@ def prox_21m(v, sigma, weight=1.0, axis=0):
     return v * np.expand_dims(ratio, axis=axis)  # restores axis
 
 
-@njit(nogil=True, fastmath=True, cache=True, parallel=True)
+@njit(nogil=True, cache=True, parallel=True)
 def prox_21m_numba(v, result, lam, sigma=1.0, weight=None):
     """
     Computes weighted version of
@@ -68,7 +68,7 @@ def dual_update(v, x, psiH, lam, sigma=1.0, weight=1.0):
 
 
 
-@njit(nogil=True, fastmath=True, cache=True, parallel=True)
+@njit(nogil=True, cache=True, parallel=True)
 def dual_update_numba(vp, v, lam, sigma=1.0, weight=None):
     """
     Computes weighted version of

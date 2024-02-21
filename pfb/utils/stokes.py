@@ -374,7 +374,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                           gq00, gq01, gq10, gq11,
                           w0, w1, w2, w3),
                           sm.simplify(sm.expand(W[i,i])))
-        Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
+        Wjfn = njit(nogil=True, inline='always')(Wsymb)
 
 
         Dsymb = lambdify((gp00, gp01, gp10, gp11,
@@ -382,9 +382,9 @@ def stokes_funcs(data, jones, product, pol, nc):
                           w0, w1, w2, w3,
                           v00, v01, v10, v11),
                           sm.simplify(sm.expand(C[i])))
-        Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
+        Djfn = njit(nogil=True, inline='always')(Dsymb)
 
-        @njit(nogil=True, fastmath=True, inline='always')
+        @njit(nogil=True, cache=True, inline='always')
         def wfunc(gp, gq, W):
             gp00 = gp[0,0]
             gp01 = gp[0,1]
@@ -402,7 +402,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                         gq00, gq01, gq10, gq11,
                         W00, W01, W10, W11).real
 
-        @njit(nogil=True, fastmath=True, inline='always')
+        @njit(nogil=True, cache=True, inline='always')
         def vfunc(gp, gq, W, V):
             gp00 = gp[0,0]
             gp01 = gp[0,1]
@@ -439,7 +439,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                           gq00, gq11,
                           w0, w1, w2, w3),
                           sm.simplify(sm.expand(W[i,i])))
-        Wjfn = njit(nogil=True, fastmath=True, inline='always')(Wsymb)
+        Wjfn = njit(nogil=True, cache=True, inline='always')(Wsymb)
 
 
         Dsymb = lambdify((gp00, gp11,
@@ -447,10 +447,10 @@ def stokes_funcs(data, jones, product, pol, nc):
                           w0, w1, w2, w3,
                           v00, v01, v10, v11),
                           sm.simplify(sm.expand(C[i])))
-        Djfn = njit(nogil=True, fastmath=True, inline='always')(Dsymb)
+        Djfn = njit(nogil=True, cache=True, inline='always')(Dsymb)
 
         if nc==literal('4'):
-            @njit(nogil=True, fastmath=True, inline='always')
+            @njit(nogil=True, cache=True, inline='always')
             def wfunc(gp, gq, W):
                 gp00 = gp[0]
                 gp11 = gp[1]
@@ -464,7 +464,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                             gq00, gq11,
                             W00, W01, W10, W11).real
 
-            @njit(nogil=True, fastmath=True, inline='always')
+            @njit(nogil=True, cache=True, inline='always')
             def vfunc(gp, gq, W, V):
                 gp00 = gp[0]
                 gp11 = gp[1]
@@ -483,7 +483,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                             W00, W01, W10, W11,
                             V00, V01, V10, V11)
         elif nc==literal('2'):
-            @njit(nogil=True, fastmath=True, inline='always')
+            @njit(nogil=True, cache=True, inline='always')
             def wfunc(gp, gq, W):
                 gp00 = gp[0]
                 gp11 = gp[1]
@@ -497,7 +497,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                             gq00, gq11,
                             W00, W01, W10, W11).real
 
-            @njit(nogil=True, fastmath=True, inline='always')
+            @njit(nogil=True, cache=True, inline='always')
             def vfunc(gp, gq, W, V):
                 gp00 = gp[0]
                 gp11 = gp[1]

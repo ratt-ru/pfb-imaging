@@ -188,7 +188,7 @@ def promote_axis(axis, ndim):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
 def dwt_axis(data, wavelet, mode, axis):
     def impl(data, wavelet, mode, axis):
         coeff_len = dwt_coeff_length(
@@ -245,7 +245,7 @@ def dwt_axis(data, wavelet, mode, axis):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
 def idwt_axis(approx_coeffs, detail_coeffs,
               wavelet, mode, axis):
 
@@ -343,7 +343,7 @@ def idwt_axis(approx_coeffs, detail_coeffs,
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
 def dwt(data, wavelet, mode="zero", axis=None):
 
     if isinstance(data, nbtypes.misc.Optional):
@@ -406,7 +406,7 @@ def coeff_product(args, repeat=1):
     return result
 
 
-@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
 def idwt(coeffs, wavelet, mode='zero', axis=None):
 
     have_axis = not is_nonelike(axis)
@@ -492,7 +492,7 @@ def promote_level(sizes, dec_lens, level=None):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
 def wavedecn(data, wavelet, mode='zero', level=None, axis=None):
     have_axis = not is_nonelike(axis)
 
@@ -527,7 +527,7 @@ def wavedecn(data, wavelet, mode='zero', level=None, axis=None):
     return impl
 
 
-@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
+@numba.generated_jit(nopython=True, nogil=True, cache=True)
 def waverecn(coeffs, wavelet, mode='zero', axis=None):
     # ca = coeffs[0]['aa']
     # if not isinstance(ca, nbtypes.npytypes.Array):
@@ -570,7 +570,7 @@ def waverecn(coeffs, wavelet, mode='zero', axis=None):
     return impl
 
 
-@numba.njit(nogil=True, fastmath=True, cache=True)
+@numba.njit(nogil=True, cache=True)
 def ravel_coeffs(coeffs):
     a_coeffs = coeffs[0]['aa']
 
@@ -624,7 +624,7 @@ def ravel_coeffs(coeffs):
     return coeff_arr, coeff_tuples, coeff_shapes
 
 
-@numba.njit(nogil=True, fastmath=True, cache=True)
+@numba.njit(nogil=True, cache=True)
 def unravel_coeffs(arr, coeff_tuples, coeff_shapes, output_format='wavedecn'):
     arr = np.asarray(arr)
     coeffs = List()
@@ -644,7 +644,7 @@ def unravel_coeffs(arr, coeff_tuples, coeff_shapes, output_format='wavedecn'):
     return coeffs
 
 
-@numba.njit(nogil=True, fastmath=True, cache=True)
+@numba.njit(nogil=True, cache=True)
 def wavelet_setup(x, bases, nlevels):
     # set up dictionary info
     tys = Dict()

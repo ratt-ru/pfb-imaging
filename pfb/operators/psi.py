@@ -7,7 +7,7 @@ import dask.array as da
 from pfb.wavelets.wavelets import wavedecn, waverecn, ravel_coeffs, unravel_coeffs
 
 
-@numba.njit(nogil=True, fastmath=True, cache=True)
+@numba.njit(nogil=True, cache=True)
 def pad(x, n):
     '''
     pad 1D array by n zeros
@@ -135,7 +135,7 @@ def im2coef(x, alpha, bases, ntot, nmax, nlevels, nthreads=1):
 #         return graph
 
 
-@numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)
+@numba.njit(nogil=True, cache=True, parallel=True)
 def im2coef_dist(x, bases, ntot, nmax, nlevels):
     '''
     Per band image to coefficients
@@ -158,7 +158,7 @@ def im2coef_dist(x, bases, ntot, nmax, nlevels):
     return alpha
 
 
-@numba.njit(nogil=True, fastmath=True, cache=True, parallel=True)
+@numba.njit(nogil=True, cache=True, parallel=True)
 def coef2im_dist(alpha, bases, ntot, iy, sy, nx, ny):
     '''
     Per band coefficients to image

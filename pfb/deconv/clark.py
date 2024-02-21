@@ -1,14 +1,14 @@
 import numpy as np
 import numexpr as ne
 from functools import partial
-import numba
+from numba import njit
 import dask.array as da
 from pfb.operators.psf import psf_convolve_cube
 from ducc0.misc import make_noncritical
 import pyscilog
 log = pyscilog.get_logger('CLARK')
 
-@numba.jit(nopython=True, nogil=True, cache=True)  # parallel=True,
+@njit(nogil=True, cache=True)  # parallel=True,
 def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     '''
     Subtract psf centered at location of xhat
@@ -25,7 +25,7 @@ def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     return A
 
 
-# @numba.jit(nopython=True, nogil=True, cache=True)  # parallel=True,
+# @njit(nogil=True, cache=True)  # parallel=True,
 def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     """
     Run subminor loop in active set
