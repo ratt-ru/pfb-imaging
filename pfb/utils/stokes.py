@@ -271,7 +271,7 @@ def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
     return out_dict
 
 
-@generated_jit(nopython=True, nogil=True, cache=True, parallel=True)
+@generated_jit(nopython=True, nogil=True, parallel=True)  # cache=True
 def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product, nc):
 
@@ -449,7 +449,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                           w0, w1, w2, w3,
                           v00, v01, v10, v11),
                           sm.simplify(sm.expand(C[i])))
-        Djfn = njit(nogil=True, cache=True, inline='always')(Dsymb)
+        Djfn = njit(nogil=True, inline='always')(Dsymb)
 
         if nc==literal('4'):
             @njit(nogil=True, inline='always')
