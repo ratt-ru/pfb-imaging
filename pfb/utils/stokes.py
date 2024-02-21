@@ -1,6 +1,7 @@
 import numpy as np
 import numexpr as ne
 from numba import generated_jit, njit, prange
+from numba.extending import overload
 from numba.types import literal
 from dask.graph_manipulation import clone
 import dask.array as da
@@ -9,6 +10,7 @@ from pfb.operators.gridder import vis2im
 from quartical.utils.numba import coerce_literal
 from operator import getitem
 from pfb.utils.beam import interp_beam
+from pfb.utils.misc import JIT_OPTIONS
 import dask
 from quartical.utils.dask import Blocker
 
@@ -384,7 +386,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                           sm.simplify(sm.expand(C[i])))
         Djfn = njit(nogil=True, inline='always')(Dsymb)
 
-        @njit(nogil=True, cache=True, inline='always')
+        @njit(nogil=True, inline='always')
         def wfunc(gp, gq, W):
             gp00 = gp[0,0]
             gp01 = gp[0,1]
@@ -402,7 +404,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                         gq00, gq01, gq10, gq11,
                         W00, W01, W10, W11).real
 
-        @njit(nogil=True, cache=True, inline='always')
+        @njit(nogil=True, inline='always')
         def vfunc(gp, gq, W, V):
             gp00 = gp[0,0]
             gp01 = gp[0,1]
@@ -439,7 +441,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                           gq00, gq11,
                           w0, w1, w2, w3),
                           sm.simplify(sm.expand(W[i,i])))
-        Wjfn = njit(nogil=True, cache=True, inline='always')(Wsymb)
+        Wjfn = njit(nogil=True, inline='always')(Wsymb)
 
 
         Dsymb = lambdify((gp00, gp11,
@@ -450,7 +452,7 @@ def stokes_funcs(data, jones, product, pol, nc):
         Djfn = njit(nogil=True, cache=True, inline='always')(Dsymb)
 
         if nc==literal('4'):
-            @njit(nogil=True, cache=True, inline='always')
+            @njit(nogil=True, inline='always')
             def wfunc(gp, gq, W):
                 gp00 = gp[0]
                 gp11 = gp[1]
@@ -464,7 +466,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                             gq00, gq11,
                             W00, W01, W10, W11).real
 
-            @njit(nogil=True, cache=True, inline='always')
+            @njit(nogil=True, inline='always')
             def vfunc(gp, gq, W, V):
                 gp00 = gp[0]
                 gp11 = gp[1]
@@ -483,7 +485,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                             W00, W01, W10, W11,
                             V00, V01, V10, V11)
         elif nc==literal('2'):
-            @njit(nogil=True, cache=True, inline='always')
+            @njit(nogil=True, inline='always')
             def wfunc(gp, gq, W):
                 gp00 = gp[0]
                 gp11 = gp[1]
@@ -497,7 +499,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                             gq00, gq11,
                             W00, W01, W10, W11).real
 
-            @njit(nogil=True, cache=True, inline='always')
+            @njit(nogil=True, inline='always')
             def vfunc(gp, gq, W, V):
                 gp00 = gp[0]
                 gp11 = gp[1]
@@ -530,3 +532,20 @@ def stokes_funcs(data, jones, product, pol, nc):
     # quit()
 
     return vfunc, wfunc
+
+
+# @njit(**JIT_OPTIONS)
+# def _weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
+#                  ant1, ant2, pol, product, nc):
+#     return _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
+#                              ant1, ant2, pol, product, nc)
+
+# def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
+#                       ant1, ant2, pol, product, nc):
+#     return NotImplementedError
+
+# @overload(_weight_data_impl, jit_options=JIT_OPTIONS)
+# def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
+#                       ant1, ant2, pol, product, nc):
+
+#     return
