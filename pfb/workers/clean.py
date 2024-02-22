@@ -56,6 +56,7 @@ def _clean(ddsi=None, **kw):
     OmegaConf.set_struct(opts, True)
 
     import numpy as np
+    from copy import copy, deepcopy
     import xarray as xr
     import numexpr as ne
     import dask
@@ -107,6 +108,7 @@ def _clean(ddsi=None, **kw):
                                                             apparent=True)
     # because fuck dask
     model = np.require(model, requirements='CAW')
+    fsel = wsums > 0  # keep track of empty bands
 
 
     wsum = np.sum(wsums)
@@ -175,7 +177,10 @@ def _clean(ddsi=None, **kw):
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
-
+    best_rms = rms
+    best_rmax = rmax
+    best_model = model.copy()
+    diverge_count = 0
     if opts.threshold is None:
         threshold = opts.sigmathreshold * rms
     else:
@@ -185,6 +190,7 @@ def _clean(ddsi=None, **kw):
           file=log)
     for k in range(opts.nmiter):
         print("Cleaning", file=log)
+        modelp = deepcopy(model)
         x, status = clark(mask*residual, psf, psfhat, wsums/wsum,
                           threshold=threshold,
                           gamma=opts.gamma,
@@ -198,6 +204,10 @@ def _clean(ddsi=None, **kw):
                           nthreads=opts.nvthreads)
         model += x
 
+        save_fits(np.mean(model[fsel], axis=0),
+                  basename + f'_{opts.postfix}_model_{k+1}.fits',
+                  hdr_mfs)
+
         print("Getting residual", file=log)
         convimage = hess(model)
         ne.evaluate('dirty - convimage', out=residual,
@@ -206,14 +216,29 @@ def _clean(ddsi=None, **kw):
                     casting='same_kind')
 
         # report rms where there aren;t any model components
+        rmsp = rms
         tmp_mask = ~np.any(model, axis=0)
         rms = np.std(residual_mfs[tmp_mask])
         rmax = np.abs(residual_mfs).max()
+
+        # base this on rmax?
+        if rms < best_rms:
+            best_rms = rms
+            best_rmax = rmax
+            best_model = model.copy()
 
         if opts.threshold is None:
             threshold = opts.sigmathreshold * rms
         else:
             threshold = opts.threshold
+
+        save_fits(residual_mfs,
+                  f'{basename}_{opts.postfix}_premop{k}_resid_mfs.fits',
+                  hdr_mfs)
+
+        save_fits(np.mean(model[fsel], axis=0),
+                  f'{basename}_{opts.postfix}_premop{k}_model_mfs.fits',
+                  hdr_mfs)
 
         # trigger flux mop if clean has stalled, not converged or
         # we have reached the final iteration/threshold
@@ -241,10 +266,6 @@ def _clean(ddsi=None, **kw):
 
             model += opts.mop_gamma*x
 
-            save_fits(residual_mfs,
-                      f'{basename}_{opts.postfix}_premop{k}_resid_mfs.fits',
-                      hdr_mfs)
-
             print("Getting residual", file=log)
             convimage = hess(model)
             ne.evaluate('dirty - convimage', out=residual,
@@ -256,9 +277,19 @@ def _clean(ddsi=None, **kw):
                       f'{basename}_{opts.postfix}_postmop{k}_resid_mfs.fits',
                       hdr_mfs)
 
+            save_fits(np.mean(model[fsel], axis=0),
+                      f'{basename}_{opts.postfix}_postmop{k}_model_mfs.fits',
+                      hdr_mfs)
+
             tmp_mask = ~np.any(model, axis=0)
             rms = np.std(residual_mfs[tmp_mask])
             rmax = np.abs(residual_mfs).max()
+
+            # base this on rmax?
+            if rms < best_rms:
+                best_rms = rms
+                best_rmax = rmax
+                best_model = model.copy()
 
             if opts.threshold is None:
                 threshold = opts.sigmathreshold * rms
@@ -274,17 +305,29 @@ def _clean(ddsi=None, **kw):
             b = ds.bandid
             r = da.from_array(residual[b]*wsum)
             m = da.from_array(model[b])
+            mbest = da.from_array(best_model[b])
             ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
-                                  'MODEL': (('x', 'y'), m)})
+                                  'MODEL': (('x', 'y'), m),
+                                  'MODEL_BEST': (('x', 'y'), mbest)})
+            ds_out = ds_out.assign_attrs({'parametrisation': 'id',
+                                          'best_rms': best_rms,
+                                          'best_rmax': best_rmax})
             dds_out.append(ds_out)
         writes = xds_to_zarr(dds_out, dds_name,
-                             columns=('RESIDUAL', 'MODEL'), rechunk=True)
+                             columns=('RESIDUAL', 'MODEL',
+                                      'MODEL_BEST'),
+                             rechunk=True)
         dask.compute(writes)
-
         if rmax <= threshold:
             print("Terminating because final threshold has been reached",
                   file=log)
             break
+
+        if rms > rmsp:
+            diverging += 1
+            if diverging > 3:
+                print("Algorithm is diverging. Terminating.", file=log)
+                break
 
     dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
 

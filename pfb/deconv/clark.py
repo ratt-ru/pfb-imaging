@@ -25,7 +25,7 @@ def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     return A
 
 
-# @njit(nogil=True, cache=True)  # parallel=True,
+@njit(nogil=True, cache=True)  # parallel=True,
 def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     """
     Run subminor loop in active set
