@@ -369,8 +369,8 @@ def _spotless(ddsi=None, **kw):
         #     break
 
         if rms > rmsp:
-            diverging += 1
-            if diverging > 3:
+            diverge_count += 1
+            if diverge_count > 3:
                 print("Algorithm is diverging. Terminating.", file=log)
                 break
 

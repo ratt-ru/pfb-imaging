@@ -281,6 +281,7 @@ def _clean(ddsi=None, **kw):
                       f'{basename}_{opts.postfix}_postmop{k}_model_mfs.fits',
                       hdr_mfs)
 
+            rmsp = rms
             tmp_mask = ~np.any(model, axis=0)
             rms = np.std(residual_mfs[tmp_mask])
             rmax = np.abs(residual_mfs).max()
@@ -295,6 +296,12 @@ def _clean(ddsi=None, **kw):
                 threshold = opts.sigmathreshold * rms
             else:
                 threshold = opts.threshold
+
+        if rms > rmsp:
+            diverge_count += 1
+            if diverge_count > 3:
+                print("Algorithm is diverging. Terminating.", file=log)
+                break
 
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
               file=log)
