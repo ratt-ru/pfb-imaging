@@ -563,7 +563,7 @@ def _grid(xdsi=None, **kw):
                                'x':4096,
                                'y':4096})
         # necessary to make psf optional
-        if 'x_psf' in out_ds.dims:
+        if 'x_psf' in out_ds.sizes:
             out_ds = out_ds.chunk({'x_psf': 4096,
                                    'y_psf':4096,
                                    'yo2': 2048})

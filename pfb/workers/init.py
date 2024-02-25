@@ -236,8 +236,8 @@ def _init(**kw):
 
 
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
-            nrow = ds.dims['row']
-            ncorr = ds.dims['corr']
+            nrow = ds.sizes['row']
+            ncorr = ds.sizes['corr']
 
             idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
             if not idx.any():
