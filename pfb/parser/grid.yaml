@@ -1,4 +1,8 @@
 inputs:
+  xds:
+    info:
+      Optional explicit path to xds.
+      Set using output-filename and postfix by default.
   nband:
     dtype: int
     required: true

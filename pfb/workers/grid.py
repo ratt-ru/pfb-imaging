@@ -139,7 +139,7 @@ def _grid(xdsi=None, **kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     # xds contains vis products, no imaging weights applied
-    xds_name = f'{basename}.xds'
+    xds_name = f'{basename}.xds' if opts.xds is None else opts.xds
     if xdsi is not None:
         xds = []
         for ds in xdsi:
