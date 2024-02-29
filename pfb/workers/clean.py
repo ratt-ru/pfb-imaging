@@ -215,6 +215,10 @@ def _clean(ddsi=None, **kw):
         ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                     casting='same_kind')
 
+        save_fits(residual_mfs,
+                  basename + f'_{opts.postfix}_residual_{k+1}.fits',
+                  hdr_mfs)
+
         # report rms where there aren;t any model components
         rmsp = rms
         tmp_mask = ~np.any(model, axis=0)
@@ -231,14 +235,6 @@ def _clean(ddsi=None, **kw):
             threshold = opts.sigmathreshold * rms
         else:
             threshold = opts.threshold
-
-        save_fits(residual_mfs,
-                  f'{basename}_{opts.postfix}_premop{k}_resid_mfs.fits',
-                  hdr_mfs)
-
-        save_fits(np.mean(model[fsel], axis=0),
-                  f'{basename}_{opts.postfix}_premop{k}_model_mfs.fits',
-                  hdr_mfs)
 
         # trigger flux mop if clean has stalled, not converged or
         # we have reached the final iteration/threshold
@@ -274,7 +270,7 @@ def _clean(ddsi=None, **kw):
                         casting='same_kind')
 
             save_fits(residual_mfs,
-                      f'{basename}_{opts.postfix}_postmop{k}_resid_mfs.fits',
+                      f'{basename}_{opts.postfix}_postmop{k}_residual_mfs.fits',
                       hdr_mfs)
 
             save_fits(np.mean(model[fsel], axis=0),
@@ -296,12 +292,6 @@ def _clean(ddsi=None, **kw):
                 threshold = opts.sigmathreshold * rms
             else:
                 threshold = opts.threshold
-
-        if rms > rmsp:
-            diverge_count += 1
-            if diverge_count > 3:
-                print("Algorithm is diverging. Terminating.", file=log)
-                break
 
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
               file=log)
