@@ -15,7 +15,7 @@ from pfb.parser.schemas import schema
 # create default parameters from schema
 defaults = {}
 for key in schema.fastim["inputs"].keys():
-    defaults[key] = schema.fastim["inputs"][key]["default"]
+    defaults[key.replace("-", "_")] = schema.fastim["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.fastim)

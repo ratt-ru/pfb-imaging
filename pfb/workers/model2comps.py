@@ -15,7 +15,7 @@ from pfb.parser.schemas import schema
 # create default parameters from schema
 defaults = {}
 for key in schema.model2comps["inputs"].keys():
-    defaults[key] = schema.model2comps["inputs"][key]["default"]
+    defaults[key.replace("-", "_")] = schema.model2comps["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.model2comps)

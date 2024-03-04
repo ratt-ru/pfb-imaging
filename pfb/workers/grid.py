@@ -17,7 +17,7 @@ from pfb.parser.schemas import schema
 # create default parameters from schema
 defaults = {}
 for key in schema.grid["inputs"].keys():
-    defaults[key] = schema.grid["inputs"][key]["default"]
+    defaults[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.grid)

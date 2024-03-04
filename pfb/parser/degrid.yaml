@@ -1,6 +1,6 @@
 inputs:
   ms:
-    dtype: str
+    dtype: URI
     required: true
     abbreviation: ms
     info:

@@ -1,6 +1,6 @@
 inputs:
   ms:
-    dtype: List[str]
+    dtype: List[URI]
     required: true
     abbreviation: ms
     info:
