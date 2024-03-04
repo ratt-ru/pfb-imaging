@@ -5,7 +5,7 @@ pfb.init:
     pass_missing_as_none: true
 
   _include:
-    - init.yaml
+    - (.)init.yaml
 
 pfb.grid:
   command: pfb.workers.grid.grid
@@ -14,7 +14,7 @@ pfb.grid:
     pass_missing_as_none: true
 
   _include:
-    - grid.yaml
+    - (.)grid.yaml
 
 pfb.degrid:
   command: pfb.workers.degrid.degrid
@@ -23,7 +23,7 @@ pfb.degrid:
     pass_missing_as_none: true
 
   _include:
-    - degrid.yaml
+    - (.)degrid.yaml
 
 pfb.clean:
   command: pfb.workers.clean.clean
@@ -32,7 +32,7 @@ pfb.clean:
     pass_missing_as_none: true
 
   _include:
-    - clean.yaml
+    - (.)clean.yaml
 
 pfb.restore:
   command: pfb.workers.restore.restore
@@ -41,7 +41,7 @@ pfb.restore:
     pass_missing_as_none: true
 
   _include:
-    - restore.yaml
+    - (.)restore.yaml
 
 pfb.fwdbwd:
   command: pfb.workers.fwdbwd.fwdbwd
@@ -50,7 +50,7 @@ pfb.fwdbwd:
     pass_missing_as_none: true
 
   _include:
-    - fwdbwd.yaml
+    - (.)fwdbwd.yaml
 
 pfb.forward:
   command: pfb.workers.forward.forward
@@ -59,7 +59,7 @@ pfb.forward:
     pass_missing_as_none: true
 
   _include:
-    - forward.yaml
+    - (.)forward.yaml
 
 pfb.spotless:
   command: pfb.workers.spotless.spotless
@@ -68,7 +68,7 @@ pfb.spotless:
     pass_missing_as_none: true
 
   _include:
-    - spotless.yaml
+    - (.)spotless.yaml
 
 pfb.model2comps:
   command: pfb.workers.model2comps.model2comps
@@ -77,4 +77,4 @@ pfb.model2comps:
     pass_missing_as_none: true
 
   _include:
-    - model2comps.yaml
+    - (.)model2comps.yaml

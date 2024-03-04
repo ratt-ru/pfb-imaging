@@ -225,7 +225,7 @@ def test_polproducts(do_gains, ms_name):
         # set defaults from schema
         init_args = {}
         for key in schema.init["inputs"].keys():
-            init_args[key] = schema.init["inputs"][key]["default"]
+            init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
         # overwrite defaults
         init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
         init_args["output_filename"] = outname
@@ -242,7 +242,7 @@ def test_polproducts(do_gains, ms_name):
         # grid data to produce dirty image
         grid_args = {}
         for key in schema.grid["inputs"].keys():
-            grid_args[key] = schema.grid["inputs"][key]["default"]
+            grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
         # overwrite defaults
         grid_args["output_filename"] = outname
         grid_args["postfix"] = postfix

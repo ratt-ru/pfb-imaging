@@ -182,7 +182,7 @@ def test_clean(do_gains, ms_name):
     from pfb.parser.schemas import schema
     init_args = {}
     for key in schema.init["inputs"].keys():
-        init_args[key] = schema.init["inputs"][key]["default"]
+        init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
     # overwrite defaults
     init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
     init_args["output_filename"] = outname
@@ -198,7 +198,7 @@ def test_clean(do_gains, ms_name):
     # grid data to produce dirty image
     grid_args = {}
     for key in schema.grid["inputs"].keys():
-        grid_args[key] = schema.grid["inputs"][key]["default"]
+        grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
     grid_args["output_filename"] = outname
     grid_args["postfix"] = postfix
@@ -218,7 +218,7 @@ def test_clean(do_gains, ms_name):
     # run clean
     clean_args = {}
     for key in schema.clean["inputs"].keys():
-        clean_args[key] = schema.clean["inputs"][key]["default"]
+        clean_args[key.replace("-", "_")] = schema.clean["inputs"][key]["default"]
     clean_args["output_filename"] = outname
     clean_args["postfix"] = postfix
     clean_args["nband"] = nchan

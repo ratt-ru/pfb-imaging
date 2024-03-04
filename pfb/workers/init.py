@@ -23,8 +23,8 @@ def init(**kw):
     '''
     Initialise data products for imaging
     '''
-    defaults.update(kw)
-    opts = OmegaConf.create(defaults)
+    defaults.update(kw)  # is this still necessary?
+    opts = OmegaConf.create(kw)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()

@@ -134,7 +134,7 @@ def test_spotless(ms_name):
     # set defaults from schema
     init_args = {}
     for key in schema.init["inputs"].keys():
-        init_args[key] = schema.init["inputs"][key]["default"]
+        init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
     # overwrite defaults
     outname = str(test_dir / 'test')
     init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
@@ -151,7 +151,7 @@ def test_spotless(ms_name):
     # grid data to produce dirty image
     grid_args = {}
     for key in schema.grid["inputs"].keys():
-        grid_args[key] = schema.grid["inputs"][key]["default"]
+        grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
     grid_args["output_filename"] = outname
     grid_args["nband"] = nchan
@@ -175,7 +175,7 @@ def test_spotless(ms_name):
     # run clean
     spotless_args = {}
     for key in schema.spotless["inputs"].keys():
-        spotless_args[key] = schema.spotless["inputs"][key]["default"]
+        spotless_args[key.replace("-", "_")] = schema.spotless["inputs"][key]["default"]
     spotless_args["output_filename"] = outname
     spotless_args["nband"] = nchan
     spotless_args["niter"] = 2
@@ -217,7 +217,7 @@ def test_spotless(ms_name):
 
     model2comps_args = {}
     for key in schema.model2comps["inputs"].keys():
-        model2comps_args[key] = schema.model2comps["inputs"][key]["default"]
+        model2comps_args[key.replace("-", "_")] = schema.model2comps["inputs"][key]["default"]
     model2comps_args["output_filename"] = outname
     model2comps_args["nbasisf"] = nchan
     model2comps_args["fit_mode"] = 'Legendre'
@@ -266,7 +266,7 @@ def test_spotless(ms_name):
     # degrid from coeffs populating MODEL_DATA
     degrid_args = {}
     for key in schema.degrid["inputs"].keys():
-        degrid_args[key] = schema.degrid["inputs"][key]["default"]
+        degrid_args[key.replace("-", "_")] = schema.degrid["inputs"][key]["default"]
     degrid_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
     degrid_args["mds"] = f'{outname}_I_main_model.mds'
     degrid_args["channels_per_image"] = 1
@@ -284,7 +284,7 @@ def test_spotless(ms_name):
     # gridding CORRECTED_DATA should return identical residuals
     init_args = {}
     for key in schema.init["inputs"].keys():
-        init_args[key] = schema.init["inputs"][key]["default"]
+        init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
     # overwrite defaults
     outname = str(test_dir / 'test2')
     init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
@@ -301,7 +301,7 @@ def test_spotless(ms_name):
     # grid data to produce dirty image
     grid_args = {}
     for key in schema.grid["inputs"].keys():
-        grid_args[key] = schema.grid["inputs"][key]["default"]
+        grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
     grid_args["output_filename"] = outname
     grid_args["nband"] = nchan
