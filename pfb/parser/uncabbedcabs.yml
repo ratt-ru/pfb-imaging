@@ -1,98 +1,80 @@
-pfb_init:
+pfb.init:
   command: pfb.workers.init.init
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: --
-    replace: {_: '-'}
 
   _include:
     - init.yaml
 
-pfb_grid:
+pfb.grid:
   command: pfb.workers.grid.grid
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: --
-    replace: {_: '-'}
 
   _include:
     - grid.yaml
 
-pfb_degrid:
+pfb.degrid:
   command: pfb.workers.degrid.degrid
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: --
-    replace: {_: '-'}
 
   _include:
     - degrid.yaml
 
-pfb_clean:
+pfb.clean:
   command: pfb.workers.clean.clean
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: --
-    replace: {_: '-'}
 
   _include:
     - clean.yaml
 
-pfb_restore:
+pfb.restore:
   command: pfb.workers.restore.restore
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: --
-    replace: {_: '-'}
 
   _include:
     - restore.yaml
 
-pfb_fwdbwd:
+pfb.fwdbwd:
   command: pfb.workers.fwdbwd.fwdbwd
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: --
-    replace: {_: '-'}
 
   _include:
     - fwdbwd.yaml
 
-pfb_forward:
+pfb.forward:
   command: pfb.workers.forward.forward
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: --
-    replace: {_: '-'}
 
   _include:
     - forward.yaml
 
-pfb_spotless:
+pfb.spotless:
   command: pfb.workers.spotless.spotless
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: --
-    replace: {_: '-'}
 
   _include:
     - spotless.yaml
 
-pfb_model2comps:
+pfb.model2comps:
   command: pfb.workers.model2comps.model2comps
   flavour: python
   policies:
     pass_missing_as_none: true
-    prefix: --
-    replace: {_: '-'}
 
   _include:
     - model2comps.yaml

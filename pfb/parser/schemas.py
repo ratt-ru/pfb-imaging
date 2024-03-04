@@ -17,8 +17,8 @@ class _CabInputsOutputs(object):
 # load schema files
 if schema is None:
 
-    # all *.yaml files under pfb.parser will be loaded automatically
-
+    # *.yaml files under pfb.parser will be loaded automatically
+    # files that should not be included must have a .yml extension
     files = glob.glob(os.path.join(os.path.dirname(__file__), "*.yaml"))
 
     structured = OmegaConf.structured(_CabInputsOutputs)

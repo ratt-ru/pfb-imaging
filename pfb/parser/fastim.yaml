@@ -20,7 +20,7 @@ inputs:
     info:
       List of FIELD_ID's to image. Defaults to all.
       Input as string eg. '[0,1,2]' if running from CLI
-  freq_range:
+  freq-range:
     dtype: str
     info:
       Frequency range to image in Hz.
@@ -34,48 +34,48 @@ inputs:
     dtype: Optional[List[any]]
     info:
       Rephase all images to this radec specified in radians
-  data_column:
+  data-column:
     dtype: str
     default: DATA
     abbreviation: dc
     info:
       Data column to image. Must be the same across MSs
-  weight_column:
+  weight-column:
     dtype: str
     abbreviation: wc
     info:
       Column containing natural weights. Must be the same across MSs
-  sigma_column:
+  sigma-column:
     dtype: str
     abbreviation: sc
     info:
       Column containing standard devations.
       Will be used to initialise natural weights if detected.
       Must be the same across MSs
-  flag_column:
+  flag-column:
     dtype: str
     default: FLAG
     abbreviation: fc
     info:
       Column containing data flags. Must be the same across MSs
-  gain_table:
+  gain-table:
     dtype: List[str]
     info:
       Path to Quartical gain table containing NET gains.
       There must be a table for each MS and glob(ms) and glob(gt) should match up
-  gain_term:
+  gain-term:
     dtype: str
     default: NET
     info:
       Which gain term to use. Default is NET
-  integrations_per_image:
+  integrations-per-image:
     dtype: int
     abbreviation: ipi
     default: -1
     info:
       Number of time integrations per image.
       Default (-1, 0, None) -> dataset per scan.
-  channels_per_image:
+  channels-per-image:
     dtype: int
     abbreviation: cpi
     default: -1
@@ -90,23 +90,23 @@ inputs:
       - double
     info:
       Gridding precision
-  bda_decorr:
+  bda-decorr:
     dtype: float
     default: 1.0
     info:
       BDA decorrelation factor.
       Only has an effect if less than one
-  beam_model:
+  beam-model:
     dtype: str
     info:
       Beam model to use
-  max_field_of_view:
+  max-field-of-view:
     dtype: float
     abbreviation: fov
     default: 3.0
     info:
       Field of view in degrees
-  chan_average:
+  chan-average:
     dtype: int
     default: 1
     info:

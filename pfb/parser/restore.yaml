@@ -2,12 +2,12 @@ inputs:
   _include:
     - dist.yml
     - out.yml
-  model_name:
+  model-name:
     dtype: str
     abbreviation: mname
     default: MODEL
     info: 'Name of model in mds'
-  residual_name:
+  residual-name:
     dtype: str
     abbreviation: rname
     default: RESIDUAL

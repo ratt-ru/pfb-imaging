@@ -20,23 +20,23 @@ inputs:
     default: 1
     info:
       Perform dilation followed by erosion with structure element of this width
-  fits_mfs:
+  fits-mfs:
     dtype: bool
     default: true
     info:
       Output MFS fits files
-  fits_cubes:
+  fits-cubes:
     dtype: bool
     default: false
     info:
       Output fits cubes
-  mop_flux:
+  mop-flux:
     dtype: bool
     default: true
     info:
       Trigger PCG based flux mop if minor cycle stalls,
       the final threshold is reached or on the final iteration.
-  mop_gamma:
+  mop-gamma:
     dtype: float
     default: 0.65
     info:
@@ -65,25 +65,25 @@ inputs:
     abbreviation: gamma
     info:
       Minor loop gain
-  peak_factor:
+  peak-factor:
     dtype: float
     default: 0.15
     abbreviation: pf
     info:
       Peak factor
-  sub_peak_factor:
+  sub-peak-factor:
     dtype: float
     default: 0.75
     abbreviation: spf
     info:
       Peak factor of sub-minor loop
-  minor_maxit:
+  minor-maxit:
     dtype: int
     default: 50
     abbreviation: mmaxit
     info:
       Maximum number of PSF convolutions between major cycles
-  subminor_maxit:
+  subminor-maxit:
     dtype: int
     default: 1000
     abbreviation: smmaxit
@@ -95,38 +95,38 @@ inputs:
     abbreviation: verb
     info:
       Verbosity level. Set to 2 for maximum verbosity, 0 for silence
-  report_freq:
+  report-freq:
     dtype: int
     default: 10
     abbreviation: rf
     info:
       Report frequency for minor cycles
-  cg_tol:
+  cg-tol:
     dtype: float
     default: 1e-2
     abbreviation: cgtol
     info:
       Tolreance of conjugate gradient algorithm
-  cg_maxit:
+  cg-maxit:
     dtype: int
     default: 100
     abbreviation: cgmaxit
     info:
       Maximum iterations for conjugate gradient algorithm
-  cg_minit:
+  cg-minit:
     dtype: int
     default: 1
     abbreviation: cgminit
     info:
       Minimum iterations for conjugate gradient algorithm
-  cg_verbose:
+  cg-verbose:
     dtype: int
     default: 1
     abbreviation: cgverb
     info:
       Verbosity of conjugate gradient algorithm.
       Set to > 1 for debugging, 0 for silence
-  cg_report_freq:
+  cg-report_freq:
     dtype: int
     default: 100
     abbreviation: cgrf
@@ -137,7 +137,7 @@ inputs:
     default: true
     info:
       Ensure residual decreases at every iteration
-  memory_greedy:
+  memory-greedy:
     dtype: bool
     default: false
     info:

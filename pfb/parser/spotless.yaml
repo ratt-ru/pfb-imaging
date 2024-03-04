@@ -26,7 +26,7 @@ inputs:
     info: 'Wavelet decomposition level'
     default: 3
     abbreviation: nlevels
-  l1reweight_from:
+  l1reweight-from:
     dtype: int
     default: 5
     info:
@@ -71,17 +71,17 @@ inputs:
     info:
       Tolerance at which to terminate algorithm.
       Will stop when norm(x-xp)/norm(x) < tol
-  fits_mfs:
+  fits-mfs:
     dtype: bool
     default: true
     info:
       Output MFS fits files
-  fits_cubes:
+  fits-cubes:
     dtype: bool
     default: false
     info:
       Output fits cubes
-  memory_greedy:
+  memory-greedy:
     dtype: bool
     default: false
     info:

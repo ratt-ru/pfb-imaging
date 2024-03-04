@@ -26,17 +26,17 @@ inputs:
     default: 1.0
     info:
       Step size of update
-  use_psf:
+  use-psf:
     dtype: bool
     default: true
     info:
       Whether to approximate the Hessian as a convolution by the PSF
-  fits_mfs:
+  fits-mfs:
     dtype: bool
     default: true
     info:
       Output MFS fits files
-  fits_cubes:
+  fits-cubes:
     dtype: bool
     default: false
     info:

@@ -1,10 +1,10 @@
-output_filename:
+output-filename:
   dtype: str
   required: true
   abbreviation: o
   info:
     Basename of output
-log_directory:
+log-directory:
   dtype: str
   required: true
   abbreviation: ldir

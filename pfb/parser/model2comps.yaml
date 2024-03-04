@@ -13,10 +13,10 @@ inputs:
     dtype: int
     info:
       Order of interpolating polynomial for frequency axis
-  fit_mode:
+  fit-mode:
     dtype: str
     default: Legendre
-  min_val:
+  min-val:
     dtype: float
     info:
       Only fit components above this flux level
@@ -25,17 +25,17 @@ inputs:
     default: 'main'
     info:
       Can be used to specify a custom name for the image space data products
-  model_name:
+  model-name:
     dtype: str
     default: MODEL
     abbreviation: mname
     info:
       Name of model in mds
-  model_fits:
+  model-fits:
     dtype: str
     info:
       Specify to degrid from a fits file
-  use_wsum:
+  use-wsum:
     dtype: bool
     default: true
     info:

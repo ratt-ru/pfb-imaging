@@ -219,7 +219,7 @@ def _clean(ddsi=None, **kw):
                   basename + f'_{opts.postfix}_residual_{k+1}.fits',
                   hdr_mfs)
 
-        # report rms where there aren;t any model components
+        # report rms where there aren't any model components
         rmsp = rms
         tmp_mask = ~np.any(model, axis=0)
         rms = np.std(residual_mfs[tmp_mask])
