@@ -1,7 +1,7 @@
 inputs:
   _include:
-    - dist.yml
-    - out.yml
+    - (.)dist.yml
+    - (.)out.yml
   model-name:
     dtype: str
     abbreviation: mname

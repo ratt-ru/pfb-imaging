@@ -124,9 +124,9 @@ inputs:
       Small values (eg. 2) result in aggressive reweighting and should be avoided
       if the model is still incomplete.
   _include:
-    - gridding.yml
-    - dist.yml
-    - out.yml
+    - (.)gridding.yml
+    - (.)dist.yml
+    - (.)out.yml
 
 outputs:
     {}

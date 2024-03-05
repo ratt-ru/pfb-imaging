@@ -44,8 +44,8 @@ inputs:
       Accumulate onto model column
 
   _include:
-    - gridding.yml
-    - dist.yml
+    - (.)gridding.yml
+    - (.)dist.yml
 
 outputs:
   {}

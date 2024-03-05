@@ -42,10 +42,10 @@ inputs:
     info:
       Output fits cubes
   _include:
-    - gridding.yml
-    - cgopts.yml
-    - dist.yml
-    - out.yml
+    - (.)gridding.yml
+    - (.)cgopts.yml
+    - (.)dist.yml
+    - (.)out.yml
 
 outputs:
   {}

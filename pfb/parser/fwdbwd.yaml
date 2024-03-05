@@ -1,11 +1,11 @@
 inputs:
   _include:
-    - gridding.yml
-    - pdopts.yml
-    - pmopts.yml
-    - cgopts.yml
-    - dist.yml
-    - out.yml
+    - (.)gridding.yml
+    - (.)pdopts.yml
+    - (.)pmopts.yml
+    - (.)cgopts.yml
+    - (.)dist.yml
+    - (.)out.yml
   model-name:
     dtype: str
     abbreviation: mname

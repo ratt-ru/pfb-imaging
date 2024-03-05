@@ -47,8 +47,8 @@ inputs:
       Multiple of the identity to add to the hessian for stability
 
   _include:
-    - dist.yml
-    - out.yml
+    - (.)dist.yml
+    - (.)out.yml
 
 outputs:
   {}

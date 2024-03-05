@@ -143,9 +143,9 @@ inputs:
     info:
       Holds data in memory if set
   _include:
-    - gridding.yml
-    - dist.yml
-    - out.yml
+    - (.)gridding.yml
+    - (.)dist.yml
+    - (.)out.yml
 
 outputs:
   {}

@@ -1,10 +1,10 @@
 inputs:
   _include:
-    - gridding.yml
-    - pdopts.yml
-    - pmopts.yml
-    - dist.yml
-    - out.yml
+    - (.)gridding.yml
+    - (.)pdopts.yml
+    - (.)pmopts.yml
+    - (.)dist.yml
+    - (.)out.yml
   nband:
     dtype: int
     required: true
