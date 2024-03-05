@@ -21,7 +21,8 @@ requirements = [
                 "QuartiCal",
                 # "@git+https://github.com/ratt-ru/QuartiCal.git"
                 # "@bandpass_smoothing"
-                "sympy"
+                "sympy",
+                "stimela >= 2.0rc14"
             ]
 
 
