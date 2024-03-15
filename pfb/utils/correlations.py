@@ -1,5 +1,5 @@
 import numpy as np
-from numba import generated_jit, njit
+from numba import njit
 from numba.types import literal
 from dask.graph_manipulation import clone
 import dask.array as da
