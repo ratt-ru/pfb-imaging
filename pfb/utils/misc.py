@@ -670,8 +670,8 @@ def dds2cubes(dds, nband, apparent=False):
     mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
                             dtype=real_type) for _ in range(nband)]
     if 'DUAL' in dds[0]:
-        nbasis, nmax = dds[0].DUAL.shape
-        dual = [da.zeros((nbasis, nmax), chunks=(-1, -1),
+        nbasis, nymax, nxmax = dds[0].DUAL.shape
+        dual = [da.zeros((nbasis, nymax, nxmax), chunks=(-1, -1, -1),
                             dtype=real_type) for _ in range(nband)]
     else:
         dual = None

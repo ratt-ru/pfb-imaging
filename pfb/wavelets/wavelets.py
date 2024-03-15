@@ -1,5 +1,22 @@
 import numba
 
+
+# from the answer given here
+# https://stackoverflow.com/questions/67431966/how-to-avoid-huge-overhead-of-single-threaded-numpys-transpose
+@numba.njit(nogil=True, cache=True, parallel=True, inline='always')
+def copyT(mat, out):
+    blockSize, tileSize = 256, 32  # To be tuned
+    n, m = mat.shape
+    for tmp in numba.prange((m+blockSize-1)//blockSize):
+        i = tmp * blockSize
+        for j in range(0, n, blockSize):
+            tiMin, tiMax = i, min(i+blockSize, m)
+            tjMin, tjMax = j, min(j+blockSize, n)
+            for ti in range(tiMin, tiMax, tileSize):
+                for tj in range(tjMin, tjMax, tileSize):
+                    out[ti:ti+tileSize, tj:tj+tileSize] = mat[tj:tj+tileSize, ti:ti+tileSize].T
+
+
 @numba.njit(nogil=True, cache=True)
 def coeff_size(nsignal, nfilter):
     return (nsignal + nfilter - 1)//2
@@ -106,7 +123,7 @@ def upsampling_convolution_valid_sf(input, filter, output):
         o += 2
 
 
-@numba.njit(nogil=True, cache=True, parallel=PARALLEL)
+@numba.njit(nogil=True, cache=True, parallel=True)
 def dwt2d_level(image, coeffs, cbuff, cbuffT, dec_lo, dec_hi):
     """
     Map image to coeffs for a single level
@@ -129,10 +146,7 @@ def dwt2d_level(image, coeffs, cbuff, cbuffT, dec_lo, dec_hi):
     This function is not meant to be called directly.
     """
     nx, ny = image.shape
-    # # Ensure even signal
-    # if nx%2 or ny%2:
-    #     raise ValueError('Signal must be even')
-    nax, nay = coeffs.shape
+    nay, nax = coeffs.shape
 
     midy = nay//2
     for i in numba.prange(nx):
@@ -142,8 +156,7 @@ def dwt2d_level(image, coeffs, cbuff, cbuffT, dec_lo, dec_hi):
         downsampling_convolution(image[i, :], cbuff[i, midy:], dec_hi, 2)
 
     # prefer over repeatedly convolving the non-contiguous array
-    for j in numba.prange(nax):
-        cbuffT[:, j] = cbuff[j]
+    copyT(cbuff, cbuffT)
 
     midx = nax//2
     for i in numba.prange(nay):
@@ -158,7 +171,7 @@ def dwt2d_level(image, coeffs, cbuff, cbuffT, dec_lo, dec_hi):
     return coeffs[0:midy, 0:midx].T.copy()
 
 
-@numba.njit(nogil=True, cache=True, parallel=PARALLEL)
+@numba.njit(nogil=True, cache=True, parallel=True)
 def dwt2d(image, coeffs, cbuff, cbuffT, ix, iy,
           sx, sy, dec_lo, dec_hi, nlevel):
     '''
@@ -200,7 +213,7 @@ def dwt2d(image, coeffs, cbuff, cbuffT, ix, iy,
                              dec_lo, dec_hi)
 
 
-@numba.njit(nogil=True, cache=True, parallel=PARALLEL)
+@numba.njit(nogil=True, cache=True, parallel=True)
 def idwt2d_level(coeffs, image, cbuff, cbuffT, rec_lo, rec_hi):
     '''
     Map coeffs to image for a single level
@@ -227,7 +240,6 @@ def idwt2d_level(coeffs, image, cbuff, cbuffT, rec_lo, rec_hi):
     nx, ny = image.shape
 
     # zero since accumulated into
-    cbuff[...] = 0.0
     cbuffT[...] = 0.0
     image[...] = 0.0
 
@@ -237,9 +249,7 @@ def idwt2d_level(coeffs, image, cbuff, cbuffT, rec_lo, rec_hi):
         upsampling_convolution_valid_sf(coeffs[i, midx:], rec_hi, cbuffT[i, :])
 
 
-    # import ipdb; ipdb.set_trace()
-    for j in numba.prange(nay):
-        cbuff[:, j] = cbuffT[j]
+    copyT(cbuffT, cbuff)
 
     midy = nay//2
     for i in numba.prange(nx):
@@ -247,7 +257,7 @@ def idwt2d_level(coeffs, image, cbuff, cbuffT, rec_lo, rec_hi):
         upsampling_convolution_valid_sf(cbuff[i, midy:], rec_hi, image[i, :])
 
 
-@numba.njit(nogil=True, cache=True, parallel=PARALLEL)
+@numba.njit(nogil=True, cache=True, parallel=True)
 def idwt2d(coeffs, image, alpha, cbuff, cbuffT, ix, iy,
            sx, sy, spx, spy, rec_lo, rec_hi, nlevel):
     '''
@@ -295,11 +305,11 @@ def idwt2d(coeffs, image, alpha, cbuff, cbuffT, ix, iy,
         # note the difference in indexing (nax,nay instead of nxo,nyo)
         # that stems from the redundant coefficient
         if i < nlevel - 1:
-            alpha[lowy:lowy+nay, lowx:lowx+nax] = image[0:nax, 0:nay].T
+            copyT(image[0:nax, 0:nay], alpha[lowy:lowy+nay, lowx:lowx+nax])
 
         # need a buffer the size of the coeffs at next level
-        idwt2d_level(alpha[lowx:highx, lowy:highy],
-                     image[0:nyo, 0:nxo],
+        idwt2d_level(alpha[lowy:highy, lowx:highx],
+                     image[0:nxo, 0:nyo],
                      cbuff[0:2*nax, 0:2*nay],
                      cbuffT[0:2*nay, 0:2*nax],
                      rec_lo, rec_hi)
