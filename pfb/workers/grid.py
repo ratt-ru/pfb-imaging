@@ -1,4 +1,8 @@
 # flake8: noqa
+import os
+import dask
+dask.config.set(**{'array.slicing.split_large_chunks': False})
+from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
 import click
@@ -13,7 +17,7 @@ from pfb.parser.schemas import schema
 # create default parameters from schema
 defaults = {}
 for key in schema.grid["inputs"].keys():
-    defaults[key] = schema.grid["inputs"][key]["default"]
+    defaults[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.grid)
@@ -26,36 +30,94 @@ def grid(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
+    OmegaConf.set_struct(opts, True)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'grid_{timestamp}.log')
-
-    OmegaConf.set_struct(opts, True)
+    ldir = Path(opts.log_directory).resolve()
+    ldir.mkdir(parents=True, exist_ok=True)
+    pyscilog.log_to_file(f'{str(ldir)}/grid_{timestamp}.log')
+    print(f'Logs will be written to {str(ldir)}/grid_{timestamp}.log', file=log)
+    basedir = Path(opts.output_filename).resolve().parent
+    basedir.mkdir(parents=True, exist_ok=True)
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    dds_name = f'{basename}_{opts.postfix}.dds'
 
     with ExitStack() as stack:
         from pfb import set_client
         opts = set_client(opts, stack, log, scheduler=opts.scheduler)
+        import dask
+        dask.config.set(**{'array.slicing.split_large_chunks': False})
+        from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
+        from pfb.utils.misc import compute_context
+        from pfb.utils.fits import dds2fits, dds2fits_mfs
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _grid(**opts)
+        dds_out = _grid(**opts)
 
-def _grid(**kw):
+        writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
+
+        # dask.visualize(writes, color="order", cmap="autumn",
+        #                node_attr={"penwidth": "4"},
+        #                filename=f'{basename}_grid_ordered_graph.pdf',
+        #                optimize_graph=False)
+        # dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
+        #                optimize_graph=False)
+
+        print("Computing image space data products", file=log)
+        with compute_context(opts.scheduler, f'{str(ldir)}/grid_{timestamp}'):
+            dask.compute(writes, optimize_graph=False)
+
+        dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
+        if 'PSF' in dds[0]:
+            for i, ds in enumerate(dds):
+                dds[i] = ds.chunk({'x_psf': -1, 'y_psf': -1})
+
+        # convert to fits files
+        fitsout = []
+        if opts.fits_mfs:
+            if opts.dirty:
+                fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
+            if opts.psf:
+                fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
+            if opts.residual and 'MODEL' in dds[0]:
+                fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+                fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
+
+        if opts.fits_cubes:
+            if opts.dirty:
+                fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
+            if opts.psf:
+                fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
+            if opts.residual and 'MODEL' in dds[0]:
+                fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+                fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
+
+        if len(fitsout):
+            print("Writing fits", file=log)
+            dask.compute(fitsout)
+
+        if opts.scheduler=='distributed':
+            from distributed import get_client
+            client = get_client()
+            client.close()
+
+        print("All done here.", file=log)
+
+def _grid(xdsi=None, **kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
-    import os
+
     import numpy as np
     import dask
-    dask.config.set(**{'array.slicing.split_large_chunks': False})
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.fits import dds2fits, dds2fits_mfs
     from pfb.utils.misc import compute_context
     from pfb.operators.gridder import image_data_products
     from pfb.operators.fft import fft2d
@@ -77,8 +139,19 @@ def _grid(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     # xds contains vis products, no imaging weights applied
-    xds_name = f'{basename}.xds'
-    xds = xds_from_zarr(xds_name, chunks={'row': -1})
+    xds_name = f'{basename}.xds' if opts.xds is None else opts.xds
+    if xdsi is not None:
+        xds = []
+        for ds in xdsi:
+            xds.append(ds.chunk({'row':-1,
+                                 'chan': -1,
+                                 'l_beam': -1,
+                                 'm_beam': -1}))
+    else:
+        xds = xds_from_zarr(xds_name, chunks={'row': -1,
+                                              'chan': -1,
+                                              'l_beam': -1,
+                                              'm_beam': -1})
     # dds contains image space products including imaging weights and uvw
     dds_name = f'{basename}_{opts.postfix}.dds'
 
@@ -178,6 +251,10 @@ def _grid(**kw):
     else:
         nx = opts.nx
         ny = opts.ny if opts.ny is not None else nx
+        cell_deg = np.rad2deg(cell_rad)
+        fovx = nx*cell_deg
+        fovy = ny*cell_deg
+        print(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
 
     if opts.dirty:
         print(f"Image size = (ntime={ntime}, nband={nband}, nx={nx}, ny={ny})", file=log)
@@ -214,7 +291,7 @@ def _grid(**kw):
         print(f'Image space data products will be stored in {dds_name}.', file=log)
 
     # check if model exists
-    if opts.transfer_model_from is not None:
+    if opts.transfer_model_from:
         try:
             mds = xds_from_zarr(opts.transfer_model_from,
                                 chunks={'params':-1, 'comps':-1})[0]
@@ -298,7 +375,10 @@ def _grid(**kw):
             'timeid': timeid,
             'freq_out': ds.freq_out,
             'time_out': ds.time_out,
-            'robustness': opts.robustness
+            'robustness': opts.robustness,
+            'super_resolution_factor': opts.super_resolution_factor,
+            'field_of_view': opts.field_of_view,
+            'product': opts.product
         })
         # TODO - assign ug,vg-coordinates
         x = (-nx/2 + np.arange(nx)) * cell_rad + x0
@@ -312,12 +392,14 @@ def _grid(**kw):
         cell_deg = np.rad2deg(cell_rad)
         l = (-(nx//2) + da.arange(nx)) * cell_deg + np.deg2rad(x0)
         m = (-(ny//2) + da.arange(ny)) * cell_deg + np.deg2rad(y0)
-        ll, mm = da.meshgrid(l, m, indexing='ij')
-        bvals = eval_beam(ds.BEAM.data, ll, mm)
+        # ll, mm = da.meshgrid(l, m, indexing='ij')
+        l_beam = ds.l_beam.data
+        m_beam = ds.m_beam.data
+        bvals = eval_beam(ds.BEAM.data, l_beam, m_beam, l, m)
         out_ds = out_ds.assign(**{'BEAM': (('x', 'y'), bvals)})
 
         # get the model
-        if opts.transfer_model_from is not None:
+        if opts.transfer_model_from:
             from pfb.utils.misc import eval_coeffs_to_slice
             model = eval_coeffs_to_slice(
                 ds.time_out,
@@ -366,6 +448,9 @@ def _grid(**kw):
 
                 # do we want the coordinates to be ug, vg rather?
                 out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
+
+            else:
+                counts = out_ds.COUNTS.data
         else:
             counts = None
 
@@ -396,7 +481,7 @@ def _grid(**kw):
         blocker.add_input('y0', y0)
         blocker.add_input('nthreads', opts.nvthreads)
         blocker.add_input('epsilon', opts.epsilon)
-        blocker.add_input('do_wgridding', opts.wstack)
+        blocker.add_input('do_wgridding', opts.do_wgridding)
         blocker.add_input('double_accum', opts.double_accum)
         blocker.add_input('l2reweight_dof', opts.l2reweight_dof)
         blocker.add_input('do_psf', opts.psf)
@@ -432,7 +517,7 @@ def _grid(**kw):
                 'PSFHAT',
                 ('x_psf', 'yo2'),
                 ((nx_psf,), (nyo2,)),
-                wgt.dtype)
+                vis.dtype)
 
         if opts.weight:
             blocker.add_output(
@@ -478,55 +563,11 @@ def _grid(**kw):
                                'x':4096,
                                'y':4096})
         # necessary to make psf optional
-        if 'x_psf' in out_ds.dims:
+        if 'x_psf' in out_ds.sizes:
             out_ds = out_ds.chunk({'x_psf': 4096,
                                    'y_psf':4096,
                                    'yo2': 2048})
 
         dds_out.append(out_ds.unify_chunks())
 
-    writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
-
-    # dask.visualize(writes, color="order", cmap="autumn",
-    #                node_attr={"penwidth": "4"},
-    #                filename=f'{basename}_grid_ordered_graph.pdf',
-    #                optimize_graph=False)
-    # dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
-    #                optimize_graph=False)
-
-    print("Computing image space data products", file=log)
-    with compute_context(opts.scheduler, basename+'_grid'):
-        dask.compute(writes, optimize_graph=False)
-
-    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
-
-    # convert to fits files
-    fitsout = []
-    if opts.fits_mfs:
-        if opts.dirty:
-            fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
-        if opts.psf:
-            fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
-        if opts.residual and model is not None:
-            fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-            fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
-
-    if opts.fits_cubes:
-        if opts.dirty:
-            fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
-        if opts.psf:
-            fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
-        if opts.residual and model is not None:
-            fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-            fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
-
-    if len(fitsout):
-        print("Writing fits", file=log)
-        dask.compute(fitsout)
-
-    if opts.scheduler=='distributed':
-        from distributed import get_client
-        client = get_client()
-        client.close()
-
-    print("All done here.", file=log)
+    return dds_out

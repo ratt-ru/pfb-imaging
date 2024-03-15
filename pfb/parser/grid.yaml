@@ -1,29 +1,20 @@
 inputs:
+  xds:
+    info:
+      Optional explicit path to xds.
+      Set using output-filename and postfix by default.
   nband:
     dtype: int
     required: true
     abbreviation: nb
     info:
       Number of imaging bands
-  output_filename:
-    dtype: str
-    required: true
-    abbreviation: o
-    info:
-      Basename of output
   postfix:
     dtype: str
     default: 'main'
     info:
       Can be used to specify a custom name for the image space data products
-  product:
-    dtype: str
-    abbreviation: p
-    default: I
-    info:
-      Imaging products to produce. Options are I, Q, U, V.
-      Only single Stokes products are currently supported
-  concat_row:
+  concat-row:
     dtype: bool
     default: True
     info:
@@ -34,7 +25,7 @@ inputs:
     info:
       Allow overwriting of image space data products.
       Specify postfix to create a new data set.
-  transfer_model_from:
+  transfer-model-from:
     dtype: str
     abbreviation: tmf
     info:
@@ -44,12 +35,12 @@ inputs:
     abbreviation: rob
     info:
       Robustness factor for Briggs weighting. None means natural
-  fits_mfs:
+  fits-mfs:
     dtype: bool
     default: true
     info:
       Output MFS fits files
-  fits_cubes:
+  fits-cubes:
     dtype: bool
     default: false
     info:
@@ -64,7 +55,7 @@ inputs:
     default: true
     info:
       Compute the PSF
-  psf_oversize:
+  psf-oversize:
     dtype: float
     default: 2.0
     abbreviation: psfo
@@ -80,19 +71,19 @@ inputs:
     default: false
     info:
       Compute the residual image
-  field_of_view:
+  field-of-view:
     dtype: float
     abbreviation: fov
     info:
       Field of view in degrees
     metavar: DEG
-  super_resolution_factor:
+  super-resolution-factor:
     dtype: float
     default: 2
     abbreviation: srf
     info:
       Will over-sample Nyquist by this factor at max frequency
-  cell_size:
+  cell-size:
     dtype: float
     info:
       Cell size in arc-seconds
@@ -104,17 +95,17 @@ inputs:
     dtype: int
     info:
       Number of y pixels
-  filter_extreme_counts:
+  filter-extreme-counts:
     dtype: bool
     default: false
     info:
       Replace extreme outliers in the weighting grid by their local mean
-  filter_nbox:
+  filter-nbox:
     dtype: int
     default: 16
     info:
       The size of the box to compute local mean over
-  filter_level:
+  filter-level:
     dtype: float
     default: 10
     info:
@@ -124,7 +115,7 @@ inputs:
     info:
       This can be predefined celestial objects known to astropy or a string in
       the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
-  l2reweight_dof:
+  l2reweight-dof:
     dtype: float
     info:
       The degrees of freedom parameter for L2 reweighting.
@@ -133,8 +124,9 @@ inputs:
       Small values (eg. 2) result in aggressive reweighting and should be avoided
       if the model is still incomplete.
   _include:
-    - (pfb.parser)gridding.yml
-    - (pfb.parser)dist.yml
+    - (.)gridding.yml
+    - (.)dist.yml
+    - (.)out.yml
 
 outputs:
     {}

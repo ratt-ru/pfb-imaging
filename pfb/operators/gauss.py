@@ -8,7 +8,7 @@ iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
 
-@njit(parallel=True, nogil=True, fastmath=True, inline='always')
+@njit(parallel=True, nogil=True, cache=True, inline='always')
 def freqmul(A, x):
     nchan, npix = x.shape
     out = np.zeros((nchan, npix), dtype=x.dtype)
@@ -19,7 +19,7 @@ def freqmul(A, x):
     return out
 
 
-@njit(parallel=True, nogil=True, fastmath=True, inline='always')
+@njit(parallel=True, nogil=True, cache=True, inline='always')
 def make_kernel(nx_psf, ny_psf, sigma0, length_scale):
     K = np.zeros((1, nx_psf, ny_psf), dtype=np.float64)
     for j in range(nx_psf):

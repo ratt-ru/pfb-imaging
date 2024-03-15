@@ -14,7 +14,7 @@ from pfb.parser.schemas import schema
 # create default parameters from schema
 defaults = {}
 for key in schema.forward["inputs"].keys():
-    defaults[key] = schema.forward["inputs"][key]["default"]
+    defaults[key.replace("-", "_")] = schema.forward["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.forward)
@@ -148,7 +148,7 @@ def _forward(**kw):
     # TODO - how to apply beam externally per ds
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
-    hessopts['wstack'] = opts.wstack
+    hessopts['do_wgridding'] = opts.do_wgridding
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads

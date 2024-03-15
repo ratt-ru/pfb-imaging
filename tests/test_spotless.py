@@ -134,7 +134,7 @@ def test_spotless(ms_name):
     # set defaults from schema
     init_args = {}
     for key in schema.init["inputs"].keys():
-        init_args[key] = schema.init["inputs"][key]["default"]
+        init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
     # overwrite defaults
     outname = str(test_dir / 'test')
     init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
@@ -143,15 +143,15 @@ def test_spotless(ms_name):
     # init_args["weight_column"] = 'WEIGHT_SPECTRUM'
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = None
-    init_args["max_field_of_view"] = fov
+    init_args["max_field_of_view"] = fov*1.1
     init_args["overwrite"] = True
     init_args["channels_per_image"] = 1
-    _init(**init_args)
+    xdso = _init(**init_args)
 
     # grid data to produce dirty image
     grid_args = {}
     for key in schema.grid["inputs"].keys():
-        grid_args[key] = schema.grid["inputs"][key]["default"]
+        grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
     grid_args["output_filename"] = outname
     grid_args["nband"] = nchan
@@ -163,13 +163,19 @@ def test_spotless(ms_name):
     grid_args["nvthreads"] = 8
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
-    grid_args["wstack"] = True
-    _grid(**grid_args)
+    grid_args["do_wgridding"] = True
+    dds = _grid(xdsi=xdso, **grid_args)
+
+    # LB - does this avoid duplicate gridding?
+    dds_name = f'{outname}_I_main.dds'
+    dds = dask.compute(dds)[0]
+    writes = xds_to_zarr(dds, dds_name, columns='ALL')
+    dask.compute(writes)
 
     # run clean
     spotless_args = {}
     for key in schema.spotless["inputs"].keys():
-        spotless_args[key] = schema.spotless["inputs"][key]["default"]
+        spotless_args[key.replace("-", "_")] = schema.spotless["inputs"][key]["default"]
     spotless_args["output_filename"] = outname
     spotless_args["nband"] = nchan
     spotless_args["niter"] = 2
@@ -184,10 +190,10 @@ def test_spotless(ms_name):
     spotless_args["nthreads_dask"] = 1
     spotless_args["nvthreads"] = 8
     spotless_args["scheduler"] = 'sync'
-    spotless_args["wstack"] = True
+    spotless_args["do_wgridding"] = True
     spotless_args["epsilon"] = epsilon
     spotless_args["fits_mfs"] = False
-    _spotless(**spotless_args)
+    _spotless(ddsi=dds, **spotless_args)
 
 
     # get the inferred model
@@ -211,7 +217,7 @@ def test_spotless(ms_name):
 
     model2comps_args = {}
     for key in schema.model2comps["inputs"].keys():
-        model2comps_args[key] = schema.model2comps["inputs"][key]["default"]
+        model2comps_args[key.replace("-", "_")] = schema.model2comps["inputs"][key]["default"]
     model2comps_args["output_filename"] = outname
     model2comps_args["nbasisf"] = nchan
     model2comps_args["fit_mode"] = 'Legendre'
@@ -257,46 +263,64 @@ def test_spotless(ms_name):
     # models need to match exactly
     assert_allclose(1 + model_test, 1 + model_inferred)
 
-    # degrid from coeffs
+    # degrid from coeffs populating MODEL_DATA
     degrid_args = {}
     for key in schema.degrid["inputs"].keys():
-        degrid_args[key] = schema.degrid["inputs"][key]["default"]
-    # overwrite defaults
+        degrid_args[key.replace("-", "_")] = schema.degrid["inputs"][key]["default"]
     degrid_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
     degrid_args["mds"] = f'{outname}_I_main_model.mds'
     degrid_args["channels_per_image"] = 1
     degrid_args["nthreads_dask"] = 1
     degrid_args["nvthreads"] = 8
-    degrid_args["wstack"] = True
+    degrid_args["do_wgridding"] = True
     _degrid(**degrid_args)
 
     # manually place residual in CORRECTED_DATA
     resid = xds.DATA.data - xds.MODEL_DATA.data
-    xds['DATA'] = (('row','chan','coor'), resid)
-    writes = [xds_to_table(xds, ms_name, columns='DATA')]
+    xds['CORRECTED_DATA'] = (('row','chan','coor'), resid)
+    writes = [xds_to_table(xds, ms_name, columns='CORRECTED_DATA')]
     dask.compute(writes)
 
     # gridding CORRECTED_DATA should return identical residuals
+    init_args = {}
+    for key in schema.init["inputs"].keys():
+        init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
     # overwrite defaults
-    grid_args['DATA_COLUMN'] = 'CORRECTED_DATA'
+    outname = str(test_dir / 'test2')
+    init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+    init_args["output_filename"] = outname
+    init_args["data_column"] = "CORRECTED_DATA"
+    # init_args["weight_column"] = 'WEIGHT_SPECTRUM'
+    init_args["flag_column"] = 'FLAG'
+    init_args["gain_table"] = None
+    init_args["max_field_of_view"] = fov*1.1
+    init_args["overwrite"] = True
+    init_args["channels_per_image"] = 1
+    xdso2 = _init(**init_args)
+
+    # grid data to produce dirty image
+    grid_args = {}
+    for key in schema.grid["inputs"].keys():
+        grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
+    # overwrite defaults
     grid_args["output_filename"] = outname
-    grid_args["postfix"] = 'resid'
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
     grid_args["fits_mfs"] = False
     grid_args["psf"] = False
-    grid_args["weight"] = False
     grid_args["residual"] = False
     grid_args["nthreads_dask"] = 1
     grid_args["nvthreads"] = 8
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
-    grid_args["wstack"] = True
-    _grid(**grid_args)
+    grid_args["do_wgridding"] = True
+    dds2 = _grid(xdsi=xdso2, **grid_args)
 
-    ddso = xds_from_zarr(f'{outname}_I_resid.dds')
-    for dso, ds in zip(ddso, dds):
-        assert_allclose(1 + np.abs(dso.DIRTY.values),
-                        1 + np.abs(ds.DIRTY.values))
+    dds2 = dask.compute(dds2)[0]
+
+    for ds, ds2 in zip(dds, dds2):
+        wsum = ds.WSUM.values
+        assert_allclose(1 + np.abs(ds.RESIDUAL.values)/wsum,
+                        1 + np.abs(ds2.DIRTY.values)/wsum)
 
 # test_spotless()

@@ -1,6 +1,6 @@
 inputs:
   ms:
-    dtype: str
+    dtype: URI
     required: true
     abbreviation: ms
     info:
@@ -11,7 +11,7 @@ inputs:
     abbreviation: mds
     info:
       Path to the mds that needs to be degridded
-  model_column:
+  model-column:
     dtype: str
     default: MODEL_DATA
     info:
@@ -23,14 +23,14 @@ inputs:
     info:
       Imaging products to degrid. Options are I, Q, U, V.
       Only single Stokes products are currently supported.
-  integrations_per_image:
+  integrations-per-image:
     dtype: int
     default: -1
     abbreviation: ipi
     info:
       Number of time integrations corresponding to each image.
       Default -1 (equivalently 0 or None) implies degrid per scan.
-  channels_per_image:
+  channels-per-image:
     dtype: int
     abbreviation: cpi
     default: -1
@@ -44,8 +44,8 @@ inputs:
       Accumulate onto model column
 
   _include:
-    - (pfb.parser)gridding.yml
-    - (pfb.parser)dist.yml
+    - (.)gridding.yml
+    - (.)dist.yml
 
 outputs:
   {}

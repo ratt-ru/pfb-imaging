@@ -298,7 +298,7 @@ def _loc2psf_vis_impl(uvw,
                       cell,
                       x0=0,
                       y0=0,
-                      wstack=True,
+                      do_wgridding=True,
                       epsilon=1e-7,
                       nthreads=1,
                       precision='single',
@@ -327,7 +327,7 @@ def _loc2psf_vis_impl(uvw,
                             center_x=x0,
                             center_y=y0,
                             epsilon=1e-7,
-                            do_wgridding=wstack,
+                            do_wgridding=do_wgridding,
                             nthreads=nthreads,
                             divide_by_n=divide_by_n)
 
@@ -344,7 +344,7 @@ def _loc2psf_vis(uvw,
                  cell,
                  x0=0,
                  y0=0,
-                 wstack=True,
+                 do_wgridding=True,
                  epsilon=1e-7,
                  nthreads=1,
                  precision='single',
@@ -355,7 +355,7 @@ def _loc2psf_vis(uvw,
                              cell,
                              x0,
                              y0,
-                             wstack,
+                             do_wgridding,
                              epsilon,
                              nthreads,
                              precision,
@@ -368,7 +368,7 @@ def loc2psf_vis(uvw,
                 cell,
                 x0=0,
                 y0=0,
-                wstack=True,
+                do_wgridding=True,
                 epsilon=1e-7,
                 nthreads=1,
                 precision='single',
@@ -380,7 +380,7 @@ def loc2psf_vis(uvw,
                         cell, None,
                         x0, None,
                         y0, None,
-                        wstack, None,
+                        do_wgridding, None,
                         epsilon, None,
                         nthreads, None,
                         precision, None,
@@ -405,7 +405,7 @@ def comps2vis(uvw,
               x0=0, y0=0,
               epsilon=1e-7,
               nthreads=1,
-              wstack=True,
+              do_wgridding=True,
               divide_by_n=False,
               ncorr_out=4):
 
@@ -436,7 +436,7 @@ def comps2vis(uvw,
                         y0, None,
                         epsilon, None,
                         nthreads, None,
-                        wstack, None,
+                        do_wgridding, None,
                         divide_by_n, None,
                         ncorr_out, None,
                         new_axes={'c': ncorr_out},
@@ -462,7 +462,7 @@ def _comps2vis(uvw,
                 x0=0, y0=0,
                 epsilon=1e-7,
                 nthreads=1,
-                wstack=True,
+                do_wgridding=True,
                 divide_by_n=False,
                 ncorr_out=4):
     return _comps2vis_impl(uvw[0],
@@ -481,7 +481,7 @@ def _comps2vis(uvw,
                            x0=x0, y0=y0,
                            epsilon=epsilon,
                            nthreads=nthreads,
-                           wstack=wstack,
+                           do_wgridding=do_wgridding,
                            divide_by_n=divide_by_n,
                            ncorr_out=ncorr_out)
 
@@ -503,7 +503,7 @@ def _comps2vis_impl(uvw,
                     x0=0, y0=0,
                     epsilon=1e-7,
                     nthreads=1,
-                    wstack=True,
+                    do_wgridding=True,
                     divide_by_n=False,
                     ncorr_out=4):
     # adjust for chunking
@@ -538,7 +538,7 @@ def _comps2vis_impl(uvw,
                                            pixsize_x=cellx, pixsize_y=celly,
                                            center_x=x0, center_y=y0,
                                            epsilon=epsilon,
-                                           do_wgridding=wstack,
+                                           do_wgridding=do_wgridding,
                                            divide_by_n=divide_by_n,
                                            nthreads=nthreads)
             if ncorr_out > 1:
@@ -608,8 +608,11 @@ def image_data_products(uvw,
         ressq = (residual_vis*residual_vis.conj()).real
         wcount = mask.sum()
         if wcount:
-            ovar = ressq.sum()/wcount
-            wgt = (dof + 1)/(dof + ressq/ovar)/ovar
+            ovar = ressq.sum()/wcount  # use 67% quantile?
+            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+        else:
+            wgt = None
+
 
     # we usually want to re-evaluate this since the robustness may change
     if robustness is not None:
@@ -623,8 +626,10 @@ def image_data_products(uvw,
             nx, ny,
             cellx, celly,
             robustness)
-
-        wgt *= imwgt
+        if wgt is not None:
+            wgt *= imwgt
+        else:
+            wgt = imwgt
 
     if do_weight:
         out_dict['WEIGHT'] = wgt
@@ -674,7 +679,7 @@ def image_data_products(uvw,
                 center_x=x0,
                 center_y=y0,
                 epsilon=1e-7,
-                do_wgridding=wstack,
+                do_wgridding=do_wgridding,
                 nthreads=nthreads,
                 divide_by_n=False,
                 flip_v=False,  # hardcoded for now

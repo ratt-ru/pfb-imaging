@@ -1,5 +1,6 @@
 # flake8: noqa
 import os
+from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
 from functools import partial
@@ -15,7 +16,7 @@ from pfb.parser.schemas import schema
 # create default parameters from schema
 defaults = {}
 for key in schema.spotless["inputs"].keys():
-    defaults[key] = schema.spotless["inputs"][key]["default"]
+    defaults[key.replace("-", "_")] = schema.spotless["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.spotless)
@@ -28,7 +29,14 @@ def spotless(**kw):
     OmegaConf.set_struct(opts, True)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'spotless_{timestamp}.log')
+    ldir = Path(opts.log_directory).resolve()
+    ldir.mkdir(parents=True, exist_ok=True)
+    pyscilog.log_to_file(f'{str(ldir)}/spotless_{timestamp}.log')
+    print(f'Logs will be written to {str(ldir)}/spotless_{timestamp}.log', file=log)
+    basedir = Path(opts.output_filename).resolve().parent
+    basedir.mkdir(parents=True, exist_ok=True)
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    dds_name = f'{basename}_{opts.postfix}.dds'
 
     with ExitStack() as stack:
         # numpy imports have to happen after this step
@@ -46,7 +54,7 @@ def spotless(**kw):
             return _spotless(**opts)
 
 
-def _spotless(**kw):
+def _spotless(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -62,15 +70,13 @@ def _spotless(**kw):
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
-    from pfb.opt.primal_dual import primal_dual_optimised2 as primal_dual
+    from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
     from pfb.utils.misc import l1reweight_func
     from pfb.operators.hessian import hessian_xds
     from pfb.operators.psf import psf_convolve_cube
-    from pfb.operators.psi import im2coef
-    from pfb.operators.psi import coef2im
+    from pfb.operators.psi import Psi
     from copy import copy, deepcopy
     from ducc0.misc import make_noncritical
-    from pfb.wavelets.wavelets import wavelet_setup
     from pfb.prox.prox_21m import prox_21m_numba as prox_21
     # from pfb.prox.prox_21 import prox_21
     from pfb.utils.misc import fitcleanbeam
@@ -78,13 +84,24 @@ def _spotless(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     dds_name = f'{basename}_{opts.postfix}.dds'
-    dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                          'chan':-1,
-                                          'x':-1,
-                                          'y':-1,
-                                          'x_psf':-1,
-                                          'y_psf':-1,
-                                          'yo2':-1})
+    if ddsi is not None:
+        dds = []
+        for ds in ddsi:
+            dds.append(ds.chunk({'row':-1,
+                                 'chan':-1,
+                                 'x':-1,
+                                 'y':-1,
+                                 'x_psf':-1,
+                                 'y_psf':-1,
+                                 'yo2':-1}))
+    else:
+        dds = xds_from_zarr(dds_name, chunks={'row':-1,
+                                            'chan':-1,
+                                            'x':-1,
+                                            'y':-1,
+                                            'x_psf':-1,
+                                            'y_psf':-1,
+                                            'yo2':-1})
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
 
@@ -137,7 +154,7 @@ def _spotless(**kw):
     # set up vis space Hessian
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
-    hessopts['wstack'] = opts.wstack
+    hessopts['do_wgridding'] = opts.do_wgridding
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads  # nvthreads since dask parallel over band
@@ -174,25 +191,9 @@ def _spotless(**kw):
     print("Setting up dictionary", file=log)
     bases = tuple(opts.bases.split(','))
     nbasis = len(bases)
-    iy, sy, ntot, nmax = wavelet_setup(
-                                np.zeros((1, nx, ny), dtype=dirty.dtype),
-                                bases, opts.nlevels)
-    ntot = tuple(ntot)
-
-    psiH = partial(im2coef,
-                   bases=bases,
-                   ntot=ntot,
-                   nmax=nmax,
-                   nlevels=opts.nlevels,
-                   nthreads=opts.nvthreads*opts.nthreads_dask) # nthreads = nvthreads*nthreads_dask because dask not involved
-    psi = partial(coef2im,
-                  bases=bases,
-                  ntot=ntot,
-                  iy=iy,
-                  sy=sy,
-                  nx=nx,
-                  ny=ny,
-                  nthreads=opts.nvthreads*opts.nthreads_dask) # nthreads = nvthreads*nthreads_dask because dask not involved
+    psi = Psi(nband, nx, ny, bases, opts.nlevels, opts.nthreads_dask)
+    Nxmax = psi.Nxmax
+    Nymax = psi.Nymax
 
     # get clean beam area to convert residual units during l1reweighting
     # TODO - could refine this with comparison between dirty and restored
@@ -206,27 +207,34 @@ def _spotless(**kw):
     # i) convert residual units so it is comparable to model
     # ii) project residual into dual domain
     # iii) compute the rms in the space where thresholding happens
-    psiHoutvar = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
+    psiHoutvar = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=dirty.dtype)
     fsel = wsums > 0
     tmp2 = residual.copy()
     tmp2[fsel] *= wsum/wsums[fsel, None, None]
-    psiH(tmp2/pix_per_beam, psiHoutvar)
+    psi.dot(tmp2/pix_per_beam, psiHoutvar)
     rms_comps = np.std(np.sum(psiHoutvar, axis=0),
-                       axis=-1)[:, None]  # preserve axes
+                       axis=(-1,-2))[:, None, None]  # preserve axes
+
+    # This is attempt at getting the primal-dual to converge
+    # more homogeneously when bands have very different wsums
+    # sfactor is used to scale the grad21 function below
+    sfactor = np.zeros((nband, 1, 1))
+    sfactor[fsel] = wsum/wsums[fsel, None, None]  # missing subbands
+    sfactor /= np.mean(sfactor[fsel])
 
     # TODO - load from dds if present
     if dual is None:
-        dual = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)
-        l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
+        dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=dirty.dtype)
+        l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=dirty.dtype)
         reweighter = None
     else:
         if opts.l1reweight_from == 0:
             print('Initialising with L1 reweighted', file=log)
-            reweighter = partial(l1reweight_func, psiH, psiHoutvar, opts.rmsfactor, rms_comps)
+            reweighter = partial(l1reweight_func, psi.dot, psiHoutvar, opts.rmsfactor, rms_comps)
             l1weight = reweighter(model)
             # l1weight[l1weight < 1.0] = 0.0
         else:
-            l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
+            l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=dirty.dtype)
             reweighter = None
 
 
@@ -236,6 +244,10 @@ def _spotless(**kw):
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
+    best_rms = rms
+    best_rmax = rmax
+    best_model = model.copy()
+    diverge_count = 0
     print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
     for k in range(opts.niter):
@@ -243,11 +255,15 @@ def _spotless(**kw):
         modelp = deepcopy(model)
         data = residual + psf_convolve(model)
         grad21 = lambda x: psf_convolve(x) - data
+        # def grad21(x):
+        #     res = psf_convolve(x) - data
+        #     res[fsel] *= sfactor
+        #     return res
         model, dual = primal_dual(model,
                                   dual,
                                   opts.rmsfactor*rms,
-                                  psi,
-                                  psiH,
+                                  psi.hdot,
+                                  psi.dot,
                                   hessnorm,
                                   prox_21,
                                   l1weight,
@@ -276,9 +292,16 @@ def _spotless(**kw):
                   basename + f'_{opts.postfix}_residual_{k+1}.fits',
                   hdr_mfs)
 
+        rmsp = rms
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
+
+        # base this on rmax?
+        if rms < best_rms:
+            best_rms = rms
+            best_rmax = rmax
+            best_model = model.copy()
 
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
               f"rms = {rms:.3e}, eps = {eps:.3e}",
@@ -288,11 +311,11 @@ def _spotless(**kw):
             print('Computing L1 weights', file=log)
             # convert residual units so it is comparable to model
             tmp2[fsel] = residual[fsel] * wsum/wsums[fsel, None, None]
-            psiH(tmp2/pix_per_beam, psiHoutvar)
+            psi.dot(tmp2/pix_per_beam, psiHoutvar)
             rms_comps = np.std(np.sum(psiHoutvar, axis=0),
-                               axis=-1)[:, None]  # preserve axes
+                               axis=(-1,-2))[:, None, None]  # preserve axes
             # we redefine the reweighter here since the rms has changed
-            reweighter = partial(l1reweight_func, psiH, psiHoutvar, opts.rmsfactor, rms_comps)
+            reweighter = partial(l1reweight_func, psi.dot, psiHoutvar, opts.rmsfactor, rms_comps)
             l1weight = reweighter(model)
             # l1weight[l1weight < 1.0] = 0.0
             # prox21 = partial(prox_21, weight=l1weight, axis=0)
@@ -304,12 +327,18 @@ def _spotless(**kw):
             r = da.from_array(residual[b]*wsum)
             m = da.from_array(model[b])
             d = da.from_array(dual[b])
+            mbest = da.from_array(best_model[b])
             ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
                                   'MODEL': (('x', 'y'), m),
-                                  'DUAL': (('c', 'n'), d)})
+                                  'DUAL': (('c', 'i', 'j'), d),
+                                  'MODEL_BEST': (('x', 'y'), mbest)})
+            ds_out = ds_out.assign_attrs({'parametrisation': 'id',
+                                          'best_rms': best_rms,
+                                          'best_rmax': best_rmax})
             dds_out.append(ds_out)
         writes = xds_to_zarr(dds_out, dds_name,
-                             columns=('RESIDUAL', 'MODEL', 'DUAL'),
+                             columns=('RESIDUAL', 'MODEL',
+                                      'DUAL', 'MODEL_BEST'),
                              rechunk=True)
         dask.compute(writes)
 
@@ -320,6 +349,12 @@ def _spotless(**kw):
         #     print("Terminating because final threshold has been reached",
         #           file=log)
         #     break
+
+        if rms > rmsp:
+            diverge_count += 1
+            if diverge_count > 3:
+                print("Algorithm is diverging. Terminating.", file=log)
+                break
 
     dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
 

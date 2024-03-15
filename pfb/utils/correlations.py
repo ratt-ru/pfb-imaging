@@ -1,12 +1,11 @@
 import numpy as np
-from numba import generated_jit, njit
+from numba import njit
 from numba.types import literal
 from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
 from quartical.utils.numba import coerce_literal
-from daskms.optimisation import inlined_array
 from operator import getitem
 from pfb.utils.beam import interp_beam
 
@@ -42,8 +41,6 @@ def single_corr(ds=None,
     else:
         frow = (ant1 == ant2)
 
-    frow = inlined_array(frow, [ant1, ant2])
-
     if opts.weight_column is not None:
         weight = getattr(ds, opts.weight_column).data
     else:
@@ -71,9 +68,6 @@ def single_corr(ds=None,
     vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts,
                            ant1, ant2)
 
-    vis = inlined_array(vis, [ant1, ant2, tbin_idx, tbin_counts, jones])
-    wgt = inlined_array(wgt, [ant1, ant2, tbin_idx, tbin_counts, jones])
-
     if opts.flag_column is not None:
         flag = getattr(ds, opts.flag_column).data
         flag = da.any(flag, axis=2)
@@ -82,7 +76,6 @@ def single_corr(ds=None,
         flag = da.broadcast_to(frow[:, None], (nrow, nchan))
 
     mask = ~flag
-    mask = inlined_array(mask, [frow])
     uvw = ds.UVW.data
 
     data_vars = {'FREQ': (('chan',), freq)}
@@ -195,65 +188,46 @@ def _weight_data(data, weight, jones, tbin_idx, tbin_counts,
     return _weight_data_impl(data[0], weight[0], jones[0][0][0],
                              tbin_idx, tbin_counts, ant1, ant2)
 
-@generated_jit(nopython=True, nogil=True, cache=True)
+@njit(nopython=True, nogil=True, cache=True)
 def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                       ant1, ant2):
+    # for dask arrays we need to adjust the chunks to
+    # start counting from zero
+    tbin_idx -= tbin_idx.min()
+    nt = np.shape(tbin_idx)[0]
+    nrow, nchan, ncorr = data.shape
+    vis = np.zeros((nrow, nchan), dtype=data.dtype)
+    wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
 
-    vis_func, wgt_func = corr_funcs(data, jones)
+    for t in range(nt):
+        for row in range(tbin_idx[t],
+                            tbin_idx[t] + tbin_counts[t]):
+            p = int(ant1[row])
+            q = int(ant2[row])
+            gp = jones[t, p, :, 0]
+            gq = jones[t, q, :, 0]
+            for chan in range(nchan):
+                wval = wgt_func(gp[chan], gq[chan],
+                                weight[row, chan])
+                wgt[row, chan] = wval
+                vis[row, chan] = vis_func(gp[chan], gq[chan],
+                                            weight[row, chan],
+                                            data[row, chan])  #/wval
 
-    def _impl(data, weight, jones, tbin_idx, tbin_counts,
-              ant1, ant2):
-        # for dask arrays we need to adjust the chunks to
-        # start counting from zero
-        tbin_idx -= tbin_idx.min()
-        nt = np.shape(tbin_idx)[0]
-        nrow, nchan, ncorr = data.shape
-        vis = np.zeros((nrow, nchan), dtype=data.dtype)
-        wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
-
-        for t in range(nt):
-            for row in range(tbin_idx[t],
-                             tbin_idx[t] + tbin_counts[t]):
-                p = int(ant1[row])
-                q = int(ant2[row])
-                gp = jones[t, p, :, 0]
-                gq = jones[t, q, :, 0]
-                for chan in range(nchan):
-                    wval = wgt_func(gp[chan], gq[chan],
-                                    weight[row, chan])
-                    wgt[row, chan] = wval
-                    vis[row, chan] = vis_func(gp[chan], gq[chan],
-                                              weight[row, chan],
-                                              data[row, chan])  #/wval
-
-        return vis, wgt
-    return _impl
+    return vis, wgt
 
 
-def corr_funcs(data, jones):
-    # The expressions for DIAG_DIAG and DIAG mode are essentially the same
-    if jones.ndim == 5:
-        # I and Q have identical weights
-        @njit(nogil=True, fastmath=True, inline='always')
-        def wfunc(gp, gq, W):
-            gp00 = gp[0]
-            gq00 = gq[0]
-            W0 = W[0]
-            return np.real(W0*gp00*gq00*np.conjugate(gp00)*np.conjugate(gq00))
+@njit(nogil=True, cache=True, inline='always')
+def wgt_func(gp, gq, W):
+    gp00 = gp[0]
+    gq00 = gq[0]
+    W0 = W[0]
+    return np.real(W0*gp00*gq00*np.conjugate(gp00)*np.conjugate(gq00))
 
-        @njit(nogil=True, fastmath=True, inline='always')
-        def vfunc(gp, gq, W, V):
-            gp00 = gp[0]
-            gq00 = gq[0]
-            W0 = W[0]
-            v00 = V[0]
-            return W0*gq00*v00*np.conjugate(gp00)
-
-        return vfunc, wfunc
-
-    # Full mode
-    elif jones.ndim == 6:
-        raise NotImplementedError("Full polarisation imaging not yet supported")
-
-    else:
-        raise ValueError("jones array has an unsupported number of dimensions")
+@njit(nogil=True, cache=True, inline='always')
+def vis_func(gp, gq, W, V):
+    gp00 = gp[0]
+    gq00 = gq[0]
+    W0 = W[0]
+    v00 = V[0]
+    return W0*gq00*v00*np.conjugate(gp00)

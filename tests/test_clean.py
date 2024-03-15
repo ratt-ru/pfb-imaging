@@ -79,12 +79,17 @@ def test_clean(do_gains, ms_name):
 
     # model vis
     epsilon = 1e-7
-    from ducc0.wgridder import dirty2ms
+    from ducc0.wgridder.experimental import dirty2vis
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
-        model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], model[c],
-                                    pixsize_x=cell_rad, pixsize_y=cell_rad,
-                                    epsilon=epsilon, do_wstacking=True, nthreads=8)
+        model_vis[:, c:c+1, 0] = dirty2vis(uvw=uvw,
+                                           freq=freq[c:c+1],
+                                           dirty=model[c],
+                                           pixsize_x=cell_rad,
+                                           pixsize_y=cell_rad,
+                                           epsilon=epsilon,
+                                           do_wgridding=True,
+                                           nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]
 
 
@@ -170,28 +175,30 @@ def test_clean(do_gains, ms_name):
         gain_path = None
 
     postfix = "main"
+    outname = str(test_dir / 'test')
+    basename = f'{outname}_I'
+    dds_name = f'{basename}_{postfix}.dds'
     # set defaults from schema
     from pfb.parser.schemas import schema
     init_args = {}
     for key in schema.init["inputs"].keys():
-        init_args[key] = schema.init["inputs"][key]["default"]
+        init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
     # overwrite defaults
-    outname = str(test_dir / 'test')
     init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
     init_args["output_filename"] = outname
     init_args["data_column"] = "DATA"
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = gain_path
-    init_args["max_field_of_view"] = fov
+    init_args["max_field_of_view"] = fov*1.1
     init_args["overwrite"] = True
     init_args["channels_per_image"] = 1
     from pfb.workers.init import _init
-    _init(**init_args)
+    xds = _init(**init_args)
 
     # grid data to produce dirty image
     grid_args = {}
     for key in schema.grid["inputs"].keys():
-        grid_args[key] = schema.grid["inputs"][key]["default"]
+        grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
     grid_args["output_filename"] = outname
     grid_args["postfix"] = postfix
@@ -204,14 +211,14 @@ def test_clean(do_gains, ms_name):
     grid_args["nvthreads"] = 8
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
-    grid_args["wstack"] = True
+    grid_args["do_wgridding"] = True
     from pfb.workers.grid import _grid
-    _grid(**grid_args)
+    dds = _grid(xdsi=xds, **grid_args)
 
     # run clean
     clean_args = {}
     for key in schema.clean["inputs"].keys():
-        clean_args[key] = schema.clean["inputs"][key]["default"]
+        clean_args[key.replace("-", "_")] = schema.clean["inputs"][key]["default"]
     clean_args["output_filename"] = outname
     clean_args["postfix"] = postfix
     clean_args["nband"] = nchan
@@ -226,12 +233,12 @@ def test_clean(do_gains, ms_name):
     clean_args["nthreads"] = 8
     clean_args["nvthreads"] = 8
     clean_args["scheduler"] = 'sync'
-    clean_args["wstack"] = True
+    clean_args["do_wgridding"] = True
     clean_args["epsilon"] = epsilon
     clean_args["mop_flux"] = True
     clean_args["fits_mfs"] = False
     from pfb.workers.clean import _clean
-    _clean(**clean_args)
+    _clean(ddsi=dds, **clean_args)
 
     # get inferred model
     basename = f'{outname}_I'

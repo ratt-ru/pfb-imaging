@@ -7,24 +7,24 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('INIT')
+log = pyscilog.get_logger('FASTIM')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}
-for key in schema.init["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
+for key in schema.fastim["inputs"].keys():
+    defaults[key.replace("-", "_")] = schema.fastim["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.init)
-def init(**kw):
+@clickify_parameters(schema.fastim)
+def fastim(**kw):
     '''
-    Initialise data products for imaging
+    Produce image data products
     '''
-    defaults.update(kw)  # is this still necessary?
-    opts = OmegaConf.create(kw)
+    defaults.update(kw)
+    opts = OmegaConf.create(defaults)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
@@ -72,7 +72,7 @@ def init(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        out_datasets = _init(**opts)
+        out_datasets = _fastim(**opts)
 
         # out_images = _grid(**opts.grid['ds'] = out_datasets)
         if len(out_datasets):
@@ -100,7 +100,7 @@ def init(**kw):
 
         print("All done here.", file=log)
 
-def _init(**kw):
+def _fastim(**kw):
     opts = OmegaConf.create(kw)
     from omegaconf import ListConfig
     if (not isinstance(opts.ms, list) and not

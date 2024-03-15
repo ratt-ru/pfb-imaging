@@ -10,4 +10,4 @@ def cli():
 from pfb.workers import (init, grid, degrid,
                          clean, restore, fwdbwd,
                          spotless, model2comps,
-                         forward)
+                         forward, fastim)

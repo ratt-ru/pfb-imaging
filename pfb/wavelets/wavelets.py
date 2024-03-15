@@ -1,666 +1,315 @@
-from collections import namedtuple
-import warnings
-
 import numba
-import numba.core.types as nbtypes
-from numba.core.cgutils import is_nonelike
-from numba.cpython.unsafe.tuple import tuple_setitem
-from numba.extending import register_jitable, overload
-from numba.typed import Dict, List
-import numpy as np
 
-from pfb.wavelets.coefficients import coefficients
-from pfb.wavelets.common import NUMBA_SEQUENCE_TYPES
-from pfb.wavelets.convolution import downsampling_convolution
-from pfb.wavelets.convolution import upsampling_convolution_valid_sf
-from pfb.wavelets.modes import Modes, promote_mode
-from pfb.wavelets.intrinsics import slice_axis, force_type_contiguity, not_optional
 
+# from the answer given here
+# https://stackoverflow.com/questions/67431966/how-to-avoid-huge-overhead-of-single-threaded-numpys-transpose
+@numba.njit(nogil=True, cache=True, parallel=True, inline='always')
+def copyT(mat, out):
+    blockSize, tileSize = 256, 32  # To be tuned
+    n, m = mat.shape
+    for tmp in numba.prange((m+blockSize-1)//blockSize):
+        i = tmp * blockSize
+        for j in range(0, n, blockSize):
+            tiMin, tiMax = i, min(i+blockSize, m)
+            tjMin, tjMax = j, min(j+blockSize, n)
+            for ti in range(tiMin, tiMax, tileSize):
+                for tj in range(tjMin, tjMax, tileSize):
+                    out[ti:ti+tileSize, tj:tj+tileSize] = mat[tj:tj+tileSize, ti:ti+tileSize].T
 
-BaseWavelet = namedtuple("BaseWavelet", (
-    "support_width",
-    "symmetry",
-    "orthogonal",
-    "biorthogonal",
-    "compact_support",
-    "family_name",
-    "short_name"))
-
-
-DiscreteWavelet = namedtuple("DiscreteWavelet",
-                             BaseWavelet._fields + (
-                                 "dec_hi",
-                                 "dec_lo",
-                                 "rec_hi",
-                                 "rec_lo",
-                                 "vanishing_moments_psi",
-                                 "vanishing_moments_phi"))
-
 
-@register_jitable
-def str_to_int(s):
-    final_index = len(s) - 1
-    value = 0
+@numba.njit(nogil=True, cache=True)
+def coeff_size(nsignal, nfilter):
+    return (nsignal + nfilter - 1)//2
 
-    for i, v in enumerate(s):
-        digit = (ord(v) - 48)
 
-        if digit < 0 or digit > 9:
-            raise ValueError("Invalid integer string")
+@numba.njit(nogil=True, cache=True)
+def signal_size(ncoeff, nfilter):
+    return 2*ncoeff - nfilter + 2
 
-        value += digit * (10 ** (final_index - i))
 
-    return value
-
-
-@register_jitable
-def dwt_max_level(data_length, filter_length):
-    if filter_length < 2:
-        raise ValueError("Invalid wavelet filter length")
+@numba.njit(nogil=True, cache=True, inline='always')
+def downsampling_convolution(input, output, filter, step):
 
-    if filter_length <= 1 or data_length < (filter_length - 1):
-        return 0
+    i = step - 1
+    o = 0
+    N = input.shape[0]
+    F = filter.shape[0]
 
-    return int(np.floor(np.log2(data_length / (filter_length - 1))))
 
+    # left boundary overhang
+    while i < F and i < N:
+        fsum = input.dtype.type(0)  # init to zero with correct type
+        j = 0
 
-@register_jitable
-def dwt_buffer_length(input_length, filter_length, mode):
-    if input_length < 1 or filter_length < 1:
-        return 0
+        while j <= i:
+            fsum += filter[j] * input[i - j]
+            j += 1
 
-    if mode is Modes.periodisation:
-        return (input_length // 2) + (1 if input_length % 2 else 0)
-    else:
-        return (input_length + filter_length - 1) // 2
+        output[o] = fsum
 
+        i += step
+        o += 1
 
-@register_jitable
-def idwt_buffer_length(coeffs_length, filter_length, mode):
-    if mode is Modes.periodisation:
-        return 2 * coeffs_length
-    else:
-        return 2 * coeffs_length - filter_length + 2
+    # center (if input equal or wider than filter: N >= F)
+    while i < N:
+        fsum = input.dtype.type(0)
+        j = 0
 
+        while j < F:
+            fsum += input[i - j] * filter[j]
+            j += 1
 
-@register_jitable
-def dwt_coeff_length(data_length, filter_length, mode):
-    if data_length < 1:
-        raise ValueError("data_length < 1")
+        output[o] = fsum
 
-    if filter_length < 1:
-        raise ValueError("filter_length < 1")
+        i += step
+        o += 1
 
-    return dwt_buffer_length(data_length, filter_length, mode)
+    # center (if filter is wider than input: F > N)
+    while i < F:
+        fsum = input.dtype.type(0)
+        j = 0
+        j = i - N + 1
 
+        while j <= i:
+            fsum += filter[j] * input[i - j]
+            j += 1
 
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
-def discrete_wavelet(wavelet):
-    if not isinstance(wavelet, nbtypes.types.UnicodeType):
-        raise TypeError("wavelet must be a string")
+        output[o] = fsum
 
-    def impl(wavelet):
-        if wavelet.startswith("db"):
-            offset = 2
-            order = str_to_int(wavelet[offset:])
-
-            coeffs = coefficients("db", order - 1)
-            index = np.arange(len(coeffs))
-            rec_lo = coeffs
-            dec_lo = np.flipud(rec_lo)
-            rec_hi = np.where(index % 2, -1, 1) * dec_lo
-            dec_hi = np.where(index[::-1] % 2, -1, 1) * rec_lo
-
-            return DiscreteWavelet(support_width=2 * order - 1,
-                                   symmetry="asymmetric",
-                                   orthogonal=1,
-                                   biorthogonal=1,
-                                   compact_support=1,
-                                   family_name="Daubechies",
-                                   short_name="db",
-                                   rec_lo=rec_lo,
-                                   dec_lo=dec_lo,
-                                   rec_hi=rec_hi,
-                                   dec_hi=dec_hi,
-                                   vanishing_moments_psi=order,
-                                   vanishing_moments_phi=0)
-
-        else:
-            raise ValueError("Unknown wavelet")
-
-    return impl
-
-
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
-def promote_wavelets(wavelets, naxis):
-    if not isinstance(naxis, nbtypes.Integer):
-        raise TypeError("naxis must be an integer")
-
-    if isinstance(wavelets, nbtypes.misc.UnicodeType):
-        def impl(wavelets, naxis):
-            return List([wavelets] * naxis)
-
-    elif (isinstance(wavelets, NUMBA_SEQUENCE_TYPES) and
-            isinstance(wavelets.dtype, nbtypes.misc.UnicodeType)):
-
-        def impl(wavelets, naxis):
-            if len(wavelets) != naxis:
-                raise ValueError("len(wavelets) != len(axis)")
-
-            return List(wavelets)
-    else:
-        raise TypeError("wavelet must be a string, "
-                        "a list of strings "
-                        "or a tuple of strings. "
-                        "Got %s." % wavelets)
-
-    return impl
-
-
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
-def promote_axis(axis, ndim):
-    if not isinstance(ndim, nbtypes.Integer):
-        raise TypeError("ndim must be an integer")
-
-    if isinstance(axis, nbtypes.Integer):
-        def impl(axis, ndim):
-            axis = axis + ndim if axis < 0 else axis
-            return List([axis])
-
-    elif (isinstance(axis, NUMBA_SEQUENCE_TYPES) and
-            isinstance(axis.dtype, nbtypes.Integer)):
-        def impl(axis, ndim):
-            if len(axis) > ndim:
-                raise ValueError("len(axis) > data.ndim")
-
-            for a in axis:
-                if a >= ndim:
-                    raise ValueError("axis[i] >= data.ndim")
-
-            return List([a + ndim if a < 0 else a for a in axis])
-
-    else:
-        raise TypeError("axis must be an integer, "
-                        "a list of integers "
-                        "or a tuple of integers. "
-                        "Got %s." % axis)
-
-    return impl
-
-
-@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
-def dwt_axis(data, wavelet, mode, axis):
-    def impl(data, wavelet, mode, axis):
-        coeff_len = dwt_coeff_length(
-            data.shape[axis], len(
-                wavelet.dec_hi), mode)
-        out_shape = tuple_setitem(data.shape, axis, coeff_len)
-
-        if axis < 0 or axis >= data.ndim:
-            raise ValueError("0 <= axis < data.ndim failed")
-
-        ca = np.empty(out_shape, dtype=data.dtype)
-        cd = np.empty(out_shape, dtype=data.dtype)
-
-        # Iterate over all points except along the slicing axis
-        for idx in np.ndindex(*tuple_setitem(data.shape, axis, 1)):
-            initial_in_row = slice_axis(data, idx, axis, None)
-            initial_ca_row = slice_axis(ca, idx, axis, None)
-            initial_cd_row = slice_axis(cd, idx, axis, None)
-
-            # The numba array type returned by slice_axis assumes
-            # non-contiguity in the general case.
-            # However, the slice may actually be contiguous in layout
-            # If so, cast the array type to obtain type contiguity
-            # else, copy the slice to obtain contiguity in
-            # both type and layout
-            if initial_in_row.flags.c_contiguous:
-                in_row = force_type_contiguity(initial_in_row)
-            else:
-                in_row = initial_in_row.copy()
-
-            if initial_ca_row.flags.c_contiguous:
-                ca_row = force_type_contiguity(initial_ca_row)
-            else:
-                ca_row = initial_ca_row.copy()
-
-            if initial_cd_row.flags.c_contiguous:
-                cd_row = force_type_contiguity(initial_cd_row)
-            else:
-                cd_row = initial_cd_row.copy()
-
-            # Compute the approximation and detail coefficients
-            downsampling_convolution(in_row, ca_row, wavelet.dec_lo, mode, 2)
-            downsampling_convolution(in_row, cd_row, wavelet.dec_hi, mode, 2)
-
-            # If necessary, copy back into the output
-            if not initial_ca_row.flags.c_contiguous:
-                initial_ca_row[:] = ca_row[:]
-
-            if not initial_cd_row.flags.c_contiguous:
-                initial_cd_row[:] = cd_row[:]
-
-        return ca, cd
-
-    return impl
-
-
-@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
-def idwt_axis(approx_coeffs, detail_coeffs,
-              wavelet, mode, axis):
-
-    have_approx = not is_nonelike(approx_coeffs)
-    have_detail = not is_nonelike(detail_coeffs)
-
-    if not have_approx and not have_detail:
-        raise ValueError("Either approximation or detail "
-                         "coefficients must be present")
-
-    dtypes = [approx_coeffs.dtype if have_approx else None,
-              detail_coeffs.dtype if have_detail else None]
-
-    out_dtype = np.result_type(*(np.dtype(dt.name) for dt in dtypes if dt))
-
-    if have_approx and have_detail:
-        if approx_coeffs.ndim != detail_coeffs.ndim:
-            raise ValueError("approx_coeffs.ndim != detail_coeffs.ndim")
-
-    def impl(approx_coeffs, detail_coeffs,
-             wavelet, mode, axis):
-
-        if have_approx and have_detail:
-            coeff_shape = approx_coeffs.shape
-            it = enumerate(zip(approx_coeffs.shape, detail_coeffs.shape))
-
-            # NOTE(sjperkins)
-            # Clip the coefficient dimensions to the smallest dimensions
-            # pywt clips in waverecn and fails in idwt and idwt_axis
-            # on heterogenous coefficient shapes.
-            # The actual clipping is performed in slice_axis
-            for i, (asize, dsize) in it:
-                size = asize if asize < dsize else dsize
-                coeff_shape = tuple_setitem(coeff_shape, i, size)
-
-        elif have_approx:
-            coeff_shape = approx_coeffs.shape
-        elif have_detail:
-            coeff_shape = detail_coeffs.shape
-        else:
-            raise ValueError("Either approximation or detail must be present")
+        i += step
+        o += 1
 
-        if not (0 <= axis < len(coeff_shape)):
-            raise ValueError(("0 <= axis < coeff.ndim does not hold"))
+    # right boundary overhang
+    while i < N + F - 1:
+        fsum = input.dtype.type(0)
+        j = 0
+        j = i - N + 1
 
-        idwt_len = idwt_buffer_length(coeff_shape[axis],
-                                      wavelet.rec_lo.shape[0],
-                                      mode)
-        out_shape = tuple_setitem(coeff_shape, axis, idwt_len)
-        output = np.empty(out_shape, dtype=out_dtype)
+        while j < F:
+            fsum += filter[j] * input[i - j]
+            j += 1
 
-        # Iterate over all points except along the slicing axis
-        for idx in np.ndindex(*tuple_setitem(output.shape, axis, 1)):
-            initial_out_row = slice_axis(output, idx, axis, None)
+        output[o] = fsum
 
-            # Zero if we have a contiguous slice, else allocate
-            if initial_out_row.flags.c_contiguous:
-                out_row = force_type_contiguity(initial_out_row)
-                out_row[:] = 0
-            else:
-                out_row = np.zeros_like(initial_out_row)
+        i += step
+        o += 1
 
-            # Apply approximation coefficients if they exist
-            if approx_coeffs is not None:
-                initial_ca_row = slice_axis(approx_coeffs, idx,
-                                            axis, coeff_shape[axis])
 
-                if initial_ca_row.flags.c_contiguous:
-                    ca_row = force_type_contiguity(initial_ca_row)
-                else:
-                    ca_row = initial_ca_row.copy()
+@numba.njit(nogil=True, cache=True, inline='always')
+def upsampling_convolution_valid_sf(input, filter, output):
 
-                upsampling_convolution_valid_sf(ca_row, wavelet.rec_lo,
-                                                out_row, mode)
-
-            # Apply detail coefficients if they exist
-            if detail_coeffs is not None:
-                initial_cd_row = slice_axis(detail_coeffs, idx,
-                                            axis, coeff_shape[axis])
-
-                if initial_cd_row.flags.c_contiguous:
-                    cd_row = force_type_contiguity(initial_cd_row)
-                else:
-                    cd_row = initial_cd_row.copy()
-
-                upsampling_convolution_valid_sf(cd_row, wavelet.rec_hi,
-                                                out_row, mode)
-
-            # Copy back output row if the output space was non-contiguous
-            if not initial_out_row.flags.c_contiguous:
-                initial_out_row[:] = out_row
-
-        return output
-
-    return impl
-
-
-@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
-def dwt(data, wavelet, mode="zero", axis=None):
-
-    if isinstance(data, nbtypes.misc.Optional):
-        if not isinstance(data.type, nbtypes.npytypes.Array):
-            raise TypeError(f"data must be ndarray. Got {data.type}")
-    elif not isinstance(data, nbtypes.npytypes.Array):
-        raise TypeError(f"data must be an ndarray. Got {data}")
-
-    have_axis = not is_nonelike(axis)
-
-    def impl(data, wavelet, mode="zero", axis=None):
-        if not have_axis:
-            axis = List(range(data.ndim))
-
-        paxis = promote_axis(axis, data.ndim)
-        naxis = len(paxis)
-        pmode = promote_mode(mode, naxis)
-        pwavelets = [discrete_wavelet(w) for w
-                     in promote_wavelets(wavelet, naxis)]
-
-        coeffs = List([("", data)])
-
-        for a, (ax, m, wv) in enumerate(zip(paxis, pmode, pwavelets)):
-            new_coeffs = List()
-
-            for subband, x in coeffs:
-                ca, cd = dwt_axis(x, wv, m, ax)
-                new_coeffs.append((subband + "a", ca))
-                new_coeffs.append((subband + "d", cd))
-
-            coeffs = new_coeffs
-
-        dict_coeffs = Dict()
-
-        for name, coeff in coeffs:
-            dict_coeffs[name] = coeff
-
-        return dict_coeffs
-
-    return impl
-
-
-@register_jitable
-def coeff_product(args, repeat=1):
-    # Adapted from
-    # https://docs.python.org/3/library/itertools.html#itertools.product
-    pools = List()
-
-    for i in range(repeat):
-        pools.append(args)
-
-    result = List()
-
-    for i in range(len(args) - 1):
-        result.append('')
-
-    for pool in pools:
-        result = List([x + y for x in result for y in pool])
-
-    return result
-
-
-@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
-def idwt(coeffs, wavelet, mode='zero', axis=None):
-
-    have_axis = not is_nonelike(axis)
-
-    def impl(coeffs, wavelet, mode='zero', axis=None):
-        ndim_transform = max([len(key) for key in coeffs.keys()])
-        coeff_shapes = [v.shape for v in coeffs.values()]
-
-        if not have_axis:
-            axis = List(range(ndim_transform))
-            ndim = ndim_transform
-        else:
-            ndim = len(coeff_shapes[0])
-
-        paxis = promote_axis(axis, ndim)
-        naxis = len(paxis)
-        pmode = promote_mode(mode, naxis)
-        pwavelets = List([discrete_wavelet(w) for w
-                          in promote_wavelets(wavelet, naxis)])
-
-        it = list(enumerate(zip(paxis, pwavelets, pmode)))
-
-        for key_length, (ax, wv, m) in it[::-1]:
-            new_coeffs = {}
-            new_keys = coeff_product('ad', key_length)
-
-            for key in new_keys:
-                L = coeffs[key + 'a']
-                H = coeffs[key + 'd']
-                new_coeffs[key] = idwt_axis(L, H, wv, m, ax)
-
-            coeffs = new_coeffs
-
-        return coeffs['']
-
-    return impl
-
-
-@numba.generated_jit(nopython=True, nogil=True, cache=True)
-def promote_level(sizes, dec_lens, level=None):
-    have_level = not is_nonelike(level)
-
-    if isinstance(sizes, nbtypes.Integer):
-        int_sizes = True
-    elif (isinstance(sizes, NUMBA_SEQUENCE_TYPES) and
-            isinstance(sizes.dtype, nbtypes.Integer)):
-        int_sizes = False
-    else:
-        raise TypeError("sizes must be an integer or "
-                        "sequence of integers")
-
-    if isinstance(dec_lens, nbtypes.Integer):
-        int_dec_len = True
-    elif (isinstance(dec_lens, NUMBA_SEQUENCE_TYPES) and
-            isinstance(dec_lens.dtype, nbtypes.Integer)):
-        int_dec_len = False
-    else:
-        raise TypeError("dec_len must be an integer or "
-                        "sequence of integers")
-
-    def impl(sizes, dec_lens, level=None):
-        if int_sizes:
-            sizes = List([sizes])
-
-        if int_dec_len:
-            dec_lens = List([dec_lens])
-
-        max_level = min([dwt_max_level(s, d) for s, d in zip(sizes, dec_lens)])
-
-        if not have_level:
-            level = max_level
-        elif level < 0:
-            raise ValueError("Negative levels are invalid. Minimum level is 0")
-        elif level > max_level:
-            # with numba.objmode():
-            #     warnings.warn("Level value is too high. "
-            #                   "All coefficients will experience "
-            #                   "boundary effects")
-            pass
-
-        return level
-
-    return impl
-
-
-@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
-def wavedecn(data, wavelet, mode='zero', level=None, axis=None):
-    have_axis = not is_nonelike(axis)
-
-    def impl(data, wavelet, mode='zero', level=None, axis=None):
-        if not have_axis:
-            axis = List(range(data.ndim))
-
-        paxis = promote_axis(axis, data.ndim)
-        naxis = len(paxis)
-        # pmodes = promote_mode(mode, naxis)
-        pwavelets = [discrete_wavelet(w) for w
-                     in promote_wavelets(wavelet, naxis)]
-        dec_lens = [w.dec_hi.shape[0] for w in pwavelets]
-        sizes = [data.shape[ax] for ax in paxis]
-        plevel = promote_level(sizes, dec_lens, level)
-
-        coeffs_list = List()
-
-        a = data
-
-        for i in range(plevel):
-            coeffs = dwt(a, wavelet, mode, paxis)
-            a = not_optional(coeffs.pop('a' * naxis))
-            coeffs_list.append(coeffs)
-
-        coeffs_list.append({'aa': a})
-
-        coeffs_list.reverse()
-
-        return coeffs_list
-
-    return impl
-
-
-@numba.generated_jit(nopython=True, nogil=True, fastmath=True, cache=True)
-def waverecn(coeffs, wavelet, mode='zero', axis=None):
-    # ca = coeffs[0]['aa']
-    # if not isinstance(ca, nbtypes.npytypes.Array):
-    #     raise TypeError("ca must be an ndarray")
-
-    have_axis = not is_nonelike(axis)
-    # ndim_slices = (slice(None),) * ca.ndim
-
-    def impl(coeffs, wavelet, mode='zero', axis=None):
-        ca = coeffs[0]['aa']
-        if len(coeffs) == 1:
-            return ca
-
-        coeff_ndims = [ca.ndim]
-        coeff_shapes = [ca.shape]
-
-        for c in coeffs[1:]:
-            coeff_ndims.extend([v.ndim for v in c.values()])
-            coeff_shapes.extend([v.shape for v in c.values()])
-
-        unique_coeff_ndims = np.unique(np.array(coeff_ndims))
-
-        if len(unique_coeff_ndims) == 1:
-            ndim = unique_coeff_ndims[0]
-        else:
-            raise ValueError("Coefficient dimensions don't match")
-
-        if not have_axis:
-            axis = List(range(ndim))
-
-        paxes = promote_axis(axis, ndim)
-        naxis = len(paxes)
-
-        for idx, c in enumerate(coeffs[1:]):
-            c[not_optional('a' * naxis)] = ca
-            ca = idwt(c, wavelet, mode, axis)
-
-        return ca
-
-    return impl
-
-
-@numba.njit(nogil=True, fastmath=True, cache=True)
-def ravel_coeffs(coeffs):
-    a_coeffs = coeffs[0]['aa']
-
-    ndim = a_coeffs.ndim
-
-    # initialize with the approximation coefficients.
-    a_size = a_coeffs.size
-    arr_size = a_size
-    for c in coeffs[1:]:
-        for k, v in c.items():
-            arr_size += v.size
-    coeff_arr = np.empty((arr_size, ), dtype=a_coeffs.dtype)
-
-    a_slice = slice(a_size)
-    coeff_arr[a_slice] = a_coeffs.ravel()
-
-    # initialize list of coefficient slices
-    coeff_tuples = List()
-    coeff_shapes = List()
-    tmp1 = Dict()
-    tmp1['aa'] = (0, a_size)
-    coeff_tuples.append(tmp1)
-    tmp2 = Dict()
-    tmp2['aa'] = a_coeffs.shape
-    coeff_shapes.append(tmp2)
-    coeff_shapes[-1]['aa'] = a_coeffs.shape
-
-
-    if len(coeffs) == 1:
-        return coeff_arr, coeff_tuples, coeff_shapes
-
-    # loop over the detail cofficients, embedding them in coeff_arr
-    offset = a_size
-    for coeff_dict in coeffs[1:]:
-        # new dictionaries for detail coefficient slices and shapes
-        tmp1 = Dict()
-        tmp2 = Dict()
-
-        # sort to make sure key order is consistent across Python versions
-        keys = sorted(coeff_dict.keys())
-        for i, key in enumerate(keys):
-            d = coeff_dict[key]
-            tmp1[key] = (offset, offset + d.size)
-            coeff_arr[offset:offset + d.size] = d.ravel()
-            tmp2[key] = d.shape
-            offset += d.size
-
-        coeff_tuples.append(tmp1)
-        coeff_shapes.append(tmp2)
-
-    return coeff_arr, coeff_tuples, coeff_shapes
-
-
-@numba.njit(nogil=True, fastmath=True, cache=True)
-def unravel_coeffs(arr, coeff_tuples, coeff_shapes, output_format='wavedecn'):
-    arr = np.asarray(arr)
-    coeffs = List()
-    tmp = Dict()
-    start, stop = coeff_tuples[0]['aa']
-    tmp['aa'] = arr[start:stop].reshape(coeff_shapes[0]['aa'])
-    coeffs.append(tmp)
-
-    # difference coefficients at each level
-    for n in range(1, len(coeff_tuples)):
-        shape_dict = coeff_shapes[n]
-        d = Dict()
-        for k, v in coeff_tuples[n].items():
-            start, stop = v
-            d[k] = arr[start:stop].reshape(shape_dict[k])
-        coeffs.append(d)
-    return coeffs
-
-
-@numba.njit(nogil=True, fastmath=True, cache=True)
-def wavelet_setup(x, bases, nlevels):
-    # set up dictionary info
-    tys = Dict()
-    sys = Dict()
-    nmax = x[0].ravel().size
-    ntot = List()
-    ntot.append(nmax)
-    for base in bases:
-        if base == 'self':
-            continue
-        alpha = wavedecn(x[0], base, mode='zero', level=nlevels)
-        y, ty, sy = ravel_coeffs(alpha)
-        tys[base] = ty
-        sys[base] = sy
-
-        ntot.append(y.size)
-        nmax = np.maximum(nmax, y.size)
-
-    return tys, sys, ntot, nmax
+    N = input.shape[0]
+    F = filter.shape[0]
+    O = output.shape[0]
+
+    o = 0
+    Fo2 = F//2
+    i = Fo2 - 1
+
+    while i < N and o < O:
+        sum_even = input.dtype.type(0)
+        sum_odd = input.dtype.type(0)
+
+        for j in range(Fo2):
+            j2 = 2*j
+            inimj = input[i-j]
+            sum_odd += filter[j2 + 1] * inimj
+            sum_even += filter[j2] * inimj
+
+        output[o] += sum_even
+        output[o + 1] += sum_odd
+
+        i += 1
+        o += 2
+
+
+@numba.njit(nogil=True, cache=True, parallel=True)
+def dwt2d_level(image, coeffs, cbuff, cbuffT, dec_lo, dec_hi):
+    """
+    Map image to coeffs for a single level
+
+    image   - (nx, ny) signal
+    coeffs  - (nay, nax) output coeffs
+    cbuff   - (nax, nay) coeff buffer
+    cbuffT  - (nay, nax) coeff buffer
+    dec_lo  - (F) length low pass filter for decomposition
+    dec_hi  - (F) length high pass filter for decomposition
+
+    The dimension of the output is given by
+
+    nax = (nx + F - 1)//2
+    nay = (ny + F - 1)//2
+
+    The output is transposed with respect to the input for
+    performance reasons.
+
+    This function is not meant to be called directly.
+    """
+    nx, ny = image.shape
+    nay, nax = coeffs.shape
+
+    midy = nay//2
+    for i in numba.prange(nx):
+        # approx
+        downsampling_convolution(image[i, :], cbuff[i, 0:midy], dec_lo, 2)
+        # detail
+        downsampling_convolution(image[i, :], cbuff[i, midy:], dec_hi, 2)
+
+    # prefer over repeatedly convolving the non-contiguous array
+    copyT(cbuff, cbuffT)
+
+    midx = nax//2
+    for i in numba.prange(nay):
+        # approx
+        downsampling_convolution(cbuffT[i, 0:nx], coeffs[i, 0:midx], dec_lo, 2)
+        # detail
+        downsampling_convolution(cbuffT[i, 0:nx], coeffs[i, midx:], dec_hi, 2)
+
+    # approx coeffs are in the top left corner of out
+    # copy and transpose to ensure correct order and
+    # that input is not overwritten at the next level
+    return coeffs[0:midy, 0:midx].T.copy()
+
+
+@numba.njit(nogil=True, cache=True, parallel=True)
+def dwt2d(image, coeffs, cbuff, cbuffT, ix, iy,
+          sx, sy, dec_lo, dec_hi, nlevel):
+    '''
+    Multi-level 2D image to coeffs transform
+
+    image   - (nx, ny) signal
+    coeffs  - (nay, nax) output coeffs
+    cbuff   - (nax, nay) coeff buffer
+    cbuffT  - (nay, nax) coeff buffer
+    ix,iy   - (nlevel) dicts containing start and stop indices for packing coeffs
+    sx,sy   - (nlevel) tuples containing coeff sizes at each level
+    spx,spy - (nlevel) tuples containing signal sizes at each level
+    dec_lo  - (F) length low pass filter for decomposition
+    dec_hi  - (F) length high pass filter for decomposition
+    nlevel  - the number of decomposition levels
+
+    The dimension of the output is given by
+
+    nax = (nx + F - 1)//2
+    nay = (ny + F - 1)//2
+
+    The output is transposed with respect to the input for
+    performance reasons.
+
+    '''
+    nx, ny = image.shape
+    approx = image
+    for i in range(nlevel):
+        _, highx = ix[i]
+        lowx = highx - 2*sx[i]
+        _, highy = iy[i]
+        lowy = highy - 2*sy[i]
+        # detail coeffs go directly into output
+        # returned approx coeffs are safe to overwrite since copied
+        approx = dwt2d_level(approx,
+                             coeffs[lowy:highy, lowx:highx],
+                             cbuff[lowx:highx, lowy:highy],
+                             cbuffT[lowy:highy, lowx:highx],
+                             dec_lo, dec_hi)
+
+
+@numba.njit(nogil=True, cache=True, parallel=True)
+def idwt2d_level(coeffs, image, cbuff, cbuffT, rec_lo, rec_hi):
+    '''
+    Map coeffs to image for a single level
+
+    coeffs  - (nay, nax) coeffs
+    image   - (nx, ny) output signal
+    cbuff   - (nax, nay) coeff buffer
+    cbuffT  - (nay, nax) coeff buffer
+    rec_lo  - (F) length low pass filter for reconstruction
+    rec_hi  - (F) length high pass filter for reconstruction
+
+    The dimension of the output signal is give by
+
+    nx = 2*nax - F + 2
+    ny = 2*nay - F + 2
+
+    The output is transposed with respect to the input for
+    performance reasons.
+
+    This function is not meant to be called directly.
+
+    '''
+    nay, nax = coeffs.shape
+    nx, ny = image.shape
+
+    # zero since accumulated into
+    cbuffT[...] = 0.0
+    image[...] = 0.0
+
+    midx = nax//2
+    for i in numba.prange(nay):
+        upsampling_convolution_valid_sf(coeffs[i, 0:midx], rec_lo, cbuffT[i, :])
+        upsampling_convolution_valid_sf(coeffs[i, midx:], rec_hi, cbuffT[i, :])
+
+
+    copyT(cbuffT, cbuff)
+
+    midy = nay//2
+    for i in numba.prange(nx):
+        upsampling_convolution_valid_sf(cbuff[i, 0:midy], rec_lo, image[i, :])
+        upsampling_convolution_valid_sf(cbuff[i, midy:], rec_hi, image[i, :])
+
+
+@numba.njit(nogil=True, cache=True, parallel=True)
+def idwt2d(coeffs, image, alpha, cbuff, cbuffT, ix, iy,
+           sx, sy, spx, spy, rec_lo, rec_hi, nlevel):
+    '''
+    Multi-level 2D coeffs to image transform
+
+    coeffs  - (nay, nax) output coeffs
+    image   - (nx, ny) signal
+    alpha   - (nay, nax) coeff buffer
+    cbuff   - (nax, nay) coeff buffer
+    cbuffT  - (nay, nax) coeff buffer
+    ix,iy   - (nlevel) dicts containing start and stop indices for packing coeffs
+    sx,sy   - (nlevel) tuples containing coeff sizes at each level
+    spx,spy - (nlevel) tuples containing signal sizes at each level
+    dec_lo  - (F) length low pass filter for decomposition
+    dec_hi  - (F) length high pass filter for decomposition
+    nlevel  - the number of decomposition levels
+
+    The dimension of the output is given by
+
+    nx = 2*nax - F + 2
+    ny = 2*nay - F + 2
+
+    The output is transposed with respect to the input for
+    performance reasons.
+
+    '''
+    nx, ny = image.shape
+    alpha[...] = coeffs  # to avoid overwriting coeffs
+    for i in range(nlevel-1, -1, -1):
+        # coeff size at current level
+        nax = sx[i]
+        nay = sy[i]
+
+        # slice indices for alpha
+        _, highx = ix[i]
+        lowx = highx - 2*nax
+        _, highy = iy[i]
+        lowy = highy - 2*nay
+
+        # signal size at current level
+        nxo = spx[i]
+        nyo = spy[i]
+
+        # previous output is the top left corner of the next input
+        # note the difference in indexing (nax,nay instead of nxo,nyo)
+        # that stems from the redundant coefficient
+        if i < nlevel - 1:
+            copyT(image[0:nax, 0:nay], alpha[lowy:lowy+nay, lowx:lowx+nax])
+
+        # need a buffer the size of the coeffs at next level
+        idwt2d_level(alpha[lowy:highy, lowx:highx],
+                     image[0:nxo, 0:nyo],
+                     cbuff[0:2*nax, 0:2*nay],
+                     cbuffT[0:2*nay, 0:2*nax],
+                     rec_lo, rec_hi)

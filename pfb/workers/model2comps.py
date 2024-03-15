@@ -1,4 +1,5 @@
 # flake8: noqa
+from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
 import click
@@ -14,7 +15,7 @@ from pfb.parser.schemas import schema
 # create default parameters from schema
 defaults = {}
 for key in schema.model2comps["inputs"].keys():
-    defaults[key] = schema.model2comps["inputs"][key]["default"]
+    defaults[key.replace("-", "_")] = schema.model2comps["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.model2comps)
@@ -27,7 +28,10 @@ def model2comps(**kw):
     opts = OmegaConf.create(defaults)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'model2comps_{timestamp}.log')
+    ldir = Path(opts.log_directory).resolve()
+    ldir.mkdir(parents=True, exist_ok=True)
+    pyscilog.log_to_file(f'{ldir}/model2comps_{timestamp}.log')
+    print(f'Logs will be written to {str(ldir)}/model2comps_{timestamp}.log', file=log)
 
     OmegaConf.set_struct(opts, True)
 

@@ -31,11 +31,11 @@ def set_client(opts, stack, log, scheduler='distributed'):
     os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
+    os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
     import numexpr as ne
     max_cores = ne.detect_number_of_cores()
     # ne_threads = min(max_cores, opts.nvthreads)
     os.environ["NUMEXPR_NUM_THREADS"] = str(max_cores)
-    os.environ["NUMBA_NUM_THREADS"] = str(max_cores)
 
     import dask
     if scheduler=='distributed':
@@ -43,10 +43,11 @@ def set_client(opts, stack, log, scheduler='distributed'):
         # with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
         #     client = distributed.Client()
         # set up client
-        if opts.host_address is not None:
+        host_address = opts.host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
+        if host_address is not None:
             from distributed import Client
             print("Initialising distributed client.", file=log)
-            client = stack.enter_context(Client(opts.host_address))
+            client = stack.enter_context(Client(host_address))
         else:
             if opts.nthreads_dask * opts.nvthreads > nthreads_max:
                 print("Warning - you are attempting to use more threads than "
@@ -55,9 +56,11 @@ def set_client(opts, stack, log, scheduler='distributed'):
             from dask.distributed import Client, LocalCluster
             print("Initialising client with LocalCluster.", file=log)
             with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
-                cluster = LocalCluster(processes=True, n_workers=opts.nworkers,
-                                    threads_per_worker=opts.nthreads_dask,
-                                    memory_limit=0)  # str(mem_limit/nworkers)+'GB'
+                cluster = LocalCluster(processes=opts.nworkers > 1,
+                                       n_workers=opts.nworkers,
+                                       threads_per_worker=opts.nthreads_dask,
+                                       memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                                       asynchronous=False)
                 cluster = stack.enter_context(cluster)
                 client = stack.enter_context(Client(cluster))
 
@@ -72,6 +75,12 @@ def set_client(opts, stack, log, scheduler='distributed'):
         from multiprocessing.pool import ThreadPool
         dask.config.set(pool=ThreadPool(opts.nthreads_dask))
         print(f"Initialising ThreadPool with {opts.nthreads_dask} threads",
+              file=log)
+    elif scheduler=='processes':
+        # TODO - why is the performance so terrible in this case?
+        from multiprocessing.pool import Pool
+        dask.config.set(pool=Pool(opts.nthreads_dask))
+        print(f"Initialising Pool with {opts.nthreads_dask} processes",
               file=log)
     else:
         raise ValueError(f"Unknown scheduler option {opts.scheduler}")

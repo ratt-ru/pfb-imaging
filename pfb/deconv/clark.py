@@ -1,22 +1,22 @@
 import numpy as np
 import numexpr as ne
 from functools import partial
-import numba
+from numba import njit
 import dask.array as da
 from pfb.operators.psf import psf_convolve_cube
 from ducc0.misc import make_noncritical
 import pyscilog
 log = pyscilog.get_logger('CLARK')
 
-@numba.jit(parallel=True, nopython=True, nogil=True, cache=True, inline='always')
+@njit(nogil=True, cache=True)  # parallel=True,
 def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     '''
     Subtract psf centered at location of xhat
     '''
     # loop over active indices
     nband = xhat.size
-    for b in numba.prange(nband):
-    # for b in range(nband):
+    # for b in numba.prange(nband):
+    for b in range(nband):
         for i in range(Ip.size):
             pp = nxo2 - Ip[i]
             qq = nyo2 - Iq[i]
@@ -25,7 +25,7 @@ def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     return A
 
 
-@numba.jit(parallel=True, nopython=True, nogil=True, cache=True)
+@njit(nogil=True, cache=True)  # parallel=True,
 def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     """
     Run subminor loop in active set
@@ -55,6 +55,8 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     q = Iq[pq]
     Amax = np.sqrt(Asearch[pq])
     fsel = wsums > 0
+    if fsel.sum() == 0:
+        raise ValueError("wsums are all zero")
     k = 0
     while Amax > th and k < maxit:
         xhat = A[:, pq]

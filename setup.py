@@ -6,23 +6,23 @@ with open("README.rst", "r") as fh:
 
 requirements = [
                 'numpy',
-                'matplotlib',
-                'ipython',
+                # 'matplotlib',
+                # 'ipython',
                 'scikit-image',
-                'dask[distributed]',
                 'PyWavelets',
                 'katbeam',
-                'pytest >= 6.2.2',
+                # 'pytest<=7.4.4, >=7.3.1',
                 'numexpr',
                 'pyscilog >= 0.1.2',
                 'Click',
-                'omegaconf',
-                "codex-africanus[dask, scipy, astropy, python-casacore, ducc0]",
-                "dask-ms[xarray, zarr, s3]",
-                "stimela==2.0rc6",
+                # "ipdb",
+                # "numba < 0.59",
+                "ducc0",
                 "QuartiCal",
+                # "@git+https://github.com/ratt-ru/QuartiCal.git"
+                # "@bandpass_smoothing"
                 "sympy",
-
+                "stimela >= 2.0rc14"
             ]
 
 
@@ -38,7 +38,7 @@ setup(
      packages=find_packages(),
      include_package_data=True,
      zip_safe=False,
-     python_requires='>=3.8',
+     python_requires='>=3.9',
      install_requires=requirements,
      classifiers=[
          "Programming Language :: Python :: 3",

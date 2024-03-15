@@ -1,4 +1,4 @@
-host_address:
+host-address:
   dtype: str
   abbreviation: ha
   info:
@@ -12,7 +12,7 @@ nworkers:
   info:
     Number of worker processes.
     Use with distributed scheduler.
-nthreads_dask:
+nthreads-dask:
   dtype: int
   default: 1
   abbreviation: ntd
@@ -30,7 +30,7 @@ nvthreads:
 scheduler:
   dtype: str
   default: threads
-  choices: ["threads", "single-threaded", "sync", "distributed"]
+  choices: ["threads", "single-threaded", "sync", "distributed", "processes"]
   abbreviation: scheduler
   info:
     Which dask scheduler to use.

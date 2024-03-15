@@ -1,10 +1,4 @@
 inputs:
-  output_filename:
-    dtype: str
-    required: true
-    abbreviation: o
-    info:
-      Basename of output
   nband:
     dtype: int
     required: true
@@ -16,13 +10,6 @@ inputs:
     default: 'main'
     info:
       Can be used to specify a custom name for the image space data product
-  product:
-    dtype: str
-    abbreviation: p
-    default: I
-    info:
-      Imaging products to produce. Options are I, Q, U, V.
-      Only single Stokes products are currently supported
   mask:
     dtype: str
     abbreviation: mask
@@ -39,25 +26,26 @@ inputs:
     default: 1.0
     info:
       Step size of update
-  use_psf:
+  use-psf:
     dtype: bool
     default: true
     info:
       Whether to approximate the Hessian as a convolution by the PSF
-  fits_mfs:
+  fits-mfs:
     dtype: bool
     default: true
     info:
       Output MFS fits files
-  fits_cubes:
+  fits-cubes:
     dtype: bool
     default: false
     info:
       Output fits cubes
   _include:
-    - (pfb.parser)gridding.yml
-    - (pfb.parser)cgopts.yml
-    - (pfb.parser)dist.yml
+    - (.)gridding.yml
+    - (.)cgopts.yml
+    - (.)dist.yml
+    - (.)out.yml
 
 outputs:
   {}

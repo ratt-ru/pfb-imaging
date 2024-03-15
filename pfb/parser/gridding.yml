@@ -3,11 +3,11 @@ epsilon:
   default: 1e-7
   info: 'Gridder accuracy'
   abbreviation: eps
-wstack:
+do-wgridding:
   dtype: bool
   default: true
   info: "Perform w-correction via improved w-stacking"
-double_accum:
+double-accum:
   dtype: bool
   default: true
   info: "Accumulate onto grid using double precision. \

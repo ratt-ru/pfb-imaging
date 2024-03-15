@@ -37,7 +37,7 @@ def compute_counts_wrapper(uvw, freq, mask, nx, ny,
 
 
 
-@njit(nogil=True, fastmath=True, cache=True, parallel=True)
+@njit(nogil=True, cache=True, parallel=True)
 def _compute_counts(uvw, freq, mask, nx, ny,
                     cell_size_x, cell_size_y, dtype,
                     k=6, ngrid=1):  # support hardcoded for now
@@ -99,7 +99,7 @@ def _compute_counts(uvw, freq, mask, nx, ny,
                     counts[g, u_idx, v_idx] += 1.0
     return counts  #.sum(axis=0, keepdims=True)
 
-@njit(nogil=True, fastmath=True, cache=True, inline='always')
+@njit(nogil=True, cache=True, inline='always')
 def _es_kernel(x, beta, k):
     return np.exp(beta*k*(np.sqrt((1-x)*(1+x)) - 1))
 
@@ -124,7 +124,7 @@ def counts_to_weights_wrapper(counts, uvw, freq, nx, ny,
                               cell_size_x, cell_size_y, robust)
 
 
-@njit(nogil=True, fastmath=True, cache=True)
+@njit(nogil=True, cache=True)
 def _counts_to_weights(counts, uvw, freq, nx, ny,
                        cell_size_x, cell_size_y, robust):
     # ufreq
@@ -178,7 +178,7 @@ def filter_extreme_counts(counts, nbox=16, nlevel=10):
 
 
 
-@njit(nogil=True, fastmath=True, cache=True)
+@njit(nogil=True, cache=True)
 def _filter_extreme_counts(counts, nbox=16, level=10):
     '''
     Replaces extreme counts by local mean computed i
@@ -212,7 +212,7 @@ def _filter_extreme_counts(counts, nbox=16, level=10):
 
 
 # from pfb.operators.gridder import im2vis
-# def l2reweight(dsv, dsi, epsilon, nthreads, wstack, precision, dof=2):
+# def l2reweight(dsv, dsi, epsilon, nthreads, do_wgridding, precision, dof=2):
 #     # vis data products
 #     uvw = dsv.UVW.data
 #     freq = dsv.FREQ.data
@@ -234,7 +234,7 @@ def _filter_extreme_counts(counts, nbox=16, level=10):
 #                     celly=cell_rad,
 #                     nthreads=nthreads,
 #                     epsilon=epsilon,
-#                     do_wgridding=wstack,
+#                     do_wgridding=do_wgridding,
 #                     x0=x0,
 #                     y0=y0,
 #                     precision=precision)

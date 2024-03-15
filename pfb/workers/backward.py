@@ -14,7 +14,7 @@ from pfb.parser.schemas import schema
 # create default parameters from schema
 defaults = {}
 for key in schema.backward["inputs"].keys():
-    defaults[key] = schema.backward["inputs"][key]["default"]
+    defaults[key.replace("-", "_")] = schema.backward["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.backward)
@@ -177,7 +177,7 @@ def _backward(**kw):
 
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
-    hessopts['wstack'] = opts.wstack
+    hessopts['do_wgridding'] = opts.do_wgridding
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads

@@ -106,7 +106,7 @@
 #     for c in range(nchan):
 #         model_vis[:, c:c+1, 0] = dirty2ms(uvw, freq[c:c+1], beam[c]*model[c],
 #                                     pixsize_x=cell_rad, pixsize_y=cell_rad,
-#                                     epsilon=epsilon, do_wstacking=True, nthreads=8)
+#                                     epsilon=epsilon, do_do_wgriddinging=True, nthreads=8)
 #         model_vis[:, c, -1] = model_vis[:, c, 0]
 
 #     desc = ms.getcoldesc('DATA')
@@ -223,7 +223,7 @@
 #     grid_args["nvthreads"] = 8
 #     grid_args["overwrite"] = True
 #     grid_args["robustness"] = None
-#     grid_args["wstack"] = True
+#     grid_args["do_wgridding"] = True
 #     grid_args["residual"] = False
 #     from pfb.workers.grid import _grid
 #     _grid(**grid_args)
@@ -251,7 +251,7 @@
 #     fwdbwd_args["cg_minit"] = 1
 #     fwdbwd_args["pd_tol"] = 0.1*epsilon
 #     fwdbwd_args["pd_maxit"] = 100
-#     fwdbwd_args["wstack"] = True
+#     fwdbwd_args["do_wgridding"] = True
 #     fwdbwd_args["sigma21"] = 0
 #     fwdbwd_args["alpha"] = 1
 #     fwdbwd_args["bases"] = 'self'

@@ -1,0 +1,19 @@
+output-filename:
+  dtype: str
+  required: true
+  abbreviation: o
+  info:
+    Basename of output
+log-directory:
+  dtype: str
+  required: true
+  abbreviation: ldir
+  info:
+    Directory to write logs and performance reports to.
+product:
+    dtype: str
+    abbreviation: p
+    default: I
+    info:
+      Imaging products to produce. Options are I, Q, U, V.
+      Only single Stokes products are currently supported

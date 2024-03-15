@@ -14,7 +14,7 @@ from pfb.parser.schemas import schema
 # create default parameters from schema
 defaults = {}
 for key in schema.degrid["inputs"].keys():
-    defaults[key] = schema.degrid["inputs"][key]["default"]
+    defaults[key.replace("-", "_")] = schema.degrid["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.degrid)
@@ -71,7 +71,6 @@ def _degrid(**kw):
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms import xds_to_storage_table as xds_to_table
-    from daskms.optimisation import inlined_array
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import model as im2vis
@@ -172,7 +171,7 @@ def _degrid(**kw):
             nfreq_out = len(fidx.chunks[0])
             assert len(freq.chunks[0]) == nfreq_out
             # and they need to match the number of row chunks
-            uvw = ds.UVW.data
+            uvw = clone(ds.UVW.data)
             assert len(uvw.chunks[0]) == len(tidx.chunks[0])
 
             vis = comps2vis(uvw,
@@ -191,15 +190,13 @@ def _degrid(**kw):
                             x0=x0, y0=y0,
                             nthreads=opts.nvthreads,
                             epsilon=opts.epsilon,
-                            wstack=opts.wstack)
+                            do_wgridding=opts.do_wgridding)
 
             # convert to single precision to write to MS
             vis = vis.astype(np.complex64)
 
             if opts.accumulate:
                 vis += getattr(ds, opts.model_column).data
-
-            vis = inlined_array(vis, [uvw])
 
             out_ds = ds.assign(**{opts.model_column:
                                  (("row", "chan", "corr"), vis)})
