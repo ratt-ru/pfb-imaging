@@ -16,7 +16,7 @@ requirements = [
                 'pyscilog >= 0.1.2',
                 'Click',
                 # "ipdb",
-                "numba < 0.59",
+                # "numba < 0.59",
                 "ducc0",
                 "QuartiCal",
                 # "@git+https://github.com/ratt-ru/QuartiCal.git"
