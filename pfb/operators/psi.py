@@ -1,181 +1,310 @@
+from collections import OrderedDict
+import concurrent.futures as cf
 import numpy as np
 import numba
-import numexpr as ne
-import concurrent.futures as cf
+from numba import types, typed
+from numba.experimental import jitclass
 import pywt
-import dask.array as da
-from pfb.wavelets.wavelets import wavedecn, waverecn, ravel_coeffs, unravel_coeffs
+from scipy.datasets import ascent
+from pfb.wavelets import coeff_size, signal_size, dwt2d, idwt2d, copyT
+from time import time
+
+@numba.njit
+def create_dict(items):
+    return {k: v for k,v in items}
 
 
-@numba.njit(nogil=True, cache=True)
-def pad(x, n):
-    '''
-    pad 1D array by n zeros
-    '''
-    return np.append(x, np.zeros(n, dtype=x.dtype))
-
-
-def _coef2im_impl(a, base, l, iy, sy, nx, ny):
-    if base == 'self':
-        wave = a.reshape(nx, ny)
-    else:
-        alpha_rec = unravel_coeffs(
-            a, iy, sy, output_format='wavedecn')
-        wave = waverecn(alpha_rec, base, mode='zero')
-    return wave, l
-
-
-def coef2im(alpha, x, bases, ntot, iy, sy, nx, ny, nthreads=1):
-    '''
-    Per band coefficients to image
-    '''
-    nband, nbasis, nmax = alpha.shape
-    sqrtP = 1.0  #np.sqrt(nbasis)
-    futures = []
-    x[...] = 0.0
-    with cf.ThreadPoolExecutor(max_workers=nthreads) as executor:
-        for l in range(nband):
-            for b in range(nbasis):
-                base = bases[b]
-                a = alpha[l, b, 0:ntot[b]]
-                if base == 'self':
-                    iyt = 1.0
-                    syt = 1.0
-                else:
-                    iyt = iy[base]
-                    syt = sy[base]
-                fut = executor.submit(_coef2im_impl, a, base, l, iyt, syt, nx, ny)
-                futures.append(fut)
-
-        for f in cf.as_completed(futures):
-            wave, l = f.result()
-            # ne.evaluate('x + wave', local_dict={
-            #             'x': x[l],
-            #             'wave': wave/sqrtP},
-            #             out=x[l], casting='same_kind')
-            x[l] += wave
-
-
-def _im2coef_impl(x, base, l, b, nlevels):
-    if base == 'self':
-        wave = x.ravel()  #, mode='constant')
-    else:
-        wave = wavedecn(x, base, mode='zero', level=nlevels)
-        wave, _, _ = ravel_coeffs(wave)
-    return wave, l, b
-
-
-def im2coef(x, alpha, bases, ntot, nmax, nlevels, nthreads=1):
-    '''
-    Per band image to coefficients
-    '''
-    nbasis = len(bases)
-    sqrtP = 1.0  #np.sqrt(nbasis)
-    nband, _, _ = x.shape
-    alpha[...] = 0.0
-    futures = []
-    with cf.ThreadPoolExecutor(max_workers=nthreads) as executor:
-        for l in range(nband):
-            for b in range(nbasis):
-                base = bases[b]
-                fut = executor.submit(_im2coef_impl, x[l], base, l, b, nlevels)
-                futures.append(fut)
-
-        for f in cf.as_completed(futures):
-            wave, l, b = f.result()
-            alpha[l, b, 0:ntot[b]] = wave/sqrtP
-
-
-# TODO - compare threadpool with dask versions
-# def _coef2im(alpha, bases, ntot, iy, sy, nx, ny):
-#     return _coef2im_impl(alpha[0][0], bases, ntot,
-#                          iy, sy, nx, ny)
-
-# def coef2im(alpha, bases, ntot, iy, sy, nx, ny, compute=True):
-#     if not isinstance(alpha, da.Array):
-#         alpha = da.from_array(alpha, chunks=(1, -1, -1), name=False)
-
-#     graph = da.blockwise(_coef2im, ("band", "nx", "ny"),
-#                          alpha, ("band", "basis", "ntot"),
-#                          bases, None, #("basis",),
-#                          ntot, None, #("basis",),
-#                          iy, None,
-#                          sy, None,
-#                          nx, None,
-#                          ny, None,
-#                          new_axes={'nx': nx, 'ny': ny},
-#                          dtype=alpha.dtype,
-#                          align_arrays=False)
-#     if compute:
-#         return graph.compute()
-#     else:
-#         return graph
-
-
-# def _im2coef(x, bases, ntot, nmax, nlevels):
-#     return _im2coef_impl(x[0][0], bases, ntot, nmax, nlevels)
-
-
-# def im2coef(x, bases, ntot, nmax, nlevels, compute=True):
-#     if not isinstance(x, da.Array):
-#         x = da.from_array(x, chunks=(1, -1, -1), name=False)
-
-#     graph = da.blockwise(_im2coef, ("band", "basis", "nmax"),
-#                          x, ("band", "nx", "ny"),
-#                          bases, None, #("basis",),
-#                          ntot, None, #("basis",),
-#                          nmax, None,
-#                          nlevels, None,
-#                          new_axes={'basis':len(bases), 'nmax':nmax},
-#                          dtype=x.dtype)
-
-#     if compute:
-#         return graph.compute()
-#     else:
-#         return graph
-
-
-@numba.njit(nogil=True, cache=True, parallel=True)
-def im2coef_dist(x, bases, ntot, nmax, nlevels):
-    '''
-    Per band image to coefficients
-    '''
-    nbasis = len(bases)
-    alpha = np.zeros((nbasis, nmax), dtype=x.dtype)
-    for b in numba.prange(nbasis):
-        base = bases[b]
-        if base == 'self':
-            # ravel and pad
-            alpha[b] = pad(x.ravel(), nmax-ntot[b]) #, mode='constant')
-        else:
+def psi_band_maker(nx, ny, bases, nlevel):
+    Nbasis = len(bases)
+    sqrtNbasis = np.sqrt(Nbasis)
+    dec_lo = {}
+    dec_hi = {}
+    rec_lo = {}
+    rec_hi = {}
+    sx = {}
+    sy = {}
+    spx = {}
+    spy = {}
+    Ntotx = {}
+    Ntoty = {}
+    ix = {}
+    iy = {}
+    Nxmax = 0
+    Nymax = 0
+    for wavelet in bases:
+        if wavelet == 'self':
             continue
-            # # decompose
-            # alpha_tmp = wavedecn(x, base, mode='zero', level=nlevels)
-            # # ravel and pad
-            # alpha_tmp, _, _ = ravel_coeffs(alpha_tmp)
-            # alpha[b] = pad(alpha_tmp, nmax-ntot[b])  #, mode='constant')
+        wvlt = pywt.Wavelet(wavelet)
+        dec_lo[wavelet] = np.array(wvlt.filter_bank[0])
+        dec_hi[wavelet] = np.array(wvlt.filter_bank[1])
+        rec_lo[wavelet] = np.array(wvlt.filter_bank[2])
+        rec_hi[wavelet] = np.array(wvlt.filter_bank[3])
 
-    return alpha
+        max_level = pywt.dwt_max_level(np.minimum(nx, ny), wavelet)
+        if nlevel > max_level:
+            raise ValueError(f"The requested decomposition level {nlevel} "
+                             "is not possible")
+
+        # bookeeping
+        N2Cx = {}
+        N2Cy = {}
+        Nx = nx
+        Ny = ny
+        Nxm = 0
+        Nym = 0
+        sx[wavelet] = typed.List()
+        sy[wavelet] = typed.List()
+        spx[wavelet] = typed.List()
+        spy[wavelet] = typed.List()
+        F = int(wavelet[-1])*2  # filter length
+        for k in range(nlevel):
+            Cx = coeff_size(Nx, F)
+            Cy = coeff_size(Ny, F)
+            N2Cx[k] = (signal_size(Cx, F), Cx)
+            N2Cy[k] = (signal_size(Cy, F), Cy)
+            Nxm += Cx
+            Nym += Cy
+            sx[wavelet].append(Cx)
+            sy[wavelet].append(Cy)
+            Nx = Cx + Cx%2
+            Ny = Cy + Cy%2
+            spx[wavelet].append(signal_size(Cx, F))
+            spy[wavelet].append(signal_size(Cy, F))
+        Nxm += Cx  # last approx coeffs
+        Nym += Cy
+        Ntotx[wavelet] = Nxm
+        Ntoty[wavelet] = Nym
+        Nxmax = np.maximum(Nxmax, Nxm)
+        Nymax = np.maximum(Nymax, Nym)
+
+        ix[wavelet] = {}
+        iy[wavelet] = {}
+        lowx = N2Cx[nlevel-1][1]
+        lowy = N2Cy[nlevel-1][1]
+        ix[wavelet][nlevel-1] = (lowx, 2*lowx)
+        iy[wavelet][nlevel-1] = (lowy, 2*lowy)
+        lowx *= 2
+        lowy *= 2
+        for k in reversed(range(nlevel-1)):
+            highx = N2Cx[k][1]
+            highy = N2Cy[k][1]
+            ix[wavelet][k] = (lowx, lowx + highx)
+            iy[wavelet][k] = (lowy, lowy + highy)
+            lowx += highx
+            lowy += highy
+
+        ix[wavelet] = create_dict(tuple(ix[wavelet].items()))
+        iy[wavelet] = create_dict(tuple(iy[wavelet].items()))
+
+    # this avoids slow constructor
+    ix = create_dict(tuple(ix.items()))
+    iy = create_dict(tuple(iy.items()))
+    dec_lo = create_dict(tuple(dec_lo.items()))
+    dec_hi = create_dict(tuple(dec_hi.items()))
+    rec_lo = create_dict(tuple(rec_lo.items()))
+    rec_hi = create_dict(tuple(rec_hi.items()))
+    sx = create_dict(tuple(sx.items()))
+    sy = create_dict(tuple(sy.items()))
+    spx = create_dict(tuple(spx.items()))
+    spy = create_dict(tuple(spy.items()))
+    Ntotx = create_dict(tuple(Ntotx.items()))
+    Ntoty = create_dict(tuple(Ntoty.items()))
+
+    # set up buffers
+    alpha = np.zeros((Nymax, Nxmax))  # avoid destroying coeff in
+    cbuff = np.zeros((Nxmax, Nymax))
+    cbuffT = np.zeros((Nymax, Nxmax))
+    image = np.zeros((nx, ny))
+
+    return psi_band(alpha, image, cbuff, cbuffT,
+                    ix, iy, sx, sy, spx, spy,
+                    dec_lo, dec_hi, rec_lo, rec_hi,
+                    Ntotx, Ntoty, Nxmax, Nymax, Nbasis,
+                    sqrtNbasis, typed.List(bases), nlevel, nx, ny)
 
 
-@numba.njit(nogil=True, cache=True, parallel=True)
-def coef2im_dist(alpha, bases, ntot, iy, sy, nx, ny):
-    '''
-    Per band coefficients to image
-    '''
-    nbasis = len(bases)
-    x = np.zeros((nbasis, nx, ny), dtype=alpha.dtype)
-    for b in numba.prange(nbasis):
-        base = bases[b]
-        a = alpha[b, 0:ntot[b]]
-        if base == 'self':
-            wave = a.reshape(nx, ny)
-        else:
-            continue
-            # alpha_rec = unravel_coeffs(
-            #     a, iy[base], sy[base], output_format='wavedecn')
-            # wave = waverecn(alpha_rec, base, mode='zero')
+kv_ty = (types.unicode_type, types.ListType(numba.int64))
+kv_ty2 = (numba.int64, types.UniTuple(types.int64, 2))
+kv_ty3 = (types.unicode_type, numba.float64[:])
+spec = OrderedDict()
+spec['alpha'] = numba.float64[:,:]
+spec['image'] = numba.float64[:,:]
+spec['cbuff'] = numba.float64[:,:]
+spec['cbuffT'] = numba.float64[:,:]
+spec['ix'] = types.DictType(types.unicode_type, types.DictType(*kv_ty2))
+spec['iy'] = types.DictType(types.unicode_type, types.DictType(*kv_ty2))
+spec['sx'] = types.DictType(*kv_ty)
+spec['sy'] = types.DictType(*kv_ty)
+spec['spx'] = types.DictType(*kv_ty)
+spec['spy'] = types.DictType(*kv_ty)
+spec['dec_lo'] = types.DictType(*kv_ty3)
+spec['dec_hi'] = types.DictType(*kv_ty3)
+spec['rec_lo'] = types.DictType(*kv_ty3)
+spec['rec_hi'] = types.DictType(*kv_ty3)
+spec['Ntotx'] = types.DictType(types.unicode_type, numba.int64)
+spec['Ntoty'] = types.DictType(types.unicode_type, numba.int64)
+spec['Nxmax'] = numba.int64
+spec['Nymax'] = numba.int64
+spec['Nbasis'] = numba.int64
+spec['sqrtNbasis'] = numba.float64
+spec['bases'] = types.ListType(types.unicode_type)
+spec['Nlevel'] = numba.int64
+spec['Nx'] = numba.int64
+spec['Ny'] = numba.int64
+@jitclass(spec)
+class psi_band(object):
+    def __init__(self, alpha, image, cbuff, cbuffT,
+                 ix, iy, sx, sy, spx, spy,
+                 dec_lo, dec_hi, rec_lo, rec_hi,
+                 Ntotx, Ntoty, Nxmax, Nymax, Nbasis,
+                 sqrtNbasis, bases, Nlevel, Nx, Ny):
 
-        x[b] = wave
-    return np.sum(x, axis=0)
+        self.alpha = alpha
+        self.image = image
+        self.cbuff = cbuff
+        self.cbuffT = cbuffT
+        self.ix = ix
+        self.iy = iy
+        self.sx = sx
+        self.sy = sy
+        self.spx = spx
+        self.spy = spy
+        self.dec_lo = dec_lo
+        self.dec_hi = dec_hi
+        self.rec_lo = rec_lo
+        self.rec_hi = rec_hi
+        self.Ntotx = Ntotx
+        self.Ntoty = Ntoty
+        self.Nxmax = Nxmax
+        self.Nymax = Nymax
+        self.Nbasis = Nbasis
+        self.sqrtNbasis = sqrtNbasis
+        self.bases = bases
+        self.Nlevel = Nlevel
+        self.Nx = Nx
+        self.Ny = Ny
 
+    def dot(self, x, alphao):
+        '''
+        signal to coeffs
+
+        x       - (nx, ny) input signal
+        alphao  - (nbasis, Nxmax, Nymax) per basis output coeffs
+        '''
+
+        for i, wavelet in enumerate(self.bases):
+            if wavelet=='self':
+                copyT(x, alphao[i, 0:self.Ny, 0:self.Nx])
+                # alphao[i, 0:self.Ny, 0:self.Nx] = x.T
+                continue
+            dec_lo = self.dec_lo[wavelet]
+            dec_hi = self.dec_hi[wavelet]
+            sx = self.sx[wavelet]
+            sy = self.sy[wavelet]
+            ix = self.ix[wavelet]
+            iy = self.iy[wavelet]
+            Ntotx = self.Ntotx[wavelet]
+            Ntoty = self.Ntoty[wavelet]
+
+            dwt2d(x,
+                  alphao[i, 0:Ntoty, 0:Ntotx],
+                  self.cbuff[0:Ntotx, 0:Ntoty],
+                  self.cbuffT[0:Ntoty, 0:Ntotx],
+                  ix, iy, sx, sy, dec_lo, dec_hi,
+                  self.Nlevel)
+
+        # alphao /= self.sqrtNbasis
+
+        return alphao
+
+
+    def hdot(self, alpha, xo):
+        '''
+        coeffs to signal
+
+        alpha   - (nbasis, Nxmax, Nymax) per basis output coeffs
+        xo      - (nx, ny) output signal
+        '''
+        xo[...] = 0.0  # accumulated
+        for i, wavelet in enumerate(self.bases):
+            if wavelet=='self':
+                copyT(alpha[i, 0:self.Ny, 0:self.Nx], self.image)
+                xo += self.image
+                continue
+            rec_lo = self.rec_lo[wavelet]
+            rec_hi = self.rec_hi[wavelet]
+            sx = self.sx[wavelet]
+            sy = self.sy[wavelet]
+            spx = self.spx[wavelet]
+            spy = self.spy[wavelet]
+            ix = self.ix[wavelet]
+            iy = self.iy[wavelet]
+            Ntotx = self.Ntotx[wavelet]
+            Ntoty = self.Ntoty[wavelet]
+            idwt2d(alpha[i, 0:Ntoty, 0:Ntotx],
+                   self.image,
+                   self.alpha[0:Ntoty, 0:Ntotx],
+                   self.cbuff[0:Ntotx, 0:Ntoty],
+                   self.cbuffT[0:Ntoty, 0:Ntotx],
+                   ix, iy, sx, sy, spx, spy, rec_lo, rec_hi,
+                   self.Nlevel)
+
+            xo += self.image
+
+        # xo /= self.sqrtNbasis
+
+        return xo
+
+
+def psi_dot_impl(x, alphao, psib, b):
+    psib.dot(x, alphao)
+    return b
+
+
+def psi_hdot_impl(alpha, xo, psib, b):
+    psib.hdot(alpha, xo)
+    return b
+
+
+class Psi(object):
+    def __init__(self, nband, nx, ny, bases, nlevel, nthreads):
+
+        self.psib = []
+        for b in range(nband):
+            self.psib.append(psi_band_maker(nx, ny, bases, nlevel))
+
+        self.nband = nband
+        self.nx = nx
+        self.ny = ny
+        self.nbasis = len(bases)
+        self.nthreads = nthreads
+        self.Nxmax = self.psib[0].Nxmax
+        self.Nymax = self.psib[0].Nymax
+
+    def dot(self, x, alphao):
+        '''
+        image to coeffs
+        '''
+        futures = []
+        with cf.ThreadPoolExecutor(max_workers=self.nthreads) as executor:
+            for b in range(self.nband):
+                f = executor.submit(psi_dot_impl, x[b], alphao[b], self.psib[b], b)
+                futures.append(f)
+
+            # wait for result
+            for f in cf.as_completed(futures):
+                b = f.result()
+
+    def hdot(self, alpha, xo):
+        '''
+        coeffs to image
+        '''
+        futures = []
+        with cf.ThreadPoolExecutor(max_workers=self.nthreads) as executor:
+            for b in range(self.nband):
+                f = executor.submit(psi_hdot_impl, alpha[b], xo[b], self.psib[b], b)
+                futures.append(f)
+
+            # wait for result
+            for f in cf.as_completed(futures):
+                b = f.result()

@@ -92,8 +92,8 @@ def primal_dual_optimised(
         x,  # initial guess for primal variable
         v,  # initial guess for dual variable
         lam,  # regulariser strength
-        psi,  # linear operator in dual domain
-        psiH,  # adjoint of psi
+        psiH,  # linear operator in dual domain
+        psi,  # adjoint of psi
         L,  # spectral norm of Hessian
         prox,  # prox of regulariser
         l1weight,
@@ -132,10 +132,10 @@ def primal_dual_optimised(
     eps = 1.0
     numreweight = 0
     for k in range(maxit):
-        psiH(xp, v)
+        psi(xp, v)
         dual_update_numba(vp, v, lam, sigma=sigma, weight=l1weight)
         ne.evaluate('2.0 * v - vp', out=vp)  #, casting='same_kind')
-        psi(vp, xout)
+        psiH(vp, xout)
         xout += grad(xp)
         ne.evaluate('xp - tau * xout', out=x)  #, casting='same_kind')
 
