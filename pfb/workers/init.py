@@ -123,7 +123,7 @@ def _init(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.stokes import single_stokes
+    from pfb.utils.stokes2vis import single_stokes
     from pfb.utils.correlations import single_corr
     from pfb.utils.misc import chunkify_rows
     import xarray as xr

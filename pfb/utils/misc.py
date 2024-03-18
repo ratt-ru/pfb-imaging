@@ -1403,3 +1403,9 @@ def setup_parametrisation(mode='id', minval=1e-5,
         raise ValueError(f"Unknown mode - {mode}")
 
     return func, finv, dfunc, dhfunc
+
+
+def weight_from_sigma(sigma):
+    weight = ne.evaluate('1.0/(sigma*sigma)',
+                         casting='same_kind')
+    return weight

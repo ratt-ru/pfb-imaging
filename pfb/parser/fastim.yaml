@@ -30,10 +30,11 @@ inputs:
     default: false
     info:
       Allow overwrite of output xds
-  radec:
-    dtype: Optional[List[any]]
+  transfer-model-from:
+    dtype: str
+    abbreviation: tmf
     info:
-      Rephase all images to this radec specified in radians
+      Name of dataset to use for model initialisation
   data-column:
     dtype: str
     default: DATA
@@ -90,29 +91,90 @@ inputs:
       - double
     info:
       Gridding precision
-  bda-decorr:
-    dtype: float
-    default: 1.0
-    info:
-      BDA decorrelation factor.
-      Only has an effect if less than one
   beam-model:
     dtype: str
     info:
       Beam model to use
-  max-field-of-view:
+  field-of-view:
     dtype: float
     abbreviation: fov
     default: 3.0
     info:
       Field of view in degrees
-  chan-average:
-    dtype: int
-    default: 1
+  super-resolution-factor:
+    dtype: float
+    default: 2
+    abbreviation: srf
     info:
-      Average this number if channels together
+      Will over-sample Nyquist by this factor at max frequency
+  cell-size:
+    dtype: float
+    info:
+      Cell size in arc-seconds
+  nx:
+    dtype: int
+    info:
+      Number of x pixels
+  ny:
+    dtype: int
+    info:
+      Number of y pixels
+  robustness:
+    dtype: float
+    abbreviation: rob
+    info:
+      Robustness factor for Briggs weighting. None means natural
+  filter-extreme-counts:
+    dtype: bool
+    default: false
+    info:
+      Replace extreme outliers in the weighting grid by their local mean
+  filter-nbox:
+    dtype: int
+    default: 16
+    info:
+      The size of the box to compute local mean over
+  filter-level:
+    dtype: float
+    default: 10
+    info:
+      The level above local mean that renders a grid weight extreme
+  target:
+    dtype: str
+    info:
+      This can be predefined celestial objects known to astropy or a string in
+      the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+  postfix:
+    dtype: str
+    default: 'main'
+    info:
+      Can be used to specify a custom name for the image space data products
+  l2reweight-dof:
+    dtype: float
+    info:
+      The degrees of freedom parameter for L2 reweighting.
+      The default (None) means no reweighting.
+      A sensible value for this parameter depends on the level of RFI in the data.
+      Small values (eg. 2) result in aggressive reweighting and should be avoided
+      if the model is still incomplete.
+  dirty:
+    dtype: bool
+    default: true
+    info:
+      Compute the dirty image
+  residual:
+    dtype: bool
+    default: false
+    info:
+      Compute the residual image
+  fits:
+    dtype: bool
+    default: false
+    info:
+      Output fits files
 
   _include:
+    - (.)gridding.yml
     - (.)dist.yml
     - (.)out.yml
 

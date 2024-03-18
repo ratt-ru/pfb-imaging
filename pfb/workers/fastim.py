@@ -56,7 +56,9 @@ def fastim(**kw):
     if opts.product.upper() not in ["I","Q", "U", "V"]:
             # "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
-
+    if opts.transfer_model_from is not None:
+        modelstore = DaskMSStore(opts.transfer_model_from.rstrip('/'))
+        opts.transfer_model_from = modelstore.url
     OmegaConf.set_struct(opts, True)
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -64,8 +66,10 @@ def fastim(**kw):
         from pfb import set_client
         opts = set_client(opts, stack, log, scheduler=opts.scheduler)
         import dask
-        from daskms.experimental.zarr import xds_to_zarr
+        from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
+        import numpy as np  # has to be after set client
         from pfb.utils.misc import compute_context
+        from pfb.utils.fits import dds2fits
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -74,9 +78,31 @@ def fastim(**kw):
 
         out_datasets = _fastim(**opts)
 
+        # assign time and band ids
+        freqs_out = []
+        times_out = []
+        for ds in out_datasets:
+            freqs_out.append(ds.freq_out)
+            times_out.append(ds.time_out)
+
+        freqs_out = np.unique(np.array(freqs_out))
+        times_out = np.unique(np.array(times_out))
+
+        for i, ds in enumerate(out_datasets):
+            bandid = np.where(freqs_out == ds.freq_out)[0][0]
+            timeid = np.where(times_out == ds.time_out)[0][0]
+            ds = ds.assign_attrs(**{
+                'bandid': bandid,
+                'timeid': timeid
+            })
+            out_datasets[i] = ds
+
+
         # out_images = _grid(**opts.grid['ds'] = out_datasets)
+        # import ipdb; ipdb.set_trace()
         if len(out_datasets):
-            writes = xds_to_zarr(out_datasets, f'{basename}.xds',
+            writes = xds_to_zarr(out_datasets,
+                                 f'{basename}_{opts.postfix}.fds',
                                 columns='ALL',
                                 rechunk=True)
         else:
@@ -90,8 +116,25 @@ def fastim(**kw):
         # dask.visualize(writes, filename=basename +
         #                '_writes_I_graph.pdf', optimize_graph=False)
 
-        with compute_context(opts.scheduler, f'{ldir}/init_{timestamp}'):
+        with compute_context(opts.scheduler, f'{ldir}/fastim_{timestamp}'):
             dask.compute(writes, optimize_graph=False)
+
+
+        dds = xds_from_zarr(f'{basename}_{opts.postfix}.fds',
+                            chunks={'x': -1, 'y': -1})
+
+        # convert to fits files
+        fitsout = []
+        if opts.fits:
+            if opts.dirty:
+                fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
+            if opts.residual:
+                fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+
+        if len(fitsout):
+            print("Writing fits", file=log)
+            with compute_context(opts.scheduler, f'{ldir}/fastim_{timestamp}'):
+                dask.compute(fitsout)
 
         if opts.scheduler=='distributed':
             from distributed import get_client
@@ -123,20 +166,18 @@ def _fastim(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.stokes import single_stokes
-    from pfb.utils.correlations import single_corr
-    from pfb.utils.misc import chunkify_rows
+    from pfb.utils.stokes2im import single_stokes_image
     import xarray as xr
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    xdsstore = DaskMSStore(f'{basename}.xds')
-    if xdsstore.exists():
+    fdsstore = DaskMSStore(f'{basename}_{opts.postfix}.fds')
+    if fdsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {basename}.xds", file=log)
-            xdsstore.rm(recursive=True)
+            print(f"Overwriting {basename}_{opts.postfix}.fds", file=log)
+            fdsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.xds exists. "
+            raise ValueError(f"{basename}_{opts.postfix}.fds exists. "
                              "Set overwrite to overwrite it. ")
 
     if opts.gain_table is not None:
@@ -177,13 +218,39 @@ def _fastim(**kw):
             max_freq = np.maximum(max_freq, freq.max())
 
     # cell size
-    cell_rad = 1.0 / (2 * uv_max * max_freq / lightspeed)
+    cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
 
-    # # we should rephase to the Barycenter of all datasets
-    # if opts.radec is not None:
-    #     raise NotImplementedError()
+    if opts.cell_size is not None:
+        cell_size = opts.cell_size
+        cell_rad = cell_size * np.pi / 60 / 60 / 180
+        if cell_N / cell_rad < 1:
+            raise ValueError("Requested cell size too large. "
+                             "Super resolution factor = ", cell_N / cell_rad)
+        print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
+    else:
+        cell_rad = cell_N / opts.super_resolution_factor
+        cell_size = cell_rad * 60 * 60 * 180 / np.pi
+        print(f"Cell size set to {cell_size} arcseconds", file=log)
 
-    # this is not optional, concatenate during gridding stage if desired
+    if opts.nx is None:
+        fov = opts.field_of_view * 3600
+        npix = int(fov / cell_size)
+        npix = good_size(npix)
+        while npix % 2:
+            npix += 1
+            npix = good_size(npix)
+        nx = npix
+        ny = npix
+    else:
+        nx = opts.nx
+        ny = opts.ny if opts.ny is not None else nx
+        cell_deg = np.rad2deg(cell_rad)
+        fovx = nx*cell_deg
+        fovy = ny*cell_deg
+        print(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
+
+    print(f"Image size = (nx={nx}, ny={ny})", file=log)
+
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
     # assumes measurement sets have the same columns
@@ -209,6 +276,19 @@ def _fastim(**kw):
             schema[opts.weight_column] = {'dims': ('chan', 'corr')}
     else:
         print(f"No weights provided, using unity weights", file=log)
+
+    if opts.transfer_model_from:
+        try:
+            mds = xds_from_zarr(opts.transfer_model_from,
+                                chunks={'params':-1, 'comps':-1})[0]
+            # this should be fairly small but should
+            # it rather be read in the dask call?
+            mds = dask.persist(mds)[0]
+        except Exception as e:
+            import ipdb; ipdb.set_trace()
+            raise ValueError(f"No dataset found at {opts.transfer_model_from}")
+    else:
+        mds = None
 
     out_datasets = []
     for ims, ms in enumerate(opts.ms):
@@ -267,10 +347,13 @@ def _fastim(**kw):
                         jones = None
 
                     if opts.product.upper() in ["I", "Q", "U", "V"]:
-                        out_ds = single_stokes(
+                        out_ds = single_stokes_image(
                             ds=subds,
+                            mds=mds,
                             jones=jones,
                             opts=opts,
+                            nx=nx,
+                            ny=ny,
                             freq=freqs[ms][idt][Inu],
                             chan_width=chan_widths[ms][idt][Inu],
                             utime=utimes[ms][idt][It],
