@@ -167,11 +167,31 @@ inputs:
     default: false
     info:
       Compute the residual image
-  fits:
+  fits-mfs:
+    dtype: bool
+    default: true
+    info:
+      Output MFS fits files
+  fits-cubes:
     dtype: bool
     default: false
     info:
-      Output fits files
+      Output fits cubes
+  movie-mfs:
+    dtype: bool
+    default: true
+    info:
+      Output MFS movie
+  movie-cubes:
+    dtype: bool
+    default: false
+    info:
+      Output movie per freq band
+  make-fds:
+    dtype: bool
+    default: true
+    info:
+      Make/remake dirty and/or residual images
 
   _include:
     - (.)gridding.yml

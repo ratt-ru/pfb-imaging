@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('FASTIM')
-
+import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
@@ -25,7 +25,6 @@ def fastim(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
@@ -69,72 +68,170 @@ def fastim(**kw):
         from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
         import numpy as np  # has to be after set client
         from pfb.utils.misc import compute_context
-        from pfb.utils.fits import dds2fits
+        from pfb.utils.fits import dds2fits, dds2fits_mfs
+        from PIL import Image, ImageDraw, ImageFont
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        out_datasets = _fastim(**opts)
 
-        # assign time and band ids
+        if opts.make_fds:
+            print("Constructing graph", file=log)
+            ti = time.time()
+            out_datasets = _fastim(**opts)
+
+            # assign time and band ids
+            freqs_out = []
+            times_out = []
+            for ds in out_datasets:
+                freqs_out.append(ds.freq_out)
+                times_out.append(ds.time_out)
+
+            freqs_out = np.unique(np.array(freqs_out))
+            times_out = np.unique(np.array(times_out))
+
+            for i, ds in enumerate(out_datasets):
+                bandid = np.where(freqs_out == ds.freq_out)[0][0]
+                timeid = np.where(times_out == ds.time_out)[0][0]
+                ds = ds.assign_attrs(**{
+                    'bandid': bandid,
+                    'timeid': timeid
+                })
+                out_datasets[i] = ds
+
+            print(f"Graph construction took {time.time() - ti}s", file=log)
+            print("Compute starting", file=log)
+            ti = time.time()
+            if len(out_datasets):
+                writes = xds_to_zarr(out_datasets,
+                                    f'{basename}_{opts.postfix}.fds',
+                                    columns='ALL',
+                                    rechunk=True)
+            else:
+                raise ValueError('No datasets found to write. '
+                                'Data completely flagged maybe?')
+
+            # dask.visualize(writes, color="order", cmap="autumn",
+            #                node_attr={"penwidth": "4"},
+            #                filename=basename + '_writes_I_ordered_graph.pdf',
+            #                optimize_graph=False)
+            # dask.visualize(writes, filename=basename +
+            #                '_writes_I_graph.pdf', optimize_graph=False)
+            # import ipdb; ipdb.set_trace()
+
+            with compute_context(opts.scheduler, f'{ldir}/fastim_{timestamp}'):
+                dask.compute(writes, optimize_graph=False)
+
+
+            print(f"Compute took {time.time() - ti}s", file=log)
+
+        fds = xds_from_zarr(f'{basename}_{opts.postfix}.fds',
+                            chunks={'x': -1, 'y': -1})
+
+        # need to redo if not making the fds
         freqs_out = []
         times_out = []
-        for ds in out_datasets:
+        for ds in fds:
             freqs_out.append(ds.freq_out)
             times_out.append(ds.time_out)
 
         freqs_out = np.unique(np.array(freqs_out))
         times_out = np.unique(np.array(times_out))
-
-        for i, ds in enumerate(out_datasets):
-            bandid = np.where(freqs_out == ds.freq_out)[0][0]
-            timeid = np.where(times_out == ds.time_out)[0][0]
-            ds = ds.assign_attrs(**{
-                'bandid': bandid,
-                'timeid': timeid
-            })
-            out_datasets[i] = ds
-
-
-        # out_images = _grid(**opts.grid['ds'] = out_datasets)
-        # import ipdb; ipdb.set_trace()
-        if len(out_datasets):
-            writes = xds_to_zarr(out_datasets,
-                                 f'{basename}_{opts.postfix}.fds',
-                                columns='ALL',
-                                rechunk=True)
-        else:
-            raise ValueError('No datasets found to write. '
-                            'Data completely flagged maybe?')
-
-        # dask.visualize(writes, color="order", cmap="autumn",
-        #                node_attr={"penwidth": "4"},
-        #                filename=basename + '_writes_I_ordered_graph.pdf',
-        #                optimize_graph=False)
-        # dask.visualize(writes, filename=basename +
-        #                '_writes_I_graph.pdf', optimize_graph=False)
-
-        with compute_context(opts.scheduler, f'{ldir}/fastim_{timestamp}'):
-            dask.compute(writes, optimize_graph=False)
-
-
-        dds = xds_from_zarr(f'{basename}_{opts.postfix}.fds',
-                            chunks={'x': -1, 'y': -1})
+        nframes = times_out.size
+        nx, ny = fds[0].RESIDUAL.shape
 
         # convert to fits files
+        if opts.fits_mfs or opts.fits_cubes:
+            print("Writing fits", file=log)
+            tj = time.time()
+
         fitsout = []
-        if opts.fits:
+        if opts.fits_mfs:
             if opts.dirty:
-                fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
+                fitsout.append(dds2fits_mfs(fds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
             if opts.residual:
-                fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+                fitsout.append(dds2fits_mfs(fds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+
+        if opts.fits_cubes:
+            if opts.dirty:
+                fitsout.append(dds2fits(fds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
+            if opts.residual:
+                fitsout.append(dds2fits(fds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
 
         if len(fitsout):
-            print("Writing fits", file=log)
-            with compute_context(opts.scheduler, f'{ldir}/fastim_{timestamp}'):
+            with compute_context(opts.scheduler, f'{ldir}/fastim_fits_{timestamp}'):
                 dask.compute(fitsout)
+            print(f"Fits writing took {time.time() - tj}s", file=log)
+
+        if opts.movie_mfs or opts.movie_cubes:
+            print("Filming", file=log)
+            fontPath = '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf'
+            sans30  =  ImageFont.truetype ( fontPath, 30 )
+            tj = time.time()
+
+        if opts.movie_mfs:
+            frames = []
+            for t in range(len(times_out)):
+                res = np.zeros(fds[0].RESIDUAL.shape)
+                for ds in fds:
+                    # bands share same time axis so accumulate
+                    if ds.timeid != t:
+                        continue
+                    else:
+                        res += ds.RESIDUAL.values
+                        utc = ds.utc
+
+                # min to zero
+                res -= res.min()
+                # max to 255
+                res *= 255/res.max()
+                res = res.astype('uint8')
+                nn = Image.fromarray(res)
+                prog = str(t).zfill(len(str(nframes)))+' / '+str(nframes)
+                draw = ImageDraw.Draw(nn)
+                draw.text((0.03*nx,0.90*ny),'Frame : '+prog,fill=('white'),font=sans30)
+                draw.text((0.03*nx,0.93*ny),'Time  : '+utc,fill=('white'),font=sans30)
+                # draw.text((0.03*nx,0.96*ny),'Image : '+ff,fill=('white'),font=sans30)
+                frames.append(nn)
+            frames[0].save(f'{basename}_{opts.postfix}_animated_mfs.gif',
+                           save_all=True,
+                           append_images=frames[1:],
+                           duration=35,
+                           loop=1)
+
+        if opts.movie_cubes:
+            for b in range(len(freqs_out)):
+                frames = []
+                for ds in fds:
+                    if ds.bandid != b:
+                        continue
+                    res = ds.RESIDUAL.values
+                    # min to zero
+                    res -= res.min()
+                    # max to 255
+                    res *= 255/res.max()
+                    res = res.astype('uint8')
+                    nn = Image.fromarray(res)
+                    tt = ds.utc
+                    t = ds.timeid
+                    prog = str(t).zfill(len(str(nframes)))+' / '+str(nframes)
+                    draw = ImageDraw.Draw(nn)
+                    draw = ImageDraw.Draw(nn)
+                    draw.text((0.03*nx,0.90*ny),'Frame : '+prog,fill=('white'),font=sans30)
+                    draw.text((0.03*nx,0.93*ny),'Time  : '+utc,fill=('white'),font=sans30)
+                    frames.append(nn)
+                frames[0].save(f'{basename}_{opts.postfix}_animated_band{b:04d}.gif',
+                               save_all=True,
+                               append_images=frames[1:],
+                               duration=35,
+                               loop=1)
+
+
+        if opts.movie_mfs or opts.movie_cubes:
+            print(f"Filming took {time.time() - tj}s", file=log)
+
 
         if opts.scheduler=='distributed':
             from distributed import get_client

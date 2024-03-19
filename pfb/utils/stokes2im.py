@@ -19,6 +19,8 @@ from pfb.utils.weighting import _compute_counts, _counts_to_weights
 from pfb.utils.misc import eval_coeffs_to_slice
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from daskms.experimental.zarr import xds_from_zarr
+from casacore.quanta import quantity
+from datetime import datetime
 
 # for old style vs new style warnings
 from numba.core.errors import NumbaPendingDeprecationWarning
@@ -91,7 +93,6 @@ def single_stokes_image(ds=None,
                                      (nrow, nchan, ncorr),
                                      chunks=data.chunks)
     else:
-        # weight = da.ones_like(data, dtype=real_type)
         weight = da.ones((nrow, nchan, ncorr),
                          chunks=data.chunks,
                          dtype=real_type)
@@ -109,7 +110,7 @@ def single_stokes_image(ds=None,
         jones = da.swapaxes(jones, 1, 2)
         # data are not 2x2 so we need separate labels
         # for jones correlations and data/weight correlations
-        # reshape to dispatch with generated_jit
+        # reshape to dispatch with overload
         jones_ncorr = jones.shape[-1]
         if jones_ncorr == 2:
             jout = 'rafdx'
@@ -157,12 +158,7 @@ def single_stokes_image(ds=None,
         tra = radec[0]
         tdec = radec[1]
 
-
-    # print(model.max(), model.min())
-
-    # import ipdb; ipdb.set_trace()
-    # quit()
-    # compute Stokes data and weights
+    # dirty and/or residual
     blocker = Blocker(image_data, 'rf')
     blocker.add_input("data", data, 'rfc')
     blocker.add_input('weight', weight, 'rfc')
@@ -224,9 +220,13 @@ def single_stokes_image(ds=None,
     data_vars = {}
     data_vars['WSUM'] = (('scalar',), output_dict['WSUM'])
 
-    coords = {'chan': (('chan',), freq),
-              'time': (('time',), utime),
-    }
+    # coords = {'chan': (('chan',), freq),
+    #           'time': (('time',), utime),
+    # }
+
+    unix_time = quantity(f'{time_out}s').to_unix_time()
+    utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+
 
     # TODO - provide time and freq centroids
     attrs = {
@@ -244,10 +244,11 @@ def single_stokes_image(ds=None,
         'time_out': time_out,
         'time_min': utime.min(),
         'time_max': utime.max(),
-        'product': opts.product
+        'product': opts.product,
+        'utc': utc
     }
 
-    out_ds = Dataset(data_vars, coords=coords,
+    out_ds = Dataset(data_vars, # coords=coords,
                      attrs=attrs)
 
     if opts.dirty:
@@ -346,9 +347,10 @@ def image_data(data,
             mds.npix_x, mds.npix_y,
             mds.cell_rad_x, mds.cell_rad_y,
             mds.center_x, mds.center_y,
-            nx, ny,
-            cellx, celly,
-            x0, y0
+            # TODO - currently needs to be the same, need FFT interpolation
+            mds.npix_x, mds.npix_y,
+            mds.cell_rad_x, mds.cell_rad_y,
+            mds.center_x, mds.center_y,
         )
 
         # do not apply weights in this direction
@@ -356,10 +358,10 @@ def image_data(data,
             uvw=uvw,
             freq=freq,
             dirty=model,
-            pixsize_x=cellx,
-            pixsize_y=celly,
-            center_x=x0,
-            center_y=y0,
+            pixsize_x=mds.cell_rad_x,
+            pixsize_y=mds.cell_rad_y,
+            center_x=mds.center_x,
+            center_y=mds.center_y,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
             flip_v=False,
