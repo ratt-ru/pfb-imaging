@@ -174,8 +174,9 @@ def _spotless(ddsi=None, **kw):
     xpad = make_noncritical(xpad)
     xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
     xhat = make_noncritical(xhat)
+    # nthreads = nvthreads*nthreads_dask because dask not involved
     psf_convolve = partial(psf_convolve_cube, xpad, xhat, xout, psfhat, lastsize,
-                           nthreads=opts.nvthreads*opts.nthreads_dask)  # nthreads = nvthreads*nthreads_dask because dask not involved
+                           nthreads=opts.nvthreads*opts.nthreads_dask)
 
     if opts.hessnorm is None:
         print("Finding spectral norm of Hessian approximation", file=log)

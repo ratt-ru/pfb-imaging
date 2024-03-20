@@ -27,7 +27,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
             with open_dict(opts):
                 opts.nvthreads = nvthreads
 
-    os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
+    # os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)

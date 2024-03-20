@@ -560,7 +560,8 @@ def fitcleanbeam(psf: np.ndarray,
         xy = np.vstack((x, y))
         emaj0 = np.maximum(xdiff, ydiff)
         emin0 = np.minimum(xdiff, ydiff)
-        p, _ = curve_fit(func, xy, psfv, p0=(emaj0, emin0, 0.0))
+        p, _ = curve_fit(func, xy, psfv, p0=(emaj0, emin0, 0.0),
+                         maxfev=2000)
         Gausspars.append([p[0] * pixsize, p[1] * pixsize, p[2]])
 
     return Gausspars
