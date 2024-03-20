@@ -158,7 +158,6 @@ def single_stokes_image(ds=None,
         tra = radec[0]
         tdec = radec[1]
 
-    # dirty and/or residual
     blocker = Blocker(image_data, 'rf')
     blocker.add_input("data", data, 'rfc')
     blocker.add_input('weight', weight, 'rfc')
@@ -190,8 +189,6 @@ def single_stokes_image(ds=None,
     blocker.add_input('do_wgridding', opts.do_wgridding)
     blocker.add_input('double_accum', opts.double_accum)
     blocker.add_input('l2reweight_dof', opts.l2reweight_dof)
-    blocker.add_input('do_dirty', opts.dirty)
-    blocker.add_input('do_residual', opts.residual)
     blocker.add_input('time_out', time_out)
     blocker.add_input('freq_out', freq_out)
 
@@ -201,19 +198,11 @@ def single_stokes_image(ds=None,
         ((1,),),
         weight.dtype)
 
-    if opts.dirty:
-        blocker.add_output(
-            'DIRTY',
-            ('x', 'y'),
-            ((nx,), (ny,)),
-            weight.dtype)
-
-    if opts.residual:
-        blocker.add_output(
-            'RESIDUAL',
-            ('x', 'y'),
-            ((nx,), (ny,)),
-            weight.dtype)
+    blocker.add_output(
+        'RESIDUAL',
+        ('x', 'y'),
+        ((nx,), (ny,)),
+        weight.dtype)
 
     output_dict = blocker.get_dask_outputs()
 
@@ -251,15 +240,9 @@ def single_stokes_image(ds=None,
     out_ds = Dataset(data_vars, # coords=coords,
                      attrs=attrs)
 
-    if opts.dirty:
-        out_ds = out_ds.assign(**{
-            'DIRTY': (('x', 'y'), output_dict['DIRTY'])
-            })
-
-    if opts.residual:
-        out_ds = out_ds.assign(**{
-            'RESIDUAL': (('x', 'y'), output_dict['RESIDUAL'])
-            })
+    out_ds = out_ds.assign(**{
+        'RESIDUAL': (('x', 'y'), output_dict['RESIDUAL'])
+        })
 
     out_ds = out_ds.chunk({'x':4096,
                            'y':4096})
@@ -288,8 +271,6 @@ def image_data(data,
                do_wgridding,
                double_accum,
                l2reweight_dof,
-               do_dirty,
-               do_residual,
                time_out,
                freq_out):
 
@@ -322,11 +303,7 @@ def image_data(data,
                                             nlevel=opts.filter_level)
 
 
-    if mds is None:
-        if l2reweight_dof:
-            raise ValueError('Requested l2 reweight but no model passed in. '
-                             'Perhaps transfer model from somewhere?')
-    else:
+    if mds is not None:
         # we only want to load these once
         model_coeffs = mds.coefficients.values
         locx = mds.location_x.values
@@ -373,17 +350,20 @@ def image_data(data,
         # apply mask to both
         residual_vis *= mask
 
-    if l2reweight_dof:
-        ressq = (residual_vis*residual_vis.conj()).real
-        wcount = mask.sum()
-        if wcount:
-            ovar = ressq.sum()/wcount  # use 67% quantile?
-            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
-        else:
-            wgt = None
+        if l2reweight_dof:
+            ressq = (residual_vis*residual_vis.conj()).real
+            wcount = mask.sum()
+            if wcount:
+                ovar = ressq.sum()/wcount  # use 67% quantile?
+                wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+            else:
+                wgt = None
+    else:
+        residual_vis = vis
 
 
-    # we usually want to re-evaluate this since the robustness may change
+    # TODO - this needs to be moved outside and done on bigger
+    # chunks of data
     if robustness is not None:
         if counts is None:
             raise ValueError('counts are None but robustness specified. '
@@ -402,52 +382,25 @@ def image_data(data,
 
     wsum = wgt[mask.astype(bool)].sum()
 
-    if do_dirty:
-        dirty = vis2dirty(
-            uvw=uvw,
-            freq=freq,
-            vis=vis,
-            wgt=wgt,
-            mask=mask,
-            npix_x=nx, npix_y=ny,
-            pixsize_x=cellx, pixsize_y=celly,
-            center_x=x0, center_y=y0,
-            epsilon=epsilon,
-            flip_v=False,  # hardcoded for now
-            do_wgridding=do_wgridding,
-            divide_by_n=False,  # hardcoded for now
-            nthreads=nthreads,
-            sigma_min=1.1, sigma_max=3.0,
-            double_precision_accumulation=double_accum)
-    else:
-        dirty = None
-
-    if do_residual and model is not None:
-        residual = vis2dirty(
-            uvw=uvw,
-            freq=freq,
-            vis=residual_vis,
-            wgt=wgt,
-            mask=mask,
-            npix_x=nx, npix_y=ny,
-            pixsize_x=cellx, pixsize_y=celly,
-            center_x=x0, center_y=y0,
-            epsilon=epsilon,
-            flip_v=False,  # hardcoded for now
-            do_wgridding=do_wgridding,
-            divide_by_n=False,  # hardcoded for now
-            nthreads=nthreads,
-            sigma_min=1.1, sigma_max=3.0,
-            double_precision_accumulation=double_accum)
-
-    else:
-        residual = None
-
+    residual = vis2dirty(
+        uvw=uvw,
+        freq=freq,
+        vis=residual_vis,
+        wgt=wgt,
+        mask=mask,
+        npix_x=nx, npix_y=ny,
+        pixsize_x=cellx, pixsize_y=celly,
+        center_x=x0, center_y=y0,
+        epsilon=epsilon,
+        flip_v=False,  # hardcoded for now
+        do_wgridding=do_wgridding,
+        divide_by_n=False,  # hardcoded for now
+        nthreads=nthreads,
+        sigma_min=1.1, sigma_max=3.0,
+        double_precision_accumulation=double_accum)
 
     out_dict = {}
     out_dict['WSUM'] = wsum
-    out_dict['DIRTY'] = dirty
     out_dict['RESIDUAL'] = residual
-
 
     return out_dict

@@ -91,10 +91,6 @@ inputs:
       - double
     info:
       Gridding precision
-  beam-model:
-    dtype: str
-    info:
-      Beam model to use
   field-of-view:
     dtype: float
     abbreviation: fov
@@ -157,16 +153,6 @@ inputs:
       A sensible value for this parameter depends on the level of RFI in the data.
       Small values (eg. 2) result in aggressive reweighting and should be avoided
       if the model is still incomplete.
-  dirty:
-    dtype: bool
-    default: true
-    info:
-      Compute the dirty image
-  residual:
-    dtype: bool
-    default: false
-    info:
-      Compute the residual image
   fits-mfs:
     dtype: bool
     default: true

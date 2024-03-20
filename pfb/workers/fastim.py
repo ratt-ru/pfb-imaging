@@ -149,16 +149,10 @@ def fastim(**kw):
 
         fitsout = []
         if opts.fits_mfs:
-            if opts.dirty:
-                fitsout.append(dds2fits_mfs(fds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
-            if opts.residual:
-                fitsout.append(dds2fits_mfs(fds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+            fitsout.append(dds2fits_mfs(fds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
 
         if opts.fits_cubes:
-            if opts.dirty:
-                fitsout.append(dds2fits(fds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
-            if opts.residual:
-                fitsout.append(dds2fits(fds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+            fitsout.append(dds2fits(fds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
 
         if len(fitsout):
             with compute_context(opts.scheduler, f'{ldir}/fastim_fits_{timestamp}'):
