@@ -233,6 +233,12 @@ def single_stokes_image(ds=None,
         weight.dtype)
 
     blocker.add_output(
+        'RMS',
+        ('scalar',),
+        ((1,),),
+        weight.dtype)
+
+    blocker.add_output(
         'RESIDUAL',
         ('x', 'y'),
         ((nx,), (ny,)),
