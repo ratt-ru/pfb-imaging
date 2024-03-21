@@ -129,6 +129,9 @@ def fastim(**kw):
 
         fds = xds_from_zarr(f'{basename}_{opts.postfix}.fds',
                             chunks={'x': -1, 'y': -1})
+        # TODO!!
+        fds = dask.persist(fds)[0]
+
 
         # need to redo if not making the fds
         freqs_out = []
@@ -169,12 +172,15 @@ def fastim(**kw):
             frames = []
             for t in range(len(times_out)):
                 res = np.zeros(fds[0].RESIDUAL.shape)
+                rmss = np.zeros(len(times_out))
+                wsum = 0.0
                 for ds in fds:
                     # bands share same time axis so accumulate
                     if ds.timeid != t:
                         continue
                     else:
                         res += ds.RESIDUAL.values
+                        wsum += ds.WSUM.values
                         utc = ds.utc
 
                 # min to zero
@@ -344,14 +350,27 @@ def _fastim(**kw):
 
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
+    # crude arithmetic
+    dc = opts.data_column.replace(" ", "")
+    if "+" in dc:
+        dc1, dc2 = dc.split("+")
+    elif "-" in dc:
+        dc1, dc2 = dc.split("-")
+    else:
+        dc1 = dc
+        dc2 = None
+
     # assumes measurement sets have the same columns
-    columns = (opts.data_column,
+    columns = (dc1,
                opts.flag_column,
                'UVW', 'ANTENNA1',
                'ANTENNA2', 'TIME', 'INTERVAL', 'FLAG_ROW')
     schema = {}
-    schema[opts.data_column] = {'dims': ('chan', 'corr')}
     schema[opts.flag_column] = {'dims': ('chan', 'corr')}
+    schema[dc1] = {'dims': ('chan', 'corr')}
+    if dc2 is not None:
+        columns += (dc2,)
+        schema[dc2] = {'dims': ('chan', 'corr')}
 
     # only WEIGHT column gets special treatment
     # any other column must have channel axis
@@ -368,7 +387,7 @@ def _fastim(**kw):
     else:
         print(f"No weights provided, using unity weights", file=log)
 
-    if opts.transfer_model_from:
+    if opts.transfer_model_from is not None:
         try:
             mds = xds_from_zarr(opts.transfer_model_from,
                                 chunks={'params':-1, 'comps':-1})[0]

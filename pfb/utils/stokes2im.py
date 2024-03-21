@@ -29,6 +29,20 @@ import warnings
 warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 
 
+def combine_columns(x, y, dc, dc1, dc2):
+    '''
+    x   - dask array containing dc1
+    y   - dask array containing dc2
+    dc  - string that numexpr can evaluate
+    dc1 - name of x
+    dc2 - name of y
+    '''
+    ne.evaluate(dc,
+                local_dict={dc1: x, dc2: y},
+                out=x,
+                casting='same_kind')
+    return x
+
 def single_stokes_image(ds=None,
                         mds=None,
                   jones=None,
@@ -52,7 +66,27 @@ def single_stokes_image(ds=None,
         real_type = np.float64
         complex_type = np.complex128
 
-    data = getattr(ds, opts.data_column).data
+    # crude arithmetic
+    dc = opts.data_column.replace(" ", "")
+    if "+" in dc:
+        dc1, dc2 = dc.split("+")
+    elif "-" in dc:
+        dc1, dc2 = dc.split("-")
+    else:
+        dc1 = dc
+        dc2 = None
+
+    data = getattr(ds, dc1).data
+    if dc2 is not None:
+        data2 = getattr(ds, dc1).data
+        data = da.map_blocks(combine_columns,
+                             data,
+                             data2,
+                             dc,
+                             dc1,
+                             dc2,
+                             chunks=data.chunks)
+
     nrow, nchan, ncorr = data.shape
     ntime = utime.size
     nant = antpos.shape[0]
@@ -208,6 +242,8 @@ def single_stokes_image(ds=None,
 
     data_vars = {}
     data_vars['WSUM'] = (('scalar',), output_dict['WSUM'])
+    data_vars['RMS'] = (('scalar',), output_dict['RMS'])
+    data_vars['RESIDUAL'] = (('x', 'y'), output_dict['RESIDUAL'])
 
     # coords = {'chan': (('chan',), freq),
     #           'time': (('time',), utime),
@@ -239,10 +275,6 @@ def single_stokes_image(ds=None,
 
     out_ds = Dataset(data_vars, # coords=coords,
                      attrs=attrs)
-
-    out_ds = out_ds.assign(**{
-        'RESIDUAL': (('x', 'y'), output_dict['RESIDUAL'])
-        })
 
     out_ds = out_ds.chunk({'x':4096,
                            'y':4096})
@@ -399,8 +431,10 @@ def image_data(data,
         sigma_min=1.1, sigma_max=3.0,
         double_precision_accumulation=double_accum)
 
+    rms = np.std(residual)
     out_dict = {}
     out_dict['WSUM'] = wsum
+    out_dict['RMS'] = rms
     out_dict['RESIDUAL'] = residual
 
     return out_dict
