@@ -121,7 +121,7 @@ def _model2comps(**kw):
         wsums[...] = 1.0
 
     if opts.min_val is not None:
-        model = np.where(model >= opts.min_val, model, 0.0)
+        model = np.where(np.abs(model) >= opts.min_val, model, 0.0)
 
     if not np.any(model):
         raise ValueError(f'Model is empty or has no components above {opts.min_val}')
