@@ -275,7 +275,7 @@ def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
     return out_dict
 
 
-@njit(**JIT_OPTIONS)
+@njit(**JIT_OPTIONS, parallel=True)
 def _weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
                  ant1, ant2, pol, product, nc):
 
@@ -294,7 +294,7 @@ def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
     raise NotImplementedError
 
 
-@overload(_weight_data_impl, **JIT_OPTIONS)
+@overload(_weight_data_impl, **JIT_OPTIONS, parallel=True)
 def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product, nc):
 

@@ -28,8 +28,8 @@ def fastim(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    pyscilog.log_to_file(f'{ldir}/init_{timestamp}.log')
-    print(f'Logs will be written to {str(ldir)}/init_{timestamp}.log', file=log)
+    pyscilog.log_to_file(f'{ldir}/fastim_{timestamp}.log')
+    print(f'Logs will be written to {str(ldir)}/fastim_{timestamp}.log', file=log)
     from daskms.fsspec_store import DaskMSStore
     msnames = []
     for ms in opts.ms:
