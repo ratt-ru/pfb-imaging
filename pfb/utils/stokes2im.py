@@ -9,7 +9,7 @@ from pfb.operators.gridder import vis2im
 # from quartical.utils.numba import coerce_literal
 from operator import getitem
 from pfb.utils.beam import interp_beam
-from pfb.utils.misc import JIT_OPTIONS, weight_from_sigma
+from pfb.utils.misc import JIT_OPTIONS, weight_from_sigma, combine_columns
 import dask
 from quartical.utils.dask import Blocker
 from pfb.utils.stokes import stokes_funcs
@@ -28,20 +28,6 @@ import warnings
 
 warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 
-
-def combine_columns(x, y, dc, dc1, dc2):
-    '''
-    x   - dask array containing dc1
-    y   - dask array containing dc2
-    dc  - string that numexpr can evaluate
-    dc1 - name of x
-    dc2 - name of y
-    '''
-    ne.evaluate(dc,
-                local_dict={dc1: x, dc2: y},
-                out=x,
-                casting='same_kind')
-    return x
 
 def single_stokes_image(ds=None,
                         mds=None,

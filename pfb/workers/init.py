@@ -186,14 +186,27 @@ def _init(**kw):
     # this is not optional, concatenate during gridding stage if desired
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
+    # crude arithmetic
+    dc = opts.data_column.replace(" ", "")
+    if "+" in dc:
+        dc1, dc2 = dc.split("+")
+    elif "-" in dc:
+        dc1, dc2 = dc.split("-")
+    else:
+        dc1 = dc
+        dc2 = None
+
     # assumes measurement sets have the same columns
-    columns = (opts.data_column,
+    columns = (dc1,
                opts.flag_column,
                'UVW', 'ANTENNA1',
                'ANTENNA2', 'TIME', 'INTERVAL', 'FLAG_ROW')
     schema = {}
-    schema[opts.data_column] = {'dims': ('chan', 'corr')}
     schema[opts.flag_column] = {'dims': ('chan', 'corr')}
+    schema[dc1] = {'dims': ('chan', 'corr')}
+    if dc2 is not None:
+        columns += (dc2,)
+        schema[dc2] = {'dims': ('chan', 'corr')}
 
     # only WEIGHT column gets special treatment
     # any other column must have channel axis

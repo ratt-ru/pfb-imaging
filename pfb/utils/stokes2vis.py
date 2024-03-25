@@ -1,7 +1,6 @@
 import numpy as np
 import numexpr as ne
-from numba import njit, prange, literally
-from numba.extending import overload
+from numba import njit, prange
 from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
@@ -9,11 +8,11 @@ from pfb.operators.gridder import vis2im
 # from quartical.utils.numba import coerce_literal
 from operator import getitem
 from pfb.utils.beam import interp_beam
-from pfb.utils.misc import JIT_OPTIONS
+from pfb.utils.misc import weight_from_sigma, combine_columns
 import dask
 from quartical.utils.dask import Blocker
 from pfb.utils.stokes import stokes_funcs
-from pfb.utils.misc import weight_from_sigma
+from pfb.utils.weighting import weight_data
 
 # for old style vs new style warnings
 from numba.core.errors import NumbaPendingDeprecationWarning
@@ -42,7 +41,28 @@ def single_stokes(ds=None,
         real_type = np.float64
         complex_type = np.complex128
 
-    data = getattr(ds, opts.data_column).data
+    # crude arithmetic
+    dc = opts.data_column.replace(" ", "")
+    if "+" in dc:
+        dc1, dc2 = dc.split("+")
+    elif "-" in dc:
+        dc1, dc2 = dc.split("-")
+    else:
+        dc1 = dc
+        dc2 = None
+
+    data = getattr(ds, dc1).data
+    if dc2 is not None:
+        data2 = getattr(ds, dc1).data
+        data = da.map_blocks(combine_columns,
+                             data,
+                             data2,
+                             dc,
+                             dc1,
+                             dc2,
+                             chunks=data.chunks)
+
+
     nrow, nchan, ncorr = data.shape
     ntime = utime.size
     nant = antpos.shape[0]
@@ -256,77 +276,3 @@ def single_stokes(ds=None,
                                          'chan':128})
 
     return out_ds.unify_chunks()
-
-
-def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
-                ant1, ant2, pol, product, nc):
-
-    vis, wgt = _weight_data(data, weight, flag, jones,
-                                 tbin_idx, tbin_counts,
-                                 ant1, ant2,
-                                 literally(pol),
-                                 literally(product),
-                                 literally(nc))
-
-    out_dict = {}
-    out_dict['vis'] = vis
-    out_dict['wgt'] = wgt
-
-    return out_dict
-
-
-@njit(**JIT_OPTIONS, parallel=True)
-def _weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
-                 ant1, ant2, pol, product, nc):
-
-    vis, wgt = _weight_data_impl(data, weight, flag, jones,
-                                 tbin_idx, tbin_counts,
-                                 ant1, ant2,
-                                 literally(pol),
-                                 literally(product),
-                                 literally(nc))
-
-    return vis, wgt
-
-
-def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
-                 ant1, ant2, pol, product, nc):
-    raise NotImplementedError
-
-
-@overload(_weight_data_impl, **JIT_OPTIONS, parallel=True)
-def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
-                      ant1, ant2, pol, product, nc):
-
-    vis_func, wgt_func = stokes_funcs(data, jones, product, pol, nc)
-
-    def _impl(data, weight, flag, jones, tbin_idx, tbin_counts,
-              ant1, ant2, pol, product, nc):
-        # for dask arrays we need to adjust the chunks to
-        # start counting from zero
-        tbin_idx -= tbin_idx.min()
-        nt = np.shape(tbin_idx)[0]
-        nrow, nchan, ncorr = data.shape
-        vis = np.zeros((nrow, nchan), dtype=data.dtype)
-        wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
-
-        for t in prange(nt):
-            for row in range(tbin_idx[t],
-                             tbin_idx[t] + tbin_counts[t]):
-                p = int(ant1[row])
-                q = int(ant2[row])
-                gp = jones[t, p, :, 0]
-                gq = jones[t, q, :, 0]
-                for chan in range(nchan):
-                    if flag[row, chan]:
-                        continue
-                    wgt[row, chan] = wgt_func(gp[chan], gq[chan],
-                                              weight[row, chan])
-                    vis[row, chan] = vis_func(gp[chan], gq[chan],
-                                              weight[row, chan],
-                                              data[row, chan])
-
-        return vis, wgt
-    return _impl
-
-
