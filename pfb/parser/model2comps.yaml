@@ -11,8 +11,10 @@ inputs:
       Order of interpolating polynomial for frequency axis
   nbasist:
     dtype: int
+    default: 1
     info:
-      Order of interpolating polynomial for frequency axis
+      Order of interpolating polynomial for time axis.
+      This is hypothetical for the time being.
   fit-mode:
     dtype: str
     default: Legendre

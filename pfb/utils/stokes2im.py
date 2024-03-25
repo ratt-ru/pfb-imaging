@@ -324,7 +324,7 @@ def image_data(data,
     mask = (~flag).astype(np.uint8)
     # apply weighting
     if robustness is not None:
-        counts = compute_counts(
+        counts = _compute_counts(
                 clone(uvw),
                 freq,
                 mask,
