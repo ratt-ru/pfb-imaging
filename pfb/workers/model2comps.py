@@ -70,13 +70,19 @@ def _model2comps(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.postfix}.dds'
-    coeff_name = f'{basename}_{opts.postfix}_{opts.model_name.lower()}.mds'
+    if opts.model_out is not None:
+        coeff_name = opts.model_out
+    else:
+        coeff_name = f'{basename}_{opts.postfix}_{opts.model_name.lower()}.mds'
 
     if os.path.isdir(coeff_name):
         if opts.overwrite:
             print(f'Removing {coeff_name}', file=log)
             import shutil
             shutil.rmtree(coeff_name)
+        else:
+            raise RuntimeError(f"{coeff_name} exists. "
+                               f"Set --overwrite if you meant to overwrite it.")
 
     dds = xds_from_zarr(dds_name,
                         chunks={'x':-1,
@@ -121,15 +127,26 @@ def _model2comps(**kw):
         wsums[...] = 1.0
 
     if opts.min_val is not None:
-        model = np.where(np.abs(model) >= opts.min_val, model, 0.0)
+        mmfs = model[wsums>0]
+        if mmfs.ndim==3:
+            mmfs = np.mean(mmfs, axis=0)
+        elif mmfs.ndim==4:
+            mmfs = np.mean(mmfs, axis=(0,1))
+        model = np.where(np.abs(mmfs)[None, None] >= opts.min_val, model, 0.0)
 
     if not np.any(model):
         raise ValueError(f'Model is empty or has no components above {opts.min_val}')
     radec = (dds[0].ra, dds[0].dec)
 
-    coeffs, Ix, Iy, expr, params, texpr, fexpr = \
-        fit_image_cube(mtimes, mfreqs, model, wgt=wsums,
-                       nbasisf=opts.nbasisf, method=opts.fit_mode)
+    try:
+        coeffs, Ix, Iy, expr, params, texpr, fexpr = \
+            fit_image_cube(mtimes, mfreqs, model, wgt=wsums,
+                        nbasisf=opts.nbasisf, method=opts.fit_mode)
+    except np.linalg.LinAlgError as e:
+        print(f"Exception {e} raised during fit ."
+              f"Do you perhaps have empty sub-bands?"
+              f"Try decreasing nbasisf", file=log)
+        quit()
 
     # save interpolated dataset
     data_vars = {

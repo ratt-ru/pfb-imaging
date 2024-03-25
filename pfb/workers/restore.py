@@ -109,7 +109,7 @@ def _restore(**kw):
         # sanity check
         try:
             psf_mismatch_mfs = np.abs(psf_mfs.max() - 1.0)
-            psf_mismatch = np.abs(np.amax(psf, axis=(1,2)) - 1.0).max()
+            psf_mismatch = np.abs(np.amax(psf, axis=(1,2))[fmask] - 1.0).max()
             assert psf_mismatch_mfs < 1e-5
             assert psf_mismatch < 1e-5
         except Exception as e:

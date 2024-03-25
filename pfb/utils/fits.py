@@ -100,22 +100,22 @@ def add_beampars(hdr, GaussPar, GaussPars=None, unit2deg=1.0):
     GaussPar - MFS beam pars
     GaussPars - beam pars for cube
     """
-    if len(GaussPar) == 3:
+    if len(GaussPar) == 1:
+        GaussPar = GaussPar[0]
+    elif len(GaussPar) != 3:
+        raise ValueError('Invalid value for GaussPar')
+
+    if not np.isnan(GaussPar).any():
         hdr['BMAJ'] = GaussPar[0]*unit2deg
         hdr['BMIN'] = GaussPar[1]*unit2deg
         hdr['BPA'] = GaussPar[2]*unit2deg
-    elif len(GaussPar) == 1:
-        hdr['BMAJ'] = GaussPar[0][0]*unit2deg
-        hdr['BMIN'] = GaussPar[0][1]*unit2deg
-        hdr['BPA'] = GaussPar[0][2]*unit2deg
-    else:
-        raise ValueError('Invalid value for GaussPar')
 
     if GaussPars is not None:
         for i in range(len(GaussPars)):
-            hdr['BMAJ' + str(i+1)] = GaussPars[i][0]*unit2deg
-            hdr['BMIN' + str(i+1)] = GaussPars[i][1]*unit2deg
-            hdr['PA' + str(i+1)] = GaussPars[i][2]*unit2deg
+            if not np.isnan(GaussPars[i]).any():
+                hdr['BMAJ' + str(i+1)] = GaussPars[i][0]*unit2deg
+                hdr['BMIN' + str(i+1)] = GaussPars[i][1]*unit2deg
+                hdr['PA' + str(i+1)] = GaussPars[i][2]*unit2deg
 
     return hdr
 
