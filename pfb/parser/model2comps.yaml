@@ -45,6 +45,11 @@ inputs:
     default: 1e-10
     info:
       Multiple of the identity to add to the hessian for stability
+  model-out:
+    dtype: str
+    info:
+      Optional explicit output name.
+      Otherwise the default naming convention is used.
 
   _include:
     - (.)dist.yml

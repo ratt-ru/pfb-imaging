@@ -536,6 +536,9 @@ def fitcleanbeam(psf: np.ndarray,
     Gausspars = []
     for v in range(nband):
         # make sure psf is normalised
+        if not psf[v].any():
+            Gausspars.append([np.nan, np.nan, np.nan])
+            continue
         psfv = psf[v] / psf[v].max()
         # find regions where psf is above level
         mask = np.where(psfv > level, 1.0, 0)
