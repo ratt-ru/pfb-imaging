@@ -53,190 +53,54 @@ def fastim(**kw):
                 raise ValueError(f"No gain table  at {gt}")
         opts.gain_table = gainnames
     if opts.product.upper() not in ["I","Q", "U", "V"]:
-            # "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
     if opts.transfer_model_from is not None:
         modelstore = DaskMSStore(opts.transfer_model_from.rstrip('/'))
         opts.transfer_model_from = modelstore.url
     OmegaConf.set_struct(opts, True)
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
+
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
 
     with ExitStack() as stack:
-        from pfb import set_client
-        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
+        os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
+        os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
+        os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
+        os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
+        import numexpr as ne
+        max_cores = ne.detect_number_of_cores()
+        ne_threads = min(max_cores, opts.nvthreads)
+        os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
         import dask
-        from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
-        import numpy as np  # has to be after set client
-        from pfb.utils.misc import compute_context
-        from pfb.utils.fits import dds2fits, dds2fits_mfs
-        from PIL import Image, ImageDraw, ImageFont
+        dask.config.set(**{'array.slicing.split_large_chunks': False})
 
-        # TODO - prettier config printing
-        print('Input Options:', file=log)
-        for key in opts.keys():
-            print('     %25s = %s' % (key, opts[key]), file=log)
+        # set up client
+        host_address = opts.host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
+        if host_address is not None:
+            from distributed import Client
+            print("Initialising distributed client.", file=log)
+            client = stack.enter_context(Client(host_address))
+        else:
+            from dask.distributed import Client, LocalCluster
+            print("Initialising client with LocalCluster.", file=log)
+            with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
+                cluster = LocalCluster(processes=True,
+                                       n_workers=opts.nworkers,
+                                       threads_per_worker=opts.nthreads_dask,
+                                       memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                                       asynchronous=False)
+                cluster = stack.enter_context(cluster)
+                client = stack.enter_context(Client(cluster))
 
+        client.wait_for_workers(opts.nworkers)
 
-        if opts.make_fds:
-            print("Constructing graph", file=log)
-            ti = time.time()
-            out_datasets = _fastim(**opts)
-
-            # assign time and band ids
-            freqs_out = []
-            times_out = []
-            for ds in out_datasets:
-                freqs_out.append(ds.freq_out)
-                times_out.append(ds.time_out)
-
-            freqs_out = np.unique(np.array(freqs_out))
-            times_out = np.unique(np.array(times_out))
-
-            for i, ds in enumerate(out_datasets):
-                bandid = np.where(freqs_out == ds.freq_out)[0][0]
-                timeid = np.where(times_out == ds.time_out)[0][0]
-                ds = ds.assign_attrs(**{
-                    'bandid': bandid,
-                    'timeid': timeid
-                })
-                out_datasets[i] = ds
-
-            print(f"Graph construction took {time.time() - ti}s", file=log)
-            print("Compute starting", file=log)
-            ti = time.time()
-            if len(out_datasets):
-                writes = xds_to_zarr(out_datasets,
-                                    f'{basename}_{opts.postfix}.fds',
-                                    columns='ALL',
-                                    rechunk=True)
-            else:
-                raise ValueError('No datasets found to write. '
-                                'Data completely flagged maybe?')
-
-            # dask.visualize(writes, color="order", cmap="autumn",
-            #                node_attr={"penwidth": "4"},
-            #                filename=basename + '_writes_I_ordered_graph.pdf',
-            #                optimize_graph=False)
-            # dask.visualize(writes, filename=basename +
-            #                '_writes_I_graph.pdf', optimize_graph=False)
-            # import ipdb; ipdb.set_trace()
-
-            with compute_context(opts.scheduler, f'{ldir}/fastim_{timestamp}'):
-                dask.compute(writes, optimize_graph=False)
-
-
-            print(f"Compute took {time.time() - ti}s", file=log)
-
-        fds = xds_from_zarr(f'{basename}_{opts.postfix}.fds',
-                            chunks={'x': -1, 'y': -1})
-        # TODO!!
-        fds = dask.persist(fds)[0]
-
-
-        # need to redo if not making the fds
-        freqs_out = []
-        times_out = []
-        for ds in fds:
-            freqs_out.append(ds.freq_out)
-            times_out.append(ds.time_out)
-
-        freqs_out = np.unique(np.array(freqs_out))
-        times_out = np.unique(np.array(times_out))
-        nframes = times_out.size
-        nx, ny = fds[0].RESIDUAL.shape
-
-        # convert to fits files
-        if opts.fits_mfs or opts.fits_cubes:
-            print("Writing fits", file=log)
-            tj = time.time()
-
-        fitsout = []
-        if opts.fits_mfs:
-            fitsout.append(dds2fits_mfs(fds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-
-        if opts.fits_cubes:
-            fitsout.append(dds2fits(fds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-
-        if len(fitsout):
-            with compute_context(opts.scheduler, f'{ldir}/fastim_fits_{timestamp}'):
-                dask.compute(fitsout)
-            print(f"Fits writing took {time.time() - tj}s", file=log)
-
-        if opts.movie_mfs or opts.movie_cubes:
-            print("Filming", file=log)
-            fontPath = '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf'
-            sans30  =  ImageFont.truetype ( fontPath, 30 )
-            tj = time.time()
-
-        if opts.movie_mfs:
-            frames = []
-            for t in range(len(times_out)):
-                res = np.zeros(fds[0].RESIDUAL.shape)
-                rmss = np.zeros(len(times_out))
-                wsum = 0.0
-                for ds in fds:
-                    # bands share same time axis so accumulate
-                    if ds.timeid != t:
-                        continue
-                    else:
-                        res += ds.RESIDUAL.values
-                        wsum += ds.WSUM.values
-                        utc = ds.utc
-
-                # min to zero
-                res -= res.min()
-                # max to 255
-                res *= 255/res.max()
-                res = res.astype('uint8')
-                nn = Image.fromarray(res)
-                prog = str(t).zfill(len(str(nframes)))+' / '+str(nframes)
-                draw = ImageDraw.Draw(nn)
-                draw.text((0.03*nx,0.90*ny),'Frame : '+prog,fill=('white'),font=sans30)
-                draw.text((0.03*nx,0.93*ny),'Time  : '+utc,fill=('white'),font=sans30)
-                # draw.text((0.03*nx,0.96*ny),'Image : '+ff,fill=('white'),font=sans30)
-                frames.append(nn)
-            frames[0].save(f'{basename}_{opts.postfix}_animated_mfs.gif',
-                           save_all=True,
-                           append_images=frames[1:],
-                           duration=35,
-                           loop=1)
-
-        if opts.movie_cubes:
-            for b in range(len(freqs_out)):
-                frames = []
-                for ds in fds:
-                    if ds.bandid != b:
-                        continue
-                    res = ds.RESIDUAL.values
-                    # min to zero
-                    res -= res.min()
-                    # max to 255
-                    res *= 255/res.max()
-                    res = res.astype('uint8')
-                    nn = Image.fromarray(res)
-                    tt = ds.utc
-                    t = ds.timeid
-                    prog = str(t).zfill(len(str(nframes)))+' / '+str(nframes)
-                    draw = ImageDraw.Draw(nn)
-                    draw = ImageDraw.Draw(nn)
-                    draw.text((0.03*nx,0.90*ny),'Frame : '+prog,fill=('white'),font=sans30)
-                    draw.text((0.03*nx,0.93*ny),'Time  : '+utc,fill=('white'),font=sans30)
-                    frames.append(nn)
-                frames[0].save(f'{basename}_{opts.postfix}_animated_band{b:04d}.gif',
-                               save_all=True,
-                               append_images=frames[1:],
-                               duration=35,
-                               loop=1)
-
-
-        if opts.movie_mfs or opts.movie_cubes:
-            print(f"Filming took {time.time() - tj}s", file=log)
-
-
-        if opts.scheduler=='distributed':
-            from distributed import get_client
-            client = get_client()
-            client.close()
+        print("Compute starting", file=log)
+        ti = time.time()
+        _fastim(**opts)
+        print(f"Compute took {time.time() - ti}s", file=log)
+        client.close()
 
         print("All done here.", file=log)
 
@@ -255,10 +119,9 @@ def _fastim(**kw):
     import numpy as np
     from pfb.utils.misc import construct_mappings
     import dask
-    dask.config.set(**{'array.slicing.split_large_chunks': False})
+    from distributed import get_client, wait
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
-    from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
     from daskms.fsspec_store import DaskMSStore
     import dask.array as da
     from africanus.constants import c as lightspeed
@@ -350,15 +213,18 @@ def _fastim(**kw):
 
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
-    # crude arithmetic
+    # crude column arithmetic
     dc = opts.data_column.replace(" ", "")
     if "+" in dc:
         dc1, dc2 = dc.split("+")
+        operator="+"
     elif "-" in dc:
         dc1, dc2 = dc.split("-")
+        operator="+"
     else:
         dc1 = dc
         dc2 = None
+        operator=None
 
     # assumes measurement sets have the same columns
     columns = (dc1,
@@ -400,7 +266,8 @@ def _fastim(**kw):
     else:
         mds = None
 
-    out_datasets = []
+    futures = []
+    client = get_client()
     for ims, ms in enumerate(opts.ms):
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
                           table_schema=schema, group_cols=group_by)
@@ -442,8 +309,8 @@ def _fastim(**kw):
                 # select all rows for output dataset
                 Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
 
-                for flow, fcounts in zip(freq_mapping[ms][idt]['start_indices'],
-                                         freq_mapping[ms][idt]['counts']):
+                for fi, (flow, fcounts) in enumerate(zip(freq_mapping[ms][idt]['start_indices'],
+                                                         freq_mapping[ms][idt]['counts'])):
                     Inu = slice(flow, flow + fcounts)
 
                     subds = ds[{'row': Irow, 'chan': Inu}]
@@ -456,9 +323,17 @@ def _fastim(**kw):
                     else:
                         jones = None
 
-                    if opts.product.upper() in ["I", "Q", "U", "V"]:
-                        out_ds = single_stokes_image(
-                            ds=subds,
+                    fut = client.submit(single_stokes_image,
+                            data=getattr(subds, dc1).data,
+                            data2=None if dc2 is None else getattr(subds, dc2).data,
+                            operator=operator,
+                            ant1=subds.ANTENNA1.data,
+                            ant2=subds.ANTENNA2.data,
+                            uvw=subds.UVW.data,
+                            frow=subds.FLAG_ROW.data,
+                            flag=subds.FLAG.data,
+                            sigma=None if opts.sigma_column is None else getattr(subds, opts.sigma_column).data,
+                            weight=None if opts.weight_column is None else getattr(subds, opts.weight_column).data,
                             mds=mds,
                             jones=jones,
                             opts=opts,
@@ -472,26 +347,14 @@ def _fastim(**kw):
                             cell_rad=cell_rad,
                             radec=radecs[ms][idt],
                             antpos=antpos[ms],
-                            poltype=poltype[ms])
-                    # elif opts.product.upper() in ["XX", "YX", "XY", "YY",
-                    #                               "RR", "RL", "LR", "LL"]:
-                    #     out_ds = single_corr(
-                    #         ds=subds,
-                    #         jones=jones,
-                    #         opts=opts,
-                    #         freq=freqs[ms][idt][Inu],
-                    #         chan_width=chan_widths[ms][idt][Inu],
-                    #         utimes=utimes[ms][idt][It],
-                    #         tbin_idx=ridx,
-                    #         tbin_counts=rcnts,
-                    #         cell_rad=cell_rad,
-                    #         radec=radecs[ms][idt])
-                    else:
-                        raise NotImplementedError(f"Product {args.product} not "
-                                                "supported yet")
-                    # if all data in a dataset is flagged we return None and
-                    # ignore this chunk of data
-                    if out_ds is not None:
-                        out_datasets.append(out_ds)
+                            poltype=poltype[ms],
+                            fieldid=subds.FIELD_ID,
+                            ddid=ds.DATA_DESC_ID,
+                            scanid=ds.SCAN_NUMBER,
+                            fds_store=fdsstore.url,
+                            bandid=fi,
+                            timeid=ti)
+                    futures.append(fut)
 
-    return out_datasets
+    wait(futures)
+    return

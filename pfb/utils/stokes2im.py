@@ -2,8 +2,7 @@ import numpy as np
 import numexpr as ne
 from numba import njit, prange, literally
 from numba.extending import overload
-from dask.graph_manipulation import clone
-import dask.array as da
+import dask
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
 # from quartical.utils.numba import coerce_literal
@@ -13,9 +12,9 @@ from pfb.utils.misc import JIT_OPTIONS, weight_from_sigma, combine_columns
 import dask
 from quartical.utils.dask import Blocker
 from pfb.utils.stokes import stokes_funcs
-from pfb.utils.stokes2vis import _weight_data
 from pfb.operators.gridder import image_data_products
-from pfb.utils.weighting import _compute_counts, _counts_to_weights
+from pfb.utils.weighting import (_compute_counts, _counts_to_weights,
+                                 _weight_data, _filter_extreme_counts)
 from pfb.utils.misc import eval_coeffs_to_slice
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from daskms.experimental.zarr import xds_from_zarr
@@ -29,21 +28,39 @@ import warnings
 warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 
 
-def single_stokes_image(ds=None,
-                        mds=None,
-                  jones=None,
-                  opts=None,
-                  nx=None,
-                  ny=None,
-                  freq=None,
-                  chan_width=None,
-                  cell_rad=None,
-                  utime=None,
-                  tbin_idx=None,
-                  tbin_counts=None,
-                  radec=None,
-                  antpos=None,
-                  poltype=None):
+def single_stokes_image(
+                    data=None,
+                    data2=None,
+                    operator=None,
+                    ant1=None,
+                    ant2=None,
+                    uvw=None,
+                    frow=None,
+                    flag=None,
+                    sigma=None,
+                    weight=None,
+                    mds=None,
+                    jones=None,
+                    opts=None,
+                    nx=None,
+                    ny=None,
+                    freq=None,
+                    chan_width=None,
+                    cell_rad=None,
+                    utime=None,
+                    tbin_idx=None,
+                    tbin_counts=None,
+                    radec=None,
+                    antpos=None,
+                    poltype=None,
+                    fieldid=None,
+                    ddid=None,
+                    scanid=None,
+                    fds_store=None,
+                    bandid=None,
+                    timeid=None):
+
+    data, data2, ant1, ant2, uvw, frow, flag, sigma, weight = dask.compute(data, data2, ant1, ant2, uvw, frow, flag, sigma, weight)
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -52,26 +69,13 @@ def single_stokes_image(ds=None,
         real_type = np.float64
         complex_type = np.complex128
 
-    # crude arithmetic
-    dc = opts.data_column.replace(" ", "")
-    if "+" in dc:
-        dc1, dc2 = dc.split("+")
-    elif "-" in dc:
-        dc1, dc2 = dc.split("-")
-    else:
-        dc1 = dc
-        dc2 = None
-
-    data = getattr(ds, dc1).data
-    if dc2 is not None:
-        data2 = getattr(ds, dc2).data
-        data = da.map_blocks(combine_columns,
-                             data,
-                             data2,
-                             dc,
-                             dc1,
-                             dc2,
-                             chunks=data.chunks)
+    if data2 is not None:
+        try:
+            assert (operator=='+' or operator=='-')
+        except Exception as e:
+            raise e
+        data = ne.evaluate(f'data {operator} data2',
+                           out=data)
 
     nrow, nchan, ncorr = data.shape
     ntime = utime.size
@@ -82,39 +86,26 @@ def single_stokes_image(ds=None,
     freq_min = freq.min()
     freq_max = freq.max()
 
-    # clone shared nodes
-    ant1 = clone(ds.ANTENNA1.data)
-    ant2 = clone(ds.ANTENNA2.data)
-    uvw = clone(ds.UVW.data)
-
     # MS may contain auto-correlations
-    if 'FLAG_ROW' in ds:
-        frow = clone(ds.FLAG_ROW.data) | (ant1 == ant2)
+    if frow is not None:
+        frow = frow | (ant1 == ant2)
     else:
         frow = (ant1 == ant2)
 
-    if opts.flag_column is not None:
-        flag = getattr(ds, opts.flag_column).data
-        flag = da.any(flag, axis=2)
-        flag = da.logical_or(flag, frow[:, None])
+    if flag is not None:
+        flag = np.any(flag, axis=2)
+        flag = np.logical_or(flag, frow[:, None])
     else:
-        flag = da.broadcast_to(frow[:, None], (nrow, nchan))
+        flag = np.broadcast_to(frow[:, None], (nrow, nchan))
 
-    if opts.sigma_column is not None:
-        sigma = getattr(ds, opts.sigma_column).data
-        # weight = 1.0/sigma**2
-        weight = da.map_blocks(weight_from_sigma,
-                               sigma,
-                               chunks=sigma.chunks)
-    elif opts.weight_column is not None:
-        weight = getattr(ds, opts.weight_column).data
-        if opts.weight_column=='WEIGHT':
-            weight = da.broadcast_to(weight[:, None, :],
-                                     (nrow, nchan, ncorr),
-                                     chunks=data.chunks)
+    if sigma is not None:
+        weight = ne.evaluate('1.0/sigma**2')
+    elif weight is not None:
+        if weight.ndim == 2:
+            weight = np.broadcast_to(weight[:, None, :],
+                                     (nrow, nchan, ncorr))
     else:
-        weight = da.ones((nrow, nchan, ncorr),
-                         chunks=data.chunks,
+        weight = np.ones((nrow, nchan, ncorr),
                          dtype=real_type)
 
     if data.dtype != complex_type:
@@ -127,7 +118,7 @@ def single_stokes_image(ds=None,
         if jones.dtype != complex_type:
             jones = jones.astype(complex_type)
         # qcal has chan and ant axes reversed compared to pfb implementation
-        jones = da.swapaxes(jones, 1, 2)
+        jones = np.swapaxes(jones, 1, 2)
         # data are not 2x2 so we need separate labels
         # for jones correlations and data/weight correlations
         # reshape to dispatch with overload
@@ -141,15 +132,9 @@ def single_stokes_image(ds=None,
             raise ValueError("Incorrect number of correlations of "
                              f"{jones_ncorr} for product {opts.product}")
     else:
-        jones = da.ones((ntime, nant, nchan, 1, 2),
-                        chunks=(-1,)*5,
+        jones = np.ones((ntime, nant, nchan, 1, 2),
                         dtype=complex_type)
         jout = 'rafdx'
-
-    # Note we do not chunk at this level since all the chunking happens upfront
-    # we cast to dask arrays simply to defer the compute
-    tbin_idx = da.from_array(tbin_idx, chunks=(-1))
-    tbin_counts = da.from_array(tbin_counts, chunks=(-1))
 
     # compute lm coordinates of target
     if opts.target is not None:
@@ -178,171 +163,48 @@ def single_stokes_image(ds=None,
         tra = radec[0]
         tdec = radec[1]
 
-    blocker = Blocker(image_data, 'rf')
-    blocker.add_input("data", data, 'rfc')
-    blocker.add_input('weight', weight, 'rfc')
-    blocker.add_input('flag', flag, 'rf')
-    blocker.add_input('uvw', uvw, ('row','three'))
-    blocker.add_input('freq', da.from_array(freq, chunks=(-1,)), ('chan',))
-    blocker.add_input('jones', jones, jout)
-    blocker.add_input('tbin_idx', tbin_idx, 'r')
-    blocker.add_input('tbin_counts', tbin_counts, 'r')
-    blocker.add_input('ant1', ant1, 'r')
-    blocker.add_input('ant2', ant2, 'r')
-    blocker.add_input('pol', poltype)
-    blocker.add_input('product', opts.product)
-    blocker.add_input('nc', str(ncorr))  # dispatch based on ncorr to deal with dual pol
-    blocker.add_input('nx', nx)
-    blocker.add_input('ny', ny)
-    blocker.add_input('cellx', cell_rad)
-    blocker.add_input('celly', cell_rad)
-    blocker.add_input('mds', mds)
-    # if model is not None:
-    #     blocker.add_input('model', model, ('x', 'y'))
-    # else:
-    #     blocker.add_input('model', None)
-    blocker.add_input('robustness', opts.robustness)
-    blocker.add_input('x0', x0)
-    blocker.add_input('y0', y0)
-    blocker.add_input('nthreads', opts.nvthreads)
-    blocker.add_input('epsilon', opts.epsilon)
-    blocker.add_input('do_wgridding', opts.do_wgridding)
-    blocker.add_input('double_accum', opts.double_accum)
-    blocker.add_input('l2reweight_dof', opts.l2reweight_dof)
-    blocker.add_input('time_out', time_out)
-    blocker.add_input('freq_out', freq_out)
-
-    blocker.add_output(
-        'WSUM',
-        ('scalar',),
-        ((1,),),
-        weight.dtype)
-
-    blocker.add_output(
-        'RMS',
-        ('scalar',),
-        ((1,),),
-        weight.dtype)
-
-    blocker.add_output(
-        'RESIDUAL',
-        ('x', 'y'),
-        ((nx,), (ny,)),
-        weight.dtype)
-
-    output_dict = blocker.get_dask_outputs()
-
-    data_vars = {}
-    data_vars['WSUM'] = (('scalar',), output_dict['WSUM'])
-    data_vars['RMS'] = (('scalar',), output_dict['RMS'])
-    data_vars['RESIDUAL'] = (('x', 'y'), output_dict['RESIDUAL'])
-
-    # coords = {'chan': (('chan',), freq),
-    #           'time': (('time',), utime),
-    # }
-
-    unix_time = quantity(f'{time_out}s').to_unix_time()
-    utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
-
-
-    # TODO - provide time and freq centroids
-    attrs = {
-        'ra' : tra,
-        'dec': tdec,
-        'x0': x0,
-        'y0': y0,
-        'cell_rad': cell_rad,
-        'fieldid': ds.FIELD_ID,
-        'ddid': ds.DATA_DESC_ID,
-        'scanid': ds.SCAN_NUMBER,
-        'freq_out': freq_out,
-        'freq_min': freq_min,
-        'freq_max': freq_max,
-        'time_out': time_out,
-        'time_min': utime.min(),
-        'time_max': utime.max(),
-        'product': opts.product,
-        'utc': utc
-    }
-
-    out_ds = Dataset(data_vars, # coords=coords,
-                     attrs=attrs)
-
-    out_ds = out_ds.chunk({'x':4096,
-                           'y':4096})
-
-    return out_ds.unify_chunks()
-
-
-def image_data(data,
-               weight,
-               flag,
-               uvw,
-               freq,
-               jones,
-               tbin_idx,
-               tbin_counts,
-               ant1, ant2,
-               pol, product, nc,
-               nx, ny,
-               cellx, celly,
-               mds,
-            #    model,
-               robustness,
-               x0, y0,
-               nthreads,
-               epsilon,
-               do_wgridding,
-               double_accum,
-               l2reweight_dof,
-               time_out,
-               freq_out):
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
     vis, wgt = _weight_data(data, weight, flag, jones,
                             tbin_idx, tbin_counts,
                             ant1, ant2,
-                            literally(pol),
-                            literally(product),
-                            literally(nc))
+                            literally(poltype),
+                            literally(opts.product),
+                            literally(str(ncorr)))
 
     mask = (~flag).astype(np.uint8)
-    # apply weighting
-    if robustness is not None:
+
+
+    # TODO - we may want to apply this to bigger chunks of data
+    if opts.robustness is not None:
         counts = _compute_counts(
-                clone(uvw),
+                uvw,
                 freq,
                 mask,
                 nx,
                 ny,
-                cellx,
-                celly,
+                cell_rad,
+                cell_rad,
                 real_type,
                 ngrid=opts.nvthreads)
         # get rid of artificially high weights corresponding to
         # nearly empty cells
         if opts.filter_extreme_counts:
-            counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
+            counts = _filter_extreme_counts(counts,
+                                            nbox=opts.filter_nbox,
                                             nlevel=opts.filter_level)
 
 
     if mds is not None:
-        # we only want to load these once
-        model_coeffs = mds.coefficients.values
-        locx = mds.location_x.values
-        locy = mds.location_y.values
-        params = mds.params.values
-        coeffs = mds.coefficients.values
-
-
         model = eval_coeffs_to_slice(
             time_out,
             freq_out,
-            model_coeffs,
-            locx, locy,
+            mds.coefficients.values,
+            mds.location_x.values,
+            mds.location_y.values,
             mds.parametrisation,
-            params,
+            mds.params.values,
             mds.texpr,
             mds.fexpr,
             mds.npix_x, mds.npix_y,
@@ -355,6 +217,7 @@ def image_data(data,
         )
 
         # do not apply weights in this direction
+        # do not change model resolution
         model_vis = dirty2vis(
             uvw=uvw,
             freq=freq,
@@ -363,32 +226,25 @@ def image_data(data,
             pixsize_y=mds.cell_rad_y,
             center_x=mds.center_x,
             center_y=mds.center_y,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
+            epsilon=opts.epsilon,
+            do_wgridding=opts.do_wgridding,
             flip_v=False,
-            nthreads=nthreads,
+            nthreads=opts.nvthreads,
             divide_by_n=False,
             sigma_min=1.1, sigma_max=3.0)
 
-        residual_vis = vis - model_vis
-        # apply mask to both
-        residual_vis *= mask
+        ne.evaluate('(vis-model_vis)*mask', out=vis)
 
         if l2reweight_dof:
-            ressq = (residual_vis*residual_vis.conj()).real
+            ressq = (vis*vis.conj()).real
             wcount = mask.sum()
             if wcount:
                 ovar = ressq.sum()/wcount  # use 67% quantile?
                 wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
             else:
                 wgt = None
-    else:
-        residual_vis = vis
 
-
-    # TODO - this needs to be moved outside and done on bigger
-    # chunks of data
-    if robustness is not None:
+    if opts.robustness is not None:
         if counts is None:
             raise ValueError('counts are None but robustness specified. '
                              'This is probably a bug!')
@@ -397,36 +253,69 @@ def image_data(data,
             uvw,
             freq,
             nx, ny,
-            cellx, celly,
+            cell_rad, cell_rad,
             robustness)
         if wgt is not None:
             wgt *= imwgt
         else:
             wgt = imwgt
 
-    wsum = wgt[mask.astype(bool)].sum()
+    wsum = wgt[~flag].sum()
 
     residual = vis2dirty(
         uvw=uvw,
         freq=freq,
-        vis=residual_vis,
+        vis=vis,
         wgt=wgt,
         mask=mask,
         npix_x=nx, npix_y=ny,
-        pixsize_x=cellx, pixsize_y=celly,
+        pixsize_x=cell_rad, pixsize_y=cell_rad,
         center_x=x0, center_y=y0,
-        epsilon=epsilon,
+        epsilon=opts.epsilon,
         flip_v=False,  # hardcoded for now
-        do_wgridding=do_wgridding,
+        do_wgridding=opts.do_wgridding,
         divide_by_n=False,  # hardcoded for now
-        nthreads=nthreads,
+        nthreads=opts.nvthreads,
         sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=double_accum)
+        double_precision_accumulation=opts.double_accum)
 
     rms = np.std(residual)
-    out_dict = {}
-    out_dict['WSUM'] = wsum
-    out_dict['RMS'] = rms
-    out_dict['RESIDUAL'] = residual
 
-    return out_dict
+    data_vars = {}
+    data_vars['RESIDUAL'] = (('x', 'y'), residual)
+
+    coords = {'chan': (('chan',), freq),
+              'time': (('time',), utime),
+    }
+
+    unix_time = quantity(f'{time_out}s').to_unix_time()
+    utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+
+
+    # TODO - provide time and freq centroids
+    attrs = {
+        'ra' : tra,
+        'dec': tdec,
+        'x0': x0,
+        'y0': y0,
+        'cell_rad': cell_rad,
+        'fieldid': fieldid,
+        'ddid': ddid,
+        'scanid': scanid,
+        'freq_out': freq_out,
+        'freq_min': freq_min,
+        'freq_max': freq_max,
+        'time_out': time_out,
+        'time_min': utime.min(),
+        'time_max': utime.max(),
+        'product': opts.product,
+        'utc': utc,
+        'wsum':wsum,
+        'rms':rms
+    }
+
+    out_ds = Dataset(data_vars,  #coords=coords,
+                     attrs=attrs)
+    out_ds.to_zarr(f'{fds_store}/band{bandid}_time{timeid}.zarr')
+
+    return
