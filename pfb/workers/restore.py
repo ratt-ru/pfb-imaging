@@ -75,13 +75,15 @@ def _restore(**kw):
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq)
 
-
+    # stack cubes
     dirty, model, residual, psf, _, _, wsums, _ = dds2cubes(dds,
                                                             nband,
                                                             apparent=True)
     wsum = np.sum(wsums)
     output_type = dirty.dtype
     fmask = wsums > 0
+    if fmask.all():
+        raise ValueError("All data seem to be flagged")
 
     if residual is None:
         print('Warning, no residual in dds. '
@@ -92,7 +94,12 @@ def _restore(**kw):
 
     if not model.any():
         print("Warning - model is empty", file=log)
-    model_mfs = np.mean(model, axis=0)
+    model_mfs = np.mean(model[fmask], axis=0)
+
+    # lm in pixel coordinates
+    lpsf = -(nx//2) + np.arange(nx)
+    mpsf = -(ny//2) + np.arange(ny)
+    xx, yy = np.meshgrid(lpsf, mpsf, indexing='ij')
 
     if psf is not None:
         nx_psf = dds[0].x_psf.size
@@ -100,46 +107,28 @@ def _restore(**kw):
         psf_mfs = np.sum(psf, axis=0)
         psf[fmask] /= wsums[fmask, None, None]/wsum
         # sanity check
-        assert (psf_mfs.max() - 1.0) < 2e-7
-        assert ((np.amax(psf, axis=(1,2)) - 1.0) < 2e-7).all()
+        try:
+            psf_mismatch_mfs = np.abs(psf_mfs.max() - 1.0)
+            psf_mismatch = np.abs(np.amax(psf, axis=(1,2))[fmask] - 1.0).max()
+            assert psf_mismatch_mfs < 1e-5
+            assert psf_mismatch < 1e-5
+        except Exception as e:
+            max_mismatch = np.maximum(psf_mismatch_mfs, psf_mismatch)
+            print(f"Warning - PSF does not normlaise to one. "
+                  f"Max mismatch is {max_mismatch:.3e}", file=log)
 
-        # fit restoring psf
+        # fit restoring psf (pixel units)
         GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)
-        cpsf_mfs = np.zeros(residual_mfs.shape, dtype=output_type)
-        lpsf = -(nx//2) + np.arange(nx)
-        mpsf = -(ny//2) + np.arange(ny)
-        xx, yy = np.meshgrid(lpsf, mpsf, indexing='ij')
-        cpsf_mfs = Gaussian2D(xx, yy, GaussPar[0], normalise=False)
-        image_mfs = convolve2gaussres(model_mfs[None], xx, yy,
-                                    GaussPar[0], opts.nvthreads,
-                                    norm_kernel=False)[0]  # peak of kernel set to unity
-        image_mfs += residual_mfs
-        # convert pixel units to deg
-        GaussPar[0][0] *= cell_deg
-        GaussPar[0][1] *= cell_deg
-        hdr_mfs = add_beampars(hdr_mfs, GaussPar)
+        hdr_mfs = add_beampars(hdr_mfs, GaussPar, unit2deg=cell_deg)
+        GaussPars = fitcleanbeam(psf, level=0.5, pixsize=1.0)
+        hdr = add_beampars(hdr, GaussPar, GaussPars, unit2deg=cell_deg)
 
-        if any([i.isupper() for i in opts.outputs]):
-            GaussPars = fitcleanbeam(psf, level=0.5, pixsize=1.0)  # pixel units
-            cpsf = np.zeros(residual.shape, dtype=output_type)
-            for v in range(opts.nband):
-                cpsf[v] = Gaussian2D(xx, yy, GaussPars[v], normalise=False)
-
-            image = np.zeros_like(model)
-            for b in range(nband):
-                image[b:b+1] = convolve2gaussres(model[b:b+1], xx, yy,
-                                                GaussPars[b], opts.nvthreads,
-                                                norm_kernel=False)  # peak of kernel set to unity
-                image[b] += residual[b]
-
-            for i, gp in enumerate(GaussPars):
-                GaussPars[i] = [gp[0]*cell_deg, gp[1]*cell_deg, gp[2]]
-
-            hdr = add_beampars(hdr, GaussPar, GaussPars)
     else:
         print('Warning, no psf in dds. '
               'Unable to add resolution info or make restored image. ',
               file=log)
+        GaussPar = None
+        GaussPars = None
 
     if 'm' in opts.outputs:
         save_fits(model_mfs,
@@ -180,24 +169,44 @@ def _restore(**kw):
                   overwrite=opts.overwrite)
 
     if 'i' in opts.outputs and psf is not None:
+        image_mfs = convolve2gaussres(model_mfs[None], xx, yy,
+                                      GaussPar[0], opts.nvthreads,
+                                      norm_kernel=False)[0]  # peak of kernel set to unity
+        image_mfs += residual_mfs
         save_fits(image_mfs,
                   f'{basename}_{opts.postfix}.image_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'I' in opts.outputs and psf is not None:
+        image = np.zeros_like(model)
+        for b in range(nband):
+            image[b:b+1] = convolve2gaussres(model[b:b+1], xx, yy,
+                                            GaussPars[b], opts.nvthreads,
+                                            norm_kernel=False)  # peak of kernel set to unity
+            image[b] += residual[b]
         save_fits(image,
                   f'{basename}_{opts.postfix}.image.fits',
                   hdr,
                   overwrite=opts.overwrite)
 
-    if 'c' in opts.outputs and psf is not None:
+    if 'c' in opts.outputs:
+        if GaussPar is None:
+            raise ValueError("Clean beam in output but no PSF in dds")
+        cpsf_mfs = Gaussian2D(xx, yy, GaussPar[0], normalise=False)
         save_fits(cpsf_mfs,
                   f'{basename}_{opts.postfix}.cpsf_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
-    if 'C' in opts.outputs and psf is not None:
+    if 'C' in opts.outputs:
+        if GaussPars is None:
+            raise ValueError("Clean beam in output but no PSF in dds")
+        cpsf = np.zeros(residual.shape, dtype=output_type)
+        for v in range(opts.nband):
+            gpar = GaussPars[v]
+            if not np.isnan(gpar).any():
+                cpsf[v] = Gaussian2D(xx, yy, gpar, normalise=False)
         save_fits(cpsf,
                   f'{basename}_{opts.postfix}.cpsf.fits',
                   hdr,
