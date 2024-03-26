@@ -388,10 +388,10 @@ def _grid(xdsi=None, **kw):
            'y': y
         })
 
-        # evaluate beam at x and y coords
+        # evaluate beam at x and y coords (expects degrees)
         cell_deg = np.rad2deg(cell_rad)
-        l = (-(nx//2) + da.arange(nx)) * cell_deg + np.deg2rad(x0)
-        m = (-(ny//2) + da.arange(ny)) * cell_deg + np.deg2rad(y0)
+        l = (-(nx//2) + da.arange(nx)) * cell_deg + np.rad2deg(x0)
+        m = (-(ny//2) + da.arange(ny)) * cell_deg + np.rad2deg(y0)
         # ll, mm = da.meshgrid(l, m, indexing='ij')
         l_beam = ds.l_beam.data
         m_beam = ds.m_beam.data

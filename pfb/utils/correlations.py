@@ -188,7 +188,7 @@ def _weight_data(data, weight, jones, tbin_idx, tbin_counts,
     return _weight_data_impl(data[0], weight[0], jones[0][0][0],
                              tbin_idx, tbin_counts, ant1, ant2)
 
-@njit(nopython=True, nogil=True, cache=True)
+@njit(nogil=True, cache=True)
 def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
                       ant1, ant2):
     # for dask arrays we need to adjust the chunks to

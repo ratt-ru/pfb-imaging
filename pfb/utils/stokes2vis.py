@@ -53,7 +53,7 @@ def single_stokes(ds=None,
 
     data = getattr(ds, dc1).data
     if dc2 is not None:
-        data2 = getattr(ds, dc1).data
+        data2 = getattr(ds, dc2).data
         data = da.map_blocks(combine_columns,
                              data,
                              data2,

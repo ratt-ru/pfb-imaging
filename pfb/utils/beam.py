@@ -131,9 +131,10 @@ def _eval_beam(beam_image, l_in, m_in, l_out, m_out):
         beamo = RGI((l_in, m_in), beam_image,
                     bounds_error=True, method='linear')
         return beamo((ll, mm))
-    except:
-        print("Bounds error raised in beam evaluation. "
-              "Consider setting init.max_field_of_view >  grid.field_of_view",
+    except Exception as e:
+        print(e)
+        print(f"{e} raised in beam evaluation. "
+              "Consider setting init.max_field_of_view > grid.field_of_view",
               file=log)
         beamo = RGI((l_in, m_in), beam_image,
                     bounds_error=False, method='linear', fill_value=None)
@@ -150,4 +151,5 @@ def eval_beam(beam_image, l_in, m_in, l_out, m_out):
                         l_out, None,
                         m_out, None,
                         adjust_chunks={'x': nxo, 'y': nyo},
-                        dtype=float)
+                        dtype=float,
+                        meta=np.empty((nxo, nyo), dtype=float))
