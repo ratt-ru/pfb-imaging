@@ -60,7 +60,8 @@ def single_stokes_image(
                     bandid=None,
                     timeid=None):
 
-    data, data2, ant1, ant2, uvw, frow, flag, sigma, weight = dask.compute(data, data2, ant1, ant2, uvw, frow, flag, sigma, weight)
+    data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones = \
+        dask.compute(data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones)
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -68,14 +69,6 @@ def single_stokes_image(
     elif opts.precision.lower() == 'double':
         real_type = np.float64
         complex_type = np.complex128
-
-    if data2 is not None:
-        try:
-            assert (operator=='+' or operator=='-')
-        except Exception as e:
-            raise e
-        data = ne.evaluate(f'data {operator} data2',
-                           out=data)
 
     nrow, nchan, ncorr = data.shape
     ntime = utime.size
@@ -110,6 +103,15 @@ def single_stokes_image(
 
     if data.dtype != complex_type:
         data = data.astype(complex_type)
+
+    if data2 is not None:
+        try:
+            assert (operator=='+' or operator=='-')
+        except Exception as e:
+            raise e
+        data2 = data2.astype(complex_type)
+        data = ne.evaluate(f'data {operator} data2',
+                           out=data)
 
     if weight.dtype != real_type:
         weight = weight.astype(real_type)
