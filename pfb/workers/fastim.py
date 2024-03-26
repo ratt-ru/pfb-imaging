@@ -355,8 +355,6 @@ def _fastim(**kw):
                             bandid=fi,
                             timeid=ti)
 
-                    import ipdb; ipdb.set_trace()
-                    wait(list(fut))
                     futures.append(fut)
 
     wait(futures)

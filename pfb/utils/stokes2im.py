@@ -189,7 +189,7 @@ def single_stokes_image(
                 ny,
                 cell_rad,
                 cell_rad,
-                real_type,
+                np.float64,  # same type as uvw
                 ngrid=opts.nvthreads)
         # get rid of artificially high weights corresponding to
         # nearly empty cells
@@ -197,6 +197,8 @@ def single_stokes_image(
             counts = _filter_extreme_counts(counts,
                                             nbox=opts.filter_nbox,
                                             nlevel=opts.filter_level)
+
+        counts = counts.sum(axis=0)
 
 
     if mds is not None:

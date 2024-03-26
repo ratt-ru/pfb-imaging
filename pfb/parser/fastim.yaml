@@ -85,7 +85,7 @@ inputs:
       Default (-1, 0, None) -> dataset per spw.
   precision:
     dtype: str
-    default: single
+    default: double
     choices:
       - single
       - double
