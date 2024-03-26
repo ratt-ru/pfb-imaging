@@ -1,6 +1,6 @@
 inputs:
   ms:
-    dtype: List[str]
+    dtype: URI
     required: true
     abbreviation: ms
     info:
@@ -60,15 +60,9 @@ inputs:
     info:
       Column containing data flags. Must be the same across MSs
   gain-table:
-    dtype: List[str]
+    dtype: URI
     info:
       Path to Quartical gain table containing NET gains.
-      There must be a table for each MS and glob(ms) and glob(gt) should match up
-  gain-term:
-    dtype: str
-    default: NET
-    info:
-      Which gain term to use. Default is NET
   integrations-per-image:
     dtype: int
     abbreviation: ipi
@@ -140,11 +134,6 @@ inputs:
     info:
       This can be predefined celestial objects known to astropy or a string in
       the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
-  postfix:
-    dtype: str
-    default: 'main'
-    info:
-      Can be used to specify a custom name for the image space data products
   l2reweight-dof:
     dtype: float
     info:
@@ -153,35 +142,38 @@ inputs:
       A sensible value for this parameter depends on the level of RFI in the data.
       Small values (eg. 2) result in aggressive reweighting and should be avoided
       if the model is still incomplete.
-  fits-mfs:
-    dtype: bool
-    default: true
+  host-address:
+    dtype: str
+    abbreviation: ha
     info:
-      Output MFS fits files
-  fits-cubes:
-    dtype: bool
-    default: false
+      Address where the distributed client lives.
+      Uses LocalCluster if no address is provided
+      and scheduler is set to distributed.
+  nworkers:
+    dtype: int
+    default: 1
+    abbreviation: nw
     info:
-      Output fits cubes
-  movie-mfs:
-    dtype: bool
-    default: true
+      Number of worker processes.
+      Use with distributed scheduler.
+  nthreads-dask:
+    dtype: int
+    default: 1
+    abbreviation: ntd
     info:
-      Output MFS movie
-  movie-cubes:
-    dtype: bool
-    default: false
+      Number of dask threads.
+      This will largely determine the memory footprint.
+      Used as nthreads per worker when using distributed scheduler.
+  nvthreads:
+    dtype: int
+    abbreviation: nvt
     info:
-      Output movie per freq band
-  make-fds:
-    dtype: bool
-    default: true
-    info:
-      Make/remake dirty and/or residual images
+      Number of threads used to scale vertically (eg. for FFTs and gridding).
+      Each dask thread can in principle spawn this many threads.
+      Will attempt to use half the available threads by default.
 
   _include:
     - (.)gridding.yml
-    - (.)dist.yml
     - (.)out.yml
 
 outputs:

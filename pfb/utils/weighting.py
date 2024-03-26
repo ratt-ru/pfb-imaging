@@ -155,7 +155,7 @@ def _counts_to_weights(counts, uvw, freq, nx, ny,
         counts = 1 + counts * ssq
 
     normfreq = freq / lightspeed
-    for r in range(nrow):
+    for r in prange(nrow):
         uvw_row = uvw[r]
         for c in range(nchan):
             # get current uv
