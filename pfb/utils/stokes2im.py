@@ -257,7 +257,7 @@ def single_stokes_image(
             freq,
             nx, ny,
             cell_rad, cell_rad,
-            robustness)
+            opts.robustness)
         if wgt is not None:
             wgt *= imwgt
         else:
