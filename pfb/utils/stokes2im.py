@@ -111,7 +111,8 @@ def single_stokes_image(
             raise e
         data2 = data2.astype(complex_type)
         data = ne.evaluate(f'data {operator} data2',
-                           out=data)
+                           out=data,
+                           casting='same_kind')
 
     if weight.dtype != real_type:
         weight = weight.astype(real_type)
