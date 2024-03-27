@@ -1,0 +1,106 @@
+inputs:
+  scans:
+    dtype: List[int]
+    info:
+      List of SCAN_NUMBERS to image. Defaults to all.
+      Input as string eg. '[0,2]' if running from CLI
+  ddids:
+    dtype: List[int]
+    info:
+      List of DATA_DESC_ID's to images. Defaults to all.
+      Input as string eg. '[0,1]' if running from CLI
+  fields:
+    dtype: List[int]
+    info:
+      List of FIELD_ID's to image. Defaults to all.
+      Input as string eg. '[0,1,2]' if running from CLI
+  freq-range:
+    dtype: str
+    info:
+      Frequency range to image in Hz.
+      Specify as a string with colon delimiter eg. '1e9:1.1e9'
+  overwrite:
+    dtype: bool
+    default: false
+    info:
+      Allow overwrite of output xds
+  precision:
+    dtype: str
+    default: single
+    choices:
+      - single
+      - double
+    info:
+      Gridding precision
+  field-of-view:
+    dtype: float
+    abbreviation: fov
+    default: 3.0
+    info:
+      Field of view in degrees
+  nx:
+    dtype: int
+    info:
+      Number of x pixels
+  ny:
+    dtype: int
+    info:
+      Number of y pixels
+  target:
+    dtype: str
+    info:
+      This can be predefined celestial objects known to astropy or a string in
+      the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+  postfix:
+    dtype: str
+    default: 'main'
+    info:
+      Can be used to specify a custom name for the image space data products
+  fits-mfs:
+    dtype: bool
+    default: true
+    info:
+      Output MFS fits files
+  fits-cubes:
+    dtype: bool
+    default: false
+    info:
+      Output fits cubes
+  movie-mfs:
+    dtype: bool
+    default: true
+    info:
+      Output MFS movie
+  movie-cubes:
+    dtype: bool
+    default: false
+    info:
+      Output movie per freq band
+  host-address:
+    dtype: str
+    abbreviation: ha
+    info:
+      Address where the distributed client lives.
+      Uses LocalCluster if no address is provided
+      and scheduler is set to distributed.
+  nworkers:
+    dtype: int
+    default: 1
+    abbreviation: nw
+    info:
+      Number of worker processes.
+      Use with distributed scheduler.
+  nthreads:
+    dtype: int
+    default: 1
+    abbreviation: ntd
+    info:
+      Number of dask threads.
+      This will largely determine the memory footprint.
+      Used as nthreads per worker when using distributed scheduler.
+
+  _include:
+    - (.)out.yml
+
+outputs:
+    {}

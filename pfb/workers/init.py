@@ -128,6 +128,9 @@ def _init(**kw):
     from pfb.utils.misc import chunkify_rows
     import xarray as xr
 
+    if np.unique(opts.fields).size > 1:
+        raise NotImplementedError(f"Only a single field is currently supported")
+
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     xdsstore = DaskMSStore(f'{basename}.xds')
@@ -223,6 +226,11 @@ def _init(**kw):
     else:
         print(f"No weights provided, using unity weights", file=log)
 
+    if opts.fields is None:
+        fields = []
+    else:
+        fields = opts.fields
+
     out_datasets = []
     for ims, ms in enumerate(opts.ms):
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
@@ -234,12 +242,14 @@ def _init(**kw):
 
         for ids, ds in enumerate(xds):
             fid = ds.FIELD_ID
+            # take the first one by default
+            if len(fields) == 0:
+                fields.append(fid)
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
             # TODO - cleaner syntax
-            if opts.fields is not None:
-                if fid not in opts.fields:
-                    continue
+            if fid not in fields:
+                continue
             if opts.ddids is not None:
                 if ddid not in opts.ddids:
                     continue
