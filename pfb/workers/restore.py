@@ -82,7 +82,7 @@ def _restore(**kw):
     wsum = np.sum(wsums)
     output_type = dirty.dtype
     fmask = wsums > 0
-    if fmask.all():
+    if (~fmask).all():
         raise ValueError("All data seem to be flagged")
 
     if residual is None:
