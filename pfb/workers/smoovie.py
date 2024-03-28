@@ -96,7 +96,7 @@ def smoovie(**kw):
                       cmap="cubehelix")
             plt.xticks([]), plt.yticks([])
             ax.annotate(
-                fnum + '\n' + utc,
+                f'{opts.outname}_band{b:04d}' + '\n' + fnum + '\n' + utc,
                 xy=(0.0, 0.0),
                 xytext=(0.05, 0.05),
                 xycoords='axes fraction',
@@ -104,7 +104,6 @@ def smoovie(**kw):
                 ha='left', va='bottom',
                 fontsize=20,
                 color='cyan')
-            ax.set_title(f'{opts.outname}_band{b:04d}')
             return fig
 
         # returns sorted list

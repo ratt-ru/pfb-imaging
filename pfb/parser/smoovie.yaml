@@ -34,6 +34,11 @@ inputs:
     default: 0.8
     info:
       vmax will be set as min-frac * median(rms)
+  cmap:
+    dtype: str
+    default: 'cyan'
+    info:
+      Any valid matplotlib cmap
   log-directory:
     dtype: str
     required: true
