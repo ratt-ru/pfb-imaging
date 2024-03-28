@@ -36,9 +36,14 @@ inputs:
       vmax will be set as min-frac * median(rms)
   cmap:
     dtype: str
-    default: 'cyan'
+    default: 'heat'
     info:
       Any valid matplotlib cmap
+  text-colour:
+    dtype: str
+    default: 'cyan'
+    info:
+      Colour to render text on image
   log-directory:
     dtype: str
     required: true

@@ -93,7 +93,7 @@ def smoovie(**kw):
             ax.imshow(im,
                       vmin=-opts.min_frac*rms,
                       vmax=opts.max_frac*rms,
-                      cmap="cubehelix")
+                      cmap=opts.cmap)
             plt.xticks([]), plt.yticks([])
             ax.annotate(
                 f'{opts.outname}_band{b:04d}' + '\n' + fnum + '\n' + utc,
@@ -103,7 +103,7 @@ def smoovie(**kw):
                 textcoords='axes fraction',
                 ha='left', va='bottom',
                 fontsize=20,
-                color='cyan')
+                color=opts.text_colour)
             return fig
 
         # returns sorted list
@@ -208,7 +208,7 @@ def smoovie(**kw):
                     results,
                     renderer=plot_frame,
                     intro_title=f"{opts.outname}-Band{b:04d}",
-                    optimze=True,
+                    optimize=True,
                     threads_per_worker=1
                     # uri=f'{opts.outname}.band{b:0:4d}.mp4'
                 )
