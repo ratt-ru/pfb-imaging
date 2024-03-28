@@ -340,8 +340,9 @@ def sum_blocks(fds, animate='time'):
         cout += getattr(ds, f'{animate}_out') * ds.wsum
         wsum += ds.wsum
 
-    outim /= wsum
-    cout /= wsum
+    if wsum:
+        outim /= wsum
+        cout /= wsum
     if animate=='time':
         unix_time = quantity(f'{cout}s').to_unix_time()
         utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
