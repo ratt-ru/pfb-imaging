@@ -1,61 +1,70 @@
 inputs:
-  scans:
-    dtype: List[int]
+  fds:
+    dtype: str
+    required: true
     info:
-      List of SCAN_NUMBERS to image. Defaults to all.
-      Input as string eg. '[0,2]' if running from CLI
-  ddids:
-    dtype: List[int]
+      Path to fds produced by fastim worker
+  outname:
+    dtype: str
+    required: true
     info:
-      List of DATA_DESC_ID's to images. Defaults to all.
-      Input as string eg. '[0,1]' if running from CLI
-  fields:
-    dtype: List[int]
+      The name of the output.
+      Fits images will be suffixed by band and time ID's.
+      Mp4 movies will suffixed by .mp4
+  animate-axis:
+    dtype: str
+    default: time
+    choices:
+      - time
+      - freq
     info:
-      List of FIELD_ID's to image. Defaults to all.
-      Input as string eg. '[0,1,2]' if running from CLI
+      Which axis to animate
+  fps:
+    dtype: int
+    default: 8
+    info:
+      Frames per second
+  min-frac:
+    dtype: float
+    default: 0.05
+    info:
+      vmin will be set as min-frac * median(rms)
+  max-frac:
+    dtype: float
+    default: 0.8
+    info:
+      vmax will be set as min-frac * median(rms)
+  log-directory:
+    dtype: str
+    required: true
+    abbreviation: ldir
+    info:
+      Directory to write logs and performance reports to
+  freq-bin:
+    dtype: int
+    default: 1
+    info:
+      How many freqs to bin into single frame
+  time-bin:
+    dtype: int
+    default: 1
+    info:
+      How many times to bin into single frame
   freq-range:
     dtype: str
     info:
-      Frequency range to image in Hz.
+      Frequency range to consider.
       Specify as a string with colon delimiter eg. '1e9:1.1e9'
+  time-range:
+    dtype: str
+    info:
+      Time range to consider in mjds
+      Specify as a string with colon delimiter eg. '5e7:5.5e7'
   overwrite:
     dtype: bool
     default: false
     info:
-      Allow overwrite of output xds
-  precision:
-    dtype: str
-    default: single
-    choices:
-      - single
-      - double
-    info:
-      Gridding precision
-  field-of-view:
-    dtype: float
-    abbreviation: fov
-    default: 3.0
-    info:
-      Field of view in degrees
-  nx:
-    dtype: int
-    info:
-      Number of x pixels
-  ny:
-    dtype: int
-    info:
-      Number of y pixels
-  target:
-    dtype: str
-    info:
-      This can be predefined celestial objects known to astropy or a string in
-      the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
-  postfix:
-    dtype: str
-    default: 'main'
-    info:
-      Can be used to specify a custom name for the image space data products
+      Allow overwrite of output files with the same names.
   fits-mfs:
     dtype: bool
     default: true
@@ -98,9 +107,26 @@ inputs:
       Number of dask threads.
       This will largely determine the memory footprint.
       Used as nthreads per worker when using distributed scheduler.
-
-  _include:
-    - (.)out.yml
+  # TBD
+  field-of-view:
+    dtype: float
+    abbreviation: fov
+    default: 3.0
+    info:
+      Field of view in degrees
+  nx:
+    dtype: int
+    info:
+      Number of x pixels
+  ny:
+    dtype: int
+    info:
+      Number of y pixels
+  target:
+    dtype: str
+    info:
+      This can be predefined celestial objects known to astropy or a string in
+      the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
 
 outputs:
     {}

@@ -287,7 +287,7 @@ def single_stokes_image(
     rms = np.std(residual)
 
     data_vars = {}
-    data_vars['RESIDUAL'] = (('x', 'y'), residual)
+    data_vars['RESIDUAL'] = (('x', 'y'), residual.astype(np.float32))
 
     coords = {'chan': (('chan',), freq),
               'time': (('time',), utime),
@@ -310,9 +310,11 @@ def single_stokes_image(
         'freq_out': freq_out,
         'freq_min': freq_min,
         'freq_max': freq_max,
+        'bandid': bandid,
         'time_out': time_out,
         'time_min': utime.min(),
         'time_max': utime.max(),
+        'timeid': timeid,
         'product': opts.product,
         'utc': utc,
         'wsum':wsum,
@@ -321,6 +323,6 @@ def single_stokes_image(
 
     out_ds = Dataset(data_vars,  #coords=coords,
                      attrs=attrs)
-    out_ds.to_zarr(f'{fds_store}/band{bandid}_time{timeid}.zarr')
+    out_ds.to_zarr(f'{fds_store}/band{bandid:04d}_time{timeid:04d}.zarr')
 
     return

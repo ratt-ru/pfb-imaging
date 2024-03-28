@@ -86,6 +86,11 @@ inputs:
     default: false
     info:
       Holds data in memory if set
+  init-factor:
+    dtype: float
+    default: 1
+    info:
+      Lower the initail rmsfactor by this amount
 
 outputs:
   {}

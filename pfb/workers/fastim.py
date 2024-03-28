@@ -96,10 +96,8 @@ def fastim(**kw):
 
         client.wait_for_workers(opts.nworkers)
 
-        print("Compute starting", file=log)
         ti = time.time()
         _fastim(**opts)
-        print(f"Compute took {time.time() - ti}s", file=log)
         client.close()
 
         print("All done here.", file=log)

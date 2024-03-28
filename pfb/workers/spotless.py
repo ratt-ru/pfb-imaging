@@ -260,9 +260,13 @@ def _spotless(ddsi=None, **kw):
         #     res = psf_convolve(x) - data
         #     res[fsel] *= sfactor
         #     return res
+        if k == 0:
+            rmsfactor = opts.init_factor * opts.rmsfactor
+        else:
+            rmsfactor = opts.rmsfactor
         model, dual = primal_dual(model,
                                   dual,
-                                  opts.rmsfactor*rms,
+                                  rmsfactor*rms,
                                   psi.hdot,
                                   psi.dot,
                                   hessnorm,
