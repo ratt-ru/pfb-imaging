@@ -134,8 +134,7 @@ def _eval_beam(beam_image, l_in, m_in, l_out, m_out):
     except Exception as e:
         print(e)
         print(f"{e} raised in beam evaluation. "
-              "Consider setting init.max_field_of_view > grid.field_of_view",
-              file=log)
+              "Consider setting init.max_field_of_view > grid.field_of_view")
         beamo = RGI((l_in, m_in), beam_image,
                     bounds_error=False, method='linear', fill_value=None)
         return beamo((ll, mm))
