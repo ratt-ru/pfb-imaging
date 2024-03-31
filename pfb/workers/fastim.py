@@ -243,12 +243,14 @@ def _fastim(**kw):
     else:
         print(f"No weights provided, using unity weights", file=log)
 
+    client = get_client()
     if opts.transfer_model_from is not None:
         try:
             mds = xr.open_zarr(opts.transfer_model_from)
             # this should be fairly small but should
             # it rather be read in the dask call?
-            mds = dask.persist(mds)[0]
+            # mds = dask.persist(mds)[0]
+            client.scatter(mds, broadcast=True)
         except Exception as e:
             import ipdb; ipdb.set_trace()
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
@@ -256,7 +258,6 @@ def _fastim(**kw):
         mds = None
 
     futures = []
-    client = get_client()
     xds = xds_from_ms(ms,
                       chunks=ms_chunks[ms],
                       columns=columns,
