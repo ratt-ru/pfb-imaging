@@ -70,19 +70,20 @@ def _model2comps(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.postfix}.dds'
+
     if opts.model_out is not None:
         coeff_name = opts.model_out
     else:
         coeff_name = f'{basename}_{opts.postfix}_{opts.model_name.lower()}.mds'
 
-    if os.path.isdir(coeff_name):
+    mdsstore = DaskMSStore(coeff_name)
+    if mdsstore.exists():
         if opts.overwrite:
-            print(f'Removing {coeff_name}', file=log)
-            import shutil
-            shutil.rmtree(coeff_name)
+            print(f"Overwriting {coeff_name}", file=log)
+            mdsstore.rm(recursive=True)
         else:
-            raise RuntimeError(f"{coeff_name} exists. "
-                               f"Set --overwrite if you meant to overwrite it.")
+            raise ValueError(f"{coeff_name} exists. "
+                             "Set --overwrite to overwrite it. ")
 
     dds = xds_from_zarr(dds_name,
                         chunks={'x':-1,
@@ -180,12 +181,9 @@ def _model2comps(**kw):
     coeff_dataset = xr.Dataset(data_vars=data_vars,
                                coords=coords,
                                attrs=attrs)
-    writes = xds_to_zarr(coeff_dataset,
-                         coeff_name,
-                         columns='ALL')
     print(f'Writing interpolated model to {coeff_name}',
           file=log)
-    dask.compute(writes)
+    coeff_dataset.to_zarr(mdsstore.url)
 
 
     print("All done here.", file=log)
