@@ -245,8 +245,7 @@ def _fastim(**kw):
 
     if opts.transfer_model_from is not None:
         try:
-            mds = xds_from_zarr(opts.transfer_model_from,
-                                chunks={'params':-1, 'comps':-1})[0]
+            mds = xr.open_zarr(opts.transfer_model_from)
             # this should be fairly small but should
             # it rather be read in the dask call?
             mds = dask.persist(mds)[0]
