@@ -250,7 +250,7 @@ def _fastim(**kw):
             # this should be fairly small but should
             # it rather be read in the dask call?
             # mds = dask.persist(mds)[0]
-            client.scatter(mds, broadcast=True)
+            # client.scatter(mds, broadcast=True)
         except Exception as e:
             import ipdb; ipdb.set_trace()
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
