@@ -60,8 +60,8 @@ def single_stokes_image(
                     bandid=None,
                     timeid=None):
 
-    data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones, mds = \
-        dask.compute(data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones, mds)
+    data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones = \
+        dask.compute(data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones)
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
