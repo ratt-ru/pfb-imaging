@@ -67,6 +67,7 @@ def _model2comps(**kw):
     from astropy.io import fits
     from pfb.utils.misc import compute_context, fit_image_cube
     import xarray as xr
+    from daskms.fsspec_store import DaskMSStore
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.postfix}.dds'
