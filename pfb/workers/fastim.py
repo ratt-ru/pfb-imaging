@@ -259,7 +259,7 @@ def _fastim(**kw):
             mds = xr.open_zarr(mdsstore.url)
             # this should be fairly small but should
             # it rather be read in the dask call?
-            # mds = dask.persist(mds)[0]
+            mds = client.persist(mds)
             client.scatter(mds, broadcast=True)
         except Exception as e:
             import ipdb; ipdb.set_trace()
@@ -358,13 +358,13 @@ def _fastim(**kw):
                 sigma = None if sc is None else getattr(subds, sc).data
                 wc = opts.weight_column
                 weight = None if wc is None else getattr(subds, wc).data
-                # poll until a worker has capacity
-                while not ascomp.has_ready():
-                    pass
-                # get and pop ready future
-                fut = ascomp.next()
-                # get worker that had it
-                wid = list(client.who_has(fut).values())[0][0]
+                # # poll until a worker has capacity
+                # while not ascomp.has_ready():
+                #     pass
+                # # get and pop ready future
+                # fut = ascomp.next()
+                # # get worker that had it
+                # wid = list(client.who_has(fut).values())[0][0]
                 future = client.submit(single_stokes_image,
                         data=getattr(subds, dc1).data,
                         data2=data2,
@@ -408,12 +408,12 @@ def _fastim(**kw):
                         scanid=subds.SCAN_NUMBER,
                         fds_store=fdsstore.url,
                         bandid=fi,
-                        timeid=ti,
-                        wid=wid,
-                        workers=wid)  # submit to the same worker
+                        timeid=ti)
+                        # wid=wid,
+                        # workers=wid)  # submit to the same worker
 
                 # add current future to ascomp
-                ascomp.add(future)
+                # ascomp.add(future)
 
     while not ascomp.is_empty():
         # pop them as they finish
