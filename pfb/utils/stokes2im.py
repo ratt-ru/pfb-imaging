@@ -76,7 +76,7 @@ def single_stokes_image(
 
     (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,
      jones) = dask.compute(data, data2, ant1, ant2, uvw, frow,
-                           flag, sigma, weight)
+                           flag, sigma, weight, jones)
 
     #  (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones,
     #  coefficients, location_x, location_y, params) = dask.compute(
