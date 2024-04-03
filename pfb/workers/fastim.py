@@ -152,6 +152,12 @@ def _fastim(**kw):
         freq_min = -np.inf
         freq_max = np.inf
 
+
+    # generate some futures to initialise as_completed
+    # Are these round robin'd?
+    client = get_client()
+    futures = client.map(lambda x: x, np.arange(opts.nworkers*opts.nthreads_dask))
+
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gain_chunks, radecs, \
@@ -245,7 +251,6 @@ def _fastim(**kw):
     else:
         print(f"No weights provided, using unity weights", file=log)
 
-    client = get_client()
     if opts.transfer_model_from is not None:
         mdsstore = DaskMSStore(opts.transfer_model_from)
         try:
@@ -254,7 +259,7 @@ def _fastim(**kw):
             mds = xr.open_zarr(mdsstore.url)
             # this should be fairly small but should
             # it rather be read in the dask call?
-            mds = dask.persist(mds)[0]
+            # mds = dask.persist(mds)[0]
             client.scatter(mds, broadcast=True)
         except Exception as e:
             import ipdb; ipdb.set_trace()
@@ -288,8 +293,6 @@ def _fastim(**kw):
         # center_x=None
         # center_y=None
 
-    # generate some futures to initialise as_completed
-    futures = client.map(lambda x: x, np.arange(opts.nworkers))
     ascomp = as_completed(futures)
     xds = xds_from_ms(ms,
                       chunks=ms_chunks[ms],
@@ -355,6 +358,7 @@ def _fastim(**kw):
                 sigma = None if sc is None else getattr(subds, sc).data
                 wc = opts.weight_column
                 weight = None if wc is None else getattr(subds, wc).data
+                # poll until a worker has capacity
                 while not ascomp.has_ready():
                     pass
                 # get and pop ready future
