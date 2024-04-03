@@ -8,6 +8,7 @@ date   - 31/03/2020
 __version__ = '0.0.1'
 
 import os
+import sys
 
 def set_client(opts, stack, log, scheduler='distributed'):
 
@@ -32,6 +33,16 @@ def set_client(opts, stack, log, scheduler='distributed'):
     os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
     os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
+    # this may be required for numba parallelism
+    # find python and set LD_LIBRARY_PATH
+    paths = sys.path
+    ppath = [paths[i] for i in range(len(paths)) if 'pfb/bin' in paths[i]]
+    if len(ppath):
+        ldpath = ppath[0].replace('bin', 'lib')
+        ldcurrent = os.environ.get('LD_LIBRARY_PATH', '')
+        os.environ["LD_LIBRARY_PATH"] = f'{ldpathth}:{ldcurrent}'
+        # TODO - should we fall over in else?
+
     import numexpr as ne
     max_cores = ne.detect_number_of_cores()
     # ne_threads = min(max_cores, opts.nvthreads)
