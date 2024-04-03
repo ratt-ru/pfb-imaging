@@ -230,7 +230,7 @@ def single_stokes_image(
             mds.coefficients.values,
             mds.location_x.values,
             mds.location_y.values,
-            parametrisation,
+            mds.parametrisation,
             mds.params.values,
             mds.texpr,
             mds.fexpr,
