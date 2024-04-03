@@ -399,4 +399,5 @@ def _fastim(**kw):
                 futures.append(fut)
 
     wait(futures)
+    import ipdb; ipdb.set_trace()
     return

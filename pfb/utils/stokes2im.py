@@ -347,5 +347,6 @@ def single_stokes_image(
 
     out_ds = Dataset(data_vars,  #coords=coords,
                      attrs=attrs)
-    out_ds.to_zarr(f'{fds_store}/band{bandid:04d}_time{timeid:04d}.zarr')
-    return
+
+    return out_ds.to_zarr(f'{fds_store}/band{bandid:04d}_time{timeid:04d}.zarr',
+                          compute=True)
