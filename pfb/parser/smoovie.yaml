@@ -26,17 +26,17 @@ inputs:
       Frames per second
   min-frac:
     dtype: float
-    default: 0.05
+    default: 1.5
     info:
       vmin will be set as min-frac * median(rms)
   max-frac:
     dtype: float
-    default: 0.8
+    default: 1.5
     info:
       vmax will be set as min-frac * median(rms)
   cmap:
     dtype: str
-    default: 'heat'
+    default: Grays
     info:
       Any valid matplotlib cmap
   text-colour:

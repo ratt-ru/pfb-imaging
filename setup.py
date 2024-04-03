@@ -17,7 +17,8 @@ requirements = [
                 # "@git+https://github.com/ratt-ru/QuartiCal.git"
                 # "@bandpass_smoothing"
                 "sympy",
-                "stimela >= 2.0rc14"
+                "stimela >= 2.0rc14",
+                "streamjoy"
             ]
 
 
