@@ -65,6 +65,7 @@ def fastim(**kw):
         print('     %25s = %s' % (key, opts[key]), file=log)
 
     with ExitStack() as stack:
+        os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
         os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
         os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
         os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
