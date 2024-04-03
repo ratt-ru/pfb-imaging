@@ -110,6 +110,7 @@ def _fastim(**kw):
     import numpy as np
     from pfb.utils.misc import construct_mappings
     import dask
+    from dask.graph_manipulation import clone
     from distributed import get_client, wait
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
@@ -352,19 +353,19 @@ def _fastim(**kw):
                         data=getattr(subds, dc1).data,
                         data2=data2,
                         operator=operator,
-                        ant1=subds.ANTENNA1.data,
-                        ant2=subds.ANTENNA2.data,
-                        uvw=subds.UVW.data,
-                        frow=subds.FLAG_ROW.data,
+                        ant1=clone(subds.ANTENNA1.data),
+                        ant2=clone(subds.ANTENNA2.data),
+                        uvw=clone(subds.UVW.data),
+                        frow=clone(subds.FLAG_ROW.data),
                         flag=subds.FLAG.data,
                         sigma=sigma,
                         weight=weight,
                         # mds=mds,
-                        coefficients=coefficients,
-                        location_x=location_x,
-                        location_y=location_y,
+                        coefficients=clone(coefficients),
+                        location_x=clone(location_x),
+                        location_y=clone(location_y),
                         parametrisation=parametrisation,
-                        params=params,
+                        params=clone(params),
                         texpr=texpr,
                         fexpr=fexpr,
                         npix_x=npix_x,
