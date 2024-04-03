@@ -39,7 +39,20 @@ def single_stokes_image(
                     flag=None,
                     sigma=None,
                     weight=None,
-                    mds=None,
+                    # mds=None,
+                    coefficients=None,
+                    location_x=None,
+                    location_y=None,
+                    parametrisation=None,
+                    params=None,
+                    texpr=None,
+                    fexpr=None,
+                    npix_x=None,
+                    npix_y=None,
+                    cell_rad_x=None,
+                    cell_rad_y=None,
+                    center_x=None,
+                    center_y=None,
                     jones=None,
                     opts=None,
                     nx=None,
@@ -60,8 +73,10 @@ def single_stokes_image(
                     bandid=None,
                     timeid=None):
 
-    data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones = \
-        dask.compute(data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones)
+    (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones,
+     coefficients, location_x, location_y, params) = dask.compute(
+         data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,
+         jones, coefficients, location_x, location_y, params)
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -201,24 +216,24 @@ def single_stokes_image(
         counts = counts.sum(axis=0)
 
 
-    if mds is not None:
+    if coefficients is not None:
         model = eval_coeffs_to_slice(
             time_out,
             freq_out,
-            mds.coefficients.values,
-            mds.location_x.values,
-            mds.location_y.values,
-            mds.parametrisation,
-            mds.params.values,
-            mds.texpr,
-            mds.fexpr,
-            mds.npix_x, mds.npix_y,
-            mds.cell_rad_x, mds.cell_rad_y,
-            mds.center_x, mds.center_y,
+            coefficients,
+            location_x,
+            location_y,
+            parametrisation,
+            params,
+            texpr,
+            fexpr,
+            npix_x, npix_y,
+            cell_rad_x, cell_rad_y,
+            center_x, center_y,
             # TODO - currently needs to be the same, need FFT interpolation
-            mds.npix_x, mds.npix_y,
-            mds.cell_rad_x, mds.cell_rad_y,
-            mds.center_x, mds.center_y,
+            npix_x, npix_y,
+            cell_rad_x, cell_rad_y,
+            center_x, center_y,
         )
 
         # do not apply weights in this direction
@@ -227,10 +242,10 @@ def single_stokes_image(
             uvw=uvw,
             freq=freq,
             dirty=model,
-            pixsize_x=mds.cell_rad_x,
-            pixsize_y=mds.cell_rad_y,
-            center_x=mds.center_x,
-            center_y=mds.center_y,
+            pixsize_x=cell_rad_x,
+            pixsize_y=cell_rad_y,
+            center_x=center_x,
+            center_y=center_y,
             epsilon=opts.epsilon,
             do_wgridding=opts.do_wgridding,
             flip_v=False,
@@ -240,7 +255,7 @@ def single_stokes_image(
 
         ne.evaluate('(vis-model_vis)*mask', out=vis)
 
-        if l2reweight_dof:
+        if opts.l2reweight_dof:
             ressq = (vis*vis.conj()).real
             wcount = mask.sum()
             if wcount:

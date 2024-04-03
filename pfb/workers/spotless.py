@@ -107,6 +107,27 @@ def _spotless(ddsi=None, **kw):
 
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
+    freq_out = []
+    for ds in dds:
+        freq_out.append(ds.freq_out)
+    freq_out = np.unique(np.array(freq_out))
+    try:
+        assert freq_out.size == opts.nband
+    except Exception as e:
+        print(f"Number of output frequencies={freq_out.size} "
+              f"does not match nband={opts.nband}", file=log)
+        raise e
+    nband = opts.nband
+    nx = dds[0].x.size
+    ny = dds[0].y.size
+    ra = dds[0].ra
+    dec = dds[0].dec
+    radec = [ra, dec]
+    cell_rad = dds[0].cell_rad
+    cell_deg = np.rad2deg(cell_rad)
+    ref_freq = np.mean(freq_out)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+
 
     # stitch dirty/psf in apparent scale
     print("Combining slices into cubes", file=log)
@@ -124,22 +145,6 @@ def _spotless(ddsi=None, **kw):
         residual_mfs = dirty_mfs.copy()
     else:
         residual_mfs = np.sum(residual, axis=0)
-
-    # for intermediary results (not currently written)
-    freq_out = []
-    for ds in dds:
-        freq_out.append(ds.freq_out)
-    freq_out = np.unique(np.array(freq_out))
-    nband = opts.nband
-    nx = dds[0].x.size
-    ny = dds[0].y.size
-    ra = dds[0].ra
-    dec = dds[0].dec
-    radec = [ra, dec]
-    cell_rad = dds[0].cell_rad
-    cell_deg = np.rad2deg(cell_rad)
-    ref_freq = np.mean(freq_out)
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
     # # TODO - check coordinates match
     # # Add option to interp onto coordinates?

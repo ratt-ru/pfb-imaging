@@ -249,13 +249,39 @@ def _fastim(**kw):
             mds = xr.open_zarr(opts.transfer_model_from)
             # this should be fairly small but should
             # it rather be read in the dask call?
-            mds = dask.persist(mds)[0]
-            client.scatter(mds, broadcast=True)
+            # mds = dask.persist(mds)[0]
+            # client.scatter(mds, broadcast=True)
         except Exception as e:
             import ipdb; ipdb.set_trace()
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
+        coefficients=mds.coefficients.data
+        location_x=mds.location_x.data
+        location_y=mds.location_y.data
+        params=mds.params.data
+        parametrisation=mds.parametrisation
+        texpr=mds.texpr
+        fexpr=mds.fexpr
+        npix_x=mds.npix_x
+        npix_y=mds.npix_y
+        cell_rad_x=mds.cell_rad_x
+        cell_rad_y=mds.cell_rad_y
+        center_x=mds.center_x
+        center_y=mds.center_y
     else:
         mds = None
+        coefficients=None
+        location_x=None
+        location_y=None
+        parametrisation=None
+        params=None
+        texpr=None
+        fexpr=None
+        npix_x=None
+        npix_y=None
+        cell_rad_x=None
+        cell_rad_y=None
+        center_x=None
+        center_y=None
 
     futures = []
     xds = xds_from_ms(ms,
@@ -333,7 +359,20 @@ def _fastim(**kw):
                         flag=subds.FLAG.data,
                         sigma=sigma,
                         weight=weight,
-                        mds=mds,
+                        # mds=mds,
+                        coefficients=coefficients,
+                        location_x=location_x,
+                        location_y=location_y,
+                        parametrisation=parametrisation,
+                        params=params,
+                        texpr=texpr,
+                        fexpr=fexpr,
+                        npix_x=npix_x,
+                        npix_y=npix_y,
+                        cell_rad_x=cell_rad_x,
+                        cell_rad_y=cell_rad_y,
+                        center_x=center_x,
+                        center_y=center_y,
                         jones=jones,
                         opts=opts,
                         nx=nx,

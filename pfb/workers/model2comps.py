@@ -152,15 +152,15 @@ def _model2comps(**kw):
 
     # save interpolated dataset
     data_vars = {
-        'coefficients': (('params', 'comps'), coeffs),
+        'coefficients': (('par', 'comps'), coeffs),
     }
     coords = {
-        'location_x': (('location_x',), Ix),
-        'location_y': (('location_y',), Iy),
+        'location_x': (('x',), Ix),
+        'location_y': (('y',), Iy),
         # 'shape_x':,
-        'params': (('params',), params),  # already converted to list
-        'times': (('times',), mtimes),  # to allow rendering to original grid
-        'freqs': (('freqs',), mfreqs)
+        'params': (('par',), params),  # already converted to list
+        'times': (('t',), mtimes),  # to allow rendering to original grid
+        'freqs': (('f',), mfreqs)
     }
     attrs = {
         'spec': 'genesis',
