@@ -258,7 +258,8 @@ def single_stokes_image(
             flip_v=False,
             nthreads=opts.nvthreads,
             divide_by_n=False,
-            sigma_min=1.1, sigma_max=3.0)
+            sigma_min=1.1, sigma_max=3.0,
+            verbosity=1)
 
         ne.evaluate('(vis-model_vis)*mask', out=vis)
 
@@ -304,7 +305,8 @@ def single_stokes_image(
         divide_by_n=False,  # hardcoded for now
         nthreads=opts.nvthreads,
         sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=opts.double_accum)
+        double_precision_accumulation=opts.double_accum,
+        verbosity=1)
 
     rms = np.std(residual)
 
