@@ -76,7 +76,7 @@ def single_stokes_image(
 
     (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,
      jones) = dask.compute(data, data2, ant1, ant2, uvw, frow,
-                           flag, sigma, weight, jones)  # , scheduler='sync'
+                           flag, sigma, weight, jones, scheduler='sync')
 
     #  (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones,
     #  coefficients, location_x, location_y, params) = dask.compute(
@@ -259,7 +259,7 @@ def single_stokes_image(
             nthreads=opts.nvthreads,
             divide_by_n=False,
             sigma_min=1.1, sigma_max=3.0,
-            verbosity=1)
+            verbosity=0)
 
         ne.evaluate('(vis-model_vis)*mask', out=vis)
 
@@ -306,7 +306,7 @@ def single_stokes_image(
         nthreads=opts.nvthreads,
         sigma_min=1.1, sigma_max=3.0,
         double_precision_accumulation=opts.double_accum,
-        verbosity=1)
+        verbosity=0)
 
     rms = np.std(residual)
 
