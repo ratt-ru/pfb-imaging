@@ -222,7 +222,7 @@ def single_stokes_image(
 
 
     if mds is not None:
-        mds = xr.open_zarr(mds).compute()
+        # mds = xr.open_zarr(mds).compute()
 
         model = eval_coeffs_to_slice(
             time_out,
