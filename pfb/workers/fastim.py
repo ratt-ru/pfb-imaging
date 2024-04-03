@@ -156,7 +156,7 @@ def _fastim(**kw):
     # generate some futures to initialise as_completed
     # Are these round robin'd?
     client = get_client()
-    futures = client.map(lambda x: x, np.arange(opts.nworkers*opts.nthreads_dask))
+    # futures = client.map(lambda x: x, np.arange(opts.nworkers*opts.nthreads_dask))
 
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
@@ -293,7 +293,8 @@ def _fastim(**kw):
         # center_x=None
         # center_y=None
 
-    ascomp = as_completed(futures)
+    # ascomp = as_completed(futures)
+    futures= []
     xds = xds_from_ms(ms,
                       chunks=ms_chunks[ms],
                       columns=columns,
@@ -414,10 +415,15 @@ def _fastim(**kw):
 
                 # add current future to ascomp
                 # ascomp.add(future)
+                futures.append(future)
 
-    while not ascomp.is_empty():
-        # pop them as they finish
-        if ascomp.has_ready():
-            fut = ascomp.next()
-            print(fut)
+    # while not ascomp.is_empty():
+    #     # pop them as they finish
+    #     if ascomp.has_ready():
+    #         fut = ascomp.next()
+    #         print(fut)
+    # ac = as_completed(futures)
+
+    # import ipdb; ipdb.set_trace()
+    wait(futures)
     return
