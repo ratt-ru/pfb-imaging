@@ -260,8 +260,6 @@ def single_stokes_image(
             divide_by_n=False,
             sigma_min=1.1, sigma_max=3.0)
 
-        del mds
-
         ne.evaluate('(vis-model_vis)*mask', out=vis)
 
         if opts.l2reweight_dof:
