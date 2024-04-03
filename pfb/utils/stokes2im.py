@@ -72,11 +72,12 @@ def single_stokes_image(
                     scanid=None,
                     fds_store=None,
                     bandid=None,
-                    timeid=None):
+                    timeid=None,
+                    wid=None):
 
     (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,
      jones) = dask.compute(data, data2, ant1, ant2, uvw, frow,
-                           flag, sigma, weight, jones, scheduler='sync')
+                           flag, sigma, weight, jones, workers=wid)  #, scheduler='sync')
 
     #  (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones,
     #  coefficients, location_x, location_y, params) = dask.compute(
