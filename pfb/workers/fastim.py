@@ -1,5 +1,6 @@
 # flake8: noqa
 import os
+import sys
 from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
@@ -69,7 +70,15 @@ def fastim(**kw):
         os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
         os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
         os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
+        paths = sys.path
+        ppath = [paths[i] for i in range(len(paths)) if 'pfb/bin' in paths[i]]
+        if len(ppath):
+            ldpath = ppath[0].replace('bin', 'lib')
+            ldcurrent = os.environ.get('LD_LIBRARY_PATH', '')
+            os.environ["LD_LIBRARY_PATH"] = f'{ldpath}:{ldcurrent}'
+            # TODO - should we fall over in else?
         os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
+
         import numexpr as ne
         max_cores = ne.detect_number_of_cores()
         ne_threads = min(max_cores, opts.nvthreads)
@@ -92,7 +101,7 @@ def fastim(**kw):
                                     memory_limit=0,  # str(mem_limit/nworkers)+'GB'
                                     asynchronous=False)
             cluster = stack.enter_context(cluster)
-            client = stack.enter_context(Client(cluster))
+            client = stack.enter_context(Client(cluster, direct_to_workers=True))
 
         client.wait_for_workers(opts.nworkers)
         client.amm.stop()
@@ -156,7 +165,7 @@ def _fastim(**kw):
     # generate some futures to initialise as_completed
     # Are these round robin'd?
     client = get_client()
-    # futures = client.map(lambda x: x, np.arange(opts.nworkers*opts.nthreads_dask))
+    futures = client.map(lambda x: x, np.arange(opts.nworkers*opts.nthreads_dask))
 
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
@@ -259,42 +268,17 @@ def _fastim(**kw):
             mds = xr.open_zarr(mdsstore.url)
             # this should be fairly small but should
             # it rather be read in the dask call?
-            mds = client.persist(mds)
-            client.scatter(mds, broadcast=True)
+            # mds = client.persist(mds)
+            foo = client.scatter(mds, broadcast=True)
+            wait(foo)
         except Exception as e:
             import ipdb; ipdb.set_trace()
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
-        # coefficients=mds.coefficients.data
-        # location_x=mds.location_x.data
-        # location_y=mds.location_y.data
-        # params=mds.params.data
-        # parametrisation=mds.parametrisation
-        # texpr=mds.texpr
-        # fexpr=mds.fexpr
-        # npix_x=mds.npix_x
-        # npix_y=mds.npix_y
-        # cell_rad_x=mds.cell_rad_x
-        # cell_rad_y=mds.cell_rad_y
-        # center_x=mds.center_x
-        # center_y=mds.center_y
     else:
         mds = None
-        # coefficients=None
-        # location_x=None
-        # location_y=None
-        # parametrisation=None
-        # params=None
-        # texpr=None
-        # fexpr=None
-        # npix_x=None
-        # npix_y=None
-        # cell_rad_x=None
-        # cell_rad_y=None
-        # center_x=None
-        # center_y=None
 
-    # ascomp = as_completed(futures)
-    futures= []
+    ascomp = as_completed(futures)
+    # futures= []
     xds = xds_from_ms(ms,
                       chunks=ms_chunks[ms],
                       columns=columns,
@@ -359,13 +343,14 @@ def _fastim(**kw):
                 sigma = None if sc is None else getattr(subds, sc).data
                 wc = opts.weight_column
                 weight = None if wc is None else getattr(subds, wc).data
-                # # poll until a worker has capacity
-                # while not ascomp.has_ready():
-                #     pass
-                # # get and pop ready future
-                # fut = ascomp.next()
-                # # get worker that had it
-                # wid = list(client.who_has(fut).values())[0][0]
+                # poll until a worker has capacity
+                while not ascomp.has_ready():
+                    pass
+                # get and pop ready future
+                fut = ascomp.next()
+                # get worker that had it
+                wid = list(client.who_has(fut).values())[0][0]
+
                 future = client.submit(single_stokes_image,
                         data=getattr(subds, dc1).data,
                         data2=data2,
@@ -378,19 +363,6 @@ def _fastim(**kw):
                         sigma=sigma,
                         weight=weight,
                         mds=mds,
-                        # coefficients=clone(coefficients),
-                        # location_x=clone(location_x),
-                        # location_y=clone(location_y),
-                        # parametrisation=parametrisation,
-                        # params=clone(params),
-                        # texpr=texpr,
-                        # fexpr=fexpr,
-                        # npix_x=npix_x,
-                        # npix_y=npix_y,
-                        # cell_rad_x=cell_rad_x,
-                        # cell_rad_y=cell_rad_y,
-                        # center_x=center_x,
-                        # center_y=center_y,
                         jones=jones,
                         opts=opts,
                         nx=nx,
@@ -409,21 +381,20 @@ def _fastim(**kw):
                         scanid=subds.SCAN_NUMBER,
                         fds_store=fdsstore.url,
                         bandid=fi,
-                        timeid=ti)
-                        # wid=wid,
-                        # workers=wid)  # submit to the same worker
+                        timeid=ti,
+                        workers=wid)  # submit to the same worker
 
                 # add current future to ascomp
-                # ascomp.add(future)
-                futures.append(future)
+                ascomp.add(future)
+                # futures.append(future)
 
-    # while not ascomp.is_empty():
-    #     # pop them as they finish
-    #     if ascomp.has_ready():
-    #         fut = ascomp.next()
-    #         print(fut)
+    while not ascomp.is_empty():
+        # pop them as they finish
+        if ascomp.has_ready():
+            fut = ascomp.next()
+            print(fut)
     # ac = as_completed(futures)
 
     # import ipdb; ipdb.set_trace()
-    wait(futures)
+    # wait(futures)
     return

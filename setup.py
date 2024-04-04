@@ -18,7 +18,8 @@ requirements = [
                 # "@bandpass_smoothing"
                 "sympy",
                 "stimela >= 2.0rc14",
-                "streamjoy"
+                "streamjoy",
+                "tbb"
             ]
 
 

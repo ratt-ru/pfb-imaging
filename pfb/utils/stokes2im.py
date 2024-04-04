@@ -3,6 +3,7 @@ import numexpr as ne
 from numba import njit, prange, literally
 from numba.extending import overload
 import dask
+from distributed import get_client, worker_client
 import xarray as xr
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
@@ -28,7 +29,7 @@ import warnings
 
 warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 
-
+# @dask.delayed
 def single_stokes_image(
                     data=None,
                     data2=None,
@@ -41,19 +42,6 @@ def single_stokes_image(
                     sigma=None,
                     weight=None,
                     mds=None,
-                    # coefficients=None,
-                    # location_x=None,
-                    # location_y=None,
-                    # parametrisation=None,
-                    # params=None,
-                    # texpr=None,
-                    # fexpr=None,
-                    # npix_x=None,
-                    # npix_y=None,
-                    # cell_rad_x=None,
-                    # cell_rad_y=None,
-                    # center_x=None,
-                    # center_y=None,
                     jones=None,
                     opts=None,
                     nx=None,
@@ -72,17 +60,12 @@ def single_stokes_image(
                     scanid=None,
                     fds_store=None,
                     bandid=None,
-                    timeid=None,
-                    wid=None):
+                    timeid=None):
 
-    (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,
-     jones) = dask.compute(data, data2, ant1, ant2, uvw, frow,
-                           flag, sigma, weight, jones)  #, workers=wid)  #, scheduler='sync')
-
-    #  (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight, jones,
-    #  coefficients, location_x, location_y, params) = dask.compute(
-    #      data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,
-    #      jones, coefficients, location_x, location_y, params)
+    with worker_client() as client:
+        (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,
+        jones) = client.compute([data, data2, ant1, ant2, uvw, frow,
+                            flag, sigma, weight, jones], sync=True)
 
     if opts.precision.lower() == 'single':
         real_type = np.float32

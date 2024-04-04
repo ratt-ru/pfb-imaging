@@ -40,7 +40,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
     if len(ppath):
         ldpath = ppath[0].replace('bin', 'lib')
         ldcurrent = os.environ.get('LD_LIBRARY_PATH', '')
-        os.environ["LD_LIBRARY_PATH"] = f'{ldpathth}:{ldcurrent}'
+        os.environ["LD_LIBRARY_PATH"] = f'{ldpath}:{ldcurrent}'
         # TODO - should we fall over in else?
 
     import numexpr as ne
