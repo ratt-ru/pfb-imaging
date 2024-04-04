@@ -62,10 +62,14 @@ def single_stokes_image(
                     bandid=None,
                     timeid=None):
 
-    with worker_client() as client:
-        (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,
-        jones) = client.compute([data, data2, ant1, ant2, uvw, frow,
-                            flag, sigma, weight, jones], sync=True)
+    # with worker_client() as client:
+    #     (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,
+    #     jones) = client.compute([data, data2, ant1, ant2, uvw, frow,
+    #                         flag, sigma, weight, jones], sync=True)
+
+    (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,
+        jones) = dask.compute(data, data2, ant1, ant2, uvw, frow,
+                            flag, sigma, weight, jones)
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
