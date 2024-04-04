@@ -88,29 +88,30 @@ def fastim(**kw):
 
         # set up client
         host_address = opts.host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
-        if host_address is not None:
-            from distributed import Client
-            print("Initialising distributed client.", file=log)
-            client = stack.enter_context(Client(host_address))
-        else:
-            from dask.distributed import Client, LocalCluster
-            print("Initialising client with LocalCluster.", file=log)
-            cluster = LocalCluster(processes=True,
-                                    n_workers=opts.nworkers,
-                                    threads_per_worker=opts.nthreads_dask,
-                                    memory_limit=0,  # str(mem_limit/nworkers)+'GB'
-                                    asynchronous=False)
-            cluster = stack.enter_context(cluster)
-            client = stack.enter_context(Client(cluster, direct_to_workers=False))
+        with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
+            if host_address is not None:
+                from distributed import Client
+                print("Initialising distributed client.", file=log)
+                client = stack.enter_context(Client(host_address))
+            else:
+                from dask.distributed import Client, LocalCluster
+                print("Initialising client with LocalCluster.", file=log)
+                cluster = LocalCluster(processes=True,
+                                        n_workers=opts.nworkers,
+                                        threads_per_worker=opts.nthreads_dask,
+                                        memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                                        asynchronous=False)
+                cluster = stack.enter_context(cluster)
+                client = stack.enter_context(Client(cluster, direct_to_workers=False))
 
-        client.wait_for_workers(opts.nworkers)
-        client.amm.stop()
+            client.wait_for_workers(opts.nworkers)
+            client.amm.stop()
 
-        ti = time.time()
-        _fastim(**opts)
-        client.close()
+            ti = time.time()
+            _fastim(**opts)
+            client.close()
 
-        print("All done here.", file=log)
+            print("All done here.", file=log)
 
 def _fastim(**kw):
     opts = OmegaConf.create(kw)
@@ -387,9 +388,9 @@ def _fastim(**kw):
                 # add current future to ascomp
                 # ascomp.add(future)
                 futures.append(future)
-                if len(futures) == opts.nworkers*opts.nthreads_dask:
-                    wait(futures)
-                    futures = []
+                # if len(futures) == opts.nworkers*opts.nthreads_dask:
+                #     wait(futures)
+                #     futures = []
 
     # while not ascomp.is_empty():
     #     # pop them as they finish
