@@ -165,7 +165,7 @@ def _fastim(**kw):
     # generate some futures to initialise as_completed
     # Are these round robin'd?
     client = get_client()
-    futures = client.map(lambda x: x, np.arange(opts.nworkers*opts.nthreads_dask*2))
+    # futures = client.map(lambda x: x, np.arange(opts.nworkers*opts.nthreads_dask*2))
 
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
@@ -277,8 +277,8 @@ def _fastim(**kw):
     else:
         mds = None
 
-    ascomp = as_completed(futures)
-    # futures= []
+    # ascomp = as_completed(futures)
+    futures= []
     xds = xds_from_ms(ms,
                       chunks=ms_chunks[ms],
                       columns=columns,
@@ -343,13 +343,13 @@ def _fastim(**kw):
                 sigma = None if sc is None else getattr(subds, sc).data
                 wc = opts.weight_column
                 weight = None if wc is None else getattr(subds, wc).data
-                # poll until a worker has capacity
-                while not ascomp.has_ready():
-                    pass
-                # get and pop ready future
-                fut = ascomp.next()
-                # get worker that had it
-                wid = list(client.who_has(fut).values())[0][0]
+                # # poll until a worker has capacity
+                # while not ascomp.has_ready():
+                #     pass
+                # # get and pop ready future
+                # fut = ascomp.next()
+                # # get worker that had it
+                # wid = list(client.who_has(fut).values())[0][0]
 
                 future = client.submit(single_stokes_image,
                         data=getattr(subds, dc1).data,
@@ -385,15 +385,18 @@ def _fastim(**kw):
                         # workers=wid)  # submit to the same worker
 
                 # add current future to ascomp
-                ascomp.add(future)
-                # futures.append(future)
+                # ascomp.add(future)
+                futures.append(future)
+                if len(futures) == opts.nworkers*opts.nthreads_dask:
+                    wait(futures)
+                    futures = []
 
-    while not ascomp.is_empty():
-        # pop them as they finish
-        if ascomp.has_ready():
-            fut = ascomp.next()
-            print(fut)
+    # while not ascomp.is_empty():
+    #     # pop them as they finish
+    #     if ascomp.has_ready():
+    #         fut = ascomp.next()
+    #         print(fut)
 
     # import ipdb; ipdb.set_trace()
-    # wait(futures)
+    wait(futures)
     return
