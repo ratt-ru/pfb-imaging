@@ -101,7 +101,7 @@ def fastim(**kw):
                                     memory_limit=0,  # str(mem_limit/nworkers)+'GB'
                                     asynchronous=False)
             cluster = stack.enter_context(cluster)
-            client = stack.enter_context(Client(cluster, direct_to_workers=True))
+            client = stack.enter_context(Client(cluster, direct_to_workers=False))
 
         client.wait_for_workers(opts.nworkers)
         client.amm.stop()
