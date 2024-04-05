@@ -166,9 +166,8 @@ def _fastim(**kw):
     # generate some futures to initialise as_completed
     # Are these round robin'd?
     client = get_client()
-    sem = Semaphore(max_leases=opts.nworkers*opts.nthreads_dask)  #, name='mysem')
+    # sem = Semaphore(max_leases=opts.nworkers*opts.nthreads_dask)  #, name='mysem')
     # futures = client.map(lambda x: x, np.arange(opts.nworkers*opts.nthreads_dask*2))
-
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gain_chunks, radecs, \
@@ -262,6 +261,7 @@ def _fastim(**kw):
     else:
         print(f"No weights provided, using unity weights", file=log)
 
+
     if opts.transfer_model_from is not None:
         mdsstore = DaskMSStore(opts.transfer_model_from)
         try:
@@ -279,8 +279,6 @@ def _fastim(**kw):
     else:
         mds = None
 
-    # ascomp = as_completed(futures)
-    futures= []
     xds = xds_from_ms(ms,
                       chunks=ms_chunks[ms],
                       columns=columns,
@@ -290,6 +288,10 @@ def _fastim(**kw):
     if opts.gain_table is not None:
         gds = xds_from_zarr(gain_name,
                             chunks=gain_chunks[ms])
+
+
+    # a flat list to use with as_completed
+    datasets = []
 
     for ids, ds in enumerate(xds):
         fid = ds.FIELD_ID
@@ -340,11 +342,13 @@ def _fastim(**kw):
                 else:
                     jones = None
 
-                data2 = None if dc2 is None else getattr(subds, dc2).data
-                sc = opts.sigma_column
-                sigma = None if sc is None else getattr(subds, sc).data
-                wc = opts.weight_column
-                weight = None if wc is None else getattr(subds, wc).data
+
+
+                # data2 = None if dc2 is None else getattr(subds, dc2).data
+                # sc = opts.sigma_column
+                # sigma = None if sc is None else getattr(subds, sc).data
+                # wc = opts.weight_column
+                # weight = None if wc is None else getattr(subds, wc).data
                 # # poll until a worker has capacity
                 # while not ascomp.has_ready():
                 #     pass
@@ -353,7 +357,71 @@ def _fastim(**kw):
                 # # get worker that had it
                 # wid = list(client.who_has(fut).values())[0][0]
 
-                future = client.submit(single_stokes_image,
+                datasets.append([subds,
+                                 jones,
+                                 freqs[ms][idt][Inu],
+                                 utimes[ms][idt][It],
+                                 ridx, rcnts,
+                                 radecs[ms][idt],
+                                 fi, ti])
+
+                # future = client.submit(single_stokes_image,
+                #         data=getattr(subds, dc1).data,
+                #         data2=data2,
+                #         operator=operator,
+                #         ant1=clone(subds.ANTENNA1.data),
+                #         ant2=clone(subds.ANTENNA2.data),
+                #         uvw=clone(subds.UVW.data),
+                #         frow=clone(subds.FLAG_ROW.data),
+                #         flag=subds.FLAG.data,
+                #         sigma=sigma,
+                #         weight=weight,
+                #         mds=mds,
+                #         jones=jones,
+                #         opts=opts,
+                #         nx=nx,
+                #         ny=ny,
+                #         freq=freqs[ms][idt][Inu],
+                #         utime=utimes[ms][idt][It],
+                #         tbin_idx=ridx,
+                #         tbin_counts=rcnts,
+                #         cell_rad=cell_rad,
+                #         radec=radecs[ms][idt],
+                #         antpos=antpos[ms],
+                #         poltype=poltype[ms],
+                #         fieldid=subds.FIELD_ID,
+                #         ddid=subds.DATA_DESC_ID,
+                #         scanid=subds.SCAN_NUMBER,
+                #         fds_store=fdsstore.url,
+                #         bandid=fi,
+                #         timeid=ti,
+                #         pure=False)
+                        # workers=wid)  # submit to the same worker
+
+                # add current future to ascomp
+                # ascomp.add(future)
+                # futures.append(future)
+                # if len(futures) == opts.nworkers*opts.nthreads_dask:
+                #     wait(futures)
+                #     futures = []
+
+    futures = []
+    associated_workers = {}
+    idle_workers = set(client.scheduler_info()['workers'].keys())
+    n_launched = 0
+
+    while idle_workers:   # Seed each worker with a task.
+
+        subds, jones, freqsi, utimesi, ridx, rcnts, radeci, fi, ti = datasets[n_launched]
+        data2 = None if dc2 is None else getattr(subds, dc2).data
+        sc = opts.sigma_column
+        sigma = None if sc is None else getattr(subds, sc).data
+        wc = opts.weight_column
+        weight = None if wc is None else getattr(subds, wc).data
+
+        worker = idle_workers.pop()
+        # future = client.submit(f, xdsl[n_launched], worker, workers=worker)
+        future = client.submit(single_stokes_image,
                         data=getattr(subds, dc1).data,
                         data2=data2,
                         operator=operator,
@@ -369,13 +437,12 @@ def _fastim(**kw):
                         opts=opts,
                         nx=nx,
                         ny=ny,
-                        freq=freqs[ms][idt][Inu],
-                        chan_width=chan_widths[ms][idt][Inu],
-                        utime=utimes[ms][idt][It],
+                        freq=freqsi,
+                        utime=utimesi,
                         tbin_idx=ridx,
                         tbin_counts=rcnts,
                         cell_rad=cell_rad,
-                        radec=radecs[ms][idt],
+                        radec=radeci,
                         antpos=antpos[ms],
                         poltype=poltype[ms],
                         fieldid=subds.FIELD_ID,
@@ -384,16 +451,67 @@ def _fastim(**kw):
                         fds_store=fdsstore.url,
                         bandid=fi,
                         timeid=ti,
-                        sem=sem,
-                        pure=False)
-                        # workers=wid)  # submit to the same worker
+                        wid=worker,
+                        pure=False,
+                        workers=worker)
 
-                # add current future to ascomp
-                # ascomp.add(future)
-                futures.append(future)
-                # if len(futures) == opts.nworkers*opts.nthreads_dask:
-                #     wait(futures)
-                #     futures = []
+        futures.append(future)
+        associated_workers[future] = worker
+        n_launched += 1
+
+    ac_iter = as_completed(futures)
+    for completed_future in ac_iter:
+
+        if n_launched == len(datasets):  # Stop once all jobs have been launched.
+            continue
+
+        subds, jones, freqsi, utimesi, ridx, rcnts, radeci, fi, ti = datasets[n_launched]
+        data2 = None if dc2 is None else getattr(subds, dc2).data
+        sc = opts.sigma_column
+        sigma = None if sc is None else getattr(subds, sc).data
+        wc = opts.weight_column
+        weight = None if wc is None else getattr(subds, wc).data
+
+        worker = associated_workers.pop(completed_future)
+
+        # future = client.submit(f, xdsl[n_launched], worker, workers=worker)
+        future = client.submit(single_stokes_image,
+                        data=getattr(subds, dc1).data,
+                        data2=data2,
+                        operator=operator,
+                        ant1=clone(subds.ANTENNA1.data),
+                        ant2=clone(subds.ANTENNA2.data),
+                        uvw=clone(subds.UVW.data),
+                        frow=clone(subds.FLAG_ROW.data),
+                        flag=subds.FLAG.data,
+                        sigma=sigma,
+                        weight=weight,
+                        mds=mds,
+                        jones=jones,
+                        opts=opts,
+                        nx=nx,
+                        ny=ny,
+                        freq=freqsi,
+                        utime=utimesi,
+                        tbin_idx=ridx,
+                        tbin_counts=rcnts,
+                        cell_rad=cell_rad,
+                        radec=radeci,
+                        antpos=antpos[ms],
+                        poltype=poltype[ms],
+                        fieldid=subds.FIELD_ID,
+                        ddid=subds.DATA_DESC_ID,
+                        scanid=subds.SCAN_NUMBER,
+                        fds_store=fdsstore.url,
+                        bandid=fi,
+                        timeid=ti,
+                        wid=worker,
+                        pure=False,
+                        workers=worker)
+
+        ac_iter.add(future)
+        associated_workers[future] = worker
+        n_launched += 1
 
     # while not ascomp.is_empty():
     #     # pop them as they finish
@@ -403,4 +521,6 @@ def _fastim(**kw):
 
     # import ipdb; ipdb.set_trace()
     wait(futures)
+
+    client.close()
     return
