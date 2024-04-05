@@ -122,7 +122,7 @@ def _fastim(**kw):
     from pfb.utils.misc import construct_mappings
     import dask
     from dask.graph_manipulation import clone
-    from distributed import get_client, wait, as_completed
+    from distributed import get_client, wait, as_completed, Semaphore
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms.fsspec_store import DaskMSStore
@@ -166,6 +166,7 @@ def _fastim(**kw):
     # generate some futures to initialise as_completed
     # Are these round robin'd?
     client = get_client()
+    sem = Semaphore(max_leases=opts.nworkers*opts.nthreads_dask)  #, name='mysem')
     # futures = client.map(lambda x: x, np.arange(opts.nworkers*opts.nthreads_dask*2))
 
     print('Constructing mapping', file=log)
@@ -382,7 +383,9 @@ def _fastim(**kw):
                         scanid=subds.SCAN_NUMBER,
                         fds_store=fdsstore.url,
                         bandid=fi,
-                        timeid=ti)
+                        timeid=ti,
+                        sem=sem,
+                        pure=False)
                         # workers=wid)  # submit to the same worker
 
                 # add current future to ascomp
