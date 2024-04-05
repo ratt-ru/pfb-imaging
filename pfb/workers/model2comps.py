@@ -67,7 +67,9 @@ def _model2comps(**kw):
     from astropy.io import fits
     from pfb.utils.misc import compute_context, fit_image_cube
     import xarray as xr
+    import fsspec as fs
     from daskms.fsspec_store import DaskMSStore
+    import json
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.postfix}.dds'
@@ -184,7 +186,13 @@ def _model2comps(**kw):
                                attrs=attrs)
     print(f'Writing interpolated model to {coeff_name}',
           file=log)
-    coeff_dataset.to_zarr(mdsstore.url)
+
+    if out_format == 'zarr':
+        coeff_dataset.to_zarr(mdsstore.url)
+    elif out_format == 'json':
+        coeff_dict = coeff_dataset.to_dict()
+        with fs.open(mdsstore.url, 'w') as f:
+            json.dump(coeff_dict, f)
 
 
     print("All done here.", file=log)
