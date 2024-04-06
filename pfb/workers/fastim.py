@@ -175,7 +175,7 @@ def _fastim(**kw):
             construct_mappings(opts.ms,
                                gain_name,
                                ipi=opts.integrations_per_image,
-                               cpi=opts.channels_per_image,
+                               cpi=opts.channels_per_degrid_image,
                                freq_min=freq_min,
                                freq_max=freq_max)
 
@@ -329,6 +329,10 @@ def _fastim(**kw):
 
             fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
                                 freq_mapping[ms][idt]['counts']))
+
+            # # TODO - cpdi to cpgi mapping
+            # nbandi = freq_mapping[ms][idt]['start_indices'].size
+
             for fi, (flow, fcounts) in fitr:
                 Inu = slice(flow, flow + fcounts)
 

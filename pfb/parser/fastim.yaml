@@ -70,13 +70,20 @@ inputs:
     info:
       Number of time integrations per image.
       Default (-1, 0, None) -> dataset per scan.
-  channels-per-image:
+  channels-per-degrid-image:
     dtype: int
-    abbreviation: cpi
+    abbreviation: cpdi
+    default: 32
+    info:
+      Number of channels per image for degridding resolution.
+      Any of (-1, 0, None) implies single dataset per spw.
+  channels-per-grid-image:
+    dtype: int
+    abbreviation: cpgi
     default: -1
     info:
-      Number of channels per image.
-      Default (-1, 0, None) -> dataset per spw.
+      Number of channels per image for gridding resolution.
+      Default of (-1, 0, None) implies a single dataset per spw.
   precision:
     dtype: str
     default: double

@@ -159,8 +159,10 @@ def smoovie(**kw):
 
         # Time and freq selection
         print(f"Time and freq selection takes ({nfreqs_in},{ntimes_in}) cube to ({nfreqs_out},{ntimes_out})", file=log)
-        nf = int(np.ceil(nfreqs_out/opts.freq_bin))
-        nt = int(np.ceil(ntimes_out/opts.time_bin))
+        fbin = nfreqs_out if opts.freq_bin in (-1, None, 0) else opts.freq_bin
+        nf = int(np.ceil(nfreqs_out/fbin))
+        tbin = ntimes_out if opts.time_bin in (-1, None, 0) else opts.time_bin
+        nt = int(np.ceil(ntimes_out/tbin))
         print(f"Time and freq binning takes ({nfreqs_out},{ntimes_out}) cube to ({nf},{nt})", file=log)
 
         # reset band and time id after selection
@@ -173,17 +175,20 @@ def smoovie(**kw):
             })
 
 
+
+
         # bin freq or time
         if opts.animate_axis == 'time':
-            fbins = np.arange(0, nfreqs_out, opts.freq_bin)
-            fbins = np.append(fbins, nfreqs_out)
+            fbins = np.arange(fbin/2, nfreqs_out + fbin/2, fbin)
+            # TODO - respect scan boundaries
             fdso = {}
             for ds in fds:
                 tmp = np.abs(fbins - ds.bandid)
-                b = np.where(tmp == tmp.min())[0][0]
+                b = np.where(tmp == tmp.min())[0][-1]
                 fdso.setdefault(b, [])
                 fdso[b].append(ds)
 
+            # import ipdb; ipdb.set_trace()
 
             for b, dlist in fdso.items():
                 futures = []
@@ -202,6 +207,13 @@ def smoovie(**kw):
                     res[1] = medrms
                     res.append(f'{str(i)}/{nt}')  # frame fraction
                     res.append(b)  # band number
+
+                # results should have
+                # 0 - out image
+                # 1 - median rms
+                # 2 - utc
+                # 3 - frame fraction
+                # 4 - band id
 
                 # TODO - submit streams in parallel
                 outim = stream(

@@ -53,7 +53,7 @@ inputs:
       Optional explicit output name.
       Otherwise the default naming convention is used.
   out-format:
-    str: zarr
+    dtype: str
     default: zarr
     choices:
       - zarr
