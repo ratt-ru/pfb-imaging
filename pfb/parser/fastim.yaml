@@ -178,6 +178,12 @@ inputs:
       Number of threads used to scale vertically (eg. for FFTs and gridding).
       Each dask thread can in principle spawn this many threads.
       Will attempt to use half the available threads by default.
+  progressbar:
+    dtype: bool
+    default: true
+    info:
+      Display progress.
+      Use --no-progressbar to deactivate.
 
   _include:
     - (.)gridding.yml

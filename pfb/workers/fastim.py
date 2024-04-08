@@ -425,13 +425,14 @@ def _fastim(**kw):
         n_launched += 1
 
     ac_iter = as_completed(futures)
+    nds = len(datasets)
     for completed_future in ac_iter:
 
         if n_launched == len(datasets):  # Stop once all jobs have been launched.
             continue
 
         (subds, jones, freqsi, utimesi, ridx, rcnts, fidx, fcnts,
-         radeci, fi, ti) = datasets[n_launched]
+        radeci, fi, ti) = datasets[n_launched]
         data2 = None if dc2 is None else getattr(subds, dc2).data
         sc = opts.sigma_column
         sigma = None if sc is None else getattr(subds, sc).data
@@ -480,6 +481,9 @@ def _fastim(**kw):
         ac_iter.add(future)
         associated_workers[future] = worker
         n_launched += 1
+
+        if opts.progressbar:
+            print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
 
     # while not ascomp.is_empty():
     #     # pop them as they finish
