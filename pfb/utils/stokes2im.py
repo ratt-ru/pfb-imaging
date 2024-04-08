@@ -9,6 +9,7 @@ from pfb.utils.stokes import stokes_funcs
 from pfb.utils.weighting import (_compute_counts, _counts_to_weights,
                                  _weight_data, _filter_extreme_counts)
 from pfb.utils.misc import eval_coeffs_to_slice
+from pfb.operators.gridder import _im2vis_impl as im2vis
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from casacore.quanta import quantity
 from datetime import datetime
@@ -18,6 +19,22 @@ from numba.core.errors import NumbaPendingDeprecationWarning
 import warnings
 
 warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
+
+# make Stokes vis
+# (row, chan, corr) -> (row, chan) = vis
+
+
+# predict model vis
+# (degrid_band, nx, ny) -> (row, chan) = model_vis
+# dirty2vis x ndegrid times with nthreads = 2
+
+# compute imaging weights
+
+# get residual_vis
+
+# grid
+# (row, chan) -> nx, ny
+# vis2dirty with nthreads = 2 * threads_per_worker
 
 
 def single_stokes_image(
@@ -41,6 +58,8 @@ def single_stokes_image(
                     utime=None,
                     tbin_idx=None,
                     tbin_counts=None,
+                    fbin_idx=None,
+                    fbin_counts=None,
                     radec=None,
                     antpos=None,
                     poltype=None,
@@ -59,10 +78,6 @@ def single_stokes_image(
                                 flag, sigma, weight, jones],
                                 sync=True,
                                 workers=wid)
-
-    # (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,
-    #     jones) = dask.compute(data, data2, ant1, ant2, uvw, frow,
-    #                         flag, sigma, weight, jones)
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -170,7 +185,7 @@ def single_stokes_image(
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
-    vis, wgt = _weight_data(data, weight, flag, jones,
+    data, weight = _weight_data(data, weight, flag, jones,
                             tbin_idx, tbin_counts,
                             ant1, ant2,
                             literally(poltype),
@@ -203,49 +218,54 @@ def single_stokes_image(
 
 
     if mds is not None:
-        # mds = xr.open_zarr(mds).compute()
+        nband = fbin_idx.size
+        model = np.zeros((nband, mds.npix_x, mds.npix_y), dtype=real_type)
 
-        model = eval_coeffs_to_slice(
-            time_out,
-            freq_out,
-            mds.coefficients.values,
-            mds.location_x.values,
-            mds.location_y.values,
-            mds.parametrisation,
-            mds.params.values,
-            mds.texpr,
-            mds.fexpr,
-            mds.npix_x, mds.npix_y,
-            mds.cell_rad_x, mds.cell_rad_y,
-            mds.center_x, mds.center_y,
-            # TODO - currently needs to be the same, need FFT interpolation
-            mds.npix_x, mds.npix_y,
-            mds.cell_rad_x, mds.cell_rad_y,
-            mds.center_x, mds.center_y,
-        )
+        for b in range(nband):
+            Inu = slice(fbin_idx[b], fbin_idx[b] + fbin_counts[b])
+            fout = np.mean(freq[Inu])
+
+            model[b] = eval_coeffs_to_slice(
+                time_out,
+                fout,
+                mds.coefficients.values,
+                mds.location_x.values,
+                mds.location_y.values,
+                mds.parametrisation,
+                mds.params.values,
+                mds.texpr,
+                mds.fexpr,
+                mds.npix_x, mds.npix_y,
+                mds.cell_rad_x, mds.cell_rad_y,
+                mds.center_x, mds.center_y,
+                # TODO - currently needs to be the same, need FFT interpolation
+                mds.npix_x, mds.npix_y,
+                mds.cell_rad_x, mds.cell_rad_y,
+                mds.center_x, mds.center_y,
+            )
 
         # do not apply weights in this direction
         # do not change model resolution
-        model_vis = dirty2vis(
-            uvw=uvw,
-            freq=freq,
-            dirty=model,
-            pixsize_x=mds.cell_rad_x,
-            pixsize_y=mds.cell_rad_y,
-            center_x=mds.center_x,
-            center_y=mds.center_y,
-            epsilon=opts.epsilon,
-            do_wgridding=opts.do_wgridding,
-            flip_v=False,
-            nthreads=opts.nvthreads,
-            divide_by_n=False,
-            sigma_min=1.1, sigma_max=3.0,
-            verbosity=0)
+        # TODO - horizontally over band axis
+        model_vis = im2vis(
+                 uvw,
+                 freq,
+                 model,
+                 mds.cell_rad_x,
+                 mds.cell_rad_y,
+                 fbin_idx,
+                 fbin_counts,
+                 x0=mds.center_x, y0=mds.center_y,
+                 epsilon=opts.epsilon,
+                 flip_v=False,
+                 do_wgridding=opts.do_wgridding,
+                 divide_by_n=False,
+                 nthreads=opts.nvthreads)
 
-        ne.evaluate('(vis-model_vis)*mask', out=vis)
+        ne.evaluate('(data-model_vis)*mask', out=data)
 
         if opts.l2reweight_dof:
-            ressq = (vis*vis.conj()).real
+            ressq = (data*data.conj()).real
             wcount = mask.sum()
             if wcount:
                 ovar = ressq.sum()/wcount  # use 67% quantile?
@@ -264,18 +284,18 @@ def single_stokes_image(
             nx, ny,
             cell_rad, cell_rad,
             opts.robustness)
-        if wgt is not None:
-            wgt *= imwgt
+        if weight is not None:
+            weight *= imwgt
         else:
-            wgt = imwgt
+            weight = imwgt
 
-    wsum = wgt[~flag].sum()
+    wsum = weight[~flag].sum()
 
     residual = vis2dirty(
         uvw=uvw,
         freq=freq,
-        vis=vis,
-        wgt=wgt,
+        vis=data,
+        wgt=weight,
         mask=mask,
         npix_x=nx, npix_y=ny,
         pixsize_x=cell_rad, pixsize_y=cell_rad,

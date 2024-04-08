@@ -168,128 +168,130 @@ def _vis2im_impl(uvw,
 
 
 
-def im2vis(uvw=None,
-           freq=None,
-           image=None,
-           wgt=None,
-           mask=None,
-           cellx=None,
-           celly=None,
-           nthreads=1,
-           epsilon=1e-7,
-           do_wgridding=True,
-           flip_v=False,
-           x0=0, y0=0,
-           precision='single',
-           divide_by_n=False,
-           sigma_min=1.1,
-           sigma_max=2.6):
+# def im2vis(uvw=None,
+#            freq=None,
+#            image=None,
+#            wgt=None,
+#            mask=None,
+#            cellx=None,
+#            celly=None,
+#            nthreads=1,
+#            epsilon=1e-7,
+#            do_wgridding=True,
+#            flip_v=False,
+#            x0=0, y0=0,
+#            precision='single',
+#            divide_by_n=False,
+#            sigma_min=1.1,
+#            sigma_max=2.6):
 
-    if precision.lower() == 'single':
-        complex_type = np.float32
-    elif precision.lower() == 'double':
-        complex_type = np.float64
+#     if precision.lower() == 'single':
+#         complex_type = np.float32
+#     elif precision.lower() == 'double':
+#         complex_type = np.float64
 
-    if wgt is not None:
-        wgt_out = 'rf'
-    else:
-        wgt_out = None
+#     if wgt is not None:
+#         wgt_out = 'rf'
+#     else:
+#         wgt_out = None
 
-    if mask is not None:
-        mask_out = 'rf'
-    else:
-        mask_out = None
+#     if mask is not None:
+#         mask_out = 'rf'
+#     else:
+#         mask_out = None
 
-    return da.blockwise(_im2vis, 'rf',
-                        uvw, 'r3',
-                        freq, 'f',
-                        image, 'xy',
-                        wgt, wgt_out,
-                        mask, mask_out,
-                        cellx, None,
-                        celly, None,
-                        x0, None,
-                        y0, None,
-                        epsilon, None,
-                        flip_v, None,
-                        do_wgridding, None,
-                        precision, None,
-                        divide_by_n, None,
-                        nthreads, None,
-                        sigma_min, None,
-                        sigma_max, None,
-                        dtype=complex_type)
+#     return da.blockwise(_im2vis, 'rf',
+#                         uvw, 'r3',
+#                         freq, 'f',
+#                         image, 'xy',
+#                         wgt, wgt_out,
+#                         mask, mask_out,
+#                         cellx, None,
+#                         celly, None,
+#                         x0, None,
+#                         y0, None,
+#                         epsilon, None,
+#                         flip_v, None,
+#                         do_wgridding, None,
+#                         precision, None,
+#                         divide_by_n, None,
+#                         nthreads, None,
+#                         sigma_min, None,
+#                         sigma_max, None,
+#                         dtype=complex_type)
 
-def _im2vis(uvw,
-           freq,
-           image,
-           wgt,
-           mask,
-           cellx,
-           celly,
-           x0=0, y0=0,
-           epsilon=1e-7,
-           flip_v=False,
-           do_wgridding=True,
-           precision='single',
-           divide_by_n=False,
-           nthreads=1,
-           sigma_min=1.1,
-           sigma_max=2.6):
+# def _im2vis(uvw,
+#            freq,
+#            image,
+#            wgt,
+#            mask,
+#            cellx,
+#            celly,
+#            x0=0, y0=0,
+#            epsilon=1e-7,
+#            flip_v=False,
+#            do_wgridding=True,
+#            precision='single',
+#            divide_by_n=False,
+#            nthreads=1,
+#            sigma_min=1.1,
+#            sigma_max=2.6):
 
-    return _im2vis_impl(uvw[0],
-                        freq,
-                        image[0][0],
-                        wgt,
-                        mask,
-                        cellx, celly,
-                        x0, y0,
-                        epsilon,
-                        flip_v,
-                        do_wgridding,
-                        precision,
-                        divide_by_n,
-                        nthreads,
-                        sigma_min,
-                        sigma_max)
+#     return _im2vis_impl(uvw[0],
+#                         freq,
+#                         image[0][0],
+#                         wgt,
+#                         mask,
+#                         cellx, celly,
+#                         x0, y0,
+#                         epsilon,
+#                         flip_v,
+#                         do_wgridding,
+#                         precision,
+#                         divide_by_n,
+#                         nthreads,
+#                         sigma_min,
+#                         sigma_max)
 
 
 
 def _im2vis_impl(uvw,
                  freq,
                  image,
-                 wgt,
-                 mask,
                  cellx,
                  celly,
+                 freq_bin_idx,
+                 freq_bin_counts,
                  x0=0, y0=0,
                  epsilon=1e-7,
                  flip_v=False,
                  do_wgridding=True,
-                 precision='single',
                  divide_by_n=False,
-                 nthreads=1,
-                 sigma_min=1.1,
-                 sigma_max=2.6):
-    uvw = np.require(uvw, dtype=np.float64)
-    freq = np.require(freq, np.float64)
-    if precision.lower() == 'single':
-        real_type = np.float32
-        complex_type = np.complex64
-    elif precision.lower() == 'double':
-        real_type = np.float64
-        complex_type = np.complex128
-    image = np.require(image, dtype=real_type)
-    if wgt is not None:
-        wgt = np.require(wgt, dtype=real_type)
-    if mask is not None:
-        mask = np.require(mask, dtype=np.uint8)
-    return dirty2vis(uvw=uvw, freq=freq, dirty=image, wgt=wgt, mask=mask,
-                     pixsize_x=cellx, pixsize_y=celly,
-                     center_x=x0, center_y=y0, epsilon=epsilon, flip_v=flip_v,
-                     do_wgridding=do_wgridding, divide_by_n=divide_by_n,
-                     nthreads=nthreads, sigma_min=sigma_min,
-                     sigma_max=sigma_max)
+                 nthreads=1):
+    # adjust for chunking
+    # need a copy here if using multiple row chunks
+    freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
+    nband, nx, ny = image.shape
+    nrow = uvw.shape[0]
+    nchan = freq.size
+    vis = np.zeros((nrow, nchan), dtype=np.result_type(image, np.complex64))
+    for i in range(nband):
+        ind = slice(freq_bin_idx2[i], freq_bin_idx2[i] + freq_bin_counts[i])
+        vis[:, ind] = dirty2vis(
+            uvw=uvw,
+            freq=freq[ind],
+            dirty=image[i],
+            pixsize_x=cellx,
+            pixsize_y=celly,
+            center_x=x0,
+            center_y=y0,
+            epsilon=epsilon,
+            nthreads=nthreads,
+            do_wgridding=do_wgridding,
+            divide_by_n=divide_by_n,
+            flip_v=flip_v
+        )
+    return vis
 
 
 

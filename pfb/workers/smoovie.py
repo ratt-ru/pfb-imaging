@@ -195,7 +195,11 @@ def smoovie(**kw):
                 for t in range(nt):
                     nlow = t*opts.time_bin
                     nhigh = np.minimum(nlow + opts.time_bin, ntimes_out)
-                    fut = client.submit(sum_blocks, dlist[nlow:nhigh])
+                    frame = []
+                    for ds in dlist:
+                        if ds.timeid >= nlow or ds.timeid < nhigh:
+                            frame.append(ds)
+                    fut = client.submit(sum_blocks, frame)
                     futures.append(fut)
 
                 # this should preserve order

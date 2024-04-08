@@ -97,25 +97,26 @@ def fastim(**kw):
                 from dask.distributed import Client, LocalCluster
                 print("Initialising client with LocalCluster.", file=log)
                 cluster = LocalCluster(processes=True,
-                                        n_workers=opts.nworkers,
-                                        threads_per_worker=opts.nthreads_dask,
-                                        memory_limit=0,  # str(mem_limit/nworkers)+'GB'
-                                        asynchronous=False)
+                                       n_workers=opts.nworkers,
+                                       threads_per_worker=opts.nthreads_dask,
+                                       memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                                       asynchronous=False)
                 cluster = stack.enter_context(cluster)
-                client = stack.enter_context(Client(cluster, direct_to_workers=False))
+                client = stack.enter_context(Client(cluster))
 
             client.wait_for_workers(opts.nworkers)
             client.amm.stop()
 
             ti = time.time()
             _fastim(**opts)
+
             client.close()
 
-            print("All done here.", file=log)
+            print(f"All done after {time.time() - ti}s", file=log)
 
 def _fastim(**kw):
     opts = OmegaConf.create(kw)
-    from omegaconf import ListConfig
+    from omegaconf import ListConfig, open_dict
     OmegaConf.set_struct(opts, True)
 
     import numpy as np
@@ -163,11 +164,9 @@ def _fastim(**kw):
         freq_max = np.inf
 
 
-    # generate some futures to initialise as_completed
-    # Are these round robin'd?
+
     client = get_client()
-    # sem = Semaphore(max_leases=opts.nworkers*opts.nthreads_dask)  #, name='mysem')
-    # futures = client.map(lambda x: x, np.arange(opts.nworkers*opts.nthreads_dask*2))
+
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gain_chunks, radecs, \
@@ -331,13 +330,27 @@ def _fastim(**kw):
                                 freq_mapping[ms][idt]['counts']))
 
             # # TODO - cpdi to cpgi mapping
-            # nbandi = freq_mapping[ms][idt]['start_indices'].size
+            # # assumes cpdi is integer multiple of cpgi
+            nbandi = freq_mapping[ms][idt]['start_indices'].size
+            nfreqs = np.sum(freq_mapping[ms][idt]['counts'])
+            if opts.channels_per_grid_image in (0, -1, None):
+                cpgi = nfreqs
+            else:
+                cpgi = opts.channels_per_grid_image
+            fbins_per_band = int(cpgi / opts.channels_per_degrid_image)
+            nband = int(np.ceil(nbandi/fbins_per_band))
 
-            for fi, (flow, fcounts) in fitr:
-                Inu = slice(flow, flow + fcounts)
+            for fi in range(nband):
+                idx0 = fi * fbins_per_band
+                idxf = np.minimum((fi + 1) * fbins_per_band, nfreqs)
+                fidx = freq_mapping[ms][idt]['start_indices'][idx0:idxf]
+                fcnts = freq_mapping[ms][idt]['counts'][idx0:idxf]
+                # need to slice out all data going onto same grid
+                Inu = slice(fidx.min(), fidx.min() + np.sum(fcnts))
 
                 subds = ds[{'row': Irow, 'chan': Inu}]
                 subds = subds.chunk({'row':-1, 'chan': -1})
+
                 if opts.gain_table is not None:
                     # Only DI gains currently supported
                     subgds = gds[ids][{'gain_time': It, 'gain_freq': Inu}]
@@ -351,6 +364,7 @@ def _fastim(**kw):
                                  freqs[ms][idt][Inu],
                                  utimes[ms][idt][It],
                                  ridx, rcnts,
+                                 fidx, fcnts,
                                  radecs[ms][idt],
                                  fi, ti])
 
@@ -361,7 +375,8 @@ def _fastim(**kw):
 
     while idle_workers:   # Seed each worker with a task.
 
-        subds, jones, freqsi, utimesi, ridx, rcnts, radeci, fi, ti = datasets[n_launched]
+        (subds, jones, freqsi, utimesi, ridx, rcnts, fidx, fcnts,
+         radeci, fi, ti) = datasets[n_launched]
         data2 = None if dc2 is None else getattr(subds, dc2).data
         sc = opts.sigma_column
         sigma = None if sc is None else getattr(subds, sc).data
@@ -389,6 +404,8 @@ def _fastim(**kw):
                         utime=utimesi,
                         tbin_idx=ridx,
                         tbin_counts=rcnts,
+                        fbin_idx=fidx,
+                        fbin_counts=fcnts,
                         cell_rad=cell_rad,
                         radec=radeci,
                         antpos=antpos[ms],
@@ -413,7 +430,8 @@ def _fastim(**kw):
         if n_launched == len(datasets):  # Stop once all jobs have been launched.
             continue
 
-        subds, jones, freqsi, utimesi, ridx, rcnts, radeci, fi, ti = datasets[n_launched]
+        (subds, jones, freqsi, utimesi, ridx, rcnts, fidx, fcnts,
+         radeci, fi, ti) = datasets[n_launched]
         data2 = None if dc2 is None else getattr(subds, dc2).data
         sc = opts.sigma_column
         sigma = None if sc is None else getattr(subds, sc).data
@@ -443,6 +461,8 @@ def _fastim(**kw):
                         utime=utimesi,
                         tbin_idx=ridx,
                         tbin_counts=rcnts,
+                        fbin_idx=fidx,
+                        fbin_counts=fcnts,
                         cell_rad=cell_rad,
                         radec=radeci,
                         antpos=antpos[ms],
@@ -470,5 +490,4 @@ def _fastim(**kw):
     # import ipdb; ipdb.set_trace()
     wait(futures)
 
-    client.close()
     return
