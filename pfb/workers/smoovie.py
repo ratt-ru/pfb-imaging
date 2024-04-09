@@ -80,6 +80,7 @@ def smoovie(**kw):
         from PIL import Image, ImageDraw, ImageFont
         import matplotlib.pyplot as plt
         from streamjoy import stream, wrap_matplotlib
+        from distributed.diagnostics.progressbar import progress
 
         @wrap_matplotlib()
         def plot_frame(frame):
@@ -197,12 +198,16 @@ def smoovie(**kw):
                     nhigh = np.minimum(nlow + opts.time_bin, ntimes_out)
                     frame = []
                     for ds in dlist:
-                        if ds.timeid >= nlow or ds.timeid < nhigh:
+                        if ds.timeid >= nlow and ds.timeid < nhigh:
                             frame.append(ds)
-                    fut = client.submit(sum_blocks, frame)
+
+                    # import ipdb; ipdb.set_trace()
+                    fut = client.submit(sum_blocks, frame,
+                                        priority=0-t)
                     futures.append(fut)
 
                 # this should preserve order
+                progress(futures)
                 results = client.gather(futures)
                 medrms = np.median([res[1] for res in results])
 
@@ -345,9 +350,12 @@ import dask
 import numpy as np
 from casacore.quanta import quantity
 from datetime import datetime
+from distributed import worker_client
 # from pfb.utils.fits import save_fits
 def sum_blocks(fds, animate='time'):
-    fds = dask.compute(fds)[0]
+    with worker_client() as client:
+        fds = client.compute(fds, sync=True)
+    # fds = dask.compute(fds)[0]
     outim = np.zeros((fds[0].x.size, fds[0].y.size))
     wsum = 0.0
     cout = 0.0

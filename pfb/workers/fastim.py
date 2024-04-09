@@ -428,7 +428,7 @@ def _fastim(**kw):
     nds = len(datasets)
     for completed_future in ac_iter:
 
-        if n_launched == len(datasets):  # Stop once all jobs have been launched.
+        if n_launched == nds:  # Stop once all jobs have been launched.
             continue
 
         (subds, jones, freqsi, utimesi, ridx, rcnts, fidx, fcnts,
@@ -485,13 +485,6 @@ def _fastim(**kw):
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
 
-    # while not ascomp.is_empty():
-    #     # pop them as they finish
-    #     if ascomp.has_ready():
-    #         fut = ascomp.next()
-    #         print(fut)
-
-    # import ipdb; ipdb.set_trace()
     wait(futures)
 
     return

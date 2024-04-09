@@ -26,12 +26,12 @@ inputs:
       Frames per second
   min-frac:
     dtype: float
-    default: 2.5
+    default: 3.5
     info:
       vmin will be set as min-frac * median(rms)
   max-frac:
     dtype: float
-    default: 2.5
+    default: 3.5
     info:
       vmax will be set as min-frac * median(rms)
   cmap:
