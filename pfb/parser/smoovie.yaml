@@ -137,6 +137,11 @@ inputs:
     info:
       This can be predefined celestial objects known to astropy or a string in
       the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+  respect-scan-boundaries:
+    dtype: bool
+    default: true
+    info:
+      Whether to allow averaging across scan boundaries
 
 outputs:
     {}

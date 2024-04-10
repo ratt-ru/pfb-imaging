@@ -84,11 +84,19 @@ def smoovie(**kw):
 
         @wrap_matplotlib()
         def plot_frame(frame):
+            # frame is a list containing
+            # 0 - out image
+            # 1 - median rms
+            # 2 - utc
+            # 3 - scan number
+            # 4 - frame fraction
+            # 5 - band id
             im = frame[0]
             rms = frame[1]
             utc = frame[2]
-            fnum = frame[3]
-            band = frame[4]
+            scan = frame[3]
+            fnum = frame[4]
+            band = frame[5]
             fig, ax = plt.subplots(figsize=(10, 10))
             fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=None, hspace=None)
             ax.imshow(im,
@@ -97,7 +105,7 @@ def smoovie(**kw):
                       cmap=opts.cmap)
             plt.xticks([]), plt.yticks([])
             ax.annotate(
-                f'{opts.outname}_band{b:04d}' + '\n' + fnum + '\n' + utc,
+                f'{opts.outname}_band{band:04d}_scan{scan:04d}' + '\n' + fnum + '\n' + utc,
                 xy=(0.0, 0.0),
                 xytext=(0.05, 0.05),
                 xycoords='axes fraction',
@@ -112,6 +120,8 @@ def smoovie(**kw):
 
         # lazy load fds
         fds = list(map(xr.open_zarr, fdslist))
+
+        # TODO - scan selection
 
         # get input times and frequencies
         freqs_in = []
@@ -158,30 +168,76 @@ def smoovie(**kw):
         ntimes_out = times_out.size
         nfreqs_out = freqs_out.size
 
+        # get scan numbers
+        scan_bins = {}
+        for ds in fds:
+            scan_bins.setdefault(ds.scanid, 0)
+            scan_bins[ds.scanid] += 1
+
+        # adjust tid and bid after selection
+        # this should make tid and bid unique
+        scan_numbers = list(scan_bins.keys())
+        bin_counts = np.array(list(scan_bins.values()))
+        bin_cumcounts = np.cumsum(np.concatenate(([0],bin_counts)))
+        for i, ds in enumerate(fds):
+            tid = ds.timeid
+            bid = ds.bandid
+            # index of scan number
+            sid = scan_numbers.index(ds.scanid)
+            fds[i] = ds.assign_attrs(**{
+                'timeid': tid + bin_cumcounts[sid] - t0,
+                'bandid': bid + bin_cumcounts[sid] - b0
+            })
+
         # Time and freq selection
         print(f"Time and freq selection takes ({nfreqs_in},{ntimes_in}) cube to ({nfreqs_out},{ntimes_out})", file=log)
         fbin = nfreqs_out if opts.freq_bin in (-1, None, 0) else opts.freq_bin
         nf = int(np.ceil(nfreqs_out/fbin))
-        tbin = ntimes_out if opts.time_bin in (-1, None, 0) else opts.time_bin
-        nt = int(np.ceil(ntimes_out/tbin))
+
+        # time and freq binning
+        if opts.respect_scan_boundaries:  # and len(scan_numbers) > 1:
+            max_bin = np.max(bin_counts)
+            if opts.time_bin in (-1, None, 0) or opts.time_bin > max_bin:
+                # one bin per scan
+                tbins = bin_counts
+                nt = bin_counts.size
+            else:
+                nts = list(map(lambda x: int(np.ceil(x/opts.time_bin)), bin_counts))
+                nt = np.sum(nts)
+                tbins = np.zeros(nt)
+                nlow = 0
+                ntot = np.sum(bin_counts)
+                for t in range(nt):
+                    nhigh = np.minimum(nlow + opts.time_bin, ntot)
+                    # check if scan would be straddled
+                    idxl = np.where(nlow < bin_cumcounts)[0][0]
+                    idxh = np.where(nhigh <= bin_cumcounts)[0][0]
+                    if idxl == idxh and t < nt-1:
+                        # not straddled
+                        tbins[t] = opts.time_bin
+                        nlow += opts.time_bin
+                    else:
+                        # straddled
+                        tbins[t] = bin_cumcounts[idxl] - nlow
+                        nlow = bin_cumcounts[idxl]
+
+        else:
+            max_bin = ntimes_out if opts.time_bin in (-1, None, 0) else opts.time_bin
+            if opts.time_bin > ntimes_out:
+                max_bin = ntimes_out
+            nt = int(np.ceil(ntimes_out/max_bin))
+            tbins = np.array([max_bin]*nt)
+            if ntimes_out % max_bin:
+                tbins[-1] = ntimes_out - (nt-1)*max_bin
+        tidx = np.cumsum(np.concatenate(([0], tbins))).astype(int)
+        tbins = tbins.astype(int)
         print(f"Time and freq binning takes ({nfreqs_out},{ntimes_out}) cube to ({nf},{nt})", file=log)
 
-        # reset band and time id after selection
-        for i, ds in enumerate(fds):
-            tid = ds.timeid
-            bid = ds.bandid
-            fds[i] = ds.assign_attrs(**{
-                'timeid': tid - t0,
-                'bandid': bid - b0
-            })
 
 
-
-
-        # bin freq or time
         if opts.animate_axis == 'time':
+            # bin freq axis and make ovie for each bin
             fbins = np.arange(fbin/2, nfreqs_out + fbin/2, fbin)
-            # TODO - respect scan boundaries
             fdso = {}
             for ds in fds:
                 tmp = np.abs(fbins - ds.bandid)
@@ -189,21 +245,13 @@ def smoovie(**kw):
                 fdso.setdefault(b, [])
                 fdso[b].append(ds)
 
-            # import ipdb; ipdb.set_trace()
-
             for b, dlist in fdso.items():
                 futures = []
                 for t in range(nt):
-                    nlow = t*opts.time_bin
-                    nhigh = np.minimum(nlow + opts.time_bin, ntimes_out)
-                    frame = []
-                    for ds in dlist:
-                        if ds.timeid >= nlow and ds.timeid < nhigh:
-                            frame.append(ds)
-
-                    # import ipdb; ipdb.set_trace()
-                    fut = client.submit(sum_blocks, frame,
-                                        priority=0-t)
+                    nlow = tidx[t]
+                    nhigh = nlow + tbins[t]
+                    fut = client.submit(sum_blocks, dlist[nlow:nhigh],
+                                        priority=-t)
                     futures.append(fut)
 
                 # this should preserve order
@@ -221,8 +269,9 @@ def smoovie(**kw):
                 # 0 - out image
                 # 1 - median rms
                 # 2 - utc
-                # 3 - frame fraction
-                # 4 - band id
+                # 3 - scan number
+                # 4 - frame fraction
+                # 5 - band id
 
                 # TODO - submit streams in parallel
                 outim = stream(
@@ -372,4 +421,4 @@ def sum_blocks(fds, animate='time'):
         utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
     rms = np.std(outim)
 
-    return [outim, rms, utc]
+    return [outim, rms, utc, fds[0].scanid]

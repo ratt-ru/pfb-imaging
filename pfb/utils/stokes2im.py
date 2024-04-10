@@ -247,6 +247,9 @@ def single_stokes_image(
         # do not apply weights in this direction
         # do not change model resolution
         # TODO - horizontally over band axis
+        # client.get_executor
+        # worker_client
+        # get_worker
         model_vis = im2vis(
                  uvw,
                  freq,

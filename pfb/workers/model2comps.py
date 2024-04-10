@@ -187,9 +187,9 @@ def _model2comps(**kw):
     print(f'Writing interpolated model to {coeff_name}',
           file=log)
 
-    if out_format == 'zarr':
+    if opts.out_format == 'zarr':
         coeff_dataset.to_zarr(mdsstore.url)
-    elif out_format == 'json':
+    elif opts.out_format == 'json':
         coeff_dict = coeff_dataset.to_dict()
         with fs.open(mdsstore.url, 'w') as f:
             json.dump(coeff_dict, f)
