@@ -79,6 +79,7 @@ def smoovie(**kw):
         from pfb.utils.fits import dds2fits, dds2fits_mfs
         from PIL import Image, ImageDraw, ImageFont
         import matplotlib.pyplot as plt
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
         from streamjoy import stream, wrap_matplotlib
         from distributed.diagnostics.progressbar import progress
 
@@ -99,10 +100,14 @@ def smoovie(**kw):
             band = frame[5]
             fig, ax = plt.subplots(figsize=(10, 10))
             fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=None, hspace=None)
-            ax.imshow(im,
+            im1 = ax.imshow(im,
                       vmin=-opts.min_frac*rms,
                       vmax=opts.max_frac*rms,
                       cmap=opts.cmap)
+            # divider = make_axes_locatable(ax)
+            # cax = divider.append_axes('right', size='5%', pad=0.05)
+            # fig.colorbar(im1, cax=cax, orientation='vertical')
+
             plt.xticks([]), plt.yticks([])
             ax.annotate(
                 f'{opts.outname}_band{band:04d}_scan{scan:04d}' + '\n' + fnum + '\n' + utc,
@@ -284,7 +289,8 @@ def smoovie(**kw):
                 )
 
                 outim.fps = opts.fps
-                outim.write(f'{opts.outname}.band{b:04d}.gif')
+                outim.write(f'{opts.outname}_band{b}_fps{opts.fps}_tbin'
+                            f'{opts.time_bin}_fbin{opts.freq_bin}.gif')
 
 
         elif opts.animate_axis == 'freq':

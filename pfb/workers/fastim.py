@@ -230,7 +230,7 @@ def _fastim(**kw):
         operator="+"
     elif "-" in dc:
         dc1, dc2 = dc.split("-")
-        operator="+"
+        operator="-"
     else:
         dc1 = dc
         dc2 = None
