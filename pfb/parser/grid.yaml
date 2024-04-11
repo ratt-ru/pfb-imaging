@@ -32,7 +32,7 @@ inputs:
       Name of dataset to use for model initialisation
   use-best-model:
     dtype: bool
-    default: flase
+    default: false
     info:
       If this flag is set MODEL_BEST will be used as the model
       unless transfer-model-from is specified. By default MODEL

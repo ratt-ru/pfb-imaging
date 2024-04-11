@@ -79,7 +79,8 @@ def _spotless(ddsi=None, **kw):
     from ducc0.misc import make_noncritical
     from pfb.prox.prox_21m import prox_21m_numba as prox_21
     # from pfb.prox.prox_21 import prox_21
-    from pfb.utils.misc import fitcleanbeam
+    from pfb.utils.misc import fitcleanbeam, fit_image_cube
+
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -108,9 +109,12 @@ def _spotless(ddsi=None, **kw):
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
     freq_out = []
+    time_out = []
     for ds in dds:
         freq_out.append(ds.freq_out)
+        time_out.append(ds.time_out)
     freq_out = np.unique(np.array(freq_out))
+    time_out = np.unique(np.array(time_out))
     try:
         assert freq_out.size == opts.nband
     except Exception as e:
@@ -127,6 +131,10 @@ def _spotless(ddsi=None, **kw):
     cell_deg = np.rad2deg(cell_rad)
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+    if 'niters' in dds[0].attrs:
+        iter0 = dds[0].niters
+    else:
+        iter0 = 0
 
 
     # stitch dirty/psf in apparent scale
@@ -190,7 +198,8 @@ def _spotless(ddsi=None, **kw):
                                           maxit=opts.pm_maxit,
                                           verbosity=opts.pm_verbose,
                                           report_freq=opts.pm_report_freq)
-        hessnorm *= 1.05
+        # inflate slightly for stability
+        hessnorm *= 1.1
     else:
         hessnorm = opts.hessnorm
         print(f"Using provided hessnorm of beta = {hessnorm:.3e}", file=log)
@@ -237,7 +246,12 @@ def _spotless(ddsi=None, **kw):
     else:
         if opts.l1reweight_from == 0:
             print('Initialising with L1 reweighted', file=log)
-            reweighter = partial(l1reweight_func, psi.dot, psiHoutvar, opts.rmsfactor, rms_comps)
+            reweighter = partial(l1reweight_func,
+                                 psi.dot,
+                                 psiHoutvar,
+                                 opts.rmsfactor,
+                                 rms_comps,
+                                 alpha=opts.alpha)
             l1weight = reweighter(model)
             # l1weight[l1weight < 1.0] = 0.0
         else:
@@ -255,17 +269,13 @@ def _spotless(ddsi=None, **kw):
     best_rmax = rmax
     best_model = model.copy()
     diverge_count = 0
-    print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
+    print(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
-    for k in range(opts.niter):
+    for k in range(iter0, iter0 + opts.niter):
         print('Solving for model', file=log)
         modelp = deepcopy(model)
         data = residual + psf_convolve(model)
         grad21 = lambda x: psf_convolve(x) - data
-        # def grad21(x):
-        #     res = psf_convolve(x) - data
-        #     res[fsel] *= sfactor
-        #     return res
         if k == 0:
             rmsfactor = opts.init_factor * opts.rmsfactor
         else:
@@ -287,6 +297,50 @@ def _spotless(ddsi=None, **kw):
                                   verbosity=opts.pd_verbose,
                                   report_freq=opts.pd_report_freq,
                                   gamma=opts.gamma)
+
+        # write component model
+        print(f"Writing model at iter {k+1} to "
+              f"{basename}_{opts.postfix}_model_{k+1}.mds", file=log)
+        try:
+            coeffs, Ix, Iy, expr, params, texpr, fexpr = \
+                fit_image_cube(time_out, freq_out, model[None, fsel, :, :],
+                               wgt=wsums[None, fsel],
+                               nbasisf=int(np.sum(fsel)),
+                               method='Legendre')
+            # save interpolated dataset
+            data_vars = {
+                'coefficients': (('par', 'comps'), coeffs),
+            }
+            coords = {
+                'location_x': (('x',), Ix),
+                'location_y': (('y',), Iy),
+                # 'shape_x':,
+                'params': (('par',), params),  # already converted to list
+                'times': (('t',), time_out),  # to allow rendering to original grid
+                'freqs': (('f',), freq_out)
+            }
+            attrs = {
+                'spec': 'genesis',
+                'cell_rad_x': cell_rad,
+                'cell_rad_y': cell_rad,
+                'npix_x': nx,
+                'npix_y': ny,
+                'texpr': texpr,
+                'fexpr': fexpr,
+                'center_x': dds[0].x0,
+                'center_y': dds[0].y0,
+                'ra': dds[0].ra,
+                'dec': dds[0].dec,
+                'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
+                'parametrisation': expr  # already converted to str
+            }
+
+            coeff_dataset = xr.Dataset(data_vars=data_vars,
+                               coords=coords,
+                               attrs=attrs)
+            coeff_dataset.to_zarr(f"{basename}_{opts.postfix}_model_{k+1}.mds")
+        except Exception as e:
+            print(f"Exception {e} raised during model fit .", file=log)
 
         save_fits(np.mean(model, axis=0),
                   basename + f'_{opts.postfix}_model_{k+1}.fits',
@@ -318,7 +372,7 @@ def _spotless(ddsi=None, **kw):
               f"rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
 
-        if k+1 >= opts.l1reweight_from:
+        if k+1 - iter0 >= opts.l1reweight_from:
             print('Computing L1 weights', file=log)
             # convert residual units so it is comparable to model
             tmp2[fsel] = residual[fsel] * wsum/wsums[fsel, None, None]
@@ -331,10 +385,8 @@ def _spotless(ddsi=None, **kw):
                                  psiHoutvar,
                                  opts.rmsfactor,
                                  rms_comps,
-                                 opts.alpha)
+                                 alpha=opts.alpha)
             l1weight = reweighter(model)
-            # l1weight[l1weight < 1.0] = 0.0
-            # prox21 = partial(prox_21, weight=l1weight, axis=0)
 
         print("Updating results", file=log)
         dds_out = []
@@ -349,6 +401,7 @@ def _spotless(ddsi=None, **kw):
                                   'DUAL': (('c', 'i', 'j'), d),
                                   'MODEL_BEST': (('x', 'y'), mbest)})
             ds_out = ds_out.assign_attrs({'parametrisation': 'id',
+                                          'niters': k+1,
                                           'best_rms': best_rms,
                                           'best_rmax': best_rmax})
             dds_out.append(ds_out)

@@ -144,12 +144,15 @@ def _model2comps(**kw):
 
     try:
         coeffs, Ix, Iy, expr, params, texpr, fexpr = \
-            fit_image_cube(mtimes, mfreqs, model, wgt=wsums,
-                        nbasisf=opts.nbasisf, method=opts.fit_mode)
+            fit_image_cube(mtimes, mfreqs, model,
+                           wgt=wsums,
+                           nbasisf=opts.nbasisf,
+                           method=opts.fit_mode,
+                           sigmasq=opts.sigmasq)
     except np.linalg.LinAlgError as e:
         print(f"Exception {e} raised during fit ."
               f"Do you perhaps have empty sub-bands?"
-              f"Try decreasing nbasisf", file=log)
+              f"Decreasing nbasisf", file=log)
         quit()
 
     # save interpolated dataset
