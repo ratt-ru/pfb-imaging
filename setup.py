@@ -13,7 +13,7 @@ requirements = [
                 'pyscilog >= 0.1.2',
                 'Click',
                 "ducc0",
-                "QuartiCal",
+                "QuartiCal"
                 "@git+https://github.com/ratt-ru/QuartiCal.git"
                 "@stimela_upgrade"
                 "sympy",
