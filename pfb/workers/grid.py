@@ -293,8 +293,7 @@ def _grid(xdsi=None, **kw):
     # check if model exists
     if opts.transfer_model_from:
         try:
-            mds = xds_from_zarr(opts.transfer_model_from,
-                                chunks={'params':-1, 'comps':-1})[0]
+            mds = xr.open_zarr(opts.transfer_model_from)
         except Exception as e:
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
 
