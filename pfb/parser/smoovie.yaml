@@ -142,6 +142,16 @@ inputs:
     default: true
     info:
       Whether to allow averaging across scan boundaries
+  out-format:
+    dtype: str
+    default: gif
+    choices:
+      - gif
+      - mp4
+    info:
+      The format to write movie out in.
+      gifs are usually better quality but can get quite large.
+      mp4 quality not currently great with streamjoy.
 
 outputs:
     {}
