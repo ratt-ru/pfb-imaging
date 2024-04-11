@@ -15,7 +15,7 @@ requirements = [
                 "ducc0",
                 "QuartiCal"
                 "@git+https://github.com/ratt-ru/QuartiCal.git"
-                "@stimela_upgrade"
+                "@stimela_upgrade",
                 "sympy",
                 "stimela >= 2.0rc14",
                 "streamjoy",
