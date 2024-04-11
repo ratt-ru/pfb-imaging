@@ -1061,7 +1061,7 @@ def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model, alpha=4):
     whereas small values should be strongly thresholded
     '''
     psiH(model, outvar)
-    mcomps = np.sum(outvar, axis=0)
+    mcomps = np.abs(np.sum(outvar, axis=0))
     # the **alpha here results in more agressive reweighting
     return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
 

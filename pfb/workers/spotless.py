@@ -190,6 +190,7 @@ def _spotless(ddsi=None, **kw):
                                           maxit=opts.pm_maxit,
                                           verbosity=opts.pm_verbose,
                                           report_freq=opts.pm_report_freq)
+        hessnorm *= 1.05
     else:
         hessnorm = opts.hessnorm
         print(f"Using provided hessnorm of beta = {hessnorm:.3e}", file=log)
@@ -325,7 +326,12 @@ def _spotless(ddsi=None, **kw):
             rms_comps = np.std(np.sum(psiHoutvar, axis=0),
                                axis=(-1,-2))[:, None, None]  # preserve axes
             # we redefine the reweighter here since the rms has changed
-            reweighter = partial(l1reweight_func, psi.dot, psiHoutvar, opts.rmsfactor, rms_comps)
+            reweighter = partial(l1reweight_func,
+                                 psi.dot,
+                                 psiHoutvar,
+                                 opts.rmsfactor,
+                                 rms_comps,
+                                 opts.alpha)
             l1weight = reweighter(model)
             # l1weight[l1weight < 1.0] = 0.0
             # prox21 = partial(prox_21, weight=l1weight, axis=0)

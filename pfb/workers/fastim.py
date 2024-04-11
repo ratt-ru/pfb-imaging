@@ -39,7 +39,8 @@ def fastim(**kw):
     try:
         assert len(mslist) == 1
     except:
-        raise ValueError(f"There must be a single MS corresponding to {opts.ms}")
+        raise ValueError(f"There must be a single MS corresponding "
+                         f"to {opts.ms}")
     opts.ms = mslist[0]
     if opts.gain_table is not None:
         gainstore = DaskMSStore(opts.gain_table.rstrip('/'))
@@ -47,17 +48,18 @@ def fastim(**kw):
         try:
             assert len(gtlist) == 1
         except Exception as e:
-            raise ValueError(f"There must be a single gain table corresponding to {opts.gain_table}")
+            raise ValueError(f"There must be a single gain table "
+                             f"corresponding to {opts.gain_table}")
         opts.gain_table = gtlist[0]
     if opts.transfer_model_from is not None:
         tmf = opts.transfer_model_from.rstrip('/')
         modelstore = DaskMSStore(tmf)
-        modellist = modelstore.fs.glob(tmf)
         try:
-            assert len(modellist) == 1
+            assert modelstore.exists()
         except Exception as e:
-            raise ValueError(f"There must be a single model corresponding to {opts.gain_table}")
-        opts.transfer_model_from = modellist[0]
+            raise ValueError(f"There must be a single model corresponding "
+                             f"to {opts.transfer_model_from}")
+        opts.transfer_model_from = modelstore.url
     OmegaConf.set_struct(opts, True)
 
     # TODO - prettier config printing
@@ -262,11 +264,8 @@ def _fastim(**kw):
 
 
     if opts.transfer_model_from is not None:
-        mdsstore = DaskMSStore(opts.transfer_model_from)
         try:
-            mdsstore.exists()
-            # mds = mdsstore.url
-            mds = xr.open_zarr(mdsstore.url)
+            mds = xr.open_zarr(opts.transfer_model_from)
             # this should be fairly small but should
             # it rather be read in the dask call?
             # mds = client.persist(mds)

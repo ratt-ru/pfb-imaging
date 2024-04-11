@@ -30,6 +30,13 @@ inputs:
     abbreviation: tmf
     info:
       Name of dataset to use for model initialisation
+  use-best-model:
+    dtype: bool
+    default: flase
+    info:
+      If this flag is set MODEL_BEST will be used as the model
+      unless transfer-model-from is specified. By default MODEL
+      will be used as the model.
   robustness:
     dtype: float
     abbreviation: rob
@@ -66,11 +73,6 @@ inputs:
     default: true
     info:
       Compute effectve image space weights
-  residual:
-    dtype: bool
-    default: false
-    info:
-      Compute the residual image
   field-of-view:
     dtype: float
     abbreviation: fov

@@ -36,6 +36,13 @@ def degrid(**kw):
         opts.ms = list(map(msstore.fs.unstrip_protocol, ms))
     except:
         raise ValueError(f"No MS at {opts.ms}")
+    modelstore = DaskMSStore(opts.mds.rstrip('/'))
+    try:
+        assert modelstore.exists()
+    except Exception as e:
+        raise ValueError(f"There must be a model at  "
+                         f"to {opts.mds}")
+    opts.mds = modelstore.url
 
     OmegaConf.set_struct(opts, True)
 
@@ -83,7 +90,7 @@ def _degrid(**kw):
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
 
-    mds = xds_from_zarr(opts.mds)[0]
+    mds = xr.open_zarr(opts.mds)
 
     # grid spec
     cell_rad = mds.cell_rad_x

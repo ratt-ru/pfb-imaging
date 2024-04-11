@@ -568,8 +568,7 @@ def image_data_products(uvw,
                         l2reweight_dof=None,
                         do_dirty=True,
                         do_psf=True,
-                        do_weight=True,
-                        do_residual=False):
+                        do_weight=True):
     '''
     Function to compute image space data products in one go
         dirty
@@ -718,7 +717,7 @@ def image_data_products(uvw,
         out_dict["PSFHAT"] = psfhat
 
 
-    if do_residual and model is not None:
+    if model is not None:
         residual = vis2dirty(
             uvw=uvw,
             freq=freq,
