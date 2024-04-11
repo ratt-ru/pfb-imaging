@@ -278,25 +278,33 @@ def smoovie(**kw):
                 # 4 - frame fraction
                 # 5 - band id
 
-                # TODO - submit streams in parallel
+                # TODO - progressbar
                 idfy = f'fps{opts.fps}_tbin{opts.time_bin}_fbin{opts.freq_bin}'
                 if opts.out_format.lower() == 'gif':
-                    uri = f'{opts.outname}_band{b}_{idfy}.gif'
+                    outim = stream(
+                            results,
+                            renderer=plot_frame,
+                            intro_title=f"{opts.outname}-Band{b:04d}",
+                            optimize=True,
+                            threads_per_worker=1,
+                            fps=opts.fps,
+                            uri=f'{opts.outname}_band{b}_{idfy}.gif'
+                        )
                 elif opts.out_format.lower() == 'mp4':
-                    uri = f'{opts.outname}_band{b}_{idfy}.mp4'
+                    outim = stream(
+                            results,
+                            renderer=plot_frame,
+                            intro_title=f"{opts.outname}-Band{b:04d}",
+                            # optimize=True,
+                            threads_per_worker=1,
+                            fps=opts.fps,
+                            uri=f'{opts.outname}_band{b}_{idfy}.mp4'
+                        )
                 else:
                     raise ValueError(f"Unsupported format {opts.out_format}")
 
-                # TODO - progressbar
-                outim = stream(
-                    results,
-                    renderer=plot_frame,
-                    intro_title=f"{opts.outname}-Band{b:04d}",
-                    optimize=True,
-                    threads_per_worker=1,
-                    fps=opts.fps,
-                    uri=uri
-                )
+
+
 
                 # outim.fps = opts.fps
                 # outim.write(f'{opts.outname}_band{b}_fps{opts.fps}_tbin'
