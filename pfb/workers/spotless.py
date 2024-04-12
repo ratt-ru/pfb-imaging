@@ -303,7 +303,7 @@ def _spotless(ddsi=None, **kw):
               f"{basename}_{opts.postfix}_model_{k+1}.mds", file=log)
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
-                fit_image_cube(time_out, freq_out, model[None, fsel, :, :],
+                fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
                                wgt=wsums[None, fsel],
                                nbasisf=int(np.sum(fsel)),
                                method='Legendre')
