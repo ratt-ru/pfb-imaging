@@ -94,7 +94,7 @@ inputs:
       Holds data in memory if set
   init-factor:
     dtype: float
-    default: 1
+    default: 0.5
     info:
       Lower the initail rmsfactor by this amount
 

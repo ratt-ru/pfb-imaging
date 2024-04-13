@@ -109,7 +109,7 @@ inputs:
       The size of the box to compute local mean over
   filter-level:
     dtype: float
-    default: 10
+    default: 5
     info:
       The level above local mean that renders a grid weight extreme
   target:
