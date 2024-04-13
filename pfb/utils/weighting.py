@@ -182,26 +182,31 @@ def filter_extreme_counts(counts, nbox=16, nlevel=10):
 
 
 @njit(nogil=True, cache=True)
-def _filter_extreme_counts(counts, nbox=16, level=10):
+def _filter_extreme_counts(counts, nbox=16, level=10.0):
     '''
     Replaces extreme counts by local mean computed i
     '''
-    nx, ny = counts.shape
-    I, J = np.where(counts>0)
-    for i, j in zip(I, J):
-        ilow = np.maximum(0, i-nbox//2)
-        ihigh = np.minimum(nx, i+nbox//2)
-        jlow = np.maximum(0, j-nbox//2)
-        jhigh = np.minimum(ny, j+nbox//2)
-        tmp = counts[ilow:ihigh, jlow:jhigh]
-        ix, iy = np.where(tmp)
-        # check if there are too few values to compare to
-        if ix.size < nbox:
-            counts[i, j] = 0
-            continue
-        local_mean = np.mean(tmp[ix, iy])
-        if counts[i,j] < local_mean/level:
-            counts[i, j] = local_mean
+    # nx, ny = counts.shape
+    # I, J = np.where(counts>0)
+    # for i, j in zip(I, J):
+    #     ilow = np.maximum(0, i-nbox//2)
+    #     ihigh = np.minimum(nx, i+nbox//2)
+    #     jlow = np.maximum(0, j-nbox//2)
+    #     jhigh = np.minimum(ny, j+nbox//2)
+    #     tmp = counts[ilow:ihigh, jlow:jhigh]
+    #     ix, iy = np.where(tmp)
+    #     # check if there are too few values to compare to
+    #     if ix.size < nbox:
+    #         counts[i, j] = 0
+    #         continue
+    #     print(ix, iy)
+    #     local_mean = np.mean(tmp[ix, iy])
+    #     if counts[i,j] < local_mean/level:
+    #         counts[i, j] = local_mean
+    # get the median ounts value
+    med = np.median(counts>0)
+    counts = np.where(counts > med/level, counts, med)
+
     return counts
 
 
