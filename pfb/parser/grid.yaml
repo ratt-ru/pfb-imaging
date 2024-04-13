@@ -99,7 +99,7 @@ inputs:
       Number of y pixels
   filter-extreme-counts:
     dtype: bool
-    default: false
+    default: true
     info:
       Replace extreme outliers in the weighting grid by their local mean
   filter-nbox:
