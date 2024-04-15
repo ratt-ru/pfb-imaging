@@ -33,6 +33,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
     os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
     os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
+    os.environ["JAX_ENABLE_X64"] = 'True'
     # this may be required for numba parallelism
     # find python and set LD_LIBRARY_PATH
     paths = sys.path

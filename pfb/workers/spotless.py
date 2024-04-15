@@ -253,7 +253,6 @@ def _spotless(ddsi=None, **kw):
                                  rms_comps,
                                  alpha=opts.alpha)
             l1weight = reweighter(model)
-            # l1weight[l1weight < 1.0] = 0.0
         else:
             l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=dirty.dtype)
             reweighter = None

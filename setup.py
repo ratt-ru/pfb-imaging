@@ -19,7 +19,8 @@ requirements = [
                 "sympy",
                 "stimela >= 2.0rc14",
                 "streamjoy",
-                "tbb"
+                "tbb",
+                "jax[cpu]"
             ]
 
 
