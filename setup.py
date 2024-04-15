@@ -20,7 +20,10 @@ requirements = [
                 "stimela >= 2.0rc14",
                 "streamjoy",
                 "tbb",
-                "jax[cpu]"
+                "jax[cpu]",
+                "codex-africanus[complete]"
+                "@git+https://github.com/ratt-ru/codex-africanus.git"
+                "@master"
             ]
 
 

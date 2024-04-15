@@ -231,13 +231,6 @@ def _spotless(ddsi=None, **kw):
     rms_comps = np.std(np.sum(psiHoutvar, axis=0),
                        axis=(-1,-2))[:, None, None]  # preserve axes
 
-    # This is attempt at getting the primal-dual to converge
-    # more homogeneously when bands have very different wsums
-    # sfactor is used to scale the grad21 function below
-    sfactor = np.zeros((nband, 1, 1))
-    sfactor[fsel] = wsum/wsums[fsel, None, None]  # missing subbands
-    sfactor /= np.mean(sfactor[fsel])
-
     # TODO - load from dds if present
     if dual is None:
         dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=dirty.dtype)
