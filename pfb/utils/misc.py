@@ -503,13 +503,14 @@ def _restore_corrs(vis, ncorr):
     return model_vis
 
 
-# model to fit
 @jax.jit
 def psf_errorsq(x, data, xy):
+    '''
+    Returns sum of square error for best fit Gaussian to data
+    '''
     emaj, emin, pa = x
     Smin = jnp.minimum(emaj, emin)
     Smaj = jnp.maximum(emaj, emin)
-    # print(emaj, emin, pa)
     A = jnp.array([[1. / Smin ** 2, 0],
                     [0, 1. / Smaj ** 2]])
 
@@ -519,7 +520,7 @@ def psf_errorsq(x, data, xy):
     B = jnp.dot(jnp.dot(R.T, A), R)
     Q = jnp.einsum('nb,bc,cn->n', xy.T, B, xy)
     # GaussPar should corresponds to FWHM
-    fwhm_conv = 2 * jnp.sqrt(2 * np.log(2))
+    fwhm_conv = 2 * jnp.sqrt(2 * jnp.log(2))
     model = jnp.exp(-fwhm_conv * Q)
     res = data - model
     return jnp.vdot(res, res)
@@ -1441,3 +1442,45 @@ def combine_columns(x, y, dc, dc1, dc2):
                 out=x,
                 casting='same_kind')
     return x
+
+
+# def fft_interp(image, cellxi, cellyi, nxo, nyo,
+#                cellxo, cellyo, shiftx, shifty):
+#     '''
+#     Use non-uniform fft to interpolate image in a flux conservative way
+
+#     image   - input image
+#     cellxi  - input x cell-size
+#     cellyi  - input y cell-size
+#     nxo     - number of x pixels in output
+#     nyo     - number of y pixels in output
+#     cellxo  - output x cell size
+#     cellyo  - output y cell size
+#     shiftx  - shift x coordinate by this amount
+#     shifty  - shift y coordinate by this amount
+
+#     All sizes are assumed to be in radians.
+#     '''
+
+
+
+#     # coordinates on input grid
+#     nx, ny = image.shape
+#     x = np.arange(-(nx//2), nx//2) * cellxi
+#     y = np.arange(-(ny//2), ny//2) * cellyi
+#     xx, yy = np.meshgrid(x, y, indexing='ij')
+
+#     # frequencies on output grid
+#     celluo = 1/(nxo*cellxo)
+#     cellvo = 1/(nyo*cellyo)
+#     uo = np.arange(-(nxo//2), nxo//2) * celluo/nxo
+#     vo = np.arange(-(nyo//2), nyo//2) * cellvo/nyo
+
+#     uu, vv = np.meshgrid(uo, vo, indexing='ij')
+#     uv = np.vstack((uo, vo)).T
+
+
+#     res1 = finufft.nufft2d3(xx.ravel(), yy.ravel(), image.ravel(), uu.ravel(), vv.ravel())
+
+
+

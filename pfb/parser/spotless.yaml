@@ -96,7 +96,13 @@ inputs:
     dtype: float
     default: 0.5
     info:
-      Lower the initail rmsfactor by this amount
+      Lower the initial rmsfactor by this amount
+  diverge-count:
+    dtype: int
+    default: 5
+    info:
+      Will terminate the algorithm if the rms increases this many times.
+      Set to > niter to disable this check.
 
 outputs:
   {}

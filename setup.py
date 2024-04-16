@@ -21,9 +21,9 @@ requirements = [
                 "streamjoy",
                 "tbb",
                 "jax[cpu]",
-                "codex-africanus[complete]"
-                "@git+https://github.com/ratt-ru/codex-africanus.git"
-                "@master"
+                # "codex-africanus[complete]"
+                # "@git+https://github.com/ratt-ru/codex-africanus.git"
+                # "@master"
             ]
 
 

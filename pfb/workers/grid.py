@@ -43,12 +43,14 @@ def grid(**kw):
     from daskms.fsspec_store import DaskMSStore
     if opts.xds is not None:
         xdsstore = DaskMSStore(opts.xds.rstrip('/'))
+        xdsname = opts.xds
     else:
         xdsstore = DaskMSStore(f'{basename}.xds')
+        xdsname = f'{basename}.xds'
     try:
         assert xdsstore.exists()
     except Exception as e:
-        raise ValueError(f"There must be an xds at {opts.xds}. "
+        raise ValueError(f"There must be an xds at {xdsname}. "
                             f"Original traceback {e}")
     opts.xds = xdsstore.url
     OmegaConf.set_struct(opts, True)
