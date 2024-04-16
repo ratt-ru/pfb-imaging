@@ -177,14 +177,16 @@ def filter_extreme_counts(counts, nbox=16, nlevel=10):
                         counts, 'xy',
                         nbox, None,
                         nlevel, None,
-                        dtype=counts.dtype)
+                        dtype=counts.dtype,
+                        meta=np.empty((0,0), dtype=float))
 
 
 
-@njit(nogil=True, cache=True)
+# @njit(nogil=True, cache=True)
 def _filter_extreme_counts(counts, nbox=16, level=10.0):
     '''
-    Replaces extreme counts by local mean computed i
+    Replaces extremely small counts by median to prevent
+    upweighting nearly empty cells
     '''
     # nx, ny = counts.shape
     # I, J = np.where(counts>0)
@@ -203,10 +205,13 @@ def _filter_extreme_counts(counts, nbox=16, level=10.0):
     #     local_mean = np.mean(tmp[ix, iy])
     #     if counts[i,j] < local_mean/level:
     #         counts[i, j] = local_mean
-    # get the median ounts value
-    med = np.median(counts>0)
-    counts = np.where(counts > med/level, counts, med)
-
+    # get the median counts value
+    ix, iy = np.where(counts > 0)
+    cnts = counts[ix,iy]
+    med = np.median(cnts)
+    lowval = med/level
+    cnts = np.maximum(cnts, lowval)
+    counts[ix,iy] = cnts
     return counts
 
 
