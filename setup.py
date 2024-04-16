@@ -6,23 +6,24 @@ with open("README.rst", "r") as fh:
 
 requirements = [
                 'numpy',
-                # 'matplotlib',
-                # 'ipython',
                 'scikit-image',
                 'PyWavelets',
                 'katbeam',
-                # 'pytest<=7.4.4, >=7.3.1',
                 'numexpr',
                 'pyscilog >= 0.1.2',
                 'Click',
-                # "ipdb",
-                # "numba < 0.59",
                 "ducc0",
-                "QuartiCal",
-                # "@git+https://github.com/ratt-ru/QuartiCal.git"
-                # "@bandpass_smoothing"
+                "QuartiCal"
+                "@git+https://github.com/ratt-ru/QuartiCal.git"
+                "@stimela_upgrade",
                 "sympy",
-                "stimela >= 2.0rc14"
+                "stimela >= 2.0rc14",
+                "streamjoy",
+                "tbb",
+                "jax[cpu]",
+                "codex-africanus[complete]"
+                "@git+https://github.com/ratt-ru/codex-africanus.git"
+                "@master"
             ]
 
 

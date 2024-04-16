@@ -1,9 +1,12 @@
 import numpy as np
-from numba import njit, prange
+from numba import njit, prange, literally
+from numba.extending import overload
 import dask.array as da
 from ducc0.fft import c2c
 from africanus.constants import c as lightspeed
 from quartical.utils.dask import Blocker
+from pfb.utils.misc import JIT_OPTIONS
+from pfb.utils.stokes import stokes_funcs
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
@@ -152,7 +155,7 @@ def _counts_to_weights(counts, uvw, freq, nx, ny,
         counts = 1 + counts * ssq
 
     normfreq = freq / lightspeed
-    for r in range(nrow):
+    for r in prange(nrow):
         uvw_row = uvw[r]
         for c in range(nchan):
             # get current uv
@@ -179,26 +182,31 @@ def filter_extreme_counts(counts, nbox=16, nlevel=10):
 
 
 @njit(nogil=True, cache=True)
-def _filter_extreme_counts(counts, nbox=16, level=10):
+def _filter_extreme_counts(counts, nbox=16, level=10.0):
     '''
     Replaces extreme counts by local mean computed i
     '''
-    nx, ny = counts.shape
-    I, J = np.where(counts>0)
-    for i, j in zip(I, J):
-        ilow = np.maximum(0, i-nbox//2)
-        ihigh = np.minimum(nx, i+nbox//2)
-        jlow = np.maximum(0, j-nbox//2)
-        jhigh = np.minimum(ny, j+nbox//2)
-        tmp = counts[ilow:ihigh, jlow:jhigh]
-        ix, iy = np.where(tmp)
-        # check if there are too few values to compare to
-        if ix.size < nbox:
-            counts[i, j] = 0
-            continue
-        local_mean = np.mean(tmp[ix, iy])
-        if counts[i,j] < local_mean/level:
-            counts[i, j] = local_mean
+    # nx, ny = counts.shape
+    # I, J = np.where(counts>0)
+    # for i, j in zip(I, J):
+    #     ilow = np.maximum(0, i-nbox//2)
+    #     ihigh = np.minimum(nx, i+nbox//2)
+    #     jlow = np.maximum(0, j-nbox//2)
+    #     jhigh = np.minimum(ny, j+nbox//2)
+    #     tmp = counts[ilow:ihigh, jlow:jhigh]
+    #     ix, iy = np.where(tmp)
+    #     # check if there are too few values to compare to
+    #     if ix.size < nbox:
+    #         counts[i, j] = 0
+    #         continue
+    #     print(ix, iy)
+    #     local_mean = np.mean(tmp[ix, iy])
+    #     if counts[i,j] < local_mean/level:
+    #         counts[i, j] = local_mean
+    # get the median ounts value
+    med = np.median(counts>0)
+    counts = np.where(counts > med/level, counts, med)
+
     return counts
 
 
@@ -262,3 +270,76 @@ def _filter_extreme_counts(counts, nbox=16, level=10):
 #         return eta/ovar
 #     else:
 #         return np.zeros_like(ressq)
+
+
+
+def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
+                ant1, ant2, pol, product, nc):
+
+    vis, wgt = _weight_data(data, weight, flag, jones,
+                                 tbin_idx, tbin_counts,
+                                 ant1, ant2,
+                                 literally(pol),
+                                 literally(product),
+                                 literally(nc))
+
+    out_dict = {}
+    out_dict['vis'] = vis
+    out_dict['wgt'] = wgt
+
+    return out_dict
+
+
+@njit(**JIT_OPTIONS, parallel=True)
+def _weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
+                 ant1, ant2, pol, product, nc):
+
+    vis, wgt = _weight_data_impl(data, weight, flag, jones,
+                                 tbin_idx, tbin_counts,
+                                 ant1, ant2,
+                                 literally(pol),
+                                 literally(product),
+                                 literally(nc))
+
+    return vis, wgt
+
+
+def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
+                 ant1, ant2, pol, product, nc):
+    raise NotImplementedError
+
+
+@overload(_weight_data_impl, **JIT_OPTIONS, parallel=True)
+def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
+                      ant1, ant2, pol, product, nc):
+
+    vis_func, wgt_func = stokes_funcs(data, jones, product, pol, nc)
+
+    def _impl(data, weight, flag, jones, tbin_idx, tbin_counts,
+              ant1, ant2, pol, product, nc):
+        # for dask arrays we need to adjust the chunks to
+        # start counting from zero
+        tbin_idx -= tbin_idx.min()
+        nt = np.shape(tbin_idx)[0]
+        nrow, nchan, ncorr = data.shape
+        vis = np.zeros((nrow, nchan), dtype=data.dtype)
+        wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
+
+        for t in prange(nt):
+            for row in range(tbin_idx[t],
+                             tbin_idx[t] + tbin_counts[t]):
+                p = int(ant1[row])
+                q = int(ant2[row])
+                gp = jones[t, p, :, 0]
+                gq = jones[t, q, :, 0]
+                for chan in range(nchan):
+                    if flag[row, chan]:
+                        continue
+                    wgt[row, chan] = wgt_func(gp[chan], gq[chan],
+                                              weight[row, chan])
+                    vis[row, chan] = vis_func(gp[chan], gq[chan],
+                                              weight[row, chan],
+                                              data[row, chan])
+
+        return vis, wgt
+    return _impl

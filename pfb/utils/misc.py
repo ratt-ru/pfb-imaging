@@ -15,7 +15,7 @@ from daskms import xds_from_storage_table as xds_from_table
 from daskms.experimental.zarr import xds_from_zarr
 from omegaconf import ListConfig
 from skimage.morphology import label
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, fmin_l_bfgs_b
 from collections import namedtuple
 from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
@@ -25,6 +25,9 @@ from scipy.linalg import solve_triangular
 import sympy as sm
 from sympy.utilities.lambdify import lambdify
 from sympy.parsing.sympy_parser import parse_expr
+import jax.numpy as jnp
+from jax import value_and_grad
+import jax
 
 JIT_OPTIONS = {
     "nogil": True,
@@ -499,6 +502,29 @@ def _restore_corrs(vis, ncorr):
         model_vis[:, :, -1] = vis
     return model_vis
 
+
+# model to fit
+@jax.jit
+def psf_errorsq(x, data, xy):
+    emaj, emin, pa = x
+    Smin = jnp.minimum(emaj, emin)
+    Smaj = jnp.maximum(emaj, emin)
+    # print(emaj, emin, pa)
+    A = jnp.array([[1. / Smin ** 2, 0],
+                    [0, 1. / Smaj ** 2]])
+
+    c, s, t = jnp.cos, jnp.sin, jnp.deg2rad(-pa)
+    R = jnp.array([[c(t), -s(t)],
+                    [s(t), c(t)]])
+    B = jnp.dot(jnp.dot(R.T, A), R)
+    Q = jnp.einsum('nb,bc,cn->n', xy.T, B, xy)
+    # GaussPar should corresponds to FWHM
+    fwhm_conv = 2 * jnp.sqrt(2 * np.log(2))
+    model = jnp.exp(-fwhm_conv * Q)
+    res = data - model
+    return jnp.vdot(res, res)
+
+
 def fitcleanbeam(psf: np.ndarray,
                  level: float = 0.5,
                  pixsize: float = 1.0,
@@ -515,23 +541,6 @@ def fitcleanbeam(psf: np.ndarray,
     x = np.arange(-nx / 2, nx / 2)
     y = np.arange(-ny / 2, ny / 2)
     xx, yy = np.meshgrid(x, y, indexing='ij')
-
-    # model to fit
-    def func(xy, emaj, emin, pa):
-        Smin = np.minimum(emaj, emin)
-        Smaj = np.maximum(emaj, emin)
-
-        A = np.array([[1. / Smin ** 2, 0],
-                      [0, 1. / Smaj ** 2]])
-
-        c, s, t = np.cos, np.sin, np.deg2rad(-pa)
-        R = np.array([[c(t), -s(t)],
-                      [s(t), c(t)]])
-        A = np.dot(np.dot(R.T, A), R)
-        R = np.einsum('nb,bc,cn->n', xy.T, A, xy)
-        # GaussPar should corresponds to FWHM
-        fwhm_conv = 2 * np.sqrt(2 * np.log(2))
-        return np.exp(-fwhm_conv * R)
 
     Gausspars = []
     for v in range(nband):
@@ -563,7 +572,12 @@ def fitcleanbeam(psf: np.ndarray,
         xy = np.vstack((x, y))
         emaj0 = np.maximum(xdiff, ydiff)
         emin0 = np.minimum(xdiff, ydiff)
-        p, _ = curve_fit(func, xy, psfv, p0=(emaj0, emin0, 0.0))
+        dfunc = value_and_grad(psf_errorsq)
+        p, f, d = fmin_l_bfgs_b(dfunc,
+                                np.array((emaj0, emin0, 0.0)),
+                                args=(psfv, xy),
+                                bounds=((0, None), (0, None), (None, None)),
+                                factr=1e11)
         Gausspars.append([p[0] * pixsize, p[1] * pixsize, p[2]])
 
     return Gausspars
@@ -1060,7 +1074,7 @@ def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model, alpha=4):
     whereas small values should be strongly thresholded
     '''
     psiH(model, outvar)
-    mcomps = np.sum(outvar, axis=0)
+    mcomps = np.abs(np.sum(outvar, axis=0))
     # the **alpha here results in more agressive reweighting
     return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
 
@@ -1406,3 +1420,24 @@ def setup_parametrisation(mode='id', minval=1e-5,
         raise ValueError(f"Unknown mode - {mode}")
 
     return func, finv, dfunc, dhfunc
+
+
+def weight_from_sigma(sigma):
+    weight = ne.evaluate('1.0/(sigma*sigma)',
+                         casting='same_kind')
+    return weight
+
+
+def combine_columns(x, y, dc, dc1, dc2):
+    '''
+    x   - dask array containing dc1
+    y   - dask array containing dc2
+    dc  - string that numexpr can evaluate
+    dc1 - name of x
+    dc2 - name of y
+    '''
+    ne.evaluate(dc,
+                local_dict={dc1: x, dc2: y},
+                out=x,
+                casting='same_kind')
+    return x

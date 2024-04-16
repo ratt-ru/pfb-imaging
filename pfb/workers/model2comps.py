@@ -67,22 +67,26 @@ def _model2comps(**kw):
     from astropy.io import fits
     from pfb.utils.misc import compute_context, fit_image_cube
     import xarray as xr
+    import fsspec as fs
+    from daskms.fsspec_store import DaskMSStore
+    import json
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.postfix}.dds'
+
     if opts.model_out is not None:
         coeff_name = opts.model_out
     else:
         coeff_name = f'{basename}_{opts.postfix}_{opts.model_name.lower()}.mds'
 
-    if os.path.isdir(coeff_name):
+    mdsstore = DaskMSStore(coeff_name)
+    if mdsstore.exists():
         if opts.overwrite:
-            print(f'Removing {coeff_name}', file=log)
-            import shutil
-            shutil.rmtree(coeff_name)
+            print(f"Overwriting {coeff_name}", file=log)
+            mdsstore.rm(recursive=True)
         else:
-            raise RuntimeError(f"{coeff_name} exists. "
-                               f"Set --overwrite if you meant to overwrite it.")
+            raise ValueError(f"{coeff_name} exists. "
+                             "Set --overwrite to overwrite it. ")
 
     dds = xds_from_zarr(dds_name,
                         chunks={'x':-1,
@@ -140,25 +144,28 @@ def _model2comps(**kw):
 
     try:
         coeffs, Ix, Iy, expr, params, texpr, fexpr = \
-            fit_image_cube(mtimes, mfreqs, model, wgt=wsums,
-                        nbasisf=opts.nbasisf, method=opts.fit_mode)
+            fit_image_cube(mtimes, mfreqs, model,
+                           wgt=wsums,
+                           nbasisf=opts.nbasisf,
+                           method=opts.fit_mode,
+                           sigmasq=opts.sigmasq)
     except np.linalg.LinAlgError as e:
         print(f"Exception {e} raised during fit ."
               f"Do you perhaps have empty sub-bands?"
-              f"Try decreasing nbasisf", file=log)
+              f"Decreasing nbasisf", file=log)
         quit()
 
     # save interpolated dataset
     data_vars = {
-        'coefficients': (('params', 'comps'), coeffs),
+        'coefficients': (('par', 'comps'), coeffs),
     }
     coords = {
-        'location_x': (('location_x',), Ix),
-        'location_y': (('location_y',), Iy),
+        'location_x': (('x',), Ix),
+        'location_y': (('y',), Iy),
         # 'shape_x':,
-        'params': (('params',), params),  # already converted to list
-        'times': (('times',), mtimes),  # to allow rendering to original grid
-        'freqs': (('freqs',), mfreqs)
+        'params': (('par',), params),  # already converted to list
+        'times': (('t',), mtimes),  # to allow rendering to original grid
+        'freqs': (('f',), mfreqs)
     }
     attrs = {
         'spec': 'genesis',
@@ -180,12 +187,15 @@ def _model2comps(**kw):
     coeff_dataset = xr.Dataset(data_vars=data_vars,
                                coords=coords,
                                attrs=attrs)
-    writes = xds_to_zarr(coeff_dataset,
-                         coeff_name,
-                         columns='ALL')
     print(f'Writing interpolated model to {coeff_name}',
           file=log)
-    dask.compute(writes)
+
+    if opts.out_format == 'zarr':
+        coeff_dataset.to_zarr(mdsstore.url)
+    elif opts.out_format == 'json':
+        coeff_dict = coeff_dataset.to_dict()
+        with fs.open(mdsstore.url, 'w') as f:
+            json.dump(coeff_dict, f)
 
 
     print("All done here.", file=log)

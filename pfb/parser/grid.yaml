@@ -30,6 +30,13 @@ inputs:
     abbreviation: tmf
     info:
       Name of dataset to use for model initialisation
+  use-best-model:
+    dtype: bool
+    default: false
+    info:
+      If this flag is set MODEL_BEST will be used as the model
+      unless transfer-model-from is specified. By default MODEL
+      will be used as the model.
   robustness:
     dtype: float
     abbreviation: rob
@@ -66,11 +73,6 @@ inputs:
     default: true
     info:
       Compute effectve image space weights
-  residual:
-    dtype: bool
-    default: false
-    info:
-      Compute the residual image
   field-of-view:
     dtype: float
     abbreviation: fov
@@ -97,7 +99,7 @@ inputs:
       Number of y pixels
   filter-extreme-counts:
     dtype: bool
-    default: false
+    default: true
     info:
       Replace extreme outliers in the weighting grid by their local mean
   filter-nbox:
@@ -107,7 +109,7 @@ inputs:
       The size of the box to compute local mean over
   filter-level:
     dtype: float
-    default: 10
+    default: 5
     info:
       The level above local mean that renders a grid weight extreme
   target:

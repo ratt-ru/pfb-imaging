@@ -30,7 +30,7 @@ def grid(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    OmegaConf.set_struct(opts, True)
+
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
@@ -40,6 +40,18 @@ def grid(**kw):
     basedir = Path(opts.output_filename).resolve().parent
     basedir.mkdir(parents=True, exist_ok=True)
     basename = f'{opts.output_filename}_{opts.product.upper()}'
+    from daskms.fsspec_store import DaskMSStore
+    if opts.xds is not None:
+        xdsstore = DaskMSStore(opts.xds.rstrip('/'))
+    else:
+        xdsstore = DaskMSStore(f'{basename}.xds')
+    try:
+        assert xdsstore.exists()
+    except Exception as e:
+        raise ValueError(f"There must be an xds at {opts.xds}. "
+                            f"Original traceback {e}")
+    opts.xds = xdsstore.url
+    OmegaConf.set_struct(opts, True)
     dds_name = f'{basename}_{opts.postfix}.dds'
 
     with ExitStack() as stack:
@@ -83,7 +95,7 @@ def grid(**kw):
                 fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
             if opts.psf:
                 fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
-            if opts.residual and 'MODEL' in dds[0]:
+            if 'MODEL' in dds[0]:
                 fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
                 fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
@@ -92,7 +104,7 @@ def grid(**kw):
                 fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
             if opts.psf:
                 fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
-            if opts.residual and 'MODEL' in dds[0]:
+            if 'MODEL' in dds[0]:
                 fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
                 fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
 
@@ -293,8 +305,7 @@ def _grid(xdsi=None, **kw):
     # check if model exists
     if opts.transfer_model_from:
         try:
-            mds = xds_from_zarr(opts.transfer_model_from,
-                                chunks={'params':-1, 'comps':-1})[0]
+            mds = xr.open_zarr(opts.transfer_model_from)
         except Exception as e:
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
 
@@ -388,10 +399,10 @@ def _grid(xdsi=None, **kw):
            'y': y
         })
 
-        # evaluate beam at x and y coords
+        # evaluate beam at x and y coords (expects degrees)
         cell_deg = np.rad2deg(cell_rad)
-        l = (-(nx//2) + da.arange(nx)) * cell_deg + np.deg2rad(x0)
-        m = (-(ny//2) + da.arange(ny)) * cell_deg + np.deg2rad(y0)
+        l = (-(nx//2) + da.arange(nx)) * cell_deg + np.rad2deg(x0)
+        m = (-(ny//2) + da.arange(ny)) * cell_deg + np.rad2deg(y0)
         # ll, mm = da.meshgrid(l, m, indexing='ij')
         l_beam = ds.l_beam.data
         m_beam = ds.m_beam.data
@@ -421,7 +432,10 @@ def _grid(xdsi=None, **kw):
             out_ds = out_ds.assign(**{'MODEL': (('x', 'y'), model)})
 
         elif 'MODEL' in out_ds:
-            model = out_ds.MODEL.data
+            if opts.use_best_model:
+                model = out_ds.MODEL_BEST.data
+            else:
+                model = out_ds.MODEL.data
         else:
             model = None
 
@@ -486,7 +500,6 @@ def _grid(xdsi=None, **kw):
         blocker.add_input('l2reweight_dof', opts.l2reweight_dof)
         blocker.add_input('do_psf', opts.psf)
         blocker.add_input('do_weight', opts.weight)
-        blocker.add_input('do_residual', opts.residual)
 
         blocker.add_output(
             'DIRTY',
@@ -500,7 +513,7 @@ def _grid(xdsi=None, **kw):
             ((1,),),
             wgt.dtype)
 
-        if opts.residual:
+        if model is not None:
             blocker.add_output(
                 'RESIDUAL',
                 ('x', 'y'),
@@ -544,7 +557,7 @@ def _grid(xdsi=None, **kw):
                 'WEIGHT': (('row', 'chan'), output_dict['WEIGHT'])
                 })
 
-        if opts.residual:
+        if model is not None:
             out_ds = out_ds.assign(**{
                 'RESIDUAL': (('x', 'y'), output_dict['RESIDUAL'])
                 })

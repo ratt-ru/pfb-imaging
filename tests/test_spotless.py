@@ -18,6 +18,7 @@ def test_spotless(ms_name):
     np.random.seed(420)
     from numpy.testing import assert_allclose
     import dask
+    import xarray as xr
     from daskms import xds_from_ms, xds_from_table, xds_to_table
     from pfb.utils.misc import Gaussian2D, give_edges
     from africanus.constants import c as lightspeed
@@ -227,7 +228,7 @@ def test_spotless(ms_name):
     _model2comps(**model2comps_args)
 
     mds_name = f'{outname}_I_main_model.mds'
-    mds = xds_from_zarr(mds_name)[0]
+    mds = xr.open_zarr(mds_name)
 
     # grid spec
     cell_rad = mds.cell_rad_x

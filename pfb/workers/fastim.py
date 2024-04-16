@@ -1,5 +1,6 @@
 # flake8: noqa
 import os
+import sys
 from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
@@ -8,7 +9,7 @@ from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('FASTIM')
-
+import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
@@ -25,125 +26,130 @@ def fastim(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    pyscilog.log_to_file(f'{ldir}/init_{timestamp}.log')
-    print(f'Logs will be written to {str(ldir)}/init_{timestamp}.log', file=log)
-    from daskms.fsspec_store import DaskMSStore
-    msnames = []
-    for ms in opts.ms:
-        msstore = DaskMSStore(ms.rstrip('/'))
-        mslist = msstore.fs.glob(ms.rstrip('/'))
-        try:
-            assert len(mslist) > 0
-            msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
-        except:
-            raise ValueError(f"No MS at {ms}")
-    opts.ms = msnames
-    if opts.gain_table is not None:
-        gainnames = []
-        for gt in opts.gain_table:
-            gainstore = DaskMSStore(gt.rstrip('/'))
-            gtlist = gainstore.fs.glob(gt.rstrip('/'))
-            try:
-                assert len(gtlist) > 0
-                gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
-            except Exception as e:
-                raise ValueError(f"No gain table  at {gt}")
-        opts.gain_table = gainnames
+    pyscilog.log_to_file(f'{ldir}/fastim_{timestamp}.log')
+    print(f'Logs will be written to {str(ldir)}/fastim_{timestamp}.log', file=log)
     if opts.product.upper() not in ["I","Q", "U", "V"]:
-            # "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
-
+    from daskms.fsspec_store import DaskMSStore
+    msstore = DaskMSStore(opts.ms.rstrip('/'))
+    mslist = msstore.fs.glob(opts.ms.rstrip('/'))
+    try:
+        assert len(mslist) == 1
+    except:
+        raise ValueError(f"There must be a single MS corresponding "
+                         f"to {opts.ms}")
+    opts.ms = mslist[0]
+    if opts.gain_table is not None:
+        gainstore = DaskMSStore(opts.gain_table.rstrip('/'))
+        gtlist = gainstore.fs.glob(opts.gain_table.rstrip('/'))
+        try:
+            assert len(gtlist) == 1
+        except Exception as e:
+            raise ValueError(f"There must be a single gain table "
+                             f"corresponding to {opts.gain_table}")
+        opts.gain_table = gtlist[0]
+    if opts.transfer_model_from is not None:
+        tmf = opts.transfer_model_from.rstrip('/')
+        modelstore = DaskMSStore(tmf)
+        try:
+            assert modelstore.exists()
+        except Exception as e:
+            raise ValueError(f"There must be a single model corresponding "
+                             f"to {opts.transfer_model_from}")
+        opts.transfer_model_from = modelstore.url
     OmegaConf.set_struct(opts, True)
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
+
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
 
     with ExitStack() as stack:
-        from pfb import set_client
-        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
+        os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
+        os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
+        os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
+        os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
+        paths = sys.path
+        ppath = [paths[i] for i in range(len(paths)) if 'pfb/bin' in paths[i]]
+        if len(ppath):
+            ldpath = ppath[0].replace('bin', 'lib')
+            ldcurrent = os.environ.get('LD_LIBRARY_PATH', '')
+            os.environ["LD_LIBRARY_PATH"] = f'{ldpath}:{ldcurrent}'
+            # TODO - should we fall over in else?
+        os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
+
+        import numexpr as ne
+        max_cores = ne.detect_number_of_cores()
+        ne_threads = min(max_cores, opts.nvthreads)
+        os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
         import dask
-        from daskms.experimental.zarr import xds_to_zarr
-        from pfb.utils.misc import compute_context
+        dask.config.set(**{'array.slicing.split_large_chunks': False})
 
-        # TODO - prettier config printing
-        print('Input Options:', file=log)
-        for key in opts.keys():
-            print('     %25s = %s' % (key, opts[key]), file=log)
+        # set up client
+        host_address = opts.host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
+        with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
+            if host_address is not None:
+                from distributed import Client
+                print("Initialising distributed client.", file=log)
+                client = stack.enter_context(Client(host_address))
+            else:
+                from dask.distributed import Client, LocalCluster
+                print("Initialising client with LocalCluster.", file=log)
+                cluster = LocalCluster(processes=True,
+                                       n_workers=opts.nworkers,
+                                       threads_per_worker=opts.nthreads_dask,
+                                       memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                                       asynchronous=False)
+                cluster = stack.enter_context(cluster)
+                client = stack.enter_context(Client(cluster))
 
-        out_datasets = _fastim(**opts)
+            client.wait_for_workers(opts.nworkers)
+            client.amm.stop()
 
-        # out_images = _grid(**opts.grid['ds'] = out_datasets)
-        if len(out_datasets):
-            writes = xds_to_zarr(out_datasets, f'{basename}.xds',
-                                columns='ALL',
-                                rechunk=True)
-        else:
-            raise ValueError('No datasets found to write. '
-                            'Data completely flagged maybe?')
+            ti = time.time()
+            _fastim(**opts)
 
-        # dask.visualize(writes, color="order", cmap="autumn",
-        #                node_attr={"penwidth": "4"},
-        #                filename=basename + '_writes_I_ordered_graph.pdf',
-        #                optimize_graph=False)
-        # dask.visualize(writes, filename=basename +
-        #                '_writes_I_graph.pdf', optimize_graph=False)
-
-        with compute_context(opts.scheduler, f'{ldir}/init_{timestamp}'):
-            dask.compute(writes, optimize_graph=False)
-
-        if opts.scheduler=='distributed':
-            from distributed import get_client
-            client = get_client()
             client.close()
 
-        print("All done here.", file=log)
+            print(f"All done after {time.time() - ti}s", file=log)
 
 def _fastim(**kw):
     opts = OmegaConf.create(kw)
-    from omegaconf import ListConfig
-    if (not isinstance(opts.ms, list) and not
-        isinstance(opts.ms, ListConfig)):
-        opts.ms = [opts.ms]
-    if opts.gain_table is not None:
-        if (not isinstance(opts.gain_table, list) and not
-            isinstance(opts.gain_table,ListConfig)):
-            opts.gain_table = [opts.gain_table]
+    from omegaconf import ListConfig, open_dict
     OmegaConf.set_struct(opts, True)
 
     import numpy as np
     from pfb.utils.misc import construct_mappings
     import dask
-    dask.config.set(**{'array.slicing.split_large_chunks': False})
+    from dask.graph_manipulation import clone
+    from distributed import get_client, wait, as_completed, Semaphore
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
-    from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
     from daskms.fsspec_store import DaskMSStore
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.stokes import single_stokes
-    from pfb.utils.correlations import single_corr
-    from pfb.utils.misc import chunkify_rows
+    from pfb.utils.stokes2im import single_stokes_image
     import xarray as xr
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    xdsstore = DaskMSStore(f'{basename}.xds')
-    if xdsstore.exists():
+    fdsstore = DaskMSStore(f'{basename}.fds')
+    if fdsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {basename}.xds", file=log)
-            xdsstore.rm(recursive=True)
+            print(f"Overwriting {basename}.fds", file=log)
+            fdsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.xds exists. "
+            raise ValueError(f"{basename}.fds exists. "
                              "Set overwrite to overwrite it. ")
 
     if opts.gain_table is not None:
-        tmpf = lambda x: x.rstrip('/') + f'::{opts.gain_term}'
-        gain_names = list(map(tmpf, opts.gain_table))
+        gain_name = "::".join(opts.gain_table.rstrip('/').rsplit("/", 1))
     else:
-        gain_names = None
+        gain_name = None
 
     if opts.freq_range is not None:
         fmin, fmax = opts.freq_range.strip(' ').split(':')
@@ -159,41 +165,87 @@ def _fastim(**kw):
         freq_min = -np.inf
         freq_max = np.inf
 
+
+
+    client = get_client()
+
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms,
-                               gain_names,
+                               gain_name,
                                ipi=opts.integrations_per_image,
-                               cpi=opts.channels_per_image,
+                               cpi=opts.channels_per_degrid_image,
                                freq_min=freq_min,
                                freq_max=freq_max)
 
     max_freq = 0
-    for ms in opts.ms:
-        for idt in freqs[ms].keys():
-            freq = freqs[ms][idt]
-            max_freq = np.maximum(max_freq, freq.max())
+    ms = opts.ms
+    # for ms in opts.ms:
+    for idt in freqs[ms].keys():
+        freq = freqs[ms][idt]
+        max_freq = np.maximum(max_freq, freq.max())
 
     # cell size
-    cell_rad = 1.0 / (2 * uv_max * max_freq / lightspeed)
+    cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
 
-    # # we should rephase to the Barycenter of all datasets
-    # if opts.radec is not None:
-    #     raise NotImplementedError()
+    if opts.cell_size is not None:
+        cell_size = opts.cell_size
+        cell_rad = cell_size * np.pi / 60 / 60 / 180
+        if cell_N / cell_rad < 1:
+            raise ValueError("Requested cell size too large. "
+                             "Super resolution factor = ", cell_N / cell_rad)
+        print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
+    else:
+        cell_rad = cell_N / opts.super_resolution_factor
+        cell_size = cell_rad * 60 * 60 * 180 / np.pi
+        print(f"Cell size set to {cell_size} arcseconds", file=log)
 
-    # this is not optional, concatenate during gridding stage if desired
+    if opts.nx is None:
+        fov = opts.field_of_view * 3600
+        npix = int(fov / cell_size)
+        npix = good_size(npix)
+        while npix % 2:
+            npix += 1
+            npix = good_size(npix)
+        nx = npix
+        ny = npix
+    else:
+        nx = opts.nx
+        ny = opts.ny if opts.ny is not None else nx
+        cell_deg = np.rad2deg(cell_rad)
+        fovx = nx*cell_deg
+        fovy = ny*cell_deg
+        print(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
+
+    print(f"Image size = (nx={nx}, ny={ny})", file=log)
+
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
-    # assumes measurement sets have the same columns
-    columns = (opts.data_column,
+    # crude column arithmetic
+    dc = opts.data_column.replace(" ", "")
+    if "+" in dc:
+        dc1, dc2 = dc.split("+")
+        operator="+"
+    elif "-" in dc:
+        dc1, dc2 = dc.split("-")
+        operator="-"
+    else:
+        dc1 = dc
+        dc2 = None
+        operator=None
+
+    columns = (dc1,
                opts.flag_column,
                'UVW', 'ANTENNA1',
                'ANTENNA2', 'TIME', 'INTERVAL', 'FLAG_ROW')
     schema = {}
-    schema[opts.data_column] = {'dims': ('chan', 'corr')}
     schema[opts.flag_column] = {'dims': ('chan', 'corr')}
+    schema[dc1] = {'dims': ('chan', 'corr')}
+    if dc2 is not None:
+        columns += (dc2,)
+        schema[dc2] = {'dims': ('chan', 'corr')}
 
     # only WEIGHT column gets special treatment
     # any other column must have channel axis
@@ -210,95 +262,228 @@ def _fastim(**kw):
     else:
         print(f"No weights provided, using unity weights", file=log)
 
-    out_datasets = []
-    for ims, ms in enumerate(opts.ms):
-        xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
-                          table_schema=schema, group_cols=group_by)
 
-        if opts.gain_table is not None:
-            gds = xds_from_zarr(gain_names[ims],
-                                chunks=gain_chunks[ms])
+    if opts.transfer_model_from is not None:
+        try:
+            mds = xr.open_zarr(opts.transfer_model_from)
+            # this should be fairly small but should
+            # it rather be read in the dask call?
+            # mds = client.persist(mds)
+            foo = client.scatter(mds, broadcast=True)
+            wait(foo)
+        except Exception as e:
+            import ipdb; ipdb.set_trace()
+            raise ValueError(f"No dataset found at {opts.transfer_model_from}")
+    else:
+        mds = None
 
-        for ids, ds in enumerate(xds):
-            fid = ds.FIELD_ID
-            ddid = ds.DATA_DESC_ID
-            scanid = ds.SCAN_NUMBER
-            # TODO - cleaner syntax
-            if opts.fields is not None:
-                if fid not in opts.fields:
-                    continue
-            if opts.ddids is not None:
-                if ddid not in opts.ddids:
-                    continue
-            if opts.scans is not None:
-                if scanid not in opts.scans:
-                    continue
+    xds = xds_from_ms(ms,
+                      chunks=ms_chunks[ms],
+                      columns=columns,
+                      table_schema=schema,
+                      group_cols=group_by)
+
+    if opts.gain_table is not None:
+        gds = xds_from_zarr(gain_name,
+                            chunks=gain_chunks[ms])
 
 
-            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
-            nrow = ds.sizes['row']
-            ncorr = ds.sizes['corr']
+    # a flat list to use with as_completed
+    datasets = []
 
-            idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
-            if not idx.any():
+    for ids, ds in enumerate(xds):
+        fid = ds.FIELD_ID
+        ddid = ds.DATA_DESC_ID
+        scanid = ds.SCAN_NUMBER
+        # TODO - cleaner syntax
+        if opts.fields is not None:
+            if fid not in opts.fields:
+                continue
+        if opts.ddids is not None:
+            if ddid not in opts.ddids:
+                continue
+        if opts.scans is not None:
+            if scanid not in opts.scans:
                 continue
 
-            for ti, (tlow, tcounts) in enumerate(zip(time_mapping[ms][idt]['start_indices'],
-                                           time_mapping[ms][idt]['counts'])):
 
-                It = slice(tlow, tlow + tcounts)
-                ridx = row_mapping[ms][idt]['start_indices'][It]
-                rcnts = row_mapping[ms][idt]['counts'][It]
-                # select all rows for output dataset
-                Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
+        idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+        nrow = ds.sizes['row']
+        ncorr = ds.sizes['corr']
 
-                for flow, fcounts in zip(freq_mapping[ms][idt]['start_indices'],
-                                         freq_mapping[ms][idt]['counts']):
-                    Inu = slice(flow, flow + fcounts)
+        idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
+        if not idx.any():
+            continue
 
-                    subds = ds[{'row': Irow, 'chan': Inu}]
-                    subds = subds.chunk({'row':-1, 'chan': -1})
-                    if opts.gain_table is not None:
-                        # Only DI gains currently supported
-                        subgds = gds[ids][{'gain_time': It, 'gain_freq': Inu}]
-                        subgds = subgds.chunk({'gain_time': -1, 'gain_freq': -1})
-                        jones = subgds.gains.data
-                    else:
-                        jones = None
+        titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
+                            time_mapping[ms][idt]['counts']))
+        for ti, (tlow, tcounts) in titr:
 
-                    if opts.product.upper() in ["I", "Q", "U", "V"]:
-                        out_ds = single_stokes(
-                            ds=subds,
-                            jones=jones,
-                            opts=opts,
-                            freq=freqs[ms][idt][Inu],
-                            chan_width=chan_widths[ms][idt][Inu],
-                            utime=utimes[ms][idt][It],
-                            tbin_idx=ridx,
-                            tbin_counts=rcnts,
-                            cell_rad=cell_rad,
-                            radec=radecs[ms][idt],
-                            antpos=antpos[ms],
-                            poltype=poltype[ms])
-                    # elif opts.product.upper() in ["XX", "YX", "XY", "YY",
-                    #                               "RR", "RL", "LR", "LL"]:
-                    #     out_ds = single_corr(
-                    #         ds=subds,
-                    #         jones=jones,
-                    #         opts=opts,
-                    #         freq=freqs[ms][idt][Inu],
-                    #         chan_width=chan_widths[ms][idt][Inu],
-                    #         utimes=utimes[ms][idt][It],
-                    #         tbin_idx=ridx,
-                    #         tbin_counts=rcnts,
-                    #         cell_rad=cell_rad,
-                    #         radec=radecs[ms][idt])
-                    else:
-                        raise NotImplementedError(f"Product {args.product} not "
-                                                "supported yet")
-                    # if all data in a dataset is flagged we return None and
-                    # ignore this chunk of data
-                    if out_ds is not None:
-                        out_datasets.append(out_ds)
+            It = slice(tlow, tlow + tcounts)
+            ridx = row_mapping[ms][idt]['start_indices'][It]
+            rcnts = row_mapping[ms][idt]['counts'][It]
+            # select all rows for output dataset
+            Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
 
-    return out_datasets
+            fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
+                                freq_mapping[ms][idt]['counts']))
+
+            # # TODO - cpdi to cpgi mapping
+            # # assumes cpdi is integer multiple of cpgi
+            nbandi = freq_mapping[ms][idt]['start_indices'].size
+            nfreqs = np.sum(freq_mapping[ms][idt]['counts'])
+            if opts.channels_per_grid_image in (0, -1, None):
+                cpgi = nfreqs
+            else:
+                cpgi = opts.channels_per_grid_image
+            fbins_per_band = int(cpgi / opts.channels_per_degrid_image)
+            nband = int(np.ceil(nbandi/fbins_per_band))
+
+            for fi in range(nband):
+                idx0 = fi * fbins_per_band
+                idxf = np.minimum((fi + 1) * fbins_per_band, nfreqs)
+                fidx = freq_mapping[ms][idt]['start_indices'][idx0:idxf]
+                fcnts = freq_mapping[ms][idt]['counts'][idx0:idxf]
+                # need to slice out all data going onto same grid
+                Inu = slice(fidx.min(), fidx.min() + np.sum(fcnts))
+
+                subds = ds[{'row': Irow, 'chan': Inu}]
+                subds = subds.chunk({'row':-1, 'chan': -1})
+
+                if opts.gain_table is not None:
+                    # Only DI gains currently supported
+                    subgds = gds[ids][{'gain_time': It, 'gain_freq': Inu}]
+                    subgds = subgds.chunk({'gain_time': -1, 'gain_freq': -1})
+                    jones = subgds.gains.data
+                else:
+                    jones = None
+
+                datasets.append([subds,
+                                 jones,
+                                 freqs[ms][idt][Inu],
+                                 utimes[ms][idt][It],
+                                 ridx, rcnts,
+                                 fidx, fcnts,
+                                 radecs[ms][idt],
+                                 fi, ti])
+
+    futures = []
+    associated_workers = {}
+    idle_workers = set(client.scheduler_info()['workers'].keys())
+    n_launched = 0
+
+    while idle_workers:   # Seed each worker with a task.
+
+        (subds, jones, freqsi, utimesi, ridx, rcnts, fidx, fcnts,
+         radeci, fi, ti) = datasets[n_launched]
+        data2 = None if dc2 is None else getattr(subds, dc2).data
+        sc = opts.sigma_column
+        sigma = None if sc is None else getattr(subds, sc).data
+        wc = opts.weight_column
+        weight = None if wc is None else getattr(subds, wc).data
+
+        worker = idle_workers.pop()
+        future = client.submit(single_stokes_image,
+                        data=getattr(subds, dc1).data,
+                        data2=data2,
+                        operator=operator,
+                        ant1=clone(subds.ANTENNA1.data),
+                        ant2=clone(subds.ANTENNA2.data),
+                        uvw=clone(subds.UVW.data),
+                        frow=clone(subds.FLAG_ROW.data),
+                        flag=subds.FLAG.data,
+                        sigma=sigma,
+                        weight=weight,
+                        mds=mds,
+                        jones=jones,
+                        opts=opts,
+                        nx=nx,
+                        ny=ny,
+                        freq=freqsi,
+                        utime=utimesi,
+                        tbin_idx=ridx,
+                        tbin_counts=rcnts,
+                        fbin_idx=fidx,
+                        fbin_counts=fcnts,
+                        cell_rad=cell_rad,
+                        radec=radeci,
+                        antpos=antpos[ms],
+                        poltype=poltype[ms],
+                        fieldid=subds.FIELD_ID,
+                        ddid=subds.DATA_DESC_ID,
+                        scanid=subds.SCAN_NUMBER,
+                        fds_store=fdsstore.url,
+                        bandid=fi,
+                        timeid=ti,
+                        wid=worker,
+                        pure=False,
+                        workers=worker)
+
+        futures.append(future)
+        associated_workers[future] = worker
+        n_launched += 1
+
+    ac_iter = as_completed(futures)
+    nds = len(datasets)
+    for completed_future in ac_iter:
+
+        if n_launched == nds:  # Stop once all jobs have been launched.
+            continue
+
+        (subds, jones, freqsi, utimesi, ridx, rcnts, fidx, fcnts,
+        radeci, fi, ti) = datasets[n_launched]
+        data2 = None if dc2 is None else getattr(subds, dc2).data
+        sc = opts.sigma_column
+        sigma = None if sc is None else getattr(subds, sc).data
+        wc = opts.weight_column
+        weight = None if wc is None else getattr(subds, wc).data
+
+        worker = associated_workers.pop(completed_future)
+
+        # future = client.submit(f, xdsl[n_launched], worker, workers=worker)
+        future = client.submit(single_stokes_image,
+                        data=getattr(subds, dc1).data,
+                        data2=data2,
+                        operator=operator,
+                        ant1=clone(subds.ANTENNA1.data),
+                        ant2=clone(subds.ANTENNA2.data),
+                        uvw=clone(subds.UVW.data),
+                        frow=clone(subds.FLAG_ROW.data),
+                        flag=subds.FLAG.data,
+                        sigma=sigma,
+                        weight=weight,
+                        mds=mds,
+                        jones=jones,
+                        opts=opts,
+                        nx=nx,
+                        ny=ny,
+                        freq=freqsi,
+                        utime=utimesi,
+                        tbin_idx=ridx,
+                        tbin_counts=rcnts,
+                        fbin_idx=fidx,
+                        fbin_counts=fcnts,
+                        cell_rad=cell_rad,
+                        radec=radeci,
+                        antpos=antpos[ms],
+                        poltype=poltype[ms],
+                        fieldid=subds.FIELD_ID,
+                        ddid=subds.DATA_DESC_ID,
+                        scanid=subds.SCAN_NUMBER,
+                        fds_store=fdsstore.url,
+                        bandid=fi,
+                        timeid=ti,
+                        wid=worker,
+                        pure=False,
+                        workers=worker)
+
+        ac_iter.add(future)
+        associated_workers[future] = worker
+        n_launched += 1
+
+        if opts.progressbar:
+            print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
+
+    wait(futures)
+
+    return

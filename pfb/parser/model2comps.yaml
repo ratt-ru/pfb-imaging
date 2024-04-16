@@ -11,8 +11,10 @@ inputs:
       Order of interpolating polynomial for frequency axis
   nbasist:
     dtype: int
+    default: 1
     info:
-      Order of interpolating polynomial for frequency axis
+      Order of interpolating polynomial for time axis.
+      This is hypothetical for the time being.
   fit-mode:
     dtype: str
     default: Legendre
@@ -50,6 +52,14 @@ inputs:
     info:
       Optional explicit output name.
       Otherwise the default naming convention is used.
+  out-format:
+    dtype: str
+    default: zarr
+    choices:
+      - zarr
+      - json
+    info:
+      Format to dump model to.
 
   _include:
     - (.)dist.yml

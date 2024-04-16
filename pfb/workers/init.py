@@ -123,10 +123,13 @@ def _init(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.stokes import single_stokes
+    from pfb.utils.stokes2vis import single_stokes
     from pfb.utils.correlations import single_corr
     from pfb.utils.misc import chunkify_rows
     import xarray as xr
+
+    if np.unique(opts.fields).size > 1:
+        raise NotImplementedError(f"Only a single field is currently supported")
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -186,14 +189,27 @@ def _init(**kw):
     # this is not optional, concatenate during gridding stage if desired
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
+    # crude arithmetic
+    dc = opts.data_column.replace(" ", "")
+    if "+" in dc:
+        dc1, dc2 = dc.split("+")
+    elif "-" in dc:
+        dc1, dc2 = dc.split("-")
+    else:
+        dc1 = dc
+        dc2 = None
+
     # assumes measurement sets have the same columns
-    columns = (opts.data_column,
+    columns = (dc1,
                opts.flag_column,
                'UVW', 'ANTENNA1',
                'ANTENNA2', 'TIME', 'INTERVAL', 'FLAG_ROW')
     schema = {}
-    schema[opts.data_column] = {'dims': ('chan', 'corr')}
     schema[opts.flag_column] = {'dims': ('chan', 'corr')}
+    schema[dc1] = {'dims': ('chan', 'corr')}
+    if dc2 is not None:
+        columns += (dc2,)
+        schema[dc2] = {'dims': ('chan', 'corr')}
 
     # only WEIGHT column gets special treatment
     # any other column must have channel axis
@@ -210,6 +226,11 @@ def _init(**kw):
     else:
         print(f"No weights provided, using unity weights", file=log)
 
+    if opts.fields is None:
+        fields = []
+    else:
+        fields = opts.fields
+
     out_datasets = []
     for ims, ms in enumerate(opts.ms):
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
@@ -221,12 +242,14 @@ def _init(**kw):
 
         for ids, ds in enumerate(xds):
             fid = ds.FIELD_ID
+            # take the first one by default
+            if len(fields) == 0:
+                fields.append(fid)
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
             # TODO - cleaner syntax
-            if opts.fields is not None:
-                if fid not in opts.fields:
-                    continue
+            if fid not in fields:
+                continue
             if opts.ddids is not None:
                 if ddid not in opts.ddids:
                     continue

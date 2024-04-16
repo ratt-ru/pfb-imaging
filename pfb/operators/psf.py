@@ -40,19 +40,19 @@ def psf_convolve_cube(xpad,    # preallocated array to store padded image
     The copyto is not necessarily faster it just allows us to see where time is spent
     '''
     _, nx, ny = x.shape
-    # xpad[...] = 0.0
-    np.copyto(xpad, 0.0)
-    # xpad[:, 0:nx, 0:ny] = x
-    np.copyto(xpad[:, 0:nx, 0:ny], x)
+    xpad[...] = 0.0
+    # np.copyto(xpad, 0.0)
+    xpad[:, 0:nx, 0:ny] = x
+    # np.copyto(xpad[:, 0:nx, 0:ny], x)
     r2c(xpad, axes=(1, 2), nthreads=nthreads,
         forward=True, inorm=0, out=xhat)
-    # xhat *= psfhat
-    ne.evaluate('xhat*psfhat', out=xhat, casting='unsafe')
+    xhat *= psfhat
+    # ne.evaluate('xhat*psfhat', out=xhat, casting='unsafe')
     c2r(xhat, axes=(1, 2), forward=False, out=xpad,
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)
-    # xout[...] = xpad[:, 0:nx, 0:ny]
-    np.copyto(xout, xpad[:, 0:nx, 0:ny])
+    xout[...] = xpad[:, 0:nx, 0:ny]
+    # np.copyto(xout, xpad[:, 0:nx, 0:ny])
     return xout
 
 
