@@ -157,7 +157,7 @@ def _restore(**kw):
 
     if 'f' in opts.outputs:
         rhat_mfs = r2c(residual_mfs, forward=True,
-                       nthreads=opts.opts.nvthreads, inorm=0)
+                       nthreads=opts.nvthreads, inorm=0)
         save_fits(np.abs(rhat_mfs),
                   f'{basename}_{opts.postfix}.abs_fft_residual_mfs.fits',
                   hdr_mfs,
@@ -169,7 +169,7 @@ def _restore(**kw):
 
     if 'F' in opts.outputs:
         rhat = r2c(residual, axes=(1,2), forward=True,
-                   nthreads=opts.opts.nvthreads, inorm=0)
+                   nthreads=opts.nvthreads, inorm=0)
         save_fits(np.abs(rhat),
                   f'{basename}_{opts.postfix}.abs_fft_residual.fits',
                   hdr,
