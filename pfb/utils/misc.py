@@ -1460,27 +1460,54 @@ def combine_columns(x, y, dc, dc1, dc2):
 #     shifty  - shift y coordinate by this amount
 
 #     All sizes are assumed to be in radians.
-#     '''
-
-
-
-#     # coordinates on input grid
+#         '''
+#     import matplotlib.pyplot as plt
+#     from scipy.fft import fftn, ifftn
+#     Fs = np.fft.fftshift
+#     iFs = np.fft.ifftshift
+#     # basic
 #     nx, ny = image.shape
-#     x = np.arange(-(nx//2), nx//2) * cellxi
-#     y = np.arange(-(ny//2), ny//2) * cellyi
-#     xx, yy = np.meshgrid(x, y, indexing='ij')
+#     imhat = Fs(fftn(image))
 
-#     # frequencies on output grid
-#     celluo = 1/(nxo*cellxo)
-#     cellvo = 1/(nyo*cellyo)
-#     uo = np.arange(-(nxo//2), nxo//2) * celluo/nxo
-#     vo = np.arange(-(nyo//2), nyo//2) * cellvo/nyo
+#     imabs = np.abs(imhat)
+#     imphase = np.angle(imhat) - 1.0
+#     # imphase = np.roll(imphase, nx//2, axis=0)
+#     imshift = ifftn(iFs(imabs*np.exp(1j*imphase))).real
 
-#     uu, vv = np.meshgrid(uo, vo, indexing='ij')
-#     uv = np.vstack((uo, vo)).T
+#     impad = np.pad(imhat, ((nx//2, nx//2), (ny//2, ny//2)), mode='constant')
+#     imo = ifftn(iFs(impad)).real
+
+#     print(np.sum(image) - np.sum(imo))
+
+#     plt.figure(1)
+#     plt.imshow(image/image.max(), vmin=0, vmax=1, interpolation=None)
+#     plt.colorbar()
+#     plt.figure(2)
+#     plt.imshow(imo/imo.max(), vmin=0, vmax=1, interpolation=None)
+#     plt.colorbar()
+#     plt.figure(3)
+#     plt.imshow(imshift/imshift.max() - image/image.max(), vmin=0, vmax=1, interpolation=None)
+#     plt.colorbar()
+
+#     plt.show()
+
+    # # coordinates on input grid
+    # nx, ny = image.shapeimhat
+    # x = np.arange(-(nx//2), nx//2) * cellxi
+    # y = np.arange(-(ny//2), ny//2) * cellyi
+    # xx, yy = np.meshgrid(x, y, indexing='ij')
+
+    # # frequencies on output grid
+    # celluo = 1/(nxo*cellxo)
+    # cellvo = 1/(nyo*cellyo)
+    # uo = np.arange(-(nxo//2), nxo//2) * celluo/nxo
+    # vo = np.arange(-(nyo//2), nyo//2) * cellvo/nyo
+
+    # uu, vv = np.meshgrid(uo, vo, indexing='ij')
+    # uv = np.vstack((uo, vo)).T
 
 
-#     res1 = finufft.nufft2d3(xx.ravel(), yy.ravel(), image.ravel(), uu.ravel(), vv.ravel())
+    # res1 = finufft.nufft2d3(xx.ravel(), yy.ravel(), image.ravel(), uu.ravel(), vv.ravel())
 
 
 

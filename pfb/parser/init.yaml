@@ -5,6 +5,8 @@ inputs:
     abbreviation: ms
     info:
       Path to measurement set
+    policies:
+      repeat: '[]'
   scans:
     dtype: List[int]
     info:

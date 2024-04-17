@@ -6,31 +6,37 @@ inputs:
     dtype: str
     abbreviation: mname
     default: MODEL
-    info: 'Name of model in mds'
+    info:
+      Name of model in dds
   residual-name:
     dtype: str
     abbreviation: rname
     default: RESIDUAL
-    info: 'Name of residual in dds'
+    info:
+      Name of residual in dds
   nband:
     dtype: int
     required: true
     abbreviation: nb
-    info: 'Number of imaging bands'
+    info:
+      Number of imaging bands
   postfix:
     dtype: str
     default: 'main'
-    info: 'Can be used to specify a custom name for the image space data \
-          products'
+    info:
+      Can be used to specify a custom name for the image space data products
   outputs:
     dtype: str
     default: mMrRiI
-    info: 'Output products. (m)odel, (r)esidual, (i)mage, (c)lean beam. \
-          Captitals correspond to cubes.'
+    info:
+      Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty,
+      (f)ft_residuals (amplitude and phase will be produced).
+      Use captitals to produce corresponding cubes.
   overwrite:
     dtype: bool
     default: false
-    info: Allow overwrite of output xds
+    info:
+      Allow overwriting fits files
 
 outputs:
     {}
