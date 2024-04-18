@@ -262,6 +262,13 @@ def smoovie(**kw):
                 # this should preserve order
                 progress(futures)
                 results = client.gather(futures)
+
+                # drop empty frames
+                for res in results:
+                    if not res[1]:
+                        results.pop(res)
+
+                # get median rms
                 medrms = np.median([res[1] for res in results])
 
                 # replace rms with medrms and add metadata
@@ -278,7 +285,9 @@ def smoovie(**kw):
                 # 4 - frame fraction
                 # 5 - band id
 
-                # TODO - progressbar
+                # TODO:
+                # - progressbar
+                # - investigate writing frames to disc as an xarray dataset and passing instead of frames
                 idfy = f'fps{opts.fps}_tbin{opts.time_bin}_fbin{opts.freq_bin}'
                 if opts.out_format.lower() == 'gif':
                     outim = stream(
