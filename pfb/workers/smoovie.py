@@ -299,6 +299,7 @@ def smoovie(**kw):
                             optimize=opts.optimize,
                             threads_per_worker=1,
                             fps=opts.fps,
+                            max_frames=-1,
                             uri=f'{opts.outname}_band{b}_{idfy}.gif'
                         )
                 elif opts.out_format.lower() == 'mp4':
@@ -309,6 +310,7 @@ def smoovie(**kw):
                             write_kwargs={'crf':5},
                             threads_per_worker=1,
                             fps=opts.fps,
+                            max_frames=-1,
                             uri=f'{opts.outname}_band{b}_{idfy}.mp4'
                         )
                 else:
