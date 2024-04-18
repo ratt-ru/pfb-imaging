@@ -264,10 +264,12 @@ def smoovie(**kw):
                 results = client.gather(futures)
 
                 # drop empty frames
-                for res in results:
+                nframes = len(results)
+                for i, res in enumerate(results):
                     if not res[1]:
-                        results.pop(res)
-
+                        results.pop(i)
+                nframeso = len(results)
+                print(f"Dropped {nframes - nframeso} epmpty frames")
                 # get median rms
                 medrms = np.median([res[1] for res in results])
 

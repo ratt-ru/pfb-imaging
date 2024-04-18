@@ -17,7 +17,7 @@ requirements = [
                 "@git+https://github.com/ratt-ru/QuartiCal.git"
                 "@stimela_upgrade",
                 "sympy",
-                "stimela >= 2.0rc14",
+                "stimela >= 2.0rc18",
                 "streamjoy >= 0.0.8",
                 "tbb",
                 "jax[cpu]",
