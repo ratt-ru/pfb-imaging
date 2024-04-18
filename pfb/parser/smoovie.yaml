@@ -158,6 +158,11 @@ inputs:
     info:
       To try and optimize the resulting gif.
       Only possible if gifsicle is installed.
+  crf:
+    dtype: int
+    default: 12
+    info:
+      Constant rate factor for controlling mp4 output quality.
 
 outputs:
     {}

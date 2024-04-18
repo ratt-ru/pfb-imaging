@@ -289,7 +289,7 @@ def smoovie(**kw):
 
                 # TODO:
                 # - progressbar
-                # - investigate writing frames to disc as an xarray dataset and passing instead of frames
+                # - investigate writing frames to disk as xarray dataset and passing instead of frames
                 idfy = f'fps{opts.fps}_tbin{opts.time_bin}_fbin{opts.freq_bin}'
                 if opts.out_format.lower() == 'gif':
                     outim = stream(
@@ -307,7 +307,7 @@ def smoovie(**kw):
                             results,
                             renderer=plot_frame,
                             intro_title=f"{opts.outname}-Band{b:04d}",
-                            write_kwargs={'crf':5},
+                            write_kwargs={'crf':opts.crf},
                             threads_per_worker=1,
                             fps=opts.fps,
                             max_frames=-1,
