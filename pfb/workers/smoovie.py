@@ -269,7 +269,7 @@ def smoovie(**kw):
                     if not res[1]:
                         results.pop(i)
                 nframeso = len(results)
-                print(f"Dropped {nframes - nframeso} epmpty frames")
+                print(f"Dropped {nframes - nframeso} empty frames in band {b}", file=log)
                 # get median rms
                 medrms = np.median([res[1] for res in results])
 
@@ -296,7 +296,7 @@ def smoovie(**kw):
                             results,
                             renderer=plot_frame,
                             intro_title=f"{opts.outname}-Band{b:04d}",
-                            optimize=True,
+                            optimize=opts.optimize,
                             threads_per_worker=1,
                             fps=opts.fps,
                             uri=f'{opts.outname}_band{b}_{idfy}.gif'

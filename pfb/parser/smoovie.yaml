@@ -152,6 +152,12 @@ inputs:
       The format to write movie out in.
       gifs are usually better quality but can get quite large.
       mp4 quality not currently great with streamjoy.
+  optimize:
+    dtype: bool
+    default: false
+    info:
+      To try and optimize the resulting gif.
+      Only possible if gifsicle is installed.
 
 outputs:
     {}
