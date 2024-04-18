@@ -18,7 +18,7 @@ requirements = [
                 "@stimela_upgrade",
                 "sympy",
                 "stimela >= 2.0rc14",
-                "streamjoy",
+                "streamjoy >= 0.0.8",
                 "tbb",
                 "jax[cpu]",
                 # "codex-africanus[complete]"

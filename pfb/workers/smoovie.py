@@ -295,7 +295,7 @@ def smoovie(**kw):
                             results,
                             renderer=plot_frame,
                             intro_title=f"{opts.outname}-Band{b:04d}",
-                            # optimize=True,
+                            write_kwargs={'crf':5},
                             threads_per_worker=1,
                             fps=opts.fps,
                             uri=f'{opts.outname}_band{b}_{idfy}.mp4'
