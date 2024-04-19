@@ -60,7 +60,8 @@ def single_stokes(ds=None,
                              dc,
                              dc1,
                              dc2,
-                             chunks=data.chunks)
+                             chunks=data.chunks,
+                             meta=np.empty((0,0,0), dtype=data.dtype))
 
 
     nrow, nchan, ncorr = data.shape
@@ -90,7 +91,8 @@ def single_stokes(ds=None,
         # weight = 1.0/sigma**2
         weight = da.map_blocks(weight_from_sigma,
                                sigma,
-                               chunks=sigma.chunks)
+                               chunks=sigma.chunks,
+                               meta=np.empty((0,0,0), dtype=sigma.dtype))
     elif opts.weight_column is not None:
         weight = getattr(ds, opts.weight_column).data
         if opts.weight_column=='WEIGHT':
