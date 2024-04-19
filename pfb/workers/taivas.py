@@ -61,11 +61,12 @@ def _taivas(**kw):
     from copy import copy, deepcopy
     from ducc0.misc import make_noncritical
     from pfb.utils.misc import fitcleanbeam
-    from taivas.drivers.predict_windowed import main as taivas
+    # from taivas.drivers.predict_windowed import main as taivas
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}_{opts.postfix}.dds.zarr'
+    dds_name = f'{basename}_{opts.postfix}.dds'
+    # import ipdb; ipdb.set_trace()
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
                                           'chan':-1,
                                           'x':-1,
@@ -81,7 +82,7 @@ def _taivas(**kw):
 
     # stitch dirty/psf in apparent scale
     output_type = dds[0].DIRTY.dtype
-    dirty, model, residual, psf, psfhat, beam, wsums, dual = dds2cubes(
+    dirty, model, residual, psf, psfhat, mean_beam, wsums, _ = dds2cubes(
                                                                dds,
                                                                opts.nband,
                                                                apparent=False)
@@ -130,7 +131,7 @@ def _taivas(**kw):
     # set up vis space Hessian
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
-    hessopts['wstack'] = opts.wstack
+    hessopts['wstack'] = opts.do_wgridding
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads  # nvthreads since dask parallel over band
@@ -148,6 +149,7 @@ def _taivas(**kw):
 
     # image space hessian
     # pre-allocate arrays for doing FFT's
+    # import ipdb; ipdb.set_trace()
     xout = np.empty(dirty.shape, dtype=dirty.dtype, order='C')
     xout = make_noncritical(xout)
     xpad = np.empty(psf.shape, dtype=dirty.dtype, order='C')
@@ -202,6 +204,12 @@ def _taivas(**kw):
 
         # point to insert deconvolution algo
         # model = taivas(residual, psf, ...)
+
+        # instead of dirty we use data = residual + psf_convolve(x) in
+
+        # compare to this likelihood
+        def likelihood(x):
+            return np.vdot(x, psf_convolve(x) - 2*dirty)
 
         import ipdb; ipdb.set_trace()
 
