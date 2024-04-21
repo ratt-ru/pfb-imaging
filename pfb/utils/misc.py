@@ -661,7 +661,7 @@ def init_mask(mask, model, output_type, log):
     return mask
 
 
-def dds2cubes(dds, nband, apparent=False):
+def dds2cubes(dds, nband, apparent=False, dual=True):
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
     nx, ny = dds[0].DIRTY.shape
@@ -687,7 +687,7 @@ def dds2cubes(dds, nband, apparent=False):
         psfhat = None
     mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
                             dtype=real_type) for _ in range(nband)]
-    if 'DUAL' in dds[0]:
+    if dual and 'DUAL' in dds[0]:
         nbasis, nymax, nxmax = dds[0].DUAL.shape
         dual = [da.zeros((nbasis, nymax, nxmax), chunks=(-1, -1, -1),
                             dtype=real_type) for _ in range(nband)]
@@ -708,7 +708,7 @@ def dds2cubes(dds, nband, apparent=False):
             psfhat[b] += ds.PSFHAT.data
         if 'MODEL' in ds:
             model[b] = ds.MODEL.data
-        if 'DUAL' in ds:
+        if dual and 'DUAL' in ds:
             dual[b] = ds.DUAL.data
         mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
         wsums[b] += ds.WSUM.data[0]
@@ -721,7 +721,7 @@ def dds2cubes(dds, nband, apparent=False):
     if 'PSF' in ds:
         psf = da.stack(psf)/wsum
         psfhat = da.stack(psfhat)/wsum
-    if 'DUAL' in ds:
+    if dual and 'DUAL' in ds:
         dual = da.stack(dual)
     for b in range(nband):
         if wsums[b]:
