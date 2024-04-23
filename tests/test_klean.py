@@ -8,7 +8,7 @@ from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 @pmp('do_gains', (True, False))
-def test_clean(do_gains, ms_name):
+def test_klean(do_gains, ms_name):
     '''
     Here we test that clean correctly infers the fluxes of point sources
     placed at the centers of pixels in the presence of the wterm and DI gain
@@ -215,30 +215,30 @@ def test_clean(do_gains, ms_name):
     from pfb.workers.grid import _grid
     dds = _grid(xdsi=xds, **grid_args)
 
-    # run clean
-    clean_args = {}
-    for key in schema.clean["inputs"].keys():
-        clean_args[key.replace("-", "_")] = schema.clean["inputs"][key]["default"]
-    clean_args["output_filename"] = outname
-    clean_args["postfix"] = postfix
-    clean_args["nband"] = nchan
-    clean_args["dirosion"] = 0
-    clean_args["do_residual"] = False
-    clean_args["nmiter"] = 100
+    # run klean
+    klean_args = {}
+    for key in schema.klean["inputs"].keys():
+        klean_args[key.replace("-", "_")] = schema.klean["inputs"][key]["default"]
+    klean_args["output_filename"] = outname
+    klean_args["postfix"] = postfix
+    klean_args["nband"] = nchan
+    klean_args["dirosion"] = 0
+    klean_args["do_residual"] = False
+    klean_args["nmiter"] = 100
     threshold = 1e-5
-    clean_args["threshold"] = threshold
-    clean_args["gamma"] = 0.1
-    clean_args["peak_factor"] = 0.75
-    clean_args["sub_peak_factor"] = 0.75
-    clean_args["nthreads"] = 8
-    clean_args["nvthreads"] = 8
-    clean_args["scheduler"] = 'sync'
-    clean_args["do_wgridding"] = True
-    clean_args["epsilon"] = epsilon
-    clean_args["mop_flux"] = True
-    clean_args["fits_mfs"] = False
-    from pfb.workers.clean import _clean
-    _clean(ddsi=dds, **clean_args)
+    klean_args["threshold"] = threshold
+    klean_args["gamma"] = 0.1
+    klean_args["peak_factor"] = 0.75
+    klean_args["sub_peak_factor"] = 0.75
+    klean_args["nthreads"] = 8
+    klean_args["nvthreads"] = 8
+    klean_args["scheduler"] = 'sync'
+    klean_args["do_wgridding"] = True
+    klean_args["epsilon"] = epsilon
+    klean_args["mop_flux"] = True
+    klean_args["fits_mfs"] = False
+    from pfb.workers.klean import _klean
+    _klean(ddsi=dds, **klean_args)
 
     # get inferred model
     basename = f'{outname}_I'

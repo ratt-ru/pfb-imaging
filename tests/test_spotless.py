@@ -173,7 +173,7 @@ def test_spotless(ms_name):
     writes = xds_to_zarr(dds, dds_name, columns='ALL')
     dask.compute(writes)
 
-    # run clean
+    # run spotless
     spotless_args = {}
     for key in schema.spotless["inputs"].keys():
         spotless_args[key.replace("-", "_")] = schema.spotless["inputs"][key]["default"]

@@ -6,19 +6,19 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('CLEAN')
+log = pyscilog.get_logger('KLEAN')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}
-for key in schema.clean["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.clean["inputs"][key]["default"]
+for key in schema.klean["inputs"].keys():
+    defaults[key.replace("-", "_")] = schema.klean["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.clean)
-def clean(**kw):
+@clickify_parameters(schema.klean)
+def klean(**kw):
     '''
     Modified single-scale clean.
     '''
@@ -26,7 +26,7 @@ def clean(**kw):
     opts = OmegaConf.create(defaults)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'clean_{timestamp}.log')
+    pyscilog.log_to_file(f'klean_{timestamp}.log')
 
     if opts.nworkers is None:
         if opts.scheduler=='distributed':
@@ -46,10 +46,10 @@ def clean(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _clean(**opts)
+        return _klean(**opts)
 
 
-def _clean(ddsi=None, **kw):
+def _klean(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
     # always combine over ds during cleaning
     opts['mean_ds'] = True
