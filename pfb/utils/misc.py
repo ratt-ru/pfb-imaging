@@ -1444,52 +1444,52 @@ def combine_columns(x, y, dc, dc1, dc2):
     return x
 
 
-# def fft_interp(image, cellxi, cellyi, nxo, nyo,
-#                cellxo, cellyo, shiftx, shifty):
-#     '''
-#     Use non-uniform fft to interpolate image in a flux conservative way
+def fft_interp(image, cellxi, cellyi, nxo, nyo,
+               cellxo, cellyo, shiftx, shifty):
+    '''
+    Use non-uniform fft to interpolate image in a flux conservative way
 
-#     image   - input image
-#     cellxi  - input x cell-size
-#     cellyi  - input y cell-size
-#     nxo     - number of x pixels in output
-#     nyo     - number of y pixels in output
-#     cellxo  - output x cell size
-#     cellyo  - output y cell size
-#     shiftx  - shift x coordinate by this amount
-#     shifty  - shift y coordinate by this amount
+    image   - input image
+    cellxi  - input x cell-size
+    cellyi  - input y cell-size
+    nxo     - number of x pixels in output
+    nyo     - number of y pixels in output
+    cellxo  - output x cell size
+    cellyo  - output y cell size
+    shiftx  - shift x coordinate by this amount
+    shifty  - shift y coordinate by this amount
 
-#     All sizes are assumed to be in radians.
-#         '''
-#     import matplotlib.pyplot as plt
-#     from scipy.fft import fftn, ifftn
-#     Fs = np.fft.fftshift
-#     iFs = np.fft.ifftshift
-#     # basic
-#     nx, ny = image.shape
-#     imhat = Fs(fftn(image))
+    All sizes are assumed to be in radians.
+    '''
+import matplotlib.pyplot as plt
+from scipy.fft import fftn, ifftn
+Fs = np.fft.fftshift
+iFs = np.fft.ifftshift
+# basic
+nx, ny = image.shape
+imhat = Fs(fftn(image))
 
-#     imabs = np.abs(imhat)
-#     imphase = np.angle(imhat) - 1.0
-#     # imphase = np.roll(imphase, nx//2, axis=0)
-#     imshift = ifftn(iFs(imabs*np.exp(1j*imphase))).real
+# imabs = np.abs(imhat)
+# imphase = np.angle(imhat) - 1.0
+# imphase = np.roll(imphase, nx//2, axis=0)
+# imshift = ifftn(iFs(imabs*np.exp(1j*imphase))).real
 
-#     impad = np.pad(imhat, ((nx//2, nx//2), (ny//2, ny//2)), mode='constant')
-#     imo = ifftn(iFs(impad)).real
+impad = np.pad(imhat, ((nx//2, nx//2), (ny//2, ny//2)), mode='constant')
+imo = ifftn(iFs(impad)).real
 
-#     print(np.sum(image) - np.sum(imo))
+print(np.sum(image) - np.sum(imo))
 
-#     plt.figure(1)
-#     plt.imshow(image/image.max(), vmin=0, vmax=1, interpolation=None)
-#     plt.colorbar()
-#     plt.figure(2)
-#     plt.imshow(imo/imo.max(), vmin=0, vmax=1, interpolation=None)
-#     plt.colorbar()
-#     plt.figure(3)
-#     plt.imshow(imshift/imshift.max() - image/image.max(), vmin=0, vmax=1, interpolation=None)
-#     plt.colorbar()
+plt.figure(1)
+plt.imshow(image/image.max(), vmin=0, vmax=1, interpolation=None)
+plt.colorbar()
+plt.figure(2)
+plt.imshow(imo/imo.max(), vmin=0, vmax=1, interpolation=None)
+plt.colorbar()
+# plt.figure(3)
+# plt.imshow(imshift/imshift.max() - image/image.max(), vmin=0, vmax=1, interpolation=None)
+# plt.colorbar()
 
-#     plt.show()
+plt.show()
 
     # # coordinates on input grid
     # nx, ny = image.shapeimhat

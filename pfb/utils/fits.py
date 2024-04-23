@@ -68,7 +68,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
 
     header = w.to_header()
     header['RESTFRQ'] = fmean
-    header['ORIGIN'] = 'pfb-clean'
+    header['ORIGIN'] = 'pfb-imaging'
     header['BTYPE'] = 'Intensity'
     header['BUNIT'] = unit
     header['SPECSYS'] = 'TOPOCENT'

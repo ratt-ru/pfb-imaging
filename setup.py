@@ -28,14 +28,14 @@ requirements = [
 
 
 setup(
-     name='pfb-clean',
+     name='pfb-imaging',
      version=pfb.__version__,
      author="Landman Bester",
      author_email="lbester@sarao.ac.za",
-     description="Pre-conditioned forward-backward CLEAN algorithm",
+     description="Radio interferometric imaging suite base on the pre-conditioned forward-backward algorithm",
      long_description=long_description,
      long_description_content_type="text/markdown",
-     url="https://github.com/ratt-ru/pfb-clean",
+     url="https://github.com/ratt-ru/pfb-imaging",
      packages=find_packages(),
      include_package_data=True,
      zip_safe=False,
