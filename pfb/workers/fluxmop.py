@@ -6,19 +6,19 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('FORWARD')
+log = pyscilog.get_logger('FLUXMOP')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}
-for key in schema.forward["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.forward["inputs"][key]["default"]
+for key in schema.fluxmop["inputs"].keys():
+    defaults[key.replace("-", "_")] = schema.fluxmop["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.forward)
-def forward(**kw):
+@clickify_parameters(schema.fluxmop)
+def fluxmop(**kw):
     '''
     Forward step aka flux mop.
 
@@ -59,7 +59,7 @@ def forward(**kw):
     opts = OmegaConf.create(defaults)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'forward_{timestamp}.log')
+    pyscilog.log_to_file(f'fluxmop_{timestamp}.log')
 
     if opts.nworkers is None:
         if opts.scheduler=='distributed':
@@ -78,9 +78,9 @@ def forward(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _forward(**opts)
+        return _fluxmop(**opts)
 
-def _forward(**kw):
+def _fluxmop(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 

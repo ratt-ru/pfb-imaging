@@ -214,6 +214,7 @@ def _spotless(ddsi=None, **kw):
     # get clean beam area to convert residual units during l1reweighting
     # TODO - could refine this with comparison between dirty and restored
     # if contiuing the deconvolution
+    print("Fitting PSF", file=log)
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
     pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
     print(f"Number of pixels per beam estimated as {pix_per_beam}",
@@ -413,7 +414,7 @@ def _spotless(ddsi=None, **kw):
 
         if rms > rmsp:
             diverge_count += 1
-            if diverge_count > 3:
+            if diverge_count > opts.diverge_count:
                 print("Algorithm is diverging. Terminating.", file=log)
                 break
 

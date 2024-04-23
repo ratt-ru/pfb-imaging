@@ -7,7 +7,6 @@ def cli():
     pass
 
 
-from pfb.workers import (init, grid, degrid,
-                         clean, restore, fwdbwd,
-                         spotless, model2comps,
-                         forward, fastim, smoovie)
+from pfb.workers import (init, grid, degrid, klean,
+                         restore, spotless, model2comps,
+                         fluxmop, fastim, smoovie)

@@ -25,14 +25,14 @@ pfb.degrid:
   _include:
     - (.)degrid.yaml
 
-pfb.clean:
-  command: pfb.workers.clean.clean
+pfb.klean:
+  command: pfb.workers.klean.klean
   flavour: python
   policies:
     pass_missing_as_none: true
 
   _include:
-    - (.)clean.yaml
+    - (.)klean.yaml
 
 pfb.restore:
   command: pfb.workers.restore.restore
@@ -52,14 +52,14 @@ pfb.fwdbwd:
   _include:
     - (.)fwdbwd.yaml
 
-pfb.forward:
-  command: pfb.workers.forward.forward
+pfb.fluxmop:
+  command: pfb.workers.fluxmop.fluxmop
   flavour: python
   policies:
     pass_missing_as_none: true
 
   _include:
-    - (.)forward.yaml
+    - (.)fluxmop.yaml
 
 pfb.spotless:
   command: pfb.workers.spotless.spotless

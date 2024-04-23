@@ -262,6 +262,15 @@ def smoovie(**kw):
                 # this should preserve order
                 progress(futures)
                 results = client.gather(futures)
+
+                # drop empty frames
+                nframes = len(results)
+                for i, res in enumerate(results):
+                    if not res[1]:
+                        results.pop(i)
+                nframeso = len(results)
+                print(f"Dropped {nframes - nframeso} empty frames in band {b}", file=log)
+                # get median rms
                 medrms = np.median([res[1] for res in results])
 
                 # replace rms with medrms and add metadata
@@ -278,16 +287,19 @@ def smoovie(**kw):
                 # 4 - frame fraction
                 # 5 - band id
 
-                # TODO - progressbar
+                # TODO:
+                # - progressbar
+                # - investigate writing frames to disk as xarray dataset and passing instead of frames
                 idfy = f'fps{opts.fps}_tbin{opts.time_bin}_fbin{opts.freq_bin}'
                 if opts.out_format.lower() == 'gif':
                     outim = stream(
                             results,
                             renderer=plot_frame,
                             intro_title=f"{opts.outname}-Band{b:04d}",
-                            optimize=True,
+                            optimize=opts.optimize,
                             threads_per_worker=1,
                             fps=opts.fps,
+                            max_frames=-1,
                             uri=f'{opts.outname}_band{b}_{idfy}.gif'
                         )
                 elif opts.out_format.lower() == 'mp4':
@@ -295,9 +307,10 @@ def smoovie(**kw):
                             results,
                             renderer=plot_frame,
                             intro_title=f"{opts.outname}-Band{b:04d}",
-                            # optimize=True,
+                            write_kwargs={'crf':opts.crf},
                             threads_per_worker=1,
                             fps=opts.fps,
+                            max_frames=-1,
                             uri=f'{opts.outname}_band{b}_{idfy}.mp4'
                         )
                 else:

@@ -51,6 +51,7 @@ def _restore(**kw):
     from pfb.utils.fits import (save_fits, add_beampars, set_wcs,
                                 dds2fits, dds2fits_mfs)
     from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres, dds2cubes
+    from ducc0.fft import c2c
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.postfix}.dds'
@@ -78,7 +79,8 @@ def _restore(**kw):
     # stack cubes
     dirty, model, residual, psf, _, _, wsums, _ = dds2cubes(dds,
                                                             nband,
-                                                            apparent=True)
+                                                            apparent=True,
+                                                            dual=False)
     wsum = np.sum(wsums)
     output_type = dirty.dtype
     fmask = wsums > 0
@@ -151,6 +153,32 @@ def _restore(**kw):
     if 'R' in opts.outputs:
         save_fits(residual,
                   f'{basename}_{opts.postfix}.residual.fits',
+                  hdr,
+                  overwrite=opts.overwrite)
+
+    if 'f' in opts.outputs:
+        rhat_mfs = c2c(residual_mfs, forward=True,
+                       nthreads=opts.nvthreads, inorm=0)
+        rhat_mfs = np.fft.fftshift(rhat_mfs)
+        save_fits(np.abs(rhat_mfs),
+                  f'{basename}_{opts.postfix}.abs_fft_residual_mfs.fits',
+                  hdr_mfs,
+                  overwrite=opts.overwrite)
+        save_fits(np.angle(rhat_mfs),
+                  f'{basename}_{opts.postfix}.phase_fft_residual_mfs.fits',
+                  hdr_mfs,
+                  overwrite=opts.overwrite)
+
+    if 'F' in opts.outputs:
+        rhat = c2c(residual, axes=(1,2), forward=True,
+                   nthreads=opts.nvthreads, inorm=0)
+        rhat = np.fft.fftshift(rhat, axes=(1,2))
+        save_fits(np.abs(rhat),
+                  f'{basename}_{opts.postfix}.abs_fft_residual.fits',
+                  hdr,
+                  overwrite=opts.overwrite)
+        save_fits(np.angle(rhat),
+                  f'{basename}_{opts.postfix}.phase_fft_residual.fits',
                   hdr,
                   overwrite=opts.overwrite)
 

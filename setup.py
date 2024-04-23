@@ -13,29 +13,29 @@ requirements = [
                 'pyscilog >= 0.1.2',
                 'Click',
                 "ducc0",
-                "QuartiCal"
-                "@git+https://github.com/ratt-ru/QuartiCal.git"
-                "@stimela_upgrade",
+                "QuartiCal >= 0.2.3",
+                # "@git+https://github.com/ratt-ru/QuartiCal.git"
+                # "@v0.2.3-fix-ver",
                 "sympy",
-                "stimela >= 2.0rc14",
-                "streamjoy",
+                "stimela >= 2.0rc18",
+                "streamjoy >= 0.0.8",
                 "tbb",
                 "jax[cpu]",
-                "codex-africanus[complete]"
-                "@git+https://github.com/ratt-ru/codex-africanus.git"
-                "@master"
+                # "codex-africanus[complete]"
+                # "@git+https://github.com/ratt-ru/codex-africanus.git"
+                # "@master"
             ]
 
 
 setup(
-     name='pfb-clean',
+     name='pfb-imaging',
      version=pfb.__version__,
      author="Landman Bester",
      author_email="lbester@sarao.ac.za",
-     description="Pre-conditioned forward-backward CLEAN algorithm",
+     description="Radio interferometric imaging suite base on the pre-conditioned forward-backward algorithm",
      long_description=long_description,
      long_description_content_type="text/markdown",
-     url="https://github.com/ratt-ru/pfb-clean",
+     url="https://github.com/ratt-ru/pfb-imaging",
      packages=find_packages(),
      include_package_data=True,
      zip_safe=False,

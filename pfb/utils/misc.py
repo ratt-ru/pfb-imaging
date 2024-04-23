@@ -503,13 +503,14 @@ def _restore_corrs(vis, ncorr):
     return model_vis
 
 
-# model to fit
 @jax.jit
 def psf_errorsq(x, data, xy):
+    '''
+    Returns sum of square error for best fit Gaussian to data
+    '''
     emaj, emin, pa = x
     Smin = jnp.minimum(emaj, emin)
     Smaj = jnp.maximum(emaj, emin)
-    # print(emaj, emin, pa)
     A = jnp.array([[1. / Smin ** 2, 0],
                     [0, 1. / Smaj ** 2]])
 
@@ -519,7 +520,7 @@ def psf_errorsq(x, data, xy):
     B = jnp.dot(jnp.dot(R.T, A), R)
     Q = jnp.einsum('nb,bc,cn->n', xy.T, B, xy)
     # GaussPar should corresponds to FWHM
-    fwhm_conv = 2 * jnp.sqrt(2 * np.log(2))
+    fwhm_conv = 2 * jnp.sqrt(2 * jnp.log(2))
     model = jnp.exp(-fwhm_conv * Q)
     res = data - model
     return jnp.vdot(res, res)
@@ -660,7 +661,7 @@ def init_mask(mask, model, output_type, log):
     return mask
 
 
-def dds2cubes(dds, nband, apparent=False):
+def dds2cubes(dds, nband, apparent=False, dual=True):
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
     nx, ny = dds[0].DIRTY.shape
@@ -686,7 +687,7 @@ def dds2cubes(dds, nband, apparent=False):
         psfhat = None
     mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
                             dtype=real_type) for _ in range(nband)]
-    if 'DUAL' in dds[0]:
+    if dual and 'DUAL' in dds[0]:
         nbasis, nymax, nxmax = dds[0].DUAL.shape
         dual = [da.zeros((nbasis, nymax, nxmax), chunks=(-1, -1, -1),
                             dtype=real_type) for _ in range(nband)]
@@ -707,7 +708,7 @@ def dds2cubes(dds, nband, apparent=False):
             psfhat[b] += ds.PSFHAT.data
         if 'MODEL' in ds:
             model[b] = ds.MODEL.data
-        if 'DUAL' in ds:
+        if dual and 'DUAL' in ds:
             dual[b] = ds.DUAL.data
         mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]
         wsums[b] += ds.WSUM.data[0]
@@ -720,7 +721,7 @@ def dds2cubes(dds, nband, apparent=False):
     if 'PSF' in ds:
         psf = da.stack(psf)/wsum
         psfhat = da.stack(psfhat)/wsum
-    if 'DUAL' in ds:
+    if dual and 'DUAL' in ds:
         dual = da.stack(dual)
     for b in range(nband):
         if wsums[b]:
@@ -1441,3 +1442,72 @@ def combine_columns(x, y, dc, dc1, dc2):
                 out=x,
                 casting='same_kind')
     return x
+
+
+# def fft_interp(image, cellxi, cellyi, nxo, nyo,
+#                cellxo, cellyo, shiftx, shifty):
+#     '''
+#     Use non-uniform fft to interpolate image in a flux conservative way
+
+#     image   - input image
+#     cellxi  - input x cell-size
+#     cellyi  - input y cell-size
+#     nxo     - number of x pixels in output
+#     nyo     - number of y pixels in output
+#     cellxo  - output x cell size
+#     cellyo  - output y cell size
+#     shiftx  - shift x coordinate by this amount
+#     shifty  - shift y coordinate by this amount
+
+#     All sizes are assumed to be in radians.
+#         '''
+#     import matplotlib.pyplot as plt
+#     from scipy.fft import fftn, ifftn
+#     Fs = np.fft.fftshift
+#     iFs = np.fft.ifftshift
+#     # basic
+#     nx, ny = image.shape
+#     imhat = Fs(fftn(image))
+
+#     imabs = np.abs(imhat)
+#     imphase = np.angle(imhat) - 1.0
+#     # imphase = np.roll(imphase, nx//2, axis=0)
+#     imshift = ifftn(iFs(imabs*np.exp(1j*imphase))).real
+
+#     impad = np.pad(imhat, ((nx//2, nx//2), (ny//2, ny//2)), mode='constant')
+#     imo = ifftn(iFs(impad)).real
+
+#     print(np.sum(image) - np.sum(imo))
+
+#     plt.figure(1)
+#     plt.imshow(image/image.max(), vmin=0, vmax=1, interpolation=None)
+#     plt.colorbar()
+#     plt.figure(2)
+#     plt.imshow(imo/imo.max(), vmin=0, vmax=1, interpolation=None)
+#     plt.colorbar()
+#     plt.figure(3)
+#     plt.imshow(imshift/imshift.max() - image/image.max(), vmin=0, vmax=1, interpolation=None)
+#     plt.colorbar()
+
+#     plt.show()
+
+    # # coordinates on input grid
+    # nx, ny = image.shapeimhat
+    # x = np.arange(-(nx//2), nx//2) * cellxi
+    # y = np.arange(-(ny//2), ny//2) * cellyi
+    # xx, yy = np.meshgrid(x, y, indexing='ij')
+
+    # # frequencies on output grid
+    # celluo = 1/(nxo*cellxo)
+    # cellvo = 1/(nyo*cellyo)
+    # uo = np.arange(-(nxo//2), nxo//2) * celluo/nxo
+    # vo = np.arange(-(nyo//2), nyo//2) * cellvo/nyo
+
+    # uu, vv = np.meshgrid(uo, vo, indexing='ij')
+    # uv = np.vstack((uo, vo)).T
+
+
+    # res1 = finufft.nufft2d3(xx.ravel(), yy.ravel(), image.ravel(), uu.ravel(), vv.ravel())
+
+
+
