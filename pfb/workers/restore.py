@@ -19,7 +19,7 @@ for key in schema.restore["inputs"].keys():
 @clickify_parameters(schema.restore)
 def restore(**kw):
     '''
-    Create fits image data products (eg. restored images).
+    Create fits image cubes from data products (eg. restored images).
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)

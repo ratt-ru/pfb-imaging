@@ -20,7 +20,7 @@ for key in schema.smoovie["inputs"].keys():
 @clickify_parameters(schema.smoovie)
 def smoovie(**kw):
     '''
-    Produce image data products
+    Smooth high cadence imaging results
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)

@@ -14,16 +14,11 @@ requirements = [
                 'Click',
                 "ducc0",
                 "QuartiCal >= 0.2.3",
-                # "@git+https://github.com/ratt-ru/QuartiCal.git"
-                # "@v0.2.3-fix-ver",
                 "sympy",
                 "stimela >= 2.0rc18",
                 "streamjoy >= 0.0.8",
                 "tbb",
                 "jax[cpu]",
-                # "codex-africanus[complete]"
-                # "@git+https://github.com/ratt-ru/codex-africanus.git"
-                # "@master"
             ]
 
 

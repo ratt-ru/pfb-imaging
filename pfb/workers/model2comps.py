@@ -21,8 +21,7 @@ for key in schema.model2comps["inputs"].keys():
 @clickify_parameters(schema.model2comps)
 def model2comps(**kw):
     '''
-    Convert model to parameters to make it possible to evaluate it at
-    an arbitrary (t, nu)
+    Convert model in dds to components.
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)

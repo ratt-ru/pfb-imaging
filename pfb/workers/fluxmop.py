@@ -22,38 +22,6 @@ def fluxmop(**kw):
     '''
     Forward step aka flux mop.
 
-    Solves
-
-    x = (A.H R.H W R A + sigmainv**2 I)^{-1} ID
-
-    with a suitable approximation to R.H W R (eg. convolution with the PSF,
-    BDA'd weights or none). Here A is the combination of mask and an
-    average beam pattern.
-
-    If a host address is provided the computation can be distributed
-    over imaging band and row. When using a distributed scheduler both
-    mem-limit and nthreads is per node and have to be specified.
-
-    When using a local cluster, mem-limit and nthreads refer to the global
-    memory and threads available, respectively. By default the gridder will
-    use all available resources.
-
-    On a local cluster, the default is to use:
-
-        nworkers = nband
-        nthreads-per-worker = 1
-
-    They have to be specified in ~.config/dask/jobqueue.yaml in the
-    distributed case.
-
-    if LocalCluster:
-        nvthreads = nthreads//(nworkers*nthreads_per_worker)
-    else:
-        nvthreads = nthreads//nthreads-per-worker
-
-    where nvthreads refers to the number of threads used to scale vertically
-    (eg. the number threads given to each gridder instance).
-
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
