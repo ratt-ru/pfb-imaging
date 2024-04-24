@@ -174,10 +174,10 @@ def test_klean(do_gains, ms_name):
         dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
         gain_path = None
 
-    postfix = "main"
+    suffix = "main"
     outname = str(test_dir / 'test')
     basename = f'{outname}_I'
-    dds_name = f'{basename}_{postfix}.dds'
+    dds_name = f'{basename}_{suffix}.dds'
     # set defaults from schema
     from pfb.parser.schemas import schema
     init_args = {}
@@ -201,7 +201,7 @@ def test_klean(do_gains, ms_name):
         grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
     grid_args["output_filename"] = outname
-    grid_args["postfix"] = postfix
+    grid_args["suffix"] = suffix
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
     grid_args["fits_mfs"] = True
@@ -220,7 +220,7 @@ def test_klean(do_gains, ms_name):
     for key in schema.klean["inputs"].keys():
         klean_args[key.replace("-", "_")] = schema.klean["inputs"][key]["default"]
     klean_args["output_filename"] = outname
-    klean_args["postfix"] = postfix
+    klean_args["suffix"] = suffix
     klean_args["nband"] = nchan
     klean_args["dirosion"] = 0
     klean_args["do_residual"] = False
@@ -242,7 +242,7 @@ def test_klean(do_gains, ms_name):
 
     # get inferred model
     basename = f'{outname}_I'
-    dds_name = f'{basename}_{postfix}.dds'
+    dds_name = f'{basename}_{suffix}.dds'
     dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
     model_inferred = np.zeros((nchan, nx, ny))
     for ds in dds:

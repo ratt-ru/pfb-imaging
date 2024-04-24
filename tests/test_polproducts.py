@@ -216,12 +216,12 @@ def test_polproducts(do_gains, ms_name):
         dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
         gain_path = None
 
-    postfix = "main"
+    suffix = "main"
     outname = str(test_dir / 'test')
     from pfb.parser.schemas import schema
     for p in ['I', 'Q', 'U', 'V']:
         basename = f'{outname}_{p}'
-        dds_name = f'{basename}_{postfix}.dds'
+        dds_name = f'{basename}_{suffix}.dds'
         # set defaults from schema
         init_args = {}
         for key in schema.init["inputs"].keys():
@@ -245,7 +245,7 @@ def test_polproducts(do_gains, ms_name):
             grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
         # overwrite defaults
         grid_args["output_filename"] = outname
-        grid_args["postfix"] = postfix
+        grid_args["suffix"] = suffix
         grid_args["nband"] = nchan
         grid_args["field_of_view"] = fov
         grid_args["fits_mfs"] = True

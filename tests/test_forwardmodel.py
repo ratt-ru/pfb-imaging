@@ -162,7 +162,7 @@
 #     assert np.allclose(psf0.max()/wsum0, 1.0, rtol=1e-7, atol=1e-7)
 
 #     # next compute via pfb workers
-#     postfix = "main"
+#     suffix = "main"
 #     outname = str(test_dir / 'test')
 #     # set defaults from schema
 #     from pfb.parser.schemas import schema
@@ -191,7 +191,7 @@
 #         grid_args[key] = schema.grid["inputs"][key]["default"]
 #     # overwrite defaults
 #     grid_args["output_filename"] = outname
-#     grid_args["postfix"] = postfix
+#     grid_args["suffix"] = suffix
 #     grid_args["nband"] = 8
 #     grid_args["field_of_view"] = fov
 #     grid_args["super_resolution_factor"] = srf

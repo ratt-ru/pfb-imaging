@@ -36,7 +36,7 @@ def spotless(**kw):
     basedir = Path(opts.output_filename).resolve().parent
     basedir.mkdir(parents=True, exist_ok=True)
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-    dds_name = f'{basename}_{opts.postfix}.dds'
+    dds_name = f'{basename}_{opts.suffix}.dds'
 
     with ExitStack() as stack:
         # numpy imports have to happen after this step
@@ -84,7 +84,7 @@ def _spotless(ddsi=None, **kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}_{opts.postfix}.dds'
+    dds_name = f'{basename}_{opts.suffix}.dds'
     if ddsi is not None:
         dds = []
         for ds in ddsi:
@@ -171,7 +171,8 @@ def _spotless(ddsi=None, **kw):
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
     hessopts['nthreads'] = opts.nvthreads  # nvthreads since dask parallel over band
-    # always clean in apparent scale so no beam
+
+    # TOD - add beam
     # mask is applied to residual after hessian application
     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
                    wsum=wsum, sigmainv=0,
@@ -199,7 +200,7 @@ def _spotless(ddsi=None, **kw):
                                           verbosity=opts.pm_verbose,
                                           report_freq=opts.pm_report_freq)
         # inflate slightly for stability
-        hessnorm *= 1.1
+        hessnorm *= 1.05
     else:
         hessnorm = opts.hessnorm
         print(f"Using provided hessnorm of beta = {hessnorm:.3e}", file=log)
@@ -213,7 +214,6 @@ def _spotless(ddsi=None, **kw):
 
     # get clean beam area to convert residual units during l1reweighting
     # TODO - could refine this with comparison between dirty and restored
-    # if contiuing the deconvolution
     print("Fitting PSF", file=log)
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
     pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
@@ -232,8 +232,7 @@ def _spotless(ddsi=None, **kw):
     rms_comps = np.std(np.sum(psiHoutvar, axis=0),
                        axis=(-1,-2))[:, None, None]  # preserve axes
 
-    # TODO - load from dds if present
-    if dual is None:
+    if dual is None or dual.shape[1] != nbasis:  # nbasis could change
         dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=dirty.dtype)
         l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=dirty.dtype)
         reweighter = None
@@ -252,7 +251,7 @@ def _spotless(ddsi=None, **kw):
             reweighter = None
 
 
-    # for generality the prox function only takes the
+    # for generality the prox function shoudl only take
     # array variable and step size as inputs
     # prox21 = partial(prox_21, weight=l1weight)
 
@@ -293,7 +292,7 @@ def _spotless(ddsi=None, **kw):
 
         # write component model
         print(f"Writing model at iter {k+1} to "
-              f"{basename}_{opts.postfix}_model_{k+1}.mds", file=log)
+              f"{basename}_{opts.suffix}_model_{k+1}.mds", file=log)
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
                 fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
@@ -331,12 +330,12 @@ def _spotless(ddsi=None, **kw):
             coeff_dataset = xr.Dataset(data_vars=data_vars,
                                coords=coords,
                                attrs=attrs)
-            coeff_dataset.to_zarr(f"{basename}_{opts.postfix}_model_{k+1}.mds")
+            coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model_{k+1}.mds")
         except Exception as e:
             print(f"Exception {e} raised during model fit .", file=log)
 
         save_fits(np.mean(model, axis=0),
-                  basename + f'_{opts.postfix}_model_{k+1}.fits',
+                  basename + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
         print("Getting residual", file=log)
@@ -347,7 +346,7 @@ def _spotless(ddsi=None, **kw):
                     casting='same_kind')
 
         save_fits(residual_mfs,
-                  basename + f'_{opts.postfix}_residual_{k+1}.fits',
+                  basename + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
 
         rmsp = rms
@@ -423,12 +422,12 @@ def _spotless(ddsi=None, **kw):
     # convert to fits files
     fitsout = []
     if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
 
     if opts.fits_cubes:
-        fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-        fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
+        fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
 
     if len(fitsout):
         print("Writing fits", file=log)
@@ -467,7 +466,7 @@ def _spotless(ddsi=None, **kw):
 #     from itertools import cycle
 
 #     basename = f'{opts.output_filename}_{opts.product.upper()}'
-#     dds_name = f'{basename}_{opts.postfix}.dds'
+#     dds_name = f'{basename}_{opts.suffix}.dds'
 
 #     client = get_client()
 #     names = [w['name'] for w in client.scheduler_info()['workers'].values()]

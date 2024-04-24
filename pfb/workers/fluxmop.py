@@ -66,7 +66,7 @@ def _fluxmop(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}_{opts.postfix}.dds'
+    dds_name = f'{basename}_{opts.suffix}.dds'
 
     dds = xds_from_zarr(dds_name, chunks={'row':-1,
                                           'chan': -1})
@@ -206,21 +206,21 @@ def _fluxmop(**kw):
     if opts.fits_mfs:
         fitsout.append(dds2fits_mfs(dds,
                                     'RESIDUAL',
-                                    f'{basename}_{opts.postfix}',
+                                    f'{basename}_{opts.suffix}',
                                     norm_wsum=True))
         fitsout.append(dds2fits_mfs(dds,
                                     'MODEL',
-                                    f'{basename}_{opts.postfix}',
+                                    f'{basename}_{opts.suffix}',
                                     norm_wsum=False))
 
     if opts.fits_cubes:
         fitsout.append(dds2fits(dds,
                                 'RESIDUAL',
-                                f'{basename}_{opts.postfix}',
+                                f'{basename}_{opts.suffix}',
                                 norm_wsum=True))
         fitsout.append(dds2fits(dds,
                                 'MODEL',
-                                f'{basename}_{opts.postfix}',
+                                f'{basename}_{opts.suffix}',
                                 norm_wsum=False))
 
     if len(fitsout):

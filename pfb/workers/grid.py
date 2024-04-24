@@ -54,7 +54,7 @@ def grid(**kw):
                             f"Original traceback {e}")
     opts.xds = xdsstore.url
     OmegaConf.set_struct(opts, True)
-    dds_name = f'{basename}_{opts.postfix}.dds'
+    dds_name = f'{basename}_{opts.suffix}.dds'
 
     with ExitStack() as stack:
         from pfb import set_client
@@ -94,21 +94,21 @@ def grid(**kw):
         fitsout = []
         if opts.fits_mfs:
             if opts.dirty:
-                fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
+                fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.suffix}', norm_wsum=True))
             if opts.psf:
-                fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
+                fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.suffix}', norm_wsum=True))
             if 'MODEL' in dds[0]:
-                fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-                fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
+                fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
+                fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
 
         if opts.fits_cubes:
             if opts.dirty:
-                fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.postfix}', norm_wsum=True))
+                fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.suffix}', norm_wsum=True))
             if opts.psf:
-                fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.postfix}', norm_wsum=True))
+                fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.suffix}', norm_wsum=True))
             if 'MODEL' in dds[0]:
-                fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-                fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
+                fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
+                fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
 
         if len(fitsout):
             print("Writing fits", file=log)
@@ -167,7 +167,7 @@ def _grid(xdsi=None, **kw):
                                               'l_beam': -1,
                                               'm_beam': -1})
     # dds contains image space products including imaging weights and uvw
-    dds_name = f'{basename}_{opts.postfix}.dds'
+    dds_name = f'{basename}_{opts.suffix}.dds'
 
     if os.path.isdir(dds_name):
         dds_exists = True

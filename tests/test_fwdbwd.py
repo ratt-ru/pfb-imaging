@@ -189,7 +189,7 @@
 #         gain_path = None
 
 
-#     postfix = ""
+#     suffix = ""
 #     # set defaults from schema
 #     from pfb.parser.schemas import schema
 #     init_args = {}
@@ -214,7 +214,7 @@
 #         grid_args[key] = schema.grid["inputs"][key]["default"]
 #     # overwrite defaults
 #     grid_args["output_filename"] = outname
-#     grid_args["postfix"] = postfix
+#     grid_args["suffix"] = suffix
 #     grid_args["nband"] = nchan
 #     grid_args["field_of_view"] = fov
 #     grid_args["fits_mfs"] = False
@@ -239,7 +239,7 @@
 #     for key in schema.fwdbwd["inputs"].keys():
 #         fwdbwd_args[key] = schema.fwdbwd["inputs"][key]["default"]
 #     fwdbwd_args["output_filename"] = outname
-#     fwdbwd_args["postfix"] = postfix
+#     fwdbwd_args["suffix"] = suffix
 #     fwdbwd_args["nband"] = nchan
 #     fwdbwd_args["mask"] = maskname
 #     fwdbwd_args["nthreads"] = 8  # has to be set when calling _fwdbwd
@@ -265,7 +265,7 @@
 
 #     # get inferred model
 #     basename = f'{outname}_I'
-#     dds_name = f'{basename}{postfix}.dds.zarr'
+#     dds_name = f'{basename}{suffix}.dds.zarr'
 #     dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
 #     model_inferred = np.zeros((nchan, nx, ny))
 #     for ds in dds:

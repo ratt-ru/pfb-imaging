@@ -75,7 +75,7 @@ def _klean(ddsi=None, **kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}_{opts.postfix}.dds'
+    dds_name = f'{basename}_{opts.suffix}.dds'
     if ddsi is not None:
         dds = []
         for ds in ddsi:
@@ -138,6 +138,10 @@ def _klean(ddsi=None, **kw):
     cell_deg = np.rad2deg(cell_rad)
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+    if 'niters' in dds[0].attrs:
+        iter0 = dds[0].niters
+    else:
+        iter0 = 0
 
     # TODO - check coordinates match
     # Add option to interp onto coordinates?
@@ -186,9 +190,9 @@ def _klean(ddsi=None, **kw):
     else:
         threshold = opts.threshold
 
-    print(f"Iter 0: peak residual = {rmax:.3e}, rms = {rms:.3e}",
+    print(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
-    for k in range(opts.nmiter):
+    for k in range(iter0, iter0 + opts.niter):
         print("Cleaning", file=log)
         modelp = deepcopy(model)
         x, status = clark(mask*residual, psf, psfhat, wsums/wsum,
@@ -204,8 +208,52 @@ def _klean(ddsi=None, **kw):
                           nthreads=opts.nvthreads)
         model += x
 
+        # write component model
+        print(f"Writing model at iter {k+1} to "
+              f"{basename}_{opts.suffix}_model_{k+1}.mds", file=log)
+        try:
+            coeffs, Ix, Iy, expr, params, texpr, fexpr = \
+                fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
+                               wgt=wsums[None, fsel],
+                               nbasisf=int(np.sum(fsel)),
+                               method='Legendre')
+            # save interpolated dataset
+            data_vars = {
+                'coefficients': (('par', 'comps'), coeffs),
+            }
+            coords = {
+                'location_x': (('x',), Ix),
+                'location_y': (('y',), Iy),
+                # 'shape_x':,
+                'params': (('par',), params),  # already converted to list
+                'times': (('t',), time_out),  # to allow rendering to original grid
+                'freqs': (('f',), freq_out)
+            }
+            attrs = {
+                'spec': 'genesis',
+                'cell_rad_x': cell_rad,
+                'cell_rad_y': cell_rad,
+                'npix_x': nx,
+                'npix_y': ny,
+                'texpr': texpr,
+                'fexpr': fexpr,
+                'center_x': dds[0].x0,
+                'center_y': dds[0].y0,
+                'ra': dds[0].ra,
+                'dec': dds[0].dec,
+                'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
+                'parametrisation': expr  # already converted to str
+            }
+
+            coeff_dataset = xr.Dataset(data_vars=data_vars,
+                               coords=coords,
+                               attrs=attrs)
+            coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model_{k+1}.mds")
+        except Exception as e:
+            print(f"Exception {e} raised during model fit .", file=log)
+
         save_fits(np.mean(model[fsel], axis=0),
-                  basename + f'_{opts.postfix}_model_{k+1}.fits',
+                  basename + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
         print("Getting residual", file=log)
@@ -216,7 +264,7 @@ def _klean(ddsi=None, **kw):
                     casting='same_kind')
 
         save_fits(residual_mfs,
-                  basename + f'_{opts.postfix}_residual_{k+1}.fits',
+                  basename + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
 
         # report rms where there aren't any model components
@@ -238,7 +286,7 @@ def _klean(ddsi=None, **kw):
 
         # trigger flux mop if clean has stalled, not converged or
         # we have reached the final iteration/threshold
-        status |= k == opts.nmiter-1
+        status |= k == opts.niter-1
         status |= rmax <= threshold
         if opts.mop_flux and status:
             print(f"Mopping flux at iter {k+1}", file=log)
@@ -270,11 +318,11 @@ def _klean(ddsi=None, **kw):
                         casting='same_kind')
 
             save_fits(residual_mfs,
-                      f'{basename}_{opts.postfix}_postmop{k}_residual_mfs.fits',
+                      f'{basename}_{opts.suffix}_postmop{k}_residual_mfs.fits',
                       hdr_mfs)
 
             save_fits(np.mean(model[fsel], axis=0),
-                      f'{basename}_{opts.postfix}_postmop{k}_model_mfs.fits',
+                      f'{basename}_{opts.suffix}_postmop{k}_model_mfs.fits',
                       hdr_mfs)
 
             rmsp = rms
@@ -307,6 +355,7 @@ def _klean(ddsi=None, **kw):
                                   'MODEL': (('x', 'y'), m),
                                   'MODEL_BEST': (('x', 'y'), mbest)})
             ds_out = ds_out.assign_attrs({'parametrisation': 'id',
+                                          'niters': k+1,
                                           'best_rms': best_rms,
                                           'best_rmax': best_rmax})
             dds_out.append(ds_out)
@@ -331,12 +380,12 @@ def _klean(ddsi=None, **kw):
     # convert to fits files
     fitsout = []
     if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
 
     if opts.fits_cubes:
-        fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-        fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
+        fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
 
     if len(fitsout):
         print("Writing fits", file=log)

@@ -346,10 +346,10 @@ def smoovie(**kw):
 
         # fitsout = []
         # if opts.fits_mfs:
-        #     fitsout.append(dds2fits_mfs(fds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+        #     fitsout.append(dds2fits_mfs(fds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
 
         # if opts.fits_cubes:
-        #     fitsout.append(dds2fits(fds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
+        #     fitsout.append(dds2fits(fds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
 
         # if len(fitsout):
         #     with compute_context(opts.scheduler, f'{ldir}/fastim_fits_{timestamp}'):
@@ -389,7 +389,7 @@ def smoovie(**kw):
         #         draw.text((0.03*nx,0.93*ny),'Time  : '+utc,fill=('white'),font=sans30)
         #         # draw.text((0.03*nx,0.96*ny),'Image : '+ff,fill=('white'),font=sans30)
         #         frames.append(nn)
-        #     frames[0].save(f'{basename}_{opts.postfix}_animated_mfs.gif',
+        #     frames[0].save(f'{basename}_{opts.suffix}_animated_mfs.gif',
         #                    save_all=True,
         #                    append_images=frames[1:],
         #                    duration=35,
@@ -416,7 +416,7 @@ def smoovie(**kw):
         #             draw.text((0.03*nx,0.90*ny),'Frame : '+prog,fill=('white'),font=sans30)
         #             draw.text((0.03*nx,0.93*ny),'Time  : '+utc,fill=('white'),font=sans30)
         #             frames.append(nn)
-        #         frames[0].save(f'{basename}_{opts.postfix}_animated_band{b:04d}.gif',
+        #         frames[0].save(f'{basename}_{opts.suffix}_animated_band{b:04d}.gif',
         #                        save_all=True,
         #                        append_images=frames[1:],
         #                        duration=35,

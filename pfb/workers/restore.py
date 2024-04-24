@@ -23,7 +23,7 @@ def restore(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.postfix}.log')
+    pyscilog.log_to_file(f'{opts.output_filename}_{opts.product}{opts.suffix}.log')
     if opts.nworkers is None:
         opts.nworkers = opts.nband
 
@@ -54,7 +54,7 @@ def _restore(**kw):
     from ducc0.fft import c2c
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-    dds_name = f'{basename}_{opts.postfix}.dds'
+    dds_name = f'{basename}_{opts.suffix}.dds'
 
     dds = xds_from_zarr(dds_name)
     nband = opts.nband
@@ -134,25 +134,25 @@ def _restore(**kw):
 
     if 'm' in opts.outputs:
         save_fits(model_mfs,
-                  f'{basename}_{opts.postfix}.model_mfs.fits',
+                  f'{basename}_{opts.suffix}.model_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'M' in opts.outputs:
         save_fits(model,
-                  f'{basename}_{opts.postfix}.model.fits',
+                  f'{basename}_{opts.suffix}.model.fits',
                   hdr,
                   overwrite=opts.overwrite)
 
     if 'r' in opts.outputs:
         save_fits(residual_mfs,
-                  f'{basename}_{opts.postfix}.residual_mfs.fits',
+                  f'{basename}_{opts.suffix}.residual_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'R' in opts.outputs:
         save_fits(residual,
-                  f'{basename}_{opts.postfix}.residual.fits',
+                  f'{basename}_{opts.suffix}.residual.fits',
                   hdr,
                   overwrite=opts.overwrite)
 
@@ -161,11 +161,11 @@ def _restore(**kw):
                        nthreads=opts.nvthreads, inorm=0)
         rhat_mfs = np.fft.fftshift(rhat_mfs)
         save_fits(np.abs(rhat_mfs),
-                  f'{basename}_{opts.postfix}.abs_fft_residual_mfs.fits',
+                  f'{basename}_{opts.suffix}.abs_fft_residual_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
         save_fits(np.angle(rhat_mfs),
-                  f'{basename}_{opts.postfix}.phase_fft_residual_mfs.fits',
+                  f'{basename}_{opts.suffix}.phase_fft_residual_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
@@ -174,25 +174,25 @@ def _restore(**kw):
                    nthreads=opts.nvthreads, inorm=0)
         rhat = np.fft.fftshift(rhat, axes=(1,2))
         save_fits(np.abs(rhat),
-                  f'{basename}_{opts.postfix}.abs_fft_residual.fits',
+                  f'{basename}_{opts.suffix}.abs_fft_residual.fits',
                   hdr,
                   overwrite=opts.overwrite)
         save_fits(np.angle(rhat),
-                  f'{basename}_{opts.postfix}.phase_fft_residual.fits',
+                  f'{basename}_{opts.suffix}.phase_fft_residual.fits',
                   hdr,
                   overwrite=opts.overwrite)
 
     if 'd' in opts.outputs:
         dirty_mfs = np.sum(dirty, axis=0)
         save_fits(dirty_mfs,
-                  f'{basename}_{opts.postfix}.dirty_mfs.fits',
+                  f'{basename}_{opts.suffix}.dirty_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'D' in opts.outputs:
         dirty[fmask] /= wsums[fmask, None, None]/wsum
         save_fits(dirty,
-                  f'{basename}_{opts.postfix}.dirty.fits',
+                  f'{basename}_{opts.suffix}.dirty.fits',
                   hdr,
                   overwrite=opts.overwrite)
 
@@ -202,7 +202,7 @@ def _restore(**kw):
                                       norm_kernel=False)[0]  # peak of kernel set to unity
         image_mfs += residual_mfs
         save_fits(image_mfs,
-                  f'{basename}_{opts.postfix}.image_mfs.fits',
+                  f'{basename}_{opts.suffix}.image_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
@@ -214,7 +214,7 @@ def _restore(**kw):
                                             norm_kernel=False)  # peak of kernel set to unity
             image[b] += residual[b]
         save_fits(image,
-                  f'{basename}_{opts.postfix}.image.fits',
+                  f'{basename}_{opts.suffix}.image.fits',
                   hdr,
                   overwrite=opts.overwrite)
 
@@ -223,7 +223,7 @@ def _restore(**kw):
             raise ValueError("Clean beam in output but no PSF in dds")
         cpsf_mfs = Gaussian2D(xx, yy, GaussPar[0], normalise=False)
         save_fits(cpsf_mfs,
-                  f'{basename}_{opts.postfix}.cpsf_mfs.fits',
+                  f'{basename}_{opts.suffix}.cpsf_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
@@ -236,7 +236,7 @@ def _restore(**kw):
             if not np.isnan(gpar).any():
                 cpsf[v] = Gaussian2D(xx, yy, gpar, normalise=False)
         save_fits(cpsf,
-                  f'{basename}_{opts.postfix}.cpsf.fits',
+                  f'{basename}_{opts.suffix}.cpsf.fits',
                   hdr,
                   overwrite=opts.overwrite)
 

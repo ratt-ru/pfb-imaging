@@ -20,7 +20,7 @@ inputs:
     abbreviation: nb
     info:
       Number of imaging bands
-  postfix:
+  suffix:
     dtype: str
     default: 'main'
     info:
