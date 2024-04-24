@@ -1424,7 +1424,8 @@ def setup_parametrisation(mode='id', minval=1e-5,
 
 
 def weight_from_sigma(sigma):
-    weight = ne.evaluate('1.0/(sigma*sigma)',
+    weight = ne.evaluate('1.0/(s*s)',
+                         local_dict={'s':sigma},
                          casting='same_kind')
     return weight
 

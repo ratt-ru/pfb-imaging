@@ -29,13 +29,18 @@ def degrid(**kw):
     pyscilog.log_to_file(f'degrid_{timestamp}.log')
 
     from daskms.fsspec_store import DaskMSStore
-    msstore = DaskMSStore(opts.ms.rstrip('/'))
-    ms = msstore.fs.glob(opts.ms.rstrip('/'))
-    try:
-        assert len(ms) > 0
-        opts.ms = list(map(msstore.fs.unstrip_protocol, ms))
-    except:
-        raise ValueError(f"No MS at {opts.ms}")
+    msnames = []
+    for ms in opts.ms:
+        msstore = DaskMSStore(ms.rstrip('/'))
+        mslist = msstore.fs.glob(ms.rstrip('/'))
+        try:
+            assert len(mslist) > 0
+            msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
+        except:
+            raise ValueError(f"No MS at {ms}")
+    if len(opts.ms) > 1:
+        raise ValueError(f"There must be a single MS at {opts.ms}")
+    opts.ms = msnames
     modelstore = DaskMSStore(opts.mds.rstrip('/'))
     try:
         assert modelstore.exists()
