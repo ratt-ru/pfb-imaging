@@ -58,7 +58,7 @@ def _fluxmop(**kw):
     import dask
     import dask.array as da
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
-    from pfb.utils.fits import load_fits, dds2fits_mfs, dds2fits
+    from pfb.utils.fits import load_fits, dds2fits_mfs, dds2fits, set_wcs, save_fits
     from pfb.utils.misc import init_mask, dds2cubes
     from pfb.operators.hessian import hessian_xds, hessian_psf_cube
     from pfb.opt.pcg import pcg
@@ -80,6 +80,7 @@ def _fluxmop(**kw):
                                                                apparent=False,
                                                                dual=False,
                                                                modelname=opts.model_name)
+    fsel = wsums > 0
     wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
@@ -106,23 +107,7 @@ def _fluxmop(**kw):
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
     ref_freq = np.mean(freq_out)
-
-    # TODO - check coordinates match
-    # Add option to interp onto coordinates?
-    if opts.mask is not None:
-        if opts.mask=='model':
-            mask = np.any(model > opts.min_model, axis=0)
-            assert mask.shape == (nx, ny)
-            mask = mask.astype(output_type)
-            print('Using model > 0 to create mask', file=log)
-        else:
-            mask = load_fits(mask, dtype=output_type).squeeze()
-            assert mask.shape == (nx, ny)
-            mask = mask.astype(output_type)
-            print('Using provided fits mask', file=log)
-    else:
-        mask = np.ones((nx, ny), dtype=output_type)
-        print('Caution - No mask is being applied', file=log)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
     # set up vis space Hessian for computing the residual
     # TODO - how to apply beam externally per ds
@@ -137,8 +122,40 @@ def _fluxmop(**kw):
                    mask=np.ones((nx, ny), dtype=output_type),
                    compute=True, use_beam=False)
 
+    # TODO - check coordinates match
+    # Add option to interp onto coordinates?
+    if opts.mask is not None:
+        if opts.mask=='model':
+            mask = np.any(model > opts.min_model, axis=0)
+            assert mask.shape == (nx, ny)
+            mask = mask.astype(output_type)
+            print('Using model > 0 to create mask', file=log)
+        else:
+            mask = load_fits(opts.mask, dtype=output_type).squeeze()
+            assert mask.shape == (nx, ny)
+            mask = mask.astype(output_type)
+            print('Using provided fits mask', file=log)
+            if opts.zero_model_outside_mask:
+                model[:, mask<1] = 0
+                print("Recomputing residual since asked to zero model", file=log)
+                convimage = hess(model)
+                ne.evaluate('dirty - convimage', out=residual,
+                            casting='same_kind')
+                ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
+                            casting='same_kind')
+                save_fits(np.mean(model[fsel], axis=0),
+                  basename + f'_{opts.suffix}_model_mfs_zeroed.fits',
+                  hdr_mfs)
+                save_fits(residual_mfs,
+                  basename + f'_{opts.suffix}_residual_mfs_zeroed.fits',
+                  hdr_mfs)
+
+    else:
+        mask = np.ones((nx, ny), dtype=output_type)
+        print('Caution - No mask is being applied', file=log)
+
     if opts.use_psf:
-        print("Solving for update using image space hessian approximation",
+        print("Using image space hessian approximation",
               file=log)
         xout = np.empty(dirty.shape, dtype=dirty.dtype, order='C')
         xout = make_noncritical(xout)
@@ -156,7 +173,7 @@ def _fluxmop(**kw):
                            nthreads=opts.nvthreads*opts.nthreads_dask,  # not using dask parallelism
                            sigmainv=opts.sigmainv)
     else:
-        print("Solving for update using vis space hessian approximation",
+        print("Using vis space hessian approximation",
               file=log)
         hess_pcg = partial(hessian_xds, xds=dds, hessopts=hessopts,
                    wsum=wsum, sigmainv=opts.sigmainv,
@@ -207,32 +224,43 @@ def _fluxmop(**kw):
                               'UPDATE': (('x', 'y'), u)})
         dds_out.append(ds_out)
     writes = xds_to_zarr(dds_out, dds_name,
-                         columns=('RESIDUAL', 'MODEL', 'MODELP', 'DUAL'),
+                         columns=('RESIDUAL', 'MODEL', 'MODELP', 'UPDATE'),
                          rechunk=True)
+    # import ipdb; ipdb.set_trace()
     dask.compute(writes)
 
     dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
+
+
 
     # convert to fits files
     fitsout = []
     if opts.fits_mfs:
         fitsout.append(dds2fits_mfs(dds,
                                     'RESIDUAL',
-                                    f'{basename}_{opts.suffix}',
+                                    f'{basename}_{opts.suffix}_mopped',
                                     norm_wsum=True))
         fitsout.append(dds2fits_mfs(dds,
                                     'MODEL',
-                                    f'{basename}_{opts.suffix}',
+                                    f'{basename}_{opts.suffix}_mopped',
+                                    norm_wsum=False))
+        fitsout.append(dds2fits_mfs(dds,
+                                    'UPDATE',
+                                    f'{basename}_{opts.suffix}_mopped',
                                     norm_wsum=False))
 
     if opts.fits_cubes:
         fitsout.append(dds2fits(dds,
                                 'RESIDUAL',
-                                f'{basename}_{opts.suffix}',
+                                f'{basename}_{opts.suffix}_mopped',
                                 norm_wsum=True))
         fitsout.append(dds2fits(dds,
                                 'MODEL',
-                                f'{basename}_{opts.suffix}',
+                                f'{basename}_{opts.suffix}_mopped',
+                                norm_wsum=False))
+        fitsout.append(dds2fits(dds,
+                                'UPDATE',
+                                f'{basename}_{opts.suffix}_mopped',
                                 norm_wsum=False))
 
     if len(fitsout):

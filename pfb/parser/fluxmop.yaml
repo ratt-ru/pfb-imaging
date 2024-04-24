@@ -15,6 +15,13 @@ inputs:
     abbreviation: mask
     info:
       Either path to mask.fits or set to model to construct from model
+  zero-model-outside-mask:
+    dtype: bool
+    default: true
+    info:
+      Make sure the input model is zero outside the mask.
+      Only has an effect if an external mask has been passed in.
+      A major cycle will be triggered to recompute the residual after zeroing.
   min-model:
     dtype: float
     default: 1e-5
