@@ -661,7 +661,7 @@ def init_mask(mask, model, output_type, log):
     return mask
 
 
-def dds2cubes(dds, nband, apparent=False, dual=True):
+def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
     nx, ny = dds[0].DIRTY.shape
@@ -706,8 +706,8 @@ def dds2cubes(dds, nband, apparent=False, dual=True):
         if 'PSF' in ds:
             psf[b] += ds.PSF.data
             psfhat[b] += ds.PSFHAT.data
-        if 'MODEL' in ds:
-            model[b] = ds.MODEL.data
+        if modelname in ds:
+            model[b] = getattr(ds, modelname).data
         if dual and 'DUAL' in ds:
             dual[b] = ds.DUAL.data
         mean_beam[b] += ds.BEAM.data * ds.WSUM.data[0]

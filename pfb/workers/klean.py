@@ -72,6 +72,7 @@ def _klean(ddsi=None, **kw):
     from pfb.operators.hessian import hessian_xds, hessian
     from scipy import ndimage
     from copy import copy
+    from pfb.utils.misc import fitcleanbeam, fit_image_cube
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -99,6 +100,13 @@ def _klean(ddsi=None, **kw):
 
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
+    freq_out = []
+    time_out = []
+    for ds in dds:
+        freq_out.append(ds.freq_out)
+        time_out.append(ds.time_out)
+    freq_out = np.unique(np.array(freq_out))
+    time_out = np.unique(np.array(time_out))
 
     # stitch dirty/psf in apparent scale
     output_type = dds[0].DIRTY.dtype
@@ -286,7 +294,7 @@ def _klean(ddsi=None, **kw):
 
         # trigger flux mop if clean has stalled, not converged or
         # we have reached the final iteration/threshold
-        status |= k == opts.niter-1
+        status |= k == iter0 + opts.niter-1
         status |= rmax <= threshold
         if opts.mop_flux and status:
             print(f"Mopping flux at iter {k+1}", file=log)

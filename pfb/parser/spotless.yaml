@@ -43,7 +43,7 @@ inputs:
       By default will threshold by rmsfactor*rms at every iteration
   gamma:
     dtype: float
-    default: 0.9
+    default: 1.0
     info:
       Step size of update
   alpha:

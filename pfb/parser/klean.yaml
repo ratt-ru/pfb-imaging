@@ -56,7 +56,7 @@ inputs:
     abbreviation: th
   sigmathreshold:
     dtype: float
-    default: 2.0
+    default: 3.0
     info:
       Multiple of the rms at which to terminate the minor cycle
   gamma:

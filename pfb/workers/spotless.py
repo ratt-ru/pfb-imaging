@@ -154,16 +154,6 @@ def _spotless(ddsi=None, **kw):
     else:
         residual_mfs = np.sum(residual, axis=0)
 
-    # # TODO - check coordinates match
-    # # Add option to interp onto coordinates?
-    # if opts.mask is not None:
-    #     mask = load_fits(mask, dtype=output_type).squeeze()
-    #     assert mask.shape == (nx, ny)
-    #     mask = mask.astype(output_type)
-    #     print('Using provided fits mask', file=log)
-    # else:
-    #     mask = np.ones((nx, ny), dtype=output_type)
-
     # set up vis space Hessian
     hessopts = {}
     hessopts['cell'] = dds[0].cell_rad
@@ -251,7 +241,7 @@ def _spotless(ddsi=None, **kw):
             reweighter = None
 
 
-    # for generality the prox function shoudl only take
+    # for generality the prox function should only take
     # array variable and step size as inputs
     # prox21 = partial(prox_21, weight=l1weight)
 

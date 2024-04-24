@@ -74,10 +74,12 @@ def _fluxmop(**kw):
     # stitch image space data products
     output_type = dds[0].DIRTY.dtype
     print("Combining slices into cubes", file=log)
-    dirty, model, residual, psf, psfhat, beam, wsums, dual = dds2cubes(
+    dirty, model, residual, psf, psfhat, beam, wsums, _ = dds2cubes(
                                                                dds,
                                                                opts.nband,
-                                                               apparent=False)
+                                                               apparent=False,
+                                                               dual=False,
+                                                               modelname=opts.model_name)
     wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
@@ -105,12 +107,22 @@ def _fluxmop(**kw):
     cell_deg = np.rad2deg(cell_rad)
     ref_freq = np.mean(freq_out)
 
+    # TODO - check coordinates match
+    # Add option to interp onto coordinates?
     if opts.mask is not None:
-        mask = load_fits(opts.mask, dtype=output_type).squeeze()
-        assert mask.shape == (nx, ny)
-        print('Using provided fits mask', file=log)
+        if opts.mask=='model':
+            mask = np.any(model > opts.min_model, axis=0)
+            assert mask.shape == (nx, ny)
+            mask = mask.astype(output_type)
+            print('Using model > 0 to create mask', file=log)
+        else:
+            mask = load_fits(mask, dtype=output_type).squeeze()
+            assert mask.shape == (nx, ny)
+            mask = mask.astype(output_type)
+            print('Using provided fits mask', file=log)
     else:
-        mask = np.ones((nx, ny), dtype=dirty.dtype)
+        mask = np.ones((nx, ny), dtype=output_type)
+        print('Caution - No mask is being applied', file=log)
 
     # set up vis space Hessian for computing the residual
     # TODO - how to apply beam externally per ds
