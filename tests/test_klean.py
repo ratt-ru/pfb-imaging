@@ -224,7 +224,7 @@ def test_klean(do_gains, ms_name):
     klean_args["nband"] = nchan
     klean_args["dirosion"] = 0
     klean_args["do_residual"] = False
-    klean_args["nmiter"] = 100
+    klean_args["niter"] = 100
     threshold = 1e-5
     klean_args["threshold"] = threshold
     klean_args["gamma"] = 0.1
