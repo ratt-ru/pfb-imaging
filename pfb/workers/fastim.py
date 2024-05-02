@@ -22,7 +22,7 @@ for key in schema.fastim["inputs"].keys():
 @clickify_parameters(schema.fastim)
 def fastim(**kw):
     '''
-    Produce image data products
+    Produce high cadence residual images.
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)

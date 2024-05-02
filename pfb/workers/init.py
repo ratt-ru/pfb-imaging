@@ -21,7 +21,7 @@ for key in schema.init["inputs"].keys():
 @clickify_parameters(schema.init)
 def init(**kw):
     '''
-    Initialise data products for imaging
+    Initialise Stokes data products for imaging
     '''
     defaults.update(kw)  # is this still necessary?
     opts = OmegaConf.create(kw)

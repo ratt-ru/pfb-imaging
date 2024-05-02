@@ -89,7 +89,7 @@ def _fwdbwd(ddsi=None, **kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}_{opts.postfix}.dds'
+    dds_name = f'{basename}_{opts.suffix}.dds'
     if ddsi is not None:
         dds = []
         for ds in ddsi:
@@ -334,7 +334,7 @@ def _fwdbwd(ddsi=None, **kw):
                    backtrack=opts.backtrack)
 
         save_fits(np.mean(delx, axis=0),
-                  basename + f'_{opts.postfix}_update_{k+1}.fits',
+                  basename + f'_{opts.suffix}_update_{k+1}.fits',
                   hdr_mfs)
 
         # compute scaling of the residual
@@ -386,12 +386,12 @@ def _fwdbwd(ddsi=None, **kw):
         else:
             x = xp + opts.gamma * delx
         save_fits(np.mean(x, axis=0),
-                  basename + f'_{opts.postfix}_param_{k+1}.fits',
+                  basename + f'_{opts.suffix}_param_{k+1}.fits',
                   hdr_mfs)
 
         model = func(x)
         save_fits(np.mean(model, axis=0),
-                  basename + f'_{opts.postfix}_model_{k+1}.fits',
+                  basename + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
         print("Getting residual", file=log)
@@ -402,7 +402,7 @@ def _fwdbwd(ddsi=None, **kw):
                     casting='same_kind')
 
         save_fits(residual_mfs,
-                  basename + f'_{opts.postfix}_residual_{k+1}.fits',
+                  basename + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
 
         rms = np.std(residual_mfs)
@@ -458,14 +458,14 @@ def _fwdbwd(ddsi=None, **kw):
     # convert to fits files
     fitsout = []
     if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
-        fitsout.append(dds2fits_mfs(dds, 'PARAM', f'{basename}_{opts.postfix}', norm_wsum=False))
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
+        fitsout.append(dds2fits_mfs(dds, 'PARAM', f'{basename}_{opts.suffix}', norm_wsum=False))
 
     if opts.fits_cubes:
-        fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.postfix}', norm_wsum=True))
-        fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.postfix}', norm_wsum=False))
-        fitsout.append(dds2fits(dds, 'PARAM', f'{basename}_{opts.postfix}', norm_wsum=False))
+        fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
+        fitsout.append(dds2fits(dds, 'PARAM', f'{basename}_{opts.suffix}', norm_wsum=False))
 
     if len(fitsout):
         print("Writing fits", file=log)

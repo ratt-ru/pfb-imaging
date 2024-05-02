@@ -2,14 +2,14 @@ inputs:
   xds:
     info:
       Optional explicit path to xds.
-      Set using output-filename and postfix by default.
+      Set using output-filename and suffix by default.
   nband:
     dtype: int
     required: true
     abbreviation: nb
     info:
       Number of imaging bands
-  postfix:
+  suffix:
     dtype: str
     default: 'main'
     info:
@@ -24,7 +24,7 @@ inputs:
     default: false
     info:
       Allow overwriting of image space data products.
-      Specify postfix to create a new data set.
+      Specify suffix to create a new data set.
   transfer-model-from:
     dtype: str
     abbreviation: tmf

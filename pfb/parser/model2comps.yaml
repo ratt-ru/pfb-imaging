@@ -22,7 +22,7 @@ inputs:
     dtype: float
     info:
       Only fit components above this flux level
-  postfix:
+  suffix:
     dtype: str
     default: 'main'
     info:

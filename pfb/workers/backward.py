@@ -96,8 +96,8 @@ def _backward(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    dds_name = f'{basename}{opts.postfix}.dds.zarr'
-    mds_name = f'{basename}{opts.postfix}.mds.zarr'
+    dds_name = f'{basename}{opts.suffix}.dds.zarr'
+    mds_name = f'{basename}{opts.suffix}.mds.zarr'
 
     dds = xds_from_zarr(dds_name, chunks={'row':opts.row_chunk,
                                           'chan': -1})

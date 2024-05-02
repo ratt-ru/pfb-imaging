@@ -5,7 +5,7 @@ inputs:
     abbreviation: nb
     info:
       Number of imaging bands
-  postfix:
+  suffix:
     dtype: str
     default: 'main'
     info:
@@ -15,15 +15,32 @@ inputs:
     abbreviation: mask
     info:
       Either path to mask.fits or set to model to construct from model
+  zero-model-outside-mask:
+    dtype: bool
+    default: true
+    info:
+      Make sure the input model is zero outside the mask.
+      Only has an effect if an external mask has been passed in.
+      A major cycle will be triggered to recompute the residual after zeroing.
+  min-model:
+    dtype: float
+    default: 1e-5
+    info:
+      If using mask to construct model construct it where model > min-model
   sigmainv:
     dtype: float
     default: 1e-5
     abbreviation: sinv
     info:
       Standard deviation of assumed GRF prior
+  model-name:
+    dtype: str
+    default: MODEL
+    info:
+      Name of the model to update
   gamma:
     dtype: float
-    default: 1.0
+    default: 0.99
     info:
       Step size of update
   use-psf:

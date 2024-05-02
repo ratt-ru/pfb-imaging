@@ -21,8 +21,7 @@ for key in schema.model2comps["inputs"].keys():
 @clickify_parameters(schema.model2comps)
 def model2comps(**kw):
     '''
-    Convert model to parameters to make it possible to evaluate it at
-    an arbitrary (t, nu)
+    Convert model in dds to components.
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
@@ -72,12 +71,12 @@ def _model2comps(**kw):
     import json
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-    dds_name = f'{basename}_{opts.postfix}.dds'
+    dds_name = f'{basename}_{opts.suffix}.dds'
 
     if opts.model_out is not None:
         coeff_name = opts.model_out
     else:
-        coeff_name = f'{basename}_{opts.postfix}_{opts.model_name.lower()}.mds'
+        coeff_name = f'{basename}_{opts.suffix}_{opts.model_name.lower()}.mds'
 
     mdsstore = DaskMSStore(coeff_name)
     if mdsstore.exists():
