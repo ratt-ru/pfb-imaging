@@ -111,6 +111,11 @@ inputs:
     default: 1
     info:
       Average this number if channels together
+  visualize-graph:
+    dtype: bool
+    default: false
+    info:
+      Visualise the compute graph.
 
   _include:
     - (.)dist.yml
