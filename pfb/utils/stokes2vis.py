@@ -13,6 +13,7 @@ import dask
 from quartical.utils.dask import Blocker
 from pfb.utils.stokes import stokes_funcs
 from pfb.utils.weighting import weight_data
+from uuid import uuid4
 
 # for old style vs new style warnings
 from numba.core.errors import NumbaPendingDeprecationWarning
@@ -88,7 +89,6 @@ def single_stokes(ds=None,
 
     if opts.sigma_column is not None:
         sigma = getattr(ds, opts.sigma_column).data
-        # weight = 1.0/sigma**2
         weight = da.map_blocks(weight_from_sigma,
                                sigma,
                                chunks=sigma.chunks,
@@ -100,7 +100,6 @@ def single_stokes(ds=None,
                                      (nrow, nchan, ncorr),
                                      chunks=data.chunks)
     else:
-        # weight = da.ones_like(data, dtype=real_type)
         weight = da.ones((nrow, nchan, ncorr),
                          chunks=data.chunks,
                          dtype=real_type)
@@ -131,7 +130,8 @@ def single_stokes(ds=None,
     else:
         jones = da.ones((ntime, nant, nchan, 1, 2),
                         chunks=(-1,)*5,
-                        dtype=complex_type)
+                        dtype=complex_type,
+                        name='x' + uuid4().hex)
         jout = 'rafdx'
 
     # Note we do not chunk at this level since all the chunking happens upfront

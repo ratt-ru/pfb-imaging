@@ -19,6 +19,7 @@ requirements = [
                 "streamjoy >= 0.0.8",
                 "tbb",
                 "jax[cpu]",
+                "ipycytoscape"
             ]
 
 

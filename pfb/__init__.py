@@ -102,6 +102,9 @@ def set_client(opts, stack, log, scheduler='distributed'):
         from quartical.scheduling import install_plugin
         client.run_on_scheduler(install_plugin)
         client.wait_for_workers(opts.nworkers)
+        dashboard_url = client.dashboard_link
+        print(f"Dask Dashboard URL at {dashboard_url}", file=log)
+
     elif scheduler in ['sync', 'single-threaded']:
         dask.config.set(scheduler=scheduler)
         print(f"Initialising with synchronous scheduler",

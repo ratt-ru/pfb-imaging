@@ -85,12 +85,14 @@ def init(**kw):
 
         if opts.visualize_graph:
             try:
+                print(f"Visualising graphs", file=log)
                 dask.visualize(writes, color="order", cmap="autumn",
                             node_attr={"penwidth": "4"},
                             filename=basename + '_writes_I_ordered_graph.pdf',
                             optimize_graph=False)
                 dask.visualize(writes, filename=basename +
                             '_writes_I_graph.pdf', optimize_graph=False)
+                print(f"Graphs available at {basename}_writes_I_graphs")
             except Exception as e:
                 print(f"Visualisation failed with {e}", file=log)
 
