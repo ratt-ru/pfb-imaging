@@ -92,7 +92,7 @@ def init(**kw):
                             optimize_graph=False)
                 dask.visualize(writes, filename=basename +
                             '_writes_I_graph.pdf', optimize_graph=False)
-                print(f"Graphs available at {basename}_writes_I_graphs")
+                print(f"Graphs available at {basename}_writes_I_graphs.pdf.html")
             except Exception as e:
                 print(f"Visualisation failed with {e}", file=log)
 
