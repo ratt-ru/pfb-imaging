@@ -33,7 +33,9 @@ __version__ = '0.0.4'
 import os
 import sys
 
-def set_client(opts, stack, log, scheduler='distributed'):
+def set_client(opts, stack, log,
+               scheduler='distributed',
+               auto_restrict=True):
 
     from omegaconf import open_dict
     # attempt somewhat intelligent default setup
@@ -99,8 +101,9 @@ def set_client(opts, stack, log, scheduler='distributed'):
                 cluster = stack.enter_context(cluster)
                 client = stack.enter_context(Client(cluster))
 
-        from quartical.scheduling import install_plugin
-        client.run_on_scheduler(install_plugin)
+        if auto_restrict:
+            from quartical.scheduling import install_plugin
+            client.run_on_scheduler(install_plugin)
         client.wait_for_workers(opts.nworkers)
         dashboard_url = client.dashboard_link
         print(f"Dask Dashboard URL at {dashboard_url}", file=log)

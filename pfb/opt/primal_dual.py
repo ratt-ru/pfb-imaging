@@ -5,6 +5,7 @@ from distributed import wait, get_client, as_completed
 from operator import getitem
 from ducc0.misc import make_noncritical
 from pfb.utils.misc import norm_diff
+from uuid import uuid4
 import pyscilog
 log = pyscilog.get_logger('PD')
 
@@ -180,130 +181,142 @@ def primal_dual_optimised(
     return x, v
 
 
-def vtilde_update(A, sigma, psiH):
-    return A.dual + sigma * psiH(A.model)
+def vtilde_update(ds, sigma, psi):
+    vtilde = ds.DUAL.values + sigma * psi.dot(ds.MODEL.values)
+    model = ds.MODEL.values
+    dual = ds.DUAL.values
+    return vtilde, model, dual
 
+def update(gradf, vtilde, ratio, x, v, sigma, lam, tau, gamma, psi, positivity):
+    xp = x.copy()
+    vp = v.copy()
 
-def get_ratio(vtildes, lam, sigma, l1weights):
-    vmfs = np.zeros(l1weights.shape)
-    nband = 0
-    for wid, v in vtildes.items():
-        # l2_norm += (v/sigma)**2
-        vmfs += v/sigma
-    # l2_norm = np.sqrt(l2_norm)
-    vsoft = np.maximum(np.abs(vmfs) - lam*l1weights/sigma, 0.0)  # norm is positive
-    # l2_soft = np.where(np.abs(l2_norm) >= lam/sigma, l2_norm, 0.0)
-    mask = vmfs != 0
-    ratio = np.zeros(mask.shape, dtype=l1weights.dtype)
-    ratio[mask] = vsoft[mask] / vmfs[mask]
-    return ratio
-
-def update(A, y, vtilde, ratio, xp, vp, sigma, lam, tau, gamma, psi, psiH, positivity):
     # dual
     v = vtilde - vtilde * ratio
 
     # primal
-    grad = -A(y - xp)/gamma
-    x = xp - tau * (psi(2 * v - vp) + grad)
+    grad = gradf(xp)
+    x = xp - tau * (psi.hdot(2 * v - vp) + grad)
     if positivity:
         x[x < 0] = 0.0
 
-    vtilde = v + sigma * psiH(x)
+    vtilde = v + sigma * psi.dot(x)
 
     eps = np.linalg.norm(x-xp)/np.linalg.norm(x)
 
     return x, v, vtilde, eps
 
 
-def sety(A, x, gamma):
-    if hasattr(A, 'model'):
-        return A.model + gamma * x
-    else:
-        return gamma * x
-
-
 def primal_dual_dist(
-            Afs,
-            xfs,
-            psi,
-            psiH,
-            lam,  # regulariser strength,
-            L,  # spectral norm of Hessian
+            ddsf,
+            psif,
+            gradf,
+            lam,  # strength of regulariser
+            L,    # spectral norm of Hessian
             l1weight,
-            nu=1.0,  # spectral norm of dictionary
+            rmsfactor,
+            rmc_comps,
+            alpha,
+            nu=1.0,  # spectral norm of psi
             sigma=None,  # step size of dual update
+            mask=None,  # regions where mask is False will be masked
             tol=1e-5,
-            maxit=100,
-            positivity=True,
+            maxit=1000,
+            positivity=1,
+            report_freq=10,
             gamma=1.0,
-            verbosity=1):
+            verbosity=1,
+            maxreweight=50):
+    '''
+    Distributed primal dual algorithm.
+    Distribution is over datasets in ddsf.
+
+    Inputs:
+
+    ddsf        - dict of futures to dds
+    psif        - dict of futures to per band psi operators with dot anf hdot methods
+    gradf       - dict of futures to gradient operators
+    lam         - strength of regulariser
+    L           - spectral norm of hessian approximation
+    l1weight    - array of L1 weights
+    reweighter  - function to compute L1 reweights
+    '''
 
     client = get_client()
 
-    names = [w['name'] for w in client.scheduler_info()['workers'].values()]
-
+    # this seems to give a good trade-off between
+    # primal and dual problems
     if sigma is None:
-        sigma = L / (2.0 * gamma)
+        sigma = L / (2.0 * gamma) / nu
 
     # stepsize control
     tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
 
     # we need to do this upfront only at the outset
-    yfs = {}
-    vtildefs = {}
-    modelfs = {}
-    dualfs = {}
-    for wid, A in Afs.items():
-        yf = client.submit(sety, A, xfs[wid], gamma, workers={wid})
-        yfs[wid] = yf
-        vtildef = client.submit(vtilde_update, A, sigma, psiH, workers={wid})
-        vtildefs[wid] = vtildef
-        modelf = client.submit(getattr, A, 'model', workers={wid})
-        modelfs[wid] = modelf
-        dualf = client.submit(getattr, A, 'dual', workers={wid})
-        dualfs[wid] = dualf
+    vtildef = {}
+    modelf = {}
+    dualf = {}
+    for wname, ds in ddsf.items():
+        fut = client.submit(vtilde_update,
+                                       ds,
+                                       sigma,
+                                       psif[wname],
+                                       workers=wname,
+                                       key='vtilde-'+uuid4().hex)
+        vtildef[wname] = client.submit(getitem, fut, 0, workers=wname)
+        modelf[wname] = client.submit(getitem, fut, 1, workers=wname)
+        dualf[wname] = client.submit(getitem, fut, 2, workers=wname)
 
-    epsfs = {}
+    epsf = {}
     for k in range(maxit):
-        # TODO - should get one ratio per basis
-        # split over different workers
-        ratio = client.submit(get_ratio,
-                              vtildefs, lam, sigma, l1weight,
-                              workers={names[0]})
+        # done on runner since need to combine over freq
+        # vtilde = client.gather(list(vtildef.values()))
+        vmfs = np.sum(client.gather(list(vtildef.values())), axis=0)/sigma
+        vsoft = np.maximum(np.abs(vmfs) - lam*l1weight/sigma, 0.0) * np.sign(vmfs)
+        mask = vmfs != 0
+        ratio = np.zeros(mask.shape, dtype=l1weight.dtype)
+        ratio[mask] = vsoft[mask] / vmfs[mask]
 
-        wait([ratio])
-        for wid, A in Afs.items():
+        # do on individual workers
+        for wname, ds in ddsf.items():
             future = client.submit(update,
-                                   A, yfs[wid], vtildefs[wid], ratio,
-                                   modelfs[wid], dualfs[wid],
+                                   gradf[wname],
+                                   vtildef[wname],
+                                   ratio,
+                                   modelf[wname],
+                                   dualf[wname],
                                    sigma,
                                    lam,
                                    tau,
                                    gamma,
-                                   psi,
-                                   psiH,
+                                   psif[wname],
                                    positivity,
-                                   workers={wid})
-            modelfs[wid] = client.submit(getitem, future, 0, workers={wid})
-            dualfs[wid] = client.submit(getitem, future, 1, workers={wid})
-            vtildefs[wid] = client.submit(getitem, future, 2, workers={wid})
-            epsfs[wid] = client.submit(getitem, future, 3, workers={wid})
+                                   workers=wname,
+                                   pure=False)
+            modelf[wname] = client.submit(getitem, future, 0, workers=wname)
+            dualf[wname] = client.submit(getitem, future, 1, workers=wname)
+            vtildef[wname] = client.submit(getitem, future, 2, workers=wname)
+            epsf[wname] = client.submit(getitem, future, 3, workers=wname)
 
-        wait(list(epsfs.values()))
+        eps = client.gather(list(epsf.values()))
 
-        eps = []
-        for wid, epsf in epsfs.items():
-            eps.append(epsf.result())
         eps = np.array(eps)
-        if eps.max() < tol:
+        epsmax = eps.max()
+
+        if not k % report_freq and verbosity > 1:
+            print(f"At iteration {k} eps = {epsmax:.3e}", file=log)
+
+        if epsmax < tol:
             break
+
+
 
     if k >= maxit-1:
         print(f'Maximum iterations reached. eps={eps}', file=log)
     else:
         print(f'Success after {k} iterations', file=log)
 
-    return modelfs, dualfs
+    return modelf, dualf
 
 
 primal_dual.__doc__ = r"""

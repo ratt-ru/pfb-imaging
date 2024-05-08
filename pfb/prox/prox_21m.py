@@ -101,3 +101,34 @@ def dual_update_numba(vp, v, lam, sigma=1.0, weight=None):
                 if absvbijsum:
                     softvbij = np.maximum(absvbijsum - lam*weightbi[j]/sigma, 0.0)
                     v[:, b, i, j] *= (1-softvbij / absvbijsum)
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def dual_update_numba_dist(vp, v, lam, sigma=1.0, weight=None):
+    """
+    Computes dual update
+
+    Assumed that v has shape (nband, nbasis, nymax, nxmax) where
+
+    nband   - number of imaging bands
+    nbasis  - number of orthogonal bases
+    nxmax   - number of x coefficients for each basis (must be equal)
+    nymax   - number of y coefficients for each basis (must be equal)
+
+    v is initialised with psiH(xp) and will be updated
+    """
+    nband, nbasis, nymax, nxmax = v.shape
+    for b in range(nbasis):
+        # select out basis
+        # vtildeb = vp[:, b] + sigma * v[:, b]
+        # weightb = weight[b]
+        for i in prange(nymax):  # WTF without the prange it segfaults when parallel=True
+            vtildebi = vp[:, b, i] + sigma * v[:, b, i]
+            weightbi = weight[b, i]
+            for j in range(nxmax):
+                vtildebij = vtildebi[:, j]
+                absvbijsum = np.abs(np.sum(vtildebij)/sigma)  # sum over band axis
+                v[:, b, i, j] = vtildebij
+                if absvbijsum:
+                    softvbij = np.maximum(absvbijsum - lam*weightbi[j]/sigma, 0.0)
+                    v[:, b, i, j] *= (1-softvbij / absvbijsum)

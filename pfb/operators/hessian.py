@@ -155,73 +155,35 @@ def _hessian_psf_slice(
     if wsum is not None:
         xout /= wsum
 
+    # if sigmainv:
+    #     xout += x * sigmainv
+
     return xout + x * sigmainv
 
-from pfb.operators.hessian import _hessian_impl
-class hessian_psf_slice(object):
-    def __init__(self, ds, nbasis, nmax, nthreads, sigmainv, cell, do_wgridding, epsilon, double_accum):
-        self.nthreads = nthreads
-        self.sigmainv = sigmainv
-        self.cell = cell
-        self.do_wgridding = do_wgridding
-        self.epsilon = epsilon
-        self.double_accum = double_accum
-        self.lastsize = ds.PSF.shape[-1]
-        self.bandid = ds.bandid
-        tmp = np.require(ds.DIRTY.values,
-                         dtype=ds.DIRTY.dtype,
-                         requirements='CAW')
-        self.dirty = make_noncritical(tmp)
-        tmp = np.require(ds.PSFHAT.values,
-                         dtype=ds.PSFHAT.dtype,
-                         requirements='CAW')
-        self.psfhat = make_noncritical(tmp)
-        tmp = np.require(ds.PSF.values,
-                         dtype=ds.PSF.dtype,
-                         requirements='CAW')
-        self.psf = make_noncritical(tmp)
-        tmp = np.require(ds.BEAM.values,
-                         dtype=ds.BEAM.dtype,
-                         requirements='CAW')
-        self.beam = make_noncritical(tmp)
-        self.wsumb = ds.WSUM.values[0]
-        if 'MODEL' in ds:
-            tmp = np.require(ds.MODEL.values,
-                             dtype=ds.MODEL.dtype,
-                             requirements='CAW')
-        else:
-            tmp = np.zeros_like(self.dirty)
-        self.model = make_noncritical(tmp)
-        if 'DUAL' in ds:
-            tmp = np.require(ds.DUAL.values,
-                             dtype=ds.DUAL.dtype,
-                             requirements='CAW')
-            assert tmp.shape == (nbasis, nmax)
-        else:
-            tmp = np.zeros((nbasis, nmax), dtype=self.dirty.dtype)
-        self.dual = make_noncritical(tmp)
-        if 'RESIDUAL' in ds:
-            tmp = np.require(ds.RESIDUAL.values,
-                             dtype=ds.RESIDUAL.dtype,
-                             requirements='CAW')
-        else:
-            tmp = self.dirty.copy()
-        self.residual = make_noncritical(tmp)
 
-        self.uvw = ds.UVW.values
-        self.wgt = ds.WEIGHT.values
-        self.vmask = ds.VIS_MASK.values
-        self.freq = ds.FREQ.values
+class hessian_psf_slice(object):
+    def __init__(self, ds, nthreads, wsum):
+        self.nthreads = nthreads
+        self.lastsize = ds.PSF.shape[-1]
+        self.psfhat = ds.PSFHAT.values
+        self.beam = ds.BEAM.values
+        self.wsumb = ds.WSUM.values[0]
+        self.wsum = wsum
 
         # pre-allocate tmp arrays
-        tmp = np.empty(self.dirty.shape, dtype=self.dirty.dtype, order='C')
+        tmp = np.empty(ds.DIRTY.shape,
+                       dtype=ds.DIRTY.dtype, order='C')
         self.xout = make_noncritical(tmp)
-        tmp = np.empty(self.psfhat.shape, dtype=self.psfhat.dtype, order='C')
+        tmp = np.empty(self.psfhat.shape,
+                       dtype=self.psfhat.dtype,
+                       order='C')
         self.xhat = make_noncritical(tmp)
-        tmp = np.empty(self.psf.shape, dtype=self.psf.dtype, order='C')
+        tmp = np.empty(ds.PSF.shape,
+                       dtype=ds.PSF.dtype,
+                       order='C')
         self.xpad = make_noncritical(tmp)
 
-    def __call__(self, x):
+    def __call__(self, x, sigmainv):
         return _hessian_psf_slice(self.xpad,
                                   self.xhat,
                                   self.xout,
@@ -230,25 +192,8 @@ class hessian_psf_slice(object):
                                   self.lastsize,
                                   x,
                                   nthreads=self.nthreads,
-                                  sigmainv=self.sigmainv,
+                                  sigmainv=sigmainv,
                                   wsum=self.wsum)
-
-    def compute_residual(self, x):
-        return self.dirty - _hessian_impl(self.beam * x,
-                                        self.uvw,
-                                        self.wgt,
-                                        self.vmask,
-                                        self.freq,
-                                        None,
-                                        cell=self.cell,
-                                        do_wgridding=self.do_wgridding,
-                                        epsilon=self.epsilon,
-                                        double_accum=self.double_accum,
-                                        nthreads=self.nthreads)
-
-
-    def set_wsum(self, wsum):
-        self.wsum = wsum
 
 
 def hessian_psf_cube(

@@ -49,9 +49,9 @@ def power_method(
     return beta, b
 
 
-def power(A, bp, bnorm):
+def power(A, bp, bnorm, sigmainv):
     bp /= bnorm
-    b = A(bp)
+    b = A(bp, sigmainv)
     bsumsq = np.sum(b**2)
     beta_num = np.vdot(b, bp)
     beta_den = np.vdot(bp, bp)
@@ -67,47 +67,55 @@ def bnormf(bsumsq):
 def betaf(beta_num, beta_den):
     return np.sum(beta_num)/np.sum(beta_den)
 
-def power_method_dist(Afs,
+def power_method_dist(hess_psfs,
                       nx,
                       ny,
                       nband,
+                      sigmainv=0,
                       tol=1e-5,
                       maxit=200):
 
     client = get_client()
-    names = [w['name'] for w in client.scheduler_info()['workers'].values()]
 
     b = []
     bssq = []
     bnum = []
     bden = []
-    for i, (wid, A) in enumerate(Afs.items()):
+    for i, (wname, hess) in enumerate(hess_psfs.items()):
         b.append(client.submit(np.random.randn, nx, ny,
-                          workers={wid}))
+                               workers=wname))
         bssq.append(client.submit(sumsq, b[i],
-                             workers={wid}))
+                                  workers=wname))
         # this just initialises the lists required below
         bnum.append(1)
         bden.append(1)
-    # wid corresponds to last worker
-    bnorm = client.submit(bnormf, bssq,
-                          workers={names[0]}).result()
+
+    # bnorm = client.submit(bnormf, bssq,
+    #                       workers=wname).result()
+    bssq = client.gather(bssq)
+    bnorm = np.sqrt(np.sum(bssq))
     beta = 1
     for k in range(maxit):
-        for i, (wid, A) in enumerate(Afs.items()):
-            fut = client.submit(power, A, b[i], bnorm,
-                                workers={wid})
+        for i, (wname, A) in enumerate(hess_psfs.items()):
+            fut = client.submit(power, A, b[i], bnorm, sigmainv,
+                                workers=wname)
 
-            b[i] = client.submit(getitem, fut, 0, workers={wid})
-            bssq[i] = client.submit(getitem, fut, 1, workers={wid})
-            bnum[i] = client.submit(getitem, fut, 2, workers={wid})
-            bden[i] = client.submit(getitem, fut, 3, workers={wid})
+            b[i] = client.submit(getitem, fut, 0, workers=wname)
+            bssq[i] = client.submit(getitem, fut, 1, workers=wname)
+            bnum[i] = client.submit(getitem, fut, 2, workers=wname)
+            bden[i] = client.submit(getitem, fut, 3, workers=wname)
 
-        bnorm = client.submit(bnormf, bssq,
-                              workers={wid})
+        # bnorm = client.submit(bnormf, bssq,
+        #                       workers=wname)
+
+        bssq = client.gather(bssq)
+        bnorm = np.sqrt(np.sum(bssq))
         betap = beta
-        beta = client.submit(betaf, bnum, bden,
-                             workers={wid}).result()
+        # beta = client.submit(betaf, bnum, bden,
+        #                      workers=wname).result()
+        bnum = client.gather(bnum)
+        bden = client.gather(bden)
+        beta = np.sum(bnum)/np.sum(bden)
 
         eps = np.abs(betap - beta)/betap
         if eps < tol:
@@ -116,46 +124,46 @@ def power_method_dist(Afs,
     return beta
 
 
-def power2(A, bp, bnorm):
-    bp /= bnorm
-    b = A(bp)
-    bsumsq = da.sum(b**2)
-    beta_num = da.vdot(b, bp)
-    beta_den = da.vdot(bp, bp)
+# def power2(A, bp, bnorm):
+#     bp /= bnorm
+#     b = A(bp)
+#     bsumsq = da.sum(b**2)
+#     beta_num = da.vdot(b, bp)
+#     beta_den = da.vdot(bp, bp)
 
-    return b, bsumsq, beta_num, beta_den
+#     return b, bsumsq, beta_num, beta_den
 
 
-def power_method_persist(ddsf,
-                         Af,
-                         nx,
-                         ny,
-                         nband,
-                         tol=1e-5,
-                         maxit=200):
+# def power_method_persist(ddsf,
+#                          Af,
+#                          nx,
+#                          ny,
+#                          nband,
+#                          tol=1e-5,
+#                          maxit=200):
 
-    client = get_client()
-    b = []
-    bssq = []
-    for ds in ddsf:
-        wid = ds.worker
-        tmp = client.persist(da.random.normal(0, 1, (nx, ny)),
-                             workers={wid})
-        b.append(tmp)
-        bssq.append(da.sum(b**2))
+#     client = get_client()
+#     b = []
+#     bssq = []
+#     for ds in ddsf:
+#         wid = ds.worker
+#         tmp = client.persist(da.random.normal(0, 1, (nx, ny)),
+#                              workers={wid})
+#         b.append(tmp)
+#         bssq.append(da.sum(b**2))
 
-    bssq = da.stack(bssq)
-    bnorm = da.sqrt(da.sum(bssq))
-    bp = deepcopy(b)
-    beta_num = [da.array()]
+#     bssq = da.stack(bssq)
+#     bnorm = da.sqrt(da.sum(bssq))
+#     bp = deepcopy(b)
+#     beta_num = [da.array()]
 
-    for k in range(maxit):
-        for i, ds, A in enumerate(zip(ddsf, Af)):
-            bp[i] = b[i]/bnorm
-            b[i] = A(bp[i])
-            bssq[i] = da.sum(b[i]**2)
-            beta_num = da.vdot(b, bp)
-            beta_den = da.vdot(bp, bp)
+#     for k in range(maxit):
+#         for i, ds, A in enumerate(zip(ddsf, Af)):
+#             bp[i] = b[i]/bnorm
+#             b[i] = A(bp[i])
+#             bssq[i] = da.sum(b[i]**2)
+#             beta_num = da.vdot(b, bp)
+#             beta_den = da.vdot(bp, bp)
 
 
 

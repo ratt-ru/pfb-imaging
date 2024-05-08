@@ -41,7 +41,9 @@ def spotless(**kw):
     with ExitStack() as stack:
         # numpy imports have to happen after this step
         from pfb import set_client
-        set_client(opts, stack, log, scheduler=opts.scheduler)
+        set_client(opts, stack, log,
+                   scheduler=opts.scheduler,
+                   auto_restrict=False)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -222,12 +224,20 @@ def _spotless(ddsi=None, **kw):
     rms_comps = np.std(np.sum(psiHoutvar, axis=0),
                        axis=(-1,-2))[:, None, None]  # preserve axes
 
+    # a value less than zero turns L1 reweighting off
+    # we'll start on convergence or at the iteration
+    # indicated by l1reweight_from, whichever comes first
+    if opts.l1reweight_from < 0:
+        l1reweight_from = np.inf
+    else:
+        l1reweight_from = opts.l1reweight_from
+
     if dual is None or dual.shape[1] != nbasis:  # nbasis could change
         dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=dirty.dtype)
         l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=dirty.dtype)
         reweighter = None
     else:
-        if opts.l1reweight_from == 0:
+        if l1reweight_from == 0:
             print('Initialising with L1 reweighted', file=log)
             reweighter = partial(l1reweight_func,
                                  psi.dot,
@@ -239,11 +249,6 @@ def _spotless(ddsi=None, **kw):
         else:
             l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=dirty.dtype)
             reweighter = None
-
-
-    # for generality the prox function should only take
-    # array variable and step size as inputs
-    # prox21 = partial(prox_21, weight=l1weight)
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -354,22 +359,6 @@ def _spotless(ddsi=None, **kw):
               f"rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
 
-        if k+1 - iter0 >= opts.l1reweight_from:
-            print('Computing L1 weights', file=log)
-            # convert residual units so it is comparable to model
-            tmp2[fsel] = residual[fsel] * wsum/wsums[fsel, None, None]
-            psi.dot(tmp2/pix_per_beam, psiHoutvar)
-            rms_comps = np.std(np.sum(psiHoutvar, axis=0),
-                               axis=(-1,-2))[:, None, None]  # preserve axes
-            # we redefine the reweighter here since the rms has changed
-            reweighter = partial(l1reweight_func,
-                                 psi.dot,
-                                 psiHoutvar,
-                                 opts.rmsfactor,
-                                 rms_comps,
-                                 alpha=opts.alpha)
-            l1weight = reweighter(model)
-
         print("Updating results", file=log)
         dds_out = []
         for ds in dds:
@@ -394,12 +383,29 @@ def _spotless(ddsi=None, **kw):
         dask.compute(writes)
 
         if eps < opts.tol:
-            print(f"Converged after {k+1} iterations.", file=log)
-            break
-        # if rmax <= threshold:
-        #     print("Terminating because final threshold has been reached",
-        #           file=log)
-        #     break
+            # do not converge prematurely
+            if k+1 - iter0 >= l1reweight_from:
+                # start reweighting
+                l1reweight_from = 0
+            else:
+                print(f"Converged after {k+1} iterations.", file=log)
+                break
+
+        if k+1 - iter0 >= l1reweight_from:
+            print('Computing L1 weights', file=log)
+            # convert residual units so it is comparable to model
+            tmp2[fsel] = residual[fsel] * wsum/wsums[fsel, None, None]
+            psi.dot(tmp2/pix_per_beam, psiHoutvar)
+            rms_comps = np.std(np.sum(psiHoutvar, axis=0),
+                               axis=(-1,-2))[:, None, None]  # preserve axes
+            # we redefine the reweighter here since the rms has changed
+            reweighter = partial(l1reweight_func,
+                                 psi.dot,
+                                 psiHoutvar,
+                                 opts.rmsfactor,
+                                 rms_comps,
+                                 alpha=opts.alpha)
+            l1weight = reweighter(model)
 
         if rms > rmsp:
             diverge_count += 1
@@ -426,246 +432,332 @@ def _spotless(ddsi=None, **kw):
     print("All done here.", file=log)
 
 
-# def _spotless_dist(**kw):
-#     opts = OmegaConf.create(kw)
-#     OmegaConf.set_struct(opts, True)
+def _spotless_dist(**kw):
+    '''
+    Distributed spotless algorithm.
 
-#     import numpy as np
-#     import xarray as xr
-#     import dask
-#     import dask.array as da
-#     from distributed import Client, wait, get_client, as_completed
-#     from pfb.opt.power_method import power_method_dist as power_method
-#     from pfb.opt.pcg import pcg_dist as pcg
-#     from pfb.opt.primal_dual import primal_dual_dist as primal_dual
-#     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
-#     from pfb.utils.fits import load_fits, dds2fits, dds2fits_mfs
-#     from pfb.utils.dist import (get_resid_and_stats, accum_wsums,
-#                                 compute_residual, update_results,
-#                                 get_epsb, l1reweight, get_cbeam_area,
-#                                 set_wsum, get_eps, set_l1weight)
-#     from pfb.operators.hessian import hessian_psf_slice
-#     from pfb.operators.psi import im2coef_dist as im2coef
-#     from pfb.operators.psi import coef2im_dist as coef2im
-#     from pfb.prox.prox_21m import prox_21m
-#     from pfb.prox.prox_21 import prox_21
-#     from pfb.wavelets.wavelets import wavelet_setup
-#     import pywt
-#     from copy import deepcopy
-#     from operator import getitem
-#     from itertools import cycle
+    The key inputs to the algorithm are the dds and mds.
+    The dds contains data products such as the dirty image, psf, weights etc.
+    There can be multiple datasets in the dds, each corresponding to a specific frequency and time range.
+    These datasets are persisted on separate workers.
+    The mds contains a continuous representation of the model in compressed format.
+    The mds is just a single dataset which gets evaluated into a discretised cube on the runner node.
+    For now the frequency resolution of the model is the same as the frequency resoltuion of the dds.
+    It is assumed that the model is static in time so a per band model potentially speaks to many datasets in the dds.
+    This makes it possible to approximately incorporate time variable instrumental effects during deconvolution.
+    Thus the measurement model for each band potentially consists of different data terms i.e.
 
-#     basename = f'{opts.output_filename}_{opts.product.upper()}'
-#     dds_name = f'{basename}_{opts.suffix}.dds'
+    [d1, d2, d3, ...] = [R1, R2, R3, ...] x + [eps1, eps2, eps3, ...]
 
-#     client = get_client()
-#     names = [w['name'] for w in client.scheduler_info()['workers'].values()]
+    The likelihood is therefore a sum over data terms
 
-#     dds = xds_from_zarr(dds_name, chunks={'row':-1,
-#                                           'chan':-1,
-#                                           'x':-1,
-#                                           'y':-1,
-#                                           'x_psf':-1,
-#                                           'y_psf':-1,
-#                                           'yo2':-1,
-#                                           'b':-1,
-#                                           'c':-1})
+    chi2 = sum_i (di - Ri x).H Wi (di - Ri x)
 
-#     real_type = dds[0].DIRTY.dtype
-#     cell_rad = dds[0].cell_rad
-#     complex_type = np.result_type(dirty.dtype, np.complex64)
+    The gradient therefore takes the form
 
-#     nband = len(dds)
-#     nx, ny = dds[0].nx, dds[0].ny
-#     nx_psf, ny_psf = dds[0].nx_psf, dds[0].ny_psf
-#     nx_psf, nyo2_psf = dds[0].PSFHAT.shape
-#     npad_xl = (nx_psf - nx)//2
-#     npad_xr = nx_psf - nx - npad_xl
-#     npad_yl = (ny_psf - ny)//2
-#     npad_yr = ny_psf - ny - npad_yl
-#     psf_padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
-#     unpad_x = slice(npad_xl, -npad_xr)
-#     unpad_y = slice(npad_yl, -npad_yr)
-#     lastsize = ny + np.sum(psf_padding[-1])
-
-#     # dictionary setup
-#     print("Setting up dictionary", file=log)
-#     bases = tuple(opts.bases.split(','))
-#     nbasis = len(bases)
-#     iy, sy, ntot, nmax = wavelet_setup(
-#                                 np.zeros((1, nx, ny), dtype=dirty.dtype),
-#                                 bases, opts.nlevels)
-#     ntot = tuple(ntot)
-
-#     psiH = partial(im2coef,
-#                     bases=bases,
-#                     ntot=ntot,
-#                     nmax=nmax,
-#                     nlevels=opts.nlevels)
-#     # avoid pickling dumba Dict
-#     psi = partial(coef2im,
-#                     bases=bases,
-#                     ntot=ntot,
-#                     iy=None,  #dict(iy),
-#                     sy=None,  #dict(sy),
-#                     nx=nx,
-#                     ny=ny)
-
-#     print('Scattering data', file=log)
-#     Afs = {}
-#     for ds, i in zip(dds, cycle(range(opts.nworkers))):
-#         Af = client.submit(hessian_psf_slice, ds, nbasis, nmax,
-#                            opts.nvthreads,
-#                            opts.sigmainv,
-#                            workers={names[i]})
-#         Afs[names[i]] = Af
-
-#     # wait expects a list
-#     wait(list(Afs.values()))
-
-#     # assumed constant
-#     wsum = client.submit(accum_wsums, Afs, workers={names[0]}).result()
-#     pix_per_beam = client.submit(get_cbeam_area, Afs, wsum, workers={names[0]}).result()
-
-#     for wid, A in Afs.items():
-#         client.submit(set_wsum, A, wsum,
-#                       pure=False,
-#                       workers={wid})
-
-#     try:
-#         l1ds = xds_from_zarr(f'{dds_name}::L1WEIGHT', chunks={'b':-1,'c':-1})
-#         if 'L1WEIGHT' in l1ds:
-#             l1weightfs = client.submit(set_l1weight, l1ds,
-#                                       workers={names[0]})
-#         else:
-#             raise
-#     except Exception as e:
-#         print(f'Did not find l1weights at {dds_name}/L1WEIGHT. '
-#               'Initialising to unity', file=log)
-#         l1weightfs = client.submit(np.ones, (nbasis, nmax), dtype=dirty.dtype,
-#                                  workers={names[0]})
-
-#     if opts.hessnorm is None:
-#         print('Getting spectral norm of Hessian approximation', file=log)
-#         hessnorm = power_method(Afs, nx, ny, nband)
-#     else:
-#         hessnorm = opts.hessnorm
-#     print(f'hessnorm = {hessnorm:.3e}', file=log)
-
-#     # future contains mfs residual and stats
-#     residf = client.submit(get_resid_and_stats, Afs, wsum,
-#                            workers={names[0]})
-#     residual_mfs = client.submit(getitem, residf, 0, workers={names[0]})
-#     rms = client.submit(getitem, residf, 1, workers={names[0]}).result()
-#     rmax = client.submit(getitem, residf, 2, workers={names[0]}).result()
-#     print(f"It {0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
-#     for k in range(opts.niter):
-#         print('Solving for update', file=log)
-#         xfs = {}
-#         for wid, A in Afs.items():
-#             xf = client.submit(pcg, A,
-#                                opts.cg_maxit,
-#                                opts.cg_minit,
-#                                opts.cg_tol,
-#                                opts.sigmainv,
-#                                workers={wid})
-#             xfs[wid] = xf
-
-#         # wait expects a list
-#         wait(list(xfs.values()))
-
-#         print('Solving for model', file=log)
-#         modelfs, dualfs = primal_dual(
-#                             Afs, xfs,
-#                             psi, psiH,
-#                             opts.rmsfactor*rms,
-#                             hessnorm,
-#                             l1weightfs,
-#                             nu=len(bases),
-#                             tol=opts.pd_tol,
-#                             maxit=opts.pd_maxit,
-#                             positivity=opts.positivity,
-#                             gamma=opts.gamma,
-#                             verbosity=opts.pd_verbose)
-
-#         print('Computing residual', file=log)
-#         residfs = {}
-#         for wid, A in Afs.items():
-#             residf = client.submit(compute_residual, A, modelfs[wid],
-#                                    workers={wid})
-#             residfs[wid] = residf
-
-#         wait(list(residfs.values()))
-
-#         # l1reweighting
-#         if k+1 >= opts.l1reweight_from:
-#             print('L1 reweighting', file=log)
-#             l1weightfs = client.submit(l1reweight, modelfs, residfs, l1weightfs,
-#                                        psiH, wsum, pix_per_beam, workers=names[0])
-
-#         # dump results so we can continue from if needs be
-#         print('Updating results', file=log)
-#         ddsfs = {}
-#         modelpfs = {}
-#         for i, (wid, A) in enumerate(Afs.items()):
-#             modelpfs[wid] = client.submit(getattr, A, 'model', workers={wid})
-#             dsf = client.submit(update_results, A, dds[i], modelfs[i], dualfs[i], residfs[i],
-#                                 pure=False,
-#                                 workers={wid})
-#             ddsfs[wid] = dsf
-
-#         dds = []
-#         for f in as_completed(list(ddsfs.values())):
-#             dds.append(f.result())
-#         writes = xds_to_zarr(dds, dds_name,
-#                              columns=('MODEL','DUAL','RESIDUAL'),
-#                              rechunk=True)
-#         l1weight = da.from_array(l1weightfs.result(), chunks=(1, 4096**2))
-#         dvars = {}
-#         dvars['L1WEIGHT'] = (('b','c'), l1weight)
-#         l1ds = xr.Dataset(dvars)
-#         l1writes = xds_to_zarr(l1ds, f'{dds_name}::L1WEIGHT')
-#         client.compute(writes, l1writes)
-
-#         residf = client.submit(get_resid_and_stats, Afs, wsum,
-#                                workers={names[0]})
-#         residual_mfs = client.submit(getitem, residf, 0, workers={names[0]})
-#         rms = client.submit(getitem, residf, 1, workers={names[0]}).result()
-#         rmax = client.submit(getitem, residf, 2, workers={names[0]}).result()
-#         eps_num = []
-#         eps_den = []
-#         for wid in Afs.keys():
-#             fut = client.submit(get_epsb, modelpfs[wid], modelfs[wid], workers={wid})
-#             eps_num.append(client.submit(getitem, fut, 0, workers={wid}))
-#             eps_den.append(client.submit(getitem, fut, 1, workers={wid}))
-
-#         eps = client.submit(get_eps, eps_num, eps_den, workers={names[0]}).result()
-#         print(f"It {k+1}: max resid = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}",
-#               file=log)
+    Dx chi2 = - 2 sum_i Ri.H Wi (di - Ri x) = 2 sum_i Ri.H Wi Ri x - IDi
 
 
-#         if eps < opts.tol:
-#             break
-
-#     # convert to fits files
-#     fitsout = []
-#     if opts.fits_mfs:
-#         fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
-#         fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
-
-#     if opts.fits_cubes:
-#         fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
-#         fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
-
-#     if len(fitsout):
-#         print("Writing fits", file=log)
-#         dask.compute(fitsout)
-
-#     client.close()
-
-#     print("All done here.", file=log)
-#     return
 
 
-# def Idty(x):
-#     return x
+    '''
+    opts = OmegaConf.create(kw)
+    OmegaConf.set_struct(opts, True)
+
+    import numpy as np
+    import xarray as xr
+    import dask
+    import dask.array as da
+    from distributed import Client, wait, get_client, as_completed
+    from pfb.opt.power_method import power_method_dist as power_method
+    from pfb.opt.pcg import pcg_dist as pcg
+    from pfb.opt.primal_dual import primal_dual_dist as primal_dual
+    from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
+    from pfb.utils.fits import load_fits, dds2fits, dds2fits_mfs, set_wcs
+    from pfb.utils.dist import (accum_wsums, get_cbeam_area, get_resids,
+                                get_mfs_and_stats, almost_grad,
+                                l1reweight_func)
+    from pfb.operators.hessian import hessian_psf_slice
+    from pfb.operators.psi2 import psi_band
+    from pfb.prox.prox_21m import prox_21m
+    from copy import deepcopy
+    from operator import getitem
+    from itertools import cycle
+    from uuid import uuid4
+    from pfb.utils.misc import fitcleanbeam
+
+    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    dds_name = f'{basename}_{opts.suffix}.dds'
+
+    client = get_client()
+    client.amm.stop()
+    names = list(client.scheduler_info()['workers'].keys())
+
+    dds = xds_from_zarr(dds_name, chunks={'row':-1,
+                                          'chan':-1,
+                                          'x':-1,
+                                          'y':-1,
+                                          'x_psf':-1,
+                                          'y_psf':-1,
+                                          'yo2':-1})
+    for i, ds in enumerate(dds):
+        dds[i] = ds.drop_vars(['COUNTS'])
+
+    real_type = dds[0].DIRTY.dtype
+    cell_rad = dds[0].cell_rad
+    complex_type = np.result_type(real_type, np.complex64)
+
+    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
+    lastsize = ny_psf
+    freq_out = []
+    time_out = []
+    for ds in dds:
+        freq_out.append(ds.freq_out)
+        time_out.append(ds.time_out)
+    freq_out = np.unique(np.array(freq_out))
+    time_out = np.unique(np.array(time_out))
+    try:
+        assert freq_out.size == opts.nband
+    except Exception as e:
+        print(f"Number of output frequencies={freq_out.size} "
+              f"does not match nband={opts.nband}", file=log)
+        raise e
+    nband = opts.nband
+    nx = dds[0].x.size
+    ny = dds[0].y.size
+    ra = dds[0].ra
+    dec = dds[0].dec
+    radec = [ra, dec]
+    cell_rad = dds[0].cell_rad
+    cell_deg = np.rad2deg(cell_rad)
+    ref_freq = np.mean(freq_out)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+    if 'niters' in dds[0].attrs:
+        iter0 = dds[0].niters
+    else:
+        iter0 = 0
+
+
+    # put psib on each worker
+    bases = tuple(opts.bases.split(','))
+    nbasis = len(bases)
+    psif = {}
+    psiHf = {}
+    for ds, wname in zip(dds, cycle(names)):
+        psif[wname] = client.submit(psi_band,
+                                    bases,
+                                    opts.nlevels,
+                                    nx, ny,
+                                    opts.nthreads_dask,
+                                    workers=wname,
+                                    key='psib-'+uuid4().hex)
+
+    wait(list(psif.values()))
+    nmax = psif[names[0]].result().nmax
+
+    # add dual and model if they are not in dds
+    if 'MODEL' not in dds[0]:
+        for i, ds in enumerate(dds):
+            model = da.zeros((nx, ny),
+                            chunks=(-1,-1),
+                            dtype=real_type,
+                            name='model-'+uuid4().hex)
+            dds[i] = ds.assign(**{
+                'MODEL': (('x', 'y'), model)
+            })
+    if 'DUAL' not in dds[0] or dds[0].DUAL.shape != nbasis:
+        for i, ds in enumerate(dds):
+            dual = da.zeros((nbasis, nmax),
+                            chunks=(-1,-1),
+                            dtype=real_type,
+                            name='dual-'+uuid4().hex)
+            dds[i] = ds.assign(**{
+                'DUAL': (('c', 'n',), dual)
+            })
+
+    # persist data onto workers
+    ddsf = {}
+    for ds, wname in zip(dds, cycle(names)):
+        ddsf[wname] = ds.persist(workers=wname)
+
+    # wait expects a list of futures
+    dds = list(ddsf.values())
+    wait(dds)
+    wsum = np.sum([ds.WSUM.values for ds in dds])
+
+    psf_mfs = np.stack([ds.PSF.values for ds in dds]).sum(axis=0)/wsum
+    GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
+    pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
+    # pix_per_beam = client.submit(get_cbeam_area, ddsf.values(), wsum,
+    #                              workers=names[0]).result()
+
+    # set up Hessian approximation
+    hess_psfs = {}
+    for wname, ds in ddsf.items():
+        hess_psfs[wname] = client.submit(hessian_psf_slice,
+                                         ds, opts.nvthreads, wsum,
+                                         workers=wname,
+                                         key='hess_psf-'+uuid4().hex)
+
+    if opts.hessnorm is None:
+        print('Getting spectral norm of Hessian approximation', file=log)
+        hessnorm = power_method(hess_psfs, nx, ny, nband)
+    else:
+        hessnorm = opts.hessnorm
+    print(f'hessnorm = {hessnorm:.3e}', file=log)
+
+
+    # vis space Hessian opts
+    hessopts = {}
+    hessopts['cell'] = dds[0].cell_rad
+    hessopts['do_wgridding'] = opts.do_wgridding
+    hessopts['epsilon'] = opts.epsilon
+    hessopts['double_accum'] = opts.double_accum
+    hessopts['nthreads'] = opts.nvthreads  # nvthreads since dask parallel over band
+
+    # futures to residuals
+    residf = {}
+    for wname, ds in ddsf.items():
+        residf[wname] = client.submit(get_resids,
+                                        ds,
+                                        wsum,
+                                        hessopts,
+                                        # actor=True,
+                                        workers=wname,
+                                        key='resid-'+uuid4().hex)
+
+
+
+    resid = client.gather(list(residf.values()))
+    residual_mfs = np.sum(resid, axis=0)
+    rms = np.std(residual_mfs)
+    rmax = np.sqrt((residual_mfs**2).max())
+
+    # a value less than zero turns L1 reweighting off
+    # we'll start on convergence or at the iteration
+    # indicated by l1reweight_from, whichever comes first
+    if opts.l1reweight_from < 0:
+        l1reweight_from = np.inf
+    else:
+        l1reweight_from = opts.l1reweight_from
+
+    if l1reweight_from == 0:
+        # this is an approximation
+        rms_comps = np.std(residual_mfs)*nband/pix_per_beam
+        l1weight = l1reweight_func(psif,
+                                   ddsf,
+                                   opts.rmsfactor,
+                                   rms_comps,
+                                   alpha=opts.alpha)
+    else:
+        l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=real_type)
+        reweighter = None
+
+    # initialise grad approximation
+    gradf = {}
+    for wname, ds in ddsf.items():
+        gradf[wname] = client.submit(almost_grad,
+                                     ds.MODEL.values,
+                                     hess_psfs[wname],
+                                     residf[wname],
+                                     workers=wname,
+                                     key='grad-'+uuid4().hex)
+
+    print(f"It {iter0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
+    for k in range(iter0, iter0 + opts.niter):
+        print('Solving for model', file=log)
+        modelfs, dualfs = primal_dual(
+                            ddsf,
+                            psif,
+                            gradf,
+                            rms,
+                            hessnorm,
+                            l1weight,
+                            opts.rmsfactor,
+                            rms_comps,
+                            opts.alpha,
+                            nu=len(bases),
+                            tol=opts.pd_tol,
+                            maxit=opts.pd_maxit,
+                            positivity=opts.positivity,
+                            gamma=opts.gamma,
+                            verbosity=opts.pd_verbose)
+
+        print('Computing residual', file=log)
+        residfs = {}
+        for wid, A in Afs.items():
+            residf = client.submit(compute_residual, A, modelfs[wid],
+                                   workers={wid})
+            residfs[wid] = residf
+
+        wait(list(residfs.values()))
+
+        # l1reweighting
+        if k+1 >= opts.l1reweight_from:
+            print('L1 reweighting', file=log)
+            l1weightfs = client.submit(l1reweight, modelfs, residfs, l1weightfs,
+                                       psiH, wsum, pix_per_beam, workers=names[0])
+
+        # dump results so we can continue from if needs be
+        print('Updating results', file=log)
+        ddsfs = {}
+        modelpfs = {}
+        for i, (wid, A) in enumerate(Afs.items()):
+            modelpfs[wid] = client.submit(getattr, A, 'model', workers={wid})
+            dsf = client.submit(update_results, A, dds[i], modelfs[i], dualfs[i], residfs[i],
+                                pure=False,
+                                workers={wid})
+            ddsfs[wid] = dsf
+
+        dds = []
+        for f in as_completed(list(ddsfs.values())):
+            dds.append(f.result())
+        writes = xds_to_zarr(dds, dds_name,
+                             columns=('MODEL','DUAL','RESIDUAL'),
+                             rechunk=True)
+        l1weight = da.from_array(l1weightfs.result(), chunks=(1, 4096**2))
+        dvars = {}
+        dvars['L1WEIGHT'] = (('b','c'), l1weight)
+        l1ds = xr.Dataset(dvars)
+        l1writes = xds_to_zarr(l1ds, f'{dds_name}::L1WEIGHT')
+        client.compute(writes, l1writes)
+
+        residf = client.submit(get_resid_and_stats, Afs, wsum,
+                               workers={names[0]})
+        residual_mfs = client.submit(getitem, residf, 0, workers={names[0]})
+        rms = client.submit(getitem, residf, 1, workers={names[0]}).result()
+        rmax = client.submit(getitem, residf, 2, workers={names[0]}).result()
+        eps_num = []
+        eps_den = []
+        for wid in Afs.keys():
+            fut = client.submit(get_epsb, modelpfs[wid], modelfs[wid], workers={wid})
+            eps_num.append(client.submit(getitem, fut, 0, workers={wid}))
+            eps_den.append(client.submit(getitem, fut, 1, workers={wid}))
+
+        eps = client.submit(get_eps, eps_num, eps_den, workers={names[0]}).result()
+        print(f"It {k+1}: max resid = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}",
+              file=log)
+
+
+        if eps < opts.tol:
+            break
+
+    # convert to fits files
+    fitsout = []
+    if opts.fits_mfs:
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
+
+    if opts.fits_cubes:
+        fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
+
+    if len(fitsout):
+        print("Writing fits", file=log)
+        dask.compute(fitsout)
+
+    client.close()
+
+    print("All done here.", file=log)
+    return
+
