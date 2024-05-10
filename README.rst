@@ -1,5 +1,6 @@
 
-![GitHub Logo](/logo/Gemini_Generated_Image_m19n6gm19n6gm19n.jpg)
+.. image:: /logo/Gemini_Generated_Image_m19n6gm19n6gm19n.jpg
+   :align: center
 
 
 pfb-imaging
