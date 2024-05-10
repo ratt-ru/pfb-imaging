@@ -34,6 +34,7 @@ class psi_band(object):
         for wavelet in bases:
             if wavelet=='self':
                 self.buffer_size[wavelet] = nx*ny
+                self.nmax = np.maximum(self.nmax, self.buffer_size[wavelet])
                 continue
             # Get the required filter banks from pywt.
             wvlt = pywt.Wavelet(wavelet)
@@ -64,25 +65,30 @@ class psi_band(object):
         alpha = np.zeros((self.nbasis, self.nmax),
                          dtype=x.dtype)
 
-        with cf.ThreadPoolExecutor(max_workers=self.nthreads) as executor:
-            futures = []
-            for i, wavelet in enumerate(self.bases):
-                if wavelet=='self':
-                    alpha[i, 0:self.buffer_size[wavelet]] = x.ravel()
-                    continue
+        # comment below to eliminate the possibility of
+        # wavelets/cf.futures being the culprit
+        # run with bases=self only
+        alpha[0, 0:self.buffer_size[self.bases[0]]] = x.ravel()
 
-                f = executor.submit(dwt, x,
-                                    self.buffer[wavelet],
-                                    self.dec_lo[wavelet],
-                                    self.dec_hi[wavelet],
-                                    self.nlevel,
-                                    i)
+        # with cf.ThreadPoolExecutor(max_workers=self.nthreads) as executor:
+        #     futures = []
+        #     for i, wavelet in enumerate(self.bases):
+        #         if wavelet=='self':
+        #             alpha[i, 0:self.buffer_size[wavelet]] = x.ravel()
+        #             continue
 
-                futures.append(f)
+        #         f = executor.submit(dwt, x,
+        #                             self.buffer[wavelet],
+        #                             self.dec_lo[wavelet],
+        #                             self.dec_hi[wavelet],
+        #                             self.nlevel,
+        #                             i)
 
-            for f in cf.as_completed(futures):
-                buffer, i = f.result()
-                alpha[i, 0:self.buffer_size[self.bases[i]]] = buffer
+        #         futures.append(f)
+
+        #     for f in cf.as_completed(futures):
+        #         buffer, i = f.result()
+        #         alpha[i, 0:self.buffer_size[self.bases[i]]] = buffer
 
         return alpha
 
@@ -100,28 +106,34 @@ class psi_band(object):
         ny = self.ny
         x = np.zeros((nx, ny), dtype=alpha.dtype)
 
-        with cf.ThreadPoolExecutor(max_workers=self.nthreads) as executor:
-            futures = []
-            for i, wavelet in enumerate(self.bases):
-                nmax = self.buffer_size[wavelet]
-                if wavelet=='self':
-                    x += alpha[i, 0:nmax].reshape(nx, ny)
-                    continue
+        # comment below to eliminate the possibility of
+        # wavelets/cf.futures being the culprit
+        # run with bases=self only
+        nmax = self.buffer_size[self.bases[0]]
+        x = alpha[0, 0:nmax].reshape(nx, ny)
 
-                f = executor.submit(idwt,
-                                    alpha[i, 0:nmax],
-                                    self.rec_lo[wavelet],
-                                    self.rec_hi[wavelet],
-                                    self.nlevel,
-                                    self.nx,
-                                    self.ny,
-                                    i)
+        # with cf.ThreadPoolExecutor(max_workers=self.nthreads) as executor:
+        #     futures = []
+        #     for i, wavelet in enumerate(self.bases):
+        #         nmax = self.buffer_size[wavelet]
+        #         if wavelet=='self':
+        #             x += alpha[i, 0:nmax].reshape(nx, ny)
+        #             continue
+
+        #         f = executor.submit(idwt,
+        #                             alpha[i, 0:nmax],
+        #                             self.rec_lo[wavelet],
+        #                             self.rec_hi[wavelet],
+        #                             self.nlevel,
+        #                             self.nx,
+        #                             self.ny,
+        #                             i)
 
 
-                futures.append(f)
+        #         futures.append(f)
 
-            for f in cf.as_completed(futures):
-                image, i = f.result()
-                x += image
+        #     for f in cf.as_completed(futures):
+        #         image, i = f.result()
+        #         x += image
 
         return x

@@ -185,8 +185,8 @@ def primal_dual_optimised(
 
 def vtilde_update(ds, sigma, psi):
     vtilde = ds.DUAL.values + sigma * psi.dot(ds.MODEL.values)
-    model = ds.MODEL.values
-    dual = ds.DUAL.values
+    model = ds.MODEL.values.copy()
+    dual = ds.DUAL.values.copy()
     return vtilde, model, dual
 
 def update(gradf, vtildep, ratio, xp, vp, sigma, lam, tau, gamma, psi, positivity):
@@ -259,11 +259,11 @@ def primal_dual_dist(
     epsf = []
     for wname, ds in ddsf.items():
         fut = client.submit(vtilde_update,
-                                       ds,
-                                       sigma,
-                                       psif[wname],
-                                       workers=wname,
-                                       key='vtilde-'+uuid4().hex)
+                            ds,
+                            sigma,
+                            psif[wname],
+                            workers=wname,
+                            key='vtilde-'+uuid4().hex)
         # vtildef[wname] = client.submit(getitem, fut, 0, workers=wname)
         vtildef.append(client.submit(getitem, fut, 0, workers=wname))
         # modelf[wname] = client.submit(getitem, fut, 1, workers=wname)
@@ -284,9 +284,9 @@ def primal_dual_dist(
         ratio[mask] = vsoft[mask] / vmfs[mask]
 
         # do on individual workers
-        for i, (wname, ds) in enumerate(ddsf.items()):
+        for i, (wname, grad) in enumerate(gradf.items()):
             future = client.submit(update,
-                                   gradf[wname],
+                                   grad,
                                    vtildef[i],
                                    ratio,
                                    modelf[i],

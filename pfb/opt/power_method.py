@@ -90,8 +90,6 @@ def power_method_dist(hess_psfs,
         bnum.append(1)
         bden.append(1)
 
-    # bnorm = client.submit(bnormf, bssq,
-    #                       workers=wname).result()
     bssq = client.gather(bssq)
     bnorm = np.sqrt(np.sum(bssq))
     beta = 1
@@ -105,14 +103,9 @@ def power_method_dist(hess_psfs,
             bnum[i] = client.submit(getitem, fut, 2, workers=wname)
             bden[i] = client.submit(getitem, fut, 3, workers=wname)
 
-        # bnorm = client.submit(bnormf, bssq,
-        #                       workers=wname)
-
         bssq = client.gather(bssq)
         bnorm = np.sqrt(np.sum(bssq))
         betap = beta
-        # beta = client.submit(betaf, bnum, bden,
-        #                      workers=wname).result()
         bnum = client.gather(bnum)
         bden = client.gather(bden)
         beta = np.sum(bnum)/np.sum(bden)
@@ -121,12 +114,12 @@ def power_method_dist(hess_psfs,
         if eps < tol:
             break
 
-        if not k % 10:
-            print(f"At iteration {k} eps = {eps:.3e}", file=log)
-            from pympler import summary, muppy
-            all_objects = muppy.get_objects()
-            # bytearrays = [obj for obj in all_objects if isinstance(obj, bytearray)]
-            # print(summary.print_(summary.summarize(bytearrays)))
-            print(summary.print_(summary.summarize(all_objects)))
+        # if not k % 10:
+        #     print(f"At iteration {k} eps = {eps:.3e}", file=log)
+        #     from pympler import summary, muppy
+        #     all_objects = muppy.get_objects()
+        #     # bytearrays = [obj for obj in all_objects if isinstance(obj, bytearray)]
+        #     # print(summary.print_(summary.summarize(bytearrays)))
+        #     print(summary.print_(summary.summarize(all_objects)))
 
     return beta
