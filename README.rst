@@ -1,10 +1,9 @@
 
-.. image:: /logo/Gemini_Generated_Image_m19n6gm19n6gm19n.jpg
-   :align: center
-
-
 pfb-imaging
 =========
+
+.. image:: /logo/Gemini_Generated_Image_m19n6gm19n6gm19n.jpg
+   :align: center
 
 Radio interferometric imaging suite base on the pre-conditioned forward-backward algorithm.
 
