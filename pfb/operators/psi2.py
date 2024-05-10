@@ -70,14 +70,11 @@ class psi_band(object):
                 if wavelet=='self':
                     alpha[i, 0:self.buffer_size[wavelet]] = x.ravel()
                     continue
-                dec_lo = self.dec_lo[wavelet]
-                dec_hi = self.dec_hi[wavelet]
-                buffer = self.buffer[wavelet]
 
                 f = executor.submit(dwt, x,
-                                    buffer,
-                                    dec_lo,
-                                    dec_hi,
+                                    self.buffer[wavelet],
+                                    self.dec_lo[wavelet],
+                                    self.dec_hi[wavelet],
                                     self.nlevel,
                                     i)
 
@@ -110,12 +107,11 @@ class psi_band(object):
                 if wavelet=='self':
                     x += alpha[i, 0:nmax].reshape(nx, ny)
                     continue
-                rec_lo = self.rec_lo[wavelet]
-                rec_hi = self.rec_hi[wavelet]
 
                 f = executor.submit(idwt,
                                     alpha[i, 0:nmax],
-                                    rec_lo, rec_hi,
+                                    self.rec_lo[wavelet],
+                                    self.rec_hi[wavelet],
                                     self.nlevel,
                                     self.nx,
                                     self.ny,
@@ -129,7 +125,3 @@ class psi_band(object):
                 x += image
 
         return x
-
-
-def psi_band_maker(bases, nlevel, nx, ny, nthreads):
-    return psi_band(bases, nlevel, nx, ny, nthreads)

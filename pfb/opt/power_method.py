@@ -121,53 +121,12 @@ def power_method_dist(hess_psfs,
         if eps < tol:
             break
 
+        if not k % 10:
+            print(f"At iteration {k} eps = {eps:.3e}", file=log)
+            from pympler import summary, muppy
+            all_objects = muppy.get_objects()
+            # bytearrays = [obj for obj in all_objects if isinstance(obj, bytearray)]
+            # print(summary.print_(summary.summarize(bytearrays)))
+            print(summary.print_(summary.summarize(all_objects)))
+
     return beta
-
-
-# def power2(A, bp, bnorm):
-#     bp /= bnorm
-#     b = A(bp)
-#     bsumsq = da.sum(b**2)
-#     beta_num = da.vdot(b, bp)
-#     beta_den = da.vdot(bp, bp)
-
-#     return b, bsumsq, beta_num, beta_den
-
-
-# def power_method_persist(ddsf,
-#                          Af,
-#                          nx,
-#                          ny,
-#                          nband,
-#                          tol=1e-5,
-#                          maxit=200):
-
-#     client = get_client()
-#     b = []
-#     bssq = []
-#     for ds in ddsf:
-#         wid = ds.worker
-#         tmp = client.persist(da.random.normal(0, 1, (nx, ny)),
-#                              workers={wid})
-#         b.append(tmp)
-#         bssq.append(da.sum(b**2))
-
-#     bssq = da.stack(bssq)
-#     bnorm = da.sqrt(da.sum(bssq))
-#     bp = deepcopy(b)
-#     beta_num = [da.array()]
-
-#     for k in range(maxit):
-#         for i, ds, A in enumerate(zip(ddsf, Af)):
-#             bp[i] = b[i]/bnorm
-#             b[i] = A(bp[i])
-#             bssq[i] = da.sum(b[i]**2)
-#             beta_num = da.vdot(b, bp)
-#             beta_den = da.vdot(bp, bp)
-
-
-
-
-
-
-

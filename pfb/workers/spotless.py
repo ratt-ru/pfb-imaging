@@ -550,7 +550,8 @@ def _spotless_dist(**kw):
                                     nx, ny,
                                     opts.nthreads_dask,
                                     workers=wname,
-                                    key='psib-'+uuid4().hex)
+                                    key='psib-'+uuid4().hex,
+                                    pure=False)
 
     wait(list(psif.values()))
     nmax = psif[names[0]].result().nmax
@@ -597,7 +598,8 @@ def _spotless_dist(**kw):
         hess_psfs[wname] = client.submit(hessian_psf_slice,
                                          ds, opts.nvthreads, wsum,
                                          workers=wname,
-                                         key='hess_psf-'+uuid4().hex)
+                                         key='hess_psf-'+uuid4().hex,
+                                         pure=False)
 
     if opts.hessnorm is None:
         print('Getting spectral norm of Hessian approximation', file=log)
@@ -650,7 +652,8 @@ def _spotless_dist(**kw):
                                    rms_comps,
                                    alpha=opts.alpha)
     else:
-        l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=real_type)
+        rms_comps = 1.0
+        l1weight = np.ones((nbasis, nmax), dtype=real_type)
         reweighter = None
 
     # initialise grad approximation
@@ -661,7 +664,8 @@ def _spotless_dist(**kw):
                                      hess_psfs[wname],
                                      residf[wname],
                                      workers=wname,
-                                     key='grad-'+uuid4().hex)
+                                     key='grad-'+uuid4().hex,
+                                     pure=False)
 
     print(f"It {iter0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for k in range(iter0, iter0 + opts.niter):

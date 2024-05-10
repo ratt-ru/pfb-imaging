@@ -59,7 +59,7 @@ class almost_grad(object):
     def __call__(self, model):
         return self.psfo(model, 0.0) - self.data
 
-    def update_data(self, model, psfo, residual):
+    def update_data(self, model, residual):
         self.data = residual + self.psfo(model, 0.0)
 
 
@@ -101,10 +101,29 @@ def l1reweight_func(psif, ddsf, rmsfactor, rms_comps, alpha=4):
 
 
 
+class band_actor(object):
+    def __init__(ddsl, model, dual, sigma, lam, L, ):
+        # there should be only single versions of these for each band
+        self.x = model
+        self.v = dual
+        self.xp = np.zeros_like(model)
+        self.vp = np.zeros_like(dual)
+        self.vtilde = np.zeros_like(dual)
 
-def update_results(ds, model, dual, residual):
-    ds_out = ds.assign(**{'MODEL': (('x','y'), da.from_array(model, chunks=(4096, 4096))),
-                          'DUAL': (('b', 'c'), da.from_array(dual, chunks=(1, 4096**2))),
-                          'RESIDUAL': (('x', 'y'), da.from_array(residual, chunks=(4096, 4096)))})
-    return ds_out
+        # there can be multiple of these
+        self.psfhats = []
+        self.dirtys = []
+        self.beams = []
+        self.weights = []
+        self.uvws = []
+        self.freqs = []
+        for ds in ddsl:
+            self.psfhats.append(ds.PSFHAT.values)
+            self.dirtys.append(ds.DIRTY.values)
+            self.beams.append(ds.BEAM.values)
+            self.weights.append(ds.WEIGHT.values)
+            self.uvws.append(ds.UVW.values)
+            self.freqs.append(ds.FREQ.values)
+
+
 

@@ -7,6 +7,8 @@ from ducc0.misc import make_noncritical
 from pfb.utils.misc import norm_diff
 from uuid import uuid4
 import pyscilog
+import gc
+# gc.set_debug(gc.DEBUG_LEAK)
 log = pyscilog.get_logger('PD')
 
 
@@ -187,12 +189,9 @@ def vtilde_update(ds, sigma, psi):
     dual = ds.DUAL.values
     return vtilde, model, dual
 
-def update(gradf, vtilde, ratio, x, v, sigma, lam, tau, gamma, psi, positivity):
-    xp = x.copy()
-    vp = v.copy()
-
+def update(gradf, vtildep, ratio, xp, vp, sigma, lam, tau, gamma, psi, positivity):
     # dual
-    v = vtilde - vtilde * ratio
+    v = vtildep * (1 - ratio)
 
     # primal
     grad = gradf(xp)
@@ -203,9 +202,10 @@ def update(gradf, vtilde, ratio, x, v, sigma, lam, tau, gamma, psi, positivity):
     vtilde = v + sigma * psi.dot(x)
 
     eps = np.linalg.norm(x-xp)/np.linalg.norm(x)
-
     return x, v, vtilde, eps
 
+def dummy_func():
+    return 1
 
 def primal_dual_dist(
             ddsf,
@@ -215,7 +215,7 @@ def primal_dual_dist(
             L,    # spectral norm of Hessian
             l1weight,
             rmsfactor,
-            rmc_comps,
+            rms_comps,
             alpha,
             nu=1.0,  # spectral norm of psi
             sigma=None,  # step size of dual update
@@ -253,9 +253,10 @@ def primal_dual_dist(
     tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
 
     # we need to do this upfront only at the outset
-    vtildef = {}
-    modelf = {}
-    dualf = {}
+    vtildef = []
+    modelf = []
+    dualf = []
+    epsf = []
     for wname, ds in ddsf.items():
         fut = client.submit(vtilde_update,
                                        ds,
@@ -263,28 +264,33 @@ def primal_dual_dist(
                                        psif[wname],
                                        workers=wname,
                                        key='vtilde-'+uuid4().hex)
-        vtildef[wname] = client.submit(getitem, fut, 0, workers=wname)
-        modelf[wname] = client.submit(getitem, fut, 1, workers=wname)
-        dualf[wname] = client.submit(getitem, fut, 2, workers=wname)
+        # vtildef[wname] = client.submit(getitem, fut, 0, workers=wname)
+        vtildef.append(client.submit(getitem, fut, 0, workers=wname))
+        # modelf[wname] = client.submit(getitem, fut, 1, workers=wname)
+        modelf.append(client.submit(getitem, fut, 1, workers=wname))
+        # dualf[wname] = client.submit(getitem, fut, 2, workers=wname)
+        dualf.append(client.submit(getitem, fut, 2, workers=wname))
+        # this just initialises the list we need below
+        epsf.append(1)
 
-    epsf = {}
+    # import ipdb; ipdb.set_trace()
     for k in range(maxit):
         # done on runner since need to combine over freq
-        # vtilde = client.gather(list(vtildef.values()))
-        vmfs = np.sum(client.gather(list(vtildef.values())), axis=0)/sigma
+        # vtilde = client.gather(vtildef)
+        vmfs = np.sum(client.gather(vtildef), axis=0)/sigma
         vsoft = np.maximum(np.abs(vmfs) - lam*l1weight/sigma, 0.0) * np.sign(vmfs)
         mask = vmfs != 0
         ratio = np.zeros(mask.shape, dtype=l1weight.dtype)
         ratio[mask] = vsoft[mask] / vmfs[mask]
 
         # do on individual workers
-        for wname, ds in ddsf.items():
+        for i, (wname, ds) in enumerate(ddsf.items()):
             future = client.submit(update,
                                    gradf[wname],
-                                   vtildef[wname],
+                                   vtildef[i],
                                    ratio,
-                                   modelf[wname],
-                                   dualf[wname],
+                                   modelf[i],
+                                   dualf[i],
                                    sigma,
                                    lam,
                                    tau,
@@ -293,18 +299,27 @@ def primal_dual_dist(
                                    positivity,
                                    workers=wname,
                                    pure=False)
-            modelf[wname] = client.submit(getitem, future, 0, workers=wname)
-            dualf[wname] = client.submit(getitem, future, 1, workers=wname)
-            vtildef[wname] = client.submit(getitem, future, 2, workers=wname)
-            epsf[wname] = client.submit(getitem, future, 3, workers=wname)
 
-        eps = client.gather(list(epsf.values()))
+            modelf[i] = client.submit(getitem, future, 0, workers=wname)
+            dualf[i] = client.submit(getitem, future, 1, workers=wname)
+            vtildef[i] = client.submit(getitem, future, 2, workers=wname)
+            epsf[i] = client.submit(getitem, future, 3, workers=wname)
+
+        gc.collect()
+
+        eps = client.gather(epsf)
 
         eps = np.array(eps)
         epsmax = eps.max()
 
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {epsmax:.3e}", file=log)
+            from pympler import summary, muppy
+            all_objects = muppy.get_objects()
+            bytearrays = [obj for obj in all_objects if isinstance(obj, bytearray)]
+            # print(summary.print_(summary.summarize(bytearrays)))
+            print(summary.print_(summary.summarize(all_objects)))
+            import ipdb; ipdb.set_trace()
 
         if epsmax < tol:
             break

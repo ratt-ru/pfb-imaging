@@ -11,3 +11,8 @@ def cli():
 from pfb.workers import (init, grid, degrid, klean,
                          restore, spotless, model2comps,
                          fluxmop, fastim, smoovie)
+
+if __name__ == '__main__':
+    from pfb.workers.spotless import spotless
+    cli.add_command(spotless)
+    cli()
