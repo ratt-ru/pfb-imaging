@@ -63,11 +63,6 @@ inputs:
     info:
       Path to Quartical gain table containing NET gains.
       There must be a table for each MS and glob(ms) and glob(gt) should match up
-  gain-term:
-    dtype: str
-    default: NET
-    info:
-      Which gain term to use. Default is NET
   integrations-per-image:
     dtype: int
     abbreviation: ipi

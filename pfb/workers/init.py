@@ -149,7 +149,7 @@ def _init(**kw):
                              "Set overwrite to overwrite it. ")
 
     if opts.gain_table is not None:
-        tmpf = lambda x: x.rstrip('/') + f'::{opts.gain_term}'
+        tmpf = lambda x: '::'.join(x.rsplit('/', 1))
         gain_names = list(map(tmpf, opts.gain_table))
     else:
         gain_names = None

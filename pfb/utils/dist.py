@@ -332,9 +332,10 @@ class band_actor(object):
     def init_model(self, model=None, dual=None):
         if model is not None:
             self.x = model
-            self.data =
+            self.data = self.psf_conv(model) + self.residual
         else:
             self.x = np.zeros((nx, ny), dtype=self.dirty.dtype)
+            self.data = self.residual
         if dual is not None:
             self.v = dual
         else:
