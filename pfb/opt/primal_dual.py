@@ -1,7 +1,7 @@
 import numpy as np
 import numexpr as ne
 import dask.array as da
-from distributed import wait, get_client, as_completed
+from pfb.utils.dist import l1reweight_func
 from operator import getitem
 from ducc0.misc import make_noncritical
 from pfb.utils.misc import norm_diff
@@ -213,8 +213,6 @@ def primal_dual_dist(
     reweighter  - function to compute L1 reweights
     '''
 
-    client = get_client()
-
     # this seems to give a good trade-off between
     # primal and dual problems
     if sigma is None:
@@ -226,7 +224,7 @@ def primal_dual_dist(
     # we need to do this upfront only at the outset
     futures = list(map(lambda a: a.init_pd_params(L, nu), actors))
     vtilde = list(map(lambda f: f.result(), futures))
-
+    numreweight = 0
     for k in range(maxit):
         # done on runner since need to combine over freq
         vmfs = np.sum(vtilde, axis=0)/sigma
@@ -254,16 +252,25 @@ def primal_dual_dist(
             # import ipdb; ipdb.set_trace()
 
         if eps < tol:
-            break
+            if (l1weight != 1.0).any() and numreweight < maxreweight:
+                l1weight = l1reweight_func(actors,
+                                           rmsfactor,
+                                           rms_comps,
+                                           alpha=alpha)
+                numreweight += 1
+            else:
+                if numreweight >= maxreweight:
+                    print("Maximum reweighting steps reached", file=log)
+                break
 
 
 
     if k >= maxit-1:
-        print(f'Maximum iterations reached. eps={eps}', file=log)
+        print(f'Maximum iterations reached. eps={eps:.3e}', file=log)
     else:
-        print(f'Success after {k} iterations', file=log)
+        print(f'Success converged after {k} iterations', file=log)
 
-    return modelf, dualf
+    return
 
 
 primal_dual.__doc__ = r"""

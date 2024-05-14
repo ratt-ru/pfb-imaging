@@ -468,25 +468,19 @@ def _spotless_dist(**kw):
     import xarray as xr
     import dask
     import dask.array as da
-    from distributed import Client, wait, get_client, as_completed
+    from distributed import get_client
     from pfb.opt.power_method import power_method_dist as power_method
-    from pfb.opt.pcg import pcg_dist as pcg
     from pfb.opt.primal_dual import primal_dual_dist as primal_dual
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.utils.fits import load_fits, dds2fits, dds2fits_mfs, set_wcs
-    from pfb.utils.dist import (accum_wsums, get_cbeam_area, get_resids,
-                                get_mfs_and_stats, almost_grad,
-                                l1reweight_func, band_actor)
-    from pfb.operators.hessian import hessian_psf_slice
-    from pfb.operators.psi2 import psi_band
-    from pfb.prox.prox_21m import prox_21m
+    from pfb.utils.dist import l1reweight_func, band_actor
     from copy import deepcopy
     from operator import getitem
     from itertools import cycle
     from uuid import uuid4
     from pfb.utils.misc import fitcleanbeam
     from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.misc import eval_coeffs_to_slice
+    from pfb.utils.misc import eval_coeffs_to_slice, fit_image_cube
     import pywt
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
@@ -564,6 +558,7 @@ def _spotless_dist(**kw):
         nmax = np.maximum(nmax, get_buffer_size((nx, ny), nfilter, opts.nlevels))
 
     # initialise dual and model (assumed constant in time)
+    # TODO - init in actor
     mds_name = f'{basename}_{opts.suffix}.mds'
     mdsstore = DaskMSStore(mds_name)
     if mdsstore.exists():
@@ -577,8 +572,8 @@ def _spotless_dist(**kw):
         coeffs = mds.coefficients.values
 
 
-        model = {}
-        dual = {}
+        model = np.zeros((nband, nx, ny))
+        dual = np.zeros((nband, nbasis, nmax))
         for i in range(opts.nband):
             model[i] = eval_coeffs_to_slice(
                 time_out,
@@ -596,17 +591,14 @@ def _spotless_dist(**kw):
                 cell_rad, cell_rad,
                 x0, y0
             )
-            dual[i] = np.zeros((nbasis, nmax),
-                               dtype=real_type)
+            # TODO - save dual in mds
+            # duals[i] = np.zeros((nbasis, nmax),
+            #                    dtype=real_type)
 
 
     else:
-        model = {}
-        dual = {}
-        for i in range(opts.nband):
-            model[i] = np.zeros((nx, ny), dtype=real_type)
-            dual[i] = np.zeros((nbasis, nmax),
-                               dtype=real_type)
+        model = np.zeros((nband, nx, ny))
+        dual = np.zeros((nband, nbasis, nmax))
 
     # split datasets per band
     ddsb = {}
@@ -689,53 +681,73 @@ def _spotless_dist(**kw):
                     verbosity=opts.pd_verbose)
 
         print('Computing residual', file=log)
-        futures = list(map(lambda a: -a.grad(), actors))
+        futures = list(map(lambda a: a.grad(), actors))
         resids = list(map(lambda f: f.result(), futures))
+        residual_mfs = -np.sum(resids, axis=0)
 
-        # l1reweighting
         if k+1 - iter0 >= opts.l1reweight_from:
             print('L1 reweighting', file=log)
-            rms_comps
-            l1weightfs = client.submit(l1reweight, modelfs, residfs, l1weightfs,
-                                       psiH, wsum, pix_per_beam, workers=names[0])
+            rms_comps = np.std(residual_mfs)*nband/pix_per_beam
+            l1weightfs = l1reweight_func(actors, opts.rmsfactor, rms_comps,
+                                         alpha=opts.alpha)
 
-        # dump results so we can continue from if needs be
-        print('Updating results', file=log)
-        ddsfs = {}
-        modelpfs = {}
-        for i, (wid, A) in enumerate(Afs.items()):
-            modelpfs[wid] = client.submit(getattr, A, 'model', workers={wid})
-            dsf = client.submit(update_results, A, dds[i], modelfs[i], dualfs[i], residfs[i],
-                                pure=False,
-                                workers={wid})
-            ddsfs[wid] = dsf
+        print('Updating model', file=log)
+        futures = list(map(lambda a: a.give_model(), actors))
+        results = list(map(lambda f: f.result(), futures))
 
-        dds = []
-        for f in as_completed(list(ddsfs.values())):
-            dds.append(f.result())
-        writes = xds_to_zarr(dds, dds_name,
-                             columns=('MODEL','DUAL','RESIDUAL'),
-                             rechunk=True)
-        l1weight = da.from_array(l1weightfs.result(), chunks=(1, 4096**2))
-        dvars = {}
-        dvars['L1WEIGHT'] = (('b','c'), l1weight)
-        l1ds = xr.Dataset(dvars)
-        l1writes = xds_to_zarr(l1ds, f'{dds_name}::L1WEIGHT')
-        client.compute(writes, l1writes)
+        bandids = [r[2] for r in results]
+        modelp = model.copy()
+        for i, b in enumerate(bandids):
+            model[b] = results[i][0]
+            dual[b] = results[i][1]
 
-        residf = client.submit(get_resid_and_stats, Afs, wsum,
-                               workers={names[0]})
-        residual_mfs = client.submit(getitem, residf, 0, workers={names[0]})
-        rms = client.submit(getitem, residf, 1, workers={names[0]}).result()
-        rmax = client.submit(getitem, residf, 2, workers={names[0]}).result()
-        eps_num = []
-        eps_den = []
-        for wid in Afs.keys():
-            fut = client.submit(get_epsb, modelpfs[wid], modelfs[wid], workers={wid})
-            eps_num.append(client.submit(getitem, fut, 0, workers={wid}))
-            eps_den.append(client.submit(getitem, fut, 1, workers={wid}))
 
-        eps = client.submit(get_eps, eps_num, eps_den, workers={names[0]}).result()
+        try:
+            coeffs, Ix, Iy, expr, params, texpr, fexpr = \
+                fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
+                               wgt=wsums[None, fsel],
+                               nbasisf=int(np.sum(fsel)),
+                               method='Legendre')
+            # save interpolated dataset
+            data_vars = {
+                'coefficients': (('par', 'comps'), coeffs),
+            }
+            coords = {
+                'location_x': (('x',), Ix),
+                'location_y': (('y',), Iy),
+                # 'shape_x':,
+                'params': (('par',), params),  # already converted to list
+                'times': (('t',), time_out),  # to allow rendering to original grid
+                'freqs': (('f',), freq_out)
+            }
+            attrs = {
+                'spec': 'genesis',
+                'cell_rad_x': cell_rad,
+                'cell_rad_y': cell_rad,
+                'npix_x': nx,
+                'npix_y': ny,
+                'texpr': texpr,
+                'fexpr': fexpr,
+                'center_x': dds[0].x0,
+                'center_y': dds[0].y0,
+                'ra': dds[0].ra,
+                'dec': dds[0].dec,
+                'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
+                'parametrisation': expr  # already converted to str
+            }
+
+            coeff_dataset = xr.Dataset(data_vars=data_vars,
+                               coords=coords,
+                               attrs=attrs)
+            coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model_{k+1}.mds")
+        except Exception as e:
+            print(f"Exception {e} raised during model fit .", file=log)
+
+
+        rms = np.std(residual_mfs)
+        rmax = np.abs(residual_mfs).max()
+        eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
+
         print(f"It {k+1}: max resid = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
 

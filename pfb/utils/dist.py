@@ -9,6 +9,7 @@ import pywt
 from pfb.wavelets.wavelets_jsk import  (get_buffer_size,
                                        dwt2d, idwt2d)
 from ducc0.misc import make_noncritical
+import concurrent.futures as cf
 
 
 def l1reweight_func(actors, rmsfactor, rms_comps, alpha=4):
@@ -45,6 +46,7 @@ class band_actor(object):
         self.wsum = wsum
         self.model = model
         self.dual = dual
+        self.bandid = dds[0].bandid
 
 
         # there can be multiple of these
@@ -80,7 +82,8 @@ class band_actor(object):
             self.data = self.dirty
 
         # set up psf convolve operators
-        self.nthreads = opts.nvthreads
+        self.nhthreads = opts.nthreads_dask
+        self.nvthreads = opts.nvthreads
         self.lastsize = dds[0].PSF.shape[-1]
 
         # pre-allocate tmp arrays
@@ -137,8 +140,10 @@ class band_actor(object):
 
     def grad(self, x=None):
         self.resid = self.dirty.copy()
+        if x is None:
+            x = self.model
 
-        if self.model.any():
+        if x.any():
             # TODO - do this in parallel
             for uvw, wgt, mask, freq, beam in zip(self.uvws, self.weights,
                                                   self.masks, self.freqs,
@@ -152,10 +157,12 @@ class band_actor(object):
                                     x0=0.0,
                                     y0=0.0,
                                     cell=self.cell_rad,
-                                    do_wgridding=opts.do_wgridding,
-                                    epsilon=opts.epsilon,
-                                    double_accum=opts.double_accum,
-                                    nthreads=opts.nvthreads)
+                                    do_wgridding=self.opts.do_wgridding,
+                                    epsilon=self.opts.epsilon,
+                                    double_accum=self.opts.double_accum,
+                                    nthreads=self.opts.nvthreads)/self.wsum
+
+        # TODO - write resid to dds list
 
         return -self.resid
 
@@ -169,7 +176,7 @@ class band_actor(object):
                                         psfhat,
                                         self.lastsize,
                                         x,
-                                        nthreads=self.nthreads)
+                                        nthreads=self.nvthreads)
 
         return convx
 
@@ -196,27 +203,27 @@ class band_actor(object):
         # comment below to eliminate the possibility of
         # wavelets/cf.futures being the culprit
         # run with bases=self only
-        alpha[0, 0:self.buffer_size[self.bases[0]]] = x.ravel()
+        # alpha[0, 0:self.buffer_size[self.bases[0]]] = x.ravel()
 
-        # with cf.ThreadPoolExecutor(max_workers=self.nthreads) as executor:
-        #     futures = []
-        #     for i, wavelet in enumerate(self.bases):
-        #         if wavelet=='self':
-        #             alpha[i, 0:self.buffer_size[wavelet]] = x.ravel()
-        #             continue
+        with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
+            futures = []
+            for i, wavelet in enumerate(self.bases):
+                if wavelet=='self':
+                    alpha[i, 0:self.buffer_size[wavelet]] = x.ravel()
+                    continue
 
-        #         f = executor.submit(dwt, x,
-        #                             self.buffer[wavelet],
-        #                             self.dec_lo[wavelet],
-        #                             self.dec_hi[wavelet],
-        #                             self.nlevel,
-        #                             i)
+                f = executor.submit(dwt, x,
+                                    self.buffer[wavelet],
+                                    self.dec_lo[wavelet],
+                                    self.dec_hi[wavelet],
+                                    self.nlevel,
+                                    i)
 
-        #         futures.append(f)
+                futures.append(f)
 
-        #     for f in cf.as_completed(futures):
-        #         buffer, i = f.result()
-        #         alpha[i, 0:self.buffer_size[self.bases[i]]] = buffer
+            for f in cf.as_completed(futures):
+                buffer, i = f.result()
+                alpha[i, 0:self.buffer_size[self.bases[i]]] = buffer
 
         return alpha
 
@@ -237,32 +244,32 @@ class band_actor(object):
         # comment below to eliminate the possibility of
         # wavelets/cf.futures being the culprit
         # run with bases=self only
-        nmax = self.buffer_size[self.bases[0]]
-        x = alpha[0, 0:nmax].reshape(nx, ny)
+        # nmax = self.buffer_size[self.bases[0]]
+        # x = alpha[0, 0:nmax].reshape(nx, ny)
 
-        # with cf.ThreadPoolExecutor(max_workers=self.nthreads) as executor:
-        #     futures = []
-        #     for i, wavelet in enumerate(self.bases):
-        #         nmax = self.buffer_size[wavelet]
-        #         if wavelet=='self':
-        #             x += alpha[i, 0:nmax].reshape(nx, ny)
-        #             continue
+        with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
+            futures = []
+            for i, wavelet in enumerate(self.bases):
+                nmax = self.buffer_size[wavelet]
+                if wavelet=='self':
+                    x += alpha[i, 0:nmax].reshape(nx, ny)
+                    continue
 
-        #         f = executor.submit(idwt,
-        #                             alpha[i, 0:nmax],
-        #                             self.rec_lo[wavelet],
-        #                             self.rec_hi[wavelet],
-        #                             self.nlevel,
-        #                             self.nx,
-        #                             self.ny,
-        #                             i)
+                f = executor.submit(idwt,
+                                    alpha[i, 0:nmax],
+                                    self.rec_lo[wavelet],
+                                    self.rec_hi[wavelet],
+                                    self.nlevel,
+                                    self.nx,
+                                    self.ny,
+                                    i)
 
 
-        #         futures.append(f)
+                futures.append(f)
 
-        #     for f in cf.as_completed(futures):
-        #         image, i = f.result()
-        #         x += image
+            for f in cf.as_completed(futures):
+                image, i = f.result()
+                x += image
 
         return x
 
@@ -270,11 +277,11 @@ class band_actor(object):
         self.hessnorm = hessnorm
         self.sigma = hessnorm/(2*gamma*nu)
         self.tau = 0.9 / (hessnorm / (2.0 * gamma) + self.sigma * nu**2)
-        self.vtilde = self.v + self.sigma * self.psi_dot(self.x)
+        self.vtilde = self.dual + self.sigma * self.psi_dot(self.model)
         return self.vtilde
 
     def update_data(self):
-        self.data = self.residual + self.psf_conv(self.x)
+        self.data = self.residual + self.psf_conv(self.model)
 
     def pd_update(self, ratio):
         self.xp[...] = self.model[...]
@@ -285,7 +292,7 @@ class band_actor(object):
         grad = self.almost_grad(self.xp)
         self.model[...] = self.xp - self.tau * (self.psi_hdot(2*self.dual - self.vp) + grad)
 
-        if self.positivity:
+        if self.opts.positivity:
             self.model[self.model < 0] = 0.0
 
         self.vtilde[...] = self.dual + self.sigma * self.psi_dot(self.model)
@@ -297,8 +304,8 @@ class band_actor(object):
 
 
     def init_random(self):
-        self.x = np.random.randn(self.nx, self.ny)
-        return np.sum(self.x**2)
+        self.b = np.random.randn(self.nx, self.ny)
+        return np.sum(self.b**2)
 
 
     def pm_update(self, bnorm):
@@ -310,7 +317,8 @@ class band_actor(object):
 
         return bsumsq, beta_num, beta_den
 
-
+    def give_model(self):
+        return self.model, self.dual, self.bandid
 
 
 
