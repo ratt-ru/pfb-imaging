@@ -8,96 +8,18 @@ from uuid import uuid4
 import pywt
 from pfb.wavelets.wavelets_jsk import  (get_buffer_size,
                                        dwt2d, idwt2d)
-
-# submit on these
-def accum_wsums(dds):
-    return np.sum([ds.WSUM.values for ds in dds])
+from ducc0.misc import make_noncritical
 
 
-def get_cbeam_area(dds, wsum):
-    psf_mfs = np.stack([ds.PSF.values for ds in dds]).sum(axis=0)/wsum
-    # beam pars in pixel units
-    GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
-    return GaussPar[0]*GaussPar[1]*np.pi/4
-
-
-def get_resids(ds, wsum, hessopts):
-    dirty = ds.DIRTY.values
-    nx, ny = dirty.shape
-    if ds.MODEL.values.any():
-        resid = dirty - _hessian_impl(ds.MODEL.values,
-                                      ds.UVW.values,
-                                      ds.WEIGHT.values,
-                                      ds.MASK.values,
-                                      ds.FREQ.values,
-                                      ds.BEAM.values,
-                                      x0=0.0,
-                                      y0=0.0,
-                                      **hessopts)
-    else:
-        resid = ds.DIRTY.values.copy()
-
-    # dso = ds.assign(**{
-    #     'RESIDUAL': (('x', 'y'), resid)
-    # })
-
-    return resid/wsum
-
-
-def get_mfs_and_stats(resids):
-    # resids should aready be normalised by wsum
-    residual_mfs = np.sum(resids, axis=0)
-    rms = np.std(residual_mfs)
-    rmax = np.sqrt((residual_mfs**2).max())
-    return residual_mfs, rms, rmax
-
-
-class almost_grad(object):
-    def __init__(self, model, psfo, residual):
-        self.psfo = psfo
-        if model.any():
-            self.data = residual + self.psfo(model, 0.0)
-        else:
-            self.data = residual.copy()
-
-    def __call__(self, model):
-        return self.psfo(model, 0.0) - self.data
-
-    def update_data(self, model, residual):
-        self.data = residual + self.psfo(model, 0.0)
-
-
-
-
-
-def get_epsb(xp, x):
-    return np.sum((x-xp)**2), np.sum(x**2)
-
-def get_eps(num, den):
-    return np.sqrt(np.sum(num)/np.sum(den))
-
-
-def psi_dot(psib, model):
-    return psib.dot(model)
-
-
-def l1reweight_func(psif, ddsf, rmsfactor, rms_comps, alpha=4):
+def l1reweight_func(actors, rmsfactor, rms_comps, alpha=4):
     '''
     The logic here is that weights should remain the same for model
     components that are rmsfactor times larger than the rms.
     High SNR values should experience relatively small thresholding
     whereas small values should be strongly thresholded
     '''
-    client = get_client()
-    outvar = []
-    for wname, ds in ddsf.items():
-        outvar.append(client.submit(psi_dot,
-                                    psif[wname],
-                                    ds.MODEL.values,
-                                    key='outvar-'+uuid4().hex,
-                                    workers=wname))
-
-    outvar = client.gather(outvar)
+    futures = list(map(lambda a: a.psi_dot(), actors))
+    outvar = list(map(lambda f: f.result(), futures))
     mcomps = np.abs(np.sum(outvar, axis=0))
     # the **alpha here results in more agressive reweighting
     return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
@@ -115,42 +37,51 @@ def idwt(buffer, rec_lo, rec_hi, nlevel, nx, ny, i):
 
 
 class band_actor(object):
-    def __init__(ddsl, opts, wsum):
+    def __init__(self, dds, opts, wsum, model, dual):
         # there should be only single versions of these for each band
         self.opts = opts
-        self.cell_rad = ddsl[0].cell_rad
+        self.cell_rad = dds[0].cell_rad
         self.nx, self.ny = model.shape
+        self.wsum = wsum
+        self.model = model
+        self.dual = dual
 
 
         # there can be multiple of these
         self.psfhats = []
         self.dirtys = []
+        self.resids = []
         self.beams = []
         self.weights = []
         self.uvws = []
         self.freqs = []
         self.masks = []
         self.wsumbs = []
-        for ds in ddsl:
-            self.psfhats.append(ds.PSFHAT.values.copy())
-            self.dirtys.append(ds.DIRTY.values.copy())
-            self.beams.append(ds.BEAM.values.copy())
-            self.weights.append(ds.WEIGHT.values.copy())
-            self.uvws.append(ds.UVW.values.copy())
-            self.freqs.append(ds.FREQ.values.copy())
-            self.masks.append(ds.MASK.values.copy())
-            self.wsumbs.append(ds.WSUM.values.copy())
+        for ds in dds:
+            self.psfhats.append(ds.PSFHAT.values/wsum)
+            self.dirtys.append(ds.DIRTY.values/wsum)
+            if model.any():
+                self.resids.append(ds.RESIDUAL.values/wsum)
+            else:
+                self.resids.append(ds.DIRTY.values/wsum)
+            self.beams.append(ds.BEAM.values)
+            self.weights.append(ds.WEIGHT.values)
+            self.uvws.append(ds.UVW.values)
+            self.freqs.append(ds.FREQ.values)
+            self.masks.append(ds.MASK.values)
+            self.wsumbs.append(ds.WSUM.values)
 
-        # we only need to keep the sum of the dirty images
+        # TODO - we only need the sum of the dirty/resid images
         self.dirty = np.sum(self.dirtys, axis=0)
+        self.resid = np.sum(self.resids, axis=0)
+        if model.any():
+            self.data = self.resid + self.psf_conv(model)
+        else:
+            self.data = self.dirty
 
         # set up psf convolve operators
         self.nthreads = opts.nvthreads
-        self.lastsize = ddsl[0].PSF.shape[-1]
-        self.psfhat = ds.PSFHAT.values
-        self.beam = ds.BEAM.values
-        self.wsumb = ds.WSUM.values[0]
-        self.wsum = wsum
+        self.lastsize = dds[0].PSF.shape[-1]
 
         # pre-allocate tmp arrays
         tmp = np.empty(self.dirty.shape,
@@ -160,15 +91,15 @@ class band_actor(object):
                        dtype=self.psfhats[0].dtype,
                        order='C')
         self.xhat = make_noncritical(tmp)
-        tmp = np.empty(ddsl[0].PSF.shape,
-                       dtype=ddsl[0].PSF.dtype,
+        tmp = np.empty(ds.PSF.shape,
+                       dtype=ds.PSF.dtype,
                        order='C')
         self.xpad = make_noncritical(tmp)
 
         # set up wavelet dictionaries
-        self.bases = opts.bases
-        self.nbasis = len(bases)
-        self.nlevel = opts.nlevel
+        self.bases = opts.bases.split(',')
+        self.nbasis = len(self.bases)
+        self.nlevel = opts.nlevels
         self.dec_lo ={}
         self.dec_hi ={}
         self.rec_lo ={}
@@ -188,40 +119,45 @@ class band_actor(object):
             self.rec_lo[wavelet] = np.array(wvlt.filter_bank[2])  # Low pass, recon.
             self.rec_hi[wavelet] = np.array(wvlt.filter_bank[3])  # Hi pass, recon.
 
-            self.buffer_size[wavelet] = get_buffer_size((nx, ny),
+            self.buffer_size[wavelet] = get_buffer_size((self.nx, self.ny),
                                                         self.dec_lo[wavelet].size,
-                                                        nlevel)
+                                                        self.nlevel)
             self.buffer[wavelet] = np.zeros(self.buffer_size[wavelet],
                                             dtype=np.float64)
 
             self.nmax = np.maximum(self.nmax, self.buffer_size[wavelet])
 
-        # # set primal dual params
-        # self.sigma =
+        # tmp optimisation vars
+        self.b = np.zeros_like(model)
+        self.bp = np.zeros_like(model)
+        self.xp = np.zeros_like(model)
+        self.vp = np.zeros_like(dual)
+        self.vtilde = np.zeros_like(dual)
 
 
-    def grad(self, x):
-        resid = self.dirty.copy()
+    def grad(self, x=None):
+        self.resid = self.dirty.copy()
 
-        # TODO - do this in parallel
-        for uvw, wgt, mask, freq, beam in zip(self.uvws, self.weights,
-                                              self.masks, self.freqs,
-                                              self.beams):
-            resid -= _hessian_impl(x,
-                                   uvw,
-                                   wgt,
-                                   mask,
-                                   freq,
-                                   beam,
-                                   x0=0.0,
-                                   y0=0.0,
-                                   cell=self.cell_rad,
-                                   do_wgridding=opts.do_wgridding,
-                                   epsilon=opts.epsilon,
-                                   double_accum=opts.double_accum,
-                                   nthreads=opts.nvthreads)
+        if self.model.any():
+            # TODO - do this in parallel
+            for uvw, wgt, mask, freq, beam in zip(self.uvws, self.weights,
+                                                  self.masks, self.freqs,
+                                                  self.beams):
+                self.resid -= _hessian_impl(x,
+                                    uvw,
+                                    wgt,
+                                    mask,
+                                    freq,
+                                    beam,
+                                    x0=0.0,
+                                    y0=0.0,
+                                    cell=self.cell_rad,
+                                    do_wgridding=opts.do_wgridding,
+                                    epsilon=opts.epsilon,
+                                    double_accum=opts.double_accum,
+                                    nthreads=opts.nvthreads)
 
-        return -resid
+        return -self.resid
 
 
     def psf_conv(self, x):
@@ -230,7 +166,7 @@ class band_actor(object):
             convx += psf_convolve_slice(self.xpad,
                                         self.xhat,
                                         self.xout,
-                                        psfat,
+                                        psfhat,
                                         self.lastsize,
                                         x,
                                         nthreads=self.nthreads)
@@ -239,11 +175,10 @@ class band_actor(object):
 
 
     def almost_grad(self, x):
-        convx = self.psf_conv(x)
-        return convx - self.data
+        return self.psf_conv(x) - self.data
 
 
-    def psi_dot(self, x):
+    def psi_dot(self, x=None):
         '''
         signal to coeffs
 
@@ -253,6 +188,8 @@ class band_actor(object):
         Output:
             alpha   - (nbasis, Nnmax) output coeffs
         '''
+        if x is None:
+            x = self.model
         alpha = np.zeros((self.nbasis, self.nmax),
                          dtype=x.dtype)
 
@@ -329,42 +266,49 @@ class band_actor(object):
 
         return x
 
-    def init_model(self, model=None, dual=None):
-        if model is not None:
-            self.x = model
-            self.data = self.psf_conv(model) + self.residual
-        else:
-            self.x = np.zeros((nx, ny), dtype=self.dirty.dtype)
-            self.data = self.residual
-        if dual is not None:
-            self.v = dual
-        else:
-            self.v = np.zeros((self.nbasis, self.nmax),
-                              dtype=self.dirty.dtype)
-        self.xp = np.zeros_like(self.x)
-        self.vp = np.zeros_like(self.v)
-        self.vtilde = np.zeros_like(self.v)
-
-
-    def set_pd_params(self, hessnorm, sigma, nu, gamma=1):
+    def init_pd_params(self, hessnorm, nu, gamma=1):
         self.hessnorm = hessnorm
         self.sigma = hessnorm/(2*gamma*nu)
         self.tau = 0.9 / (hessnorm / (2.0 * gamma) + self.sigma * nu**2)
-
-    def update_lam21(self, lam):
-        self.lam = lam
-
-    def init_vtilde(self):
         self.vtilde = self.v + self.sigma * self.psi_dot(self.x)
         return self.vtilde
 
-    def pd_update(self, ratio):
-        self.xp[...] = self.x[...]
-        self.vp[...] = self.v[...]
+    def update_data(self):
+        self.data = self.residual + self.psf_conv(self.x)
 
-        self.v[...] = self.vtilde * (1 - ratio)
+    def pd_update(self, ratio):
+        self.xp[...] = self.model[...]
+        self.vp[...] = self.dual[...]
+
+        self.dual[...] = self.vtilde * (1 - ratio)
 
         grad = self.almost_grad(self.xp)
+        self.model[...] = self.xp - self.tau * (self.psi_hdot(2*self.dual - self.vp) + grad)
+
+        if self.positivity:
+            self.model[self.model < 0] = 0.0
+
+        self.vtilde[...] = self.dual + self.sigma * self.psi_dot(self.model)
+
+        eps_num = np.sum((self.model-self.xp)**2)
+        eps_den = np.sum(self.model**2)
+
+        return self.vtilde, eps_num, eps_den
+
+
+    def init_random(self):
+        self.x = np.random.randn(self.nx, self.ny)
+        return np.sum(self.x**2)
+
+
+    def pm_update(self, bnorm):
+        self.bp[...] = self.b/bnorm
+        self.b[...] = self.psf_conv(self.bp)
+        bsumsq = np.sum(self.b**2)
+        beta_num = np.vdot(self.b, self.bp)
+        beta_den = np.vdot(self.bp, self.bp)
+
+        return bsumsq, beta_num, beta_den
 
 
 

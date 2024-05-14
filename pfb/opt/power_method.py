@@ -67,59 +67,47 @@ def bnormf(bsumsq):
 def betaf(beta_num, beta_den):
     return np.sum(beta_num)/np.sum(beta_den)
 
-def power_method_dist(hess_psfs,
+
+from time import time
+def power_method_dist(actors,
                       nx,
                       ny,
                       nband,
                       sigmainv=0,
-                      tol=1e-5,
+                      tol=1e-4,
                       maxit=200):
 
     client = get_client()
 
-    b = []
-    bssq = []
-    bnum = []
-    bden = []
-    for i, (wname, hess) in enumerate(hess_psfs.items()):
-        b.append(client.submit(np.random.randn, nx, ny,
-                               workers=wname))
-        bssq.append(client.submit(sumsq, b[i],
-                                  workers=wname))
-        # this just initialises the lists required below
-        bnum.append(1)
-        bden.append(1)
+    bssq = list(map(lambda a: a.init_random(), actors))
+    # for wname, actor in actors.items():
+    #     bssq.append(actor.init_random())
 
-    bssq = client.gather(bssq)
+    # while not np.all(list(map(lambda o: o.done(), bssq))):
+    #     pass
+
+    # custom gather?
+    bssq = list(map(lambda o: o.result(), bssq))
     bnorm = np.sqrt(np.sum(bssq))
     beta = 1
     for k in range(maxit):
-        for i, (wname, A) in enumerate(hess_psfs.items()):
-            fut = client.submit(power, A, b[i], bnorm, sigmainv,
-                                workers=wname)
+        futures = list(map(lambda a: a.pm_update(bnorm), actors))
 
-            b[i] = client.submit(getitem, fut, 0, workers=wname)
-            bssq[i] = client.submit(getitem, fut, 1, workers=wname)
-            bnum[i] = client.submit(getitem, fut, 2, workers=wname)
-            bden[i] = client.submit(getitem, fut, 3, workers=wname)
+        results = list(map(lambda f: f.result(), futures))
+        # what is wrong here?
+        # bssq = list(map(getitem, results, 0))
+        bssq = [r[0] for r in results]
+        bnum = [r[1] for r in results]
+        bden = [r[2] for r in results]
 
-        bssq = client.gather(bssq)
         bnorm = np.sqrt(np.sum(bssq))
         betap = beta
-        bnum = client.gather(bnum)
-        bden = client.gather(bden)
         beta = np.sum(bnum)/np.sum(bden)
 
         eps = np.abs(betap - beta)/betap
         if eps < tol:
             break
 
-        # if not k % 10:
-        #     print(f"At iteration {k} eps = {eps:.3e}", file=log)
-        #     from pympler import summary, muppy
-        #     all_objects = muppy.get_objects()
-        #     # bytearrays = [obj for obj in all_objects if isinstance(obj, bytearray)]
-        #     # print(summary.print_(summary.summarize(bytearrays)))
-        #     print(summary.print_(summary.summarize(all_objects)))
+        print(eps, beta)
 
     return beta

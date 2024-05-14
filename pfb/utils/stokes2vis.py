@@ -190,7 +190,7 @@ def single_stokes(ds=None,
 
         # map_blocks to deal with nan row chunks.
         # only freq average -> row chunks are preserved
-        cchunk = nchan//opts.chan_average
+        cchunk = int(np.ceil(nchan/opts.chan_average))
         vis = res.visibilities.map_blocks(lambda x: x,
                                           chunks=(nrow, cchunk, 1))[:, :, 0]
         wgt = res.weight_spectrum.map_blocks(lambda x: x,

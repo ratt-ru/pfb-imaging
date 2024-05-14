@@ -182,35 +182,8 @@ def primal_dual_optimised(
 
     return x, v
 
-
-def vtilde_update(ds, sigma, psi):
-    vtilde = ds.DUAL.values + sigma * psi.dot(ds.MODEL.values)
-    model = ds.MODEL.values.copy()
-    dual = ds.DUAL.values.copy()
-    return vtilde, model, dual
-
-def update(gradf, vtildep, ratio, xp, vp, sigma, lam, tau, gamma, psi, positivity):
-    # dual
-    v = vtildep * (1 - ratio)
-
-    # primal
-    grad = gradf(xp)
-    x = xp - tau * (psi.hdot(2 * v - vp) + grad)
-    if positivity:
-        x[x < 0] = 0.0
-
-    vtilde = v + sigma * psi.dot(x)
-
-    eps = np.linalg.norm(x-xp)/np.linalg.norm(x)
-    return x, v, vtilde, eps
-
-def dummy_func():
-    return 1
-
 def primal_dual_dist(
-            ddsf,
-            psif,
-            gradf,
+            actors,
             lam,  # strength of regulariser
             L,    # spectral norm of Hessian
             l1weight,
@@ -233,9 +206,7 @@ def primal_dual_dist(
 
     Inputs:
 
-    ddsf        - dict of futures to dds
-    psif        - dict of futures to per band psi operators with dot anf hdot methods
-    gradf       - dict of futures to gradient operators
+    actors      - list of band actors
     lam         - strength of regulariser
     L           - spectral norm of hessian approximation
     l1weight    - array of L1 weights
@@ -253,75 +224,36 @@ def primal_dual_dist(
     tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
 
     # we need to do this upfront only at the outset
-    vtildef = []
-    modelf = []
-    dualf = []
-    epsf = []
-    for wname, ds in ddsf.items():
-        fut = client.submit(vtilde_update,
-                            ds,
-                            sigma,
-                            psif[wname],
-                            workers=wname,
-                            key='vtilde-'+uuid4().hex)
-        # vtildef[wname] = client.submit(getitem, fut, 0, workers=wname)
-        vtildef.append(client.submit(getitem, fut, 0, workers=wname))
-        # modelf[wname] = client.submit(getitem, fut, 1, workers=wname)
-        modelf.append(client.submit(getitem, fut, 1, workers=wname))
-        # dualf[wname] = client.submit(getitem, fut, 2, workers=wname)
-        dualf.append(client.submit(getitem, fut, 2, workers=wname))
-        # this just initialises the list we need below
-        epsf.append(1)
+    futures = list(map(lambda a: a.init_pd_params(L, nu), actors))
+    vtilde = list(map(lambda f: f.result(), futures))
 
-    # import ipdb; ipdb.set_trace()
     for k in range(maxit):
         # done on runner since need to combine over freq
-        # vtilde = client.gather(vtildef)
-        vmfs = np.sum(client.gather(vtildef), axis=0)/sigma
+        vmfs = np.sum(vtilde, axis=0)/sigma
         vsoft = np.maximum(np.abs(vmfs) - lam*l1weight/sigma, 0.0) * np.sign(vmfs)
         mask = vmfs != 0
         ratio = np.zeros(mask.shape, dtype=l1weight.dtype)
         ratio[mask] = vsoft[mask] / vmfs[mask]
 
         # do on individual workers
-        for i, (wname, grad) in enumerate(gradf.items()):
-            future = client.submit(update,
-                                   grad,
-                                   vtildef[i],
-                                   ratio,
-                                   modelf[i],
-                                   dualf[i],
-                                   sigma,
-                                   lam,
-                                   tau,
-                                   gamma,
-                                   psif[wname],
-                                   positivity,
-                                   workers=wname,
-                                   pure=False)
+        futures = list(map(lambda a: a.pd_update(ratio), actors))
+        results = list(map(lambda f: f.result(), futures))
+        vtilde = [r[0] for r in results]
+        eps_num = [r[1] for r in results]
+        eps_den = [r[2] for r in results]
 
-            modelf[i] = client.submit(getitem, future, 0, workers=wname)
-            dualf[i] = client.submit(getitem, future, 1, workers=wname)
-            vtildef[i] = client.submit(getitem, future, 2, workers=wname)
-            epsf[i] = client.submit(getitem, future, 3, workers=wname)
-
-        gc.collect()
-
-        eps = client.gather(epsf)
-
-        eps = np.array(eps)
-        epsmax = eps.max()
+        eps = np.sqrt(np.sum(eps_num)/np.sum(eps_den))
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} eps = {epsmax:.3e}", file=log)
-            from pympler import summary, muppy
-            all_objects = muppy.get_objects()
-            bytearrays = [obj for obj in all_objects if isinstance(obj, bytearray)]
-            # print(summary.print_(summary.summarize(bytearrays)))
-            print(summary.print_(summary.summarize(all_objects)))
-            import ipdb; ipdb.set_trace()
+            print(f"At iteration {k} eps = {eps:.3e}", file=log)
+            # from pympler import summary, muppy
+            # all_objects = muppy.get_objects()
+            # bytearrays = [obj for obj in all_objects if isinstance(obj, bytearray)]
+            # # print(summary.print_(summary.summarize(bytearrays)))
+            # print(summary.print_(summary.summarize(all_objects)))
+            # import ipdb; ipdb.set_trace()
 
-        if epsmax < tol:
+        if eps < tol:
             break
 
 

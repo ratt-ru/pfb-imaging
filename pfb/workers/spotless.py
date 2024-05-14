@@ -476,7 +476,7 @@ def _spotless_dist(**kw):
     from pfb.utils.fits import load_fits, dds2fits, dds2fits_mfs, set_wcs
     from pfb.utils.dist import (accum_wsums, get_cbeam_area, get_resids,
                                 get_mfs_and_stats, almost_grad,
-                                l1reweight_func)
+                                l1reweight_func, band_actor)
     from pfb.operators.hessian import hessian_psf_slice
     from pfb.operators.psi2 import psi_band
     from pfb.prox.prox_21m import prox_21m
@@ -485,15 +485,28 @@ def _spotless_dist(**kw):
     from itertools import cycle
     from uuid import uuid4
     from pfb.utils.misc import fitcleanbeam
+    from daskms.fsspec_store import DaskMSStore
+    from pfb.utils.misc import eval_coeffs_to_slice
+    import pywt
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.suffix}.dds'
+    ddsstore = DaskMSStore(dds_name)
+    try:
+        assert ddsstore.exists()
+    except Exception as e:
+        raise ValueError(f'No dds at {dds_name}')
 
     client = get_client()
     client.amm.stop()
     names = list(client.scheduler_info()['workers'].keys())
 
-    dds = xds_from_zarr(dds_name, chunks={'row':-1,
+    try:
+        assert len(names) == opts.nband
+    except Exception as e:
+        raise ValueError("You must initialise a worker per imaging band")
+
+    dds = xds_from_zarr(ddsstore.url, chunks={'row':-1,
                                           'chan':-1,
                                           'x':-1,
                                           'y':-1,
@@ -538,100 +551,103 @@ def _spotless_dist(**kw):
         iter0 = 0
 
 
-    # put psib on each worker
+    # get size of dual domain
     bases = tuple(opts.bases.split(','))
     nbasis = len(bases)
-    psif = {}
-    psiHf = {}
-    for ds, wname in zip(dds, cycle(names)):
-        psif[wname] = client.submit(psi_band,
-                                    bases,
-                                    opts.nlevels,
-                                    nx, ny,
-                                    opts.nthreads_dask,
-                                    workers=wname,
-                                    key='psib-'+uuid4().hex,
-                                    pure=False)
+    from pfb.wavelets.wavelets_jsk import get_buffer_size
+    nmax = 0
+    for wavelet in bases:
+        if wavelet == 'self':
+            nmax = nx*ny
+            continue
+        nfilter = len(pywt.Wavelet(wavelet).filter_bank[0])
+        nmax = np.maximum(nmax, get_buffer_size((nx, ny), nfilter, opts.nlevels))
 
-    wait(list(psif.values()))
-    nmax = psif[names[0]].result().nmax
+    # initialise dual and model (assumed constant in time)
+    mds_name = f'{basename}_{opts.suffix}.mds'
+    mdsstore = DaskMSStore(mds_name)
+    if mdsstore.exists():
+        mds = xr.open_zarr(mdsstore.url)
 
-    # add dual and model if they are not in dds
-    if 'MODEL' not in dds[0]:
-        for i, ds in enumerate(dds):
-            model = da.zeros((nx, ny),
-                            chunks=(-1,-1),
-                            dtype=real_type,
-                            name='model-'+uuid4().hex)
-            dds[i] = ds.assign(**{
-                'MODEL': (('x', 'y'), model)
-            })
-    if 'DUAL' not in dds[0] or dds[0].DUAL.shape != nbasis:
-        for i, ds in enumerate(dds):
-            dual = da.zeros((nbasis, nmax),
-                            chunks=(-1,-1),
-                            dtype=real_type,
-                            name='dual-'+uuid4().hex)
-            dds[i] = ds.assign(**{
-                'DUAL': (('c', 'n',), dual)
-            })
+        # we only want to load these once
+        model_coeffs = mds.coefficients.values
+        locx = mds.location_x.values
+        locy = mds.location_y.values
+        params = mds.params.values
+        coeffs = mds.coefficients.values
 
-    # persist data onto workers
-    ddsf = {}
-    for ds, wname in zip(dds, cycle(names)):
-        ddsf[wname] = ds.persist(workers=wname)
 
-    # wait expects a list of futures
-    dds = list(ddsf.values())
-    wait(dds)
-    wsum = np.sum([ds.WSUM.values for ds in dds])
+        model = {}
+        dual = {}
+        for i in range(opts.nband):
+            model[i] = eval_coeffs_to_slice(
+                time_out,
+                freq_out[i],
+                model_coeffs,
+                locx, locy,
+                mds.parametrisation,
+                params,
+                mds.texpr,
+                mds.fexpr,
+                mds.npix_x, mds.npix_y,
+                mds.cell_rad_x, mds.cell_rad_y,
+                mds.center_x, mds.center_y,
+                nx, ny,
+                cell_rad, cell_rad,
+                x0, y0
+            )
+            dual[i] = np.zeros((nbasis, nmax),
+                               dtype=real_type)
 
-    psf_mfs = np.stack([ds.PSF.values for ds in dds]).sum(axis=0)/wsum
+
+    else:
+        model = {}
+        dual = {}
+        for i in range(opts.nband):
+            model[i] = np.zeros((nx, ny), dtype=real_type)
+            dual[i] = np.zeros((nbasis, nmax),
+                               dtype=real_type)
+
+    # split datasets per band
+    ddsb = {}
+    for ds in dds:
+        bandid = ds.bandid
+        ddsb.setdefault(bandid, [])
+        ddsb[bandid].append(ds)
+
+    # TODO - is this too slow?
+    wsum = da.stack([ds.WSUM.data for ds in dds]).sum(axis=0).compute()
+    psf_mfs = da.stack([ds.PSF.values for ds in dds]).sum(axis=0).compute()/wsum
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
     pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
-    # pix_per_beam = client.submit(get_cbeam_area, ddsf.values(), wsum,
-    #                              workers=names[0]).result()
 
-    # set up Hessian approximation
-    hess_psfs = {}
-    for wname, ds in ddsf.items():
-        hess_psfs[wname] = client.submit(hessian_psf_slice,
-                                         ds, opts.nvthreads, wsum,
-                                         workers=wname,
-                                         key='hess_psf-'+uuid4().hex,
-                                         pure=False)
+    # set up band actors
+    futures = []
+    for wname, (bandid, ddsl) in zip(names, ddsb.items()):
+        f = client.submit(band_actor,
+                          ddsl,
+                          opts,
+                          wsum,
+                          model[bandid],
+                          dual[bandid],
+                          workers=wname,
+                          key='actor-'+uuid4().hex,
+                          actor=True,
+                          pure=False)
+        futures.append(f)
+
+    actors = list(map(lambda f: f.result(), futures))
 
     if opts.hessnorm is None:
         print('Getting spectral norm of Hessian approximation', file=log)
-        hessnorm = power_method(hess_psfs, nx, ny, nband)
+        hessnorm = power_method(actors, nx, ny, nband)
     else:
         hessnorm = opts.hessnorm
     print(f'hessnorm = {hessnorm:.3e}', file=log)
 
-
-    # vis space Hessian opts
-    hessopts = {}
-    hessopts['cell'] = dds[0].cell_rad
-    hessopts['do_wgridding'] = opts.do_wgridding
-    hessopts['epsilon'] = opts.epsilon
-    hessopts['double_accum'] = opts.double_accum
-    hessopts['nthreads'] = opts.nvthreads  # nvthreads since dask parallel over band
-
-    # futures to residuals
-    residf = {}
-    for wname, ds in ddsf.items():
-        residf[wname] = client.submit(get_resids,
-                                        ds,
-                                        wsum,
-                                        hessopts,
-                                        # actor=True,
-                                        workers=wname,
-                                        key='resid-'+uuid4().hex)
-
-
-
-    resid = client.gather(list(residf.values()))
-    residual_mfs = np.sum(resid, axis=0)
+    futures = list(map(lambda a: a.grad(), actors))
+    residual_mfs = -np.sum(list(map(lambda f: f.result(), futures)),
+                           axis=0)
     rms = np.std(residual_mfs)
     rmax = np.sqrt((residual_mfs**2).max())
 
@@ -646,8 +662,7 @@ def _spotless_dist(**kw):
     if l1reweight_from == 0:
         # this is an approximation
         rms_comps = np.std(residual_mfs)*nband/pix_per_beam
-        l1weight = l1reweight_func(psif,
-                                   ddsf,
+        l1weight = l1reweight_func(actors,
                                    opts.rmsfactor,
                                    rms_comps,
                                    alpha=opts.alpha)
@@ -656,49 +671,31 @@ def _spotless_dist(**kw):
         l1weight = np.ones((nbasis, nmax), dtype=real_type)
         reweighter = None
 
-    # initialise grad approximation
-    gradf = {}
-    for wname, ds in ddsf.items():
-        gradf[wname] = client.submit(almost_grad,
-                                     ds.MODEL.values,
-                                     hess_psfs[wname],
-                                     residf[wname],
-                                     workers=wname,
-                                     key='grad-'+uuid4().hex,
-                                     pure=False)
-
     print(f"It {iter0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for k in range(iter0, iter0 + opts.niter):
         print('Solving for model', file=log)
-        modelfs, dualfs = primal_dual(
-                            ddsf,
-                            psif,
-                            gradf,
-                            rms,
-                            hessnorm,
-                            l1weight,
-                            opts.rmsfactor,
-                            rms_comps,
-                            opts.alpha,
-                            nu=len(bases),
-                            tol=opts.pd_tol,
-                            maxit=opts.pd_maxit,
-                            positivity=opts.positivity,
-                            gamma=opts.gamma,
-                            verbosity=opts.pd_verbose)
+        primal_dual(actors,
+                    rms,
+                    hessnorm,
+                    l1weight,
+                    opts.rmsfactor,
+                    rms_comps,
+                    opts.alpha,
+                    nu=len(bases),
+                    tol=opts.pd_tol,
+                    maxit=opts.pd_maxit,
+                    positivity=opts.positivity,
+                    gamma=opts.gamma,
+                    verbosity=opts.pd_verbose)
 
         print('Computing residual', file=log)
-        residfs = {}
-        for wid, A in Afs.items():
-            residf = client.submit(compute_residual, A, modelfs[wid],
-                                   workers={wid})
-            residfs[wid] = residf
-
-        wait(list(residfs.values()))
+        futures = list(map(lambda a: -a.grad(), actors))
+        resids = list(map(lambda f: f.result(), futures))
 
         # l1reweighting
-        if k+1 >= opts.l1reweight_from:
+        if k+1 - iter0 >= opts.l1reweight_from:
             print('L1 reweighting', file=log)
+            rms_comps
             l1weightfs = client.submit(l1reweight, modelfs, residfs, l1weightfs,
                                        psiH, wsum, pix_per_beam, workers=names[0])
 
