@@ -56,7 +56,9 @@ def fwdbwd(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _fwdbwd(**opts)
+        _fwdbwd(**opts)
+
+    print("All done here.", file=log)
 
 def _fwdbwd(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
@@ -470,5 +472,3 @@ def _fwdbwd(ddsi=None, **kw):
     if len(fitsout):
         print("Writing fits", file=log)
         dask.compute(fitsout)
-
-    print("All done here.", file=log)

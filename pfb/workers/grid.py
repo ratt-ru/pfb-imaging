@@ -114,12 +114,7 @@ def grid(**kw):
             print("Writing fits", file=log)
             dask.compute(fitsout)
 
-        if opts.scheduler=='distributed':
-            from distributed import get_client
-            client = get_client()
-            client.close()
-
-        print("All done here.", file=log)
+    print("All done here.", file=log)
 
 def _grid(xdsi=None, **kw):
     opts = OmegaConf.create(kw)

@@ -99,12 +99,7 @@ def init(**kw):
         with compute_context(opts.scheduler, f'{ldir}/init_{timestamp}'):
             dask.compute(writes, optimize_graph=False)
 
-        if opts.scheduler=='distributed':
-            from distributed import get_client
-            client = get_client()
-            client.close()
-
-        print("All done here.", file=log)
+    print("All done here.", file=log)
 
 def _init(**kw):
     opts = OmegaConf.create(kw)

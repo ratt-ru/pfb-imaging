@@ -38,7 +38,7 @@ def idwt(buffer, rec_lo, rec_hi, nlevel, nx, ny, i):
 
 
 class band_actor(object):
-    def __init__(self, dds, opts, wsum, model, dual):
+    def __init__(self, dds, opts, wsum, model, dual, wid):
         # there should be only single versions of these for each band
         self.opts = opts
         self.cell_rad = dds[0].cell_rad
@@ -48,6 +48,11 @@ class band_actor(object):
         self.dual = dual
         self.bandid = dds[0].bandid
 
+
+        with worker_client as client:
+            dds = client.compute(dds,
+                                 sync=True,
+                                 workers=wid)
 
         # there can be multiple of these
         self.psfhats = []
@@ -166,6 +171,8 @@ class band_actor(object):
 
         return -self.resid
 
+    def get_resid(self):
+        return self.resid
 
     def psf_conv(self, x):
         convx = np.zeros_like(x)

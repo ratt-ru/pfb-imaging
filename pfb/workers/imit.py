@@ -8,49 +8,56 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('FASTIM')
+log = pyscilog.get_logger('IMIT')
 import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}
-for key in schema.fastim["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.fastim["inputs"][key]["default"]
+for key in schema.imit["inputs"].keys():
+    defaults[key.replace("-", "_")] = schema.imit["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.fastim)
-def fastim(**kw):
+@clickify_parameters(schema.imit)
+def imit(**kw):
     '''
-    Produce high cadence residual images.
+    Produce image space data products directly from MS.
+    This essentially combines the init and grid workers
+    and doesn't use xds_to_zarr to create the dds.
+    Instead each worker writes directly to a sub-directory.
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    pyscilog.log_to_file(f'{ldir}/fastim_{timestamp}.log')
+    pyscilog.log_to_file(f'{ldir}/imit_{timestamp}.log')
     print(f'Logs will be written to {str(ldir)}/fastim_{timestamp}.log', file=log)
     if opts.product.upper() not in ["I","Q", "U", "V"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
     from daskms.fsspec_store import DaskMSStore
-    msstore = DaskMSStore(opts.ms.rstrip('/'))
-    mslist = msstore.fs.glob(opts.ms.rstrip('/'))
-    try:
-        assert len(mslist) == 1
-    except:
-        raise ValueError(f"There must be a single MS corresponding "
-                         f"to {opts.ms}")
-    opts.ms = mslist[0]
-    if opts.gain_table is not None:
-        gainstore = DaskMSStore(opts.gain_table.rstrip('/'))
-        gtlist = gainstore.fs.glob(opts.gain_table.rstrip('/'))
+    msnames = []
+    for ms in opts.ms:
+        msstore = DaskMSStore(ms.rstrip('/'))
+        mslist = msstore.fs.glob(ms.rstrip('/'))
         try:
-            assert len(gtlist) == 1
-        except Exception as e:
-            raise ValueError(f"There must be a single gain table "
-                             f"corresponding to {opts.gain_table}")
-        opts.gain_table = gtlist[0]
+            assert len(mslist) > 0
+            msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
+        except:
+            raise ValueError(f"No MS at {ms}")
+    opts.ms = msnames
+    if opts.gain_table is not None:
+        gainnames = []
+        for gt in opts.gain_table:
+            gainstore = DaskMSStore(gt.rstrip('/'))
+            gtlist = gainstore.fs.glob(gt.rstrip('/'))
+            try:
+                assert len(gtlist) > 0
+                gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
+            except Exception as e:
+                raise ValueError(f"No gain table  at {gt}")
+        opts.gain_table = gainnames
     if opts.transfer_model_from is not None:
         tmf = opts.transfer_model_from.rstrip('/')
         modelstore = DaskMSStore(tmf)
@@ -61,6 +68,10 @@ def fastim(**kw):
                              f"to {opts.transfer_model_from}")
         opts.transfer_model_from = modelstore.url
     OmegaConf.set_struct(opts, True)
+
+    if opts.product.upper() not in ["I","Q", "U", "V"]:
+            # "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
+        raise NotImplementedError(f"Product {opts.product} not yet supported")
 
     # TODO - prettier config printing
     print('Input Options:', file=log)
@@ -109,11 +120,11 @@ def fastim(**kw):
         client.amm.stop()
 
         ti = time.time()
-        _fastim(**opts)
+        _imit(**opts)
 
     print(f"All done after {time.time() - ti}s", file=log)
 
-def _fastim(**kw):
+def _imit(**kw):
     opts = OmegaConf.create(kw)
     from omegaconf import ListConfig, open_dict
     OmegaConf.set_struct(opts, True)
@@ -129,24 +140,27 @@ def _fastim(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.stokes2im import single_stokes_image
+    from pfb.utils.stokes2im import image_space_products
     import xarray as xr
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    fdsstore = DaskMSStore(f'{basename}.fds')
-    if fdsstore.exists():
+    ddsstore = DaskMSStore(f'{basename}.dds')
+    if ddsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {basename}.fds", file=log)
-            fdsstore.rm(recursive=True)
+            print(f"Overwriting {basename}.dds", file=log)
+            ddsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.fds exists. "
+            raise ValueError(f"{basename}.dds exists. "
                              "Set overwrite to overwrite it. ")
 
+    print(f"Data products will be stored in {ddsstore.url}", file=log)
+
     if opts.gain_table is not None:
-        gain_name = "::".join(opts.gain_table.rstrip('/').rsplit("/", 1))
+        tmpf = lambda x: '::'.join(x.rsplit('/', 1))
+        gain_names = list(map(tmpf, opts.gain_table))
     else:
-        gain_name = None
+        gain_names = None
 
     if opts.freq_range is not None:
         fmin, fmax = opts.freq_range.strip(' ').split(':')
@@ -162,8 +176,6 @@ def _fastim(**kw):
         freq_min = -np.inf
         freq_max = np.inf
 
-
-
     client = get_client()
 
     print('Constructing mapping', file=log)
@@ -171,18 +183,17 @@ def _fastim(**kw):
         freqs, utimes, ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms,
-                               gain_name,
+                               gain_names,
                                ipi=opts.integrations_per_image,
                                cpi=opts.channels_per_degrid_image,
                                freq_min=freq_min,
                                freq_max=freq_max)
 
     max_freq = 0
-    ms = opts.ms
-    # for ms in opts.ms:
-    for idt in freqs[ms].keys():
-        freq = freqs[ms][idt]
-        max_freq = np.maximum(max_freq, freq.max())
+    for ms in opts.ms:
+        for idt in freqs[ms].keys():
+            freq = freqs[ms][idt]
+            max_freq = np.maximum(max_freq, freq.max())
 
     # cell size
     cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
@@ -197,7 +208,7 @@ def _fastim(**kw):
     else:
         cell_rad = cell_N / opts.super_resolution_factor
         cell_size = cell_rad * 60 * 60 * 180 / np.pi
-        print(f"Cell size set to {cell_size} arcseconds", file=log)
+        print(f"Cell size set to {cell_size:.3e} arcseconds", file=log)
 
     if opts.nx is None:
         fov = opts.field_of_view * 3600
@@ -274,95 +285,94 @@ def _fastim(**kw):
     else:
         mds = None
 
-    xds = xds_from_ms(ms,
-                      chunks=ms_chunks[ms],
-                      columns=columns,
-                      table_schema=schema,
-                      group_cols=group_by)
-
-    if opts.gain_table is not None:
-        gds = xds_from_zarr(gain_name,
-                            chunks=gain_chunks[ms])
-
 
     # a flat list to use with as_completed
     datasets = []
 
-    for ids, ds in enumerate(xds):
-        fid = ds.FIELD_ID
-        ddid = ds.DATA_DESC_ID
-        scanid = ds.SCAN_NUMBER
-        # TODO - cleaner syntax
-        if opts.fields is not None:
-            if fid not in opts.fields:
+    for ims, ms in enumerate(opts.ms):
+        xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
+                          table_schema=schema, group_cols=group_by)
+
+        if opts.gain_table is not None:
+            gds = xds_from_zarr(gain_names[ims],
+                                chunks=gain_chunks[ms])
+
+        for ids, ds in enumerate(xds):
+            fid = ds.FIELD_ID
+            ddid = ds.DATA_DESC_ID
+            scanid = ds.SCAN_NUMBER
+            # TODO - cleaner syntax
+            if opts.fields is not None:
+                if fid not in opts.fields:
+                    continue
+            if opts.ddids is not None:
+                if ddid not in opts.ddids:
+                    continue
+            if opts.scans is not None:
+                if scanid not in opts.scans:
+                    continue
+
+
+            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+            nrow = ds.sizes['row']
+            ncorr = ds.sizes['corr']
+
+            idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
+            if not idx.any():
                 continue
-        if opts.ddids is not None:
-            if ddid not in opts.ddids:
-                continue
-        if opts.scans is not None:
-            if scanid not in opts.scans:
-                continue
 
+            titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
+                                time_mapping[ms][idt]['counts']))
+            for ti, (tlow, tcounts) in titr:
 
-        idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
-        nrow = ds.sizes['row']
-        ncorr = ds.sizes['corr']
+                It = slice(tlow, tlow + tcounts)
+                ridx = row_mapping[ms][idt]['start_indices'][It]
+                rcnts = row_mapping[ms][idt]['counts'][It]
+                # select all rows for output dataset
+                Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
 
-        idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
-        if not idx.any():
-            continue
+                fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
+                                    freq_mapping[ms][idt]['counts']))
 
-        titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
-                            time_mapping[ms][idt]['counts']))
-        for ti, (tlow, tcounts) in titr:
-
-            It = slice(tlow, tlow + tcounts)
-            ridx = row_mapping[ms][idt]['start_indices'][It]
-            rcnts = row_mapping[ms][idt]['counts'][It]
-            # select all rows for output dataset
-            Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
-
-            fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
-                                freq_mapping[ms][idt]['counts']))
-
-            # # TODO - cpdi to cpgi mapping
-            # # assumes cpdi is integer multiple of cpgi
-            nbandi = freq_mapping[ms][idt]['start_indices'].size
-            nfreqs = np.sum(freq_mapping[ms][idt]['counts'])
-            if opts.channels_per_grid_image in (0, -1, None):
-                cpgi = nfreqs
-            else:
-                cpgi = opts.channels_per_grid_image
-            fbins_per_band = int(cpgi / opts.channels_per_degrid_image)
-            nband = int(np.ceil(nbandi/fbins_per_band))
-
-            for fi in range(nband):
-                idx0 = fi * fbins_per_band
-                idxf = np.minimum((fi + 1) * fbins_per_band, nfreqs)
-                fidx = freq_mapping[ms][idt]['start_indices'][idx0:idxf]
-                fcnts = freq_mapping[ms][idt]['counts'][idx0:idxf]
-                # need to slice out all data going onto same grid
-                Inu = slice(fidx.min(), fidx.min() + np.sum(fcnts))
-
-                subds = ds[{'row': Irow, 'chan': Inu}]
-                subds = subds.chunk({'row':-1, 'chan': -1})
-
-                if opts.gain_table is not None:
-                    # Only DI gains currently supported
-                    subgds = gds[ids][{'gain_time': It, 'gain_freq': Inu}]
-                    subgds = subgds.chunk({'gain_time': -1, 'gain_freq': -1})
-                    jones = subgds.gains.data
+                # # TODO - cpdi to cpgi mapping
+                # # assumes cpdi is integer multiple of cpgi
+                nbandi = freq_mapping[ms][idt]['start_indices'].size
+                nfreqs = np.sum(freq_mapping[ms][idt]['counts'])
+                if opts.channels_per_grid_image in (0, -1, None):
+                    cpgi = nfreqs
                 else:
-                    jones = None
+                    cpgi = opts.channels_per_grid_image
+                fbins_per_band = int(cpgi / opts.channels_per_degrid_image)
+                nband = int(np.ceil(nbandi/fbins_per_band))
 
-                datasets.append([subds,
-                                 jones,
-                                 freqs[ms][idt][Inu],
-                                 utimes[ms][idt][It],
-                                 ridx, rcnts,
-                                 fidx, fcnts,
-                                 radecs[ms][idt],
-                                 fi, ti])
+                for fi in range(nband):
+                    idx0 = fi * fbins_per_band
+                    idxf = np.minimum((fi + 1) * fbins_per_band, nfreqs)
+                    fidx = freq_mapping[ms][idt]['start_indices'][idx0:idxf]
+                    fcnts = freq_mapping[ms][idt]['counts'][idx0:idxf]
+                    # need to slice out all data going onto same grid
+                    Inu = slice(fidx.min(), fidx.min() + np.sum(fcnts))
+
+                    subds = ds[{'row': Irow, 'chan': Inu}]
+                    subds = subds.chunk({'row':-1, 'chan': -1})
+
+                    if opts.gain_table is not None:
+                        # Only DI gains currently supported
+                        subgds = gds[ids][{'gain_time': It, 'gain_freq': Inu}]
+                        subgds = subgds.chunk({'gain_time': -1, 'gain_freq': -1})
+                        jones = subgds.gains.data
+                    else:
+                        jones = None
+
+                    datasets.append([subds,
+                                    jones,
+                                    freqs[ms][idt][Inu],
+                                    chan_widths[ms][idt][Inu],
+                                    utimes[ms][idt][It],
+                                    ridx, rcnts,
+                                    fidx, fcnts,
+                                    radecs[ms][idt],
+                                    fi, ti, ims])
 
     futures = []
     associated_workers = {}
@@ -371,32 +381,22 @@ def _fastim(**kw):
 
     while idle_workers:   # Seed each worker with a task.
 
-        (subds, jones, freqsi, utimesi, ridx, rcnts, fidx, fcnts,
-         radeci, fi, ti) = datasets[n_launched]
-        data2 = None if dc2 is None else getattr(subds, dc2).data
-        sc = opts.sigma_column
-        sigma = None if sc is None else getattr(subds, sc).data
-        wc = opts.weight_column
-        weight = None if wc is None else getattr(subds, wc).data
+        (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts, fidx, fcnts,
+         radeci, fi, ti, ims) = datasets[n_launched]
 
         worker = idle_workers.pop()
-        future = client.submit(single_stokes_image,
-                        data=getattr(subds, dc1).data,
-                        data2=data2,
+        future = client.submit(image_space_products,
+                        dc1=dc1,
+                        dc2=dc2,
                         operator=operator,
-                        ant1=clone(subds.ANTENNA1.data),
-                        ant2=clone(subds.ANTENNA2.data),
-                        uvw=clone(subds.UVW.data),
-                        frow=clone(subds.FLAG_ROW.data),
-                        flag=subds.FLAG.data,
-                        sigma=sigma,
-                        weight=weight,
+                        ds=subds,
                         mds=mds,
                         jones=jones,
                         opts=opts,
                         nx=nx,
                         ny=ny,
                         freq=freqsi,
+                        chan_width=chan_widthi,
                         utime=utimesi,
                         tbin_idx=ridx,
                         tbin_counts=rcnts,
@@ -409,9 +409,10 @@ def _fastim(**kw):
                         fieldid=subds.FIELD_ID,
                         ddid=subds.DATA_DESC_ID,
                         scanid=subds.SCAN_NUMBER,
-                        fds_store=fdsstore.url,
+                        dds_store=ddsstore.url,
                         bandid=fi,
                         timeid=ti,
+                        msid=ims,
                         wid=worker,
                         pure=False,
                         workers=worker)
@@ -427,8 +428,8 @@ def _fastim(**kw):
         if n_launched == nds:  # Stop once all jobs have been launched.
             continue
 
-        (subds, jones, freqsi, utimesi, ridx, rcnts, fidx, fcnts,
-        radeci, fi, ti) = datasets[n_launched]
+        (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts, fidx, fcnts,
+        radeci, fi, ti, ims) = datasets[n_launched]
         data2 = None if dc2 is None else getattr(subds, dc2).data
         sc = opts.sigma_column
         sigma = None if sc is None else getattr(subds, sc).data
@@ -437,24 +438,18 @@ def _fastim(**kw):
 
         worker = associated_workers.pop(completed_future)
 
-        # future = client.submit(f, xdsl[n_launched], worker, workers=worker)
-        future = client.submit(single_stokes_image,
-                        data=getattr(subds, dc1).data,
-                        data2=data2,
+        future = client.submit(image_space_products,
+                        dc1=dc1,
+                        dc2=dc2,
                         operator=operator,
-                        ant1=clone(subds.ANTENNA1.data),
-                        ant2=clone(subds.ANTENNA2.data),
-                        uvw=clone(subds.UVW.data),
-                        frow=clone(subds.FLAG_ROW.data),
-                        flag=subds.FLAG.data,
-                        sigma=sigma,
-                        weight=weight,
+                        ds=subds,
                         mds=mds,
                         jones=jones,
                         opts=opts,
                         nx=nx,
                         ny=ny,
                         freq=freqsi,
+                        chan_width=chan_widthi,
                         utime=utimesi,
                         tbin_idx=ridx,
                         tbin_counts=rcnts,
@@ -467,13 +462,15 @@ def _fastim(**kw):
                         fieldid=subds.FIELD_ID,
                         ddid=subds.DATA_DESC_ID,
                         scanid=subds.SCAN_NUMBER,
-                        fds_store=fdsstore.url,
+                        dds_store=ddsstore.url,
                         bandid=fi,
                         timeid=ti,
+                        msid=ims,
                         wid=worker,
                         pure=False,
                         workers=worker)
 
+        futures.append(future)
         ac_iter.add(future)
         associated_workers[future] = worker
         n_launched += 1
@@ -482,5 +479,22 @@ def _fastim(**kw):
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
 
     wait(futures)
+
+    times_out = []
+    freqs_out = []
+    for f in futures:
+        result = f.result()
+        times_out.append(result[1])
+        freqs_out.append(result[2])
+
+    times_out = np.unique(times_out)
+    freqs_out = np.unique(freqs_out)
+
+    nband = freqs_out.size
+    ntime = times_out.size
+
+    print("\n")  # after progressbar above
+    print(f"Freq and time selection resulted in {nband} output bands and "
+          f"{ntime} output times", file=log)
 
     return

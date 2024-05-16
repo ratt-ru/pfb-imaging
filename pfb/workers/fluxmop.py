@@ -46,7 +46,9 @@ def fluxmop(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _fluxmop(**opts)
+        _fluxmop(**opts)
+
+    print("All done here.", file=log)
 
 def _fluxmop(**kw):
     opts = OmegaConf.create(kw)
@@ -266,5 +268,3 @@ def _fluxmop(**kw):
     if len(fitsout):
         print("Writing fits", file=log)
         dask.compute(fitsout)
-
-    print("All done here.", file=log)

@@ -46,7 +46,9 @@ def klean(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _klean(**opts)
+        _klean(**opts)
+
+    print("All done here.", file=log)
 
 
 def _klean(ddsi=None, **kw):
@@ -398,10 +400,3 @@ def _klean(ddsi=None, **kw):
     if len(fitsout):
         print("Writing fits", file=log)
         dask.compute(fitsout)
-
-    if opts.scheduler=='distributed':
-        from distributed import get_client
-        client = get_client()
-        client.close()
-
-    print("All done here.", file=log)

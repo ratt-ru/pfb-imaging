@@ -51,9 +51,11 @@ def spotless(**kw):
             print('     %25s = %s' % (key, opts[key]), file=log)
 
         if opts.scheduler=='distributed':
-            return _spotless_dist(**opts)
+            _spotless_dist(**opts)
         else:
-            return _spotless(**opts)
+            _spotless(**opts)
+
+    print("All done here.", file=log)
 
 
 def _spotless(ddsi=None, **kw):
@@ -429,8 +431,7 @@ def _spotless(ddsi=None, **kw):
         print("Writing fits", file=log)
         dask.compute(fitsout)
 
-    print("All done here.", file=log)
-
+    return
 
 def _spotless_dist(**kw):
     '''
@@ -482,6 +483,7 @@ def _spotless_dist(**kw):
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.misc import eval_coeffs_to_slice, fit_image_cube
     import pywt
+    from pfb.wavelets.wavelets_jsk import get_buffer_size
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.suffix}.dds'
@@ -548,7 +550,6 @@ def _spotless_dist(**kw):
     # get size of dual domain
     bases = tuple(opts.bases.split(','))
     nbasis = len(bases)
-    from pfb.wavelets.wavelets_jsk import get_buffer_size
     nmax = 0
     for wavelet in bases:
         if wavelet == 'self':
@@ -571,7 +572,7 @@ def _spotless_dist(**kw):
         params = mds.params.values
         coeffs = mds.coefficients.values
 
-
+        # TODO - save dual in mds
         model = np.zeros((nband, nx, ny))
         dual = np.zeros((nband, nbasis, nmax))
         for i in range(opts.nband):
@@ -591,10 +592,6 @@ def _spotless_dist(**kw):
                 cell_rad, cell_rad,
                 x0, y0
             )
-            # TODO - save dual in mds
-            # duals[i] = np.zeros((nbasis, nmax),
-            #                    dtype=real_type)
-
 
     else:
         model = np.zeros((nband, nx, ny))
@@ -622,6 +619,7 @@ def _spotless_dist(**kw):
                           wsum,
                           model[bandid],
                           dual[bandid],
+                          wname,
                           workers=wname,
                           key='actor-'+uuid4().hex,
                           actor=True,
@@ -637,11 +635,11 @@ def _spotless_dist(**kw):
         hessnorm = opts.hessnorm
     print(f'hessnorm = {hessnorm:.3e}', file=log)
 
-    futures = list(map(lambda a: a.grad(), actors))
-    residual_mfs = -np.sum(list(map(lambda f: f.result(), futures)),
-                           axis=0)
+    futures = list(map(lambda a: a.get_resid(), actors))
+    residual_mfs = np.sum(list(map(lambda f: f.result(), futures)),
+                          axis=0)
     rms = np.std(residual_mfs)
-    rmax = np.sqrt((residual_mfs**2).max())
+    rmax = np.abs(residual_mfs).max()
 
     # a value less than zero turns L1 reweighting off
     # we'll start on convergence or at the iteration
@@ -662,6 +660,11 @@ def _spotless_dist(**kw):
         rms_comps = 1.0
         l1weight = np.ones((nbasis, nmax), dtype=real_type)
         reweighter = None
+
+    best_rms = rms
+    best_rmax = rmax
+    best_model = model.copy()
+    diverge_count = 0
 
     print(f"It {iter0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for k in range(iter0, iter0 + opts.niter):
@@ -701,7 +704,17 @@ def _spotless_dist(**kw):
             model[b] = results[i][0]
             dual[b] = results[i][1]
 
+        # save model and residual
+        save_fits(np.mean(model, axis=0),
+                  basename + f'_{opts.suffix}_model_{k+1}.fits',
+                  hdr_mfs)
+        save_fits(residual_mfs,
+                  basename + f'_{opts.suffix}_residual_{k+1}.fits',
+                  hdr_mfs)
 
+
+        print(f"Writing model at iter {k+1} to "
+              f"{basename}_{opts.suffix}_model_{k+1}.mds", file=log)
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
                 fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
@@ -743,17 +756,36 @@ def _spotless_dist(**kw):
         except Exception as e:
             print(f"Exception {e} raised during model fit .", file=log)
 
-
+        rmsp = rms
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
+
+        # base this on rmax?
+        if rms < best_rms:
+            best_rms = rms
+            best_rmax = rmax
+            best_model = model.copy()
 
         print(f"It {k+1}: max resid = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
 
 
         if eps < opts.tol:
-            break
+            # do not converge prematurely
+            if k+1 - iter0 >= l1reweight_from:
+                # start reweighting
+                l1reweight_from = 0
+            else:
+                print(f"Converged after {k+1} iterations.", file=log)
+                break
+
+
+        if rms > rmsp:
+            diverge_count += 1
+            if diverge_count > opts.diverge_count:
+                print("Algorithm is diverging. Terminating.", file=log)
+                break
 
     # convert to fits files
     fitsout = []
@@ -769,8 +801,5 @@ def _spotless_dist(**kw):
         print("Writing fits", file=log)
         dask.compute(fitsout)
 
-    client.close()
-
-    print("All done here.", file=log)
     return
 
