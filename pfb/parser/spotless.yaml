@@ -103,6 +103,64 @@ inputs:
     info:
       Will terminate the algorithm if the rms increases this many times.
       Set to > niter to disable this check.
+  field-of-view:
+    dtype: float
+    abbreviation: fov
+    info:
+      Field of view in degrees
+    metavar: DEG
+  super-resolution-factor:
+    dtype: float
+    default: 2
+    abbreviation: srf
+    info:
+      Will over-sample Nyquist by this factor at max frequency
+  cell-size:
+    dtype: float
+    info:
+      Cell size in arc-seconds
+  nx:
+    dtype: int
+    info:
+      Number of x pixels
+  ny:
+    dtype: int
+    info:
+      Number of y pixels
+  robustness:
+    dtype: float
+    default: 0.0
+    abbreviation: rob
+    info:
+      Robustness value for Briggs weighting
+  psf-oversize:
+    dtype: float
+    default: 2.0
+    abbreviation: psfo
+    info:
+      Size of PSF relative to dirty image
+  filter-counts-level:
+    dtype: float
+    default: 5.0
+    info:
+      Replace extreme outliers in the weighting grid by their local mean
+  target:
+    dtype: str
+    info:
+      This can be predefined celestial objects known to astropy or a string in
+      the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+  concat:
+    dtype: bool
+    default: true
+    info:
+      Concatenate datasets by row/time.
+      This will result in a single dirty image, psf and beam per band.
+  mf_weighting:
+    dtype: bool
+    default: true
+    info:
+      Base the imaging weights on the uniform weights computed over all
+      data instead of per band.
 
 outputs:
   {}

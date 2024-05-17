@@ -368,19 +368,13 @@ def image_space_products(
                     dc2=None,
                     operator=None,
                     ds=None,
-                    mds=None,
                     jones=None,
                     opts=None,
-                    nx=None,
-                    ny=None,
                     freq=None,
                     chan_width=None,
-                    cell_rad=None,
                     utime=None,
                     tbin_idx=None,
                     tbin_counts=None,
-                    fbin_idx=None,
-                    fbin_counts=None,
                     radec=None,
                     antpos=None,
                     poltype=None,
@@ -391,7 +385,9 @@ def image_space_products(
                     bandid=None,
                     timeid=None,
                     msid=None,
-                    wid=None):
+                    wid=None,
+                    max_freq=None,
+                    uv_max=None):
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -486,34 +482,6 @@ def image_space_products(
         jones = np.ones((ntime, nant, nchan, 1, 2),
                         dtype=complex_type)
 
-    # compute lm coordinates of target
-    if opts.target is not None:
-        tmp = opts.target.split(',')
-        if len(tmp) == 1 and tmp[0] == opts.target:
-            obs_time = time_out
-            tra, tdec = get_coordinates(obs_time, target=opts.target)
-        else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
-            from astropy import units as u
-            from astropy.coordinates import SkyCoord
-            c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(u.hourangle, u.deg))
-            tra = np.deg2rad(c.ra.value)
-            tdec = np.deg2rad(c.dec.value)
-
-        tcoords=np.zeros((1,2))
-        tcoords[0,0] = tra
-        tcoords[0,1] = tdec
-        coords0 = np.array(radec)
-        lm0 = radec_to_lm(tcoords, coords0).squeeze()
-        # LB - why the negative?
-        x0 = -lm0[0]
-        y0 = -lm0[1]
-    else:
-        x0 = 0.0
-        y0 = 0.0
-        tra = radec[0]
-        tdec = radec[1]
-
-
     # we currently need this extra loop through the data because
     # we don't have access to the grid
     data, weight = _weight_data(data, weight, flag, jones,
@@ -577,216 +545,14 @@ def image_space_products(
 
         print(res.freq)
 
-
-    if opts.robustness is not None:
-        counts = _compute_counts(
-                uvw,
-                freq,
-                mask,
-                nx,
-                ny,
-                cell_rad,
-                cell_rad,
-                np.float64,  # same type as uvw
-                ngrid=opts.nvthreads)
-        # get rid of artificially high weights corresponding to
-        # nearly empty cells
-        if opts.filter_extreme_counts:
-            counts = _filter_extreme_counts(counts,
-                                            nbox=opts.filter_nbox,
-                                            nlevel=opts.filter_level)
-
-        counts = counts.sum(axis=0)
-
-    resid = None
-    if mds is not None:
-        nband = fbin_idx.size
-        model = np.zeros((nband, mds.npix_x, mds.npix_y), dtype=real_type)
-
-        for b in range(nband):
-            Inu = slice(fbin_idx[b], fbin_idx[b] + fbin_counts[b])
-            fout = np.mean(freq[Inu])
-
-            model[b] = eval_coeffs_to_slice(
-                time_out,
-                fout,
-                mds.coefficients.values,
-                mds.location_x.values,
-                mds.location_y.values,
-                mds.parametrisation,
-                mds.params.values,
-                mds.texpr,
-                mds.fexpr,
-                mds.npix_x, mds.npix_y,
-                mds.cell_rad_x, mds.cell_rad_y,
-                mds.center_x, mds.center_y,
-                # TODO - currently needs to be the same, need FFT interpolation
-                mds.npix_x, mds.npix_y,
-                mds.cell_rad_x, mds.cell_rad_y,
-                mds.center_x, mds.center_y,
-            )
-
-        # do not apply weights in this direction
-        # do not change model resolution
-        # TODO - horizontally over band axis
-        model_vis = im2vis(
-                 uvw,
-                 freq,
-                 model,
-                 mds.cell_rad_x,
-                 mds.cell_rad_y,
-                 fbin_idx,
-                 fbin_counts,
-                 x0=mds.center_x, y0=mds.center_y,
-                 epsilon=opts.epsilon,
-                 flip_v=False,
-                 do_wgridding=opts.do_wgridding,
-                 divide_by_n=False,
-                 nthreads=opts.nvthreads)
-
-        resid = ne.evaluate('(data-model_vis)*mask')
-
-        if opts.l2reweight_dof:
-            ressq = (data*data.conj()).real
-            wcount = mask.sum()
-            if wcount:
-                ovar = ressq.sum()/wcount  # use 67% quantile?
-                weight = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
-            else:
-                weight = None
-
-    if opts.robustness is not None:
-        if counts is None:
-            raise ValueError('counts are None but robustness specified. '
-                            'This is probably a bug!')
-        imwgt = _counts_to_weights(
-            counts,
-            uvw,
-            freq,
-            nx, ny,
-            cell_rad, cell_rad,
-            opts.robustness)
-        if weight is not None:
-            weight *= imwgt
-        else:
-            weight = imwgt
-
+    mask = (~flag).astype(np.uint8)
     # we want to set these after averaging and after all the weights
     # have been calculated
     data_vars = {}
     data_vars['VIS'] = (('row', 'chan'), data)
     data_vars['WEIGHT'] = (('row', 'chan'), weight)
-
-    wsum = weight[~flag].sum()
-    mask = (~flag).astype(np.uint8)
-    dirty = vis2dirty(
-        uvw=uvw,
-        freq=freq,
-        vis=data,
-        wgt=weight,
-        mask=mask,
-        npix_x=nx, npix_y=ny,
-        pixsize_x=cell_rad, pixsize_y=cell_rad,
-        center_x=x0, center_y=y0,
-        epsilon=opts.epsilon,
-        flip_v=False,  # hardcoded for now
-        do_wgridding=opts.do_wgridding,
-        divide_by_n=False,  # hardcoded for now
-        nthreads=opts.nvthreads,
-        sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=opts.double_accum,
-        verbosity=0)
-
-    if x0 or y0:
-        # LB - what is wrong with this?
-        # n = np.sqrt(1 - x0**2 - y0**2)
-        # if convention.upper() == 'CASA':
-        #     freqfactor = -2j*np.pi*freq[None, :]/lightspeed
-        # else:
-        #     freqfactor = 2j*np.pi*freq[None, :]/lightspeed
-        # psf_vis = np.exp(freqfactor*(uvw[:, 0:1]*x0 +
-        #                              uvw[:, 1:2]*y0 +
-        #                              uvw[:, 2:]*(n-1)))
-        # if divide_by_n:
-        #     psf_vis /= n
-        x = np.zeros((128,128), dtype=wgt.dtype)
-        x[64,64] = 1.0
-        psf_vis = dirty2vis(
-            uvw=uvw,
-            freq=freq,
-            dirty=x,
-            pixsize_x=cell_rad,
-            pixsize_y=cell_rad,
-            center_x=x0,
-            center_y=y0,
-            epsilon=opts.epsilon,
-            do_wgridding=opts.do_wgridding,
-            nthreads=opts.nvthreads,
-            divide_by_n=False,
-            flip_v=False,  # hardcoded for now
-            sigma_min=1.1, sigma_max=3.0)
-
-    else:
-        psf_vis = np.ones((nrow, nchan), dtype=complex_type)
-
-    nx_psf = good_size(int(opts.psf_oversize * nx))
-    while nx_psf % 2:
-        nx_psf += 1
-        nx_psf = good_size(nx_psf)
-
-    ny_psf = good_size(int(opts.psf_oversize * ny))
-    while ny_psf % 2:
-        ny_psf += 1
-        ny_psf = good_size(ny_psf)
-    nyo2 = ny_psf//2 + 1
-
-    psf = vis2dirty(
-        uvw=uvw,
-        freq=freq,
-        vis=psf_vis,
-        wgt=weight,
-        mask=mask,
-        npix_x=nx_psf, npix_y=ny_psf,
-        pixsize_x=cell_rad, pixsize_y=cell_rad,
-        center_x=x0, center_y=y0,
-        epsilon=opts.epsilon,
-        flip_v=False,  # hardcoded for now
-        do_wgridding=opts.do_wgridding,
-        divide_by_n=False,  # hardcoded for now
-        nthreads=opts.nvthreads,
-        sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=opts.double_accum)
-
-    # get FT of psf
-    psfhat = r2c(iFs(psf, axes=(0, 1)), axes=(0, 1),
-                    nthreads=opts.nvthreads,
-                    forward=True, inorm=0)
-
-    data_vars = {}
-    data_vars['DIRTY'] = (('x', 'y'), dirty)
-    data_vars["PSF"] = (('x_psf', 'y_psf'), psf)
-    data_vars["PSFHAT"] = (('x_psf', 'yo2'), psfhat)
-
-    if resid is not None:
-        residual = vis2dirty(
-            uvw=uvw,
-            freq=freq,
-            vis=resid,
-            wgt=weight,
-            mask=mask,
-            npix_x=nx, npix_y=ny,
-            pixsize_x=cell_rad, pixsize_y=cell_rad,
-            center_x=x0, center_y=y0,
-            epsilon=opts.epsilon,
-            flip_v=False,  # hardcoded for now
-            do_wgridding=opts.do_wgridding,
-            divide_by_n=False,  # hardcoded for now
-            nthreads=opts.nvthreads,
-            sigma_min=1.1, sigma_max=3.0,
-            double_precision_accumulation=opts.double_accum,
-            verbosity=0)
-
-        data_vars['RESIDUAL'] = (('x', 'y'), residual)
+    data_vars['MASK'] = (('row', 'chan'), mask)
+    data_vars['UVW'] = (('row', 'three'), uvw)
 
     coords = {'chan': (('chan',), freq),
             'time': (('time',), utime),
@@ -795,21 +561,10 @@ def image_space_products(
     unix_time = quantity(f'{time_out}s').to_unix_time()
     utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
 
-
-
-
-    if resid is not None:
-        rms = np.std(resid/wsum)
-    else:
-        rms = np.std(dirty/wsum)
-
     # TODO - provide time and freq centroids
     attrs = {
-        'ra' : tra,
-        'dec': tdec,
-        'x0': x0,
-        'y0': y0,
-        'cell_rad': cell_rad,
+        'ra' : radec[0],
+        'dec': radec[1],
         'fieldid': fieldid,
         'ddid': ddid,
         'scanid': scanid,
@@ -823,13 +578,14 @@ def image_space_products(
         'timeid': timeid,
         'product': opts.product,
         'utc': utc,
-        'wsum':wsum,
-        'rms':rms
+        'max_freq': max_freq,
+        'uv_max': uv_max,
     }
 
-    out_ds = xr.Dataset(data_vars,  #coords=coords,
-                    attrs=attrs)
-    oname = f'ms{msid:04d}_spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
+    out_ds = xr.Dataset(data_vars, coords=coords,
+                        attrs=attrs)
+    oname = f'ms{msid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
+            f'_band{bandid:04d}_time{timeid:04d}'
     with worker_client() as client:
         out_store = out_ds.to_zarr(f'{dds_store}/{oname}.zarr',
                                    compute=True)

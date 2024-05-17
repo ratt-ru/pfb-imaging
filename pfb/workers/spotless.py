@@ -484,12 +484,17 @@ def _spotless_dist(**kw):
     from pfb.utils.misc import eval_coeffs_to_slice, fit_image_cube
     import pywt
     from pfb.wavelets.wavelets_jsk import get_buffer_size
+    import joblib
+    import fsspec
+    import pickle
+    from pfb.utils.dist import grad_actor
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-    dds_name = f'{basename}_{opts.suffix}.dds'
-    ddsstore = DaskMSStore(dds_name)
+    # dds_name = f'{basename}_{opts.suffix}.dds'
+    dds_name = f'{basename}.dds'
+    ds_store = DaskMSStore(dds_name)
     try:
-        assert ddsstore.exists()
+        assert ds_store.exists()
     except Exception as e:
         raise ValueError(f'No dds at {dds_name}')
 
@@ -502,49 +507,105 @@ def _spotless_dist(**kw):
     except Exception as e:
         raise ValueError("You must initialise a worker per imaging band")
 
-    dds = xds_from_zarr(ddsstore.url, chunks={'row':-1,
-                                          'chan':-1,
-                                          'x':-1,
-                                          'y':-1,
-                                          'x_psf':-1,
-                                          'y_psf':-1,
-                                          'yo2':-1})
-    for i, ds in enumerate(dds):
-        dds[i] = ds.drop_vars(['COUNTS'])
+    ds_list = ds_store.fs.glob(f'{ds_store.url}/*')
 
-    real_type = dds[0].DIRTY.dtype
-    cell_rad = dds[0].cell_rad
-    complex_type = np.result_type(real_type, np.complex64)
+    # create an actor cache dir
+    actor_cache_dir = ds_store.url.rsplit('/', 1)[0] + '/actor_cache'
+    ac_store = DaskMSStore(actor_cache_dir)
+    optsp_name = ac_store.url + '/opts.pkl'
+    # does this use the correct protocol?
+    fs = fsspec.filesystem(ac_store.url.split(':', 1)[0])
+    if ac_store.exists():
+        # get opts from previous run
+        with fs.open(optsp_name, 'rb') as f:
+            optsp = pickle.load(f)
 
-    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
-    lastsize = ny_psf
-    freq_out = []
-    time_out = []
-    for ds in dds:
-        freq_out.append(ds.freq_out)
-        time_out.append(ds.time_out)
-    freq_out = np.unique(np.array(freq_out))
-    time_out = np.unique(np.array(time_out))
-    try:
-        assert freq_out.size == opts.nband
-    except Exception as e:
-        print(f"Number of output frequencies={freq_out.size} "
-              f"does not match nband={opts.nband}", file=log)
-        raise e
-    nband = opts.nband
-    nx = dds[0].x.size
-    ny = dds[0].y.size
-    ra = dds[0].ra
-    dec = dds[0].dec
-    radec = [ra, dec]
-    cell_rad = dds[0].cell_rad
-    cell_deg = np.rad2deg(cell_rad)
-    ref_freq = np.mean(freq_out)
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-    if 'niters' in dds[0].attrs:
-        iter0 = dds[0].niters
+        # check if we need to remake the data products
+        verify_attrs = ['robustness', 'epsilon',
+                        'do_wgridding', 'double_accum',
+                        'field_of_view', 'super_resolution_factor']
+        try:
+            for attr in verify_attrs:
+                assert optsp[attr] == opts[attr]
+            remake = False
+        except Exception as e:
+            print(f'Cache verification failed on {attr}. '
+                  'Will remake image data products', file=log)
+            fs.makedirs(ac_store.url, exist_ok=True)
+            # dump opts to validate cache on rerun
+            with fs.open(optsp_name, 'wb') as f:
+                pickle.dump(opts, f)
+            remake = True
     else:
-        iter0 = 0
+        fs.makedirs(ac_store.url, exist_ok=True)
+        # dump opts to validate cache on rerun
+        with fs.open(optsp_name, 'wb') as f:
+            pickle.dump(opts, f)
+        remake = True
+
+    # filter datasets by band
+    dsb = {}
+    for ds in ds_list:
+        idx = ds.find('band') + 4
+        bid = int(ds[idx:idx+4])
+        dsb.setdefault(bid, [])
+        dsb[bid].append(ds)
+    nband = len(dsb.keys())
+    try:
+        assert len(names) == nband
+    except Exception as e:
+        raise ValueError(f"You must initialise {nband} workers. "
+                         "One for each imaging band.")
+
+    # set up band actors
+    futures = []
+    for wname, (bandid, dsl) in zip(names, dsb.items()):
+        f = client.submit(grad_actor,
+                          dsl,
+                          opts,
+                          bandid,
+                          workers=wname,
+                          key='actor-'+uuid4().hex,
+                          actor=True,
+                          pure=False)
+        futures.append(f)
+
+    actors = list(map(lambda f: f.result(), futures))
+
+    # we do this in case we want to do MF weighting
+    futures = list(map(lambda a: a.get_counts(), actors))
+    counts = list(map(lambda f: f.result(), futures))
+    if opts.mf_weighting:
+        counts = np.sum(counts, axis=0)
+    else:
+        counts = None  # will use self.counts in this case
+    futures = list(map(lambda a: a.set_imaging_weights(counts=counts), actors))
+    wsums = list(map(lambda f: f.result(), futures))
+    wsum = np.sum(wsums)
+    real_type = wsum.dtype
+    complex_type = np.result_type(real_type, np.complex64)
+    futures = list(map(lambda a: a.get_image_info(), actors))
+    results = list(map(lambda f: f.result(), futures))
+    nx, ny, cell_rad, ra, dec, freq_out = results[0]
+    freqs_out = [freq_out]
+    for result in results[1:]:
+        assert result[0] == nx
+        assert result[1] == ny
+        assert result[2] == cell_rad
+        assert result[3] == ra
+        assert result[4] == dec
+        freqs_out.append(result[5])
+
+    radec = [ra, dec]
+    cell_deg = np.rad2deg(cell_rad)
+    ref_freq = np.mean(freqs_out)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+
+    iter0 = 0
+    # if 'niters' in dds[0].attrs:
+    #     iter0 = dds[0].niters
+    # else:
+    #     iter0 = 0
 
 
     # get size of dual domain
@@ -597,36 +658,14 @@ def _spotless_dist(**kw):
         model = np.zeros((nband, nx, ny))
         dual = np.zeros((nband, nbasis, nmax))
 
-    # split datasets per band
-    ddsb = {}
-    for ds in dds:
-        bandid = ds.bandid
-        ddsb.setdefault(bandid, [])
-        ddsb[bandid].append(ds)
+    futures = []
+    for b in range(nband):
+        fut = actors[b].set_image_data_products(wsum, model[b], dual[b])
+        futures.append(fut)
 
-    # TODO - is this too slow?
-    wsum = da.stack([ds.WSUM.data for ds in dds]).sum(axis=0).compute()
-    psf_mfs = da.stack([ds.PSF.values for ds in dds]).sum(axis=0).compute()/wsum
+    psf_mfs = np.sum(list(map(lambda f: f.result(), futures)), axis=0)/wsum
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
     pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
-
-    # set up band actors
-    futures = []
-    for wname, (bandid, ddsl) in zip(names, ddsb.items()):
-        f = client.submit(band_actor,
-                          ddsl,
-                          opts,
-                          wsum,
-                          model[bandid],
-                          dual[bandid],
-                          wname,
-                          workers=wname,
-                          key='actor-'+uuid4().hex,
-                          actor=True,
-                          pure=False)
-        futures.append(f)
-
-    actors = list(map(lambda f: f.result(), futures))
 
     if opts.hessnorm is None:
         print('Getting spectral norm of Hessian approximation', file=log)
@@ -687,12 +726,6 @@ def _spotless_dist(**kw):
         futures = list(map(lambda a: a.grad(), actors))
         resids = list(map(lambda f: f.result(), futures))
         residual_mfs = -np.sum(resids, axis=0)
-
-        if k+1 - iter0 >= opts.l1reweight_from:
-            print('L1 reweighting', file=log)
-            rms_comps = np.std(residual_mfs)*nband/pix_per_beam
-            l1weightfs = l1reweight_func(actors, opts.rmsfactor, rms_comps,
-                                         alpha=opts.alpha)
 
         print('Updating model', file=log)
         futures = list(map(lambda a: a.give_model(), actors))
@@ -780,6 +813,11 @@ def _spotless_dist(**kw):
                 print(f"Converged after {k+1} iterations.", file=log)
                 break
 
+        if k+1 - iter0 >= l1reweight_from:
+            print('L1 reweighting', file=log)
+            rms_comps = np.std(residual_mfs)*nband/pix_per_beam
+            l1weightfs = l1reweight_func(actors, opts.rmsfactor, rms_comps,
+                                         alpha=opts.alpha)
 
         if rms > rmsp:
             diverge_count += 1

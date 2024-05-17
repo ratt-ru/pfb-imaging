@@ -1,16 +1,22 @@
 import numpy as np
-import dask.array as da
+import xarray as xr
 from distributed import get_client, worker_client, wait
 from pfb.utils.misc import fitcleanbeam
 from pfb.operators.hessian import _hessian_impl
 from pfb.operators.psf import psf_convolve_slice
+from pfb.utils.weighting import (_compute_counts, _counts_to_weights,
+                                 _filter_extreme_counts)
 from uuid import uuid4
 import pywt
 from pfb.wavelets.wavelets_jsk import  (get_buffer_size,
                                        dwt2d, idwt2d)
 from ducc0.misc import make_noncritical
 import concurrent.futures as cf
-
+from africanus.constants import c as lightspeed
+from ducc0.wgridder.experimental import vis2dirty, dirty2vis
+from ducc0.fft import c2r, r2c, good_size
+iFs = np.fft.ifftshift
+Fs = np.fft.fftshift
 
 def l1reweight_func(actors, rmsfactor, rms_comps, alpha=4):
     '''
@@ -36,73 +42,161 @@ def idwt(buffer, rec_lo, rec_hi, nlevel, nx, ny, i):
     idwt2d(buffer, image, rec_lo, rec_hi, nlevel)
     return image, i
 
+# this keeps track of dataset label
+def counts_to_weights(counts, uvw, freq, nx, ny,
+                      cell_size_x, cell_size_y,
+                      robust, i):
+    return i, _counts_to_weights(counts, uvw, freq, nx, ny,
+                                 cell_size_x, cell_size_y,
+                                 robust)
 
-class band_actor(object):
-    def __init__(self, dds, opts, wsum, model, dual, wid):
-        # there should be only single versions of these for each band
+class grad_actor(object):
+    def __init__(self, ds_names, opts, bandid):
         self.opts = opts
-        self.cell_rad = dds[0].cell_rad
-        self.nx, self.ny = model.shape
-        self.wsum = wsum
-        self.model = model
-        self.dual = dual
-        self.bandid = dds[0].bandid
+        self.bandid = bandid
 
+        dsl = []
+        for dsn in ds_names:
+            dsl.append(xr.open_zarr(dsn, chunks=None))
 
-        with worker_client as client:
-            dds = client.compute(dds,
-                                 sync=True,
-                                 workers=wid)
+        # TODO - make sure these are consistent across datasets
+        self.freq = dsl[0].chan.values
+        self.freq_out = np.mean(self.freq)
+        self.max_freq = dsl[0].max_freq
+        self.uv_max = dsl[0].uv_max
 
-        # there can be multiple of these
-        self.psfhats = []
-        self.dirtys = []
-        self.resids = []
-        self.beams = []
-        self.weights = []
-        self.uvws = []
-        self.freqs = []
-        self.masks = []
-        self.wsumbs = []
-        for ds in dds:
-            self.psfhats.append(ds.PSFHAT.values/wsum)
-            self.dirtys.append(ds.DIRTY.values/wsum)
-            if model.any():
-                self.resids.append(ds.RESIDUAL.values/wsum)
-            else:
-                self.resids.append(ds.DIRTY.values/wsum)
-            self.beams.append(ds.BEAM.values)
-            self.weights.append(ds.WEIGHT.values)
-            self.uvws.append(ds.UVW.values)
-            self.freqs.append(ds.FREQ.values)
-            self.masks.append(ds.MASK.values)
-            self.wsumbs.append(ds.WSUM.values)
+        # beam = [ds.BEAM for ds in dsl]  # TODO
+        wgt = [ds.WEIGHT for ds in dsl]
+        vis = [ds.VIS for ds in dsl]
+        mask = [ds.MASK for ds in dsl]
+        uvw = [ds.UVW for ds in dsl]
+        times_out = [ds.time_out for ds in dsl]
 
-        # TODO - we only need the sum of the dirty/resid images
-        self.dirty = np.sum(self.dirtys, axis=0)
-        self.resid = np.sum(self.resids, axis=0)
-        if model.any():
-            self.data = self.resid + self.psf_conv(model)
+        # we cant just use xr.merge because beam needs to be summed
+        if opts.concat:
+            self.wgt = [xr.concat(wgt, dim='row').values]
+            self.vis = [xr.concat(vis, dim='row').values]
+            self.mask = [xr.concat(mask, dim='row').values]
+            self.uvw = [xr.concat(uvw, dim='row').values]
+            self.times_out = [np.mean(times_out)]  # avoid precision issues
         else:
-            self.data = self.dirty
+            self.wgt = list(map(lambda d: d.values, wgt))
+            self.vis = list(map(lambda d: d.values, vis))
+            self.mask = list(map(lambda d: d.values, mask))
+            self.uvw = list(map(lambda d: d.values, uvw))
+            self.times_out = times_out
 
-        # set up psf convolve operators
+        self.real_type = self.wgt[0].dtype
+        self.complex_type = self.vis[0].dtype
+        self.ntimes = len(self.times_out)
+
+        # Nyquist cell size
+        cell_N = 1.0 / (2 * self.uv_max * self.max_freq / lightspeed)
+
+        if opts.cell_size is not None:
+            cell_size = opts.cell_size
+            cell_rad = cell_size * np.pi / 60 / 60 / 180
+            if cell_N / cell_rad < 1:
+                raise ValueError("Requested cell size too large. "
+                                "Super resolution factor = ", cell_N / cell_rad)
+        else:
+            cell_rad = cell_N / opts.super_resolution_factor
+            cell_size = cell_rad * 60 * 60 * 180 / np.pi
+
+        if opts.nx is None:
+            fov = opts.field_of_view * 3600
+            npix = int(fov / cell_size)
+            npix = good_size(npix)
+            while npix % 2:
+                npix += 1
+                npix = good_size(npix)
+            nx = npix
+            ny = npix
+        else:
+            nx = opts.nx
+            ny = opts.ny if opts.ny is not None else nx
+            cell_deg = np.rad2deg(cell_rad)
+            fovx = nx*cell_deg
+            fovy = ny*cell_deg
+
+        nx_psf = good_size(int(opts.psf_oversize * nx))
+        while nx_psf % 2:
+            nx_psf += 1
+            nx_psf = good_size(nx_psf)
+
+        ny_psf = good_size(int(opts.psf_oversize * ny))
+        while ny_psf % 2:
+            ny_psf += 1
+            ny_psf = good_size(ny_psf)
+
+
+        self.cell_rad = cell_rad
+        self.nx = nx
+        self.ny = ny
+        self.nx_psf = nx_psf
+        self.ny_psf = ny_psf
+        self.nyo2 = ny_psf//2 + 1
         self.nhthreads = opts.nthreads_dask
         self.nvthreads = opts.nvthreads
-        self.lastsize = dds[0].PSF.shape[-1]
+        self.lastsize = ny_psf
 
-        # pre-allocate tmp arrays
-        tmp = np.empty(self.dirty.shape,
-                       dtype=self.dirty.dtype, order='C')
-        self.xout = make_noncritical(tmp)
-        tmp = np.empty(self.psfhats[0].shape,
-                       dtype=self.psfhats[0].dtype,
-                       order='C')
-        self.xhat = make_noncritical(tmp)
-        tmp = np.empty(ds.PSF.shape,
-                       dtype=ds.PSF.dtype,
-                       order='C')
-        self.xpad = make_noncritical(tmp)
+        # uv-cell counts
+        with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
+            futures = []
+            for uvw, mask in zip(self.uvw, self.mask):
+                fut = executor.submit(_compute_counts,
+                                      uvw,
+                                      self.freq,
+                                      mask,
+                                      nx,
+                                      ny,
+                                      cell_rad,
+                                      cell_rad,
+                                      np.float64,  # same type as uvw
+                                      ngrid=self.nvthreads)
+                futures.append(fut)
+            self.counts = []
+            for fut in cf.as_completed(futures):
+                self.counts.append(fut.result().sum(axis=0))
+
+        # TODO - should we always sum all the counts in a band?
+        self.counts = np.sum(self.counts, axis=0)
+
+        # we can't compute imaging weights yet because we need
+        # to communicate counts when using MF weighting
+
+        # compute lm coordinates of target
+        if opts.target is not None:
+            if len(self.times_out) > 1:
+                raise NotImplementedError("Off center targets are not yet "
+                                          "supported for multiple output "
+                                          "times.")
+            tmp = opts.target.split(',')
+            if len(tmp) == 1 and tmp[0] == opts.target:
+                obs_time = self.times_out[0]
+                self.ra, self.dec = get_coordinates(obs_time, target=opts.target)
+            else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
+                from astropy import units as u
+                from astropy.coordinates import SkyCoord
+                c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(u.hourangle, u.deg))
+                ra = np.deg2rad(c.ra.value)
+                dec = np.deg2rad(c.dec.value)
+
+            tcoords=np.zeros((1,2))
+            tcoords[0,0] = ra
+            tcoords[0,1] = dec
+            coords0 = np.array((ds.ra, ds.dec))
+            lm0 = radec_to_lm(tcoords, coords0).squeeze()
+            # LB - why the negative?
+            self.x0 = [-lm0[0]]
+            self.y0 = [-lm0[1]]
+            self.ra = [ra]
+            self.dec = [dec]
+        else:
+            self.x0 = [0.0] * self.ntimes
+            self.y0 = [0.0] * self.ntimes
+            self.ra = [ds.ra for ds in dsl]
+            self.dec = [ds.dec for ds in dsl]
 
         # set up wavelet dictionaries
         self.bases = opts.bases.split(',')
@@ -136,40 +230,171 @@ class band_actor(object):
             self.nmax = np.maximum(self.nmax, self.buffer_size[wavelet])
 
         # tmp optimisation vars
-        self.b = np.zeros_like(model)
-        self.bp = np.zeros_like(model)
-        self.xp = np.zeros_like(model)
-        self.vp = np.zeros_like(dual)
-        self.vtilde = np.zeros_like(dual)
+        self.b = np.zeros((self.nx, self.ny), dtype=self.real_type)
+        self.bp = np.zeros((self.nx, self.ny), dtype=self.real_type)
+        self.xp = np.zeros((self.nx, self.ny), dtype=self.real_type)
+        self.vp = np.zeros((self.nbasis, self.nmax), dtype=self.real_type)
+        self.vtilde = np.zeros((self.nbasis, self.nmax), dtype=self.real_type)
+
+    def get_counts(self):
+        # it doesn't seem to be possible to
+        # access an actors attributes directly?
+        return self.counts
+
+    def get_image_info(self):
+        return (self.nx, self.ny, self.cell_rad,
+                self.ra[0], self.dec[0], self.freq_out)
+
+    def set_imaging_weights(self, counts=None):
+        if counts is not None:
+            self.counts = counts
+        # TODO - this is more complicated if we do not always
+        # sum all the counts in a band
+        filter_level = self.opts.filter_counts_level
+        if filter_level:
+            self.counts = _filter_extreme_counts(self.counts,
+                                                 level=filter_level)
+
+        with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
+            futures = []
+            for i, uvw in enumerate(self.uvw):
+                fut = executor.submit(counts_to_weights,
+                                      self.counts,
+                                      uvw,
+                                      self.freq,
+                                      self.nx, self.ny,
+                                      self.cell_rad,
+                                      self.cell_rad,
+                                      self.opts.robustness,
+                                      i)
+                futures.append(fut)
+
+            # we keep imwgt and wgt separate for l2 reweighting purposes
+            self.imwgt = [1] * len(self.uvw)
+            self.wsums = [1] * len(self.uvw)
+            for fut in cf.as_completed(futures):
+                i, imwgt = fut.result()
+                self.imwgt[i] = imwgt
+                self.wsums[i] = (imwgt * self.wgt[i]).sum()
+
+        # this is wsum for the band not in total
+        self.wsumb = np.sum(self.wsums)
+
+        return self.wsumb
+
+    def set_image_data_products(self, wsum, model, dual, dof=None):
+        '''
+        This initialises the psf and residual.
+        Can also be used to perform L2 reweighting.
+        '''
+        # wsum passed in here must be the total wsum from all bands
+        self.wsum = wsum
+        self.model = model
+        self.dual = dual
+
+        with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
+            futures = []
+            for i, (uvw, imwgt, wgt, vis, mask, x0, y0) in enumerate(zip(
+                                                    self.uvw, self.imwgt,
+                                                    self.wgt, self.vis,
+                                                    self.mask, self.x0,
+                                                    self.y0)):
+                fut = executor.submit(image_data_products,
+                                      model,
+                                      uvw,
+                                      self.freq,
+                                      vis,
+                                      imwgt,
+                                      wgt,
+                                      mask,
+                                      self.nx, self.ny,
+                                      self.nx_psf, self.ny_psf,
+                                      self.cell_rad, self.cell_rad,
+                                      dof=dof,
+                                      x0=x0, y0=y0,
+                                      nthreads=self.nvthreads,
+                                      epsilon=self.opts.epsilon,
+                                      do_wgridding=self.opts.do_wgridding,
+                                      double_accum=self.opts.double_accum,
+                                      timeid=i)
+
+                futures.append(fut)
+
+            self.psfs = [1] * self.ntimes
+            self.psfhats = [1] * self.ntimes
+            self.resids = [1] * self.ntimes
+            # self.beams = [1] * self.ntimes
+            for fut in cf.as_completed(futures):
+                i, residual, psf, psfhat, wgt = fut.result()
+                self.resids[i] = residual
+                self.psfs[i] = psf
+                self.psfhats[i] = psfhat
+                self.wgt[g] = wgt
+
+        # pre-allocate tmp arrays required for convolution
+        tmp = np.empty(residual.shape,
+                       dtype=dirty.dtype, order='C')
+        self.xout = make_noncritical(tmp)
+        tmp = np.empty(psfhat.shape,
+                       dtype=psfhat.dtype,
+                       order='C')
+        self.xhat = make_noncritical(tmp)
+        tmp = np.empty(psf.shape,
+                       dtype=psf.dtype,
+                       order='C')
+        self.xpad = make_noncritical(tmp)
 
 
-    def grad(self, x=None):
+        # we only really need the sum of the dirty/resid images
+        self.resid = np.sum(self.resids, axis=0)/self.wsum
+        if model is not None:
+            self.data = self.resid + self.psf_conv(model)
+        else:
+            self.data = self.resid
+
+        # we return the per band psf since we need the mfs psf
+        # on the runner
+        return np.sum(self.psfs, axis=0)
+
+
+    def set_residual(self, x=None):
         self.resid = self.dirty.copy()
         if x is None:
             x = self.model
 
-        if x.any():
-            # TODO - do this in parallel
-            for uvw, wgt, mask, freq, beam in zip(self.uvws, self.weights,
-                                                  self.masks, self.freqs,
-                                                  self.beams):
-                self.resid -= _hessian_impl(x,
-                                    uvw,
-                                    wgt,
-                                    mask,
-                                    freq,
-                                    beam,
-                                    x0=0.0,
-                                    y0=0.0,
-                                    cell=self.cell_rad,
-                                    do_wgridding=self.opts.do_wgridding,
-                                    epsilon=self.opts.epsilon,
-                                    double_accum=self.opts.double_accum,
-                                    nthreads=self.opts.nvthreads)/self.wsum
+        with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
+            futures = []
+            for i, (uvw, imwgt, wgt, vis, mask, x0, y0) in enumerate(zip(
+                                                    self.uvw, self.imwgt,
+                                                    self.wgt, self.vis,
+                                                    self.mask, self.x0,
+                                                    self.y0)):
 
-        # TODO - write resid to dds list
+                fut = executor.submit(residual_from_vis,
+                                      model,
+                                      uvw,
+                                      self.freq,
+                                      vis,
+                                      imwgt,
+                                      wgt,
+                                      mask,
+                                      self.nx, self.ny,
+                                      self.cell_rad, self.cell_rad,
+                                      x0=x0, y0=y0,
+                                      nthreads=self.nvthreads,
+                                      epsilon=self.opts.epsilon,
+                                      do_wgridding=self.opts.do_wgridding,
+                                      double_accum=self.opts.double_accum,
+                                      timeid=i)
 
-        return -self.resid
+                futures.append(fut)
+
+            for fut in cf.as_completed(futures):
+                i, residual = fut.result()
+                self.resids[i] = residual
+
+        self.resid = np.sum(self.resids, axis=0)/wsum
+        return self.resid
 
     def get_resid(self):
         return self.resid
@@ -185,12 +410,33 @@ class band_actor(object):
                                         x,
                                         nthreads=self.nvthreads)
 
-        return convx
+        return convx/self.wsum
 
 
     def almost_grad(self, x):
         return self.psf_conv(x) - self.data
 
+    def l2_reweight(self, dof):
+
+        with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
+            futures = []
+            for i, (uvw, wgt, vis, mask, x0, y0) in enumerate(zip(self.uvw, self.imwgt,
+                                                   self.vis, self.mask,
+                                                   self.x0, self.y0)):
+                fut = executor.submit(dirty2vis,
+                    uvw=uvw,
+                    freq=freq,
+                    dirty=model,
+                    pixsize_x=cellx,
+                    pixsize_y=celly,
+                    center_x=x0,
+                    center_y=y0,
+                    epsilon=epsilon,
+                    do_wgridding=do_wgridding,
+                    flip_v=False,
+                    nthreads=nthreads,
+                    divide_by_n=False,
+                    sigma_min=1.1, sigma_max=3.0)
 
     def psi_dot(self, x=None):
         '''
@@ -328,4 +574,190 @@ class band_actor(object):
         return self.model, self.dual, self.bandid
 
 
+def image_data_products(model,
+                        uvw,
+                        freq,
+                        vis,
+                        imwgt,
+                        wgt,
+                        mask,
+                        nx, ny,
+                        nx_psf, ny_psf,
+                        cellx, celly,
+                        dof=None,
+                        x0=0.0, y0=0.0,
+                        nthreads=1,
+                        epsilon=1e-7,
+                        do_wgridding=True,
+                        double_accum=True,
+                        timeid=0):
+    '''
+    Function to compute image space data products in one go
+        dirty
+        psf
+        psfhat
+    '''
 
+    if model.any():
+        # don't apply weights in this direction
+        model_vis = dirty2vis(
+                uvw=uvw,
+                freq=freq,
+                dirty=model,
+                pixsize_x=cellx,
+                pixsize_y=celly,
+                center_x=x0,
+                center_y=y0,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                flip_v=False,
+                nthreads=nthreads,
+                divide_by_n=False,
+                sigma_min=1.1, sigma_max=3.0)
+
+        residual_vis = vis - model_vis
+    else:
+        residual_vis = vis
+
+    if dof is not None:
+        # apply mask to both
+        residual_vis *= mask
+        ressq = (residual_vis*residual_vis.conj()).real
+        wcount = mask.sum()
+        if wcount:
+            ovar = ressq.sum()/wcount  # use 67% quantile?
+            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)
+
+    dirty = vis2dirty(
+        uvw=uvw,
+        freq=freq,
+        vis=residual_vis,
+        wgt=wgt*imwgt,
+        mask=mask,
+        npix_x=nx, npix_y=ny,
+        pixsize_x=cellx, pixsize_y=celly,
+        center_x=x0, center_y=y0,
+        epsilon=epsilon,
+        flip_v=False,  # hardcoded for now
+        do_wgridding=do_wgridding,
+        divide_by_n=False,  # hardcoded for now
+        nthreads=nthreads,
+        sigma_min=1.1, sigma_max=3.0,
+        double_precision_accumulation=double_accum)
+
+    if x0 or y0:
+        # LB - what is wrong with this?
+        # n = np.sqrt(1 - x0**2 - y0**2)
+        # if convention.upper() == 'CASA':
+        #     freqfactor = -2j*np.pi*freq[None, :]/lightspeed
+        # else:
+        #     freqfactor = 2j*np.pi*freq[None, :]/lightspeed
+        # psf_vis = np.exp(freqfactor*(uvw[:, 0:1]*x0 +
+        #                              uvw[:, 1:2]*y0 +
+        #                              uvw[:, 2:]*(n-1)))
+        # if divide_by_n:
+        #     psf_vis /= n
+        x = np.zeros((128,128), dtype=wgt.dtype)
+        x[64,64] = 1.0
+        psf_vis = dirty2vis(
+            uvw=uvw,
+            freq=freq,
+            dirty=x,
+            pixsize_x=cellx,
+            pixsize_y=celly,
+            center_x=x0,
+            center_y=y0,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            nthreads=nthreads,
+            divide_by_n=False,
+            flip_v=False,  # hardcoded for now
+            sigma_min=1.1, sigma_max=3.0)
+
+    else:
+        nrow, _ = uvw.shape
+        nchan = freq.size
+        psf_vis = np.ones((nrow, nchan), dtype=vis.dtype)
+
+    psf = vis2dirty(
+        uvw=uvw,
+        freq=freq,
+        vis=psf_vis,
+        wgt=wgt*imwgt,
+        mask=mask,
+        npix_x=nx_psf, npix_y=ny_psf,
+        pixsize_x=cellx, pixsize_y=celly,
+        center_x=x0, center_y=y0,
+        epsilon=epsilon,
+        flip_v=False,  # hardcoded for now
+        do_wgridding=do_wgridding,
+        divide_by_n=False,  # hardcoded for now
+        nthreads=nthreads,
+        sigma_min=1.1, sigma_max=3.0,
+        double_precision_accumulation=double_accum)
+
+    # get FT of psf
+    psfhat = r2c(iFs(psf, axes=(0, 1)), axes=(0, 1),
+                    nthreads=nthreads,
+                    forward=True, inorm=0)
+
+    return timeid, dirty, psf, psfhat, wgt
+
+def residual_from_vis(
+                model,
+                uvw,
+                freq,
+                vis,
+                imwgt,
+                wgt,
+                mask,
+                nx, ny,
+                cellx, celly,
+                model,
+                x0=0.0, y0=0.0,
+                nthreads=1,
+                epsilon=1e-7,
+                do_wgridding=True,
+                double_accum=True,
+                timeid=0):
+    '''
+    This is used for major cycles when we don't change the weights.
+    '''
+
+    # don't apply weights in this direction
+    model_vis = dirty2vis(
+            uvw=uvw,
+            freq=freq,
+            dirty=model,
+            pixsize_x=cellx,
+            pixsize_y=celly,
+            center_x=x0,
+            center_y=y0,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            flip_v=False,
+            nthreads=nthreads,
+            divide_by_n=False,
+            sigma_min=1.1, sigma_max=3.0)
+
+    residual_vis = (vis - model_vis)
+
+    residual = vis2dirty(
+        uvw=uvw,
+        freq=freq,
+        vis=residual_vis,
+        wgt=wgt*imwgt,
+        mask=mask,
+        npix_x=nx, npix_y=ny,
+        pixsize_x=cellx, pixsize_y=celly,
+        center_x=x0, center_y=y0,
+        epsilon=epsilon,
+        flip_v=False,  # hardcoded for now
+        do_wgridding=do_wgridding,
+        divide_by_n=False,  # hardcoded for now
+        nthreads=nthreads,
+        sigma_min=1.1, sigma_max=3.0,
+        double_precision_accumulation=double_accum)
+
+
+    return timeid, residual

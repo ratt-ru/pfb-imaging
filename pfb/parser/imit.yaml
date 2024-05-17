@@ -71,20 +71,13 @@ inputs:
     info:
       Number of time integrations per image.
       Default (-1, 0, None) -> dataset per scan.
-  channels-per-degrid-image:
+  channels-per-image:
     dtype: int
-    abbreviation: cpdi
+    abbreviation: cpi
     default: 32
     info:
       Number of channels per image for degridding resolution.
       Any of (-1, 0, None) implies single dataset per spw.
-  channels-per-grid-image:
-    dtype: int
-    abbreviation: cpgi
-    default: -1
-    info:
-      Number of channels per image for gridding resolution.
-      Default of (-1, 0, None) implies a single dataset per spw.
   precision:
     dtype: str
     default: double
@@ -103,89 +96,25 @@ inputs:
     dtype: str
     info:
       Beam model to use
-  field-of-view:
-    dtype: float
-    abbreviation: fov
-    info:
-      Field of view in degrees
-    metavar: DEG
-  super-resolution-factor:
-    dtype: float
-    default: 2
-    abbreviation: srf
-    info:
-      Will over-sample Nyquist by this factor at max frequency
-  cell-size:
-    dtype: float
-    info:
-      Cell size in arc-seconds
-  nx:
-    dtype: int
-    info:
-      Number of x pixels
-  ny:
-    dtype: int
-    info:
-      Number of y pixels
   chan-average:
     dtype: int
     default: 1
     info:
       Average this number if channels together
-  transfer-model-from:
-    dtype: str
-    abbreviation: tmf
-    info:
-      Name of dataset to use for model initialisation
-  robustness:
-    dtype: float
-    abbreviation: rob
-    info:
-      Robustness factor for Briggs weighting. None means natural
-  fits-mfs:
-    dtype: bool
-    default: true
-    info:
-      Output MFS fits files
-  fits-cubes:
-    dtype: bool
-    default: false
-    info:
-      Output fits cubes
-  filter-counts-level:
-    dtype: float
-    default: 5.0
-    info:
-      Replace extreme outliers in the weighting grid by their local mean
   target:
     dtype: str
     info:
       This can be predefined celestial objects known to astropy or a string in
       the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
-  l2reweight-dof:
-    dtype: float
-    info:
-      The degrees of freedom parameter for L2 reweighting.
-      The default (None) means no reweighting.
-      A sensible value for this parameter depends on the level of RFI in the data.
-      Small values (eg. 2) result in aggressive reweighting and should be avoided
-      if the model is still incomplete.
   progressbar:
     dtype: bool
     default: true
     info:
       Display progress.
       Use --no-progressbar to deactivate.
-  psf-oversize:
-    dtype: float
-    default: 2.0
-    abbreviation: psfo
-    info:
-      Size of PSF relative to dirty image
 
 
   _include:
-    - (.)gridding.yml
     - (.)dist.yml
     - (.)out.yml
 

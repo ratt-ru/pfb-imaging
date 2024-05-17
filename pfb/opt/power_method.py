@@ -75,7 +75,9 @@ def power_method_dist(actors,
                       nband,
                       sigmainv=0,
                       tol=1e-4,
-                      maxit=200):
+                      maxit=200,
+                      report_freq=10,
+                      verbosity=1,):
 
     client = get_client()
 
@@ -108,6 +110,7 @@ def power_method_dist(actors,
         if eps < tol:
             break
 
-        print(eps, beta)
+        if not k % report_freq and verbosity > 1:
+            print(f"At iteration {k} eps = {eps:.3e}", file=log)
 
     return beta

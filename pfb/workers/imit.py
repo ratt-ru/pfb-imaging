@@ -58,15 +58,6 @@ def imit(**kw):
             except Exception as e:
                 raise ValueError(f"No gain table  at {gt}")
         opts.gain_table = gainnames
-    if opts.transfer_model_from is not None:
-        tmf = opts.transfer_model_from.rstrip('/')
-        modelstore = DaskMSStore(tmf)
-        try:
-            assert modelstore.exists()
-        except Exception as e:
-            raise ValueError(f"There must be a single model corresponding "
-                             f"to {opts.transfer_model_from}")
-        opts.transfer_model_from = modelstore.url
     OmegaConf.set_struct(opts, True)
 
     if opts.product.upper() not in ["I","Q", "U", "V"]:
@@ -185,49 +176,16 @@ def _imit(**kw):
             construct_mappings(opts.ms,
                                gain_names,
                                ipi=opts.integrations_per_image,
-                               cpi=opts.channels_per_degrid_image,
+                               cpi=opts.channels_per_image,
                                freq_min=freq_min,
                                freq_max=freq_max)
 
+    # we need this to set cell sizes consistently per band
     max_freq = 0
     for ms in opts.ms:
         for idt in freqs[ms].keys():
             freq = freqs[ms][idt]
             max_freq = np.maximum(max_freq, freq.max())
-
-    # cell size
-    cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
-
-    if opts.cell_size is not None:
-        cell_size = opts.cell_size
-        cell_rad = cell_size * np.pi / 60 / 60 / 180
-        if cell_N / cell_rad < 1:
-            raise ValueError("Requested cell size too large. "
-                             "Super resolution factor = ", cell_N / cell_rad)
-        print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
-    else:
-        cell_rad = cell_N / opts.super_resolution_factor
-        cell_size = cell_rad * 60 * 60 * 180 / np.pi
-        print(f"Cell size set to {cell_size:.3e} arcseconds", file=log)
-
-    if opts.nx is None:
-        fov = opts.field_of_view * 3600
-        npix = int(fov / cell_size)
-        npix = good_size(npix)
-        while npix % 2:
-            npix += 1
-            npix = good_size(npix)
-        nx = npix
-        ny = npix
-    else:
-        nx = opts.nx
-        ny = opts.ny if opts.ny is not None else nx
-        cell_deg = np.rad2deg(cell_rad)
-        fovx = nx*cell_deg
-        fovy = ny*cell_deg
-        print(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
-
-    print(f"Image size = (nx={nx}, ny={ny})", file=log)
 
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
@@ -269,21 +227,6 @@ def _imit(**kw):
             schema[opts.weight_column] = {'dims': ('chan', 'corr')}
     else:
         print(f"No weights provided, using unity weights", file=log)
-
-
-    if opts.transfer_model_from is not None:
-        try:
-            mds = xr.open_zarr(opts.transfer_model_from)
-            # this should be fairly small but should
-            # it rather be read in the dask call?
-            # mds = client.persist(mds)
-            foo = client.scatter(mds, broadcast=True)
-            wait(foo)
-        except Exception as e:
-            import ipdb; ipdb.set_trace()
-            raise ValueError(f"No dataset found at {opts.transfer_model_from}")
-    else:
-        mds = None
 
 
     # a flat list to use with as_completed
@@ -334,28 +277,11 @@ def _imit(**kw):
                 fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
                                     freq_mapping[ms][idt]['counts']))
 
-                # # TODO - cpdi to cpgi mapping
-                # # assumes cpdi is integer multiple of cpgi
-                nbandi = freq_mapping[ms][idt]['start_indices'].size
-                nfreqs = np.sum(freq_mapping[ms][idt]['counts'])
-                if opts.channels_per_grid_image in (0, -1, None):
-                    cpgi = nfreqs
-                else:
-                    cpgi = opts.channels_per_grid_image
-                fbins_per_band = int(cpgi / opts.channels_per_degrid_image)
-                nband = int(np.ceil(nbandi/fbins_per_band))
-
-                for fi in range(nband):
-                    idx0 = fi * fbins_per_band
-                    idxf = np.minimum((fi + 1) * fbins_per_band, nfreqs)
-                    fidx = freq_mapping[ms][idt]['start_indices'][idx0:idxf]
-                    fcnts = freq_mapping[ms][idt]['counts'][idx0:idxf]
-                    # need to slice out all data going onto same grid
-                    Inu = slice(fidx.min(), fidx.min() + np.sum(fcnts))
+                for fi, (flow, fcounts) in fitr:
+                    Inu = slice(flow, flow + fcounts)
 
                     subds = ds[{'row': Irow, 'chan': Inu}]
                     subds = subds.chunk({'row':-1, 'chan': -1})
-
                     if opts.gain_table is not None:
                         # Only DI gains currently supported
                         subgds = gds[ids][{'gain_time': It, 'gain_freq': Inu}]
@@ -370,7 +296,6 @@ def _imit(**kw):
                                     chan_widths[ms][idt][Inu],
                                     utimes[ms][idt][It],
                                     ridx, rcnts,
-                                    fidx, fcnts,
                                     radecs[ms][idt],
                                     fi, ti, ims])
 
@@ -381,7 +306,7 @@ def _imit(**kw):
 
     while idle_workers:   # Seed each worker with a task.
 
-        (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts, fidx, fcnts,
+        (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
          radeci, fi, ti, ims) = datasets[n_launched]
 
         worker = idle_workers.pop()
@@ -390,19 +315,13 @@ def _imit(**kw):
                         dc2=dc2,
                         operator=operator,
                         ds=subds,
-                        mds=mds,
                         jones=jones,
                         opts=opts,
-                        nx=nx,
-                        ny=ny,
                         freq=freqsi,
                         chan_width=chan_widthi,
                         utime=utimesi,
                         tbin_idx=ridx,
                         tbin_counts=rcnts,
-                        fbin_idx=fidx,
-                        fbin_counts=fcnts,
-                        cell_rad=cell_rad,
                         radec=radeci,
                         antpos=antpos[ms],
                         poltype=poltype[ms],
@@ -414,6 +333,8 @@ def _imit(**kw):
                         timeid=ti,
                         msid=ims,
                         wid=worker,
+                        max_freq=max_freq,
+                        uv_max=uv_max,
                         pure=False,
                         workers=worker)
 
@@ -428,7 +349,7 @@ def _imit(**kw):
         if n_launched == nds:  # Stop once all jobs have been launched.
             continue
 
-        (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts, fidx, fcnts,
+        (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
         radeci, fi, ti, ims) = datasets[n_launched]
         data2 = None if dc2 is None else getattr(subds, dc2).data
         sc = opts.sigma_column
@@ -443,19 +364,13 @@ def _imit(**kw):
                         dc2=dc2,
                         operator=operator,
                         ds=subds,
-                        mds=mds,
                         jones=jones,
                         opts=opts,
-                        nx=nx,
-                        ny=ny,
                         freq=freqsi,
                         chan_width=chan_widthi,
                         utime=utimesi,
                         tbin_idx=ridx,
                         tbin_counts=rcnts,
-                        fbin_idx=fidx,
-                        fbin_counts=fcnts,
-                        cell_rad=cell_rad,
                         radec=radeci,
                         antpos=antpos[ms],
                         poltype=poltype[ms],
@@ -467,6 +382,8 @@ def _imit(**kw):
                         timeid=ti,
                         msid=ims,
                         wid=worker,
+                        max_freq=max_freq,
+                        uv_max=uv_max,
                         pure=False,
                         workers=worker)
 
