@@ -475,6 +475,8 @@ def image_space_products(
         jones_ncorr = jones.shape[-1]
         if jones_ncorr == 4:
             jones = jones.reshape(ntime, nant, nchan, 1, 2, 2)
+        elif jones_ncorr == 2:
+            pass
         else:
             raise ValueError("Incorrect number of correlations of "
                             f"{jones_ncorr} for product {opts.product}")
