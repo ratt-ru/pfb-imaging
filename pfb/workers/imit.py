@@ -108,6 +108,8 @@ def imit(**kw):
             client = stack.enter_context(Client(cluster))
 
         client.wait_for_workers(opts.nworkers)
+        dashboard_url = client.dashboard_link
+        print(f"Dask Dashboard URL at {dashboard_url}", file=log)
         client.amm.stop()
 
         ti = time.time()
@@ -134,6 +136,7 @@ def _imit(**kw):
     from ducc0.fft import good_size
     from pfb.utils.stokes2im import image_space_products
     import xarray as xr
+    from uuid import uuid4
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -337,7 +340,8 @@ def _imit(**kw):
                         max_freq=max_freq,
                         uv_max=uv_max,
                         pure=False,
-                        workers=worker)
+                        workers=worker,
+                        key='image-'+uuid4().hex)
 
         futures.append(future)
         associated_workers[future] = worker
@@ -386,7 +390,8 @@ def _imit(**kw):
                         max_freq=max_freq,
                         uv_max=uv_max,
                         pure=False,
-                        workers=worker)
+                        workers=worker,
+                        key='image-'+uuid4().hex)
 
         futures.append(future)
         ac_iter.add(future)
