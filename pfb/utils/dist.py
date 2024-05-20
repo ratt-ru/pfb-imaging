@@ -282,13 +282,16 @@ class grad_actor(object):
 
         return self.wsumb
 
-    def set_image_data_products(self, wsum, model, dual, dof=None):
+    def set_image_data_products(self, model, dual, dof=None):
         '''
         This initialises the psf and residual.
-        Can also be used to perform L2 reweighting.
+        Also used to perform L2 reweighting so wsum can change.
+        This is why we can't normalise by wsum.
+        Returns the average per-band psf and resid so that we can
+        compute the MFS images (and hence wsum, rms and rmax etc.)
+        on the runner.
         '''
-        # wsum passed in here must be the total wsum from all bands
-        self.wsum = wsum
+        # per band model and dual
         self.model = model
         self.dual = dual
 
@@ -344,16 +347,18 @@ class grad_actor(object):
                        order='C')
         self.xpad = make_noncritical(tmp)
 
-
-        # we only really need the sum of the dirty/resid images
-        self.resid = np.sum(self.resids, axis=0)/self.wsum
-        self.data = self.resid + self.psf_conv(model)
-
         # we return the per band psf since we need the mfs psf
         # on the runner
         # TODO - we don't actually need to store the psfs on the worker
         # only psfhats
-        return np.sum(self.psfs, axis=0)
+        return np.sum(self.psfs, axis=0), np.sum(self.resids, axis=0)
+
+
+    def set_wsum_and_data(self, wsum):
+        self.wsum = wsum
+        resid = np.sum(self.resids, axis=0)
+        self.data = resid/wsum + self.psf_conv(self.model)
+        return 1  # do we need to return something?
 
 
     def set_residual(self, x=None):
@@ -391,15 +396,12 @@ class grad_actor(object):
                 i, residual = fut.result()
                 self.resids[i] = residual
 
-        self.resid = np.sum(self.resids, axis=0)/self.wsum
-
-        self.data = self.resid + self.psf_conv(x)
+        # we can do this here because wsum doesn't change
+        resid = np.sum(self.resids, axis=0)
+        self.data = resid/self.wsum + self.psf_conv(x)
 
         # return residual since we need the MFS residual on the runner
-        return self.resid
-
-    def get_resid(self):
-        return self.resid
+        return resid
 
     def psf_conv(self, x):
         convx = np.zeros_like(x)

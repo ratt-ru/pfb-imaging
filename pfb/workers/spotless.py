@@ -661,12 +661,23 @@ def _spotless_dist(**kw):
 
     futures = []
     for b in range(nband):
-        fut = actors[b].set_image_data_products(wsum, model[b], dual[b])
+        fut = actors[b].set_image_data_products(model[b], dual[b])
         futures.append(fut)
 
-    psf_mfs = np.sum(list(map(lambda f: f.result(), futures)), axis=0)/wsum
+    results = list(map(lambda f: f.result(), futures))
+    psf_mfs = np.sum([r[0] for r in results], axis=0)/wsum
+    assert (psf_mfs.max() - 1.0) < opts.epsilon  # make sure wsum is consistent
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
     pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
+    residual_mfs = np.sum([r[1] for r in results], axis=0)/wsum
+    rms = np.std(residual_mfs)
+    rmax = np.abs(residual_mfs).max()
+
+    # don't keep the cubes on the runner
+    del results
+
+    futures = list(map(lambda a: a.set_wsum_and_data(wsum), actors))
+    results = list(map(lambda f: f.result(), futures))
 
     if opts.hessnorm is None:
         print('Getting spectral norm of Hessian approximation', file=log)
@@ -675,20 +686,10 @@ def _spotless_dist(**kw):
         hessnorm = opts.hessnorm
     print(f'hessnorm = {hessnorm:.3e}', file=log)
 
-    futures = list(map(lambda a: a.get_resid(), actors))
-    residual_mfs = np.sum(list(map(lambda f: f.result(), futures)),
-                          axis=0)
-    rms = np.std(residual_mfs)
-    rmax = np.abs(residual_mfs).max()
-
     # a value less than zero turns L1 reweighting off
     # we'll start on convergence or at the iteration
     # indicated by l1reweight_from, whichever comes first
-    if opts.l1reweight_from < 0:
-        # k+1 - iter0 can never be >= inf
-        l1reweight_from = np.inf
-    else:
-        l1reweight_from = opts.l1reweight_from
+    l1reweight_from = opts.l1reweight_from
 
     if l1reweight_from == 0:
         # this is an approximation
@@ -787,29 +788,53 @@ def _spotless_dist(**kw):
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
         if eps < opts.tol:
             # do not converge prematurely
-            if k+1 - iter0 >= l1reweight_from:
+            if k+1 - iter0 < l1reweight_from:  # only happens once
                 # start reweighting
                 l1reweight_from = k+1 - iter0
-            elif l1reweight_from < k+1 - iter0 and l2reweights < opts.max_l2_reweights:
-                # L1 reweighting has already kicked in and we have converged again so
-                # perform L2 reweight
+                # don't start L2 reweighting before L1 reweighting
+                # if it is enabled
+                dof = None
+            elif l2reweights < opts.max_l2_reweights:
+                # L1 reweighting has already kicked in and we have
+                # converged again so perform L2 reweight
                 dof = opts.l2_reweight_dof
-                l2reweights += 1
             else:
+                # we have reached max L2 reweights so we are done
+                import ipdb; ipdb.set_trace()
                 print(f"Converged after {k+1} iterations.", file=log)
                 break
         else:
             # do not perform an L2 reweight unless the M step has converged
             dof = None
 
-        if dof is None:
+        if dof is not None:
+            print('Will recompute image data products since L2 reweight is required.')
+            futures = []
+            for b in range(nband):
+                fut = actors[b].set_image_data_products(model[b], dual[b], dof=dof)
+                futures.append(fut)
+
+            results = list(map(lambda f: f.result(), futures))
+            psf_mfs = np.sum([r[0] for r in results], axis=0)
+            wsum = psf_mfs.max()
+            psf_mfs /= wsum
+            GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
+            pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
+            residual_mfs = np.sum([r[1] for r in results], axis=0)/wsum
+
+            # don't keep the cubes on the runner
+            del results
+
+            futures = list(map(lambda a: a.set_wsum_and_data(wsum), actors))
+            results = list(map(lambda f: f.result(), futures))
+            l2reweights += 1
+        else:
             # compute normal residual, no need to redo PSF etc
             print('Computing residual', file=log)
             futures = list(map(lambda a: a.set_residual(), actors))
             resids = list(map(lambda f: f.result(), futures))
-            residual_mfs = np.sum(resids, axis=0)
-        else:
-            print('Will recompute image data products since L2 reweight is required.')
+            # we never resids by wsum inside the worker
+            residual_mfs = np.sum(resids, axis=0)/wsum
 
 
         save_fits(residual_mfs,
@@ -819,7 +844,6 @@ def _spotless_dist(**kw):
         rmsp = rms
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
-
 
         # base this on rmax?
         if rms < best_rms:
@@ -845,19 +869,19 @@ def _spotless_dist(**kw):
                 print("Algorithm is diverging. Terminating.", file=log)
                 break
 
-    # convert to fits files
-    fitsout = []
-    if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
+    # # convert to fits files
+    # fitsout = []
+    # if opts.fits_mfs:
+    #     fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
+    #     fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
 
-    if opts.fits_cubes:
-        fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
-        fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
+    # if opts.fits_cubes:
+    #     fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
+    #     fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
 
-    if len(fitsout):
-        print("Writing fits", file=log)
-        dask.compute(fitsout)
+    # if len(fitsout):
+    #     print("Writing fits", file=log)
+    #     dask.compute(fitsout)
 
     return
 
