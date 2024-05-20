@@ -294,7 +294,7 @@ def _imit(**kw):
                     else:
                         jones = None
 
-                    datasets.append([subds,
+                    datasets.append([clone(subds),
                                     jones,
                                     freqs[ms][idt][Inu],
                                     chan_widths[ms][idt][Inu],
