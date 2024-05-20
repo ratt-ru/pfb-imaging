@@ -5,6 +5,7 @@ import dask
 from distributed import get_client, worker_client
 import xarray as xr
 import dask
+from uuid import uuid4
 from pfb.utils.stokes import stokes_funcs
 from pfb.utils.weighting import (_compute_counts, _counts_to_weights,
                                  _weight_data, _filter_extreme_counts)
@@ -82,7 +83,8 @@ def single_stokes_image(
         jones) = client.compute([data, data2, ant1, ant2, uvw, frow,
                                 flag, sigma, weight, jones],
                                 sync=True,
-                                workers=wid)
+                                workers=wid,
+                                key='read-'+uuid4().hex)
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -399,7 +401,8 @@ def image_space_products(
     with worker_client() as client:
         (ds, jones) = client.compute([ds, jones],
                                      sync=True,
-                                     workers=wid)
+                                     workers=wid,
+                                     key='read-'+uuid4().hex)
     data = getattr(ds, dc1).values
     ds = ds.drop_vars(dc1)
     nrow, nchan, ncorr = data.shape

@@ -794,7 +794,7 @@ def _spotless_dist(**kw):
                 # don't start L2 reweighting before L1 reweighting
                 # if it is enabled
                 dof = None
-            elif l2reweights < opts.max_l2_reweights:
+            elif l2reweights < opts.max_l2_reweight:
                 # L1 reweighting has already kicked in and we have
                 # converged again so perform L2 reweight
                 dof = opts.l2_reweight_dof
