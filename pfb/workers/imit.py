@@ -127,6 +127,7 @@ def _imit(**kw):
     from distributed import get_client, wait, as_completed, Semaphore
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
+    from daskms.experimental.zarr import xds_from_zarr
     from daskms.fsspec_store import DaskMSStore
     import dask.array as da
     from africanus.constants import c as lightspeed
