@@ -473,8 +473,8 @@ def _spotless_dist(**kw):
     from pfb.opt.power_method import power_method_dist as power_method
     from pfb.opt.primal_dual import primal_dual_dist as primal_dual
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
-    from pfb.utils.fits import load_fits, dds2fits, dds2fits_mfs, set_wcs
-    from pfb.utils.dist import l1reweight_func, band_actor
+    from pfb.utils.fits import load_fits, dds2fits, dds2fits_mfs, set_wcs, save_fits
+    from pfb.utils.dist import l1reweight_func
     from copy import deepcopy
     from operator import getitem
     from itertools import cycle
@@ -581,24 +581,25 @@ def _spotless_dist(**kw):
         counts = None  # will use self.counts in this case
     futures = list(map(lambda a: a.set_imaging_weights(counts=counts), actors))
     wsums = list(map(lambda f: f.result(), futures))
+    fsel = np.array(wsums) > 0
     wsum = np.sum(wsums)
     real_type = wsum.dtype
     complex_type = np.result_type(real_type, np.complex64)
     futures = list(map(lambda a: a.get_image_info(), actors))
     results = list(map(lambda f: f.result(), futures))
     nx, ny, cell_rad, ra, dec, freq_out = results[0]
-    freqs_out = [freq_out]
+    freq_out = [freq_out]
     for result in results[1:]:
         assert result[0] == nx
         assert result[1] == ny
         assert result[2] == cell_rad
         assert result[3] == ra
         assert result[4] == dec
-        freqs_out.append(result[5])
+        freq_out.append(result[5])
 
     radec = [ra, dec]
     cell_deg = np.rad2deg(cell_rad)
-    ref_freq = np.mean(freqs_out)
+    ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
     iter0 = 0
@@ -684,6 +685,7 @@ def _spotless_dist(**kw):
     # we'll start on convergence or at the iteration
     # indicated by l1reweight_from, whichever comes first
     if opts.l1reweight_from < 0:
+        # k+1 - iter0 can never be >= inf
         l1reweight_from = np.inf
     else:
         l1reweight_from = opts.l1reweight_from
@@ -704,7 +706,7 @@ def _spotless_dist(**kw):
     best_rmax = rmax
     best_model = model.copy()
     diverge_count = 0
-
+    l2reweights = 0
     print(f"It {iter0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for k in range(iter0, iter0 + opts.niter):
         print('Solving for model', file=log)
@@ -722,11 +724,6 @@ def _spotless_dist(**kw):
                     gamma=opts.gamma,
                     verbosity=opts.pd_verbose)
 
-        print('Computing residual', file=log)
-        futures = list(map(lambda a: a.grad(), actors))
-        resids = list(map(lambda f: f.result(), futures))
-        residual_mfs = -np.sum(resids, axis=0)
-
         print('Updating model', file=log)
         futures = list(map(lambda a: a.give_model(), actors))
         results = list(map(lambda f: f.result(), futures))
@@ -738,19 +735,15 @@ def _spotless_dist(**kw):
             dual[b] = results[i][1]
 
         # save model and residual
-        save_fits(np.mean(model, axis=0),
+        save_fits(np.mean(model[fsel], axis=0),
                   basename + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
-        save_fits(residual_mfs,
-                  basename + f'_{opts.suffix}_residual_{k+1}.fits',
-                  hdr_mfs)
-
 
         print(f"Writing model at iter {k+1} to "
               f"{basename}_{opts.suffix}_model_{k+1}.mds", file=log)
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
-                fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
+                fit_image_cube(np.ones(1), freq_out[fsel], model[None, fsel, :, :],
                                wgt=wsums[None, fsel],
                                nbasisf=int(np.sum(fsel)),
                                method='Legendre')
@@ -789,10 +782,44 @@ def _spotless_dist(**kw):
         except Exception as e:
             print(f"Exception {e} raised during model fit .", file=log)
 
+
+        # convergence check
+        eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
+        if eps < opts.tol:
+            # do not converge prematurely
+            if k+1 - iter0 >= l1reweight_from:
+                # start reweighting
+                l1reweight_from = k+1 - iter0
+            elif l1reweight_from < k+1 - iter0 and l2reweights < opts.max_l2_reweights:
+                # L1 reweighting has already kicked in and we have converged again so
+                # perform L2 reweight
+                dof = opts.l2_reweight_dof
+                l2reweights += 1
+            else:
+                print(f"Converged after {k+1} iterations.", file=log)
+                break
+        else:
+            # do not perform an L2 reweight unless the M step has converged
+            dof = None
+
+        if dof is None:
+            # compute normal residual, no need to redo PSF etc
+            print('Computing residual', file=log)
+            futures = list(map(lambda a: a.set_residual(), actors))
+            resids = list(map(lambda f: f.result(), futures))
+            residual_mfs = np.sum(resids, axis=0)
+        else:
+            print('Will recompute image data products since L2 reweight is required.')
+
+
+        save_fits(residual_mfs,
+                  basename + f'_{opts.suffix}_residual_{k+1}.fits',
+                  hdr_mfs)
+
         rmsp = rms
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
-        eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
+
 
         # base this on rmax?
         if rms < best_rms:
@@ -804,19 +831,12 @@ def _spotless_dist(**kw):
               file=log)
 
 
-        if eps < opts.tol:
-            # do not converge prematurely
-            if k+1 - iter0 >= l1reweight_from:
-                # start reweighting
-                l1reweight_from = 0
-            else:
-                print(f"Converged after {k+1} iterations.", file=log)
-                break
+
 
         if k+1 - iter0 >= l1reweight_from:
             print('L1 reweighting', file=log)
             rms_comps = np.std(residual_mfs)*nband/pix_per_beam
-            l1weightfs = l1reweight_func(actors, opts.rmsfactor, rms_comps,
+            l1weight = l1reweight_func(actors, opts.rmsfactor, rms_comps,
                                          alpha=opts.alpha)
 
         if rms > rmsp:

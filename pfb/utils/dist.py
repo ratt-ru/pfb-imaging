@@ -329,11 +329,11 @@ class grad_actor(object):
                 self.resids[i] = residual
                 self.psfs[i] = psf
                 self.psfhats[i] = psfhat
-                self.wgt[g] = wgt
+                self.wgt[i] = wgt
 
         # pre-allocate tmp arrays required for convolution
         tmp = np.empty(residual.shape,
-                       dtype=dirty.dtype, order='C')
+                       dtype=residual.dtype, order='C')
         self.xout = make_noncritical(tmp)
         tmp = np.empty(psfhat.shape,
                        dtype=psfhat.dtype,
@@ -347,18 +347,16 @@ class grad_actor(object):
 
         # we only really need the sum of the dirty/resid images
         self.resid = np.sum(self.resids, axis=0)/self.wsum
-        if model is not None:
-            self.data = self.resid + self.psf_conv(model)
-        else:
-            self.data = self.resid
+        self.data = self.resid + self.psf_conv(model)
 
         # we return the per band psf since we need the mfs psf
         # on the runner
+        # TODO - we don't actually need to store the psfs on the worker
+        # only psfhats
         return np.sum(self.psfs, axis=0)
 
 
     def set_residual(self, x=None):
-        self.resid = self.dirty.copy()
         if x is None:
             x = self.model
 
@@ -371,7 +369,7 @@ class grad_actor(object):
                                                     self.y0)):
 
                 fut = executor.submit(residual_from_vis,
-                                      model,
+                                      x,
                                       uvw,
                                       self.freq,
                                       vis,
@@ -393,7 +391,11 @@ class grad_actor(object):
                 i, residual = fut.result()
                 self.resids[i] = residual
 
-        self.resid = np.sum(self.resids, axis=0)/wsum
+        self.resid = np.sum(self.resids, axis=0)/self.wsum
+
+        self.data = self.resid + self.psf_conv(x)
+
+        # return residual since we need the MFS residual on the runner
         return self.resid
 
     def get_resid(self):
@@ -415,28 +417,6 @@ class grad_actor(object):
 
     def almost_grad(self, x):
         return self.psf_conv(x) - self.data
-
-    def l2_reweight(self, dof):
-
-        with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
-            futures = []
-            for i, (uvw, wgt, vis, mask, x0, y0) in enumerate(zip(self.uvw, self.imwgt,
-                                                   self.vis, self.mask,
-                                                   self.x0, self.y0)):
-                fut = executor.submit(dirty2vis,
-                    uvw=uvw,
-                    freq=freq,
-                    dirty=model,
-                    pixsize_x=cellx,
-                    pixsize_y=celly,
-                    center_x=x0,
-                    center_y=y0,
-                    epsilon=epsilon,
-                    do_wgridding=do_wgridding,
-                    flip_v=False,
-                    nthreads=nthreads,
-                    divide_by_n=False,
-                    sigma_min=1.1, sigma_max=3.0)
 
     def psi_dot(self, x=None):
         '''
@@ -532,9 +512,6 @@ class grad_actor(object):
         self.tau = 0.9 / (hessnorm / (2.0 * gamma) + self.sigma * nu**2)
         self.vtilde = self.dual + self.sigma * self.psi_dot(self.model)
         return self.vtilde
-
-    def update_data(self):
-        self.data = self.residual + self.psf_conv(self.model)
 
     def pd_update(self, ratio):
         self.xp[...] = self.model[...]
@@ -713,7 +690,6 @@ def residual_from_vis(
                 mask,
                 nx, ny,
                 cellx, celly,
-                model,
                 x0=0.0, y0=0.0,
                 nthreads=1,
                 epsilon=1e-7,

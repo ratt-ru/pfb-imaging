@@ -30,7 +30,8 @@ inputs:
     dtype: int
     default: 5
     info:
-      Start doing l1reweights after this many iterations
+      L1 reweighting will kick in either at convergence or after this many
+      iterations. Set to a negative value to disbale L1 reweighting.
   hessnorm:
     dtype: float
     abbreviation: hessnorm
@@ -70,7 +71,6 @@ inputs:
     abbreviation: niter
     info:
       Number of iterations.
-      L21 reweighting will take place after every iteration
   tol:
     dtype: float
     default: 5e-4
@@ -143,7 +143,8 @@ inputs:
     dtype: float
     default: 5.0
     info:
-      Replace extreme outliers in the weighting grid by their local mean
+      Set minimum counts in the uniform weighting grid to the median divided by this value.
+      This is useful to avoid artificially up-weighting nearly empty uv-cells.
   target:
     dtype: str
     info:
@@ -155,12 +156,25 @@ inputs:
     info:
       Concatenate datasets by row/time.
       This will result in a single dirty image, psf and beam per band.
-  mf_weighting:
+  mf-weighting:
     dtype: bool
-    default: true
+    default: false
     info:
       Base the imaging weights on the uniform weights computed over all
-      data instead of per band.
+      data instead of per band. This ensures that the MFS image can truly
+      be uniformly weighted.
+  l2-reweight-dof:
+    dtype: float
+    default: 3.5
+    info:
+      The degrees of freedom parameter for performing L2 reweighting.
+      L2 reweighting is triggered if L1 reweighting is active and convergence
+      is reached and will be applied a maximum of max-l2-reweight times.
+  max-l2-reweight:
+    dtype: int
+    default: 5
+    info:
+      The maximum number of L2 reweighting steps.
 
 outputs:
   {}
