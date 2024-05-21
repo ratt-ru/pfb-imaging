@@ -106,7 +106,7 @@ def imit(**kw):
                                     asynchronous=False)
             cluster = stack.enter_context(cluster)
             client = stack.enter_context(Client(cluster,
-                                                direct_to_workers=True))
+                                                direct_to_workers=False))
 
         client.wait_for_workers(opts.nworkers)
         dashboard_url = client.dashboard_link
@@ -295,7 +295,7 @@ def _imit(**kw):
                     else:
                         jones = None
 
-                    datasets.append([clone(subds),
+                    datasets.append([subds,
                                     jones,
                                     freqs[ms][idt][Inu],
                                     chan_widths[ms][idt][Inu],

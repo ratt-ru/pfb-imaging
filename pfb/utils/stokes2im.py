@@ -3,6 +3,7 @@ import numexpr as ne
 from numba import literally
 import dask
 from distributed import get_client, worker_client
+from dask.graph_manipulation import clone
 import xarray as xr
 import dask
 from uuid import uuid4
@@ -399,7 +400,8 @@ def image_space_products(
         complex_type = np.complex128
 
     with worker_client() as client:
-        (ds, jones) = client.compute([ds, jones],
+        (ds, jones) = client.compute([clone(ds),
+                                      clone(jones)],
                                      sync=True,
                                      workers=wid,
                                      key='read-'+uuid4().hex)
