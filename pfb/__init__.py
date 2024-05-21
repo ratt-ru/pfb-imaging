@@ -99,7 +99,8 @@ def set_client(opts, stack, log,
                                        memory_limit=0,  # str(mem_limit/nworkers)+'GB'
                                        asynchronous=False)
                 cluster = stack.enter_context(cluster)
-                client = stack.enter_context(Client(cluster))
+                client = stack.enter_context(Client(cluster,
+                                                    direct_to_workers=True))
 
         if auto_restrict:
             from quartical.scheduling import install_plugin

@@ -517,6 +517,11 @@ class grad_actor(object):
         return self.vtilde
 
     def pd_update(self, ratio):
+        # ratio - (nbasis, nmax)
+
+        if self.bandid == 0:
+            from time import time
+            ti = time()
         self.xp[...] = self.model[...]
         self.vp[...] = self.dual[...]
 
@@ -533,6 +538,10 @@ class grad_actor(object):
         eps_num = np.sum((self.model-self.xp)**2)
         eps_den = np.sum(self.model**2)
 
+        if self.bandid == 0:
+            print('0 - ', time() - ti)
+
+        # vtilde - (nband, nbasis, nmax)
         return self.vtilde, eps_num, eps_den
 
 
