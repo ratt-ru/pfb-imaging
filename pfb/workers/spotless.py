@@ -484,7 +484,6 @@ def _spotless_dist(**kw):
     from pfb.utils.misc import eval_coeffs_to_slice, fit_image_cube
     import pywt
     from pfb.wavelets.wavelets_jsk import get_buffer_size
-    import joblib
     import fsspec
     import pickle
     from pfb.utils.dist import grad_actor
@@ -558,6 +557,7 @@ def _spotless_dist(**kw):
                          "One for each imaging band.")
 
     # set up band actors
+    print("Setting up actors", file=log)
     futures = []
     for wname, (bandid, dsl) in zip(names, dsb.items()):
         f = client.submit(grad_actor,
@@ -579,6 +579,8 @@ def _spotless_dist(**kw):
         counts = np.sum(counts, axis=0)
     else:
         counts = None  # will use self.counts in this case
+
+    print("Setting imaging weights", file=log)
     futures = list(map(lambda a: a.set_imaging_weights(counts=counts), actors))
     wsums = list(map(lambda f: f.result(), futures))
     fsel = np.array(wsums) > 0
@@ -587,15 +589,18 @@ def _spotless_dist(**kw):
     complex_type = np.result_type(real_type, np.complex64)
     futures = list(map(lambda a: a.get_image_info(), actors))
     results = list(map(lambda f: f.result(), futures))
-    nx, ny, cell_rad, ra, dec, freq_out = results[0]
+    nx, ny, nmax, cell_rad, ra, dec, freq_out = results[0]
     freq_out = [freq_out]
     for result in results[1:]:
         assert result[0] == nx
         assert result[1] == ny
-        assert result[2] == cell_rad
-        assert result[3] == ra
-        assert result[4] == dec
-        freq_out.append(result[5])
+        assert result[2] == nmax
+        assert result[3] == cell_rad
+        assert result[4] == ra
+        assert result[5] == dec
+        freq_out.append(result[6])
+
+    print(f"Image size set to ({nx}, {ny})", file=log)
 
     radec = [ra, dec]
     cell_deg = np.rad2deg(cell_rad)
@@ -612,13 +617,6 @@ def _spotless_dist(**kw):
     # get size of dual domain
     bases = tuple(opts.bases.split(','))
     nbasis = len(bases)
-    nmax = 0
-    for wavelet in bases:
-        if wavelet == 'self':
-            nmax = nx*ny
-            continue
-        nfilter = len(pywt.Wavelet(wavelet).filter_bank[0])
-        nmax = np.maximum(nmax, get_buffer_size((nx, ny), nfilter, opts.nlevels))
 
     # initialise dual and model (assumed constant in time)
     # TODO - init in actor
@@ -659,6 +657,8 @@ def _spotless_dist(**kw):
         model = np.zeros((nband, nx, ny))
         dual = np.zeros((nband, nbasis, nmax))
 
+
+    print("Computing image data products", file=log)
     futures = []
     for b in range(nband):
         fut = actors[b].set_image_data_products(model[b], dual[b])

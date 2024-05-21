@@ -53,7 +53,7 @@ def set_client(opts, stack, log,
             with open_dict(opts):
                 opts.nvthreads = nvthreads
 
-    # os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
+    os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
@@ -71,8 +71,8 @@ def set_client(opts, stack, log,
 
     import numexpr as ne
     max_cores = ne.detect_number_of_cores()
-    # ne_threads = min(max_cores, opts.nvthreads)
-    os.environ["NUMEXPR_NUM_THREADS"] = str(max_cores)
+    ne_threads = min(max_cores, opts.nvthreads)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
     import dask
     if scheduler=='distributed':

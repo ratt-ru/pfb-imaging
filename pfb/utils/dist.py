@@ -242,7 +242,7 @@ class grad_actor(object):
         return self.counts
 
     def get_image_info(self):
-        return (self.nx, self.ny, self.cell_rad,
+        return (self.nx, self.ny, self.nmax, self.cell_rad,
                 self.ra[0], self.dec[0], self.freq_out)
 
     def set_imaging_weights(self, counts=None):
@@ -302,6 +302,7 @@ class grad_actor(object):
                                                     self.wgt, self.vis,
                                                     self.mask, self.x0,
                                                     self.y0)):
+
                 fut = executor.submit(image_data_products,
                                       model,
                                       uvw,
@@ -565,7 +566,7 @@ def image_data_products(model,
                         cellx, celly,
                         dof=None,
                         x0=0.0, y0=0.0,
-                        nthreads=1,
+                        nthreads=4,
                         epsilon=1e-7,
                         do_wgridding=True,
                         double_accum=True,
@@ -592,7 +593,8 @@ def image_data_products(model,
                 flip_v=False,
                 nthreads=nthreads,
                 divide_by_n=False,
-                sigma_min=1.1, sigma_max=3.0)
+                sigma_min=1.1, sigma_max=3.0,
+                verbosity=1)
 
         residual_vis = vis - model_vis
     else:
