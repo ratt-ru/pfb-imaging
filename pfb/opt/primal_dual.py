@@ -8,6 +8,7 @@ from pfb.utils.misc import norm_diff
 from uuid import uuid4
 import pyscilog
 import gc
+from time import time
 # gc.set_debug(gc.DEBUG_LEAK)
 log = pyscilog.get_logger('PD')
 
@@ -227,29 +228,30 @@ def primal_dual_dist(
     numreweight = 0
     for k in range(maxit):
         # done on runner since need to combine over freq
+        ti = time()
         vmfs = np.sum(vtilde, axis=0)/sigma
         vsoft = np.maximum(np.abs(vmfs) - lam*l1weight/sigma, 0.0) * np.sign(vmfs)
         mask = vmfs != 0
         ratio = np.zeros(mask.shape, dtype=l1weight.dtype)
         ratio[mask] = vsoft[mask] / vmfs[mask]
+        print('ratio - ', time() - ti)
 
+        ti = time()
         # do on individual workers
         futures = list(map(lambda a: a.pd_update(ratio), actors))
         results = list(map(lambda f: f.result(), futures))
+        print('update - ', time() - ti)
+
+        ti = time()
         vtilde = [r[0] for r in results]
         eps_num = [r[1] for r in results]
         eps_den = [r[2] for r in results]
-
         eps = np.sqrt(np.sum(eps_num)/np.sum(eps_den))
+        print('vtilde - ', time() - ti)
+
 
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {eps:.3e}", file=log)
-            # from pympler import summary, muppy
-            # all_objects = muppy.get_objects()
-            # bytearrays = [obj for obj in all_objects if isinstance(obj, bytearray)]
-            # # print(summary.print_(summary.summarize(bytearrays)))
-            # print(summary.print_(summary.summarize(all_objects)))
-            # import ipdb; ipdb.set_trace()
 
         if eps < tol:
             if (l1weight != 1.0).any() and numreweight < maxreweight:
