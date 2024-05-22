@@ -671,8 +671,7 @@ def image_data_products(model,
                 flip_v=False,
                 nthreads=nthreads,
                 divide_by_n=False,
-                sigma_min=1.1, sigma_max=3.0,
-                verbosity=1)
+                sigma_min=1.1, sigma_max=3.0)
 
         residual_vis = vis - model_vis
     else:

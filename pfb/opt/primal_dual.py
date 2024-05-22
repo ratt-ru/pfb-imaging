@@ -5,6 +5,7 @@ from pfb.utils.dist import l1reweight_func
 from operator import getitem
 from ducc0.misc import make_noncritical
 from pfb.utils.misc import norm_diff
+from numba import njit, prange
 from uuid import uuid4
 import pyscilog
 import gc
@@ -228,13 +229,8 @@ def primal_dual_dist(
     numreweight = 0
     ratio = np.zeros(l1weight.shape, dtype=l1weight.dtype)
     for k in range(maxit):
-        # done on runner since need to combine over freq
         ti = time()
-        vmfs = np.sum(vtilde, axis=0)/sigma
-        vsoft = np.maximum(np.abs(vmfs) - lam*l1weight/sigma, 0.0) * np.sign(vmfs)
-        mask = vmfs != 0
-        ratio[~mask] = 0.0
-        ratio[mask] = vsoft[mask] / vmfs[mask]
+        get_ratio(np.array(vtilde), l1weight, sigma, lam, ratio)
         print('ratio - ', time() - ti)
 
         ti = time()
@@ -264,14 +260,28 @@ def primal_dual_dist(
                     print("Maximum reweighting steps reached", file=log)
                 break
 
-
-
     if k >= maxit-1:
         print(f'Maximum iterations reached. eps={eps:.3e}', file=log)
     else:
         print(f'Success converged after {k} iterations', file=log)
 
     return
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def get_ratio(vtilde, l1weight, sigma, lam, ratio):
+    nband, nbasis, nmax = vtilde.shape
+    for b in range(nbasis):
+        for i in prange(nmax):  # WTF without the prange it segfaults when parallel=True
+            vtildebi = vtilde[:, b, i]
+            weightbi = l1weight[b, i]
+            absvbisum = np.abs(np.sum(vtildebi)/sigma)  # sum over band axis
+            softvbisum = absvbisum - lam*weightbi/sigma
+            if softvbisum > 0:
+                ratio[b, i] = softvbisum/absvbisum
+            else:
+                ratio[b, i] = 0.0
+
 
 
 primal_dual.__doc__ = r"""
