@@ -716,7 +716,7 @@ def _spotless_dist(**kw):
     for k in range(iter0, iter0 + opts.niter):
         print('Solving for model', file=log)
         primal_dual(actors,
-                    rms,
+                    rms*opts.rmsfactor,
                     hessnorm,
                     l1weight,
                     opts.rmsfactor,
@@ -781,7 +781,7 @@ def _spotless_dist(**kw):
         coeff_dataset = xr.Dataset(data_vars=data_vars,
                             coords=coords,
                             attrs=attrs)
-        coeff_dataset.to_zarr(f"{mdsstore.url}")
+        coeff_dataset.to_zarr(f"{mdsstore.url}", mode='w')
 
         # convergence check
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)

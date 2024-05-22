@@ -395,7 +395,6 @@ class grad_actor(object):
         # needed if we have done L2 reweighting and we are
         # resuming a run with a different robustness value
         if dof and self.opts.concat:
-            print('Updating weights in input ds')
             wgt = self.wgt[0]  # only one of these
             rowi = 0
             for i, dsn in enumerate(self.ds_names):
@@ -504,11 +503,6 @@ class grad_actor(object):
         alpha = np.zeros((self.nbasis, self.nmax),
                          dtype=x.dtype)
 
-        # comment below to eliminate the possibility of
-        # wavelets/cf.futures being the culprit
-        # run with bases=self only
-        # alpha[0, 0:self.buffer_size[self.bases[0]]] = x.ravel()
-
         with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
             futures = []
             for i, wavelet in enumerate(self.bases):
@@ -544,12 +538,6 @@ class grad_actor(object):
         nx = self.nx
         ny = self.ny
         x = np.zeros((nx, ny), dtype=alpha.dtype)
-
-        # comment below to eliminate the possibility of
-        # wavelets/cf.futures being the culprit
-        # run with bases=self only
-        # nmax = self.buffer_size[self.bases[0]]
-        # x = alpha[0, 0:nmax].reshape(nx, ny)
 
         with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
             futures = []
