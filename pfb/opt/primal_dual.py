@@ -226,13 +226,14 @@ def primal_dual_dist(
     futures = list(map(lambda a: a.init_pd_params(L, nu), actors))
     vtilde = list(map(lambda f: f.result(), futures))
     numreweight = 0
+    ratio = np.zeros(l1weight.shape, dtype=l1weight.dtype)
     for k in range(maxit):
         # done on runner since need to combine over freq
         ti = time()
         vmfs = np.sum(vtilde, axis=0)/sigma
         vsoft = np.maximum(np.abs(vmfs) - lam*l1weight/sigma, 0.0) * np.sign(vmfs)
         mask = vmfs != 0
-        ratio = np.zeros(mask.shape, dtype=l1weight.dtype)
+        ratio[~mask] = 0.0
         ratio[mask] = vsoft[mask] / vmfs[mask]
         print('ratio - ', time() - ti)
 
@@ -242,12 +243,10 @@ def primal_dual_dist(
         results = list(map(lambda f: f.result(), futures))
         print('update - ', time() - ti)
 
-        ti = time()
         vtilde = [r[0] for r in results]
         eps_num = [r[1] for r in results]
         eps_den = [r[2] for r in results]
         eps = np.sqrt(np.sum(eps_num)/np.sum(eps_den))
-        print('vtilde - ', time() - ti)
 
 
         if not k % report_freq and verbosity > 1:

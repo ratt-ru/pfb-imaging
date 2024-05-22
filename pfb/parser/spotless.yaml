@@ -175,6 +175,11 @@ inputs:
     default: 5
     info:
       The maximum number of L2 reweighting steps.
+  reset-cache:
+    dtype: bool
+    default: false
+    info:
+      Hard reset the cache
 
 outputs:
   {}

@@ -76,9 +76,9 @@ def set_client(opts, stack, log,
 
     import dask
     if scheduler=='distributed':
-        # TODO - investigate what difference this makes
-        # with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
-        #     client = distributed.Client()
+        # we probably always want compression
+
+
         # set up client
         host_address = opts.host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
         if host_address is not None:
@@ -92,15 +92,20 @@ def set_client(opts, stack, log,
                       file=log)
             from dask.distributed import Client, LocalCluster
             print("Initialising client with LocalCluster.", file=log)
-            with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
-                cluster = LocalCluster(processes=opts.nworkers > 1,
-                                       n_workers=opts.nworkers,
-                                       threads_per_worker=opts.nthreads_dask,
-                                       memory_limit=0,  # str(mem_limit/nworkers)+'GB'
-                                       asynchronous=False)
-                cluster = stack.enter_context(cluster)
-                client = stack.enter_context(Client(cluster,
-                                                    direct_to_workers=True))
+            dask.config.set({
+                    'distributed.comm.compression': {
+                        'on': True,
+                        'type': 'blosc'
+                    }
+            })
+            cluster = LocalCluster(processes=opts.nworkers > 1,
+                                    n_workers=opts.nworkers,
+                                    threads_per_worker=opts.nthreads_dask,
+                                    memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                                    asynchronous=False)
+            cluster = stack.enter_context(cluster)
+            client = stack.enter_context(Client(cluster,
+                                                direct_to_workers=True))
 
         if auto_restrict:
             from quartical.scheduling import install_plugin

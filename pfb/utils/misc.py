@@ -1138,6 +1138,7 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
         wgt = wgt.reshape(ntime*nband, 1)
     else:
         wgt = np.ones((ntime*nband, 1), dtype=float)
+
     # nothing to fit
     if ntime==1 and nband==1:
         coeffs = beta

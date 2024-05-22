@@ -51,9 +51,11 @@ def counts_to_weights(counts, uvw, freq, nx, ny,
                                  robust)
 
 class grad_actor(object):
-    def __init__(self, ds_names, opts, bandid):
+    def __init__(self, ds_names, opts, bandid, cache_path):
         self.opts = opts
         self.bandid = bandid
+        self.cache_path = cache_path + f'/band{bandid}'
+        self.ds_names = ds_names
 
         dsl = []
         for dsn in ds_names:
@@ -72,13 +74,13 @@ class grad_actor(object):
         uvw = [ds.UVW for ds in dsl]
         times_out = [ds.time_out for ds in dsl]
 
-        # we cant just use xr.merge because beam needs to be summed
+        # TODO - weighted sum of beam needs to be summed
         if opts.concat:
             self.wgt = [xr.concat(wgt, dim='row').values]
             self.vis = [xr.concat(vis, dim='row').values]
             self.mask = [xr.concat(mask, dim='row').values]
             self.uvw = [xr.concat(uvw, dim='row').values]
-            self.times_out = [np.mean(times_out)]  # avoid precision issues
+            self.times_out = [np.mean(times_out)]
         else:
             self.wgt = list(map(lambda d: d.values, wgt))
             self.vis = list(map(lambda d: d.values, vis))
@@ -236,6 +238,16 @@ class grad_actor(object):
         self.vp = np.zeros((self.nbasis, self.nmax), dtype=self.real_type)
         self.vtilde = np.zeros((self.nbasis, self.nmax), dtype=self.real_type)
 
+        # pre-allocate tmp arrays required for convolution
+        # make_noncritical for efficiency of FFT
+        self.xout = make_noncritical(np.zeros((self.nx, self.ny),
+                                              dtype=self.real_type))
+        self.xhat = make_noncritical(np.zeros((self.nx_psf, self.nyo2),
+                                              dtype=self.complex_type))
+        self.xpad = make_noncritical(np.zeros((self.nx_psf, self.ny_psf),
+                                              dtype=self.real_type))
+
+
     def get_counts(self):
         # it doesn't seem to be possible to
         # access an actors attributes directly?
@@ -243,7 +255,8 @@ class grad_actor(object):
 
     def get_image_info(self):
         return (self.nx, self.ny, self.nmax, self.cell_rad,
-                self.ra[0], self.dec[0], self.freq_out)
+                self.ra[0], self.dec[0], self.x0[0], self.y0[0],
+                self.freq_out, np.mean(self.times_out))
 
     def set_imaging_weights(self, counts=None):
         if counts is not None:
@@ -282,7 +295,7 @@ class grad_actor(object):
 
         return self.wsumb
 
-    def set_image_data_products(self, model, dual, dof=None):
+    def set_image_data_products(self, model, dual, dof=None, from_cache=False):
         '''
         This initialises the psf and residual.
         Also used to perform L2 reweighting so wsum can change.
@@ -294,6 +307,21 @@ class grad_actor(object):
         # per band model and dual
         self.model = model
         self.dual = dual
+
+        if from_cache:
+            self.psfs = [1] * self.ntimes
+            self.psfhats = [1] * self.ntimes
+            self.resids = [1] * self.ntimes
+            for i in range(self.ntimes):
+                cname = self.cache_path + f'_time{i}.zarr'
+                ds = xr.open_zarr(cname, chunks=None)
+                self.resids[i] = ds.RESID.values
+                self.psfs[i] = ds.PSF.values
+                self.psfhats[i] = ds.PSFHAT.values
+                self.wgt[i] = ds.WGT.values
+            # we return the per band psf since we need the mfs psf
+            # on the runner
+            return np.sum(self.psfs, axis=0), np.sum(self.resids, axis=0)
 
         with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
             futures = []
@@ -334,19 +362,48 @@ class grad_actor(object):
                 self.psfs[i] = psf
                 self.psfhats[i] = psfhat
                 self.wgt[i] = wgt
+                # cache vars affected by major cycle
+                data_vars = {
+                    'RESID': (('nx','ny'), residual),
+                    'PSF': (('nx_psf','ny_psf'), psf),
+                    'PSFHAT': (('nx_psf', 'nyo2'), psfhat),
+                    'WGT': (('row', 'chan'), wgt)
+                }
+                attrs = {
+                    'robustness': self.opts.robustness,
+                    'time_out': self.times_out[i]
 
-        # pre-allocate tmp arrays required for convolution
-        tmp = np.empty(residual.shape,
-                       dtype=residual.dtype, order='C')
-        self.xout = make_noncritical(tmp)
-        tmp = np.empty(psfhat.shape,
-                       dtype=psfhat.dtype,
-                       order='C')
-        self.xhat = make_noncritical(tmp)
-        tmp = np.empty(psf.shape,
-                       dtype=psf.dtype,
-                       order='C')
-        self.xpad = make_noncritical(tmp)
+                }
+                dset = xr.Dataset(data_vars, attrs=attrs)
+                cname = self.cache_path + f'_time{i}.zarr'
+                dset.to_zarr(cname, mode='a')
+
+                # update natural weights if they have changed
+                # we can do this here if not concatenating otherwise
+                # do in separate loop
+                # needed if we have done L2 reweighting and we are
+                # resuming a run with a different robustness value
+                if dof and not self.opts.concat:
+                    ds = xr.open_zarr(self.ds_names[i])
+                    ds['WEIGHT'] = wgt
+                    ds.to_zarr(self.ds_names[i], mode='a')
+
+
+        # TODO - parallel over time chunks
+        # update natural weights if they have changed
+        # we need a separate loop when concatenating
+        # needed if we have done L2 reweighting and we are
+        # resuming a run with a different robustness value
+        if dof and self.opts.concat:
+            print('Updating weights in input ds')
+            wgt = self.wgt[0]  # only one of these
+            rowi = 0
+            for i, dsn in enumerate(self.ds_names):
+                ds = xr.open_zarr(dsn, chunks=None)
+                nrow = ds.WEIGHT.shape[0]
+                ds['WEIGHT'] = (('row', 'chan'), wgt[rowi:rowi + nrow])
+                ds.to_zarr(dsn, mode='a')
+                rowi += nrow
 
         # we return the per band psf since we need the mfs psf
         # on the runner
@@ -396,6 +453,17 @@ class grad_actor(object):
             for fut in cf.as_completed(futures):
                 i, residual = fut.result()
                 self.resids[i] = residual
+                # cache vars affected by major cycle
+                data_vars = {
+                    'RESID': (('nx','ny'), residual),
+                }
+                attrs = {
+                    'time_out': self.times_out[i],
+
+                }
+                dset = xr.Dataset(data_vars, attrs=attrs)
+                cname = self.cache_path + f'_time{i}.zarr'
+                dset.to_zarr(cname, mode='r+')
 
         # we can do this here because wsum doesn't change
         resid = np.sum(self.resids, axis=0)
@@ -542,6 +610,7 @@ class grad_actor(object):
             print('0 - ', time() - ti)
 
         # vtilde - (nband, nbasis, nmax)
+        # convert to float32 for faster serialisation
         return self.vtilde, eps_num, eps_den
 
 

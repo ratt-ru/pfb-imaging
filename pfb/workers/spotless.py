@@ -508,13 +508,16 @@ def _spotless_dist(**kw):
 
     ds_list = ds_store.fs.glob(f'{ds_store.url}/*')
 
+    mds_name = f'{basename}.mds'
+    mdsstore = DaskMSStore(mds_name)
+
     # create an actor cache dir
-    actor_cache_dir = ds_store.url.rsplit('/', 1)[0] + '/actor_cache'
+    actor_cache_dir = ds_store.url.rstrip('.dds') + '.cache'
     ac_store = DaskMSStore(actor_cache_dir)
     optsp_name = ac_store.url + '/opts.pkl'
     # does this use the correct protocol?
     fs = fsspec.filesystem(ac_store.url.split(':', 1)[0])
-    if ac_store.exists():
+    if ac_store.exists() and not opts.reset_cache:
         # get opts from previous run
         with fs.open(optsp_name, 'rb') as f:
             optsp = pickle.load(f)
@@ -526,21 +529,25 @@ def _spotless_dist(**kw):
         try:
             for attr in verify_attrs:
                 assert optsp[attr] == opts[attr]
-            remake = False
+
+            from_cache = True
+            print("Initialising from cached data products", file=log)
         except Exception as e:
             print(f'Cache verification failed on {attr}. '
                   'Will remake image data products', file=log)
+            ac_store.rm(recursive=True)
             fs.makedirs(ac_store.url, exist_ok=True)
             # dump opts to validate cache on rerun
             with fs.open(optsp_name, 'wb') as f:
                 pickle.dump(opts, f)
-            remake = True
+            from_cache = False
     else:
         fs.makedirs(ac_store.url, exist_ok=True)
         # dump opts to validate cache on rerun
         with fs.open(optsp_name, 'wb') as f:
             pickle.dump(opts, f)
-        remake = True
+        from_cache = False
+        print("Initialising from scratch.", file=log)
 
     # filter datasets by band
     dsb = {}
@@ -564,12 +571,12 @@ def _spotless_dist(**kw):
                           dsl,
                           opts,
                           bandid,
+                          ac_store.url,
                           workers=wname,
                           key='actor-'+uuid4().hex,
                           actor=True,
                           pure=False)
         futures.append(f)
-
     actors = list(map(lambda f: f.result(), futures))
 
     # we do this in case we want to do MF weighting
@@ -582,14 +589,14 @@ def _spotless_dist(**kw):
 
     print("Setting imaging weights", file=log)
     futures = list(map(lambda a: a.set_imaging_weights(counts=counts), actors))
-    wsums = list(map(lambda f: f.result(), futures))
-    fsel = np.array(wsums) > 0
+    wsums = np.array(list(map(lambda f: f.result(), futures)))
+    fsel = wsums > 0
     wsum = np.sum(wsums)
     real_type = wsum.dtype
     complex_type = np.result_type(real_type, np.complex64)
     futures = list(map(lambda a: a.get_image_info(), actors))
     results = list(map(lambda f: f.result(), futures))
-    nx, ny, nmax, cell_rad, ra, dec, freq_out = results[0]
+    nx, ny, nmax, cell_rad, ra, dec, x0, y0, freq_out, time_out = results[0]
     freq_out = [freq_out]
     for result in results[1:]:
         assert result[0] == nx
@@ -598,20 +605,18 @@ def _spotless_dist(**kw):
         assert result[3] == cell_rad
         assert result[4] == ra
         assert result[5] == dec
-        freq_out.append(result[6])
+        assert result[6] == x0
+        assert result[7] == y0
+        freq_out.append(result[8])
 
     print(f"Image size set to ({nx}, {ny})", file=log)
 
     radec = [ra, dec]
     cell_deg = np.rad2deg(cell_rad)
+    freq_out = np.array(freq_out)
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
-
-    iter0 = 0
-    # if 'niters' in dds[0].attrs:
-    #     iter0 = dds[0].niters
-    # else:
-    #     iter0 = 0
+    time_out = np.array((time_out,))
 
 
     # get size of dual domain
@@ -619,9 +624,6 @@ def _spotless_dist(**kw):
     nbasis = len(bases)
 
     # initialise dual and model (assumed constant in time)
-    # TODO - init in actor
-    mds_name = f'{basename}_{opts.suffix}.mds'
-    mdsstore = DaskMSStore(mds_name)
     if mdsstore.exists():
         mds = xr.open_zarr(mdsstore.url)
 
@@ -631,13 +633,14 @@ def _spotless_dist(**kw):
         locy = mds.location_y.values
         params = mds.params.values
         coeffs = mds.coefficients.values
+        iter0 = mds.niters
 
         # TODO - save dual in mds
         model = np.zeros((nband, nx, ny))
         dual = np.zeros((nband, nbasis, nmax))
         for i in range(opts.nband):
             model[i] = eval_coeffs_to_slice(
-                time_out,
+                time_out[0],
                 freq_out[i],
                 model_coeffs,
                 locx, locy,
@@ -656,12 +659,13 @@ def _spotless_dist(**kw):
     else:
         model = np.zeros((nband, nx, ny))
         dual = np.zeros((nband, nbasis, nmax))
-
+        iter0 = 0
 
     print("Computing image data products", file=log)
     futures = []
     for b in range(nband):
-        fut = actors[b].set_image_data_products(model[b], dual[b])
+        fut = actors[b].set_image_data_products(model[b], dual[b],
+                                                from_cache=from_cache)
         futures.append(fut)
 
     results = list(map(lambda f: f.result(), futures))
@@ -740,49 +744,44 @@ def _spotless_dist(**kw):
                   basename + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
-        print(f"Writing model at iter {k+1} to "
-              f"{basename}_{opts.suffix}_model_{k+1}.mds", file=log)
-        try:
-            coeffs, Ix, Iy, expr, params, texpr, fexpr = \
-                fit_image_cube(np.ones(1), freq_out[fsel], model[None, fsel, :, :],
-                               wgt=wsums[None, fsel],
-                               nbasisf=int(np.sum(fsel)),
-                               method='Legendre')
-            # save interpolated dataset
-            data_vars = {
-                'coefficients': (('par', 'comps'), coeffs),
-            }
-            coords = {
-                'location_x': (('x',), Ix),
-                'location_y': (('y',), Iy),
-                # 'shape_x':,
-                'params': (('par',), params),  # already converted to list
-                'times': (('t',), time_out),  # to allow rendering to original grid
-                'freqs': (('f',), freq_out)
-            }
-            attrs = {
-                'spec': 'genesis',
-                'cell_rad_x': cell_rad,
-                'cell_rad_y': cell_rad,
-                'npix_x': nx,
-                'npix_y': ny,
-                'texpr': texpr,
-                'fexpr': fexpr,
-                'center_x': dds[0].x0,
-                'center_y': dds[0].y0,
-                'ra': dds[0].ra,
-                'dec': dds[0].dec,
-                'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
-                'parametrisation': expr  # already converted to str
-            }
+        print(f"Writing model to {mdsstore.url}",
+              file=log)
+        coeffs, Ix, Iy, expr, params, texpr, fexpr = \
+            fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
+                            wgt=wsums[None, fsel],
+                            method='Legendre')
 
-            coeff_dataset = xr.Dataset(data_vars=data_vars,
-                               coords=coords,
-                               attrs=attrs)
-            coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model_{k+1}.mds")
-        except Exception as e:
-            print(f"Exception {e} raised during model fit .", file=log)
+        data_vars = {
+            'coefficients': (('par', 'comps'), coeffs),
+        }
+        coords = {
+            'location_x': (('x',), Ix),
+            'location_y': (('y',), Iy),
+            'params': (('par',), params),  # already converted to list
+            'times': (('t',), time_out),  # to allow rendering to original grid
+            'freqs': (('f',), freq_out)
+        }
+        attrs = {
+            'spec': 'genesis',
+            'cell_rad_x': cell_rad,
+            'cell_rad_y': cell_rad,
+            'npix_x': nx,
+            'npix_y': ny,
+            'texpr': texpr,
+            'fexpr': fexpr,
+            'center_x': x0,
+            'center_y': y0,
+            'ra': ra,
+            'dec': dec,
+            'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
+            'parametrisation': expr,  # already converted to str
+            'niters': k+1  # keep track in mds
+        }
 
+        coeff_dataset = xr.Dataset(data_vars=data_vars,
+                            coords=coords,
+                            attrs=attrs)
+        coeff_dataset.to_zarr(f"{mdsstore.url}")
 
         # convergence check
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
@@ -808,7 +807,8 @@ def _spotless_dist(**kw):
             dof = None
 
         if dof is not None:
-            print('Will recompute image data products since L2 reweight is required.')
+            print('Recomputing image data products since L2 reweight '
+                  'is required.', file=log)
             futures = []
             for b in range(nband):
                 fut = actors[b].set_image_data_products(model[b], dual[b], dof=dof)
