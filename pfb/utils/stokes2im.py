@@ -28,22 +28,6 @@ import warnings
 
 warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 
-# make Stokes vis
-# (row, chan, corr) -> (row, chan) = vis
-
-
-# predict model vis
-# (degrid_band, nx, ny) -> (row, chan) = model_vis
-# dirty2vis x ndegrid times with nthreads = 2
-
-# compute imaging weights
-
-# get residual_vis
-
-# grid
-# (row, chan) -> nx, ny
-# vis2dirty with nthreads = 2 * threads_per_worker
-
 
 def single_stokes_image(
                     data=None,

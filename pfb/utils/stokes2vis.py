@@ -1,5 +1,6 @@
 import numpy as np
 import numexpr as ne
+import xarray as xr
 from numba import njit, prange, literally
 from dask.graph_manipulation import clone
 from distributed import get_client, worker_client
@@ -16,6 +17,8 @@ from pfb.utils.stokes import stokes_funcs
 from pfb.utils.weighting import weight_data, _weight_data
 from uuid import uuid4
 import gc
+from casacore.quanta import quantity
+from datetime import datetime
 # for old style vs new style warnings
 from numba.core.errors import NumbaPendingDeprecationWarning
 import warnings
@@ -436,15 +439,11 @@ def single_stokes_dist(
         data = res.visibilities[:, :, 0]
         weight = res.weight_spectrum[:, :, 0]
         flag = res.flag[:, :, 0]
-        uvw = res.uvw
         freq = res.chan_freq
 
         nrow, nchan = data.shape
 
     if opts.bda_decorr < 1:
-        # raise NotImplementedError("BDA averaging is work in progress!")
-        # TODO - why was this here?
-        # wgt = da.where(mask, wgt, 0.0)
         from africanus.averaging import bda
 
         res = bda(time,
@@ -460,12 +459,11 @@ def single_stokes_dist(
                   decorrelation=opts.bda_decorr,
                   min_nchan=freq.size)
 
-        uvw = res.uvw
+        offsets = res.offsets
+        uvw = res.uvw[offsets[:-1], :]
         weight = res.weight_spectrum.reshape(-1, nchan).squeeze()
         data = res.visibilities.reshape(-1, nchan).squeeze()
-        flag = res.flag.visibilities.reshape(-1, nchan).squeeze()
-
-        print(res.freq)
+        flag = res.flag.reshape(-1, nchan).squeeze()
 
     mask = (~flag).astype(np.uint8)
     # we want to set these after averaging and after all the weights

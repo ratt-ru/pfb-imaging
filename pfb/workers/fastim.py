@@ -144,9 +144,9 @@ def _fastim(**kw):
         else:
             raise ValueError(f"{basename}.fds exists. "
                              "Set overwrite to overwrite it. ")
-    else:
-        fs = fsspec.filesystem(fdsstore.url.split(':', 1)[0])
-        fs.makedirs(fdsstore.url, exist_ok=True)
+
+    fs = fsspec.filesystem(fdsstore.url.split(':', 1)[0])
+    fs.makedirs(fdsstore.url, exist_ok=True)
 
     if opts.gain_table is not None:
         gain_name = "::".join(opts.gain_table.rstrip('/').rsplit("/", 1))
