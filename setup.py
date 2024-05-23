@@ -13,7 +13,9 @@ requirements = [
                 'pyscilog >= 0.1.2',
                 'Click',
                 "ducc0",
-                "QuartiCal >= 0.2.3",
+                "QuartiCal >= 0.2.3"
+                "@git+https://github.com/ratt-ru/QuartiCal.git"
+                "@unpinneddeps",
                 "sympy",
                 "stimela >= 2.0rc18",
                 "streamjoy >= 0.0.8",
