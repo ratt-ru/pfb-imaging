@@ -355,5 +355,5 @@ def single_stokes_image(
         out_store = out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr',
                                 mode='w')
     elif opts.output_format == 'fits':
-        save_fits(residual, f'{fds_store.full_path}/{oname}.fits', hdr)
+        save_fits(residual/wsum, f'{fds_store.full_path}/{oname}.fits', hdr)
     return 1

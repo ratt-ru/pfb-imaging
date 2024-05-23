@@ -102,7 +102,7 @@ inputs:
     default: 5
     info:
       Will terminate the algorithm if the rms increases this many times.
-      Set to > niter to disable this check.
+      Set to larger than niter to disable this check.
   field-of-view:
     dtype: float
     abbreviation: fov
