@@ -19,6 +19,7 @@ requirements = [
                 "sympy",
                 "stimela >= 2.0rc18",
                 "streamjoy >= 0.0.8",
+                "codex-africanus[complete] >= 0.3.7",
                 "tbb",
                 "jax[cpu]",
                 "ipycytoscape",
