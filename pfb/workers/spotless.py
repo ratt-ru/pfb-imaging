@@ -437,14 +437,14 @@ def _spotless_dist(**kw):
     '''
     Distributed spotless algorithm.
 
-    The key inputs to the algorithm are the dds and mds.
-    The dds contains data products such as the dirty image, psf, weights etc.
-    There can be multiple datasets in the dds, each corresponding to a specific frequency and time range.
+    The key inputs to the algorithm are the xds and mds.
+    The xds contains the Stokes coeherencies created with the imit worker.
+    There can be multiple datasets in the xds, each corresponding to a specific frequency and time range.
     These datasets are persisted on separate workers.
     The mds contains a continuous representation of the model in compressed format.
     The mds is just a single dataset which gets evaluated into a discretised cube on the runner node.
-    For now the frequency resolution of the model is the same as the frequency resoltuion of the dds.
-    It is assumed that the model is static in time so a per band model potentially speaks to many datasets in the dds.
+    For now the frequency resolution of the model is the same as the frequency resoltuion of the xds.
+    It is assumed that the model is static in time so a per band model potentially speaks to many datasets in the xds.
     This makes it possible to approximately incorporate time variable instrumental effects during deconvolution.
     Thus the measurement model for each band potentially consists of different data terms i.e.
 

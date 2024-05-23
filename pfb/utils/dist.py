@@ -770,7 +770,8 @@ def residual_from_vis(
     '''
 
     # don't apply weights in this direction
-    model_vis = dirty2vis(
+    residual_vis = vis.copy()
+    residual_vis -= dirty2vis(
             uvw=uvw,
             freq=freq,
             dirty=model,
@@ -784,8 +785,6 @@ def residual_from_vis(
             nthreads=nthreads,
             divide_by_n=False,
             sigma_min=1.1, sigma_max=3.0)
-
-    residual_vis = (vis - model_vis)
 
     residual = vis2dirty(
         uvw=uvw,

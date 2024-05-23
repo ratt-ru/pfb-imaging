@@ -6,6 +6,7 @@ import dask.array as da
 from dask import delayed
 from datetime import datetime
 from casacore.quanta import quantity
+from astropy.time import Time
 
 
 def data_from_header(hdr, axis=3):
@@ -73,7 +74,12 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
     header['BUNIT'] = unit
     header['SPECSYS'] = 'TOPOCENT'
     if unix_time is not None:
-        header['UTC_TIME'] = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+        # TODO - this is probably a bit of a round about way of doing this
+        utc_iso = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+        header['UTC_TIME'] = utc_iso
+        t = Time(utc_iso)
+        t.format = 'fits'
+        header['UTC_FITS'] = t.value
 
     return header
 

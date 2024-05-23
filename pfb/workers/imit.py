@@ -135,7 +135,7 @@ def _imit(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.stokes2im import image_space_products
+    from pfb.utils.stokes2vis import single_stokes_dist
     import xarray as xr
     from uuid import uuid4
 
@@ -315,7 +315,7 @@ def _imit(**kw):
          radeci, fi, ti, ims) = datasets[n_launched]
 
         worker = idle_workers.pop()
-        future = client.submit(image_space_products,
+        future = client.submit(single_stokes_dist,
                         dc1=dc1,
                         dc2=dc2,
                         operator=operator,
@@ -365,7 +365,7 @@ def _imit(**kw):
 
         worker = associated_workers.pop(completed_future)
 
-        future = client.submit(image_space_products,
+        future = client.submit(single_stokes_dist,
                         dc1=dc1,
                         dc2=dc2,
                         operator=operator,

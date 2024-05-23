@@ -103,7 +103,8 @@ def fastim(**kw):
                                     memory_limit=0,  # str(mem_limit/nworkers)+'GB'
                                     asynchronous=False)
             cluster = stack.enter_context(cluster)
-            client = stack.enter_context(Client(cluster))
+            client = stack.enter_context(Client(cluster,
+                                                direct_to_workers=False))
 
         client.wait_for_workers(opts.nworkers)
         client.amm.stop()
@@ -125,6 +126,7 @@ def _fastim(**kw):
     from distributed import get_client, wait, as_completed, Semaphore
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
+    import fsspec
     from daskms.fsspec_store import DaskMSStore
     import dask.array as da
     from africanus.constants import c as lightspeed
@@ -142,6 +144,9 @@ def _fastim(**kw):
         else:
             raise ValueError(f"{basename}.fds exists. "
                              "Set overwrite to overwrite it. ")
+    else:
+        fs = fsspec.filesystem(fdsstore.url.split(':', 1)[0])
+        fs.makedirs(fdsstore.url, exist_ok=True)
 
     if opts.gain_table is not None:
         gain_name = "::".join(opts.gain_table.rstrip('/').rsplit("/", 1))
@@ -333,7 +338,11 @@ def _fastim(**kw):
                 cpgi = nfreqs
             else:
                 cpgi = opts.channels_per_grid_image
-            fbins_per_band = int(cpgi / opts.channels_per_degrid_image)
+            if opts.channels_per_degrid_image in (0, -1, None):
+                cpdi = nfreqs
+            else:
+                cpdi = opts.channels_per_degrid_image
+            fbins_per_band = int(cpgi / cpdi)
             nband = int(np.ceil(nbandi/fbins_per_band))
 
             for fi in range(nband):
@@ -409,7 +418,7 @@ def _fastim(**kw):
                         fieldid=subds.FIELD_ID,
                         ddid=subds.DATA_DESC_ID,
                         scanid=subds.SCAN_NUMBER,
-                        fds_store=fdsstore.url,
+                        fds_store=fdsstore,
                         bandid=fi,
                         timeid=ti,
                         wid=worker,
@@ -467,7 +476,7 @@ def _fastim(**kw):
                         fieldid=subds.FIELD_ID,
                         ddid=subds.DATA_DESC_ID,
                         scanid=subds.SCAN_NUMBER,
-                        fds_store=fdsstore.url,
+                        fds_store=fdsstore,
                         bandid=fi,
                         timeid=ti,
                         wid=worker,
