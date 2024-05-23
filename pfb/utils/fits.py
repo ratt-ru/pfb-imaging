@@ -79,7 +79,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         header['UTC_TIME'] = utc_iso
         t = Time(utc_iso)
         t.format = 'fits'
-        header['UTC_FITS'] = t.value
+        header['DATE-OBS'] = t.value
 
     return header
 

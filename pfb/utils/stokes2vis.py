@@ -1,7 +1,8 @@
 import numpy as np
 import numexpr as ne
-from numba import njit, prange
+from numba import njit, prange, literally
 from dask.graph_manipulation import clone
+from distributed import get_client, worker_client
 import dask.array as da
 from xarray import Dataset
 from pfb.operators.gridder import vis2im
@@ -12,9 +13,9 @@ from pfb.utils.misc import weight_from_sigma, combine_columns
 import dask
 from quartical.utils.dask import Blocker
 from pfb.utils.stokes import stokes_funcs
-from pfb.utils.weighting import weight_data
+from pfb.utils.weighting import weight_data, _weight_data
 from uuid import uuid4
-
+import gc
 # for old style vs new style warnings
 from numba.core.errors import NumbaPendingDeprecationWarning
 import warnings
@@ -441,7 +442,7 @@ def single_stokes_dist(
         nrow, nchan = data.shape
 
     if opts.bda_decorr < 1:
-        raise NotImplementedError("BDA averaging is work in progress!")
+        # raise NotImplementedError("BDA averaging is work in progress!")
         # TODO - why was this here?
         # wgt = da.where(mask, wgt, 0.0)
         from africanus.averaging import bda
@@ -456,7 +457,7 @@ def single_stokes_dist(
                   visibilities=data[:, :, None],
                   chan_freq=freq,
                   chan_width=chan_width,
-                  decorrelation=0.95,
+                  decorrelation=opts.bda_decorr,
                   min_nchan=freq.size)
 
         uvw = res.uvw
