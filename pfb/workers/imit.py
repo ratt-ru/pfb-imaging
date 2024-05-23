@@ -138,6 +138,7 @@ def _imit(**kw):
     from pfb.utils.stokes2vis import single_stokes_dist
     import xarray as xr
     from uuid import uuid4
+    import fsspec
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
@@ -149,6 +150,9 @@ def _imit(**kw):
         else:
             raise ValueError(f"{basename}.dds exists. "
                              "Set overwrite to overwrite it. ")
+
+    fs = fsspec.filesystem(ddsstore.url.split(':', 1)[0])
+    fs.makedirs(ddsstore.url, exist_ok=True)
 
     print(f"Data products will be stored in {ddsstore.url}", file=log)
 

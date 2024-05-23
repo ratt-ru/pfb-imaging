@@ -311,7 +311,7 @@ def single_stokes_image(
     utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
 
     cell_deg = np.rad2deg(cell_rad)
-    hdr = set_wcs(cell_rad, cell_rad, nx, ny, [tra, tdec],
+    hdr = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
                   freq_out, GuassPar=(1, 1, 0),  # fake for now
                   unix_time=unix_time)
 

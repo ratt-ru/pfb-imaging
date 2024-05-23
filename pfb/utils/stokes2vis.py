@@ -506,7 +506,6 @@ def single_stokes_dist(
                         attrs=attrs)
     oname = f'ms{msid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
             f'_band{bandid:04d}_time{timeid:04d}'
-    # with worker_client() as client:
     out_store = out_ds.to_zarr(f'{dds_store}/{oname}.zarr',
                                 mode='w')
     return out_store, time_out, freq_out
