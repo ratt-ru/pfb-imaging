@@ -462,6 +462,7 @@ class grad_actor(object):
                 }
                 dset = xr.Dataset(data_vars, attrs=attrs)
                 cname = self.cache_path + f'_time{i}.zarr'
+                print(f"Attempting to cache to {cname}")
                 dset.to_zarr(cname, mode='r+')
 
         # we can do this here because wsum doesn't change
