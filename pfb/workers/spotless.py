@@ -508,6 +508,9 @@ def _spotless_dist(**kw):
 
     ds_list = ds_store.fs.glob(f'{ds_store.url}/*')
 
+    url_prepend = ds_store.protocol + '://'
+    ds_list = list(map(lambda x: url_prepend + x, ds_list))
+
     mds_name = f'{basename}.mds'
     mdsstore = DaskMSStore(mds_name)
 

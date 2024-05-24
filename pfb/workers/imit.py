@@ -151,7 +151,7 @@ def _imit(**kw):
             raise ValueError(f"{basename}.dds exists. "
                              "Set overwrite to overwrite it. ")
 
-    fs = fsspec.filesystem(ddsstore.url.split(':', 1)[0])
+    fs = fsspec.filesystem(ddsstore.protocol)
     fs.makedirs(ddsstore.url, exist_ok=True)
 
     print(f"Data products will be stored in {ddsstore.url}", file=log)

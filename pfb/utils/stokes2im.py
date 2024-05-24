@@ -265,9 +265,9 @@ def single_stokes_image(
             wcount = mask.sum()
             if wcount:
                 ovar = ressq.sum()/wcount  # use 67% quantile?
-                wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+                weight = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
             else:
-                wgt = None
+                weight = None
 
     if opts.robustness is not None:
         if counts is None:
@@ -305,7 +305,7 @@ def single_stokes_image(
         double_precision_accumulation=opts.double_accum,
         verbosity=0)
 
-    rms = np.std(residual)
+    rms = np.std(residual/wsum)
 
     unix_time = quantity(f'{time_out}s').to_unix_time()
     utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
