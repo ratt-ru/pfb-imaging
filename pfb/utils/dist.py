@@ -57,6 +57,8 @@ class grad_actor(object):
         self.cache_path = cache_path + f'/band{bandid}'
         self.ds_names = ds_names
 
+        print(dsl)
+
         dsl = []
         for dsn in ds_names:
             dsl.append(xr.open_zarr(dsn, chunks=None))

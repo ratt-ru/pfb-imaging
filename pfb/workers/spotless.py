@@ -559,6 +559,8 @@ def _spotless_dist(**kw):
         bid = int(ds[idx:idx+4])
         dsb.setdefault(bid, [])
         dsb[bid].append(ds)
+
+    print('ds = ', ds)
     nband = len(dsb.keys())
     try:
         assert len(names) == nband
@@ -808,6 +810,9 @@ def _spotless_dist(**kw):
         else:
             # do not perform an L2 reweight unless the M step has converged
             dof = None
+
+        if k+1 - iter0 >= opts.l2_reweight_from and l2reweights < opts.max_l2_reweight:
+            dof = opts.l2_reweight_dof
 
         if dof is not None:
             print('Recomputing image data products since L2 reweight '
