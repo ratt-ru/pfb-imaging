@@ -675,7 +675,8 @@ def _spotless_dist(**kw):
     try:
         results = list(map(lambda f: f.result(), futures))
     except Exception as e:
-        print(e)
+        print("Error raised - ", e)
+        print([r.result() for r in result()])
 
         import ipdb; ipdb.set_trace()
     psf_mfs = np.sum([r[0] for r in results], axis=0)/wsum
