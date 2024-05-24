@@ -376,6 +376,7 @@ class grad_actor(object):
                 }
                 dset = xr.Dataset(data_vars, attrs=attrs)
                 cname = self.cache_path + f'_time{i}.zarr'
+                print(f"Attempting to cache to {cname}")
                 dset.to_zarr(cname, mode='a')
 
                 # update natural weights if they have changed
