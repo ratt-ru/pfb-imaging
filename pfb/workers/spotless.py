@@ -560,7 +560,6 @@ def _spotless_dist(**kw):
         dsb.setdefault(bid, [])
         dsb[bid].append(ds)
 
-    print('ds = ', ds)
     nband = len(dsb.keys())
     try:
         assert len(names) == nband
