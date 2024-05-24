@@ -23,7 +23,8 @@ requirements = [
                 "tbb",
                 "jax[cpu]",
                 "ipycytoscape",
-                "lz4"
+                "lz4",
+                "ipdb"
             ]
 
 

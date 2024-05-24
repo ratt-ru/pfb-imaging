@@ -672,7 +672,12 @@ def _spotless_dist(**kw):
                                                 from_cache=from_cache)
         futures.append(fut)
 
-    results = list(map(lambda f: f.result(), futures))
+    try:
+        results = list(map(lambda f: f.result(), futures))
+    except Exception as e:
+        print(e)
+
+        import ipdb; ipdb.set_trace()
     psf_mfs = np.sum([r[0] for r in results], axis=0)/wsum
     assert (psf_mfs.max() - 1.0) < opts.epsilon  # make sure wsum is consistent
     GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
