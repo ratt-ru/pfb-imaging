@@ -376,7 +376,6 @@ class grad_actor(object):
                 }
                 dset = xr.Dataset(data_vars, attrs=attrs)
                 cname = self.cache_path + f'_time{i}.zarr'
-                print(f"Attempting to cache to {cname}")
                 dset.to_zarr(cname, mode='a')
 
                 # update natural weights if they have changed
@@ -463,7 +462,6 @@ class grad_actor(object):
                 }
                 dset = xr.Dataset(data_vars, attrs=attrs)
                 cname = self.cache_path + f'_time{i}.zarr'
-                print(f"Attempting to cache to {cname}")
                 dset.to_zarr(cname, mode='r+')
 
         # we can do this here because wsum doesn't change
@@ -576,10 +574,6 @@ class grad_actor(object):
 
     def pd_update(self, ratio):
         # ratio - (nbasis, nmax)
-
-        if self.bandid == 0:
-            from time import time
-            ti = time()
         self.xp[...] = self.model[...]
         self.vp[...] = self.dual[...]
 
@@ -596,11 +590,7 @@ class grad_actor(object):
         eps_num = np.sum((self.model-self.xp)**2)
         eps_den = np.sum(self.model**2)
 
-        if self.bandid == 0:
-            print('0 - ', time() - ti)
-
         # vtilde - (nband, nbasis, nmax)
-        # convert to float32 for faster serialisation
         return self.vtilde, eps_num, eps_den
 
 
@@ -648,7 +638,8 @@ def image_data_products(model,
 
     if model.any():
         # don't apply weights in this direction
-        model_vis = dirty2vis(
+        residual_vis = vis.copy()
+        residual_vis -= dirty2vis(
                 uvw=uvw,
                 freq=freq,
                 dirty=model,
@@ -662,8 +653,6 @@ def image_data_products(model,
                 nthreads=nthreads,
                 divide_by_n=False,
                 sigma_min=1.1, sigma_max=3.0)
-
-        residual_vis = vis - model_vis
     else:
         residual_vis = vis
 
@@ -725,7 +714,8 @@ def image_data_products(model,
     else:
         nrow, _ = uvw.shape
         nchan = freq.size
-        psf_vis = np.ones((nrow, nchan), dtype=vis.dtype)
+        tmp = np.ones((1,), dtype=vis.dtype)
+        psf_vis = np.broadcast_to(tmp, vis.shape)
 
     psf = vis2dirty(
         uvw=uvw,
