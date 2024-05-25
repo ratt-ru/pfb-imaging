@@ -468,6 +468,9 @@ def single_stokes_dist(
         except:
             print('uvw - ', uvw.shape)
             print(res.weight_spectrum.shape, nchan)
+            uvwshape = uvw.shape
+            wshape = res.weight_spectrum.shape
+            return uvwshape, wshape, nchan
 
     mask = (~flag).astype(np.uint8)
     # we want to set these after averaging and after all the weights
