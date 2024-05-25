@@ -552,6 +552,8 @@ def _spotless_dist(**kw):
         from_cache = False
         print("Initialising from scratch.", file=log)
 
+    print(f"Data products will be cached in {ac_store.url}", file=log)
+
     # filter datasets by band
     dsb = {}
     for ds in ds_list:

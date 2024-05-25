@@ -450,7 +450,7 @@ def single_stokes_dist(
                   interval,
                   ant1, ant2,
                   uvw=uvw,
-                  flag_row= frow,
+                #   flag_row= frow,
                   flag=flag[:, :, None],
                   weight_spectrum=weight[:, :, None],
                   visibilities=data[:, :, None],
