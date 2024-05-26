@@ -751,6 +751,10 @@ def _spotless_dist(**kw):
             model[b] = results[i][0]
             dual[b] = results[i][1]
 
+        if np.isnan(model).any():
+            import ipdb; ipdb.set_trace()
+
+            raise ValueError('Model is nan')
         # save model and residual
         save_fits(np.mean(model[fsel], axis=0),
                   basename + f'_{opts.suffix}_model_{k+1}.fits',

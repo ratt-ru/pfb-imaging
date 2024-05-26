@@ -413,14 +413,22 @@ class grad_actor(object):
 
     def set_wsum_and_data(self, wsum):
         self.wsum = wsum
-        resid = np.sum(self.resids, axis=0)
-        self.data = resid/wsum + self.psf_conv(self.model)
-        return 1  # do we need to return something?
+        if wsum > 0:
+            resid = np.sum(self.resids, axis=0)
+            self.data = resid/wsum + self.psf_conv(self.model)
+            return 0
+        else:
+            self.data = np.zeros_like(self.model)
+            return 1 # use to check?
 
 
     def set_residual(self, x=None):
         if x is None:
             x = self.model
+
+        if self.wsum == 0:
+            self.data = np.zeros_like(x)
+            return np.zeros_like(x)
 
         with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
             futures = []
@@ -473,6 +481,9 @@ class grad_actor(object):
 
     def psf_conv(self, x):
         convx = np.zeros_like(x)
+        if self.wsum == 0:
+            return convx
+
         for psfhat in self.psfhats:
             convx += psf_convolve_slice(self.xpad,
                                         self.xhat,
@@ -635,6 +646,8 @@ def image_data_products(model,
         psf
         psfhat
     '''
+    if np.isinf(model).any() or np.isnan(model).any():
+        raise ValueError('Model contains infs or nans')
 
     if model.any():
         # don't apply weights in this direction
@@ -760,6 +773,9 @@ def residual_from_vis(
     '''
     This is used for major cycles when we don't change the weights.
     '''
+
+    if np.isinf(model).any() or np.isnan(model).any():
+        raise ValueError('Model contains infs or nans')
 
     # don't apply weights in this direction
     residual_vis = vis.copy()

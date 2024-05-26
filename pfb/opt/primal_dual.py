@@ -244,6 +244,11 @@ def primal_dual_dist(
         eps_den = [r[2] for r in results]
         eps = np.sqrt(np.sum(eps_num)/np.sum(eps_den))
 
+        if np.isnan(eps):
+            import ipdb; ipdb.set_trace()
+
+            raise ValueError('eps is nan')
+
 
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {eps:.3e}", file=log)
@@ -277,7 +282,7 @@ def get_ratio(vtilde, l1weight, sigma, lam, ratio):
             weightbi = l1weight[b, i]
             absvbisum = np.abs(np.sum(vtildebi)/sigma)  # sum over band axis
             softvbisum = absvbisum - lam*weightbi/sigma
-            if softvbisum > 0:
+            if absvbisum > 0 and softvbisum > 0:
                 ratio[b, i] = softvbisum/absvbisum
             else:
                 ratio[b, i] = 0.0
