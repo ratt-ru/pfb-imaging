@@ -517,6 +517,11 @@ def _spotless_dist(**kw):
     # create an actor cache dir
     actor_cache_dir = ds_store.url.rstrip('.dds') + '.cache'
     ac_store = DaskMSStore(actor_cache_dir)
+
+    if ac_store.exists() and opts.reset_cache:
+        print(f"Removing {ac_store.url}.dds", file=log)
+        ac_store.rm(recursive=True)
+
     optsp_name = ac_store.url + '/opts.pkl'
     # does this use the correct protocol?
     fs = fsspec.filesystem(ac_store.url.split(':', 1)[0])
