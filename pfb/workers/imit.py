@@ -334,7 +334,7 @@ def _imit(**kw):
                 bandid=fi,
                 timeid=ti,
                 msid=ims,
-                wid=worker,
+                wid=0,
                 max_freq=max_freq,
                 uv_max=uv_max
             )
