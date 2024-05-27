@@ -325,7 +325,6 @@ def single_stokes_dist(
                                      key='read-'+uuid4().hex)
     data = getattr(ds, dc1).values
     ds = ds.drop_vars(dc1)
-    nrow, nchan, ncorr = data.shape
     if dc2 is not None:
         try:
             assert (operator=='+' or operator=='-')
@@ -352,9 +351,11 @@ def single_stokes_dist(
     ds = ds.drop_vars('FLAG')
     # MS may contain auto-correlations
     frow = ds.FLAG_ROW.values | (ant1 == ant2)
+
+
+    nrow, nchan, ncorr = data.shape
     ds = ds.drop_vars('FLAG_ROW')
     flag = np.any(flag, axis=2)
-    flag = np.logical_or(flag, frow[:, None])
     if opts.sigma_column is not None:
         weight = ne.evaluate('1.0/sigma**2',
                              local_dict={'sigma': getattr(ds, opts.sigma_column).values})
@@ -369,7 +370,6 @@ def single_stokes_dist(
     # this seems to help with memory consumption
     # note the ds.drop_vars above
     del ds
-
     gc.collect()
 
     nrow, nchan, ncorr = data.shape
@@ -416,6 +416,18 @@ def single_stokes_dist(
                             literally(opts.product),
                             literally(str(ncorr)))
 
+    # do after weight_data otherwise mappings need to be recomputed
+    # dropped flagged rows
+    mrow = ~frow
+    data = data[mrow]
+    time = time[mrow]
+    interval = interval[mrow]
+    ant1 = ant1[mrow]
+    ant2 = ant2[mrow]
+    uvw = uvw[mrow]
+    flag = flag[mrow]
+    weight = weight[mrow]
+
     gc.collect()
 
     # simple average over channels
@@ -451,7 +463,6 @@ def single_stokes_dist(
                   interval,
                   ant1, ant2,
                   uvw=uvw,
-                #   flag_row= frow,
                   flag=flag[:, :, None],
                   weight_spectrum=weight[:, :, None],
                   visibilities=data[:, :, None],
@@ -486,8 +497,10 @@ def single_stokes_dist(
     data_vars['FREQ'] = (('chan',), freq)
     data_vars['BEAM'] = (('l_beam','m_beam'), beam)
 
+
+
     coords = {'chan': (('chan',), freq),
-              'time': (('time',), utime),
+            #   'time': (('time',), utime),
               'l_beam': (('l_beam',), l_beam),
               'm_beam': (('m_beam',), m_beam)
     }
