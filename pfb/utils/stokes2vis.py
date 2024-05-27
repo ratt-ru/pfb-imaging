@@ -317,12 +317,16 @@ def single_stokes_dist(
         real_type = np.float64
         complex_type = np.complex128
 
-    with worker_client() as client:
-        (ds, jones) = client.compute([clone(ds),
-                                      clone(jones)],
-                                     sync=True,
-                                     workers=wid,
-                                     key='read-'+uuid4().hex)
+    # with worker_client() as client:
+    #     (ds, jones) = client.compute([clone(ds),
+    #                                   clone(jones)],
+    #                                  sync=True,
+    #                                  workers=wid,
+    #                                  key='read-'+uuid4().hex)
+
+    ds = ds.compute(scheduler='sync')
+    jones = jones.compute(scheduler='sync')
+
     data = getattr(ds, dc1).values
     ds = ds.drop_vars(dc1)
     nrow, nchan, ncorr = data.shape
