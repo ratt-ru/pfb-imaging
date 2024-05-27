@@ -4,7 +4,8 @@ from distributed import get_client, worker_client, wait
 from pfb.utils.misc import fitcleanbeam
 from pfb.operators.hessian import _hessian_impl
 from pfb.operators.psf import psf_convolve_slice
-from pfb.utils.weighting import (_compute_counts, _counts_to_weights,
+from pfb.utils.weighting import (_compute_counts_wgt,
+                                 _counts_to_weights,
                                  _filter_extreme_counts)
 from uuid import uuid4
 import pywt
@@ -145,11 +146,12 @@ class grad_actor(object):
         # uv-cell counts
         with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
             futures = []
-            for uvw, mask in zip(self.uvw, self.mask):
-                fut = executor.submit(_compute_counts,
+            for uvw, mask, wgt in zip(self.uvw, self.mask, self.wgt):
+                fut = executor.submit(_compute_counts_wgt,
                                       uvw,
                                       self.freq,
                                       mask,
+                                      wgt,
                                       nx,
                                       ny,
                                       cell_rad,
@@ -159,6 +161,7 @@ class grad_actor(object):
                 futures.append(fut)
             self.counts = []
             for fut in cf.as_completed(futures):
+                # sum over grids
                 self.counts.append(fut.result().sum(axis=0))
 
         # TODO - should we always sum all the counts in a band?
