@@ -440,10 +440,11 @@ def single_stokes_dist(
         weight = res.weight_spectrum[:, :, 0]
         flag = res.flag[:, :, 0]
         freq = res.chan_freq
-
+        uvw = res.uvw
         nrow, nchan = data.shape
 
     if opts.bda_decorr < 1:
+        raise NotImplementedError('BDA is work in progress')
         from africanus.averaging import bda
 
         res = bda(time,
@@ -473,16 +474,29 @@ def single_stokes_dist(
             return uvwshape, wshape, nchan
 
     mask = (~flag).astype(np.uint8)
-    # we want to set these after averaging and after all the weights
-    # have been calculated
+
+
+    # TODO - just a fake beam for now
+    fov = 10  # max fov in degrees
+    npix = 512
+    cell_deg = fov/npix
+    l_beam = -(fov/2) + np.arange(npix)
+    m_beam = -(fov/2) + np.arange(npix)
+    beam = np.ones((npix, npix), dtype=real_type)
+
+    # set after averaging
     data_vars = {}
     data_vars['VIS'] = (('row', 'chan'), data)
     data_vars['WEIGHT'] = (('row', 'chan'), weight)
     data_vars['MASK'] = (('row', 'chan'), mask)
     data_vars['UVW'] = (('row', 'three'), uvw)
+    data_vars['FREQ'] = (('chan',), freq)
+    data_vars['BEAM'] = (('l_beam','m_beam'), beam)
 
     coords = {'chan': (('chan',), freq),
-            'time': (('time',), utime),
+              'time': (('time',), utime),
+              'l_beam': (('l_beam',), l_beam),
+              'm_beam': (('m_beam',), m_beam)
     }
 
     unix_time = quantity(f'{time_out}s').to_unix_time()

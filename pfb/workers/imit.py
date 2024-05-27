@@ -22,10 +22,7 @@ for key in schema.imit["inputs"].keys():
 @clickify_parameters(schema.imit)
 def imit(**kw):
     '''
-    Produce image space data products directly from MS.
-    This essentially combines the init and grid workers
-    and doesn't use xds_to_zarr to create the dds.
-    Instead each worker writes directly to a sub-directory.
+    Initialise Stokes data products for imaging
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
