@@ -489,13 +489,12 @@ def _spotless_dist(**kw):
     from pfb.utils.dist import grad_actor
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
-    # dds_name = f'{basename}_{opts.suffix}.dds'
-    dds_name = f'{basename}.dds'
-    ds_store = DaskMSStore(dds_name)
+    xds_name = f'{basename}.xds'
+    xds_store = DaskMSStore(xds_name)
     try:
-        assert ds_store.exists()
+        assert xds_store.exists()
     except Exception as e:
-        raise ValueError(f'No dds at {dds_name}')
+        raise ValueError(f'No xds at {xds_name}')
 
     client = get_client()
     client.amm.stop()
@@ -506,25 +505,25 @@ def _spotless_dist(**kw):
     except Exception as e:
         raise ValueError("You must initialise a worker per imaging band")
 
-    ds_list = ds_store.fs.glob(f'{ds_store.url}/*')
+    ds_list = xds_store.fs.glob(f'{xds_store.url}/*')
 
-    url_prepend = ds_store.protocol + '://'
+    url_prepend = xds_store.protocol + '://'
     ds_list = list(map(lambda x: url_prepend + x, ds_list))
 
     mds_name = f'{basename}.mds'
     mdsstore = DaskMSStore(mds_name)
 
     # create an actor cache dir
-    actor_cache_dir = ds_store.url.rstrip('.dds') + '.cache'
+    actor_cache_dir = xds_store.url.rstrip('.xds') + '.dds'
     ac_store = DaskMSStore(actor_cache_dir)
 
     if ac_store.exists() and opts.reset_cache:
-        print(f"Removing {ac_store.url}.dds", file=log)
+        print(f"Removing {ac_store.url}", file=log)
         ac_store.rm(recursive=True)
 
     optsp_name = ac_store.url + '/opts.pkl'
     # does this use the correct protocol?
-    fs = fsspec.filesystem(ac_store.url.split(':', 1)[0])
+    fs = fsspec.filesystem(ac_store.protocol)
     if ac_store.exists() and not opts.reset_cache:
         # get opts from previous run
         with fs.open(optsp_name, 'rb') as f:
@@ -887,9 +886,6 @@ def _spotless_dist(**kw):
 
         print(f"It {k+1}: max resid = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
-
-
-
 
         if k+1 - iter0 >= l1reweight_from:
             print('L1 reweighting', file=log)

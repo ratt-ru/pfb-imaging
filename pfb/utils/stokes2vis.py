@@ -302,7 +302,7 @@ def single_stokes_dist(
                     fieldid=None,
                     ddid=None,
                     scanid=None,
-                    dds_store=None,
+                    xds_store=None,
                     bandid=None,
                     timeid=None,
                     msid=None,
@@ -527,6 +527,6 @@ def single_stokes_dist(
                         attrs=attrs)
     oname = f'ms{msid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
             f'_band{bandid:04d}_time{timeid:04d}'
-    out_store = out_ds.to_zarr(f'{dds_store}/{oname}.zarr',
+    out_store = out_ds.to_zarr(f'{xds_store}/{oname}.zarr',
                                 mode='w')
     return out_store, time_out, freq_out

@@ -139,19 +139,19 @@ def _imit(**kw):
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
-    ddsstore = DaskMSStore(f'{basename}.dds')
-    if ddsstore.exists():
+    xds_store = DaskMSStore(f'{basename}.xds')
+    if xds_store.exists():
         if opts.overwrite:
-            print(f"Overwriting {basename}.dds", file=log)
-            ddsstore.rm(recursive=True)
+            print(f"Overwriting {basename}.xds", file=log)
+            xds_store.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.dds exists. "
+            raise ValueError(f"{basename}.xds exists. "
                              "Set overwrite to overwrite it. ")
 
-    fs = fsspec.filesystem(ddsstore.protocol)
-    fs.makedirs(ddsstore.url, exist_ok=True)
+    fs = fsspec.filesystem(xds_store.protocol)
+    fs.makedirs(xds_store.url, exist_ok=True)
 
-    print(f"Data products will be stored in {ddsstore.url}", file=log)
+    print(f"Data products will be stored in {xds_store.url}", file=log)
 
     if opts.gain_table is not None:
         tmpf = lambda x: '::'.join(x.rsplit('/', 1))
@@ -309,7 +309,7 @@ def _imit(**kw):
     associated_workers = {}
     idle_workers = set(client.scheduler_info()['workers'].keys())
     n_launched = 0
-
+    nds = len(datasets)
     while idle_workers:   # Seed each worker with a task.
 
         (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
@@ -334,7 +334,7 @@ def _imit(**kw):
                         fieldid=subds.FIELD_ID,
                         ddid=subds.DATA_DESC_ID,
                         scanid=subds.SCAN_NUMBER,
-                        dds_store=ddsstore.url,
+                        xds_store=xds_store.url,
                         bandid=fi,
                         timeid=ti,
                         msid=ims,
@@ -349,8 +349,10 @@ def _imit(**kw):
         associated_workers[future] = worker
         n_launched += 1
 
+        if opts.progressbar:
+            print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
+
     ac_iter = as_completed(futures)
-    nds = len(datasets)
     for completed_future in ac_iter:
 
         if n_launched == nds:  # Stop once all jobs have been launched.
@@ -390,7 +392,7 @@ def _imit(**kw):
                         fieldid=subds.FIELD_ID,
                         ddid=subds.DATA_DESC_ID,
                         scanid=subds.SCAN_NUMBER,
-                        dds_store=ddsstore.url,
+                        xds_store=xds_store.url,
                         bandid=fi,
                         timeid=ti,
                         msid=ims,
