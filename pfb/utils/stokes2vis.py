@@ -440,6 +440,7 @@ def single_stokes_dist(
         weight = res.weight_spectrum[:, :, 0]
         flag = res.flag[:, :, 0]
         freq = res.chan_freq
+        chan_width = res.chan_width
         uvw = res.uvw
         nrow, nchan = data.shape
 
@@ -461,16 +462,9 @@ def single_stokes_dist(
 
         offsets = res.offsets
         uvw = res.uvw[offsets[:-1], :]
-        try:
-            weight = res.weight_spectrum.reshape(-1, nchan).squeeze()
-            data = res.visibilities.reshape(-1, nchan).squeeze()
-            flag = res.flag.reshape(-1, nchan).squeeze()
-        except:
-            print('uvw - ', uvw.shape)
-            print(res.weight_spectrum.shape, nchan)
-            uvwshape = uvw.shape
-            wshape = res.weight_spectrum.shape
-            return uvwshape, wshape, nchan
+        weight = res.weight_spectrum.reshape(-1, nchan).squeeze()
+        data = res.visibilities.reshape(-1, nchan).squeeze()
+        flag = res.flag.reshape(-1, nchan).squeeze()
 
     mask = (~flag).astype(np.uint8)
 
