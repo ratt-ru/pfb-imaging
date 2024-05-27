@@ -444,7 +444,6 @@ def single_stokes_dist(
         nrow, nchan = data.shape
 
     if opts.bda_decorr < 1:
-        raise NotImplementedError('BDA is work in progress')
         from africanus.averaging import bda
 
         res = bda(time,
