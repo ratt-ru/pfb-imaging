@@ -694,8 +694,11 @@ def _spotless_dist(**kw):
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
 
-    # don't keep the cubes on the runner
-    del results
+    if iter0 == 0:
+        save_fits(residual_mfs,
+                  basename + f'_{opts.suffix}_dirty_mfs.fits',
+                  hdr_mfs)
+
 
     futures = list(map(lambda a: a.set_wsum_and_data(wsum), actors))
     results = list(map(lambda f: f.result(), futures))
@@ -703,6 +706,8 @@ def _spotless_dist(**kw):
     if opts.hessnorm is None:
         print('Getting spectral norm of Hessian approximation', file=log)
         hessnorm = power_method(actors, nx, ny, nband)
+        # inflate so we don't have to recompute after each L2 reweight
+        hessnorm *= 1.05
     else:
         hessnorm = opts.hessnorm
     print(f'hessnorm = {hessnorm:.3e}', file=log)
@@ -820,7 +825,6 @@ def _spotless_dist(**kw):
                 dof = opts.l2_reweight_dof
             else:
                 # we have reached max L2 reweights so we are done
-                import ipdb; ipdb.set_trace()
                 print(f"Converged after {k+1} iterations.", file=log)
                 break
         else:
@@ -851,6 +855,12 @@ def _spotless_dist(**kw):
 
             futures = list(map(lambda a: a.set_wsum_and_data(wsum), actors))
             results = list(map(lambda f: f.result(), futures))
+
+            # # TODO - how much does hessnorm change after L2 reweight?
+            # print('Getting spectral norm of Hessian approximation', file=log)
+            # hessnorm = power_method(actors, nx, ny, nband)
+            # print(f'hessnorm = {hessnorm:.3e}', file=log)
+
             l2reweights += 1
         else:
             # compute normal residual, no need to redo PSF etc

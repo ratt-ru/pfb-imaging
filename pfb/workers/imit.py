@@ -162,7 +162,7 @@ def _imit(**kw):
     else:
         gain_names = None
 
-    if opts.freq_range is not None:
+    if opts.freq_range is not None and len(opts.freq_range):
         fmin, fmax = opts.freq_range.strip(' ').split(':')
         if len(fmin) > 0:
             freq_min = float(fmin)
