@@ -305,46 +305,7 @@ def _imit(**kw):
                                     radecs[ms][idt],
                                     fi, ti, ims])
 
-    # debug call outside of client
-    nds = len(datasets)
-    for i in range(nds):
-        (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
-            radeci, fi, ti, ims) = datasets[i]
 
-        try:
-            out_store, time_out, freq_out = single_stokes_dist(
-                dc1=dc1,
-                dc2=dc2,
-                operator=operator,
-                ds=subds,
-                jones=jones,
-                opts=opts,
-                freq=freqsi,
-                chan_width=chan_widthi,
-                utime=utimesi,
-                tbin_idx=ridx,
-                tbin_counts=rcnts,
-                radec=radeci,
-                antpos=antpos[ms],
-                poltype=poltype[ms],
-                fieldid=subds.FIELD_ID,
-                ddid=subds.DATA_DESC_ID,
-                scanid=subds.SCAN_NUMBER,
-                xds_store=xds_store.url,
-                bandid=fi,
-                timeid=ti,
-                msid=ims,
-                wid=0,
-                max_freq=max_freq,
-                uv_max=uv_max
-            )
-            print(f"Success at {i}!", file=log)
-        except Exception as e:
-            import ipdb; ipdb.set_trace()
-            quit()
-
-
-    quit()
 
     futures = []
     associated_workers = {}
