@@ -42,19 +42,20 @@ def grid(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     from daskms.fsspec_store import DaskMSStore
     if opts.xds is not None:
-        xdsstore = DaskMSStore(opts.xds.rstrip('/'))
-        xdsname = opts.xds
+        xds_store = DaskMSStore(opts.xds.rstrip('/'))
+        xds_name = opts.xds
     else:
-        xdsstore = DaskMSStore(f'{basename}.xds')
-        xdsname = f'{basename}.xds'
+        xds_store = DaskMSStore(f'{basename}.xds')
+        xds_name = f'{basename}.xds'
     try:
-        assert xdsstore.exists()
+        assert xds_store.exists()
     except Exception as e:
-        raise ValueError(f"There must be an xds at {xdsname}. "
+        raise ValueError(f"There must be an xds at {xds_name}. "
                             f"Original traceback {e}")
-    opts.xds = xdsstore.url
+    opts.xds = xds_store.url
     OmegaConf.set_struct(opts, True)
     dds_name = f'{basename}_{opts.suffix}.dds'
+    dds_store = DaskMSStore(dds_name)
 
     with ExitStack() as stack:
         from pfb import set_client
@@ -85,7 +86,7 @@ def grid(**kw):
         with compute_context(opts.scheduler, f'{str(ldir)}/grid_{timestamp}'):
             dask.compute(writes, optimize_graph=False)
 
-        dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
+        dds = xds_from_zarr(dds_store.url, chunks={'x': -1, 'y': -1})
         if 'PSF' in dds[0]:
             for i, ds in enumerate(dds):
                 dds[i] = ds.chunk({'x_psf': -1, 'y_psf': -1})
@@ -123,6 +124,7 @@ def _grid(xdsi=None, **kw):
 
     import numpy as np
     import dask
+    from daskms.fsspec_store import DaskMSStore
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
     import dask.array as da
     from africanus.constants import c as lightspeed
@@ -149,6 +151,7 @@ def _grid(xdsi=None, **kw):
 
     # xds contains vis products, no imaging weights applied
     xds_name = f'{basename}.xds' if opts.xds is None else opts.xds
+    xds_store = DaskMSStore(xds_name)
     if xdsi is not None:
         xds = []
         for ds in xdsi:
@@ -157,19 +160,31 @@ def _grid(xdsi=None, **kw):
                                  'l_beam': -1,
                                  'm_beam': -1}))
     else:
-        xds = xds_from_zarr(xds_name, chunks={'row': -1,
-                                              'chan': -1,
-                                              'l_beam': -1,
-                                              'm_beam': -1})
+        try:
+            assert xds_store.exists()
+        except Exception as e:
+            raise ValueError(f"There must be a dataset at {xds_store.url}")
+        # xds = xds_from_zarr(xds_store.url, chunks={'row': -1,
+        #                                       'chan': -1,
+        #                                       'l_beam': -1,
+        #                                       'm_beam': -1})
+        xds = list(map(xr.open_zarr, xds_store.fs.glob(f'{xds_store.url}/*.zarr')))
+
+        for i, ds in enumerate(xds):
+            xds[i] = ds.chunk({'row':-1,
+                               'chan': -1,
+                               'l_beam': -1,
+                               'm_beam': -1})
+
     # dds contains image space products including imaging weights and uvw
     dds_name = f'{basename}_{opts.suffix}.dds'
+    dds_store = DaskMSStore(dds_name)
 
-    if os.path.isdir(dds_name):
+    if dds_store.exists():
         dds_exists = True
         if opts.overwrite:
             print(f'Removing {dds_name}', file=log)
-            import shutil
-            shutil.rmtree(dds_name)
+            dds_store.rm(recursive=True)
             dds_exists = False
     else:
         dds_exists = False

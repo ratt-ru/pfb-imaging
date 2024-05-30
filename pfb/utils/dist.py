@@ -654,8 +654,8 @@ def image_data_products(model,
 
     if model.any():
         # don't apply weights in this direction
-        residual_vis = vis.copy()
-        residual_vis -= dirty2vis(
+        # residual_vis = vis.copy()
+        residual_vis = dirty2vis(
                 uvw=uvw,
                 freq=freq,
                 dirty=model,
@@ -669,6 +669,9 @@ def image_data_products(model,
                 nthreads=nthreads,
                 divide_by_n=False,
                 sigma_min=1.1, sigma_max=3.0)
+        # this should save us 1 vis sized array
+        residual_vis *= -1 # negate model
+        residual_vis += vis  # add vis
     else:
         residual_vis = vis
 
@@ -731,6 +734,7 @@ def image_data_products(model,
         nrow, _ = uvw.shape
         nchan = freq.size
         tmp = np.ones((1,), dtype=vis.dtype)
+        # should be tiny
         psf_vis = np.broadcast_to(tmp, vis.shape)
 
     psf = vis2dirty(
@@ -781,8 +785,8 @@ def residual_from_vis(
         raise ValueError('Model contains infs or nans')
 
     # don't apply weights in this direction
-    residual_vis = vis.copy()
-    residual_vis -= dirty2vis(
+    # residual_vis = vis.copy()
+    residual_vis = dirty2vis(
             uvw=uvw,
             freq=freq,
             dirty=model,
@@ -796,6 +800,12 @@ def residual_from_vis(
             nthreads=nthreads,
             divide_by_n=False,
             sigma_min=1.1, sigma_max=3.0)
+
+    # this should save us 1 vis sized array
+    # negate model
+    residual_vis *= -1
+    # add data
+    residual_vis += vis
 
     residual = vis2dirty(
         uvw=uvw,
