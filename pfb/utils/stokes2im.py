@@ -103,12 +103,15 @@ def single_stokes_image(
     if sigma is not None:
         weight = ne.evaluate('1.0/sigma**2')
     elif weight is not None:
+        # in case we are reading WEIGHT instead of WEIGHT_SPECTRUM
         if weight.ndim == 2:
             weight = np.broadcast_to(weight[:, None, :],
                                     (nrow, nchan, ncorr))
     else:
-        weight = np.ones((nrow, nchan, ncorr),
-                        dtype=real_type)
+        # this shoul dbe a tiny array
+        weight = np.ones((1,), dtype=real_type)
+        weight = np.broadcast_to(weight[:, None, None],
+                                 (nrow, nchan, ncorr))
 
     if data.dtype != complex_type:
         data = data.astype(complex_type)
@@ -200,6 +203,11 @@ def single_stokes_image(
                 cell_rad,
                 np.float64,  # same type as uvw
                 ngrid=opts.nvthreads)
+
+        # counts will be accumulated on nvthreads grids in parallel
+        # so we need the sum here
+        counts = counts.sum(axis=0)
+
         # get rid of artificially high weights corresponding to
         # nearly empty cells
         if opts.filter_extreme_counts:
@@ -207,7 +215,6 @@ def single_stokes_image(
                                             nbox=opts.filter_nbox,
                                             nlevel=opts.filter_level)
 
-        counts = counts.sum(axis=0)
 
 
     if mds is not None:
@@ -260,14 +267,15 @@ def single_stokes_image(
 
         ne.evaluate('(data-model_vis)*mask', out=data)
 
-        if opts.l2reweight_dof:
-            ressq = (data*data.conj()).real
-            wcount = mask.sum()
-            if wcount:
-                ovar = ressq.sum()/wcount  # use 67% quantile?
-                weight = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
-            else:
-                weight = None
+    if opts.l2reweight_dof:
+        # data should contain residual_vis at this point
+        ressq = (data*data.conj()).real * mask
+        wcount = mask.sum()
+        if wcount:
+            ovar = ressq.sum()/wcount  # use 67% quantile?
+            weight = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+        else:
+            weight = None
 
     if opts.robustness is not None:
         if counts is None:

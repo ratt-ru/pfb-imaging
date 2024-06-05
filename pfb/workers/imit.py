@@ -30,7 +30,7 @@ def imit(**kw):
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
     pyscilog.log_to_file(f'{ldir}/imit_{timestamp}.log')
-    print(f'Logs will be written to {str(ldir)}/fastim_{timestamp}.log', file=log)
+    print(f'Logs will be written to {str(ldir)}/imit_{timestamp}.log', file=log)
     if opts.product.upper() not in ["I","Q", "U", "V"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
     from daskms.fsspec_store import DaskMSStore
