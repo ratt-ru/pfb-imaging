@@ -534,6 +534,8 @@ def _comps2vis_impl(uvw,
             fout = ffunc(np.mean(freq[indf]))
             image = np.zeros((nx, ny), dtype=comps.dtype)
             image[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
+            # negate w for wgridder bug
+            uvw[:, 2] = -uvw[:, 2]
             vis[indr, indf, 0] = dirty2vis(uvw=uvw,
                                            freq=freq[indf],
                                            dirty=image,
