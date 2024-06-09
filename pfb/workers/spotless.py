@@ -288,8 +288,7 @@ def _spotless(ddsi=None, **kw):
                                   gamma=opts.gamma)
 
         # write component model
-        print(f"Writing model at iter {k+1} to "
-              f"{basename}_{opts.suffix}_model_{k+1}.mds", file=log)
+        print(f"Writing model to {basename}_{opts.suffix}_model.mds", file=log)
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
                 fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
@@ -327,7 +326,8 @@ def _spotless(ddsi=None, **kw):
             coeff_dataset = xr.Dataset(data_vars=data_vars,
                                coords=coords,
                                attrs=attrs)
-            coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model_{k+1}.mds")
+            coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model.mds",
+                                  mode='w')
         except Exception as e:
             print(f"Exception {e} raised during model fit .", file=log)
 

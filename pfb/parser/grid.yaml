@@ -97,21 +97,12 @@ inputs:
     dtype: int
     info:
       Number of y pixels
-  filter-extreme-counts:
-    dtype: bool
-    default: true
-    info:
-      Replace extreme outliers in the weighting grid by their local mean
-  filter-nbox:
-    dtype: int
-    default: 16
-    info:
-      The size of the box to compute local mean over
-  filter-level:
+  filter-counts-level:
     dtype: float
-    default: 5
+    default: 5.0
     info:
-      The level above local mean that renders a grid weight extreme
+      Set minimum counts in the uniform weighting grid to the median divided by this value.
+      This is useful to avoid artificially up-weighting nearly empty uv-cells.
   target:
     dtype: str
     info:

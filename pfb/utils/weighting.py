@@ -11,8 +11,20 @@ iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
 
-def compute_counts(uvw, freq, mask, nx, ny,
-                   cell_size_x, cell_size_y, dtype, k=6, ngrid=1):
+def compute_counts(uvw,
+                   freq,
+                   mask,
+                   nx, ny,
+                   cell_size_x, cell_size_y,
+                   dtype,
+                   wgt=None,
+                   k=6,
+                   ngrid=1):
+
+    if wgt is not None:
+        wgtout = ('row', 'chan')
+    else:
+        wgtout = None
 
     counts = da.blockwise(compute_counts_wrapper, ('row', 'nx', 'ny'),
                           uvw, ('row', 'three'),
@@ -23,6 +35,7 @@ def compute_counts(uvw, freq, mask, nx, ny,
                           cell_size_x, None,
                           cell_size_y, None,
                           dtype, None,
+                          wgt, wgtout,
                           k, None,
                           ngrid, None,
                           new_axes={"nx": nx, "ny": ny},
@@ -33,17 +46,28 @@ def compute_counts(uvw, freq, mask, nx, ny,
     return counts.sum(axis=0)
 
 
-def compute_counts_wrapper(uvw, freq, mask, nx, ny,
-                           cell_size_x, cell_size_y, dtype, k, ngrid):
+def compute_counts_wrapper(uvw,
+                           freq,
+                           mask,
+                           nx, ny,
+                           cell_size_x, cell_size_y,
+                           dtype,
+                           wgt,
+                           k,
+                           ngrid):
+    if wgt is not None:
+        wgtout = wgt[0]
+    else:
+        wgtout = wgt
     return _compute_counts(uvw[0], freq[0], mask[0], nx, ny,
-                        cell_size_x, cell_size_y, dtype, k, ngrid)
+                        cell_size_x, cell_size_y, dtype, wgtout, k, ngrid)
 
 
 
 @njit(nogil=True, cache=True, parallel=True)
 def _compute_counts(uvw, freq, mask, nx, ny,
                     cell_size_x, cell_size_y, dtype,
-                    k=6, ngrid=1):  # support hardcoded for now
+                    wgt=None, k=6, ngrid=1):  # support hardcoded for now
     # ufreq
     u_cell = 1/(nx*cell_size_x)
     # shifts fftfreq such that they start at zero
@@ -70,68 +94,9 @@ def _compute_counts(uvw, freq, mask, nx, ny,
     ko2 = k//2
     ko2sq = ko2**2
 
-    for g in prange(ngrid):
-        for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
-            uvw_row = uvw[r]
-            for c in range(nchan):
-                if not mask[r, c]:
-                    continue
-                # current uv coords
-                chan_normfreq = normfreq[c]
-                u_tmp = uvw_row[0] * chan_normfreq
-                v_tmp = uvw_row[1] * chan_normfreq
-                # pixel coordinates
-                ug = (u_tmp + umax)/u_cell
-                vg = (v_tmp + vmax)/v_cell
-                if k:
-                    # indices
-                    u_idx = int(np.round(ug))
-                    v_idx = int(np.round(vg))
-                    for i in range(-ko2, ko2):
-                        x_idx = i + u_idx
-                        x = x_idx - ug + 0.5
-                        val = _es_kernel(x/ko2, 2.3, k)
-                        for j in range(-ko2, ko2):
-                            y_idx = j + v_idx
-                            y = y_idx - vg + 0.5
-                            counts[g, x_idx, y_idx] += val * _es_kernel(y/ko2, 2.3, k)
-                else:  # nearest neighbour
-                    # indices
-                    u_idx = int(np.floor(ug))
-                    v_idx = int(np.floor(vg))
-                    counts[g, u_idx, v_idx] += 1.0
-    return counts  #.sum(axis=0, keepdims=True)
-
-
-@njit(nogil=True, cache=True, parallel=True)
-def _compute_counts_wgt(uvw, freq, mask, wgt, nx, ny,
-                    cell_size_x, cell_size_y, dtype,
-                    k=6, ngrid=1):  # support hardcoded for now
-    # ufreq
-    u_cell = 1/(nx*cell_size_x)
-    # shifts fftfreq such that they start at zero
-    # convenient to look up the pixel value
-    umax = np.abs(-1/cell_size_x/2 - u_cell/2)
-
-    # vfreq
-    v_cell = 1/(ny*cell_size_y)
-    vmax = np.abs(-1/cell_size_y/2 - v_cell/2)
-
-    # initialise array to store counts
-    # the additional axis is to allow chunking over row
-    counts = np.zeros((ngrid, nx, ny), dtype=dtype)
-
-    # accumulate counts
-    nrow = uvw.shape[0]
-    nchan = freq.size
-    bin_counts = [nrow // ngrid + (1 if x < nrow % ngrid else 0)  for x in range (ngrid)]
-    bin_idx = np.zeros(ngrid, dtype=np.int64)
-    bin_counts = np.asarray(bin_counts).astype(bin_idx.dtype)
-    bin_idx[1:] = np.cumsum(bin_counts)[0:-1]
-
-    normfreq = freq / lightspeed
-    ko2 = k//2
-    ko2sq = ko2**2
+    if wgt is None:
+        # this should be a small array
+        wgt = np.broadcast_to(np.ones((1,), dtype=dtype), (nrow, nchan))
 
     for g in prange(ngrid):
         for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
@@ -164,7 +129,7 @@ def _compute_counts_wgt(uvw, freq, mask, wgt, nx, ny,
                     # indices
                     u_idx = int(np.floor(ug))
                     v_idx = int(np.floor(vg))
-                    counts[g, u_idx, v_idx] += wrc
+                    counts[g, u_idx, v_idx] += 1.0
     return counts
 
 
@@ -237,40 +202,22 @@ def _counts_to_weights(counts, uvw, freq, nx, ny,
     return weights
 
 
-def filter_extreme_counts(counts, nbox=16, nlevel=10):
+def filter_extreme_counts(counts, level=10):
 
     return da.blockwise(_filter_extreme_counts, 'xy',
                         counts, 'xy',
-                        nbox, None,
-                        nlevel, None,
+                        level, None,
                         dtype=counts.dtype,
                         meta=np.empty((0,0), dtype=float))
 
 
 
 # @njit(nogil=True, cache=True)
-def _filter_extreme_counts(counts, nbox=16, level=10.0):
+def _filter_extreme_counts(counts, level=10.0):
     '''
     Replaces extremely small counts by median to prevent
     upweighting nearly empty cells
     '''
-    # nx, ny = counts.shape
-    # I, J = np.where(counts>0)
-    # for i, j in zip(I, J):
-    #     ilow = np.maximum(0, i-nbox//2)
-    #     ihigh = np.minimum(nx, i+nbox//2)
-    #     jlow = np.maximum(0, j-nbox//2)
-    #     jhigh = np.minimum(ny, j+nbox//2)
-    #     tmp = counts[ilow:ihigh, jlow:jhigh]
-    #     ix, iy = np.where(tmp)
-    #     # check if there are too few values to compare to
-    #     if ix.size < nbox:
-    #         counts[i, j] = 0
-    #         continue
-    #     print(ix, iy)
-    #     local_mean = np.mean(tmp[ix, iy])
-    #     if counts[i,j] < local_mean/level:
-    #         counts[i, j] = local_mean
     # get the median counts value
     ix, iy = np.where(counts > 0)
     cnts = counts[ix,iy]

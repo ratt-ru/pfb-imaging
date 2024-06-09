@@ -4,7 +4,7 @@ from distributed import get_client, worker_client, wait
 from pfb.utils.misc import fitcleanbeam
 from pfb.operators.hessian import _hessian_impl
 from pfb.operators.psf import psf_convolve_slice
-from pfb.utils.weighting import (_compute_counts_wgt,
+from pfb.utils.weighting import (_compute_counts,
                                  _counts_to_weights,
                                  _filter_extreme_counts)
 from uuid import uuid4
@@ -147,16 +147,16 @@ class grad_actor(object):
         with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
             futures = []
             for uvw, mask, wgt in zip(self.uvw, self.mask, self.wgt):
-                fut = executor.submit(_compute_counts_wgt,
+                fut = executor.submit(_compute_counts,
                                       uvw,
                                       self.freq,
                                       mask,
-                                      wgt,
                                       nx,
                                       ny,
                                       cell_rad,
                                       cell_rad,
                                       np.float64,  # same type as uvw
+                                      wgt,
                                       ngrid=self.nvthreads)
                 futures.append(fut)
             self.counts = []

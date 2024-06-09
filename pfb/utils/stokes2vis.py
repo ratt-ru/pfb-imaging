@@ -346,8 +346,6 @@ def single_stokes_dist(
     ant2 = ds.ANTENNA2.values
     ds = ds.drop_vars('ANTENNA2')
     uvw = ds.UVW.values
-    # negate w for wgridder bug
-    uvw[:, 2] = -uvw[:, 2]
     ds = ds.drop_vars('UVW')
     flag = ds.FLAG.values
     ds = ds.drop_vars('FLAG')
@@ -491,6 +489,8 @@ def single_stokes_dist(
     beam = np.ones((npix, npix), dtype=real_type)
 
     # set after averaging
+    # negate w for wgridder bug
+    # uvw[:, 2] = -uvw[:, 2]
     data_vars = {}
     data_vars['VIS'] = (('row', 'chan'), data)
     data_vars['WEIGHT'] = (('row', 'chan'), weight)

@@ -173,6 +173,7 @@ def _grid(xdsi=None, **kw):
         for i, ds in enumerate(xds):
             xds[i] = ds.chunk({'row':-1,
                                'chan': -1,
+                               'three': -1,
                                'l_beam': -1,
                                'm_beam': -1})
 
@@ -465,12 +466,13 @@ def _grid(xdsi=None, **kw):
                         cell_rad,
                         cell_rad,
                         real_type,
+                        wgt,
                         ngrid=opts.nvthreads)
                 # get rid of artificially high weights corresponding to
                 # nearly empty cells
-                if opts.filter_extreme_counts:
-                    counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
-                                                   nlevel=opts.filter_level)
+                if opts.filter_counts_level:
+                    counts = filter_extreme_counts(counts,
+                                                   level=opts.filter_counts_level)
 
                 # do we want the coordinates to be ug, vg rather?
                 out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
