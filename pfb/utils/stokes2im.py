@@ -202,6 +202,7 @@ def single_stokes_image(
                 cell_rad,
                 cell_rad,
                 np.float64,  # same type as uvw
+                weight,
                 ngrid=opts.nvthreads)
 
         # counts will be accumulated on nvthreads grids in parallel
@@ -355,13 +356,14 @@ def single_stokes_image(
             'utc': utc,
             'wsum':wsum,
             'rms':rms,
-            'header': hdr.items()
+            # 'header': hdr.items()
         }
 
         out_ds = xr.Dataset(data_vars,  #coords=coords,
                         attrs=attrs)
         out_store = out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr',
                                 mode='w')
+        # return out_store
     elif opts.output_format == 'fits':
         save_fits(residual/wsum, f'{fds_store.full_path}/{oname}.fits', hdr)
     return 1
