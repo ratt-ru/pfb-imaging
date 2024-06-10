@@ -368,12 +368,6 @@ def _imit(**kw):
         wc = opts.weight_column
         weight = None if wc is None else getattr(subds, wc).data
 
-        res = completed_future.result()
-        if isinstance(res[2], int):
-            print(res)
-
-            quit()
-
         worker = associated_workers.pop(completed_future)
 
         future = client.submit(single_stokes_dist,

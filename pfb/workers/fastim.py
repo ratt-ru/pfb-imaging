@@ -219,7 +219,8 @@ def _fastim(**kw):
         cell_deg = np.rad2deg(cell_rad)
         fovx = nx*cell_deg
         fovy = ny*cell_deg
-        print(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
+        print(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees",
+              file=log)
 
     print(f"Image size = (nx={nx}, ny={ny})", file=log)
 
@@ -445,6 +446,10 @@ def _fastim(**kw):
         weight = None if wc is None else getattr(subds, wc).data
 
         worker = associated_workers.pop(completed_future)
+
+        if completed_future.result() != 1:
+            import ipdb; ipdb.set_trace()
+            raise ValueError("Something went wrong in submit!")
 
         # future = client.submit(f, xdsl[n_launched], worker, workers=worker)
         future = client.submit(single_stokes_image,

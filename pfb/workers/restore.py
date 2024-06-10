@@ -76,6 +76,10 @@ def _restore(**kw):
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq)
 
+    if opts.overwrite:
+        print("Warning! Potentially overwriting output images",
+              file=log)
+
     # stack cubes
     dirty, model, residual, psf, _, _, wsums, _ = dds2cubes(dds,
                                                             nband,

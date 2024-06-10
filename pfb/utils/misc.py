@@ -351,7 +351,7 @@ def construct_mappings(ms_name,
             chan_widths[ms][idt] = spws.CHAN_WIDTH.data[ds.DATA_DESC_ID]
             times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
             uvw = ds.UVW.data
-            u_max = abs(uvw[:, 0].max())
+            u_max = abs(uvw[:, 0]).max()
             v_max = abs(uvw[:, 1]).max()
             uv_maxs.append(da.maximum(u_max, v_max))
 
@@ -1252,6 +1252,10 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
     ffunc = lambdify(params[1], fexpr)
     image_in[Ix, Iy] = modelf(tfunc(time), ffunc(freq), *coeffs)
 
+    pix_area_in = cellxi * cellyi
+    pix_area_out = cellxo * cellyo
+    area_ratio = pix_area_out/pix_area_in
+
     xin = (-(nxi//2) + np.arange(nxi))*cellxi + x0i
     yin = (-(nyi//2) + np.arange(nyi))*cellyi + y0i
     xo = (-(nxo//2) + np.arange(nxo))*cellxo + x0o
@@ -1304,7 +1308,7 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
         interpo = RegularGridInterpolator((xin, yin), image_in,
                                           bounds_error=True, method='linear')
         xx, yy = np.meshgrid(xo, yo, indexing='ij')
-        return interpo((xx, yy))
+        return interpo((xx, yy)) * area_ratio
     # elif (nxi != nxo) or (nyi != nyo):
     #     # only need the overlap in this case
     #     _, idx0, idx1 = np.intersect1d(xin, xo, assume_unique=True, return_indices=True)
@@ -1312,6 +1316,37 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
     #     return image[idx0, idy0]
     else:
         return image_in
+
+
+
+# This !!!!!!!
+def mds_to_slice(mds, time, freq, nxo, nyo, cellxo, cellyo, x0o, y0o):
+    coeffs = mds.coefficients.values
+    Ix = mds.location_x.values
+    Iy = mds.location_y.values
+    expr = mds.parametrisation
+    paramf = mds.params.values
+    texpr = mds.texpr
+    fexpr = mds.fexpr
+
+
+    model_slice = eval_coeffs_to_slice(
+                time,
+                freq,
+                coeffs,
+                Ix, Iy,
+                expr,
+                paramf,
+                texpr,
+                fexpr,
+                mds.npix_x, mds.npix_y,
+                mds.cell_rad_x, mds.cell_rad_y,
+                mds.center_x, mds.center_y,
+                nxo, nyo,
+                cellxo, cellyo,
+                x0o, y0o
+            )
+    return model_slice
 
 
 @njit(**JIT_OPTIONS)
