@@ -60,6 +60,11 @@ inputs:
       - json
     info:
       Format to dump model to.
+  out-freqs:
+    dtype: str
+    info:
+      A string flow:fhigh:step of frequencies in hertz where the
+      output cube needs to be evaluated.
 
   _include:
     - (.)dist.yml

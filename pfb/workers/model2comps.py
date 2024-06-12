@@ -65,6 +65,8 @@ def _model2comps(**kw):
     from pfb.utils.fits import load_fits, data_from_header
     from astropy.io import fits
     from pfb.utils.misc import compute_context, fit_image_cube
+    from pfb.utils.fits import set_wcs, save_fits
+    from pfb.utils.misc import eval_coeffs_to_slice
     import xarray as xr
     import fsspec as fs
     from daskms.fsspec_store import DaskMSStore
@@ -195,6 +197,41 @@ def _model2comps(**kw):
         coeff_dict = coeff_dataset.to_dict()
         with fs.open(mdsstore.url, 'w') as f:
             json.dump(coeff_dict, f)
+
+
+    # TODO - doesn't work with multiple fields
+    # render model to cube
+    if opts.out_freqs is not None:
+        flow, fhigh, step = opts.out_freqs.split(':')
+        freq_out = np.linspace(float(fmin), float(fmax), float(step))
+        ra = dds[0].ra
+        dec  = dds[0].dec
+        hdr = set_wcs(cell_deg, cell_deg, nx, ny, [ra, dec],
+                    freq_out, GuassPar=(1, 1, 0),  # fake for now
+                    unix_time=unix_time)
+        nbando = freq_out.size
+        modelo = np.zeros((nbando, ns, ny))
+        for b in range(nbando):
+            modelo[b] = eval_coeffs_to_slice(mtimes[0],
+                                            freq_out[b],
+                                            coeffs,
+                                            Ix, Iy,
+                                            expr,
+                                            params,
+                                            texpr,
+                                            fexpr,
+                                            nx, ny,
+                                            cell_rad, cell_rad,
+                                            x0, y0,
+                                            nx, ny,
+                                            cell_rad, cell_rad,
+                                            x0, y0)
+
+        save_fits(modelo,
+                f'{basename}_{opts.suffix}_{opts.outfreqs}.fits',
+                overwrite=True)
+
+
 
 
     print("All done here.", file=log)
