@@ -214,7 +214,7 @@ def _fluxmop(**kw):
     modelp = model.copy()
     model += opts.gamma * update
 
-
+    residualp = residual.copy()
     print("Getting residual", file=log)
     convimage = hess(model)
     ne.evaluate('dirty - convimage', out=residual,
@@ -228,16 +228,19 @@ def _fluxmop(**kw):
     for ds in dds:
         b = ds.bandid
         r = da.from_array(residual[b]*wsum)
+        rp = da.from_array(residualp[b]*wsum)
         m = da.from_array(model[b])
         mp = da.from_array(modelp[b])
         u = da.from_array(update[b])
+        # keep previous results in case of failure
         ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
+                              'RESIDUALP': (('x', 'y'), rp),
                               'MODEL': (('x', 'y'), m),
-                              'MODELP': (('x', 'y'), mp),  # to revert in case of failure
+                              'MODELP': (('x', 'y'), mp),
                               'UPDATE': (('x', 'y'), u)})
         dds_out.append(ds_out)
     writes = xds_to_zarr(dds_out, dds_name,
-                         columns=('RESIDUAL', 'MODEL', 'MODELP', 'UPDATE'),
+                         columns=('RESIDUAL', 'RESIDUALP', 'MODEL', 'MODELP', 'UPDATE'),
                          rechunk=True)
     # import ipdb; ipdb.set_trace()
     dask.compute(writes)
