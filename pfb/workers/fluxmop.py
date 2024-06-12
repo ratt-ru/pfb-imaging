@@ -142,7 +142,7 @@ def _fluxmop(**kw):
             assert mask.shape == (nx, ny)
             if opts.or_mask_with_model:
                 print("Combining model with input mask", file=log)
-                mask = np.logical_or(mask>0, model_mfs>0).astype(real_type)
+                mask = np.logical_or(mask>0, model_mfs>0).astype(output_type)
 
 
             mask = mask.astype(output_type)
