@@ -17,7 +17,7 @@ inputs:
       Either path to mask.fits or set to model to construct from model
   zero-model-outside-mask:
     dtype: bool
-    default: true
+    default: false
     info:
       Make sure the input model is zero outside the mask.
       Only has an effect if an external mask has been passed in.

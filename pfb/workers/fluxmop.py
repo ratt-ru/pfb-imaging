@@ -147,7 +147,7 @@ def _fluxmop(**kw):
 
             mask = mask.astype(output_type)
             print('Using provided fits mask', file=log)
-            if opts.zero_model_outside_mask:
+            if opts.zero_model_outside_mask and not opts.or_mask_with_model:
                 model[:, mask<1] = 0
                 print("Recomputing residual since asked to zero model", file=log)
                 convimage = hess(model)
