@@ -22,6 +22,12 @@ inputs:
       Make sure the input model is zero outside the mask.
       Only has an effect if an external mask has been passed in.
       A major cycle will be triggered to recompute the residual after zeroing.
+  or-mask-with-model:
+    dtype: bool
+    default: false
+    info:
+      Make a new mask consisting of the union of input mask and where the MFS
+      model is larger than zero.
   min-model:
     dtype: float
     default: 1e-5

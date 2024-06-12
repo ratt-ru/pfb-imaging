@@ -95,6 +95,11 @@ def _fluxmop(**kw):
 
     lastsize = dds[0].y_psf.size
 
+    if model is not None:
+        model_mfs = np.mean(model[fsel], axis=0)
+    else:
+        model_mfs = None
+
     # for intermediary results (not currently written)
     freq_out = []
     for ds in dds:
@@ -135,6 +140,11 @@ def _fluxmop(**kw):
         else:
             mask = load_fits(opts.mask, dtype=output_type).squeeze()
             assert mask.shape == (nx, ny)
+            if opts.or_mask_with_model:
+                print("Combining model with input mask", file=log)
+                mask = np.logical_or(mask>0, model_mfs>0).astype(real_type)
+
+
             mask = mask.astype(output_type)
             print('Using provided fits mask', file=log)
             if opts.zero_model_outside_mask:
@@ -151,6 +161,7 @@ def _fluxmop(**kw):
                 save_fits(residual_mfs,
                   basename + f'_{opts.suffix}_residual_mfs_zeroed.fits',
                   hdr_mfs)
+
 
     else:
         mask = np.ones((nx, ny), dtype=output_type)
