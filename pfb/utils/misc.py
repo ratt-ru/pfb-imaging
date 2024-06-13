@@ -661,7 +661,8 @@ def init_mask(mask, model, output_type, log):
     return mask
 
 
-def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
+def dds2cubes(dds, nband, apparent=False, dual=True,
+              modelname='MODEL', residname='RESIDUAL'):
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
     nx, ny = dds[0].DIRTY.shape
@@ -669,7 +670,7 @@ def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
                       dtype=real_type) for _ in range(nband)]
     model = [da.zeros((nx, ny), chunks=(-1, -1),
                       dtype=real_type) for _ in range(nband)]
-    if 'RESIDUAL' in dds[0]:
+    if residname in dds[0]:
         residual = [da.zeros((nx, ny), chunks=(-1, -1),
                             dtype=real_type) for _ in range(nband)]
     else:
@@ -697,12 +698,12 @@ def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
         b = ds.bandid
         if apparent:
             dirty[b] += ds.DIRTY.data
-            if 'RESIDUAL' in ds:
-                residual[b] += ds.RESIDUAL.data
+            if residname in ds:
+                residual[b] += getattr(ds, residname).data
         else:
             dirty[b] += ds.DIRTY.data * ds.BEAM.data
-            if 'RESIDUAL' in ds:
-                residual[b] += ds.RESIDUAL.data * ds.BEAM.data
+            if residname in ds:
+                residual[b] += getattr(ds, residname).data * ds.BEAM.data
         if 'PSF' in ds:
             psf[b] += ds.PSF.data
             psfhat[b] += ds.PSFHAT.data
@@ -716,7 +717,7 @@ def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
     wsum = wsums.sum()
     dirty = da.stack(dirty)/wsum
     model = da.stack(model)
-    if 'RESIDUAL' in ds:
+    if residname in ds:
         residual = da.stack(residual)/wsum
     if 'PSF' in ds:
         psf = da.stack(psf)/wsum

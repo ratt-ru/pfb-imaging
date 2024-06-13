@@ -44,6 +44,11 @@ inputs:
     default: MODEL
     info:
       Name of the model to update
+  residual-name:
+    dtype: str
+    default: RESIDUAL
+    info:
+      Name of the residual to use
   gamma:
     dtype: float
     default: 0.99

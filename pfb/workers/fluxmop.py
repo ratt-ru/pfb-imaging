@@ -81,7 +81,8 @@ def _fluxmop(**kw):
                                                                opts.nband,
                                                                apparent=False,
                                                                dual=False,
-                                                               modelname=opts.model_name)
+                                                               modelname=opts.model_name,
+                                                               residname=opts.residual_name)
     fsel = wsums > 0
     wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
