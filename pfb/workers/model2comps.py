@@ -78,8 +78,10 @@ def _model2comps(**kw):
 
     if opts.model_out is not None:
         coeff_name = opts.model_out
+        fits_name = opts.model_out.rstrip('.mds') + '.fits'
     else:
         coeff_name = f'{basename}_{opts.suffix}_{opts.model_name.lower()}.mds'
+        fits_name = f'{basename}_{opts.suffix}_{opts.model_name.lower()}.fits'
 
     mdsstore = DaskMSStore(coeff_name)
     if mdsstore.exists():
@@ -230,7 +232,7 @@ def _model2comps(**kw):
                                             x0, y0)
 
         save_fits(modelo,
-                  f'{basename}_{opts.suffix}_{opts.out_freqs}.fits',
+                  fits_name,
                   hdr,
                   overwrite=True)
 
