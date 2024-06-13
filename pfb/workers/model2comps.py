@@ -71,6 +71,7 @@ def _model2comps(**kw):
     import fsspec as fs
     from daskms.fsspec_store import DaskMSStore
     import json
+    from casacore.quanta import quantity
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.suffix}.dds'
@@ -202,15 +203,16 @@ def _model2comps(**kw):
     # TODO - doesn't work with multiple fields
     # render model to cube
     if opts.out_freqs is not None:
-        flow, fhigh, step = opts.out_freqs.split(':')
-        freq_out = np.linspace(float(fmin), float(fmax), float(step))
+        flow, fhigh, step = list(map(float, opts.out_freqs.split(':')))
+        nbando = int((fhigh - flow)/step)
+        freq_out = np.linspace(flow, fhigh, nbando)
         ra = dds[0].ra
         dec  = dds[0].dec
+        unix_time = quantity(f'{mtimes[0]}s').to_unix_time()
         hdr = set_wcs(cell_deg, cell_deg, nx, ny, [ra, dec],
                     freq_out, GuassPar=(1, 1, 0),  # fake for now
                     unix_time=unix_time)
-        nbando = freq_out.size
-        modelo = np.zeros((nbando, ns, ny))
+        modelo = np.zeros((nbando, nx, ny))
         for b in range(nbando):
             modelo[b] = eval_coeffs_to_slice(mtimes[0],
                                             freq_out[b],
@@ -228,8 +230,9 @@ def _model2comps(**kw):
                                             x0, y0)
 
         save_fits(modelo,
-                f'{basename}_{opts.suffix}_{opts.outfreqs}.fits',
-                overwrite=True)
+                  f'{basename}_{opts.suffix}_{opts.out_freqs}.fits',
+                  hdr,
+                  overwrite=True)
 
 
 
