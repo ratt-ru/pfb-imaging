@@ -146,11 +146,52 @@ def _model2comps(**kw):
         raise ValueError(f'Model is empty or has no components above {opts.min_val}')
     radec = (dds[0].ra, dds[0].dec)
 
+    if opts.out_freqs is not None:
+        flow, fhigh, step = list(map(float, opts.out_freqs.split(':')))
+        fsel = np.all(wsums > 0, axis=0)
+        if flow < mfreqs.min():
+            # linear extrapolation from first two non-null bands
+            Ilow = np.argmax(fsel)  # first non-null index
+            Ihigh = Ilow + 1
+            while not fsel[Ihigh]:
+                Ihigh += 1
+            nudiff = mfreqs[Ihigh] - mfreqs[Ilow]
+            slopes = (model[:, Ihigh] - model[:, Ilow])/nudiff
+            intercepts = model[:, Ihigh] - slopes * mfreqs[Ihigh]
+            mlow = slopes * flow + intercepts
+            model = np.concatenate((mlow[:, None], model), axis=1)
+            mfreqs = np.concatenate((np.array((flow,)), mfreqs))
+            # TODO - duplicate first non-null value?
+            wsums = np.concatenate((wsums[:, Ilow:Ilow+1], wsums),
+                                   axis=1)
+            nband = mfreqs.size
+        if fhigh > mfreqs.max():
+            # linear extrapolation from last two non-null bands
+            Ihigh = nband - np.argmax(fsel[::-1]) - 1  # last non-null index
+            Ilow = Ihigh - 1
+            while not fsel[Ilow]:
+                Ilow -= 1
+            nudiff = mfreqs[Ihigh] - mfreqs[Ilow]
+            slopes = (model[:, Ihigh] - model[:, Ilow])/nudiff
+            intercepts = model[:, Ihigh] - slopes * mfreqs[Ihigh]
+            mhigh = slopes * fhigh + intercepts
+            model = np.concatenate((model, mhigh[:, None]), axis=1)
+            mfreqs = np.concatenate((mfreqs, np.array((fhigh,))))
+            # TODO - duplicate last non-null value?
+            wsums = np.concatenate((wsums, wsums[:, Ihigh][:, None]),
+                                   axis=1)
+            nband = mfreqs.size
+
+    if opts.nbasisf is None:
+        nbasisf = nband-1
+    else:
+        nbasisf = opts.nbasisf
+
     try:
         coeffs, Ix, Iy, expr, params, texpr, fexpr = \
             fit_image_cube(mtimes, mfreqs, model,
                            wgt=wsums,
-                           nbasisf=opts.nbasisf,
+                           nbasisf=nbasisf,
                            method=opts.fit_mode,
                            sigmasq=opts.sigmasq)
     except np.linalg.LinAlgError as e:

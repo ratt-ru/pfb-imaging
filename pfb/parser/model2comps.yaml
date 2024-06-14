@@ -6,9 +6,9 @@ inputs:
       Allow overwrite of existing model
   nbasisf:
     dtype: int
-    default: 4
     info:
-      Order of interpolating polynomial for frequency axis
+      Order of interpolating polynomial for frequency axis.
+      One less than the number of bands by default.
   nbasist:
     dtype: int
     default: 1
