@@ -75,6 +75,10 @@ def _klean(ddsi=None, **kw):
     from scipy import ndimage
     from copy import copy
     from pfb.utils.misc import fitcleanbeam, fit_image_cube
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    nthreads_tot = opts.nthreads_dask * opts.nvthreads
+    resize_thread_pool(nthreads_tot)
+    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 

@@ -84,7 +84,10 @@ def _spotless(ddsi=None, **kw):
     from pfb.prox.prox_21m import prox_21m_numba as prox_21
     # from pfb.prox.prox_21 import prox_21
     from pfb.utils.misc import fitcleanbeam, fit_image_cube
-
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    nthreads_tot = opts.nthreads_dask * opts.nvthreads
+    resize_thread_pool(nthreads_tot)
+    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 

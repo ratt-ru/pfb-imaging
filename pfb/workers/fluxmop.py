@@ -65,6 +65,10 @@ def _fluxmop(**kw):
     from pfb.operators.hessian import hessian_xds, hessian_psf_cube
     from pfb.opt.pcg import pcg
     from ducc0.misc import make_noncritical
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    nthreads_tot = opts.nthreads_dask * opts.nvthreads
+    resize_thread_pool(nthreads_tot)
+    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 

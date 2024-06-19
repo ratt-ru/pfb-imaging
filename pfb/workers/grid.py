@@ -145,6 +145,10 @@ def _grid(xdsi=None, **kw):
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
     from quartical.utils.dask import Blocker
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    nthreads_tot = opts.nthreads_dask * opts.nvthreads
+    resize_thread_pool(nthreads_tot)
+    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
