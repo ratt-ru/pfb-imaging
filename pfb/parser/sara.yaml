@@ -1,0 +1,108 @@
+inputs:
+  _include:
+    - (.)gridding.yml
+    - (.)pdopts.yml
+    - (.)pmopts.yml
+    - (.)dist.yml
+    - (.)out.yml
+  nband:
+    dtype: int
+    required: true
+    abbreviation: nb
+    info:
+      Number of imaging bands
+  suffix:
+    dtype: str
+    default: 'main'
+    info:
+      Can be used to specify a custom name for the image space data products
+  bases:
+    dtype: str
+    info: 'Wavelet bases to use. Give as comma separated str eg. '
+    default: 'self,db1,db2'
+    abbreviation: bases
+  nlevels:
+    dtype: int
+    info: 'Wavelet decomposition level'
+    default: 3
+    abbreviation: nlevels
+  l1reweight-from:
+    dtype: int
+    default: 5
+    info:
+      L1 reweighting will kick in either at convergence or after this many
+      iterations. Set to a negative value to disbale L1 reweighting.
+  hessnorm:
+    dtype: float
+    abbreviation: hessnorm
+    info:
+      Spectral norm of hessian approximation
+  rmsfactor:
+    dtype: float
+    default: 1.0
+    info:
+      By default will threshold by rmsfactor*rms at every iteration
+  gamma:
+    dtype: float
+    default: 1.0
+    info:
+      Step size of update
+  alpha:
+    dtype: float
+    default: 2
+    info:
+      Controls how aggressively the l1reweighting is applied.
+      Larger values correspond to more agressive reweighting.
+  positivity:
+    dtype: int
+    default: 1
+    # choices:
+    #   - 0
+    #   - 1
+    #   - 2
+    info:
+      How to apply positivity constraint
+      0 -> no positivity,
+      1 -> normal positivity constraint
+      and 2 -> strong positivity i.e. all pixels in a band > 0
+  niter:
+    dtype: int
+    default: 10
+    abbreviation: niter
+    info:
+      Number of iterations.
+  tol:
+    dtype: float
+    default: 5e-4
+    info:
+      Tolerance at which to terminate algorithm.
+      Will stop when norm(x-xp)/norm(x) < tol
+  fits-mfs:
+    dtype: bool
+    default: true
+    info:
+      Output MFS fits files
+  fits-cubes:
+    dtype: bool
+    default: false
+    info:
+      Output fits cubes
+  memory-greedy:
+    dtype: bool
+    default: false
+    info:
+      Holds data in memory if set
+  init-factor:
+    dtype: float
+    default: 0.5
+    info:
+      Lower the initial rmsfactor by this amount
+  diverge-count:
+    dtype: int
+    default: 5
+    info:
+      Will terminate the algorithm if the rms increases this many times.
+      Set to larger than niter to disable this check.
+
+outputs:
+  {}

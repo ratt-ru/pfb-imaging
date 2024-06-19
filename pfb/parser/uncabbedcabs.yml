@@ -79,6 +79,15 @@ pfb.spotless:
   _include:
     - (.)spotless.yaml
 
+pfb.sara:
+  command: pfb.workers.sara.sara
+  flavour: python
+  policies:
+    pass_missing_as_none: true
+
+  _include:
+    - (.)sara.yaml
+
 pfb.model2comps:
   command: pfb.workers.model2comps.model2comps
   flavour: python
