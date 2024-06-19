@@ -150,6 +150,8 @@ def _model2comps(**kw):
         flow, fhigh, step = list(map(float, opts.out_freqs.split(':')))
         fsel = np.all(wsums > 0, axis=0)
         if flow < mfreqs.min():
+            print(f"Linearly extrapolating to {flow:.3e}Hz",
+                  file=log)
             # linear extrapolation from first two non-null bands
             Ilow = np.argmax(fsel)  # first non-null index
             Ihigh = Ilow + 1
@@ -162,10 +164,12 @@ def _model2comps(**kw):
             model = np.concatenate((mlow[:, None], model), axis=1)
             mfreqs = np.concatenate((np.array((flow,)), mfreqs))
             # TODO - duplicate first non-null value?
-            wsums = np.concatenate((wsums[:, Ilow:Ilow+1], wsums),
+            wsums = np.concatenate((wsums[:, Ilow][:, None], wsums),
                                    axis=1)
             nband = mfreqs.size
         if fhigh > mfreqs.max():
+            print(f"Linearly extrapolating to {fhigh:.3e}Hz",
+                  file=log)
             # linear extrapolation from last two non-null bands
             Ihigh = nband - np.argmax(fsel[::-1]) - 1  # last non-null index
             Ilow = Ihigh - 1
@@ -187,6 +191,7 @@ def _model2comps(**kw):
     else:
         nbasisf = opts.nbasisf
 
+    print("Fitting coefficients", file=log)
     try:
         coeffs, Ix, Iy, expr, params, texpr, fexpr = \
             fit_image_cube(mtimes, mfreqs, model,
@@ -248,6 +253,8 @@ def _model2comps(**kw):
     if opts.out_freqs is not None:
         flow, fhigh, step = list(map(float, opts.out_freqs.split(':')))
         nbando = int((fhigh - flow)/step)
+        print(f"Rendering model cube to {nbando} output bands",
+              file=log)
         freq_out = np.linspace(flow, fhigh, nbando)
         ra = dds[0].ra
         dec  = dds[0].dec

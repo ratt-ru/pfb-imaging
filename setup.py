@@ -5,7 +5,7 @@ with open("README.rst", "r") as fh:
     long_description = fh.read()
 
 requirements = [
-                'numpy',
+                'numpy <= 2.0.0',
                 'scikit-image',
                 'PyWavelets',
                 'katbeam',
