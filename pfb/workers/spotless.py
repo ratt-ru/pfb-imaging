@@ -22,7 +22,7 @@ for key in schema.spotless["inputs"].keys():
 @clickify_parameters(schema.spotless)
 def spotless(**kw):
     '''
-    Spotless algorithm
+    Distributed spotless algorithm.
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)

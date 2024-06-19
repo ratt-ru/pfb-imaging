@@ -8,19 +8,19 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('FASTIM')
+log = pyscilog.get_logger('HCI')
 import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}
-for key in schema.fastim["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.fastim["inputs"][key]["default"]
+for key in schema.hci["inputs"].keys():
+    defaults[key.replace("-", "_")] = schema.hci["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.fastim)
-def fastim(**kw):
+@clickify_parameters(schema.hci)
+def hci(**kw):
     '''
     Produce high cadence residual images.
     '''
@@ -29,7 +29,7 @@ def fastim(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    pyscilog.log_to_file(f'{ldir}/fastim_{timestamp}.log')
+    pyscilog.log_to_file(f'{ldir}/hci_{timestamp}.log')
     print(f'Logs will be written to {str(ldir)}/fastim_{timestamp}.log', file=log)
     if opts.product.upper() not in ["I","Q", "U", "V"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
@@ -110,11 +110,11 @@ def fastim(**kw):
         client.amm.stop()
 
         ti = time.time()
-        _fastim(**opts)
+        _hci(**opts)
 
     print(f"All done after {time.time() - ti}s", file=log)
 
-def _fastim(**kw):
+def _hci(**kw):
     opts = OmegaConf.create(kw)
     from omegaconf import ListConfig, open_dict
     OmegaConf.set_struct(opts, True)

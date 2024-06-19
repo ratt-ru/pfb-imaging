@@ -19,10 +19,10 @@ for key in schema.sara["inputs"].keys():
     defaults[key.replace("-", "_")] = schema.sara["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.spotless)
+@clickify_parameters(schema.sara)
 def sara(**kw):
     '''
-    Spotless algorithm
+    Deconvolution using SARA regularisation
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
@@ -31,7 +31,7 @@ def sara(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    pyscilog.log_to_file(f'{str(ldir)}/spotless_{timestamp}.log')
+    pyscilog.log_to_file(f'{str(ldir)}/sara_{timestamp}.log')
     print(f'Logs will be written to {str(ldir)}/spotless_{timestamp}.log', file=log)
     basedir = Path(opts.output_filename).resolve().parent
     basedir.mkdir(parents=True, exist_ok=True)
