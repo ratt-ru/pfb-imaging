@@ -895,7 +895,7 @@ def concat_chan(xds, nband_out=1):
             flow = freq_bins[b]
             fhigh = freq_bins[b+1]
             freqsb = all_freqs[all_freqs >= flow]
-            # exlusive except for the last one
+            # exclusive except for the last one
             if b==nband_out-1:
                 freqsb = freqsb[freqsb <= fhigh]
             else:
@@ -933,17 +933,6 @@ def concat_chan(xds, nband_out=1):
             blocker.add_output('masko', 'rf', ((nrow,), (nchan,)), xdst[0].MASK.dtype)
 
             out_dict = blocker.get_dask_outputs()
-
-            # import dask
-            # dask.visualize(out_dict, color="order", cmap="autumn",
-            #             node_attr={"penwidth": "4"},
-            #             filename='/home/landman/testing/pfb/out/outdict_ordered_graph.pdf',
-            #             optimize_graph=False,
-            #             engine='cytoscape')
-            # dask.visualize(out_dict,
-            #             filename='/home/landman/testing/pfb/out/outdict_graph.pdf',
-            #             optimize_graph=False, engine='cytoscape')
-            # quit()
 
             # get weighted sum of beam
             beam = sum_beam(xdst)
@@ -1047,9 +1036,13 @@ def sum_overlap(ufreq, flow, fhigh, **kwargs):
         mask = kwargs[f'mask{i}']
         nu = kwargs[f'freq{i}']
         _, idx0, idx1 = np.intersect1d(nu, ufreq, assume_unique=True, return_indices=True)
-        viso[:, idx1] += vis[:, idx0] * wgt[:, idx0] * mask[:, idx0]
-        wgto[:, idx1] += wgt[:, idx0] * mask[:, idx0]
-        masko[:, idx1] += mask[:, idx0]
+        try:
+            viso[:, idx1] += vis[:, idx0] * wgt[:, idx0] * mask[:, idx0]
+            wgto[:, idx1] += wgt[:, idx0] * mask[:, idx0]
+            masko[:, idx1] += mask[:, idx0]
+        except Exception as e:
+            print(flow, fhigh, ufreq, nu)
+            raise e
 
     # unmasked where at least one data point is unflagged
     masko = np.where(masko > 0, True, False)

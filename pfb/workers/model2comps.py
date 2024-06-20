@@ -269,7 +269,7 @@ def _model2comps(**kw):
                                          x0, y0)
 
     eps = norm_diff(modelo, model[0])
-    print(f"Fractioal interpolation error is {eps:.3e}", file=log)
+    print(f"Fractional interpolation error is {eps:.3e}", file=log)
 
 
     # TODO - doesn't work with multiple fields

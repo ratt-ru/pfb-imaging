@@ -239,7 +239,7 @@ def single_stokes_image(
                 mds.npix_x, mds.npix_y,
                 mds.cell_rad_x, mds.cell_rad_y,
                 mds.center_x, mds.center_y,
-                # TODO - currently needs to be the same, need FFT interpolation
+                # TODO - currently needs to be the same, need flux conservative interpolation
                 mds.npix_x, mds.npix_y,
                 mds.cell_rad_x, mds.cell_rad_y,
                 mds.center_x, mds.center_y,
