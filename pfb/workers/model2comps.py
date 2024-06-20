@@ -66,7 +66,7 @@ def _model2comps(**kw):
     from astropy.io import fits
     from pfb.utils.misc import compute_context, fit_image_cube
     from pfb.utils.fits import set_wcs, save_fits
-    from pfb.utils.misc import eval_coeffs_to_slice
+    from pfb.utils.misc import eval_coeffs_to_slice, norm_diff
     import xarray as xr
     import fsspec as fs
     from daskms.fsspec_store import DaskMSStore
@@ -248,6 +248,28 @@ def _model2comps(**kw):
         coeff_dict = coeff_dataset.to_dict()
         with fs.open(mdsstore.url, 'w') as f:
             json.dump(coeff_dict, f)
+
+
+    # interpolation error
+    modelo = np.zeros((nband, nx, ny))
+    for b in range(nband):
+        modelo[b] = eval_coeffs_to_slice(mtimes[0],
+                                         mfreqs[b],
+                                         coeffs,
+                                         Ix, Iy,
+                                         expr,
+                                         params,
+                                         texpr,
+                                         fexpr,
+                                         nx, ny,
+                                         cell_rad, cell_rad,
+                                         x0, y0,
+                                         nx, ny,
+                                         cell_rad, cell_rad,
+                                         x0, y0)
+
+    eps = norm_diff(modelo, model)
+    print(f"Fractioal interpolation error is {eps:.3e}", file=log)
 
 
     # TODO - doesn't work with multiple fields
