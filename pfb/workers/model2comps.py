@@ -191,7 +191,9 @@ def _model2comps(**kw):
     else:
         nbasisf = opts.nbasisf
 
-    print("Fitting coefficients", file=log)
+    nbasis = nbasisf
+    print(f"Fitting coefficients with {nbasis} basis functions",
+          file=log)
     try:
         coeffs, Ix, Iy, expr, params, texpr, fexpr = \
             fit_image_cube(mtimes, mfreqs, model,
