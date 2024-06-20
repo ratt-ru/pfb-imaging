@@ -268,7 +268,7 @@ def _model2comps(**kw):
                                          cell_rad, cell_rad,
                                          x0, y0)
 
-    eps = norm_diff(modelo, model)
+    eps = norm_diff(modelo, model[0])
     print(f"Fractioal interpolation error is {eps:.3e}", file=log)
 
 
