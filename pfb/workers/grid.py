@@ -316,6 +316,11 @@ def _grid(xdsi=None, **kw):
             assert out_ds.cell_rad == cell_rad
         print(f'As far as we can tell {dds_name} can be reused/updated.',
               file=log)
+        if opts.mf_weighting:
+            counts = da.array([ds.COUNTS.data for ds in xds]).sum(axis=0).compute()
+            for i, ds in enumerate(dds):
+                dds[i] = ds.assign(**{'COUNTS': (('x', 'y'), counts)})
+
     else:
         print(f'Image space data products will be stored in {dds_name}.', file=log)
 
