@@ -69,6 +69,11 @@ inputs:
     default: false
     info:
       Output fits cubes
+  memory-greedy:
+    dtype: bool
+    default: false
+    info:
+      Holds data in memory if set
   _include:
     - (.)gridding.yml
     - (.)cgopts.yml
