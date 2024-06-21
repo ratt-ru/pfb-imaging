@@ -50,7 +50,7 @@ def fluxmop(**kw):
 
     print("All done here.", file=log)
 
-def _fluxmop(**kw):
+def _fluxmop(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -73,9 +73,26 @@ def _fluxmop(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     dds_name = f'{basename}_{opts.suffix}.dds'
-
-    dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                          'chan': -1})
+    if ddsi is not None:
+        dds = []
+        for ds in ddsi:
+            dds.append(ds.chunk({'row':-1,
+                                 'chan':-1,
+                                 'x':-1,
+                                 'y':-1,
+                                 'x_psf':-1,
+                                 'y_psf':-1,
+                                 'yo2':-1}))
+    else:
+        dds = xds_from_zarr(dds_name, chunks={'row':-1,
+                                            'chan':-1,
+                                            'x':-1,
+                                            'y':-1,
+                                            'x_psf':-1,
+                                            'y_psf':-1,
+                                            'yo2':-1})
+    if opts.memory_greedy:
+        dds = dask.persist(dds)[0]
 
     # stitch image space data products
     output_type = dds[0].DIRTY.dtype
@@ -100,11 +117,6 @@ def _fluxmop(**kw):
 
     lastsize = dds[0].y_psf.size
 
-    if model is not None:
-        model_mfs = np.mean(model[fsel], axis=0)
-    else:
-        model_mfs = None
-
     # for intermediary results (not currently written)
     freq_out = []
     for ds in dds:
@@ -120,6 +132,12 @@ def _fluxmop(**kw):
     cell_deg = np.rad2deg(cell_rad)
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+
+    if model is not None:
+        model_mfs = np.mean(model[fsel], axis=0)
+    else:
+        model_mfs = np.zeros((nx,ny), dtype=output_type)
+        model = np.zeros((nband, nx,ny), dtype=output_type)
 
     # set up vis space Hessian for computing the residual
     # TODO - how to apply beam externally per ds
@@ -193,10 +211,16 @@ def _fluxmop(**kw):
     else:
         print("Using vis space hessian approximation",
               file=log)
+        # TODO - we can probably do better here
         hess_pcg = partial(hessian_xds, xds=dds, hessopts=hessopts,
                    wsum=wsum, sigmainv=opts.sigmainv,
                    mask=mask,
                    compute=True, use_beam=False)
+
+        if not opts.memory_greedy:
+            print("Warning! Data will be loaded from disk at every iteration. "
+                  "It is recommended to use vis space Hessian approximation "
+                  "with --memory-greedy", file=log)
 
     cgopts = {}
     cgopts['tol'] = opts.cg_tol
