@@ -51,7 +51,7 @@ def counts_to_weights(counts, uvw, freq, nx, ny,
                                  cell_size_x, cell_size_y,
                                  robust)
 
-class grad_actor(object):
+class band_actor(object):
     def __init__(self, ds_names, opts, bandid, cache_path):
         self.opts = opts
         self.bandid = bandid
@@ -62,148 +62,61 @@ class grad_actor(object):
         for dsn in ds_names:
             dsl.append(xr.open_zarr(dsn, chunks=None))
 
-        # TODO - make sure these are consistent across datasets
-        self.freq = dsl[0].chan.values
+        times_in = []
+        self.freq = dsl[0].FREQ.values
+        for ds in dsl:
+            times_in.append(ds.time_out)
+            if (ds.FREQ.values != self.freq).all():
+                raise NotImplementedError("Freqs per band currently assumed to be the same")
+
+        times_in = np.unique(times_in)
+
+        # need to take weighted sum of beam before concat
+        beam = np.zeros((ds.l_beam.size, ds.m_beam.size), dtype=float)
+        wsum = 0.0
+        for i, ds in enumerate(dsl):
+            wgt = ds.WEIGHT.values
+            mask = ds.MASK.values
+            wsumt = (wgt*mask).sum()
+            wsum += wsumt
+            beam += ds.BEAM.values * wsumt
+            ds = ds.drop_vars('BEAM')
+            dsl[i] = ds.drop_dims(('l_beam', 'm_beam'))
+
+        beam /= wsum
+
+        # now there should only be a single one
+        self.ds = xr.concat(dsl, dim='row')
+        self.real_type = ds.WEIGHT.dtype
+        self.complex_type = ds.VIS.dtype
         self.freq_out = np.mean(self.freq)
-        self.max_freq = dsl[0].max_freq
-        self.uv_max = dsl[0].uv_max
+        self.time_out = np.mean(times_in)
 
-        beam = [ds.BEAM for ds in dsl]  # TODO
-        wgt = [ds.WEIGHT for ds in dsl]
-        vis = [ds.VIS for ds in dsl]
-        mask = [ds.MASK for ds in dsl]
-        uvw = [ds.UVW for ds in dsl]
-        times_out = [ds.time_out for ds in dsl]
-
-        # TODO - weighted sum of beam
-        if opts.concat:
-            self.wgt = [xr.concat(wgt, dim='row').values]
-            self.vis = [xr.concat(vis, dim='row').values]
-            self.mask = [xr.concat(mask, dim='row').values]
-            self.uvw = [xr.concat(uvw, dim='row').values]
-            self.times_out = [np.mean(times_out)]
-            self.beam = [np.mean(beam, axis=0)]
-        else:
-            self.wgt = list(map(lambda d: d.values, wgt))
-            self.vis = list(map(lambda d: d.values, vis))
-            self.mask = list(map(lambda d: d.values, mask))
-            self.uvw = list(map(lambda d: d.values, uvw))
-            self.beam = list(map(lambda d: d.values, beam))
-            self.times_out = times_out
-
-        self.real_type = self.wgt[0].dtype
-        self.complex_type = self.vis[0].dtype
-        self.ntimes = len(self.times_out)
-
-        # Nyquist cell size
-        cell_N = 1.0 / (2 * self.uv_max * self.max_freq / lightspeed)
-
-        if opts.cell_size is not None:
-            cell_size = opts.cell_size
-            cell_rad = cell_size * np.pi / 60 / 60 / 180
-            if cell_N / cell_rad < 1:
-                raise ValueError("Requested cell size too large. "
-                                "Super resolution factor = ", cell_N / cell_rad)
-        else:
-            cell_rad = cell_N / opts.super_resolution_factor
-            cell_size = cell_rad * 60 * 60 * 180 / np.pi
-
-        if opts.nx is None:
-            fov = opts.field_of_view * 3600
-            npix = int(fov / cell_size)
-            npix = good_size(npix)
-            while npix % 2:
-                npix += 1
-                npix = good_size(npix)
-            nx = npix
-            ny = npix
-        else:
-            nx = opts.nx
-            ny = opts.ny if opts.ny is not None else nx
-            cell_deg = np.rad2deg(cell_rad)
-            fovx = nx*cell_deg
-            fovy = ny*cell_deg
-
-        nx_psf = good_size(int(opts.psf_oversize * nx))
-        while nx_psf % 2:
-            nx_psf += 1
-            nx_psf = good_size(nx_psf)
-
-        ny_psf = good_size(int(opts.psf_oversize * ny))
-        while ny_psf % 2:
-            ny_psf += 1
-            ny_psf = good_size(ny_psf)
-
-
-        self.cell_rad = cell_rad
-        self.nx = nx
-        self.ny = ny
-        self.nx_psf = nx_psf
-        self.ny_psf = ny_psf
-        self.nyo2 = ny_psf//2 + 1
+        self.cell_rad = np.deg2rad(opts.cell/3600)
+        self.nx = opts.nx
+        self.ny = opts.ny  # also lastsize now
+        self.nyo2 = ny//2 + 1
         self.nhthreads = opts.nthreads_dask
         self.nvthreads = opts.nvthreads
-        self.lastsize = ny_psf
 
         # uv-cell counts
-        with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
-            futures = []
-            for uvw, mask, wgt in zip(self.uvw, self.mask, self.wgt):
-                fut = executor.submit(_compute_counts,
-                                      uvw,
+        self.counts = _compute_counts(self.ds.UVW.values,
                                       self.freq,
-                                      mask,
-                                      nx,
-                                      ny,
-                                      cell_rad,
-                                      cell_rad,
+                                      self.ds.MASK.values,
+                                      self.nx,
+                                      self.ny,
+                                      self.cell_rad,
+                                      self.cell_rad,
                                       np.float64,  # same type as uvw
-                                      wgt,
+                                      self.ds.WEIGHT.values,
                                       ngrid=self.nvthreads)
-                futures.append(fut)
-            self.counts = []
-            for fut in cf.as_completed(futures):
-                # sum over grids
-                self.counts.append(fut.result().sum(axis=0))
 
-        # TODO - should we always sum all the counts in a band?
         self.counts = np.sum(self.counts, axis=0)
 
-        # we can't compute imaging weights yet because we need
-        # to communicate counts when using MF weighting
+        assert self.counts.shape[0] == self.nx
+        assert self.counts.shape[1] == self.ny
 
-        # compute lm coordinates of target
-        if opts.target is not None:
-            if len(self.times_out) > 1:
-                raise NotImplementedError("Off center targets are not yet "
-                                          "supported for multiple output "
-                                          "times.")
-            tmp = opts.target.split(',')
-            if len(tmp) == 1 and tmp[0] == opts.target:
-                obs_time = self.times_out[0]
-                self.ra, self.dec = get_coordinates(obs_time, target=opts.target)
-            else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
-                from astropy import units as u
-                from astropy.coordinates import SkyCoord
-                c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(u.hourangle, u.deg))
-                ra = np.deg2rad(c.ra.value)
-                dec = np.deg2rad(c.dec.value)
 
-            tcoords=np.zeros((1,2))
-            tcoords[0,0] = ra
-            tcoords[0,1] = dec
-            coords0 = np.array((ds.ra, ds.dec))
-            lm0 = radec_to_lm(tcoords, coords0).squeeze()
-            # LB - why the negative?
-            self.x0 = [-lm0[0]]
-            self.y0 = [-lm0[1]]
-            self.ra = [ra]
-            self.dec = [dec]
-        else:
-            self.x0 = [0.0] * self.ntimes
-            self.y0 = [0.0] * self.ntimes
-            self.ra = [ds.ra for ds in dsl]
-            self.dec = [ds.dec for ds in dsl]
 
         # set up wavelet dictionaries
         self.bases = opts.bases.split(',')
@@ -252,53 +165,11 @@ class grad_actor(object):
         self.xpad = make_noncritical(np.zeros((self.nx_psf, self.ny_psf),
                                               dtype=self.real_type))
 
-
-    def get_counts(self):
-        # it doesn't seem to be possible to
-        # access an actors attributes directly?
-        return self.counts
-
     def get_image_info(self):
         return (self.nx, self.ny, self.nmax, self.cell_rad,
                 self.ra[0], self.dec[0], self.x0[0], self.y0[0],
                 self.freq_out, np.mean(self.times_out))
 
-    def set_imaging_weights(self, counts=None):
-        if counts is not None:
-            self.counts = counts
-        # TODO - this is more complicated if we do not always
-        # sum all the counts in a band
-        filter_level = self.opts.filter_counts_level
-        if filter_level:
-            self.counts = _filter_extreme_counts(self.counts,
-                                                 level=filter_level)
-
-        with cf.ThreadPoolExecutor(max_workers=self.nhthreads) as executor:
-            futures = []
-            for i, uvw in enumerate(self.uvw):
-                fut = executor.submit(counts_to_weights,
-                                      self.counts,
-                                      uvw,
-                                      self.freq,
-                                      self.nx, self.ny,
-                                      self.cell_rad,
-                                      self.cell_rad,
-                                      self.opts.robustness,
-                                      i)
-                futures.append(fut)
-
-            # we keep imwgt and wgt separate for l2 reweighting purposes
-            self.imwgt = [1] * len(self.uvw)
-            self.wsums = [1] * len(self.uvw)
-            for fut in cf.as_completed(futures):
-                i, imwgt = fut.result()
-                self.imwgt[i] = imwgt
-                self.wsums[i] = (imwgt * self.wgt[i]).sum()
-
-        # this is wsum for the band not in total
-        self.wsumb = np.sum(self.wsums)
-
-        return self.wsumb
 
     def set_image_data_products(self, model, dual, dof=None, from_cache=False):
         '''
