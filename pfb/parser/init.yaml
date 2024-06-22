@@ -112,10 +112,37 @@ inputs:
     info:
       Display progress.
       Use --no-progressbar to deactivate.
-
+  host-address:
+    dtype: str
+    abbreviation: ha
+    info:
+      Address where the distributed client lives.
+      Uses LocalCluster if no address is provided
+      and scheduler is set to distributed.
+  nworkers:
+    dtype: int
+    default: 1
+    abbreviation: nw
+    info:
+      Number of worker processes.
+      This will largely determine the memory footprint.
+  nthreads-dask:
+    dtype: int
+    default: 1
+    abbreviation: ntd
+    info:
+      Number of dask threads per worker.
+      Only change this if you know what you are doing.
+  nvthreads:
+    dtype: int
+    default: 1
+    abbreviation: nvt
+    info:
+      Number of threads used to scale vertically (eg. for FFTs and gridding).
+      Each dask thread can in principle spawn this many threads.
+      Will attempt to use half the available threads by default.
 
   _include:
-    - (.)dist.yml
     - (.)out.yml
 
 outputs:
