@@ -9,17 +9,17 @@ inputs:
     dtype: List[int]
     info:
       List of SCAN_NUMBERS to image. Defaults to all.
-      Input as string eg. '[0,2]' if running from CLI
+      Input as comma separated list 0,2 if running from CLI
   ddids:
     dtype: List[int]
     info:
       List of DATA_DESC_ID's to images. Defaults to all.
-      Input as string eg. '[0,1]' if running from CLI
+      Input as comma separated list 0,2 if running from CLI
   fields:
     dtype: List[int]
     info:
       List of FIELD_ID's to image. Defaults to all.
-      Input as string eg. '[0,1,2]' if running from CLI
+      Input as comma separated list 0,2 if running from CLI
   freq-range:
     dtype: str
     info:
@@ -62,7 +62,8 @@ inputs:
     dtype: List[str]
     info:
       Path to Quartical gain table containing NET gains.
-      There must be a table for each MS and glob(ms) and glob(gt) should match up
+      There must be a table for each MS and glob(ms) and
+      glob(gt) should match up when running from CLI.
   integrations-per-image:
     dtype: int
     abbreviation: ipi
@@ -73,10 +74,10 @@ inputs:
   channels-per-image:
     dtype: int
     abbreviation: cpi
-    default: -1
+    default: 32
     info:
-      Number of channels per image.
-      Default (-1, 0, None) -> dataset per spw.
+      Number of channels per image for degridding resolution.
+      Any of (-1, 0, None) implies single dataset per spw.
   precision:
     dtype: str
     default: double
@@ -95,22 +96,23 @@ inputs:
     dtype: str
     info:
       Beam model to use
-  max-field-of-view:
-    dtype: float
-    abbreviation: fov
-    default: 3.0
-    info:
-      Field of view in degrees
   chan-average:
     dtype: int
     default: 1
     info:
       Average this number if channels together
-  visualize-graph:
-    dtype: bool
-    default: false
+  target:
+    dtype: str
     info:
-      Visualise the compute graph.
+      This can be predefined celestial objects known to astropy or a string in
+      the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+  progressbar:
+    dtype: bool
+    default: true
+    info:
+      Display progress.
+      Use --no-progressbar to deactivate.
+
 
   _include:
     - (.)dist.yml

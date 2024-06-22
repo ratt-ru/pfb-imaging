@@ -32,6 +32,12 @@ __version__ = '0.0.4'
 
 import os
 import sys
+import psutil
+import resource
+
+mem_total = psutil.virtual_memory().total
+_, hardlim = resource.getrlimit(resource.RLIMIT_AS)
+resource.setrlimit(resource.RLIMIT_AS, (mem_total, hardlim))
 
 def set_client(opts, stack, log,
                scheduler='distributed',

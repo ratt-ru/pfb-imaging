@@ -1,7 +1,7 @@
 import numpy as np
 import xarray as xr
 from distributed import get_client, worker_client, wait
-from pfb.utils.misc import fitcleanbeam
+from pfb.opt.pcg import pcg
 from pfb.operators.hessian import _hessian_impl
 from pfb.operators.psf import psf_convolve_slice
 from pfb.utils.weighting import (_compute_counts,
@@ -68,25 +68,27 @@ class grad_actor(object):
         self.max_freq = dsl[0].max_freq
         self.uv_max = dsl[0].uv_max
 
-        # beam = [ds.BEAM for ds in dsl]  # TODO
+        beam = [ds.BEAM for ds in dsl]  # TODO
         wgt = [ds.WEIGHT for ds in dsl]
         vis = [ds.VIS for ds in dsl]
         mask = [ds.MASK for ds in dsl]
         uvw = [ds.UVW for ds in dsl]
         times_out = [ds.time_out for ds in dsl]
 
-        # TODO - weighted sum of beam needs to be summed
+        # TODO - weighted sum of beam
         if opts.concat:
             self.wgt = [xr.concat(wgt, dim='row').values]
             self.vis = [xr.concat(vis, dim='row').values]
             self.mask = [xr.concat(mask, dim='row').values]
             self.uvw = [xr.concat(uvw, dim='row').values]
             self.times_out = [np.mean(times_out)]
+            self.beam = [np.mean(beam, axis=0)]
         else:
             self.wgt = list(map(lambda d: d.values, wgt))
             self.vis = list(map(lambda d: d.values, vis))
             self.mask = list(map(lambda d: d.values, mask))
             self.uvw = list(map(lambda d: d.values, uvw))
+            self.beam = list(map(lambda d: d.values, beam))
             self.times_out = times_out
 
         self.real_type = self.wgt[0].dtype
@@ -315,6 +317,7 @@ class grad_actor(object):
             self.psfs = [1] * self.ntimes
             self.psfhats = [1] * self.ntimes
             self.resids = [1] * self.ntimes
+            self.beams = [1] * self.ntimes
             for i in range(self.ntimes):
                 cname = self.cache_path + f'_time{i}.zarr'
                 ds = xr.open_zarr(cname, chunks=None)
@@ -322,6 +325,7 @@ class grad_actor(object):
                 self.psfs[i] = ds.PSF.values
                 self.psfhats[i] = ds.PSFHAT.values
                 self.wgt[i] = ds.WGT.values
+                self.beams[i] = ds.BEAM.values
             # we return the per band psf since we need the mfs psf
             # on the runner
             return np.sum(self.psfs, axis=0), np.sum(self.resids, axis=0)
@@ -429,7 +433,7 @@ class grad_actor(object):
         if x is None:
             x = self.model
 
-        if self.wsum == 0:
+        if self.wsumb == 0:
             self.data = np.zeros_like(x)
             return np.zeros_like(x)
 
@@ -477,14 +481,15 @@ class grad_actor(object):
 
         # we can do this here because wsum doesn't change
         resid = np.sum(self.resids, axis=0)
-        self.data = resid/self.wsum + self.psf_conv(x)
+        self.resid = resid/self.wsum
+        self.data = self.resid + self.psf_conv(x)
 
         # return residual since we need the MFS residual on the runner
         return resid
 
     def psf_conv(self, x):
         convx = np.zeros_like(x)
-        if self.wsum == 0:
+        if self.wsumb == 0:
             return convx
 
         for psfhat in self.psfhats:
@@ -497,6 +502,38 @@ class grad_actor(object):
                                         nthreads=self.nvthreads)
 
         return convx/self.wsum
+
+
+    def hess_psf(self, x):
+        return self.psf_conv(x) + self.sigmasq * x
+
+
+    def hess_wgt(self, x):
+        convx = np.zeros_like(x)
+        if self.wsumb == 0:
+            return convx
+
+        for uvw, imwgt, mask, beam, x0, y0 in zip(self.uvw,
+                                                  self.imwgt,
+                                                  self.mask,
+                                                  self.beam,
+                                                  self.x0,
+                                                  self.y0):
+            convx += _hessian_impl(x,
+                                   uvw,
+                                   imwgt,
+                                   mask,
+                                   self.freq,
+                                   beam,
+                                   x0=x0,
+                                   y0=y0,
+                                   cell=self.cell_rad,
+                                   do_wgridding=self.opts.do_wgridding,
+                                   epsilon=self.opts.epsilon,
+                                   double_accum=self.opts.double_accum,
+                                   nthreads=self.nvthreads)
+
+        return convx/self.wsum + self.sigmasq * x
 
 
     def almost_grad(self, x):
@@ -624,6 +661,25 @@ class grad_actor(object):
 
     def give_model(self):
         return self.model, self.dual, self.bandid
+
+    def cg_update(self, x, approx='psf'):
+        if approx == 'psf':
+            hess = self.hess_psf
+        elif approx == 'wgt':
+            hess = self.hess_wgt
+        else:
+            raise ValueError(f'Unknown approx method {approx}')
+
+        x0 = np.zeros((nx, ny), dtype=float)
+        update = pcg(hess,
+                     self.resid,
+                     x0,
+                     tol=self.opts.cg_tol,
+                     maxit=self.opts.cg_maxit,
+                     minit=self.opts.cg_minit,
+                     verbosity=0)
+
+        return update
 
 
 def image_data_products(model,
