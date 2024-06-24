@@ -14,16 +14,11 @@ from pfb.utils.misc import weight_from_sigma, combine_columns
 import dask
 from quartical.utils.dask import Blocker
 from pfb.utils.stokes import stokes_funcs
-from pfb.utils.weighting import weight_data, _weight_data
+from pfb.utils.weighting import weight_data
 from uuid import uuid4
 import gc
 from casacore.quanta import quantity
 from datetime import datetime
-# for old style vs new style warnings
-from numba.core.errors import NumbaPendingDeprecationWarning
-import warnings
-
-warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 
 
 def single_stokes(
@@ -151,7 +146,7 @@ def single_stokes(
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
-    data, weight = _weight_data(data, weight, flag, jones,
+    data, weight = weight_data(data, weight, flag, jones,
                             tbin_idx, tbin_counts,
                             ant1, ant2,
                             literally(poltype),

@@ -9,7 +9,7 @@ import dask
 from uuid import uuid4
 from pfb.utils.stokes import stokes_funcs
 from pfb.utils.weighting import (_compute_counts, _counts_to_weights,
-                                 _weight_data, _filter_extreme_counts)
+                                 weight_data, _filter_extreme_counts)
 from pfb.utils.misc import eval_coeffs_to_slice
 from pfb.utils.fits import set_wcs, save_fits
 from pfb.operators.gridder import _im2vis_impl as im2vis
@@ -21,12 +21,6 @@ from africanus.constants import c as lightspeed
 import gc
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
-
-# for old style vs new style warnings
-from numba.core.errors import NumbaPendingDeprecationWarning
-import warnings
-
-warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 
 
 def single_stokes_image(
@@ -181,7 +175,7 @@ def single_stokes_image(
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
-    data, weight = _weight_data(data, weight, flag, jones,
+    data, weight = weight_data(data, weight, flag, jones,
                             tbin_idx, tbin_counts,
                             ant1, ant2,
                             literally(poltype),

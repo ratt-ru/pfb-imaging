@@ -228,26 +228,26 @@ def _filter_extreme_counts(counts, level=10.0):
     return counts
 
 
-def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
-                ant1, ant2, pol, product, nc):
+# def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
+#                 ant1, ant2, pol, product, nc):
 
-    vis, wgt = _weight_data(data, weight, flag, jones,
-                                 tbin_idx, tbin_counts,
-                                 ant1, ant2,
-                                 literally(pol),
-                                 literally(product),
-                                 literally(nc))
+#     vis, wgt = _weight_data(data, weight, flag, jones,
+#                                  tbin_idx, tbin_counts,
+#                                  ant1, ant2,
+#                                  literally(pol),
+#                                  literally(product),
+#                                  literally(nc))
 
-    out_dict = {}
-    out_dict['vis'] = vis
-    out_dict['wgt'] = wgt
+#     out_dict = {}
+#     out_dict['vis'] = vis
+#     out_dict['wgt'] = wgt
 
-    return out_dict
+#     return out_dict
 
 
 @njit(**JIT_OPTIONS, parallel=True)
-def _weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
-                 ant1, ant2, pol, product, nc):
+def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
+                ant1, ant2, pol, product, nc):
 
     vis, wgt = _weight_data_impl(data, weight, flag, jones,
                                  tbin_idx, tbin_counts,

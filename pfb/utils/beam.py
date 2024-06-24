@@ -4,14 +4,9 @@ from functools import partial
 from katbeam import JimBeam
 import dask.array as da
 from numba.core.errors import NumbaDeprecationWarning
-import warnings
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=NumbaDeprecationWarning)
-    from africanus.rime.fast_beam_cubes import beam_cube_dde
-    from africanus.rime import parallactic_angles
-# import pyscilog
-# pyscilog.init('pfb')
-# log = pyscilog.get_logger('BEAM')
+from africanus.rime.fast_beam_cubes import beam_cube_dde
+from africanus.rime import parallactic_angles
+
 
 def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
                       utime=None, ant_pos=None, phase_dir=None):
