@@ -24,8 +24,7 @@ requirements = [
                 "jax[cpu]",
                 "ipycytoscape",
                 "lz4",
-                "ipdb",
-                "numba == 0.59.1"
+                "ipdb"
             ]
 
 
