@@ -570,7 +570,8 @@ def image_data_products(uvw,
                         l2reweight_dof=None,
                         do_dirty=True,
                         do_psf=True,
-                        do_weight=True):
+                        do_weight=True,
+                        do_noise=False):
     '''
     Function to compute image space data products in one go
         dirty
@@ -738,5 +739,29 @@ def image_data_products(uvw,
             double_precision_accumulation=double_accum)
 
         out_dict['RESIDUAL'] = residual
+
+    if do_noise:
+        # sample noise and project into image space
+        nrow, nchan = vis.shape
+        vis = (np.random.randn(nrow, nchan) +
+               1j*np.random.randn(nrow, nchan)) * np.sqrt(wgt)/np.sqrt(2)
+        noise = residual = vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=vis,
+            wgt=wgt,
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cellx, pixsize_y=celly,
+            center_x=x0, center_y=y0,
+            epsilon=epsilon,
+            flip_v=False,  # hardcoded for now
+            do_wgridding=do_wgridding,
+            divide_by_n=False,  # hardcoded for now
+            nthreads=nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=double_accum)
+
+        out_dict['NOISE'] = noise
 
     return out_dict

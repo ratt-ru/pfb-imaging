@@ -101,6 +101,8 @@ def grid(**kw):
             if 'MODEL' in dds[0]:
                 fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
                 fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
+            if opts.noise:
+                fitsout.append(dds2fits_mfs(dds, 'NOISE', f'{basename}_{opts.suffix}', norm_wsum=True))
 
         if opts.fits_cubes:
             if opts.dirty:
@@ -110,6 +112,8 @@ def grid(**kw):
             if 'MODEL' in dds[0]:
                 fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
                 fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
+            if opts.noise:
+                fitsout.append(dds2fits(dds, 'NOISE', f'{basename}_{opts.suffix}', norm_wsum=True))
 
         if len(fitsout):
             print("Writing fits", file=log)
@@ -523,6 +527,7 @@ def _grid(xdsi=None, **kw):
         blocker.add_input('l2reweight_dof', opts.l2reweight_dof)
         blocker.add_input('do_psf', opts.psf)
         blocker.add_input('do_weight', opts.weight)
+        blocker.add_input('do_noise', opts.noise)
 
         blocker.add_output(
             'DIRTY',
@@ -562,6 +567,13 @@ def _grid(xdsi=None, **kw):
                 wgt.chunks,
                 wgt.dtype)
 
+        if opts.noise:
+            blocker.add_output(
+                'NOISE',
+                ('x', 'y'),
+                ((nx,), (ny,)),
+                wgt.dtype)
+
         output_dict = blocker.get_dask_outputs()
         out_ds = out_ds.assign(**{
             'DIRTY': (('x', 'y'), output_dict['DIRTY'])
@@ -583,6 +595,11 @@ def _grid(xdsi=None, **kw):
         if model is not None:
             out_ds = out_ds.assign(**{
                 'RESIDUAL': (('x', 'y'), output_dict['RESIDUAL'])
+                })
+
+        if opts.noise:
+            out_ds = out_ds.assign(**{
+                'NOISE': (('x', 'y'), output_dict['NOISE'])
                 })
 
 
