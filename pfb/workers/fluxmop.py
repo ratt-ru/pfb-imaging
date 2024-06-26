@@ -84,13 +84,25 @@ def _fluxmop(ddsi=None, **kw):
                                  'y_psf':-1,
                                  'yo2':-1}))
     else:
-        dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                            'chan':-1,
-                                            'x':-1,
-                                            'y':-1,
-                                            'x_psf':-1,
-                                            'y_psf':-1,
-                                            'yo2':-1})
+        dds = xds_from_zarr(dds_name)
+        chunks = {'x':-1,
+                  'y':-1}
+        # These may or may not be present
+        if 'PSF' in dds[0]:
+            chunks['x_psf'] = -1
+            chunks['y_psf'] = -1
+            chunks['yo2'] = -1
+        if 'WEIGHT' in dds[0]:
+            chunks['row'] = -1
+            chunks['chan'] = -1
+        for i, ds in enumerate(dds):
+            dds[i] = ds.chunk(chunks)
+
+    if not opts.use_psf and 'PSF' in dds[0]:
+        # inflates memory and not required
+        for i, ds in enumerate(dds):
+            dds[i] = ds.drop_vars(('PSF', 'PSFHAT'))
+
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
 
@@ -106,8 +118,6 @@ def _fluxmop(ddsi=None, **kw):
                                                                residname=opts.residual_name)
     fsel = wsums > 0
     wsum = np.sum(wsums)
-    psf_mfs = np.sum(psf, axis=0)
-    assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
     dirty_mfs = np.sum(dirty, axis=0)
     if residual is None:
         residual = dirty.copy()
@@ -115,9 +125,11 @@ def _fluxmop(ddsi=None, **kw):
     else:
         residual_mfs = np.sum(residual, axis=0)
 
-    lastsize = dds[0].y_psf.size
 
-    # for intermediary results (not currently written)
+    if psf is not None:
+        psf_mfs = np.sum(psf, axis=0)
+        assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
+        lastsize = dds[0].y_psf.size
     freq_out = []
     for ds in dds:
         freq_out.append(ds.freq_out)

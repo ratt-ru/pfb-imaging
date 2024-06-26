@@ -1312,37 +1312,6 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
         return image_in
 
 
-
-# This !!!!!!!
-def mds_to_slice(mds, time, freq, nxo, nyo, cellxo, cellyo, x0o, y0o):
-    coeffs = mds.coefficients.values
-    Ix = mds.location_x.values
-    Iy = mds.location_y.values
-    expr = mds.parametrisation
-    paramf = mds.params.values
-    texpr = mds.texpr
-    fexpr = mds.fexpr
-
-
-    model_slice = eval_coeffs_to_slice(
-                time,
-                freq,
-                coeffs,
-                Ix, Iy,
-                expr,
-                paramf,
-                texpr,
-                fexpr,
-                mds.npix_x, mds.npix_y,
-                mds.cell_rad_x, mds.cell_rad_y,
-                mds.center_x, mds.center_y,
-                nxo, nyo,
-                cellxo, cellyo,
-                x0o, y0o
-            )
-    return model_slice
-
-
 @njit(**JIT_OPTIONS)
 def norm_diff(x, xp):
     return norm_diff_impl(x, xp)

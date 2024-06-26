@@ -54,6 +54,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         ref_freq = freq[nchan//2]
     else:
         ref_freq = freq
+        crpix3 = 1
     w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
     # LB - y axis treated differently because of stupid fits convention?
     w.wcs.crpix = [1 + nx//2, ny//2, crpix3, 1]
