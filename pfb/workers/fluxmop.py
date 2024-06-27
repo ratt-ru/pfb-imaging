@@ -305,7 +305,10 @@ def _fluxmop(ddsi=None, **kw):
 
     print("Solving for update", file=log)
     x0 = np.zeros((nband, nx, ny), dtype=output_type)
-    # x0 = precond(j)
+    x0 = precond(j)
+    save_fits(np.mean(x0, axis=0),
+              basename + f'_{opts.suffix}_x0.fits',
+              hdr_mfs)
     update = pcg(hess_pcg, beam * mask[None, :, :] * residual, x0,
                 #  M=precond,
                  tol=opts.cg_tol,
