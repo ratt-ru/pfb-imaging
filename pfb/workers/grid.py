@@ -172,7 +172,7 @@ def grid(**kw):
             print("Writing fits", file=log)
             dask.compute(fitsout)
 
-    print(f"All done after {time() - ti}s", file=log)
+    print(f"All done after {time.time() - ti}s", file=log)
 
 def _grid(xdsi=None, **kw):
     opts = OmegaConf.create(kw)
