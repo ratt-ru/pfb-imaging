@@ -37,10 +37,28 @@ def grid(**kw):
     ldir.mkdir(parents=True, exist_ok=True)
     pyscilog.log_to_file(f'{str(ldir)}/grid_{timestamp}.log')
     print(f'Logs will be written to {str(ldir)}/grid_{timestamp}.log', file=log)
-    basedir = Path(opts.output_filename).resolve().parent
-    basedir.mkdir(parents=True, exist_ok=True)
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
+
     from daskms.fsspec_store import DaskMSStore
+    import fsspec
+    # TODO - there must be a neater way to do this with fsspec
+    # basedir = Path(opts.output_filename).resolve().parent
+    # basedir.mkdir(parents=True, exist_ok=True)
+    # basename = f'{opts.output_filename}_{opts.product.upper()}'
+    if '://' in opts.output_filename:
+        protocol = opts.output_filename.split('://')[0]
+    else:
+        protocol = 'file'
+
+
+    fs = fsspec.filesystem(protocol)
+    basedir = fs.expand_path('/'.join(opts.output_filename.split('/')[:-1]))[0]
+    if not fs.exists(basedir):
+        fs.makedirs(basedir)
+
+    oname = opts.output_filename.split('/')[-1] + f'_{opts.product.upper()}'
+    basename = f'{basedir}/{oname}'
+
+
     if opts.xds is not None:
         xds_store = DaskMSStore(opts.xds.rstrip('/'))
         xds_name = opts.xds
@@ -53,9 +71,23 @@ def grid(**kw):
         raise ValueError(f"There must be an xds at {xds_name}. "
                             f"Original traceback {e}")
     opts.xds = xds_store.url
-    OmegaConf.set_struct(opts, True)
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
+    opts.dds = dds_store.url
+
+    if opts.fits_output_folder is not None:
+        # this should be a file system
+        fs = fsspec.filesystem('file')
+        fbasedir = fs.expand_path(opts.fits_output_folder)[0]
+        if not fs.exists(fbasedir):
+            fs.makedirs(fbasedir)
+        fits_oname = f'{fbasedir}/{oname}'
+        opts.fits_output_folder = fbasedir
+    else:
+        fits_oname = f'{basedir}/{oname}'
+        opts.fits_output_folder = basedir
+
+    OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
         from pfb import set_client
@@ -71,6 +103,7 @@ def grid(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
+        ti = time.time()
         dds_out = _grid(**opts)
 
         writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
@@ -95,31 +128,51 @@ def grid(**kw):
         fitsout = []
         if opts.fits_mfs:
             if opts.dirty:
-                fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.suffix}', norm_wsum=True))
+                fitsout.append(dds2fits_mfs(dds, 'DIRTY',
+                                            f'{fits_oname}_{opts.suffix}',
+                                            norm_wsum=True))
             if opts.psf:
-                fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.suffix}', norm_wsum=True))
+                fitsout.append(dds2fits_mfs(dds, 'PSF',
+                                            f'{fits_oname}_{opts.suffix}',
+                                            norm_wsum=True))
             if 'MODEL' in dds[0]:
-                fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
-                fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
+                fitsout.append(dds2fits_mfs(dds, 'RESIDUAL',
+                                            f'{fits_oname}_{opts.suffix}',
+                                            norm_wsum=True))
+                fitsout.append(dds2fits_mfs(dds, 'MODEL',
+                                            f'{fits_oname}_{opts.suffix}',
+                                            norm_wsum=False))
             if opts.noise:
-                fitsout.append(dds2fits_mfs(dds, 'NOISE', f'{basename}_{opts.suffix}', norm_wsum=True))
+                fitsout.append(dds2fits_mfs(dds, 'NOISE',
+                                            f'{fits_oname}_{opts.suffix}',
+                                            norm_wsum=True))
 
         if opts.fits_cubes:
             if opts.dirty:
-                fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.suffix}', norm_wsum=True))
+                fitsout.append(dds2fits(dds, 'DIRTY',
+                                        f'{fits_oname}_{opts.suffix}',
+                                        norm_wsum=True))
             if opts.psf:
-                fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.suffix}', norm_wsum=True))
+                fitsout.append(dds2fits(dds, 'PSF',
+                                        f'{fits_oname}_{opts.suffix}',
+                                        norm_wsum=True))
             if 'MODEL' in dds[0]:
-                fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
-                fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
+                fitsout.append(dds2fits(dds, 'RESIDUAL',
+                                        f'{fits_oname}_{opts.suffix}',
+                                        norm_wsum=True))
+                fitsout.append(dds2fits(dds, 'MODEL',
+                                        f'{fits_oname}_{opts.suffix}',
+                                        norm_wsum=False))
             if opts.noise:
-                fitsout.append(dds2fits(dds, 'NOISE', f'{basename}_{opts.suffix}', norm_wsum=True))
+                fitsout.append(dds2fits(dds, 'NOISE',
+                                        f'{fits_oname}_{opts.suffix}',
+                                        norm_wsum=True))
 
         if len(fitsout):
             print("Writing fits", file=log)
             dask.compute(fitsout)
 
-    print("All done here.", file=log)
+    print(f"All done after {time() - ti}s", file=log)
 
 def _grid(xdsi=None, **kw):
     opts = OmegaConf.create(kw)

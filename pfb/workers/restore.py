@@ -87,6 +87,8 @@ def _restore(**kw):
     # stack cubes
     dirty, model, residual, psf, _, _, wsums, _ = dds2cubes(dds,
                                                             nband,
+                                                            modelname=opts.model_name,
+                                                            residname=opts.residual_name,
                                                             apparent=True,
                                                             dual=False)
     wsum = np.sum(wsums)

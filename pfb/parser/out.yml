@@ -11,9 +11,16 @@ log-directory:
   info:
     Directory to write logs and performance reports to.
 product:
-    dtype: str
-    abbreviation: p
-    default: I
-    info:
-      Imaging products to produce. Options are I, Q, U, V.
-      Only single Stokes products are currently supported
+  dtype: str
+  abbreviation: p
+  default: I
+  info:
+    Imaging products to produce. Options are I, Q, U, V.
+    Only single Stokes products are currently supported
+fits-output-folder:
+  dtype: str
+  abbreviation: fitso
+  info:
+    Optional path to write fits files to.
+    Set to output-filename if not provided.
+    The same naming conventions apply.
