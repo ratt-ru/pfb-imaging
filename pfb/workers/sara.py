@@ -109,7 +109,7 @@ def sara(**kw):
         print("Writing fits", file=log)
         dask.compute(fitsout)
 
-    print(f"All done here after {time() - ti}s", file=log)
+    print(f"All done here after {time.time() - ti}s", file=log)
 
 
 def _sara(ddsi=None, **kw):
