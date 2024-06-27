@@ -737,7 +737,8 @@ def dds2cubes(dds, nband, apparent=False, dual=True,
                                                                 mean_beam,
                                                                 wsums,
                                                                 dual)
-    return dirty, model, residual, psf, psfhat, mean_beam, wsums, dual
+    return (dirty, model.setflags(write=True), residual, psf, psfhat,
+            mean_beam, wsums, dual)
 
 
 def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):

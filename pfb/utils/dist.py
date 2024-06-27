@@ -99,25 +99,6 @@ class band_actor(object):
         self.nhthreads = opts.nthreads_dask
         self.nvthreads = opts.nvthreads
 
-        # uv-cell counts
-        self.counts = _compute_counts(self.ds.UVW.values,
-                                      self.freq,
-                                      self.ds.MASK.values,
-                                      self.nx,
-                                      self.ny,
-                                      self.cell_rad,
-                                      self.cell_rad,
-                                      np.float64,  # same type as uvw
-                                      self.ds.WEIGHT.values,
-                                      ngrid=self.nvthreads)
-
-        self.counts = np.sum(self.counts, axis=0)
-
-        assert self.counts.shape[0] == self.nx
-        assert self.counts.shape[1] == self.ny
-
-
-
         # set up wavelet dictionaries
         self.bases = opts.bases.split(',')
         self.nbasis = len(self.bases)

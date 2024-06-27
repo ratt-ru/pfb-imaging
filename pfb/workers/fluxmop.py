@@ -63,9 +63,13 @@ def _fluxmop(ddsi=None, **kw):
     from pfb.utils.fits import load_fits, dds2fits_mfs, dds2fits, set_wcs, save_fits
     from pfb.utils.misc import init_mask, dds2cubes
     from pfb.operators.hessian import hessian_xds, hessian_psf_cube
+    from pfb.operators.psf import psf_convolve_cube
     from pfb.opt.pcg import pcg
     from ducc0.misc import make_noncritical
     from ducc0.misc import resize_thread_pool, thread_pool_size
+    from ducc0.fft import c2c
+    iFs = np.fft.ifftshift
+    Fs = np.fft.fftshift
     nthreads_tot = opts.nthreads_dask * opts.nvthreads
     resize_thread_pool(nthreads_tot)
     print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
@@ -98,10 +102,10 @@ def _fluxmop(ddsi=None, **kw):
         for i, ds in enumerate(dds):
             dds[i] = ds.chunk(chunks)
 
-    if not opts.use_psf and 'PSF' in dds[0]:
-        # inflates memory and not required
-        for i, ds in enumerate(dds):
-            dds[i] = ds.drop_vars(('PSF', 'PSFHAT'))
+    # if not opts.use_psf and 'PSF' in dds[0]:
+    #     # inflates memory and not required
+    #     for i, ds in enumerate(dds):
+    #         dds[i] = ds.drop_vars(('PSF', 'PSFHAT'))
 
     if opts.memory_greedy:
         dds = dask.persist(dds)[0]
@@ -202,6 +206,15 @@ def _fluxmop(ddsi=None, **kw):
         mask = np.ones((nx, ny), dtype=output_type)
         print('Caution - No mask is being applied', file=log)
 
+    def F(x):
+        return c2c(Fs(x, axes=(1,2)), axes=(1,2), forward=True, inorm=0, nthreads=8)
+
+    def FH(x):
+        return iFs(c2c(x, axes=(1,2), forward=False, inorm=2, nthreads=8), axes=(1,2))
+
+    # information source gets modified if using image space hessian
+    j = beam * mask[None, :, :] * residual
+
     if opts.use_psf:
         print("Using image space hessian approximation",
               file=log)
@@ -211,15 +224,43 @@ def _fluxmop(ddsi=None, **kw):
         xpad = make_noncritical(xpad)
         xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
         xhat = make_noncritical(xhat)
-        hess_pcg = partial(hessian_psf_cube,
-                           xpad,
-                           xhat,
-                           xout,
-                           beam*mask[None, :, :],
-                           psfhat,
-                           lastsize,
-                           nthreads=opts.nvthreads*opts.nthreads_dask,  # not using dask parallelism
-                           sigmainv=opts.sigmainv)
+        R = partial(psf_colvolve_cube,
+                    xpad,
+                    xhat,
+                    xout,
+                    psfhat,
+                    lastsize,
+                    nthreads=opts.nvthreads*opts.nthreads_dask)
+
+        RH = partial(psf_colvolve_cube,
+                     xpad,
+                     xhat,
+                     xout,
+                     psfhat.conj(),
+                     lastsize,
+                     nthreads=opts.nvthreads*opts.nthreads_dask)
+
+        def hess_pcg(x):
+            return RH(R(x)) + opts.sigmainv*x
+
+        # now we have a good preconditioner
+        nx_psf = dds[0].x_psf.size
+        ny_psf = dds[0].y_psf.size
+        nxpad = (nx_psf - nx)//2
+        nypad = (ny_psf - ny)//2
+        if nxpad:
+            nxf = -nxpad
+        else:
+            nxf = nx_psf
+        if nypad:
+            nyf = -nypad
+        else:
+            nyf = ny_psf
+        Ihatsq = np.abs(F(psf[:, nxpad:nxf, nypad:nyf]))**2
+        def precond(x):
+            xhat = F(x)
+            return FH(xhat/(Ihatsq + 1)).real
+
     else:
         print("Using vis space hessian approximation",
               file=log)
@@ -234,6 +275,26 @@ def _fluxmop(ddsi=None, **kw):
                   "It is recommended to use vis space Hessian approximation "
                   "with --memory-greedy", file=log)
 
+
+        # set up preconditioner
+        nx_psf = dds[0].x_psf.size
+        ny_psf = dds[0].y_psf.size
+        nxpad = (nx_psf - nx)//2
+        nypad = (ny_psf - ny)//2
+        if nxpad:
+            nxf = -nxpad
+        else:
+            nxf = nx_psf
+        if nypad:
+            nyf = -nypad
+        else:
+            nyf = ny_psf
+        Ihat = np.abs(F(psf[:, nxpad:nxf, nypad:nyf] ))
+        def precond(x):
+            xhat = F(x)
+            return FH(xhat/(Ihat + 3)).real
+
+
     cgopts = {}
     cgopts['tol'] = opts.cg_tol
     cgopts['maxit'] = opts.cg_maxit
@@ -244,7 +305,9 @@ def _fluxmop(ddsi=None, **kw):
 
     print("Solving for update", file=log)
     x0 = np.zeros((nband, nx, ny), dtype=output_type)
+    # x0 = precond(j)
     update = pcg(hess_pcg, beam * mask[None, :, :] * residual, x0,
+                #  M=precond,
                  tol=opts.cg_tol,
                  maxit=opts.cg_maxit,
                  minit=opts.cg_minit,

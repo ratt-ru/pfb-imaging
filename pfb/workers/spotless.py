@@ -38,18 +38,55 @@ def spotless(**kw):
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.suffix}.dds'
 
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
+
     with ExitStack() as stack:
         # numpy imports have to happen after this step
-        from pfb import set_client
-        set_client(opts, stack, log,
-                   scheduler=opts.scheduler,
-                   auto_restrict=False)
+        os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
+        os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
+        os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
+        os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
+        paths = sys.path
+        ppath = [paths[i] for i in range(len(paths)) if 'pfb/bin' in paths[i]]
+        if len(ppath):
+            ldpath = ppath[0].replace('bin', 'lib')
+            ldcurrent = os.environ.get('LD_LIBRARY_PATH', '')
+            os.environ["LD_LIBRARY_PATH"] = f'{ldpath}:{ldcurrent}'
+            # TODO - should we fall over in else?
+        os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
 
-        # TODO - prettier config printing
-        print('Input Options:', file=log)
-        for key in opts.keys():
-            print('     %25s = %s' % (key, opts[key]), file=log)
+        import numexpr as ne
+        max_cores = ne.detect_number_of_cores()
+        ne_threads = min(max_cores, opts.nvthreads)
+        os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
+        import dask
+        dask.config.set(**{'array.slicing.split_large_chunks': False})
 
+        # set up client
+        host_address = opts.host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
+        if host_address is not None:
+            from distributed import Client
+            print("Initialising distributed client.", file=log)
+            client = stack.enter_context(Client(host_address))
+        else:
+            from dask.distributed import Client, LocalCluster
+            print("Initialising client with LocalCluster.", file=log)
+            cluster = LocalCluster(processes=True,
+                                    n_workers=opts.nworkers,
+                                    threads_per_worker=opts.nthreads_dask,
+                                    memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                                    asynchronous=False)
+            cluster = stack.enter_context(cluster)
+            client = stack.enter_context(Client(cluster,
+                                                direct_to_workers=False))
+
+        client.wait_for_workers(opts.nworkers)
+        dashboard_url = client.dashboard_link
+        print(f"Dask Dashboard URL at {dashboard_url}", file=log)
+        client.amm.stop()
         _spotless_dist(**opts)
 
     print("All done here.", file=log)
@@ -108,7 +145,7 @@ def _spotless(**kw):
     from pfb.wavelets.wavelets_jsk import get_buffer_size
     import fsspec
     import pickle
-    from pfb.utils.dist import grad_actor
+    from pfb.utils.dist import band_actor
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     xds_name = f'{basename}.xds'
@@ -119,7 +156,6 @@ def _spotless(**kw):
         raise ValueError(f'No xds at {xds_name}')
 
     client = get_client()
-    client.amm.stop()
     names = list(client.scheduler_info()['workers'].keys())
 
     try:
@@ -199,7 +235,7 @@ def _spotless(**kw):
     print("Setting up actors", file=log)
     futures = []
     for wname, (bandid, dsl) in zip(names, dsb.items()):
-        f = client.submit(grad_actor,
+        f = client.submit(band_actor,
                           dsl,
                           opts,
                           bandid,
