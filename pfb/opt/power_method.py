@@ -73,7 +73,6 @@ def power_method_dist(actors,
                       nx,
                       ny,
                       nband,
-                      sigmainv=0,
                       tol=1e-4,
                       maxit=200,
                       report_freq=10,
@@ -82,12 +81,6 @@ def power_method_dist(actors,
     client = get_client()
 
     bssq = list(map(lambda a: a.init_random(), actors))
-    # for wname, actor in actors.items():
-    #     bssq.append(actor.init_random())
-
-    # while not np.all(list(map(lambda o: o.done(), bssq))):
-    #     pass
-
     # custom gather?
     bssq = list(map(lambda o: o.result(), bssq))
     bnorm = np.sqrt(np.sum(bssq))

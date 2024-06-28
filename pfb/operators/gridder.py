@@ -613,7 +613,7 @@ def image_data_products(uvw,
         wcount = mask.sum()
         if wcount:
             ovar = ressq.sum()/wcount  # use 67% quantile?
-            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)
         else:
             wgt = None
 

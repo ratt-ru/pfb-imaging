@@ -33,12 +33,17 @@ inputs:
     default: 1e-5
     info:
       If using mask to construct model construct it where model > min-model
-  sigmainv:
+  sigmainvsq:
     dtype: float
     default: 1e-5
     abbreviation: sinv
     info:
       Standard deviation of assumed GRF prior
+  sigmasq:
+    dtype: float
+    default: 1
+    info:
+      The value that is added to |psfhat| for preconditioning.
   model-name:
     dtype: str
     default: MODEL

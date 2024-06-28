@@ -241,7 +241,7 @@ def _fluxmop(ddsi=None, **kw):
                      nthreads=opts.nvthreads*opts.nthreads_dask)
 
         def hess_pcg(x):
-            return RH(R(x)) + opts.sigmainv*x
+            return RH(R(x)) + opts.sigmainvsq*x
 
         # now we have a good preconditioner
         nx_psf = dds[0].x_psf.size
@@ -266,7 +266,7 @@ def _fluxmop(ddsi=None, **kw):
               file=log)
         # TODO - we can probably do better here
         hess_pcg = partial(hessian_xds, xds=dds, hessopts=hessopts,
-                   wsum=wsum, sigmainv=opts.sigmainv,
+                   wsum=wsum, sigmainv=opts.sigmainvsq,
                    mask=mask,
                    compute=True, use_beam=False)
 
@@ -292,7 +292,7 @@ def _fluxmop(ddsi=None, **kw):
         Ihat = np.abs(F(psf[:, nxpad:nxf, nypad:nyf] ))
         def precond(x):
             xhat = F(x)
-            return FH(xhat/(Ihat + 3)).real
+            return FH(xhat/(Ihat + opts.sigmasq)).real
 
 
     cgopts = {}
@@ -303,14 +303,19 @@ def _fluxmop(ddsi=None, **kw):
     cgopts['report_freq'] = opts.cg_report_freq
     cgopts['backtrack'] = opts.backtrack
 
+    rms = np.std(residual_mfs)
+    rmax = np.abs(residual_mfs).max()
+    print(f"Initial peak residual = {rmax:.3e}, rms = {rms:.3e}",
+          file=log)
+
     print("Solving for update", file=log)
-    x0 = np.zeros((nband, nx, ny), dtype=output_type)
+    # x0 = np.zeros((nband, nx, ny), dtype=output_type)
     x0 = precond(j)
     save_fits(np.mean(x0, axis=0),
               basename + f'_{opts.suffix}_x0.fits',
               hdr_mfs)
     update = pcg(hess_pcg, beam * mask[None, :, :] * residual, x0,
-                #  M=precond,
+                 M=precond,
                  tol=opts.cg_tol,
                  maxit=opts.cg_maxit,
                  minit=opts.cg_minit,
@@ -329,6 +334,10 @@ def _fluxmop(ddsi=None, **kw):
     ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                 casting='same_kind')
 
+    rms = np.std(residual_mfs)
+    rmax = np.abs(residual_mfs).max()
+    print(f"Final peak residual = {rmax:.3e}, rms = {rms:.3e}",
+          file=log)
 
     print("Updating results", file=log)
     dds_out = []

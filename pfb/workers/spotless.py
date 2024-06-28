@@ -1,5 +1,6 @@
 # flake8: noqa
 import os
+import sys
 from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
@@ -87,7 +88,7 @@ def spotless(**kw):
         dashboard_url = client.dashboard_link
         print(f"Dask Dashboard URL at {dashboard_url}", file=log)
         client.amm.stop()
-        _spotless_dist(**opts)
+        _spotless(**opts)
 
     print("All done here.", file=log)
 
@@ -147,6 +148,9 @@ def _spotless(**kw):
     import pickle
     from pfb.utils.dist import band_actor
 
+    real_type = np.float64
+    complex_type = np.complex128
+
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     xds_name = f'{basename}.xds'
     xds_store = DaskMSStore(xds_name)
@@ -188,7 +192,7 @@ def _spotless(**kw):
             optsp = pickle.load(f)
 
         # check if we need to remake the data products
-        verify_attrs = ['robustness', 'epsilon',
+        verify_attrs = ['epsilon',
                         'do_wgridding', 'double_accum',
                         'field_of_view', 'super_resolution_factor']
         try:
@@ -231,6 +235,7 @@ def _spotless(**kw):
         raise ValueError(f"You must initialise {nband} workers. "
                          "One for each imaging band.")
 
+
     # set up band actors
     print("Setting up actors", file=log)
     futures = []
@@ -247,25 +252,11 @@ def _spotless(**kw):
         futures.append(f)
     actors = list(map(lambda f: f.result(), futures))
 
-    # we do this in case we want to do MF weighting
-    futures = list(map(lambda a: a.get_counts(), actors))
-    counts = list(map(lambda f: f.result(), futures))
-    if opts.mf_weighting:
-        counts = np.sum(counts, axis=0)
-    else:
-        counts = None  # will use self.counts in this case
-
-    print("Setting imaging weights", file=log)
-    futures = list(map(lambda a: a.set_imaging_weights(counts=counts), actors))
-    wsums = np.array(list(map(lambda f: f.result(), futures)))
-    fsel = wsums > 0
-    wsum = np.sum(wsums)
-    real_type = wsum.dtype
-    complex_type = np.result_type(real_type, np.complex64)
     futures = list(map(lambda a: a.get_image_info(), actors))
     results = list(map(lambda f: f.result(), futures))
-    nx, ny, nmax, cell_rad, ra, dec, x0, y0, freq_out, time_out = results[0]
+    nx, ny, nmax, cell_rad, ra, dec, x0, y0, freq_out, time_out, wsum0 = results[0]
     freq_out = [freq_out]
+    wsums = [wsum0]
     for result in results[1:]:
         assert result[0] == nx
         assert result[1] == ny
@@ -276,8 +267,14 @@ def _spotless(**kw):
         assert result[6] == x0
         assert result[7] == y0
         freq_out.append(result[8])
+        wsums.append(result[9])
 
     print(f"Image size set to ({nx}, {ny})", file=log)
+    # need to set wsum after setting image products
+    wsums = np.array(wsums)
+    fsel = wsums > 0
+    wsum = np.sum(wsums)
+
 
     radec = [ra, dec]
     cell_deg = np.rad2deg(cell_rad)
@@ -291,8 +288,9 @@ def _spotless(**kw):
     bases = tuple(opts.bases.split(','))
     nbasis = len(bases)
 
-    # initialise dual and model (assumed constant in time)
+    # initialise model (assumed constant in time)
     if mdsstore.exists():
+        print(f"Loading model from {mdsstore.url}", file=log)
         mds = xr.open_zarr(mdsstore.url)
 
         # we only want to load these once
@@ -303,9 +301,7 @@ def _spotless(**kw):
         coeffs = mds.coefficients.values
         iter0 = mds.niters
 
-        # TODO - save dual in mds
         model = np.zeros((nband, nx, ny))
-        dual = np.zeros((nband, nbasis, nmax))
         for i in range(opts.nband):
             model[i] = eval_coeffs_to_slice(
                 time_out[0],
@@ -326,28 +322,24 @@ def _spotless(**kw):
 
     else:
         model = np.zeros((nband, nx, ny))
-        dual = np.zeros((nband, nbasis, nmax))
         iter0 = 0
 
     print("Computing image data products", file=log)
     futures = []
     for b in range(nband):
-        fut = actors[b].set_image_data_products(model[b], dual[b],
+        fut = actors[b].set_image_data_products(model[b],
                                                 from_cache=from_cache)
         futures.append(fut)
 
-    try:
-        results = list(map(lambda f: f.result(), futures))
-    except Exception as e:
-        print("Error raised - ", e)
-        print([r.result() for r in result()])
 
-        import ipdb; ipdb.set_trace()
-    psf_mfs = np.sum([r[0] for r in results], axis=0)/wsum
-    assert (psf_mfs.max() - 1.0) < opts.epsilon  # make sure wsum is consistent
-    GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
-    pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
-    residual_mfs = np.sum([r[1] for r in results], axis=0)/wsum
+    results = list(map(lambda f: f.result(), futures))
+    residual_mfs = np.sum([r[0] for r in results], axis=0)
+    wsums = np.array([r[1] for r in results])
+    wsum = np.sum(wsums)
+    futures = list(map(lambda a: a.set_wsum(wsum), actors))
+    results = list(map(lambda f: f.result(), futures))
+
+    residual_mfs /= wsum
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
 
@@ -356,13 +348,13 @@ def _spotless(**kw):
                   basename + f'_{opts.suffix}_dirty_mfs.fits',
                   hdr_mfs)
 
-
-    futures = list(map(lambda a: a.set_wsum_and_data(wsum), actors))
-    results = list(map(lambda f: f.result(), futures))
-
     if opts.hessnorm is None:
         print('Getting spectral norm of Hessian approximation', file=log)
-        hessnorm = power_method(actors, nx, ny, nband)
+        hessnorm = power_method(actors, nx, ny, nband,
+                                tol=opts.pm_tol,
+                                maxit=opts.pm_maxit,
+                                report_freq=opts.pm_report_freq,
+                                verbosity=opts.pm_verbose)
         # inflate so we don't have to recompute after each L2 reweight
         hessnorm *= 1.05
     else:
@@ -393,6 +385,10 @@ def _spotless(**kw):
     l2reweights = 0
     print(f"It {iter0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for k in range(iter0, iter0 + opts.niter):
+        print('Solving for update', file=log)
+        futures = list(map(lambda a: a.cg_update(), actors))
+        results = list(map(lambda f: f.result(), futures))
+
         print('Solving for model', file=log)
         primal_dual(actors,
                     rms*opts.rmsfactor,
@@ -416,7 +412,6 @@ def _spotless(**kw):
         modelp = model.copy()
         for i, b in enumerate(bandids):
             model[b] = results[i][0]
-            dual[b] = results[i][1]
 
         if np.isnan(model).any():
             import ipdb; ipdb.set_trace()
@@ -496,22 +491,22 @@ def _spotless(**kw):
                   'is required.', file=log)
             futures = []
             for b in range(nband):
-                fut = actors[b].set_image_data_products(model[b], dual[b], dof=dof)
+                fut = actors[b].set_image_data_products(model[b],
+                                                        from_cache=from_cache)
                 futures.append(fut)
 
+
             results = list(map(lambda f: f.result(), futures))
-            psf_mfs = np.sum([r[0] for r in results], axis=0)
-            wsum = psf_mfs.max()
-            psf_mfs /= wsum
-            GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
-            pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
-            residual_mfs = np.sum([r[1] for r in results], axis=0)/wsum
+            residual_mfs = np.sum([r[0] for r in results], axis=0)
+            wsums = np.array([r[1] for r in results])
+            wsum = np.sum(wsums)
+            futures = list(map(lambda a: a.set_wsum(wsum), actors))
+            results = list(map(lambda f: f.result(), futures))
+
+            residual_mfs /= wsum
 
             # don't keep the cubes on the runner
             del results
-
-            futures = list(map(lambda a: a.set_wsum_and_data(wsum), actors))
-            results = list(map(lambda f: f.result(), futures))
 
             # # TODO - how much does hessnorm change after L2 reweight?
             # print('Getting spectral norm of Hessian approximation', file=log)

@@ -8,7 +8,7 @@ from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 
-def test_spotless(ms_name):
+def test_sara(ms_name):
     '''
     # TODO - currently we just check that this runs through.
     # What should the passing criteria be?
@@ -27,7 +27,7 @@ def test_spotless(ms_name):
     from pfb.parser.schemas import schema
     from pfb.workers.init import _init
     from pfb.workers.grid import _grid
-    from pfb.workers.spotless import _spotless
+    from pfb.workers.sara import _sara
     from pfb.workers.model2comps import _model2comps
     from pfb.workers.degrid import _degrid
     import sympy as sm
@@ -39,24 +39,16 @@ def test_spotless(ms_name):
     xds = xds_from_ms(ms_name,
                       chunks={'row': -1, 'chan': -1})[0]
     spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]
-    # ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
-    # spw = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW'))
 
-    # utime = np.unique(ms.getcol('TIME'))
     utime = np.unique(xds.TIME.values)
     freq = spw.CHAN_FREQ.values.squeeze()
-    # freq = spw.getcol('CHAN_FREQ').squeeze()
     freq0 = np.mean(freq)
 
     ntime = utime.size
     nchan = freq.size
-    # nant = np.maximum(ms.getcol('ANTENNA1').max(), ms.getcol('ANTENNA2').max()) + 1
     nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA2.values.max()) + 1
-
-    # ncorr = ms.getcol('FLAG').shape[-1]
     ncorr = xds.corr.size
 
-    # uvw = ms.getcol('UVW')
     uvw = xds.UVW.values
     nrow = uvw.shape[0]
     u_max = abs(uvw[:, 0]).max()
@@ -173,28 +165,28 @@ def test_spotless(ms_name):
     writes = xds_to_zarr(dds, dds_name, columns='ALL')
     dask.compute(writes)
 
-    # run spotless
-    spotless_args = {}
-    for key in schema.spotless["inputs"].keys():
-        spotless_args[key.replace("-", "_")] = schema.spotless["inputs"][key]["default"]
-    spotless_args["output_filename"] = outname
-    spotless_args["nband"] = nchan
-    spotless_args["niter"] = 2
+    # run sara
+    sara_args = {}
+    for key in schema.sara["inputs"].keys():
+        sara_args[key.replace("-", "_")] = schema.sara["inputs"][key]["default"]
+    sara_args["output_filename"] = outname
+    sara_args["nband"] = nchan
+    sara_args["niter"] = 2
     tol = 1e-5
-    spotless_args["tol"] = tol
-    spotless_args["gamma"] = 1.0
-    spotless_args["pd_tol"] = 5e-4
-    spotless_args["rmsfactor"] = 0.1
-    spotless_args["l1reweight_from"] = 5
-    spotless_args["bases"] = 'self,db1,db2,db3'
-    spotless_args["nlevels"] = 3
-    spotless_args["nthreads_dask"] = 1
-    spotless_args["nvthreads"] = 8
-    spotless_args["scheduler"] = 'sync'
-    spotless_args["do_wgridding"] = True
-    spotless_args["epsilon"] = epsilon
-    spotless_args["fits_mfs"] = False
-    _spotless(ddsi=dds, **spotless_args)
+    sara_args["tol"] = tol
+    sara_args["gamma"] = 1.0
+    sara_args["pd_tol"] = 5e-4
+    sara_args["rmsfactor"] = 0.1
+    sara_args["l1reweight_from"] = 5
+    sara_args["bases"] = 'self,db1,db2,db3'
+    sara_args["nlevels"] = 3
+    sara_args["nthreads_dask"] = 1
+    sara_args["nvthreads"] = 8
+    sara_args["scheduler"] = 'sync'
+    sara_args["do_wgridding"] = True
+    sara_args["epsilon"] = epsilon
+    sara_args["fits_mfs"] = False
+    _sara(ddsi=dds, **sara_args)
 
 
     # get the inferred model
@@ -324,4 +316,4 @@ def test_spotless(ms_name):
         assert_allclose(1 + np.abs(ds.RESIDUAL.values)/wsum,
                         1 + np.abs(ds2.DIRTY.values)/wsum)
 
-# test_spotless()
+# test_sara()
