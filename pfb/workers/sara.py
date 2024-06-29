@@ -33,6 +33,7 @@ def sara(**kw):
     pyscilog.log_to_file(f'{str(ldir)}/sara_{timestamp}.log')
 
     print(f'Logs will be written to {str(ldir)}/spotless_{timestamp}.log', file=log)
+    from daskms.experimental.zarr import xds_from_zarr
     from daskms.fsspec_store import DaskMSStore
     import fsspec
     # TODO - there must be a neater way to do this with fsspec
