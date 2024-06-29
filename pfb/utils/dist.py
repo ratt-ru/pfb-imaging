@@ -306,11 +306,11 @@ class band_actor(object):
                                 epsilon=self.opts.epsilon,
                                 do_wgridding=self.opts.do_wgridding,
                                 double_accum=self.opts.double_accum,
-                                timeid=i)
+                                timeid=0)
 
         # cache vars affected by major cycle
         self.dds = self.dds.assign(
-            **{'RESIDUAL': (('x','y'), residual/self.wsum)}
+            **{'RESIDUAL': (('x','y'), residual)}
         )
 
         # create a dataset to write to disk

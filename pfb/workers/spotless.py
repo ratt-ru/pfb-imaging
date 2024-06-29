@@ -82,7 +82,7 @@ def spotless(**kw):
                                     asynchronous=False)
             cluster = stack.enter_context(cluster)
             client = stack.enter_context(Client(cluster,
-                                                direct_to_workers=False))
+                                                direct_to_workers=True))
 
         client.wait_for_workers(opts.nworkers)
         dashboard_url = client.dashboard_link
