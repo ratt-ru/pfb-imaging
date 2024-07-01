@@ -63,7 +63,8 @@ def klean(**kw):
         _klean(**opts)
 
     dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
-
+    from pfb.utils.fits import dds2fits, dds2fits_mfs
+    import dask
     # convert to fits files
     fitsout = []
     if opts.fits_mfs:
