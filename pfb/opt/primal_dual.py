@@ -1,11 +1,16 @@
 import numpy as np
 import numexpr as ne
 import dask.array as da
-from distributed import wait, get_client, as_completed
+from pfb.utils.dist import l1reweight_func
 from operator import getitem
 from ducc0.misc import make_noncritical
 from pfb.utils.misc import norm_diff
+from numba import njit, prange
+from uuid import uuid4
 import pyscilog
+import gc
+from time import time
+# gc.set_debug(gc.DEBUG_LEAK)
 log = pyscilog.get_logger('PD')
 
 
@@ -179,131 +184,109 @@ def primal_dual_optimised(
 
     return x, v
 
-
-def vtilde_update(A, sigma, psiH):
-    return A.dual + sigma * psiH(A.model)
-
-
-def get_ratio(vtildes, lam, sigma, l1weights):
-    vmfs = np.zeros(l1weights.shape)
-    nband = 0
-    for wid, v in vtildes.items():
-        # l2_norm += (v/sigma)**2
-        vmfs += v/sigma
-    # l2_norm = np.sqrt(l2_norm)
-    vsoft = np.maximum(np.abs(vmfs) - lam*l1weights/sigma, 0.0)  # norm is positive
-    # l2_soft = np.where(np.abs(l2_norm) >= lam/sigma, l2_norm, 0.0)
-    mask = vmfs != 0
-    ratio = np.zeros(mask.shape, dtype=l1weights.dtype)
-    ratio[mask] = vsoft[mask] / vmfs[mask]
-    return ratio
-
-def update(A, y, vtilde, ratio, xp, vp, sigma, lam, tau, gamma, psi, psiH, positivity):
-    # dual
-    v = vtilde - vtilde * ratio
-
-    # primal
-    grad = -A(y - xp)/gamma
-    x = xp - tau * (psi(2 * v - vp) + grad)
-    if positivity:
-        x[x < 0] = 0.0
-
-    vtilde = v + sigma * psiH(x)
-
-    eps = np.linalg.norm(x-xp)/np.linalg.norm(x)
-
-    return x, v, vtilde, eps
-
-
-def sety(A, x, gamma):
-    if hasattr(A, 'model'):
-        return A.model + gamma * x
-    else:
-        return gamma * x
-
-
 def primal_dual_dist(
-            Afs,
-            xfs,
-            psi,
-            psiH,
-            lam,  # regulariser strength,
-            L,  # spectral norm of Hessian
+            actors,
+            lam,  # strength of regulariser
+            L,    # spectral norm of Hessian
             l1weight,
-            nu=1.0,  # spectral norm of dictionary
+            rmsfactor,
+            rms_comps,
+            alpha,
+            nu=1.0,  # spectral norm of psi
             sigma=None,  # step size of dual update
+            mask=None,  # regions where mask is False will be masked
             tol=1e-5,
-            maxit=100,
-            positivity=True,
+            maxit=1000,
+            positivity=1,
+            report_freq=10,
             gamma=1.0,
-            verbosity=1):
+            verbosity=1,
+            maxreweight=50):
+    '''
+    Distributed primal dual algorithm.
+    Distribution is over datasets in ddsf.
 
-    client = get_client()
+    Inputs:
 
-    names = [w['name'] for w in client.scheduler_info()['workers'].values()]
+    actors      - list of band actors
+    lam         - strength of regulariser
+    L           - spectral norm of hessian approximation
+    l1weight    - array of L1 weights
+    reweighter  - function to compute L1 reweights
+    '''
 
+    # this seems to give a good trade-off between
+    # primal and dual problems
     if sigma is None:
-        sigma = L / (2.0 * gamma)
+        sigma = L / (2.0 * gamma) / nu
 
     # stepsize control
     tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
 
     # we need to do this upfront only at the outset
-    yfs = {}
-    vtildefs = {}
-    modelfs = {}
-    dualfs = {}
-    for wid, A in Afs.items():
-        yf = client.submit(sety, A, xfs[wid], gamma, workers={wid})
-        yfs[wid] = yf
-        vtildef = client.submit(vtilde_update, A, sigma, psiH, workers={wid})
-        vtildefs[wid] = vtildef
-        modelf = client.submit(getattr, A, 'model', workers={wid})
-        modelfs[wid] = modelf
-        dualf = client.submit(getattr, A, 'dual', workers={wid})
-        dualfs[wid] = dualf
-
-    epsfs = {}
+    futures = list(map(lambda a: a.init_pd_params(L, nu), actors))
+    vtilde = list(map(lambda f: f.result(), futures))
+    numreweight = 0
+    ratio = np.zeros(l1weight.shape, dtype=l1weight.dtype)
     for k in range(maxit):
-        # TODO - should get one ratio per basis
-        # split over different workers
-        ratio = client.submit(get_ratio,
-                              vtildefs, lam, sigma, l1weight,
-                              workers={names[0]})
+        ti = time()
+        get_ratio(np.array(vtilde), l1weight, sigma, lam, ratio)
+        print('ratio - ', time() - ti)
 
-        wait([ratio])
-        for wid, A in Afs.items():
-            future = client.submit(update,
-                                   A, yfs[wid], vtildefs[wid], ratio,
-                                   modelfs[wid], dualfs[wid],
-                                   sigma,
-                                   lam,
-                                   tau,
-                                   gamma,
-                                   psi,
-                                   psiH,
-                                   positivity,
-                                   workers={wid})
-            modelfs[wid] = client.submit(getitem, future, 0, workers={wid})
-            dualfs[wid] = client.submit(getitem, future, 1, workers={wid})
-            vtildefs[wid] = client.submit(getitem, future, 2, workers={wid})
-            epsfs[wid] = client.submit(getitem, future, 3, workers={wid})
+        ti = time()
+        # do on individual workers
+        futures = list(map(lambda a: a.pd_update(ratio), actors))
+        results = list(map(lambda f: f.result(), futures))
+        print('update - ', time() - ti)
 
-        wait(list(epsfs.values()))
+        vtilde = [r[0] for r in results]
+        eps_num = [r[1] for r in results]
+        eps_den = [r[2] for r in results]
+        eps = np.sqrt(np.sum(eps_num)/np.sum(eps_den))
 
-        eps = []
-        for wid, epsf in epsfs.items():
-            eps.append(epsf.result())
-        eps = np.array(eps)
-        if eps.max() < tol:
-            break
+        if np.isnan(eps):
+            import ipdb; ipdb.set_trace()
+
+            raise ValueError('eps is nan')
+
+
+        if not k % report_freq and verbosity > 1:
+            print(f"At iteration {k} eps = {eps:.3e}", file=log)
+
+        if eps < tol:
+            if (l1weight != 1.0).any() and numreweight < maxreweight:
+                l1weight = l1reweight_func(actors,
+                                           rmsfactor,
+                                           rms_comps,
+                                           alpha=alpha)
+                numreweight += 1
+            else:
+                if numreweight >= maxreweight:
+                    print("Maximum reweighting steps reached", file=log)
+                break
 
     if k >= maxit-1:
-        print(f'Maximum iterations reached. eps={eps}', file=log)
+        print(f'Maximum iterations reached. eps={eps:.3e}', file=log)
     else:
-        print(f'Success after {k} iterations', file=log)
+        print(f'Success converged after {k} iterations', file=log)
 
-    return modelfs, dualfs
+    return
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def get_ratio(vtilde, l1weight, sigma, lam, ratio):
+    nband, nbasis, nmax = vtilde.shape
+    for b in range(nbasis):
+        for i in prange(nmax):  # WTF without the prange it segfaults when parallel=True
+            vtildebi = vtilde[:, b, i]
+            weightbi = l1weight[b, i]
+            absvbisum = np.abs(np.sum(vtildebi)/sigma)  # sum over band axis
+            softvbisum = absvbisum - lam*weightbi/sigma
+            if absvbisum > 0 and softvbisum > 0:
+                ratio[b, i] = softvbisum/absvbisum
+            else:
+                ratio[b, i] = 0.0
+
 
 
 primal_dual.__doc__ = r"""

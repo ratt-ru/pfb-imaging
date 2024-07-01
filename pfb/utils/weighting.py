@@ -11,8 +11,20 @@ iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
 
-def compute_counts(uvw, freq, mask, nx, ny,
-                   cell_size_x, cell_size_y, dtype, k=6, ngrid=1):
+def compute_counts(uvw,
+                   freq,
+                   mask,
+                   nx, ny,
+                   cell_size_x, cell_size_y,
+                   dtype,
+                   wgt=None,
+                   k=6,
+                   ngrid=1):
+
+    if wgt is not None:
+        wgtout = ('row', 'chan')
+    else:
+        wgtout = None
 
     counts = da.blockwise(compute_counts_wrapper, ('row', 'nx', 'ny'),
                           uvw, ('row', 'three'),
@@ -23,6 +35,7 @@ def compute_counts(uvw, freq, mask, nx, ny,
                           cell_size_x, None,
                           cell_size_y, None,
                           dtype, None,
+                          wgt, wgtout,
                           k, None,
                           ngrid, None,
                           new_axes={"nx": nx, "ny": ny},
@@ -33,17 +46,28 @@ def compute_counts(uvw, freq, mask, nx, ny,
     return counts.sum(axis=0)
 
 
-def compute_counts_wrapper(uvw, freq, mask, nx, ny,
-                           cell_size_x, cell_size_y, dtype, k, ngrid):
+def compute_counts_wrapper(uvw,
+                           freq,
+                           mask,
+                           nx, ny,
+                           cell_size_x, cell_size_y,
+                           dtype,
+                           wgt,
+                           k,
+                           ngrid):
+    if wgt is not None:
+        wgtout = wgt[0]
+    else:
+        wgtout = wgt
     return _compute_counts(uvw[0], freq[0], mask[0], nx, ny,
-                        cell_size_x, cell_size_y, dtype, k, ngrid)
+                        cell_size_x, cell_size_y, dtype, wgtout, k, ngrid)
 
 
 
 @njit(nogil=True, cache=True, parallel=True)
 def _compute_counts(uvw, freq, mask, nx, ny,
                     cell_size_x, cell_size_y, dtype,
-                    k=6, ngrid=1):  # support hardcoded for now
+                    wgt=None, k=6, ngrid=1):  # support hardcoded for now
     # ufreq
     u_cell = 1/(nx*cell_size_x)
     # shifts fftfreq such that they start at zero
@@ -70,9 +94,15 @@ def _compute_counts(uvw, freq, mask, nx, ny,
     ko2 = k//2
     ko2sq = ko2**2
 
+    if wgt is None:
+        # this should be a small array
+        # wgt = np.broadcast_to(np.ones((1,), dtype=dtype), (nrow, nchan))
+        wgt = np.ones((nrow, nchan), dtype=uvw.dtype)
+
     for g in prange(ngrid):
         for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
             uvw_row = uvw[r]
+            wgt_row = wgt[r]
             for c in range(nchan):
                 if not mask[r, c]:
                     continue
@@ -83,6 +113,7 @@ def _compute_counts(uvw, freq, mask, nx, ny,
                 # pixel coordinates
                 ug = (u_tmp + umax)/u_cell
                 vg = (v_tmp + vmax)/v_cell
+                wrc = wgt_row[c]
                 if k:
                     # indices
                     u_idx = int(np.round(ug))
@@ -90,7 +121,7 @@ def _compute_counts(uvw, freq, mask, nx, ny,
                     for i in range(-ko2, ko2):
                         x_idx = i + u_idx
                         x = x_idx - ug + 0.5
-                        val = _es_kernel(x/ko2, 2.3, k)
+                        val = _es_kernel(x/ko2, 2.3, k) * wrc
                         for j in range(-ko2, ko2):
                             y_idx = j + v_idx
                             y = y_idx - vg + 0.5
@@ -100,7 +131,8 @@ def _compute_counts(uvw, freq, mask, nx, ny,
                     u_idx = int(np.floor(ug))
                     v_idx = int(np.floor(vg))
                     counts[g, u_idx, v_idx] += 1.0
-    return counts  #.sum(axis=0, keepdims=True)
+    return counts
+
 
 @njit(nogil=True, cache=True, inline='always')
 def _es_kernel(x, beta, k):
@@ -171,40 +203,22 @@ def _counts_to_weights(counts, uvw, freq, nx, ny,
     return weights
 
 
-def filter_extreme_counts(counts, nbox=16, nlevel=10):
+def filter_extreme_counts(counts, level=10):
 
     return da.blockwise(_filter_extreme_counts, 'xy',
                         counts, 'xy',
-                        nbox, None,
-                        nlevel, None,
+                        level, None,
                         dtype=counts.dtype,
                         meta=np.empty((0,0), dtype=float))
 
 
 
 # @njit(nogil=True, cache=True)
-def _filter_extreme_counts(counts, nbox=16, level=10.0):
+def _filter_extreme_counts(counts, level=10.0):
     '''
     Replaces extremely small counts by median to prevent
     upweighting nearly empty cells
     '''
-    # nx, ny = counts.shape
-    # I, J = np.where(counts>0)
-    # for i, j in zip(I, J):
-    #     ilow = np.maximum(0, i-nbox//2)
-    #     ihigh = np.minimum(nx, i+nbox//2)
-    #     jlow = np.maximum(0, j-nbox//2)
-    #     jhigh = np.minimum(ny, j+nbox//2)
-    #     tmp = counts[ilow:ihigh, jlow:jhigh]
-    #     ix, iy = np.where(tmp)
-    #     # check if there are too few values to compare to
-    #     if ix.size < nbox:
-    #         counts[i, j] = 0
-    #         continue
-    #     print(ix, iy)
-    #     local_mean = np.mean(tmp[ix, iy])
-    #     if counts[i,j] < local_mean/level:
-    #         counts[i, j] = local_mean
     # get the median counts value
     ix, iy = np.where(counts > 0)
     cnts = counts[ix,iy]
@@ -215,89 +229,9 @@ def _filter_extreme_counts(counts, nbox=16, level=10.0):
     return counts
 
 
-# from scipy.special import polygamma
-# import dask
-# @dask.delayed()
-# def etaf(ressq, ovar, dof):
-#     eta = (dof + 1)/(dof + ressq/ovar)
-#     logeta = polygamma(0, dof+1) - np.log(dof + ressq/ovar)
-#     return eta, logeta
-
-
-# from pfb.operators.gridder import im2vis
-# def l2reweight(dsv, dsi, epsilon, nthreads, do_wgridding, precision, dof=2):
-#     # vis data products
-#     uvw = dsv.UVW.data
-#     freq = dsv.FREQ.data
-#     vis = dsv.VIS.data
-#     vis_mask = dsv.MASK.data
-
-#     # image data products
-#     model = dsi.MODEL.data
-#     cell_rad = dsi.cell_rad
-#     x0 = dsi.x0
-#     y0 = dsi.y0
-#     beam = dsi.BEAM.data
-
-#     # residual from model visibilities
-#     mvis = im2vis(uvw=uvw,
-#                     freq=freq,
-#                     image=model*beam,
-#                     cellx=cell_rad,
-#                     celly=cell_rad,
-#                     nthreads=nthreads,
-#                     epsilon=epsilon,
-#                     do_wgridding=do_wgridding,
-#                     x0=x0,
-#                     y0=y0,
-#                     precision=precision)
-#     res = vis - mvis
-#     res *= vis_mask
-
-#     # Mahalanobis distance
-#     ressq = (res*res.conj()).real
-
-#     # overall variance factor
-#     eta = da.map_blocks(update_eta,
-#                         ressq,
-#                         vis_mask,
-#                         dof,
-#                         chunks=ressq.chunks)
-
-#     return eta, res
-
-
-# def update_eta(ressq, vis_mask, dof):
-#     wcount = vis_mask.sum()
-#     if wcount:
-#         ovar = ressq.sum()/wcount
-#         eta = (dof + 1)/(dof + ressq/ovar)
-#         return eta/ovar
-#     else:
-#         return np.zeros_like(ressq)
-
-
-
+@njit(**JIT_OPTIONS, parallel=True)
 def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
                 ant1, ant2, pol, product, nc):
-
-    vis, wgt = _weight_data(data, weight, flag, jones,
-                                 tbin_idx, tbin_counts,
-                                 ant1, ant2,
-                                 literally(pol),
-                                 literally(product),
-                                 literally(nc))
-
-    out_dict = {}
-    out_dict['vis'] = vis
-    out_dict['wgt'] = wgt
-
-    return out_dict
-
-
-@njit(**JIT_OPTIONS, parallel=True)
-def _weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
-                 ant1, ant2, pol, product, nc):
 
     vis, wgt = _weight_data_impl(data, weight, flag, jones,
                                  tbin_idx, tbin_counts,
@@ -314,7 +248,7 @@ def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
     raise NotImplementedError
 
 
-@overload(_weight_data_impl, **JIT_OPTIONS, parallel=True)
+@overload(_weight_data_impl, **JIT_OPTIONS, parallel=True, prefer_literal=True)
 def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product, nc):
 

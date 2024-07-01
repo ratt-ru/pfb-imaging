@@ -184,6 +184,10 @@ inputs:
     info:
       Display progress.
       Use --no-progressbar to deactivate.
+  output-format:
+    default: zarr
+    info:
+      zarr or fits output
 
   _include:
     - (.)gridding.yml

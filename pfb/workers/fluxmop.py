@@ -46,9 +46,11 @@ def fluxmop(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _fluxmop(**opts)
+        _fluxmop(**opts)
 
-def _fluxmop(**kw):
+    print("All done here.", file=log)
+
+def _fluxmop(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -61,15 +63,52 @@ def _fluxmop(**kw):
     from pfb.utils.fits import load_fits, dds2fits_mfs, dds2fits, set_wcs, save_fits
     from pfb.utils.misc import init_mask, dds2cubes
     from pfb.operators.hessian import hessian_xds, hessian_psf_cube
+    from pfb.operators.psf import psf_convolve_cube
     from pfb.opt.pcg import pcg
     from ducc0.misc import make_noncritical
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    from ducc0.fft import c2c
+    iFs = np.fft.ifftshift
+    Fs = np.fft.fftshift
+    nthreads_tot = opts.nthreads_dask * opts.nvthreads
+    resize_thread_pool(nthreads_tot)
+    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
 
     dds_name = f'{basename}_{opts.suffix}.dds'
+    if ddsi is not None:
+        dds = []
+        for ds in ddsi:
+            dds.append(ds.chunk({'row':-1,
+                                 'chan':-1,
+                                 'x':-1,
+                                 'y':-1,
+                                 'x_psf':-1,
+                                 'y_psf':-1,
+                                 'yo2':-1}))
+    else:
+        dds = xds_from_zarr(dds_name)
+        chunks = {'x':-1,
+                  'y':-1}
+        # These may or may not be present
+        if 'PSF' in dds[0]:
+            chunks['x_psf'] = -1
+            chunks['y_psf'] = -1
+            chunks['yo2'] = -1
+        if 'WEIGHT' in dds[0]:
+            chunks['row'] = -1
+            chunks['chan'] = -1
+        for i, ds in enumerate(dds):
+            dds[i] = ds.chunk(chunks)
 
-    dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                          'chan': -1})
+    # if not opts.use_psf and 'PSF' in dds[0]:
+    #     # inflates memory and not required
+    #     for i, ds in enumerate(dds):
+    #         dds[i] = ds.drop_vars(('PSF', 'PSFHAT'))
+
+    if opts.memory_greedy:
+        dds = dask.persist(dds)[0]
 
     # stitch image space data products
     output_type = dds[0].DIRTY.dtype
@@ -79,11 +118,10 @@ def _fluxmop(**kw):
                                                                opts.nband,
                                                                apparent=False,
                                                                dual=False,
-                                                               modelname=opts.model_name)
+                                                               modelname=opts.model_name,
+                                                               residname=opts.residual_name)
     fsel = wsums > 0
     wsum = np.sum(wsums)
-    psf_mfs = np.sum(psf, axis=0)
-    assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
     dirty_mfs = np.sum(dirty, axis=0)
     if residual is None:
         residual = dirty.copy()
@@ -91,9 +129,11 @@ def _fluxmop(**kw):
     else:
         residual_mfs = np.sum(residual, axis=0)
 
-    lastsize = dds[0].y_psf.size
 
-    # for intermediary results (not currently written)
+    if psf is not None:
+        psf_mfs = np.sum(psf, axis=0)
+        assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
+        lastsize = dds[0].y_psf.size
     freq_out = []
     for ds in dds:
         freq_out.append(ds.freq_out)
@@ -108,6 +148,12 @@ def _fluxmop(**kw):
     cell_deg = np.rad2deg(cell_rad)
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+
+    if model is not None:
+        model_mfs = np.mean(model[fsel], axis=0)
+    else:
+        model_mfs = np.zeros((nx,ny), dtype=output_type)
+        model = np.zeros((nband, nx,ny), dtype=output_type)
 
     # set up vis space Hessian for computing the residual
     # TODO - how to apply beam externally per ds
@@ -133,9 +179,14 @@ def _fluxmop(**kw):
         else:
             mask = load_fits(opts.mask, dtype=output_type).squeeze()
             assert mask.shape == (nx, ny)
+            if opts.or_mask_with_model:
+                print("Combining model with input mask", file=log)
+                mask = np.logical_or(mask>0, model_mfs>0).astype(output_type)
+
+
             mask = mask.astype(output_type)
             print('Using provided fits mask', file=log)
-            if opts.zero_model_outside_mask:
+            if opts.zero_model_outside_mask and not opts.or_mask_with_model:
                 model[:, mask<1] = 0
                 print("Recomputing residual since asked to zero model", file=log)
                 convimage = hess(model)
@@ -150,9 +201,19 @@ def _fluxmop(**kw):
                   basename + f'_{opts.suffix}_residual_mfs_zeroed.fits',
                   hdr_mfs)
 
+
     else:
         mask = np.ones((nx, ny), dtype=output_type)
         print('Caution - No mask is being applied', file=log)
+
+    def F(x):
+        return c2c(Fs(x, axes=(1,2)), axes=(1,2), forward=True, inorm=0, nthreads=8)
+
+    def FH(x):
+        return iFs(c2c(x, axes=(1,2), forward=False, inorm=2, nthreads=8), axes=(1,2))
+
+    # information source gets modified if using image space hessian
+    j = beam * mask[None, :, :] * residual
 
     if opts.use_psf:
         print("Using image space hessian approximation",
@@ -163,22 +224,76 @@ def _fluxmop(**kw):
         xpad = make_noncritical(xpad)
         xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
         xhat = make_noncritical(xhat)
-        hess_pcg = partial(hessian_psf_cube,
-                           xpad,
-                           xhat,
-                           xout,
-                           beam*mask[None, :, :],
-                           psfhat,
-                           lastsize,
-                           nthreads=opts.nvthreads*opts.nthreads_dask,  # not using dask parallelism
-                           sigmainv=opts.sigmainv)
+        R = partial(psf_colvolve_cube,
+                    xpad,
+                    xhat,
+                    xout,
+                    psfhat,
+                    lastsize,
+                    nthreads=opts.nvthreads*opts.nthreads_dask)
+
+        RH = partial(psf_colvolve_cube,
+                     xpad,
+                     xhat,
+                     xout,
+                     psfhat.conj(),
+                     lastsize,
+                     nthreads=opts.nvthreads*opts.nthreads_dask)
+
+        def hess_pcg(x):
+            return RH(R(x)) + opts.sigmainvsq*x
+
+        # now we have a good preconditioner
+        nx_psf = dds[0].x_psf.size
+        ny_psf = dds[0].y_psf.size
+        nxpad = (nx_psf - nx)//2
+        nypad = (ny_psf - ny)//2
+        if nxpad:
+            nxf = -nxpad
+        else:
+            nxf = nx_psf
+        if nypad:
+            nyf = -nypad
+        else:
+            nyf = ny_psf
+        Ihatsq = np.abs(F(psf[:, nxpad:nxf, nypad:nyf]))**2
+        def precond(x):
+            xhat = F(x)
+            return FH(xhat/(Ihatsq + 1)).real
+
     else:
         print("Using vis space hessian approximation",
               file=log)
+        # TODO - we can probably do better here
         hess_pcg = partial(hessian_xds, xds=dds, hessopts=hessopts,
-                   wsum=wsum, sigmainv=opts.sigmainv,
+                   wsum=wsum, sigmainv=opts.sigmainvsq,
                    mask=mask,
                    compute=True, use_beam=False)
+
+        if not opts.memory_greedy:
+            print("Warning! Data will be loaded from disk at every iteration. "
+                  "It is recommended to use vis space Hessian approximation "
+                  "with --memory-greedy", file=log)
+
+
+        # set up preconditioner
+        nx_psf = dds[0].x_psf.size
+        ny_psf = dds[0].y_psf.size
+        nxpad = (nx_psf - nx)//2
+        nypad = (ny_psf - ny)//2
+        if nxpad:
+            nxf = -nxpad
+        else:
+            nxf = nx_psf
+        if nypad:
+            nyf = -nypad
+        else:
+            nyf = ny_psf
+        Ihat = np.abs(F(psf[:, nxpad:nxf, nypad:nyf] ))
+        def precond(x):
+            xhat = F(x)
+            return FH(xhat/(Ihat + opts.sigmasq)).real
+
 
     cgopts = {}
     cgopts['tol'] = opts.cg_tol
@@ -188,9 +303,19 @@ def _fluxmop(**kw):
     cgopts['report_freq'] = opts.cg_report_freq
     cgopts['backtrack'] = opts.backtrack
 
+    rms = np.std(residual_mfs)
+    rmax = np.abs(residual_mfs).max()
+    print(f"Initial peak residual = {rmax:.3e}, rms = {rms:.3e}",
+          file=log)
+
     print("Solving for update", file=log)
-    x0 = np.zeros((nband, nx, ny), dtype=output_type)
+    # x0 = np.zeros((nband, nx, ny), dtype=output_type)
+    x0 = precond(j)
+    save_fits(np.mean(x0, axis=0),
+              basename + f'_{opts.suffix}_x0.fits',
+              hdr_mfs)
     update = pcg(hess_pcg, beam * mask[None, :, :] * residual, x0,
+                 M=precond,
                  tol=opts.cg_tol,
                  maxit=opts.cg_maxit,
                  minit=opts.cg_minit,
@@ -201,7 +326,7 @@ def _fluxmop(**kw):
     modelp = model.copy()
     model += opts.gamma * update
 
-
+    residualp = residual.copy()
     print("Getting residual", file=log)
     convimage = hess(model)
     ne.evaluate('dirty - convimage', out=residual,
@@ -209,24 +334,31 @@ def _fluxmop(**kw):
     ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
                 casting='same_kind')
 
+    rms = np.std(residual_mfs)
+    rmax = np.abs(residual_mfs).max()
+    print(f"Final peak residual = {rmax:.3e}, rms = {rms:.3e}",
+          file=log)
 
     print("Updating results", file=log)
     dds_out = []
     for ds in dds:
         b = ds.bandid
         r = da.from_array(residual[b]*wsum)
+        rp = da.from_array(residualp[b]*wsum)
         m = da.from_array(model[b])
         mp = da.from_array(modelp[b])
         u = da.from_array(update[b])
+        # keep previous results in case of failure
         ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
+                              'RESIDUALP': (('x', 'y'), rp),
                               'MODEL': (('x', 'y'), m),
-                              'MODELP': (('x', 'y'), mp),  # to revert in case of failure
+                              'MODELP': (('x', 'y'), mp),
                               'UPDATE': (('x', 'y'), u)})
         dds_out.append(ds_out)
     writes = xds_to_zarr(dds_out, dds_name,
-                         columns=('RESIDUAL', 'MODEL', 'MODELP', 'UPDATE'),
+                         columns=('RESIDUAL', 'RESIDUALP', 'MODEL', 'MODELP', 'UPDATE'),
                          rechunk=True)
-    # import ipdb; ipdb.set_trace()
+
     dask.compute(writes)
 
     dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
@@ -266,5 +398,3 @@ def _fluxmop(**kw):
     if len(fitsout):
         print("Writing fits", file=log)
         dask.compute(fitsout)
-
-    print("All done here.", file=log)

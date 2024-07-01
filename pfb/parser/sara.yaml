@@ -3,7 +3,6 @@ inputs:
     - (.)gridding.yml
     - (.)pdopts.yml
     - (.)pmopts.yml
-    - (.)cgopts.yml
     - (.)dist.yml
     - (.)out.yml
   nband:
@@ -38,12 +37,6 @@ inputs:
     abbreviation: hess-norm
     info:
       Spectral norm of hessian approximation
-  hess-approx:
-    dtype: str
-    default: wgt
-    abbreviation: hess-approx
-    info:
-      Set to wgt/psf to use the vis/image space hess approximation
   rmsfactor:
     dtype: float
     default: 1.0
@@ -110,72 +103,6 @@ inputs:
     info:
       Will terminate the algorithm if the rms increases this many times.
       Set to larger than niter to disable this check.
-  field-of-view:
-    dtype: float
-    abbreviation: fov
-    info:
-      Field of view in degrees
-    metavar: DEG
-  super-resolution-factor:
-    dtype: float
-    default: 2
-    abbreviation: srf
-    info:
-      Will over-sample Nyquist by this factor at max frequency
-  cell-size:
-    dtype: float
-    info:
-      Cell size in arc-seconds
-  nx:
-    dtype: int
-    info:
-      Number of x pixels
-  ny:
-    dtype: int
-    info:
-      Number of y pixels
-  psf-oversize:
-    dtype: float
-    default: 1.2
-    abbreviation: psfo
-    info:
-      Size of PSF relative to dirty image
-  target:
-    dtype: str
-    info:
-      This can be predefined celestial objects known to astropy or a string in
-      the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
-  concat:
-    dtype: bool
-    default: true
-    info:
-      Concatenate datasets by row/time.
-      This will result in a single dirty image, psf and beam per band.
-  l2-reweight-from:
-    dtype: int
-    default: 10
-    info:
-      Start doing L2 reweights from this iteration onwards.
-      L2 reweights will also be triggered if the algorithm
-      converges, L1 reweighting has already kicked in and
-      l2-reweight-dof is set.
-  l2-reweight-dof:
-    dtype: float
-    default: 3.5
-    info:
-      The degrees of freedom parameter for performing L2 reweighting.
-      L2 reweighting is triggered if L1 reweighting is active and convergence
-      is reached and will be applied a maximum of max-l2-reweight times.
-  max-l2-reweight:
-    dtype: int
-    default: 5
-    info:
-      The maximum number of L2 reweighting steps.
-  reset-cache:
-    dtype: bool
-    default: false
-    info:
-      Hard reset the cache
 
 outputs:
   {}

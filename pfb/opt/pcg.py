@@ -9,47 +9,6 @@ import pyscilog
 log = pyscilog.get_logger('PCG')
 
 
-def cg(A,
-       b,
-       x0=None,
-       tol=1e-5,
-       maxit=500,
-       verbosity=1,
-       report_freq=10):
-
-    if x0 is None:
-        x = np.zeros(b.shape, dtype=b.dtype)
-    else:
-        x = x0.copy()
-
-    # initial residual
-    r = A(x) - b
-    p = -r
-    rnorm = np.vdot(r, r)
-    rnorm0 = rnorm
-    eps = rnorm
-    k = 0
-    while eps > tol and k < maxit:
-        xp = x
-        rp = r
-        Ap = A(p)
-        alpha = rnorm/np.vdot(p, Ap)
-        x += alpha * p
-        r += alpha * Ap
-        rnorm_next = np.vdot(r, r)
-        beta = rnorm_next/rnorm
-        p = beta*p - r
-        rnorm = rnorm_next
-        eps = rnorm #/rnorm0
-
-        k += 1
-
-    if k >= maxit:
-        print(f"Max iters reached eps = {eps}")
-
-    return x
-
-
 def pcg(A,
         b,
         x0=None,
@@ -358,65 +317,4 @@ def pcg_psf(psfhat,
         return model.compute()
     else:
         return model
-
-
-def pcg_dist(A, maxit, minit, tol, sigmainv):
-    '''
-    kwargs - tol, maxit, minit, nthreads, psf_padding, unpad_x, unpad_y
-             sigmainv, lastsize, hessian
-    '''
-
-    if hasattr(A, 'residual'):
-        b = A.residual/A.wsum
-    else:
-        b = A.dirty/A.wsum
-    x = np.zeros_like(b)
-
-    def M(x):
-        return x / sigmainv
-
-    r = A(x) - b
-    y = M(r)
-    p = -y
-    rnorm = np.vdot(r, y)
-    if np.isnan(rnorm) or rnorm == 0.0:
-        eps0 = 1.0
-    else:
-        eps0 = rnorm
-    k = 0
-    eps = 1.0
-    stall_count = 0
-    while (eps > tol or k < minit) and k < maxit and stall_count < 5:
-        xp = x.copy()
-        rp = r.copy()
-        epsp = eps
-        Ap = A(p)
-        rnorm = np.vdot(r, y)
-        alpha = rnorm / np.vdot(p, Ap)
-        x = xp + alpha * p
-        r = rp + alpha * Ap
-        y = M(r)
-        rnorm_next = np.vdot(r, y)
-        while rnorm_next > rnorm:  # TODO - better line search
-            alpha *= 0.75
-            x = xp + alpha * p
-            r = rp + alpha * Ap
-            y = M(r)
-            rnorm_next = np.vdot(r, y)
-
-        beta = rnorm_next / rnorm
-        p = beta * p - y
-        # if p is zero we should stop
-        if not np.any(p):
-            break
-        rnorm = rnorm_next
-        k += 1
-        eps = rnorm / eps0
-
-        if np.abs(eps - epsp) < 1e-3*tol:
-            stall_count += 1
-
-    print(f'Band={A.bandid}, iters{k}, eps={eps}', file=log)
-    return x
-
 

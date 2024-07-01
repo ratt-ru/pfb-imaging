@@ -52,6 +52,10 @@ def _restore(**kw):
                                 dds2fits, dds2fits_mfs)
     from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres, dds2cubes
     from ducc0.fft import c2c
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    nthreads_tot = opts.nthreads_dask * opts.nvthreads
+    resize_thread_pool(nthreads_tot)
+    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
     basename = f'{opts.output_filename}_{opts.product.upper()}'
     dds_name = f'{basename}_{opts.suffix}.dds'
@@ -76,9 +80,15 @@ def _restore(**kw):
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq)
 
+    if opts.overwrite:
+        print("Warning! Potentially overwriting output images",
+              file=log)
+
     # stack cubes
     dirty, model, residual, psf, _, _, wsums, _ = dds2cubes(dds,
                                                             nband,
+                                                            modelname=opts.model_name,
+                                                            residname=opts.residual_name,
                                                             apparent=True,
                                                             dual=False)
     wsum = np.sum(wsums)

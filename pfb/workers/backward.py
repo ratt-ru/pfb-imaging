@@ -222,13 +222,13 @@ def _backward(**kw):
                         wsum=wsum, sigmainv=opts.sigmainv, mask=mask,
                         compute=True)
 
-    if opts.hessnorm is None:
+    if opts.hess_norm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
-        hessnorm, _ = power_method(hess, (nband, nx, ny), tol=opts.pm_tol,
+        hess_norm, _ = power_method(hess, (nband, nx, ny), tol=opts.pm_tol,
                          maxit=opts.pm_maxit, verbosity=opts.pm_verbose,
                          report_freq=opts.pm_report_freq)
     else:
-        hessnorm = opts.hessnorm
+        hess_norm = opts.hess_norm
 
     if 'DUAL' in mds:
         dual = mds.DUAL.values
@@ -247,7 +247,7 @@ def _backward(**kw):
     for i in range(opts.niter):
         # prox = partial(prox_21m, sigma=opts.sigma21, weight=weight, axis=0)
         model, dual = primal_dual(hess, data, model, dual, sigma21,
-                                  psi, psiH, weight, hessnorm, prox_21,
+                                  psi, psiH, weight, hess_norm, prox_21,
                                   nu=nbasis, positivity=opts.positivity,
                                   tol=opts.pd_tol, maxit=opts.pd_maxit,
                                   verbosity=opts.pd_verbose,

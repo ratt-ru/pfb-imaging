@@ -65,7 +65,9 @@ def degrid(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _degrid(**opts)
+        _degrid(**opts)
+
+    print("All done here.", file=log)
 
 def _degrid(**kw):
     opts = OmegaConf.create(kw)
@@ -94,6 +96,10 @@ def _degrid(**kw):
     import sympy as sm
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    nthreads_tot = opts.nthreads_dask * opts.nvthreads
+    resize_thread_pool(nthreads_tot)
+    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
     mds = xr.open_zarr(opts.mds)
 
@@ -227,11 +233,4 @@ def _degrid(**kw):
 
     with compute_context(opts.scheduler, opts.mds+'_degrid'):
         dask.compute(writes, optimize_graph=False)
-
-    if opts.scheduler=='distributed':
-        from distributed import get_client
-        client = get_client()
-        client.close()
-
-    print("All done here.", file=log)
 

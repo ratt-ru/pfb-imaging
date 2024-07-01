@@ -35,26 +35,35 @@ def grid(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    pyscilog.log_to_file(f'{str(ldir)}/grid_{timestamp}.log')
-    print(f'Logs will be written to {str(ldir)}/grid_{timestamp}.log', file=log)
-    basedir = Path(opts.output_filename).resolve().parent
-    basedir.mkdir(parents=True, exist_ok=True)
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    logname = f'{str(ldir)}/grid_{timestamp}.log'
+    pyscilog.log_to_file(logname)
+    print(f'Logs will be written to {logname}', file=log)
+
     from daskms.fsspec_store import DaskMSStore
+    from pfb.utils.naming import set_output_names
+    basedir, oname, fits_output_folder = set_output_names(opts.output_filename,
+                                                          opts.product,
+                                                          opts.fits_output_folder)
+
+    basename = f'{basedir}/{oname}'
+    fits_oname = f'{fits_output_folder}/{oname}'
+
     if opts.xds is not None:
-        xdsstore = DaskMSStore(opts.xds.rstrip('/'))
-        xdsname = opts.xds
+        xds_store = DaskMSStore(opts.xds.rstrip('/'))
+        xds_name = opts.xds
     else:
-        xdsstore = DaskMSStore(f'{basename}.xds')
-        xdsname = f'{basename}.xds'
+        xds_store = DaskMSStore(f'{basename}.xds')
+        xds_name = f'{basename}.xds'
     try:
-        assert xdsstore.exists()
+        assert xds_store.exists()
     except Exception as e:
-        raise ValueError(f"There must be an xds at {xdsname}. "
+        raise ValueError(f"There must be an xds at {xds_name}. "
                             f"Original traceback {e}")
-    opts.xds = xdsstore.url
-    OmegaConf.set_struct(opts, True)
+    opts.xds = xds_store.url
     dds_name = f'{basename}_{opts.suffix}.dds'
+    dds_store = DaskMSStore(dds_name)
+    opts.fits_output_folder = fits_output_folder
+    OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
         from pfb import set_client
@@ -70,22 +79,16 @@ def grid(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
+        ti = time.time()
         dds_out = _grid(**opts)
 
         writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
-
-        # dask.visualize(writes, color="order", cmap="autumn",
-        #                node_attr={"penwidth": "4"},
-        #                filename=f'{basename}_grid_ordered_graph.pdf',
-        #                optimize_graph=False)
-        # dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
-        #                optimize_graph=False)
 
         print("Computing image space data products", file=log)
         with compute_context(opts.scheduler, f'{str(ldir)}/grid_{timestamp}'):
             dask.compute(writes, optimize_graph=False)
 
-        dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
+        dds = xds_from_zarr(dds_store.url, chunks={'x': -1, 'y': -1})
         if 'PSF' in dds[0]:
             for i, ds in enumerate(dds):
                 dds[i] = ds.chunk({'x_psf': -1, 'y_psf': -1})
@@ -94,32 +97,51 @@ def grid(**kw):
         fitsout = []
         if opts.fits_mfs:
             if opts.dirty:
-                fitsout.append(dds2fits_mfs(dds, 'DIRTY', f'{basename}_{opts.suffix}', norm_wsum=True))
+                fitsout.append(dds2fits_mfs(dds, 'DIRTY',
+                                            f'{fits_oname}_{opts.suffix}',
+                                            norm_wsum=True))
             if opts.psf:
-                fitsout.append(dds2fits_mfs(dds, 'PSF', f'{basename}_{opts.suffix}', norm_wsum=True))
+                fitsout.append(dds2fits_mfs(dds, 'PSF',
+                                            f'{fits_oname}_{opts.suffix}',
+                                            norm_wsum=True))
             if 'MODEL' in dds[0]:
-                fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
-                fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
+                fitsout.append(dds2fits_mfs(dds, 'RESIDUAL',
+                                            f'{fits_oname}_{opts.suffix}',
+                                            norm_wsum=True))
+                fitsout.append(dds2fits_mfs(dds, 'MODEL',
+                                            f'{fits_oname}_{opts.suffix}',
+                                            norm_wsum=False))
+            if opts.noise:
+                fitsout.append(dds2fits_mfs(dds, 'NOISE',
+                                            f'{fits_oname}_{opts.suffix}',
+                                            norm_wsum=True))
 
         if opts.fits_cubes:
             if opts.dirty:
-                fitsout.append(dds2fits(dds, 'DIRTY', f'{basename}_{opts.suffix}', norm_wsum=True))
+                fitsout.append(dds2fits(dds, 'DIRTY',
+                                        f'{fits_oname}_{opts.suffix}',
+                                        norm_wsum=True))
             if opts.psf:
-                fitsout.append(dds2fits(dds, 'PSF', f'{basename}_{opts.suffix}', norm_wsum=True))
+                fitsout.append(dds2fits(dds, 'PSF',
+                                        f'{fits_oname}_{opts.suffix}',
+                                        norm_wsum=True))
             if 'MODEL' in dds[0]:
-                fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
-                fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
+                fitsout.append(dds2fits(dds, 'RESIDUAL',
+                                        f'{fits_oname}_{opts.suffix}',
+                                        norm_wsum=True))
+                fitsout.append(dds2fits(dds, 'MODEL',
+                                        f'{fits_oname}_{opts.suffix}',
+                                        norm_wsum=False))
+            if opts.noise:
+                fitsout.append(dds2fits(dds, 'NOISE',
+                                        f'{fits_oname}_{opts.suffix}',
+                                        norm_wsum=True))
 
         if len(fitsout):
             print("Writing fits", file=log)
             dask.compute(fitsout)
 
-        if opts.scheduler=='distributed':
-            from distributed import get_client
-            client = get_client()
-            client.close()
-
-        print("All done here.", file=log)
+    print(f"All done after {time.time() - ti}s", file=log)
 
 def _grid(xdsi=None, **kw):
     opts = OmegaConf.create(kw)
@@ -128,6 +150,7 @@ def _grid(xdsi=None, **kw):
 
     import numpy as np
     import dask
+    from daskms.fsspec_store import DaskMSStore
     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
     import dask.array as da
     from africanus.constants import c as lightspeed
@@ -148,12 +171,17 @@ def _grid(xdsi=None, **kw):
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
     from quartical.utils.dask import Blocker
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    nthreads_tot = opts.nthreads_dask * opts.nvthreads
+    resize_thread_pool(nthreads_tot)
+    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
 
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    basename = f'{opts.output_filename}'
 
     # xds contains vis products, no imaging weights applied
     xds_name = f'{basename}.xds' if opts.xds is None else opts.xds
+    xds_store = DaskMSStore(xds_name)
     if xdsi is not None:
         xds = []
         for ds in xdsi:
@@ -162,19 +190,28 @@ def _grid(xdsi=None, **kw):
                                  'l_beam': -1,
                                  'm_beam': -1}))
     else:
-        xds = xds_from_zarr(xds_name, chunks={'row': -1,
-                                              'chan': -1,
-                                              'l_beam': -1,
-                                              'm_beam': -1})
+        try:
+            assert xds_store.exists()
+        except Exception as e:
+            raise ValueError(f"There must be a dataset at {xds_store.url}")
+        xds = list(map(xr.open_zarr, xds_store.fs.glob(f'{xds_store.url}/*.zarr')))
+
+        for i, ds in enumerate(xds):
+            xds[i] = ds.chunk({'row':-1,
+                               'chan': -1,
+                               'three': -1,
+                               'l_beam': -1,
+                               'm_beam': -1})
+
     # dds contains image space products including imaging weights and uvw
     dds_name = f'{basename}_{opts.suffix}.dds'
+    dds_store = DaskMSStore(dds_name)
 
-    if os.path.isdir(dds_name):
+    if dds_store.exists():
         dds_exists = True
         if opts.overwrite:
             print(f'Removing {dds_name}', file=log)
-            import shutil
-            shutil.rmtree(dds_name)
+            dds_store.rm(recursive=True)
             dds_exists = False
     else:
         dds_exists = False
@@ -301,6 +338,11 @@ def _grid(xdsi=None, **kw):
             assert out_ds.cell_rad == cell_rad
         print(f'As far as we can tell {dds_name} can be reused/updated.',
               file=log)
+        if opts.mf_weighting:
+            counts = da.array([ds.COUNTS.data for ds in xds]).sum(axis=0).compute()
+            for i, ds in enumerate(dds):
+                dds[i] = ds.assign(**{'COUNTS': (('x', 'y'), counts)})
+
     else:
         print(f'Image space data products will be stored in {dds_name}.', file=log)
 
@@ -455,12 +497,13 @@ def _grid(xdsi=None, **kw):
                         cell_rad,
                         cell_rad,
                         real_type,
+                        wgt,
                         ngrid=opts.nvthreads)
                 # get rid of artificially high weights corresponding to
                 # nearly empty cells
-                if opts.filter_extreme_counts:
-                    counts = filter_extreme_counts(counts, nbox=opts.filter_nbox,
-                                                   nlevel=opts.filter_level)
+                if opts.filter_counts_level:
+                    counts = filter_extreme_counts(counts,
+                                                   level=opts.filter_counts_level)
 
                 # do we want the coordinates to be ug, vg rather?
                 out_ds = out_ds.assign(**{'COUNTS': (('x', 'y'), counts)})
@@ -502,6 +545,7 @@ def _grid(xdsi=None, **kw):
         blocker.add_input('l2reweight_dof', opts.l2reweight_dof)
         blocker.add_input('do_psf', opts.psf)
         blocker.add_input('do_weight', opts.weight)
+        blocker.add_input('do_noise', opts.noise)
 
         blocker.add_output(
             'DIRTY',
@@ -541,6 +585,13 @@ def _grid(xdsi=None, **kw):
                 wgt.chunks,
                 wgt.dtype)
 
+        if opts.noise:
+            blocker.add_output(
+                'NOISE',
+                ('x', 'y'),
+                ((nx,), (ny,)),
+                wgt.dtype)
+
         output_dict = blocker.get_dask_outputs()
         out_ds = out_ds.assign(**{
             'DIRTY': (('x', 'y'), output_dict['DIRTY'])
@@ -562,6 +613,11 @@ def _grid(xdsi=None, **kw):
         if model is not None:
             out_ds = out_ds.assign(**{
                 'RESIDUAL': (('x', 'y'), output_dict['RESIDUAL'])
+                })
+
+        if opts.noise:
+            out_ds = out_ds.assign(**{
+                'NOISE': (('x', 'y'), output_dict['NOISE'])
                 })
 
 

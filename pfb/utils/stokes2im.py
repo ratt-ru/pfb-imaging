@@ -3,38 +3,24 @@ import numexpr as ne
 from numba import literally
 import dask
 from distributed import get_client, worker_client
+from dask.graph_manipulation import clone
 import xarray as xr
 import dask
+from uuid import uuid4
 from pfb.utils.stokes import stokes_funcs
 from pfb.utils.weighting import (_compute_counts, _counts_to_weights,
-                                 _weight_data, _filter_extreme_counts)
+                                 weight_data, _filter_extreme_counts)
 from pfb.utils.misc import eval_coeffs_to_slice
+from pfb.utils.fits import set_wcs, save_fits
 from pfb.operators.gridder import _im2vis_impl as im2vis
-from ducc0.wgridder.experimental import vis2dirty, dirty2vis
+from ducc0.wgridder import vis2dirty, dirty2vis
 from casacore.quanta import quantity
 from datetime import datetime
-
-# for old style vs new style warnings
-from numba.core.errors import NumbaPendingDeprecationWarning
-import warnings
-
-warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
-
-# make Stokes vis
-# (row, chan, corr) -> (row, chan) = vis
-
-
-# predict model vis
-# (degrid_band, nx, ny) -> (row, chan) = model_vis
-# dirty2vis x ndegrid times with nthreads = 2
-
-# compute imaging weights
-
-# get residual_vis
-
-# grid
-# (row, chan) -> nx, ny
-# vis2dirty with nthreads = 2 * threads_per_worker
+from ducc0.fft import c2r, r2c, good_size
+from africanus.constants import c as lightspeed
+import gc
+iFs = np.fft.ifftshift
+Fs = np.fft.fftshift
 
 
 def single_stokes_image(
@@ -77,7 +63,8 @@ def single_stokes_image(
         jones) = client.compute([data, data2, ant1, ant2, uvw, frow,
                                 flag, sigma, weight, jones],
                                 sync=True,
-                                workers=wid)
+                                workers=wid,
+                                key='read-'+uuid4().hex)
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -110,12 +97,15 @@ def single_stokes_image(
     if sigma is not None:
         weight = ne.evaluate('1.0/sigma**2')
     elif weight is not None:
+        # in case we are reading WEIGHT instead of WEIGHT_SPECTRUM
         if weight.ndim == 2:
             weight = np.broadcast_to(weight[:, None, :],
                                     (nrow, nchan, ncorr))
     else:
-        weight = np.ones((nrow, nchan, ncorr),
-                        dtype=real_type)
+        # this shoul dbe a tiny array
+        weight = np.ones((1,), dtype=real_type)
+        weight = np.broadcast_to(weight[:, None, None],
+                                 (nrow, nchan, ncorr))
 
     if data.dtype != complex_type:
         data = data.astype(complex_type)
@@ -185,7 +175,7 @@ def single_stokes_image(
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
-    data, weight = _weight_data(data, weight, flag, jones,
+    data, weight = weight_data(data, weight, flag, jones,
                             tbin_idx, tbin_counts,
                             ant1, ant2,
                             literally(poltype),
@@ -206,7 +196,13 @@ def single_stokes_image(
                 cell_rad,
                 cell_rad,
                 np.float64,  # same type as uvw
+                weight,
                 ngrid=opts.nvthreads)
+
+        # counts will be accumulated on nvthreads grids in parallel
+        # so we need the sum here
+        counts = counts.sum(axis=0)
+
         # get rid of artificially high weights corresponding to
         # nearly empty cells
         if opts.filter_extreme_counts:
@@ -214,7 +210,6 @@ def single_stokes_image(
                                             nbox=opts.filter_nbox,
                                             nlevel=opts.filter_level)
 
-        counts = counts.sum(axis=0)
 
 
     if mds is not None:
@@ -238,7 +233,7 @@ def single_stokes_image(
                 mds.npix_x, mds.npix_y,
                 mds.cell_rad_x, mds.cell_rad_y,
                 mds.center_x, mds.center_y,
-                # TODO - currently needs to be the same, need FFT interpolation
+                # TODO - currently needs to be the same, need flux conservative interpolation
                 mds.npix_x, mds.npix_y,
                 mds.cell_rad_x, mds.cell_rad_y,
                 mds.center_x, mds.center_y,
@@ -267,14 +262,15 @@ def single_stokes_image(
 
         ne.evaluate('(data-model_vis)*mask', out=data)
 
-        if opts.l2reweight_dof:
-            ressq = (data*data.conj()).real
-            wcount = mask.sum()
-            if wcount:
-                ovar = ressq.sum()/wcount  # use 67% quantile?
-                wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
-            else:
-                wgt = None
+    if opts.l2reweight_dof:
+        # data should contain residual_vis at this point
+        ressq = (data*data.conj()).real * mask
+        wcount = mask.sum()
+        if wcount:
+            ovar = ressq.sum()/wcount  # use 67% quantile?
+            weight = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+        else:
+            weight = None
 
     if opts.robustness is not None:
         if counts is None:
@@ -312,47 +308,56 @@ def single_stokes_image(
         double_precision_accumulation=opts.double_accum,
         verbosity=0)
 
-    rms = np.std(residual)
-
-    data_vars = {}
-    data_vars['RESIDUAL'] = (('x', 'y'), residual.astype(np.float32))
-
-    coords = {'chan': (('chan',), freq),
-            'time': (('time',), utime),
-    }
+    rms = np.std(residual/wsum)
 
     unix_time = quantity(f'{time_out}s').to_unix_time()
     utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
 
+    cell_deg = np.rad2deg(cell_rad)
+    hdr = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
+                  freq_out, GuassPar=(1, 1, 0),  # fake for now
+                  unix_time=unix_time)
 
-    # TODO - provide time and freq centroids
-    attrs = {
-        'ra' : tra,
-        'dec': tdec,
-        'x0': x0,
-        'y0': y0,
-        'cell_rad': cell_rad,
-        'fieldid': fieldid,
-        'ddid': ddid,
-        'scanid': scanid,
-        'freq_out': freq_out,
-        'freq_min': freq_min,
-        'freq_max': freq_max,
-        'bandid': bandid,
-        'time_out': time_out,
-        'time_min': utime.min(),
-        'time_max': utime.max(),
-        'timeid': timeid,
-        'product': opts.product,
-        'utc': utc,
-        'wsum':wsum,
-        'rms':rms
-    }
-
-    out_ds = xr.Dataset(data_vars,  #coords=coords,
-                    attrs=attrs)
     oname = f'spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
-    with worker_client() as client:
-        out_store = out_ds.to_zarr(f'{fds_store}/{oname}.zarr',
-                                   compute=True)
-    return out_store
+    if opts.output_format == 'zarr':
+        data_vars = {}
+        data_vars['RESIDUAL'] = (('x', 'y'), residual.astype(np.float32))
+
+        coords = {'chan': (('chan',), freq),
+                'time': (('time',), utime),
+        }
+
+
+        # TODO - provide time and freq centroids
+        attrs = {
+            'ra' : tra,
+            'dec': tdec,
+            'x0': x0,
+            'y0': y0,
+            'cell_rad': cell_rad,
+            'fieldid': fieldid,
+            'ddid': ddid,
+            'scanid': scanid,
+            'freq_out': freq_out,
+            'freq_min': freq_min,
+            'freq_max': freq_max,
+            'bandid': bandid,
+            'time_out': time_out,
+            'time_min': utime.min(),
+            'time_max': utime.max(),
+            'timeid': timeid,
+            'product': opts.product,
+            'utc': utc,
+            'wsum':wsum,
+            'rms':rms,
+            # 'header': hdr.items()
+        }
+
+        out_ds = xr.Dataset(data_vars,  #coords=coords,
+                        attrs=attrs)
+        out_store = out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr',
+                                mode='w')
+        # return out_store
+    elif opts.output_format == 'fits':
+        save_fits(residual/wsum, f'{fds_store.full_path}/{oname}.fits', hdr)
+    return 1

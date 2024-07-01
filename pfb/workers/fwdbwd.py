@@ -56,7 +56,9 @@ def fwdbwd(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _fwdbwd(**opts)
+        _fwdbwd(**opts)
+
+    print("All done here.", file=log)
 
 def _fwdbwd(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
@@ -316,7 +318,7 @@ def _fwdbwd(ddsi=None, **kw):
         # hessian depends on x and sigmainv so need to do this at every iteration
         sigmainv = np.maximum(np.std(j), opts.sigmainv)
         hesspsf = partial(hessian_psf, psf_convolve, xp, sigmainv, df, dhf)
-        hessnorm, hessbeta = power_method(hesspsf, (nband, nx, ny),
+        hess_norm, hessbeta = power_method(hesspsf, (nband, nx, ny),
                                           b0=hessbeta,
                                           tol=opts.pm_tol,
                                           maxit=opts.pm_maxit,
@@ -369,7 +371,7 @@ def _fwdbwd(ddsi=None, **kw):
                                 sigma21,
                                 psi,
                                 psiH,
-                                hessnorm,
+                                hess_norm,
                                 prox_21,
                                 l1weight,
                                 reweighter,
@@ -428,7 +430,6 @@ def _fwdbwd(ddsi=None, **kw):
             # l1weight[l1weight < 1.0] = 0.0
             # prox21 = partial(prox_21, weight=l1weight, axis=0)
 
-        # import ipdb; ipdb.set_trace()
         print("Updating results", file=log)
         dds_out = []
         for ds in dds:
@@ -470,5 +471,3 @@ def _fwdbwd(ddsi=None, **kw):
     if len(fitsout):
         print("Writing fits", file=log)
         dask.compute(fitsout)
-
-    print("All done here.", file=log)

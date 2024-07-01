@@ -8,19 +8,19 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('FASTIM')
+log = pyscilog.get_logger('HCI')
 import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}
-for key in schema.fastim["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.fastim["inputs"][key]["default"]
+for key in schema.hci["inputs"].keys():
+    defaults[key.replace("-", "_")] = schema.hci["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.fastim)
-def fastim(**kw):
+@clickify_parameters(schema.hci)
+def hci(**kw):
     '''
     Produce high cadence residual images.
     '''
@@ -29,7 +29,7 @@ def fastim(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    pyscilog.log_to_file(f'{ldir}/fastim_{timestamp}.log')
+    pyscilog.log_to_file(f'{ldir}/hci_{timestamp}.log')
     print(f'Logs will be written to {str(ldir)}/fastim_{timestamp}.log', file=log)
     if opts.product.upper() not in ["I","Q", "U", "V"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
@@ -90,33 +90,31 @@ def fastim(**kw):
 
         # set up client
         host_address = opts.host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
-        with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
-            if host_address is not None:
-                from distributed import Client
-                print("Initialising distributed client.", file=log)
-                client = stack.enter_context(Client(host_address))
-            else:
-                from dask.distributed import Client, LocalCluster
-                print("Initialising client with LocalCluster.", file=log)
-                cluster = LocalCluster(processes=True,
-                                       n_workers=opts.nworkers,
-                                       threads_per_worker=opts.nthreads_dask,
-                                       memory_limit=0,  # str(mem_limit/nworkers)+'GB'
-                                       asynchronous=False)
-                cluster = stack.enter_context(cluster)
-                client = stack.enter_context(Client(cluster))
+        if host_address is not None:
+            from distributed import Client
+            print("Initialising distributed client.", file=log)
+            client = stack.enter_context(Client(host_address))
+        else:
+            from dask.distributed import Client, LocalCluster
+            print("Initialising client with LocalCluster.", file=log)
+            cluster = LocalCluster(processes=True,
+                                    n_workers=opts.nworkers,
+                                    threads_per_worker=opts.nthreads_dask,
+                                    memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                                    asynchronous=False)
+            cluster = stack.enter_context(cluster)
+            client = stack.enter_context(Client(cluster,
+                                                direct_to_workers=False))
 
-            client.wait_for_workers(opts.nworkers)
-            client.amm.stop()
+        client.wait_for_workers(opts.nworkers)
+        client.amm.stop()
 
-            ti = time.time()
-            _fastim(**opts)
+        ti = time.time()
+        _hci(**opts)
 
-            client.close()
+    print(f"All done after {time.time() - ti}s", file=log)
 
-            print(f"All done after {time.time() - ti}s", file=log)
-
-def _fastim(**kw):
+def _hci(**kw):
     opts = OmegaConf.create(kw)
     from omegaconf import ListConfig, open_dict
     OmegaConf.set_struct(opts, True)
@@ -128,6 +126,7 @@ def _fastim(**kw):
     from distributed import get_client, wait, as_completed, Semaphore
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
+    import fsspec
     from daskms.fsspec_store import DaskMSStore
     import dask.array as da
     from africanus.constants import c as lightspeed
@@ -145,6 +144,9 @@ def _fastim(**kw):
         else:
             raise ValueError(f"{basename}.fds exists. "
                              "Set overwrite to overwrite it. ")
+
+    fs = fsspec.filesystem(fdsstore.url.split(':', 1)[0])
+    fs.makedirs(fdsstore.url, exist_ok=True)
 
     if opts.gain_table is not None:
         gain_name = "::".join(opts.gain_table.rstrip('/').rsplit("/", 1))
@@ -217,7 +219,8 @@ def _fastim(**kw):
         cell_deg = np.rad2deg(cell_rad)
         fovx = nx*cell_deg
         fovy = ny*cell_deg
-        print(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
+        print(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees",
+              file=log)
 
     print(f"Image size = (nx={nx}, ny={ny})", file=log)
 
@@ -336,7 +339,11 @@ def _fastim(**kw):
                 cpgi = nfreqs
             else:
                 cpgi = opts.channels_per_grid_image
-            fbins_per_band = int(cpgi / opts.channels_per_degrid_image)
+            if opts.channels_per_degrid_image in (0, -1, None):
+                cpdi = nfreqs
+            else:
+                cpdi = opts.channels_per_degrid_image
+            fbins_per_band = int(cpgi / cpdi)
             nband = int(np.ceil(nbandi/fbins_per_band))
 
             for fi in range(nband):
@@ -412,7 +419,7 @@ def _fastim(**kw):
                         fieldid=subds.FIELD_ID,
                         ddid=subds.DATA_DESC_ID,
                         scanid=subds.SCAN_NUMBER,
-                        fds_store=fdsstore.url,
+                        fds_store=fdsstore,
                         bandid=fi,
                         timeid=ti,
                         wid=worker,
@@ -439,6 +446,10 @@ def _fastim(**kw):
         weight = None if wc is None else getattr(subds, wc).data
 
         worker = associated_workers.pop(completed_future)
+
+        if completed_future.result() != 1:
+            import ipdb; ipdb.set_trace()
+            raise ValueError("Something went wrong in submit!")
 
         # future = client.submit(f, xdsl[n_launched], worker, workers=worker)
         future = client.submit(single_stokes_image,
@@ -470,7 +481,7 @@ def _fastim(**kw):
                         fieldid=subds.FIELD_ID,
                         ddid=subds.DATA_DESC_ID,
                         scanid=subds.SCAN_NUMBER,
-                        fds_store=fdsstore.url,
+                        fds_store=fdsstore,
                         bandid=fi,
                         timeid=ti,
                         wid=worker,

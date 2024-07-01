@@ -32,8 +32,16 @@ __version__ = '0.0.4'
 
 import os
 import sys
+# import psutil
+# import resource
 
-def set_client(opts, stack, log, scheduler='distributed'):
+# mem_total = psutil.virtual_memory().total
+# _, hardlim = resource.getrlimit(resource.RLIMIT_AS)
+# resource.setrlimit(resource.RLIMIT_AS, (mem_total, hardlim))
+
+def set_client(opts, stack, log,
+               scheduler='distributed',
+               auto_restrict=True):
 
     from omegaconf import open_dict
     # attempt somewhat intelligent default setup
@@ -51,7 +59,7 @@ def set_client(opts, stack, log, scheduler='distributed'):
             with open_dict(opts):
                 opts.nvthreads = nvthreads
 
-    # os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
+    os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
@@ -69,14 +77,14 @@ def set_client(opts, stack, log, scheduler='distributed'):
 
     import numexpr as ne
     max_cores = ne.detect_number_of_cores()
-    # ne_threads = min(max_cores, opts.nvthreads)
-    os.environ["NUMEXPR_NUM_THREADS"] = str(max_cores)
+    ne_threads = min(max_cores, opts.nvthreads)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
     import dask
     if scheduler=='distributed':
-        # TODO - investigate what difference this makes
-        # with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
-        #     client = distributed.Client()
+        # we probably always want compression
+
+
         # set up client
         host_address = opts.host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
         if host_address is not None:
@@ -90,18 +98,28 @@ def set_client(opts, stack, log, scheduler='distributed'):
                       file=log)
             from dask.distributed import Client, LocalCluster
             print("Initialising client with LocalCluster.", file=log)
-            with dask.config.set({"distributed.scheduler.worker-saturation":  1.1}):
-                cluster = LocalCluster(processes=opts.nworkers > 1,
-                                       n_workers=opts.nworkers,
-                                       threads_per_worker=opts.nthreads_dask,
-                                       memory_limit=0,  # str(mem_limit/nworkers)+'GB'
-                                       asynchronous=False)
-                cluster = stack.enter_context(cluster)
-                client = stack.enter_context(Client(cluster))
+            dask.config.set({
+                    'distributed.comm.compression': {
+                        'on': True,
+                        'type': 'blosc'
+                    }
+            })
+            cluster = LocalCluster(processes=opts.nworkers > 1,
+                                    n_workers=opts.nworkers,
+                                    threads_per_worker=opts.nthreads_dask,
+                                    memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                                    asynchronous=False)
+            cluster = stack.enter_context(cluster)
+            client = stack.enter_context(Client(cluster,
+                                                direct_to_workers=False))
 
-        from quartical.scheduling import install_plugin
-        client.run_on_scheduler(install_plugin)
+        if auto_restrict:
+            from quartical.scheduling import install_plugin
+            client.run_on_scheduler(install_plugin)
         client.wait_for_workers(opts.nworkers)
+        dashboard_url = client.dashboard_link
+        print(f"Dask Dashboard URL at {dashboard_url}", file=log)
+
     elif scheduler in ['sync', 'single-threaded']:
         dask.config.set(scheduler=scheduler)
         print(f"Initialising with synchronous scheduler",

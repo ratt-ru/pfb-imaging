@@ -351,10 +351,9 @@ def construct_mappings(ms_name,
             chan_widths[ms][idt] = spws.CHAN_WIDTH.data[ds.DATA_DESC_ID]
             times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
             uvw = ds.UVW.data
-            u_max = abs(uvw[:, 0].max())
+            u_max = abs(uvw[:, 0]).max()
             v_max = abs(uvw[:, 1]).max()
             uv_maxs.append(da.maximum(u_max, v_max))
-
             if gain_name is not None:
                 gain_times[ms][idt] = gain[ids].gain_time.data
                 gain_freqs[ms][idt] = gain[ids].gain_freq.data
@@ -661,7 +660,8 @@ def init_mask(mask, model, output_type, log):
     return mask
 
 
-def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
+def dds2cubes(dds, nband, apparent=False, dual=True,
+              modelname='MODEL', residname='RESIDUAL'):
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
     nx, ny = dds[0].DIRTY.shape
@@ -669,7 +669,7 @@ def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
                       dtype=real_type) for _ in range(nband)]
     model = [da.zeros((nx, ny), chunks=(-1, -1),
                       dtype=real_type) for _ in range(nband)]
-    if 'RESIDUAL' in dds[0]:
+    if residname in dds[0]:
         residual = [da.zeros((nx, ny), chunks=(-1, -1),
                             dtype=real_type) for _ in range(nband)]
     else:
@@ -697,12 +697,12 @@ def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
         b = ds.bandid
         if apparent:
             dirty[b] += ds.DIRTY.data
-            if 'RESIDUAL' in ds:
-                residual[b] += ds.RESIDUAL.data
+            if residname in ds:
+                residual[b] += getattr(ds, residname).data
         else:
             dirty[b] += ds.DIRTY.data * ds.BEAM.data
-            if 'RESIDUAL' in ds:
-                residual[b] += ds.RESIDUAL.data * ds.BEAM.data
+            if residname in ds:
+                residual[b] += getattr(ds, residname).data * ds.BEAM.data
         if 'PSF' in ds:
             psf[b] += ds.PSF.data
             psfhat[b] += ds.PSFHAT.data
@@ -716,7 +716,7 @@ def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
     wsum = wsums.sum()
     dirty = da.stack(dirty)/wsum
     model = da.stack(model)
-    if 'RESIDUAL' in ds:
+    if residname in ds:
         residual = da.stack(residual)/wsum
     if 'PSF' in ds:
         psf = da.stack(psf)/wsum
@@ -736,7 +736,8 @@ def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
                                                                 mean_beam,
                                                                 wsums,
                                                                 dual)
-    return dirty, model, residual, psf, psfhat, mean_beam, wsums, dual
+    return (dirty, model, residual, psf, psfhat,
+            mean_beam, wsums, dual)
 
 
 def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):
@@ -894,7 +895,7 @@ def concat_chan(xds, nband_out=1):
             flow = freq_bins[b]
             fhigh = freq_bins[b+1]
             freqsb = all_freqs[all_freqs >= flow]
-            # exlusive except for the last one
+            # exclusive except for the last one
             if b==nband_out-1:
                 freqsb = freqsb[freqsb <= fhigh]
             else:
@@ -932,17 +933,6 @@ def concat_chan(xds, nband_out=1):
             blocker.add_output('masko', 'rf', ((nrow,), (nchan,)), xdst[0].MASK.dtype)
 
             out_dict = blocker.get_dask_outputs()
-
-            # import dask
-            # dask.visualize(out_dict, color="order", cmap="autumn",
-            #             node_attr={"penwidth": "4"},
-            #             filename='/home/landman/testing/pfb/out/outdict_ordered_graph.pdf',
-            #             optimize_graph=False,
-            #             engine='cytoscape')
-            # dask.visualize(out_dict,
-            #             filename='/home/landman/testing/pfb/out/outdict_graph.pdf',
-            #             optimize_graph=False, engine='cytoscape')
-            # quit()
 
             # get weighted sum of beam
             beam = sum_beam(xdst)
@@ -1046,9 +1036,13 @@ def sum_overlap(ufreq, flow, fhigh, **kwargs):
         mask = kwargs[f'mask{i}']
         nu = kwargs[f'freq{i}']
         _, idx0, idx1 = np.intersect1d(nu, ufreq, assume_unique=True, return_indices=True)
-        viso[:, idx1] += vis[:, idx0] * wgt[:, idx0] * mask[:, idx0]
-        wgto[:, idx1] += wgt[:, idx0] * mask[:, idx0]
-        masko[:, idx1] += mask[:, idx0]
+        try:
+            viso[:, idx1] += vis[:, idx0] * wgt[:, idx0] * mask[:, idx0]
+            wgto[:, idx1] += wgt[:, idx0] * mask[:, idx0]
+            masko[:, idx1] += mask[:, idx0]
+        except Exception as e:
+            print(flow, fhigh, ufreq, nu)
+            raise e
 
     # unmasked where at least one data point is unflagged
     masko = np.where(masko > 0, True, False)
@@ -1138,6 +1132,7 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
         wgt = wgt.reshape(ntime*nband, 1)
     else:
         wgt = np.ones((ntime*nband, 1), dtype=float)
+
     # nothing to fit
     if ntime==1 and nband==1:
         coeffs = beta
@@ -1251,6 +1246,10 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
     ffunc = lambdify(params[1], fexpr)
     image_in[Ix, Iy] = modelf(tfunc(time), ffunc(freq), *coeffs)
 
+    pix_area_in = cellxi * cellyi
+    pix_area_out = cellxo * cellyo
+    area_ratio = pix_area_out/pix_area_in
+
     xin = (-(nxi//2) + np.arange(nxi))*cellxi + x0i
     yin = (-(nyi//2) + np.arange(nyi))*cellyi + y0i
     xo = (-(nxo//2) + np.arange(nxo))*cellxo + x0o
@@ -1303,7 +1302,7 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
         interpo = RegularGridInterpolator((xin, yin), image_in,
                                           bounds_error=True, method='linear')
         xx, yy = np.meshgrid(xo, yo, indexing='ij')
-        return interpo((xx, yy))
+        return interpo((xx, yy)) * area_ratio
     # elif (nxi != nxo) or (nyi != nyo):
     #     # only need the overlap in this case
     #     _, idx0, idx1 = np.intersect1d(xin, xo, assume_unique=True, return_indices=True)

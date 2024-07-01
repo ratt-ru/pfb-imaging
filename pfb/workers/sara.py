@@ -8,21 +8,21 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('KLEAN')
+log = pyscilog.get_logger('SARA')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 # create default parameters from schema
 defaults = {}
-for key in schema.klean["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.klean["inputs"][key]["default"]
+for key in schema.sara["inputs"].keys():
+    defaults[key.replace("-", "_")] = schema.sara["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.klean)
-def klean(**kw):
+@clickify_parameters(schema.sara)
+def sara(**kw):
     '''
-    Modified single-scale clean.
+    Deconvolution using SARA regularisation
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
@@ -30,10 +30,10 @@ def klean(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    logname = f'{str(ldir)}/klean_{timestamp}.log'
+    logname = f'{str(ldir)}/sara_{timestamp}.log'
     pyscilog.log_to_file(logname)
-
     print(f'Logs will be written to {logname}', file=log)
+
     from daskms.experimental.zarr import xds_from_zarr
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import set_output_names
@@ -52,7 +52,9 @@ def klean(**kw):
     with ExitStack() as stack:
         # numpy imports have to happen after this step
         from pfb import set_client
-        set_client(opts, stack, log, scheduler=opts.scheduler)
+        set_client(opts, stack, log,
+                   scheduler=opts.scheduler,
+                   auto_restrict=False)
 
         # TODO - prettier config printing
         print('Input Options:', file=log)
@@ -60,9 +62,10 @@ def klean(**kw):
             print('     %25s = %s' % (key, opts[key]), file=log)
 
         ti = time.time()
-        _klean(**opts)
+        _sara(**opts)
 
     dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
+
     from pfb.utils.fits import dds2fits, dds2fits_mfs
     import dask
     # convert to fits files
@@ -90,14 +93,11 @@ def klean(**kw):
     print(f"All done here after {time.time() - ti}s", file=log)
 
 
-def _klean(ddsi=None, **kw):
+def _sara(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
-    # always combine over ds during cleaning
-    opts['mean_ds'] = True
     OmegaConf.set_struct(opts, True)
 
     import numpy as np
-    from copy import copy, deepcopy
     import xarray as xr
     import numexpr as ne
     import dask
@@ -106,13 +106,18 @@ def _klean(ddsi=None, **kw):
     from pfb.utils.fits import (set_wcs, save_fits, dds2fits,
                                 dds2fits_mfs, load_fits)
     from pfb.utils.misc import dds2cubes
-    from pfb.deconv.hogbom import hogbom
-    from pfb.deconv.clark import clark
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
-    from pfb.opt.pcg import pcg, pcg_psf
-    from pfb.operators.hessian import hessian_xds, hessian
-    from scipy import ndimage
-    from copy import copy
+    from pfb.opt.power_method import power_method
+    from pfb.opt.pcg import pcg
+    from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
+    from pfb.utils.misc import l1reweight_func
+    from pfb.operators.hessian import hessian_xds
+    from pfb.operators.psf import psf_convolve_cube
+    from pfb.operators.psi import Psi
+    from copy import copy, deepcopy
+    from ducc0.misc import make_noncritical
+    from pfb.prox.prox_21m import prox_21m_numba as prox_21
+    # from pfb.prox.prox_21 import prox_21
     from pfb.utils.misc import fitcleanbeam, fit_image_cube
     from ducc0.misc import resize_thread_pool, thread_pool_size
     nthreads_tot = opts.nthreads_dask * opts.nvthreads
@@ -121,7 +126,7 @@ def _klean(ddsi=None, **kw):
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
-        fits_oname = opts.fits_output_folder + basename.split('/')[1]
+        fits_oname = opts.fits_output_folder + '/' + basename.split('/')[1]
     else:
         fits_oname = basename
 
@@ -156,40 +161,17 @@ def _klean(ddsi=None, **kw):
         time_out.append(ds.time_out)
     freq_out = np.unique(np.array(freq_out))
     time_out = np.unique(np.array(time_out))
-
-    # stitch dirty/psf in apparent scale
-    output_type = dds[0].DIRTY.dtype
-    dirty, model, residual, psf, psfhat, _, wsums, _ = dds2cubes(
-                                                            dds,
-                                                            opts.nband,
-                                                            apparent=True)
-    # because fuck dask
-    model = np.require(model, requirements='CAW')
-    fsel = wsums > 0  # keep track of empty bands
-
-
-    wsum = np.sum(wsums)
-    psf_mfs = np.sum(psf, axis=0)
-    # This is onlt the case for a psf at (l=0,m=0)
-    # assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
-    dirty_mfs = np.sum(dirty, axis=0)
-    if residual is None:
-        residual = dirty.copy()
-        residual_mfs = dirty_mfs.copy()
-    else:
-        residual_mfs = np.sum(residual, axis=0)
-
-    # for intermediary results (not currently written)
-    freq_out = []
-    for ds in dds:
-        freq_out.append(ds.freq_out)
-    freq_out = np.unique(np.array(freq_out))
+    try:
+        assert freq_out.size == opts.nband
+    except Exception as e:
+        print(f"Number of output frequencies={freq_out.size} "
+              f"does not match nband={opts.nband}", file=log)
+        raise e
+    nband = opts.nband
     nx = dds[0].x.size
     ny = dds[0].y.size
     ra = dds[0].ra
     dec = dds[0].dec
-    x0 = dds[0].x0
-    y0 = dds[0].y0
     radec = [ra, dec]
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
@@ -200,15 +182,24 @@ def _klean(ddsi=None, **kw):
     else:
         iter0 = 0
 
-    # TODO - check coordinates match
-    # Add option to interp onto coordinates?
-    if opts.mask is not None:
-        mask = load_fits(mask, dtype=output_type).squeeze()
-        assert mask.shape == (nx, ny)
-        mask = mask.astype(output_type)
-        print('Using provided fits mask', file=log)
+
+    # stitch dirty/psf in apparent scale
+    print("Combining slices into cubes", file=log)
+    output_type = dds[0].DIRTY.dtype
+    dirty, model, residual, psf, psfhat, beam, wsums, dual = dds2cubes(
+                                                               dds,
+                                                               opts.nband,
+                                                               apparent=False)
+    model = np.require(model, requirements='CAW')
+    wsum = np.sum(wsums)
+    psf_mfs = np.sum(psf, axis=0)
+    assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
+    dirty_mfs = np.sum(dirty, axis=0)
+    if residual is None:
+        residual = dirty.copy()
+        residual_mfs = dirty_mfs.copy()
     else:
-        mask = np.ones((nx, ny), dtype=output_type)
+        residual_mfs = np.sum(residual, axis=0)
 
     # set up vis space Hessian
     hessopts = {}
@@ -216,25 +207,93 @@ def _klean(ddsi=None, **kw):
     hessopts['do_wgridding'] = opts.do_wgridding
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
-    hessopts['nthreads'] = opts.nvthreads
-    hessopts['x0'] = x0
-    hessopts['y0'] = y0
-    # always clean in apparent scale so no beam
+    hessopts['nthreads'] = opts.nvthreads  # nvthreads since dask parallel over band
+
+    # TOD - add beam
     # mask is applied to residual after hessian application
     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
                    wsum=wsum, sigmainv=0,
                    mask=np.ones((nx, ny), dtype=output_type),
                    compute=True, use_beam=False)
 
-    # PCG related options for flux mop
-    cgopts = {}
-    cgopts['tol'] = opts.cg_tol
-    cgopts['maxit'] = opts.cg_maxit
-    cgopts['minit'] = opts.cg_minit
-    cgopts['verbosity'] = opts.cg_verbose
-    cgopts['report_freq'] = opts.cg_report_freq
-    cgopts['backtrack'] = opts.backtrack
 
+    # image space hessian
+    # pre-allocate arrays for doing FFT's
+    xout = np.empty(dirty.shape, dtype=dirty.dtype, order='C')
+    xout = make_noncritical(xout)
+    xpad = np.empty(psf.shape, dtype=dirty.dtype, order='C')
+    xpad = make_noncritical(xpad)
+    xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
+    xhat = make_noncritical(xhat)
+    # nthreads = nvthreads*nthreads_dask because dask not involved
+    psf_convolve = partial(psf_convolve_cube, xpad, xhat, xout, psfhat, lastsize,
+                           nthreads=opts.nvthreads*opts.nthreads_dask)
+
+    if opts.hess_norm is None:
+        print("Finding spectral norm of Hessian approximation", file=log)
+        hess_norm, hessbeta = power_method(psf_convolve, (nband, nx, ny),
+                                          tol=opts.pm_tol,
+                                          maxit=opts.pm_maxit,
+                                          verbosity=opts.pm_verbose,
+                                          report_freq=opts.pm_report_freq)
+        # inflate slightly for stability
+        hess_norm *= 1.05
+    else:
+        hess_norm = opts.hess_norm
+        print(f"Using provided hess-norm of beta = {hess_norm:.3e}", file=log)
+
+    print("Setting up dictionary", file=log)
+    bases = tuple(opts.bases.split(','))
+    nbasis = len(bases)
+    psi = Psi(nband, nx, ny, bases, opts.nlevels, opts.nthreads_dask)
+    Nxmax = psi.Nxmax
+    Nymax = psi.Nymax
+
+    # get clean beam area to convert residual units during l1reweighting
+    # TODO - could refine this with comparison between dirty and restored
+    print("Fitting PSF", file=log)
+    GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
+    pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
+    print(f"Number of pixels per beam estimated as {pix_per_beam}",
+          file=log)
+
+    # We do the following to set hyper-parameters in an intuitive way
+    # i) convert residual units so it is comparable to model
+    # ii) project residual into dual domain
+    # iii) compute the rms in the space where thresholding happens
+    psiHoutvar = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=dirty.dtype)
+    fsel = wsums > 0
+    tmp2 = residual.copy()
+    tmp2[fsel] *= wsum/wsums[fsel, None, None]
+    psi.dot(tmp2/pix_per_beam, psiHoutvar)
+    rms_comps = np.std(np.sum(psiHoutvar, axis=0),
+                       axis=(-1,-2))[:, None, None]  # preserve axes
+
+    # a value less than zero turns L1 reweighting off
+    # we'll start on convergence or at the iteration
+    # indicated by l1reweight_from, whichever comes first
+    if opts.l1reweight_from < 0:
+        l1reweight_from = np.inf
+    else:
+        l1reweight_from = opts.l1reweight_from
+
+    if dual is None or dual.shape[1] != nbasis:  # nbasis could change
+        dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=dirty.dtype)
+        l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=dirty.dtype)
+        reweighter = None
+    else:
+        if l1reweight_from == 0:
+            print('Initialising with L1 reweighted', file=log)
+            reweighter = partial(l1reweight_func,
+                                 psi.dot,
+                                 psiHoutvar,
+                                 opts.rmsfactor,
+                                 rms_comps,
+                                 alpha=opts.alpha)
+            l1weight = reweighter(model)
+        else:
+            l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=dirty.dtype)
+            reweighter = None
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -242,32 +301,37 @@ def _klean(ddsi=None, **kw):
     best_rmax = rmax
     best_model = model.copy()
     diverge_count = 0
-    if opts.threshold is None:
-        threshold = opts.sigmathreshold * rms
-    else:
-        threshold = opts.threshold
-
     print(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
     for k in range(iter0, iter0 + opts.niter):
-        print("Cleaning", file=log)
+        print('Solving for model', file=log)
         modelp = deepcopy(model)
-        x, status = clark(mask*residual, psf, psfhat, wsums/wsum,
-                          threshold=threshold,
-                          gamma=opts.gamma,
-                          pf=opts.peak_factor,
-                          maxit=opts.minor_maxit,
-                          subpf=opts.sub_peak_factor,
-                          submaxit=opts.subminor_maxit,
-                          verbosity=opts.verbose,
-                          report_freq=opts.report_freq,
-                          sigmathreshold=opts.sigmathreshold,
-                          nthreads=opts.nvthreads)
-        model += x
+        data = residual + psf_convolve(model)
+        grad21 = lambda x: psf_convolve(x) - data
+        if k == 0:
+            rmsfactor = opts.init_factor * opts.rmsfactor
+        else:
+            rmsfactor = opts.rmsfactor
+        model, dual = primal_dual(model,
+                                  dual,
+                                  rmsfactor*rms,
+                                  psi.hdot,
+                                  psi.dot,
+                                  hess_norm,
+                                  prox_21,
+                                  l1weight,
+                                  reweighter,
+                                  grad21,
+                                  nu=nbasis,
+                                  positivity=opts.positivity,
+                                  tol=opts.pd_tol,
+                                  maxit=opts.pd_maxit,
+                                  verbosity=opts.pd_verbose,
+                                  report_freq=opts.pd_report_freq,
+                                  gamma=opts.gamma)
 
         # write component model
-        print(f"Writing model at iter {k+1} to "
-              f"{basename}_{opts.suffix}_model.mds", file=log)
+        print(f"Writing model to {basename}_{opts.suffix}_model.mds", file=log)
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
                 fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
@@ -310,7 +374,7 @@ def _klean(ddsi=None, **kw):
         except Exception as e:
             print(f"Exception {e} raised during model fit .", file=log)
 
-        save_fits(np.mean(model[fsel], axis=0),
+        save_fits(np.mean(model, axis=0),
                   fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
@@ -325,11 +389,10 @@ def _klean(ddsi=None, **kw):
                   fits_oname + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
 
-        # report rms where there aren't any model components
         rmsp = rms
-        tmp_mask = ~np.any(model, axis=0)
-        rms = np.std(residual_mfs[tmp_mask])
+        rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
+        eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
         # base this on rmax?
         if rms < best_rms:
@@ -337,69 +400,8 @@ def _klean(ddsi=None, **kw):
             best_rmax = rmax
             best_model = model.copy()
 
-        if opts.threshold is None:
-            threshold = opts.sigmathreshold * rms
-        else:
-            threshold = opts.threshold
-
-        # trigger flux mop if clean has stalled, not converged or
-        # we have reached the final iteration/threshold
-        status |= k == iter0 + opts.niter-1
-        status |= rmax <= threshold
-        if opts.mop_flux and status:
-            print(f"Mopping flux at iter {k+1}", file=log)
-            mopmask = np.any(model, axis=0)
-            if opts.dirosion:
-                struct = ndimage.generate_binary_structure(2, opts.dirosion)
-                mopmask = ndimage.binary_dilation(mopmask, structure=struct)
-                mopmask = ndimage.binary_erosion(mopmask, structure=struct)
-            x0 = np.zeros_like(x)
-            x0[:, mopmask] = residual_mfs[mopmask]
-            # TODO - applying mask as beam is wasteful
-            mopmask = mopmask[None, :, :].astype(residual.dtype)
-            x = pcg_psf(psfhat,
-                        mopmask*residual,
-                        x0,
-                        mopmask,
-                        lastsize,
-                        opts.nvthreads,
-                        rmax,  # used as sigmainv
-                        cgopts)
-
-            model += opts.mop_gamma*x
-
-            print("Getting residual", file=log)
-            convimage = hess(model)
-            ne.evaluate('dirty - convimage', out=residual,
-                        casting='same_kind')
-            ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
-                        casting='same_kind')
-
-            save_fits(residual_mfs,
-                      f'{fits_oname}_{opts.suffix}_postmop{k}_residual_mfs.fits',
-                      hdr_mfs)
-
-            save_fits(np.mean(model[fsel], axis=0),
-                      f'{fits_oname}_{opts.suffix}_postmop{k}_model_mfs.fits',
-                      hdr_mfs)
-
-            rmsp = rms
-            tmp_mask = ~np.any(model, axis=0)
-            rms = np.std(residual_mfs[tmp_mask])
-            rmax = np.abs(residual_mfs).max()
-
-            # base this on rmax?
-            if rms < best_rms:
-                best_rms = rms
-                best_rmax = rmax
-                best_model = model.copy()
-
-            if opts.threshold is None:
-                threshold = opts.sigmathreshold * rms
-            else:
-                threshold = opts.threshold
-
-        print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
+        print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
+              f"rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
 
         print("Updating results", file=log)
@@ -408,9 +410,11 @@ def _klean(ddsi=None, **kw):
             b = ds.bandid
             r = da.from_array(residual[b]*wsum)
             m = da.from_array(model[b])
+            d = da.from_array(dual[b])
             mbest = da.from_array(best_model[b])
             ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
                                   'MODEL': (('x', 'y'), m),
+                                  'DUAL': (('c', 'i', 'j'), d),
                                   'MODEL_BEST': (('x', 'y'), mbest)})
             ds_out = ds_out.assign_attrs({'parametrisation': 'id',
                                           'niters': k+1,
@@ -419,18 +423,40 @@ def _klean(ddsi=None, **kw):
             dds_out.append(ds_out)
         writes = xds_to_zarr(dds_out, dds_name,
                              columns=('RESIDUAL', 'MODEL',
-                                      'MODEL_BEST'),
+                                      'DUAL', 'MODEL_BEST'),
                              rechunk=True)
         dask.compute(writes)
-        if rmax <= threshold:
-            print("Terminating because final threshold has been reached",
-                  file=log)
-            break
+
+        if eps < opts.tol:
+            # do not converge prematurely
+            if k+1 - iter0 >= l1reweight_from:
+                # start reweighting
+                l1reweight_from = 0
+            else:
+                print(f"Converged after {k+1} iterations.", file=log)
+                break
+
+        if k+1 - iter0 >= l1reweight_from:
+            print('Computing L1 weights', file=log)
+            # convert residual units so it is comparable to model
+            tmp2[fsel] = residual[fsel] * wsum/wsums[fsel, None, None]
+            psi.dot(tmp2/pix_per_beam, psiHoutvar)
+            rms_comps = np.std(np.sum(psiHoutvar, axis=0),
+                               axis=(-1,-2))[:, None, None]  # preserve axes
+            # we redefine the reweighter here since the rms has changed
+            reweighter = partial(l1reweight_func,
+                                 psi.dot,
+                                 psiHoutvar,
+                                 opts.rmsfactor,
+                                 rms_comps,
+                                 alpha=opts.alpha)
+            l1weight = reweighter(model)
 
         if rms > rmsp:
             diverge_count += 1
-            if diverge_count > 3:
+            if diverge_count > opts.diverge_count:
                 print("Algorithm is diverging. Terminating.", file=log)
                 break
 
     return
+

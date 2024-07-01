@@ -8,11 +8,20 @@ from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 
-def test_spotless(ms_name):
+def test_sara(ms_name):
     '''
     # TODO - currently we just check that this runs through.
     # What should the passing criteria be?
     '''
+
+    # we need the client for the init step
+    from dask.distributed import LocalCluster, Client
+    cluster = LocalCluster(processes=False,
+                           n_workers=1,
+                           threads_per_worker=1,
+                           memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                           asynchronous=False)
+    client = Client(cluster, direct_to_workers=False)
 
     import numpy as np
     np.random.seed(420)
@@ -23,11 +32,11 @@ def test_spotless(ms_name):
     from pfb.utils.misc import Gaussian2D, give_edges
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from ducc0.wgridder.experimental import dirty2vis
+    from ducc0.wgridder import dirty2vis
     from pfb.parser.schemas import schema
     from pfb.workers.init import _init
     from pfb.workers.grid import _grid
-    from pfb.workers.spotless import _spotless
+    from pfb.workers.sara import _sara
     from pfb.workers.model2comps import _model2comps
     from pfb.workers.degrid import _degrid
     import sympy as sm
@@ -39,24 +48,16 @@ def test_spotless(ms_name):
     xds = xds_from_ms(ms_name,
                       chunks={'row': -1, 'chan': -1})[0]
     spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]
-    # ms = table(str(test_dir / 'test_ascii_1h60.0s.MS'), readonly=False)
-    # spw = table(str(test_dir / 'test_ascii_1h60.0s.MS::SPECTRAL_WINDOW'))
 
-    # utime = np.unique(ms.getcol('TIME'))
     utime = np.unique(xds.TIME.values)
     freq = spw.CHAN_FREQ.values.squeeze()
-    # freq = spw.getcol('CHAN_FREQ').squeeze()
     freq0 = np.mean(freq)
 
     ntime = utime.size
     nchan = freq.size
-    # nant = np.maximum(ms.getcol('ANTENNA1').max(), ms.getcol('ANTENNA2').max()) + 1
     nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA2.values.max()) + 1
-
-    # ncorr = ms.getcol('FLAG').shape[-1]
     ncorr = xds.corr.size
 
-    # uvw = ms.getcol('UVW')
     uvw = xds.UVW.values
     nrow = uvw.shape[0]
     u_max = abs(uvw[:, 0]).max()
@@ -137,8 +138,8 @@ def test_spotless(ms_name):
     for key in schema.init["inputs"].keys():
         init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
     # overwrite defaults
-    outname = str(test_dir / 'test')
-    init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+    outname = str(test_dir / 'test_I')
+    init_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
     init_args["output_filename"] = outname
     init_args["data_column"] = "DATA"
     # init_args["weight_column"] = 'WEIGHT_SPECTRUM'
@@ -168,37 +169,37 @@ def test_spotless(ms_name):
     dds = _grid(xdsi=xdso, **grid_args)
 
     # LB - does this avoid duplicate gridding?
-    dds_name = f'{outname}_I_main.dds'
+    dds_name = f'{outname}_main.dds'
     dds = dask.compute(dds)[0]
     writes = xds_to_zarr(dds, dds_name, columns='ALL')
     dask.compute(writes)
 
-    # run spotless
-    spotless_args = {}
-    for key in schema.spotless["inputs"].keys():
-        spotless_args[key.replace("-", "_")] = schema.spotless["inputs"][key]["default"]
-    spotless_args["output_filename"] = outname
-    spotless_args["nband"] = nchan
-    spotless_args["niter"] = 2
+    # run sara
+    sara_args = {}
+    for key in schema.sara["inputs"].keys():
+        sara_args[key.replace("-", "_")] = schema.sara["inputs"][key]["default"]
+    sara_args["output_filename"] = outname
+    sara_args["nband"] = nchan
+    sara_args["niter"] = 2
     tol = 1e-5
-    spotless_args["tol"] = tol
-    spotless_args["gamma"] = 1.0
-    spotless_args["pd_tol"] = 5e-4
-    spotless_args["rmsfactor"] = 0.1
-    spotless_args["l1reweight_from"] = 5
-    spotless_args["bases"] = 'self,db1,db2,db3'
-    spotless_args["nlevels"] = 3
-    spotless_args["nthreads_dask"] = 1
-    spotless_args["nvthreads"] = 8
-    spotless_args["scheduler"] = 'sync'
-    spotless_args["do_wgridding"] = True
-    spotless_args["epsilon"] = epsilon
-    spotless_args["fits_mfs"] = False
-    _spotless(ddsi=dds, **spotless_args)
+    sara_args["tol"] = tol
+    sara_args["gamma"] = 1.0
+    sara_args["pd_tol"] = 5e-4
+    sara_args["rmsfactor"] = 0.1
+    sara_args["l1reweight_from"] = 5
+    sara_args["bases"] = 'self,db1,db2,db3'
+    sara_args["nlevels"] = 3
+    sara_args["nthreads_dask"] = 1
+    sara_args["nvthreads"] = 8
+    sara_args["scheduler"] = 'sync'
+    sara_args["do_wgridding"] = True
+    sara_args["epsilon"] = epsilon
+    sara_args["fits_mfs"] = False
+    _sara(ddsi=dds, **sara_args)
 
 
     # get the inferred model
-    dds = xds_from_zarr(f'{outname}_I_main.dds')
+    dds = xds_from_zarr(dds_name)
     freqs_dds = []
     times_dds = []
     for ds in dds:
@@ -227,7 +228,7 @@ def test_spotless(ms_name):
     model2comps_args["sigmasq"] = 1e-14
     _model2comps(**model2comps_args)
 
-    mds_name = f'{outname}_I_main_model.mds'
+    mds_name = f'{outname}_main_model.mds'
     mds = xr.open_zarr(mds_name)
 
     # grid spec
@@ -269,7 +270,7 @@ def test_spotless(ms_name):
     for key in schema.degrid["inputs"].keys():
         degrid_args[key.replace("-", "_")] = schema.degrid["inputs"][key]["default"]
     degrid_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
-    degrid_args["mds"] = f'{outname}_I_main_model.mds'
+    degrid_args["mds"] = f'{outname}_main_model.mds'
     degrid_args["channels_per_image"] = 1
     degrid_args["nthreads_dask"] = 1
     degrid_args["nvthreads"] = 8
@@ -287,8 +288,8 @@ def test_spotless(ms_name):
     for key in schema.init["inputs"].keys():
         init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
     # overwrite defaults
-    outname = str(test_dir / 'test2')
-    init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+    outname = str(test_dir / 'test2_I')
+    init_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
     init_args["output_filename"] = outname
     init_args["data_column"] = "CORRECTED_DATA"
     # init_args["weight_column"] = 'WEIGHT_SPECTRUM'
@@ -324,4 +325,4 @@ def test_spotless(ms_name):
         assert_allclose(1 + np.abs(ds.RESIDUAL.values)/wsum,
                         1 + np.abs(ds2.DIRTY.values)/wsum)
 
-# test_spotless()
+# test_sara()

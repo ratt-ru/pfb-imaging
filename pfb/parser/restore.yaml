@@ -34,7 +34,7 @@ inputs:
       Use captitals to produce corresponding cubes.
   overwrite:
     dtype: bool
-    default: false
+    default: true
     info:
       Allow overwriting fits files
 

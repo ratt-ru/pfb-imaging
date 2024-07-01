@@ -7,7 +7,7 @@ number of rows after BDA.
 import numpy as np
 import dask
 import dask.array as da
-from ducc0.wgridder.experimental import vis2dirty, dirty2vis
+from ducc0.wgridder import vis2dirty, dirty2vis
 from ducc0.fft import c2r, r2c
 from africanus.constants import c as lightspeed
 from quartical.utils.dask import Blocker
@@ -534,6 +534,8 @@ def _comps2vis_impl(uvw,
             fout = ffunc(np.mean(freq[indf]))
             image = np.zeros((nx, ny), dtype=comps.dtype)
             image[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
+            # negate w for wgridder bug
+            # uvw[:, 2] = -uvw[:, 2]
             vis[indr, indf, 0] = dirty2vis(uvw=uvw,
                                            freq=freq[indf],
                                            dirty=image,
@@ -568,7 +570,8 @@ def image_data_products(uvw,
                         l2reweight_dof=None,
                         do_dirty=True,
                         do_psf=True,
-                        do_weight=True):
+                        do_weight=True,
+                        do_noise=False):
     '''
     Function to compute image space data products in one go
         dirty
@@ -610,7 +613,7 @@ def image_data_products(uvw,
         wcount = mask.sum()
         if wcount:
             ovar = ressq.sum()/wcount  # use 67% quantile?
-            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)
         else:
             wgt = None
 
@@ -736,5 +739,29 @@ def image_data_products(uvw,
             double_precision_accumulation=double_accum)
 
         out_dict['RESIDUAL'] = residual
+
+    if do_noise:
+        # sample noise and project into image space
+        nrow, nchan = vis.shape
+        vis = (np.random.randn(nrow, nchan) +
+               1j*np.random.randn(nrow, nchan)) * np.sqrt(wgt)/np.sqrt(2)
+        noise = residual = vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=vis,
+            wgt=wgt,
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cellx, pixsize_y=celly,
+            center_x=x0, center_y=y0,
+            epsilon=epsilon,
+            flip_v=False,  # hardcoded for now
+            do_wgridding=do_wgridding,
+            divide_by_n=False,  # hardcoded for now
+            nthreads=nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=double_accum)
+
+        out_dict['NOISE'] = noise
 
     return out_dict

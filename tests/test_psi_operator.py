@@ -37,8 +37,6 @@ def test_psi(nx, ny, nband, nlevels):
     alpha = np.random.randn(nband, nbasis, nymax, nxmax)  #, dtype=x.dtype)
     xrec = np.random.randn(nband, nx, ny)  #, dtype=x.dtype)
 
-    # import ipdb; ipdb.set_trace()
-
     # decompose
     psi.dot(x, alpha)
     # reconstruct
