@@ -37,8 +37,12 @@ The default outputs are named using a conbination of the following parameters
 * `--product`
 * `--suffix`
 
-This is to allow imaging multiple fields from a single set of averaged Stokes visibilities produced by the `init` applcation.
 The output dataset of the `init` application will be called
 
 :code:`f"{output_filename}_{product}.xds"`
 
+with standard python string substitutions. The grid worker will creates another dataset called
+
+:code:`f"{output_filename}_{product}_{suffix}.xds"`
+
+i.e. with the suffix appended. This is to allow imaging multiple fields from a single set of averaged Stokes visibilities produced by the `init` applcation.
