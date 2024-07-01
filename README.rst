@@ -35,9 +35,10 @@ The default outputs are named using a conbination of the following parameters
 
 * `--output-filename`
 * `--product`
-* `--suffix``
+* `--suffix`
 
 This is to allow imaging multiple fields from a single set of averaged Stokes visibilities produced by the `init` applcation.
 The output dataset of the `init` application will be called
 
-    `:: output-filename_product.xds`
+:code:`f"{output_filename}_{product}.xds"`
+
