@@ -61,8 +61,10 @@ def test_counts(ms_name):
 
 
     mask = np.ones((nrow, nchan), dtype=bool)
+    wgt = np.ones((nrow, nchan), dtype=uvw.dtype)
     counts = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                             dtype=np.float64, k=0).squeeze()
+                             dtype=np.float64, k=0, ngrid=2, wgt=wgt).squeeze()
+    counts = counts.sum(axis=0)
     ku = np.sort(np.fft.fftfreq(nx, cell_rad))
     # shift by half a pixel to get bin edges
     kucell = ku[1] - ku[0]
@@ -138,15 +140,17 @@ def test_counts_dask(ms_name):
 
     print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
     mask = np.ones((nrow, nchan), dtype=bool)
+    wgt = np.ones((nrow, nchan), dtype=uvw.dtype)
     counts = _compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                             np.float64, k=0).squeeze()
+                             np.float64, k=0, wgt=wgt).squeeze()
 
     rc = 5000
     uvw = da.from_array(uvw, chunks=(rc, 3))
     freq = da.from_array(freq, chunks=-1)
     mask = da.from_array(mask, chunks=(rc, -1))
+    wgt = da.from_array(wgt, chunks=(rc, -1))
     counts_dask = compute_counts(uvw, freq, mask, nx, ny, cell_rad, cell_rad,
-                                 np.float64, k=0)
+                                 np.float64, k=0, wgt=wgt)
 
     assert_allclose(counts, counts_dask.compute())
 

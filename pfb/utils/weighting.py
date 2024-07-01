@@ -96,7 +96,8 @@ def _compute_counts(uvw, freq, mask, nx, ny,
 
     if wgt is None:
         # this should be a small array
-        wgt = np.broadcast_to(np.ones((1,), dtype=dtype), (nrow, nchan))
+        # wgt = np.broadcast_to(np.ones((1,), dtype=dtype), (nrow, nchan))
+        wgt = np.ones((nrow, nchan), dtype=uvw.dtype)
 
     for g in prange(ngrid):
         for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):

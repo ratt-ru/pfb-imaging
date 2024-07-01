@@ -358,7 +358,7 @@ def _fluxmop(ddsi=None, **kw):
     writes = xds_to_zarr(dds_out, dds_name,
                          columns=('RESIDUAL', 'RESIDUALP', 'MODEL', 'MODELP', 'UPDATE'),
                          rechunk=True)
-    # import ipdb; ipdb.set_trace()
+
     dask.compute(writes)
 
     dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})

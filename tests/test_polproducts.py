@@ -12,6 +12,14 @@ def test_polproducts(do_gains, ms_name):
     '''
     Tests polarisation products
     '''
+    # we need the client for the init step
+    from dask.distributed import LocalCluster, Client
+    cluster = LocalCluster(processes=False,
+                           n_workers=1,
+                           threads_per_worker=1,
+                           memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                           asynchronous=False)
+    client = Client(cluster, direct_to_workers=False)
 
     import numpy as np
     np.random.seed(420)
@@ -220,13 +228,13 @@ def test_polproducts(do_gains, ms_name):
     from pfb.parser.schemas import schema
     for p in ['I', 'Q', 'U', 'V']:
         basename = f'{outname}_{p}'
-        dds_name = f'{basename}.dds'
+        dds_name = f'{basename}_main.dds'
         # set defaults from schema
         init_args = {}
         for key in schema.init["inputs"].keys():
             init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
         # overwrite defaults
-        init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+        init_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
         init_args["output_filename"] = basename
         init_args["data_column"] = "DATA"
         init_args["flag_column"] = 'FLAG'

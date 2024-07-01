@@ -430,7 +430,6 @@ def _fwdbwd(ddsi=None, **kw):
             # l1weight[l1weight < 1.0] = 0.0
             # prox21 = partial(prox_21, weight=l1weight, axis=0)
 
-        # import ipdb; ipdb.set_trace()
         print("Updating results", file=log)
         dds_out = []
         for ds in dds:

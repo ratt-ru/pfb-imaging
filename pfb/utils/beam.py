@@ -72,7 +72,7 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
                             beam_extents, bfreqs,
                             lm, parangles, point_errs,
                             ant_scale, np.array((freq,))).squeeze()
-    import ipdb; ipdb.set_trace()
+
     return beam_image.squeeze()
 
 

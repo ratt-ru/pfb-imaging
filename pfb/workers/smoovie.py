@@ -126,7 +126,6 @@ def smoovie(**kw):
         # lazy load fds
         fds = list(map(xr.open_zarr, fdslist))
 
-        # import ipdb; ipdb.set_trace()
         # TODO - scan selection
 
         # get input times and frequencies
