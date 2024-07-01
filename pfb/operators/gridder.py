@@ -7,7 +7,7 @@ number of rows after BDA.
 import numpy as np
 import dask
 import dask.array as da
-from ducc0.wgridder.experimental import vis2dirty, dirty2vis
+from ducc0.wgridder import vis2dirty, dirty2vis
 from ducc0.fft import c2r, r2c
 from africanus.constants import c as lightspeed
 from quartical.utils.dask import Blocker

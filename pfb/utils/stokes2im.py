@@ -13,7 +13,7 @@ from pfb.utils.weighting import (_compute_counts, _counts_to_weights,
 from pfb.utils.misc import eval_coeffs_to_slice
 from pfb.utils.fits import set_wcs, save_fits
 from pfb.operators.gridder import _im2vis_impl as im2vis
-from ducc0.wgridder.experimental import vis2dirty, dirty2vis
+from ducc0.wgridder import vis2dirty, dirty2vis
 from casacore.quanta import quantity
 from datetime import datetime
 from ducc0.fft import c2r, r2c, good_size

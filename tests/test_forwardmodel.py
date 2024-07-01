@@ -27,7 +27,7 @@
 #     from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 #     from africanus.constants import c as lightspeed
 #     from ducc0.fft import good_size
-#     from ducc0.wgridder.experimental import vis2dirty
+#     from ducc0.wgridder import vis2dirty
 #     from africanus.calibration.utils.dask import corrupt_vis, correct_vis
 #     from africanus.calibration.utils import chunkify_rows
 #     import xarray as xr

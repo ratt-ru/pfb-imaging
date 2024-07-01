@@ -19,6 +19,7 @@ def test_polproducts(do_gains, ms_name):
     from daskms import xds_from_ms, xds_from_table, xds_to_table
     from daskms.experimental.zarr import xds_to_zarr
     from africanus.constants import c as lightspeed
+    from ducc0.wgridder import dirty2vis
 
 
     test_dir = Path(ms_name).resolve().parent
@@ -80,7 +81,6 @@ def test_polproducts(do_gains, ms_name):
 
     # model vis
     epsilon = 1e-7
-    from ducc0.wgridder.experimental import dirty2vis
     model_vis_I = np.zeros((nrow, nchan), dtype=np.complex128)
     for c in range(nchan):
         model_vis_I[:, c:c+1] = dirty2vis(uvw=uvw,

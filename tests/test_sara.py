@@ -23,7 +23,7 @@ def test_sara(ms_name):
     from pfb.utils.misc import Gaussian2D, give_edges
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from ducc0.wgridder.experimental import dirty2vis
+    from ducc0.wgridder import dirty2vis
     from pfb.parser.schemas import schema
     from pfb.workers.init import _init
     from pfb.workers.grid import _grid

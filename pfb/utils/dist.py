@@ -14,7 +14,7 @@ from pfb.wavelets.wavelets_jsk import  (get_buffer_size,
 from ducc0.misc import make_noncritical
 import concurrent.futures as cf
 from africanus.constants import c as lightspeed
-from ducc0.wgridder.experimental import vis2dirty, dirty2vis
+from ducc0.wgridder import vis2dirty, dirty2vis
 from ducc0.fft import c2r, r2c, c2c, good_size
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
