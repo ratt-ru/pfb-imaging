@@ -30,9 +30,10 @@ def sara(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    pyscilog.log_to_file(f'{str(ldir)}/sara_{timestamp}.log')
+    logname = f'{str(ldir)}/sara_{timestamp}.log'
+    pyscilog.log_to_file(logname)
 
-    print(f'Logs will be written to {str(ldir)}/spotless_{timestamp}.log', file=log)
+    print(f'Logs will be written to {str(ldir)}/sara_{timestamp}.log', file=log)
     from daskms.experimental.zarr import xds_from_zarr
     from daskms.fsspec_store import DaskMSStore
     import fsspec
@@ -50,11 +51,10 @@ def sara(**kw):
     if not fs.exists(basedir):
         fs.makedirs(basedir)
 
-    oname = (opts.output_filename.split('/')[-1] + f'_{opts.product.upper()}'
-             + f'_{opts.suffix}')
+    oname = opts.output_filename.split('/')[-1] + f'_{opts.product.upper()}'
     basename = f'{basedir}/{oname}'
     opts.output_filename = basename
-    dds_name = f'{basename}.dds'
+    dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
 
     if opts.fits_output_folder is not None:
@@ -92,18 +92,18 @@ def sara(**kw):
     fitsout = []
     if opts.fits_mfs:
         fitsout.append(dds2fits_mfs(dds, 'RESIDUAL',
-                                    f'{fits_oname}',
+                                    f'{fits_oname}_{opts.suffix}',
                                     norm_wsum=True))
         fitsout.append(dds2fits_mfs(dds, 'MODEL',
-                                    f'{fits_oname}',
+                                    f'{fits_oname}_{opts.suffix}',
                                     norm_wsum=False))
 
     if opts.fits_cubes:
         fitsout.append(dds2fits(dds, 'RESIDUAL',
-                                f'{fits_oname}',
+                                f'{fits_oname}_{opts.suffix}',
                                 norm_wsum=True))
         fitsout.append(dds2fits(dds, 'MODEL',
-                                f'{fits_oname}',
+                                f'{fits_oname}_{opts.suffix}',
                                 norm_wsum=False))
 
     if len(fitsout):
@@ -145,9 +145,12 @@ def _sara(ddsi=None, **kw):
     print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
     basename = opts.output_filename
-    fits_oname = opts.fits_output_folder + basename.split('/')[1]
+    if opts.fits_output_folder is not None:
+        fits_oname = opts.fits_output_folder + basename.split('/')[1]
+    else:
+        fits_oname = basename
 
-    dds_name = f'{basename}.dds'
+    dds_name = f'{basename}_{opts.suffix}.dds'
     if ddsi is not None:
         dds = []
         for ds in ddsi:
@@ -207,6 +210,7 @@ def _sara(ddsi=None, **kw):
                                                                dds,
                                                                opts.nband,
                                                                apparent=False)
+    model = np.require(model, requirements='CAW')
     wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
     assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
@@ -347,7 +351,7 @@ def _sara(ddsi=None, **kw):
                                   gamma=opts.gamma)
 
         # write component model
-        print(f"Writing model to {basename}_model.mds", file=log)
+        print(f"Writing model to {basename}_{opts.suffix}_model.mds", file=log)
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
                 fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
@@ -385,13 +389,13 @@ def _sara(ddsi=None, **kw):
             coeff_dataset = xr.Dataset(data_vars=data_vars,
                                coords=coords,
                                attrs=attrs)
-            coeff_dataset.to_zarr(f"{basename}_model.mds",
+            coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model.mds",
                                   mode='w')
         except Exception as e:
             print(f"Exception {e} raised during model fit .", file=log)
 
         save_fits(np.mean(model, axis=0),
-                  fits_oname + f'_model_{k+1}.fits',
+                  fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
         print("Getting residual", file=log)
@@ -402,7 +406,7 @@ def _sara(ddsi=None, **kw):
                     casting='same_kind')
 
         save_fits(residual_mfs,
-                  fits_oname + f'_residual_{k+1}.fits',
+                  fits_oname + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
 
         rmsp = rms

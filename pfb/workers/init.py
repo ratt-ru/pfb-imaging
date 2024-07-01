@@ -31,6 +31,7 @@ def init(**kw):
     ldir.mkdir(parents=True, exist_ok=True)
     logname = f'{str(ldir)}/init_{timestamp}.log'
     pyscilog.log_to_file(logname)
+
     print(f'Logs will be written to {logname}', file=log)
     if opts.product.upper() not in ["I","Q", "U", "V"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
@@ -56,11 +57,21 @@ def init(**kw):
             except Exception as e:
                 raise ValueError(f"No gain table  at {gt}")
         opts.gain_table = gainnames
-    OmegaConf.set_struct(opts, True)
 
-    if opts.product.upper() not in ["I","Q", "U", "V"]:
-            # "XX", "YX", "XY", "YY", "RR", "RL", "LR", "LL"]:
-        raise NotImplementedError(f"Product {opts.product} not yet supported")
+    if '://' in opts.output_filename:
+        protocol = opts.output_filename.split('://')[0]
+    else:
+        protocol = 'file'
+
+    fs = fsspec.filesystem(protocol)
+    basedir = fs.expand_path('/'.join(opts.output_filename.split('/')[:-1]))[0]
+    if not fs.exists(basedir):
+        fs.makedirs(basedir)
+
+    oname = opts.output_filename.split('/')[-1] + f'_{opts.product.upper()}'
+    basename = f'{basedir}/{oname}'
+    opts.output_filename = basename
+    OmegaConf.set_struct(opts, True)
 
     # TODO - prettier config printing
     print('Input Options:', file=log)
@@ -138,7 +149,7 @@ def _init(**kw):
     from uuid import uuid4
     import fsspec
 
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    basename = f'{opts.output_filename}'
 
     xds_store = DaskMSStore(f'{basename}.xds')
     if xds_store.exists():

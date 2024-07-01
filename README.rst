@@ -1,5 +1,6 @@
+===========
 pfb-imaging
-=========
+===========
 
 .. .. image:: /logo/Gemini_Generated_Image_m19n6gm19n6gm19n.jpg
 ..    :align: center
@@ -26,3 +27,17 @@ no binary mode eg
 If you find any of this useful please cite (for now)
 
 https://arxiv.org/abs/2101.08072
+
+A word about naming conventions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The default outputs are named using a conbination of the following parameters
+
+* `--output-filename`
+* `--product`
+* `--suffix``
+
+This is to allow imaging multiple fields from a single set of averaged Stokes visibilities produced by the `init` applcation.
+The output dataset of the `init` application will be called
+
+    `:: output-filename_product.xds`

@@ -1,4 +1,6 @@
 # flake8: noqa
+import os
+from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
 from functools import partial
@@ -26,13 +28,45 @@ def klean(**kw):
     opts = OmegaConf.create(defaults)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'klean_{timestamp}.log')
+    ldir = Path(opts.log_directory).resolve()
+    ldir.mkdir(parents=True, exist_ok=True)
+    pyscilog.log_to_file(f'{str(ldir)}/klean_{timestamp}.log')
 
-    if opts.nworkers is None:
-        if opts.scheduler=='distributed':
-            opts.nworkers = opts.nband
-        else:
-            opts.nworkers = 1
+    print(f'Logs will be written to {str(ldir)}/klean_{timestamp}.log', file=log)
+    from daskms.experimental.zarr import xds_from_zarr
+    from daskms.fsspec_store import DaskMSStore
+    import fsspec
+    # TODO - there must be a neater way to do this with fsspec
+    # basedir = Path(opts.output_filename).resolve().parent
+    # basedir.mkdir(parents=True, exist_ok=True)
+    # basename = f'{opts.output_filename}_{opts.product.upper()}'
+    if '://' in opts.output_filename:
+        protocol = opts.output_filename.split('://')[0]
+    else:
+        protocol = 'file'
+
+    fs = fsspec.filesystem(protocol)
+    basedir = fs.expand_path('/'.join(opts.output_filename.split('/')[:-1]))[0]
+    if not fs.exists(basedir):
+        fs.makedirs(basedir)
+
+    oname = opts.output_filename.split('/')[-1] + f'_{opts.product.upper()}'
+    basename = f'{basedir}/{oname}'
+    opts.output_filename = basename
+    dds_name = f'{basename}_{opts.suffix}.dds'
+    dds_store = DaskMSStore(dds_name)
+
+    if opts.fits_output_folder is not None:
+        # this should be a file system
+        fs = fsspec.filesystem('file')
+        fbasedir = fs.expand_path(opts.fits_output_folder)[0]
+        if not fs.exists(fbasedir):
+            fs.makedirs(fbasedir)
+        fits_oname = f'{fbasedir}/{oname}'
+        opts.fits_output_folder = fbasedir
+    else:
+        fits_oname = f'{basedir}/{oname}'
+        opts.fits_output_folder = basedir
 
     OmegaConf.set_struct(opts, True)
 
@@ -46,9 +80,34 @@ def klean(**kw):
         for key in opts.keys():
             print('     %25s = %s' % (key, opts[key]), file=log)
 
+        ti = time.time()
         _klean(**opts)
 
-    print("All done here.", file=log)
+    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
+
+    # convert to fits files
+    fitsout = []
+    if opts.fits_mfs:
+        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL',
+                                    f'{fits_oname}_{opts.suffix}',
+                                    norm_wsum=True))
+        fitsout.append(dds2fits_mfs(dds, 'MODEL',
+                                    f'{fits_oname}_{opts.suffix}',
+                                    norm_wsum=False))
+
+    if opts.fits_cubes:
+        fitsout.append(dds2fits(dds, 'RESIDUAL',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=True))
+        fitsout.append(dds2fits(dds, 'MODEL',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=False))
+
+    if len(fitsout):
+        print("Writing fits", file=log)
+        dask.compute(fitsout)
+
+    print(f"All done here after {time.time() - ti}s", file=log)
 
 
 def _klean(ddsi=None, **kw):
@@ -80,9 +139,13 @@ def _klean(ddsi=None, **kw):
     resize_thread_pool(nthreads_tot)
     print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    basename = opts.output_filename
+    if opts.fits_output_folder is not None:
+        fits_oname = opts.fits_output_folder + basename.split('/')[1]
+    else:
+        fits_oname = basename
 
-    dds_name = f'{basename}_{opts.suffix}.dds'
+    dds_name = f'{basename}.dds'
     if ddsi is not None:
         dds = []
         for ds in ddsi:
@@ -224,7 +287,7 @@ def _klean(ddsi=None, **kw):
 
         # write component model
         print(f"Writing model at iter {k+1} to "
-              f"{basename}_{opts.suffix}_model_{k+1}.mds", file=log)
+              f"{basename}_model.mds", file=log)
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
                 fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
@@ -262,12 +325,12 @@ def _klean(ddsi=None, **kw):
             coeff_dataset = xr.Dataset(data_vars=data_vars,
                                coords=coords,
                                attrs=attrs)
-            coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model_{k+1}.mds")
+            coeff_dataset.to_zarr(f"{basename}_model.mds")
         except Exception as e:
             print(f"Exception {e} raised during model fit .", file=log)
 
         save_fits(np.mean(model[fsel], axis=0),
-                  basename + f'_{opts.suffix}_model_{k+1}.fits',
+                  fits_oname + + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
         print("Getting residual", file=log)
@@ -278,7 +341,7 @@ def _klean(ddsi=None, **kw):
                     casting='same_kind')
 
         save_fits(residual_mfs,
-                  basename + f'_{opts.suffix}_residual_{k+1}.fits',
+                  fits_oname + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
 
         # report rms where there aren't any model components
@@ -332,11 +395,11 @@ def _klean(ddsi=None, **kw):
                         casting='same_kind')
 
             save_fits(residual_mfs,
-                      f'{basename}_{opts.suffix}_postmop{k}_residual_mfs.fits',
+                      f'{fits_oname}_{opts.suffix}_postmop{k}_residual_mfs.fits',
                       hdr_mfs)
 
             save_fits(np.mean(model[fsel], axis=0),
-                      f'{basename}_{opts.suffix}_postmop{k}_model_mfs.fits',
+                      f'{fits_oname}_{opts.suffix}_postmop{k}_model_mfs.fits',
                       hdr_mfs)
 
             rmsp = rms
@@ -389,18 +452,4 @@ def _klean(ddsi=None, **kw):
                 print("Algorithm is diverging. Terminating.", file=log)
                 break
 
-    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
-
-    # convert to fits files
-    fitsout = []
-    if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
-
-    if opts.fits_cubes:
-        fitsout.append(dds2fits(dds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
-        fitsout.append(dds2fits(dds, 'MODEL', f'{basename}_{opts.suffix}', norm_wsum=False))
-
-    if len(fitsout):
-        print("Writing fits", file=log)
-        dask.compute(fitsout)
+    return

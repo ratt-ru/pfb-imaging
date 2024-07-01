@@ -14,6 +14,15 @@ def test_sara(ms_name):
     # What should the passing criteria be?
     '''
 
+    # we need the client for the init step
+    from dask.distributed import LocalCluster, Client
+    cluster = LocalCluster(processes=False,
+                           n_workers=1,
+                           threads_per_worker=1,
+                           memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                           asynchronous=False)
+    client = Client(cluster, direct_to_workers=False)
+
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
@@ -129,8 +138,8 @@ def test_sara(ms_name):
     for key in schema.init["inputs"].keys():
         init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
     # overwrite defaults
-    outname = str(test_dir / 'test')
-    init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+    outname = str(test_dir / 'test_I')
+    init_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
     init_args["output_filename"] = outname
     init_args["data_column"] = "DATA"
     # init_args["weight_column"] = 'WEIGHT_SPECTRUM'
@@ -146,6 +155,7 @@ def test_sara(ms_name):
     for key in schema.grid["inputs"].keys():
         grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
+    import ipdb; ipdb.set_trace()
     grid_args["output_filename"] = outname
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
@@ -160,7 +170,7 @@ def test_sara(ms_name):
     dds = _grid(xdsi=xdso, **grid_args)
 
     # LB - does this avoid duplicate gridding?
-    dds_name = f'{outname}_I_main.dds'
+    dds_name = f'{outname}_main.dds'
     dds = dask.compute(dds)[0]
     writes = xds_to_zarr(dds, dds_name, columns='ALL')
     dask.compute(writes)
@@ -190,7 +200,7 @@ def test_sara(ms_name):
 
 
     # get the inferred model
-    dds = xds_from_zarr(f'{outname}_I_main.dds')
+    dds = xds_from_zarr(f'{outname}.dds')
     freqs_dds = []
     times_dds = []
     for ds in dds:

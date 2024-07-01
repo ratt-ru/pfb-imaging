@@ -16,6 +16,15 @@ def test_klean(do_gains, ms_name):
     TODO - add per scan PB variations
     '''
 
+    # we need the client for the init step
+    from dask.distributed import LocalCluster, Client
+    cluster = LocalCluster(processes=False,
+                           n_workers=1,
+                           threads_per_worker=1,
+                           memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                           asynchronous=False)
+    client = Client(cluster, direct_to_workers=False)
+
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
@@ -165,8 +174,8 @@ def test_klean(do_gains, ms_name):
         }
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
         gain_path = str(test_dir / Path("gains.qc"))
-        out_path = f'{gain_path}::NET'
-        dask.compute(xds_to_zarr(net_xds_list, out_path))
+        dask.compute(xds_to_zarr(net_xds_list, f'{gain_path}::NET'))
+        gain_path = [f'{gain_path}/NET']
 
     else:
         xds['DATA'] = (('row','chan','corr'),
@@ -174,17 +183,15 @@ def test_klean(do_gains, ms_name):
         dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
         gain_path = None
 
-    suffix = "main"
-    outname = str(test_dir / 'test')
-    basename = f'{outname}_I'
-    dds_name = f'{basename}_{suffix}.dds'
+    outname = str(test_dir / 'test_I')
+    dds_name = f'{outname}.dds'
     # set defaults from schema
     from pfb.parser.schemas import schema
     init_args = {}
     for key in schema.init["inputs"].keys():
         init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
     # overwrite defaults
-    init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+    init_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
     init_args["output_filename"] = outname
     init_args["data_column"] = "DATA"
     init_args["flag_column"] = 'FLAG'
@@ -201,7 +208,6 @@ def test_klean(do_gains, ms_name):
         grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
     grid_args["output_filename"] = outname
-    grid_args["suffix"] = suffix
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
     grid_args["fits_mfs"] = True
@@ -220,7 +226,6 @@ def test_klean(do_gains, ms_name):
     for key in schema.klean["inputs"].keys():
         klean_args[key.replace("-", "_")] = schema.klean["inputs"][key]["default"]
     klean_args["output_filename"] = outname
-    klean_args["suffix"] = suffix
     klean_args["nband"] = nchan
     klean_args["dirosion"] = 0
     klean_args["do_residual"] = False
@@ -241,8 +246,7 @@ def test_klean(do_gains, ms_name):
     _klean(ddsi=dds, **klean_args)
 
     # get inferred model
-    basename = f'{outname}_I'
-    dds_name = f'{basename}_{suffix}.dds'
+    dds_name = f'{outname}.dds'
     dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
     model_inferred = np.zeros((nchan, nx, ny))
     for ds in dds:

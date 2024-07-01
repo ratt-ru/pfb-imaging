@@ -203,8 +203,8 @@ def test_polproducts(do_gains, ms_name):
         }
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
         gain_path = str(test_dir / Path("gains.qc"))
-        out_path = f'{gain_path}::NET'
-        dask.compute(xds_to_zarr(net_xds_list, out_path))
+        dask.compute(xds_to_zarr(net_xds_list, f'{gain_path}::NET'))
+        gain_path = [f'{gain_path}/NET']
 
     else:
         # # add iid noise
@@ -216,19 +216,18 @@ def test_polproducts(do_gains, ms_name):
         dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
         gain_path = None
 
-    suffix = "main"
     outname = str(test_dir / 'test')
     from pfb.parser.schemas import schema
     for p in ['I', 'Q', 'U', 'V']:
         basename = f'{outname}_{p}'
-        dds_name = f'{basename}_{suffix}.dds'
+        dds_name = f'{basename}.dds'
         # set defaults from schema
         init_args = {}
         for key in schema.init["inputs"].keys():
             init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
         # overwrite defaults
         init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
-        init_args["output_filename"] = outname
+        init_args["output_filename"] = basename
         init_args["data_column"] = "DATA"
         init_args["flag_column"] = 'FLAG'
         init_args["gain_table"] = gain_path
@@ -244,8 +243,7 @@ def test_polproducts(do_gains, ms_name):
         for key in schema.grid["inputs"].keys():
             grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
         # overwrite defaults
-        grid_args["output_filename"] = outname
-        grid_args["suffix"] = suffix
+        grid_args["output_filename"] = basename
         grid_args["nband"] = nchan
         grid_args["field_of_view"] = fov
         grid_args["fits_mfs"] = True

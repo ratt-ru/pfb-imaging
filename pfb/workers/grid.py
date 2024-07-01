@@ -208,7 +208,7 @@ def _grid(xdsi=None, **kw):
     print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
 
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    basename = f'{opts.output_filename}'
 
     # xds contains vis products, no imaging weights applied
     xds_name = f'{basename}.xds' if opts.xds is None else opts.xds

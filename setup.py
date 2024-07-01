@@ -12,7 +12,9 @@ requirements = [
                 'numexpr',
                 'pyscilog >= 0.1.2',
                 'Click',
-                "ducc0",
+                "ducc0"
+                "@git+https://github.com/mreineck/ducc.git"
+                "@tweak_wgridder_conventions",
                 "QuartiCal"
                 "@git+https://github.com/ratt-ru/QuartiCal.git"
                 "@unpinneddeps",

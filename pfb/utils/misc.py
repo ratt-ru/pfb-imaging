@@ -354,7 +354,6 @@ def construct_mappings(ms_name,
             u_max = abs(uvw[:, 0]).max()
             v_max = abs(uvw[:, 1]).max()
             uv_maxs.append(da.maximum(u_max, v_max))
-
             if gain_name is not None:
                 gain_times[ms][idt] = gain[ids].gain_time.data
                 gain_freqs[ms][idt] = gain[ids].gain_freq.data
@@ -737,7 +736,7 @@ def dds2cubes(dds, nband, apparent=False, dual=True,
                                                                 mean_beam,
                                                                 wsums,
                                                                 dual)
-    return (dirty, model.setflags(write=True), residual, psf, psfhat,
+    return (dirty, model, residual, psf, psfhat,
             mean_beam, wsums, dual)
 
 
