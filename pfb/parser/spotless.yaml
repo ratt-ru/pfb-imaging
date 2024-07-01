@@ -33,11 +33,17 @@ inputs:
     info:
       L1 reweighting will kick in either at convergence or after this many
       iterations. Set to a negative value to disbale L1 reweighting.
-  hessnorm:
+  hess-norm:
     dtype: float
-    abbreviation: hessnorm
+    abbreviation: hess-norm
     info:
       Spectral norm of hessian approximation
+  hess-approx:
+    dtype: str
+    default: wgt
+    abbreviation: hess-approx
+    info:
+      Set to wgt/psf to use the vis/image space hess approximation
   rmsfactor:
     dtype: float
     default: 1.0

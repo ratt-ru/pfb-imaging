@@ -318,7 +318,7 @@ def _fwdbwd(ddsi=None, **kw):
         # hessian depends on x and sigmainv so need to do this at every iteration
         sigmainv = np.maximum(np.std(j), opts.sigmainv)
         hesspsf = partial(hessian_psf, psf_convolve, xp, sigmainv, df, dhf)
-        hessnorm, hessbeta = power_method(hesspsf, (nband, nx, ny),
+        hess_norm, hessbeta = power_method(hesspsf, (nband, nx, ny),
                                           b0=hessbeta,
                                           tol=opts.pm_tol,
                                           maxit=opts.pm_maxit,
@@ -371,7 +371,7 @@ def _fwdbwd(ddsi=None, **kw):
                                 sigma21,
                                 psi,
                                 psiH,
-                                hessnorm,
+                                hess_norm,
                                 prox_21,
                                 l1weight,
                                 reweighter,

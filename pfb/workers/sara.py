@@ -245,18 +245,18 @@ def _sara(ddsi=None, **kw):
     psf_convolve = partial(psf_convolve_cube, xpad, xhat, xout, psfhat, lastsize,
                            nthreads=opts.nvthreads*opts.nthreads_dask)
 
-    if opts.hessnorm is None:
+    if opts.hess_norm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
-        hessnorm, hessbeta = power_method(psf_convolve, (nband, nx, ny),
+        hess_norm, hessbeta = power_method(psf_convolve, (nband, nx, ny),
                                           tol=opts.pm_tol,
                                           maxit=opts.pm_maxit,
                                           verbosity=opts.pm_verbose,
                                           report_freq=opts.pm_report_freq)
         # inflate slightly for stability
-        hessnorm *= 1.05
+        hess_norm *= 1.05
     else:
-        hessnorm = opts.hessnorm
-        print(f"Using provided hessnorm of beta = {hessnorm:.3e}", file=log)
+        hess_norm = opts.hess_norm
+        print(f"Using provided hess-norm of beta = {hess_norm:.3e}", file=log)
 
     print("Setting up dictionary", file=log)
     bases = tuple(opts.bases.split(','))
@@ -333,7 +333,7 @@ def _sara(ddsi=None, **kw):
                                   rmsfactor*rms,
                                   psi.hdot,
                                   psi.dot,
-                                  hessnorm,
+                                  hess_norm,
                                   prox_21,
                                   l1weight,
                                   reweighter,

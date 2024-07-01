@@ -53,6 +53,9 @@ class band_actor(object):
         self.nvthreads = opts.nvthreads
         self.real_type = np.float64
         self.complex_type = np.complex128
+        # hess_approx determines whether we use the vis of image space
+        # approximation of the hessian.
+        self.hess_approx = opts.hess_approx
 
         dsl = []
         for dsn in ds_names:
@@ -281,7 +284,7 @@ class band_actor(object):
         # we can only normalise once we have wsum from all bands
         self.dds['PSFHAT'] /= wsum
         self.dds['RESIDUAL'] /= wsum
-        # are these upadted on disk?
+        # are these updated on disk?
 
 
     def set_residual(self, x=None):
@@ -308,15 +311,15 @@ class band_actor(object):
                                 double_accum=self.opts.double_accum,
                                 timeid=0)
 
-        # cache vars affected by major cycle
+        # wsum doesn't change so we can normalise
         self.dds = self.dds.assign(
-            **{'RESIDUAL': (('x','y'), residual)}
+            **{'RESIDUAL': (('x','y'), residual/self.wsum)}
         )
 
         # create a dataset to write to disk
         # only update RESIDUAL not all vars
         data_vars = {
-            'RESIDUAL': (('x','y'), residual),
+            'RESIDUAL': (('x','y'), residual/self.wsum),
         }
         dset = xr.Dataset(data_vars)
         cname = self.cache_path + '.zarr'
@@ -368,8 +371,9 @@ class band_actor(object):
         '''
         The gradient function during the backward step
         '''
-        return -self.hess_psf(self.xtilde - x,
-                              mode='forward')
+        # return -self.hess_psf(self.xtilde - x,
+        #                       mode='forward')
+        return -self.hess_wgt(self.xtilde - x)
 
     def psi_dot(self, x=None):
         '''
@@ -448,35 +452,37 @@ class band_actor(object):
 
         return x
 
-    def init_pd_params(self, hessnorm, nu, gamma=1):
-        self.hessnorm = hessnorm
-        self.sigma = hessnorm/(2*gamma*nu)
-        self.tau = 0.9 / (hessnorm / (2.0 * gamma) + self.sigma * nu**2)
+    def init_pd_params(self, hess_norm, nu, gamma=1):
+        self.hess_norm = hess_norm
+        self.sigma = hess_norm/(2*gamma*nu)
+        self.tau = 0.9 / (hess_norm / (2.0 * gamma) + self.sigma * nu**2)
         self.vtilde = self.dual + self.sigma * self.psi_dot(self.model)
         return self.vtilde
 
     def cg_update(self):
         precond = lambda x: self.hess_psf(x,
-                                        mode='backward')
-        x = pcg(
-            A=self.hess_wgt,
-            b=self.dds.RESIDUAL.values,
-            x0=precond(self.dds.RESIDUAL.values),
-            M=precond,
-            tol=self.opts.cg_tol,
-            maxit=self.opts.cg_maxit,
-            minit=self.opts.cg_minit,
-            verbosity=self.opts.cg_verbose,
-            report_freq=self.opts.cg_report_freq,
-            backtrack=self.opts.backtrack,
-            return_resid=False
-        )
+                                          mode='backward')
+        if self.hess_approx == 'wgt':
+            x = pcg(
+                A=self.hess_wgt,
+                b=self.dds.RESIDUAL.values,
+                x0=precond(self.dds.RESIDUAL.values),
+                M=precond,
+                tol=self.opts.cg_tol,
+                maxit=self.opts.cg_maxit,
+                minit=self.opts.cg_minit,
+                verbosity=self.opts.cg_verbose,
+                report_freq=self.opts.cg_report_freq,
+                backtrack=self.opts.backtrack,
+                return_resid=False
+            )
+        elif self.hess_approx == "psf":
+            x = precond(self.dds.RESIDUAL.values)
 
+        self.update = x
         self.xtilde = self.model + x
 
-        # this result does not currently need to be
-        # communicated across workers
-        return
+        return x
 
     def pd_update(self, ratio):
         # ratio - (nbasis, nmax)
@@ -507,7 +513,10 @@ class band_actor(object):
 
     def pm_update(self, bnorm):
         self.bp[...] = self.b/bnorm
-        self.b[...] = self.hess_wgt(self.bp)
+        if self.hess_approx == "wgt":
+            self.b[...] = self.hess_wgt(self.bp)
+        else:
+            self.b[...] = self.hess_psf(self.bp, mode='forward')
         bsumsq = np.sum(self.b**2)
         beta_num = np.vdot(self.b, self.bp)
         beta_den = np.vdot(self.bp, self.bp)
@@ -515,7 +524,7 @@ class band_actor(object):
         return bsumsq, beta_num, beta_den
 
     def give_model(self):
-        return self.model, self.dual, self.bandid
+        return self.model, self.bandid
 
 
 def image_data_products(model,
@@ -698,4 +707,4 @@ def residual_from_vis(
         double_precision_accumulation=double_accum)
 
 
-    return timeid, residual
+    return residual

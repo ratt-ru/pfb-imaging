@@ -348,18 +348,18 @@ def _spotless(**kw):
                   basename + f'_{opts.suffix}_dirty_mfs.fits',
                   hdr_mfs)
 
-    if opts.hessnorm is None:
+    if opts.hess_norm is None:
         print('Getting spectral norm of Hessian approximation', file=log)
-        hessnorm = power_method(actors, nx, ny, nband,
+        hess_norm = power_method(actors, nx, ny, nband,
                                 tol=opts.pm_tol,
                                 maxit=opts.pm_maxit,
                                 report_freq=opts.pm_report_freq,
                                 verbosity=opts.pm_verbose)
         # inflate so we don't have to recompute after each L2 reweight
-        hessnorm *= 1.05
+        hess_norm *= 1.05
     else:
-        hessnorm = opts.hessnorm
-    print(f'hessnorm = {hessnorm:.3e}', file=log)
+        hess_norm = opts.hess_norm
+    print(f'hess-norm = {hess_norm:.3e}', file=log)
 
     # a value less than zero turns L1 reweighting off
     # we'll start on convergence or at the iteration
@@ -387,12 +387,14 @@ def _spotless(**kw):
     for k in range(iter0, iter0 + opts.niter):
         print('Solving for update', file=log)
         futures = list(map(lambda a: a.cg_update(), actors))
-        results = list(map(lambda f: f.result(), futures))
+        updates = list(map(lambda f: f.result(), futures))
+        updates = np.array(updates)
+        update_mfs = np.mean(updates[fsel], axis=0)
 
         print('Solving for model', file=log)
         primal_dual(actors,
                     rms*opts.rmsfactor,
-                    hessnorm,
+                    hess_norm,
                     l1weight,
                     opts.rmsfactor,
                     rms_comps,
@@ -408,7 +410,7 @@ def _spotless(**kw):
         futures = list(map(lambda a: a.give_model(), actors))
         results = list(map(lambda f: f.result(), futures))
 
-        bandids = [r[2] for r in results]
+        bandids = [r[1] for r in results]
         modelp = model.copy()
         for i, b in enumerate(bandids):
             model[b] = results[i][0]
@@ -418,6 +420,10 @@ def _spotless(**kw):
 
             raise ValueError('Model is nan')
         # save model and residual
+        save_fits(update_mfs,
+                  basename + f'_{opts.suffix}_update_{k+1}.fits',
+                  hdr_mfs)
+
         save_fits(np.mean(model[fsel], axis=0),
                   basename + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
@@ -508,10 +514,10 @@ def _spotless(**kw):
             # don't keep the cubes on the runner
             del results
 
-            # # TODO - how much does hessnorm change after L2 reweight?
+            # # TODO - how much does hess-norm change after L2 reweight?
             # print('Getting spectral norm of Hessian approximation', file=log)
-            # hessnorm = power_method(actors, nx, ny, nband)
-            # print(f'hessnorm = {hessnorm:.3e}', file=log)
+            # hess_norm = power_method(actors, nx, ny, nband)
+            # print(f'hess-norm = {hess_norm:.3e}', file=log)
 
             l2reweights += 1
         else:
@@ -542,9 +548,11 @@ def _spotless(**kw):
 
         if k+1 - iter0 >= l1reweight_from:
             print('L1 reweighting', file=log)
-            rms_comps = np.std(residual_mfs)*nband/pix_per_beam
-            l1weight = l1reweight_func(actors, opts.rmsfactor, rms_comps,
-                                         alpha=opts.alpha)
+            rms_comps = np.std(update_mfs)
+            l1weight = l1reweight_func(actors,
+                                       opts.rmsfactor,
+                                       rms_comps,
+                                       alpha=opts.alpha)
 
         if rms > rmsp:
             diverge_count += 1
