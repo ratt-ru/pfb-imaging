@@ -35,10 +35,6 @@ def model2comps(**kw):
     from daskms.experimental.zarr import xds_from_zarr
     from daskms.fsspec_store import DaskMSStore
     import fsspec
-    # TODO - there must be a neater way to do this with fsspec
-    # basedir = Path(opts.output_filename).resolve().parent
-    # basedir.mkdir(parents=True, exist_ok=True)
-    # basename = f'{opts.output_filename}_{opts.product.upper()}'
     if '://' in opts.output_filename:
         protocol = opts.output_filename.split('://')[0]
     else:
@@ -109,7 +105,7 @@ def _model2comps(ddsi=None, **kw):
     else:
         fits_oname = basename
 
-    dds_name = f'{basename}.dds'
+    dds_name = f'{basename}_{opts.suffix}.dds'
     if ddsi is not None:
         dds = []
         for ds in ddsi:
@@ -134,8 +130,8 @@ def _model2comps(ddsi=None, **kw):
         coeff_name = opts.model_out
         fits_name = opts.model_out.rstrip('.mds') + '.fits'
     else:
-        coeff_name = f'{basename}_{opts.model_name.lower()}.mds'
-        fits_name = f'{basename}_{opts.model_name.lower()}.fits'
+        coeff_name = f'{basename}_{opts.suffix}_{opts.model_name.lower()}.mds'
+        fits_name = f'{basename}_{opts.suffix}_{opts.model_name.lower()}.fits'
 
     mdsstore = DaskMSStore(coeff_name)
     if mdsstore.exists():

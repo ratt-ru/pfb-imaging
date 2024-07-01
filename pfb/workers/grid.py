@@ -35,29 +35,18 @@ def grid(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    pyscilog.log_to_file(f'{str(ldir)}/grid_{timestamp}.log')
-    print(f'Logs will be written to {str(ldir)}/grid_{timestamp}.log', file=log)
+    logname = f'{str(ldir)}/grid_{timestamp}.log'
+    pyscilog.log_to_file(logname)
+    print(f'Logs will be written to {logname}', file=log)
 
     from daskms.fsspec_store import DaskMSStore
-    import fsspec
-    # TODO - there must be a neater way to do this with fsspec
-    # basedir = Path(opts.output_filename).resolve().parent
-    # basedir.mkdir(parents=True, exist_ok=True)
-    # basename = f'{opts.output_filename}_{opts.product.upper()}'
-    if '://' in opts.output_filename:
-        protocol = opts.output_filename.split('://')[0]
-    else:
-        protocol = 'file'
+    from pfb.utils.naming import set_output_names
+    basedir, oname, fits_output_folder = set_output_names(opts.output_filename,
+                                                          opts.product,
+                                                          opts.fits_output_folder)
 
-
-    fs = fsspec.filesystem(protocol)
-    basedir = fs.expand_path('/'.join(opts.output_filename.split('/')[:-1]))[0]
-    if not fs.exists(basedir):
-        fs.makedirs(basedir)
-
-    oname = opts.output_filename.split('/')[-1] + f'_{opts.product.upper()}'
     basename = f'{basedir}/{oname}'
-
+    fits_oname = f'{fits_output_folder}/{oname}'
 
     if opts.xds is not None:
         xds_store = DaskMSStore(opts.xds.rstrip('/'))
@@ -73,20 +62,7 @@ def grid(**kw):
     opts.xds = xds_store.url
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
-    opts.dds = dds_store.url
-
-    if opts.fits_output_folder is not None:
-        # this should be a file system
-        fs = fsspec.filesystem('file')
-        fbasedir = fs.expand_path(opts.fits_output_folder)[0]
-        if not fs.exists(fbasedir):
-            fs.makedirs(fbasedir)
-        fits_oname = f'{fbasedir}/{oname}'
-        opts.fits_output_folder = fbasedir
-    else:
-        fits_oname = f'{basedir}/{oname}'
-        opts.fits_output_folder = basedir
-
+    opts.fits_output_folder = fits_output_folder
     OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
@@ -107,13 +83,6 @@ def grid(**kw):
         dds_out = _grid(**opts)
 
         writes = xds_to_zarr(dds_out, dds_name, columns='ALL')
-
-        # dask.visualize(writes, color="order", cmap="autumn",
-        #                node_attr={"penwidth": "4"},
-        #                filename=f'{basename}_grid_ordered_graph.pdf',
-        #                optimize_graph=False)
-        # dask.visualize(writes, filename=f'{basename}_grid_graph.pdf',
-        #                optimize_graph=False)
 
         print("Computing image space data products", file=log)
         with compute_context(opts.scheduler, f'{str(ldir)}/grid_{timestamp}'):
@@ -225,10 +194,6 @@ def _grid(xdsi=None, **kw):
             assert xds_store.exists()
         except Exception as e:
             raise ValueError(f"There must be a dataset at {xds_store.url}")
-        # xds = xds_from_zarr(xds_store.url, chunks={'row': -1,
-        #                                       'chan': -1,
-        #                                       'l_beam': -1,
-        #                                       'm_beam': -1})
         xds = list(map(xr.open_zarr, xds_store.fs.glob(f'{xds_store.url}/*.zarr')))
 
         for i, ds in enumerate(xds):

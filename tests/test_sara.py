@@ -155,7 +155,6 @@ def test_sara(ms_name):
     for key in schema.grid["inputs"].keys():
         grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
-    import ipdb; ipdb.set_trace()
     grid_args["output_filename"] = outname
     grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
@@ -200,7 +199,7 @@ def test_sara(ms_name):
 
 
     # get the inferred model
-    dds = xds_from_zarr(f'{outname}.dds')
+    dds = xds_from_zarr(dds_name)
     freqs_dds = []
     times_dds = []
     for ds in dds:
@@ -229,7 +228,7 @@ def test_sara(ms_name):
     model2comps_args["sigmasq"] = 1e-14
     _model2comps(**model2comps_args)
 
-    mds_name = f'{outname}_I_main_model.mds'
+    mds_name = f'{outname}_main_model.mds'
     mds = xr.open_zarr(mds_name)
 
     # grid spec
@@ -271,7 +270,7 @@ def test_sara(ms_name):
     for key in schema.degrid["inputs"].keys():
         degrid_args[key.replace("-", "_")] = schema.degrid["inputs"][key]["default"]
     degrid_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
-    degrid_args["mds"] = f'{outname}_I_main_model.mds'
+    degrid_args["mds"] = f'{outname}_main_model.mds'
     degrid_args["channels_per_image"] = 1
     degrid_args["nthreads_dask"] = 1
     degrid_args["nvthreads"] = 8
@@ -289,8 +288,8 @@ def test_sara(ms_name):
     for key in schema.init["inputs"].keys():
         init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
     # overwrite defaults
-    outname = str(test_dir / 'test2')
-    init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+    outname = str(test_dir / 'test2_I')
+    init_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
     init_args["output_filename"] = outname
     init_args["data_column"] = "CORRECTED_DATA"
     # init_args["weight_column"] = 'WEIGHT_SPECTRUM'

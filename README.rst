@@ -43,6 +43,10 @@ The output dataset of the `init` application will be called
 
 with standard python string substitutions. The grid worker will creates another dataset called
 
-:code:`f"{output_filename}_{product}_{suffix}.xds"`
+:code:`f"{output_filename}_{product}_{suffix}.dds"`
 
-i.e. with the suffix appended. This is to allow imaging multiple fields from a single set of averaged Stokes visibilities produced by the `init` applcation.
+i.e. with the suffix appended (the default suffix being main).
+This is to allow imaging multiple fields from a single set of averaged Stokes visibilities produced by the `init` applcation (eg. the main field and the sun).
+All deconvolution algorithms interact with the latter of these and they will produce a component model called
+
+:code:`f"{output_filename}_{product}_{suffix}_model.mds"`

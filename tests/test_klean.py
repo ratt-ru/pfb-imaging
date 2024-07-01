@@ -184,7 +184,7 @@ def test_klean(do_gains, ms_name):
         gain_path = None
 
     outname = str(test_dir / 'test_I')
-    dds_name = f'{outname}.dds'
+    dds_name = f'{outname}_main.dds'
     # set defaults from schema
     from pfb.parser.schemas import schema
     init_args = {}
@@ -246,7 +246,6 @@ def test_klean(do_gains, ms_name):
     _klean(ddsi=dds, **klean_args)
 
     # get inferred model
-    dds_name = f'{outname}.dds'
     dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
     model_inferred = np.zeros((nchan, nx, ny))
     for ds in dds:

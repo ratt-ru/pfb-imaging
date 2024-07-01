@@ -32,43 +32,21 @@ def sara(**kw):
     ldir.mkdir(parents=True, exist_ok=True)
     logname = f'{str(ldir)}/sara_{timestamp}.log'
     pyscilog.log_to_file(logname)
+    print(f'Logs will be written to {logname}', file=log)
 
-    print(f'Logs will be written to {str(ldir)}/sara_{timestamp}.log', file=log)
     from daskms.experimental.zarr import xds_from_zarr
     from daskms.fsspec_store import DaskMSStore
-    import fsspec
-    # TODO - there must be a neater way to do this with fsspec
-    # basedir = Path(opts.output_filename).resolve().parent
-    # basedir.mkdir(parents=True, exist_ok=True)
-    # basename = f'{opts.output_filename}_{opts.product.upper()}'
-    if '://' in opts.output_filename:
-        protocol = opts.output_filename.split('://')[0]
-    else:
-        protocol = 'file'
+    from pfb.utils.naming import set_output_names
+    basedir, oname, fits_output_folder = set_output_names(opts.output_filename,
+                                                          opts.product,
+                                                          opts.fits_output_folder)
 
-    fs = fsspec.filesystem(protocol)
-    basedir = fs.expand_path('/'.join(opts.output_filename.split('/')[:-1]))[0]
-    if not fs.exists(basedir):
-        fs.makedirs(basedir)
-
-    oname = opts.output_filename.split('/')[-1] + f'_{opts.product.upper()}'
     basename = f'{basedir}/{oname}'
+    fits_oname = f'{fits_output_folder}/{oname}'
     opts.output_filename = basename
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
-
-    if opts.fits_output_folder is not None:
-        # this should be a file system
-        fs = fsspec.filesystem('file')
-        fbasedir = fs.expand_path(opts.fits_output_folder)[0]
-        if not fs.exists(fbasedir):
-            fs.makedirs(fbasedir)
-        fits_oname = f'{fbasedir}/{oname}'
-        opts.fits_output_folder = fbasedir
-    else:
-        fits_oname = f'{basedir}/{oname}'
-        opts.fits_output_folder = basedir
-
+    opts.fits_output_folder = fits_output_folder
     OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:

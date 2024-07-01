@@ -58,17 +58,10 @@ def init(**kw):
                 raise ValueError(f"No gain table  at {gt}")
         opts.gain_table = gainnames
 
-    if '://' in opts.output_filename:
-        protocol = opts.output_filename.split('://')[0]
-    else:
-        protocol = 'file'
+    from pfb.utils.naming import set_output_names
+    basedir, oname, fits_output_folder = set_output_names(opts.output_filename,
+                                                          opts.product)
 
-    fs = fsspec.filesystem(protocol)
-    basedir = fs.expand_path('/'.join(opts.output_filename.split('/')[:-1]))[0]
-    if not fs.exists(basedir):
-        fs.makedirs(basedir)
-
-    oname = opts.output_filename.split('/')[-1] + f'_{opts.product.upper()}'
     basename = f'{basedir}/{oname}'
     opts.output_filename = basename
     OmegaConf.set_struct(opts, True)

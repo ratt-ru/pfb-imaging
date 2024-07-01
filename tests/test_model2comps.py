@@ -133,4 +133,3 @@ def test_model2comps(ms_name):
 
         assert_allclose(1.0 + imout[mx, my], 1.0 + model[0, gx, gy])
 
-# test_model2comps()
