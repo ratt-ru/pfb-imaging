@@ -24,7 +24,8 @@ requirements = [
                 "jax[cpu]",
                 "ipycytoscape",
                 "lz4",
-                "ipdb"
+                "ipdb",
+                "psutil"
             ]
 
 
