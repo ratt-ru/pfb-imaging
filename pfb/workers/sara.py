@@ -43,6 +43,7 @@ def sara(**kw):
 
     basename = f'{basedir}/{oname}'
     fits_oname = f'{fits_output_folder}/{oname}'
+
     opts.output_filename = basename
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
@@ -126,7 +127,7 @@ def _sara(ddsi=None, **kw):
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
-        fits_oname = opts.fits_output_folder + '/' + basename.split('/')[1]
+        fits_oname = opts.fits_output_folder + '/' + basename.split('/')[-1]
     else:
         fits_oname = basename
 
