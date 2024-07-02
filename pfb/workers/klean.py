@@ -121,7 +121,7 @@ def _klean(ddsi=None, **kw):
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
-        fits_oname = opts.fits_output_folder + basename.split('/')[-1]
+        fits_oname = opts.fits_output_folder + '/' + basename.split('/')[-1]
     else:
         fits_oname = basename
 
