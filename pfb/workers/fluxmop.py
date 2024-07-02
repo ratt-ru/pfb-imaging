@@ -1,5 +1,6 @@
 # flake8: noqa
 from contextlib import ExitStack
+from pathlib import Path
 from pfb.workers.main import cli
 from functools import partial
 import click
@@ -27,14 +28,25 @@ def fluxmop(**kw):
     opts = OmegaConf.create(defaults)
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'fluxmop_{timestamp}.log')
+    ldir = Path(opts.log_directory).resolve()
+    ldir.mkdir(parents=True, exist_ok=True)
+    logname = f'{str(ldir)}/fluxmop_{timestamp}.log'
+    pyscilog.log_to_file(logname)
+    print(f'Logs will be written to {logname}', file=log)
 
-    if opts.nworkers is None:
-        if opts.scheduler=='distributed':
-            opts.nworkers = opts.nband
-        else:
-            opts.nworkers = 1
+    from daskms.fsspec_store import DaskMSStore
+    from pfb.utils.naming import set_output_names
+    basedir, oname, fits_output_folder = set_output_names(opts.output_filename,
+                                                          opts.product,
+                                                          opts.fits_output_folder)
 
+    basename = f'{basedir}/{oname}'
+    fits_oname = f'{fits_output_folder}/{oname}'
+
+    opts.output_filename = basename
+    dds_name = f'{basename}_{opts.suffix}.dds'
+    dds_store = DaskMSStore(dds_name)
+    opts.fits_output_folder = fits_output_folder
     OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
@@ -74,7 +86,11 @@ def _fluxmop(ddsi=None, **kw):
     resize_thread_pool(nthreads_tot)
     print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
-    basename = f'{opts.output_filename}_{opts.product.upper()}'
+    basename = opts.output_filename
+    if opts.fits_output_folder is not None:
+        fits_oname = opts.fits_output_folder + '/' + basename.split('/')[-1]
+    else:
+        fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
     if ddsi is not None:

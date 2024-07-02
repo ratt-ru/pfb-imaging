@@ -29,40 +29,24 @@ def model2comps(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    pyscilog.log_to_file(f'{str(ldir)}/model2comps_{timestamp}.log')
+    logname = f'{str(ldir)}/model2comps_{timestamp}.log'
+    pyscilog.log_to_file(logname)
 
-    print(f'Logs will be written to {str(ldir)}/model2comps_{timestamp}.log', file=log)
-    from daskms.experimental.zarr import xds_from_zarr
+    print(f'Logs will be written to {logname}', file=log)
+
     from daskms.fsspec_store import DaskMSStore
-    import fsspec
-    if '://' in opts.output_filename:
-        protocol = opts.output_filename.split('://')[0]
-    else:
-        protocol = 'file'
+    from pfb.utils.naming import set_output_names
+    basedir, oname, fits_output_folder = set_output_names(opts.output_filename,
+                                                          opts.product,
+                                                          opts.fits_output_folder)
 
-    fs = fsspec.filesystem(protocol)
-    basedir = fs.expand_path('/'.join(opts.output_filename.split('/')[:-1]))[0]
-    if not fs.exists(basedir):
-        fs.makedirs(basedir)
-
-    oname = opts.output_filename.split('/')[-1] + f'_{opts.product.upper()}'
     basename = f'{basedir}/{oname}'
+    fits_oname = f'{fits_output_folder}/{oname}'
+
     opts.output_filename = basename
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
-
-    if opts.fits_output_folder is not None:
-        # this should be a file system
-        fs = fsspec.filesystem('file')
-        fbasedir = fs.expand_path(opts.fits_output_folder)[0]
-        if not fs.exists(fbasedir):
-            fs.makedirs(fbasedir)
-        fits_oname = f'{fbasedir}/{oname}'
-        opts.fits_output_folder = fbasedir
-    else:
-        fits_oname = f'{basedir}/{oname}'
-        opts.fits_output_folder = basedir
-
+    opts.fits_output_folder = fits_output_folder
     OmegaConf.set_struct(opts, True)
 
     with ExitStack() as stack:
@@ -101,7 +85,7 @@ def _model2comps(ddsi=None, **kw):
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
-        fits_oname = opts.fits_output_folder + basename.split('/')[1]
+        fits_oname = opts.fits_output_folder + '/' + basename.split('/')[-1]
     else:
         fits_oname = basename
 
