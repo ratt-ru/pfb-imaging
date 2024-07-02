@@ -168,9 +168,7 @@ def _model2comps(ddsi=None, **kw):
     x0 = dds[0].x0
     y0 = dds[0].y0
 
-    # TODO - do this as a dask graph
-    # model = [da.zeros((nx, ny)) for _ in range(opts.nband)]
-    # wsums = [da.zeros(1) for _ in range(opts.nband)]
+
     model = np.zeros((ntime, nband, nx, ny), dtype=np.float64)
     wsums = np.zeros((ntime, nband), dtype=np.float64)
     for ds in dds:
@@ -181,14 +179,9 @@ def _model2comps(ddsi=None, **kw):
 
     if not opts.use_wsum:
         wsums[...] = 1.0
-
-    if opts.min_val is not None:
-        mmfs = model[wsums>0]
-        if mmfs.ndim==3:
-            mmfs = np.mean(mmfs, axis=0)
-        elif mmfs.ndim==4:
-            mmfs = np.mean(mmfs, axis=(0,1))
-        model = np.where(np.abs(mmfs)[None, None] >= opts.min_val, model, 0.0)
+    else:
+        # normalise so ridge param has more intuitive meaning
+        wsums /= wsums.max()
 
     if not np.any(model):
         raise ValueError(f'Model is empty or has no components above {opts.min_val}')
@@ -233,6 +226,9 @@ def _model2comps(ddsi=None, **kw):
             wsums = np.concatenate((wsums, wsums[:, Ihigh][:, None]),
                                    axis=1)
             nband = mfreqs.size
+
+    if opts.min_val is not None:
+        model = np.where(model > opts.min_val, model, opts.min_val)
 
     if opts.nbasisf is None:
         nbasisf = nband-1
