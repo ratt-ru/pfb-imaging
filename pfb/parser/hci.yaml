@@ -163,14 +163,6 @@ inputs:
     info:
       Number of worker processes.
       Use with distributed scheduler.
-  nthreads-dask:
-    dtype: int
-    default: 1
-    abbreviation: ntd
-    info:
-      Number of dask threads.
-      This will largely determine the memory footprint.
-      Used as nthreads per worker when using distributed scheduler.
   nvthreads:
     dtype: int
     abbreviation: nvt

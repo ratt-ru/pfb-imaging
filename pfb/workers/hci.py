@@ -99,8 +99,8 @@ def hci(**kw):
             print("Initialising client with LocalCluster.", file=log)
             cluster = LocalCluster(processes=True,
                                     n_workers=opts.nworkers,
-                                    threads_per_worker=opts.nthreads_dask,
-                                    memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                                    threads_per_worker=1,
+                                    memory_limit=0,
                                     asynchronous=False)
             cluster = stack.enter_context(cluster)
             client = stack.enter_context(Client(cluster,
