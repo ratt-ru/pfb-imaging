@@ -33,10 +33,6 @@ inputs:
     abbreviation: mname
     info:
       Name of model in mds
-  model-fits:
-    dtype: str
-    info:
-      Specify to degrid from a fits file
   use-wsum:
     dtype: bool
     default: true

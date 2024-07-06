@@ -60,6 +60,7 @@ def grid(**kw):
         raise ValueError(f"There must be an xds at {xds_name}. "
                             f"Original traceback {e}")
     opts.xds = xds_store.url
+    opts.output_filename = basename
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
     opts.fits_output_folder = fits_output_folder

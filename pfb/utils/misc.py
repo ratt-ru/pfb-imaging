@@ -677,13 +677,15 @@ def dds2cubes(dds, nband, apparent=False, dual=True,
     wsums = [da.zeros(1, dtype=real_type) for _ in range(nband)]
     if 'PSF' in dds[0]:
         nx_psf, ny_psf = dds[0].PSF.shape
-        nx_psf, nyo2_psf = dds[0].PSFHAT.shape
         psf = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1),
                         dtype=real_type) for _ in range(nband)]
+    else:
+        psf = None
+    if 'PSFHAT' in dds[0]:
+        nx_psf, nyo2_psf = dds[0].PSFHAT.shape
         psfhat = [da.zeros((nx_psf, nyo2_psf), chunks=(-1, -1),
                             dtype=complex_type) for _ in range(nband)]
     else:
-        psf = None
         psfhat = None
     mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
                             dtype=real_type) for _ in range(nband)]
@@ -705,6 +707,7 @@ def dds2cubes(dds, nband, apparent=False, dual=True,
                 residual[b] += getattr(ds, residname).data * ds.BEAM.data
         if 'PSF' in ds:
             psf[b] += ds.PSF.data
+        if 'PSFHAT' in ds:
             psfhat[b] += ds.PSFHAT.data
         if modelname in ds:
             model[b] = getattr(ds, modelname).data
@@ -720,6 +723,7 @@ def dds2cubes(dds, nband, apparent=False, dual=True,
         residual = da.stack(residual)/wsum
     if 'PSF' in ds:
         psf = da.stack(psf)/wsum
+    if 'PSFHAT' in ds:
         psfhat = da.stack(psfhat)/wsum
     if dual and 'DUAL' in ds:
         dual = da.stack(dual)

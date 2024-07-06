@@ -19,6 +19,36 @@ from ducc0.fft import c2r, r2c, c2c, good_size
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
+
+class fake_future(object):
+    '''
+    This is just a class that has a fake result method.
+    Useful for testing and when not running in distributed mode.
+    '''
+    def __init__(self, r):
+        self.r = r
+
+    def result(self):
+        return self.r
+
+class fake_client(object):
+    '''
+    This is just a class that has a fake submit method.
+    Useful for testing and when not running in distributed mode.
+    '''
+    def __init__(self, nworkers, nvthreads):
+        # TODO - use cf to fake these for horizontal parallelism
+        self.nworkers = nworkers
+        self.nvthreads = nvthreads
+
+    def submit(self, *args, workers=0, key=None, actor=False, pure=False):
+        func = args[0]  # by convention
+        res = func(args[1:])
+        if actor:  # return instantiated class
+            return res
+        else:  # return fake future with result
+            return fake_future(res)
+
 def l1reweight_func(actors, rmsfactor, rms_comps, alpha=4):
     '''
     The logic here is that weights should remain the same for model
