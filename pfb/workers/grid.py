@@ -163,10 +163,10 @@ def grid(**kw):
                                     norm_wsum=True)
                 futures.append(fut)
 
-    if len(futures):
-        print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
-        if opts.scheduler == 'distributed':
-            wait(futures)
+        if len(futures):
+            print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
+            if opts.scheduler == 'distributed':
+                wait(futures)
 
     print(f"All done after {time.time() - ti}s", file=log)
 

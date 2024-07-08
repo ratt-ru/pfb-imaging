@@ -1,9 +1,7 @@
 # flake8: noqa
 import os
-from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
-from functools import partial
 import click
 from omegaconf import OmegaConf
 import pyscilog
@@ -26,72 +24,64 @@ def sara(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
+
+    from pfb.utils.naming import set_output_names
+    opts, basedir, oname = set_output_names(opts)
+    OmegaConf.set_struct(opts, True)
+
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
+
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    logname = f'{str(ldir)}/sara_{timestamp}.log'
+    logname = f'{str(opts.log_directory)}/sara_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
 
-    from daskms.experimental.zarr import xds_from_zarr
     from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.naming import set_output_names
-    basedir, oname, fits_output_folder = set_output_names(opts.output_filename,
-                                                          opts.product,
-                                                          opts.fits_output_folder)
+    from pfb.utils.naming import xds_from_url
 
     basename = f'{basedir}/{oname}'
-    fits_oname = f'{fits_output_folder}/{oname}'
-
-    opts.output_filename = basename
-    dds_name = f'{basename}_{opts.suffix}.dds'
-    dds_store = DaskMSStore(dds_name)
-    opts.fits_output_folder = fits_output_folder
-    OmegaConf.set_struct(opts, True)
+    fits_oname = f'{opts.fits_output_folder}/{oname}'
+    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
 
     with ExitStack() as stack:
-        # numpy imports have to happen after this step
-        from pfb import set_client
-        set_client(opts, stack, log,
-                   scheduler=opts.scheduler,
-                   auto_restrict=False)
-
-        # TODO - prettier config printing
-        print('Input Options:', file=log)
-        for key in opts.keys():
-            print('     %25s = %s' % (key, opts[key]), file=log)
-
         ti = time.time()
         _sara(**opts)
 
-    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
+        dds = xds_from_url(dds_store.url)
 
-    from pfb.utils.fits import dds2fits, dds2fits_mfs
-    import dask
-    # convert to fits files
-    fitsout = []
-    if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds, 'MODEL',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=False))
+        from pfb.utils.fits import dds2fits, dds2fits_mfs
 
-    if opts.fits_cubes:
-        fitsout.append(dds2fits(dds, 'RESIDUAL',
-                                f'{fits_oname}_{opts.suffix}',
-                                norm_wsum=True))
-        fitsout.append(dds2fits(dds, 'MODEL',
-                                f'{fits_oname}_{opts.suffix}',
-                                norm_wsum=False))
+        if opts.fits_mfs or opts.fits:
+            print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
 
-    if len(fitsout):
-        print("Writing fits", file=log)
-        dask.compute(fitsout)
+        # convert to fits files
+        if opts.fits_mfs:
+            dds2fits_mfs(dds,
+                         'RESIDUAL',
+                         f'{fits_oname}_{opts.suffix}',
+                         norm_wsum=True)
+            dds2fits_mfs(dds,
+                         'MODEL',
+                         f'{fits_oname}_{opts.suffix}',
+                         norm_wsum=False)
 
-    print(f"All done here after {time.time() - ti}s", file=log)
+        if opts.fits_cubes:
+            dds2fits(dds,
+                     'RESIDUAL',
+                     f'{fits_oname}_{opts.suffix}',
+                     norm_wsum=True)
+            dds2fits(dds,
+                     'MODEL',
+                     f'{fits_oname}_{opts.suffix}',
+                     norm_wsum=False)
+
+    print(f"All done after {time.time() - ti}s", file=log)
 
 
 def _sara(ddsi=None, **kw):
@@ -101,12 +91,7 @@ def _sara(ddsi=None, **kw):
     import numpy as np
     import xarray as xr
     import numexpr as ne
-    import dask
-    import dask.array as da
-    from dask.distributed import performance_report
-    from pfb.utils.fits import (set_wcs, save_fits, dds2fits,
-                                dds2fits_mfs, load_fits)
-    from pfb.utils.misc import dds2cubes
+    from pfb.utils.fits import set_wcs, save_fits, load_fits
     from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
@@ -116,7 +101,7 @@ def _sara(ddsi=None, **kw):
     from pfb.operators.psf import psf_convolve_cube
     from pfb.operators.psi import Psi
     from copy import copy, deepcopy
-    from ducc0.misc import make_noncritical
+    from ducc0.misc import empty_noncritical
     from pfb.prox.prox_21m import prox_21m_numba as prox_21
     # from pfb.prox.prox_21 import prox_21
     from pfb.utils.misc import fitcleanbeam, fit_image_cube
@@ -132,6 +117,8 @@ def _sara(ddsi=None, **kw):
         fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
+    dds_store = DaskMSStore(dds_name)
+    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
     if ddsi is not None:
         dds = []
         for ds in ddsi:
@@ -143,16 +130,10 @@ def _sara(ddsi=None, **kw):
                                  'y_psf':-1,
                                  'yo2':-1}))
     else:
-        dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                            'chan':-1,
-                                            'x':-1,
-                                            'y':-1,
-                                            'x_psf':-1,
-                                            'y_psf':-1,
-                                            'yo2':-1})
-    if opts.memory_greedy:
-        dds = dask.persist(dds)[0]
+        # are these sorted correctly?
+        dds = xds_from_list(dds_list)
 
+    nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
     freq_out = []
@@ -162,17 +143,38 @@ def _sara(ddsi=None, **kw):
         time_out.append(ds.time_out)
     freq_out = np.unique(np.array(freq_out))
     time_out = np.unique(np.array(time_out))
-    try:
-        assert freq_out.size == opts.nband
-    except Exception as e:
-        print(f"Number of output frequencies={freq_out.size} "
-              f"does not match nband={opts.nband}", file=log)
-        raise e
-    nband = opts.nband
+
+    nband = freq_out.size
+
+    # stitch dirty/psf in apparent scale
+    # drop_vars to avoid duplicates in memory
+    output_type = dds[0].DIRTY.dtype
+    if 'RESIDUAL' in dds[0]:
+        residual = np.stack([ds.RESIDUAL.values for ds in dds], axis=0)
+        dds = [ds.drop_vars('RESIDUAL') for ds in dds]
+    else:
+        residual = np.stack([ds.DIRTY.values for ds in dds], axis=0)
+        dds = [ds.drop_vars('DIRTY') for ds in dds]
+    if 'MODEL' in dds[0]:
+        model = np.stack([ds.MODEL.values for ds in dds], axis=0)
+        dds = [ds.drop_vars('MODEL') for ds in dds]
+    psf = np.stack([ds.PSF.values for ds in dds], axis=0)
+    dds = [ds.drop_vars('PSF') for ds in dds]
+    wsums = np.stack([ds.WSUM.values for ds in dds], axis=0)
+    fsel = wsums > 0  # keep track of empty bands
+
+
+    wsum = np.sum(wsums)
+    psf_mfs = np.sum(psf, axis=0)
+    residual_mfs = np.sum(residual, axis=0)
+
+    # for intermediary results (not currently written)
     nx = dds[0].x.size
     ny = dds[0].y.size
     ra = dds[0].ra
     dec = dds[0].dec
+    x0 = dds[0].x0
+    y0 = dds[0].y0
     radec = [ra, dec]
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
@@ -183,51 +185,27 @@ def _sara(ddsi=None, **kw):
     else:
         iter0 = 0
 
-
-    # stitch dirty/psf in apparent scale
-    print("Combining slices into cubes", file=log)
-    output_type = dds[0].DIRTY.dtype
-    dirty, model, residual, psf, psfhat, beam, wsums, dual = dds2cubes(
-                                                               dds,
-                                                               opts.nband,
-                                                               apparent=False)
-    model = np.require(model, requirements='CAW')
-    wsum = np.sum(wsums)
-    psf_mfs = np.sum(psf, axis=0)
-    assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
-    dirty_mfs = np.sum(dirty, axis=0)
-    if residual is None:
-        residual = dirty.copy()
-        residual_mfs = dirty_mfs.copy()
-    else:
-        residual_mfs = np.sum(residual, axis=0)
-
-    # set up vis space Hessian
-    hessopts = {}
-    hessopts['cell'] = dds[0].cell_rad
-    hessopts['do_wgridding'] = opts.do_wgridding
-    hessopts['epsilon'] = opts.epsilon
-    hessopts['double_accum'] = opts.double_accum
-    hessopts['nthreads'] = opts.nvthreads  # nvthreads since dask parallel over band
-
-    # TOD - add beam
-    # mask is applied to residual after hessian application
-    hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
-                   wsum=wsum, sigmainv=0,
-                   mask=np.ones((nx, ny), dtype=output_type),
-                   compute=True, use_beam=False)
-
-
     # image space hessian
     # pre-allocate arrays for doing FFT's
-    xout = np.empty(dirty.shape, dtype=dirty.dtype, order='C')
-    xout = make_noncritical(xout)
-    xpad = np.empty(psf.shape, dtype=dirty.dtype, order='C')
-    xpad = make_noncritical(xpad)
-    xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
-    xhat = make_noncritical(xhat)
+    xhat = empty_noncritical(psf.shape, dtype='c16')
+    nxpadl = (nx_psf - nx)//2
+    nxpadr = nx_psf - nx - nxpadl
+    nypadl = (ny_psf - ny)//2
+    nypadr = ny_psf - ny - nypadl
+    if nx_psf != nx:
+        slicex = slice(nxpadl, -nxpadr)
+    else:
+        slicex = slice(None)
+    if ny_psf != ny:
+        slicey = slice(nypadl, -nypadr)
+    else:
+        slicey = slice(None)
     # nthreads = nvthreads*nthreads_dask because dask not involved
-    psf_convolve = partial(psf_convolve_cube, xpad, xhat, xout, psfhat, lastsize,
+    psf_convolve = partial(psf_convolve_cube2,
+                           xpad,
+                           psf,
+                           slicex,
+                           slicey,
                            nthreads=opts.nvthreads*opts.nthreads_dask)
 
     if opts.hess_norm is None:

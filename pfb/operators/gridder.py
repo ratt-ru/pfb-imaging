@@ -547,3 +547,74 @@ def image_data_products(dsl,
         return residual, wsum
     except:
         return dirty, wsum
+
+
+def compute_residual(ds,
+                     nx, ny,
+                     cellx, celly,
+                     output_name,
+                     model,
+                     x0=0.0, y0=0.0,
+                     nthreads=1,
+                     epsilon=1e-7,
+                     do_wgridding=True,
+                     double_accum=True):
+    '''
+    Function to compute residual and write it to disk
+    '''
+
+    # this happens per ds
+    if isinstance(ds, str):
+        ds = xds_from_list([ds])[0]
+
+    uvw = ds.UVW.values
+    wgt = ds.WEIGHT.values
+    mask = ds.MASK.values
+    beam = ds.BEAM.values
+    dirty = ds.DIRTY.values
+
+    # do not apply weights in this direction
+    model_vis = dirty2vis(
+        uvw=uvw,
+        freq=freq,
+        dirty=beam*model,
+        pixsize_x=cellx,
+        pixsize_y=celly,
+        center_x=x0,
+        center_y=y0,
+        epsilon=epsilon,
+        do_wgridding=do_wgridding,
+        flip_v=False,
+        nthreads=nthreads,
+        divide_by_n=False,
+        sigma_min=1.1, sigma_max=3.0)
+
+
+    convim = vis2dirty(
+        uvw=uvw,
+        freq=freq,
+        vis=residual_vis,
+        wgt=wgt,
+        mask=mask,
+        npix_x=nx, npix_y=ny,
+        pixsize_x=cellx, pixsize_y=celly,
+        center_x=x0, center_y=y0,
+        epsilon=epsilon,
+        flip_v=False,  # hardcoded for now
+        do_wgridding=do_wgridding,
+        divide_by_n=False,  # hardcoded for now
+        nthreads=nthreads,
+        sigma_min=1.1, sigma_max=3.0,
+        double_precision_accumulation=double_accum)
+
+    # this is the once attenuated residual since
+    # dirty is only attenuated once
+    residual = dirty - convim
+
+    ds['MODEL'] = (('x','y'), model)
+    ds['RESIDUAL'] = (('x','y'), residual)
+
+    # save
+    ds.to_zarr(output_name, mode='r+')
+
+    return residual

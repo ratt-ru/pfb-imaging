@@ -56,6 +56,26 @@ def psf_convolve_cube(xpad,    # preallocated array to store padded image
     return xout
 
 
+def psf_convolve_cube2(xhat,    # preallocated array to store results
+                       psfhat,
+                       slicex,
+                       slicey,
+                       x,       # input image, not overwritten
+                       nthreads=1):
+    '''
+    The copyto is not necessarily faster it just allows us to see where time is spent
+    '''
+    _, nx, ny = x.shape
+    xhat[:, slicex, slicey] = x[...]
+    c2c(xhat, axes=(1, 2), out=xhat, nthreads=nthreads,
+        forward=True, inorm=0, out=xhat)
+    xhat *= psfhat
+    c2c(xhat, axes=(1, 2), forward=False, out=xhat,
+        inorm=2, nthreads=nthreads,
+        allow_overwriting_input=True)
+    return xhat[:, slicex, slicey].real
+
+
 def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, mask,
                      compute=True, use_beam=True):
     '''

@@ -1,9 +1,7 @@
 # flake8: noqa
 import os
-from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
-from functools import partial
 import click
 from omegaconf import OmegaConf
 import pyscilog
@@ -26,94 +24,85 @@ def klean(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
+
+    from pfb.utils.naming import set_output_names
+    opts, basedir, oname = set_output_names(opts)
+    OmegaConf.set_struct(opts, True)
+
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
+
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    logname = f'{str(ldir)}/klean_{timestamp}.log'
+    logname = f'{str(opts.log_directory)}/klean_{timestamp}.log'
     pyscilog.log_to_file(logname)
-
     print(f'Logs will be written to {logname}', file=log)
-    from daskms.experimental.zarr import xds_from_zarr
+
+
     from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.naming import set_output_names
-    basedir, oname, fits_output_folder = set_output_names(opts.output_filename,
-                                                          opts.product,
-                                                          opts.fits_output_folder)
+    from pfb.utils.naming import xds_from_url
 
     basename = f'{basedir}/{oname}'
-    fits_oname = f'{fits_output_folder}/{oname}'
-    opts.output_filename = basename
-    dds_name = f'{basename}_{opts.suffix}.dds'
-    dds_store = DaskMSStore(dds_name)
-    opts.fits_output_folder = fits_output_folder
-    OmegaConf.set_struct(opts, True)
+    fits_oname = f'{opts.fits_output_folder}/{oname}'
+    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
 
     with ExitStack() as stack:
-        # numpy imports have to happen after this step
-        from pfb import set_client
-        set_client(opts, stack, log, scheduler=opts.scheduler)
-
-        # TODO - prettier config printing
-        print('Input Options:', file=log)
-        for key in opts.keys():
-            print('     %25s = %s' % (key, opts[key]), file=log)
-
         ti = time.time()
         _klean(**opts)
 
-    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
-    from pfb.utils.fits import dds2fits, dds2fits_mfs
-    import dask
-    # convert to fits files
-    fitsout = []
-    if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds, 'RESIDUAL',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds, 'MODEL',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=False))
+        dds = xds_from_url(dds_name)
 
-    if opts.fits_cubes:
-        fitsout.append(dds2fits(dds, 'RESIDUAL',
-                                f'{fits_oname}_{opts.suffix}',
-                                norm_wsum=True))
-        fitsout.append(dds2fits(dds, 'MODEL',
-                                f'{fits_oname}_{opts.suffix}',
-                                norm_wsum=False))
+        from pfb.utils.fits import dds2fits, dds2fits_mfs
 
-    if len(fitsout):
-        print("Writing fits", file=log)
-        dask.compute(fitsout)
 
-    print(f"All done here after {time.time() - ti}s", file=log)
+        if opts.fits_mfs or opts.fits:
+            print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
+
+        # convert to fits files
+        if opts.fits_mfs:
+            dds2fits_mfs(dds,
+                         'RESIDUAL',
+                         f'{fits_oname}_{opts.suffix}',
+                         norm_wsum=True)
+            dds2fits_mfs(dds,
+                         'MODEL',
+                         f'{fits_oname}_{opts.suffix}',
+                         norm_wsum=False)
+
+        if opts.fits_cubes:
+            dds2fits(dds,
+                     'RESIDUAL',
+                     f'{fits_oname}_{opts.suffix}',
+                     norm_wsum=True)
+            dds2fits(dds,
+                     'MODEL',
+                     f'{fits_oname}_{opts.suffix}',
+                     norm_wsum=False)
+
+    print(f"All done after {time.time() - ti}s", file=log)
 
 
 def _klean(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
-    # always combine over ds during cleaning
-    opts['mean_ds'] = True
     OmegaConf.set_struct(opts, True)
 
+    from functools import partial
     import numpy as np
     from copy import copy, deepcopy
     import xarray as xr
-    import numexpr as ne
-    import dask
-    import dask.array as da
-    from dask.distributed import performance_report
-    from pfb.utils.fits import (set_wcs, save_fits, dds2fits,
-                                dds2fits_mfs, load_fits)
-    from pfb.utils.misc import dds2cubes
-    from pfb.deconv.hogbom import hogbom
+    from pfb.utils.fits import set_wcs, save_fits, load_fits
     from pfb.deconv.clark import clark
-    from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
+    from pfb.utils.naming import xds_from_url
     from pfb.opt.pcg import pcg, pcg_psf
-    from pfb.operators.hessian import hessian_xds, hessian
+    from pfb.operators.gridding import compute_residual
     from scipy import ndimage
-    from copy import copy
     from pfb.utils.misc import fitcleanbeam, fit_image_cube
+    from daskms.fsspec_store import DaskMSStore
+    from pfb.utils.naming import xds_from_url
     from ducc0.misc import resize_thread_pool, thread_pool_size
     nthreads_tot = opts.nthreads_dask * opts.nvthreads
     resize_thread_pool(nthreads_tot)
@@ -126,6 +115,8 @@ def _klean(ddsi=None, **kw):
         fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
+    dds_store = DaskMSStore(dds_name)
+    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
     if ddsi is not None:
         dds = []
         for ds in ddsi:
@@ -137,16 +128,10 @@ def _klean(ddsi=None, **kw):
                                  'y_psf':-1,
                                  'yo2':-1}))
     else:
-        dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                            'chan':-1,
-                                            'x':-1,
-                                            'y':-1,
-                                            'x_psf':-1,
-                                            'y_psf':-1,
-                                            'yo2':-1})
-    if opts.memory_greedy:
-        dds = dask.persist(dds)[0]
+        # are these sorted correctly?
+        dds = xds_from_list(dds_list)
 
+    nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
     freq_out = []
@@ -157,33 +142,31 @@ def _klean(ddsi=None, **kw):
     freq_out = np.unique(np.array(freq_out))
     time_out = np.unique(np.array(time_out))
 
+    nband = freq_out.size
+
     # stitch dirty/psf in apparent scale
+    # drop_vars to avoid duplicates in memory
     output_type = dds[0].DIRTY.dtype
-    dirty, model, residual, psf, psfhat, _, wsums, _ = dds2cubes(
-                                                            dds,
-                                                            opts.nband,
-                                                            apparent=True)
-    # because fuck dask
-    model = np.require(model, requirements='CAW')
+    if 'RESIDUAL' in dds[0]:
+        residual = np.stack([ds.RESIDUAL.values for ds in dds], axis=0)
+        dds = [ds.drop_vars('RESIDUAL') for ds in dds]
+    else:
+        residual = np.stack([ds.DIRTY.values for ds in dds], axis=0)
+        dds = [ds.drop_vars('DIRTY') for ds in dds]
+    if 'MODEL' in dds[0]:
+        model = np.stack([ds.MODEL.values for ds in dds], axis=0)
+        dds = [ds.drop_vars('MODEL') for ds in dds]
+    psf = np.stack([ds.PSF.values for ds in dds], axis=0)
+    dds = [ds.drop_vars('PSF') for ds in dds]
+    wsums = np.stack([ds.WSUM.values for ds in dds], axis=0)
     fsel = wsums > 0  # keep track of empty bands
 
 
     wsum = np.sum(wsums)
     psf_mfs = np.sum(psf, axis=0)
-    # This is onlt the case for a psf at (l=0,m=0)
-    # assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
-    dirty_mfs = np.sum(dirty, axis=0)
-    if residual is None:
-        residual = dirty.copy()
-        residual_mfs = dirty_mfs.copy()
-    else:
-        residual_mfs = np.sum(residual, axis=0)
+    residual_mfs = np.sum(residual, axis=0)
 
     # for intermediary results (not currently written)
-    freq_out = []
-    for ds in dds:
-        freq_out.append(ds.freq_out)
-    freq_out = np.unique(np.array(freq_out))
     nx = dds[0].x.size
     ny = dds[0].y.size
     ra = dds[0].ra
@@ -209,22 +192,6 @@ def _klean(ddsi=None, **kw):
         print('Using provided fits mask', file=log)
     else:
         mask = np.ones((nx, ny), dtype=output_type)
-
-    # set up vis space Hessian
-    hessopts = {}
-    hessopts['cell'] = dds[0].cell_rad
-    hessopts['do_wgridding'] = opts.do_wgridding
-    hessopts['epsilon'] = opts.epsilon
-    hessopts['double_accum'] = opts.double_accum
-    hessopts['nthreads'] = opts.nvthreads
-    hessopts['x0'] = x0
-    hessopts['y0'] = y0
-    # always clean in apparent scale so no beam
-    # mask is applied to residual after hessian application
-    hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
-                   wsum=wsum, sigmainv=0,
-                   mask=np.ones((nx, ny), dtype=output_type),
-                   compute=True, use_beam=False)
 
     # PCG related options for flux mop
     cgopts = {}
@@ -314,13 +281,22 @@ def _klean(ddsi=None, **kw):
                   fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
-        print("Getting residual", file=log)
-        convimage = hess(model)
-        ne.evaluate('dirty - convimage', out=residual,
-                    casting='same_kind')
-        ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
-                    casting='same_kind')
-
+        print(f'Computing residual', file=log)
+        for ds_name, ds in zip(ds_list, dds):
+            b = int(ds.bandid)
+            resid = compute_residuals(ds_name,
+                                      nx, ny,
+                                      cell_rad, cell_rad,
+                                      ds_name,
+                                      model[b],
+                                      x0=ds.x0, y0=ds.y0,
+                                      nthreads=opts.nvthreads,
+                                      epsilon=opts.epsilon,
+                                      do_wgridding=opts.do_wgridding,
+                                      double_accum=opts.double_accum)
+            residual[b] = resid
+        residual /= wsum
+        residual_mfs = np.sum(residual, axis=0)
         save_fits(residual_mfs,
                   fits_oname + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
@@ -368,12 +344,22 @@ def _klean(ddsi=None, **kw):
 
             model += opts.mop_gamma*x
 
-            print("Getting residual", file=log)
-            convimage = hess(model)
-            ne.evaluate('dirty - convimage', out=residual,
-                        casting='same_kind')
-            ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
-                        casting='same_kind')
+            print(f'Computing residual', file=log)
+            for ds_name, ds in zip(ds_list, dds):
+                b = int(ds.bandid)
+                resid = compute_residuals(ds_name,
+                                        nx, ny,
+                                        cell_rad, cell_rad,
+                                        ds_name,
+                                        model[b],
+                                        x0=ds.x0, y0=ds.y0,
+                                        nthreads=opts.nvthreads,
+                                        epsilon=opts.epsilon,
+                                        do_wgridding=opts.do_wgridding,
+                                        double_accum=opts.double_accum)
+                residual[b] = resid
+            residual /= wsum
+            residual_mfs = np.sum(residual, axis=0)
 
             save_fits(residual_mfs,
                       f'{fits_oname}_{opts.suffix}_postmop{k}_residual_mfs.fits',
@@ -402,26 +388,6 @@ def _klean(ddsi=None, **kw):
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
               file=log)
 
-        print("Updating results", file=log)
-        dds_out = []
-        for ds in dds:
-            b = ds.bandid
-            r = da.from_array(residual[b]*wsum)
-            m = da.from_array(model[b])
-            mbest = da.from_array(best_model[b])
-            ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
-                                  'MODEL': (('x', 'y'), m),
-                                  'MODEL_BEST': (('x', 'y'), mbest)})
-            ds_out = ds_out.assign_attrs({'parametrisation': 'id',
-                                          'niters': k+1,
-                                          'best_rms': best_rms,
-                                          'best_rmax': best_rmax})
-            dds_out.append(ds_out)
-        writes = xds_to_zarr(dds_out, dds_name,
-                             columns=('RESIDUAL', 'MODEL',
-                                      'MODEL_BEST'),
-                             rechunk=True)
-        dask.compute(writes)
         if rmax <= threshold:
             print("Terminating because final threshold has been reached",
                   file=log)
