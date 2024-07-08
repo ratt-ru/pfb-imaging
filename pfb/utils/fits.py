@@ -28,7 +28,7 @@ def save_fits(data, name, hdr, overwrite=True, dtype=np.float32):
     data = np.transpose(to4d(data), axes=(0, 1, 3, 2))[:, :, ::-1]
     hdu.data = np.require(data, dtype=dtype, requirements='F')
     hdu.writeto(name, overwrite=overwrite)
-    return np.ones((1,), dtype=bool)  # so we can use map_blocks
+    return
 
 
 def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
@@ -155,26 +155,17 @@ def set_header_info(mhdr, ref_freq, freq_axis, args, beampars):
     return new_hdr
 
 
-def normwsum(data, wsum):
-    if wsum > 0:
-        return data / wsum
-    else:
-        return data
-
-
 def dds2fits(dds, column, outname, norm_wsum=True, otype=np.float32):
-    imsout = []
     basename = outname + '_' + column.lower()
     for ds in dds:
         t = ds.timeid
         b = ds.bandid
         name = basename + f'_time{t:04d}_band{b:04d}.fits'
-        data = ds.get(column).data
+        data = ds.get(column).values
         if norm_wsum:
-            data = da.map_blocks(normwsum,
-                                 data,
-                                 ds.WSUM.data[0],
-                                 chunks=data.chunks)
+            wsum = ds.WSUM.values[0]
+            if wsum > 0:
+                data /= wsum
             unit = 'Jy/beam'
         else:
             unit = 'Jy/pixel'
@@ -184,16 +175,9 @@ def dds2fits(dds, column, outname, norm_wsum=True, otype=np.float32):
         unix_time = quantity(f'{ds.time_out}s').to_unix_time()
         hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, ds.freq_out,
                       unit=unit, unix_time=unix_time)
-        imout = da.map_blocks(save_fits,
-                             data,
-                             name,
-                             hdr,
-                             overwrite=True,
-                             chunks=(1,),
-                             drop_axis=tuple(np.arange(1,len(data.shape))),
-                             meta=np.empty((0,), dtype=bool))
-        imsout.append(imout)
-    return imsout
+        save_fits(data, name, hdr, overwrite=True,
+                  dtype=otype)
+    return 1  # to wait for futures
 
 
 def dds2fits_mfs(dds, column, outname, norm_wsum=True, otype=np.float32):
@@ -208,43 +192,30 @@ def dds2fits_mfs(dds, column, outname, norm_wsum=True, otype=np.float32):
     basename = outname + '_' + column.lower()
     imsout = []
     nx, ny = dds[0].get(column).shape
-    datas = [da.zeros((nx, ny), chunks=(-1, -1),
-                dtype=otype) for _ in range(ntimes_out)]
-    wsums = [da.zeros(1) for _ in range(ntimes_out)]
-    counts = [da.zeros(1) for _ in range(ntimes_out)]
+    datas = np.zeros((ntimes_out, nx, ny), dtype=float)
+    wsums = np.zeros(ntimes_out)
+    counts = np.zeros(ntimes_out)
     radecs = [[] for _ in range(ntimes_out)]
     cell_deg = np.rad2deg(dds[0].cell_rad)
     for ds in dds:
-        t = ds.timeid
-        datas[t] += ds.get(column).data
-        wsums[t] += ds.WSUM.data[0]
+        t = int(ds.timeid)
+        datas[t] += ds.get(column).values
+        wsums[t] += ds.WSUM.values[0]
         counts[t] += 1
         radecs[t] = (ds.ra, ds.dec)
     for t in range(ntimes_out):
         name = basename + f'_time{t:04d}_mfs.fits'
         if norm_wsum:
-            data = da.map_blocks(normwsum,
-                                 datas[t],
-                                 wsums[t],
-                                 chunks=datas[t].chunks)
+            if wsums[t] > 0:
+                datas[t] /= wsums[t]
             unit = 'Jy/beam'
         else:
-            data = da.map_blocks(normwsum,
-                                 datas[t],
-                                 counts[t],
-                                 chunks=datas[t].chunks)
+            datas[t] /= counts[t]  # masked mean
             unit = 'Jy/pixel'
         unix_time = quantity(f'{times_out[t]}s').to_unix_time()
         hdr = set_wcs(cell_deg, cell_deg, nx, ny, radecs[t], freq_out,
                       unit=unit, unix_time=unix_time)
-        imout = da.map_blocks(save_fits,
-                             data,
-                             name,
-                             hdr,
-                             overwrite=True,
-                             chunks=(1,),
-                             drop_axis=tuple(np.arange(1,len(data.shape))),
-                             meta=np.empty((0,), dtype=bool))
-        imsout.append(imout)
+        save_fits(datas[t], name, hdr, overwrite=True,
+                  dtype=otype)
 
-    return imsout
+    return 1

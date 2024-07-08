@@ -4,7 +4,6 @@ from numba.types import literal
 from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
-from pfb.operators.gridder import vis2im
 from quartical.utils.numba import coerce_literal
 from operator import getitem
 from pfb.utils.beam import interp_beam

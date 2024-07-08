@@ -29,7 +29,6 @@ nvthreads:
     Will attempt to use half the available threads by default.
 scheduler:
   dtype: str
-  default: threads
   choices: ["threads", "single-threaded", "sync", "distributed", "processes"]
   abbreviation: scheduler
   info:

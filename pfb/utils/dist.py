@@ -1,12 +1,13 @@
+import inspect
 import numpy as np
 import xarray as xr
 from distributed import get_client, worker_client, wait
 from pfb.opt.pcg import pcg
 from pfb.operators.hessian import _hessian_impl
 from pfb.operators.psf import psf_convolve_slice
-from pfb.utils.weighting import (_compute_counts,
-                                 _counts_to_weights,
-                                 _filter_extreme_counts)
+from pfb.utils.weighting import (compute_counts,
+                                 counts_to_weights,
+                                 filter_extreme_counts)
 from uuid import uuid4
 import pywt
 from pfb.wavelets.wavelets_jsk import  (get_buffer_size,
@@ -36,18 +37,30 @@ class fake_client(object):
     This is just a class that has a fake submit method.
     Useful for testing and when not running in distributed mode.
     '''
-    def __init__(self, nworkers, nvthreads):
+    def __init__(self, nworkers=1, nvthreads=1):
         # TODO - use cf to fake these for horizontal parallelism
         self.nworkers = nworkers
         self.nvthreads = nvthreads
 
-    def submit(self, *args, workers=0, key=None, actor=False, pure=False):
+    def submit(self, *args, **kwargs):
         func = args[0]  # by convention
-        res = func(args[1:])
-        if actor:  # return instantiated class
+        params = inspect.signature(func).parameters
+        fkw = {}
+        for name, param in params.items():
+            if name in kwargs:
+                fkw[name] = kwargs[name]
+        res = func(*args[1:], **fkw)
+        if 'actor' in kwargs and kwargs['actor']:  # return instantiated class
             return res
         else:  # return fake future with result
             return fake_future(res)
+
+    def wait(self, futures):
+        return
+
+    def gather(self, futures):
+        return [f.result() for f in futures]
+
 
 def l1reweight_func(actors, rmsfactor, rms_comps, alpha=4):
     '''
@@ -77,7 +90,7 @@ class band_actor(object):
     def __init__(self, ds_names, opts, bandid, cache_path):
         self.opts = opts
         self.bandid = bandid
-        self.cache_path = cache_path + f'/band{bandid}'
+        self.cache_path = f'{cache_path}/time0000_band{bandid:04d}.zarr'
         self.ds_names = ds_names
         self.nhthreads = opts.nthreads_dask
         self.nvthreads = opts.nvthreads
@@ -265,8 +278,7 @@ class band_actor(object):
         self.model = model
 
         if from_cache:
-            cname = self.cache_path + f'_time{i}.zarr'
-            self.dds = xr.open_zarr(cname, chunks=None)
+            self.dds = xr.open_zarr(self.cache_path, chunks=None)
         else:
             residual, psfhat, wgt = image_data_products(
                                 model,
@@ -300,8 +312,7 @@ class band_actor(object):
 
             }
             self.dds = xr.Dataset(data_vars, attrs=attrs)
-            cname = self.cache_path + '.zarr'
-            self.dds.to_zarr(cname, mode='a')
+            self.dds.to_zarr(self.cache_path, mode='a')
 
             # TODO - we still have two copies of the weights
 
@@ -352,8 +363,7 @@ class band_actor(object):
             'RESIDUAL': (('x','y'), residual/self.wsum),
         }
         dset = xr.Dataset(data_vars)
-        cname = self.cache_path + '.zarr'
-        dset.to_zarr(cname, mode='r+')
+        dset.to_zarr(self.cache_path, mode='r+')
 
         # return residual since we need the MFS residual on the runner
         return residual

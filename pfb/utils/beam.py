@@ -112,7 +112,7 @@ def interp_beam(freq, nx, ny, cell_deg, btype,
     return beam_image, l, m
 
 
-def _eval_beam(beam_image, l_in, m_in, l_out, m_out):
+def eval_beam(beam_image, l_in, m_in, l_out, m_out):
     if l_out.ndim == 2:
         ll = l_out
         mm = m_out
@@ -133,17 +133,3 @@ def _eval_beam(beam_image, l_in, m_in, l_out, m_out):
         beamo = RGI((l_in, m_in), beam_image,
                     bounds_error=False, method='linear', fill_value=None)
         return beamo((ll, mm))
-
-
-def eval_beam(beam_image, l_in, m_in, l_out, m_out):
-    nxo = l_out.shape[0]
-    nyo = m_out.shape[-1]
-    return da.blockwise(_eval_beam, 'xy',
-                        beam_image, 'xy',
-                        l_in, None,
-                        m_in, None,
-                        l_out, None,
-                        m_out, None,
-                        adjust_chunks={'x': nxo, 'y': nyo},
-                        dtype=float,
-                        meta=np.empty((nxo, nyo), dtype=float))

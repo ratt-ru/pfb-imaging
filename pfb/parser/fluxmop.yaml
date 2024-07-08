@@ -39,7 +39,7 @@ inputs:
     abbreviation: sinv
     info:
       Standard deviation of assumed GRF prior
-  sigmasq:
+  sigma:
     dtype: float
     default: 1
     info:

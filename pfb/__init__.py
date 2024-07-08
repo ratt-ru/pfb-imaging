@@ -82,9 +82,6 @@ def set_client(opts, stack, log,
 
     import dask
     if scheduler=='distributed':
-        # we probably always want compression
-
-
         # set up client
         host_address = opts.host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
         if host_address is not None:
@@ -92,10 +89,6 @@ def set_client(opts, stack, log,
             print("Initialising distributed client.", file=log)
             client = stack.enter_context(Client(host_address))
         else:
-            if opts.nthreads_dask * opts.nvthreads > nthreads_max:
-                print("Warning - you are attempting to use more threads than "
-                      "available. This may lead to suboptimal performance.",
-                      file=log)
             from dask.distributed import Client, LocalCluster
             print("Initialising client with LocalCluster.", file=log)
             dask.config.set({
@@ -104,11 +97,11 @@ def set_client(opts, stack, log,
                         'type': 'blosc'
                     }
             })
-            cluster = LocalCluster(processes=opts.nworkers > 1,
-                                    n_workers=opts.nworkers,
-                                    threads_per_worker=opts.nthreads_dask,
-                                    memory_limit=0,  # str(mem_limit/nworkers)+'GB'
-                                    asynchronous=False)
+            cluster = LocalCluster(processes=True,
+                                   n_workers=opts.nworkers,
+                                   threads_per_worker=opts.nthreads_dask,
+                                   memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                                   asynchronous=False)
             cluster = stack.enter_context(cluster)
             client = stack.enter_context(Client(cluster,
                                                 direct_to_workers=False))
@@ -135,6 +128,8 @@ def set_client(opts, stack, log,
         dask.config.set(pool=Pool(opts.nthreads_dask))
         print(f"Initialising Pool with {opts.nthreads_dask} processes",
               file=log)
+    elif scheduler is None:
+        print("Faking client", file=log)
     else:
         raise ValueError(f"Unknown scheduler option {opts.scheduler}")
 

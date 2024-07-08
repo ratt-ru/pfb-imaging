@@ -1,3 +1,4 @@
+import concurrent.futures as cf
 import numpy as np
 from numba import njit, prange, literally
 from numba.extending import overload
@@ -7,67 +8,53 @@ from africanus.constants import c as lightspeed
 from quartical.utils.dask import Blocker
 from pfb.utils.misc import JIT_OPTIONS
 from pfb.utils.stokes import stokes_funcs
+from pfb.utils.naming import xds_from_list
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
 
-def compute_counts(uvw,
-                   freq,
-                   mask,
+def compute_counts(dsl,
                    nx, ny,
                    cell_size_x, cell_size_y,
-                   dtype,
-                   wgt=None,
                    k=6,
-                   ngrid=1):
+                   nthreads=1):
 
-    if wgt is not None:
-        wgtout = ('row', 'chan')
-    else:
-        wgtout = None
+    if isinstance(dsl[0], str):
+        dsl = xds_from_list(dsl)
 
-    counts = da.blockwise(compute_counts_wrapper, ('row', 'nx', 'ny'),
-                          uvw, ('row', 'three'),
-                          freq, ('chan',),
-                          mask, ('row', 'chan'),
-                          nx, None,
-                          ny, None,
-                          cell_size_x, None,
-                          cell_size_y, None,
-                          dtype, None,
-                          wgt, wgtout,
-                          k, None,
-                          ngrid, None,
-                          new_axes={"nx": nx, "ny": ny},
-                          adjust_chunks={'row': ngrid},
-                          align_arrays=False,
-                          dtype=dtype)
+    nds = len(dsl)
+    ngrid = nthreads//nds
 
-    return counts.sum(axis=0)
+    counts = []
+    # TODO - parallel over ds
+    with cf.ThreadPoolExecutor(max_workers=ngrid) as executor:
+        futures = []
+        for ds in dsl:
+            fut = executor.submit(_compute_counts,
+                                  ds.UVW.values,
+                                  ds.FREQ.values,
+                                  ds.MASK.values,
+                                  ds.WEIGHT.values,
+                                  nx, ny,
+                                  cell_size_x,
+                                  cell_size_y,
+                                  ds.WEIGHT.dtype,
+                                  k=6,
+                                  ngrid=ngrid)
+            futures.append(fut)
 
+        for fut in cf.as_completed(futures):
+            # sum over number of grids
+            counts.append(fut.result().sum(axis=0))
 
-def compute_counts_wrapper(uvw,
-                           freq,
-                           mask,
-                           nx, ny,
-                           cell_size_x, cell_size_y,
-                           dtype,
-                           wgt,
-                           k,
-                           ngrid):
-    if wgt is not None:
-        wgtout = wgt[0]
-    else:
-        wgtout = wgt
-    return _compute_counts(uvw[0], freq[0], mask[0], nx, ny,
-                        cell_size_x, cell_size_y, dtype, wgtout, k, ngrid)
+    return np.array(counts)
 
 
 
 @njit(nogil=True, cache=True, parallel=True)
-def _compute_counts(uvw, freq, mask, nx, ny,
+def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                     cell_size_x, cell_size_y, dtype,
-                    wgt=None, k=6, ngrid=1):  # support hardcoded for now
+                    k=6, ngrid=1):  # support hardcoded for now
     # ufreq
     u_cell = 1/(nx*cell_size_x)
     # shifts fftfreq such that they start at zero
@@ -138,29 +125,9 @@ def _compute_counts(uvw, freq, mask, nx, ny,
 def _es_kernel(x, beta, k):
     return np.exp(beta*k*(np.sqrt((1-x)*(1+x)) - 1))
 
-def counts_to_weights(counts, uvw, freq, nx, ny,
-                      cell_size_x, cell_size_y, robust):
-
-    weights = da.blockwise(counts_to_weights_wrapper, ('row', 'chan'),
-                           counts, ('nx', 'ny'),
-                           uvw, ('row', 'three'),
-                           freq, ('chan',),
-                           nx, None,
-                           ny, None,
-                           cell_size_x, None,
-                           cell_size_y, None,
-                           robust, None,
-                           dtype=counts.dtype)
-    return weights
-
-def counts_to_weights_wrapper(counts, uvw, freq, nx, ny,
-                              cell_size_x, cell_size_y, robust):
-    return _counts_to_weights(counts[0][0], uvw[0], freq, nx, ny,
-                              cell_size_x, cell_size_y, robust)
-
 
 @njit(nogil=True, cache=True)
-def _counts_to_weights(counts, uvw, freq, nx, ny,
+def counts_to_weights(counts, uvw, freq, nx, ny,
                        cell_size_x, cell_size_y, robust):
     # ufreq
     u_cell = 1/(nx*cell_size_x)
@@ -203,18 +170,9 @@ def _counts_to_weights(counts, uvw, freq, nx, ny,
     return weights
 
 
-def filter_extreme_counts(counts, level=10):
-
-    return da.blockwise(_filter_extreme_counts, 'xy',
-                        counts, 'xy',
-                        level, None,
-                        dtype=counts.dtype,
-                        meta=np.empty((0,0), dtype=float))
-
-
 
 # @njit(nogil=True, cache=True)
-def _filter_extreme_counts(counts, level=10.0):
+def filter_extreme_counts(counts, level=10.0):
     '''
     Replaces extremely small counts by median to prevent
     upweighting nearly empty cells

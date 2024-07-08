@@ -76,9 +76,7 @@ def _fluxmop(ddsi=None, **kw):
     from pfb.utils.misc import init_mask, dds2cubes
     from pfb.operators.hessian import hessian_xds, hessian_psf_cube
     from pfb.operators.psf import psf_convolve_cube
-    from pfb.opt.pcg import pcg
-    from ducc0.misc import make_noncritical
-    from ducc0.misc import empty_noncritical
+    from pfb.opt.pcg import pcg_dds
     from ducc0.misc import resize_thread_pool, thread_pool_size
     from ducc0.fft import c2c
     iFs = np.fft.ifftshift
@@ -119,12 +117,6 @@ def _fluxmop(ddsi=None, **kw):
         for i, ds in enumerate(dds):
             dds[i] = ds.chunk(chunks)
 
-    # inflates memory and not required
-    for i, ds in enumerate(dds):
-        dds[i] = ds.drop_vars(('PSFHAT','NOISE'))
-
-    if opts.memory_greedy:
-        dds = dask.persist(dds)[0]
 
     # stitch image space data products
     output_type = dds[0].DIRTY.dtype
@@ -222,114 +214,6 @@ def _fluxmop(ddsi=None, **kw):
         mask = np.ones((nx, ny), dtype=output_type)
         print('Caution - No mask is being applied', file=log)
 
-    def F(x):
-        return c2c(Fs(x, axes=(1,2)), axes=(1,2), forward=True, inorm=0, nthreads=8)
-
-    def FH(x):
-        return iFs(c2c(x, axes=(1,2), forward=False, inorm=2, nthreads=8), axes=(1,2))
-
-    # information source gets modified if using image space hessian
-    j = beam * mask[None, :, :] * residual
-
-    if opts.use_psf:
-        raise NotImplementedError
-        # print("Using image space hessian approximation",
-        #       file=log)
-        # xout = np.empty(dirty.shape, dtype=dirty.dtype, order='C')
-        # xout = make_noncritical(xout)
-        # xpad = np.empty(psf.shape, dtype=dirty.dtype, order='C')
-        # xpad = make_noncritical(xpad)
-        # xhat = np.empty(psfhat.shape, dtype=psfhat.dtype)
-        # xhat = make_noncritical(xhat)
-        # R = partial(psf_colvolve_cube,
-        #             xpad,
-        #             xhat,
-        #             xout,
-        #             psfhat,
-        #             lastsize,
-        #             nthreads=opts.nvthreads*opts.nthreads_dask)
-
-        # RH = partial(psf_colvolve_cube,
-        #              xpad,
-        #              xhat,
-        #              xout,
-        #              psfhat.conj(),
-        #              lastsize,
-        #              nthreads=opts.nvthreads*opts.nthreads_dask)
-
-        # def hess_pcg(x):
-        #     return RH(R(x)) + opts.sigmainvsq*x
-
-        # # now we have a good preconditioner
-        # nx_psf = dds[0].x_psf.size
-        # ny_psf = dds[0].y_psf.size
-        # nxpad = (nx_psf - nx)//2
-        # nypad = (ny_psf - ny)//2
-        # if nxpad:
-        #     nxf = -nxpad
-        # else:
-        #     nxf = nx_psf
-        # if nypad:
-        #     nyf = -nypad
-        # else:
-        #     nyf = ny_psf
-        # Ihatsq = np.abs(F(psf[:, nxpad:nxf, nypad:nyf]))**2
-        # def precond(x):
-        #     xhat = F(x)
-        #     return FH(xhat/(Ihatsq + 1)).real
-
-    else:
-        print("Using vis space hessian approximation",
-              file=log)
-        # TODO - we can probably do better here
-        hess_pcg = partial(hessian_xds,
-                           xds=dds,
-                           hessopts=hessopts,
-                           wsum=wsum,
-                           sigmainv=opts.sigmainvsq,
-                           mask=mask,
-                           compute=True,
-                           use_beam=False)
-
-        if not opts.memory_greedy:
-            print("Warning! Data will be loaded from disk at every iteration. "
-                  "It is recommended to use vis space Hessian approximation "
-                  "with --memory-greedy", file=log)
-
-
-        # set up preconditioner
-        nx_psf = dds[0].x_psf.size
-        ny_psf = dds[0].y_psf.size
-        nxpadl = (nx_psf - nx)//2
-        nxpadr = nx_psf - nx - nxpadl
-        nypadl = (ny_psf - ny)//2
-        nypadr = ny_psf - ny - nypadl
-        padding = ((0,0),(nxpadl, nxpadr),(nypadl,nypadr))
-        if nx_psf != nx:
-            unpad_x = slice(nxpadl, -nxpadr)
-        else:
-            unpad_x = slice(None)
-        if ny_psf != ny:
-            unpad_y = slice(nypadl, -nypadr)
-        else:
-            unpad_y = slice(None)
-        psf = np.abs(F(psf))  # avoid copy
-        # xhat = empty_noncritical((nband, nx_psf, ny_psf),
-        #                             dtype=np.complex128)
-        xhat = np.zeros((nband, nx_psf, ny_psf),
-                        dtype=np.complex128)
-        def precond(xhat, x):
-            xhat[...] = 0j
-            xhat[:, unpad_x, unpad_y] = x
-            c2c(xhat, axes=(1,2), out=xhat,
-                forward=True, inorm=0, nthreads=8)
-            xhat /= (psf + opts.sigmasq)
-            c2c(xhat, axes=(1,2), out=xhat,
-                forward=False, inorm=2, nthreads=8)
-            return xhat[:, unpad_x, unpad_y].real
-
-        precondo = partial(precond, xhat)
-
 
     cgopts = {}
     cgopts['tol'] = opts.cg_tol
@@ -337,7 +221,7 @@ def _fluxmop(ddsi=None, **kw):
     cgopts['minit'] = opts.cg_minit
     cgopts['verbosity'] = opts.cg_verbose
     cgopts['report_freq'] = opts.cg_report_freq
-    cgopts['backtrack'] = opts.backtrack
+    # cgopts['backtrack'] = opts.backtrack
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -350,14 +234,16 @@ def _fluxmop(ddsi=None, **kw):
     save_fits(np.mean(x0, axis=0),
               basename + f'_{opts.suffix}_x0.fits',
               hdr_mfs)
-    update = pcg(hess_pcg, beam * mask[None, :, :] * residual, x0,
-                 M=precondo,
-                 tol=opts.cg_tol,
-                 maxit=opts.cg_maxit,
-                 minit=opts.cg_minit,
-                 verbosity=opts.cg_verbose,
-                 report_freq=opts.cg_report_freq,
-                 backtrack=opts.backtrack)
+    for ds in dds:
+        x, r, x0 = pcg_dds(hess_pcg,
+                           opts.sigmainvsq,
+                           opts.sigma,
+                           mask=mask,
+                           do_wgridding=opts.do_wgridding,
+                           epsilon=opts.epsilon,
+                           double_accum=opts.double_accum,
+                           nthreads=opts.nvthreads,
+                           **cgopts)
 
     modelp = model.copy()
     model += opts.gamma * update

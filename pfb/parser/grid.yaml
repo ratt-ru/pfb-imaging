@@ -3,12 +3,6 @@ inputs:
     info:
       Optional explicit path to xds.
       Set using output-filename and suffix by default.
-  nband:
-    dtype: int
-    required: true
-    abbreviation: nb
-    info:
-      Number of imaging bands
   suffix:
     dtype: str
     default: 'main'
@@ -62,6 +56,11 @@ inputs:
     default: true
     info:
       Compute the PSF
+  residual:
+    dtype: bool
+    default: true
+    info:
+      Compute the residual (only if model is present)
   noise:
     dtype: bool
     default: true
@@ -128,6 +127,11 @@ inputs:
       Base the imaging weights on the uniform weights computed over all
       data instead of per band. This ensures that the MFS image can truly
       be uniformly weighted.
+  reset-cache:
+    dtype: bool
+    default: false
+    info:
+      Reset dds cache
   _include:
     - (.)gridding.yml
     - (.)dist.yml

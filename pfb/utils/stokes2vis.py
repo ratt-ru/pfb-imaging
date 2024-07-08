@@ -6,7 +6,6 @@ from dask.graph_manipulation import clone
 from distributed import get_client, worker_client
 import dask.array as da
 from xarray import Dataset
-from pfb.operators.gridder import vis2im
 # from quartical.utils.numba import coerce_literal
 from operator import getitem
 from pfb.utils.beam import interp_beam

@@ -5,133 +5,36 @@ number of rows after BDA.
 """
 
 import numpy as np
+import xarray as xr
 import dask
 import dask.array as da
 from ducc0.wgridder import vis2dirty, dirty2vis
 from ducc0.fft import c2r, r2c
 from africanus.constants import c as lightspeed
 from quartical.utils.dask import Blocker
-from pfb.utils.weighting import _counts_to_weights
+from pfb.utils.weighting import counts_to_weights
+from pfb.utils.beam import eval_beam
+from pfb.utils.naming import xds_from_list
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
-def vis2im(uvw=None,
-           freq=None,
-           vis=None,
-           wgt=None,
-           nx=None, ny=None,
-           cellx=None, celly=None,
-           nthreads=None,
-           epsilon=None,
-           mask=None,
-           do_wgridding=True,
-           flip_v=False,
-           x0=0, y0=0,
-           precision='single',
-           divide_by_n=False,
-           sigma_min=1.1, sigma_max=2.6,
-           double_precision_accumulation=True):
 
-    if precision.lower() == 'single':
-        real_type = np.float32
-    elif precision.lower() == 'double':
-        real_type = np.float64
-
-    if wgt is not None:
-        wgt_out = 'rf'
-    else:
-        wgt_out = None
-
-    if mask is not None:
-        mask_out = 'rf'
-    else:
-        mask_out = None
-
-    return da.blockwise(_vis2im, 'xy',
-                        uvw, 'r3',
-                        freq, 'f',
-                        vis, 'rf',
-                        wgt, wgt_out,
-                        mask, mask_out,
-                        nx, None,
-                        ny, None,
-                        cellx, None,
-                        celly, None,
-                        x0, None,
-                        y0, None,
-                        epsilon, None,
-                        precision, None,
-                        flip_v, None,
-                        do_wgridding, None,
-                        divide_by_n, None,
-                        nthreads, None,
-                        sigma_min, None,
-                        sigma_max, None,
-                        double_precision_accumulation, None,
-                        new_axes={'x':nx, 'y': ny},
-                        dtype=real_type)
-
-def _vis2im(uvw,
-            freq,
-            vis,
-            wgt,
-            mask,
-            nx, ny,
-            cellx, celly,
-            x0, y0,
-            epsilon,
-            precision,
-            flip_v,
-            do_wgridding,
-            divide_by_n,
-            nthreads,
-            sigma_min,
-            sigma_max,
-            double_precision_accumulation):
-
-    if wgt is not None:
-        wgt_out = wgt[0][0]
-    else:
-        wgt_out = None
-
-    if mask is not None:
-        mask_out = mask[0][0]
-    else:
-        mask_out = None
-
-    return _vis2im_impl(uvw[0][0],
-                        freq[0],
-                        vis[0][0],
-                        wgt_out,
-                        mask_out,
-                        nx, ny,
-                        cellx, celly,
-                        x0, y0,
-                        epsilon,
-                        precision,
-                        flip_v,
-                        do_wgridding,
-                        divide_by_n,
-                        nthreads,
-                        sigma_min, sigma_max,
-                        double_precision_accumulation)
-
-def _vis2im_impl(uvw,
-                 freq,
-                 vis,
-                 wgt,
-                 mask,
-                 nx, ny,
-                 cellx, celly,
-                 x0, y0,
-                 epsilon,
-                 precision,
-                 flip_v,
-                 do_wgridding,
-                 divide_by_n,
-                 nthreads,
-                 sigma_min, sigma_max,
-                 double_precision_accumulation):
+def vis2im(uvw,
+           freq,
+           vis,
+           wgt,
+           mask,
+           nx, ny,
+           cellx, celly,
+           x0, y0,
+           epsilon,
+           precision,
+           flip_v,
+           do_wgridding,
+           divide_by_n,
+           nthreads,
+           sigma_min, sigma_max,
+           double_precision_accumulation):
     uvw = np.require(uvw, dtype=np.float64)
     freq = np.require(freq, np.float64)
 
@@ -167,107 +70,19 @@ def _vis2im_impl(uvw,
                      double_precision_accumulation=double_precision_accumulation)
 
 
-
-# def im2vis(uvw=None,
-#            freq=None,
-#            image=None,
-#            wgt=None,
-#            mask=None,
-#            cellx=None,
-#            celly=None,
-#            nthreads=1,
-#            epsilon=1e-7,
-#            do_wgridding=True,
-#            flip_v=False,
-#            x0=0, y0=0,
-#            precision='single',
-#            divide_by_n=False,
-#            sigma_min=1.1,
-#            sigma_max=2.6):
-
-#     if precision.lower() == 'single':
-#         complex_type = np.float32
-#     elif precision.lower() == 'double':
-#         complex_type = np.float64
-
-#     if wgt is not None:
-#         wgt_out = 'rf'
-#     else:
-#         wgt_out = None
-
-#     if mask is not None:
-#         mask_out = 'rf'
-#     else:
-#         mask_out = None
-
-#     return da.blockwise(_im2vis, 'rf',
-#                         uvw, 'r3',
-#                         freq, 'f',
-#                         image, 'xy',
-#                         wgt, wgt_out,
-#                         mask, mask_out,
-#                         cellx, None,
-#                         celly, None,
-#                         x0, None,
-#                         y0, None,
-#                         epsilon, None,
-#                         flip_v, None,
-#                         do_wgridding, None,
-#                         precision, None,
-#                         divide_by_n, None,
-#                         nthreads, None,
-#                         sigma_min, None,
-#                         sigma_max, None,
-#                         dtype=complex_type)
-
-# def _im2vis(uvw,
-#            freq,
-#            image,
-#            wgt,
-#            mask,
-#            cellx,
-#            celly,
-#            x0=0, y0=0,
-#            epsilon=1e-7,
-#            flip_v=False,
-#            do_wgridding=True,
-#            precision='single',
-#            divide_by_n=False,
-#            nthreads=1,
-#            sigma_min=1.1,
-#            sigma_max=2.6):
-
-#     return _im2vis_impl(uvw[0],
-#                         freq,
-#                         image[0][0],
-#                         wgt,
-#                         mask,
-#                         cellx, celly,
-#                         x0, y0,
-#                         epsilon,
-#                         flip_v,
-#                         do_wgridding,
-#                         precision,
-#                         divide_by_n,
-#                         nthreads,
-#                         sigma_min,
-#                         sigma_max)
-
-
-
-def _im2vis_impl(uvw,
-                 freq,
-                 image,
-                 cellx,
-                 celly,
-                 freq_bin_idx,
-                 freq_bin_counts,
-                 x0=0, y0=0,
-                 epsilon=1e-7,
-                 flip_v=False,
-                 do_wgridding=True,
-                 divide_by_n=False,
-                 nthreads=1):
+def im2vis(uvw,
+           freq,
+           image,
+           cellx,
+           celly,
+           freq_bin_idx,
+           freq_bin_counts,
+           x0=0, y0=0,
+           epsilon=1e-7,
+           flip_v=False,
+           do_wgridding=True,
+           divide_by_n=False,
+           nthreads=1):
     # adjust for chunking
     # need a copy here if using multiple row chunks
     freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
@@ -294,103 +109,7 @@ def _im2vis_impl(uvw,
     return vis
 
 
-
-def _loc2psf_vis_impl(uvw,
-                      freq,
-                      cell,
-                      x0=0,
-                      y0=0,
-                      do_wgridding=True,
-                      epsilon=1e-7,
-                      nthreads=1,
-                      precision='single',
-                      divide_by_n=False,
-                      convention='CASA'):
-    if x0 or y0:
-        # LB - what is wrong with this?
-        # n = np.sqrt(1 - x0**2 - y0**2)
-        # if convention.upper() == 'CASA':
-        #     freqfactor = -2j*np.pi*freq[None, :]/lightspeed
-        # else:
-        #     freqfactor = 2j*np.pi*freq[None, :]/lightspeed
-        # psf_vis = np.exp(freqfactor*(uvw[:, 0:1]*x0 +
-        #                              uvw[:, 1:2]*y0 +
-        #                              uvw[:, 2:]*(n-1)))
-        # if divide_by_n:
-        #     psf_vis /= n
-        real_type = np.float32 if precision == 'single' else np.float64
-        x = np.zeros((128,128), dtype=real_type)
-        x[64,64] = 1.0
-        psf_vis = dirty2vis(uvw=uvw,
-                            freq=freq,
-                            dirty=x,
-                            pixsize_x=cell,
-                            pixsize_y=cell,
-                            center_x=x0,
-                            center_y=y0,
-                            epsilon=1e-7,
-                            do_wgridding=do_wgridding,
-                            nthreads=nthreads,
-                            divide_by_n=divide_by_n)
-
-    else:
-        nrow, _ = uvw.shape
-        nchan = freq.size
-        dtype = np.complex64 if precision == 'single' else np.complex128
-        psf_vis = np.ones((nrow, nchan), dtype=dtype)
-    return psf_vis
-
-
-def _loc2psf_vis(uvw,
-                 freq,
-                 cell,
-                 x0=0,
-                 y0=0,
-                 do_wgridding=True,
-                 epsilon=1e-7,
-                 nthreads=1,
-                 precision='single',
-                 divide_by_n=False,
-                 convention='CASA'):
-    return _loc2psf_vis_impl(uvw[0],
-                             freq,
-                             cell,
-                             x0,
-                             y0,
-                             do_wgridding,
-                             epsilon,
-                             nthreads,
-                             precision,
-                             divide_by_n,
-                             convention)
-
-
-def loc2psf_vis(uvw,
-                freq,
-                cell,
-                x0=0,
-                y0=0,
-                do_wgridding=True,
-                epsilon=1e-7,
-                nthreads=1,
-                precision='single',
-                divide_by_n=False,
-                convention='CASA'):
-    return da.blockwise(_loc2psf_vis, 'rf',
-                        uvw, 'r3',
-                        freq, 'f',
-                        cell, None,
-                        x0, None,
-                        y0, None,
-                        do_wgridding, None,
-                        epsilon, None,
-                        nthreads, None,
-                        precision, None,
-                        divide_by_n, None,
-                        convention, None,
-                        dtype=np.complex64 if precision == 'single' else np.complex128)
-
-
+# we still need the collections interface here for the degridder
 def comps2vis(uvw,
               utime,
               freq,
@@ -550,15 +269,13 @@ def _comps2vis_impl(uvw,
     return vis
 
 
-def image_data_products(uvw,
-                        freq,
-                        vis,
-                        wgt,
-                        mask,
+def image_data_products(dsl,
                         counts,
                         nx, ny,
                         nx_psf, ny_psf,
                         cellx, celly,
+                        output_name,
+                        attrs,
                         model=None,
                         robustness=None,
                         x0=0.0, y0=0.0,
@@ -570,18 +287,64 @@ def image_data_products(uvw,
                         l2reweight_dof=None,
                         do_dirty=True,
                         do_psf=True,
+                        do_residual=True,
                         do_weight=True,
                         do_noise=False):
     '''
     Function to compute image space data products in one go
+
         dirty
         psf
-        psfhat
-        imweight
         residual
+        noise
+        beam
+        imweight
         wsum
+
+    Assumes all datasets are concatenatable and will compute weighted
+    sum of beam
     '''
-    out_dict = {}
+
+    # TODO - assign ug,vg-coordinates
+    x = (-nx/2 + np.arange(nx)) * cellx + x0
+    y = (-ny/2 + np.arange(ny)) * celly + y0
+    coords = {
+        'x': x,
+        'y': y
+    }
+
+    if isinstance(dsl[0], str):
+        dsl = xds_from_list(dsl)
+
+    # need to take weighted sum of beam before concat
+    beam = np.zeros((nx, ny), dtype=float)
+    wsumb = 0.0
+    freq = dsl[0].FREQ.values  # must all be the same
+    for i, ds in enumerate(dsl):
+        wgt = ds.WEIGHT.values
+        mask = ds.MASK.values
+        wsumt = (wgt*mask).sum()
+        wsumb += wsumt
+        l_beam = ds.l_beam
+        m_beam = ds.m_beam
+        beamt = eval_beam(ds.BEAM.values, l_beam, m_beam,
+                          np.rad2deg(x), np.rad2deg(y))
+        beam += beamt * wsumt
+        assert (ds.FREQ.values == freq).all()
+        ds = ds.drop_vars(('BEAM','FREQ'))
+        dsl[i] = ds.drop_dims(('l_beam', 'm_beam'))
+
+    # weighted sum of beam computd using natural weights
+    beam /= wsumb
+
+    ds = xr.concat(dsl, dim='row')
+    uvw = ds.UVW.values
+    vis = ds.VIS.values
+    wgt = ds.WEIGHT.values
+    mask = ds.MASK.values
+
+    # output ds
+    dso = xr.Dataset(attrs=attrs, coords=coords)
 
     if model is None:
         if l2reweight_dof:
@@ -589,7 +352,7 @@ def image_data_products(uvw,
                              'Perhaps transfer model from somewhere?')
     else:
         # do not apply weights in this direction
-        model_vis = dirty2vis(
+        residual_vis = dirty2vis(
             uvw=uvw,
             freq=freq,
             dirty=model,
@@ -604,8 +367,9 @@ def image_data_products(uvw,
             divide_by_n=False,
             sigma_min=1.1, sigma_max=3.0)
 
-        residual_vis = vis - model_vis
-        # apply mask to both
+        residual_vis *= -1  # negate model
+        residual_vis += vis
+        # apply mask to both for reweighting
         residual_vis *= mask
 
     if l2reweight_dof:
@@ -613,7 +377,10 @@ def image_data_products(uvw,
         wcount = mask.sum()
         if wcount:
             ovar = ressq.sum()/wcount  # use 67% quantile?
+            # first divide ovar to get ressq relative to 1
             wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)
+            # now divide by ovar to scale to absolute units
+            wgt /= ovar
         else:
             wgt = None
 
@@ -623,7 +390,7 @@ def image_data_products(uvw,
         if counts is None:
             raise ValueError('counts are None but robustness specified. '
                              'This is probably a bug!')
-        imwgt = _counts_to_weights(
+        imwgt = counts_to_weights(
             counts,
             uvw,
             freq,
@@ -636,28 +403,29 @@ def image_data_products(uvw,
             wgt = imwgt
 
     if do_weight:
-        out_dict['WEIGHT'] = wgt
+        dso['WEIGHT'] = (('row','chan'), wgt)
 
     wsum = wgt[mask.astype(bool)].sum()
-    out_dict['WSUM'] = np.atleast_1d(wsum)
+    dso['WSUM'] = (('scalar',), np.atleast_1d(wsum))
 
-    dirty = vis2dirty(
-        uvw=uvw,
-        freq=freq,
-        vis=vis,
-        wgt=wgt,
-        mask=mask,
-        npix_x=nx, npix_y=ny,
-        pixsize_x=cellx, pixsize_y=celly,
-        center_x=x0, center_y=y0,
-        epsilon=epsilon,
-        flip_v=False,  # hardcoded for now
-        do_wgridding=do_wgridding,
-        divide_by_n=False,  # hardcoded for now
-        nthreads=nthreads,
-        sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=double_accum)
-    out_dict['DIRTY'] = dirty
+    if do_dirty:
+        dirty = vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=vis,
+            wgt=wgt,
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cellx, pixsize_y=celly,
+            center_x=x0, center_y=y0,
+            epsilon=epsilon,
+            flip_v=False,  # hardcoded for now
+            do_wgridding=do_wgridding,
+            divide_by_n=False,  # hardcoded for now
+            nthreads=nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=double_accum)
+        dso['DIRTY'] = (('x','y'), dirty)
 
     if do_psf:
         if x0 or y0:
@@ -716,11 +484,11 @@ def image_data_products(uvw,
                      nthreads=nthreads,
                      forward=True, inorm=0)
 
-        out_dict["PSF"] = psf
-        out_dict["PSFHAT"] = psfhat
+        dso["PSF"] = (('x_psf', 'y_psf'), psf)
+        dso["PSFHAT"] = (('x_psf', 'yo2'), psfhat)
 
 
-    if model is not None:
+    if do_residual and model is not None:
         residual = vis2dirty(
             uvw=uvw,
             freq=freq,
@@ -738,14 +506,15 @@ def image_data_products(uvw,
             sigma_min=1.1, sigma_max=3.0,
             double_precision_accumulation=double_accum)
 
-        out_dict['RESIDUAL'] = residual
+        dso['MODEL'] = (('x','y'), model)
+        dso['RESIDUAL'] = (('x','y'), residual)
 
     if do_noise:
         # sample noise and project into image space
         nrow, nchan = vis.shape
         vis = (np.random.randn(nrow, nchan) +
                1j*np.random.randn(nrow, nchan)) * np.sqrt(wgt)/np.sqrt(2)
-        noise = residual = vis2dirty(
+        noise = vis2dirty(
             uvw=uvw,
             freq=freq,
             vis=vis,
@@ -762,6 +531,19 @@ def image_data_products(uvw,
             sigma_min=1.1, sigma_max=3.0,
             double_precision_accumulation=double_accum)
 
-        out_dict['NOISE'] = noise
+        dso['NOISE'] = (('x','y'), noise)
 
-    return out_dict
+    if beam is not None:
+        dso['BEAM'] = (('x', 'y'), beam)
+    else:
+        dso['BEAM'] = (('x', 'y'), np.ones((nx, ny), dtype=wgt.dtype))
+
+    # save
+    dso.to_zarr(output_name, mode='a')
+
+    # return residual to report stats
+    # one of these should always succeed
+    try:
+        return residual, wsum
+    except:
+        return dirty, wsum
