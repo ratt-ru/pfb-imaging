@@ -8,8 +8,8 @@ from africanus.rime.fast_beam_cubes import beam_cube_dde
 from africanus.rime import parallactic_angles
 
 
-def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
-                      utime=None, ant_pos=None, phase_dir=None):
+def interp_beam(freq, nx, ny, cell_deg, btype,
+                utime=None, ant_pos=None, phase_dir=None):
     '''
     A function that returns an object array containing a function
     returning beam values given (l,m) coordinates at a single frequency.
@@ -20,7 +20,9 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
         assert freq.size == 1, "Only single frequency interpolation currently supported"
         freq = freq[0]
     if btype is None:
-        return np.ones((nx, ny), dtype=float)
+        l = (-(nx//2) + np.arange(nx)) * cell_deg
+        m = (-(ny//2) + np.arange(ny)) * cell_deg
+        return np.ones((nx, ny), dtype=float), l, m
     elif btype.endswith('.npz'):
         # these are expected to be in the format given here
         # https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
@@ -55,7 +57,7 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
         bfreqs = np.array((freq,))
 
     if utime is None:
-        return beam_amp.squeeze()
+        return beam_amp.squeeze(), l, m
 
     parangles = parallactic_angles(utime, ant_pos, phase_dir, backend='astropy')
     # mean over antanna nant -> 1
@@ -73,43 +75,7 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
                             lm, parangles, point_errs,
                             ant_scale, np.array((freq,))).squeeze()
 
-    return beam_image.squeeze()
-
-
-def interp_beam(freq, nx, ny, cell_deg, btype,
-                utime=None, ant_pos=None, phase_dir=None):
-    '''
-    Blockwise wrapper that returns an object array containing a function
-    returning beam values given (l,m) coordinates at a single frequency.
-    Frequency mapped to imaging band extenally. Result is meant to be
-    passed into eval_beam below.
-    '''
-    if btype is not None and btype.endswith('.npz'):
-        dct = np.load(btype)
-        l = dct['ldeg']
-        m = dct['mdeg']
-        nx = l.size
-        ny = m.size
-        cell_deg = l[1] - l[0]
-        assert cell_deg == m[1] - m[0], 'Beam coords must be on a square grid'
-    else:
-        l = (-(nx//2) + np.arange(nx)) * cell_deg
-        m = (-(ny//2) + np.arange(ny)) * cell_deg
-
-    beam_image = da.blockwise(_interp_beam_impl, 'xy',
-                        freq, None,
-                        nx, None,
-                        ny, None,
-                        cell_deg, None,
-                        btype, None,
-                        utime, None,
-                        ant_pos, None,
-                        phase_dir, None,
-                        new_axes={'x': nx, 'y': ny},
-                        dtype=float)
-    # l = da.from_array(l, chunks=-1)
-    # m = da.from_array(m, chunks=-1)
-    return beam_image, l, m
+    return beam_image.squeeze(), l, m
 
 
 def eval_beam(beam_image, l_in, m_in, l_out, m_out):
