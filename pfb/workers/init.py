@@ -1,7 +1,6 @@
 # flake8: noqa
 import os
 import sys
-from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
 import click
@@ -26,15 +25,22 @@ def init(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    ldir = Path(opts.log_directory).resolve()
-    ldir.mkdir(parents=True, exist_ok=True)
-    logname = f'{str(ldir)}/init_{timestamp}.log'
-    pyscilog.log_to_file(logname)
 
-    print(f'Logs will be written to {logname}', file=log)
+    from pfb.utils.naming import set_output_names
+    opts, basedir, oname = set_output_names(opts)
+
+    import psutil
+    nthreads = psutil.cpu_count(logical=True)
+    ncpu = psutil.cpu_count(logical=False)
+    if opts.nthreads is None:
+        opts.nthreads = nthreads//2
+        ncpu = ncpu//2
+
+    OmegaConf.set_struct(opts, True)
+
     if opts.product.upper() not in ["I","Q", "U", "V"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
+
     from daskms.fsspec_store import DaskMSStore
     msnames = []
     for ms in opts.ms:
@@ -58,12 +64,6 @@ def init(**kw):
                 raise ValueError(f"No gain table  at {gt}")
         opts.gain_table = gainnames
 
-    from pfb.utils.naming import set_output_names
-    basedir, oname, fits_output_folder = set_output_names(opts.output_filename,
-                                                          opts.product)
-
-    basename = f'{basedir}/{oname}'
-    opts.output_filename = basename
     OmegaConf.set_struct(opts, True)
 
     # TODO - prettier config printing
@@ -71,49 +71,25 @@ def init(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    with ExitStack() as stack:
-        os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
-        os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
-        os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
-        os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
-        paths = sys.path
-        ppath = [paths[i] for i in range(len(paths)) if 'pfb/bin' in paths[i]]
-        if len(ppath):
-            ldpath = ppath[0].replace('bin', 'lib')
-            ldcurrent = os.environ.get('LD_LIBRARY_PATH', '')
-            os.environ["LD_LIBRARY_PATH"] = f'{ldpath}:{ldcurrent}'
-            # TODO - should we fall over in else?
-        os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    logname = f'{str(opts.log_directory)}/init_{timestamp}.log'
+    pyscilog.log_to_file(logname)
+    print(f'Logs will be written to {logname}', file=log)
 
-        import numexpr as ne
-        max_cores = ne.detect_number_of_cores()
-        ne_threads = min(max_cores, opts.nvthreads)
-        os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
+    basename = f'{basedir}/{oname}'
+
+    from pfb import set_envs
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    resize_thread_pool(opts.nthreads)
+    set_envs(opts.nthreads, ncpu)
+
+    with ExitStack() as stack:
         import dask
         dask.config.set(**{'array.slicing.split_large_chunks': False})
-
-        # set up client
-        host_address = opts.host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
-        if host_address is not None:
-            from distributed import Client
-            print("Initialising distributed client.", file=log)
-            client = stack.enter_context(Client(host_address))
-        else:
-            from dask.distributed import Client, LocalCluster
-            print("Initialising client with LocalCluster.", file=log)
-            cluster = LocalCluster(processes=True,
-                                    n_workers=opts.nworkers,
-                                    threads_per_worker=opts.nthreads_dask,
-                                    memory_limit=0,  # str(mem_limit/nworkers)+'GB'
-                                    asynchronous=False)
-            cluster = stack.enter_context(cluster)
-            client = stack.enter_context(Client(cluster,
-                                                direct_to_workers=False))
-
-        client.wait_for_workers(opts.nworkers)
-        dashboard_url = client.dashboard_link
-        print(f"Dask Dashboard URL at {dashboard_url}", file=log)
-        client.amm.stop()
+        from pfb import set_client
+        from distributed import wait, get_client
+        set_client(opts.nworkers, stack, log)
+        client = get_client()
 
         ti = time.time()
         _init(**opts)

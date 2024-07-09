@@ -219,9 +219,12 @@ def pcg_psf(psfhat,
 
 
 def pcg_dds(ds,
+            ds_name,
             sigmainvsq,  # regularisation for Hessian approximation
             sigma,       # regularisation for preconditioner
             mask=1.0,
+            residual_name='RESIDUAL',
+            model_name='MODEL',
             do_wgridding=True,
             epsilon=5e-4,
             double_accum=True,
@@ -233,19 +236,19 @@ def pcg_dds(ds,
     '''
     pcg for fluxmop
     '''
-    ds = ds.drop_vars(('PSFHAT','NOISE'))
-    ds = dask.persist(ds)[0]
-
-    if 'RESIDUAL' in ds:
-        j = ds.RESIDUAL.values
-        ds = ds.drop_vars(('DIRTY','RESIDUAL'))
+    if residual_name in ds:
+        j = getattr(ds, residual_name).values
+        ds = ds.drop_vars(residual_name)
     else:
         j = ds.DIRTY.values
         ds = ds.drop_vars(('DIRTY'))
 
     j *= mask * ds.BEAM.values
-
     nx, ny = j.shape
+    wsum = np.sum(ds.WEIGHT.values * ds.MASK.values)
+    # set sigmas relative to wsum
+    sigma *= wsum
+    sigmainvsq *= wsum
 
     # set precond if PSF is present
     if 'PSF' in ds:
@@ -277,11 +280,13 @@ def pcg_dds(ds,
             c2c(xhat, out=xhat, forward=False, inorm=2, nthreads=8)
             return xhat[unpad_x, unpad_y].real
 
-        precondo = partial(precond, xhat=xhat)
+        precondo = partial(precond, xhat)
         x0 = precondo(j)
     else:
         precondo = None
         x0 = np.zeros_like(j)
+
+
 
     hess = partial(_hessian_impl,
                    uvw=ds.UVW.values,
@@ -297,18 +302,18 @@ def pcg_dds(ds,
                    double_accum=double_accum,
                    nthreads=nthreads)
 
-
     x, resid = pcg(hess,
                    j,
                    x0=x0,
                    M=precondo,
                    tol=tol,
                    maxit=maxit,
+                   minit=1,
                    verbosity=verbosity,
                    report_freq=report_freq,
                    backtrack=False,
                    return_resid=True)
 
-    return x, resid, x0
+    return x, resid, x0, int(ds.bandid)
 
 

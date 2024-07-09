@@ -93,7 +93,7 @@ class band_actor(object):
         self.cache_path = f'{cache_path}/time0000_band{bandid:04d}.zarr'
         self.ds_names = ds_names
         self.nhthreads = opts.nthreads_dask
-        self.nvthreads = opts.nvthreads
+        self.nvthreads = opts.nthreads
         self.real_type = np.float64
         self.complex_type = np.complex128
         # hess_approx determines whether we use the vis of image space
@@ -207,7 +207,7 @@ class band_actor(object):
         self.time_out = np.mean(times_in)
 
         self.nhthreads = opts.nthreads_dask
-        self.nvthreads = opts.nvthreads
+        self.nvthreads = opts.nthreads
 
         # set up wavelet dictionaries
         self.bases = opts.bases.split(',')

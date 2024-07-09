@@ -97,7 +97,7 @@ def _degrid(**kw):
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
     from ducc0.misc import resize_thread_pool, thread_pool_size
-    nthreads_tot = opts.nthreads_dask * opts.nvthreads
+    nthreads_tot = opts.nthreads_dask * opts.nthreads
     resize_thread_pool(nthreads_tot)
     print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
@@ -206,7 +206,7 @@ def _degrid(**kw):
                             nx, ny,
                             cell_rad, cell_rad,
                             x0=x0, y0=y0,
-                            nthreads=opts.nvthreads,
+                            nthreads=opts.nthreads,
                             epsilon=opts.epsilon,
                             do_wgridding=opts.do_wgridding)
 

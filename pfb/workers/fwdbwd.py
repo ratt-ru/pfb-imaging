@@ -156,7 +156,7 @@ def _fwdbwd(ddsi=None, **kw):
     hessopts['do_wgridding'] = opts.do_wgridding
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
-    hessopts['nthreads'] = opts.nvthreads  # nvthreads since dask parallel over band
+    hessopts['nthreads'] = opts.nthreads  # nvthreads since dask parallel over band
     # always clean in apparent scale so no beam
     # mask is applied to residual after hessian application
     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
@@ -175,7 +175,7 @@ def _fwdbwd(ddsi=None, **kw):
     xhat = make_noncritical(xhat)
     # We use nthreads = nvthreads*nthreads_dask because dask not involved
     psf_convolve = partial(psf_convolve_cube, xpad, xhat, xout, psfhat, lastsize,
-                           nthreads=opts.nvthreads*opts.nthreads_dask)
+                           nthreads=opts.nthreads*opts.nthreads_dask)
 
     print("Setting up dictionary", file=log)
     bases = tuple(opts.bases.split(','))
@@ -190,7 +190,7 @@ def _fwdbwd(ddsi=None, **kw):
                    ntot=ntot,
                    nmax=nmax,
                    nlevels=opts.nlevels,
-                   nthreads=opts.nvthreads*opts.nthreads_dask) # nthreads = nvthreads*nthreads_dask because dask not involved
+                   nthreads=opts.nthreads*opts.nthreads_dask) # nthreads = nvthreads*nthreads_dask because dask not involved
     psi = partial(coef2im,
                   bases=bases,
                   ntot=ntot,
@@ -198,7 +198,7 @@ def _fwdbwd(ddsi=None, **kw):
                   sy=sy,
                   nx=nx,
                   ny=ny,
-                  nthreads=opts.nvthreads*opts.nthreads_dask) # nthreads = nvthreads*nthreads_dask because dask not involved
+                  nthreads=opts.nthreads*opts.nthreads_dask) # nthreads = nvthreads*nthreads_dask because dask not involved
 
     def hesspsi(x):
         tmpa = np.zeros((nband, nbasis, nmax), dtype=dirty.dtype)

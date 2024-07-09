@@ -46,10 +46,10 @@ def spotless(**kw):
 
     with ExitStack() as stack:
         # numpy imports have to happen after this step
-        os.environ["OMP_NUM_THREADS"] = str(opts.nvthreads)
-        os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nvthreads)
-        os.environ["MKL_NUM_THREADS"] = str(opts.nvthreads)
-        os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nvthreads)
+        os.environ["OMP_NUM_THREADS"] = str(opts.nthreads)
+        os.environ["OPENBLAS_NUM_THREADS"] = str(opts.nthreads)
+        os.environ["MKL_NUM_THREADS"] = str(opts.nthreads)
+        os.environ["VECLIB_MAXIMUM_THREADS"] = str(opts.nthreads)
         paths = sys.path
         ppath = [paths[i] for i in range(len(paths)) if 'pfb/bin' in paths[i]]
         if len(ppath):
@@ -57,11 +57,11 @@ def spotless(**kw):
             ldcurrent = os.environ.get('LD_LIBRARY_PATH', '')
             os.environ["LD_LIBRARY_PATH"] = f'{ldpath}:{ldcurrent}'
             # TODO - should we fall over in else?
-        os.environ["NUMBA_NUM_THREADS"] = str(opts.nvthreads)
+        os.environ["NUMBA_NUM_THREADS"] = str(opts.nthreads)
 
         import numexpr as ne
         max_cores = ne.detect_number_of_cores()
-        ne_threads = min(max_cores, opts.nvthreads)
+        ne_threads = min(max_cores, opts.nthreads)
         os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
         import dask
         dask.config.set(**{'array.slicing.split_large_chunks': False})

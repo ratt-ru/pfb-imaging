@@ -1,8 +1,6 @@
 # flake8: noqa
 from contextlib import ExitStack
-from pathlib import Path
 from pfb.workers.main import cli
-from functools import partial
 import click
 from omegaconf import OmegaConf
 import pyscilog
@@ -26,53 +24,109 @@ def fluxmop(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
+
+    from pfb.utils.naming import set_output_names
+    opts, basedir, oname = set_output_names(opts)
+
+    import psutil
+    nthreads = psutil.cpu_count(logical=True)
+    ncpu = psutil.cpu_count(logical=False)
+    if opts.nthreads is None:
+        if opts.nworkers > 1:
+            ntpw = nthreads//opts.nworkers
+            opts.nthreads = ntpw//2
+            ncpu = ntpw//2
+        else:
+            opts.nthreads = nthreads//2
+            ncpu = ncpu//2
+
+    OmegaConf.set_struct(opts, True)
+
+    from pfb import set_envs
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    resize_thread_pool(opts.nthreads)
+    set_envs(opts.nthreads, ncpu)
+
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
+
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    ldir = Path(opts.log_directory).resolve()
-    ldir.mkdir(parents=True, exist_ok=True)
-    logname = f'{str(ldir)}/fluxmop_{timestamp}.log'
+    logname = f'{str(opts.log_directory)}/fluxmop_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
 
     from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.naming import set_output_names
-    basedir, oname, fits_output_folder = set_output_names(opts.output_filename,
-                                                          opts.product,
-                                                          opts.fits_output_folder)
+    from pfb.utils.naming import xds_from_url
+    from pfb.utils.fits import dds2fits, dds2fits_mfs
 
     basename = f'{basedir}/{oname}'
-    fits_oname = f'{fits_output_folder}/{oname}'
-
-    opts.output_filename = basename
-    dds_name = f'{basename}_{opts.suffix}.dds'
-    dds_store = DaskMSStore(dds_name)
-    opts.fits_output_folder = fits_output_folder
-    OmegaConf.set_struct(opts, True)
+    fits_oname = f'{opts.fits_output_folder}/{oname}'
+    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
 
     with ExitStack() as stack:
         from pfb import set_client
-        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
+        if opts.nworkers > 1:
+            set_client(opts.nworkers, stack, log)
+            client = get_client()
+        else:
+            print("Faking client", file=log)
+            from pfb.utils.dist import fake_client
+            client = fake_client()
+            names = [0]
 
-        # TODO - prettier config printing
-        print('Input Options:', file=log)
-        for key in opts.keys():
-            print('     %25s = %s' % (key, opts[key]), file=log)
-
+        ti = time.time()
         _fluxmop(**opts)
 
-    print("All done here.", file=log)
+        dds = xds_from_url(dds_store.url)
+
+        if opts.fits_mfs or opts.fits:
+            print(f"Writing fits files to {fits_oname}_{opts.suffix}",
+                  file=log)
+
+        # convert to fits files
+        if opts.fits_mfs:
+            dds2fits_mfs(dds,
+                         'RESIDUAL',
+                         f'{fits_oname}_{opts.suffix}',
+                         norm_wsum=True)
+            dds2fits_mfs(dds,
+                         'MODEL',
+                         f'{fits_oname}_{opts.suffix}',
+                         norm_wsum=False)
+            dds2fits_mfs(dds,
+                         'UPDATE',
+                         f'{fits_oname}_{opts.suffix}',
+                         norm_wsum=False)
+
+        if opts.fits_cubes:
+            dds2fits(dds,
+                     'RESIDUAL',
+                     f'{fits_oname}_{opts.suffix}',
+                     norm_wsum=True)
+            dds2fits(dds,
+                     'MODEL',
+                     f'{fits_oname}_{opts.suffix}',
+                     norm_wsum=False)
+            dds2fits(dds,
+                     'UPDATE',
+                     f'{fits_oname}_{opts.suffix}',
+                     norm_wsum=False)
+
+    print(f"All done after {time.time() - ti}s", file=log)
 
 def _fluxmop(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
+    from itertools import cycle
     import numpy as np
-    import numexpr as ne
     import xarray as xr
-    import dask
-    import dask.array as da
-    from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
-    from pfb.utils.fits import load_fits, dds2fits_mfs, dds2fits, set_wcs, save_fits
+    from pfb.utils.fits import load_fits, set_wcs, save_fits
+    from daskms.fsspec_store import DaskMSStore
+    from pfb.utils.naming import xds_from_url, xds_from_list
     from pfb.utils.misc import init_mask, dds2cubes
     from pfb.operators.hessian import hessian_xds, hessian_psf_cube
     from pfb.operators.psf import psf_convolve_cube
@@ -81,9 +135,6 @@ def _fluxmop(ddsi=None, **kw):
     from ducc0.fft import c2c
     iFs = np.fft.ifftshift
     Fs = np.fft.fftshift
-    nthreads_tot = opts.nthreads_dask * opts.nvthreads
-    resize_thread_pool(nthreads_tot)
-    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
@@ -92,6 +143,8 @@ def _fluxmop(ddsi=None, **kw):
         fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
+    dds_store = DaskMSStore(dds_name)
+    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
     if ddsi is not None:
         dds = []
         for ds in ddsi:
@@ -103,50 +156,21 @@ def _fluxmop(ddsi=None, **kw):
                                  'y_psf':-1,
                                  'yo2':-1}))
     else:
-        dds = xds_from_zarr(dds_name)
-        chunks = {'x':-1,
-                  'y':-1}
-        # These may or may not be present
-        if 'PSF' in dds[0]:
-            chunks['x_psf'] = -1
-            chunks['y_psf'] = -1
-            chunks['yo2'] = -1
-        if 'WEIGHT' in dds[0]:
-            chunks['row'] = -1
-            chunks['chan'] = -1
-        for i, ds in enumerate(dds):
-            dds[i] = ds.chunk(chunks)
+        # are these sorted correctly?
+        dds = xds_from_list(dds_list)
 
-
-    # stitch image space data products
-    output_type = dds[0].DIRTY.dtype
-    print("Combining slices into cubes", file=log)
-    dirty, model, residual, psf, psfhat, beam, wsums, _ = dds2cubes(
-                                                               dds,
-                                                               opts.nband,
-                                                               apparent=False,
-                                                               dual=False,
-                                                               modelname=opts.model_name,
-                                                               residname=opts.residual_name)
-    fsel = wsums > 0
-    wsum = np.sum(wsums)
-    dirty_mfs = np.sum(dirty, axis=0)
-    if residual is None:
-        residual = dirty.copy()
-        residual_mfs = dirty_mfs.copy()
-    else:
-        residual_mfs = np.sum(residual, axis=0)
-
-
-    if psf is not None:
-        psf_mfs = np.sum(psf, axis=0)
-        assert (psf_mfs.max() - 1.0) < 2*opts.epsilon
-        lastsize = dds[0].y_psf.size
+    nx, ny = dds[0].x.size, dds[0].y.size
+    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
+    lastsize = ny_psf
     freq_out = []
+    time_out = []
     for ds in dds:
         freq_out.append(ds.freq_out)
+        time_out.append(ds.time_out)
     freq_out = np.unique(np.array(freq_out))
-    nband = opts.nband
+    time_out = np.unique(np.array(time_out))
+
+    nband = freq_out.size
     nx = dds[0].x.size
     ny = dds[0].y.size
     ra = dds[0].ra
@@ -157,24 +181,21 @@ def _fluxmop(ddsi=None, **kw):
     ref_freq = np.mean(freq_out)
     hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
 
-    if model is not None:
-        model_mfs = np.mean(model[fsel], axis=0)
+    if opts.residual_name in dds[0]:
+        residual = np.stack([getattr(ds, opts.residual_name).values for ds in dds],
+                            axis=0)
     else:
-        model_mfs = np.zeros((nx,ny), dtype=output_type)
-        model = np.zeros((nband, nx,ny), dtype=output_type)
-
-    # set up vis space Hessian for computing the residual
-    # TODO - how to apply beam externally per ds
-    hessopts = {}
-    hessopts['cell'] = dds[0].cell_rad
-    hessopts['do_wgridding'] = opts.do_wgridding
-    hessopts['epsilon'] = opts.epsilon
-    hessopts['double_accum'] = opts.double_accum
-    hessopts['nthreads'] = opts.nvthreads
-    hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
-                   wsum=wsum, sigmainv=0,
-                   mask=np.ones((nx, ny), dtype=output_type),
-                   compute=True, use_beam=False)
+        residual = np.stack([ds.DIRTY.values for ds in dds], axis=0)
+    if opts.model_name in dds[0]:
+        model = np.stack([getattr(ds, opts.model_name).values for ds in dds],
+                         axis=0)
+    else:
+        model = np.zeros((nband, nx, ny))
+    wsums = np.stack([ds.WSUM.values[0] for ds in dds], axis=0)
+    fsel = wsums > 0  # keep track of empty bands
+    wsum = np.sum(wsums)
+    residual /= wsum
+    residual_mfs = np.sum(residual, axis=0)
 
     # TODO - check coordinates match
     # Add option to interp onto coordinates?
@@ -182,17 +203,17 @@ def _fluxmop(ddsi=None, **kw):
         if opts.mask=='model':
             mask = np.any(model > opts.min_model, axis=0)
             assert mask.shape == (nx, ny)
-            mask = mask.astype(output_type)
+            mask = mask.astype(residual.dtype)
             print('Using model > 0 to create mask', file=log)
         else:
-            mask = load_fits(opts.mask, dtype=output_type).squeeze()
+            mask = load_fits(opts.mask, dtype=residual.dtype).squeeze()
             assert mask.shape == (nx, ny)
             if opts.or_mask_with_model:
                 print("Combining model with input mask", file=log)
-                mask = np.logical_or(mask>0, model_mfs>0).astype(output_type)
+                mask = np.logical_or(mask>0, model_mfs>0).astype(residual.dtype)
 
 
-            mask = mask.astype(output_type)
+            mask = mask.astype(residual.dtype)
             print('Using provided fits mask', file=log)
             if opts.zero_model_outside_mask and not opts.or_mask_with_model:
                 model[:, mask<1] = 0
@@ -211,17 +232,8 @@ def _fluxmop(ddsi=None, **kw):
 
 
     else:
-        mask = np.ones((nx, ny), dtype=output_type)
+        mask = np.ones((nx, ny), dtype=residual.dtype)
         print('Caution - No mask is being applied', file=log)
-
-
-    cgopts = {}
-    cgopts['tol'] = opts.cg_tol
-    cgopts['maxit'] = opts.cg_maxit
-    cgopts['minit'] = opts.cg_minit
-    cgopts['verbosity'] = opts.cg_verbose
-    cgopts['report_freq'] = opts.cg_report_freq
-    # cgopts['backtrack'] = opts.backtrack
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -229,94 +241,48 @@ def _fluxmop(ddsi=None, **kw):
           file=log)
 
     print("Solving for update", file=log)
-    # x0 = np.zeros((nband, nx, ny), dtype=output_type)
-    x0 = precondo(j)
-    save_fits(np.mean(x0, axis=0),
-              basename + f'_{opts.suffix}_x0.fits',
-              hdr_mfs)
-    for ds in dds:
-        x, r, x0 = pcg_dds(hess_pcg,
-                           opts.sigmainvsq,
-                           opts.sigma,
-                           mask=mask,
-                           do_wgridding=opts.do_wgridding,
-                           epsilon=opts.epsilon,
-                           double_accum=opts.double_accum,
-                           nthreads=opts.nvthreads,
-                           **cgopts)
+    try:
+        from distributed import get_client
+        client = get_client()
+        names = list(client.scheduler_info()['workers'].keys())
+        from distributed import as_completed
+    except:
+        from pfb.utils.dist import fake_client
+        client = fake_client()
+        names = [0]
+        as_completed = lambda x: x
+    futures = []
+    for wname, ds, ds_name in zip(cycle(names), dds, dds_list):
+        fut = client.submit(
+            pcg_dds,
+            ds,
+            ds_name,
+            opts.sigmainvsq,
+            opts.sigma,
+            mask=mask,
+            do_wgridding=opts.do_wgridding,
+            epsilon=5e-4,
+            double_accum=opts.double_accum,
+            nthreads=opts.nthreads,
+            tol=opts.cg_tol,
+            maxit=opts.cg_maxit,
+            verbosity=opts.cg_verbose,
+            report_freq=opts.cg_report_freq,
+            workers=wname
+        )
+        futures.append(fut)
 
     modelp = model.copy()
-    model += opts.gamma * update
-
     residualp = residual.copy()
-    print("Getting residual", file=log)
-    convimage = hess(model)
-    ne.evaluate('dirty - convimage', out=residual,
-                casting='same_kind')
-    ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
-                casting='same_kind')
+    for fut in as_completed(futures):
+        x, r, x0, b = fut.result()
+        residual[b] = r
+        model[b] += opts.gamma * x
 
+    residual_mfs = np.sum(residual)
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
     print(f"Final peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
 
-    print("Updating results", file=log)
-    dds_out = []
-    for ds in dds:
-        b = ds.bandid
-        r = da.from_array(residual[b]*wsum)
-        rp = da.from_array(residualp[b]*wsum)
-        m = da.from_array(model[b])
-        mp = da.from_array(modelp[b])
-        u = da.from_array(update[b])
-        # keep previous results in case of failure
-        ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
-                              'RESIDUALP': (('x', 'y'), rp),
-                              'MODEL': (('x', 'y'), m),
-                              'MODELP': (('x', 'y'), mp),
-                              'UPDATE': (('x', 'y'), u)})
-        dds_out.append(ds_out)
-    writes = xds_to_zarr(dds_out, dds_name,
-                         columns=('RESIDUAL', 'RESIDUALP', 'MODEL', 'MODELP', 'UPDATE'),
-                         rechunk=True)
-
-    dask.compute(writes)
-
-    dds = xds_from_zarr(dds_name, chunks={'x': -1, 'y': -1})
-
-
-
-    # convert to fits files
-    fitsout = []
-    if opts.fits_mfs:
-        fitsout.append(dds2fits_mfs(dds,
-                                    'RESIDUAL',
-                                    f'{basename}_{opts.suffix}_mopped',
-                                    norm_wsum=True))
-        fitsout.append(dds2fits_mfs(dds,
-                                    'MODEL',
-                                    f'{basename}_{opts.suffix}_mopped',
-                                    norm_wsum=False))
-        fitsout.append(dds2fits_mfs(dds,
-                                    'UPDATE',
-                                    f'{basename}_{opts.suffix}_mopped',
-                                    norm_wsum=False))
-
-    if opts.fits_cubes:
-        fitsout.append(dds2fits(dds,
-                                'RESIDUAL',
-                                f'{basename}_{opts.suffix}_mopped',
-                                norm_wsum=True))
-        fitsout.append(dds2fits(dds,
-                                'MODEL',
-                                f'{basename}_{opts.suffix}_mopped',
-                                norm_wsum=False))
-        fitsout.append(dds2fits(dds,
-                                'UPDATE',
-                                f'{basename}_{opts.suffix}_mopped',
-                                norm_wsum=False))
-
-    if len(fitsout):
-        print("Writing fits", file=log)
-        dask.compute(fitsout)
+    return

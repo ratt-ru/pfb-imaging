@@ -345,6 +345,7 @@ def image_data_products(dsl,
 
     # output ds
     dso = xr.Dataset(attrs=attrs, coords=coords)
+    dso['FREQ'] = (('chan',), freq)
 
     if model is None:
         if l2reweight_dof:
@@ -402,8 +403,11 @@ def image_data_products(dsl,
         else:
             wgt = imwgt
 
+    # these are always used together
     if do_weight:
         dso['WEIGHT'] = (('row','chan'), wgt)
+        dso['UVW'] = (('row', 'three'), uvw)
+        dso['MASK'] = (('row','chan'), mask)
 
     wsum = wgt[mask.astype(bool)].sum()
     dso['WSUM'] = (('scalar',), np.atleast_1d(wsum))
@@ -572,6 +576,7 @@ def compute_residual(ds,
     mask = ds.MASK.values
     beam = ds.BEAM.values
     dirty = ds.DIRTY.values
+    freq = ds.FREQ.values
 
     # do not apply weights in this direction
     model_vis = dirty2vis(
@@ -593,7 +598,7 @@ def compute_residual(ds,
     convim = vis2dirty(
         uvw=uvw,
         freq=freq,
-        vis=residual_vis,
+        vis=model_vis,
         wgt=wgt,
         mask=mask,
         npix_x=nx, npix_y=ny,
@@ -615,6 +620,6 @@ def compute_residual(ds,
     ds['RESIDUAL'] = (('x','y'), residual)
 
     # save
-    ds.to_zarr(output_name, mode='r+')
+    ds.to_zarr(output_name, mode='a')
 
     return residual

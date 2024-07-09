@@ -66,13 +66,13 @@ def psf_convolve_cube2(xhat,    # preallocated array to store results
     The copyto is not necessarily faster it just allows us to see where time is spent
     '''
     _, nx, ny = x.shape
+    xhat[...] = 0j
     xhat[:, slicex, slicey] = x[...]
-    c2c(xhat, axes=(1, 2), out=xhat, nthreads=nthreads,
-        forward=True, inorm=0, out=xhat)
+    c2c(xhat, out=xhat, axes=(1, 2), nthreads=nthreads,
+        forward=True, inorm=0)
     xhat *= psfhat
-    c2c(xhat, axes=(1, 2), forward=False, out=xhat,
-        inorm=2, nthreads=nthreads,
-        allow_overwriting_input=True)
+    c2c(xhat, out=xhat, axes=(1, 2), forward=False,
+        inorm=2, nthreads=nthreads)
     return xhat[:, slicex, slicey].real
 
 

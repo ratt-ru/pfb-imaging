@@ -180,7 +180,7 @@ def _backward(**kw):
     hessopts['do_wgridding'] = opts.do_wgridding
     hessopts['epsilon'] = opts.epsilon
     hessopts['double_accum'] = opts.double_accum
-    hessopts['nthreads'] = opts.nvthreads
+    hessopts['nthreads'] = opts.nthreads
 
     if opts.use_psf:
         from pfb.operators.psf import psf_convolve_xds
@@ -200,7 +200,7 @@ def _backward(**kw):
         psfopts['unpad_x'] = unpad_x
         psfopts['unpad_y'] = unpad_y
         psfopts['lastsize'] = lastsize
-        psfopts['nthreads'] = opts.nvthreads
+        psfopts['nthreads'] = opts.nthreads
 
         if opts.mean_ds:
             print("Using mean-ds approximation", file=log)

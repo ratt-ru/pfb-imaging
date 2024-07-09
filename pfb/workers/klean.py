@@ -1,5 +1,6 @@
 # flake8: noqa
 import os
+import sys
 from contextlib import ExitStack
 from pfb.workers.main import cli
 import click
@@ -27,7 +28,20 @@ def klean(**kw):
 
     from pfb.utils.naming import set_output_names
     opts, basedir, oname = set_output_names(opts)
+
+    import psutil
+    nthreads = psutil.cpu_count(logical=True)
+    ncpu = psutil.cpu_count(logical=False)
+    if opts.nthreads is None:
+        opts.nthreads = nthreads//2
+        ncpu = ncpu//2
+
     OmegaConf.set_struct(opts, True)
+
+    from pfb import set_envs
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    resize_thread_pool(opts.nthreads)
+    set_envs(opts.nthreads, ncpu)
 
     # TODO - prettier config printing
     print('Input Options:', file=log)
@@ -36,8 +50,6 @@ def klean(**kw):
 
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    ldir = Path(opts.log_directory).resolve()
-    ldir.mkdir(parents=True, exist_ok=True)
     logname = f'{str(opts.log_directory)}/klean_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
@@ -54,7 +66,7 @@ def klean(**kw):
         ti = time.time()
         _klean(**opts)
 
-        dds = xds_from_url(dds_name)
+        dds = xds_from_url(dds_store.url)
 
         from pfb.utils.fits import dds2fits, dds2fits_mfs
 
@@ -96,17 +108,12 @@ def _klean(ddsi=None, **kw):
     import xarray as xr
     from pfb.utils.fits import set_wcs, save_fits, load_fits
     from pfb.deconv.clark import clark
-    from pfb.utils.naming import xds_from_url
+    from pfb.utils.naming import xds_from_url, xds_from_list
     from pfb.opt.pcg import pcg, pcg_psf
-    from pfb.operators.gridding import compute_residual
+    from pfb.operators.gridder import compute_residual
     from scipy import ndimage
     from pfb.utils.misc import fitcleanbeam, fit_image_cube
     from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.naming import xds_from_url
-    from ducc0.misc import resize_thread_pool, thread_pool_size
-    nthreads_tot = opts.nthreads_dask * opts.nvthreads
-    resize_thread_pool(nthreads_tot)
-    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
@@ -146,7 +153,6 @@ def _klean(ddsi=None, **kw):
 
     # stitch dirty/psf in apparent scale
     # drop_vars to avoid duplicates in memory
-    output_type = dds[0].DIRTY.dtype
     if 'RESIDUAL' in dds[0]:
         residual = np.stack([ds.RESIDUAL.values for ds in dds], axis=0)
         dds = [ds.drop_vars('RESIDUAL') for ds in dds]
@@ -156,13 +162,19 @@ def _klean(ddsi=None, **kw):
     if 'MODEL' in dds[0]:
         model = np.stack([ds.MODEL.values for ds in dds], axis=0)
         dds = [ds.drop_vars('MODEL') for ds in dds]
+    else:
+        model = np.zeros((nband, nx, ny))
     psf = np.stack([ds.PSF.values for ds in dds], axis=0)
+    psfhat = np.stack([ds.PSFHAT.values for ds in dds], axis=0)
     dds = [ds.drop_vars('PSF') for ds in dds]
-    wsums = np.stack([ds.WSUM.values for ds in dds], axis=0)
+    wsums = np.stack([ds.WSUM.values[0] for ds in dds], axis=0)
     fsel = wsums > 0  # keep track of empty bands
 
 
     wsum = np.sum(wsums)
+    psf /= wsum
+    psfhat /= wsum
+    residual /= wsum
     psf_mfs = np.sum(psf, axis=0)
     residual_mfs = np.sum(residual, axis=0)
 
@@ -186,12 +198,12 @@ def _klean(ddsi=None, **kw):
     # TODO - check coordinates match
     # Add option to interp onto coordinates?
     if opts.mask is not None:
-        mask = load_fits(mask, dtype=output_type).squeeze()
+        mask = load_fits(mask, dtype=residual.dtype).squeeze()
         assert mask.shape == (nx, ny)
-        mask = mask.astype(output_type)
+        mask = mask.astype(residual.dtype)
         print('Using provided fits mask', file=log)
     else:
-        mask = np.ones((nx, ny), dtype=output_type)
+        mask = np.ones((nx, ny), dtype=residual.dtype)
 
     # PCG related options for flux mop
     cgopts = {}
@@ -229,7 +241,7 @@ def _klean(ddsi=None, **kw):
                           verbosity=opts.verbose,
                           report_freq=opts.report_freq,
                           sigmathreshold=opts.sigmathreshold,
-                          nthreads=opts.nvthreads)
+                          nthreads=opts.nthreads)
         model += x
 
         # write component model
@@ -282,18 +294,18 @@ def _klean(ddsi=None, **kw):
                   hdr_mfs)
 
         print(f'Computing residual', file=log)
-        for ds_name, ds in zip(ds_list, dds):
+        for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
-            resid = compute_residuals(ds_name,
-                                      nx, ny,
-                                      cell_rad, cell_rad,
-                                      ds_name,
-                                      model[b],
-                                      x0=ds.x0, y0=ds.y0,
-                                      nthreads=opts.nvthreads,
-                                      epsilon=opts.epsilon,
-                                      do_wgridding=opts.do_wgridding,
-                                      double_accum=opts.double_accum)
+            resid = compute_residual(ds_name,
+                                     nx, ny,
+                                     cell_rad, cell_rad,
+                                     ds_name,
+                                     model[b],
+                                     x0=ds.x0, y0=ds.y0,
+                                     nthreads=opts.nthreads,
+                                     epsilon=opts.epsilon,
+                                     do_wgridding=opts.do_wgridding,
+                                     double_accum=opts.double_accum)
             residual[b] = resid
         residual /= wsum
         residual_mfs = np.sum(residual, axis=0)
@@ -312,6 +324,13 @@ def _klean(ddsi=None, **kw):
             best_rms = rms
             best_rmax = rmax
             best_model = model.copy()
+            for ds_name, ds in zip(dds_list, dds):
+                b = int(ds.bandid)
+                ds = ds.assign(**{
+                    'MODEL_BEST': (('x', 'y'), best_model[b])
+                })
+
+                ds.to_zarr(ds_name, mode='a')
 
         if opts.threshold is None:
             threshold = opts.sigmathreshold * rms
@@ -338,22 +357,22 @@ def _klean(ddsi=None, **kw):
                         x0,
                         mopmask,
                         lastsize,
-                        opts.nvthreads,
+                        opts.nthreads,
                         rmax,  # used as sigmainv
                         cgopts)
 
             model += opts.mop_gamma*x
 
             print(f'Computing residual', file=log)
-            for ds_name, ds in zip(ds_list, dds):
+            for ds_name, ds in zip(dds_list, dds):
                 b = int(ds.bandid)
-                resid = compute_residuals(ds_name,
+                resid = compute_residual(ds_name,
                                         nx, ny,
                                         cell_rad, cell_rad,
                                         ds_name,
                                         model[b],
                                         x0=ds.x0, y0=ds.y0,
-                                        nthreads=opts.nvthreads,
+                                        nthreads=opts.nthreads,
                                         epsilon=opts.epsilon,
                                         do_wgridding=opts.do_wgridding,
                                         double_accum=opts.double_accum)
@@ -379,6 +398,13 @@ def _klean(ddsi=None, **kw):
                 best_rms = rms
                 best_rmax = rmax
                 best_model = model.copy()
+                for ds_name, ds in zip(dds_list, dds):
+                    b = int(ds.bandid)
+                    ds = ds.assign(**{
+                        'MODEL_BEST': (('x', 'y'), best_model[b])
+                    })
+
+                    ds.to_zarr(ds_name, mode='a')
 
             if opts.threshold is None:
                 threshold = opts.sigmathreshold * rms
@@ -398,5 +424,14 @@ def _klean(ddsi=None, **kw):
             if diverge_count > 3:
                 print("Algorithm is diverging. Terminating.", file=log)
                 break
+
+        # keep track of total number of iterations
+        for ds_name, ds in zip(dds_list, dds):
+            b = int(ds.bandid)
+            ds = ds.assign_attrs(**{
+                'niter': k,
+            })
+
+            ds.to_zarr(ds_name, mode='a')
 
     return

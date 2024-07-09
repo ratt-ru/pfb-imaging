@@ -31,16 +31,22 @@ def grid(**kw):
     from pfb.utils.naming import set_output_names
     opts, basedir, oname = set_output_names(opts)
 
-    import time
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f'{str(opts.log_directory)}/grid_{timestamp}.log'
-    pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    import psutil
+    nthreads = psutil.cpu_count(logical=True)
+    ncpu = psutil.cpu_count(logical=False)
+    if opts.nthreads is None:
+        if opts.nworkers > 1:
+            ntpw = nthreads//opts.nworkers
+            opts.nthreads = ntpw//2
+            ncpu = ntpw//2
+        else:
+            opts.nthreads = nthreads//2
+            ncpu = ncpu//2
 
     from daskms.fsspec_store import DaskMSStore
-
     basename = f'{basedir}/{oname}'
     fits_oname = f'{opts.fits_output_folder}/{oname}'
+    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
 
     if opts.xds is not None:
         xds_store = DaskMSStore(opts.xds.rstrip('/'))
@@ -61,16 +67,29 @@ def grid(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
+    import time
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    logname = f'{str(opts.log_directory)}/grid_{timestamp}.log'
+    pyscilog.log_to_file(logname)
+    print(f'Logs will be written to {logname}', file=log)
 
+    from pfb import set_envs
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    resize_thread_pool(opts.nthreads)
+    set_envs(opts.nthreads, ncpu)
 
     with ExitStack() as stack:
         from pfb import set_client
-
-        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
-        import dask
-        dask.config.set(**{'array.slicing.split_large_chunks': False})
         from distributed import wait, get_client
+        if opts.nworkers > 1:
+            set_client(opts.nworkers, stack, log)
+            client = get_client()
+        else:
+            print("Faking client", file=log)
+            from pfb.utils.dist import fake_client
+            client = fake_client()
+            names = [0]
+
         from pfb.utils.naming import xds_from_url
         from pfb.utils.fits import dds2fits, dds2fits_mfs
 
@@ -78,14 +97,6 @@ def grid(**kw):
         residual_mfs = _grid(**opts)
 
         dds = xds_from_url(dds_store.url)
-
-        try:
-            client = get_client()
-            names = list(client.scheduler_info()['workers'].keys())
-        except:
-            from pfb.utils.dist import fake_client
-            client = fake_client()
-            names = [0]
 
         # convert to fits files
         futures = []
@@ -165,7 +176,7 @@ def grid(**kw):
 
         if len(futures):
             print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
-            if opts.scheduler == 'distributed':
+            if opts.nworkers > 1:
                 wait(futures)
 
     print(f"All done after {time.time() - ti}s", file=log)
@@ -174,31 +185,22 @@ def _grid(xdsi=None, **kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
-
     import numpy as np
-    import dask
     from distributed import as_completed, get_client
     from itertools import cycle
     import fsspec
     from daskms.fsspec_store import DaskMSStore
-    from africanus.constants import c as lightspeed
-    from ducc0.fft import good_size
     from pfb.utils.misc import set_image_size
     from pfb.operators.gridder import image_data_products
     from pfb.utils.weighting import (compute_counts,
                                      filter_extreme_counts)
     import xarray as xr
-    from uuid import uuid4
     from pfb.utils.astrometry import get_coordinates
     from africanus.coordinates import radec_to_lm
     from pfb.utils.naming import xds_from_url, cache_opts, get_opts
     import sympy as sm
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
-    from ducc0.misc import resize_thread_pool, thread_pool_size
-    nthreads_tot = opts.nthreads_dask * opts.nvthreads
-    resize_thread_pool(nthreads_tot)
-    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
     try:
         client = get_client()
@@ -369,7 +371,7 @@ def _grid(xdsi=None, **kw):
                                 ds_dct['dsl'],
                                 nx, ny,
                                 cell_rad, cell_rad,
-                                nthreads=opts.nvthreads,
+                                nthreads=opts.nthreads,
                                 workers=wname)
 
             futures.append(fut)
@@ -520,7 +522,7 @@ def _grid(xdsi=None, **kw):
                             model=model,
                             robustness=opts.robustness,
                             x0=x0, y0=y0,
-                            nthreads=opts.nvthreads,
+                            nthreads=opts.nthreads,
                             epsilon=opts.epsilon,
                             do_wgridding=opts.do_wgridding,
                             double_accum=opts.double_accum,
@@ -535,14 +537,18 @@ def _grid(xdsi=None, **kw):
 
     residual_mfs = np.zeros((nx, ny))
     wsum = 0.0
-    if opts.scheduler == 'distributed':
+    if opts.nworkers > 1:
         from distributed import as_completed
     else:
         as_completed = lambda x: x
+    nds = len(futures)
+    n_launched = 1
     for fut in as_completed(futures):
+        print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
         residual, wsumb = fut.result()
         residual_mfs += residual
         wsum += wsumb
+        n_launched += 1
 
     residual_mfs /= wsum
     rms = np.std(residual_mfs)

@@ -1,5 +1,6 @@
 # flake8: noqa
 import os
+import sys
 from contextlib import ExitStack
 from pfb.workers.main import cli
 import click
@@ -27,7 +28,20 @@ def sara(**kw):
 
     from pfb.utils.naming import set_output_names
     opts, basedir, oname = set_output_names(opts)
+
+    import psutil
+    nthreads = psutil.cpu_count(logical=True)
+    ncpu = psutil.cpu_count(logical=False)
+    if opts.nthreads is None:
+        opts.nthreads = nthreads//2
+        ncpu = ncpu//2
+
     OmegaConf.set_struct(opts, True)
+
+    from pfb import set_envs
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    resize_thread_pool(opts.nthreads)
+    set_envs(opts.nthreads, ncpu)
 
     # TODO - prettier config printing
     print('Input Options:', file=log)
@@ -36,8 +50,6 @@ def sara(**kw):
 
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    ldir = Path(opts.log_directory).resolve()
-    ldir.mkdir(parents=True, exist_ok=True)
     logname = f'{str(opts.log_directory)}/sara_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
@@ -58,7 +70,8 @@ def sara(**kw):
         from pfb.utils.fits import dds2fits, dds2fits_mfs
 
         if opts.fits_mfs or opts.fits:
-            print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
+            print(f"Writing fits files to {fits_oname}_{opts.suffix}",
+                  file=log)
 
         # convert to fits files
         if opts.fits_mfs:
@@ -88,27 +101,26 @@ def _sara(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
+    from functools import partial
     import numpy as np
     import xarray as xr
     import numexpr as ne
     from pfb.utils.fits import set_wcs, save_fits, load_fits
-    from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
+    from pfb.utils.naming import xds_from_url, xds_from_list
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
     from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
     from pfb.utils.misc import l1reweight_func
-    from pfb.operators.hessian import hessian_xds
-    from pfb.operators.psf import psf_convolve_cube
+    from pfb.operators.psf import psf_convolve_cube2
     from pfb.operators.psi import Psi
+    from pfb.operators.gridder import compute_residual
     from copy import copy, deepcopy
     from ducc0.misc import empty_noncritical
     from pfb.prox.prox_21m import prox_21m_numba as prox_21
     # from pfb.prox.prox_21 import prox_21
     from pfb.utils.misc import fitcleanbeam, fit_image_cube
-    from ducc0.misc import resize_thread_pool, thread_pool_size
-    nthreads_tot = opts.nthreads_dask * opts.nvthreads
-    resize_thread_pool(nthreads_tot)
-    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
+    from daskms.fsspec_store import DaskMSStore
+    from ducc0.fft import c2c
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
@@ -158,13 +170,16 @@ def _sara(ddsi=None, **kw):
     if 'MODEL' in dds[0]:
         model = np.stack([ds.MODEL.values for ds in dds], axis=0)
         dds = [ds.drop_vars('MODEL') for ds in dds]
+    else:
+        model = np.zeros((nband, nx, ny))
     psf = np.stack([ds.PSF.values for ds in dds], axis=0)
     dds = [ds.drop_vars('PSF') for ds in dds]
-    wsums = np.stack([ds.WSUM.values for ds in dds], axis=0)
+    wsums = np.stack([ds.WSUM.values[0] for ds in dds], axis=0)
     fsel = wsums > 0  # keep track of empty bands
 
-
     wsum = np.sum(wsums)
+    psf /= wsum
+    residual /= wsum
     psf_mfs = np.sum(psf, axis=0)
     residual_mfs = np.sum(residual, axis=0)
 
@@ -200,13 +215,15 @@ def _sara(ddsi=None, **kw):
         slicey = slice(nypadl, -nypadr)
     else:
         slicey = slice(None)
-    # nthreads = nvthreads*nthreads_dask because dask not involved
+    psf = np.fft.fftshift(psf.astype('c16'), axes=(1,2))
+    c2c(psf, axes=(1,2), forward=True, inorm=0, out=psf,
+        nthreads=opts.nthreads)
     psf_convolve = partial(psf_convolve_cube2,
-                           xpad,
+                           xhat,
                            psf,
                            slicex,
                            slicey,
-                           nthreads=opts.nvthreads*opts.nthreads_dask)
+                           nthreads=opts.nthreads)
 
     if opts.hess_norm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
@@ -224,7 +241,7 @@ def _sara(ddsi=None, **kw):
     print("Setting up dictionary", file=log)
     bases = tuple(opts.bases.split(','))
     nbasis = len(bases)
-    psi = Psi(nband, nx, ny, bases, opts.nlevels, opts.nthreads_dask)
+    psi = Psi(nband, nx, ny, bases, opts.nlevels, opts.nthreads)
     Nxmax = psi.Nxmax
     Nymax = psi.Nymax
 
@@ -240,7 +257,8 @@ def _sara(ddsi=None, **kw):
     # i) convert residual units so it is comparable to model
     # ii) project residual into dual domain
     # iii) compute the rms in the space where thresholding happens
-    psiHoutvar = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=dirty.dtype)
+    psiHoutvar = np.zeros((nband, nbasis, Nymax, Nxmax),
+                          dtype=residual.dtype)
     fsel = wsums > 0
     tmp2 = residual.copy()
     tmp2[fsel] *= wsum/wsums[fsel, None, None]
@@ -256,23 +274,20 @@ def _sara(ddsi=None, **kw):
     else:
         l1reweight_from = opts.l1reweight_from
 
-    if dual is None or dual.shape[1] != nbasis:  # nbasis could change
-        dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=dirty.dtype)
-        l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=dirty.dtype)
-        reweighter = None
+    # TODO - should we cache this?
+    dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=residual.dtype)
+    if l1reweight_from == 0:
+        print('Initialising with L1 reweighted', file=log)
+        reweighter = partial(l1reweight_func,
+                             psi.dot,
+                             psiHoutvar,
+                             opts.rmsfactor,
+                             rms_comps,
+                             alpha=opts.alpha)
+        l1weight = reweighter(model)
     else:
-        if l1reweight_from == 0:
-            print('Initialising with L1 reweighted', file=log)
-            reweighter = partial(l1reweight_func,
-                                 psi.dot,
-                                 psiHoutvar,
-                                 opts.rmsfactor,
-                                 rms_comps,
-                                 alpha=opts.alpha)
-            l1weight = reweighter(model)
-        else:
-            l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=dirty.dtype)
-            reweighter = None
+        l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=residual.dtype)
+        reweighter = None
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -310,10 +325,13 @@ def _sara(ddsi=None, **kw):
                                   gamma=opts.gamma)
 
         # write component model
-        print(f"Writing model to {basename}_{opts.suffix}_model.mds", file=log)
+        print(f"Writing model to {basename}_{opts.suffix}_model.mds",
+              file=log)
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
-                fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
+                fit_image_cube(time_out,
+                               freq_out[fsel],
+                               model[None, fsel, :, :],
                                wgt=wsums[None, fsel],
                                nbasisf=int(np.sum(fsel)),
                                method='Legendre')
@@ -357,13 +375,22 @@ def _sara(ddsi=None, **kw):
                   fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
-        print("Getting residual", file=log)
-        convimage = hess(model)
-        ne.evaluate('dirty - convimage', out=residual,
-                    casting='same_kind')
-        ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
-                    casting='same_kind')
-
+        print(f'Computing residual', file=log)
+        for ds_name, ds in zip(dds_list, dds):
+            b = int(ds.bandid)
+            resid = compute_residual(ds_name,
+                                     nx, ny,
+                                     cell_rad, cell_rad,
+                                     ds_name,
+                                     model[b],
+                                     x0=ds.x0, y0=ds.y0,
+                                     nthreads=opts.nthreads,
+                                     epsilon=opts.epsilon,
+                                     do_wgridding=opts.do_wgridding,
+                                     double_accum=opts.double_accum)
+            residual[b] = resid
+        residual /= wsum
+        residual_mfs = np.sum(residual, axis=0)
         save_fits(residual_mfs,
                   fits_oname + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
@@ -373,44 +400,32 @@ def _sara(ddsi=None, **kw):
         rmax = np.abs(residual_mfs).max()
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
-        # base this on rmax?
+        # what to base this on?
         if rms < best_rms:
             best_rms = rms
             best_rmax = rmax
             best_model = model.copy()
+            for ds_name, ds in zip(dds_list, dds):
+                b = int(ds.bandid)
+                ds = ds.assign(**{
+                    'MODEL_BEST': (('x', 'y'), best_model[b])
+                })
+                ds = ds.assign_attrs(**{
+                    'rms': best_rms,
+                    'rmax': best_rmax
+                })
+                ds.to_zarr(ds_name, mode='a')
+
 
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
               f"rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
 
-        print("Updating results", file=log)
-        dds_out = []
-        for ds in dds:
-            b = ds.bandid
-            r = da.from_array(residual[b]*wsum)
-            m = da.from_array(model[b])
-            d = da.from_array(dual[b])
-            mbest = da.from_array(best_model[b])
-            ds_out = ds.assign(**{'RESIDUAL': (('x', 'y'), r),
-                                  'MODEL': (('x', 'y'), m),
-                                  'DUAL': (('c', 'i', 'j'), d),
-                                  'MODEL_BEST': (('x', 'y'), mbest)})
-            ds_out = ds_out.assign_attrs({'parametrisation': 'id',
-                                          'niters': k+1,
-                                          'best_rms': best_rms,
-                                          'best_rmax': best_rmax})
-            dds_out.append(ds_out)
-        writes = xds_to_zarr(dds_out, dds_name,
-                             columns=('RESIDUAL', 'MODEL',
-                                      'DUAL', 'MODEL_BEST'),
-                             rechunk=True)
-        dask.compute(writes)
-
         if eps < opts.tol:
             # do not converge prematurely
-            if k+1 - iter0 >= l1reweight_from:
+            if k+1 - iter0 < l1reweight_from:  # only happens once
                 # start reweighting
-                l1reweight_from = 0
+                l1reweight_from = k+1 - iter0
             else:
                 print(f"Converged after {k+1} iterations.", file=log)
                 break
@@ -436,6 +451,15 @@ def _sara(ddsi=None, **kw):
             if diverge_count > opts.diverge_count:
                 print("Algorithm is diverging. Terminating.", file=log)
                 break
+
+        # keep track of total number of iterations
+        for ds_name, ds in zip(dds_list, dds):
+            b = int(ds.bandid)
+            ds = ds.assign_attrs(**{
+                'niter': k,
+            })
+
+            ds.to_zarr(ds_name, mode='a')
 
     return
 

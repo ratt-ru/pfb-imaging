@@ -197,7 +197,7 @@ def single_stokes_image(
                 cell_rad,
                 np.float64,  # same type as uvw
                 weight,
-                ngrid=opts.nvthreads)
+                ngrid=opts.nthreads)
 
         # counts will be accumulated on nvthreads grids in parallel
         # so we need the sum here
@@ -258,7 +258,7 @@ def single_stokes_image(
                  flip_v=False,
                  do_wgridding=opts.do_wgridding,
                  divide_by_n=False,
-                 nthreads=opts.nvthreads)
+                 nthreads=opts.nthreads)
 
         ne.evaluate('(data-model_vis)*mask', out=data)
 
@@ -303,7 +303,7 @@ def single_stokes_image(
         flip_v=False,  # hardcoded for now
         do_wgridding=opts.do_wgridding,
         divide_by_n=False,  # hardcoded for now
-        nthreads=opts.nvthreads,
+        nthreads=opts.nthreads,
         sigma_min=1.1, sigma_max=3.0,
         double_precision_accumulation=opts.double_accum,
         verbosity=0)

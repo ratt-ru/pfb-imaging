@@ -3,14 +3,7 @@ inputs:
     - (.)gridding.yml
     - (.)pdopts.yml
     - (.)pmopts.yml
-    - (.)dist.yml
     - (.)out.yml
-  nband:
-    dtype: int
-    required: true
-    abbreviation: nb
-    info:
-      Number of imaging bands
   suffix:
     dtype: str
     default: 'main'
@@ -71,6 +64,12 @@ inputs:
     abbreviation: niter
     info:
       Number of iterations.
+  nthreads:
+    dtype: int
+    abbreviation: nthreads
+    info:
+      Total number of threads to use.
+      Defaults to half the total number available.
   tol:
     dtype: float
     default: 5e-4
@@ -87,11 +86,6 @@ inputs:
     default: false
     info:
       Output fits cubes
-  memory-greedy:
-    dtype: bool
-    default: false
-    info:
-      Holds data in memory if set
   init-factor:
     dtype: float
     default: 0.5

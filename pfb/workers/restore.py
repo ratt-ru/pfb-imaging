@@ -69,7 +69,7 @@ def _restore(**kw):
     from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres, dds2cubes
     from ducc0.fft import c2c
     from ducc0.misc import resize_thread_pool, thread_pool_size
-    nthreads_tot = opts.nthreads_dask * opts.nvthreads
+    nthreads_tot = opts.nthreads_dask * opts.nthreads
     resize_thread_pool(nthreads_tot)
     print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
 
@@ -188,7 +188,7 @@ def _restore(**kw):
 
     if 'f' in opts.outputs:
         rhat_mfs = c2c(residual_mfs, forward=True,
-                       nthreads=opts.nvthreads, inorm=0)
+                       nthreads=opts.nthreads, inorm=0)
         rhat_mfs = np.fft.fftshift(rhat_mfs)
         save_fits(np.abs(rhat_mfs),
                   f'{basename}_{opts.suffix}.abs_fft_residual_mfs.fits',
@@ -201,7 +201,7 @@ def _restore(**kw):
 
     if 'F' in opts.outputs:
         rhat = c2c(residual, axes=(1,2), forward=True,
-                   nthreads=opts.nvthreads, inorm=0)
+                   nthreads=opts.nthreads, inorm=0)
         rhat = np.fft.fftshift(rhat, axes=(1,2))
         save_fits(np.abs(rhat),
                   f'{basename}_{opts.suffix}.abs_fft_residual.fits',
@@ -228,7 +228,7 @@ def _restore(**kw):
 
     if 'i' in opts.outputs and psf is not None:
         image_mfs = convolve2gaussres(model_mfs[None], xx, yy,
-                                      GaussPar[0], opts.nvthreads,
+                                      GaussPar[0], opts.nthreads,
                                       norm_kernel=False)[0]  # peak of kernel set to unity
         image_mfs += residual_mfs
         save_fits(image_mfs,
@@ -240,7 +240,7 @@ def _restore(**kw):
         image = np.zeros_like(model)
         for b in range(nband):
             image[b:b+1] = convolve2gaussres(model[b:b+1], xx, yy,
-                                            GaussPars[b], opts.nvthreads,
+                                            GaussPars[b], opts.nthreads,
                                             norm_kernel=False)  # peak of kernel set to unity
             image[b] += residual[b]
         save_fits(image,

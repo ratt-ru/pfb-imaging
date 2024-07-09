@@ -6,7 +6,6 @@ output-filename:
     Basename of output
 log-directory:
   dtype: str
-  required: true
   abbreviation: ldir
   info:
     Directory to write logs and performance reports to.

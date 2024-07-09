@@ -1,10 +1,4 @@
 inputs:
-  nband:
-    dtype: int
-    required: true
-    abbreviation: nb
-    info:
-      Number of imaging bands
   suffix:
     dtype: str
     default: 'main'
@@ -48,6 +42,12 @@ inputs:
     abbreviation: niter
     info:
       Number of major iterations
+  nthreads:
+    dtype: int
+    abbreviation: nthreads
+    info:
+      Total number of threads to use.
+      Defaults to half the total number available.
   threshold:
     dtype: float
     info:
@@ -137,14 +137,9 @@ inputs:
     default: true
     info:
       Ensure residual decreases at every iteration
-  memory-greedy:
-    dtype: bool
-    default: false
-    info:
-      Holds data in memory if set
+
   _include:
     - (.)gridding.yml
-    - (.)dist.yml
     - (.)out.yml
 
 outputs:
