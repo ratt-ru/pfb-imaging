@@ -5,6 +5,7 @@ from distributed import wait
 from uuid import uuid4
 from ducc0.misc import make_noncritical
 from pfb.utils.misc import norm_diff
+from pfb.utils.naming import xds_from_list
 from pfb.operators.hessian import _hessian_impl
 from ducc0.misc import empty_noncritical
 from ducc0.fft import c2c
@@ -218,8 +219,7 @@ def pcg_psf(psfhat,
         return model
 
 
-def pcg_dds(ds,
-            ds_name,
+def pcg_dds(ds_name,
             sigmainvsq,  # regularisation for Hessian approximation
             sigma,       # regularisation for preconditioner
             mask=1.0,
@@ -236,14 +236,20 @@ def pcg_dds(ds,
     '''
     pcg for fluxmop
     '''
-    if residual_name in ds:
-        j = getattr(ds, residual_name).values
-        ds = ds.drop_vars(residual_name)
-    else:
-        j = ds.DIRTY.values
-        ds = ds.drop_vars(('DIRTY'))
+    if not isinstance(ds_name, list):
+        ds_name = [ds_name]
 
-    j *= mask * ds.BEAM.values
+    ds = xds_from_list(ds_name)[0]
+
+    if residual_name in ds:
+        residp = getattr(ds, residual_name).values
+        j = residp * mask * ds.BEAM.values
+        # ds = ds.drop_vars(residual_name)
+    else:
+        residp = ds.DIRTY.values
+        j = residp * mask * ds.BEAM.values
+        # ds = ds.drop_vars(('DIRTY'))
+
     nx, ny = j.shape
     wsum = np.sum(ds.WEIGHT.values * ds.MASK.values)
     # set sigmas relative to wsum
@@ -253,7 +259,6 @@ def pcg_dds(ds,
     # set precond if PSF is present
     if 'PSF' in ds:
         psf = ds.PSF.values.astype('c16')
-        ds = ds.drop_vars('PSF')
         nx_psf, ny_psf = psf.shape
         nxpadl = (nx_psf - nx)//2
         nxpadr = nx_psf - nx - nxpadl
@@ -268,25 +273,26 @@ def pcg_dds(ds,
         else:
             unpad_y = slice(None)
         # TODO - avoid copy
-        c2c(Fs(psf, axes=(0,1)), out=psf, forward=True, inorm=0, nthreads=8)
+        psf = c2c(Fs(psf, axes=(0,1)), forward=True, inorm=0, nthreads=8)
         psf = np.abs(psf)
         xhat = empty_noncritical((nx_psf, ny_psf),
                                  dtype=np.complex128)
-        def precond(xhat, x):
+        def precond(x, xhat=None, abspsf=None, sigma=None):
             xhat[...] = 0j
             xhat[unpad_x, unpad_y] = x
             c2c(xhat, out=xhat, forward=True, inorm=0, nthreads=8)
-            xhat /= (psf + sigma)
+            xhat /= (abspsf + sigma)
             c2c(xhat, out=xhat, forward=False, inorm=2, nthreads=8)
-            return xhat[unpad_x, unpad_y].real
+            return xhat[unpad_x, unpad_y].real.copy()
 
-        precondo = partial(precond, xhat)
+        precondo = partial(precond,
+                           xhat=xhat,
+                           abspsf=psf,
+                           sigma=sigma)
         x0 = precondo(j)
     else:
         precondo = None
         x0 = np.zeros_like(j)
-
-
 
     hess = partial(_hessian_impl,
                    uvw=ds.UVW.values,
@@ -300,20 +306,57 @@ def pcg_dds(ds,
                    do_wgridding=do_wgridding,
                    epsilon=epsilon,
                    double_accum=double_accum,
-                   nthreads=nthreads)
+                   nthreads=nthreads,
+                   sigmainvsq=sigmainvsq)
 
-    x, resid = pcg(hess,
-                   j,
-                   x0=x0,
-                   M=precondo,
-                   tol=tol,
-                   maxit=maxit,
-                   minit=1,
-                   verbosity=verbosity,
-                   report_freq=report_freq,
-                   backtrack=False,
-                   return_resid=True)
+    x = pcg(hess,
+            j,
+            x0=x0.copy(),
+            M=precondo,
+            tol=tol,
+            maxit=maxit,
+            minit=1,
+            verbosity=verbosity,
+            report_freq=report_freq,
+            backtrack=False,
+            return_resid=False)
 
-    return x, resid, x0, int(ds.bandid)
+    if model_name in ds:
+        modelp = getattr(ds, model_name).values
+        model = modelp + x
+    else:
+        modelp = np.zeros((nx ,ny))
+        model = x
+
+
+    resid = ds.DIRTY.values - _hessian_impl(
+                                        model,
+                                        ds.UVW.values,
+                                        ds.WEIGHT.values,
+                                        ds.MASK.values,
+                                        ds.FREQ.values,
+                                        ds.BEAM.values,
+                                        cell=ds.cell_rad,
+                                        x0=ds.x0,
+                                        y0=ds.y0,
+                                        do_wgridding=do_wgridding,
+                                        epsilon=epsilon,
+                                        double_accum=double_accum,
+                                        nthreads=nthreads,
+                                        sigmainvsq=0)
+
+    # import ipdb; ipdb.set_trace()
+    ds = ds.assign(**{
+        'MODEL': (('x','y'), model),
+        'RESIDUAL': (('x','y'), resid),
+        'MODELP': (('x','y'), modelp),
+        'RESIDUALP': (('x','y'), residp),
+        'UPDATE': (('x','y'), x),
+        'X0': (('x','y'), x0)
+    })
+
+    ds.to_zarr(ds_name[0], mode='a')
+
+    return resid, int(ds.bandid)
 
 

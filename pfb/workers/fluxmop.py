@@ -100,6 +100,10 @@ def fluxmop(**kw):
                          'UPDATE',
                          f'{fits_oname}_{opts.suffix}',
                          norm_wsum=False)
+            dds2fits_mfs(dds,
+                         'X0',
+                         f'{fits_oname}_{opts.suffix}',
+                         norm_wsum=False)
 
         if opts.fits_cubes:
             dds2fits(dds,
@@ -112,6 +116,10 @@ def fluxmop(**kw):
                      norm_wsum=False)
             dds2fits(dds,
                      'UPDATE',
+                     f'{fits_oname}_{opts.suffix}',
+                     norm_wsum=False)
+            dds2fits(dds,
+                     'X0',
                      f'{fits_oname}_{opts.suffix}',
                      norm_wsum=False)
 
@@ -185,6 +193,7 @@ def _fluxmop(ddsi=None, **kw):
         residual = np.stack([getattr(ds, opts.residual_name).values for ds in dds],
                             axis=0)
     else:
+        print("Using dirty image as residual", file=log)
         residual = np.stack([ds.DIRTY.values for ds in dds], axis=0)
     if opts.model_name in dds[0]:
         model = np.stack([getattr(ds, opts.model_name).values for ds in dds],
@@ -255,13 +264,14 @@ def _fluxmop(ddsi=None, **kw):
     for wname, ds, ds_name in zip(cycle(names), dds, dds_list):
         fut = client.submit(
             pcg_dds,
-            ds,
             ds_name,
             opts.sigmainvsq,
             opts.sigma,
+            residual_name=opts.residual_name,
+            model_name=opts.model_name,
             mask=mask,
             do_wgridding=opts.do_wgridding,
-            epsilon=5e-4,
+            epsilon=opts.epsilon,
             double_accum=opts.double_accum,
             nthreads=opts.nthreads,
             tol=opts.cg_tol,
@@ -272,14 +282,11 @@ def _fluxmop(ddsi=None, **kw):
         )
         futures.append(fut)
 
-    modelp = model.copy()
-    residualp = residual.copy()
     for fut in as_completed(futures):
-        x, r, x0, b = fut.result()
+        r, b = fut.result()
         residual[b] = r
-        model[b] += opts.gamma * x
 
-    residual_mfs = np.sum(residual)
+    residual_mfs = np.sum(residual/wsum, axis=0)
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
     print(f"Final peak residual = {rmax:.3e}, rms = {rms:.3e}",

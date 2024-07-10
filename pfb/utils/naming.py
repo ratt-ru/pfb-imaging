@@ -66,6 +66,7 @@ def xds_from_url(url, columns='ALL', chunks=-1):
     if chunks != -1:
         raise NotImplementedError
 
+    url = url.rstrip('/')
     from daskms.fsspec_store import DaskMSStore
     import xarray as xr
     store = DaskMSStore(url)
