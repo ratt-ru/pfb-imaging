@@ -178,14 +178,14 @@ def get_padding_info(nx, ny, pfrac):
     nfft = good_size(ny + npad_y, True)
     npad_yl = (nfft - ny) // 2
     npad_yr = nfft - ny - npad_yl
-    padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+    padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
     unpad_x = slice(npad_xl, -npad_xr)
     unpad_y = slice(npad_yl, -npad_yr)
     return padding, unpad_x, unpad_y
 
 
 def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
-                      pfrac=0.5, norm_kernel=False):
+                      pfrac=0.2, norm_kernel=False):
     """
     Convolves the image to a specified resolution.
 
@@ -197,19 +197,20 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
                   (emaj, emin, pa).
     gausspari   - initial resolution . By default it is assumed that the image
                   is a clean component image with no associated resolution.
-                  If beampari is specified, it must be a tuple containing
-                  gausspars for each imaging band in the same format.
     nthreads    - number of threads to use for the FFT's.
     pfrac       - padding used for the FFT based convolution.
                   Will pad by pfrac/2 on both sides of image
+    norm_kernel - Normalise kernel to have unity volume.
+                  By default the kernel has maximum of one and is not
+                  normalised.
     """
-    nband, nx, ny = image.shape
+    nx, ny = image.shape
     padding, unpad_x, unpad_y = get_padding_info(nx, ny, pfrac)
-    ax = (1, 2)  # axes over which to perform fft
+    ax = (0, 1)  # axes over which to perform fft
     lastsize = ny + np.sum(padding[-1])
 
     gausskern = Gaussian2D(xx, yy, gaussparf, normalise=norm_kernel)
-    gausskern = np.pad(gausskern[None], padding, mode='constant')
+    gausskern = np.pad(gausskern, padding, mode='constant')
     gausskernhat = r2c(iFs(gausskern, axes=ax), axes=ax, forward=True,
                        nthreads=nthreads, inorm=0)
 
@@ -221,20 +222,19 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
     if gausspari is None:
         imhat *= gausskernhat
     else:
-        for i in range(nband):
-            thiskern = Gaussian2D(xx, yy, gausspari[i], normalise=norm_kernel)
-            thiskern = np.pad(thiskern[None], padding, mode='constant')
-            thiskernhat = r2c(iFs(thiskern, axes=ax), axes=ax, forward=True,
-                              nthreads=nthreads, inorm=0)
+        thiskern = Gaussian2D(xx, yy, gausspari, normalise=norm_kernel)
+        thiskern = np.pad(thiskern, padding, mode='constant')
+        thiskernhat = r2c(iFs(thiskern, axes=ax), axes=ax, forward=True,
+                            nthreads=nthreads, inorm=0)
 
-            convkernhat = np.zeros_like(thiskernhat)
-            msk = np.abs(thiskernhat) > 0.0
-            convkernhat[msk] = gausskernhat[msk]/thiskernhat[msk]
+        convkernhat = np.zeros_like(thiskernhat)
+        msk = np.abs(thiskernhat) > 0.0
+        convkernhat[msk] = gausskernhat[msk]/thiskernhat[msk]
 
-            imhat[i] *= convkernhat[0]
+        imhat *= convkernhat
 
     image = Fs(c2r(imhat, axes=ax, forward=False, lastsize=lastsize, inorm=2,
-                   nthreads=nthreads), axes=ax)[:, unpad_x, unpad_y]
+                   nthreads=nthreads), axes=ax)[unpad_x, unpad_y]
 
     return image
 

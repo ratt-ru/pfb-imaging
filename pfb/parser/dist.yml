@@ -14,7 +14,7 @@ nworkers:
     Use with distributed scheduler.
 nthreads:
   dtype: int
-  abbreviation: nthreads
+  abbreviation: nt
   info:
     Number of threads used to scale vertically (eg. for FFTs and gridding).
     Each dask thread can in principle spawn this many threads.

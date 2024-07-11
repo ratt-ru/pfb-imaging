@@ -14,12 +14,6 @@ inputs:
     default: RESIDUAL
     info:
       Name of residual in dds
-  nband:
-    dtype: int
-    required: true
-    abbreviation: nb
-    info:
-      Number of imaging bands
   suffix:
     dtype: str
     default: 'main'
@@ -37,6 +31,16 @@ inputs:
     default: true
     info:
       Allow overwriting fits files
+  gausspar:
+    dtype: List[float]
+    info:
+      Gaussian parameters (e-major, e-minor, position-angle) specifying the
+      resolution to restore images to. The major and minor axes need to be
+      specified in units of arcseconds and the position-angle in degrees.
+      The default resolution is the native resolution in each imaging band.
+      This parameter can be used to homogenise the resolution of the cubes.
+      Set to (0,0,0) to use the resolution of the lowest band.
+
 
 outputs:
     {}

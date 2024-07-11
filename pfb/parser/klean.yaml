@@ -44,7 +44,7 @@ inputs:
       Number of major iterations
   nthreads:
     dtype: int
-    abbreviation: nthreads
+    abbreviation: nt
     info:
       Total number of threads to use.
       Defaults to half the total number available.

@@ -15,6 +15,11 @@ inputs:
     info:
       Order of interpolating polynomial for time axis.
       This is hypothetical for the time being.
+  nthreads:
+    dtype: int
+    abbreviation: nt
+    info:
+      Number of threads
   fit-mode:
     dtype: str
     default: Legendre
@@ -63,7 +68,6 @@ inputs:
       output cube needs to be evaluated.
 
   _include:
-    - (.)dist.yml
     - (.)out.yml
 
 outputs:

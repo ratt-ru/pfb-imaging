@@ -74,6 +74,9 @@ def xds_from_url(url, columns='ALL', chunks=-1):
     # these will only be read in on first value access and won't be chunked
     open_zarr = partial(xr.open_zarr, chunks=None)
     xds = list(map(open_zarr, store.fs.glob(f'{url}/*.zarr')))
+
+    if not len(xds):
+        raise ValueError(f'Nothing found at {url}')
     return xds
 
 
@@ -86,7 +89,10 @@ def xds_from_list(ds_list, columns='ALL', chunks=-1):
 
     # these will only be read in on first value access and won't be chunked
     open_zarr = partial(xr.open_zarr, chunks=None)
-    return list(map(open_zarr, ds_list))
+    xds = list(map(open_zarr, ds_list))
+    if not len(xds):
+        raise ValueError(f'Nothing found at {url}')
+    return xds
 
 
 def cache_opts(opts, url, protocol, name='opts.pkl'):

@@ -139,7 +139,6 @@ def _spotless(**kw):
     from operator import getitem
     from itertools import cycle
     from uuid import uuid4
-    from pfb.utils.misc import fitcleanbeam
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.misc import eval_coeffs_to_slice, fit_image_cube
     import pywt

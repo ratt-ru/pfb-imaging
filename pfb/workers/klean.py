@@ -112,7 +112,7 @@ def _klean(ddsi=None, **kw):
     from pfb.opt.pcg import pcg, pcg_psf
     from pfb.operators.gridder import compute_residual
     from scipy import ndimage
-    from pfb.utils.misc import fitcleanbeam, fit_image_cube
+    from pfb.utils.misc import fit_image_cube
     from daskms.fsspec_store import DaskMSStore
 
     basename = opts.output_filename

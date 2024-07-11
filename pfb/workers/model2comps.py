@@ -1,5 +1,4 @@
 # flake8: noqa
-from pathlib import Path
 from contextlib import ExitStack
 from pfb.workers.main import cli
 import click
@@ -25,40 +24,47 @@ def model2comps(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
+
+    from pfb.utils.naming import set_output_names
+    opts, basedir, oname = set_output_names(opts)
+
+    import psutil
+    nthreads = psutil.cpu_count(logical=True)
+    ncpu = psutil.cpu_count(logical=False)
+    if opts.nthreads is None:
+        opts.nthreads = nthreads//2
+        ncpu = ncpu//2
+
+    OmegaConf.set_struct(opts, True)
+
+    from pfb import set_envs
+    from ducc0.misc import resize_thread_pool, thread_pool_size
+    resize_thread_pool(opts.nthreads)
+    set_envs(opts.nthreads, ncpu)
+
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
+
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    ldir = Path(opts.log_directory).resolve()
-    ldir.mkdir(parents=True, exist_ok=True)
-    logname = f'{str(ldir)}/model2comps_{timestamp}.log'
+    logname = f'{str(opts.log_directory)}/model2comps_{timestamp}.log'
     pyscilog.log_to_file(logname)
 
     print(f'Logs will be written to {logname}', file=log)
 
-    from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.naming import set_output_names
-    basedir, oname, fits_output_folder = set_output_names(opts.output_filename,
-                                                          opts.product,
-                                                          opts.fits_output_folder)
-
-    basename = f'{basedir}/{oname}'
-    fits_oname = f'{fits_output_folder}/{oname}'
-
-    opts.output_filename = basename
-    dds_name = f'{basename}_{opts.suffix}.dds'
-    dds_store = DaskMSStore(dds_name)
-    opts.fits_output_folder = fits_output_folder
-    OmegaConf.set_struct(opts, True)
+    # basename = f'{basedir}/{oname}'
+    # fits_oname = f'{opts.fits_output_folder}/{oname}'
+    # dds_name = f'{basename}_{opts.suffix}.dds'
+    # dds_store = DaskMSStore(dds_name)
 
     with ExitStack() as stack:
-        from pfb import set_client
-        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
+        ti = time.time()
+        _model2comps(**opts)
 
-        # TODO - prettier config printing
-        print('Input Options:', file=log)
-        for key in opts.keys():
-            print('     %25s = %s' % (key, opts[key]), file=log)
 
-        return _model2comps(**opts)
+    print(f"All done after {time.time() - ti}s", file=log)
 
 def _model2comps(ddsi=None, **kw):
     opts = OmegaConf.create(kw)
@@ -66,15 +72,9 @@ def _model2comps(ddsi=None, **kw):
 
     import os
     import numpy as np
-    from pfb.utils.misc import construct_mappings
-    import dask
-    from dask.distributed import performance_report
-    from daskms.experimental.zarr import xds_from_zarr, xds_to_zarr
-    import dask.array as da
+    from pfb.utils.naming import xds_from_url, xds_from_list
     from africanus.constants import c as lightspeed
-    from pfb.utils.fits import load_fits, data_from_header
-    from astropy.io import fits
-    from pfb.utils.misc import compute_context, fit_image_cube
+    from pfb.utils.misc import fit_image_cube
     from pfb.utils.fits import set_wcs, save_fits
     from pfb.utils.misc import eval_coeffs_to_slice, norm_diff
     import xarray as xr
@@ -90,6 +90,8 @@ def _model2comps(ddsi=None, **kw):
         fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
+    dds_store = DaskMSStore(dds_name)
+    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
     if ddsi is not None:
         dds = []
         for ds in ddsi:
@@ -101,14 +103,8 @@ def _model2comps(ddsi=None, **kw):
                                  'y_psf':-1,
                                  'yo2':-1}))
     else:
-        dds = xds_from_zarr(dds_name, chunks={'row':-1,
-                                            'chan':-1,
-                                            'x':-1,
-                                            'y':-1,
-                                            'x_psf':-1,
-                                            'y_psf':-1,
-                                            'yo2':-1})
-
+        # are these sorted correctly?
+        dds = xds_from_list(dds_list)
 
     if opts.model_out is not None:
         coeff_name = opts.model_out
@@ -136,15 +132,12 @@ def _model2comps(ddsi=None, **kw):
     mfreqs = []
     mtimes = []
     for ds in dds:
-        nband = np.maximum(ds.bandid+1, nband)
-        ntime = np.maximum(ds.timeid+1, ntime)
         mfreqs.append(ds.freq_out)
         mtimes.append(ds.time_out)
     mfreqs = np.unique(np.array(mfreqs))
     mtimes = np.unique(np.array(mtimes))
-    assert mfreqs.size == nband
-    assert mtimes.size == ntime
-    assert len(dds) == nband*ntime
+    nband = mfreqs.size
+    ntime = mtimes.size
 
     # stack cube
     nx = dds[0].x.size
@@ -152,12 +145,11 @@ def _model2comps(ddsi=None, **kw):
     x0 = dds[0].x0
     y0 = dds[0].y0
 
-
     model = np.zeros((ntime, nband, nx, ny), dtype=np.float64)
     wsums = np.zeros((ntime, nband), dtype=np.float64)
     for ds in dds:
-        b = ds.bandid
-        t = ds.timeid
+        b = int(ds.bandid)
+        t = int(ds.timeid)
         model[t, b] = getattr(ds, opts.model_name).values
         wsums[t, b] += ds.WSUM.values[0]
 
@@ -168,7 +160,7 @@ def _model2comps(ddsi=None, **kw):
         wsums /= wsums.max()
 
     if not np.any(model):
-        raise ValueError(f'Model is empty or has no components above {opts.min_val}')
+        raise ValueError(f'Model is empty')
     radec = (dds[0].ra, dds[0].dec)
 
     if opts.out_freqs is not None:
@@ -212,7 +204,10 @@ def _model2comps(ddsi=None, **kw):
             nband = mfreqs.size
 
     if opts.min_val is not None:
-        model = np.where(model > opts.min_val, model, opts.min_val)
+        model = np.where(model > opts.min_val, model, 0.0)
+
+    if not np.any(model):
+        raise ValueError(f'Model has no components above {opts.min_val}')
 
     if opts.nbasisf is None:
         nbasisf = nband-1
