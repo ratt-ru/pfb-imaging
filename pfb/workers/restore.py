@@ -78,7 +78,7 @@ def _restore(ddsi=None, **kw):
                                 dds2fits, dds2fits_mfs)
     from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres, dds2cubes
     from ducc0.fft import c2c
-    from pfb.utils.restoration import restore_ds
+    from pfb.utils.restoration import restore_ds, ublurr_ds
     from itertools import cycle
     from daskms.fsspec_store import DaskMSStore
     try:
@@ -149,13 +149,19 @@ def _restore(ddsi=None, **kw):
     if 'm' in opts.outputs.lower() and opts.model_name not in dds[0]:
         raise ValueError(f'{opts.model_name} not found in dds. '
                          'Unable to produce requested model.')
-    if 'i' in opts.outputs and 'PSF' not in dds[0]:
+    if 'u' in opts.outputs.lower() and opts.model_name not in dds[0]:
+        raise ValueError(f'{opts.model_name} not found in dds. '
+                         'Unable to produce requested blurred image.')
+    if 'i' in opts.outputs.lower() and 'PSF' not in dds[0]:
         if opts.gausspar is None:
             raise ValueError('PSF not found in dds. '
                              'Unable to produce restored image.')
         else:
-            print("Warning - unable to homogenise residual since no PSF "
-                  "found in dds.", file=log)
+            print("Warning - unable to homogenise residual resolution "
+                  "since no PSF found in dds.", file=log)
+    if 'u' in opts.outputs.lower() and 'PSF' not in dds[0]:
+        raise ValueError('PSF not found in dds. '
+                         'Unable to produce uniformly blurred image.')
         # psf = np.stack([ds.PSF.values for ds in dds], axis=0)
     wsums = np.stack([ds.WSUM.values[0] for ds in dds], axis=0)
     wsum = np.sum(wsums)
@@ -165,87 +171,151 @@ def _restore(ddsi=None, **kw):
 
     if opts.gausspar is None:
         gaussparf = None
+        gaussparfu = None
+        try:
+            psf = np.stack([ds.PSF.values for ds in dds], axis=0)
+            psf_mfs = np.sum(psf, axis=0)/wsum
+            psf[fmask] = psf[fmask]/wsums[fmask, None, None]
+            gausspars = fitcleanbeam(psf, level=0.5, pixsize=1)
+        except Exception as e:
+            raise e
+
         print("Using native resolution", file=log)
     elif opts.gausspar == [0,0,0]:
         bid0 = np.array([int(ds.bandid) for ds in dds]).min()
         # TODO - there could be more than one ds per band
-        ds0 = [ds for ds in dds if int(ds.bandid) == bid0][0]
+        for ds, ds_name in zip(dds, dds_list):
+            if int(ds.bandid) == bid0:
+                ds0 = ds
+                ds0_name = ds_name
+
         gaussparf = fitcleanbeam(ds0.PSF.values[None], level=0.5,
                                  pixsize=1)[0]
         emaj = gaussparf[0] * cell_asec
         emin = gaussparf[1] * cell_asec
         pa = gaussparf[2]
         print(f"Using lowest resolution of ({emaj:.3e} asec, {emin:.3e} asec, "
-              f"{pa:.3e} degrees)", file=log)
+              f"{pa:.3e} degrees) for restored images", file=log)
+        gausspars = (gaussparf,)*nband
 
-        gaussparu = restore_ds(dds_list[0],
-                               opts.outputs,
-                               residual_name=opts.residual_name,
-                               model_name=opts.model_name,
-                               nthreads=opts.nthreads,
-                               gaussparf=gaussparf)
+        if 'u' in opts.products.lower():
+            gaussparfu = ublurr_ds(dds_list[0],
+                                   model_name=opts.model_name,
+                                   nthreads=opts.nthreads,
+                                   gaussparf=gaussparf)
+            # inflate and cicularise
+            emaj = gaussparfu[0]
+            emin = gaussparfu[1]
+            emaj = np.maximum(emaj, emin)
+            print(f"Lowest intrinsic resolution is {emaj:.3e} asec",
+                  file=log)
+            emaj *= opts.inflate_factor
+            gaussparfu[0] = emaj
+            gaussparfu[1] = emaj
+            gaussparfu[2] = 0.0
+            emaj *= cell_asec
+            print(f"Setting uniformly blurred image resolution to {emaj:.3e} asec",
+                  file=log)
+            gaussparsu = (gaussparfu,)*nband
 
     else:
         gaussparf = opts.gausspar
+        gaussparfu = opts.gausspar
+        gausspars = (gaussparf,)*nband
+        gaussparsu = gausspars
         emaj = gaussparf[0]
         emin = gaussparf[1]
         pa = gaussparf[2]
         print(f"Using specified resolution of ({emaj:.3e} asec, {emin:.3e} asec, "
-              f"{pa:.3e} degrees)", file=log)
+              f"{pa:.3e} degrees) for all images", file=log)
 
-    import ipdb; ipdb.set_trace()
-
-    # compute per band images on workers
-    futures = []
-    for wname, ds, ds_name in zip(cycle(names), dds, dds_list):
-        fut = client.submit(restore_ds,
-                            ds_name,
-                            opts.outputs,
-                            residual_name=opts.residual_name,
-                            model_name=opts.model_name,
-                            nthreads=opts.nthreads,
-                            gaussparf=opts.gausspar)
-        futures.append(fut)
-
-    # mfs images on runner
-    psf_mfs = np.sum([ds.PSF.values for ds in dds], axis=0)/wsum
-    model_mfs = np.sum([getattr(ds, opts.model_name).values for ds in dds],
-                       axis=0)/np.sum(fmask)
-    residual_mfs = np.sum([getattr(ds, opts.residual_name).values for ds in dds],
-                          axis=0)/wsum
-    if not model_mfs.any():
-        print("Warning - model is empty", file=log)
-
-    # lm in pixel coordinates
-    lpsf = -(nx//2) + np.arange(nx)
-    mpsf = -(ny//2) + np.arange(ny)
-    xx, yy = np.meshgrid(lpsf, mpsf, indexing='ij')
-
-    # fit restoring psf (pixel units)
-    GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)
-    hdr_mfs = add_beampars(hdr_mfs, GaussPar, unit2deg=cell_deg)
+    hdr_mfs = add_beampars(hdr_mfs, gaussparf, unit2deg=cell_deg)
+    uhdr_mfs = add_beampars(hdr_mfs, gaussparfu, unit2deg=cell_deg)
+    hdr = add_beampars(hdr_mfs, gaussparf, gausspars, unit2deg=cell_deg)
+    uhdr = add_beampars(hdr_mfs, gaussparfu, gaussparsu, unit2deg=cell_deg)
 
 
+    cube = np.zeros((nband, nx, ny))
+    if 'i' in opts.products.lower():
+        # we need to do this per band
+        futures = []
+        for wname, ds, ds_name in zip(cycle(names), dds, dds_list):
+            fut = client.submit(restore_ds,
+                                ds_name,
+                                residual_name=opts.residual_name,
+                                model_name=opts.model_name,
+                                nthreads=opts.nthreads,
+                                gaussparf=gaussparf)
+            futures.append(fut)
+
+        for fut in as_completed(futures):
+            image, b = fut.result()
+            cube[b] = image
+
+        if 'I' in opts.products:
+            save_fits(cube,
+                      f'{basename}_{opts.suffix}.image.fits',
+                      hdr,
+                      overwrite=opts.overwrite)
+        if 'i' in opts.products:
+            cube_mfs = np.sum(cube * wsums[:, None, None], axis=0)/wsum
+            save_fits(cube_mfs,
+                      f'{basename}_{opts.suffix}.image_mfs.fits',
+                      hdr_mfs,
+                      overwrite=opts.overwrite)
+
+    if 'u' in opts.products.lower():
+        # compute per band images on workers
+        futures = []
+        for wname, ds, ds_name in zip(cycle(names), dds, dds_list):
+            fut = client.submit(ublurr_ds,
+                                ds_name,
+                                gaussparf=gaussparfu,
+                                model_name=opts.model_name,
+                                nthreads=opts.nthreads)
+            futures.append(fut)
+
+        for fut in as_completed(futures):
+            image, b = fut.result()
+            cube[b] = image
+
+        if 'U' in opts.products:
+            save_fits(cube,
+                      f'{basename}_{opts.suffix}.uimage.fits',
+                      uhdr,
+                      overwrite=opts.overwrite)
+        if 'u' in opts.products:
+            cube_mfs = np.sum(cube * wsums[:, None, None], axis=0)/wsum
+            save_fits(cube_mfs,
+                      f'{basename}_{opts.suffix}.uimage_mfs.fits',
+                      uhdr_mfs,
+                      overwrite=opts.overwrite)
 
     if 'm' in opts.outputs:
+        model_mfs = np.sum([getattr(ds, opts.model_name).values for ds in dds], axis=0)
+        model_mfs /= np.sum(fmask)
         save_fits(model_mfs,
                   f'{basename}_{opts.suffix}.model_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'M' in opts.outputs:
+        model = np.stack([getattr(ds, opts.model_name).values for ds in dds], axis=0)
         save_fits(model,
                   f'{basename}_{opts.suffix}.model.fits',
                   hdr,
                   overwrite=opts.overwrite)
 
     if 'r' in opts.outputs:
+        residual_mfs = np.sum([getattr(ds, opts.residual_name).values for ds in dds], axis=0)/wsum
         save_fits(residual_mfs,
                   f'{basename}_{opts.suffix}.residual_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'R' in opts.outputs:
+        residual = np.stack([getattr(ds, opts.residual_name).values for ds in dds], axis=0)
+        residual[fmask] = residual[fmask]/wsums[fmask, None, None]
         save_fits(residual,
                   f'{basename}_{opts.suffix}.residual.fits',
                   hdr,
@@ -291,27 +361,7 @@ def _restore(ddsi=None, **kw):
                   hdr,
                   overwrite=opts.overwrite)
 
-    if 'i' in opts.outputs and psf is not None:
-        image_mfs = convolve2gaussres(model_mfs[None], xx, yy,
-                                      GaussPar[0], opts.nthreads,
-                                      norm_kernel=False)[0]  # peak of kernel set to unity
-        image_mfs += residual_mfs
-        save_fits(image_mfs,
-                  f'{basename}_{opts.suffix}.image_mfs.fits',
-                  hdr_mfs,
-                  overwrite=opts.overwrite)
 
-    if 'I' in opts.outputs and psf is not None:
-        image = np.zeros_like(model)
-        for b in range(nband):
-            image[b:b+1] = convolve2gaussres(model[b:b+1], xx, yy,
-                                            GaussPars[b], opts.nthreads,
-                                            norm_kernel=False)  # peak of kernel set to unity
-            image[b] += residual[b]
-        save_fits(image,
-                  f'{basename}_{opts.suffix}.image.fits',
-                  hdr,
-                  overwrite=opts.overwrite)
 
     if 'c' in opts.outputs:
         if GaussPar is None:
@@ -335,9 +385,4 @@ def _restore(ddsi=None, **kw):
                   hdr,
                   overwrite=opts.overwrite)
 
-    if opts.scheduler=='distributed':
-        from distributed import get_client
-        client = get_client()
-        client.close()
-
-    print("All done here", file=log)
+    return

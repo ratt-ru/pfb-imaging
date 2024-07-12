@@ -40,6 +40,12 @@ inputs:
       The default resolution is the native resolution in each imaging band.
       This parameter can be used to homogenise the resolution of the cubes.
       Set to (0,0,0) to use the resolution of the lowest band.
+  inflate_factor:
+    dtype: float
+    default: 1.5
+    info:
+      Inflate the intrinsic resolution of the uniformly blurred image by
+      this amount.
 
 
 outputs:
