@@ -205,7 +205,8 @@ def single_stokes(
                   chan_freq=freq,
                   chan_width=chan_width,
                   decorrelation=opts.bda_decorr,
-                  min_nchan=freq.size)
+                  min_nchan=freq.size,
+                  max_fov=opts.max_field_of_view)
 
         offsets = res.offsets
         uvw = res.uvw[offsets[:-1], :]
