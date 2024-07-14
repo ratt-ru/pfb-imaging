@@ -23,11 +23,11 @@ def compute_counts(dsl,
         dsl = xds_from_list(dsl)
 
     nds = len(dsl)
-    ngrid = nthreads//nds
+    ngrid = np.maximum(nthreads//nds, 1)
 
     counts = []
     # TODO - parallel over ds
-    with cf.ThreadPoolExecutor(max_workers=ngrid) as executor:
+    with cf.ThreadPoolExecutor(max_workers=nds) as executor:
         futures = []
         for ds in dsl:
             fut = executor.submit(_compute_counts,
