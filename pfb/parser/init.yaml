@@ -92,9 +92,10 @@ inputs:
     info:
       BDA decorrelation factor.
       Only has an effect if less than one
-  max-field-of0view:
+  max-field-of-view:
     dtype: float
     default: 3.0
+    abbreviation: max-fov
     info:
       The maximum field of view that will be considered.
       Used to compute decorrelation due to BDA.
