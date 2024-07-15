@@ -98,7 +98,6 @@ def xds_from_list(ds_list, drop_vars=None, chunks=-1, nthreads=1):
     Reads a list of datasets into memory in parallel.
     Use drop_vars to drop vars that should not be read into memory.
     '''
-    ti = time.time()
     if chunks != -1:
         raise NotImplementedError
 
@@ -112,22 +111,12 @@ def xds_from_list(ds_list, drop_vars=None, chunks=-1, nthreads=1):
         for i, ds in enumerate(xds):
             xds[i] = ds.drop_vars(drop_vars, errors="ignore")
 
-    ti = time.time()
     futures = []
     with cf.ThreadPoolExecutor(max_workers=nthreads) as executor:
         for ds in xds:
             for var in ds.data_vars:
                 futures.append(executor.submit(read_var, ds, var))
     cf.wait(futures)
-    print(f'Parallel read in {time.time() - ti}s')
-
-
-    xds = list(map(open_zarr, ds_list))
-    ti = time.time()
-    for ds in xds:
-        for var in ds.data_vars:
-            read_var(ds, var)
-    print(f'Serial read in {time.time() - ti}s')
     return xds
 
 
