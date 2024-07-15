@@ -67,6 +67,7 @@ def fluxmop(**kw):
     dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
 
     with ExitStack() as stack:
+        from distributed import wait
         from pfb import set_client
         if opts.nworkers > 1:
             client = set_client(opts.nworkers, stack, log)
@@ -86,38 +87,45 @@ def fluxmop(**kw):
             print(f"Writing fits files to {fits_oname}_{opts.suffix}",
                   file=log)
             futures = []
-            fut = client.submit(dds2fits,
-                                dds_list,
-                                'RESIDUAL',
-                                f'{fits_oname}_{opts.suffix}',
-                                norm_wsum=True,
-                                nthreads=opts.nthreads,
-                                do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+            fut = client.submit(
+                    dds2fits,
+                    dds_list,
+                    'RESIDUAL',
+                    f'{fits_oname}_{opts.suffix}',
+                    norm_wsum=True,
+                    nthreads=opts.nthreads,
+                    do_mfs=opts.fits_mfs,
+                    do_cube=opts.fits_cubes)
             futures.append(fut)
-            fut = client.submit(dds_list,
-                     'MODEL',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False,
-                     nthreads=opts.nthreads,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
+            fut = client.submit(
+                    dds2fits,
+                    dds_list,
+                    'MODEL',
+                    f'{fits_oname}_{opts.suffix}',
+                    norm_wsum=False,
+                    nthreads=opts.nthreads,
+                    do_mfs=opts.fits_mfs,
+                    do_cube=opts.fits_cubes)
             futures.append(fut)
-            fut = client.submit(dds_list,
-                     'UPDATE',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False,
-                     nthreads=opts.nthreads,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
+            fut = client.submit(
+                    dds2fits,
+                    dds_list,
+                    'UPDATE',
+                    f'{fits_oname}_{opts.suffix}',
+                    norm_wsum=False,
+                    nthreads=opts.nthreads,
+                    do_mfs=opts.fits_mfs,
+                    do_cube=opts.fits_cubes)
             futures.append(fut)
-            fut = client.submit(dds_list,
-                     'X0',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False,
-                     nthreads=opts.nthreads,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
+            fut = client.submit(
+                    dds2fits,
+                    dds_list,
+                    'X0',
+                    f'{fits_oname}_{opts.suffix}',
+                    norm_wsum=False,
+                    nthreads=opts.nthreads,
+                    do_mfs=opts.fits_mfs,
+                    do_cube=opts.fits_cubes)
             futures.append(fut)
 
         if len(futures):

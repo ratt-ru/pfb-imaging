@@ -80,9 +80,9 @@ def grid(**kw):
 
     with ExitStack() as stack:
         from pfb import set_client
-        from distributed import wait, get_client
+        from distributed import wait
         if opts.nworkers > 1:
-            set_client(opts.nworkers, stack, log)
+            client = set_client(opts.nworkers, stack, log)
             client = get_client()
         else:
             print("Faking client", file=log)
