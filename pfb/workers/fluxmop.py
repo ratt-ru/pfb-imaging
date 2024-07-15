@@ -85,34 +85,44 @@ def fluxmop(**kw):
         if opts.fits_mfs or opts.fits_cubes:
             print(f"Writing fits files to {fits_oname}_{opts.suffix}",
                   file=log)
-            dds2fits(dds,
-                     'RESIDUAL',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=True,
-                     nthreads=opts.nthreads,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
-            dds2fits(dds,
+            futures = []
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'RESIDUAL',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=True,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
+            fut = client.submit(dds_list,
                      'MODEL',
                      f'{fits_oname}_{opts.suffix}',
                      norm_wsum=False,
                      nthreads=opts.nthreads,
                      do_mfs=opts.fits_mfs,
                      do_cube=opts.fits_cubes)
-            dds2fits(dds,
+            futures.append(fut)
+            fut = client.submit(dds_list,
                      'UPDATE',
                      f'{fits_oname}_{opts.suffix}',
                      norm_wsum=False,
                      nthreads=opts.nthreads,
                      do_mfs=opts.fits_mfs,
                      do_cube=opts.fits_cubes)
-            dds2fits(dds,
+            futures.append(fut)
+            fut = client.submit(dds_list,
                      'X0',
                      f'{fits_oname}_{opts.suffix}',
                      norm_wsum=False,
                      nthreads=opts.nthreads,
                      do_mfs=opts.fits_mfs,
                      do_cube=opts.fits_cubes)
+            futures.append(fut)
+
+        if len(futures):
+            if opts.nworkers > 1:
+                wait(futures)
 
     print(f"All done after {time.time() - ti}s", file=log)
 

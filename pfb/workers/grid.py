@@ -101,6 +101,7 @@ def grid(**kw):
         # convert to fits files
         futures = []
         if opts.fits_mfs or opts.fits_cubes:
+            print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
             if opts.dirty:
                 fut = client.submit(dds2fits,
                                     dds_list,
@@ -156,7 +157,6 @@ def grid(**kw):
                 futures.append(fut)
 
         if len(futures):
-            print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
             if opts.nworkers > 1:
                 wait(futures)
 
