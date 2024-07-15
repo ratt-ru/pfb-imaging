@@ -365,6 +365,7 @@ def _grid(xdsi=None, **kw):
 
 
     if opts.robustness is not None and not from_cache:
+        print("Computing imaging weights", file=log)
         futures = []
         for wname, (tbid, ds_dct) in zip(cycle(names), xds_dct.items()):
             fut = client.submit(compute_counts,
@@ -507,7 +508,11 @@ def _grid(xdsi=None, **kw):
             if from_cache:
                 count = out_ds.COUNTS.values
             else:
-                count = counts[int(timeid), int(bandid)]
+                if opts.mf_weighting:
+                    b = 0
+                else:
+                    b = int(bandid)
+                count = counts[int(timeid), b]
         else:
             count = None
 

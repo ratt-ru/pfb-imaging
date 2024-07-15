@@ -58,7 +58,7 @@ def set_client(nworkers, stack, log, host_address=None):
     dashboard_url = client.dashboard_link
     print(f"Dask Dashboard URL at {dashboard_url}", file=log)
 
-    return
+    return client
 
 
 def logo():

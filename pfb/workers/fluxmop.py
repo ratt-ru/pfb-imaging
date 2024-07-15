@@ -69,8 +69,7 @@ def fluxmop(**kw):
     with ExitStack() as stack:
         from pfb import set_client
         if opts.nworkers > 1:
-            set_client(opts.nworkers, stack, log)
-            client = get_client()
+            client = set_client(opts.nworkers, stack, log)
         else:
             print("Faking client", file=log)
             from pfb.utils.dist import fake_client
