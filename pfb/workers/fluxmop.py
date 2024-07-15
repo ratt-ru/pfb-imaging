@@ -79,48 +79,40 @@ def fluxmop(**kw):
         ti = time.time()
         _fluxmop(**opts)
 
-        dds = xds_from_url(dds_store.url)
-
-        if opts.fits_mfs or opts.fits:
-            print(f"Writing fits files to {fits_oname}_{opts.suffix}",
-                  file=log)
+        dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
 
         # convert to fits files
-        if opts.fits_mfs:
-            dds2fits_mfs(dds,
-                         'RESIDUAL',
-                         f'{fits_oname}_{opts.suffix}',
-                         norm_wsum=True)
-            dds2fits_mfs(dds,
-                         'MODEL',
-                         f'{fits_oname}_{opts.suffix}',
-                         norm_wsum=False)
-            dds2fits_mfs(dds,
-                         'UPDATE',
-                         f'{fits_oname}_{opts.suffix}',
-                         norm_wsum=False)
-            dds2fits_mfs(dds,
-                         'X0',
-                         f'{fits_oname}_{opts.suffix}',
-                         norm_wsum=False)
-
-        if opts.fits_cubes:
+        if opts.fits_mfs or opts.fits_cubes:
+            print(f"Writing fits files to {fits_oname}_{opts.suffix}",
+                  file=log)
             dds2fits(dds,
                      'RESIDUAL',
                      f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=True)
+                     norm_wsum=True,
+                     nthreads=opts.nthreads,
+                     do_mfs=opts.fits_mfs,
+                     do_cube=opts.fits_cubes)
             dds2fits(dds,
                      'MODEL',
                      f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False)
+                     norm_wsum=False,
+                     nthreads=opts.nthreads,
+                     do_mfs=opts.fits_mfs,
+                     do_cube=opts.fits_cubes)
             dds2fits(dds,
                      'UPDATE',
                      f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False)
+                     norm_wsum=False,
+                     nthreads=opts.nthreads,
+                     do_mfs=opts.fits_mfs,
+                     do_cube=opts.fits_cubes)
             dds2fits(dds,
                      'X0',
                      f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False)
+                     norm_wsum=False,
+                     nthreads=opts.nthreads,
+                     do_mfs=opts.fits_mfs,
+                     do_cube=opts.fits_cubes)
 
     print(f"All done after {time.time() - ti}s", file=log)
 

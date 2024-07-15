@@ -12,8 +12,8 @@ from ducc0.fft import c2c
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
-import pyscilog
-log = pyscilog.get_logger('PCG')
+# import pyscilog
+# log = pyscilog.get_logger('PCG')
 
 def pcg(A,
         b,
@@ -36,7 +36,7 @@ def pcg(A,
     r = A(x0) - b
     y = M(r)
     if not np.any(y):
-        print(f"Initial residual is zero", file=log)
+        print(f"Initial residual is zero")  #, file=log)
         return x0
     p = -y
     rnorm = np.vdot(r, y)
@@ -80,18 +80,18 @@ def pcg(A,
             stall_count += 1
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}",
-                  file=log)
+            print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
+                #   file=log)
 
     if k >= maxit:
         if verbosity:
-            print(f"Max iters reached. eps = {eps:.3e}", file=log)
+            print(f"Max iters reached. eps = {eps:.3e}")  #, file=log)
     elif stall_count >= 5:
         if verbosity:
-            print(f"Stalled after {k} iterations with eps = {eps:.3e}", file=log)
+            print(f"Stalled after {k} iterations with eps = {eps:.3e}")  #, file=log)
     else:
         if verbosity:
-            print(f"Success, converged after {k} iterations", file=log)
+            print(f"Success, converged after {k} iterations")  #, file=log)
     if not return_resid:
         return x
     else:
