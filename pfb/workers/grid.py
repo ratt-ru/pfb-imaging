@@ -96,82 +96,63 @@ def grid(**kw):
         ti = time.time()
         residual_mfs = _grid(**opts)
 
-        dds = xds_from_url(dds_store.url)
+        dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
 
         # convert to fits files
         futures = []
-        if opts.fits_mfs:
-            if opts.dirty:
-                fut = client.submit(dds2fits_mfs,
-                                    dds,
-                                    'DIRTY',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True)
-                futures.append(fut)
-            if opts.psf:
-                fut = client.submit(dds2fits_mfs,
-                                    dds,
-                                    'PSF',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True)
-                futures.append(fut)
-            if 'MODEL' in dds[0]:
-                fut = client.submit(dds2fits_mfs,
-                                    dds,
-                                    'MODEL',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=False)
-                futures.append(fut)
-                if opts.residual:
-                    fut = client.submit(dds2fits_mfs,
-                                        dds,
-                                        'RESIDUAL',
-                                        f'{fits_oname}_{opts.suffix}',
-                                        norm_wsum=True)
-                    futures.append(fut)
-            if opts.noise:
-                fut = client.submit(dds2fits_mfs,
-                                    dds,
-                                    'NOISE',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True)
-                futures.append(fut)
-
-        if opts.fits_cubes:
+        if opts.fits_mfs or opts.fits_cubes:
             if opts.dirty:
                 fut = client.submit(dds2fits,
-                                    dds,
+                                    dds_list,
                                     'DIRTY',
                                     f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True)
+                                    norm_wsum=True,
+                                    nthreads=opts.nthreads,
+                                    do_mfs=opts.fits_mfs,
+                                    do_cube=opts.fits_cubes)
                 futures.append(fut)
             if opts.psf:
                 fut = client.submit(dds2fits,
-                                    dds,
+                                    dds_list,
                                     'PSF',
                                     f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True)
+                                    norm_wsum=True,
+                                    nthreads=opts.nthreads,
+                                    do_mfs=opts.fits_mfs,
+                                    do_cube=opts.fits_cubes)
                 futures.append(fut)
-            if 'MODEL' in dds[0]:
-                fut = client.submit(dds2fits,
-                                    dds,
-                                    'MODEL',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=False)
-                futures.append(fut)
-                if opts.residual:
+            if opts.residual:
+                try:
                     fut = client.submit(dds2fits,
-                                        dds,
+                                        dds_list,
+                                        'MODEL',
+                                        f'{fits_oname}_{opts.suffix}',
+                                        norm_wsum=False,
+                                        nthreads=opts.nthreads,
+                                        do_mfs=opts.fits_mfs,
+                                        do_cube=opts.fits_cubes)
+                    futures.append(fut)
+
+                    fut = client.submit(dds2fits,
+                                        dds_list,
                                         'RESIDUAL',
                                         f'{fits_oname}_{opts.suffix}',
-                                        norm_wsum=True)
+                                        norm_wsum=True,
+                                        nthreads=opts.nthreads,
+                                        do_mfs=opts.fits_mfs,
+                                        do_cube=opts.fits_cubes)
                     futures.append(fut)
+                except:
+                    pass
             if opts.noise:
                 fut = client.submit(dds2fits,
-                                    dds,
+                                    dds_list,
                                     'NOISE',
                                     f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True)
+                                    norm_wsum=True,
+                                    nthreads=opts.nthreads,
+                                    do_mfs=opts.fits_mfs,
+                                    do_cube=opts.fits_cubes)
                 futures.append(fut)
 
         if len(futures):
@@ -253,12 +234,8 @@ def _grid(xdsi=None, **kw):
     uv_max = 0
     max_freq = 0
     for ds in xds:
-        uvw = ds.UVW.values
-        u_max = abs(uvw[:, 0]).max()
-        v_max = abs(uvw[:, 1]).max()
-        uv_max = np.maximum(uv_max, np.maximum(u_max, v_max))
-        max_freq = np.maximum(max_freq, ds.FREQ.data.max())
-
+        uv_max = np.maximum(uv_max, ds.uv_max)
+        max_freq = np.maximum(max_freq, ds.max_freq)
 
     nx, ny, nx_psf, ny_psf, cell_N, cell_rad = set_image_size(
         uv_max,

@@ -42,9 +42,7 @@ def single_stokes(
                 bandid=None,
                 timeid=None,
                 msid=None,
-                wid=None,
-                max_freq=None,
-                uv_max=None):
+                wid=None):
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -87,11 +85,21 @@ def single_stokes(
     ds = ds.drop_vars('FLAG')
     # MS may contain auto-correlations
     frow = ds.FLAG_ROW.values | (ant1 == ant2)
+    ds = ds.drop_vars('FLAG_ROW')
 
+    # flag if any of the correlations flagged
+    flag = np.any(flag, axis=2)
+    # combine flag and frow
+    flag = np.logical_or(flag, frow[:, None])
+
+    # we rely on this to check the number of output bands and
+    # to ensure we don't end up with fully flagged chunks
+    if flag.all():
+        return 1
 
     nrow, nchan, ncorr = data.shape
-    ds = ds.drop_vars('FLAG_ROW')
-    flag = np.any(flag, axis=2)
+
+
     if opts.sigma_column is not None:
         weight = ne.evaluate('1.0/sigma**2',
                              local_dict={'sigma': getattr(ds, opts.sigma_column).values})
@@ -153,7 +161,7 @@ def single_stokes(
                             literally(str(ncorr)))
 
     # do after weight_data otherwise mappings need to be recomputed
-    # dropped flagged rows
+    # drop fully flagged rows
     mrow = ~frow
     data = data[mrow]
     time = time[mrow]
@@ -165,6 +173,10 @@ def single_stokes(
     weight = weight[mrow]
 
     gc.collect()
+
+    # LB - do before or after averaging?
+    uv_max = np.maximum(uvw[:, 0].max(), uvw[:, 1].max())
+    max_freq = freq.max()
 
     # simple average over channels
     if opts.chan_average > 1:

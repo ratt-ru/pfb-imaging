@@ -550,6 +550,7 @@ def image_data_products(dsl,
         dso['BEAM'] = (('x', 'y'), np.ones((nx, ny), dtype=wgt.dtype))
 
     # save
+    dso = dso.assign_attrs(wsum=wsum)
     dso.to_zarr(output_name, mode='a')
 
     # return residual to report stats

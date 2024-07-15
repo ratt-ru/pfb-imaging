@@ -93,7 +93,8 @@ def read_var(ds, var):
     return 1
 
 
-def xds_from_list(ds_list, drop_vars=None, chunks=-1, nthreads=1):
+def xds_from_list(ds_list, drop_vars=None, drop_all_but=None,
+                  chunks=-1, nthreads=1):
     '''
     Reads a list of datasets into memory in parallel.
     Use drop_vars to drop vars that should not be read into memory.
@@ -110,6 +111,13 @@ def xds_from_list(ds_list, drop_vars=None, chunks=-1, nthreads=1):
     if drop_vars is not None:
         for i, ds in enumerate(xds):
             xds[i] = ds.drop_vars(drop_vars, errors="ignore")
+
+    if drop_all_but is not None:
+        for i, ds in enumerate(xds):
+            drop_vars = [var for var in ds.data_vars]
+            if drop_all_but in drop_vars:
+                var = drop_vars.pop(drop_vars.index(drop_all_but))
+                xds[i] = ds.drop_vars(drop_vars, errors="ignore")
 
     futures = []
     with cf.ThreadPoolExecutor(max_workers=nthreads) as executor:

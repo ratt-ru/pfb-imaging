@@ -167,13 +167,6 @@ def _init(**kw):
                                freq_min=freq_min,
                                freq_max=freq_max)
 
-    # we need this to set cell sizes consistently per band
-    max_freq = 0
-    for ms in opts.ms:
-        for idt in freqs[ms].keys():
-            freq = freqs[ms][idt]
-            max_freq = np.maximum(max_freq, freq.max())
-
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
     # crude column arithmetic
@@ -322,8 +315,6 @@ def _init(**kw):
                         timeid=ti,
                         msid=ims,
                         wid=worker,
-                        max_freq=max_freq,
-                        uv_max=uv_max,
                         pure=False,
                         workers=worker,
                         key='image-'+uuid4().hex)
@@ -374,8 +365,6 @@ def _init(**kw):
                         timeid=ti,
                         msid=ims,
                         wid=worker,
-                        max_freq=max_freq,
-                        uv_max=uv_max,
                         pure=False,
                         workers=worker,
                         key='image-'+uuid4().hex)
@@ -394,8 +383,12 @@ def _init(**kw):
     freqs_out = []
     for f in futures:
         result = f.result()
-        times_out.append(result[1])
-        freqs_out.append(result[2])
+        # this should fail if a chunk is fully flagged
+        try:
+            times_out.append(result[1])
+            freqs_out.append(result[2])
+        except:
+            pass
 
     times_out = np.unique(times_out)
     freqs_out = np.unique(freqs_out)

@@ -7,6 +7,7 @@ from dask import delayed
 from datetime import datetime
 from casacore.quanta import quantity
 from astropy.time import Time
+from pfb.utils.naming import xds_from_list
 
 
 def data_from_header(hdr, axis=3):
@@ -155,28 +156,60 @@ def set_header_info(mhdr, ref_freq, freq_axis, args, beampars):
     return new_hdr
 
 
-def dds2fits(dds, column, outname, norm_wsum=True, otype=np.float32):
+def dds2fits(dsl, column, outname, norm_wsum=True,
+             otype=np.float32, nthreads=1,
+             do_mfs=True, do_cube=True):
     basename = outname + '_' + column.lower()
-    for ds in dds:
-        t = ds.timeid
-        b = ds.bandid
-        name = basename + f'_time{t:04d}_band{b:04d}.fits'
-        data = ds.get(column).values
-        if norm_wsum:
-            wsum = ds.WSUM.values[0]
-            if wsum > 0:
-                data /= wsum
-            unit = 'Jy/beam'
-        else:
-            unit = 'Jy/pixel'
+    if norm_wsum:
+        unit = 'Jy/beam'
+    else:
+        unit = 'Jy/pixel'
+    dds = xds_from_list(dsl, drop_all_but=column,
+                        nthreads=nthreads)
+    timeids = [ds.timeid for ds in dds]
+    freqs = [ds.freq_out for ds in dds]
+    freqs = np.unique(freqs)
+    nband = freqs.size
+    nx, ny = getattr(dds[0], column).shape
+    for timeid in timeids:
+        cube = np.zeros((nband, nx, ny))
+        wsums = np.zeros(nband)
+        wsum = 0.0
+        for ds in dds:
+            if ds.timeid == timeid:
+                b = int(ds.bandid)
+                cube[b] = ds.get(column).values
+                wsums[b] = ds.wsum
+                wsum += wsums[b]
         radec = (ds.ra, ds.dec)
         cell_deg = np.rad2deg(ds.cell_rad)
         nx, ny = ds.get(column).shape
         unix_time = quantity(f'{ds.time_out}s').to_unix_time()
-        hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, ds.freq_out,
-                      unit=unit, unix_time=unix_time)
-        save_fits(data, name, hdr, overwrite=True,
-                  dtype=otype)
+        fmask = wsums > 0
+
+        if do_mfs:
+            if norm_wsum:
+                freq_mfs = np.sum(freqs*wsums)/wsum
+                cube_mfs = np.sum(cube, axis=0)/wsum
+            else:
+                freq_mfs = np.mean(freqs)
+                cube_mfs = np.mean(cube[fmask], axis=0)
+
+            name = basename + f'_time{timeid}_mfs.fits'
+            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_mfs,
+                        unit=unit, unix_time=unix_time)
+            save_fits(cube_mfs, name, hdr, overwrite=True,
+                    dtype=otype)
+
+        if do_cube:
+            if norm_wsum:
+                cube[fmask] = cube[fmask]/wsums[fmask, None, None]
+            name = basename + f'_time{timeid}.fits'
+            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freqs,
+                          unit=unit, unix_time=unix_time)
+            save_fits(cube, name, hdr, overwrite=True,
+                      dtype=otype)
+
     return 1  # to wait for futures
 
 
