@@ -209,6 +209,7 @@ def _grid(xdsi=None, **kw):
         from pfb.utils.dist import fake_client
         client = fake_client()
         names = [0]
+        as_completed = lambda x: x
 
     basename = f'{opts.output_filename}'
 
@@ -373,14 +374,17 @@ def _grid(xdsi=None, **kw):
                                 nx, ny,
                                 cell_rad, cell_rad,
                                 nthreads=opts.nthreads,
+                                tbid=tbid,
                                 workers=wname)
 
             futures.append(fut)
-
-        counts = client.gather(futures)
-        counts = np.stack(counts, axis=0)
-        # band assumed to be axis 1
-        counts = np.transpose(counts, axes=(1,0,2,3))
+        counts = np.zeros((ntime, nband, nx, ny))
+        for fut in as_completed(futures):
+            count, tbid = fut.result()
+            bandid = tbid[-4:]
+            timeid = tbid[4:8]
+            counts[int(timeid), int(bandid)] = count
+            print(f'Done with {tbid}', file=log)
         if opts.mf_weighting:
             counts = np.sum(counts, axis=(1), keepdims=True)
         level = opts.filter_counts_level
@@ -399,7 +403,6 @@ def _grid(xdsi=None, **kw):
     if opts.psf:
         print(f"PSF size = (ntime={ntime}, nband={nband}, "
               f"nx={nx_psf}, ny={ny_psf})", file=log)
-
 
     # check if model exists
     if opts.transfer_model_from:
@@ -542,10 +545,6 @@ def _grid(xdsi=None, **kw):
 
     residual_mfs = np.zeros((nx, ny))
     wsum = 0.0
-    if opts.nworkers > 1:
-        from distributed import as_completed
-    else:
-        as_completed = lambda x: x
     nds = len(futures)
     n_launched = 1
     for fut in as_completed(futures):

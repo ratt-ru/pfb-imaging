@@ -18,16 +18,25 @@ def compute_counts(dsl,
                    cell_size_x, cell_size_y,
                    k=6,
                    nthreads=1):
+    '''
+    Sum the weights on the grid over all datasets
+    '''
 
-    if isinstance(dsl[0], str):
-        dsl = xds_from_list(dsl)
+    if isinstance(dsl, str):
+        dsl = [dsl]
+
+    dsl = xds_from_list(dsl, nthreads=nthreads,
+                        drop_vars=('VIS','BEAM'))
 
     nds = len(dsl)
-    ngrid = np.maximum(nthreads//nds, 1)
+    maxw = np.minimum(nthreads, nds)
+    if nthreads > nds:  # this is not perfect
+        ngrid = np.maximum(nthreads//nds, 1)
+    else:
+        ngrid = 1
 
-    counts = []
-    # TODO - parallel over ds
-    with cf.ThreadPoolExecutor(max_workers=nds) as executor:
+    counts = np.zeros((nx, ny), dtype=dsl[0].WEIGHT.dtype)
+    with cf.ThreadPoolExecutor(max_workers=maxw) as executor:
         futures = []
         for ds in dsl:
             fut = executor.submit(_compute_counts,
@@ -44,10 +53,10 @@ def compute_counts(dsl,
             futures.append(fut)
 
         for fut in cf.as_completed(futures):
-            # sum over number of grids
-            counts.append(fut.result().sum(axis=0))
+            # sum over number of grids and number of datasets
+            counts += fut.result().sum(axis=0)
 
-    return np.array(counts)
+    return counts
 
 
 
@@ -126,7 +135,7 @@ def _es_kernel(x, beta, k):
     return np.exp(beta*k*(np.sqrt((1-x)*(1+x)) - 1))
 
 
-@njit(nogil=True, cache=True)
+@njit(nogil=True, cache=True, parallel=True)
 def counts_to_weights(counts, uvw, freq, nx, ny,
                        cell_size_x, cell_size_y, robust):
     # ufreq
