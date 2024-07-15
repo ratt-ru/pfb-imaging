@@ -143,7 +143,7 @@ def _sara(ddsi=None, **kw):
                                  'yo2':-1}))
     else:
         # are these sorted correctly?
-        dds = xds_from_list(dds_list)
+        dds = xds_from_url(dds_store.url)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size

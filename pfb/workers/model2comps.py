@@ -104,7 +104,7 @@ def _model2comps(ddsi=None, **kw):
                                  'yo2':-1}))
     else:
         # are these sorted correctly?
-        dds = xds_from_list(dds_list)
+        dds = xds_from_url(dds_store.url)
 
     if opts.model_out is not None:
         coeff_name = opts.model_out

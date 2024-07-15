@@ -1,6 +1,9 @@
 import fsspec
 from functools import partial
 import pickle
+import xarray as xr
+import concurrent.futures as cf
+import time
 
 def set_output_names(opts):
     '''
@@ -61,6 +64,9 @@ def set_output_names(opts):
 
 
 def xds_from_url(url, columns='ALL', chunks=-1):
+    '''
+    Returns a lazy view of the dataset
+    '''
     if columns.upper() != 'ALL':
         raise NotImplementedError
     if chunks != -1:
@@ -68,7 +74,6 @@ def xds_from_url(url, columns='ALL', chunks=-1):
 
     url = url.rstrip('/')
     from daskms.fsspec_store import DaskMSStore
-    import xarray as xr
     store = DaskMSStore(url)
 
     # these will only be read in on first value access and won't be chunked
@@ -80,18 +85,49 @@ def xds_from_url(url, columns='ALL', chunks=-1):
     return xds
 
 
-def xds_from_list(ds_list, columns='ALL', chunks=-1):
-    if columns.upper() != 'ALL':
-        raise NotImplementedError
+def read_var(ds, var):
+    '''
+    Access var to force loading it into memory
+    '''
+    val = getattr(ds, var).values
+    return 1
+
+
+def xds_from_list(ds_list, drop_vars=None, chunks=-1, nthreads=1):
+    '''
+    Reads a list of datasets into memory in parallel.
+    Use drop_vars to drop vars that should not be read into memory.
+    '''
+    ti = time.time()
     if chunks != -1:
         raise NotImplementedError
-    import xarray as xr
 
     # these will only be read in on first value access and won't be chunked
     open_zarr = partial(xr.open_zarr, chunks=None)
     xds = list(map(open_zarr, ds_list))
     if not len(xds):
         raise ValueError(f'Nothing found at {url}')
+
+    if drop_vars is not None:
+        for i, ds in enumerate(xds):
+            xds[i] = ds.drop_vars(drop_vars, errors="ignore")
+
+    ti = time.time()
+    futures = []
+    with cf.ThreadPoolExecutor(max_workers=nthreads) as executor:
+        for ds in xds:
+            for var in ds.data_vars:
+                futures.append(executor.submit(read_var, ds, var))
+    cf.wait(futures)
+    print(f'Parallel read in {time.time() - ti}s')
+
+
+    xds = list(map(open_zarr, ds_list))
+    ti = time.time()
+    for ds in xds:
+        for var in ds.data_vars:
+            read_var(ds, var)
+    print(f'Serial read in {time.time() - ti}s')
     return xds
 
 

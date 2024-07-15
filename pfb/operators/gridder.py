@@ -5,6 +5,7 @@ number of rows after BDA.
 """
 
 import numpy as np
+import concurrent.futures as cf
 import xarray as xr
 import dask
 import dask.array as da
@@ -346,6 +347,8 @@ def image_data_products(dsl,
     # output ds
     dso = xr.Dataset(attrs=attrs, coords=coords)
     dso['FREQ'] = (('chan',), freq)
+    if counts is not None:
+        dso['COUNTS'] = (('x', 'y'), counts)
 
     if model is None:
         if l2reweight_dof:

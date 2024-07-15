@@ -164,7 +164,7 @@ def _fluxmop(ddsi=None, **kw):
                                  'yo2':-1}))
     else:
         # are these sorted correctly?
-        dds = xds_from_list(dds_list)
+        dds = xds_from_url(dds_store.url)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
@@ -281,9 +281,13 @@ def _fluxmop(ddsi=None, **kw):
         )
         futures.append(fut)
 
+    nds = len(futures)
+    n_launched = 1
     for fut in as_completed(futures):
+        print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
         r, b = fut.result()
         residual[b] = r
+        n_launched += 1
 
     residual_mfs = np.sum(residual/wsum, axis=0)
     rms = np.std(residual_mfs)
