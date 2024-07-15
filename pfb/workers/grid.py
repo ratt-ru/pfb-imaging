@@ -351,7 +351,6 @@ def _grid(xdsi=None, **kw):
                                 nx, ny,
                                 cell_rad, cell_rad,
                                 nthreads=opts.nthreads,
-                                tbid=tbid,
                                 workers=wname)
 
             futures.append(fut)
@@ -530,6 +529,8 @@ def _grid(xdsi=None, **kw):
         residual_mfs += residual
         wsum += wsumb
         n_launched += 1
+
+    print("\n")  # after progressbar above
 
     residual_mfs /= wsum
     rms = np.std(residual_mfs)
