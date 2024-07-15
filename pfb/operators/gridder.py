@@ -314,28 +314,32 @@ def image_data_products(dsl,
         'y': y
     }
 
-    if isinstance(dsl[0], str):
-        dsl = xds_from_list(dsl)
+    # expects a list
+    if isinstance(dsl, str):
+        dsl = [dsl]
+
+    dsl = xds_from_list(dsl, nthreads=nthreads)
 
     # need to take weighted sum of beam before concat
     beam = np.zeros((nx, ny), dtype=float)
     wsumb = 0.0
     freq = dsl[0].FREQ.values  # must all be the same
+    xx, yy = np.meshgrid(np.rad2deg(x), np.rad2deg(y), indexing='ij')
     for i, ds in enumerate(dsl):
         wgt = ds.WEIGHT.values
         mask = ds.MASK.values
         wsumt = (wgt*mask).sum()
         wsumb += wsumt
-        l_beam = ds.l_beam
-        m_beam = ds.m_beam
+        l_beam = ds.l_beam.values
+        m_beam = ds.m_beam.values
         beamt = eval_beam(ds.BEAM.values, l_beam, m_beam,
-                          np.rad2deg(x), np.rad2deg(y))
+                          xx, yy)
         beam += beamt * wsumt
         assert (ds.FREQ.values == freq).all()
         ds = ds.drop_vars(('BEAM','FREQ'))
         dsl[i] = ds.drop_dims(('l_beam', 'm_beam'))
 
-    # weighted sum of beam computd using natural weights
+    # weighted sum of beam computed using natural weights
     beam /= wsumb
 
     ds = xr.concat(dsl, dim='row')

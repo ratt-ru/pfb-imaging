@@ -88,14 +88,9 @@ def eval_beam(beam_image, l_in, m_in, l_out, m_out):
         msg = 'Only 1 or 2D coordinates supported for beam evaluation'
         raise ValueError(msg)
 
-    try:
+    if (beam_image == 1.0).all():
+        return np.ones_like(ll)
+    else:  # this gets expensive
         beamo = RGI((l_in, m_in), beam_image,
-                    bounds_error=True, method='linear')
-        return beamo((ll, mm))
-    except Exception as e:
-        print(e)
-        print(f"{e} raised in beam evaluation. "
-              "Consider setting init.max_field_of_view > grid.field_of_view")
-        beamo = RGI((l_in, m_in), beam_image,
-                    bounds_error=False, method='linear', fill_value=None)
+                    bounds_error=False, method='linear', fill_value=1.0)
         return beamo((ll, mm))

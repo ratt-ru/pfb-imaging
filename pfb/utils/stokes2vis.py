@@ -221,8 +221,8 @@ def single_stokes(
     fov = 10  # max fov in degrees
     npix = 512
     cell_deg = fov/npix
-    l_beam = -(fov/2) + np.arange(npix)
-    m_beam = -(fov/2) + np.arange(npix)
+    l_beam = -(npix//2) + np.arange(npix)
+    m_beam = -(npix//2) + np.arange(npix)
     beam = np.ones((npix, npix), dtype=real_type)
 
     # set after averaging
