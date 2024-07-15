@@ -289,6 +289,8 @@ def _fluxmop(ddsi=None, **kw):
         residual[b] = r
         n_launched += 1
 
+    print("\n")  # after progressbar above
+
     residual_mfs = np.sum(residual/wsum, axis=0)
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()

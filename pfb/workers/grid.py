@@ -350,6 +350,7 @@ def _grid(xdsi=None, **kw):
                                 ds_dct['dsl'],
                                 nx, ny,
                                 cell_rad, cell_rad,
+                                tbid=tbid,
                                 nthreads=opts.nthreads,
                                 workers=wname)
 

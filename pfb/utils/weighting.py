@@ -16,6 +16,7 @@ Fs = np.fft.fftshift
 def compute_counts(dsl,
                    nx, ny,
                    cell_size_x, cell_size_y,
+                   tbid=0,
                    k=6,
                    nthreads=1):
     '''
@@ -53,10 +54,10 @@ def compute_counts(dsl,
             futures.append(fut)
 
         for fut in cf.as_completed(futures):
-            # sum over number of grids and number of datasets
+            # sum over number of datasets
             counts += fut.result().sum(axis=0)
 
-    return counts
+    return counts, tbid
 
 
 
@@ -127,7 +128,7 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                     u_idx = int(np.floor(ug))
                     v_idx = int(np.floor(vg))
                     counts[g, u_idx, v_idx] += 1.0
-    return counts
+    return counts.sum(axis=0)
 
 
 @njit(nogil=True, cache=True, inline='always')
