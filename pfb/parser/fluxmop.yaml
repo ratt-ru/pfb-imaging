@@ -50,7 +50,7 @@ inputs:
       Name of the residual to use
   gamma:
     dtype: float
-    default: 0.99
+    default: 1.0
     info:
       Step size of update
   use-psf:

@@ -71,11 +71,13 @@ def fluxmop(**kw):
         from pfb import set_client
         if opts.nworkers > 1:
             client = set_client(opts.nworkers, stack, log)
+            from distributed import as_completed
         else:
             print("Faking client", file=log)
             from pfb.utils.dist import fake_client
             client = fake_client()
             names = [0]
+            as_completed = lambda x: x
 
         ti = time.time()
         _fluxmop(**opts)
@@ -128,9 +130,9 @@ def fluxmop(**kw):
                     do_cube=opts.fits_cubes)
             futures.append(fut)
 
-        if len(futures):
-            if opts.nworkers > 1:
-                wait(futures)
+            for fut in as_completed(futures):
+                column = fut.result()
+                print(f'Done writing {column}', file=log)
 
     print(f"All done after {time.time() - ti}s", file=log)
 
@@ -276,6 +278,7 @@ def _fluxmop(ddsi=None, **kw):
             ds_name,
             opts.sigmainvsq,
             opts.sigma,
+            use_psf=opts.use_psf,
             residual_name=opts.residual_name,
             model_name=opts.model_name,
             mask=mask,
@@ -294,7 +297,7 @@ def _fluxmop(ddsi=None, **kw):
     nds = len(futures)
     n_launched = 1
     for fut in as_completed(futures):
-        print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
+        print(f"\rProcessed: {n_launched}/{nds}", end='', flush=True)
         r, b = fut.result()
         residual[b] = r
         n_launched += 1

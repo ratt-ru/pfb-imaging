@@ -127,11 +127,6 @@ inputs:
       Base the imaging weights on the uniform weights computed over all
       data instead of per band. This ensures that the MFS image can truly
       be uniformly weighted.
-  reset-cache:
-    dtype: bool
-    default: false
-    info:
-      Reset dds cache
   _include:
     - (.)gridding.yml
     - (.)dist.yml

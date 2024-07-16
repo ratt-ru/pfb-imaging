@@ -83,12 +83,13 @@ def grid(**kw):
         from distributed import wait
         if opts.nworkers > 1:
             client = set_client(opts.nworkers, stack, log)
-            client = get_client()
+            from distributed import as_completed
         else:
             print("Faking client", file=log)
             from pfb.utils.dist import fake_client
             client = fake_client()
             names = [0]
+            as_completed = lambda x: x
 
         from pfb.utils.naming import xds_from_url
         from pfb.utils.fits import dds2fits, dds2fits_mfs
@@ -156,9 +157,12 @@ def grid(**kw):
                                     do_cube=opts.fits_cubes)
                 futures.append(fut)
 
-        if len(futures):
-            if opts.nworkers > 1:
-                wait(futures)
+            for fut in as_completed(futures):
+                try:
+                    column = fut.result()
+                except:
+                    continue
+                print(f'Done writing {column}', file=log)
 
     print(f"All done after {time.time() - ti}s", file=log)
 
@@ -267,13 +271,13 @@ def _grid(xdsi=None, **kw):
     else:
         protocol = 'file'
 
-    if dds_store.exists() and opts.reset_cache:
+    if dds_store.exists() and opts.overwrite:
         print(f"Removing {dds_store.url}", file=log)
         dds_store.rm(recursive=True)
 
     optsp_name = dds_store.url + '/opts.pkl'
     fs = fsspec.filesystem(protocol)
-    if dds_store.exists() and not opts.reset_cache:
+    if dds_store.exists() and not opts.overwrite:
         # get opts from previous run
         optsp = get_opts(dds_store.url,
                          protocol,

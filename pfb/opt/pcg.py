@@ -219,10 +219,29 @@ def pcg_psf(psfhat,
         return model
 
 
+def taperf(shape, taper_width):
+    height, width = shape
+    array = np.ones((height, width))
+
+    # Create 1D taper for both dimensions
+    taper_x = np.ones(width)
+    taper_y = np.ones(height)
+
+    # Apply cosine taper to the edges
+    taper_x[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
+    taper_x[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
+
+    taper_y[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
+    taper_y[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
+
+    return np.outer(taper_y, taper_x)
+
+
 def pcg_dds(ds_name,
             sigmainvsq,  # regularisation for Hessian approximation
             sigma,       # regularisation for preconditioner
             mask=1.0,
+            use_psf=True,
             residual_name='RESIDUAL',
             model_name='MODEL',
             do_wgridding=True,
@@ -239,7 +258,7 @@ def pcg_dds(ds_name,
     if not isinstance(ds_name, list):
         ds_name = [ds_name]
 
-    ds = xds_from_list(ds_name)[0]
+    ds = xds_from_list(ds_name, nthreads=nthreads)[0]
 
     if residual_name in ds:
         residp = getattr(ds, residual_name).values
@@ -256,8 +275,13 @@ def pcg_dds(ds_name,
     sigma *= wsum
     sigmainvsq *= wsum
 
+    # downweight edges of field compared to center
+    width = int(0.1*nx)
+    taperxy = taperf((nx, ny), width)
+    sigmainvsq /= taperxy
+
     # set precond if PSF is present
-    if 'PSF' in ds:
+    if 'PSF' in ds and use_psf:
         psf = ds.PSF.values.astype('c16')
         nx_psf, ny_psf = psf.shape
         nxpadl = (nx_psf - nx)//2
@@ -277,18 +301,27 @@ def pcg_dds(ds_name,
         psf = np.abs(psf)
         xhat = empty_noncritical((nx_psf, ny_psf),
                                  dtype=np.complex128)
-        def precond(x, xhat=None, abspsf=None, sigma=None):
+
+        # downweight long spacings where we don't have data
+        # 0.5 based on Nyquist oversampling
+        taperuv = taperf((nx_psf, ny_psf), int(0.5*nx_psf))
+        taperuv = (1 + np.abs((1 - taperuv)))*sigma/2
+        taperuv = Fs(taperuv, axes=(0,1))
+
+        def precond(x, xhat=None, abspsf=None, sigma=None, taperxy=None, taperuv=None):
             xhat[...] = 0j
-            xhat[unpad_x, unpad_y] = x
+            xhat[unpad_x, unpad_y] = x  * taperxy
             c2c(xhat, out=xhat, forward=True, inorm=0, nthreads=8)
-            xhat /= (abspsf + sigma)
+            xhat /= (abspsf + taperuv)
             c2c(xhat, out=xhat, forward=False, inorm=2, nthreads=8)
-            return xhat[unpad_x, unpad_y].real.copy()
+            return xhat[unpad_x, unpad_y].real * taperxy
 
         precondo = partial(precond,
                            xhat=xhat,
                            abspsf=psf,
-                           sigma=sigma)
+                           sigma=sigma,
+                           taperxy=taperxy,
+                           taperuv=taperuv)
         x0 = precondo(j)
     else:
         precondo = None
@@ -345,7 +378,6 @@ def pcg_dds(ds_name,
                                         nthreads=nthreads,
                                         sigmainvsq=0)
 
-    # import ipdb; ipdb.set_trace()
     ds = ds.assign(**{
         'MODEL': (('x','y'), model),
         'RESIDUAL': (('x','y'), resid),

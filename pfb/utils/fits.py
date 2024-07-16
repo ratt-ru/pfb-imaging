@@ -210,7 +210,7 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
             save_fits(cube, name, hdr, overwrite=True,
                       dtype=otype)
 
-    return 1  # to wait for futures
+    return column
 
 
 def dds2fits_mfs(dds, column, outname, norm_wsum=True, otype=np.float32):

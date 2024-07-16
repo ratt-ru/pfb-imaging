@@ -67,7 +67,7 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
                   epsilon=None,
                   double_accum=None,
                   nthreads=None,
-                  sigmainvsq=0.0):
+                  sigmainvsq=None):
     if not x.any():
         return np.zeros_like(x)
     nx, ny = x.shape
@@ -104,7 +104,7 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
     if beam is not None:
         convim *= beam
 
-    if sigmainvsq:
+    if sigmainvsq is not None:
         convim += sigmainvsq * x
 
     return convim
