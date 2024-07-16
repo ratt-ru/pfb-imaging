@@ -559,19 +559,5 @@ def _spotless(**kw):
                 print("Algorithm is diverging. Terminating.", file=log)
                 break
 
-    # # convert to fits files
-    # fitsout = []
-    # if opts.fits_mfs:
-    #     fitsout.append(dds2fits_mfs(dds, 'RESIDUAL', basename, norm_wsum=True))
-    #     fitsout.append(dds2fits_mfs(dds, 'MODEL', basename, norm_wsum=False))
-
-    # if opts.fits_cubes:
-    #     fitsout.append(dds2fits(dds, 'RESIDUAL', basename, norm_wsum=True))
-    #     fitsout.append(dds2fits(dds, 'MODEL', basename, norm_wsum=False))
-
-    # if len(fitsout):
-    #     print("Writing fits", file=log)
-    #     dask.compute(fitsout)
-
     return
 

@@ -69,7 +69,7 @@ def restore_ds(ds_name,
     image += residual
 
     ds['IMAGE'] = (('x','y'), image)
-    ds.to_zarr(ds_name, mode='a')
+    ds.to_zarr(ds_name[0], mode='a')
 
     return image, int(ds.bandid), gaussparf
 
@@ -141,7 +141,7 @@ def ublurr_ds(ds_name,
             return_resid=False)
 
     upsf /= upsf.max()
-    gausspari = fitcleanbeam(upsf[None], level=0.5, pixsize=1.0)[0]
+    gausspari = fitcleanbeam(upsf[None], level=0.25, pixsize=1.0)[0]
 
     # first call to get intrinsic resolution
     if gaussparf is None:
@@ -157,11 +157,12 @@ def ublurr_ds(ds_name,
                               xx, yy,
                               gaussparf,
                               nthreads,
-                              norm_kernel=False,
+                              norm_kernel=True,
                               gausspari=gausspari)
 
     ds['UIMAGE'] = (('x','y'), image)
-    ds.to_zarr(ds_name, mode='a')
+    # import ipdb; ipdb.set_trace()
+    ds.to_zarr(ds_name[0], mode='a')
 
     return image, int(ds.bandid)
 

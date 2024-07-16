@@ -63,7 +63,7 @@ def restore(**kw):
             client = fake_client()
             names = [0]
         ti = time.time()
-        return _restore(**opts)
+        _restore(**opts)
 
     print(f"All done after {time.time() - ti}s", file=log)
 
@@ -198,11 +198,10 @@ def _restore(ddsi=None, **kw):
               f"{pa:.3e} degrees) for restored images", file=log)
         gausspars = (gaussparf,)*nband
 
-        if 'u' in opts.products.lower():
+        if 'u' in opts.outputs.lower():
             gaussparfu = ublurr_ds(dds_list[0],
                                    model_name=opts.model_name,
-                                   nthreads=opts.nthreads,
-                                   gaussparf=gaussparf)
+                                   nthreads=opts.nthreads)
             # inflate and cicularise
             emaj = gaussparfu[0]
             emin = gaussparfu[1]
@@ -236,7 +235,7 @@ def _restore(ddsi=None, **kw):
 
 
     cube = np.zeros((nband, nx, ny))
-    if 'i' in opts.products.lower():
+    if 'i' in opts.outputs.lower():
         # we need to do this per band
         futures = []
         for wname, ds, ds_name in zip(cycle(names), dds, dds_list):
@@ -249,23 +248,22 @@ def _restore(ddsi=None, **kw):
             futures.append(fut)
 
         for fut in as_completed(futures):
-            image, b = fut.result()
+            image, b, _ = fut.result()
             cube[b] = image
 
-        if 'I' in opts.products:
+        if 'I' in opts.outputs:
             save_fits(cube,
                       f'{basename}_{opts.suffix}.image.fits',
                       hdr,
                       overwrite=opts.overwrite)
-        if 'i' in opts.products:
+        if 'i' in opts.outputs:
             cube_mfs = np.sum(cube * wsums[:, None, None], axis=0)/wsum
             save_fits(cube_mfs,
                       f'{basename}_{opts.suffix}.image_mfs.fits',
                       hdr_mfs,
                       overwrite=opts.overwrite)
 
-    if 'u' in opts.products.lower():
-        # compute per band images on workers
+    if 'u' in opts.outputs.lower():
         futures = []
         for wname, ds, ds_name in zip(cycle(names), dds, dds_list):
             fut = client.submit(ublurr_ds,
@@ -279,12 +277,12 @@ def _restore(ddsi=None, **kw):
             image, b = fut.result()
             cube[b] = image
 
-        if 'U' in opts.products:
+        if 'U' in opts.outputs:
             save_fits(cube,
                       f'{basename}_{opts.suffix}.uimage.fits',
                       uhdr,
                       overwrite=opts.overwrite)
-        if 'u' in opts.products:
+        if 'u' in opts.outputs:
             cube_mfs = np.sum(cube * wsums[:, None, None], axis=0)/wsum
             save_fits(cube_mfs,
                       f'{basename}_{opts.suffix}.uimage_mfs.fits',

@@ -80,7 +80,6 @@ def grid(**kw):
 
     with ExitStack() as stack:
         from pfb import set_client
-        from distributed import wait
         if opts.nworkers > 1:
             client = set_client(opts.nworkers, stack, log)
             from distributed import as_completed
@@ -92,7 +91,7 @@ def grid(**kw):
             as_completed = lambda x: x
 
         from pfb.utils.naming import xds_from_url
-        from pfb.utils.fits import dds2fits, dds2fits_mfs
+        from pfb.utils.fits import dds2fits
 
         ti = time.time()
         residual_mfs = _grid(**opts)
