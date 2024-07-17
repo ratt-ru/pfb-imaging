@@ -205,27 +205,30 @@ def _restore(ddsi=None, **kw):
             emaj = gaussparfu[0]
             emin = gaussparfu[1]
             emaj = np.maximum(emaj, emin)
-            print(f"Lowest intrinsic resolution is {emaj:.3e} asec",
+            print(f"Lowest intrinsic resolution is {emaj*cell_asec:.3e} asec",
                   file=log)
             emaj *= opts.inflate_factor
             gaussparfu[0] = emaj
             gaussparfu[1] = emaj
             gaussparfu[2] = 0.0
-            emaj *= cell_asec
-            print(f"Setting uniformly blurred image resolution to {emaj:.3e} asec",
+            print(f"Setting uniformly blurred image resolution to {emaj*cell_asec:.3e} asec",
                   file=log)
             gaussparsu = (gaussparfu,)*nband
 
     else:
-        gaussparf = opts.gausspar
-        gaussparfu = opts.gausspar
-        gausspars = (gaussparf,)*nband
-        gaussparsu = gausspars
+        gaussparf = list(opts.gausspar)
+        gaussparfu = list(opts.gausspar)
         emaj = gaussparf[0]
         emin = gaussparf[1]
         pa = gaussparf[2]
         print(f"Using specified resolution of ({emaj:.3e} asec, {emin:.3e} asec, "
               f"{pa:.3e} degrees) for all images", file=log)
+        # convert to pixel units
+        for i in range(2):
+            gaussparf[i] /= cell_asec
+            gaussparfu[i] /= cell_asec
+        gausspars = (gaussparf,)*nband
+        gaussparsu = (gaussparfu,)*nband
 
     hdr_mfs = add_beampars(hdr_mfs, gaussparf, unit2deg=cell_deg)
     uhdr_mfs = add_beampars(hdr_mfs, gaussparfu, unit2deg=cell_deg)
@@ -252,13 +255,13 @@ def _restore(ddsi=None, **kw):
 
         if 'I' in opts.outputs:
             save_fits(cube,
-                      f'{basename}_{opts.suffix}.image.fits',
+                      f'{fits_oname}_{opts.suffix}.image.fits',
                       hdr,
                       overwrite=opts.overwrite)
         if 'i' in opts.outputs:
             cube_mfs = np.sum(cube * wsums[:, None, None], axis=0)/wsum
             save_fits(cube_mfs,
-                      f'{basename}_{opts.suffix}.image_mfs.fits',
+                      f'{fits_oname}_{opts.suffix}.image_mfs.fits',
                       hdr_mfs,
                       overwrite=opts.overwrite)
 
@@ -278,13 +281,13 @@ def _restore(ddsi=None, **kw):
 
         if 'U' in opts.outputs:
             save_fits(cube,
-                      f'{basename}_{opts.suffix}.uimage.fits',
+                      f'{fits_oname}_{opts.suffix}.uimage.fits',
                       uhdr,
                       overwrite=opts.overwrite)
         if 'u' in opts.outputs:
             cube_mfs = np.sum(cube * wsums[:, None, None], axis=0)/wsum
             save_fits(cube_mfs,
-                      f'{basename}_{opts.suffix}.uimage_mfs.fits',
+                      f'{fits_oname}_{opts.suffix}.uimage_mfs.fits',
                       uhdr_mfs,
                       overwrite=opts.overwrite)
 
@@ -292,21 +295,21 @@ def _restore(ddsi=None, **kw):
         model_mfs = np.sum([getattr(ds, opts.model_name).values for ds in dds], axis=0)
         model_mfs /= np.sum(fmask)
         save_fits(model_mfs,
-                  f'{basename}_{opts.suffix}.model_mfs.fits',
+                  f'{fits_oname}_{opts.suffix}.model_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'M' in opts.outputs:
         model = np.stack([getattr(ds, opts.model_name).values for ds in dds], axis=0)
         save_fits(model,
-                  f'{basename}_{opts.suffix}.model.fits',
+                  f'{fits_oname}_{opts.suffix}.model.fits',
                   hdr,
                   overwrite=opts.overwrite)
 
     if 'r' in opts.outputs:
         residual_mfs = np.sum([getattr(ds, opts.residual_name).values for ds in dds], axis=0)/wsum
         save_fits(residual_mfs,
-                  f'{basename}_{opts.suffix}.residual_mfs.fits',
+                  f'{fits_oname}_{opts.suffix}.residual_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
@@ -314,7 +317,7 @@ def _restore(ddsi=None, **kw):
         residual = np.stack([getattr(ds, opts.residual_name).values for ds in dds], axis=0)
         residual[fmask] = residual[fmask]/wsums[fmask, None, None]
         save_fits(residual,
-                  f'{basename}_{opts.suffix}.residual.fits',
+                  f'{fits_oname}_{opts.suffix}.residual.fits',
                   hdr,
                   overwrite=opts.overwrite)
 
@@ -323,11 +326,11 @@ def _restore(ddsi=None, **kw):
                        nthreads=opts.nthreads, inorm=0)
         rhat_mfs = np.fft.fftshift(rhat_mfs)
         save_fits(np.abs(rhat_mfs),
-                  f'{basename}_{opts.suffix}.abs_fft_residual_mfs.fits',
+                  f'{fits_oname}_{opts.suffix}.abs_fft_residual_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
         save_fits(np.angle(rhat_mfs),
-                  f'{basename}_{opts.suffix}.phase_fft_residual_mfs.fits',
+                  f'{fits_oname}_{opts.suffix}.phase_fft_residual_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
@@ -336,25 +339,25 @@ def _restore(ddsi=None, **kw):
                    nthreads=opts.nthreads, inorm=0)
         rhat = np.fft.fftshift(rhat, axes=(1,2))
         save_fits(np.abs(rhat),
-                  f'{basename}_{opts.suffix}.abs_fft_residual.fits',
+                  f'{fits_oname}_{opts.suffix}.abs_fft_residual.fits',
                   hdr,
                   overwrite=opts.overwrite)
         save_fits(np.angle(rhat),
-                  f'{basename}_{opts.suffix}.phase_fft_residual.fits',
+                  f'{fits_oname}_{opts.suffix}.phase_fft_residual.fits',
                   hdr,
                   overwrite=opts.overwrite)
 
     if 'd' in opts.outputs:
         dirty_mfs = np.sum(dirty, axis=0)
         save_fits(dirty_mfs,
-                  f'{basename}_{opts.suffix}.dirty_mfs.fits',
+                  f'{fits_oname}_{opts.suffix}.dirty_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
     if 'D' in opts.outputs:
         dirty[fmask] /= wsums[fmask, None, None]/wsum
         save_fits(dirty,
-                  f'{basename}_{opts.suffix}.dirty.fits',
+                  f'{fits_oname}_{opts.suffix}.dirty.fits',
                   hdr,
                   overwrite=opts.overwrite)
 
@@ -365,7 +368,7 @@ def _restore(ddsi=None, **kw):
             raise ValueError("Clean beam in output but no PSF in dds")
         cpsf_mfs = Gaussian2D(xx, yy, GaussPar[0], normalise=False)
         save_fits(cpsf_mfs,
-                  f'{basename}_{opts.suffix}.cpsf_mfs.fits',
+                  f'{fits_oname}_{opts.suffix}.cpsf_mfs.fits',
                   hdr_mfs,
                   overwrite=opts.overwrite)
 
@@ -378,7 +381,7 @@ def _restore(ddsi=None, **kw):
             if not np.isnan(gpar).any():
                 cpsf[v] = Gaussian2D(xx, yy, gpar, normalise=False)
         save_fits(cpsf,
-                  f'{basename}_{opts.suffix}.cpsf.fits',
+                  f'{fits_oname}_{opts.suffix}.cpsf.fits',
                   hdr,
                   overwrite=opts.overwrite)
 
