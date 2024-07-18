@@ -26,5 +26,5 @@ cg-report-freq:
   abbreviation: cgrf
 backtrack:
   dtype: bool
-  default: true
+  default: false
   info: 'Ensure residual decreases at every iteration'

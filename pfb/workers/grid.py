@@ -248,7 +248,7 @@ def _grid(xdsi=None, **kw):
     cell_deg = np.rad2deg(cell_rad)
     cell_size = cell_deg * 3600
     print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
-    print(f"Cell size set to {cell_size} arcseconds", file=log)
+    print(f"Cell size set to {cell_size:.5e} arcseconds", file=log)
     print(f"Field of view is ({nx*cell_deg:.3e},{ny*cell_deg:.3e}) degrees",
           file=log)
 
@@ -287,6 +287,7 @@ def _grid(xdsi=None, **kw):
                         'do_wgridding', 'double_accum',
                         'field_of_view', 'super_resolution_factor']
         try:
+            import ipdb; ipdb.set_trace()
             for attr in verify_attrs:
                 assert optsp[attr] == opts[attr]
 

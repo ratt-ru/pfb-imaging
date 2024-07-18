@@ -269,10 +269,8 @@ def _sara(ddsi=None, **kw):
     # a value less than zero turns L1 reweighting off
     # we'll start on convergence or at the iteration
     # indicated by l1reweight_from, whichever comes first
-    if opts.l1reweight_from < 0:
-        l1reweight_from = np.inf
-    else:
-        l1reweight_from = opts.l1reweight_from
+    l1reweight_from = opts.l1reweight_from
+    l1reweight_active = False
 
     # TODO - should we cache this?
     dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=residual.dtype)
@@ -285,6 +283,7 @@ def _sara(ddsi=None, **kw):
                              rms_comps,
                              alpha=opts.alpha)
         l1weight = reweighter(model)
+        l1reweight_active = True
     else:
         l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=residual.dtype)
         reweighter = None
@@ -423,9 +422,10 @@ def _sara(ddsi=None, **kw):
 
         if eps < opts.tol:
             # do not converge prematurely
-            if k+1 - iter0 < l1reweight_from:  # only happens once
+            if l1reweight_from > 0 and not l1reweight_active:  # only happens once
                 # start reweighting
                 l1reweight_from = k+1 - iter0
+                l1reweight_active = True
             else:
                 print(f"Converged after {k+1} iterations.", file=log)
                 break

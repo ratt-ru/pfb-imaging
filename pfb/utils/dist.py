@@ -1,18 +1,21 @@
 import inspect
 import numpy as np
+import numba
 import xarray as xr
-from distributed import get_client, worker_client, wait
 from pfb.opt.pcg import pcg
+from pfb.operators.gridder import image_data_products, compute_residual
 from pfb.operators.hessian import _hessian_impl
 from pfb.operators.psf import psf_convolve_slice
 from pfb.utils.weighting import (compute_counts,
                                  counts_to_weights,
                                  filter_extreme_counts)
+from pfb.utils.misc import taperf, set_image_size
+from pfb.utils.naming import xds_from_url, xds_from_list
 from uuid import uuid4
 import pywt
 from pfb.wavelets.wavelets_jsk import  (get_buffer_size,
                                        dwt2d, idwt2d)
-from ducc0.misc import make_noncritical
+from ducc0.misc import empty_noncritical, resize_thread_pool
 import concurrent.futures as cf
 from africanus.constants import c as lightspeed
 from ducc0.wgridder import vis2dirty, dirty2vis
@@ -32,6 +35,14 @@ class fake_future(object):
     def result(self):
         return self.r
 
+# class fake_actor(object):
+#     def __init__(self, r):
+#         self.r = r
+
+#     def result(self):
+#         import ipdb; ipdb.set_trace()
+#         return self.r
+
 class fake_client(object):
     '''
     This is just a class that has a fake submit method.
@@ -50,59 +61,71 @@ class fake_client(object):
             if name in kwargs:
                 fkw[name] = kwargs[name]
         res = func(*args[1:], **fkw)
-        if 'actor' in kwargs and kwargs['actor']:  # return instantiated class
-            return res
-        else:  # return fake future with result
-            return fake_future(res)
-
-    def wait(self, futures):
-        return
+        # if 'actor' in kwargs and kwargs['actor']:  # return instantiated class
+        #     return fake_actor(res)
+        # else:  # return fake future with result
+        return fake_future(res)
 
     def gather(self, futures):
         return [f.result() for f in futures]
 
 
-def l1reweight_func(actors, rmsfactor, rms_comps, alpha=4):
+def l1reweight_func(actors, rmsfactor, alpha=4):
     '''
     The logic here is that weights should remain the same for model
-    components that are rmsfactor times larger than the rms.
+    components that are rmsfactor times larger than the rms of the updates.
     High SNR values should experience relatively small thresholding
     whereas small values should be strongly thresholded
     '''
-    futures = list(map(lambda a: a.psi_dot(), actors))
-    outvar = list(map(lambda f: f.result(), futures))
-    mcomps = np.abs(np.sum(outvar, axis=0))
+    # project model
+    futures = list(map(lambda a: a.psi_dot(mode='model'), actors))
+    outvar = np.sum(list(map(lambda f: f.result(), futures)), axis=0)
+    mcomps = np.abs(outvar)
+    # project updates
+    futures = list(map(lambda a: a.psi_dot(mode='update'), actors))
+    outvar = np.sum(list(map(lambda f: f.result(), futures)), axis=0)
+    if not outvar.any():
+        raise ValueError("Cannot reweight before any updates have been performed")
+    rms_comps = np.std(outvar)
     # the **alpha here results in more agressive reweighting
     return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
 
 
-def dwt(x, buffer, dec_lo, dec_hi, nlevel, i):
-    dwt2d(x, buffer, dec_lo, dec_hi, nlevel)
+# the context manager should allow both vertical and horizontal scaling
+# within a single python process
+def dwt(x, buffer, dec_lo, dec_hi, nlevel, nthreads, i):
+    if nthreads > 1:
+        with numba.config.THREADING_LAYER.override('omp'), numba.config.NUMBA_NUM_THREADS.override(nthreads):
+            dwt2d(x, buffer, dec_lo, dec_hi, nlevel)
+    else:
+        dwt2d(x, buffer, dec_lo, dec_hi, nlevel)
     return buffer, i
 
-
-def idwt(buffer, rec_lo, rec_hi, nlevel, nx, ny, i):
+def idwt(buffer, rec_lo, rec_hi, nlevel, nx, ny, nthreads, i):
     image = np.zeros((nx, ny), dtype=buffer.dtype)
-    idwt2d(buffer, image, rec_lo, rec_hi, nlevel)
+    if nthreads > 1:
+        with numba.config.THREADING_LAYER.override('omp'), numba.config.NUMBA_NUM_THREADS.override(nthreads):
+            idwt2d(buffer, image, rec_lo, rec_hi, nlevel)
+    else:
+        idwt2d(buffer, image, rec_lo, rec_hi, nlevel)
     return image, i
 
 class band_actor(object):
-    def __init__(self, ds_names, opts, bandid, cache_path):
+    def __init__(self, xds_list, opts, bandid, cache_path, max_freq, uv_max):
         self.opts = opts
         self.bandid = bandid
         self.cache_path = f'{cache_path}/time0000_band{bandid:04d}.zarr'
-        self.ds_names = ds_names
-        self.nhthreads = opts.nthreads_dask
-        self.nvthreads = opts.nthreads
+        self.xds_list = xds_list
+        self.nthreads = opts.nthreads
         self.real_type = np.float64
         self.complex_type = np.complex128
         # hess_approx determines whether we use the vis of image space
         # approximation of the hessian.
         self.hess_approx = opts.hess_approx
+        resize_thread_pool(self.nthreads)
 
-        dsl = []
-        for dsn in ds_names:
-            dsl.append(xr.open_zarr(dsn, chunks=None))
+        dsl = xds_from_list(xds_list, drop_vars=['VIS', 'BEAM'],
+                            nthreads=self.nthreads)
 
         times_in = []
         self.freq = dsl[0].FREQ.values
@@ -113,65 +136,29 @@ class band_actor(object):
 
         times_in = np.unique(times_in)
 
-        # need to take weighted sum of beam before concat
-        beam = np.zeros((ds.l_beam.size, ds.m_beam.size), dtype=float)
-        self.wsumb = 0.0  # wsum for the band
-        # we need to drop these before concat (needed for beam interpolation)
-        l_beam = dsl[0].l_beam
-        m_beam = dsl[0].m_beam
+        # drop before concat
         for i, ds in enumerate(dsl):
-            wgt = ds.WEIGHT.values
-            mask = ds.MASK.values
-            wsumt = (wgt*mask).sum()
-            self.wsumb += wsumt
-            beam += ds.BEAM.values * wsumt
-            ds = ds.drop_vars('BEAM')
+            ds = ds.drop_vars('FREQ')
             dsl[i] = ds.drop_dims(('l_beam', 'm_beam'))
 
-        beam /= self.wsumb
+        # concat and check if band is empty
+        xds = xr.concat(dsl, dim='row')
+        wsumb = np.sum(xds.WEIGHT.values*xds.MASK.values)
+        if wsumb == 0:
+            raise ValueError('Got empty dataset. This is a bug!')
 
         # set cell sizes
-        self.max_freq = dsl[0].max_freq
-        self.uv_max = dsl[0].uv_max
-        # Nyquist cell size
-        cell_N = 1.0 / (2 * self.uv_max * self.max_freq / lightspeed)
-
-        if opts.cell_size is not None:
-            cell_size = opts.cell_size
-            cell_rad = cell_size * np.pi / 60 / 60 / 180
-            if cell_N / cell_rad < 1:
-                raise ValueError("Requested cell size too large. "
-                                "Super resolution factor = ", cell_N / cell_rad)
-        else:
-            cell_rad = cell_N / opts.super_resolution_factor
-            cell_size = cell_rad * 60 * 60 * 180 / np.pi
-
-        if opts.nx is None:
-            fov = opts.field_of_view * 3600
-            npix = int(fov / cell_size)
-            npix = good_size(npix)
-            while npix % 2:
-                npix += 1
-                npix = good_size(npix)
-            nx = npix
-            ny = npix
-        else:
-            nx = opts.nx
-            ny = opts.ny if opts.ny is not None else nx
-            cell_deg = np.rad2deg(cell_rad)
-            fovx = nx*cell_deg
-            fovy = ny*cell_deg
-
-        nx_psf = good_size(int(opts.psf_oversize * nx))
-        while nx_psf % 2:
-            nx_psf += 1
-            nx_psf = good_size(nx_psf)
-
-        ny_psf = good_size(int(opts.psf_oversize * ny))
-        while ny_psf % 2:
-            ny_psf += 1
-            ny_psf = good_size(ny_psf)
-
+        self.max_freq = max_freq
+        self.uv_max = uv_max
+        nx, ny, nx_psf, ny_psf, cell_N, cell_rad = set_image_size(uv_max,
+                                                                  max_freq,
+                                                                  opts)
+        cell_deg = np.rad2deg(cell_rad)
+        cell_size = cell_deg * 3600
+        # print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
+        # print(f"Cell size set to {cell_size:.5e} arcseconds", file=log)
+        # print(f"Field of view is ({nx*cell_deg:.3e},{ny*cell_deg:.3e}) degrees",
+        #     file=log)
 
         self.cell_rad = cell_rad
         self.nx = nx
@@ -191,27 +178,24 @@ class band_actor(object):
             self.unpad_x = slice(None)
             self.unpad_y = slice(None)
 
-        # TODO - interpolate beam to size of image
-        # interpo = RegularGridInterpolator((l_beam, m_beam), beam,
-        #                                   bounds_error=True, method='linear')
-        self.beam = np.ones((nx, ny), dtype=self.real_type)
-
         self.ra = dsl[0].ra
         self.dec = dsl[0].dec
         self.x0 = 0.0
         self.y0 = 0.0
 
-        # now there should only be a single one
-        self.xds = xr.concat(dsl, dim='row')
         self.freq_out = np.mean(self.freq)
         self.time_out = np.mean(times_in)
-
-        self.nhthreads = opts.nthreads_dask
-        self.nvthreads = opts.nthreads
 
         # set up wavelet dictionaries
         self.bases = opts.bases.split(',')
         self.nbasis = len(self.bases)
+        # do the wavelet transform in parallel over basis
+        self.nhthreads = np.minimum(self.nthreads, self.nbasis)
+        print(f"Will process {self.nhthreads} bases in parallel")
+        # use any additional threads to prange each basis
+        self.nvthreads = np.maximum(1, self.nthreads//self.nbasis)
+        numba.set_num_threads(self.nvthreads)
+        print(f"numba is using {numba.get_num_threads()} vertical threads")
         self.nlevel = opts.nlevels
         self.dec_lo ={}
         self.dec_hi ={}
@@ -250,22 +234,51 @@ class band_actor(object):
         # always initialised to zero
         self.dual = np.zeros((self.nbasis, self.nmax), dtype=self.real_type)
 
+        # this will be overwritten if loading from cache
+        # important for L1-reweighting!
+        self.update = np.zeros((self.nx, self.ny), dtype=self.real_type)
+
         # pre-allocate tmp array required for hess_psf
         # make_noncritical for efficiency of FFT
-        self.xhat = make_noncritical(np.zeros((self.nx_psf, self.ny_psf),
-                                              dtype=self.complex_type))
+        self.xhat = empty_noncritical((self.nx_psf, self.ny_psf),
+                                       dtype=self.complex_type)
 
-        # TODO - tune using evidence and/or psf sse?
-        self.sigma = 1.0  # used in hess_psf for backward
-        self.sigmasqinv = 1e-6
+        self.sigmainvsq = opts.sigmainvsq
+        if opts.hess_approx=='wgt':
+            self.hess = self.hess_wgt
+        elif opts.hess_approx=='psf':
+            self.hess = self.hess_psf
+        elif opts.hess_approx=='direct':
+            self.hess = self.hess_direct
+            if self.sigmainvsq < 1:
+                print(f'Warning - using dangerously low value of '
+                      f'{self.sigmainvsq} with direct Hessian approximation')
+        npix = np.maximum(self.nx, self.ny)
+        self.taperxy = taperf((self.nx, self.ny), int(0.1*npix))
+
+        self.attrs = {
+            'ra': self.ra,
+            'dec': self.dec,
+            'x0': self.x0,
+            'y0': self.y0,
+            'cell_rad': self.cell_rad,
+            'bandid': self.bandid,
+            'timeid': '0000',
+            'freq_out': self.freq_out,
+            'time_out': self.time_out,
+            'robustness': self.opts.robustness,
+            'super_resolution_factor': self.opts.super_resolution_factor,
+            'field_of_view': self.opts.field_of_view,
+            'product': self.opts.product
+        }
 
     def get_image_info(self):
         return (self.nx, self.ny, self.nmax, self.cell_rad,
                 self.ra, self.dec, self.x0, self.y0,
-                self.freq_out, self.time_out, self.wsumb)
+                self.freq_out, self.time_out)
 
 
-    def set_image_data_products(self, model, dof=None, from_cache=False):
+    def set_image_data_products(self, model, k, dof=None, from_cache=False):
         '''
         This initialises the psf and residual.
         Also used to perform L2 reweighting so wsum can change.
@@ -279,56 +292,66 @@ class band_actor(object):
 
         if from_cache:
             self.dds = xr.open_zarr(self.cache_path, chunks=None)
+            self.update = self.dds.UPDATE.values
+            residual = self.dds.RESIDUAL.values
+            self.wsumb = self.dds.wsum
         else:
-            residual, psfhat, wgt = image_data_products(
-                                model,
-                                self.xds.UVW.values,
-                                self.freq,
-                                self.xds.VIS.values,
-                                self.xds.WEIGHT.values,
-                                self.xds.MASK.values,
+            # attempt to save memory
+            if hasattr(self, 'dds'):
+                self.dds = None
+            residual, wsumb = image_data_products(
+                                self.xds_list,
+                                None,  # counts
                                 self.nx, self.ny,
                                 self.nx_psf, self.ny_psf,
                                 self.cell_rad, self.cell_rad,
-                                dof=dof,
+                                self.cache_path,
+                                self.attrs,
+                                model=model,
+                                robustness=self.opts.robustness,
                                 x0=self.x0, y0=self.y0,
-                                nthreads=self.nvthreads,
+                                nthreads=self.nthreads,
                                 epsilon=self.opts.epsilon,
                                 do_wgridding=self.opts.do_wgridding,
                                 double_accum=self.opts.double_accum,
-                                timeid=0)
+                                # divide_by_n=False,
+                                l2reweight_dof=dof,
+                                do_dirty=True,
+                                do_psf=True,
+                                do_residual=True,
+                                do_weight=True,
+                                do_noise=False)
 
-            self.wsumb = np.sum(wgt*self.xds.MASK.values)
+            self.wsumb = wsumb
             # cache vars affected by major cycle
             # we cache the weights in the
             data_vars = {
-                'RESIDUAL': (('x','y'), residual),
-                'PSFHAT': (('x_psf', 'y_psf'), np.abs(psfhat)),
-                'WGT': (('row', 'chan'), wgt)
+                'UPDATE': (('x','y'), self.update)
             }
-            attrs = {
-                'time_out': self.time_out,
-                'wsumb': self.wsumb,
+            self.attrs['niters'] = k
+            self.attrs['wsum'] = wsumb
+            dds = xr.Dataset(data_vars, attrs=self.attrs)
+            dds.to_zarr(self.cache_path, mode='a')
 
-            }
-            self.dds = xr.Dataset(data_vars, attrs=attrs)
-            self.dds.to_zarr(self.cache_path, mode='a')
-
-            # TODO - we still have two copies of the weights
-
+            # these are read in each major cycle anyway
+            drop_vars = ['PSF','MODEL','DIRTY']
+            if self.opts.hess_approx != 'wgt':
+                drop_vars += ['WEIGHT','UVW','MASK']
+            self.dds = xds_from_list([self.cache_path],
+                                     drop_vars=drop_vars)[0]
 
         # return the per band resid since resid MFS required on runner
-        return self.dds.RESIDUAL.values, self.wsumb
+        return residual, self.wsumb
 
     def set_wsum(self, wsum):
         self.wsum = wsum  # wsum over all bands
         # we can only normalise once we have wsum from all bands
-        self.dds['PSFHAT'] /= wsum
-        self.dds['RESIDUAL'] /= wsum
-        # are these updated on disk?
+        # only required if wsum changes
+        self.psfhat = self.dds.PSFHAT.values/wsum
+        self.residual = self.dds.RESIDUAL.values/wsum
 
 
-    def set_residual(self, x=None):
+    def set_residual(self, k, x=None):
         if x is None:
             x = self.model
 
@@ -336,86 +359,137 @@ class band_actor(object):
             self.data = np.zeros_like(x)
             return np.zeros_like(x)
 
-        residual = residual_from_vis(
-                                x,
-                                self.xds.UVW.values,
-                                self.freq,
-                                self.xds.VIS.values,
-                                self.dds.WGT.values, # may have been reweighted
-                                self.xds.MASK.values,
+        residual = compute_residual(
+                                self.cache_path,
                                 self.nx, self.ny,
                                 self.cell_rad, self.cell_rad,
+                                self.cache_path,  # output_name (same as dsl names?)
+                                x,
                                 x0=self.x0, y0=self.y0,
-                                nthreads=self.nvthreads,
+                                nthreads=self.nthreads,
                                 epsilon=self.opts.epsilon,
                                 do_wgridding=self.opts.do_wgridding,
-                                double_accum=self.opts.double_accum,
-                                timeid=0)
+                                double_accum=self.opts.double_accum)
+
+        # is this even necessary?
+        data_vars = {
+            'UPDATE': (('x','y'), self.update)
+        }
+        self.attrs['niters'] = k
+        dds = xr.Dataset(data_vars, attrs=self.attrs)
+        dds.to_zarr(self.cache_path, mode='a')
+
+        # these are read in each major cycle anyway
+        drop_vars = ['PSF','MODEL','DIRTY']
+        if self.opts.hess_approx != 'wgt':
+            drop_vars += ['WEIGHT','UVW','MASK']
+        self.dds = xds_from_list([self.cache_path],
+                                    drop_vars=drop_vars)[0]
 
         # wsum doesn't change so we can normalise
-        self.dds = self.dds.assign(
-            **{'RESIDUAL': (('x','y'), residual/self.wsum)}
-        )
-
-        # create a dataset to write to disk
-        # only update RESIDUAL not all vars
-        data_vars = {
-            'RESIDUAL': (('x','y'), residual/self.wsum),
-        }
-        dset = xr.Dataset(data_vars)
-        dset.to_zarr(self.cache_path, mode='r+')
+        self.residual = residual/self.wsum
 
         # return residual since we need the MFS residual on the runner
         return residual
 
+    def hess_direct(self, x, mode='forward', sigma=None):
+        if sigma is None:
+            sigma = self.sigmainvsq
+        if self.wsumb == 0:  # should not happen
+            return np.zeros((self.nx, self.ny), dtype=self.real_type)
+        self.xhat[...] = np.pad(x*self.taperxy, self.padding, mode='constant')
+        c2c(self.xhat, out=self.xhat,
+            forward=True, inorm=0, nthreads=self.nthreads)
+        if mode=='forward':
+            self.xhat *= (np.abs(self.psfhat) + sigma)
+        elif mode=='backward':
+            self.xhat /= (np.abs(self.psfhat) + sigma)
+        c2c(self.xhat, out=self.xhat,
+            forward=False, inorm=2, nthreads=self.nthreads)
+        # TODO - do we need the copy here?
+        # c2c out must not overlap input
+        return self.xhat[self.unpad_x, self.unpad_y].real * self.taperxy
 
     def hess_psf(self, x, mode='forward'):
-        if self.wsumb == 0:
+        if self.wsumb == 0:  # shoul dnot happen
             return np.zeros((self.nx, self.ny), dtype=self.real_type)
         self.xhat[...] = np.pad(x, self.padding, mode='constant')
         c2c(Fs(self.xhat, axes=(0,1)), out=self.xhat,
-            forward=True, inorm=0, nthreads=self.nvthreads)
+            forward=True, inorm=0, nthreads=self.nthreads)
         if mode=='forward':
-            self.xhat *= (self.dds.PSFHAT.values + self.sigmasqinv)
+            self.xhat *= (self.psfhat + self.sigmainvsq)
         elif mode=='backward':
-            self.xhat /= (self.dds.PSFHAT.values + 1/self.sigma)
+            self.xhat /= (self.psfhat + 1/self.sigma)
         c2c(self.xhat, out=self.xhat,
-            forward=False, inorm=2, nthreads=self.nvthreads)
+            forward=False, inorm=2, nthreads=self.nthreads)
         # TODO - do we need the copy here?
         # c2c out must not overlap input
         return iFs(self.xhat, axes=(0,1))[self.unpad_x, self.unpad_y].copy().real
 
 
-    def hess_wgt(self, x):
+    def hess_wgt(self, x, mode='forward'):
         convx = np.zeros_like(x)
         if self.wsumb == 0:
             return convx
 
-        convx += _hessian_impl(x,
-                               self.xds.UVW.values,
-                               self.dds.WGT.values,
-                               self.xds.MASK.values,
-                               self.freq,
-                               None, # self.beam
-                               x0=0.0, y0=0.0,
-                               cell=self.cell_rad,
-                               do_wgridding=self.opts.do_wgridding,
-                               epsilon=5e-4,  # we don't need much accuracy here
-                               double_accum=self.opts.double_accum,
-                               nthreads=self.nvthreads)
+        if mode=='forward':
+            convx += _hessian_impl(x,
+                                self.dds.UVW.values,
+                                self.dds.WEIGHT.values,
+                                self.dds.MASK.values,
+                                self.freq,
+                                None, # self.beam
+                                x0=0.0, y0=0.0,
+                                cell=self.cell_rad,
+                                do_wgridding=self.opts.do_wgridding,
+                                epsilon=5e-4,  # we don't need much accuracy here
+                                double_accum=self.opts.double_accum,
+                                nthreads=self.nthreads)
 
-        return convx/self.wsum + self.sigmasqinv * x
+            return convx/self.wsum + self.sigmainvsq * x
+        else:
+            raise NotImplementedError('Not yet')
 
+    def cg_update(self):
+        if self.hess_approx == 'wgt':
+            precond = lambda x: self.hess_direct(x,
+                                                 mode='backward',
+                                                 sigma=1.0)
+            x = pcg(
+                A=self.hess_wgt,
+                b=self.residual,
+                x0=precond(self.residual),
+                M=precond,
+                tol=self.opts.cg_tol,
+                maxit=self.opts.cg_maxit,
+                minit=self.opts.cg_minit,
+                verbosity=self.opts.cg_verbose,
+                report_freq=self.opts.cg_report_freq,
+                backtrack=self.opts.backtrack,
+                return_resid=False
+            )
+        elif self.hess_approx == "psf":
+            # the information source differs because we need a Hermitian
+            # postive definite operator for the pcg
+
+            raise NotImplementedError
+        elif self.hess_approx == "direct":
+            x = self.hess_direct(self.residual, mode='backward')
+        else:
+            raise ValueError(f'Unknown hess-approx {self.hess_approx}')
+
+        self.update = x
+        self.xtilde = self.model + x
+
+        return x
 
     def backward_grad(self, x):
         '''
         The gradient function during the backward step
         '''
-        # return -self.hess_psf(self.xtilde - x,
-        #                       mode='forward')
-        return -self.hess_wgt(self.xtilde - x)
+        return -self.hess(self.xtilde - x, mode='forward')
 
-    def psi_dot(self, x=None):
+    def psi_dot(self, x=None, mode='model'):
         '''
         signal to coeffs
 
@@ -424,9 +498,17 @@ class band_actor(object):
 
         Output:
             alpha   - (nbasis, Nnmax) output coeffs
+
+        If x==None we apply psi_dot to the update.
+        Used for L1-reweighting
         '''
+        # TODO - this is a bit of a kludge that we need
+        # for performing L1 reweights
         if x is None:
-            x = self.model
+            if mode == 'model':
+                x = self.model
+            else:
+                x = self.update
         alpha = np.zeros((self.nbasis, self.nmax),
                          dtype=x.dtype)
 
@@ -442,6 +524,7 @@ class band_actor(object):
                                     self.dec_lo[wavelet],
                                     self.dec_hi[wavelet],
                                     self.nlevel,
+                                    self.nvthreads,
                                     i)
 
                 futures.append(f)
@@ -481,6 +564,7 @@ class band_actor(object):
                                     self.nlevel,
                                     self.nx,
                                     self.ny,
+                                    self.nvthreads,
                                     i)
 
 
@@ -496,33 +580,8 @@ class band_actor(object):
         self.hess_norm = hess_norm
         self.sigma = hess_norm/(2*gamma*nu)
         self.tau = 0.9 / (hess_norm / (2.0 * gamma) + self.sigma * nu**2)
-        self.vtilde = self.dual + self.sigma * self.psi_dot(self.model)
+        self.vtilde = self.dual + self.sigma * self.psi_dot(x=self.model)
         return self.vtilde
-
-    def cg_update(self):
-        precond = lambda x: self.hess_psf(x,
-                                          mode='backward')
-        if self.hess_approx == 'wgt':
-            x = pcg(
-                A=self.hess_wgt,
-                b=self.dds.RESIDUAL.values,
-                x0=precond(self.dds.RESIDUAL.values),
-                M=precond,
-                tol=self.opts.cg_tol,
-                maxit=self.opts.cg_maxit,
-                minit=self.opts.cg_minit,
-                verbosity=self.opts.cg_verbose,
-                report_freq=self.opts.cg_report_freq,
-                backtrack=self.opts.backtrack,
-                return_resid=False
-            )
-        elif self.hess_approx == "psf":
-            x = precond(self.dds.RESIDUAL.values)
-
-        self.update = x
-        self.xtilde = self.model + x
-
-        return x
 
     def pd_update(self, ratio):
         # ratio - (nbasis, nmax)
@@ -537,7 +596,7 @@ class band_actor(object):
         if self.opts.positivity:
             self.model[self.model < 0] = 0.0
 
-        self.vtilde[...] = self.dual + self.sigma * self.psi_dot(self.model)
+        self.vtilde[...] = self.dual + self.sigma * self.psi_dot(x=self.model)
 
         eps_num = np.sum((self.model-self.xp)**2)
         eps_den = np.sum(self.model**2)
@@ -553,10 +612,7 @@ class band_actor(object):
 
     def pm_update(self, bnorm):
         self.bp[...] = self.b/bnorm
-        if self.hess_approx == "wgt":
-            self.b[...] = self.hess_wgt(self.bp)
-        else:
-            self.b[...] = self.hess_psf(self.bp, mode='forward')
+        self.b[...] = self.hess(self.bp)
         bsumsq = np.sum(self.b**2)
         beta_num = np.vdot(self.b, self.bp)
         beta_den = np.vdot(self.bp, self.bp)
@@ -565,186 +621,3 @@ class band_actor(object):
 
     def give_model(self):
         return self.model, self.bandid
-
-
-def image_data_products(model,
-                        uvw,
-                        freq,
-                        vis,
-                        wgt,
-                        mask,
-                        nx, ny,
-                        nx_psf, ny_psf,
-                        cellx, celly,
-                        dof=None,
-                        x0=0.0, y0=0.0,
-                        nthreads=4,
-                        epsilon=1e-7,
-                        do_wgridding=True,
-                        double_accum=True,
-                        timeid=0):
-    '''
-    Function to compute image space data products in one go
-        dirty
-        psf
-        psfhat
-    '''
-    if np.isinf(model).any() or np.isnan(model).any():
-        raise ValueError('Model contains infs or nans')
-
-    if model.any():
-        # don't apply weights in this direction
-        # residual_vis = vis.copy()
-        residual_vis = dirty2vis(
-                uvw=uvw,
-                freq=freq,
-                dirty=model,
-                pixsize_x=cellx,
-                pixsize_y=celly,
-                center_x=x0,
-                center_y=y0,
-                epsilon=epsilon,
-                do_wgridding=do_wgridding,
-                flip_v=False,
-                nthreads=nthreads,
-                divide_by_n=False,
-                sigma_min=1.1, sigma_max=3.0)
-        # this should save us 1 vis sized array
-        residual_vis *= -1 # negate model
-        residual_vis += vis  # add vis
-    else:
-        residual_vis = vis
-
-    if dof is not None:
-        # apply mask to both
-        residual_vis *= mask
-        ressq = (residual_vis*residual_vis.conj()).real
-        wcount = mask.sum()
-        if wcount:
-            ovar = ressq.sum()/wcount  # use 67% quantile?
-            wgt = (dof + 1)/(dof + ressq/ovar)
-
-    dirty = vis2dirty(
-        uvw=uvw,
-        freq=freq,
-        vis=residual_vis,
-        wgt=wgt,
-        mask=mask,
-        npix_x=nx, npix_y=ny,
-        pixsize_x=cellx, pixsize_y=celly,
-        center_x=x0, center_y=y0,
-        epsilon=epsilon,
-        flip_v=False,  # hardcoded for now
-        do_wgridding=do_wgridding,
-        divide_by_n=False,  # hardcoded for now
-        nthreads=nthreads,
-        sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=double_accum)
-
-    if x0 or y0:
-        # -w is the wgridder convention
-        n = np.sqrt(1 - x0**2 - y0**2)
-        freqfactor = 2j*np.pi*freq[None, :]/lightspeed
-        psf_vis = np.exp(freqfactor*(uvw[:, 0:1]*x0 +
-                                     uvw[:, 1:2]*y0 -
-                                     uvw[:, 2:]*(n-1)))
-        if divide_by_n:
-            psf_vis /= n
-
-    else:
-        nrow, _ = uvw.shape
-        nchan = freq.size
-        tmp = np.ones((1,), dtype=vis.dtype)
-        # should be tiny
-        psf_vis = np.broadcast_to(tmp, vis.shape)
-
-    psf = vis2dirty(
-        uvw=uvw,
-        freq=freq,
-        vis=psf_vis,
-        wgt=wgt,
-        mask=mask,
-        npix_x=nx_psf, npix_y=ny_psf,
-        pixsize_x=cellx, pixsize_y=celly,
-        center_x=x0, center_y=y0,
-        epsilon=epsilon,
-        flip_v=False,  # hardcoded for now
-        do_wgridding=do_wgridding,
-        divide_by_n=False,  # hardcoded for now
-        nthreads=nthreads,
-        sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=double_accum)
-
-    # get FT of psf
-    # we don't actually need the PSF anymore?
-    psf = psf.astype(vis.dtype)
-    c2c(Fs(psf, axes=(0, 1)), axes=(0, 1), out=psf,
-        nthreads=nthreads,
-        forward=True, inorm=0)
-
-    return dirty, np.abs(psf), wgt
-
-def residual_from_vis(
-                model,
-                uvw,
-                freq,
-                vis,
-                wgt,
-                mask,
-                nx, ny,
-                cellx, celly,
-                x0=0.0, y0=0.0,
-                nthreads=1,
-                epsilon=1e-7,
-                do_wgridding=True,
-                double_accum=True,
-                timeid=0):
-    '''
-    This is used for major cycles when we don't change the weights.
-    '''
-
-    if np.isinf(model).any() or np.isnan(model).any():
-        raise ValueError('Model contains infs or nans')
-
-    # don't apply weights in this direction
-    # residual_vis = vis.copy()
-    residual_vis = dirty2vis(
-            uvw=uvw,
-            freq=freq,
-            dirty=model,
-            pixsize_x=cellx,
-            pixsize_y=celly,
-            center_x=x0,
-            center_y=y0,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            flip_v=False,
-            nthreads=nthreads,
-            divide_by_n=False,
-            sigma_min=1.1, sigma_max=3.0)
-
-    # this should save us 1 vis sized array
-    # negate model
-    residual_vis *= -1
-    # add data
-    residual_vis += vis
-
-    residual = vis2dirty(
-        uvw=uvw,
-        freq=freq,
-        vis=residual_vis,
-        wgt=wgt,
-        mask=mask,
-        npix_x=nx, npix_y=ny,
-        pixsize_x=cellx, pixsize_y=celly,
-        center_x=x0, center_y=y0,
-        epsilon=epsilon,
-        flip_v=False,  # hardcoded for now
-        do_wgridding=do_wgridding,
-        divide_by_n=False,  # hardcoded for now
-        nthreads=nthreads,
-        sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=double_accum)
-
-
-    return residual

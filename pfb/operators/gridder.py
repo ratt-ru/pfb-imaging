@@ -10,7 +10,7 @@ import xarray as xr
 import dask
 import dask.array as da
 from ducc0.wgridder import vis2dirty, dirty2vis
-from ducc0.fft import c2r, r2c
+from ducc0.fft import c2r, r2c, c2c
 from africanus.constants import c as lightspeed
 from quartical.utils.dask import Blocker
 from pfb.utils.weighting import counts_to_weights
@@ -382,15 +382,21 @@ def image_data_products(dsl,
 
     if l2reweight_dof:
         ressq = (residual_vis*residual_vis.conj()).real
-        wcount = mask.sum()
+        wcount = mask.sum()*2  # x2 because complex
+        # chi2_dofp = np.mean(ressq[mask]/wgt[mask])
         if wcount:
             ovar = ressq.sum()/wcount  # use 67% quantile?
             # first divide ovar to get ressq relative to 1
+            # print(np.median(ressq/ovar), ovar)
             wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)
             # now divide by ovar to scale to absolute units
             wgt /= ovar
         else:
             wgt = None
+
+        # the chi2_dof after reweighting should be close to one
+        # chi2_dof = np.mean(ressq[mask]/wgt[mask])
+        # print(f'Chi2-dof changed from {chi2_dofp} to {chi2_dof}')
 
 
     # we usually want to re-evaluate this since the robustness may change
@@ -471,7 +477,9 @@ def image_data_products(dsl,
         else:
             nrow, _ = uvw.shape
             nchan = freq.size
-            psf_vis = np.ones((nrow, nchan), dtype=vis.dtype)
+            tmp = np.ones((1,), dtype=vis.dtype)
+            # should be tiny
+            psf_vis = np.broadcast_to(tmp, vis.shape)
 
         psf = vis2dirty(
             uvw=uvw,
@@ -491,12 +499,14 @@ def image_data_products(dsl,
             double_precision_accumulation=double_accum)
 
         # get FT of psf
-        psfhat = r2c(iFs(psf, axes=(0, 1)), axes=(0, 1),
+        # TODO - c2c is simpler since only one buffer required
+        # but could use r2c and c2r
+        psfhat = c2c(iFs(psf, axes=(0, 1)), axes=(0, 1),
                      nthreads=nthreads,
                      forward=True, inorm=0)
 
         dso["PSF"] = (('x_psf', 'y_psf'), psf)
-        dso["PSFHAT"] = (('x_psf', 'yo2'), psfhat)
+        dso["PSFHAT"] = (('x_psf', 'y_psf'), psfhat)
 
 
     if do_residual and model is not None:
@@ -561,7 +571,7 @@ def image_data_products(dsl,
         return dirty, wsum
 
 
-def compute_residual(ds,
+def compute_residual(dsl,
                      nx, ny,
                      cellx, celly,
                      output_name,
@@ -575,9 +585,12 @@ def compute_residual(ds,
     Function to compute residual and write it to disk
     '''
 
-    # this happens per ds
-    if isinstance(ds, str):
-        ds = xds_from_list([ds])[0]
+    # expects a list
+    if isinstance(dsl, str):
+        dsl = [dsl]
+
+    # currently only a single dds
+    ds = xds_from_list(dsl, nthreads=nthreads)[0]
 
     uvw = ds.UVW.values
     wgt = ds.WEIGHT.values

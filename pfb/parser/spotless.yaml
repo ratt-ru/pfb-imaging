@@ -6,17 +6,24 @@ inputs:
     - (.)cgopts.yml
     - (.)dist.yml
     - (.)out.yml
-  nband:
-    dtype: int
-    required: true
-    abbreviation: nb
+  xds:
     info:
-      Number of imaging bands
+      Optional explicit path to xds.
+      Set using output-filename and product by default.
+  mds:
+    info:
+      Optional explicit path to mds.
+      Set using output-filename, product and suffix by default.
   suffix:
     dtype: str
     default: 'main'
     info:
       Can be used to specify a custom name for the image space data products
+  robustness:
+    dtype: float
+    abbreviation: rob
+    info:
+      Robustness factor for Briggs weighting. None means natural
   bases:
     dtype: str
     info: 'Wavelet bases to use. Give as comma separated str eg. '
@@ -40,8 +47,9 @@ inputs:
       Spectral norm of hessian approximation
   hess-approx:
     dtype: str
-    default: wgt
+    default: direct
     abbreviation: hess-approx
+    choices: ['wgt','psf','direct']
     info:
       Set to wgt/psf to use the vis/image space hess approximation
   rmsfactor:
@@ -63,15 +71,12 @@ inputs:
   positivity:
     dtype: int
     default: 1
-    # choices:
-    #   - 0
-    #   - 1
-    #   - 2
-    info:
+    choices: ['0','1','2']
+    info: |
       How to apply positivity constraint
-      0 -> no positivity,
+      0 -> no positivity
       1 -> normal positivity constraint
-      and 2 -> strong positivity i.e. all pixels in a band > 0
+      2 -> strong positivity i.e. all pixels in a band > 0
   niter:
     dtype: int
     default: 10
@@ -136,7 +141,7 @@ inputs:
       Number of y pixels
   psf-oversize:
     dtype: float
-    default: 1.2
+    default: 1.0
     abbreviation: psfo
     info:
       Size of PSF relative to dirty image
@@ -145,12 +150,6 @@ inputs:
     info:
       This can be predefined celestial objects known to astropy or a string in
       the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
-  concat:
-    dtype: bool
-    default: true
-    info:
-      Concatenate datasets by row/time.
-      This will result in a single dirty image, psf and beam per band.
   l2-reweight-from:
     dtype: int
     default: 10
@@ -171,11 +170,16 @@ inputs:
     default: 5
     info:
       The maximum number of L2 reweighting steps.
-  reset-cache:
+  overwrite:
     dtype: bool
     default: false
     info:
       Hard reset the cache
+  sigmainvsq:
+    dtype: float
+    default: 1.0
+    info:
+      Value to add to Hessian to make it invertible
 
 outputs:
   {}

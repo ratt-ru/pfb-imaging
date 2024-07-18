@@ -1494,6 +1494,23 @@ def set_image_size(uv_max, max_freq, opts):
 
     return nx, ny, nx_psf, ny_psf, cell_N, cell_rad
 
+def taperf(shape, taper_width):
+    height, width = shape
+    array = np.ones((height, width))
+
+    # Create 1D taper for both dimensions
+    taper_x = np.ones(width)
+    taper_y = np.ones(height)
+
+    # Apply cosine taper to the edges
+    taper_x[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
+    taper_x[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
+
+    taper_y[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
+    taper_y[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
+
+    return np.outer(taper_y, taper_x)
+
 # def fft_interp(image, cellxi, cellyi, nxo, nyo,
 #                cellxo, cellyo, shiftx, shifty):
 #     '''

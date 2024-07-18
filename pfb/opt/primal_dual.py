@@ -257,7 +257,6 @@ def primal_dual_dist(
             if (l1weight != 1.0).any() and numreweight < maxreweight:
                 l1weight = l1reweight_func(actors,
                                            rmsfactor,
-                                           rms_comps,
                                            alpha=alpha)
                 numreweight += 1
             else:
