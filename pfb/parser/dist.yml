@@ -19,3 +19,9 @@ nthreads:
     Number of threads used to scale vertically (eg. for FFTs and gridding).
     Each dask thread can in principle spawn this many threads.
     Will attempt to use half the available threads by default.
+direct_to_workers:
+  dtype: bool
+  default: true
+  info:
+    Connect direct to workers i.e. bypass scheduler.
+    Faster but then the dashboard isn't very useful.

@@ -190,10 +190,13 @@ class band_actor(object):
         self.bases = opts.bases.split(',')
         self.nbasis = len(self.bases)
         # do the wavelet transform in parallel over basis
-        self.nhthreads = np.minimum(self.nthreads, self.nbasis)
+        if 'self' in self.bases:
+            self.nhthreads = np.minimum(self.nthreads, self.nbasis-1)
+        else:
+            self.nhthreads = np.minimum(self.nthreads, self.nbasis)
         print(f"Will process {self.nhthreads} bases in parallel")
-        # use any additional threads to prange each basis
-        self.nvthreads = np.maximum(1, self.nthreads//self.nbasis)
+        # use additional threads to prange each basis
+        self.nvthreads = np.maximum(1, self.nthreads//self.nhthreads)
         numba.set_num_threads(self.nvthreads)
         print(f"numba is using {numba.get_num_threads()} vertical threads")
         self.nlevel = opts.nlevels
@@ -349,6 +352,8 @@ class band_actor(object):
         # only required if wsum changes
         self.psfhat = self.dds.PSFHAT.values/wsum
         self.residual = self.dds.RESIDUAL.values/wsum
+        if self.opts.hess_approx == 'direct':
+            self.psfhat = np.abs(self.psfhat)
 
 
     def set_residual(self, k, x=None):
@@ -401,9 +406,9 @@ class band_actor(object):
         c2c(self.xhat, out=self.xhat,
             forward=True, inorm=0, nthreads=self.nthreads)
         if mode=='forward':
-            self.xhat *= (np.abs(self.psfhat) + sigma)
+            self.xhat *= (self.psfhat + sigma)
         elif mode=='backward':
-            self.xhat /= (np.abs(self.psfhat) + sigma)
+            self.xhat /= (self.psfhat + sigma)
         c2c(self.xhat, out=self.xhat,
             forward=False, inorm=2, nthreads=self.nthreads)
         # TODO - do we need the copy here?
@@ -411,20 +416,7 @@ class band_actor(object):
         return self.xhat[self.unpad_x, self.unpad_y].real * self.taperxy
 
     def hess_psf(self, x, mode='forward'):
-        if self.wsumb == 0:  # shoul dnot happen
-            return np.zeros((self.nx, self.ny), dtype=self.real_type)
-        self.xhat[...] = np.pad(x, self.padding, mode='constant')
-        c2c(Fs(self.xhat, axes=(0,1)), out=self.xhat,
-            forward=True, inorm=0, nthreads=self.nthreads)
-        if mode=='forward':
-            self.xhat *= (self.psfhat + self.sigmainvsq)
-        elif mode=='backward':
-            self.xhat /= (self.psfhat + 1/self.sigma)
-        c2c(self.xhat, out=self.xhat,
-            forward=False, inorm=2, nthreads=self.nthreads)
-        # TODO - do we need the copy here?
-        # c2c out must not overlap input
-        return iFs(self.xhat, axes=(0,1))[self.unpad_x, self.unpad_y].copy().real
+        raise NotImplementedError('Not yet')
 
 
     def hess_wgt(self, x, mode='forward'):
@@ -452,14 +444,14 @@ class band_actor(object):
 
     def cg_update(self):
         if self.hess_approx == 'wgt':
-            precond = lambda x: self.hess_direct(x,
-                                                 mode='backward',
-                                                 sigma=1.0)
+            # precond = lambda x: self.hess_direct(x,
+            #                                      mode='backward',
+            #                                      sigma=1.0)
             x = pcg(
                 A=self.hess_wgt,
                 b=self.residual,
-                x0=precond(self.residual),
-                M=precond,
+                # x0=precond(self.residual),
+                # M=precond,
                 tol=self.opts.cg_tol,
                 maxit=self.opts.cg_maxit,
                 minit=self.opts.cg_minit,

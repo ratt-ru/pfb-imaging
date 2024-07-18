@@ -28,7 +28,8 @@ def set_envs(nthreads, ncpu):
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
 
-def set_client(nworkers, stack, log, host_address=None):
+def set_client(nworkers, stack, log,
+               host_address=None, direct_to_workers=False):
     import dask
     # set up client
     host_address = host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
@@ -52,7 +53,7 @@ def set_client(nworkers, stack, log, host_address=None):
                                 asynchronous=False)
         cluster = stack.enter_context(cluster)
         client = stack.enter_context(Client(cluster,
-                                            direct_to_workers=False))
+                                            direct_to_workers=direct_to_workers))
 
     client.wait_for_workers(nworkers)
     dashboard_url = client.dashboard_link

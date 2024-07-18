@@ -72,7 +72,8 @@ def spotless(**kw):
     with ExitStack() as stack:
         from pfb import set_client
         if opts.nworkers > 1:
-            client = set_client(opts.nworkers, stack, log)
+            client = set_client(opts.nworkers, stack, log,
+                                direct_to_workers=opts.direct_to_workers)
             from distributed import as_completed
         else:
             print("Faking client", file=log)
