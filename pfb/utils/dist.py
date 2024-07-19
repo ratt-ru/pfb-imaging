@@ -1,6 +1,7 @@
 import inspect
 import numpy as np
 import numba
+import numexpr as ne
 import xarray as xr
 from pfb.opt.pcg import pcg
 from pfb.operators.gridder import image_data_products, compute_residual
@@ -200,6 +201,7 @@ class band_actor(object):
 
         # always initialised to zero
         self.dual = np.zeros((self.nbasis, self.Nymax, self.Nxmax), dtype=self.real_type)
+        self.dual_tmp = np.zeros((self.nbasis, self.Nymax, self.Nxmax), dtype=self.real_type)
 
         # this will be overwritten if loading from cache
         # important for L1-reweighting!
@@ -494,25 +496,60 @@ class band_actor(object):
 
     def pd_update(self, ratio):
         # ratio - (nbasis, nymax, nxmax)
+        # ti = time.time()
         self.xp[...] = self.model[...]
         self.vp[...] = self.dual[...]
+        # print('copy = ', time.time() - ti)
+        # self.dual[...] = self.vtilde * (1 - ratio)
+        ne.evaluate('vtilde * (1 - ratio)', local_dict={
+            'vtilde' : self.vtilde,
+            'ratio': ratio},
+            out=self.dual, casting='same_kind')
 
-        self.dual[...] = self.vtilde * (1 - ratio)
-
+        # ti = time.time()
         grad = self.backward_grad(self.xp)
-        self.psi.hdot(2*self.dual - self.vp, self.b)
-        self.model[...] = self.xp - self.tau * (self.b + grad)
+        # print('grad = ', time.time() - ti)
+        # ti = time.time()
+        ne.evaluate('2*dual - vp', local_dict={
+            'dual': self.dual,
+            'vp': self.vp},
+            out=self.dual_tmp, casting='same_kind')
+        # self.psi.hdot(2*self.dual - self.vp, self.b)
+        self.psi.hdot(self.dual_tmp, self.b)
+        ne.evaluate('xp - tau*(b + g)', local_dict={
+            'xp': self.xp,
+            'tau': self.tau,
+            'b': self.b,
+            'g': grad},
+            out=self.model, casting='same_kind')
+        # self.model[...] = self.xp - self.tau * (self.b + grad)
+        # print('update = ', time.time() - ti)
 
+        # ti = time.time()
         if self.opts.positivity:
             self.model[self.model < 0] = 0.0
+        # print('postivity = ', time.time() - ti)
 
+        # ti = time.time()
         self.psi.dot(self.model, self.vtilde)
-        self.vtilde *= self.sigma
-        self.vtilde += self.dual
+        ne.evaluate('d + sigma * vtilde', local_dict={
+            'd': self.dual,
+            'sigma': self.sigma,
+            'vtilde': self.vtilde},
+            out=self.vtilde, casting='same_kind')
+        # self.vtilde *= self.sigma
+        # self.vtilde += self.dual
         # self.vtilde[...] = self.dual + self.sigma * self.psi_dot(x=self.model)
+        # print('vtilde = ', time.time() - ti)
 
-        eps_num = np.sum((self.model-self.xp)**2)
+        # ti = time.time()
+        eps_num = ne.evaluate('sum((m-xp)**2)', local_dict={
+            'm': self.model,
+            'xp': self.xp},
+            casting='same_kind')
+        # eps_num = np.sum((self.model-self.xp)**2)
         eps_den = np.sum(self.model**2)
+        # print('eps = ', time.time() - ti)
 
         # vtilde - (nband, nbasis, nymax, nxmax)
         return self.vtilde, eps_num, eps_den, int(self.bandid)
