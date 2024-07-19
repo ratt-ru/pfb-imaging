@@ -499,14 +499,12 @@ def image_data_products(dsl,
             double_precision_accumulation=double_accum)
 
         # get FT of psf
-        # TODO - c2c is simpler since only one buffer required
-        # but could use r2c and c2r
-        psfhat = c2c(iFs(psf, axes=(0, 1)), axes=(0, 1),
+        psfhat = r2c(iFs(psf, axes=(0, 1)), axes=(0, 1),
                      nthreads=nthreads,
                      forward=True, inorm=0)
 
         dso["PSF"] = (('x_psf', 'y_psf'), psf)
-        dso["PSFHAT"] = (('x_psf', 'y_psf'), psfhat)
+        dso["PSFHAT"] = (('x_psf', 'yo2'), psfhat)
 
 
     if do_residual and model is not None:

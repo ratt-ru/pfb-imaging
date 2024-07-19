@@ -274,17 +274,18 @@ def primal_dual_dist(
 
 @njit(nogil=True, cache=True, parallel=True)
 def get_ratio(vtilde, l1weight, sigma, lam, ratio):
-    nband, nbasis, nmax = vtilde.shape
+    nband, nbasis, nymax, nxmax = vtilde.shape
     for b in range(nbasis):
-        for i in prange(nmax):  # WTF without the prange it segfaults when parallel=True
-            vtildebi = vtilde[:, b, i]
-            weightbi = l1weight[b, i]
-            absvbisum = np.abs(np.sum(vtildebi)/sigma)  # sum over band axis
-            softvbisum = absvbisum - lam*weightbi/sigma
-            if absvbisum > 0 and softvbisum > 0:
-                ratio[b, i] = softvbisum/absvbisum
-            else:
-                ratio[b, i] = 0.0
+        for i in prange(nymax):  # WTF without the prange it segfaults when parallel=True
+            for j in range(nxmax):
+                vtildebi = vtilde[:, b, i, j]
+                weightbi = l1weight[b, i, j]
+                absvbisum = np.abs(np.sum(vtildebi)/sigma)  # sum over band axis
+                softvbisum = absvbisum - lam*weightbi/sigma
+                if absvbisum > 0 and softvbisum > 0:
+                    ratio[b, i, j] = softvbisum/absvbisum
+                else:
+                    ratio[b, i, j] = 0.0
 
 
 

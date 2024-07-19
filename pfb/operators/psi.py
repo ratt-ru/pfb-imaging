@@ -189,8 +189,10 @@ class psi_band(object):
         signal to coeffs
 
         x       - (nx, ny) input signal
-        alphao  - (nbasis, Nxmax, Nymax) per basis output coeffs
+        alphao  - (nbasis, Nymax, Nxmax) per basis output coeffs
         '''
+
+        alphao[...] = 0.0
 
         for i, wavelet in enumerate(self.bases):
             if wavelet=='self':

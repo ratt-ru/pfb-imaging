@@ -134,7 +134,7 @@ def _spotless(xdsi=None, **kw):
     Distributed spotless algorithm.
 
     The key inputs to the algorithm are the xds and mds.
-    The xds contains the Stokes coeherencies created with the init worker.
+    The xds contains the Stokes coherencies created with the init worker.
     There can be multiple datasets in the xds, each corresponding to a specific frequency and time range.
     These datasets are persisted on separate workers.
     The mds contains a continuous representation of the model in compressed format.
@@ -147,6 +147,7 @@ def _spotless(xdsi=None, **kw):
 
     from itertools import cycle
     import numpy as np
+    import numba
     import xarray as xr
     from distributed import get_client
     from pfb.opt.power_method import power_method_dist as power_method
@@ -161,6 +162,9 @@ def _spotless(xdsi=None, **kw):
     import fsspec
     import pickle
     from pfb.utils.dist import band_actor
+
+    # should be set but just in case
+    numba.set_num_threads(opts.nthreads)
 
     real_type = np.float64
     complex_type = np.complex128
@@ -304,18 +308,19 @@ def _spotless(xdsi=None, **kw):
     actors = list(map(lambda f: f.result(), futures))
     futures = list(map(lambda a: a.get_image_info(), actors))
     results = list(map(lambda f: f.result(), futures))
-    nx, ny, nmax, cell_rad, ra, dec, x0, y0, freq_out, time_out = results[0]
+    nx, ny, nymax, nxmax, cell_rad, ra, dec, x0, y0, freq_out, time_out = results[0]
     freq_out = [freq_out]
     for result in results[1:]:
         assert result[0] == nx
         assert result[1] == ny
-        assert result[2] == nmax
-        assert result[3] == cell_rad
-        assert result[4] == ra
-        assert result[5] == dec
-        assert result[6] == x0
-        assert result[7] == y0
-        freq_out.append(result[8])
+        assert result[2] == nymax
+        assert result[3] == nxmax
+        assert result[4] == cell_rad
+        assert result[5] == ra
+        assert result[6] == dec
+        assert result[7] == x0
+        assert result[8] == y0
+        freq_out.append(result[9])
 
     print(f"Image size set to ({nx}, {ny})", file=log)
 
@@ -418,13 +423,13 @@ def _spotless(xdsi=None, **kw):
 
     if l1reweight_from == 0:
         print(f'Initialising with L1 reweighted', file=log)
-        l1weight = l1reweight_func(actors,
+        l1weight, rms_comps = l1reweight_func(actors,
                                    opts.rmsfactor,
                                    alpha=opts.alpha)
         l1reweight_active = True
     else:
         rms_comps = 1.0
-        l1weight = np.ones((nbasis, nmax), dtype=real_type)
+        l1weight = np.ones((nbasis, nymax, nxmax), dtype=real_type)
         reweighter = None
 
     best_rms = rms
@@ -597,7 +602,7 @@ def _spotless(xdsi=None, **kw):
 
         if k+1 - iter0 >= l1reweight_from:
             print('L1 reweighting', file=log)
-            l1weight = l1reweight_func(actors,
+            l1weight, rms_comps = l1reweight_func(actors,
                                        opts.rmsfactor,
                                        alpha=opts.alpha)
 
