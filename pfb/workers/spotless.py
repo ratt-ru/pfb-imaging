@@ -401,7 +401,7 @@ def _spotless(xdsi=None, **kw):
 
     if iter0 == 0:
         save_fits(residual_mfs,
-                  basename + f'_{opts.suffix}_dirty_mfs.fits',
+                  fits_oname + f'_{opts.suffix}_dirty_mfs.fits',
                   hdr_mfs)
 
     if opts.hess_norm is None:
@@ -430,9 +430,9 @@ def _spotless(xdsi=None, **kw):
                                    alpha=opts.alpha)
         l1reweight_active = True
     else:
-        rms_comps = rms  # this shoul dnot happen
+        rms_comps = rms  # this should not happen
         l1weight = np.ones((nbasis, nymax, nxmax), dtype=real_type)
-        reweighter = None
+        l1reweight_active = False
 
     best_rms = rms
     best_rmax = rmax

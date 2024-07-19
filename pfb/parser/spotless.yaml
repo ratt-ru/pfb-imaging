@@ -97,7 +97,7 @@ inputs:
       Output MFS fits files
   fits-cubes:
     dtype: bool
-    default: false
+    default: true
     info:
       Output fits cubes
   diverge-count:

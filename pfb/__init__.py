@@ -31,6 +31,7 @@ def set_envs(nthreads, ncpu):
 def set_client(nworkers, stack, log,
                host_address=None, direct_to_workers=False):
     import dask
+    dask.config.set({'distributed.comm.compression': 'lz4'})
     # set up client
     host_address = host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
     if host_address is not None:
