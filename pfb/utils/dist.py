@@ -88,7 +88,7 @@ def l1reweight_func(actors, rmsfactor, rms_comps=None, alpha=4):
         if not outvar.any():
             raise ValueError("Cannot reweight before any updates have been performed")
         # exclude zero components due to padding wavelets
-        rms_comps = np.std(outvar[outvar>0])
+        rms_comps = np.std(outvar[outvar!=0])
         return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha), rms_comps
     else:
         assert rms_comps > 0
@@ -490,7 +490,7 @@ class band_actor(object):
         self.vtilde *= self.sigma
         self.vtilde += self.dual
         # self.vtilde = self.dual + self.sigma * self.psi_dot(x=self.model)
-        return self.vtilde
+        return self.vtilde, int(self.bandid)
 
     def pd_update(self, ratio):
         # ratio - (nbasis, nymax, nxmax)
@@ -515,7 +515,7 @@ class band_actor(object):
         eps_den = np.sum(self.model**2)
 
         # vtilde - (nband, nbasis, nymax, nxmax)
-        return self.vtilde, eps_num, eps_den
+        return self.vtilde, eps_num, eps_den, int(self.bandid)
 
 
     def init_random(self):

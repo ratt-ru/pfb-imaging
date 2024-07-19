@@ -184,6 +184,8 @@ def primal_dual_optimised(
 
     return x, v
 
+from distributed import as_completed
+
 def primal_dual_dist(
             actors,
             lam,  # strength of regulariser
@@ -225,24 +227,38 @@ def primal_dual_dist(
 
     # we need to do this upfront only at the outset
     futures = list(map(lambda a: a.init_pd_params(L, nu), actors))
-    vtilde = list(map(lambda f: f.result(), futures))
+    # we don't want to allocate at each iteration
+    eps_num = [1.0]*len(futures)
+    eps_den = [1.0]*len(futures)
+    vtilde = np.zeros((len(actors), *l1weight.shape), dtype=l1weight.dtype)
+    for fut in as_completed(futures):
+        tmp, b = fut.result()
+        vtilde[b] = tmp
+    # vtilde = list(map(lambda f: f.result(), futures))
     numreweight = 0
     do_reweight = ~(l1weight == 1.0).all()  # reweighting active
     ratio = np.zeros(l1weight.shape, dtype=l1weight.dtype)
     for k in range(maxit):
-        # ti = time()
-        get_ratio(np.array(vtilde), l1weight, sigma, lam, ratio)
-        # print('ratio - ', time() - ti)
+        ti = time()
+        get_ratio(vtilde, l1weight, sigma, lam, ratio)
+        # get_ratio(np.array(vtilde), l1weight, sigma, lam, ratio)
+        print('ratio - ', time() - ti)
 
-        # ti = time()
+        ti = time()
         # do on individual workers
         futures = list(map(lambda a: a.pd_update(ratio), actors))
-        results = list(map(lambda f: f.result(), futures))
-        # print('update - ', time() - ti)
+        for fut in as_completed(futures):
+            tmp, epsn, epsd, b = fut.result()
+            vtilde[b] = tmp
+            eps_num[b] = epsn
+            eps_den[b] = epsd
 
-        vtilde = [r[0] for r in results]
-        eps_num = [r[1] for r in results]
-        eps_den = [r[2] for r in results]
+        # results = list(map(lambda f: f.result(), futures))
+        print('update - ', time() - ti)
+
+        # vtilde = [r[0] for r in results]
+        # eps_num = [r[1] for r in results]
+        # eps_den = [r[2] for r in results]
         eps = np.sqrt(np.sum(eps_num)/np.sum(eps_den))
 
         if np.isnan(eps):
