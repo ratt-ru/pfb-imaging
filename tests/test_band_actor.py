@@ -31,8 +31,9 @@ if __name__=='__main__':
     for key in schema.spotless["inputs"].keys():
         init_args[key.replace("-", "_")] = schema.spotless["inputs"][key]["default"]
     opts = OmegaConf.create(init_args)
-    opts['nthreads'] = 1
+    opts['nthreads'] = 7
     opts['field_of_view'] = 2.0
+    opts['super_resolution_factor'] = 4.0
 
     # import ipdb; ipdb.set_trace()
     actor = band_actor(ds_list,
@@ -54,6 +55,8 @@ if __name__=='__main__':
     residual, wsum = actor.set_image_data_products(model[0],0,from_cache=False)
     residual /= wsum
     rms = np.std(residual)
+
+    print('rms = ', rms)
 
     hess_norm = 100.0
     l1weight = np.ones((nbasis, nymax, nxmax))
