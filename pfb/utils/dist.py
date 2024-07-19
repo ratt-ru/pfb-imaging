@@ -6,9 +6,7 @@ from pfb.opt.pcg import pcg
 from pfb.operators.gridder import image_data_products, compute_residual
 from pfb.operators.hessian import _hessian_impl
 from pfb.operators.psf import psf_convolve_slice
-from pfb.utils.weighting import (compute_counts,
-                                 counts_to_weights,
-                                 filter_extreme_counts)
+from pfb.utils.weighting import _compute_counts
 from pfb.utils.misc import taperf, set_image_size
 from pfb.utils.naming import xds_from_url, xds_from_list
 from uuid import uuid4
@@ -83,13 +81,14 @@ def l1reweight_func(actors, rmsfactor, rms_comps=None, alpha=4):
     futures = list(map(lambda a: a.psi_dot(mode='model'), actors))
     outvar = np.sum(list(map(lambda f: f.result(), futures)), axis=0)
     mcomps = np.abs(outvar)
-    # project updates
+    # we only project updates in the outer loop
     if rms_comps is None:
         futures = list(map(lambda a: a.psi_dot(mode='update'), actors))
         outvar = np.sum(list(map(lambda f: f.result(), futures)), axis=0)
         if not outvar.any():
             raise ValueError("Cannot reweight before any updates have been performed")
-        rms_comps = np.std(outvar)
+        # exclude zero components due to padding wavelets
+        rms_comps = np.std(outvar[ouvar>0])
         return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha), rms_comps
     else:
         assert rms_comps > 0
@@ -173,6 +172,16 @@ class band_actor(object):
 
         self.freq_out = np.mean(self.freq)
         self.time_out = np.mean(times_in)
+
+        self.counts = _compute_counts(
+                                xds.UVW.values,
+                                self.freq,
+                                xds.MASK.values,
+                                xds.WEIGHT.values,
+                                nx, ny,
+                                cell_rad, cell_rad,
+                                self.real_type,
+                                ngrid=self.nthreads)
 
         # set up wavelet dictionaries
         self.bases = opts.bases.split(',')
@@ -277,7 +286,7 @@ class band_actor(object):
                 self.dds = None
             residual, wsumb = image_data_products(
                                 self.xds_list,
-                                None,  # counts
+                                self.counts,
                                 self.nx, self.ny,
                                 self.nx_psf, self.ny_psf,
                                 self.cell_rad, self.cell_rad,
@@ -327,6 +336,12 @@ class band_actor(object):
         self.residual = self.dds.RESIDUAL.values/wsum
         if self.opts.hess_approx == 'direct':
             self.psfhat = np.abs(self.psfhat)
+            # # Briggs weighting factor
+            # robust = 0.5
+            # numsqrt = 5*10**(-robust)
+            # avgW = (self.psfhat ** 2).sum() / self.psfhat.sum()
+            # ssq = numsqrt * numsqrt/avgW
+            # self.taper = 1 + self.psfhat * ssq
 
 
     def set_residual(self, k, x=None):
@@ -337,6 +352,7 @@ class band_actor(object):
             self.data = np.zeros_like(x)
             return np.zeros_like(x)
 
+        # we don;t need counts here because we use the weights in the dds
         residual = compute_residual(
                                 self.cache_path,
                                 self.nx, self.ny,
@@ -462,7 +478,8 @@ class band_actor(object):
             self.psi.dot(self.model, self.dual)
             return self.dual
         elif mode == 'update':
-            self.psi.dot(self.update, self.dual)
+            # we don't want to bias rms_comps due to tapered edges
+            self.psi.dot(self.update/self.taperxy, self.dual)
             return self.bp
 
     def init_pd_params(self, hess_norm, nu, gamma=1):

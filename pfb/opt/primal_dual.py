@@ -227,17 +227,18 @@ def primal_dual_dist(
     futures = list(map(lambda a: a.init_pd_params(L, nu), actors))
     vtilde = list(map(lambda f: f.result(), futures))
     numreweight = 0
+    do_reweight = ~(l1weight == 1.0).all()  # reweighting active
     ratio = np.zeros(l1weight.shape, dtype=l1weight.dtype)
     for k in range(maxit):
-        ti = time()
+        # ti = time()
         get_ratio(np.array(vtilde), l1weight, sigma, lam, ratio)
-        print('ratio - ', time() - ti)
+        # print('ratio - ', time() - ti)
 
-        ti = time()
+        # ti = time()
         # do on individual workers
         futures = list(map(lambda a: a.pd_update(ratio), actors))
         results = list(map(lambda f: f.result(), futures))
-        print('update - ', time() - ti)
+        # print('update - ', time() - ti)
 
         vtilde = [r[0] for r in results]
         eps_num = [r[1] for r in results]
@@ -254,11 +255,13 @@ def primal_dual_dist(
             print(f"At iteration {k} eps = {eps:.3e}", file=log)
 
         if eps < tol:
-            if (l1weight != 1.0).any() and numreweight < maxreweight:
+            if do_reweight and numreweight < maxreweight:
                 l1weight = l1reweight_func(actors,
                                            rmsfactor,
+                                           rms_comps=rms_comps,
                                            alpha=alpha)
                 numreweight += 1
+                print(f"Reweighting iter {numreweight}", file=log)
             else:
                 if numreweight >= maxreweight:
                     print("Maximum reweighting steps reached", file=log)
@@ -277,11 +280,13 @@ def get_ratio(vtilde, l1weight, sigma, lam, ratio):
     nband, nbasis, nymax, nxmax = vtilde.shape
     for b in range(nbasis):
         for i in prange(nymax):  # WTF without the prange it segfaults when parallel=True
+            vtildebi = vtilde[:, b, i]
+            weightbi = l1weight[b, i]
             for j in range(nxmax):
-                vtildebi = vtilde[:, b, i, j]
-                weightbi = l1weight[b, i, j]
-                absvbisum = np.abs(np.sum(vtildebi)/sigma)  # sum over band axis
-                softvbisum = absvbisum - lam*weightbi/sigma
+                vtildebij = vtildebi[:, j]
+                weightbij = weightbi[j]
+                absvbisum = np.abs(np.sum(vtildebij)/sigma)  # sum over band axis
+                softvbisum = absvbisum - lam*weightbij/sigma
                 if absvbisum > 0 and softvbisum > 0:
                     ratio[b, i, j] = softvbisum/absvbisum
                 else:

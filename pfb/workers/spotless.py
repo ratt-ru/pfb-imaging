@@ -163,8 +163,10 @@ def _spotless(xdsi=None, **kw):
     import pickle
     from pfb.utils.dist import band_actor
 
-    # should be set but just in case
-    numba.set_num_threads(opts.nthreads)
+    # the runner should use all available resources
+    import psutil
+    ncpu = psutil.cpu_count(logical=False)
+    numba.set_num_threads(ncpu)
 
     real_type = np.float64
     complex_type = np.complex128
@@ -428,7 +430,7 @@ def _spotless(xdsi=None, **kw):
                                    alpha=opts.alpha)
         l1reweight_active = True
     else:
-        rms_comps = 1.0
+        rms_comps = rms  # this shoul dnot happen
         l1weight = np.ones((nbasis, nymax, nxmax), dtype=real_type)
         reweighter = None
 

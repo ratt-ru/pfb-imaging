@@ -12,7 +12,7 @@ def set_envs(nthreads, ncpu):
     os.environ["OPENBLAS_NUM_THREADS"] = str(nthreads)
     os.environ["MKL_NUM_THREADS"] = str(nthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(nthreads)
-    os.environ["NUMBA_NUM_THREADS"] = str(nthreads)
+    # os.environ["NUMBA_NUM_THREADS"] = str(nthreads)
     os.environ["JAX_ENABLE_X64"] = 'True'
     # this may be required for numba parallelism
     # find python and set LD_LIBRARY_PATH
