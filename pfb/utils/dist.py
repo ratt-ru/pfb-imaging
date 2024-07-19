@@ -88,7 +88,7 @@ def l1reweight_func(actors, rmsfactor, rms_comps=None, alpha=4):
         if not outvar.any():
             raise ValueError("Cannot reweight before any updates have been performed")
         # exclude zero components due to padding wavelets
-        rms_comps = np.std(outvar[ouvar>0])
+        rms_comps = np.std(outvar[outvar>0])
         return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha), rms_comps
     else:
         assert rms_comps > 0
