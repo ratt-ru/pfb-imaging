@@ -31,6 +31,7 @@ def power_method(
         betap = beta
         beta = np.vdot(bp, b) / np.vdot(bp, bp)
         b /= bnorm
+        # this is a scalar
         eps = np.linalg.norm(beta - betap) / betap
         k += 1
         bp[...] = b[...]

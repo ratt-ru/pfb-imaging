@@ -184,8 +184,10 @@ def primal_dual_optimised(
 
         # copy contents to avoid allocating new memory
         ti = time()
-        xp[...] = x[...]
-        vp[...] = v[...]
+        np.copyto(xp, x)
+        np.copyto(vp, v)
+        # xp[...] = x[...]
+        # vp[...] = v[...]
         print('copy = ', time() - ti)
         if np.isnan(eps) or np.isinf(eps):
             import pdb; pdb.set_trace()
