@@ -306,7 +306,7 @@ class Psi(object):
         image to coeffs
         '''
         futures = []
-        with cf.ThreadPoolExecutor(max_workers=self.nthreads) as executor:
+        with cf.ProcessPoolExecutor(max_workers=self.nband) as executor:
             for b in range(self.nband):
                 f = executor.submit(psi_dot_impl, x[b], alphao[b], self.psib[b], b,
                                     nthreads=self.nthreads_per_band)
@@ -321,7 +321,7 @@ class Psi(object):
         coeffs to image
         '''
         futures = []
-        with cf.ThreadPoolExecutor(max_workers=self.nthreads) as executor:
+        with cf.ProcessPoolExecutor(max_workers=self.nband) as executor:
             for b in range(self.nband):
                 f = executor.submit(psi_hdot_impl, alpha[b], xo[b], self.psib[b], b,
                                     nthreads=self.nthreads_per_band)
