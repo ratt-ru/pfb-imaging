@@ -90,16 +90,6 @@ inputs:
     info:
       Tolerance at which to terminate algorithm.
       Will stop when norm(x-xp)/norm(x) < tol
-  fits-mfs:
-    dtype: bool
-    default: true
-    info:
-      Output MFS fits files
-  fits-cubes:
-    dtype: bool
-    default: true
-    info:
-      Output fits cubes
   diverge-count:
     dtype: int
     default: 5

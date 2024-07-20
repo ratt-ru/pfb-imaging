@@ -36,16 +36,6 @@ inputs:
     abbreviation: rob
     info:
       Robustness factor for Briggs weighting. None means natural
-  fits-mfs:
-    dtype: bool
-    default: true
-    info:
-      Output MFS fits files
-  fits-cubes:
-    dtype: bool
-    default: false
-    info:
-      Output fits cubes
   dirty:
     dtype: bool
     default: true

@@ -317,13 +317,9 @@ def _sara(ddsi=None, **kw):
         modelp = deepcopy(model)
         xtilde = model + opts.gamma * update
         grad21 = lambda x: -precond(xtilde - x)/opts.gamma
-        if k == 0:
-            rmsfactor = opts.init_factor * opts.rmsfactor
-        else:
-            rmsfactor = opts.rmsfactor
         model, dual = primal_dual(model,
                                   dual,
-                                  rmsfactor*rms,
+                                  opts.rmsfactor*rms,
                                   psi.hdot,
                                   psi.dot,
                                   hess_norm,

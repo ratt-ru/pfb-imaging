@@ -14,16 +14,6 @@ inputs:
     default: 1
     info:
       Perform dilation followed by erosion with structure element of this width
-  fits-mfs:
-    dtype: bool
-    default: true
-    info:
-      Output MFS fits files
-  fits-cubes:
-    dtype: bool
-    default: false
-    info:
-      Output fits cubes
   mop-flux:
     dtype: bool
     default: true

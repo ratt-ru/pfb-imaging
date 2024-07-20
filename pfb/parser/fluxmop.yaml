@@ -58,16 +58,6 @@ inputs:
     default: true
     info:
       Whether to approximate the Hessian as a convolution by the PSF
-  fits-mfs:
-    dtype: bool
-    default: true
-    info:
-      Output MFS fits files
-  fits-cubes:
-    dtype: bool
-    default: false
-    info:
-      Output fits cubes
   memory-greedy:
     dtype: bool
     default: false

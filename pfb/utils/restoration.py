@@ -161,7 +161,6 @@ def ublurr_ds(ds_name,
                               gausspari=gausspari)
 
     ds['UIMAGE'] = (('x','y'), image)
-    # import ipdb; ipdb.set_trace()
     ds.to_zarr(ds_name[0], mode='a')
 
     return image, int(ds.bandid)

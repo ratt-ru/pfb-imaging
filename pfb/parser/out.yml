@@ -23,3 +23,13 @@ fits-output-folder:
     Optional path to write fits files to.
     Set to output-filename if not provided.
     The same naming conventions apply.
+fits-mfs:
+  dtype: bool
+  default: true
+  info:
+    Output MFS fits files
+fits-cubes:
+  dtype: bool
+  default: true
+  info:
+    Output fits cubes
