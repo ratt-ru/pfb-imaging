@@ -191,6 +191,7 @@ def _sara(ddsi=None, **kw):
 
     wsum = np.sum(wsums)
     psfhat = np.abs(psfhat)/wsum
+    psfhat += 1.0
     residual /= wsum
     residual_mfs = np.sum(residual, axis=0)
 

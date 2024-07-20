@@ -287,6 +287,8 @@ def psi_hdot_impl(alpha, xo, psib, b, nthreads=1):
 class Psi(object):
     def __init__(self, nband, nx, ny, bases, nlevel, nthreads):
 
+        numba.set_num_threads(nthreads)
+
         self.psib = []
         for b in range(nband):
             self.psib.append(psi_band_maker(nx, ny, bases, nlevel))
@@ -305,28 +307,32 @@ class Psi(object):
         '''
         image to coeffs
         '''
-        futures = []
-        with cf.ProcessPoolExecutor(max_workers=self.nband) as executor:
-            for b in range(self.nband):
-                f = executor.submit(psi_dot_impl, x[b], alphao[b], self.psib[b], b,
-                                    nthreads=self.nthreads_per_band)
-                futures.append(f)
+        # futures = []
+        # with cf.ThreadPoolExecutor(max_workers=self.nband) as executor:
+        #     for b in range(self.nband):
+        #         f = executor.submit(psi_dot_impl, x[b], alphao[b], self.psib[b], b,
+        #                             nthreads=self.nthreads_per_band)
+        #         futures.append(f)
 
-            # wait for result
-            for f in cf.as_completed(futures):
-                b = f.result()
+        #     # wait for result
+        #     for f in cf.as_completed(futures):
+        #         b = f.result()
+        for b in range(self.nband):
+            self.psib[b].dot(x[b], alphao[b])
 
     def hdot(self, alpha, xo):
         '''
         coeffs to image
         '''
-        futures = []
-        with cf.ProcessPoolExecutor(max_workers=self.nband) as executor:
-            for b in range(self.nband):
-                f = executor.submit(psi_hdot_impl, alpha[b], xo[b], self.psib[b], b,
-                                    nthreads=self.nthreads_per_band)
-                futures.append(f)
+        # futures = []
+        # with cf.ThreadPoolExecutor(max_workers=self.nband) as executor:
+        #     for b in range(self.nband):
+        #         f = executor.submit(psi_hdot_impl, alpha[b], xo[b], self.psib[b], b,
+        #                             nthreads=self.nthreads_per_band)
+        #         futures.append(f)
 
-            # wait for result
-            for f in cf.as_completed(futures):
-                b = f.result()
+        #     # wait for result
+        #     for f in cf.as_completed(futures):
+        #         b = f.result()
+        for b in range(self.nband):
+            self.psib[b].hdot(alpha[b], xo[b])

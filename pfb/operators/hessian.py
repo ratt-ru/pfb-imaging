@@ -213,9 +213,11 @@ def hess_direct(x,     # input image, not overwritten
     r2c(xpad, out=xhat, axes=(1,2),
         forward=True, inorm=0, nthreads=nthreads)
     if mode=='forward':
-        xhat *= (psfhat + sigmainvsq)
+        # xhat *= (psfhat + sigmainvsq)
+        xhat *= psfhat
     else:
-        xhat /= (psfhat + sigmainvsq)
+        # xhat /= (psfhat + sigmainvsq)
+        xhat /= psfhat
     c2r(xhat, axes=(1, 2), forward=False, out=xpad,
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)
