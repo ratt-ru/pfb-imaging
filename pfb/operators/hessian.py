@@ -2,6 +2,7 @@ import numpy as np
 import dask
 import dask.array as da
 from ducc0.wgridder import vis2dirty, dirty2vis
+from ducc0.fft import r2c, c2r
 from ducc0.misc import make_noncritical
 from uuid import uuid4
 from pfb.operators.psf import (psf_convolve_slice,
@@ -165,41 +166,6 @@ def _hessian_psf_slice(
     return xout + x * sigmainv
 
 
-class hessian_psf_slice(object):
-    def __init__(self, ds, nthreads, wsum):
-        self.nthreads = nthreads
-        self.lastsize = ds.PSF.shape[-1]
-        self.psfhat = ds.PSFHAT.values
-        self.beam = ds.BEAM.values
-        self.wsumb = ds.WSUM.values[0]
-        self.wsum = wsum
-
-        # pre-allocate tmp arrays
-        tmp = np.empty(ds.DIRTY.shape,
-                       dtype=ds.DIRTY.dtype, order='C')
-        self.xout = make_noncritical(tmp)
-        tmp = np.empty(self.psfhat.shape,
-                       dtype=self.psfhat.dtype,
-                       order='C')
-        self.xhat = make_noncritical(tmp)
-        tmp = np.empty(ds.PSF.shape,
-                       dtype=ds.PSF.dtype,
-                       order='C')
-        self.xpad = make_noncritical(tmp)
-
-    def __call__(self, x, sigmainv):
-        return _hessian_psf_slice(self.xpad,
-                                  self.xhat,
-                                  self.xout,
-                                  self.psfhat,
-                                  self.beam,
-                                  self.lastsize,
-                                  x,
-                                  nthreads=self.nthreads,
-                                  sigmainv=sigmainv,
-                                  wsum=self.wsum)
-
-
 def hessian_psf_cube(
                     xpad,  # preallocated array to store padded image
                     xhat,  # preallocated array to store FTd image
@@ -230,64 +196,28 @@ def hessian_psf_cube(
     return xout + x * sigmainv
 
 
-def hess_vis(xds,
-             dds,
-             xout,
-             x,
-             sigmainv=1.0,
-             do_wgridding=True,
-             nthreads=1,
-             epsilon=1e-7,
-             divide_by_n=False):
-    for ds in xds:
-        b = ds.bandid
-        t = ds.timeid
-        vis_mask = ds.MASK.values
-        if np.all(vis_mask == 0):
-            continue
-
-        # accumulate model vis for this band and time
-        mvis = np.zeros(ds.VIS.data.shape, dtype=ds.VIS.dtype)
-        for field in dds.keys():
-
-            x0 = dds[field][f't{t}b{b}']['x0']
-            y0 = dds[field][f't{t}b{b}']['y0']
-            cell = dds[field][f't{t}b{b}']['cell']
-            nx = dds[field][f't{t}b{b}']['nx']
-            ny = dds[field][f't{t}b{b}']['ny']
-
-            mvis += dirty2vis(uvw=ds.UVW.values,
-                              freq=ds.FREQ.values,
-                              dirty=x[field][f't{t}b{b}'],
-                              pixsize_x=cell,
-                              pixsize_y=cell,
-                              center_x=x0,
-                              center_y=y0,
-                              epsilon=epsilon,
-                              do_wgridding=do_wgridding,
-                              nthreads=nthreads,
-                              divide_by_n=divide_by_n)
-
-        # project to image space
-        for field in dds.keys():
-            x0 = dds[field][f't{t}b{b}']['x0']
-            y0 = dds[field][f't{t}b{b}']['y0']
-            cell = dds[field][f't{t}b{b}']['cell']
-            nx = dds[field][f't{t}b{b}']['nx']
-            ny = dds[field][f't{t}b{b}']['ny']
-            xout[field][f't{t}b{b}'] = vis2dirty(uvw=ds.UVW.values,
-                                                freq=ds.FREQ.values,
-                                                vis=mvis,
-                                                wgt=ds.WEIGHT.values,
-                                                npix_x=nx,
-                                                npix_y=ny,
-                                                pixsize_x=cell,
-                                                pixsize_y=cell,
-                                                center_x=x0,
-                                                center_y=y0,
-                                                epsilon=epsilon,
-                                                do_wgridding=do_wgridding,
-                                                nthreads=nthreads,
-                                                divide_by_n=divide_by_n)
-            xout[field][f't{t}b{b}'] += sigmainv * x[field][f't{t}b{b}']
-    return xout
+def hess_direct(x,     # input image, not overwritten
+                xpad=None,  # preallocated array to store padded image
+                xhat=None,  # preallocated array to store FTd image
+                xout=None,  # preallocated array to store output image
+                psfhat=None,
+                taperxy=None,
+                lastsize=None,
+                nthreads=1,
+                sigmainvsq=1,
+                wsum=None,
+                mode='forward'):
+    nband, nx, ny = x.shape
+    xpad[...] = 0.0
+    xpad[:, 0:nx, 0:ny] = x * taperxy[None]
+    r2c(xpad, out=xhat, axes=(1,2),
+        forward=True, inorm=0, nthreads=nthreads)
+    if mode=='forward':
+        xhat *= (psfhat + sigmainvsq)
+    else:
+        xhat /= (psfhat + sigmainvsq)
+    c2r(xhat, axes=(1, 2), forward=False, out=xpad,
+        lastsize=lastsize, inorm=2, nthreads=nthreads,
+        allow_overwriting_input=True)
+    xout[...] = xpad[:, 0:nx, 0:ny]
+    return xout * taperxy[None]

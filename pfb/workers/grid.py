@@ -287,7 +287,6 @@ def _grid(xdsi=None, **kw):
                         'do_wgridding', 'double_accum',
                         'field_of_view', 'super_resolution_factor']
         try:
-            import ipdb; ipdb.set_trace()
             for attr in verify_attrs:
                 assert optsp[attr] == opts[attr]
 

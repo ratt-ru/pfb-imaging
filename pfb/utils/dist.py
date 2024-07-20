@@ -35,13 +35,6 @@ class fake_future(object):
     def result(self):
         return self.r
 
-# class fake_actor(object):
-#     def __init__(self, r):
-#         self.r = r
-
-#     def result(self):
-#         import ipdb; ipdb.set_trace()
-#         return self.r
 
 class fake_client(object):
     '''
@@ -372,6 +365,7 @@ class band_actor(object):
             'UPDATE': (('x','y'), self.update)
         }
         self.attrs['niters'] = k
+        self.attrs['wsum'] = self.wsumb
         dds = xr.Dataset(data_vars, attrs=self.attrs)
         dds.to_zarr(self.cache_path, mode='a')
 
@@ -500,29 +494,14 @@ class band_actor(object):
         self.xp[...] = self.model[...]
         self.vp[...] = self.dual[...]
         # print('copy = ', time.time() - ti)
-        # self.dual[...] = self.vtilde * (1 - ratio)
-        ne.evaluate('vtilde * (1 - ratio)', local_dict={
-            'vtilde' : self.vtilde,
-            'ratio': ratio},
-            out=self.dual, casting='same_kind')
+        self.dual[...] = self.vtilde * (1 - ratio)
 
         # ti = time.time()
         grad = self.backward_grad(self.xp)
         # print('grad = ', time.time() - ti)
         # ti = time.time()
-        ne.evaluate('2*dual - vp', local_dict={
-            'dual': self.dual,
-            'vp': self.vp},
-            out=self.dual_tmp, casting='same_kind')
-        # self.psi.hdot(2*self.dual - self.vp, self.b)
-        self.psi.hdot(self.dual_tmp, self.b)
-        ne.evaluate('xp - tau*(b + g)', local_dict={
-            'xp': self.xp,
-            'tau': self.tau,
-            'b': self.b,
-            'g': grad},
-            out=self.model, casting='same_kind')
-        # self.model[...] = self.xp - self.tau * (self.b + grad)
+        self.psi.hdot(2*self.dual - self.vp, self.b)
+        self.model[...] = self.xp - self.tau * (self.b + grad)
         # print('update = ', time.time() - ti)
 
         # ti = time.time()
@@ -531,29 +510,81 @@ class band_actor(object):
         # print('postivity = ', time.time() - ti)
 
         # ti = time.time()
+        # do in place
         self.psi.dot(self.model, self.vtilde)
-        ne.evaluate('d + sigma * vtilde', local_dict={
-            'd': self.dual,
-            'sigma': self.sigma,
-            'vtilde': self.vtilde},
-            out=self.vtilde, casting='same_kind')
-        # self.vtilde *= self.sigma
-        # self.vtilde += self.dual
+        self.vtilde *= self.sigma
+        self.vtilde += self.dual
         # self.vtilde[...] = self.dual + self.sigma * self.psi_dot(x=self.model)
         # print('vtilde = ', time.time() - ti)
 
         # ti = time.time()
-        eps_num = ne.evaluate('sum((m-xp)**2)', local_dict={
-            'm': self.model,
-            'xp': self.xp},
-            casting='same_kind')
-        # eps_num = np.sum((self.model-self.xp)**2)
+        eps_num = np.sum((self.model-self.xp)**2)
         eps_den = np.sum(self.model**2)
         # print('eps = ', time.time() - ti)
 
         # vtilde - (nband, nbasis, nymax, nxmax)
         return self.vtilde, eps_num, eps_den, int(self.bandid)
 
+    # # the ne version doesn't seem to make a huge difference
+    # def pd_update_ne(self, ratio):
+    #     # ratio - (nbasis, nymax, nxmax)
+    #     # ti = time.time()
+    #     self.xp[...] = self.model[...]
+    #     self.vp[...] = self.dual[...]
+    #     # print('copy = ', time.time() - ti)
+    #     # self.dual[...] = self.vtilde * (1 - ratio)
+    #     ne.evaluate('vtilde * (1 - ratio)', local_dict={
+    #         'vtilde' : self.vtilde,
+    #         'ratio': ratio},
+    #         out=self.dual, casting='same_kind')
+
+    #     # ti = time.time()
+    #     grad = self.backward_grad(self.xp)
+    #     # print('grad = ', time.time() - ti)
+    #     # ti = time.time()
+    #     ne.evaluate('2*dual - vp', local_dict={
+    #         'dual': self.dual,
+    #         'vp': self.vp},
+    #         out=self.dual_tmp, casting='same_kind')
+    #     # self.psi.hdot(2*self.dual - self.vp, self.b)
+    #     self.psi.hdot(self.dual_tmp, self.b)
+    #     ne.evaluate('xp - tau*(b + g)', local_dict={
+    #         'xp': self.xp,
+    #         'tau': self.tau,
+    #         'b': self.b,
+    #         'g': grad},
+    #         out=self.model, casting='same_kind')
+    #     # self.model[...] = self.xp - self.tau * (self.b + grad)
+    #     # print('update = ', time.time() - ti)
+
+    #     # ti = time.time()
+    #     if self.opts.positivity:
+    #         self.model[self.model < 0] = 0.0
+    #     # print('postivity = ', time.time() - ti)
+
+    #     # ti = time.time()
+    #     self.psi.dot(self.model, self.vtilde)
+    #     ne.evaluate('d + sigma * vtilde', local_dict={
+    #         'd': self.dual,
+    #         'sigma': self.sigma,
+    #         'vtilde': self.vtilde},
+    #         out=self.vtilde, casting='same_kind')
+    #     # self.vtilde *= self.sigma
+    #     # self.vtilde += self.dual
+    #     # self.vtilde[...] = self.dual + self.sigma * self.psi_dot(x=self.model)
+    #     # print('vtilde = ', time.time() - ti)
+
+    #     # ti = time.time()
+    #     eps_num = ne.evaluate('sum((m-xp)**2)', local_dict={
+    #         'm': self.model,
+    #         'xp': self.xp},
+    #         casting='same_kind')
+    #     # eps_num = np.sum((self.model-self.xp)**2)
+    #     eps_den = np.sum(self.model**2)
+    #     # print('eps = ', time.time() - ti)
+
+    #     # vtilde - (nband, nbasis, nymax, nxmax)
+    #     return self.vtilde, eps_num, eps_den, int(self.bandid)
 
     def init_random(self):
         self.b[...] = np.random.randn(self.nx, self.ny)

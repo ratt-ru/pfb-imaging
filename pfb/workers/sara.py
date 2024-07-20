@@ -110,8 +110,8 @@ def _sara(ddsi=None, **kw):
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
     from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
-    from pfb.utils.misc import l1reweight_func
-    from pfb.operators.psf import psf_convolve_cube2
+    from pfb.utils.misc import l1reweight_func, taperf
+    from pfb.operators.hessian import hess_direct
     from pfb.operators.psi import Psi
     from pfb.operators.gridder import compute_residual
     from copy import copy, deepcopy
@@ -143,7 +143,9 @@ def _sara(ddsi=None, **kw):
                                  'yo2':-1}))
     else:
         # are these sorted correctly?
-        dds = xds_from_url(dds_store.url)
+        dds = xds_from_list(dds_list,
+                            drop_vars=['UVW', 'WEIGHT', 'MASK'],
+                            nthreads=opts.nthreads)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
@@ -158,11 +160,16 @@ def _sara(ddsi=None, **kw):
 
     nband = freq_out.size
 
+    # only need this to get ny_psf
+    dds = [ds.drop_vars('PSF') for ds in dds]
+
     # stitch dirty/psf in apparent scale
     # drop_vars to avoid duplicates in memory
+    # and avoid unintentional side effects?
     output_type = dds[0].DIRTY.dtype
     if 'RESIDUAL' in dds[0]:
         residual = np.stack([ds.RESIDUAL.values for ds in dds], axis=0)
+        dds = [ds.drop_vars('DIRTY') for ds in dds]
         dds = [ds.drop_vars('RESIDUAL') for ds in dds]
     else:
         residual = np.stack([ds.DIRTY.values for ds in dds], axis=0)
@@ -172,18 +179,22 @@ def _sara(ddsi=None, **kw):
         dds = [ds.drop_vars('MODEL') for ds in dds]
     else:
         model = np.zeros((nband, nx, ny))
-    psf = np.stack([ds.PSF.values for ds in dds], axis=0)
-    dds = [ds.drop_vars('PSF') for ds in dds]
-    wsums = np.stack([ds.WSUM.values[0] for ds in dds], axis=0)
+    if 'UPDATE' in dds[0]:
+        update = np.stack([ds.UPDATE.values for ds in dds], axis=0)
+        dds = [ds.drop_vars('UPDATE') for ds in dds]
+    else:
+        update = np.zeros((nband, nx, ny))
+    psfhat = np.stack([ds.PSFHAT.values for ds in dds], axis=0)
+    dds = [ds.drop_vars('PSFHAT') for ds in dds]
+    wsums = np.stack([ds.wsum for ds in dds], axis=0)
     fsel = wsums > 0  # keep track of empty bands
 
     wsum = np.sum(wsums)
-    psf /= wsum
+    psfhat = np.abs(psfhat)/wsum
     residual /= wsum
-    psf_mfs = np.sum(psf, axis=0)
     residual_mfs = np.sum(residual, axis=0)
 
-    # for intermediary results (not currently written)
+    # for intermediary results
     nx = dds[0].x.size
     ny = dds[0].y.size
     ra = dds[0].ra
@@ -202,32 +213,31 @@ def _sara(ddsi=None, **kw):
 
     # image space hessian
     # pre-allocate arrays for doing FFT's
-    xhat = empty_noncritical(psf.shape, dtype='c16')
-    nxpadl = (nx_psf - nx)//2
-    nxpadr = nx_psf - nx - nxpadl
-    nypadl = (ny_psf - ny)//2
-    nypadr = ny_psf - ny - nypadl
-    if nx_psf != nx:
-        slicex = slice(nxpadl, -nxpadr)
-    else:
-        slicex = slice(None)
-    if ny_psf != ny:
-        slicey = slice(nypadl, -nypadr)
-    else:
-        slicey = slice(None)
-    psf = np.fft.fftshift(psf.astype('c16'), axes=(1,2))
-    c2c(psf, axes=(1,2), forward=True, inorm=0, out=psf,
-        nthreads=opts.nthreads)
-    psf_convolve = partial(psf_convolve_cube2,
-                           xhat,
-                           psf,
-                           slicex,
-                           slicey,
-                           nthreads=opts.nthreads)
+    real_type = 'f8'
+    complex_type = 'c16'
+    npix = np.maximum(nx, ny)
+    nyo2 = psfhat.shape[-1]
+    taperxy = taperf((nx, ny), int(0.1*npix))
+    xhat = empty_noncritical((nband, nx_psf, nyo2),
+                             dtype=complex_type)
+    xpad = empty_noncritical((nband, nx_psf, ny_psf),
+                             dtype=real_type)
+    xout = empty_noncritical((nband, nx, ny),
+                             dtype=real_type)
+    precond = partial(hess_direct,
+                      xpad=xpad,
+                      xhat=xhat,
+                      xout=xout,
+                      psfhat=psfhat,
+                      taperxy=taperxy,
+                      lastsize=ny_psf,
+                      nthreads=opts.nthreads,
+                      sigmainvsq=1.0,
+                      mode='forward')
 
     if opts.hess_norm is None:
         print("Finding spectral norm of Hessian approximation", file=log)
-        hess_norm, hessbeta = power_method(psf_convolve, (nband, nx, ny),
+        hess_norm, hessbeta = power_method(precond, (nband, nx, ny),
                                           tol=opts.pm_tol,
                                           maxit=opts.pm_maxit,
                                           verbosity=opts.pm_verbose,
@@ -245,40 +255,28 @@ def _sara(ddsi=None, **kw):
     Nxmax = psi.Nxmax
     Nymax = psi.Nymax
 
-    # get clean beam area to convert residual units during l1reweighting
-    # TODO - could refine this with comparison between dirty and restored
-    print("Fitting PSF", file=log)
-    GaussPar = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
-    pix_per_beam = GaussPar[0]*GaussPar[1]*np.pi/4
-    print(f"Number of pixels per beam estimated as {pix_per_beam}",
-          file=log)
-
-    # We do the following to set hyper-parameters in an intuitive way
-    # i) convert residual units so it is comparable to model
-    # ii) project residual into dual domain
-    # iii) compute the rms in the space where thresholding happens
-    psiHoutvar = np.zeros((nband, nbasis, Nymax, Nxmax),
-                          dtype=residual.dtype)
-    fsel = wsums > 0
-    tmp2 = residual.copy()
-    tmp2[fsel] *= wsum/wsums[fsel, None, None]
-    psi.dot(tmp2/pix_per_beam, psiHoutvar)
-    rms_comps = np.std(np.sum(psiHoutvar, axis=0),
-                       axis=(-1,-2))[:, None, None]  # preserve axes
-
     # a value less than zero turns L1 reweighting off
     # we'll start on convergence or at the iteration
     # indicated by l1reweight_from, whichever comes first
     l1reweight_from = opts.l1reweight_from
     l1reweight_active = False
+    # we need an array to put the components in for reweighting
+    outvar = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=real_type)
 
     # TODO - should we cache this?
     dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=residual.dtype)
     if l1reweight_from == 0:
         print('Initialising with L1 reweighted', file=log)
+        if not update.any():
+            raise ValueError("Cannot reweight before any updates have been performed")
+        # divide by taper so as not to bias rms_comps
+        psi.dot(update/taperxy, outvar)
+        tmp = np.sum(outvar, axis=0)
+        # exclude zeros from padding DWT's
+        rms_comps = np.std(tmp[tmp!=0])
         reweighter = partial(l1reweight_func,
                              psi.dot,
-                             psiHoutvar,
+                             outvar,
                              opts.rmsfactor,
                              rms_comps,
                              alpha=opts.alpha)
@@ -287,6 +285,7 @@ def _sara(ddsi=None, **kw):
     else:
         l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=residual.dtype)
         reweighter = None
+        l1reweight_active = False
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
@@ -297,10 +296,27 @@ def _sara(ddsi=None, **kw):
     print(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
     for k in range(iter0, iter0 + opts.niter):
+        print('Solving for update', file=log)
+        update = hess_direct(
+                    residual,
+                    xpad=xpad,
+                    xhat=xhat,
+                    xout=xout,
+                    psfhat=psfhat,
+                    taperxy=taperxy,
+                    lastsize=ny_psf,
+                    nthreads=opts.nthreads,
+                    sigmainvsq=1.0,
+                    mode='backward')
+        update_mfs = np.mean(update, axis=0)
+        save_fits(update_mfs,
+                  fits_oname + f'_{opts.suffix}_update_{k+1}.fits',
+                  hdr_mfs)
+
         print('Solving for model', file=log)
         modelp = deepcopy(model)
-        data = residual + psf_convolve(model)
-        grad21 = lambda x: psf_convolve(x) - data
+        xtilde = model + opts.gamma * update
+        grad21 = lambda x: -precond(xtilde - x)/opts.gamma
         if k == 0:
             rmsfactor = opts.init_factor * opts.rmsfactor
         else:
@@ -346,7 +362,7 @@ def _sara(ddsi=None, **kw):
                 'times': (('t',), time_out),  # to allow rendering to original grid
                 'freqs': (('f',), freq_out)
             }
-            attrs = {
+            mattrs = {
                 'spec': 'genesis',
                 'cell_rad_x': cell_rad,
                 'cell_rad_y': cell_rad,
@@ -364,7 +380,7 @@ def _sara(ddsi=None, **kw):
 
             coeff_dataset = xr.Dataset(data_vars=data_vars,
                                coords=coords,
-                               attrs=attrs)
+                               attrs=mattrs)
             coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model.mds",
                                   mode='w')
         except Exception as e:
@@ -404,16 +420,20 @@ def _sara(ddsi=None, **kw):
             best_rms = rms
             best_rmax = rmax
             best_model = model.copy()
-            for ds_name, ds in zip(dds_list, dds):
-                b = int(ds.bandid)
-                ds = ds.assign(**{
-                    'MODEL_BEST': (('x', 'y'), best_model[b])
-                })
-                ds = ds.assign_attrs(**{
-                    'rms': best_rms,
-                    'rmax': best_rmax
-                })
-                ds.to_zarr(ds_name, mode='a')
+
+        # these are not updated in compute_residual
+        for ds_name, ds in zip(dds_list, dds):
+            b = int(ds.bandid)
+            ds = ds.assign(**{
+                'MODEL_BEST': (('x', 'y'), best_model[b]),
+                'UPDATE': (('x', 'y'), update[b]),
+            })
+            attrs = {}
+            attrs['rms'] = best_rms
+            attrs['rmax'] = best_rmax
+            attrs['niters'] = k+1
+            ds = ds.assign_attrs(**attrs)
+            ds.to_zarr(ds_name, mode='a')
 
 
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
@@ -432,19 +452,19 @@ def _sara(ddsi=None, **kw):
 
         if k+1 - iter0 >= l1reweight_from:
             print('Computing L1 weights', file=log)
-            # convert residual units so it is comparable to model
-            tmp2[fsel] = residual[fsel] * wsum/wsums[fsel, None, None]
-            psi.dot(tmp2/pix_per_beam, psiHoutvar)
-            rms_comps = np.std(np.sum(psiHoutvar, axis=0),
-                               axis=(-1,-2))[:, None, None]  # preserve axes
-            # we redefine the reweighter here since the rms has changed
+            # divide by taper so as not to bias rms_comps
+            psi.dot(update/taperxy, outvar)
+            tmp = np.sum(outvar, axis=0)
+            # exclude zeros from padding DWT's
+            rms_comps = np.std(tmp[tmp!=0])
             reweighter = partial(l1reweight_func,
-                                 psi.dot,
-                                 psiHoutvar,
-                                 opts.rmsfactor,
-                                 rms_comps,
-                                 alpha=opts.alpha)
+                                psi.dot,
+                                outvar,
+                                opts.rmsfactor,
+                                rms_comps,
+                                alpha=opts.alpha)
             l1weight = reweighter(model)
+            l1reweight_active = True
 
         if rms > rmsp:
             diverge_count += 1
