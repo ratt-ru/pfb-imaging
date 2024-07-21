@@ -532,7 +532,9 @@ def image_data_products(dsl,
         # sample noise and project into image space
         nrow, nchan = vis.shape
         vis = (np.random.randn(nrow, nchan) +
-               1j*np.random.randn(nrow, nchan)) * np.sqrt(wgt)/np.sqrt(2)
+               1j*np.random.randn(nrow, nchan))
+        wmask = wgt > 0.0
+        vis[wmask] /= np.sqrt(wgt[wmask])
         noise = vis2dirty(
             uvw=uvw,
             freq=freq,
