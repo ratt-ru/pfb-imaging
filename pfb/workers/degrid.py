@@ -2,6 +2,7 @@
 from contextlib import ExitStack
 from pfb.workers.main import cli
 import click
+import time
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
@@ -24,9 +25,16 @@ def degrid(**kw):
     '''
     defaults.update(kw)
     opts = OmegaConf.create(defaults)
-    import time
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'degrid_{timestamp}.log')
+
+    from pfb.utils.naming import set_output_names
+    opts, basedir, oname = set_output_names(opts)
+
+    import psutil
+    nthreads = psutil.cpu_count(logical=True)
+    ncpu = psutil.cpu_count(logical=False)
+    if opts.nthreads is None:
+        opts.nthreads = nthreads//2
+        ncpu = ncpu//2
 
     from daskms.fsspec_store import DaskMSStore
     msnames = []
@@ -51,29 +59,32 @@ def degrid(**kw):
 
     OmegaConf.set_struct(opts, True)
 
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
+
     if opts.product.upper() not in ["I"]:
                                     # , "Q", "U", "V", "XX", "YX", "XY",
                                     # "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    logname = f'{str(opts.log_directory)}/degrid_{timestamp}.log'
+    pyscilog.log_to_file(logname)
+    print(f'Logs will be written to {logname}', file=log)
+
     with ExitStack() as stack:
         from pfb import set_client
-        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
+        client = set_client(opts.nworkers, stack, log)
 
-        # TODO - prettier config printing
-        print('Input Options:', file=log)
-        for key in opts.keys():
-            print('     %25s = %s' % (key, opts[key]), file=log)
-
+        ti = time.time()
         _degrid(**opts)
 
-    print("All done here.", file=log)
+    print(f"All done after {time.time() - ti}s.", file=log)
 
 def _degrid(**kw):
     opts = OmegaConf.create(kw)
-    from omegaconf import ListConfig
-    if not isinstance(opts.ms, list) and not isinstance(opts.ms, ListConfig) :
-        opts.ms = [opts.ms]
     OmegaConf.set_struct(opts, True)
 
     import numpy as np
@@ -96,10 +107,8 @@ def _degrid(**kw):
     import sympy as sm
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
-    from ducc0.misc import resize_thread_pool, thread_pool_size
-    nthreads_tot = opts.nthreads_dask * opts.nthreads
-    resize_thread_pool(nthreads_tot)
-    print(f'ducc0 max number of threads set to {thread_pool_size()}', file=log)
+    from ducc0.misc import resize_thread_pool
+    resize_thread_pool(opts.nthreads)
 
     mds = xr.open_zarr(opts.mds)
 
@@ -231,6 +240,10 @@ def _degrid(**kw):
     # dask.visualize(writes, filename=opts.output_filename +
     #                '_degrid_writes_I_graph.pdf', optimize_graph=False)
 
-    with compute_context(opts.scheduler, opts.mds+'_degrid'):
+    if opts.nworkers > 1:
+        scheduler = 'distributed'
+    else:
+        scheduler = None
+    with compute_context(scheduler, opts.mds+'_degrid'):
         dask.compute(writes, optimize_graph=False)
 

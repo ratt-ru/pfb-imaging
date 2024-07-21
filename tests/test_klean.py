@@ -30,6 +30,7 @@ def test_klean(do_gains, ms_name):
     from numpy.testing import assert_allclose
     from daskms import xds_from_ms, xds_from_table, xds_to_table
     from daskms.experimental.zarr import xds_to_zarr
+    from pfb.utils.naming import xds_from_url
     from africanus.constants import c as lightspeed
     from ducc0.wgridder import dirty2vis
 
@@ -199,8 +200,9 @@ def test_klean(do_gains, ms_name):
     init_args["max_field_of_view"] = fov*1.1
     init_args["overwrite"] = True
     init_args["channels_per_image"] = 1
+    init_args["bda_decorr"] = 1.0
     from pfb.workers.init import _init
-    xds = _init(**init_args)
+    _init(**init_args)
 
     # grid data to produce dirty image
     grid_args = {}
@@ -208,48 +210,44 @@ def test_klean(do_gains, ms_name):
         grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
     grid_args["output_filename"] = outname
-    grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
     grid_args["fits_mfs"] = True
     grid_args["psf"] = True
     grid_args["residual"] = False
-    grid_args["nthreads"] = 8  # has to be set when calling _grid
-    grid_args["nvthreads"] = 8
+    grid_args["nthreads"] = 8
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
     grid_args["do_wgridding"] = True
     from pfb.workers.grid import _grid
-    dds = _grid(xdsi=xds, **grid_args)
+    _grid(**grid_args)
 
     # run klean
     klean_args = {}
     for key in schema.klean["inputs"].keys():
         klean_args[key.replace("-", "_")] = schema.klean["inputs"][key]["default"]
     klean_args["output_filename"] = outname
-    klean_args["nband"] = nchan
     klean_args["dirosion"] = 0
     klean_args["do_residual"] = False
     klean_args["niter"] = 100
-    threshold = 1e-5
+    threshold = 1e-1
     klean_args["threshold"] = threshold
     klean_args["gamma"] = 0.1
     klean_args["peak_factor"] = 0.75
     klean_args["sub_peak_factor"] = 0.75
     klean_args["nthreads"] = 8
-    klean_args["nvthreads"] = 8
-    klean_args["scheduler"] = 'sync'
     klean_args["do_wgridding"] = True
     klean_args["epsilon"] = epsilon
     klean_args["mop_flux"] = True
     klean_args["fits_mfs"] = False
     from pfb.workers.klean import _klean
-    _klean(ddsi=dds, **klean_args)
+    _klean(**klean_args)
 
     # get inferred model
-    dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
+    dds = xds_from_url(dds_name)
     model_inferred = np.zeros((nchan, nx, ny))
     for ds in dds:
-        b = ds.bandid
+        # import ipdb; ipdb.set_trace()
+        b = int(ds.bandid)
         model_inferred[b] = ds.MODEL.values
 
     # we actually reconstruct I/n(l,m) so we need to correct for that

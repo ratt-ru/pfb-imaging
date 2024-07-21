@@ -324,13 +324,20 @@ def _klean(ddsi=None, **kw):
             best_rms = rms
             best_rmax = rmax
             best_model = model.copy()
-            for ds_name, ds in zip(dds_list, dds):
-                b = int(ds.bandid)
-                ds = ds.assign(**{
-                    'MODEL_BEST': (('x', 'y'), best_model[b])
-                })
 
-                ds.to_zarr(ds_name, mode='a')
+        # these are not updated in compute_residual
+        for ds_name, ds in zip(dds_list, dds):
+            b = int(ds.bandid)
+            ds = ds.assign(**{
+                'MODEL': (('x', 'y'), model[b]),
+                'MODEL_BEST': (('x', 'y'), best_model[b]),
+            })
+            attrs = {}
+            attrs['rms'] = best_rms
+            attrs['rmax'] = best_rmax
+            attrs['niters'] = k+1
+            ds = ds.assign_attrs(**attrs)
+            ds.to_zarr(ds_name, mode='a')
 
         if opts.threshold is None:
             threshold = opts.sigmathreshold * rms

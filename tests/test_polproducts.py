@@ -28,6 +28,7 @@ def test_polproducts(do_gains, ms_name):
     from daskms.experimental.zarr import xds_to_zarr
     from africanus.constants import c as lightspeed
     from ducc0.wgridder import dirty2vis
+    from pfb.utils.naming import xds_from_url
 
 
     test_dir = Path(ms_name).resolve().parent
@@ -240,11 +241,12 @@ def test_polproducts(do_gains, ms_name):
         init_args["flag_column"] = 'FLAG'
         init_args["gain_table"] = gain_path
         init_args["max_field_of_view"] = fov*1.1
+        init_args["bda_decorr"] = 1.0
         init_args["overwrite"] = True
         init_args["channels_per_image"] = 1
         init_args["product"] = p
         from pfb.workers.init import _init
-        xds = _init(**init_args)
+        _init(**init_args)
 
         # grid data to produce dirty image
         grid_args = {}
@@ -252,21 +254,19 @@ def test_polproducts(do_gains, ms_name):
             grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
         # overwrite defaults
         grid_args["output_filename"] = basename
-        grid_args["nband"] = nchan
         grid_args["field_of_view"] = fov
         grid_args["fits_mfs"] = True
         grid_args["psf"] = True
         grid_args["residual"] = False
-        grid_args["nthreads"] = 8  # has to be set when calling _grid
-        grid_args["nvthreads"] = 8
+        grid_args["nthreads"] = 8
         grid_args["overwrite"] = True
         grid_args["robustness"] = 0.0
         grid_args["do_wgridding"] = True
         grid_args["product"] = p
         from pfb.workers.grid import _grid
-        dds = _grid(xdsi=xds, **grid_args)
+        _grid(**grid_args)
 
-        dds = dask.compute(dds)[0]
+        dds = xds_from_url(dds_name)
 
         for ds in dds:
             wsum = ds.WSUM.values

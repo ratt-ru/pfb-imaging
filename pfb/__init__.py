@@ -48,10 +48,10 @@ def set_client(nworkers, stack, log,
                 }
         })
         cluster = LocalCluster(processes=True,
-                                n_workers=nworkers,
-                                threads_per_worker=1,
-                                memory_limit=0,  # str(mem_limit/nworkers)+'GB'
-                                asynchronous=False)
+                               n_workers=nworkers,
+                               threads_per_worker=1,
+                               memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                               asynchronous=False)
         cluster = stack.enter_context(cluster)
         client = stack.enter_context(Client(cluster,
                                             direct_to_workers=direct_to_workers))

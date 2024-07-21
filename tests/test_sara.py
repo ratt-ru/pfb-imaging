@@ -29,6 +29,7 @@ def test_sara(ms_name):
     import dask
     import xarray as xr
     from daskms import xds_from_ms, xds_from_table, xds_to_table
+    from pfb.utils.naming import xds_from_url
     from pfb.utils.misc import Gaussian2D, give_edges
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
@@ -148,7 +149,7 @@ def test_sara(ms_name):
     init_args["max_field_of_view"] = fov*1.1
     init_args["overwrite"] = True
     init_args["channels_per_image"] = 1
-    xdso = _init(**init_args)
+    _init(**init_args)
 
     # grid data to produce dirty image
     grid_args = {}
@@ -156,50 +157,41 @@ def test_sara(ms_name):
         grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
     grid_args["output_filename"] = outname
-    grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
     grid_args["fits_mfs"] = False
     grid_args["psf"] = True
     grid_args["residual"] = False
-    grid_args["nthreads_dask"] = 1
-    grid_args["nvthreads"] = 8
+    grid_args["nthreads"] = 8
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
     grid_args["do_wgridding"] = True
-    dds = _grid(xdsi=xdso, **grid_args)
+    _grid(**grid_args)
 
-    # LB - does this avoid duplicate gridding?
     dds_name = f'{outname}_main.dds'
-    dds = dask.compute(dds)[0]
-    writes = xds_to_zarr(dds, dds_name, columns='ALL')
-    dask.compute(writes)
 
     # run sara
     sara_args = {}
     for key in schema.sara["inputs"].keys():
         sara_args[key.replace("-", "_")] = schema.sara["inputs"][key]["default"]
     sara_args["output_filename"] = outname
-    sara_args["nband"] = nchan
     sara_args["niter"] = 2
     tol = 1e-5
     sara_args["tol"] = tol
     sara_args["gamma"] = 1.0
-    sara_args["pd_tol"] = 5e-4
+    sara_args["pd_tol"] = 1e-3
     sara_args["rmsfactor"] = 0.1
     sara_args["l1reweight_from"] = 5
-    sara_args["bases"] = 'self,db1,db2,db3'
+    sara_args["bases"] = 'self,db1'
     sara_args["nlevels"] = 3
-    sara_args["nthreads_dask"] = 1
-    sara_args["nvthreads"] = 8
-    sara_args["scheduler"] = 'sync'
+    sara_args["nthreads"] = 8
     sara_args["do_wgridding"] = True
     sara_args["epsilon"] = epsilon
     sara_args["fits_mfs"] = False
-    _sara(ddsi=dds, **sara_args)
+    _sara(**sara_args)
 
 
     # get the inferred model
-    dds = xds_from_zarr(dds_name)
+    dds = xds_from_url(dds_name)
     freqs_dds = []
     times_dds = []
     for ds in dds:
@@ -215,7 +207,9 @@ def test_sara(ms_name):
 
     model_inferred = np.zeros((ntime_dds, nfreq_dds, nx, ny))
     for ds in dds:
-        model_inferred[ds.timeid, ds.bandid, :, :] = ds.MODEL.values
+        b = int(ds.bandid)
+        t = int(ds.timeid)
+        model_inferred[t, b, :, :] = ds.MODEL.values
 
     model2comps_args = {}
     for key in schema.model2comps["inputs"].keys():
@@ -269,11 +263,10 @@ def test_sara(ms_name):
     degrid_args = {}
     for key in schema.degrid["inputs"].keys():
         degrid_args[key.replace("-", "_")] = schema.degrid["inputs"][key]["default"]
-    degrid_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+    degrid_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
     degrid_args["mds"] = f'{outname}_main_model.mds'
     degrid_args["channels_per_image"] = 1
-    degrid_args["nthreads_dask"] = 1
-    degrid_args["nvthreads"] = 8
+    degrid_args["nthreads"] = 8
     degrid_args["do_wgridding"] = True
     _degrid(**degrid_args)
 
@@ -296,9 +289,10 @@ def test_sara(ms_name):
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = None
     init_args["max_field_of_view"] = fov*1.1
+    init_args["bda_decorr"] = 1.0
     init_args["overwrite"] = True
     init_args["channels_per_image"] = 1
-    xdso2 = _init(**init_args)
+    _init(**init_args)
 
     # grid data to produce dirty image
     grid_args = {}
@@ -306,19 +300,19 @@ def test_sara(ms_name):
         grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
     grid_args["output_filename"] = outname
-    grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
     grid_args["fits_mfs"] = False
     grid_args["psf"] = False
     grid_args["residual"] = False
-    grid_args["nthreads_dask"] = 1
-    grid_args["nvthreads"] = 8
+    grid_args["nthreads"] = 8
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
     grid_args["do_wgridding"] = True
-    dds2 = _grid(xdsi=xdso2, **grid_args)
+    _grid(**grid_args)
 
-    dds2 = dask.compute(dds2)[0]
+    dds_name = f'{outname}_main.dds'
+
+    dds2 = xds_from_url(dds_name)
 
     for ds, ds2 in zip(dds, dds2):
         wsum = ds.WSUM.values

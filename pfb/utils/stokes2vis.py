@@ -175,7 +175,7 @@ def single_stokes(
     gc.collect()
 
     # LB - do before or after averaging?
-    uv_max = np.maximum(uvw[:, 0].max(), uvw[:, 1].max())
+    uv_max = np.maximum(np.abs(uvw[:, 0]).max(), np.abs(uvw[:, 1]).max())
     max_freq = freq.max()
 
     # simple average over channels

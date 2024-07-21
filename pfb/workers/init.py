@@ -88,8 +88,7 @@ def init(**kw):
         dask.config.set(**{'array.slicing.split_large_chunks': False})
         from pfb import set_client
         from distributed import wait, get_client
-        set_client(opts.nworkers, stack, log)
-        client = get_client()
+        client = set_client(opts.nworkers, stack, log)
 
         ti = time.time()
         _init(**opts)
@@ -98,7 +97,6 @@ def init(**kw):
 
 def _init(**kw):
     opts = OmegaConf.create(kw)
-    from omegaconf import ListConfig, open_dict
     OmegaConf.set_struct(opts, True)
 
     import numpy as np

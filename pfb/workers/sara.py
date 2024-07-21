@@ -422,6 +422,7 @@ def _sara(ddsi=None, **kw):
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
             ds = ds.assign(**{
+                'MODEL': (('x', 'y'), model[b]),
                 'MODEL_BEST': (('x', 'y'), best_model[b]),
                 'UPDATE': (('x', 'y'), update[b]),
             })
