@@ -7,6 +7,8 @@ import sys
 # _, hardlim = resource.getrlimit(resource.RLIMIT_AS)
 # resource.setrlimit(resource.RLIMIT_AS, (mem_total, hardlim))
 
+__version__ = '0.0.4'
+
 def set_envs(nthreads, ncpu):
     os.environ["OMP_NUM_THREADS"] = str(nthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(nthreads)
