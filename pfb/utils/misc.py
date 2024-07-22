@@ -1075,7 +1075,6 @@ def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model, alpha=4):
     '''
     psiH(model, outvar)
     mcomps = np.abs(np.sum(outvar, axis=0))
-    # the **alpha here results in more agressive reweighting
     return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
 
 
@@ -1510,6 +1509,18 @@ def taperf(shape, taper_width):
     taper_y[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
 
     return np.outer(taper_y, taper_x)
+
+
+@njit(parallel=True)
+def parallel_standard_normal(shape):
+    rows, cols = shape
+    result = np.empty(shape, dtype=np.float64)
+
+    for i in prange(rows):
+        for j in range(cols):
+            result[i, j] = np.random.standard_normal()
+
+    return result
 
 # def fft_interp(image, cellxi, cellyi, nxo, nyo,
 #                cellxo, cellyo, shiftx, shifty):

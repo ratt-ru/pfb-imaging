@@ -62,16 +62,16 @@ def grid(**kw):
     opts.xds = xds_store.url
     OmegaConf.set_struct(opts, True)
 
-    # TODO - prettier config printing
-    print('Input Options:', file=log)
-    for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
-
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/grid_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
+
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
 
     from pfb import set_envs
     from ducc0.misc import resize_thread_pool, thread_pool_size
@@ -283,7 +283,7 @@ def _grid(xdsi=None, **kw):
                          name='opts.pkl')
 
         # check if we need to remake the data products
-        verify_attrs = ['epsilon', 'mf_weighting'
+        verify_attrs = ['epsilon', 'mf_weighting',
                         'do_wgridding', 'double_accum',
                         'field_of_view', 'super_resolution_factor']
         try:
@@ -412,7 +412,7 @@ def _grid(xdsi=None, **kw):
         freq_out = ds_dct['freq_out']
 
         if from_cache:
-            ds_out = xr.open_zarr(f'{dds_store.url}/time{timeid}_band{bandid}.zarr',
+            out_ds = xr.open_zarr(f'{dds_store.url}/time{timeid}_band{bandid}.zarr',
                                   chunks=None)
 
         # compute lm coordinates of target

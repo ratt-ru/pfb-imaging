@@ -5,6 +5,7 @@ number of rows after BDA.
 """
 
 import numpy as np
+import numba
 import concurrent.futures as cf
 import xarray as xr
 import dask
@@ -13,7 +14,7 @@ from ducc0.wgridder import vis2dirty, dirty2vis
 from ducc0.fft import c2r, r2c, c2c
 from africanus.constants import c as lightspeed
 from quartical.utils.dask import Blocker
-from pfb.utils.weighting import counts_to_weights
+from pfb.utils.weighting import counts_to_weights, _compute_counts
 from pfb.utils.beam import eval_beam
 from pfb.utils.naming import xds_from_list
 iFs = np.fft.ifftshift
@@ -347,6 +348,7 @@ def image_data_products(dsl,
     vis = ds.VIS.values
     wgt = ds.WEIGHT.values
     mask = ds.MASK.values
+    bandid = int(ds.bandid)
 
     # output ds
     dso = xr.Dataset(attrs=attrs, coords=coords)
@@ -377,26 +379,25 @@ def image_data_products(dsl,
 
         residual_vis *= -1  # negate model
         residual_vis += vis
-        # apply mask to both for reweighting
-        residual_vis *= mask
+        # apply mask for reweighting
+        # residual_vis *= mask
 
     if l2reweight_dof:
         ressq = (residual_vis*residual_vis.conj()).real
-        wcount = mask.sum()*2  # x2 because complex
-        # chi2_dofp = np.mean(ressq[mask]/wgt[mask])
-        if wcount:
-            ovar = ressq.sum()/wcount  # use 67% quantile?
-            # first divide ovar to get ressq relative to 1
-            # print(np.median(ressq/ovar), ovar)
+        ovar = np.var(residual_vis[mask])
+        chi2_dofp = np.mean(ressq[mask]*wgt[mask])
+        mean_dev = np.mean(ressq[mask]/ovar)
+        if ovar:
             wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)
             # now divide by ovar to scale to absolute units
+            # the chi2_dof after reweighting should be close to one
             wgt /= ovar
+            chi2_dof = np.mean(ressq[mask]*wgt[mask])
+            print(f'Band {bandid} chi2-dof changed from {chi2_dofp} to {chi2_dof} with mean deviation of {mean_dev}')
         else:
             wgt = None
 
-        # the chi2_dof after reweighting should be close to one
-        # chi2_dof = np.mean(ressq[mask]/wgt[mask])
-        # print(f'Chi2-dof changed from {chi2_dofp} to {chi2_dof}')
+
 
 
     # we usually want to re-evaluate this since the robustness may change
@@ -404,6 +405,14 @@ def image_data_products(dsl,
         if counts is None:
             raise ValueError('counts are None but robustness specified. '
                              'This is probably a bug!')
+        counts = _compute_counts(uvw,
+                                 freq,
+                                 mask,
+                                 wgt,
+                                 nx, ny,
+                                 cellx, celly,
+                                 uvw.dtype,
+                                 ngrid=nthreads)
         imwgt = counts_to_weights(
             counts,
             uvw,
@@ -531,10 +540,12 @@ def image_data_products(dsl,
     if do_noise:
         # sample noise and project into image space
         nrow, nchan = vis.shape
-        vis = (np.random.randn(nrow, nchan) +
-               1j*np.random.randn(nrow, nchan))
+        from pfb.utils.misc import parallel_standard_normal
+        vis = (parallel_standard_normal((nrow, nchan)) +
+               1j*parallel_standard_normal((nrow, nchan)))
         wmask = wgt > 0.0
         vis[wmask] /= np.sqrt(wgt[wmask])
+        vis[~wmask] = 0j
         noise = vis2dirty(
             uvw=uvw,
             freq=freq,

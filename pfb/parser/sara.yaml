@@ -17,7 +17,7 @@ inputs:
   nlevels:
     dtype: int
     info: 'Wavelet decomposition level'
-    default: 3
+    default: 2
     abbreviation: nlevels
   l1reweight-from:
     dtype: int
@@ -82,6 +82,11 @@ inputs:
     info:
       Will terminate the algorithm if the rms increases this many times.
       Set to larger than niter to disable this check.
+  do_res:
+    dtype: bool
+    default: true
+    info:
+      Deconvolve PSF to add intrinsic model resolution to dds
 
 outputs:
   {}

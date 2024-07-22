@@ -68,7 +68,8 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
                   epsilon=None,
                   double_accum=None,
                   nthreads=None,
-                  sigmainvsq=None):
+                  sigmainvsq=None,
+                  wsum=1.0):
     if not x.any():
         return np.zeros_like(x)
     nx, ny = x.shape
@@ -101,6 +102,7 @@ def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
                       do_wgridding=do_wgridding,
                       double_precision_accumulation=double_accum,
                       divide_by_n=False)
+    convim /= wsum
 
     if beam is not None:
         convim *= beam
@@ -223,3 +225,32 @@ def hess_direct(x,     # input image, not overwritten
         allow_overwriting_input=True)
     xout[...] = xpad[:, 0:nx, 0:ny]
     return xout * taperxy[None]
+
+
+def hess_direct_slice(x,     # input image, not overwritten
+                xpad=None,  # preallocated array to store padded image
+                xhat=None,  # preallocated array to store FTd image
+                xout=None,  # preallocated array to store output image
+                psfhat=None,
+                taperxy=None,
+                lastsize=None,
+                nthreads=1,
+                sigmainvsq=1,
+                wsum=None,
+                mode='forward'):
+    nx, ny = x.shape
+    xpad[...] = 0.0
+    xpad[0:nx, 0:ny] = x * taperxy
+    r2c(xpad, out=xhat, axes=(0,1),
+        forward=True, inorm=0, nthreads=nthreads)
+    if mode=='forward':
+        # xhat *= (psfhat + sigmainvsq)
+        xhat *= psfhat
+    else:
+        # xhat /= (psfhat + sigmainvsq)
+        xhat /= psfhat
+    c2r(xhat, axes=(0, 1), forward=False, out=xpad,
+        lastsize=lastsize, inorm=2, nthreads=nthreads,
+        allow_overwriting_input=True)
+    xout[...] = xpad[0:nx, 0:ny]
+    return xout * taperxy

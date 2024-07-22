@@ -104,6 +104,7 @@ inputs:
       the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
   l2reweight-dof:
     dtype: float
+    abbreviation: dof
     info:
       The degrees of freedom parameter for L2 reweighting.
       The default (None) means no reweighting.

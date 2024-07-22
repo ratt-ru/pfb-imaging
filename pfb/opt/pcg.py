@@ -4,9 +4,9 @@ import dask.array as da
 from distributed import wait
 from uuid import uuid4
 from ducc0.misc import make_noncritical
-from pfb.utils.misc import norm_diff
+from pfb.utils.misc import norm_diff, fitcleanbeam, Gaussian2D
 from pfb.utils.naming import xds_from_list
-from pfb.operators.hessian import _hessian_impl
+from pfb.operators.hessian import _hessian_impl, hess_direct_slice
 from ducc0.misc import empty_noncritical
 from ducc0.fft import c2c
 iFs = np.fft.ifftshift
@@ -258,32 +258,44 @@ def pcg_dds(ds_name,
     if not isinstance(ds_name, list):
         ds_name = [ds_name]
 
-    ds = xds_from_list(ds_name, nthreads=nthreads)[0]
+    # drop_vars = ['PSF']
+    # if not use_psf:
+    #     drop_vars.append('PSFHAT')
+    drop_vars = None
+    ds = xds_from_list(ds_name, nthreads=nthreads,
+                       drop_vars=drop_vars)[0]
 
     if residual_name in ds:
-        residp = getattr(ds, residual_name).values
-        j = residp * mask * ds.BEAM.values
-        # ds = ds.drop_vars(residual_name)
+        j = getattr(ds, residual_name).values * mask * ds.BEAM.values
+        ds = ds.drop_vars(residual_name)
     else:
-        residp = ds.DIRTY.values
-        j = residp * mask * ds.BEAM.values
-        # ds = ds.drop_vars(('DIRTY'))
+        j = ds.DIRTY.values * mask * ds.BEAM.values
+        ds = ds.drop_vars(('DIRTY'))
 
+    psf = ds.PSF.values
+    nx_psf, py_psf = psf.shape
     nx, ny = j.shape
     wsum = np.sum(ds.WEIGHT.values * ds.MASK.values)
+    psf /= wsum
+    j /= wsum
     # set sigmas relative to wsum
-    sigma *= wsum
-    sigmainvsq *= wsum
+    # sigma *= wsum
+    # sigmainvsq *= wsum
 
     # downweight edges of field compared to center
+    # this allows the PCG to downweight the fit to the edges
+    # which may be contaminated by edge effects and also
+    # stabalises the preconditioner
     width = int(0.1*nx)
     taperxy = taperf((nx, ny), width)
-    sigmainvsq /= taperxy
+    # sigmainvsq /= taperxy
 
     # set precond if PSF is present
-    if 'PSF' in ds and use_psf:
-        psf = ds.PSF.values.astype('c16')
-        nx_psf, ny_psf = psf.shape
+    if 'PSFHAT' in ds and use_psf:
+        psfhat = np.abs(ds.PSFHAT.values)/wsum + sigma
+        ds.drop_vars(('PSFHAT'))
+        nx_psf, nyo2 = psfhat.shape
+        ny_psf = 2*(nyo2-1)  # is this always the case?
         nxpadl = (nx_psf - nx)//2
         nxpadr = nx_psf - nx - nxpadl
         nypadl = (ny_psf - ny)//2
@@ -296,35 +308,39 @@ def pcg_dds(ds_name,
             unpad_y = slice(nypadl, -nypadr)
         else:
             unpad_y = slice(None)
-        # TODO - avoid copy
-        psf = c2c(Fs(psf, axes=(0,1)), forward=True, inorm=0, nthreads=8)
-        psf = np.abs(psf)
-        xhat = empty_noncritical((nx_psf, ny_psf),
-                                 dtype=np.complex128)
+        xpad = empty_noncritical((nx_psf, ny_psf),
+                                 dtype=j.dtype)
+        xhat = empty_noncritical((nx_psf, nyo2),
+                                 dtype='c16')
+        xout = empty_noncritical((nx, ny),
+                                 dtype=j.dtype)
+        precond = partial(
+                    hess_direct_slice,
+                    xpad=xpad,
+                    xhat=xhat,
+                    xout=xout,
+                    psfhat=psfhat,
+                    taperxy=taperxy,
+                    lastsize=ny_psf,
+                    nthreads=nthreads,
+                    sigmainvsq=1.0,  # not used
+                    mode='backward')
 
-        # downweight long spacings where we don't have data
-        # 0.5 based on Nyquist oversampling
-        taperuv = taperf((nx_psf, ny_psf), int(0.5*nx_psf))
-        taperuv = (1 + np.abs((1 - taperuv)))*sigma/2
-        taperuv = Fs(taperuv, axes=(0,1))
+        x0 = precond(j)
 
-        def precond(x, xhat=None, abspsf=None, sigma=None, taperxy=None, taperuv=None):
-            xhat[...] = 0j
-            xhat[unpad_x, unpad_y] = x  * taperxy
-            c2c(xhat, out=xhat, forward=True, inorm=0, nthreads=8)
-            xhat /= (abspsf + taperuv)
-            c2c(xhat, out=xhat, forward=False, inorm=2, nthreads=8)
-            return xhat[unpad_x, unpad_y].real * taperxy
-
-        precondo = partial(precond,
-                           xhat=xhat,
-                           abspsf=psf,
-                           sigma=sigma,
-                           taperxy=taperxy,
-                           taperuv=taperuv)
-        x0 = precondo(j)
+        # get intrinsic resolution by deconvolving psf
+        cbeam = precond(psf[unpad_x, unpad_y])
+        cbeam /= cbeam.max()
+        gaussparf = fitcleanbeam(cbeam[None], level=0.25, pixsize=1.0)[0]
+        ds = ds.assign(**{
+            'CBEAM': (('x', 'y'), cbeam)
+        })
+        ds = ds.assign_attrs(**{
+            'gaussparu': gaussparf
+        })
     else:
-        precondo = None
+        # print('Not using preconditioning')
+        precond = None
         x0 = np.zeros_like(j)
 
     hess = partial(_hessian_impl,
@@ -340,12 +356,13 @@ def pcg_dds(ds_name,
                    epsilon=epsilon,
                    double_accum=double_accum,
                    nthreads=nthreads,
-                   sigmainvsq=sigmainvsq)
+                   sigmainvsq=sigmainvsq,
+                   wsum=wsum)
 
     x = pcg(hess,
             j,
             x0=x0.copy(),
-            M=precondo,
+            M=precond,
             tol=tol,
             maxit=maxit,
             minit=1,
@@ -355,10 +372,8 @@ def pcg_dds(ds_name,
             return_resid=False)
 
     if model_name in ds:
-        modelp = getattr(ds, model_name).values
-        model = modelp + x
+        model = getattr(ds, model_name).values + x
     else:
-        modelp = np.zeros((nx ,ny))
         model = x
 
 
@@ -379,12 +394,10 @@ def pcg_dds(ds_name,
                                         sigmainvsq=0)
 
     ds = ds.assign(**{
-        'MODEL': (('x','y'), model),
-        'RESIDUAL': (('x','y'), resid),
-        'MODELP': (('x','y'), modelp),
-        'RESIDUALP': (('x','y'), residp),
+        'MODEL_MOPPED': (('x','y'), model),
+        'RESIDUAL_MOPPED': (('x','y'), resid),
         'UPDATE': (('x','y'), x),
-        'X0': (('x','y'), x0)
+        'X0': (('x','y'), x0),
     })
 
     ds.to_zarr(ds_name[0], mode='a')

@@ -43,16 +43,16 @@ def sara(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    # TODO - prettier config printing
-    print('Input Options:', file=log)
-    for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
-
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/sara_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
+
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
 
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import xds_from_url
@@ -60,6 +60,7 @@ def sara(**kw):
     basename = f'{basedir}/{oname}'
     fits_oname = f'{opts.fits_output_folder}/{oname}'
     dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
+    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
 
     with ExitStack() as stack:
         ti = time.time()
@@ -67,32 +68,46 @@ def sara(**kw):
 
         dds = xds_from_url(dds_store.url)
 
-        from pfb.utils.fits import dds2fits, dds2fits_mfs
-
         if opts.fits_mfs or opts.fits:
+            from pfb.utils.fits import dds2fits, dds2fits_mfs
             print(f"Writing fits files to {fits_oname}_{opts.suffix}",
                   file=log)
 
-        # convert to fits files
-        if opts.fits_mfs:
-            dds2fits_mfs(dds,
-                         'RESIDUAL',
-                         f'{fits_oname}_{opts.suffix}',
-                         norm_wsum=True)
-            dds2fits_mfs(dds,
-                         'MODEL',
-                         f'{fits_oname}_{opts.suffix}',
-                         norm_wsum=False)
-
-        if opts.fits_cubes:
-            dds2fits(dds,
+            dds2fits(dds_list,
                      'RESIDUAL',
                      f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=True)
-            dds2fits(dds,
+                     norm_wsum=True,
+                     nthreads=opts.nthreads,
+                     do_mfs=opts.fits_mfs,
+                     do_cube=opts.fits_cubes)
+            print('Done writing RESIDUAL', file=log)
+            dds2fits(dds_list,
                      'MODEL',
                      f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False)
+                     norm_wsum=False,
+                     nthreads=opts.nthreads,
+                     do_mfs=opts.fits_mfs,
+                     do_cube=opts.fits_cubes)
+            print('Done writing MODEL', file=log)
+            dds2fits(dds_list,
+                     'UPDATE',
+                     f'{fits_oname}_{opts.suffix}',
+                     norm_wsum=False,
+                     nthreads=opts.nthreads,
+                     do_mfs=opts.fits_mfs,
+                     do_cube=opts.fits_cubes)
+            print('Done writing UPDATE', file=log)
+            try:
+                dds2fits(dds_list,
+                     'MCBEAM',
+                     f'{fits_oname}_{opts.suffix}',
+                     norm_wsum=False,
+                     nthreads=opts.nthreads,
+                     do_mfs=opts.fits_mfs,
+                     do_cube=opts.fits_cubes)
+                print('Done writing MCBEAM', file=log)
+            except Exception as e:
+                print(e)
 
     print(f"All done after {time.time() - ti}s", file=log)
 
@@ -111,7 +126,7 @@ def _sara(ddsi=None, **kw):
     from pfb.opt.pcg import pcg
     from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
     from pfb.utils.misc import l1reweight_func, taperf
-    from pfb.operators.hessian import hess_direct
+    from pfb.operators.hessian import hess_direct, hessian_psf_cube
     from pfb.operators.psi import Psi
     from pfb.operators.gridder import compute_residual
     from copy import copy, deepcopy
@@ -161,6 +176,7 @@ def _sara(ddsi=None, **kw):
     nband = freq_out.size
 
     # only need this to get ny_psf
+    psf = np.stack([ds.PSF.values for ds in dds], axis=0)
     dds = [ds.drop_vars('PSF') for ds in dds]
 
     # stitch dirty/psf in apparent scale
@@ -190,10 +206,15 @@ def _sara(ddsi=None, **kw):
     fsel = wsums > 0  # keep track of empty bands
 
     wsum = np.sum(wsums)
-    psfhat = np.abs(psfhat)/wsum
-    psfhat += 1.0
+    psf /= wsum
+    psfhat /= wsum
+    abspsf = np.abs(psfhat)
+    abspsf += 1.0
     residual /= wsum
     residual_mfs = np.sum(residual, axis=0)
+
+    # add resolution info
+    gausspari = fitcleanbeam(psf, level=0.5, pixsize=1.0)  # normalised internally
 
     # for intermediary results
     nx = dds[0].x.size
@@ -211,7 +232,6 @@ def _sara(ddsi=None, **kw):
         iter0 = dds[0].niters
     else:
         iter0 = 0
-
     # image space hessian
     # pre-allocate arrays for doing FFT's
     real_type = 'f8'
@@ -229,7 +249,7 @@ def _sara(ddsi=None, **kw):
                       xpad=xpad,
                       xhat=xhat,
                       xout=xout,
-                      psfhat=psfhat,
+                      psfhat=abspsf,
                       taperxy=taperxy,
                       lastsize=ny_psf,
                       nthreads=opts.nthreads,
@@ -430,6 +450,7 @@ def _sara(ddsi=None, **kw):
             attrs['rms'] = best_rms
             attrs['rmax'] = best_rmax
             attrs['niters'] = k+1
+            attrs['gausspar'] = gausspari[b]
             ds = ds.assign_attrs(**attrs)
             ds.to_zarr(ds_name, mode='a')
 
@@ -470,14 +491,103 @@ def _sara(ddsi=None, **kw):
                 print("Algorithm is diverging. Terminating.", file=log)
                 break
 
-        # keep track of total number of iterations
+
+    if opts.do_res:
+        rmsf = rms
+        print("Getting intrinsic model resolution", file=log)
+        cbeam = np.zeros((nband, nx, ny))
+        dual = np.zeros((nband, nbasis, Nymax, Nxmax))
+        l1weight = np.ones((nbasis, Nymax, Nxmax))
+        reweighter = None
+        l1reweight_active = False
+        residual = psf.copy()
+        residual_mfs = np.sum(residual, axis=0)
+        rms = np.std(residual_mfs)
+        for k in range(iter0, iter0 + opts.niter):
+            update = hess_direct(
+                        residual,
+                        xpad=xpad,
+                        xhat=xhat,
+                        xout=xout,
+                        psfhat=psfhat,
+                        taperxy=taperxy,
+                        lastsize=ny_psf,
+                        nthreads=opts.nthreads,
+                        sigmainvsq=1.0,
+                        mode='backward')
+            xtilde = cbeam + opts.gamma * update
+            grad21 = lambda x: -precond(xtilde - x)/opts.gamma
+            cbeamp = cbeam.copy()
+            cbeam, dual = primal_dual(cbeam,
+                                    dual,
+                                    opts.rmsfactor*np.maximum(rms, rmsf),
+                                    psi.hdot,
+                                    psi.dot,
+                                    hess_norm,
+                                    prox_21,
+                                    l1weight,
+                                    reweighter,
+                                    grad21,
+                                    nu=nbasis,
+                                    positivity=opts.positivity,
+                                    tol=opts.pd_tol,
+                                    maxit=opts.pd_maxit,
+                                    verbosity=opts.pd_verbose,
+                                    report_freq=opts.pd_report_freq,
+                                    gamma=opts.gamma)
+
+            eps = np.linalg.norm(cbeam - cbeamp)/np.linalg.norm(cbeam)
+            if eps < opts.tol:
+                # do not converge prematurely
+                if l1reweight_from > 0 and not l1reweight_active:  # only happens once
+                    # start reweighting
+                    l1reweight_from = k+1 - iter0
+                    l1reweight_active = True
+                else:
+                    print(f"Converged after {k+1} iterations.", file=log)
+                    break
+
+            if k+1 - iter0 >= l1reweight_from:
+                print('Computing L1 weights', file=log)
+                # rms_comps fixed
+                reweighter = partial(l1reweight_func,
+                                    psi.dot,
+                                    outvar,
+                                    opts.rmsfactor,
+                                    rms_comps,
+                                    alpha=opts.alpha)
+                l1weight = reweighter(cbeam)
+                l1reweight_active = True
+
+            # the psf approximation shoul dbe more than good enough for this
+            residual = psf - hessian_psf_cube(
+                                xpad,  # preallocated array to store padded image
+                                xhat,  # preallocated array to store FTd image
+                                xout,  # preallocated array to store output image
+                                None,
+                                psfhat,
+                                lastsize,
+                                cbeam,     # input image, not overwritten
+                                nthreads=opts.nthreads,
+                                sigmainv=0,
+                                wsum=wsum
+            )
+            residual_mfs = np.sum(residual, axis=0)
+            rmax = np.abs(residual_mfs).max()
+            rms = np.std(residual_mfs)
+            print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
+              f"rms = {rms:.3e}, eps = {eps:.3e}",
+              file=log)
+
+        # only do this right at the end
+        gaussparm = fitcleanbeam(cbeam, level=0.25, pixsize=1.0)
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
-            ds = ds.assign_attrs(**{
-                'niter': k,
+            ds = ds.assign(**{
+                'MCBEAM': (('x', 'y'), cbeam[b])
             })
-
+            ds = ds.assign_attrs(gaussparm=gaussparm[b])
             ds.to_zarr(ds_name, mode='a')
+            print(f'Band {b} has intrinsic resolution of {gaussparm[b]}', file=log)
 
     return
-

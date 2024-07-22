@@ -137,58 +137,58 @@ def primal_dual_optimised(
     eps = 1.0
     numreweight = 0
     for k in range(maxit):
-        ti = time()
+        # ti = time()
         psi(xp, v)
-        print('psi = ', time() - ti)
-        ti = time()
+        # print('psi = ', time() - ti)
+        # ti = time()
         dual_update_numba(vp, v, lam, sigma=sigma, weight=l1weight)
-        print('update = ', time() - ti)
-        ti = time()
+        # print('update = ', time() - ti)
+        # ti = time()
         ne.evaluate('2.0 * v - vp', out=vp)  #, casting='same_kind')
-        print('eval1 = ', time() - ti)
-        ti = time()
+        # print('eval1 = ', time() - ti)
+        # ti = time()
         psiH(vp, xout)
-        print('psiH = ', time() - ti)
-        ti = time()
+        # print('psiH = ', time() - ti)
+        # ti = time()
         xout += grad(xp)
-        print('grad = ', time() - ti)
-        ti = time()
+        # print('grad = ', time() - ti)
+        # ti = time()
         ne.evaluate('xp - tau * xout', out=x)  #, casting='same_kind')
-        print('eval2 = ', time() - ti)
+        # print('eval2 = ', time() - ti)
 
-        ti = time()
+        # ti = time()
         if positivity == 1:
             x[x < 0.0] = 0.0
         elif positivity == 2:
             msk = np.any(x<=0, axis=0)
             x[:, msk] = 0.0
-        print('pos = ', time() - ti)
+        # print('pos = ', time() - ti)
         # convergence check
         if x.any():
-            ti = time()
+            # ti = time()
             eps = norm_diff(x, xp)
-            print('eps = ', time() - ti)
+            # print('eps = ', time() - ti)
         else:
             import pdb; pdb.set_trace()
             eps = 1.0
         if eps < tol:
             if reweighter is not None and numreweight < maxreweight:
-                ti = time()
+                # ti = time()
                 l1weight = reweighter(x)
                 numreweight += 1
-                print('reweight = ', time() - ti)
+                # print('reweight = ', time() - ti)
             else:
                 if numreweight >= maxreweight:
                     print("Maximum reweighting steps reached", file=log)
                 break
 
         # copy contents to avoid allocating new memory
-        ti = time()
+        # ti = time()
         np.copyto(xp, x)
         np.copyto(vp, v)
         # xp[...] = x[...]
         # vp[...] = v[...]
-        print('copy = ', time() - ti)
+        # print('copy = ', time() - ti)
         if np.isnan(eps) or np.isinf(eps):
             import pdb; pdb.set_trace()
 

@@ -59,11 +59,6 @@ def degrid(**kw):
 
     OmegaConf.set_struct(opts, True)
 
-    # TODO - prettier config printing
-    print('Input Options:', file=log)
-    for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
-
     if opts.product.upper() not in ["I"]:
                                     # , "Q", "U", "V", "XX", "YX", "XY",
                                     # "YY", "RR", "RL", "LR", "LL"]:
@@ -73,6 +68,11 @@ def degrid(**kw):
     logname = f'{str(opts.log_directory)}/degrid_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
+
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
 
     with ExitStack() as stack:
         from pfb import set_client

@@ -20,7 +20,9 @@ def restore_ds(ds_name,
     if not isinstance(ds_name, list):
         ds_name = [ds_name]
 
-    ds = xds_from_list(ds_name)[0]
+    drop_vars = ['WEIGHT', 'UVW', 'MASK', 'PSFHAT']
+    ds = xds_from_list(ds_name, nthreads=nthreads,
+                       drop_vars=drop_vars)[0]
     wsum = ds.WSUM.values[0]
     if not wsum:
         return
@@ -76,25 +78,33 @@ def restore_ds(ds_name,
 def ublurr_ds(ds_name,
               gaussparf=None,
               model_name='MODEL',
+              update_name='UPDATE',
               nthreads=1,
               npix_psf_box=128):
     '''
     Create uniformly blurred images from a dataset.
-    model_name ideally refers to the mopped model.
-    The intrinsic resolution is obtained by computing the point source
+    Update refers to the update produced by the fluxmop.
+    Its intrinsic resolution is obtained by computing the natural
+    point source response of the instrument.
+    Model should be a deconvolved object
+    The intrinsic resolution of the update is obtained by computing the point source
     response after correcting for the uv-sampling density.
     If gaussparf is provided the images will be convolved to this resolution.
     '''
     if not isinstance(ds_name, list):
         ds_name = [ds_name]
 
-    ds = xds_from_list(ds_name)[0]
+    ds = xds_from_list(ds_name, nthreads=nthreads)[0]
     wsum = ds.WSUM.values[0]
     if not wsum:
         return
 
     try:
         model = getattr(ds, model_name).values
+    except:
+        raise ValueError(f'Could not find {model_name} in ds')
+    try:
+        update = getattr(ds, update_name).values
     except:
         raise ValueError(f'Could not find {model_name} in ds')
     psf = ds.PSF.values

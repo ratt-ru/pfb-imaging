@@ -47,16 +47,16 @@ def fluxmop(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    # TODO - prettier config printing
-    print('Input Options:', file=log)
-    for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
-
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/fluxmop_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
+
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
 
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import xds_from_url
@@ -92,7 +92,7 @@ def fluxmop(**kw):
             fut = client.submit(
                     dds2fits,
                     dds_list,
-                    'RESIDUAL',
+                    'RESIDUAL_MOPPED',
                     f'{fits_oname}_{opts.suffix}',
                     norm_wsum=True,
                     nthreads=opts.nthreads,
@@ -102,7 +102,7 @@ def fluxmop(**kw):
             fut = client.submit(
                     dds2fits,
                     dds_list,
-                    'MODEL',
+                    'MODEL_MOPPED',
                     f'{fits_oname}_{opts.suffix}',
                     norm_wsum=False,
                     nthreads=opts.nthreads,
@@ -129,6 +129,19 @@ def fluxmop(**kw):
                     do_mfs=opts.fits_mfs,
                     do_cube=opts.fits_cubes)
             futures.append(fut)
+            try:
+                fut = client.submit(
+                        dds2fits,
+                        dds_list,
+                        'CBEAM',
+                        f'{fits_oname}_{opts.suffix}',
+                        norm_wsum=False,
+                        nthreads=opts.nthreads,
+                        do_mfs=opts.fits_mfs,
+                        do_cube=opts.fits_cubes)
+                futures.append(fut)
+            except Exception as e:
+                print(e)
 
             for fut in as_completed(futures):
                 column = fut.result()
