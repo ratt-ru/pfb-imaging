@@ -383,16 +383,19 @@ def image_data_products(dsl,
         # residual_vis *= mask
 
     if l2reweight_dof:
+        # careful mask needs to be bool here
         ressq = (residual_vis*residual_vis.conj()).real
-        ovar = np.var(residual_vis[mask])
-        chi2_dofp = np.mean(ressq[mask]*wgt[mask])
-        mean_dev = np.mean(ressq[mask]/ovar)
+        ssq = ressq[mask>0].sum()
+        ovar = ssq/mask.sum()
+        # ovar = np.var(residual_vis[mask])
+        chi2_dofp = np.mean(ressq[mask>0]*wgt[mask>0])
+        mean_dev = np.mean(ressq[mask>0]/ovar)
         if ovar:
             wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)
             # now divide by ovar to scale to absolute units
             # the chi2_dof after reweighting should be close to one
             wgt /= ovar
-            chi2_dof = np.mean(ressq[mask]*wgt[mask])
+            chi2_dof = np.mean(ressq[mask>0]*wgt[mask>0])
             print(f'Band {bandid} chi2-dof changed from {chi2_dofp} to {chi2_dof} with mean deviation of {mean_dev}')
         else:
             wgt = None
@@ -412,7 +415,7 @@ def image_data_products(dsl,
                                  nx, ny,
                                  cellx, celly,
                                  uvw.dtype,
-                                 ngrid=nthreads)
+                                 ngrid=np.minimum(nthreads, 8))  # limit number of grids
         imwgt = counts_to_weights(
             counts,
             uvw,
