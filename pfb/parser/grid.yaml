@@ -58,7 +58,7 @@ inputs:
       Compute noise map by sampling from weights
   psf-oversize:
     dtype: float
-    default: 2.0
+    default: 1.0
     abbreviation: psfo
     info:
       Size of PSF relative to dirty image

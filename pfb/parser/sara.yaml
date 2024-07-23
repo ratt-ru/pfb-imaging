@@ -84,7 +84,7 @@ inputs:
       Set to larger than niter to disable this check.
   do_res:
     dtype: bool
-    default: true
+    default: false
     info:
       Deconvolve PSF to add intrinsic model resolution to dds
 

@@ -238,7 +238,7 @@ def _sara(ddsi=None, **kw):
     complex_type = 'c16'
     npix = np.maximum(nx, ny)
     nyo2 = psfhat.shape[-1]
-    taperxy = taperf((nx, ny), int(0.1*npix))
+    taperxy = taperf((nx, ny), np.minimum(int(0.1*npix), 32))
     xhat = empty_noncritical((nband, nx_psf, nyo2),
                              dtype=complex_type)
     xpad = empty_noncritical((nband, nx_psf, ny_psf),
@@ -500,7 +500,19 @@ def _sara(ddsi=None, **kw):
         l1weight = np.ones((nbasis, Nymax, Nxmax))
         reweighter = None
         l1reweight_active = False
-        residual = psf.copy()
+        nxpadl = (nx_psf - nx)//2
+        nxpadr = nx_psf - nx - nxpadl
+        nypadl = (ny_psf - ny)//2
+        nypadr = ny_psf - ny - nypadl
+        if nx_psf != nx:
+            unpad_x = slice(nxpadl, -nxpadr)
+        else:
+            unpad_x = slice(None)
+        if ny_psf != ny:
+            unpad_y = slice(nypadl, -nypadr)
+        else:
+            unpad_y = slice(None)
+        residual = psf[:, unpad_x, unpad_y].copy()
         residual_mfs = np.sum(residual, axis=0)
         rms = np.std(residual_mfs)
         for k in range(iter0, iter0 + opts.niter):
@@ -560,7 +572,7 @@ def _sara(ddsi=None, **kw):
                 l1reweight_active = True
 
             # the psf approximation shoul dbe more than good enough for this
-            residual = psf - hessian_psf_cube(
+            residual = psf[:, unpad_x, unpad_y] - hessian_psf_cube(
                                 xpad,  # preallocated array to store padded image
                                 xhat,  # preallocated array to store FTd image
                                 xout,  # preallocated array to store output image
