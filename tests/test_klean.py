@@ -218,6 +218,7 @@ def test_klean(do_gains, ms_name):
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
     grid_args["do_wgridding"] = True
+    grid_args["psf_oversize"] = 2.0
     from pfb.workers.grid import _grid
     _grid(**grid_args)
 

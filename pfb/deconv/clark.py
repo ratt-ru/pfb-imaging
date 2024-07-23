@@ -4,7 +4,7 @@ from functools import partial
 from numba import njit
 import dask.array as da
 from pfb.operators.psf import psf_convolve_cube
-from ducc0.misc import make_noncritical
+from ducc0.misc import empty_noncritical
 import pyscilog
 log = pyscilog.get_logger('CLARK')
 
@@ -45,10 +45,13 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     q = Iq[pq]
 
     where pq is the location of the maximum in A.
+
+    # TODO - this does not work unless the PSF is twice the size of the image
     """
     nband, nx_psf, ny_psf = psf.shape
     nxo2 = nx_psf//2
     nyo2 = ny_psf//2
+    # _, nx, ny = model.shape
     Asearch = np.sum(A, axis=0)**2
     pq = Asearch.argmax()
     p = Ip[pq]
@@ -63,7 +66,14 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         model[fsel, p, q] += gamma * xhat[fsel]/wsums[fsel]
         Idelp = p - Ip
         Idelq = q - Iq
-        # find where PSF overlaps with image
+        # # find where PSF overlaps with image
+        # left_x =  p - Ip >= 0
+        # right_x = p + Ip < nx
+        # left_y =  q - Iq >= 0
+        # right_y = q + Iq < ny
+        # mask = (left_x & right_x) & (left_y & right_y)
+
+        # import ipdb; ipdb.set_trace()
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
         # Ipp, Iqq = psf[:, nxo2 - Ip[mask], nyo2 - Iq[mask]]
         A = subtract(A[:, mask], psf,
@@ -105,15 +115,11 @@ def clark(ID,
     # PSFHAT /= wsum
     # wsums = wsums/wsum
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
-    model = make_noncritical(model)
     IR = ID.copy()
     # pre-allocate arrays for doing FFT's
-    xout = np.empty(ID.shape, dtype=ID.dtype, order='C')
-    xout = make_noncritical(xout)
-    xpad = np.empty(PSF.shape, dtype=ID.dtype, order='C')
-    xpad = make_noncritical(xpad)
-    xhat = np.empty(PSFHAT.shape, dtype=PSFHAT.dtype)
-    xhat = make_noncritical(xhat)
+    xout = empty_noncritical(ID.shape, dtype=ID.dtype)
+    xpad = empty_noncritical(PSF.shape, dtype=ID.dtype)
+    xhat = empty_noncritical(PSFHAT.shape, dtype=PSFHAT.dtype)
     # square avoids abs of full array
     IRsearch = np.sum(IR, axis=0)**2
     pq = IRsearch.argmax()
@@ -132,6 +138,7 @@ def clark(ID,
                          gamma=gamma,
                          th=subth,
                          maxit=submaxit)
+        # import ipdb; ipdb.set_trace()
         # subtract from full image (as in major cycle)
         psf_convolve_cube(
                         xpad,

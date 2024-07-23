@@ -136,10 +136,14 @@ def _klean(ddsi=None, **kw):
                                  'yo2':-1}))
     else:
         # are these sorted correctly?
-        dds = xds_from_url(dds_store.url)
+        drop_vars = ['UVW','WEIGHT','MASK']
+        dds = xds_from_list(dds_list, nthreads=opts.nthreads,
+                            drop_vars=drop_vars)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
+    if nx_psf//2 < nx or ny_psf//2 < ny:
+        raise ValueError("klean currently assumes a double sized PSF")
     lastsize = ny_psf
     freq_out = []
     time_out = []
