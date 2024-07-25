@@ -286,7 +286,7 @@ def pcg_dds(ds_name,
     # this allows the PCG to downweight the fit to the edges
     # which may be contaminated by edge effects and also
     # stabalises the preconditioner
-    width = int(0.1*nx)
+    width = np.minimum(int(0.1*nx), 32)
     taperxy = taperf((nx, ny), width)
     # sigmainvsq /= taperxy
 
@@ -329,15 +329,13 @@ def pcg_dds(ds_name,
         x0 = precond(j)
 
         # get intrinsic resolution by deconvolving psf
-        cbeam = precond(psf[unpad_x, unpad_y])
-        cbeam /= cbeam.max()
-        gaussparf = fitcleanbeam(cbeam[None], level=0.25, pixsize=1.0)[0]
+        upsf = precond(psf[unpad_x, unpad_y])
+        upsf /= upsf.max()
+        gaussparu = fitcleanbeam(upsf[None], level=0.25, pixsize=1.0)[0]
         ds = ds.assign(**{
-            'CBEAM': (('x', 'y'), cbeam)
+            'UPSF': (('x', 'y'), upsf)
         })
-        ds = ds.assign_attrs(**{
-            'gaussparu': gaussparf
-        })
+        ds = ds.assign_attrs(gaussparu=gaussparu)
     else:
         # print('Not using preconditioning')
         precond = None

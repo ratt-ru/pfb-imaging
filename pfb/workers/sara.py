@@ -69,7 +69,7 @@ def sara(**kw):
         dds = xds_from_url(dds_store.url)
 
         if opts.fits_mfs or opts.fits:
-            from pfb.utils.fits import dds2fits, dds2fits_mfs
+            from pfb.utils.fits import dds2fits
             print(f"Writing fits files to {fits_oname}_{opts.suffix}",
                   file=log)
 
@@ -99,13 +99,13 @@ def sara(**kw):
             print('Done writing UPDATE', file=log)
             try:
                 dds2fits(dds_list,
-                     'MCBEAM',
+                     'MPSF',
                      f'{fits_oname}_{opts.suffix}',
                      norm_wsum=False,
                      nthreads=opts.nthreads,
                      do_mfs=opts.fits_mfs,
                      do_cube=opts.fits_cubes)
-                print('Done writing MCBEAM', file=log)
+                print('Done writing MPSF', file=log)
             except Exception as e:
                 print(e)
 
@@ -213,9 +213,6 @@ def _sara(ddsi=None, **kw):
     residual /= wsum
     residual_mfs = np.sum(residual, axis=0)
 
-    # add resolution info
-    gausspari = fitcleanbeam(psf, level=0.5, pixsize=1.0)  # normalised internally
-
     # for intermediary results
     nx = dds[0].x.size
     ny = dds[0].y.size
@@ -316,7 +313,11 @@ def _sara(ddsi=None, **kw):
     diverge_count = 0
     print(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
-    for k in range(iter0, iter0 + opts.niter):
+    if opts.skip_model:
+        mrange = []
+    else:
+        mrange = range(iter0, iter0 + opts.niter)
+    for k in mrange:
         print('Solving for update', file=log)
         update = hess_direct(
                     residual,
@@ -450,7 +451,6 @@ def _sara(ddsi=None, **kw):
             attrs['rms'] = best_rms
             attrs['rmax'] = best_rmax
             attrs['niters'] = k+1
-            attrs['gausspar'] = gausspari[b]
             ds = ds.assign_attrs(**attrs)
             ds.to_zarr(ds_name, mode='a')
 
@@ -495,7 +495,21 @@ def _sara(ddsi=None, **kw):
     if opts.do_res:
         rmsf = rms
         print("Getting intrinsic model resolution", file=log)
+
+        # fix this upfront
+        psi.dot(update/taperxy, outvar)
+        tmp = np.sum(outvar, axis=0)
+        # exclude zeros from padding DWT's
+        rms_comps = np.std(tmp[tmp!=0])
+        l = -(nx//2) + np.arange(nx)
+        m = -(ny//2) + np.arange(ny)
+        xx, yy = np.meshgrid(l, m, indexing='ij')
+
+        # initialise to clean beam
+        from pfb.utils.misc import Gaussian2D
         cbeam = np.zeros((nband, nx, ny))
+        for b, ds in enumerate(dds):
+            cbeam[b] = Gaussian2D(xx, yy, ds.gaussparn, normalise=True)
         dual = np.zeros((nband, nbasis, Nymax, Nxmax))
         l1weight = np.ones((nbasis, Nymax, Nxmax))
         reweighter = None
@@ -532,7 +546,8 @@ def _sara(ddsi=None, **kw):
             cbeamp = cbeam.copy()
             cbeam, dual = primal_dual(cbeam,
                                     dual,
-                                    opts.rmsfactor*np.maximum(rms, rmsf),
+                                    opts.rmsfactor*rmsf,
+                                    # opts.rmsfactor*np.maximum(rms, rmsf),
                                     psi.hdot,
                                     psi.dot,
                                     hess_norm,
@@ -570,7 +585,7 @@ def _sara(ddsi=None, **kw):
                                     alpha=opts.alpha)
                 l1weight = reweighter(cbeam)
                 l1reweight_active = True
-
+            # import ipdb; ipdb.set_trace()
             # the psf approximation shoul dbe more than good enough for this
             residual = psf[:, unpad_x, unpad_y] - hessian_psf_cube(
                                 xpad,  # preallocated array to store padded image
@@ -582,7 +597,7 @@ def _sara(ddsi=None, **kw):
                                 cbeam,     # input image, not overwritten
                                 nthreads=opts.nthreads,
                                 sigmainv=0,
-                                wsum=wsum
+                                wsum=1.0  # already normalised
             )
             residual_mfs = np.sum(residual, axis=0)
             rmax = np.abs(residual_mfs).max()
@@ -596,7 +611,7 @@ def _sara(ddsi=None, **kw):
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
             ds = ds.assign(**{
-                'MCBEAM': (('x', 'y'), cbeam[b])
+                'MPSF': (('x', 'y'), cbeam[b])
             })
             ds = ds.assign_attrs(gaussparm=gaussparm[b])
             ds.to_zarr(ds_name, mode='a')

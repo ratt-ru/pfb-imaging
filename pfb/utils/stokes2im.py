@@ -316,7 +316,7 @@ def single_stokes_image(
     cell_deg = np.rad2deg(cell_rad)
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
                   freq_out, GuassPar=(1, 1, 0),  # fake for now
-                  unix_time=unix_time)
+                  ms_time=time_out)
 
     oname = f'spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
     if opts.output_format == 'zarr':

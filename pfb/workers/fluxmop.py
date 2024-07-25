@@ -60,7 +60,6 @@ def fluxmop(**kw):
 
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import xds_from_url
-    from pfb.utils.fits import dds2fits, dds2fits_mfs
 
     basename = f'{basedir}/{oname}'
     fits_oname = f'{opts.fits_output_folder}/{oname}'
@@ -86,6 +85,7 @@ def fluxmop(**kw):
 
         # convert to fits files
         if opts.fits_mfs or opts.fits_cubes:
+            from pfb.utils.fits import dds2fits
             print(f"Writing fits files to {fits_oname}_{opts.suffix}",
                   file=log)
             futures = []
@@ -133,7 +133,7 @@ def fluxmop(**kw):
                 fut = client.submit(
                         dds2fits,
                         dds_list,
-                        'CBEAM',
+                        'UPSF',
                         f'{fits_oname}_{opts.suffix}',
                         norm_wsum=False,
                         nthreads=opts.nthreads,

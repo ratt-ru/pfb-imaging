@@ -184,8 +184,8 @@ def get_padding_info(nx, ny, pfrac):
     return padding, unpad_x, unpad_y
 
 
-def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
-                      pfrac=0.2, norm_kernel=False):
+def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None,
+                      pfrac=0.5, norm_kernel=False):
     """
     Convolves the image to a specified resolution.
 
@@ -197,44 +197,57 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
                   (emaj, emin, pa).
     gausspari   - initial resolution . By default it is assumed that the image
                   is a clean component image with no associated resolution.
+                  If beampari is specified, it must be a tuple containing
+                  gausspars for each imaging band in the same format.
     nthreads    - number of threads to use for the FFT's.
     pfrac       - padding used for the FFT based convolution.
                   Will pad by pfrac/2 on both sides of image
-    norm_kernel - Normalise kernel to have unity volume.
-                  By default the kernel has maximum of one and is not
-                  normalised.
     """
-    nx, ny = image.shape
+    nband, nx, ny = image.shape
     padding, unpad_x, unpad_y = get_padding_info(nx, ny, pfrac)
-    ax = (0, 1)  # axes over which to perform fft
+    ax = (1, 2)  # axes over which to perform fft
     lastsize = ny + np.sum(padding[-1])
 
-    gausskern = Gaussian2D(xx, yy, gaussparf, normalise=norm_kernel)
-    gausskern = np.pad(gausskern, padding, mode='constant')
-    gausskernhat = r2c(iFs(gausskern, axes=ax), axes=ax, forward=True,
-                       nthreads=nthreads, inorm=0)
-
+    # import ipdb; ipdb.set_trace()
+    padding = ((0,0),) + padding
     image = np.pad(image, padding, mode='constant')
     imhat = r2c(iFs(image, axes=ax), axes=ax, forward=True, nthreads=nthreads,
                 inorm=0)
+
+    if len(gaussparf) == 3:  # single final resolution
+        gausskern = Gaussian2D(xx, yy, gaussparf, normalise=norm_kernel)
+        gausskern = np.pad(gausskern, padding[1:], mode='constant')
+        gausskernhat = r2c(iFs(gausskern, axes=(0,1)), axes=(0,1),
+                           forward=True, nthreads=nthreads, inorm=0)
+        gausskernhat = np.broadcast_to(gausskernhat[None], imhat.shape)
+    else:
+        assert len(gaussparf) == nband
+        gausskernhat = np.zeros_like(imhat)
+        for b in range(nband):
+            gausskern = Gaussian2D(xx, yy, gaussparf[b], normalise=norm_kernel)
+            gausskern = np.pad(gausskern, padding[1:], mode='constant')
+            r2c(iFs(gausskern, axes=(0,1)), out=gausskernhat[b],
+                axes=(0,1), forward=True, nthreads=nthreads, inorm=0)
+
 
     # convolve to desired resolution
     if gausspari is None:
         imhat *= gausskernhat
     else:
-        thiskern = Gaussian2D(xx, yy, gausspari, normalise=norm_kernel)
-        thiskern = np.pad(thiskern, padding, mode='constant')
-        thiskernhat = r2c(iFs(thiskern, axes=ax), axes=ax, forward=True,
-                            nthreads=nthreads, inorm=0)
+        for b in range(nband):
+            thiskern = Gaussian2D(xx, yy, gausspari[b], normalise=norm_kernel)
+            thiskern = np.pad(thiskern, padding[1:], mode='constant')
+            thiskernhat = r2c(iFs(thiskern, axes=(0,1)), axes=(0,1), forward=True,
+                              nthreads=nthreads, inorm=0)
 
-        convkernhat = np.zeros_like(thiskernhat)
-        msk = np.abs(thiskernhat) > 0.0
-        convkernhat[msk] = gausskernhat[msk]/thiskernhat[msk]
+            convkernhat = np.zeros_like(thiskernhat)
+            msk = np.abs(thiskernhat) > 0.0
+            convkernhat[msk] = gausskernhat[b, msk]/thiskernhat[msk]
 
-        imhat *= convkernhat
+            imhat[b] *= convkernhat
 
     image = Fs(c2r(imhat, axes=ax, forward=False, lastsize=lastsize, inorm=2,
-                   nthreads=nthreads), axes=ax)[unpad_x, unpad_y]
+                   nthreads=nthreads), axes=ax)[:, unpad_x, unpad_y]
 
     return image
 
@@ -506,17 +519,16 @@ def _restore_corrs(vis, ncorr):
 @jax.jit
 def psf_errorsq(x, data, xy):
     '''
-    Returns sum of square error for best fit Gaussian to data
+    Returns sum of square error for best fit Gaussian to data.
+    Note emaj must be larger than emin
     '''
     emaj, emin, pa = x
-    Smin = jnp.minimum(emaj, emin)
-    Smaj = jnp.maximum(emaj, emin)
-    A = jnp.array([[1. / Smin ** 2, 0],
-                    [0, 1. / Smaj ** 2]])
+    A = jnp.array([[1. / emin ** 2, 0],
+                    [0, 1. / emaj ** 2]])
 
-    c, s, t = jnp.cos, jnp.sin, jnp.deg2rad(-pa)
-    R = jnp.array([[c(t), -s(t)],
-                    [s(t), c(t)]])
+    t = jnp.deg2rad(-pa)
+    R = jnp.array([[jnp.cos(t), -jnp.sin(t)],
+                    [jnp.sin(t), jnp.cos(t)]])
     B = jnp.dot(jnp.dot(R.T, A), R)
     Q = jnp.einsum('nb,bc,cn->n', xy.T, B, xy)
     # GaussPar should corresponds to FWHM

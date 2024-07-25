@@ -98,6 +98,7 @@ def xds_from_list(ds_list, drop_vars=None, drop_all_but=None,
     '''
     Reads a list of datasets into memory in parallel.
     Use drop_vars to drop vars that should not be read into memory.
+    Shoudl return a list that is ordered in frequency
     '''
     if chunks != -1:
         raise NotImplementedError
@@ -109,15 +110,20 @@ def xds_from_list(ds_list, drop_vars=None, drop_all_but=None,
         raise ValueError(f'Nothing found at {url}')
 
     if drop_vars is not None:
+        if not isinstance(drop_vars, list):
+            drop_vars = list(drop_vars)
         for i, ds in enumerate(xds):
             xds[i] = ds.drop_vars(drop_vars, errors="ignore")
 
     if drop_all_but is not None:
+        if not isinstance(drop_all_but, list):
+            drop_all_but = [drop_all_but]
         for i, ds in enumerate(xds):
             drop_vars = [var for var in ds.data_vars]
-            if drop_all_but in drop_vars:
-                var = drop_vars.pop(drop_vars.index(drop_all_but))
-                xds[i] = ds.drop_vars(drop_vars, errors="ignore")
+            for var in drop_all_but:
+                if var in drop_vars:
+                    drop_vars.pop(drop_vars.index(var))
+            xds[i] = ds.drop_vars(drop_vars, errors="ignore")
 
     futures = []
     with cf.ThreadPoolExecutor(max_workers=nthreads) as executor:
@@ -125,6 +131,16 @@ def xds_from_list(ds_list, drop_vars=None, drop_all_but=None,
             for var in ds.data_vars:
                 futures.append(executor.submit(read_var, ds, var))
     cf.wait(futures)
+
+    # make sure list is ordered correctly (increasing frequency)
+    # TODO - reorder if not
+    if len(xds) > 1:
+        freq_out = [ds.freq_out for ds in xds]
+        freq_min = freq_out[0]
+        for f in freq_out[1:]:
+            if freq_min > f:
+                raise ValueError('xds list is not ordered in frequency')
+            freq_min = f
     return xds
 
 

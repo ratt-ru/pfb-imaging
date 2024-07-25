@@ -33,7 +33,7 @@ def save_fits(data, name, hdr, overwrite=True, dtype=np.float32):
 
 
 def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
-            unit='Jy/beam', GuassPar=None, unix_time=None):
+            unit='Jy/beam', GuassPar=None, ms_time=None):
     """
     cell_x/y - cell sizes in degrees
     nx/y - number of x and y pixels
@@ -77,8 +77,9 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
     header['BTYPE'] = 'Intensity'
     header['BUNIT'] = unit
     header['SPECSYS'] = 'TOPOCENT'
-    if unix_time is not None:
+    if ms_time is not None:
         # TODO - this is probably a bit of a round about way of doing this
+        unix_time = quantity(f'{ms_time}s').to_unix_time()
         utc_iso = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
         header['UTC_TIME'] = utc_iso
         t = Time(utc_iso)
@@ -197,7 +198,7 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
 
             name = basename + f'_time{timeid}_mfs.fits'
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_mfs,
-                        unit=unit, unix_time=unix_time)
+                        unit=unit, ms_time=ds.time_out)
             save_fits(cube_mfs, name, hdr, overwrite=True,
                     dtype=otype)
 
@@ -206,49 +207,9 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
                 cube[fmask] = cube[fmask]/wsums[fmask, None, None]
             name = basename + f'_time{timeid}.fits'
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freqs,
-                          unit=unit, unix_time=unix_time)
+                          unit=unit, ms_time=ds.time_out)
             save_fits(cube, name, hdr, overwrite=True,
                       dtype=otype)
 
     return column
 
-
-def dds2fits_mfs(dds, column, outname, norm_wsum=True, otype=np.float32):
-    times_out = []
-    freqs = []
-    for ds in dds:
-        times_out.append(ds.time_out)
-        freqs.append(ds.freq_out)
-    times_out = np.unique(np.array(times_out))
-    ntimes_out = times_out.size
-    freq_out = np.mean(np.unique(np.array(freqs)))
-    basename = outname + '_' + column.lower()
-    imsout = []
-    nx, ny = dds[0].get(column).shape
-    datas = np.zeros((ntimes_out, nx, ny), dtype=float)
-    wsums = np.zeros(ntimes_out)
-    counts = np.zeros(ntimes_out)
-    radecs = [[] for _ in range(ntimes_out)]
-    cell_deg = np.rad2deg(dds[0].cell_rad)
-    for ds in dds:
-        t = int(ds.timeid)
-        datas[t] += ds.get(column).values
-        wsums[t] += ds.WSUM.values[0]
-        counts[t] += 1
-        radecs[t] = (ds.ra, ds.dec)
-    for t in range(ntimes_out):
-        name = basename + f'_time{t:04d}_mfs.fits'
-        if norm_wsum:
-            if wsums[t] > 0:
-                datas[t] /= wsums[t]
-            unit = 'Jy/beam'
-        else:
-            datas[t] /= counts[t]  # masked mean
-            unit = 'Jy/pixel'
-        unix_time = quantity(f'{times_out[t]}s').to_unix_time()
-        hdr = set_wcs(cell_deg, cell_deg, nx, ny, radecs[t], freq_out,
-                      unit=unit, unix_time=unix_time)
-        save_fits(datas[t], name, hdr, overwrite=True,
-                  dtype=otype)
-
-    return 1

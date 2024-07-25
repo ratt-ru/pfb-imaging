@@ -113,17 +113,12 @@ def primal_dual_optimised(
         report_freq=10,
         gamma=1.0,
         verbosity=1,
-        maxreweight=50):
-    # TODO - we can't use make_noncritical because it sometimes returns an
-    # array that is not explicitly c-contiguous. How does this impact
-    # performance?
+        maxreweight=5):  # max successive reweights before convergence
+
     # initialise
     xp = x.copy()
-    # xp = make_noncritical(xp)
     vp = v.copy()
     xout = np.zeros_like(x)
-    # xout = make_noncritical(xout)
-
 
     # this seems to give a good trade-off between
     # primal and dual problems
@@ -136,6 +131,7 @@ def primal_dual_optimised(
     # start iterations
     eps = 1.0
     numreweight = 0
+    last_reweight_iter = 0
     for k in range(maxit):
         ti = time()
         psi(xp, v)
@@ -175,8 +171,13 @@ def primal_dual_optimised(
             if reweighter is not None and numreweight < maxreweight:
                 # ti = time()
                 l1weight = reweighter(x)
-                numreweight += 1
-                # print('reweight = ', time() - ti)
+                # print("reweight = ", time() - ti)
+                if k-last_reweight_iter==1:
+                    numreweight += 1
+                else:
+                    numreweight = 0
+                last_reweight_iter = k
+
             else:
                 if numreweight >= maxreweight:
                     print("Maximum reweighting steps reached", file=log)
@@ -186,8 +187,6 @@ def primal_dual_optimised(
         # ti = time()
         np.copyto(xp, x)
         np.copyto(vp, v)
-        # xp[...] = x[...]
-        # vp[...] = v[...]
         # print('copy = ', time() - ti)
         if np.isnan(eps) or np.isinf(eps):
             import pdb; pdb.set_trace()

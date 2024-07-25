@@ -17,6 +17,7 @@ from quartical.utils.dask import Blocker
 from pfb.utils.weighting import counts_to_weights, _compute_counts
 from pfb.utils.beam import eval_beam
 from pfb.utils.naming import xds_from_list
+from pfb.utils.misc import fitcleanbeam
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
@@ -517,6 +518,11 @@ def image_data_products(dsl,
 
         dso["PSF"] = (('x_psf', 'y_psf'), psf)
         dso["PSFHAT"] = (('x_psf', 'yo2'), psfhat)
+
+        # add natural resolution info
+        # normalised internally
+        gausspar = fitcleanbeam(psf[None, :, :], level=0.5, pixsize=1.0)[0]
+        dso = dso.assign_attrs(gaussparn=gausspar)
 
 
     if do_residual and model is not None:

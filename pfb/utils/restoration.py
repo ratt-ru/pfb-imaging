@@ -1,177 +1,125 @@
 from functools import partial
 import numpy as np
 from pfb.utils.misc import Gaussian2D, convolve2gaussres, fitcleanbeam
+from pfb.utils.fits import set_wcs, add_beampars, save_fits
 from pfb.utils.naming import xds_from_list
 from pfb.operators.hessian import _hessian_impl
 from pfb.opt.pcg import pcg
 
 
-def restore_ds(ds_name,
-               residual_name='RESIDUAL',
-               model_name='MODEL',
-               nthreads=1,
-               gaussparf=None):
+def restore_cube(ds_name,
+                 output_name,
+                 model_name,
+                 residual_name,
+                 gausspari,  # intrinsic resolution of the residual
+                 gausspari_mfs,  # intrinsic resolution of the MFS residual
+                 gaussparf,  # final desired resolution
+                 gaussparf_mfs,  # final desired resolution
+                 gaussparm=None,  # intrinsic resolution of the model
+                 gaussparm_mfs=None,  # intrinsic resolution of the model
+                 nthreads=1,
+                 unit='Jy/beam',
+                 output_dtype='f4'):
     '''
-    Create restored image from dataset.
-    If gaussparf is provided the images will be convolved to this resolution.
-    Otherwise they will be convolved to the native resolution obtained by
-    fitting a Gaussian to the main lobe of the PSF.
+    Function to create science data products.
+
     '''
+    # convolve residual
     if not isinstance(ds_name, list):
         ds_name = [ds_name]
 
-    drop_vars = ['WEIGHT', 'UVW', 'MASK', 'PSFHAT']
-    ds = xds_from_list(ds_name, nthreads=nthreads,
-                       drop_vars=drop_vars)[0]
-    wsum = ds.WSUM.values[0]
-    if not wsum:
-        return
-
-    try:
-        residual = getattr(ds, residual_name).values
-    except:
-        raise ValueError(f'Could not find {residual_name} in ds')
-    try:
-        model = getattr(ds, model_name).values
-    except:
-        raise ValueError(f'Could not find {model_name} in ds')
-    psf = ds.PSF.values
-    psf /= wsum
-    residual /= wsum
-
-    cell_rad = ds.cell_rad
-    cell_deg = np.rad2deg(cell_rad)
-    cell_asec = cell_deg * 3600
-
-    # intrinsic to target resolution (the old way)
-    gausspari = fitcleanbeam(psf[None], level=0.5, pixsize=1.0)[0]
-    # lm in pixel coordinates since gausspar in pixel coords
-    nx = ds.x.size
-    ny = ds.y.size
-    l = -(nx//2) + np.arange(nx)
-    m = -(ny//2) + np.arange(ny)
-    xx, yy = np.meshgrid(l, m, indexing='ij')
-    if gaussparf is None:
-        gaussparf = gausspari
-        gausspari = None
+    if unit.lower() == 'jy/beam':
+        norm_kernel = False
+        unit = 'Jy/beam'  # for consistency
     else:
-        residual = convolve2gaussres(residual,
-                                     xx, yy,
-                                     gaussparf,
-                                     nthreads,
-                                     gausspari=gausspari,
-                                     norm_kernel=True)
+        norm_kernel = True
+        unit = 'Jy/pixel'  # for consistency
 
-    image = convolve2gaussres(model,
-                              xx, yy,
-                              gaussparf,
-                              nthreads,
-                              norm_kernel=False)
-
-    image += residual
-
-    ds['IMAGE'] = (('x','y'), image)
-    ds.to_zarr(ds_name[0], mode='a')
-
-    return image, int(ds.bandid), gaussparf
-
-def ublurr_ds(ds_name,
-              gaussparf=None,
-              model_name='MODEL',
-              update_name='UPDATE',
-              nthreads=1,
-              npix_psf_box=128):
-    '''
-    Create uniformly blurred images from a dataset.
-    Update refers to the update produced by the fluxmop.
-    Its intrinsic resolution is obtained by computing the natural
-    point source response of the instrument.
-    Model should be a deconvolved object
-    The intrinsic resolution of the update is obtained by computing the point source
-    response after correcting for the uv-sampling density.
-    If gaussparf is provided the images will be convolved to this resolution.
-    '''
-    if not isinstance(ds_name, list):
-        ds_name = [ds_name]
-
-    ds = xds_from_list(ds_name, nthreads=nthreads)[0]
-    wsum = ds.WSUM.values[0]
-    if not wsum:
-        return
-
-    try:
-        model = getattr(ds, model_name).values
-    except:
-        raise ValueError(f'Could not find {model_name} in ds')
-    try:
-        update = getattr(ds, update_name).values
-    except:
-        raise ValueError(f'Could not find {model_name} in ds')
-    psf = ds.PSF.values
-    psf /= wsum
-
-    cell_rad = ds.cell_rad
-    cell_deg = np.rad2deg(cell_rad)
-    cell_asec = cell_deg * 3600
-
-    # get intrinsic resolution
-    nx_psf, ny_psf = psf.shape
-    npo2 = npix_psf_box//2
-    slicex = slice(nx_psf//2 - npo2, nx_psf//2 + npo2)
-    slicey = slice(ny_psf//2 - npo2, ny_psf//2 + npo2)
-    l = -npo2 + np.arange(npix_psf_box)
-    m = -npo2 + np.arange(npix_psf_box)
-    xx, yy = np.meshgrid(l, m, indexing='ij')
-    gausspari = fitcleanbeam(psf[None, slicex, slicey], level=0.5, pixsize=1.0)[0]
-    hess = partial(_hessian_impl,
-                   uvw=ds.UVW.values,
-                   weight=ds.WEIGHT.values,
-                   vis_mask=ds.MASK.values,
-                   freq=ds.FREQ.values,
-                   beam=None,
-                   cell=ds.cell_rad,
-                   x0=ds.x0,
-                   y0=ds.y0,
-                   do_wgridding=False,
-                   epsilon=5e-4,
-                   double_accum=True,
-                   nthreads=nthreads,
-                   sigmainvsq=1e-5*wsum)
-    j = psf[slicex, slicey] * wsum
-    x0 = Gaussian2D(xx, yy, GaussPar=gausspari, normalise=True, nsigma=3)
-    upsf = pcg(hess,
-            j,
-            x0=x0.copy(),
-            tol=5e-3,
-            maxit=100,
-            minit=1,
-            verbosity=0,
-            report_freq=100,
-            backtrack=False,
-            return_resid=False)
-
-    upsf /= upsf.max()
-    gausspari = fitcleanbeam(upsf[None], level=0.25, pixsize=1.0)[0]
-
-    # first call to get intrinsic resolution
-    if gaussparf is None:
-        return gausspari
-
-    # lm in pixel coordinates since gausspar in pixel coords
-    nx = ds.x.size
-    ny = ds.y.size
+    drop_all_but = [model_name, residual_name]
+    dds = xds_from_list(ds_name, nthreads=nthreads,
+                        drop_all_but=drop_all_but)
+    if model_name not in dds[0]:
+        raise ValueError(f'Could not find {model_name} in dds')
+    if residual_name not in dds[0]:
+        raise ValueError(f'Could not find {residual_name} in dds')
+    wsums = np.array([ds.wsum for ds in dds])
+    fsel = wsums > 0
+    wsum = np.sum(wsums)
+    nx = dds[0].x.size
+    ny = dds[0].y.size
     l = -(nx//2) + np.arange(nx)
     m = -(ny//2) + np.arange(ny)
     xx, yy = np.meshgrid(l, m, indexing='ij')
-    image = convolve2gaussres(model,
-                              xx, yy,
-                              gaussparf,
-                              nthreads,
-                              norm_kernel=True,
-                              gausspari=gausspari)
 
-    ds['UIMAGE'] = (('x','y'), image)
-    ds.to_zarr(ds_name[0], mode='a')
+    mcube = np.stack([getattr(ds, model_name).values for ds in dds],
+                        axis=0)
+    nband = mcube.shape[0]
+    mcube_mfs = np.mean(mcube[fsel], axis=0)
+    if gaussparm is not None and len(gaussparm) != nband:
+        raise ValueError(f'Got inconsistent GaussPars for {model_name}')
+    mcube = convolve2gaussres(mcube, xx, yy, gaussparf,
+                              nthreads=nthreads,
+                              gausspari=gaussparm,
+                              pfrac=0.2,
+                              norm_kernel=norm_kernel)
+    if gaussparm_mfs is not None:
+        gaussparm_mfs = (gaussparm_mfs,)
+    mcube_mfs = convolve2gaussres(mcube_mfs[None], xx, yy, gaussparf_mfs,
+                                  nthreads=nthreads,
+                                  gausspari=gaussparm_mfs,
+                                  pfrac=0.2,
+                                  norm_kernel=norm_kernel)
 
-    return image, int(ds.bandid)
+    if len(gausspari) != nband:
+        raise ValueError(f'Got inconsistent GaussPars for {residual_name}')
+    rcube = np.stack([getattr(ds, residual_name).values for ds in dds],
+                        axis=0)
+    if unit == 'Jy/beam':
+        rcube_mfs = np.sum(rcube, axis=0)/wsum
+        rcube[fsel] /= wsums[fsel, None, None]
+    else:
+        rcube_mfs = np.sum(rcube[fsel]*wsums[fsel, None, None], axis=0)/wsum
+    rcube = convolve2gaussres(rcube, xx, yy, gaussparf,
+                              nthreads=nthreads,
+                              gausspari=gausspari,
+                              pfrac=0.2,
+                              norm_kernel=False)
+    rcube_mfs = convolve2gaussres(rcube_mfs[None], xx, yy, gaussparf_mfs,
+                                  nthreads=nthreads,
+                                  gausspari=(gausspari_mfs,),
+                                  pfrac=0.2,
+                                  norm_kernel=False)
+
+    mcube += rcube
+    mcube_mfs += rcube_mfs
+
+    radec = (dds[0].ra, dds[0].dec)
+    cell_rad = dds[0].cell_rad
+    cell_deg = np.rad2deg(cell_rad)
+    cell_asec = cell_deg * 3600
+    freq_out = np.array([ds.freq_out for ds in dds])
+    freq_out = np.unique(freq_out)
+    time_out = np.array([ds.time_out for ds in dds])
+    time_out = np.unique(time_out)
+    if time_out.size > 1:
+        raise ValueError('Got multiple times to restore')
+    else:
+        time_out = time_out[0]
+    hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_out,
+                  unit=unit, ms_time=time_out)
+    if gaussparf is not None:
+        # ref_freq is at the center of the band so we provide beam_pars there
+        add_beampars(hdr, gaussparf[nband//2], GaussPars=gaussparf, unit2deg=cell_deg)
+
+    save_fits(mcube, output_name + '.fits', hdr, overwrite=True,
+              dtype=output_dtype)
+
+    ref_freq = np.sum(freq_out[fsel]*wsums[fsel, None, None])/wsum
+    hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq,
+                  unit=unit, ms_time=time_out)
+    if gaussparf_mfs is not None:
+        add_beampars(hdr, gaussparf_mfs, unit2deg=cell_deg)
+
+    save_fits(mcube_mfs, output_name + '_mfs.fits', hdr, overwrite=True,
+              dtype=output_dtype)
 
