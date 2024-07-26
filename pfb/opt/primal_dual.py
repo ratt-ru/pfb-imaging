@@ -113,7 +113,7 @@ def primal_dual_optimised(
         report_freq=10,
         gamma=1.0,
         verbosity=1,
-        maxreweight=5):  # max successive reweights before convergence
+        maxreweight=10):  # max successive reweights before convergence
 
     # initialise
     xp = x.copy()

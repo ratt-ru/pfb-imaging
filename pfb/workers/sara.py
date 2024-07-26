@@ -229,6 +229,16 @@ def _sara(ddsi=None, **kw):
         iter0 = dds[0].niters
     else:
         iter0 = 0
+
+    ntol = len(opts.pd_tol)
+    niters = opts.niter
+    if ntol < niters:
+        pd_tolf = opts.pd_tol[-1]
+        pd_tol = opts.pd_tol + [pd_tolf]*niters  # no harm in too many
+    else:
+        pd_tol = opts.pd_tol
+        pd_tolf = pd_tol[-1]
+
     # image space hessian
     # pre-allocate arrays for doing FFT's
     real_type = 'f8'
@@ -254,14 +264,19 @@ def _sara(ddsi=None, **kw):
                       mode='forward')
 
     if opts.hess_norm is None:
-        print("Finding spectral norm of Hessian approximation", file=log)
-        hess_norm, hessbeta = power_method(precond, (nband, nx, ny),
-                                          tol=opts.pm_tol,
-                                          maxit=opts.pm_maxit,
-                                          verbosity=opts.pm_verbose,
-                                          report_freq=opts.pm_report_freq)
-        # inflate slightly for stability
-        hess_norm *= 1.05
+        if 'hess_norm' in dds[0].attrs:
+            print(f"Using previously estimated hess_norm of {hess_norm:.3e}",
+                  file=log)
+            hess_norm = dds[0].hess_norm
+        else:
+            print("Finding spectral norm of Hessian approximation", file=log)
+            hess_norm, hessbeta = power_method(precond, (nband, nx, ny),
+                                            tol=opts.pm_tol,
+                                            maxit=opts.pm_maxit,
+                                            verbosity=opts.pm_verbose,
+                                            report_freq=opts.pm_report_freq)
+            # inflate slightly for stability
+            hess_norm *= 1.05
     else:
         hess_norm = opts.hess_norm
         print(f"Using provided hess-norm of beta = {hess_norm:.3e}", file=log)
@@ -351,7 +366,7 @@ def _sara(ddsi=None, **kw):
                                   grad21,
                                   nu=nbasis,
                                   positivity=opts.positivity,
-                                  tol=opts.pd_tol,
+                                  tol=pd_tol[k-iter0],
                                   maxit=opts.pd_maxit,
                                   verbosity=opts.pd_verbose,
                                   report_freq=opts.pd_report_freq,
@@ -451,6 +466,7 @@ def _sara(ddsi=None, **kw):
             attrs['rms'] = best_rms
             attrs['rmax'] = best_rmax
             attrs['niters'] = k+1
+            attrs['hess_norm'] = hess_norm
             ds = ds.assign_attrs(**attrs)
             ds.to_zarr(ds_name, mode='a')
 
@@ -557,7 +573,7 @@ def _sara(ddsi=None, **kw):
                                     grad21,
                                     nu=nbasis,
                                     positivity=opts.positivity,
-                                    tol=opts.pd_tol,
+                                    tol=pd_tolf,
                                     maxit=opts.pd_maxit,
                                     verbosity=opts.pd_verbose,
                                     report_freq=opts.pd_report_freq,
@@ -585,7 +601,7 @@ def _sara(ddsi=None, **kw):
                                     alpha=opts.alpha)
                 l1weight = reweighter(cbeam)
                 l1reweight_active = True
-            # import ipdb; ipdb.set_trace()
+
             # the psf approximation shoul dbe more than good enough for this
             residual = psf[:, unpad_x, unpad_y] - hessian_psf_cube(
                                 xpad,  # preallocated array to store padded image

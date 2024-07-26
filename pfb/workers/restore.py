@@ -253,8 +253,8 @@ def _restore(**kw):
                         gaussparn_mfs,
                         gaussparf,
                         gaussparf_mfs,
-                        gaussparm=None,
-                        gaussparm_mfs=None,
+                        gaussparm=gaussparm,
+                        gaussparm_mfs=gaussparm_mfs,
                         nthreads=opts.nthreads,
                         unit='Jy/beam',
                         output_dtype='f4')
@@ -263,7 +263,6 @@ def _restore(**kw):
     if 'u' in opts.outputs.lower():
         if gaussparu is None:
             raise ValueError('Could not make uniformly blurred image since Gausspars not in dds')
-        import ipdb; ipdb.set_trace()
         fut = client.submit(
                         restore_cube,
                         dds_list,
