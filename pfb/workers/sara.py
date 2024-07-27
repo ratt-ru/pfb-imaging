@@ -230,14 +230,18 @@ def _sara(ddsi=None, **kw):
     else:
         iter0 = 0
 
-    ntol = len(opts.pd_tol)
+    # Allow calling with pd_tol as float
+    try:
+        ntol = len(opts.pd_tol)
+        pd_tol = opts.pd_tol
+    except TypeError:
+        assert ininstance(opts.pd_tol, float)
+        ntol = 1
+        pd_tol = [opts.pd_tol]
     niters = opts.niter
     if ntol < niters:
-        pd_tolf = opts.pd_tol[-1]
-        pd_tol = opts.pd_tol + [pd_tolf]*niters  # no harm in too many
-    else:
-        pd_tol = opts.pd_tol
         pd_tolf = pd_tol[-1]
+        pd_tol += [pd_tolf]*niters  # no harm in too many
 
     # image space hessian
     # pre-allocate arrays for doing FFT's

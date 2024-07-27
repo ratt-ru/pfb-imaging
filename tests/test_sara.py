@@ -178,7 +178,7 @@ def test_sara(ms_name):
     tol = 1e-5
     sara_args["tol"] = tol
     sara_args["gamma"] = 1.0
-    sara_args["pd_tol"] = 1e-3
+    sara_args["pd_tol"] = [1e-3]
     sara_args["rmsfactor"] = 0.1
     sara_args["l1reweight_from"] = 5
     sara_args["bases"] = 'self,db1'
