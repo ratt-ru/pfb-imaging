@@ -204,6 +204,8 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None,
                   Will pad by pfrac/2 on both sides of image
     """
     nband, nx, ny = image.shape
+    if gausspari is not None and len(gausspari) != nband:
+        raise ValueError('gausspari must be on length nband')
     padding, unpad_x, unpad_y = get_padding_info(nx, ny, pfrac)
     ax = (1, 2)  # axes over which to perform fft
     lastsize = ny + np.sum(padding[-1])

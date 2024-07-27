@@ -29,8 +29,8 @@ def test_convolve2gaussres(nx, ny, nband, alpha):
         restored[v] = Gaussian2D(xx, yy, Gausspari[v],
                                  normalise=False) * (freq[v]/ref_freq)**alpha
 
-        conv_model[v] = convolve2gaussres(restored[v], xx, yy, Gausspari[0], 8,
-                                          gausspari=Gausspari[v])
+        conv_model[v] = convolve2gaussres(restored[v][None], xx, yy, Gausspari[0],
+                                          nthreads=8, gausspari=(Gausspari[v],))
 
     Ix, Iy = np.where(conv_model[-1] > 0.05)
 
