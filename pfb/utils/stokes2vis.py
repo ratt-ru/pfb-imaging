@@ -18,6 +18,9 @@ from uuid import uuid4
 import gc
 from casacore.quanta import quantity
 from datetime import datetime
+from katbeam import JimBeam
+from scipy import ndimage
+from scipy.constants import c as lightspeed
 
 
 def single_stokes(
@@ -229,17 +232,38 @@ def single_stokes(
     mask = (~flag).astype(np.uint8)
 
 
-    # TODO - just a fake beam for now
-    fov = 10  # max fov in degrees
-    npix = 512
-    cell_deg = fov/npix
-    l_beam = -(npix//2) + np.arange(npix)
-    m_beam = -(npix//2) + np.arange(npix)
-    beam = np.ones((npix, npix), dtype=real_type)
+    # TODO - better beam interpolation
+    fov = opts.max_field_of_view
+    cell_rad = 1.0 / (uv_max * max_freq / lightspeed)
+    cell_deg = np.rad2deg(cell_rad)
+    npix = int(opts.max_field_of_view/cell_deg)
+    l_beam = (-(npix//2) + np.arange(npix)) * cell_deg
+    m_beam = (-(npix//2) + np.arange(npix)) * cell_deg
+    if opts.beam_model is None:
+        beam = np.ones((npix, npix), dtype=real_type)
+    elif opts.beam_model.lower() == 'katbeam':
+        if freq_min >= 8.5e8 and freq_max <= 1.8e9:
+            beamo = JimBeam('MKAT-AA-L-JIM-2020')
+        elif freq_min >= 5.4e8 and freq_max <= 1.1e9:
+            beamo = JimBeam('MKAT-AA-UHF-JIM-2020')
+        # elif freq_min >= 8.56e8 and freq_max <= 1.71179102e+09:
+        #     beamo = JimBeam('MKAT-AA-S-JIM-2020')
+        else:
+            raise ValueError(f"Freq range not covered by katbeam")
+        xx, yy = np.meshgrid(l_beam, m_beam, indexing='ij')
+        beam0 = getattr(beamo, opts.product.upper())(xx, yy, freq_out/1e6)
+        step = 25
+        angles = np.linspace(0, 359, step)
+        beam = np.zeros((npix, npix), dtype=np.float64)
+        for angle in angles:
+            beam += ndimage.rotate(beam0, angle, reshape=False, mode='nearest')
+        beam /= angles.size
+        beam /= beam.max()
+    else:
+        raise ValueError(f"Unknown beam model {opts.beam_model}")
+
 
     # set after averaging
-    # negate w for wgridder bug
-    # uvw[:, 2] = -uvw[:, 2]
     data_vars = {}
     data_vars['VIS'] = (('row', 'chan'), data)
     data_vars['WEIGHT'] = (('row', 'chan'), weight)
@@ -278,6 +302,7 @@ def single_stokes(
         'utc': utc,
         'max_freq': max_freq,
         'uv_max': uv_max,
+        'beam_model': opts.beam_model
     }
 
     out_ds = xr.Dataset(data_vars, coords=coords,

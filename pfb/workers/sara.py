@@ -202,6 +202,7 @@ def _sara(ddsi=None, **kw):
         update = np.zeros((nband, nx, ny))
     psfhat = np.stack([ds.PSFHAT.values for ds in dds], axis=0)
     dds = [ds.drop_vars('PSFHAT') for ds in dds]
+    beam = np.stack([ds.BEAM.values for ds in dds], axis=0)
     wsums = np.stack([ds.wsum for ds in dds], axis=0)
     fsel = wsums > 0  # keep track of empty bands
 
@@ -209,7 +210,6 @@ def _sara(ddsi=None, **kw):
     psf /= wsum
     psfhat /= wsum
     abspsf = np.abs(psfhat)
-    abspsf += 1.0
     residual /= wsum
     residual_mfs = np.sum(residual, axis=0)
 
@@ -247,34 +247,42 @@ def _sara(ddsi=None, **kw):
     # pre-allocate arrays for doing FFT's
     real_type = 'f8'
     complex_type = 'c16'
-    npix = np.maximum(nx, ny)
-    nyo2 = psfhat.shape[-1]
-    taperxy = taperf((nx, ny), np.minimum(int(0.1*npix), 32))
-    xhat = empty_noncritical((nband, nx_psf, nyo2),
-                             dtype=complex_type)
-    xpad = empty_noncritical((nband, nx_psf, ny_psf),
-                             dtype=real_type)
-    xout = empty_noncritical((nband, nx, ny),
-                             dtype=real_type)
-    precond = partial(hess_direct,
-                      xpad=xpad,
-                      xhat=xhat,
-                      xout=xout,
-                      psfhat=abspsf,
-                      taperxy=taperxy,
-                      lastsize=ny_psf,
-                      nthreads=opts.nthreads,
-                      sigmainvsq=1.0,
-                      mode='forward')
+    if opts.hess_approx == 'direct':
+        npix = np.maximum(nx, ny)
+        nyo2 = psfhat.shape[-1]
+        taperxy = taperf((nx, ny), np.minimum(int(0.1*npix), 32))
+        xhat = empty_noncritical((nband, nx_psf, nyo2),
+                                dtype=complex_type)
+        xpad = empty_noncritical((nband, nx_psf, ny_psf),
+                                dtype=real_type)
+        xout = empty_noncritical((nband, nx, ny),
+                                dtype=real_type)
+        precond = lambda x, mode : hess_direct(
+                                    x,
+                                    xpad=xpad,
+                                    xhat=xhat,
+                                    xout=xout,
+                                    psfhat=abspsf,
+                                    taperxy=taperxy,
+                                    lastsize=ny_psf,
+                                    nthreads=opts.nthreads,
+                                    sigmainvsq=1.0,
+                                    mode=mode)
+    elif opts.hess_approx == 'psf':
+        raise NotImplementedError
+    elif opts.hess_approx == 'wgt':
+        raise NotImplementedError
 
     if opts.hess_norm is None:
+        # if the grid worker had been rerun hess_norm won't be in attrs
         if 'hess_norm' in dds[0].attrs:
+            hess_norm = dds[0].hess_norm
             print(f"Using previously estimated hess_norm of {hess_norm:.3e}",
                   file=log)
-            hess_norm = dds[0].hess_norm
         else:
             print("Finding spectral norm of Hessian approximation", file=log)
-            hess_norm, hessbeta = power_method(precond, (nband, nx, ny),
+            func = lambda x: precond(x, 'forward')
+            hess_norm, hessbeta = power_method(func, (nband, nx, ny),
                                             tol=opts.pm_tol,
                                             maxit=opts.pm_maxit,
                                             verbosity=opts.pm_verbose,
@@ -312,10 +320,10 @@ def _sara(ddsi=None, **kw):
         # exclude zeros from padding DWT's
         rms_comps = np.std(tmp[tmp!=0])
         reweighter = partial(l1reweight_func,
-                             psi.dot,
-                             outvar,
-                             opts.rmsfactor,
-                             rms_comps,
+                             psiH=psi.dot,
+                             outvar=outvar,
+                             rmsfactor=opts.rmsfactor,
+                             rms_comps=rms_comps,
                              alpha=opts.alpha)
         l1weight = reweighter(model)
         l1reweight_active = True
@@ -338,26 +346,16 @@ def _sara(ddsi=None, **kw):
         mrange = range(iter0, iter0 + opts.niter)
     for k in mrange:
         print('Solving for update', file=log)
-        update = hess_direct(
-                    residual,
-                    xpad=xpad,
-                    xhat=xhat,
-                    xout=xout,
-                    psfhat=abspsf,
-                    taperxy=taperxy,
-                    lastsize=ny_psf,
-                    nthreads=opts.nthreads,
-                    sigmainvsq=1.0,
-                    mode='backward')
+        update = precond(residual, 'backward')
         update_mfs = np.mean(update, axis=0)
         save_fits(update_mfs,
                   fits_oname + f'_{opts.suffix}_update_{k+1}.fits',
                   hdr_mfs)
 
-        print('Solving for model', file=log)
+        print(f'Solving for model with lambda = {opts.rmsfactor*rms}', file=log)
         modelp = deepcopy(model)
         xtilde = model + opts.gamma * update
-        grad21 = lambda x: -precond(xtilde - x)/opts.gamma
+        grad21 = lambda x: -precond(xtilde - x, 'forward')/opts.gamma
         model, dual = primal_dual(model,
                                   dual,
                                   opts.rmsfactor*rms,
@@ -446,7 +444,6 @@ def _sara(ddsi=None, **kw):
         save_fits(residual_mfs,
                   fits_oname + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
-
         rmsp = rms
         rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
@@ -497,11 +494,11 @@ def _sara(ddsi=None, **kw):
             # exclude zeros from padding DWT's
             rms_comps = np.std(tmp[tmp!=0])
             reweighter = partial(l1reweight_func,
-                                psi.dot,
-                                outvar,
-                                opts.rmsfactor,
-                                rms_comps,
-                                alpha=opts.alpha)
+                                 psiH=psi.dot,
+                                 outvar=outvar,
+                                 rmsfactor=opts.rmsfactor,
+                                 rms_comps=rms_comps,
+                                 alpha=opts.alpha)
             l1weight = reweighter(model)
             l1reweight_active = True
 
@@ -598,10 +595,10 @@ def _sara(ddsi=None, **kw):
                 print('Computing L1 weights', file=log)
                 # rms_comps fixed
                 reweighter = partial(l1reweight_func,
-                                    psi.dot,
-                                    outvar,
-                                    opts.rmsfactor,
-                                    rms_comps,
+                                    psiH=psi.dot,
+                                    outvar=outvar,
+                                    rmsfactor=opts.rmsfactor,
+                                    rms_comps=rms_comps,
                                     alpha=opts.alpha)
                 l1weight = reweighter(cbeam)
                 l1reweight_active = True
@@ -631,7 +628,7 @@ def _sara(ddsi=None, **kw):
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
             ds = ds.assign(**{
-                'MPSF': (('x', 'y'), cbeam[b])
+                'MPSF': (('x', 'y'), cbeam[b]/cbeam[b].max())
             })
             ds = ds.assign_attrs(gaussparm=gaussparm[b])
             ds.to_zarr(ds_name, mode='a')

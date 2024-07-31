@@ -81,6 +81,7 @@ def _model2comps(ddsi=None, **kw):
     from daskms.fsspec_store import DaskMSStore
     import json
     from casacore.quanta import quantity
+    from pfb.utils.misc import eval_coeffs_to_slice
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
@@ -158,6 +159,35 @@ def _model2comps(ddsi=None, **kw):
         # normalise so ridge param has more intuitive meaning
         wsums /= wsums.max()
 
+    # render input model onto model grid
+    # TODO - this is not perfectly flux conservative
+    if opts.mds is not None:
+        mdsi_store = DaskMSStore(opts.mds)
+        mdsi = xr.open_zarr(mdsi_store.url)
+        # we only want to load these once
+        coeffsi = mdsi.coefficients.values
+        locxi = mdsi.location_x.values
+        locyi = mdsi.location_y.values
+        paramsi = mdsi.params.values
+        for t, mtime in enumerate(mtimes):
+            for b, mfreq in enumerate(mfreqs):
+                model[t, b] += eval_coeffs_to_slice(
+                    mtime,
+                    mfreq,
+                    coeffsi,
+                    locxi, locyi,
+                    mdsi.parametrisation,
+                    paramsi,
+                    mdsi.texpr,
+                    mdsi.fexpr,
+                    mdsi.npix_x, mdsi.npix_y,
+                    mdsi.cell_rad_x, mdsi.cell_rad_y,
+                    mdsi.center_x, mdsi.center_y,
+                    nx, ny,
+                    cell_rad, cell_rad,
+                    x0, y0
+                )
+
     if not np.any(model):
         raise ValueError(f'Model is empty')
     radec = (dds[0].ra, dds[0].dec)
@@ -197,7 +227,6 @@ def _model2comps(ddsi=None, **kw):
             mhigh = slopes * fhigh + intercepts
             model = np.concatenate((model, mhigh[:, None]), axis=1)
             mfreqs = np.concatenate((mfreqs, np.array((fhigh,))))
-            # TODO - duplicate last non-null value?
             wsums = np.concatenate((wsums, wsums[:, Ihigh][:, None]),
                                    axis=1)
             nband = mfreqs.size

@@ -156,6 +156,16 @@ def grid(**kw):
                                     do_cube=opts.fits_cubes)
                 futures.append(fut)
 
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'BEAM',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=False,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
+
             for fut in as_completed(futures):
                 try:
                     column = fut.result()
@@ -176,8 +186,6 @@ def _grid(xdsi=None, **kw):
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.misc import set_image_size
     from pfb.operators.gridder import image_data_products
-    from pfb.utils.weighting import (compute_counts,
-                                     filter_extreme_counts)
     import xarray as xr
     from pfb.utils.astrometry import get_coordinates
     from africanus.coordinates import radec_to_lm
@@ -283,7 +291,7 @@ def _grid(xdsi=None, **kw):
                          name='opts.pkl')
 
         # check if we need to remake the data products
-        verify_attrs = ['epsilon', 'mf_weighting',
+        verify_attrs = ['epsilon',
                         'do_wgridding', 'double_accum',
                         'field_of_view', 'super_resolution_factor']
         try:
@@ -344,38 +352,6 @@ def _grid(xdsi=None, **kw):
                         xds_dct[tbid]['time_out'] = times_out[t]
                         xds_dct[tbid]['freq_out'] = freqs_out[b]
 
-
-    if opts.robustness is not None and not from_cache:
-        print("Computing imaging weights", file=log)
-        futures = []
-        for wname, (tbid, ds_dct) in zip(cycle(names), xds_dct.items()):
-            fut = client.submit(compute_counts,
-                                ds_dct['dsl'],
-                                nx, ny,
-                                cell_rad, cell_rad,
-                                tbid=tbid,
-                                nthreads=opts.nthreads,
-                                workers=wname)
-
-            futures.append(fut)
-        counts = np.zeros((ntime, nband, nx, ny))
-        for fut in as_completed(futures):
-            count, tbid = fut.result()
-            bandid = tbid[-4:]
-            timeid = tbid[4:8]
-            counts[int(timeid), int(bandid)] = count
-            print(f'Done with {tbid}', file=log)
-        if opts.mf_weighting:
-            counts = np.sum(counts, axis=(1), keepdims=True)
-        level = opts.filter_counts_level
-        if level:
-            for i in range(counts.shape[0]):
-                for j in range(counts.shape[1]):
-                    counts[i,j] = filter_extreme_counts(counts[i,j],
-                                                        level=level)
-    else:
-        counts = None
-
     if opts.dirty:
         print(f"Image size = (ntime={ntime}, nband={nband}, "
               f"nx={nx}, ny={ny})", file=log)
@@ -396,7 +372,6 @@ def _grid(xdsi=None, **kw):
         locx = mds.location_x.values
         locy = mds.location_y.values
         params = mds.params.values
-        coeffs = mds.coefficients.values
 
         print(f"Loading model from {opts.transfer_model_from}. ",
               file=log)
@@ -486,22 +461,9 @@ def _grid(xdsi=None, **kw):
         else:
             model = None
 
-
-        if opts.robustness is not None:
-            if from_cache:
-                count = out_ds.COUNTS.values
-            else:
-                if opts.mf_weighting:
-                    b = 0
-                else:
-                    b = int(bandid)
-                count = counts[int(timeid), b]
-        else:
-            count = None
-
         fut = client.submit(image_data_products,
                             dsl,
-                            count,
+                            None,  # counts
                             nx, ny,
                             nx_psf, ny_psf,
                             cell_rad, cell_rad,

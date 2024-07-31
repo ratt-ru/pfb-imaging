@@ -60,7 +60,12 @@ def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
         return convim
 
 
-def _hessian_impl(x, uvw, weight, vis_mask, freq, beam,
+def _hessian_impl(x,
+                  uvw=None,
+                  weight=None,
+                  vis_mask=None,
+                  freq=None,
+                  beam=None,
                   x0=0.0,
                   y0=0.0,
                   cell=None,
@@ -178,24 +183,28 @@ def hessian_psf_cube(
                     x,     # input image, not overwritten
                     nthreads=1,
                     sigmainv=1,
-                    wsum=None):
+                    wsum=None,
+                    mode='forward'):
     """
     Tikhonov regularised Hessian approx
     """
-    if beam is not None:
-        psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x*beam,
-                          nthreads=nthreads)
+    if mode=='forward':
+        if beam is not None:
+            psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x*beam,
+                            nthreads=nthreads)
+        else:
+            psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x,
+                            nthreads=nthreads)
+
+        if beam is not None:
+            xout *= beam
+
+        if wsum is not None:
+            xout /= wsum
+
+        return xout + x * sigmainv
     else:
-        psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x,
-                          nthreads=nthreads)
-
-    if beam is not None:
-        xout *= beam
-
-    if wsum is not None:
-        xout /= wsum
-
-    return xout + x * sigmainv
+        raise NotImplementedError
 
 
 def hess_direct(x,     # input image, not overwritten
@@ -215,11 +224,9 @@ def hess_direct(x,     # input image, not overwritten
     r2c(xpad, out=xhat, axes=(1,2),
         forward=True, inorm=0, nthreads=nthreads)
     if mode=='forward':
-        # xhat *= (psfhat + sigmainvsq)
-        xhat *= psfhat
+        xhat *= (psfhat + sigmainvsq)
     else:
-        # xhat /= (psfhat + sigmainvsq)
-        xhat /= psfhat
+        xhat /= (psfhat + sigmainvsq)
     c2r(xhat, axes=(1, 2), forward=False, out=xpad,
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)

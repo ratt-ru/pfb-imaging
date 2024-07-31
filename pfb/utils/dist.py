@@ -522,7 +522,7 @@ class band_actor(object):
         eps_den = np.sum(self.model**2)
         # print('eps = ', time.time() - ti)
 
-        # vtilde - (nband, nbasis, nymax, nxmax)
+        # vtilde - (nbasis, nymax, nxmax)
         return self.vtilde, eps_num, eps_den, int(self.bandid)
 
     # # the ne version doesn't seem to make a huge difference

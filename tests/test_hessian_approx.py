@@ -12,7 +12,11 @@ from ducc0.misc import make_noncritical
 from ducc0.wgridder import vis2dirty
 from ducc0.wgridder import dirty2vis
 
+'''
+R.H W R x \approx Z.H F.H Ihat F Z x
 
+
+'''
 
 # @pytest.mark.parametrize("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5)])
 def test_hessian():

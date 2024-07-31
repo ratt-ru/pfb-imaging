@@ -52,7 +52,9 @@ inputs:
     abbreviation: hess-approx
     choices: ['wgt','psf','direct']
     info:
-      Set to wgt/psf to use the vis/image space hess approximation
+      Which Hessian approximation to use.
+      Set to wgt for vis space approximation, psf for zero-padded image
+      space approximation and direct for direct inversion.
   rmsfactor:
     dtype: float
     default: 1.0

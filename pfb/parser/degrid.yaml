@@ -46,6 +46,7 @@ inputs:
   _include:
     - (.)gridding.yml
     - (.)dist.yml
+    - (.)out.yml
 
 outputs:
   {}

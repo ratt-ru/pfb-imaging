@@ -4,6 +4,11 @@ inputs:
     default: false
     info:
       Allow overwrite of existing model
+  mds:
+    dtype: str
+    info:
+      An optional input model to append to the model.
+      Will be rendered to the same resolution as the model in the dds.
   nbasisf:
     dtype: int
     info:

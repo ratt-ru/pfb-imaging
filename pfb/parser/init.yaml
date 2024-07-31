@@ -102,7 +102,7 @@ inputs:
   beam-model:
     dtype: str
     info:
-      Beam model to use
+      Beam model to use. Only katbeam currently supported.
   chan-average:
     dtype: int
     default: 1

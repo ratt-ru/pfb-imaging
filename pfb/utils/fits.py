@@ -193,7 +193,7 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
                 freq_mfs = np.sum(freqs*wsums)/wsum
                 cube_mfs = np.sum(cube, axis=0)/wsum
             else:
-                freq_mfs = np.mean(freqs)
+                freq_mfs = np.mean(freqs[fmask])
                 cube_mfs = np.mean(cube[fmask], axis=0)
 
             name = basename + f'_time{timeid}_mfs.fits'

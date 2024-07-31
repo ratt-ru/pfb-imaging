@@ -341,7 +341,7 @@ def image_data_products(dsl,
         ds = ds.drop_vars(('BEAM','FREQ'))
         dsl[i] = ds.drop_dims(('l_beam', 'm_beam'))
 
-    # weighted sum of beam computed using natural weights
+    # TODO - weighted sum of beam computed using natural weights?
     beam /= wsumb
 
     ds = xr.concat(dsl, dim='row')
@@ -401,14 +401,8 @@ def image_data_products(dsl,
         else:
             wgt = None
 
-
-
-
     # we usually want to re-evaluate this since the robustness may change
     if robustness is not None:
-        if counts is None:
-            raise ValueError('counts are None but robustness specified. '
-                             'This is probably a bug!')
         counts = _compute_counts(uvw,
                                  freq,
                                  mask,
@@ -664,3 +658,77 @@ def compute_residual(dsl,
     ds.to_zarr(output_name, mode='a')
 
     return residual
+
+
+from pfb.operators.hessian import _hessian_impl
+def estimate_epsilon(dsl,
+                     nx, ny,
+                     cellx, celly,
+                     output_name,
+                     x0=0.0, y0=0.0,
+                     nthreads=1,
+                     epsilon=1e-7,
+                     do_wgridding=True,
+                     double_accum=True):
+    '''
+    Function to estimate epsilon required for stable preconditioning.
+    Done by minimising
+
+    res.conj().T * res
+
+    where
+
+    res = (IR - hess(precond(IR)))[ix, iy]
+
+    and ix and iy select out the image in the untapered part of the image.
+
+    '''
+
+    def sse(sigma, IR, hess_approx, precond, slicex, slicey):
+        tmp = precond(IR, sigma)
+        res = hess_approx(res)[slicex, slicey]
+        return np.vdot(res, res)
+
+    # expects a list
+    if isinstance(dsl, str):
+        dsl = [dsl]
+
+    # currently only a single dds
+    ds = xds_from_list(dsl, nthreads=nthreads)[0]
+
+    uvw = ds.UVW.values
+    wgt = ds.WEIGHT.values
+    mask = ds.MASK.values
+    beam = ds.BEAM.values
+    if 'RESIDUAL' in ds:
+        residual = ds.RESIDUAL.values
+    else:
+        residual = ds.DIRTY.values
+    freq = ds.FREQ.values
+    psfhat = ds.PSFHAT.values
+    wsum = ds.wsum
+
+    hess = partial(_hessian_impl,
+                   uvw=ds.UVW.values,
+                   weight=ds.WEIGHT.values,
+                   vis_mask=ds.MASK.values,
+                   freq=ds.FREQ.values,
+                   beam=ds.BEAM.values,
+                   cell=ds.cell_rad,
+                   x0=ds.x0,
+                   y0=ds.y0,
+                   do_wgridding=do_wgridding,
+                   epsilon=epsilon,
+                   double_accum=double_accum,
+                   nthreads=nthreads,
+                   sigmainvsq=0.0,
+                   wsum=wsum)
+
+
+
+    ds = ds.assign_attrs(sigma=sigma)
+
+    # save
+    ds.to_zarr(output_name, mode='a')
+
+    return sigma

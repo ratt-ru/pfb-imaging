@@ -30,6 +30,15 @@ inputs:
     abbreviation: hess-norm
     info:
       Spectral norm of hessian approximation
+  hess-approx:
+    dtype: str
+    default: direct
+    abbreviation: hess-approx
+    choices: ['wgt','psf','direct']
+    info:
+      Which Hessian approximation to use.
+      Set to wgt for vis space approximation, psf for zero-padded image
+      space approximation and direct for direct inversion.
   rmsfactor:
     dtype: float
     default: 1.0
