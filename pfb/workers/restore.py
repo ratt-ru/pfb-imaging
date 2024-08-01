@@ -79,6 +79,7 @@ def _restore(**kw):
     from pfb.utils.restoration import restore_cube
     from itertools import cycle
     from daskms.fsspec_store import DaskMSStore
+    from distributed import wait
     try:
         from distributed import get_client
         client = get_client()
@@ -327,5 +328,8 @@ def _restore(**kw):
     #               f'{fits_oname}_{opts.suffix}.cpsf.fits',
     #               hdr,
     #               overwrite=opts.overwrite)
+
+    if opts.nworkers > 1:
+        wait(futures)
 
     return
