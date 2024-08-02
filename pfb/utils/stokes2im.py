@@ -184,34 +184,6 @@ def single_stokes_image(
 
     mask = (~flag).astype(np.uint8)
 
-
-    # TODO - we may want to apply this to bigger chunks of data
-    if opts.robustness is not None:
-        counts = _compute_counts(
-                uvw,
-                freq,
-                mask,
-                nx,
-                ny,
-                cell_rad,
-                cell_rad,
-                np.float64,  # same type as uvw
-                weight,
-                ngrid=opts.nthreads)
-
-        # counts will be accumulated on nvthreads grids in parallel
-        # so we need the sum here
-        counts = counts.sum(axis=0)
-
-        # get rid of artificially high weights corresponding to
-        # nearly empty cells
-        if opts.filter_extreme_counts:
-            counts = _filter_extreme_counts(counts,
-                                            nbox=opts.filter_nbox,
-                                            nlevel=opts.filter_level)
-
-
-
     if mds is not None:
         nband = fbin_idx.size
         model = np.zeros((nband, mds.npix_x, mds.npix_y), dtype=real_type)
@@ -273,16 +245,22 @@ def single_stokes_image(
             weight = None
 
     if opts.robustness is not None:
-        if counts is None:
-            raise ValueError('counts are None but robustness specified. '
-                            'This is probably a bug!')
-        imwgt = _counts_to_weights(
+        counts = _compute_counts(uvw,
+                                 freq,
+                                 mask,
+                                 weight,
+                                 nx, ny,
+                                 cellx, celly,
+                                 uvw.dtype,
+                                 ngrid=1)
+
+        imwgt = counts_to_weights(
             counts,
             uvw,
             freq,
             nx, ny,
-            cell_rad, cell_rad,
-            opts.robustness)
+            cellx, celly,
+            robustness)
         if weight is not None:
             weight *= imwgt
         else:
@@ -310,6 +288,42 @@ def single_stokes_image(
 
     rms = np.std(residual/wsum)
 
+    if opts.natural_grad:
+        from pfb.opt.pcg import pcg
+        from pfb.operators.hessian import _hessian_impl
+        from functools import partial
+
+        hess = partial(_hessian_impl,
+                       uvw=uvw,
+                       weight=weight,
+                       vis_mask=mask,
+                       freq=freq,
+                       beam=None,
+                       cell=cell_rad,
+                       x0=x0,
+                       y0=y0,
+                       do_wgridding=opts.do_wgridding,
+                       epsilon=opts.epsilon,
+                       double_accum=opts.double_accum,
+                       nthreads=opts.nthreads,
+                       sigmainvsq=opts.sigmainvsq*wsum,
+                       wsum=1.0)  # we haven't normalised residual
+
+        x = pcg(hess,
+                residual,
+                x0=np.zeros_like(residual),
+                # M=precond,
+                tol=opts.cg_tol,
+                minit=1,
+                tol=opts.cg_tol,
+                maxit=opts.cg_maxit,
+                verbosity=opts.cg_verbose,
+                report_freq=opts.cg_report_freq,
+                backtrack=False,
+                return_resid=False)
+    else:
+        x = None
+
     unix_time = quantity(f'{time_out}s').to_unix_time()
     utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
 
@@ -322,6 +336,8 @@ def single_stokes_image(
     if opts.output_format == 'zarr':
         data_vars = {}
         data_vars['RESIDUAL'] = (('x', 'y'), residual.astype(np.float32))
+        if x is not None:
+            data_vars['NATGRAD'] = (('x', 'y'), residual.astype(np.float32))
 
         coords = {'chan': (('chan',), freq),
                 'time': (('time',), utime),

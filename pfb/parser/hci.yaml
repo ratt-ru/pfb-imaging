@@ -95,12 +95,12 @@ inputs:
   field-of-view:
     dtype: float
     abbreviation: fov
-    default: 3.0
+    default: 1.0
     info:
       Field of view in degrees
   super-resolution-factor:
     dtype: float
-    default: 2
+    default: 1.4
     abbreviation: srf
     info:
       Will over-sample Nyquist by this factor at max frequency
@@ -121,21 +121,6 @@ inputs:
     abbreviation: rob
     info:
       Robustness factor for Briggs weighting. None means natural
-  filter-extreme-counts:
-    dtype: bool
-    default: false
-    info:
-      Replace extreme outliers in the weighting grid by their local mean
-  filter-nbox:
-    dtype: int
-    default: 16
-    info:
-      The size of the box to compute local mean over
-  filter-level:
-    dtype: float
-    default: 10
-    info:
-      The level above local mean that renders a grid weight extreme
   target:
     dtype: str
     info:
@@ -149,27 +134,6 @@ inputs:
       A sensible value for this parameter depends on the level of RFI in the data.
       Small values (eg. 2) result in aggressive reweighting and should be avoided
       if the model is still incomplete.
-  host-address:
-    dtype: str
-    abbreviation: ha
-    info:
-      Address where the distributed client lives.
-      Uses LocalCluster if no address is provided
-      and scheduler is set to distributed.
-  nworkers:
-    dtype: int
-    default: 1
-    abbreviation: nw
-    info:
-      Number of worker processes.
-      Use with distributed scheduler.
-  nvthreads:
-    dtype: int
-    abbreviation: nvt
-    info:
-      Number of threads used to scale vertically (eg. for FFTs and gridding).
-      Each dask thread can in principle spawn this many threads.
-      Will attempt to use half the available threads by default.
   progressbar:
     dtype: bool
     default: true
@@ -180,10 +144,18 @@ inputs:
     default: zarr
     info:
       zarr or fits output
+  sigmainvsq:
+    dtype: float
+    default: 1e-5
+    info:
+      Value to add to Hessian to make it invertible.
+      Smaller values tend to fit more noise and make the inversion less stable.
 
   _include:
     - (.)gridding.yml
     - (.)out.yml
+    - (.)dist.yml
+    - (.)cgopts.yml
 
 outputs:
     {}

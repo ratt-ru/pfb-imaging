@@ -308,7 +308,6 @@ def _sara(ddsi=None, **kw):
     # we need an array to put the components in for reweighting
     outvar = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=real_type)
 
-    # TODO - should we cache this?
     dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=residual.dtype)
     if l1reweight_from == 0:
         print('Initialising with L1 reweighted', file=log)
@@ -319,6 +318,12 @@ def _sara(ddsi=None, **kw):
         tmp = np.sum(outvar, axis=0)
         # exclude zeros from padding DWT's
         rms_comps = np.std(tmp[tmp!=0])
+        print(f'rms_comps updated to {rms_comps}', file=log)
+        for i, base in enumerate(bases):
+            tmpb = tmp[i]
+            print(f'rms for base {base} is {np.std(tmpb[tmpb!=0])}',
+                    file=log)
+        import ipdb; ipdb.set_trace()
         reweighter = partial(l1reweight_func,
                              psiH=psi.dot,
                              outvar=outvar,
@@ -493,6 +498,11 @@ def _sara(ddsi=None, **kw):
             tmp = np.sum(outvar, axis=0)
             # exclude zeros from padding DWT's
             rms_comps = np.std(tmp[tmp!=0])
+            print(f'rms_comps updated to {rms_comps}', file=log)
+            for i, base in enumerate(bases):
+                tmpb = tmp[i]
+                print(f'rms for base {base} is {np.std(tmpb[tmpb!=0])}',
+                      file=log)
             reweighter = partial(l1reweight_func,
                                  psiH=psi.dot,
                                  outvar=outvar,

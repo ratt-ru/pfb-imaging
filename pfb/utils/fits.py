@@ -58,7 +58,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         crpix3 = 1
     w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
     # LB - y axis treated differently because of stupid fits convention?
-    w.wcs.crpix = [1 + nx//2, ny//2, crpix3, 1]
+    w.wcs.crpix = [1 + nx//2,1 + ny//2, crpix3, 1]
 
     if np.size(freq) > 1:
         w.wcs.crval[2] = freq[0]
@@ -176,12 +176,12 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
         cube = np.zeros((nband, nx, ny))
         wsums = np.zeros(nband)
         wsum = 0.0
-        for ds in dds:
+        for i, ds in enumerate(dds):
             if ds.timeid == timeid:
                 b = int(ds.bandid)
-                cube[b] = ds.get(column).values
-                wsums[b] = ds.wsum
-                wsum += wsums[b]
+                cube[i] = ds.get(column).values
+                wsums[i] = ds.wsum
+                wsum += wsums[i]
         radec = (ds.ra, ds.dec)
         cell_deg = np.rad2deg(ds.cell_rad)
         nx, ny = ds.get(column).shape
