@@ -12,7 +12,7 @@ inputs:
   bases:
     dtype: str
     info: 'Wavelet bases to use. Give as comma separated str eg. '
-    default: 'self,db1,db2'
+    default: 'self,db1,db2,db3'
     abbreviation: bases
   nlevels:
     dtype: int

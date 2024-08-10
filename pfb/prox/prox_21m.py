@@ -73,7 +73,7 @@ def dual_update(v, x, psiH, lam, sigma=1.0, weight=1.0):
 
 
 @njit(nogil=True, cache=True, parallel=True)
-def dual_update_numba(vp, v, lam, sigma=1.0, weight=None):
+def dual_update_numba(vp, v, lam, freq_factor, sigma=1.0, weight=None):
     """
     Computes dual update
 
@@ -87,6 +87,7 @@ def dual_update_numba(vp, v, lam, sigma=1.0, weight=None):
     v is initialised with psiH(xp) and will be updated
     """
     nband, nbasis, nymax, nxmax = v.shape
+    # assert freq_factor.size == nband
     for b in range(nbasis):
         # select out basis
         # vtildeb = vp[:, b] + sigma * v[:, b]
@@ -100,7 +101,8 @@ def dual_update_numba(vp, v, lam, sigma=1.0, weight=None):
                 v[:, b, i, j] = vtildebij
                 if absvbijsum:
                     softvbij = np.maximum(absvbijsum - lam*weightbi[j]/sigma, 0.0)
-                    v[:, b, i, j] *= (1-softvbij / absvbijsum)
+                    for k in range(nband):
+                        v[k, b, i, j] *= (1- softvbij * freq_factor[k] / absvbijsum)
 
 
 @njit(nogil=True, cache=True, parallel=True)

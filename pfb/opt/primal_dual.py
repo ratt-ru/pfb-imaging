@@ -112,6 +112,7 @@ def primal_dual_optimised(
         positivity=1,
         report_freq=10,
         gamma=1.0,
+        freq_factor=1,
         verbosity=1,
         maxreweight=20):  # max successive reweights before convergence
 
@@ -137,7 +138,8 @@ def primal_dual_optimised(
         psi(xp, v)
         print('psi = ', time() - ti)
         # ti = time()
-        dual_update_numba(vp, v, lam, sigma=sigma, weight=l1weight)
+        dual_update_numba(vp, v, lam, freq_factor,
+                          sigma=sigma, weight=l1weight)
         # print('update = ', time() - ti)
         # ti = time()
         ne.evaluate('2.0 * v - vp', out=vp)  #, casting='same_kind')
