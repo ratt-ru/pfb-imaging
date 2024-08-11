@@ -102,7 +102,8 @@ def dual_update_numba(vp, v, lam, freq_factor, sigma=1.0, weight=None):
                 if absvbijsum:
                     softvbij = np.maximum(absvbijsum - lam*weightbi[j]/sigma, 0.0)
                     for k in range(nband):
-                        v[k, b, i, j] *= (1- softvbij * freq_factor[k] / absvbijsum)
+                        ratio = np.minimum(1, softvbij / (absvbijsum*freq_factor[k]))
+                        v[k, b, i, j] *= (1 - ratio)
 
 
 @njit(nogil=True, cache=True, parallel=True)

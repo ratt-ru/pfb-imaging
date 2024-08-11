@@ -133,7 +133,7 @@ def _sara(ddsi=None, **kw):
     from ducc0.misc import empty_noncritical
     from pfb.prox.prox_21m import prox_21m_numba as prox_21
     # from pfb.prox.prox_21 import prox_21
-    from pfb.utils.misc import fitcleanbeam, fit_image_cube
+    from pfb.utils.misc import fitcleanbeam, fit_image_cube, eval_coeffs_to_slice
     from daskms.fsspec_store import DaskMSStore
     from ducc0.fft import c2c
 
@@ -212,6 +212,7 @@ def _sara(ddsi=None, **kw):
     abspsf = np.abs(psfhat)
     residual /= wsum
     residual_mfs = np.sum(residual, axis=0)
+    model_mfs = np.mean(model[fsel], axis=0)
 
     # for intermediary results
     nx = dds[0].x.size
@@ -300,6 +301,9 @@ def _sara(ddsi=None, **kw):
     Nxmax = psi.Nxmax
     Nymax = psi.Nymax
 
+    # level slice indices
+    # import ipdb; ipdb.set_trace()
+
     # a value less than zero turns L1 reweighting off
     # we'll start on convergence or at the iteration
     # indicated by l1reweight_from, whichever comes first
@@ -323,7 +327,6 @@ def _sara(ddsi=None, **kw):
             tmpb = tmp[i]
             print(f'rms for base {base} is {np.std(tmpb[tmpb!=0])}',
                     file=log)
-        import ipdb; ipdb.set_trace()
         reweighter = partial(l1reweight_func,
                              psiH=psi.dot,
                              outvar=outvar,
@@ -338,7 +341,7 @@ def _sara(ddsi=None, **kw):
         l1reweight_active = False
 
     if opts.rms_outside_model and model.any():
-        rms_mask = model == 0
+        rms_mask = model_mfs == 0
         rms = np.std(residual_mfs[rms_mask])
     else:
         rms = np.std(residual_mfs)
@@ -370,7 +373,7 @@ def _sara(ddsi=None, **kw):
         if iter0 == 0:
             lam = opts.init_factor * opts.rmsfactor * rms
         else:
-            lamp = opts.rmsfactor*rms
+            lam = opts.rmsfactor*rms
         model, dual = primal_dual(model,
                                   dual,
                                   lam,
@@ -437,7 +440,8 @@ def _sara(ddsi=None, **kw):
         except Exception as e:
             print(f"Exception {e} raised during model fit .", file=log)
 
-        save_fits(np.mean(model, axis=0),
+        model_mfs = np.mean(model[fsel], axis=0)
+        save_fits(model_mfs,
                   fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
@@ -462,7 +466,7 @@ def _sara(ddsi=None, **kw):
                   hdr_mfs)
         rmsp = rms
         if opts.rms_outside_model:
-            rms_mask = model == 0
+            rms_mask = model_mfs == 0
             rms = np.std(residual_mfs[rms_mask])
         else:
             rms = np.std(residual_mfs)
