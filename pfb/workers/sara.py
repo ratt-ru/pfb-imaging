@@ -337,7 +337,11 @@ def _sara(ddsi=None, **kw):
         reweighter = None
         l1reweight_active = False
 
-    rms = np.std(residual_mfs)
+    if opts.rms_outside_model and model.any():
+        rms_mask = model == 0
+        rms = np.std(residual_mfs[rms_mask])
+    else:
+        rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
     best_rms = rms
     best_rmax = rmax
@@ -363,9 +367,13 @@ def _sara(ddsi=None, **kw):
         modelp = deepcopy(model)
         xtilde = model + opts.gamma * update
         grad21 = lambda x: -precond(xtilde - x, 'forward')/opts.gamma
+        if iter0 == 0:
+            lam = opts.init_factor * opts.rmsfactor * rms
+        else:
+            lamp = opts.rmsfactor*rms
         model, dual = primal_dual(model,
                                   dual,
-                                  opts.rmsfactor*rms,
+                                  lam,
                                   psi.hdot,
                                   psi.dot,
                                   hess_norm,
@@ -453,7 +461,11 @@ def _sara(ddsi=None, **kw):
                   fits_oname + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
         rmsp = rms
-        rms = np.std(residual_mfs)
+        if opts.rms_outside_model:
+            rms_mask = model == 0
+            rms = np.std(residual_mfs[rms_mask])
+        else:
+            rms = np.std(residual_mfs)
         rmax = np.abs(residual_mfs).max()
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 

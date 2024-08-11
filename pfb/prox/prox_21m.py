@@ -92,7 +92,7 @@ def dual_update_numba(vp, v, lam, freq_factor, sigma=1.0, weight=None):
         # select out basis
         # vtildeb = vp[:, b] + sigma * v[:, b]
         # weightb = weight[b]
-        for i in prange(nymax):  # WTF without the prange it segfaults when parallel=True
+        for i in prange(nymax):  # without the prange it segfaults when parallel=True?
             vtildebi = vp[:, b, i] + sigma * v[:, b, i]
             weightbi = weight[b, i]
             for j in range(nxmax):

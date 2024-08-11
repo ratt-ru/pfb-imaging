@@ -101,6 +101,17 @@ inputs:
     default: false
     info:
       Skip model creation i.e. use with do-res to do-res only
+  rms-outside-model:
+    dtype: bool
+    default: true
+    info:
+      Mask residual where model is non-zero when computing rms.
+      This is not recommended for largely non-empty fields.
+  init_factor:
+    dtype: float
+    default: 0.5
+    info:
+      Reduce the regularisation strength by this fraction at the outset.
 
 outputs:
   {}

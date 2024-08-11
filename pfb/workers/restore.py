@@ -102,15 +102,16 @@ def _restore(**kw):
     dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
     dds = xds_from_url(dds_store.url)
 
-    ddso = []
-    ddso_list = []
-    for ds, dsl in zip(dds, dds_list):
-        b = int(ds.bandid)
-        if b not in opts.drop_bands:
-            ddso.append(ds)
-            ddso_list.append(dsl)
-    dds = ddso
-    dds_list = ddso_list
+    if opts.drop_bands is not None:
+        ddso = []
+        ddso_list = []
+        for ds, dsl in zip(dds, dds_list):
+            b = int(ds.bandid)
+            if b not in opts.drop_bands:
+                ddso.append(ds)
+                ddso_list.append(dsl)
+        dds = ddso
+        dds_list = ddso_list
 
     freq_out = []
     time_out = []

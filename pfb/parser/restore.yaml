@@ -48,6 +48,7 @@ inputs:
       this amount.
   drop-bands:
     dtype: List[int]
+    # default: [] How to make the default an empty list?
     info:
       List of bands to discard
 
