@@ -358,6 +358,7 @@ def _sara(ddsi=None, **kw):
         mrange = range(iter0, iter0 + opts.niter)
     freq_factor = wsums/wsum
     freq_factor /= freq_factor.max()
+    freq_factor[...] = 1.0
     for k in mrange:
         print('Solving for update', file=log)
         update = precond(residual, 'backward')
@@ -402,8 +403,9 @@ def _sara(ddsi=None, **kw):
                                freq_out[fsel],
                                model[None, fsel, :, :],
                                wgt=wsums[None, fsel],
-                               nbasisf=int(np.sum(fsel)),
-                               method='Legendre')
+                               nbasisf=int(np.sum(fsel))-1,
+                               method='Legendre',
+                               sigmasq=1e-6)
             # save interpolated dataset
             data_vars = {
                 'coefficients': (('par', 'comps'), coeffs),
@@ -437,6 +439,24 @@ def _sara(ddsi=None, **kw):
                                attrs=mattrs)
             coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model.mds",
                                   mode='w')
+
+            for b in range(nband):
+                model[b] = eval_coeffs_to_slice(
+                        time_out[0],
+                        freq_out[b],
+                        coeffs,
+                        Ix, Iy,
+                        expr,
+                        params,
+                        texpr,
+                        fexpr,
+                        nx, ny,
+                        cell_rad, cell_rad,
+                        dds[0].x0, dds[0].y0,
+                        nx, ny,
+                        cell_rad, cell_rad,
+                        dds[0].x0, dds[0].y0
+                )
         except Exception as e:
             print(f"Exception {e} raised during model fit .", file=log)
 
