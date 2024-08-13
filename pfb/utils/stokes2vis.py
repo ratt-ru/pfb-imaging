@@ -154,6 +154,25 @@ def single_stokes(
         jones = np.ones((ntime, nant, nchan, 1, 2),
                         dtype=complex_type)
 
+    # check that there are no missing antennas
+    ant1u = np.unique(ant1)
+    ant2u = np.unique(ant2)
+    try:
+        assert (ant1u[1:] - ant1u[0:-1] == 1).all()
+        assert (ant2u[1:] - ant2u[0:-1] == 1).all()
+    except Exception as e:
+        raise NotImplementedError('You seem to have missing antennas. '
+                                  'This is not currently supported.')
+
+    # check that antpos gives the correct size table
+    antmax = np.maximum(ant1.max(), ant2.max()) + 1
+    try:
+        assert antmax == nant
+    except Exception as e:
+        raise ValueError('Inconsistent ANTENNA table. '
+                         'Size does not match max number of antennas '
+                         'as inferred from ant1 and ant2. ')
+
     # we currently need this extra loop through the data because
     # we don't have access to the grid
     data, weight = weight_data(data, weight, flag, jones,
