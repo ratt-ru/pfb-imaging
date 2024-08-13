@@ -47,6 +47,9 @@ def single_stokes(
                 msid=None,
                 wid=None):
 
+    oname = f'ms{msid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
+            f'_band{bandid:04d}_time{timeid:04d}'
+
     if opts.precision.lower() == 'single':
         real_type = np.float32
         complex_type = np.complex64
@@ -170,9 +173,10 @@ def single_stokes(
         assert antmax == nant
     except Exception as e:
         raise ValueError('Inconsistent ANTENNA table. '
-                         'Size does not match max number of antennas '
+                         'Shape does not match max number of antennas '
                          'as inferred from ant1 and ant2. '
-                         f'Table size is {antpos.shape} but got {antmax}')
+                         f'Table size is {antpos.shape} but got {antmax}. '
+                         f'{oname}')
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
@@ -327,8 +331,6 @@ def single_stokes(
 
     out_ds = xr.Dataset(data_vars, coords=coords,
                         attrs=attrs)
-    oname = f'ms{msid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
-            f'_band{bandid:04d}_time{timeid:04d}'
     out_store = out_ds.to_zarr(f'{xds_store}/{oname}.zarr',
                                 mode='w')
     return out_store, time_out, freq_out
