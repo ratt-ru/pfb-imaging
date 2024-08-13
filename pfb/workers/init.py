@@ -330,7 +330,7 @@ def _init(**kw):
         if n_launched == nds:  # Stop once all jobs have been launched.
             continue
 
-        if len(completed_future.result() != 3):
+        if isinstance(completed_future.result(), BaseException):
             print(completed_future.result())
             raise RuntimeError('Something went wrong')
 
