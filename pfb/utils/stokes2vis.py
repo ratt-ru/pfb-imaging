@@ -171,7 +171,8 @@ def single_stokes(
     except Exception as e:
         raise ValueError('Inconsistent ANTENNA table. '
                          'Size does not match max number of antennas '
-                         'as inferred from ant1 and ant2. ')
+                         'as inferred from ant1 and ant2. '
+                         f'Table size is {antpos.shape} but got {antmax}')
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
