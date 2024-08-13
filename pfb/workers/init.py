@@ -330,6 +330,10 @@ def _init(**kw):
         if n_launched == nds:  # Stop once all jobs have been launched.
             continue
 
+        if len(completed_future.result() != 3):
+            print(completed_future.result())
+            raise RuntimeError('Something went wrong')
+
         (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
         radeci, fi, ti, ims) = datasets[n_launched]
         data2 = None if dc2 is None else getattr(subds, dc2).data
