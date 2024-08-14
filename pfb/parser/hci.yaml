@@ -150,6 +150,11 @@ inputs:
     info:
       Value to add to Hessian to make it invertible.
       Smaller values tend to fit more noise and make the inversion less stable.
+  concat-time:
+    dtype: bool
+    default: false
+    info:
+      Concatenate gains and times across scan
 
   _include:
     - (.)gridding.yml

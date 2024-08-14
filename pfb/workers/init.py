@@ -275,7 +275,7 @@ def _init(**kw):
                                     utimes[ms][idt][It],
                                     ridx, rcnts,
                                     radecs[ms][idt],
-                                    fi, ti, ims])
+                                    fi, ti, ims, ms])
 
 
 
@@ -287,7 +287,7 @@ def _init(**kw):
     while idle_workers:   # Seed each worker with a task.
 
         (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
-         radeci, fi, ti, ims) = datasets[n_launched]
+         radeci, fi, ti, ims, ms) = datasets[n_launched]
 
         worker = idle_workers.pop()
         future = client.submit(single_stokes,
@@ -335,7 +335,7 @@ def _init(**kw):
             raise RuntimeError('Something went wrong')
 
         (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
-        radeci, fi, ti, ims) = datasets[n_launched]
+        radeci, fi, ti, ims, ms) = datasets[n_launched]
         data2 = None if dc2 is None else getattr(subds, dc2).data
         sc = opts.sigma_column
         sigma = None if sc is None else getattr(subds, sc).data

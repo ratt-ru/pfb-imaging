@@ -54,11 +54,15 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         crpix3 = nchan//2+1
         ref_freq = freq[nchan//2]
     else:
-        ref_freq = freq
+        if isinstance(freq, np.ndarray):
+            ref_freq = freq[0]
+        else:
+            ref_freq = freq
         crpix3 = 1
     w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
-    # LB - y axis treated differently because of stupid fits convention?
-    w.wcs.crpix = [1 + nx//2,1 + ny//2, crpix3, 1]
+    # LB - y axis treated differently to match wsclean?
+    # import ipdb; ipdb.set_trace()
+    w.wcs.crpix = [1 + nx//2, ny//2, crpix3, 1]
 
     if np.size(freq) > 1:
         w.wcs.crval[2] = freq[0]
@@ -85,6 +89,20 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         t = Time(utc_iso)
         t.format = 'fits'
         header['DATE-OBS'] = t.value
+
+
+    # if 'LONPOLE' in header:
+    #     header.pop('LONPOLE')
+    # if 'LATPOLE' in header:
+    #     header.pop('LATPOLE')
+    # if 'RADESYS' in header:
+    #     header.pop('RADESYS')
+    # if 'MJDREF' in header:
+    #     header.pop('MJDREF')
+
+    header['EQUINOX'] = '2000. / J2000'
+    header['BSCALE'] = 1.0
+    header['BZERO'] = 0.0
 
     return header
 
