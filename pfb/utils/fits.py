@@ -52,31 +52,22 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
     if np.size(freq) > 1:
         nchan = freq.size
         crpix3 = nchan//2+1
-        ref_freq = freq[nchan//2]
+        ref_freq = freq[crpix3]
+        df = freq[1]-freq[0]
+        w.wcs.cdelt[2] = df
     else:
-        if isinstance(freq, np.ndarray):
+        if isinstance(freq, np.ndarray) and freq.size == 1:
             ref_freq = freq[0]
         else:
             ref_freq = freq
         crpix3 = 1
     w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
-    # LB - y axis treated differently to match wsclean?
-    # import ipdb; ipdb.set_trace()
+    # y axis treated differently because of wgridder convention?
+    # https://github.com/mreineck/ducc/issues/34
     w.wcs.crpix = [1 + nx//2, ny//2, crpix3, 1]
 
-    if np.size(freq) > 1:
-        w.wcs.crval[2] = freq[0]
-        df = freq[1]-freq[0]
-        w.wcs.cdelt[2] = df
-        fmean = np.mean(freq)
-    else:
-        if isinstance(freq, np.ndarray):
-            fmean = freq[0]
-        else:
-            fmean = freq
-
     header = w.to_header()
-    header['RESTFRQ'] = fmean
+    header['RESTFRQ'] = ref_freq
     header['ORIGIN'] = 'pfb-imaging'
     header['BTYPE'] = 'Intensity'
     header['BUNIT'] = unit
@@ -90,7 +81,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         t.format = 'fits'
         header['DATE-OBS'] = t.value
 
-
+    # What are these used for?
     # if 'LONPOLE' in header:
     #     header.pop('LONPOLE')
     # if 'LATPOLE' in header:
@@ -217,8 +208,9 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
             name = basename + f'_time{timeid}_mfs.fits'
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_mfs,
                         unit=unit, ms_time=ds.time_out)
+            hdr['WSUM'] = wsum
             save_fits(cube_mfs, name, hdr, overwrite=True,
-                    dtype=otype)
+                      dtype=otype)
 
         if do_cube:
             if norm_wsum:
@@ -226,6 +218,8 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
             name = basename + f'_time{timeid}.fits'
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freqs,
                           unit=unit, ms_time=ds.time_out)
+            for b in range(fmask.size):
+                hdr[f'WSUM{b}'] = wsums[b]
             save_fits(cube, name, hdr, overwrite=True,
                       dtype=otype)
 
