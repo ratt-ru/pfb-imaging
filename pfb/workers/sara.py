@@ -356,9 +356,6 @@ def _sara(ddsi=None, **kw):
         mrange = []
     else:
         mrange = range(iter0, iter0 + opts.niter)
-    freq_factor = wsums/wsum
-    freq_factor /= freq_factor.max()
-    freq_factor[...] = 1.0
     for k in mrange:
         print('Solving for update', file=log)
         update = precond(residual, 'backward')
@@ -391,8 +388,7 @@ def _sara(ddsi=None, **kw):
                                   maxit=opts.pd_maxit,
                                   verbosity=opts.pd_verbose,
                                   report_freq=opts.pd_report_freq,
-                                  gamma=opts.gamma,
-                                  freq_factor=freq_factor)
+                                  gamma=opts.gamma)
 
         # write component model
         print(f"Writing model to {basename}_{opts.suffix}_model.mds",

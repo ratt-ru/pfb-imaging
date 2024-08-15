@@ -112,7 +112,6 @@ def primal_dual_optimised(
         positivity=1,
         report_freq=10,
         gamma=1.0,
-        freq_factor=1,
         verbosity=1,
         maxreweight=20):  # max successive reweights before convergence
 
@@ -127,45 +126,55 @@ def primal_dual_optimised(
         sigma = L / (2.0 * gamma) / nu
 
     # stepsize control
-    tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
+    tau = 0.98 / (L / (2.0 * gamma) + sigma * nu**2)
 
     # start iterations
     eps = 1.0
     numreweight = 0
     last_reweight_iter = 0
+    # for timing
+    tpsi = 0.0
+    tupdate = 0.0
+    teval1 = 0.0
+    tpsiH = 0.0
+    tgrad = 0.0
+    teval2 = 0.0
+    tpos = 0.0
+    tnorm = 0.0
+    tcopy = 0.0
     for k in range(maxit):
         ti = time()
         psi(xp, v)
-        print('psi = ', time() - ti)
-        # ti = time()
-        dual_update_numba(vp, v, lam, freq_factor,
+        tpsi += time() - ti
+        ti = time()
+        dual_update_numba(vp, v, lam,
                           sigma=sigma, weight=l1weight)
-        # print('update = ', time() - ti)
-        # ti = time()
+        tupdate += time() - ti
+        ti = time()
         ne.evaluate('2.0 * v - vp', out=vp)  #, casting='same_kind')
-        # print('eval1 = ', time() - ti)
+        teval1 += time() - ti
         ti = time()
         psiH(vp, xout)
-        print('psiH = ', time() - ti)
+        tpsiH += time() - ti
         ti = time()
         xout += grad(xp)
-        print('grad = ', time() - ti)
-        # ti = time()
+        tgrad += time() - ti
+        ti = time()
         ne.evaluate('xp - tau * xout', out=x)  #, casting='same_kind')
-        # print('eval2 = ', time() - ti)
+        teval2 += time() - ti
 
-        # ti = time()
+        ti = time()
         if positivity == 1:
             x[x < 0.0] = 0.0
         elif positivity == 2:
             msk = np.any(x<=0, axis=0)
             x[:, msk] = 0.0
-        # print('pos = ', time() - ti)
+        tpos += time() - ti
         # convergence check
         if x.any():
-            # ti = time()
+            ti = time()
             eps = norm_diff(x, xp)
-            # print('eps = ', time() - ti)
+            tnorm += time() - ti
         else:
             import pdb; pdb.set_trace()
             eps = 1.0
@@ -186,15 +195,25 @@ def primal_dual_optimised(
                 break
 
         # copy contents to avoid allocating new memory
-        # ti = time()
+        ti = time()
         np.copyto(xp, x)
         np.copyto(vp, v)
-        # print('copy = ', time() - ti)
+        tcopy += time() - ti
         if np.isnan(eps) or np.isinf(eps):
             import pdb; pdb.set_trace()
 
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {eps:.3e}", file=log)
+
+    print('Time taken per step', file=log)
+    print(f'psi = {tpsi}', file=log)
+    print(f'psiH = {tpsiH}', file=log)
+    print(f'grad = {tgrad}', file=log)
+    print(f'update = {tupdate}', file=log)
+    print(f'eval1 = {teval1}', file=log)
+    print(f'eval2 = {teval2}', file=log)
+    print(f'pos = {tpos}', file=log)
+    print(f'norm = {tnorm}', file=log)
 
     if k == maxit-1:
         if verbosity:
