@@ -207,6 +207,7 @@ def _sara(ddsi=None, **kw):
     fsel = wsums > 0  # keep track of empty bands
 
     wsum = np.sum(wsums)
+    wsums /= wsum
     psf /= wsum
     psfhat /= wsum
     abspsf = np.abs(psfhat)
@@ -267,7 +268,7 @@ def _sara(ddsi=None, **kw):
                                     taperxy=taperxy,
                                     lastsize=ny_psf,
                                     nthreads=opts.nthreads,
-                                    sigmainvsq=1.0,
+                                    sigmainvsq=wsums[:, None, None],
                                     mode=mode)
     elif opts.hess_approx == 'psf':
         raise NotImplementedError
@@ -429,6 +430,12 @@ def _sara(ddsi=None, **kw):
                 'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
                 'parametrisation': expr  # already converted to str
             }
+            for key, val in opts.items():
+                if key == 'pd_tol':
+                    mattrs[key] = pd_tolf
+                else:
+                    mattrs[key] = val
+            # import ipdb; ipdb.set_trace()
 
             coeff_dataset = xr.Dataset(data_vars=data_vars,
                                coords=coords,

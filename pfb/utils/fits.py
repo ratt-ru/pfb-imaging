@@ -140,32 +140,6 @@ def add_beampars(hdr, GaussPar, GaussPars=None, unit2deg=1.0):
     return hdr
 
 
-def set_header_info(mhdr, ref_freq, freq_axis, args, beampars):
-    hdr_keys = ['SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'NAXIS3',
-                'NAXIS4', 'CTYPE1', 'CTYPE2', 'CTYPE3', 'CTYPE4', 'CRPIX1',
-                'CRPIX2', 'CRPIX3', 'CRPIX4', 'CRVAL1', 'CRVAL2', 'CRVAL3',
-                'CRVAL4', 'CDELT1', 'CDELT2', 'CDELT3', 'CDELT4']
-
-    new_hdr = {}
-    for key in hdr_keys:
-        new_hdr[key] = mhdr[key]
-
-    if freq_axis == 3:
-        new_hdr["NAXIS3"] = 1
-        new_hdr["CRVAL3"] = ref_freq
-    elif freq_axis == 4:
-        new_hdr["NAXIS4"] = 1
-        new_hdr["CRVAL4"] = ref_freq
-
-    new_hdr['BMAJ'] = beampars[0]
-    new_hdr['BMIN'] = beampars[1]
-    new_hdr['BPA'] = beampars[2]
-
-    new_hdr = fits.Header(new_hdr)
-
-    return new_hdr
-
-
 def dds2fits(dsl, column, outname, norm_wsum=True,
              otype=np.float32, nthreads=1,
              do_mfs=True, do_cube=True):
@@ -188,9 +162,9 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
         for i, ds in enumerate(dds):
             if ds.timeid == timeid:
                 b = int(ds.bandid)
-                cube[i] = ds.get(column).values
-                wsums[i] = ds.wsum
-                wsum += wsums[i]
+                cube[b] = ds.get(column).values
+                wsums[b] = ds.wsum
+                wsum += ds.wsum
         radec = (ds.ra, ds.dec)
         cell_deg = np.rad2deg(ds.cell_rad)
         nx, ny = ds.get(column).shape
@@ -198,12 +172,14 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
         fmask = wsums > 0
 
         if do_mfs:
+            freq_mfs = np.sum(freqs*wsums)/wsum
             if norm_wsum:
-                freq_mfs = np.sum(freqs*wsums)/wsum
+                # already weighted by wsum
                 cube_mfs = np.sum(cube, axis=0)/wsum
             else:
-                freq_mfs = np.mean(freqs[fmask])
-                cube_mfs = np.mean(cube[fmask], axis=0)
+                # weigted sum
+                cube_mfs = np.sum(cube[fmask]*wsums[fmask, None, None],
+                                  axis=0)/wsum
 
             name = basename + f'_time{timeid}_mfs.fits'
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_mfs,
