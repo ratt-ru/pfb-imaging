@@ -94,7 +94,7 @@ def read_var(ds, var):
 
 
 def xds_from_list(ds_list, drop_vars=None, drop_all_but=None,
-                  chunks=-1, nthreads=1):
+                  chunks=-1, nthreads=1, order_freq=True):
     '''
     Reads a list of datasets into memory in parallel.
     Use drop_vars to drop vars that should not be read into memory.
@@ -134,7 +134,7 @@ def xds_from_list(ds_list, drop_vars=None, drop_all_but=None,
 
     # make sure list is ordered correctly (increasing frequency)
     # TODO - reorder if not
-    if len(xds) > 1:
+    if len(xds) > 1 and order_freq:
         freq_out = [ds.freq_out for ds in xds]
         freq_min = freq_out[0]
         for f in freq_out[1:]:
