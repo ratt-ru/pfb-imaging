@@ -149,7 +149,8 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
     else:
         unit = 'Jy/pixel'
     dds = xds_from_list(dsl, drop_all_but=column,
-                        nthreads=nthreads)
+                        nthreads=nthreads,
+                        order_freq=False)
     timeids = [ds.timeid for ds in dds]
     freqs = [ds.freq_out for ds in dds]
     freqs = np.unique(freqs)
