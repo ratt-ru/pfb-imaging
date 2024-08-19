@@ -335,7 +335,7 @@ def _model2comps(ddsi=None, **kw):
         dec  = dds[0].dec
         hdr = set_wcs(cell_deg, cell_deg, nx, ny, [ra, dec],
                     freq_out, GuassPar=(1, 1, 0),  # fake for now
-                    ms_time=mtime[0])
+                    ms_time=mtimes[0])
         modelo = np.zeros((nbando, nx, ny))
         for b in range(nbando):
             modelo[b] = eval_coeffs_to_slice(mtimes[0],
