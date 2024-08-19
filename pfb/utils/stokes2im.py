@@ -250,7 +250,7 @@ def single_stokes_image(
                                  mask,
                                  weight,
                                  nx, ny,
-                                 cellx, celly,
+                                 cell_rad, cell_rad,
                                  uvw.dtype,
                                  ngrid=1)
 
@@ -259,7 +259,7 @@ def single_stokes_image(
             uvw,
             freq,
             nx, ny,
-            cellx, celly,
+            cell_rad, cell_rad,
             robustness)
         if weight is not None:
             weight *= imwgt
