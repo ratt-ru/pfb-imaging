@@ -126,6 +126,7 @@ def _hci(**kw):
     from distributed import get_client, wait, as_completed, Semaphore
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
+    from daskms.experimental.zarr import xds_from_zarr
     import fsspec
     from daskms.fsspec_store import DaskMSStore
     import dask.array as da
