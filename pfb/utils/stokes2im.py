@@ -8,8 +8,8 @@ import xarray as xr
 import dask
 from uuid import uuid4
 from pfb.utils.stokes import stokes_funcs
-from pfb.utils.weighting import (_compute_counts, _counts_to_weights,
-                                 weight_data, _filter_extreme_counts)
+from pfb.utils.weighting import (_compute_counts, counts_to_weights,
+                                 weight_data, filter_extreme_counts)
 from pfb.utils.misc import eval_coeffs_to_slice
 from pfb.utils.fits import set_wcs, save_fits
 from pfb.operators.gridder import im2vis
