@@ -240,7 +240,7 @@ def single_stokes_image(
         wcount = mask.sum()
         if wcount:
             ovar = ressq.sum()/wcount  # use 67% quantile?
-            weight = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+            weight = (opts.l2reweight_dof + 1)/(opts.l2reweight_dof + ressq/ovar)/ovar
         else:
             weight = None
 
@@ -260,7 +260,7 @@ def single_stokes_image(
             freq,
             nx, ny,
             cell_rad, cell_rad,
-            robustness)
+            opts.robustness)
         if weight is not None:
             weight *= imwgt
         else:
