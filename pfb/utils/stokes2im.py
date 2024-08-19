@@ -313,7 +313,6 @@ def single_stokes_image(
                 residual,
                 x0=np.zeros_like(residual),
                 # M=precond,
-                tol=opts.cg_tol,
                 minit=1,
                 tol=opts.cg_tol,
                 maxit=opts.cg_maxit,
