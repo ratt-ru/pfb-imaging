@@ -268,7 +268,7 @@ def _sara(ddsi=None, **kw):
                                     taperxy=taperxy,
                                     lastsize=ny_psf,
                                     nthreads=opts.nthreads,
-                                    sigmainvsq=wsums[:, None, None],
+                                    sigmainvsq=wsums[:, None, None]*opts.epsfactor,
                                     mode=mode)
     elif opts.hess_approx == 'psf':
         raise NotImplementedError
@@ -322,11 +322,14 @@ def _sara(ddsi=None, **kw):
         psi.dot(update/taperxy, outvar)
         tmp = np.sum(outvar, axis=0)
         # exclude zeros from padding DWT's
-        rms_comps = np.std(tmp[tmp!=0])
-        print(f'rms_comps updated to {rms_comps}', file=log)
+        # rms_comps = np.std(tmp[tmp!=0])
+        # print(f'rms_comps updated to {rms_comps}', file=log)
+        # per basis rms_comps
+        rms_comps = np.ones((nbasis,), dtype=float)
         for i, base in enumerate(bases):
             tmpb = tmp[i]
-            print(f'rms for base {base} is {np.std(tmpb[tmpb!=0])}',
+            rms_comps[i] = np.std(tmpb[tmpb!=0])
+            print(f'rms_comps for base {base} is {rms_comps[i]}',
                     file=log)
         reweighter = partial(l1reweight_func,
                              psiH=psi.dot,
@@ -539,11 +542,13 @@ def _sara(ddsi=None, **kw):
             psi.dot(update/taperxy, outvar)
             tmp = np.sum(outvar, axis=0)
             # exclude zeros from padding DWT's
-            rms_comps = np.std(tmp[tmp!=0])
-            print(f'rms_comps updated to {rms_comps}', file=log)
+            # rms_comps = np.std(tmp[tmp!=0])
+            rms_comps = np.ones((nbasis,), dtype=float)
+            # print(f'rms_comps updated to {rms_comps}', file=log)
             for i, base in enumerate(bases):
                 tmpb = tmp[i]
-                print(f'rms for base {base} is {np.std(tmpb[tmpb!=0])}',
+                rms_comps[i] = np.std(tmpb[tmpb!=0])
+                print(f'rms_comps for base {base} is {rms_comps[i]}',
                       file=log)
             reweighter = partial(l1reweight_func,
                                  psiH=psi.dot,

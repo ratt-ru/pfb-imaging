@@ -107,7 +107,7 @@ def xds_from_list(ds_list, drop_vars=None, drop_all_but=None,
     open_zarr = partial(xr.open_zarr, chunks=None)
     xds = list(map(open_zarr, ds_list))
     if not len(xds):
-        raise ValueError(f'Nothing found at {url}')
+        raise ValueError(f'Nothing found at {ds_list[0]}')
 
     if drop_vars is not None:
         if not isinstance(drop_vars, list):

@@ -1094,7 +1094,11 @@ def l1reweight_func(model,
     '''
     psiH(model, outvar)
     mcomps = np.abs(np.sum(outvar, axis=0))
-    return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
+    # rms_comps can be per basis
+    if isinstance(rms_comps, np.ndarray):
+        return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps[:, None, None]**alpha)
+    else:
+        return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
 
 
 # TODO - this can be done in parallel by splitting the image into facets

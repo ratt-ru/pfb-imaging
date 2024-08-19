@@ -44,6 +44,11 @@ inputs:
     default: 1.0
     info:
       By default will threshold by rmsfactor*rms at every iteration
+  epsfactor:
+    dtype: float
+    default: 1.0
+    info:
+      Will use epsfactor*wsum to regularise the inversion of the Hessian approximation.
   gamma:
     dtype: float
     default: 1.0
@@ -103,7 +108,7 @@ inputs:
       Skip model creation i.e. use with do-res to do-res only
   rms-outside-model:
     dtype: bool
-    default: true
+    default: false
     info:
       Mask residual where model is non-zero when computing rms.
       This is not recommended for largely non-empty fields.
