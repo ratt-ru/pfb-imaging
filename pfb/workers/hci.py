@@ -296,7 +296,7 @@ def _hci(**kw):
         if opts.concat_time:
             gds = xr.concat(gds, 'gain_time')
 
-    import ipdb; ipdb.set_trace()
+    # import ipdb; ipdb.set_trace()
 
 
 

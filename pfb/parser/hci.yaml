@@ -155,6 +155,11 @@ inputs:
     default: false
     info:
       Concatenate gains and times across scan
+  natural-grad:
+    dtype: bool
+    default: false
+    info:
+      Compute naural gradient
 
   _include:
     - (.)gridding.yml
