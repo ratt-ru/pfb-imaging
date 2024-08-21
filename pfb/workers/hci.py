@@ -287,18 +287,9 @@ def _hci(**kw):
                       table_schema=schema,
                       group_cols=group_by)
 
-    if opts.concat_time:
-        xds = xr.concat(xds, dime='row')
-
     if opts.gain_table is not None:
         gds = xds_from_zarr(gain_name,
                             chunks=gain_chunks[ms])
-        if opts.concat_time:
-            gds = xr.concat(gds, 'gain_time')
-
-    # import ipdb; ipdb.set_trace()
-
-
 
     # a flat list to use with as_completed
     datasets = []
@@ -340,8 +331,8 @@ def _hci(**kw):
             fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
                                 freq_mapping[ms][idt]['counts']))
 
-            # # TODO - cpdi to cpgi mapping
-            # # assumes cpdi is integer multiple of cpgi
+            # TODO - cpdi to cpgi mapping
+            # assumes cpdi is integer multiple of cpgi
             nbandi = freq_mapping[ms][idt]['start_indices'].size
             nfreqs = np.sum(freq_mapping[ms][idt]['counts'])
             if opts.channels_per_grid_image in (0, -1, None):
