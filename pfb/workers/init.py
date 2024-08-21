@@ -36,8 +36,6 @@ def init(**kw):
         opts.nthreads = nthreads//2
         ncpu = ncpu//2
 
-    OmegaConf.set_struct(opts, True)
-
     if opts.product.upper() not in ["I","Q", "U", "V"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 

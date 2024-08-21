@@ -17,6 +17,7 @@ from ducc0.wgridder import vis2dirty, dirty2vis
 from casacore.quanta import quantity
 from datetime import datetime
 from ducc0.fft import c2r, r2c, good_size
+from ducc0.misc import resize_thread_pool
 from africanus.constants import c as lightspeed
 import gc
 iFs = np.fft.ifftshift
@@ -56,7 +57,7 @@ def single_stokes_image(
                     bandid=None,
                     timeid=None,
                     wid=None):
-
+    resize_thread_pool(opts.nthreads)
 
     with worker_client() as client:
         (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,

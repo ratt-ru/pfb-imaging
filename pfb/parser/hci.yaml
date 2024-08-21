@@ -1,6 +1,6 @@
 inputs:
   ms:
-    dtype: URI
+    dtype: List[URI]
     required: true
     abbreviation: ms
     info:
@@ -9,17 +9,17 @@ inputs:
     dtype: List[int]
     info:
       List of SCAN_NUMBERS to image. Defaults to all.
-      Input as string eg. '[0,2]' if running from CLI
+      Input as comma separated list 0,2 if running from CLI
   ddids:
     dtype: List[int]
     info:
       List of DATA_DESC_ID's to images. Defaults to all.
-      Input as string eg. '[0,1]' if running from CLI
+      Input as comma separated list 0,2 if running from CLI
   fields:
     dtype: List[int]
     info:
       List of FIELD_ID's to image. Defaults to all.
-      Input as string eg. '[0,1,2]' if running from CLI
+      Input as comma separated list 0,2 if running from CLI
   freq-range:
     dtype: str
     info:
@@ -60,9 +60,11 @@ inputs:
     info:
       Column containing data flags. Must be the same across MSs
   gain-table:
-    dtype: URI
+    dtype: List[URI]
     info:
       Path to Quartical gain table containing NET gains.
+      There must be a table for each MS and glob(ms) and
+      glob(gt) should match up when running from CLI.
   integrations-per-image:
     dtype: int
     abbreviation: ipi
