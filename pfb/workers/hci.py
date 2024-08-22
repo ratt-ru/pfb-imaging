@@ -132,6 +132,7 @@ def _hci(**kw):
     if opts.gain_table is not None:
         tmpf = lambda x: '::'.join(x.rsplit('/', 1))
         gain_names = list(map(tmpf, opts.gain_table))
+        gain_name = gain_names[0]
     else:
         gain_names = None
 
@@ -155,7 +156,6 @@ def _hci(**kw):
 
     # only a single MS for now
     ms = opts.ms[0]
-    gain_name = gain_names[0]
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
     # write model to tmp ds
@@ -324,11 +324,10 @@ def _hci(**kw):
                 datasets.append([subds,
                                 jones,
                                 freqs[ms][idt][Inu],
-                                chan_widths[ms][idt][Inu],
                                 utimes[ms][idt][It],
                                 ridx, rcnts,
                                 radecs[ms][idt],
-                                fi, ti, ims, ms])
+                                fi, ti, ms])
 
     futures = []
     associated_workers = {}
@@ -337,16 +336,15 @@ def _hci(**kw):
 
     while idle_workers:   # Seed each worker with a task.
 
-        (subds, jones, freqsi, utimesi, ridx, rcnts, fidx, fcnts,
+        (subds, jones, freqsi, utimesi, ridx, rcnts,
          radeci, fi, ti, ms) = datasets[n_launched]
 
         worker = idle_workers.pop()
         future = client.submit(single_stokes_image,
                         dc1=dc1,
-                        dc2=data2,
+                        dc2=dc2,
                         operator=operator,
                         ds=subds,
-                        mds=mds,
                         jones=jones,
                         opts=opts,
                         nx=nx,
@@ -377,7 +375,7 @@ def _hci(**kw):
         if n_launched == nds:  # Stop once all jobs have been launched.
             continue
 
-        (subds, jones, freqsi, utimesi, ridx, rcnts, fidx, fcnts,
+        (subds, jones, freqsi, utimesi, ridx, rcnts,
         radeci, fi, ti, ms) = datasets[n_launched]
 
         worker = associated_workers.pop(completed_future)
@@ -392,7 +390,6 @@ def _hci(**kw):
                         dc2=dc2,
                         operator=operator,
                         ds=subds,
-                        mds=mds,
                         jones=jones,
                         opts=opts,
                         nx=nx,
@@ -418,7 +415,7 @@ def _hci(**kw):
 
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
-
+    print("\n")  # after progressbar above
     wait(futures)
 
     return

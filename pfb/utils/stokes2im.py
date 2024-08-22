@@ -25,7 +25,6 @@ def single_stokes_image(
                     dc2=None,
                     operator=None,
                     ds=None,
-                    mds=None,
                     jones=None,
                     opts=None,
                     nx=None,
@@ -57,8 +56,8 @@ def single_stokes_image(
         complex_type = np.complex128
 
     with worker_client() as client:
-        (ds, jones) = client.compute([clone(ds),
-                                      clone(jones)],
+        (ds, jones) = client.compute([ds,
+                                      jones],
                                      sync=True,
                                      workers=wid,
                                      key='read-'+uuid4().hex)
@@ -116,7 +115,7 @@ def single_stokes_image(
                          dtype=real_type)
 
     if opts.model_column is not None:
-        model_vis = getattr(ds.model_column).values
+        model_vis = getattr(ds, opts.model_column).values
         ds = ds.drop(opts.model_column)
 
     # this seems to help with memory consumption
