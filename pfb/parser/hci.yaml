@@ -73,13 +73,6 @@ inputs:
       Path to Quartical gain table containing NET gains.
       There must be a table for each MS and glob(ms) and
       glob(gt) should match up when running from CLI.
-  integrations-per-degrid-image:
-    dtype: int
-    abbreviation: ipi
-    default: -1
-    info:
-      Number of time integrations per image for degridding resolution.
-      Default (-1, 0, None) -> dataset per scan.
   integrations-per-image:
     dtype: int
     abbreviation: ipi
@@ -87,14 +80,7 @@ inputs:
     info:
       Number of time integrations per image.
       Default (-1, 0, None) -> dataset per scan.
-  channels-per-degrid-image:
-    dtype: int
-    abbreviation: cpdi
-    default: 32
-    info:
-      Number of channels per image for degridding resolution.
-      Any of (-1, 0, None) implies single dataset per spw.
-  channels-per-grid-image:
+  channels-per-image:
     dtype: int
     abbreviation: cpgi
     default: -1

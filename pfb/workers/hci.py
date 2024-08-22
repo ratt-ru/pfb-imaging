@@ -160,105 +160,9 @@ def _hci(**kw):
 
     # write model to tmp ds
     if opts.transfer_model_from is not None:
-        try:
-            mds = xr.open_zarr(opts.transfer_model_from)
-            # this should be fairly small but should
-            # it rather be read in the dask call?
-            # mds = client.persist(mds)
-            foo = client.scatter(mds, broadcast=True)
-            wait(foo)
-        except Exception as e:
-            import ipdb; ipdb.set_trace()
-            raise ValueError(f"No dataset found at {opts.transfer_model_from}")
+        raise NotImplementedError('Use the degrid app to populate a model column instead')
 
-        print('Constructing degrid mapping', file=log)
-        row_mapping, freq_mapping, time_mapping, \
-        freqs, utimes, ms_chunks, gain_chunks, radecs, \
-        chan_widths, uv_max, antpos, poltype = \
-            construct_mappings(opts.ms,
-                               gain_names,
-                               ipi=opts.integrations_per_degrid_image,
-                               cpi=opts.channels_per_degrid_image,
-                               freq_min=freq_min,
-                               freq_max=freq_max)
-
-        # we load the flag column to get dims
-        columns = ('UVW', opts.flag_column)
-        schema = {}
-        schema[opts.flag_column] = {'dims': ('chan', 'corr')}
-        xds = xds_from_ms(
-                    ms,
-                    chunks=ms_chunks[ms],
-                    columns=columns,
-                    table_schema=schema,
-                    group_cols=group_by)
-
-        for ids, ds in enumerate(xds):
-            fid = ds.FIELD_ID
-            ddid = ds.DATA_DESC_ID
-            scanid = ds.SCAN_NUMBER
-            # TODO - cleaner syntax
-            if opts.fields is not None:
-                if fid not in list(map(int, opts.fields)):
-                    continue
-            if opts.ddids is not None:
-                if ddid not in list(map(int, opts.ddids)):
-                    continue
-            if opts.scans is not None:
-                if scanid not in list(map(int, opts.scans)):
-                    continue
-
-
-            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
-            nrow = ds.sizes['row']
-            ncorr = ds.sizes['corr']
-
-            idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
-            if not idx.any():
-                continue
-
-            titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
-                                 time_mapping[ms][idt]['counts']))
-            for ti, (tlow, tcounts) in titr:
-
-                It = slice(tlow, tlow + tcounts)
-                ridx = row_mapping[ms][idt]['start_indices'][It]
-                rcnts = row_mapping[ms][idt]['counts'][It]
-                # select all rows for output dataset
-                Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
-
-                # TODO - cpdi to cpgi mapping
-                # assumes cpdi is integer multiple of cpgi
-                nbandi = freq_mapping[ms][idt]['start_indices'].size
-                nfreqs = np.sum(freq_mapping[ms][idt]['counts'])
-                if opts.channels_per_grid_image in (0, -1, None):
-                    cpgi = nfreqs
-                else:
-                    cpgi = opts.channels_per_grid_image
-                if opts.channels_per_degrid_image in (0, -1, None):
-                    cpdi = nfreqs
-                else:
-                    cpdi = opts.channels_per_degrid_image
-                fbins_per_band = int(np.round(cpgi / cpdi))
-                nband = int(np.ceil(nbandi/fbins_per_band))
-
-                for fi in range(nband):
-                    idx0 = fi * fbins_per_band
-                    idxf = np.minimum((fi + 1) * fbins_per_band, nfreqs)
-                    fidx = freq_mapping[ms][idt]['start_indices'][idx0:idxf]
-                    fcnts = freq_mapping[ms][idt]['counts'][idx0:idxf]
-                    # need to slice out all data going onto same grid
-                    Inu = slice(fidx.min(), fidx.min() + np.sum(fcnts))
-
-                    subds = ds[{'row': Irow, 'chan': Inu}]
-                    subds = subds.chunk({'row':-1, 'chan': -1})
-
-
-
-    else:
-        mds = None
-
-    print('Constructing grid mapping', file=log)
+    print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype = \
@@ -351,6 +255,9 @@ def _hci(**kw):
     else:
         print(f"No weights provided, using unity weights", file=log)
 
+    if opts.model_column is not None:
+        columns += (opts.model_column)
+        schema[opts.model_column] = {'dims': ('chan', 'corr')}
 
     xds = xds_from_ms(ms,
                       chunks=ms_chunks[ms],
@@ -398,32 +305,14 @@ def _hci(**kw):
             # select all rows for output dataset
             Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
 
-            # TODO - cpdi to cpgi mapping
-            # assumes cpdi is integer multiple of cpgi
-            nbandi = freq_mapping[ms][idt]['start_indices'].size
-            nfreqs = np.sum(freq_mapping[ms][idt]['counts'])
-            if opts.channels_per_grid_image in (0, -1, None):
-                cpgi = nfreqs
-            else:
-                cpgi = opts.channels_per_grid_image
-            if opts.channels_per_degrid_image in (0, -1, None):
-                cpdi = nfreqs
-            else:
-                cpdi = opts.channels_per_degrid_image
-            fbins_per_band = int(np.round(cpgi / cpdi))
-            nband = int(np.ceil(nbandi/fbins_per_band))
+            fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
+                                    freq_mapping[ms][idt]['counts']))
 
-            for fi in range(nband):
-                idx0 = fi * fbins_per_band
-                idxf = np.minimum((fi + 1) * fbins_per_band, nfreqs)
-                fidx = freq_mapping[ms][idt]['start_indices'][idx0:idxf]
-                fcnts = freq_mapping[ms][idt]['counts'][idx0:idxf]
-                # need to slice out all data going onto same grid
-                Inu = slice(fidx.min(), fidx.min() + np.sum(fcnts))
+            for fi, (flow, fcounts) in fitr:
+                Inu = slice(flow, flow + fcounts)
 
                 subds = ds[{'row': Irow, 'chan': Inu}]
                 subds = subds.chunk({'row':-1, 'chan': -1})
-
                 if opts.gain_table is not None:
                     # Only DI gains currently supported
                     subgds = gds[ids][{'gain_time': It, 'gain_freq': Inu}]
@@ -433,13 +322,13 @@ def _hci(**kw):
                     jones = None
 
                 datasets.append([subds,
-                                 jones,
-                                 freqs[ms][idt][Inu],
-                                 utimes[ms][idt][It],
-                                 ridx, rcnts,
-                                 fidx-fidx.min(), fcnts,  # start counting from zero
-                                 radecs[ms][idt],
-                                 fi, ti, ms])
+                                jones,
+                                freqs[ms][idt][Inu],
+                                chan_widths[ms][idt][Inu],
+                                utimes[ms][idt][It],
+                                ridx, rcnts,
+                                radecs[ms][idt],
+                                fi, ti, ims, ms])
 
     futures = []
     associated_workers = {}
@@ -450,11 +339,6 @@ def _hci(**kw):
 
         (subds, jones, freqsi, utimesi, ridx, rcnts, fidx, fcnts,
          radeci, fi, ti, ms) = datasets[n_launched]
-        data2 = None if dc2 is None else getattr(subds, dc2).data
-        sc = opts.sigma_column
-        sigma = None if sc is None else getattr(subds, sc).data
-        wc = opts.weight_column
-        weight = None if wc is None else getattr(subds, wc).data
 
         worker = idle_workers.pop()
         future = client.submit(single_stokes_image,
@@ -471,8 +355,6 @@ def _hci(**kw):
                         utime=utimesi,
                         tbin_idx=ridx,
                         tbin_counts=rcnts,
-                        fbin_idx=fidx,
-                        fbin_counts=fcnts,
                         cell_rad=cell_rad,
                         radec=radeci,
                         antpos=antpos[ms],
@@ -497,11 +379,6 @@ def _hci(**kw):
 
         (subds, jones, freqsi, utimesi, ridx, rcnts, fidx, fcnts,
         radeci, fi, ti, ms) = datasets[n_launched]
-        data2 = None if dc2 is None else getattr(subds, dc2).data
-        sc = opts.sigma_column
-        sigma = None if sc is None else getattr(subds, sc).data
-        wc = opts.weight_column
-        weight = None if wc is None else getattr(subds, wc).data
 
         worker = associated_workers.pop(completed_future)
 
@@ -524,8 +401,6 @@ def _hci(**kw):
                         utime=utimesi,
                         tbin_idx=ridx,
                         tbin_counts=rcnts,
-                        fbin_idx=fidx,
-                        fbin_counts=fcnts,
                         cell_rad=cell_rad,
                         radec=radeci,
                         antpos=antpos[ms],

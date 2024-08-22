@@ -35,8 +35,6 @@ def single_stokes_image(
                     utime=None,
                     tbin_idx=None,
                     tbin_counts=None,
-                    fbin_idx=None,
-                    fbin_counts=None,
                     radec=None,
                     antpos=None,
                     poltype=None,
@@ -48,7 +46,7 @@ def single_stokes_image(
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
     scanid = ds.SCAN_NUMBER
-    oname = f'ms{msid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
+    oname = f'ms{fieldid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
             f'_band{bandid:04d}_time{timeid:04d}'
 
     if opts.precision.lower() == 'single':
@@ -106,7 +104,6 @@ def single_stokes_image(
 
     nrow, nchan, ncorr = data.shape
 
-
     if opts.sigma_column is not None:
         weight = ne.evaluate('1.0/sigma**2',
                              local_dict={'sigma': getattr(ds, opts.sigma_column).values})
@@ -117,6 +114,10 @@ def single_stokes_image(
     else:
         weight = np.ones((nrow, nchan, ncorr),
                          dtype=real_type)
+
+    if opts.model_column is not None:
+        model_vis = getattr(ds.model_column).values
+        ds = ds.drop(opts.model_column)
 
     # this seems to help with memory consumption
     # note the ds.drop_vars above
@@ -218,53 +219,12 @@ def single_stokes_image(
 
     mask = (~flag).astype(np.uint8)
 
-    if mds is not None:
-        nband = fbin_idx.size
-        model = np.zeros((nband, mds.npix_x, mds.npix_y), dtype=real_type)
-
-        for b in range(nband):
-            Inu = slice(fbin_idx[b], fbin_idx[b] + fbin_counts[b])
-            fout = np.mean(freq[Inu])
-
-            model[b] = eval_coeffs_to_slice(
-                time_out,
-                fout,
-                mds.coefficients.values,
-                mds.location_x.values,
-                mds.location_y.values,
-                mds.parametrisation,
-                mds.params.values,
-                mds.texpr,
-                mds.fexpr,
-                mds.npix_x, mds.npix_y,
-                mds.cell_rad_x, mds.cell_rad_y,
-                mds.center_x, mds.center_y,
-                # TODO - currently needs to be the same, need flux conservative interpolation
-                mds.npix_x, mds.npix_y,
-                mds.cell_rad_x, mds.cell_rad_y,
-                mds.center_x, mds.center_y,
-            )
-
-        # do not apply weights in this direction
-        # do not change model resolution
-        # TODO - horizontally over band axis
-        # client.get_executor
-        # worker_client
-        # get_worker
-        model_vis = im2vis(
-                 uvw,
-                 freq,
-                 model,
-                 mds.cell_rad_x,
-                 mds.cell_rad_y,
-                 fbin_idx,
-                 fbin_counts,
-                 x0=mds.center_x, y0=mds.center_y,
-                 epsilon=opts.epsilon,
-                 flip_v=False,
-                 do_wgridding=opts.do_wgridding,
-                 divide_by_n=False,
-                 nthreads=opts.nthreads)
+    # TODO - this subtraction woul dbe better to do inside weight_data
+    if opts.model_column is not None:
+        if opts.product.lower() == 'i':
+            model_vis = (model_vis[:, :, 0] + model_vis[:, :, -1])/2.0
+        else:
+            raise NotImplementedError(f'Model subtraction not supported for product {opts.product}')
 
         ne.evaluate('(data-model_vis)*mask', out=data)
 
