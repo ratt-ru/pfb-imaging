@@ -40,7 +40,15 @@ inputs:
     default: DATA
     abbreviation: dc
     info:
-      Data column to image. Must be the same across MSs
+      Data column to image. Must be the same across MSs.
+      Simple arithmetic is supported eg. 'CORRECTED_DATA-MODEL_DATA'.
+      When gains are present this column will be corrected.
+  # model-column:
+  #   dtype: str
+  #   abbreviation: mc
+  #   info:
+  #     Model column to subtract from corrected data column.
+  #     Useful to avoid high time res degridding.
   weight-column:
     dtype: str
     abbreviation: wc
@@ -65,10 +73,17 @@ inputs:
       Path to Quartical gain table containing NET gains.
       There must be a table for each MS and glob(ms) and
       glob(gt) should match up when running from CLI.
-  integrations-per-image:
+  integrations-per-degrid-image:
     dtype: int
     abbreviation: ipi
     default: -1
+    info:
+      Number of time integrations per image for degridding resolution.
+      Default (-1, 0, None) -> dataset per scan.
+  integrations-per-image:
+    dtype: int
+    abbreviation: ipi
+    default: 1
     info:
       Number of time integrations per image.
       Default (-1, 0, None) -> dataset per scan.

@@ -39,7 +39,9 @@ inputs:
     default: DATA
     abbreviation: dc
     info:
-      Data column to image. Must be the same across MSs
+      Data column to image. Must be the same across MSs.
+      Simple arithmetic is supported eg. 'CORRECTED_DATA-MODEL_DATA'.
+      When gains are present this column will be corrected.
   weight-column:
     dtype: str
     abbreviation: wc

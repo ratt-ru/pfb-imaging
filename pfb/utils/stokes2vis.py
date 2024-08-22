@@ -38,17 +38,16 @@ def single_stokes(
                 radec=None,
                 antpos=None,
                 poltype=None,
-                fieldid=None,
-                ddid=None,
-                scanid=None,
                 xds_store=None,
                 bandid=None,
                 timeid=None,
                 msid=None,
                 wid=None):
 
-    oname = f'ms{msid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
-            f'_band{bandid:04d}_time{timeid:04d}'
+    fieldid = ds.FIELD_ID
+    ddid = ds.DATA_DESC_ID
+    scanid = ds.SCAN_NUMBER
+    oname = f'ms{msid:04d}_spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -331,6 +330,6 @@ def single_stokes(
 
     out_ds = xr.Dataset(data_vars, coords=coords,
                         attrs=attrs)
-    out_store = out_ds.to_zarr(f'{xds_store}/{oname}.zarr',
+    out_ds.to_zarr(f'{xds_store}/{oname}.zarr',
                                 mode='w')
-    return out_store, time_out, freq_out
+    return time_out, freq_out

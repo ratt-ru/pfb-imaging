@@ -1,11 +1,8 @@
 import numpy as np
 import numexpr as ne
 from numba import literally
-import dask
-from distributed import get_client, worker_client
-from dask.graph_manipulation import clone
+from distributed import worker_client
 import xarray as xr
-import dask
 from uuid import uuid4
 from pfb.utils.stokes import stokes_funcs
 from pfb.utils.weighting import (_compute_counts, counts_to_weights,
@@ -17,7 +14,6 @@ from ducc0.wgridder import vis2dirty, dirty2vis
 from casacore.quanta import quantity
 from datetime import datetime
 from ducc0.fft import c2r, r2c, good_size
-from ducc0.misc import resize_thread_pool
 from africanus.constants import c as lightspeed
 import gc
 iFs = np.fft.ifftshift
@@ -25,16 +21,10 @@ Fs = np.fft.fftshift
 
 
 def single_stokes_image(
-                    data=None,
-                    data2=None,
+                    dc1=None,
+                    dc2=None,
                     operator=None,
-                    ant1=None,
-                    ant2=None,
-                    uvw=None,
-                    frow=None,
-                    flag=None,
-                    sigma=None,
-                    weight=None,
+                    ds=None,
                     mds=None,
                     jones=None,
                     opts=None,
@@ -50,22 +40,16 @@ def single_stokes_image(
                     radec=None,
                     antpos=None,
                     poltype=None,
-                    fieldid=None,
-                    ddid=None,
-                    scanid=None,
                     fds_store=None,
                     bandid=None,
                     timeid=None,
                     wid=None):
-    resize_thread_pool(opts.nthreads)
 
-    with worker_client() as client:
-        (data, data2, ant1, ant2, uvw, frow, flag, sigma, weight,
-        jones) = client.compute([data, data2, ant1, ant2, uvw, frow,
-                                flag, sigma, weight, jones],
-                                sync=True,
-                                workers=wid,
-                                key='read-'+uuid4().hex)
+    fieldid = ds.FIELD_ID
+    ddid = ds.DATA_DESC_ID
+    scanid = ds.SCAN_NUMBER
+    oname = f'ms{msid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
+            f'_band{bandid:04d}_time{timeid:04d}'
 
     if opts.precision.lower() == 'single':
         real_type = np.float32
@@ -73,6 +57,71 @@ def single_stokes_image(
     elif opts.precision.lower() == 'double':
         real_type = np.float64
         complex_type = np.complex128
+
+    with worker_client() as client:
+        (ds, jones) = client.compute([clone(ds),
+                                      clone(jones)],
+                                     sync=True,
+                                     workers=wid,
+                                     key='read-'+uuid4().hex)
+    data = getattr(ds, dc1).values
+    ds = ds.drop_vars(dc1)
+    if dc2 is not None:
+        try:
+            assert (operator=='+' or operator=='-')
+        except Exception as e:
+            raise e
+        ne.evaluate(f'data {operator} data2',
+                    local_dict={'data': data,
+                                'data2': getattr(ds, dc2).values},
+                    out=data,
+                    casting='same_kind')
+        ds = ds.drop_vars(dc2)
+
+    time = ds.TIME.values
+    ds = ds.drop_vars('TIME')
+    interval = ds.INTERVAL.values
+    ds = ds.drop_vars('INTERVAL')
+    ant1 = ds.ANTENNA1.values
+    ds = ds.drop_vars('ANTENNA1')
+    ant2 = ds.ANTENNA2.values
+    ds = ds.drop_vars('ANTENNA2')
+    uvw = ds.UVW.values
+    ds = ds.drop_vars('UVW')
+    flag = ds.FLAG.values
+    ds = ds.drop_vars('FLAG')
+    # MS may contain auto-correlations
+    frow = ds.FLAG_ROW.values | (ant1 == ant2)
+    ds = ds.drop_vars('FLAG_ROW')
+
+    # flag if any of the correlations flagged
+    flag = np.any(flag, axis=2)
+    # combine flag and frow
+    flag = np.logical_or(flag, frow[:, None])
+
+    # we rely on this to check the number of output bands and
+    # to ensure we don't end up with fully flagged chunks
+    if flag.all():
+        return 1
+
+    nrow, nchan, ncorr = data.shape
+
+
+    if opts.sigma_column is not None:
+        weight = ne.evaluate('1.0/sigma**2',
+                             local_dict={'sigma': getattr(ds, opts.sigma_column).values})
+        ds = ds.drop_vars(opts.sigma_column)
+    elif opts.weight_column is not None:
+        weight = getattr(ds, opts.weight_column).values
+        ds = ds.drop_vars(opts.weight_column)
+    else:
+        weight = np.ones((nrow, nchan, ncorr),
+                         dtype=real_type)
+
+    # this seems to help with memory consumption
+    # note the ds.drop_vars above
+    del ds
+    gc.collect()
 
     nrow, nchan, ncorr = data.shape
     ntime = utime.size
@@ -83,43 +132,8 @@ def single_stokes_image(
     freq_min = freq.min()
     freq_max = freq.max()
 
-    # MS may contain auto-correlations
-    if frow is not None:
-        frow = frow | (ant1 == ant2)
-    else:
-        frow = (ant1 == ant2)
-
-    if flag is not None:
-        flag = np.any(flag, axis=2)
-        flag = np.logical_or(flag, frow[:, None])
-    else:
-        flag = np.broadcast_to(frow[:, None], (nrow, nchan))
-
-    if sigma is not None:
-        weight = ne.evaluate('1.0/sigma**2')
-    elif weight is not None:
-        # in case we are reading WEIGHT instead of WEIGHT_SPECTRUM
-        if weight.ndim == 2:
-            weight = np.broadcast_to(weight[:, None, :],
-                                    (nrow, nchan, ncorr))
-    else:
-        # this shoul dbe a tiny array
-        weight = np.ones((1,), dtype=real_type)
-        weight = np.broadcast_to(weight[:, None, None],
-                                 (nrow, nchan, ncorr))
-
     if data.dtype != complex_type:
         data = data.astype(complex_type)
-
-    if data2 is not None:
-        try:
-            assert (operator=='+' or operator=='-')
-        except Exception as e:
-            raise e
-        data2 = data2.astype(complex_type)
-        data = ne.evaluate(f'data {operator} data2',
-                        out=data,
-                        casting='same_kind')
 
     if weight.dtype != real_type:
         weight = weight.astype(real_type)
@@ -133,18 +147,37 @@ def single_stokes_image(
         # for jones correlations and data/weight correlations
         # reshape to dispatch with overload
         jones_ncorr = jones.shape[-1]
-        if jones_ncorr == 2:
-            jout = 'rafdx'
-        elif jones_ncorr == 4:
-            jout = 'rafdxx'
+        if jones_ncorr == 4:
             jones = jones.reshape(ntime, nant, nchan, 1, 2, 2)
+        elif jones_ncorr == 2:
+            pass
         else:
             raise ValueError("Incorrect number of correlations of "
                             f"{jones_ncorr} for product {opts.product}")
     else:
         jones = np.ones((ntime, nant, nchan, 1, 2),
                         dtype=complex_type)
-        jout = 'rafdx'
+
+    # check that there are no missing antennas
+    ant1u = np.unique(ant1)
+    ant2u = np.unique(ant2)
+    try:
+        assert (ant1u[1:] - ant1u[0:-1] == 1).all()
+        assert (ant2u[1:] - ant2u[0:-1] == 1).all()
+    except Exception as e:
+        raise NotImplementedError('You seem to have missing antennas. '
+                                  'This is not currently supported.')
+
+    # check that antpos gives the correct size table
+    antmax = np.maximum(ant1.max(), ant2.max()) + 1
+    try:
+        assert antmax == nant
+    except Exception as e:
+        raise ValueError('Inconsistent ANTENNA table. '
+                         'Shape does not match max number of antennas '
+                         'as inferred from ant1 and ant2. '
+                         f'Table size is {antpos.shape} but got {antmax}. '
+                         f'{oname}')
 
     # compute lm coordinates of target
     if opts.target is not None:
@@ -371,9 +404,8 @@ def single_stokes_image(
 
         out_ds = xr.Dataset(data_vars,  #coords=coords,
                         attrs=attrs)
-        out_store = out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr',
+        out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr',
                                 mode='w')
-        # return out_store
     elif opts.output_format == 'fits':
         save_fits(residual/wsum, f'{fds_store.full_path}/{oname}.fits', hdr)
     return 1

@@ -275,8 +275,6 @@ def _init(**kw):
                                     radecs[ms][idt],
                                     fi, ti, ims, ms])
 
-
-
     futures = []
     associated_workers = {}
     idle_workers = set(client.scheduler_info()['workers'].keys())
@@ -303,9 +301,6 @@ def _init(**kw):
                         radec=radeci,
                         antpos=antpos[ms],
                         poltype=poltype[ms],
-                        fieldid=subds.FIELD_ID,
-                        ddid=subds.DATA_DESC_ID,
-                        scanid=subds.SCAN_NUMBER,
                         xds_store=xds_store.url,
                         bandid=fi,
                         timeid=ti,
@@ -357,9 +352,6 @@ def _init(**kw):
                         radec=radeci,
                         antpos=antpos[ms],
                         poltype=poltype[ms],
-                        fieldid=subds.FIELD_ID,
-                        ddid=subds.DATA_DESC_ID,
-                        scanid=subds.SCAN_NUMBER,
                         xds_store=xds_store.url,
                         bandid=fi,
                         timeid=ti,
@@ -385,8 +377,8 @@ def _init(**kw):
         result = f.result()
         # this should fail if a chunk is fully flagged
         try:
-            times_out.append(result[1])
-            freqs_out.append(result[2])
+            times_out.append(result[0])
+            freqs_out.append(result[1])
         except:
             pass
 

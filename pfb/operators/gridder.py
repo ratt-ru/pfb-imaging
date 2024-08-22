@@ -113,25 +113,28 @@ def im2vis(uvw,
 
 
 # we still need the collections interface here for the degridder
-def comps2vis(uvw,
-              utime,
-              freq,
-              rbin_idx, rbin_cnts,
-              tbin_idx, tbin_cnts,
-              fbin_idx, fbin_cnts,
-              comps,
-              Ix, Iy,
-              modelf,
-              tfunc,
-              ffunc,
-              nx, ny,
-              cellx, celly,
-              x0=0, y0=0,
-              epsilon=1e-7,
-              nthreads=1,
-              do_wgridding=True,
-              divide_by_n=False,
-              ncorr_out=4):
+def comps2vis(
+            uvw,
+            utime,
+            freq,
+            rbin_idx, rbin_cnts,
+            tbin_idx, tbin_cnts,
+            fbin_idx, fbin_cnts,
+            comps,
+            Ix, Iy,
+            modelf,
+            tfunc,
+            ffunc,
+            nx, ny,
+            cellx, celly,
+            x0=0, y0=0,
+            epsilon=1e-7,
+            nthreads=1,
+            do_wgridding=True,
+            divide_by_n=False,
+            ncorr_out=4,
+            freq_min=-np.inf,
+            freq_max=np.inf):
 
     # determine output type
     complex_type = da.result_type(comps, np.complex64)
@@ -163,51 +166,59 @@ def comps2vis(uvw,
                         do_wgridding, None,
                         divide_by_n, None,
                         ncorr_out, None,
+                        freq_min, None,
+                        freq_max, None,
                         new_axes={'c': ncorr_out},
-                        # it should be pulling these from uvw and freq so shouldn't need this?
+                        # it should be getting these from uvw and freq?
                         adjust_chunks={'r': uvw.chunks[0]},
                         dtype=complex_type,
                         align_arrays=False)
 
 
-def _comps2vis(uvw,
-                utime,
-                freq,
-                rbin_idx, rbin_cnts,
-                tbin_idx, tbin_cnts,
-                fbin_idx, fbin_cnts,
-                comps,
-                Ix, Iy,
-                modelf,
-                tfunc,
-                ffunc,
-                nx, ny,
-                cellx, celly,
-                x0=0, y0=0,
-                epsilon=1e-7,
-                nthreads=1,
-                do_wgridding=True,
-                divide_by_n=False,
-                ncorr_out=4):
-    return _comps2vis_impl(uvw[0],
-                           utime,
-                           freq,
-                           rbin_idx, rbin_cnts,
-                           tbin_idx, tbin_cnts,
-                           fbin_idx, fbin_cnts,
-                           comps,
-                           Ix, Iy,
-                           modelf,
-                           tfunc,
-                           ffunc,
-                           nx, ny,
-                           cellx, celly,
-                           x0=x0, y0=y0,
-                           epsilon=epsilon,
-                           nthreads=nthreads,
-                           do_wgridding=do_wgridding,
-                           divide_by_n=divide_by_n,
-                           ncorr_out=ncorr_out)
+def _comps2vis(
+            uvw,
+            utime,
+            freq,
+            rbin_idx, rbin_cnts,
+            tbin_idx, tbin_cnts,
+            fbin_idx, fbin_cnts,
+            comps,
+            Ix, Iy,
+            modelf,
+            tfunc,
+            ffunc,
+            nx, ny,
+            cellx, celly,
+            x0=0, y0=0,
+            epsilon=1e-7,
+            nthreads=1,
+            do_wgridding=True,
+            divide_by_n=False,
+            ncorr_out=4,
+            freq_min=-np.inf,
+            freq_max=np.inf):
+    return _comps2vis_impl(
+                        uvw[0],
+                        utime,
+                        freq,
+                        rbin_idx, rbin_cnts,
+                        tbin_idx, tbin_cnts,
+                        fbin_idx, fbin_cnts,
+                        comps,
+                        Ix, Iy,
+                        modelf,
+                        tfunc,
+                        ffunc,
+                        nx, ny,
+                        cellx, celly,
+                        x0=x0, y0=y0,
+                        epsilon=epsilon,
+                        nthreads=nthreads,
+                        do_wgridding=do_wgridding,
+                        divide_by_n=divide_by_n,
+                        ncorr_out=ncorr_out,
+                        freq_min=freq_min,
+                        freq_max=freq_max)
 
 
 
@@ -229,7 +240,9 @@ def _comps2vis_impl(uvw,
                     nthreads=1,
                     do_wgridding=True,
                     divide_by_n=False,
-                    ncorr_out=4):
+                    ncorr_out=4,
+                    freq_min=-np.inf,
+                    freq_max=np.inf):
     # adjust for chunking
     # need a copy here if using multiple row chunks
     rbin_idx2 = rbin_idx - rbin_idx.min()
@@ -250,16 +263,18 @@ def _comps2vis_impl(uvw,
         indr = slice(rbin_idx2[indt][0], rbin_idx2[indt][-1] + rbin_cnts[indt][-1])
         for b in range(nband):
             indf = slice(fbin_idx2[b], fbin_idx2[b] + fbin_cnts[b])
+            f = freq[indf]
+            # don't degrid outside requested frequency range
+            if not ((f>=freq_min) & (f<=freq_max)).any():
+                continue
             # render components to image
             # we want to do this on each worker
             tout = tfunc(np.mean(utime[indt]))
             fout = ffunc(np.mean(freq[indf]))
             image = np.zeros((nx, ny), dtype=comps.dtype)
             image[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
-            # negate w for wgridder bug
-            # uvw[:, 2] = -uvw[:, 2]
             vis[indr, indf, 0] = dirty2vis(uvw=uvw,
-                                           freq=freq[indf],
+                                           freq=f,
                                            dirty=image,
                                            pixsize_x=cellx, pixsize_y=celly,
                                            center_x=x0, center_y=y0,

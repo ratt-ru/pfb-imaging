@@ -153,20 +153,124 @@ def _hci(**kw):
 
     client = get_client()
 
-    print('Constructing mapping', file=log)
+    # only a single MS for now
+    ms = opts.ms[0]
+    gain_name = gain_names[0]
+    group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
+
+    # write model to tmp ds
+    if opts.transfer_model_from is not None:
+        try:
+            mds = xr.open_zarr(opts.transfer_model_from)
+            # this should be fairly small but should
+            # it rather be read in the dask call?
+            # mds = client.persist(mds)
+            foo = client.scatter(mds, broadcast=True)
+            wait(foo)
+        except Exception as e:
+            import ipdb; ipdb.set_trace()
+            raise ValueError(f"No dataset found at {opts.transfer_model_from}")
+
+        print('Constructing degrid mapping', file=log)
+        row_mapping, freq_mapping, time_mapping, \
+        freqs, utimes, ms_chunks, gain_chunks, radecs, \
+        chan_widths, uv_max, antpos, poltype = \
+            construct_mappings(opts.ms,
+                               gain_names,
+                               ipi=opts.integrations_per_degrid_image,
+                               cpi=opts.channels_per_degrid_image,
+                               freq_min=freq_min,
+                               freq_max=freq_max)
+
+        # we load the flag column to get dims
+        columns = ('UVW', opts.flag_column)
+        schema = {}
+        schema[opts.flag_column] = {'dims': ('chan', 'corr')}
+        xds = xds_from_ms(
+                    ms,
+                    chunks=ms_chunks[ms],
+                    columns=columns,
+                    table_schema=schema,
+                    group_cols=group_by)
+
+        for ids, ds in enumerate(xds):
+            fid = ds.FIELD_ID
+            ddid = ds.DATA_DESC_ID
+            scanid = ds.SCAN_NUMBER
+            # TODO - cleaner syntax
+            if opts.fields is not None:
+                if fid not in list(map(int, opts.fields)):
+                    continue
+            if opts.ddids is not None:
+                if ddid not in list(map(int, opts.ddids)):
+                    continue
+            if opts.scans is not None:
+                if scanid not in list(map(int, opts.scans)):
+                    continue
+
+
+            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+            nrow = ds.sizes['row']
+            ncorr = ds.sizes['corr']
+
+            idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
+            if not idx.any():
+                continue
+
+            titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
+                                 time_mapping[ms][idt]['counts']))
+            for ti, (tlow, tcounts) in titr:
+
+                It = slice(tlow, tlow + tcounts)
+                ridx = row_mapping[ms][idt]['start_indices'][It]
+                rcnts = row_mapping[ms][idt]['counts'][It]
+                # select all rows for output dataset
+                Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
+
+                # TODO - cpdi to cpgi mapping
+                # assumes cpdi is integer multiple of cpgi
+                nbandi = freq_mapping[ms][idt]['start_indices'].size
+                nfreqs = np.sum(freq_mapping[ms][idt]['counts'])
+                if opts.channels_per_grid_image in (0, -1, None):
+                    cpgi = nfreqs
+                else:
+                    cpgi = opts.channels_per_grid_image
+                if opts.channels_per_degrid_image in (0, -1, None):
+                    cpdi = nfreqs
+                else:
+                    cpdi = opts.channels_per_degrid_image
+                fbins_per_band = int(np.round(cpgi / cpdi))
+                nband = int(np.ceil(nbandi/fbins_per_band))
+
+                for fi in range(nband):
+                    idx0 = fi * fbins_per_band
+                    idxf = np.minimum((fi + 1) * fbins_per_band, nfreqs)
+                    fidx = freq_mapping[ms][idt]['start_indices'][idx0:idxf]
+                    fcnts = freq_mapping[ms][idt]['counts'][idx0:idxf]
+                    # need to slice out all data going onto same grid
+                    Inu = slice(fidx.min(), fidx.min() + np.sum(fcnts))
+
+                    subds = ds[{'row': Irow, 'chan': Inu}]
+                    subds = subds.chunk({'row':-1, 'chan': -1})
+
+
+
+    else:
+        mds = None
+
+    print('Constructing grid mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gain_chunks, radecs, \
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms,
                                gain_names,
                                ipi=opts.integrations_per_image,
-                               cpi=opts.channels_per_degrid_image,
+                               cpi=opts.channels_per_image,
                                freq_min=freq_min,
                                freq_max=freq_max)
 
     max_freq = 0
-    ms = opts.ms[0]
-    gain_name = gain_names[0]
+
     # for ms in opts.ms:
     for idt in freqs[ms].keys():
         freq = freqs[ms][idt]
@@ -208,8 +312,6 @@ def _hci(**kw):
 
     print(f"Image size = (nx={nx}, ny={ny})", file=log)
 
-    group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
-
     # crude column arithmetic
     dc = opts.data_column.replace(" ", "")
     if "+" in dc:
@@ -249,20 +351,6 @@ def _hci(**kw):
     else:
         print(f"No weights provided, using unity weights", file=log)
 
-
-    if opts.transfer_model_from is not None:
-        try:
-            mds = xr.open_zarr(opts.transfer_model_from)
-            # this should be fairly small but should
-            # it rather be read in the dask call?
-            # mds = client.persist(mds)
-            foo = client.scatter(mds, broadcast=True)
-            wait(foo)
-        except Exception as e:
-            import ipdb; ipdb.set_trace()
-            raise ValueError(f"No dataset found at {opts.transfer_model_from}")
-    else:
-        mds = None
 
     xds = xds_from_ms(ms,
                       chunks=ms_chunks[ms],
@@ -370,16 +458,10 @@ def _hci(**kw):
 
         worker = idle_workers.pop()
         future = client.submit(single_stokes_image,
-                        data=getattr(subds, dc1).data,
-                        data2=data2,
+                        dc1=dc1,
+                        dc2=data2,
                         operator=operator,
-                        ant1=clone(subds.ANTENNA1.data),
-                        ant2=clone(subds.ANTENNA2.data),
-                        uvw=clone(subds.UVW.data),
-                        frow=clone(subds.FLAG_ROW.data),
-                        flag=subds.FLAG.data,
-                        sigma=sigma,
-                        weight=weight,
+                        ds=subds,
                         mds=mds,
                         jones=jones,
                         opts=opts,
@@ -395,9 +477,6 @@ def _hci(**kw):
                         radec=radeci,
                         antpos=antpos[ms],
                         poltype=poltype[ms],
-                        fieldid=subds.FIELD_ID,
-                        ddid=subds.DATA_DESC_ID,
-                        scanid=subds.SCAN_NUMBER,
                         fds_store=fdsstore,
                         bandid=fi,
                         timeid=ti,
@@ -432,16 +511,10 @@ def _hci(**kw):
 
         # future = client.submit(f, xdsl[n_launched], worker, workers=worker)
         future = client.submit(single_stokes_image,
-                        data=getattr(subds, dc1).data,
-                        data2=data2,
+                        dc1=dc1,
+                        dc2=dc2,
                         operator=operator,
-                        ant1=clone(subds.ANTENNA1.data),
-                        ant2=clone(subds.ANTENNA2.data),
-                        uvw=clone(subds.UVW.data),
-                        frow=clone(subds.FLAG_ROW.data),
-                        flag=subds.FLAG.data,
-                        sigma=sigma,
-                        weight=weight,
+                        ds=subds,
                         mds=mds,
                         jones=jones,
                         opts=opts,
@@ -457,9 +530,6 @@ def _hci(**kw):
                         radec=radeci,
                         antpos=antpos[ms],
                         poltype=poltype[ms],
-                        fieldid=subds.FIELD_ID,
-                        ddid=subds.DATA_DESC_ID,
-                        scanid=subds.SCAN_NUMBER,
                         fds_store=fdsstore,
                         bandid=fi,
                         timeid=ti,

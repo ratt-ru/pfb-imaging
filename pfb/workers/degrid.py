@@ -132,9 +132,19 @@ def _degrid(**kw):
     ffunc = lambdify(params[1], fexpr)
 
 
-    # signature (t, f, *params) with
-    # t = utime/ref_time
-    # f = freq/ref_freq
+    if opts.freq_range is not None and len(opts.freq_range):
+        fmin, fmax = opts.freq_range.strip(' ').split(':')
+        if len(fmin) > 0:
+            freq_min = float(fmin)
+        else:
+            freq_min = -np.inf
+        if len(fmax) > 0:
+            freq_max = float(fmax)
+        else:
+            freq_max = np.inf
+    else:
+        freq_min = -np.inf
+        freq_max = np.inf
 
 
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
@@ -200,7 +210,6 @@ def _degrid(**kw):
             # and they need to match the number of row chunks
             uvw = clone(ds.UVW.data)
             assert len(uvw.chunks[0]) == len(tidx.chunks[0])
-
             vis = comps2vis(uvw,
                             utime,
                             freq,
@@ -217,7 +226,9 @@ def _degrid(**kw):
                             x0=x0, y0=y0,
                             nthreads=opts.nthreads,
                             epsilon=opts.epsilon,
-                            do_wgridding=opts.do_wgridding)
+                            do_wgridding=opts.do_wgridding,
+                            freq_min=freq_min,
+                            freq_max=freq_max)
 
             # convert to single precision to write to MS
             vis = vis.astype(np.complex64)
