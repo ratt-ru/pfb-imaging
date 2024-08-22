@@ -256,7 +256,7 @@ def _hci(**kw):
         print(f"No weights provided, using unity weights", file=log)
 
     if opts.model_column is not None:
-        columns += (opts.model_column)
+        columns += (opts.model_column,)
         schema[opts.model_column] = {'dims': ('chan', 'corr')}
 
     xds = xds_from_ms(ms,

@@ -82,7 +82,7 @@ inputs:
       Default (-1, 0, None) -> dataset per scan.
   channels-per-image:
     dtype: int
-    abbreviation: cpgi
+    abbreviation: cpi
     default: -1
     info:
       Number of channels per image for gridding resolution.
