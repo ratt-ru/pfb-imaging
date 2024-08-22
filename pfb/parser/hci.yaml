@@ -43,12 +43,12 @@ inputs:
       Data column to image. Must be the same across MSs.
       Simple arithmetic is supported eg. 'CORRECTED_DATA-MODEL_DATA'.
       When gains are present this column will be corrected.
-  # model-column:
-  #   dtype: str
-  #   abbreviation: mc
-  #   info:
-  #     Model column to subtract from corrected data column.
-  #     Useful to avoid high time res degridding.
+  model-column:
+    dtype: str
+    abbreviation: mc
+    info:
+      Model column to subtract from corrected data column.
+      Useful to avoid high time res degridding.
   weight-column:
     dtype: str
     abbreviation: wc
