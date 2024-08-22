@@ -90,7 +90,7 @@ def _degrid(**kw):
     import numpy as np
     from pfb.utils.misc import construct_mappings
     import dask
-    from dask.distributed import performance_report
+    from dask.distributed import performance_report, wait, get_client
     from dask.graph_manipulation import clone
     from daskms.experimental.zarr import xds_from_zarr
     from daskms import xds_from_storage_ms as xds_from_ms
@@ -110,7 +110,10 @@ def _degrid(**kw):
     from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
 
+    client = get_client()
     mds = xr.open_zarr(opts.mds)
+    foo = client.scatter(mds, broadcast=True)
+    wait(foo)
 
     # grid spec
     cell_rad = mds.cell_rad_x
@@ -216,14 +219,15 @@ def _degrid(**kw):
                             ridx, rcnts,
                             tidx, tcnts,
                             fidx, fcnts,
-                            coeffs,
-                            locx, locy,
+                            mds,
+                            # coeffs,
+                            # locx, locy,
                             modelf,
                             tfunc,
                             ffunc,
-                            nx, ny,
-                            cell_rad, cell_rad,
-                            x0=x0, y0=y0,
+                            # nx, ny,
+                            # cell_rad, cell_rad,
+                            # x0=x0, y0=y0,
                             nthreads=opts.nthreads,
                             epsilon=opts.epsilon,
                             do_wgridding=opts.do_wgridding,

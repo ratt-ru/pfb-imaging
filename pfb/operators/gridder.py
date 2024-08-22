@@ -120,14 +120,15 @@ def comps2vis(
             rbin_idx, rbin_cnts,
             tbin_idx, tbin_cnts,
             fbin_idx, fbin_cnts,
-            comps,
-            Ix, Iy,
+            mds,
+            # comps,
+            # Ix, Iy,
             modelf,
             tfunc,
             ffunc,
-            nx, ny,
-            cellx, celly,
-            x0=0, y0=0,
+            # nx, ny,
+            # cellx, celly,
+            # x0=0, y0=0,
             epsilon=1e-7,
             nthreads=1,
             do_wgridding=True,
@@ -137,7 +138,7 @@ def comps2vis(
             freq_max=np.inf):
 
     # determine output type
-    complex_type = da.result_type(comps, np.complex64)
+    complex_type = da.result_type(mds.coefficients.dtype, np.complex64)
 
     return da.blockwise(_comps2vis, 'rfc',
                         uvw, 'r3',
@@ -149,18 +150,19 @@ def comps2vis(
                         tbin_cnts, 'r',
                         fbin_idx, 'f',
                         fbin_cnts, 'f',
-                        comps, None,
-                        Ix, None,
-                        Iy, None,
+                        mds, None,
+                        # comps, None,
+                        # Ix, None,
+                        # Iy, None,
                         modelf, None,
                         tfunc, None,
                         ffunc, None,
-                        nx, None,
-                        ny, None,
-                        cellx, None,
-                        celly, None,
-                        x0, None,
-                        y0, None,
+                        # nx, None,
+                        # ny, None,
+                        # cellx, None,
+                        # celly, None,
+                        # x0, None,
+                        # y0, None,
                         epsilon, None,
                         nthreads, None,
                         do_wgridding, None,
@@ -182,14 +184,15 @@ def _comps2vis(
             rbin_idx, rbin_cnts,
             tbin_idx, tbin_cnts,
             fbin_idx, fbin_cnts,
-            comps,
-            Ix, Iy,
+            mds,
+            # comps,
+            # Ix, Iy,
             modelf,
             tfunc,
             ffunc,
-            nx, ny,
-            cellx, celly,
-            x0=0, y0=0,
+            # nx, ny,
+            # cellx, celly,
+            # x0=0, y0=0,
             epsilon=1e-7,
             nthreads=1,
             do_wgridding=True,
@@ -204,14 +207,15 @@ def _comps2vis(
                         rbin_idx, rbin_cnts,
                         tbin_idx, tbin_cnts,
                         fbin_idx, fbin_cnts,
-                        comps,
-                        Ix, Iy,
+                        mds,
+                        # comps,
+                        # Ix, Iy,
                         modelf,
                         tfunc,
                         ffunc,
-                        nx, ny,
-                        cellx, celly,
-                        x0=x0, y0=y0,
+                        # nx, ny,
+                        # cellx, celly,
+                        # x0=x0, y0=y0,
                         epsilon=epsilon,
                         nthreads=nthreads,
                         do_wgridding=do_wgridding,
@@ -228,14 +232,15 @@ def _comps2vis_impl(uvw,
                     rbin_idx, rbin_cnts,
                     tbin_idx, tbin_cnts,
                     fbin_idx, fbin_cnts,
-                    comps,
-                    Ix, Iy,
+                    mds,
+                    # comps,
+                    # Ix, Iy,
                     modelf,
                     tfunc,
                     ffunc,
-                    nx, ny,
-                    cellx, celly,
-                    x0=0, y0=0,
+                    # nx, ny,
+                    # cellx, celly,
+                    # x0=0, y0=0,
                     epsilon=1e-7,
                     nthreads=1,
                     do_wgridding=True,
@@ -252,6 +257,17 @@ def _comps2vis_impl(uvw,
     # currently not interpolating in time
     ntime = tbin_idx.size
     nband = fbin_idx.size
+
+    # get model
+    comps = mds.coefficients.values
+    Ix = mds.location_x.values
+    Iy = mds.location_y.values
+    cellx = mds.cell_rad_x
+    celly = mds.cell_rad_x
+    nx = mds.npix_x
+    ny = mds.npix_y
+    x0 = mds.center_x
+    y0 = mds.center_y
 
     nrow = uvw.shape[0]
     nchan = freq.size
