@@ -60,6 +60,11 @@ inputs:
     info:
       Controls how aggressively the l1reweighting is applied.
       Larger values correspond to more agressive reweighting.
+  nbasisf:
+    dtype: int
+    info:
+      Number of basis functions to use while fitting the frequency axis.
+      Default is to use the number of non-null imaging bands i.e. interpolation.
   positivity:
     dtype: int
     default: 1

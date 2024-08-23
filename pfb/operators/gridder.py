@@ -254,11 +254,16 @@ def _comps2vis_impl(uvw,
     tbin_idx2 = tbin_idx - tbin_idx.min()
     fbin_idx2 = fbin_idx - fbin_idx.min()
 
-    # currently not interpolating in time
     ntime = tbin_idx.size
     nband = fbin_idx.size
 
-    # get model
+    nrow = uvw.shape[0]
+    nchan = freq.size
+    vis = np.zeros((nrow, nchan, ncorr_out),
+                   dtype=np.result_type(mds.coefficients.dtype, np.complex64))
+    if not ((freq>=freq_min) & (freq<=freq_max)).any():
+        return vis
+
     comps = mds.coefficients.values
     Ix = mds.location_x.values
     Iy = mds.location_y.values
@@ -268,10 +273,6 @@ def _comps2vis_impl(uvw,
     ny = mds.npix_y
     x0 = mds.center_x
     y0 = mds.center_y
-
-    nrow = uvw.shape[0]
-    nchan = freq.size
-    vis = np.zeros((nrow, nchan, ncorr_out), dtype=np.result_type(comps, np.complex64))
     for t in range(ntime):
         indt = slice(tbin_idx2[t], tbin_idx2[t] + tbin_cnts[t])
         # TODO - clean up this logic. row_mapping holds the number of rows per
@@ -284,7 +285,6 @@ def _comps2vis_impl(uvw,
             if not ((f>=freq_min) & (f<=freq_max)).any():
                 continue
             # render components to image
-            # we want to do this on each worker
             tout = tfunc(np.mean(utime[indt]))
             fout = ffunc(np.mean(freq[indf]))
             image = np.zeros((nx, ny), dtype=comps.dtype)

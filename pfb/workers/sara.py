@@ -172,6 +172,8 @@ def _sara(ddsi=None, **kw):
         time_out.append(ds.time_out)
     freq_out = np.unique(np.array(freq_out))
     time_out = np.unique(np.array(time_out))
+    if time_out.size > 1:
+        raise NotImplementedError('Only static models currently supported')
 
     nband = freq_out.size
 
@@ -302,8 +304,12 @@ def _sara(ddsi=None, **kw):
     Nxmax = psi.Nxmax
     Nymax = psi.Nymax
 
-    # level slice indices
-    # import ipdb; ipdb.set_trace()
+    # number of frequency basis functions
+    if opts.nbasisf is None:
+        nbasisf = int(np.sum(fsel))
+    else:
+        nbasisf = opts.nbasisf
+    print(f"Using {nbasisf} frequency basis functions", file=log)
 
     # a value less than zero turns L1 reweighting off
     # we'll start on convergence or at the iteration
@@ -403,7 +409,7 @@ def _sara(ddsi=None, **kw):
                                freq_out[fsel],
                                model[None, fsel, :, :],
                                wgt=wsums[None, fsel],
-                               nbasisf=int(np.sum(fsel))-1,
+                               nbasisf=nbasisf,
                                method='Legendre',
                                sigmasq=1e-6)
             # save interpolated dataset

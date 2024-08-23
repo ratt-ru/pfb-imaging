@@ -437,8 +437,8 @@ def _grid(xdsi=None, **kw):
         if opts.transfer_model_from:
             from pfb.utils.misc import eval_coeffs_to_slice
             model = eval_coeffs_to_slice(
-                ds.time_out,
-                ds.freq_out,
+                time_out,
+                freq_out,
                 model_coeffs,
                 locx, locy,
                 mds.parametrisation,

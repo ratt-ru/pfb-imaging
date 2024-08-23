@@ -164,10 +164,6 @@ def _degrid(**kw):
 
     print("Computing model visibilities", file=log)
     writes = []
-    # avoid reading these more than once
-    coeffs = mds.coefficients.values
-    locx = mds.location_x.values
-    locy = mds.location_y.values
     for ms in opts.ms:
         xds = xds_from_ms(ms,
                           chunks=ms_chunks[ms],
