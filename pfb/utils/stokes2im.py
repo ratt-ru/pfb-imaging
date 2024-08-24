@@ -115,8 +115,12 @@ def single_stokes_image(
                          dtype=real_type)
 
     if opts.model_column is not None:
-        model_vis = getattr(ds, opts.model_column).values
+        model_vis = getattr(ds, opts.model_column).values.astype(complex_type)
         ds = ds.drop(opts.model_column)
+        if opts.product.lower() == 'i':
+            model_vis = (model_vis[:, :, 0] + model_vis[:, :, -1])/2.0
+        else:
+            raise NotImplementedError(f'Model subtraction not supported for product {opts.product}')
 
     # this seems to help with memory consumption
     # note the ds.drop_vars above
@@ -131,6 +135,8 @@ def single_stokes_image(
     freq_out = np.mean(freq)
     freq_min = freq.min()
     freq_max = freq.max()
+
+    print(freq_min, freq_max)
 
     if data.dtype != complex_type:
         data = data.astype(complex_type)
@@ -220,11 +226,6 @@ def single_stokes_image(
 
     # TODO - this subtraction woul dbe better to do inside weight_data
     if opts.model_column is not None:
-        if opts.product.lower() == 'i':
-            model_vis = (model_vis[:, :, 0] + model_vis[:, :, -1])/2.0
-        else:
-            raise NotImplementedError(f'Model subtraction not supported for product {opts.product}')
-
         ne.evaluate('(data-model_vis)*mask', out=data)
 
     if opts.l2reweight_dof:
