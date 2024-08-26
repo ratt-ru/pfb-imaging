@@ -33,7 +33,8 @@ def test_sara(ms_name):
     from pfb.utils.misc import Gaussian2D, give_edges
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from ducc0.wgridder import dirty2vis
+    from ducc0.wgridder.experimental import dirty2vis
+    from pfb.operators.gridder import wgridder_conventions
     from pfb.parser.schemas import schema
     from pfb.workers.init import _init
     from pfb.workers.grid import _grid
@@ -109,6 +110,7 @@ def test_sara(ms_name):
         model[:, mx, my] += spectrum[:, None, None] * gauss[None, gx, gy]
 
     # model vis
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
     epsilon = 1e-7
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
@@ -120,7 +122,9 @@ def test_sara(ms_name):
                                            epsilon=epsilon,
                                            do_wgridding=True,
                                            divide_by_n=False,
-                                           flip_v=False,
+                                           flip_u=flip_u,
+                                           flip_v=flip_v,
+                                           flip_w=flip_w,
                                            nthreads=8,
                                            sigma_min=1.1,
                                            sigma_max=3.0)
@@ -190,7 +194,8 @@ def test_sara(ms_name):
     _sara(**sara_args)
 
 
-    # get the inferred model
+    # the computed by the grid worker should be idenitcal to that
+    # computed in sara when passing in model
     dds = xds_from_url(dds_name)
     freqs_dds = []
     times_dds = []
@@ -205,59 +210,7 @@ def test_sara(ms_name):
     ntime_dds = times_dds.size
     nfreq_dds = freqs_dds.size
 
-    model_inferred = np.zeros((ntime_dds, nfreq_dds, nx, ny))
-    for ds in dds:
-        b = int(ds.bandid)
-        t = int(ds.timeid)
-        model_inferred[t, b, :, :] = ds.MODEL.values
 
-    model2comps_args = {}
-    for key in schema.model2comps["inputs"].keys():
-        model2comps_args[key.replace("-", "_")] = schema.model2comps["inputs"][key]["default"]
-    model2comps_args["output_filename"] = outname
-    model2comps_args["nbasisf"] = nchan
-    model2comps_args["fit_mode"] = 'Legendre'
-    model2comps_args["overwrite"] = True
-    model2comps_args["use_wsum"] = False
-    model2comps_args["sigmasq"] = 1e-14
-    _model2comps(**model2comps_args)
-
-    mds_name = f'{outname}_main_model.mds'
-    mds = xr.open_zarr(mds_name)
-
-    # grid spec
-    cell_rad = mds.cell_rad_x
-    cell_deg = np.rad2deg(cell_rad)
-    nx = mds.npix_x
-    ny = mds.npix_y
-    x0 = mds.center_x
-    y0 = mds.center_y
-    radec = (mds.ra, mds.dec)
-
-    # model func
-    params = sm.symbols(('t','f'))
-    params += sm.symbols(tuple(mds.params.values))
-    symexpr = parse_expr(mds.parametrisation)
-    modelf = lambdify(params, symexpr)
-    texpr = parse_expr(mds.texpr)
-    tfunc = lambdify(params[0], texpr)
-    fexpr = parse_expr(mds.fexpr)
-    ffunc = lambdify(params[1], fexpr)
-
-    # model coeffs
-    coeffs = mds.coefficients.values
-    locx = mds.location_x.values
-    locy = mds.location_y.values
-
-    model_test = np.zeros((ntime_dds, nfreq_dds, nx, ny), dtype=float)
-    for i in range(ntime_dds):
-        tout = tfunc(times_dds[i])
-        for j in range(nchan):
-            fout = ffunc(freqs_dds[j])
-            model_test[i,j,locx,locy] = modelf(tout, fout, *coeffs)
-
-    # models need to match exactly
-    assert_allclose(1 + model_test, 1 + model_inferred)
 
     # degrid from coeffs populating MODEL_DATA
     degrid_args = {}

@@ -64,7 +64,7 @@ def compute_counts(dsl,
 @njit(nogil=True, cache=True, parallel=True)
 def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                     cell_size_x, cell_size_y, dtype,
-                    k=6, ngrid=1):  # support hardcoded for now
+                    k=6, ngrid=1, usign=1.0, vsign=-1.0):  # support hardcoded for now
     # ufreq
     u_cell = 1/(nx*cell_size_x)
     # shifts fftfreq such that they start at zero
@@ -105,8 +105,8 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                     continue
                 # current uv coords
                 chan_normfreq = normfreq[c]
-                u_tmp = uvw_row[0] * chan_normfreq
-                v_tmp = uvw_row[1] * chan_normfreq
+                u_tmp = uvw_row[0] * chan_normfreq * usign
+                v_tmp = uvw_row[1] * chan_normfreq * vsign
                 # pixel coordinates
                 ug = (u_tmp + umax)/u_cell
                 vg = (v_tmp + vmax)/v_cell
@@ -138,7 +138,8 @@ def _es_kernel(x, beta, k):
 
 @njit(nogil=True, cache=True, parallel=True)
 def counts_to_weights(counts, uvw, freq, nx, ny,
-                       cell_size_x, cell_size_y, robust):
+                       cell_size_x, cell_size_y, robust,
+                       usign=1.0, vsign=-1.0):
     # ufreq
     u_cell = 1/(nx*cell_size_x)
     umax = np.abs(-1/cell_size_x/2 - u_cell/2)
@@ -169,8 +170,8 @@ def counts_to_weights(counts, uvw, freq, nx, ny,
         for c in range(nchan):
             # get current uv
             chan_normfreq = normfreq[c]
-            u_tmp = uvw_row[0] * chan_normfreq
-            v_tmp = uvw_row[1] * chan_normfreq
+            u_tmp = uvw_row[0] * chan_normfreq * usign
+            v_tmp = uvw_row[1] * chan_normfreq * vsign
             # get u index
             u_idx = int(np.floor((u_tmp + umax)/u_cell))
             # get v index

@@ -292,7 +292,7 @@ def pcg_dds(ds_name,
 
     # set precond if PSF is present
     if 'PSFHAT' in ds and use_psf:
-        psfhat = np.abs(ds.PSFHAT.values)/wsum + sigma
+        psfhat = np.abs(ds.PSFHAT.values)/wsum
         ds.drop_vars(('PSFHAT'))
         nx_psf, nyo2 = psfhat.shape
         ny_psf = 2*(nyo2-1)  # is this always the case?
@@ -323,7 +323,7 @@ def pcg_dds(ds_name,
                     taperxy=taperxy,
                     lastsize=ny_psf,
                     nthreads=nthreads,
-                    sigmainvsq=1.0,  # not used
+                    sigmainvsq=sigma,
                     mode='backward')
 
         x0 = precond(j)

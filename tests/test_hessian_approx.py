@@ -1,61 +1,140 @@
 import itertools
 import numpy as np
 import pytest
-pmp = pytest.mark.parametrize
-from ducc0.wgridder import dirty2vis, vis2dirty
+from pathlib import Path
+from pfb.operators.gridder import wgridder_conventions
+from pfb.operators.hessian import _hessian_impl as hessian
+from pfb.operators.psf import psf_convolve_slice
+from pfb.utils.misc import set_image_size
+from ducc0.wgridder.experimental import vis2dirty, dirty2vis
+from scipy.constants import c as lightspeed
+from daskms import xds_from_ms, xds_from_table
 from ducc0.fft import c2r, r2c
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
-from pfb.operators.hessian import _hessian_impl as hessian
-from pfb.operators.psf import psf_convolve_slice
-from ducc0.misc import make_noncritical
-from ducc0.wgridder import vis2dirty
-from ducc0.wgridder import dirty2vis
+pmp = pytest.mark.parametrize
 
-'''
-R.H W R x \approx Z.H F.H Ihat F Z x
+@pmp("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5)])
+def test_psfvis(center_offset, ms_name):
+    test_dir = Path(ms_name).resolve().parent
+    xds = xds_from_ms(ms_name,
+                      chunks={'row': -1, 'chan': -1})[0]
+    spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]
+    uvw = xds.UVW.values
+    freq = spw.CHAN_FREQ.values.squeeze()
 
-
-'''
-
-# @pytest.mark.parametrize("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5)])
-def test_hessian():
-    # np.random.seed(42)
-    nx, ny = 128, 128
-    nant = 10
-    nchan = 2
-
-    pixsize = 0.5 * np.pi / 180 / 3600.  # 1 arcsec ~ 4 pixels / beam, so we'll avoid aliasing
-    l0, m0 = 0.0, 0.0
-    dl = pixsize
-    dm = pixsize
-
-    ant1, ant2 = np.asarray(list(itertools.combinations(range(nant), 2))).T
-    antennas = 10e3 * np.random.normal(size=(nant, 3))
-    antennas[:, 2] *= 0.001
-    uvw = antennas[ant2] - antennas[ant1]
+    # uvw = ms.getcol('UVW')
     nrow = uvw.shape[0]
-    freqs = np.linspace(700e6, 2000e6, nchan)
+    nchan = freq.size
 
-    epsilon = 1e-12
-    uvwneg = uvw.copy()
-    uvwneg[:, 2] *= -1
+    umax = np.abs(uvw[:, 0]).max()
+    vmax = np.abs(uvw[:, 1]).max()
+    uv_max = np.maximum(umax, vmax)
+    max_freq = freq.max()
+
+    nx, ny, nx_psf, ny_psf, cell_N, cell_rad = set_image_size(
+                    uv_max,
+                    max_freq,
+                    1.0,
+                    2.0)
+    x0, y0 = center_offset
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
+    epsilon = 1e-10
+    signu = -1.0 if flip_u else 1.0
+    signv = -1.0 if flip_v else 1.0
+    # we need these in the test because of flipped wgridder convention
+    # https://github.com/mreineck/ducc/issues/34
+    signx = -1.0 if flip_u else 1.0
+    signy = -1.0 if flip_v else 1.0
+
+    # produce PSF visibilities centered at x0, y0
+    n = np.sqrt(1 - x0**2 - y0**2)
+    freqfactor = -2j*np.pi*freq[None, :]/lightspeed
+    psf_vis = np.exp(freqfactor*(signu*uvw[:, 0:1]*x0*signx +
+                                 signv*uvw[:, 1:2]*y0*signy -
+                                 uvw[:, 2:]*(n-1)))
+    x = np.zeros((nx, ny), dtype='f8')
+    x[nx//2, ny//2] = 1.0
+    psf_vis2 = dirty2vis(
+                    uvw=uvw,
+                    freq=freq,
+                    dirty=x,
+                    pixsize_x=cell_rad,
+                    pixsize_y=cell_rad,
+                    center_x=x0,
+                    center_y=y0,
+                    flip_u=flip_u,
+                    flip_v=flip_v,
+                    flip_w=flip_w,
+                    epsilon=epsilon,
+                    nthreads=8,
+                    do_wgridding=True,
+                    divide_by_n=False)
+
+    assert np.abs(psf_vis - psf_vis2).max() <= epsilon
+
+
+
+@pmp("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5)])
+def test_hessian(center_offset, ms_name):
+    test_dir = Path(ms_name).resolve().parent
+    xds = xds_from_ms(ms_name,
+                      chunks={'row': -1, 'chan': -1})[0]
+    spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]
+    uvw = xds.UVW.values
+    freq = spw.CHAN_FREQ.values.squeeze()
+
+    nrow = uvw.shape[0]
+    nchan = freq.size
+
+    umax = np.abs(uvw[:, 0]).max()
+    vmax = np.abs(uvw[:, 1]).max()
+    uv_max = np.maximum(umax, vmax)
+    max_freq = freq.max()
+
+    x0, y0 = center_offset
+    nx, ny, nx_psf, ny_psf, cell_N, cell_rad = set_image_size(
+                    uv_max,
+                    max_freq,
+                    1.5,
+                    2.0)
+
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
+    epsilon = 1e-10
+    signu = -1.0 if flip_u else 1.0
+    signv = -1.0 if flip_v else 1.0
+    # we need these in the test because of flipped wgridder convention
+    # https://github.com/mreineck/ducc/issues/34
+    signx = -1.0 if flip_u else 1.0
+    signy = -1.0 if flip_v else 1.0
+
+    # produce PSF visibilities centered at x0, y0
+    n = np.sqrt(1 - x0**2 - y0**2)
+    freqfactor = -2j*np.pi*freq[None, :]/lightspeed
+    psf_vis = np.exp(freqfactor*(signu*uvw[:, 0:1]*x0*signx +
+                                 signv*uvw[:, 1:2]*y0*signy))
+
+
+    x = np.zeros((nx, ny), dtype='f8')
+    x[nx//2, ny//2] = 1.0
     psf = vis2dirty(
-        uvw=uvwneg,
-        freq=freqs,
-        vis=np.ones((nrow, nchan), dtype='c16'),
+        uvw=uvw,
+        freq=freq,
+        vis=psf_vis,
         wgt=None,
-        npix_x=2*nx,
-        npix_y=2*ny,
-        pixsize_x=dl,
-        pixsize_y=dm,
-        center_x=l0,
-        center_y=m0,
+        npix_x=nx_psf,
+        npix_y=ny_psf,
+        pixsize_x=cell_rad,
+        pixsize_y=cell_rad,
+        center_x=x0,
+        center_y=y0,
+        flip_u=flip_u,
+        flip_v=flip_v,
+        flip_w=flip_w,
         epsilon=epsilon,
         do_wgridding=False,
-        flip_v=False,
-        divide_by_n=False,  # else we also need it in the PSF convolve
-        nthreads=1,
+        divide_by_n=False,  # else we also need it in PSF convolve
+        nthreads=8,
         verbosity=0,
     )
 
@@ -63,37 +142,33 @@ def test_hessian():
                      nthreads=8,
                      forward=True, inorm=0)
 
-    x = np.random.normal(size=(nx, ny))
-    # x[...] = 0.0
-    # x[nx//2, ny//2] = 1.0
-    # x[nx//2-1, ny//2] = 0.5
-    # x[nx//2, ny//2-1] = 0.5
-    beam = np.ones((nx, ny))
+
     res1 = hessian(
         x,
-        uvw,
-        np.ones((nrow, nchan), dtype='f8'),
-        np.ones((nrow, nchan), dtype=np.uint8),
-        freqs,
-        beam,
-        x0=l0, y0=m0,
-        cell=pixsize,
+        uvw=uvw,
+        weight=np.ones((nrow, nchan), dtype='f8'),
+        vis_mask=np.ones((nrow, nchan), dtype=np.uint8),
+        freq=freq,
+        cell=cell_rad,
+        x0=x0,
+        y0=y0,
+        flip_u=flip_u,
+        flip_v=flip_v,
+        flip_w=flip_w,
         do_wgridding=False,
         epsilon=epsilon,
         double_accum=True,
         nthreads=8
     )
 
-    res2 = psf_convolve_slice(np.zeros((2*nx, 2*ny)),
+    res2 = psf_convolve_slice(np.zeros((nx_psf, ny_psf)),
                               np.zeros_like(psfhat),
                               np.zeros_like(x),
                               psfhat,
-                              2*ny,
-                              x*beam,
+                              ny_psf,
+                              x,
                               nthreads=8)
 
     scale = np.abs(res2).max()
-
-    diff = res2-res1
+    diff = (res2-res1)/scale
     assert np.allclose(1 + diff, 1)
-

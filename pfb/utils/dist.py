@@ -132,7 +132,12 @@ class band_actor(object):
         self.uv_max = uv_max
         nx, ny, nx_psf, ny_psf, cell_N, cell_rad = set_image_size(uv_max,
                                                                   max_freq,
-                                                                  opts)
+                                                                  opts.field_of_view,
+                                                                  opts.super_resolution_factor,
+                                                                  opts.cell_size,
+                                                                  opts.nx,
+                                                                  opts.ny,
+                                                                  opts.psf_oversize)
         cell_deg = np.rad2deg(cell_rad)
         cell_size = cell_deg * 3600
         # print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
@@ -354,7 +359,6 @@ class band_actor(object):
                                 self.cell_rad, self.cell_rad,
                                 self.cache_path,  # output_name (same as dsl names?)
                                 x,
-                                x0=self.x0, y0=self.y0,
                                 nthreads=self.nthreads,
                                 epsilon=self.opts.epsilon,
                                 do_wgridding=self.opts.do_wgridding,

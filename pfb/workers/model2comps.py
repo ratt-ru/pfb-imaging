@@ -280,6 +280,9 @@ def _model2comps(ddsi=None, **kw):
         'fexpr': fexpr,
         'center_x': x0,
         'center_y': y0,
+        'flip_u': dds[0].flip_u,
+        'flip_v': dds[0].flip_v,
+        'flip_v': dds[0].flip_v,
         'ra': dds[0].ra,
         'dec': dds[0].dec,
         'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV

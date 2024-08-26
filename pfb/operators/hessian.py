@@ -1,63 +1,12 @@
 import numpy as np
 import dask
 import dask.array as da
-from ducc0.wgridder import vis2dirty, dirty2vis
+from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from ducc0.fft import r2c, c2r
 from ducc0.misc import make_noncritical
 from uuid import uuid4
 from pfb.operators.psf import (psf_convolve_slice,
                                psf_convolve_cube)
-
-
-def hessian_xds(x, xds, hessopts, wsum, sigmainv, mask,
-                compute=True, use_beam=True):
-    '''
-    Vis space Hessian reduction over dataset.
-    Hessian will be applied to x
-    '''
-    if not isinstance(x, da.Array):
-        x = da.from_array(x, chunks=(1, -1, -1),
-                          name="x-" + uuid4().hex)
-
-    if not isinstance(mask, da.Array):
-        mask = da.from_array(mask, chunks=(-1, -1),
-                             name="mask-" + uuid4().hex)
-
-    assert mask.ndim == 2
-
-    nband, nx, ny = x.shape
-
-    # LB - what is the point of specifying name?
-    convims = [da.zeros((nx, ny),
-               chunks=(-1, -1), name="zeros-" + uuid4().hex)
-               for _ in range(nband)]
-
-    for ds in xds:
-        wgt = ds.WEIGHT.data
-        vis_mask = ds.MASK.data
-        uvw = ds.UVW.data
-        freq = ds.FREQ.data
-        b = ds.bandid
-        if use_beam:
-            beam = ds.BEAM.data * mask
-        else:
-            # TODO - separate implementation without
-            # unnecessary beam application
-            beam = mask
-
-        convim = hessian(x[b], uvw, wgt, vis_mask, freq, beam, hessopts)
-
-        convims[b] += convim
-
-    convim = da.stack(convims)/wsum
-
-    if sigmainv:
-        convim += x * sigmainv**2
-
-    if compute:
-        return convim.compute()
-    else:
-        return convim
 
 
 def _hessian_impl(x,
@@ -68,6 +17,9 @@ def _hessian_impl(x,
                   beam=None,
                   x0=0.0,
                   y0=0.0,
+                  flip_u=False,
+                  flip_v=True,
+                  flip_w=False,
                   cell=None,
                   do_wgridding=None,
                   epsilon=None,
@@ -75,6 +27,17 @@ def _hessian_impl(x,
                   nthreads=None,
                   sigmainvsq=None,
                   wsum=1.0):
+    '''
+    Apply vis space Hessian approximation on a slice of an image.
+
+    Important!
+    x0, y0, flip_u, flip_v and flip_w must be consistent with the
+    conventions defined in pfb.operators.gridder.wgridder_conventions
+
+    These are inputs here to allow for testing but should generally be taken
+    from the attrs of the datasets produced by
+    pfb.operators.gridder.image_data_products
+    '''
     if not x.any():
         return np.zeros_like(x)
     nx, ny = x.shape
@@ -86,27 +49,34 @@ def _hessian_impl(x,
                     pixsize_y=cell,
                     center_x=x0,
                     center_y=y0,
+                    flip_u=flip_u,
+                    flip_v=flip_v,
+                    flip_w=flip_w,
                     epsilon=epsilon,
                     nthreads=nthreads,
                     do_wgridding=do_wgridding,
                     divide_by_n=False)
 
-    convim = vis2dirty(uvw=uvw,
-                      freq=freq,
-                      vis=mvis,
-                      wgt=weight,
-                      mask=vis_mask,
-                      npix_x=nx,
-                      npix_y=ny,
-                      pixsize_x=cell,
-                      pixsize_y=cell,
-                      center_x=x0,
-                      center_y=y0,
-                      epsilon=epsilon,
-                      nthreads=nthreads,
-                      do_wgridding=do_wgridding,
-                      double_precision_accumulation=double_accum,
-                      divide_by_n=False)
+    convim = vis2dirty(
+                    uvw=uvw,
+                    freq=freq,
+                    vis=mvis,
+                    wgt=weight,
+                    mask=vis_mask,
+                    npix_x=nx,
+                    npix_y=ny,
+                    pixsize_x=cell,
+                    pixsize_y=cell,
+                    center_x=x0,
+                    center_y=y0,
+                    flip_u=flip_u,
+                    flip_v=flip_v,
+                    flip_w=flip_w,
+                    epsilon=epsilon,
+                    nthreads=nthreads,
+                    do_wgridding=do_wgridding,
+                    double_precision_accumulation=double_accum,
+                    divide_by_n=False)
     convim /= wsum
 
     if beam is not None:
@@ -118,24 +88,25 @@ def _hessian_impl(x,
     return convim
 
 
-def _hessian(x, uvw, weight, vis_mask, freq, beam, hessopts):
-    return _hessian_impl(x, uvw[0][0], weight[0][0], vis_mask[0][0], freq[0],
-                         beam, **hessopts)
+# Kept in case we need them in the future
+# def _hessian(x, uvw, weight, vis_mask, freq, beam, hessopts):
+#     return _hessian_impl(x, uvw[0][0], weight[0][0], vis_mask[0][0], freq[0],
+#                          beam, **hessopts)
 
-def hessian(x, uvw, weight, vis_mask, freq, beam, hessopts):
-    if beam is None:
-        bout = None
-    else:
-        bout = ('nx', 'ny')
-    return da.blockwise(_hessian, ('nx', 'ny'),
-                        x, ('nx', 'ny'),
-                        uvw, ('row', 'three'),
-                        weight, ('row', 'chan'),
-                        vis_mask, ('row', 'chan'),
-                        freq, ('chan',),
-                        beam, bout,
-                        hessopts, None,
-                        dtype=x.dtype)
+# def hessian(x, uvw, weight, vis_mask, freq, beam, hessopts):
+#     if beam is None:
+#         bout = None
+#     else:
+#         bout = ('nx', 'ny')
+#     return da.blockwise(_hessian, ('nx', 'ny'),
+#                         x, ('nx', 'ny'),
+#                         uvw, ('row', 'three'),
+#                         weight, ('row', 'chan'),
+#                         vis_mask, ('row', 'chan'),
+#                         freq, ('chan',),
+#                         beam, bout,
+#                         hessopts, None,
+#                         dtype=x.dtype)
 
 
 def _hessian_psf_slice(
@@ -167,10 +138,10 @@ def _hessian_psf_slice(
     if wsum is not None:
         xout /= wsum
 
-    # if sigmainv:
-    #     xout += x * sigmainv
+    if sigmainv:
+        xout += x * sigmainv
 
-    return xout + x * sigmainv
+    return xout
 
 
 def hessian_psf_cube(
@@ -202,7 +173,10 @@ def hessian_psf_cube(
         if wsum is not None:
             xout /= wsum
 
-        return xout + x * sigmainv
+        if sigmainv:
+            xout += x * sigmainv
+
+        return xout
     else:
         raise NotImplementedError
 
@@ -220,7 +194,10 @@ def hess_direct(x,     # input image, not overwritten
                 mode='forward'):
     nband, nx, ny = x.shape
     xpad[...] = 0.0
-    xpad[:, 0:nx, 0:ny] = x * taperxy[None]
+    if mode == 'forward':
+        xpad[:, 0:nx, 0:ny] = x / taperxy[None]
+    else:
+        xpad[:, 0:nx, 0:ny] = x * taperxy[None]
     r2c(xpad, out=xhat, axes=(1,2),
         forward=True, inorm=0, nthreads=nthreads)
     if mode=='forward':
@@ -231,7 +208,11 @@ def hess_direct(x,     # input image, not overwritten
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)
     xout[...] = xpad[:, 0:nx, 0:ny]
-    return xout * taperxy[None]
+    if mode=='forward':
+        xout /= taperxy[None]
+    else:
+        xout *= taperxy[None]
+    return xout
 
 
 def hess_direct_slice(x,     # input image, not overwritten
@@ -254,16 +235,15 @@ def hess_direct_slice(x,     # input image, not overwritten
     r2c(xpad, out=xhat, axes=(0,1),
         forward=True, inorm=0, nthreads=nthreads)
     if mode=='forward':
-        # xhat *= (psfhat + sigmainvsq)
-        xhat *= psfhat
+        xhat *= (psfhat + sigmainvsq)
     else:
-        # xhat /= (psfhat + sigmainvsq)
-        xhat /= psfhat
+        xhat /= (psfhat + sigmainvsq)
     c2r(xhat, axes=(0, 1), forward=False, out=xpad,
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)
     xout[...] = xpad[0:nx, 0:ny]
-    if mode=='foward':
-        return xout / taperxy
+    if mode=='forward':
+        xout /= taperxy
     else:
-        return xout * taperxy
+        xout *= taperxy
+    return xout

@@ -10,7 +10,7 @@ import concurrent.futures as cf
 import xarray as xr
 import dask
 import dask.array as da
-from ducc0.wgridder import vis2dirty, dirty2vis
+from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from ducc0.fft import c2r, r2c, c2c
 from africanus.constants import c as lightspeed
 from quartical.utils.dask import Blocker
@@ -22,6 +22,20 @@ iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
 
+def wgridder_conventions(l0, m0):
+    '''
+    Returns
+
+    flip_u, flip_v, flip_w, x0, y0
+
+    according to the conventions documented here https://github.com/mreineck/ducc/issues/34
+
+    Note that these conventions are stored as dataset attributes in order
+    to call the operators acting on datasets with a consistent convention.
+    '''
+    return False, True, False, -l0, -m0
+
+
 def vis2im(uvw,
            freq,
            vis,
@@ -29,10 +43,9 @@ def vis2im(uvw,
            mask,
            nx, ny,
            cellx, celly,
-           x0, y0,
+           l0, m0,
            epsilon,
            precision,
-           flip_v,
            do_wgridding,
            divide_by_n,
            nthreads,
@@ -56,6 +69,8 @@ def vis2im(uvw,
     if mask is not None:
         mask = np.require(mask, dtype=np.uint8)
 
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
+
     return vis2dirty(uvw=uvw,
                      freq=freq,
                      vis=vis,
@@ -65,7 +80,9 @@ def vis2im(uvw,
                      pixsize_x=cellx, pixsize_y=celly,
                      center_x=x0, center_y=y0,
                      epsilon=epsilon,
+                     flip_u=flip_u,
                      flip_v=flip_v,
+                     flip_w=flip_w,
                      do_wgridding=do_wgridding,
                      divide_by_n=divide_by_n,
                      nthreads=nthreads,
@@ -80,15 +97,15 @@ def im2vis(uvw,
            celly,
            freq_bin_idx,
            freq_bin_counts,
-           x0=0, y0=0,
+           l0=0, m0=0,
            epsilon=1e-7,
-           flip_v=False,
            do_wgridding=True,
            divide_by_n=False,
            nthreads=1):
     # adjust for chunking
     # need a copy here if using multiple row chunks
     freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
     nband, nx, ny = image.shape
     nrow = uvw.shape[0]
     nchan = freq.size
@@ -103,12 +120,13 @@ def im2vis(uvw,
             pixsize_y=celly,
             center_x=x0,
             center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
             epsilon=epsilon,
             nthreads=nthreads,
             do_wgridding=do_wgridding,
-            divide_by_n=divide_by_n,
-            flip_v=flip_v
-        )
+            divide_by_n=divide_by_n)
     return vis
 
 
@@ -121,14 +139,9 @@ def comps2vis(
             tbin_idx, tbin_cnts,
             fbin_idx, fbin_cnts,
             mds,
-            # comps,
-            # Ix, Iy,
             modelf,
             tfunc,
             ffunc,
-            # nx, ny,
-            # cellx, celly,
-            # x0=0, y0=0,
             epsilon=1e-7,
             nthreads=1,
             do_wgridding=True,
@@ -151,18 +164,9 @@ def comps2vis(
                         fbin_idx, 'f',
                         fbin_cnts, 'f',
                         mds, None,
-                        # comps, None,
-                        # Ix, None,
-                        # Iy, None,
                         modelf, None,
                         tfunc, None,
                         ffunc, None,
-                        # nx, None,
-                        # ny, None,
-                        # cellx, None,
-                        # celly, None,
-                        # x0, None,
-                        # y0, None,
                         epsilon, None,
                         nthreads, None,
                         do_wgridding, None,
@@ -185,14 +189,9 @@ def _comps2vis(
             tbin_idx, tbin_cnts,
             fbin_idx, fbin_cnts,
             mds,
-            # comps,
-            # Ix, Iy,
             modelf,
             tfunc,
             ffunc,
-            # nx, ny,
-            # cellx, celly,
-            # x0=0, y0=0,
             epsilon=1e-7,
             nthreads=1,
             do_wgridding=True,
@@ -208,14 +207,9 @@ def _comps2vis(
                         tbin_idx, tbin_cnts,
                         fbin_idx, fbin_cnts,
                         mds,
-                        # comps,
-                        # Ix, Iy,
                         modelf,
                         tfunc,
                         ffunc,
-                        # nx, ny,
-                        # cellx, celly,
-                        # x0=x0, y0=y0,
                         epsilon=epsilon,
                         nthreads=nthreads,
                         do_wgridding=do_wgridding,
@@ -233,14 +227,9 @@ def _comps2vis_impl(uvw,
                     tbin_idx, tbin_cnts,
                     fbin_idx, fbin_cnts,
                     mds,
-                    # comps,
-                    # Ix, Iy,
                     modelf,
                     tfunc,
                     ffunc,
-                    # nx, ny,
-                    # cellx, celly,
-                    # x0=0, y0=0,
                     epsilon=1e-7,
                     nthreads=1,
                     do_wgridding=True,
@@ -271,8 +260,12 @@ def _comps2vis_impl(uvw,
     celly = mds.cell_rad_x
     nx = mds.npix_x
     ny = mds.npix_y
+    # these are taken from dataset attrs to make sure they remain consistent
     x0 = mds.center_x
     y0 = mds.center_y
+    flip_u = mds.flip_u
+    flip_v = mds.flip_v
+    flip_w = mds.flip_v
     for t in range(ntime):
         indt = slice(tbin_idx2[t], tbin_idx2[t] + tbin_cnts[t])
         # TODO - clean up this logic. row_mapping holds the number of rows per
@@ -294,6 +287,9 @@ def _comps2vis_impl(uvw,
                                            dirty=image,
                                            pixsize_x=cellx, pixsize_y=celly,
                                            center_x=x0, center_y=y0,
+                                           flip_u=flip_u,
+                                           flip_v=flip_v,
+                                           flip_w=flip_w,
                                            epsilon=epsilon,
                                            do_wgridding=do_wgridding,
                                            divide_by_n=divide_by_n,
@@ -312,12 +308,11 @@ def image_data_products(dsl,
                         attrs,
                         model=None,
                         robustness=None,
-                        x0=0.0, y0=0.0,
+                        l0=0.0, m0=0.0,
                         nthreads=1,
                         epsilon=1e-7,
                         do_wgridding=True,
                         double_accum=True,
-                        # divide_by_n=False,
                         l2reweight_dof=None,
                         do_dirty=True,
                         do_psf=True,
@@ -339,6 +334,8 @@ def image_data_products(dsl,
     sum of beam
     '''
 
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
+
     # TODO - assign ug,vg-coordinates
     x = (-nx/2 + np.arange(nx)) * cellx + x0
     y = (-ny/2 + np.arange(ny)) * celly + y0
@@ -346,6 +343,7 @@ def image_data_products(dsl,
         'x': x,
         'y': y
     }
+
 
     # expects a list
     if isinstance(dsl, str):
@@ -404,28 +402,27 @@ def image_data_products(dsl,
             center_y=y0,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
-            flip_v=False,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
             nthreads=nthreads,
-            divide_by_n=False,
+            divide_by_n=False,  # incorporte in smooth beam
             sigma_min=1.1, sigma_max=3.0)
 
         residual_vis *= -1  # negate model
         residual_vis += vis
-        # apply mask for reweighting
-        # residual_vis *= mask
 
     if l2reweight_dof:
-        # careful mask needs to be bool here
         ressq = (residual_vis*residual_vis.conj()).real
+        # mask needs to be bool here
         ssq = ressq[mask>0].sum()
         ovar = ssq/mask.sum()
-        # ovar = np.var(residual_vis[mask])
         chi2_dofp = np.mean(ressq[mask>0]*wgt[mask>0])
         mean_dev = np.mean(ressq[mask>0]/ovar)
         if ovar:
             wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)
             # now divide by ovar to scale to absolute units
-            # the chi2_dof after reweighting should be close to one
+            # the chi2_dof after reweighting should be closer to one
             wgt /= ovar
             chi2_dof = np.mean(ressq[mask>0]*wgt[mask>0])
             print(f'Band {bandid} chi2-dof changed from {chi2_dofp} to {chi2_dof} with mean deviation of {mean_dev}')
@@ -441,14 +438,18 @@ def image_data_products(dsl,
                                  nx, ny,
                                  cellx, celly,
                                  uvw.dtype,
-                                 ngrid=np.minimum(nthreads, 8))  # limit number of grids
+                                 ngrid=np.minimum(nthreads, 8),  # limit number of grids
+                                 usign=1.0 if flip_u else -1.0,
+                                 vsign=1.0 if flip_v else -1.0)
         imwgt = counts_to_weights(
             counts,
             uvw,
             freq,
             nx, ny,
             cellx, celly,
-            robustness)
+            robustness,
+            usign=1.0 if flip_u else -1.0,
+            vsign=1.0 if flip_v else -1.0)
         if wgt is not None:
             wgt *= imwgt
         else:
@@ -474,9 +475,11 @@ def image_data_products(dsl,
             pixsize_x=cellx, pixsize_y=celly,
             center_x=x0, center_y=y0,
             epsilon=epsilon,
-            flip_v=False,  # hardcoded for now
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
             do_wgridding=do_wgridding,
-            divide_by_n=False,  # hardcoded for now
+            divide_by_n=False,  # incorporte in smooth beam
             nthreads=nthreads,
             sigma_min=1.1, sigma_max=3.0,
             double_precision_accumulation=double_accum)
@@ -505,11 +508,13 @@ def image_data_products(dsl,
                 pixsize_y=celly,
                 center_x=x0,
                 center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
                 epsilon=epsilon,
                 do_wgridding=do_wgridding,
                 nthreads=nthreads,
-                divide_by_n=False,
-                flip_v=False,  # hardcoded for now
+                divide_by_n=False,  # incorporte in smooth beam
                 sigma_min=1.1, sigma_max=3.0)
 
         else:
@@ -528,10 +533,12 @@ def image_data_products(dsl,
             npix_x=nx_psf, npix_y=ny_psf,
             pixsize_x=cellx, pixsize_y=celly,
             center_x=x0, center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
             epsilon=epsilon,
-            flip_v=False,  # hardcoded for now
             do_wgridding=do_wgridding,
-            divide_by_n=False,  # hardcoded for now
+            divide_by_n=False,  # incorporte in smooth beam
             nthreads=nthreads,
             sigma_min=1.1, sigma_max=3.0,
             double_precision_accumulation=double_accum)
@@ -560,10 +567,12 @@ def image_data_products(dsl,
             npix_x=nx, npix_y=ny,
             pixsize_x=cellx, pixsize_y=celly,
             center_x=x0, center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
             epsilon=epsilon,
-            flip_v=False,  # hardcoded for now
             do_wgridding=do_wgridding,
-            divide_by_n=False,  # hardcoded for now
+            divide_by_n=False,  # incorporte in smooth beam
             nthreads=nthreads,
             sigma_min=1.1, sigma_max=3.0,
             double_precision_accumulation=double_accum)
@@ -589,10 +598,12 @@ def image_data_products(dsl,
             npix_x=nx, npix_y=ny,
             pixsize_x=cellx, pixsize_y=celly,
             center_x=x0, center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
             epsilon=epsilon,
-            flip_v=False,  # hardcoded for now
             do_wgridding=do_wgridding,
-            divide_by_n=False,  # hardcoded for now
+            divide_by_n=False,  # incorporte in smooth beam
             nthreads=nthreads,
             sigma_min=1.1, sigma_max=3.0,
             double_precision_accumulation=double_accum)
@@ -605,7 +616,10 @@ def image_data_products(dsl,
         dso['BEAM'] = (('x', 'y'), np.ones((nx, ny), dtype=wgt.dtype))
 
     # save
-    dso = dso.assign_attrs(wsum=wsum)
+    dso = dso.assign_attrs(wsum=wsum, x0=x0, y0=y0, l0=l0, m0=m0,
+                           flip_u=flip_u,
+                           flip_v=flip_v,
+                           flip_w=flip_w)
     dso.to_zarr(output_name, mode='a')
 
     # return residual to report stats
@@ -621,7 +635,6 @@ def compute_residual(dsl,
                      cellx, celly,
                      output_name,
                      model,
-                     x0=0.0, y0=0.0,
                      nthreads=1,
                      epsilon=1e-7,
                      do_wgridding=True,
@@ -629,7 +642,6 @@ def compute_residual(dsl,
     '''
     Function to compute residual and write it to disk
     '''
-
     # expects a list
     if isinstance(dsl, str):
         dsl = [dsl]
@@ -643,6 +655,11 @@ def compute_residual(dsl,
     beam = ds.BEAM.values
     dirty = ds.DIRTY.values
     freq = ds.FREQ.values
+    flip_u = ds.flip_u
+    flip_v = ds.flip_v
+    flip_w = ds.flip_w
+    x0 = ds.x0
+    y0 = ds.y0
 
     # do not apply weights in this direction
     model_vis = dirty2vis(
@@ -653,11 +670,13 @@ def compute_residual(dsl,
         pixsize_y=celly,
         center_x=x0,
         center_y=y0,
+        flip_u=flip_u,
+        flip_v=flip_v,
+        flip_w=flip_w,
         epsilon=epsilon,
         do_wgridding=do_wgridding,
-        flip_v=False,
         nthreads=nthreads,
-        divide_by_n=False,
+        divide_by_n=False,  # incorporate in smooth beam
         sigma_min=1.1, sigma_max=3.0)
 
 
@@ -670,10 +689,12 @@ def compute_residual(dsl,
         npix_x=nx, npix_y=ny,
         pixsize_x=cellx, pixsize_y=celly,
         center_x=x0, center_y=y0,
+        flip_u=flip_u,
+        flip_v=flip_v,
+        flip_w=flip_w,
         epsilon=epsilon,
-        flip_v=False,  # hardcoded for now
         do_wgridding=do_wgridding,
-        divide_by_n=False,  # hardcoded for now
+        divide_by_n=False,  # incorporate in smooth beam
         nthreads=nthreads,
         sigma_min=1.1, sigma_max=3.0,
         double_precision_accumulation=double_accum)
@@ -689,77 +710,3 @@ def compute_residual(dsl,
     ds.to_zarr(output_name, mode='a')
 
     return residual
-
-
-from pfb.operators.hessian import _hessian_impl
-def estimate_epsilon(dsl,
-                     nx, ny,
-                     cellx, celly,
-                     output_name,
-                     x0=0.0, y0=0.0,
-                     nthreads=1,
-                     epsilon=1e-7,
-                     do_wgridding=True,
-                     double_accum=True):
-    '''
-    Function to estimate epsilon required for stable preconditioning.
-    Done by minimising
-
-    res.conj().T * res
-
-    where
-
-    res = (IR - hess(precond(IR)))[ix, iy]
-
-    and ix and iy select out the image in the untapered part of the image.
-
-    '''
-
-    def sse(sigma, IR, hess_approx, precond, slicex, slicey):
-        tmp = precond(IR, sigma)
-        res = hess_approx(res)[slicex, slicey]
-        return np.vdot(res, res)
-
-    # expects a list
-    if isinstance(dsl, str):
-        dsl = [dsl]
-
-    # currently only a single dds
-    ds = xds_from_list(dsl, nthreads=nthreads)[0]
-
-    uvw = ds.UVW.values
-    wgt = ds.WEIGHT.values
-    mask = ds.MASK.values
-    beam = ds.BEAM.values
-    if 'RESIDUAL' in ds:
-        residual = ds.RESIDUAL.values
-    else:
-        residual = ds.DIRTY.values
-    freq = ds.FREQ.values
-    psfhat = ds.PSFHAT.values
-    wsum = ds.wsum
-
-    hess = partial(_hessian_impl,
-                   uvw=ds.UVW.values,
-                   weight=ds.WEIGHT.values,
-                   vis_mask=ds.MASK.values,
-                   freq=ds.FREQ.values,
-                   beam=ds.BEAM.values,
-                   cell=ds.cell_rad,
-                   x0=ds.x0,
-                   y0=ds.y0,
-                   do_wgridding=do_wgridding,
-                   epsilon=epsilon,
-                   double_accum=double_accum,
-                   nthreads=nthreads,
-                   sigmainvsq=0.0,
-                   wsum=wsum)
-
-
-
-    ds = ds.assign_attrs(sigma=sigma)
-
-    # save
-    ds.to_zarr(output_name, mode='a')
-
-    return sigma

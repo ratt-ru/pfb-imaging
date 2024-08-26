@@ -9,8 +9,8 @@ from pfb.utils.weighting import (_compute_counts, counts_to_weights,
                                  weight_data, filter_extreme_counts)
 from pfb.utils.misc import eval_coeffs_to_slice
 from pfb.utils.fits import set_wcs, save_fits
-from pfb.operators.gridder import im2vis
-from ducc0.wgridder import vis2dirty, dirty2vis
+from pfb.operators.gridder import wgridder_conventions
+from ducc0.wgridder import vis2dirty
 from casacore.quanta import quantity
 from datetime import datetime
 from ducc0.fft import c2r, r2c, good_size
@@ -203,9 +203,8 @@ def single_stokes_image(
         tcoords[0,1] = tdec
         coords0 = np.array((ds.ra, ds.dec))
         lm0 = radec_to_lm(tcoords, coords0).squeeze()
-        # LB - why the negative?
-        x0 = -lm0[0]
-        y0 = -lm0[1]
+        x0 = lm0[0]
+        y0 = lm0[1]
     else:
         x0 = 0.0
         y0 = 0.0
@@ -224,7 +223,7 @@ def single_stokes_image(
 
     mask = (~flag).astype(np.uint8)
 
-    # TODO - this subtraction woul dbe better to do inside weight_data
+    # TODO - this subtraction would be better to do inside weight_data
     if opts.model_column is not None:
         ne.evaluate('(data-model_vis)*mask', out=data)
 
@@ -238,6 +237,8 @@ def single_stokes_image(
         else:
             weight = None
 
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
+
     if opts.robustness is not None:
         counts = _compute_counts(uvw,
                                  freq,
@@ -246,7 +247,9 @@ def single_stokes_image(
                                  nx, ny,
                                  cell_rad, cell_rad,
                                  uvw.dtype,
-                                 ngrid=1)
+                                 ngrid=1,
+                                 usign=1.0 if flip_u else -1.0,
+                                 vsign=1.0 if flip_v else -1.0)
 
         imwgt = counts_to_weights(
             counts,
@@ -254,7 +257,9 @@ def single_stokes_image(
             freq,
             nx, ny,
             cell_rad, cell_rad,
-            opts.robustness)
+            opts.robustness,
+            usign=1.0 if flip_u else -1.0,
+            vsign=1.0 if flip_v else -1.0)
         if weight is not None:
             weight *= imwgt
         else:
@@ -271,10 +276,12 @@ def single_stokes_image(
         npix_x=nx, npix_y=ny,
         pixsize_x=cell_rad, pixsize_y=cell_rad,
         center_x=x0, center_y=y0,
+        flip_u=flip_u,
+        flip_v=flip_v,
+        flip_w=flip_w,
         epsilon=opts.epsilon,
-        flip_v=False,  # hardcoded for now
         do_wgridding=opts.do_wgridding,
-        divide_by_n=False,  # hardcoded for now
+        divide_by_n=True,  # no rephasing or smooth beam so do it here
         nthreads=opts.nthreads,
         sigma_min=1.1, sigma_max=3.0,
         double_precision_accumulation=opts.double_accum,

@@ -1,13 +1,25 @@
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
-from pfb.utils.misc import to4d
 import dask.array as da
 from dask import delayed
 from datetime import datetime
 from casacore.quanta import quantity
 from astropy.time import Time
 from pfb.utils.naming import xds_from_list
+
+
+def to4d(data):
+    if data.ndim == 4:
+        return data
+    elif data.ndim == 2:
+        return data[None, None]
+    elif data.ndim == 3:
+        return data[None]
+    elif data.ndim == 1:
+        return data[None, None, None]
+    else:
+        raise ValueError("Only arrays with ndim <= 4 can be broadcast to 4D.")
 
 
 def data_from_header(hdr, axis=3):
@@ -20,13 +32,13 @@ def data_from_header(hdr, axis=3):
 
 def load_fits(name, dtype=np.float32):
     data = fits.getdata(name)
-    data = np.transpose(to4d(data)[:, :, ::-1], axes=(0, 1, 3, 2))
+    data = np.transpose(to4d(data), axes=(0, 1, 3, 2))
     return np.require(data, dtype=dtype, requirements='C')
 
 
 def save_fits(data, name, hdr, overwrite=True, dtype=np.float32):
     hdu = fits.PrimaryHDU(header=hdr)
-    data = np.transpose(to4d(data), axes=(0, 1, 3, 2))[:, :, ::-1]
+    data = np.transpose(to4d(data), axes=(0, 1, 3, 2))
     hdu.data = np.require(data, dtype=dtype, requirements='F')
     hdu.writeto(name, overwrite=overwrite)
     return
@@ -62,9 +74,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
             ref_freq = freq
         crpix3 = 1
     w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
-    # y axis treated differently because of wgridder convention?
-    # https://github.com/mreineck/ducc/issues/34
-    w.wcs.crpix = [1 + nx//2, ny//2, crpix3, 1]
+    w.wcs.crpix = [1 + nx//2, 1 + ny//2, crpix3, 1]
 
     header = w.to_header()
     header['RESTFRQ'] = ref_freq

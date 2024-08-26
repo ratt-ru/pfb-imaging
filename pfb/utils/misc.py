@@ -94,19 +94,6 @@ def kron_matvec2(A, b):
     return x
 
 
-def to4d(data):
-    if data.ndim == 4:
-        return data
-    elif data.ndim == 2:
-        return data[None, None]
-    elif data.ndim == 3:
-        return data[None]
-    elif data.ndim == 1:
-        return data[None, None, None]
-    else:
-        raise ValueError("Only arrays with ndim <= 4 can be broadcast to 4D.")
-
-
 def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     S0, S1, PA = GaussPar
     Smaj = S0  #np.maximum(S0, S1)
@@ -1471,24 +1458,30 @@ def combine_columns(x, y, dc, dc1, dc2):
     return x
 
 
-def set_image_size(uv_max, max_freq, opts):
+def set_image_size(
+                uv_max,
+                max_freq,
+                field_of_view,
+                super_resolution_factor,
+                cell_size=None,
+                nx=None, ny=None,
+                psf_oversize=2.0):
     # max cell size
     cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
 
-    if opts.cell_size is not None:
-        cell_size = opts.cell_size
+    if cell_size is not None:
         cell_rad = cell_size * np.pi / 60 / 60 / 180
         if cell_N / cell_rad < 1:
             raise ValueError("Requested cell size too large. "
                              "Super resolution factor = ", cell_N / cell_rad)
 
     else:
-        cell_rad = cell_N / opts.super_resolution_factor
+        cell_rad = cell_N / super_resolution_factor
         cell_size = cell_rad * 60 * 60 * 180 / np.pi
 
 
-    if opts.nx is None:
-        fov = opts.field_of_view * 3600
+    if nx is None:
+        fov = field_of_view * 3600
         npix = int(fov / cell_size)
         npix = good_size(npix)
         while npix % 2:
@@ -1497,18 +1490,18 @@ def set_image_size(uv_max, max_freq, opts):
         nx = npix
         ny = npix
     else:
-        nx = opts.nx
-        ny = opts.ny if opts.ny is not None else nx
+        nx = nx
+        ny = ny if ny is not None else nx
         cell_deg = np.rad2deg(cell_rad)
         fovx = nx*cell_deg
         fovy = ny*cell_deg
 
-    nx_psf = good_size(int(opts.psf_oversize * nx))
+    nx_psf = good_size(int(psf_oversize * nx))
     while nx_psf % 2:
         nx_psf += 1
         nx_psf = good_size(nx_psf)
 
-    ny_psf = good_size(int(opts.psf_oversize * ny))
+    ny_psf = good_size(int(psf_oversize * ny))
     while ny_psf % 2:
         ny_psf += 1
         ny_psf = good_size(ny_psf)

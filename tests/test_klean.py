@@ -32,7 +32,8 @@ def test_klean(do_gains, ms_name):
     from daskms.experimental.zarr import xds_to_zarr
     from pfb.utils.naming import xds_from_url
     from africanus.constants import c as lightspeed
-    from ducc0.wgridder import dirty2vis
+    from ducc0.wgridder.experimental import dirty2vis
+    from pfb.operators.gridder import wgridder_conventions
 
 
     test_dir = Path(ms_name).resolve().parent
@@ -90,6 +91,7 @@ def test_klean(do_gains, ms_name):
 
     # model vis
     epsilon = 1e-7
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
         model_vis[:, c:c+1, 0] = dirty2vis(uvw=uvw,
@@ -98,6 +100,9 @@ def test_klean(do_gains, ms_name):
                                            pixsize_x=cell_rad,
                                            pixsize_y=cell_rad,
                                            epsilon=epsilon,
+                                           flip_u=flip_u,
+                                           flip_v=flip_v,
+                                           flip_w=flip_w,
                                            do_wgridding=True,
                                            nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]

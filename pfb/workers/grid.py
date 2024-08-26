@@ -251,7 +251,12 @@ def _grid(xdsi=None, **kw):
     nx, ny, nx_psf, ny_psf, cell_N, cell_rad = set_image_size(
         uv_max,
         max_freq,
-        opts
+        opts.field_of_view,
+        opts.super_resolution_factor,
+        opts.cell_size,
+        opts.nx,
+        opts.ny,
+        opts.psf_oversize
     )
     cell_deg = np.rad2deg(cell_rad)
     cell_size = cell_deg * 3600
@@ -407,21 +412,19 @@ def _grid(xdsi=None, **kw):
             tcoords[0,1] = tdec
             coords0 = np.array((ra, dec))
             lm0 = radec_to_lm(tcoords, coords0).squeeze()
-            # The negative stems from a wgridder convention
-            # https://github.com/mreineck/ducc/issues/34
-            x0 = -lm0[0]
-            y0 = -lm0[1]
+            l0 = lm0[0]
+            m0 = lm0[1]
         else:
-            x0 = 0.0
-            y0 = 0.0
+            l0 = 0.0
+            m0 = 0.0
             tra = ds.ra
             tdec = ds.dec
 
         attrs = {
             'ra': tra,
             'dec': tdec,
-            'x0': x0,
-            'y0': y0,
+            'l0': l0,
+            'm0': m0,
             'cell_rad': cell_rad,
             'bandid': bandid,
             'timeid': timeid,
@@ -454,10 +457,12 @@ def _grid(xdsi=None, **kw):
             )
 
         elif from_cache:
-            if opts.use_best_model:
+            if opts.use_best_model and 'BEST_MODEL' in out_ds:
                 model = out_ds.MODEL_BEST.values
-            else:
+            elif 'MODEL' in out_ds:
                 model = out_ds.MODEL.values
+            else:
+                model = None
         else:
             model = None
 
@@ -471,7 +476,7 @@ def _grid(xdsi=None, **kw):
                             attrs,
                             model=model,
                             robustness=opts.robustness,
-                            x0=x0, y0=y0,
+                            l0=l0, m0=m0,
                             nthreads=opts.nthreads,
                             epsilon=opts.epsilon,
                             do_wgridding=opts.do_wgridding,

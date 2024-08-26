@@ -160,8 +160,6 @@ def _fluxmop(ddsi=None, **kw):
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import xds_from_url, xds_from_list
     from pfb.utils.misc import init_mask, dds2cubes
-    from pfb.operators.hessian import hessian_xds, hessian_psf_cube
-    from pfb.operators.psf import psf_convolve_cube
     from pfb.opt.pcg import pcg_dds
     from ducc0.misc import resize_thread_pool, thread_pool_size
     from ducc0.fft import c2c

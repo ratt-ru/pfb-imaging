@@ -434,6 +434,9 @@ def _sara(ddsi=None, **kw):
                 'fexpr': fexpr,
                 'center_x': dds[0].x0,
                 'center_y': dds[0].y0,
+                'flip_u': dds[0].flip_u,
+                'flip_v': dds[0].flip_v,
+                'flip_v': dds[0].flip_v,
                 'ra': dds[0].ra,
                 'dec': dds[0].dec,
                 'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
@@ -485,7 +488,6 @@ def _sara(ddsi=None, **kw):
                                      cell_rad, cell_rad,
                                      ds_name,
                                      model[b],
-                                     x0=ds.x0, y0=ds.y0,
                                      nthreads=opts.nthreads,
                                      epsilon=opts.epsilon,
                                      do_wgridding=opts.do_wgridding,
