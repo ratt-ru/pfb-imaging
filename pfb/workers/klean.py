@@ -98,7 +98,7 @@ def klean(**kw):
     print(f"All done after {time.time() - ti}s", file=log)
 
 
-def _klean(ddsi=None, **kw):
+def _klean(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -124,21 +124,9 @@ def _klean(ddsi=None, **kw):
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
     dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
-    if ddsi is not None:
-        dds = []
-        for ds in ddsi:
-            dds.append(ds.chunk({'row':-1,
-                                 'chan':-1,
-                                 'x':-1,
-                                 'y':-1,
-                                 'x_psf':-1,
-                                 'y_psf':-1,
-                                 'yo2':-1}))
-    else:
-        # are these sorted correctly?
-        drop_vars = ['UVW','WEIGHT','MASK']
-        dds = xds_from_list(dds_list, nthreads=opts.nthreads,
-                            drop_vars=drop_vars)
+    drop_vars = ['UVW','WEIGHT','MASK']
+    dds = xds_from_list(dds_list, nthreads=opts.nthreads,
+                        drop_vars=drop_vars)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
@@ -281,7 +269,7 @@ def _klean(ddsi=None, **kw):
                 'center_y': dds[0].y0,
                 'flip_u': dds[0].flip_u,
                 'flip_v': dds[0].flip_v,
-                'flip_v': dds[0].flip_v,
+                'flip_w': dds[0].flip_w,
                 'ra': dds[0].ra,
                 'dec': dds[0].dec,
                 'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV

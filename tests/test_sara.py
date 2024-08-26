@@ -13,6 +13,8 @@ def test_sara(ms_name):
     # TODO - currently we just check that this runs through.
     # What should the passing criteria be?
     '''
+    robustness = None
+    do_wgridding = True
 
     # we need the client for the init step
     from dask.distributed import LocalCluster, Client
@@ -120,7 +122,7 @@ def test_sara(ms_name):
                                            pixsize_x=cell_rad,
                                            pixsize_y=cell_rad,
                                            epsilon=epsilon,
-                                           do_wgridding=True,
+                                           do_wgridding=do_wgridding,
                                            divide_by_n=False,
                                            flip_u=flip_u,
                                            flip_v=flip_v,
@@ -167,8 +169,8 @@ def test_sara(ms_name):
     grid_args["residual"] = False
     grid_args["nthreads"] = 8
     grid_args["overwrite"] = True
-    grid_args["robustness"] = 0.0
-    grid_args["do_wgridding"] = True
+    grid_args["robustness"] = robustness
+    grid_args["do_wgridding"] = do_wgridding
     _grid(**grid_args)
 
     dds_name = f'{outname}_main.dds'
@@ -183,36 +185,51 @@ def test_sara(ms_name):
     sara_args["tol"] = tol
     sara_args["gamma"] = 1.0
     sara_args["pd_tol"] = [1e-3]
-    sara_args["rmsfactor"] = 0.1
+    sara_args["rmsfactor"] = 1.0
+    sara_args["epsfactor"] = 4.0
     sara_args["l1reweight_from"] = 5
     sara_args["bases"] = 'self,db1'
     sara_args["nlevels"] = 3
     sara_args["nthreads"] = 8
-    sara_args["do_wgridding"] = True
+    sara_args["do_wgridding"] = do_wgridding
     sara_args["epsilon"] = epsilon
     sara_args["fits_mfs"] = False
     _sara(**sara_args)
 
 
-    # the computed by the grid worker should be idenitcal to that
-    # computed in sara when passing in model
+    # the residual computed by the grid worker should be identical
+    # to that computed in sara when transferring model
     dds = xds_from_url(dds_name)
-    freqs_dds = []
-    times_dds = []
-    for ds in dds:
-        freqs_dds.append(ds.freq_out)
-        times_dds.append(ds.time_out)
 
-    freqs_dds = np.array(freqs_dds)
-    times_dds = np.array(times_dds)
-    freqs_dds = np.unique(freqs_dds)
-    times_dds = np.unique(times_dds)
-    ntime_dds = times_dds.size
-    nfreq_dds = freqs_dds.size
+    # grid data to produce dirty image
+    grid_args = {}
+    for key in schema.grid["inputs"].keys():
+        grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
+    # overwrite defaults
+    grid_args["output_filename"] = outname
+    grid_args["field_of_view"] = fov
+    grid_args["fits_mfs"] = False
+    grid_args["psf"] = False
+    grid_args["weight"] = False
+    grid_args["noise"] = False
+    grid_args["residual"] = True
+    grid_args["nthreads"] = 8
+    grid_args["overwrite"] = True
+    grid_args["robustness"] = robustness
+    grid_args["do_wgridding"] = do_wgridding
+    grid_args["transfer_model_from"] = f'{outname}_main_model.mds'
+    grid_args["suffix"] = 'subtract'
+    _grid(**grid_args)
 
+    dds2 = xds_from_url(f'{outname}_subtract.dds')
 
+    for ds, ds2 in zip(dds, dds2):
+        wsum = ds.WSUM.values
+        assert_allclose(1 + np.abs(ds.RESIDUAL.values)/wsum,
+                        1 + np.abs(ds2.RESIDUAL.values)/wsum)
 
-    # degrid from coeffs populating MODEL_DATA
+    # residuals also need to be the same if we do the
+    # subtraction in visibility space
     degrid_args = {}
     for key in schema.degrid["inputs"].keys():
         degrid_args[key.replace("-", "_")] = schema.degrid["inputs"][key]["default"]
@@ -220,16 +237,9 @@ def test_sara(ms_name):
     degrid_args["mds"] = f'{outname}_main_model.mds'
     degrid_args["channels_per_image"] = 1
     degrid_args["nthreads"] = 8
-    degrid_args["do_wgridding"] = True
+    degrid_args["do_wgridding"] = do_wgridding
     _degrid(**degrid_args)
 
-    # manually place residual in CORRECTED_DATA
-    resid = xds.DATA.data - xds.MODEL_DATA.data
-    xds['CORRECTED_DATA'] = (('row','chan','coor'), resid)
-    writes = [xds_to_table(xds, ms_name, columns='CORRECTED_DATA')]
-    dask.compute(writes)
-
-    # gridding CORRECTED_DATA should return identical residuals
     init_args = {}
     for key in schema.init["inputs"].keys():
         init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
@@ -237,7 +247,7 @@ def test_sara(ms_name):
     outname = str(test_dir / 'test2_I')
     init_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
     init_args["output_filename"] = outname
-    init_args["data_column"] = "CORRECTED_DATA"
+    init_args["data_column"] = "DATA-MODEL_DATA"
     # init_args["weight_column"] = 'WEIGHT_SPECTRUM'
     init_args["flag_column"] = 'FLAG'
     init_args["gain_table"] = None
@@ -259,8 +269,8 @@ def test_sara(ms_name):
     grid_args["residual"] = False
     grid_args["nthreads"] = 8
     grid_args["overwrite"] = True
-    grid_args["robustness"] = 0.0
-    grid_args["do_wgridding"] = True
+    grid_args["robustness"] = robustness
+    grid_args["do_wgridding"] = do_wgridding
     _grid(**grid_args)
 
     dds_name = f'{outname}_main.dds'

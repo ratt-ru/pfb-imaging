@@ -149,7 +149,7 @@ def fluxmop(**kw):
 
     print(f"All done after {time.time() - ti}s", file=log)
 
-def _fluxmop(ddsi=None, **kw):
+def _fluxmop(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -175,19 +175,7 @@ def _fluxmop(ddsi=None, **kw):
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
     dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
-    if ddsi is not None:
-        dds = []
-        for ds in ddsi:
-            dds.append(ds.chunk({'row':-1,
-                                 'chan':-1,
-                                 'x':-1,
-                                 'y':-1,
-                                 'x_psf':-1,
-                                 'y_psf':-1,
-                                 'yo2':-1}))
-    else:
-        # are these sorted correctly?
-        dds = xds_from_url(dds_store.url)
+    dds = xds_from_url(dds_store.url)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size

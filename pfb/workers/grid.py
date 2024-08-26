@@ -185,7 +185,7 @@ def _grid(xdsi=None, **kw):
     import fsspec
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.misc import set_image_size
-    from pfb.operators.gridder import image_data_products
+    from pfb.operators.gridder import image_data_products, wgridder_conventions
     import xarray as xr
     from pfb.utils.astrometry import get_coordinates
     from africanus.coordinates import radec_to_lm
@@ -439,6 +439,7 @@ def _grid(xdsi=None, **kw):
         # get the model
         if opts.transfer_model_from:
             from pfb.utils.misc import eval_coeffs_to_slice
+            _, _, _, x0, y0 = wgridder_conventions(l0, m0)
             model = eval_coeffs_to_slice(
                 time_out,
                 freq_out,

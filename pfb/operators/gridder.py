@@ -265,7 +265,7 @@ def _comps2vis_impl(uvw,
     y0 = mds.center_y
     flip_u = mds.flip_u
     flip_v = mds.flip_v
-    flip_w = mds.flip_v
+    flip_w = mds.flip_w
     for t in range(ntime):
         indt = slice(tbin_idx2[t], tbin_idx2[t] + tbin_cnts[t])
         # TODO - clean up this logic. row_mapping holds the number of rows per

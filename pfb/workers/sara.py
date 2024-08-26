@@ -112,7 +112,7 @@ def sara(**kw):
     print(f"All done after {time.time() - ti}s", file=log)
 
 
-def _sara(ddsi=None, **kw):
+def _sara(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -146,21 +146,9 @@ def _sara(ddsi=None, **kw):
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
     dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
-    if ddsi is not None:
-        dds = []
-        for ds in ddsi:
-            dds.append(ds.chunk({'row':-1,
-                                 'chan':-1,
-                                 'x':-1,
-                                 'y':-1,
-                                 'x_psf':-1,
-                                 'y_psf':-1,
-                                 'yo2':-1}))
-    else:
-        # are these sorted correctly?
-        dds = xds_from_list(dds_list,
-                            drop_vars=['UVW', 'WEIGHT', 'MASK'],
-                            nthreads=opts.nthreads)
+    dds = xds_from_list(dds_list,
+                        drop_vars=['UVW', 'WEIGHT', 'MASK'],
+                        nthreads=opts.nthreads)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
@@ -374,7 +362,6 @@ def _sara(ddsi=None, **kw):
                   fits_oname + f'_{opts.suffix}_update_{k+1}.fits',
                   hdr_mfs)
 
-        print(f'Solving for model with lambda = {opts.rmsfactor*rms}', file=log)
         modelp = deepcopy(model)
         xtilde = model + opts.gamma * update
         grad21 = lambda x: -precond(xtilde - x, 'forward')/opts.gamma
@@ -382,6 +369,7 @@ def _sara(ddsi=None, **kw):
             lam = opts.init_factor * opts.rmsfactor * rms
         else:
             lam = opts.rmsfactor*rms
+        print(f'Solving for model with lambda = {lam}', file=log)
         model, dual = primal_dual(model,
                                   dual,
                                   lam,
@@ -436,7 +424,7 @@ def _sara(ddsi=None, **kw):
                 'center_y': dds[0].y0,
                 'flip_u': dds[0].flip_u,
                 'flip_v': dds[0].flip_v,
-                'flip_v': dds[0].flip_v,
+                'flip_w': dds[0].flip_w,
                 'ra': dds[0].ra,
                 'dec': dds[0].dec,
                 'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV

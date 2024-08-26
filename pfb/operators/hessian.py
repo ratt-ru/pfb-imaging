@@ -194,10 +194,10 @@ def hess_direct(x,     # input image, not overwritten
                 mode='forward'):
     nband, nx, ny = x.shape
     xpad[...] = 0.0
-    if mode == 'forward':
-        xpad[:, 0:nx, 0:ny] = x / taperxy[None]
-    else:
-        xpad[:, 0:nx, 0:ny] = x * taperxy[None]
+    # if mode == 'forward':
+    #     xpad[:, 0:nx, 0:ny] = x / taperxy[None]
+    # else:
+    xpad[:, 0:nx, 0:ny] = x * taperxy[None]
     r2c(xpad, out=xhat, axes=(1,2),
         forward=True, inorm=0, nthreads=nthreads)
     if mode=='forward':
@@ -208,10 +208,10 @@ def hess_direct(x,     # input image, not overwritten
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)
     xout[...] = xpad[:, 0:nx, 0:ny]
-    if mode=='forward':
-        xout /= taperxy[None]
-    else:
-        xout *= taperxy[None]
+    # if mode=='forward':
+    #     xout /= taperxy[None]
+    # else:
+    xout *= taperxy[None]
     return xout
 
 
@@ -228,10 +228,10 @@ def hess_direct_slice(x,     # input image, not overwritten
                 mode='forward'):
     nx, ny = x.shape
     xpad[...] = 0.0
-    if mode == 'forward':
-        xpad[0:nx, 0:ny] = x / taperxy
-    else:
-        xpad[0:nx, 0:ny] = x * taperxy
+    # if mode == 'forward':
+    #     xpad[0:nx, 0:ny] = x / taperxy
+    # else:
+    xpad[0:nx, 0:ny] = x * taperxy
     r2c(xpad, out=xhat, axes=(0,1),
         forward=True, inorm=0, nthreads=nthreads)
     if mode=='forward':
@@ -242,8 +242,8 @@ def hess_direct_slice(x,     # input image, not overwritten
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)
     xout[...] = xpad[0:nx, 0:ny]
-    if mode=='forward':
-        xout /= taperxy
-    else:
-        xout *= taperxy
+    # if mode=='forward':
+    #     xout /= taperxy
+    # else:
+    xout *= taperxy
     return xout
