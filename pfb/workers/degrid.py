@@ -81,7 +81,7 @@ def degrid(**kw):
         ti = time.time()
         _degrid(**opts)
 
-    print(f"All done after {time.time() - ti}s.", file=log)
+        print(f"All done after {time.time() - ti}s.", file=log)
 
 def _degrid(**kw):
     opts = OmegaConf.create(kw)

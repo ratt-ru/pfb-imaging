@@ -95,7 +95,7 @@ def klean(**kw):
                      f'{fits_oname}_{opts.suffix}',
                      norm_wsum=False)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+        print(f"All done after {time.time() - ti}s", file=log)
 
 
 def _klean(**kw):

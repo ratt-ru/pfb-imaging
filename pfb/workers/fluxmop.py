@@ -147,7 +147,7 @@ def fluxmop(**kw):
                 column = fut.result()
                 print(f'Done writing {column}', file=log)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+        print(f"All done after {time.time() - ti}s", file=log)
 
 def _fluxmop(**kw):
     opts = OmegaConf.create(kw)

@@ -109,7 +109,7 @@ def sara(**kw):
             except Exception as e:
                 print(e)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+        print(f"All done after {time.time() - ti}s", file=log)
 
 
 def _sara(**kw):

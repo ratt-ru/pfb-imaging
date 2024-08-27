@@ -173,7 +173,7 @@ def grid(**kw):
                     continue
                 print(f'Done writing {column}', file=log)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+        print(f"All done after {time.time() - ti}s", file=log)
 
 def _grid(xdsi=None, **kw):
     opts = OmegaConf.create(kw)

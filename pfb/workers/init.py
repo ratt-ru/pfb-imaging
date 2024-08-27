@@ -91,7 +91,7 @@ def init(**kw):
         ti = time.time()
         _init(**opts)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+        print(f"All done after {time.time() - ti}s", file=log)
 
 def _init(**kw):
     opts = OmegaConf.create(kw)
@@ -282,6 +282,9 @@ def _init(**kw):
     nds = len(datasets)
     while idle_workers:   # Seed each worker with a task.
 
+        if n_launched == nds:  # Stop once all jobs have been launched.
+            break
+
         (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
          radeci, fi, ti, ims, ms) = datasets[n_launched]
 
@@ -321,7 +324,7 @@ def _init(**kw):
     for completed_future in ac_iter:
 
         if n_launched == nds:  # Stop once all jobs have been launched.
-            continue
+            break
 
         if isinstance(completed_future.result(), BaseException):
             print(completed_future.result())

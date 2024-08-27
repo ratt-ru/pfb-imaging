@@ -55,8 +55,9 @@ def set_client(nworkers, stack, log,
                                memory_limit=0,  # str(mem_limit/nworkers)+'GB'
                                asynchronous=False)
         cluster = stack.enter_context(cluster)
-        client = stack.enter_context(Client(cluster,
-                                            direct_to_workers=direct_to_workers))
+        client = Client(cluster,
+                        direct_to_workers=direct_to_workers)
+        client = stack.enter_context(client)
 
     client.wait_for_workers(nworkers)
     dashboard_url = client.dashboard_link

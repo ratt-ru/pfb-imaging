@@ -92,7 +92,7 @@ def hci(**kw):
         ti = time.time()
         _hci(**opts)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+        print(f"All done after {time.time() - ti}s", file=log)
 
 def _hci(**kw):
     opts = OmegaConf.create(kw)
@@ -336,6 +336,9 @@ def _hci(**kw):
 
     while idle_workers:   # Seed each worker with a task.
 
+        if n_launched == nds:  # Stop once all jobs have been launched.
+            break
+
         (subds, jones, freqsi, utimesi, ridx, rcnts,
          radeci, fi, ti, ms) = datasets[n_launched]
 
@@ -373,7 +376,7 @@ def _hci(**kw):
     for completed_future in ac_iter:
 
         if n_launched == nds:  # Stop once all jobs have been launched.
-            continue
+            break
 
         (subds, jones, freqsi, utimesi, ridx, rcnts,
         radeci, fi, ti, ms) = datasets[n_launched]
