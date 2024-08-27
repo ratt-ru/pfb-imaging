@@ -11,6 +11,7 @@ log = pyscilog.get_logger('INIT')
 import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+import psutil
 
 # create default parameters from schema
 defaults = {}
@@ -151,6 +152,7 @@ def _init(**kw):
         freq_max = np.inf
 
     client = get_client()
+    worker_keys = client.scheduler_info()['workers'].keys()
 
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
@@ -368,6 +370,9 @@ def _init(**kw):
         ac_iter.add(future)
         associated_workers[future] = worker
         n_launched += 1
+
+        worker_info = client.scheduler_info()['workers']
+        print(f'Total memory {worker} MB = ', worker_info[worker]['metrics']['memory'])
 
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
