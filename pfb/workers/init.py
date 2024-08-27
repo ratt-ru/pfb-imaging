@@ -282,13 +282,10 @@ def _init(**kw):
     idle_workers = set(client.scheduler_info()['workers'].keys())
     n_launched = 0
     nds = len(datasets)
-    while idle_workers:   # Seed each worker with a task.
-
-        if n_launched == nds:  # Stop once all jobs have been launched.
-            break
-
+    while idle_workers and len(datasets):   # Seed each worker with a task.
+        # pop so len(datasets) -> 0
         (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
-         radeci, fi, ti, ims, ms) = datasets[n_launched]
+         radeci, fi, ti, ims, ms) = datasets.pop(0)
 
         worker = idle_workers.pop()
         future = client.submit(single_stokes,
@@ -332,26 +329,24 @@ def _init(**kw):
             times_out.append(result[0])
             freqs_out.append(result[1])
         except:
-            pass
-
-        if n_launched == nds:  # Stop once all jobs have been launched.
-            break
+            pass  # no result if chunk fully flagged
 
         if isinstance(completed_future.result(), BaseException):
             print(completed_future.result())
             raise RuntimeError('Something went wrong')
 
-        (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
-        radeci, fi, ti, ims, ms) = datasets[n_launched]
-        data2 = None if dc2 is None else getattr(subds, dc2).data
-        sc = opts.sigma_column
-        sigma = None if sc is None else getattr(subds, sc).data
-        wc = opts.weight_column
-        weight = None if wc is None else getattr(subds, wc).data
+        # Stop once all jobs have been launched.
+        if not len(datasets):
+            break
 
-        client.run(clear_memory, workers=idle_workers)
+        # pop so len(datasets) -> 0
+        (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
+        radeci, fi, ti, ims, ms) = datasets.pop(0)
 
         worker = associated_workers.pop(completed_future)
+
+        client.cancel(completed_future)
+        client.run(clear_memory, workers=idle_workers)
 
         future = client.submit(single_stokes,
                         dc1=dc1,
@@ -386,17 +381,6 @@ def _init(**kw):
 
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
-
-    # times_out = []
-    # freqs_out = []
-    # for f in futures:
-    #     result = f.result()
-    #     # this should fail if a chunk is fully flagged
-    #     try:
-    #         times_out.append(result[0])
-    #         freqs_out.append(result[1])
-    #     except:
-    #         pass
 
     times_out = np.unique(times_out)
     freqs_out = np.unique(freqs_out)

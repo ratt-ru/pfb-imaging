@@ -333,14 +333,10 @@ def _hci(**kw):
     associated_workers = {}
     idle_workers = set(client.scheduler_info()['workers'].keys())
     n_launched = 0
-
-    while idle_workers:   # Seed each worker with a task.
-
-        if n_launched == nds:  # Stop once all jobs have been launched.
-            break
-
+    while idle_workers and len(datasets):   # Seed each worker with a task.
+        # pop so len(datasets) -> 0
         (subds, jones, freqsi, utimesi, ridx, rcnts,
-         radeci, fi, ti, ms) = datasets[n_launched]
+         radeci, fi, ti, ms) = datasets.pop(0)
 
         worker = idle_workers.pop()
         future = client.submit(single_stokes_image,
@@ -374,20 +370,23 @@ def _hci(**kw):
     ac_iter = as_completed(futures)
     nds = len(datasets)
     for completed_future in ac_iter:
-
-        if n_launched == nds:  # Stop once all jobs have been launched.
+        # Stop once all jobs have been launched.
+        if not len(datasets):
             break
 
+        if isinstance(completed_future.result(), BaseException):
+            print(completed_future.result())
+            raise RuntimeError('Something went wrong')
+
+        # pop so len(datasets) -> 0
         (subds, jones, freqsi, utimesi, ridx, rcnts,
-        radeci, fi, ti, ms) = datasets[n_launched]
+        radeci, fi, ti, ms) = datasets.pop(0)
 
         worker = associated_workers.pop(completed_future)
 
-        if completed_future.result() != 1:
-            import ipdb; ipdb.set_trace()
-            raise ValueError("Something went wrong in submit!")
+        client.cancel(completed_future)
+        client.run(clear_memory, workers=idle_workers)
 
-        # future = client.submit(f, xdsl[n_launched], worker, workers=worker)
         future = client.submit(single_stokes_image,
                         dc1=dc1,
                         dc2=dc2,
@@ -419,6 +418,9 @@ def _hci(**kw):
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
     print("\n")  # after progressbar above
-    wait(futures)
 
     return
+
+
+def clear_memory():
+    gc.collect()
