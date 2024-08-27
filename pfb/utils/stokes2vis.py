@@ -3,7 +3,7 @@ import numexpr as ne
 import xarray as xr
 from numba import njit, prange, literally
 from dask.graph_manipulation import clone
-from distributed import get_client, worker_client
+from distributed import worker_client
 import dask.array as da
 from xarray import Dataset
 # from quartical.utils.numba import coerce_literal

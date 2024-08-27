@@ -322,8 +322,17 @@ def _init(**kw):
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
 
+    times_out = []
+    freqs_out = []
     ac_iter = as_completed(futures)
     for completed_future in ac_iter:
+
+        result = completed_future.result()
+        try:
+            times_out.append(result[0])
+            freqs_out.append(result[1])
+        except:
+            pass
 
         if n_launched == nds:  # Stop once all jobs have been launched.
             break
@@ -339,6 +348,8 @@ def _init(**kw):
         sigma = None if sc is None else getattr(subds, sc).data
         wc = opts.weight_column
         weight = None if wc is None else getattr(subds, wc).data
+
+        client.run(clear_memory, workers=idle_workers)
 
         worker = associated_workers.pop(completed_future)
 
@@ -366,7 +377,6 @@ def _init(**kw):
                         workers=worker,
                         key='image-'+uuid4().hex)
 
-        futures.append(future)
         ac_iter.add(future)
         associated_workers[future] = worker
         n_launched += 1
@@ -377,18 +387,16 @@ def _init(**kw):
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
 
-    wait(futures)
-
-    times_out = []
-    freqs_out = []
-    for f in futures:
-        result = f.result()
-        # this should fail if a chunk is fully flagged
-        try:
-            times_out.append(result[0])
-            freqs_out.append(result[1])
-        except:
-            pass
+    # times_out = []
+    # freqs_out = []
+    # for f in futures:
+    #     result = f.result()
+    #     # this should fail if a chunk is fully flagged
+    #     try:
+    #         times_out.append(result[0])
+    #         freqs_out.append(result[1])
+    #     except:
+    #         pass
 
     times_out = np.unique(times_out)
     freqs_out = np.unique(freqs_out)
@@ -401,3 +409,7 @@ def _init(**kw):
           f"{ntime} output times", file=log)
 
     return
+
+
+def clear_memory():
+    gc.collect()
