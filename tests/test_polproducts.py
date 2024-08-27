@@ -27,8 +27,9 @@ def test_polproducts(do_gains, ms_name):
     from daskms import xds_from_ms, xds_from_table, xds_to_table
     from daskms.experimental.zarr import xds_to_zarr
     from africanus.constants import c as lightspeed
-    from ducc0.wgridder import dirty2vis
+    from ducc0.wgridder.experimental import dirty2vis
     from pfb.utils.naming import xds_from_url
+    from pfb.operators.gridder import wgridder_conventions
 
 
     test_dir = Path(ms_name).resolve().parent
@@ -72,6 +73,8 @@ def test_polproducts(do_gains, ms_name):
     nx = npix
     ny = npix
 
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
+
     print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
 
     # first axis is Stokes
@@ -97,6 +100,11 @@ def test_polproducts(do_gains, ms_name):
                                         dirty=model[0, c],
                                         pixsize_x=cell_rad,
                                         pixsize_y=cell_rad,
+                                        center_x=x0,
+                                        center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
                                         epsilon=epsilon,
                                         do_wgridding=True,
                                         nthreads=8)
@@ -107,6 +115,11 @@ def test_polproducts(do_gains, ms_name):
                                         dirty=model[1, c],
                                         pixsize_x=cell_rad,
                                         pixsize_y=cell_rad,
+                                        center_x=x0,
+                                        center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
                                         epsilon=epsilon,
                                         do_wgridding=True,
                                         nthreads=8)
@@ -117,6 +130,11 @@ def test_polproducts(do_gains, ms_name):
                                         dirty=model[2, c],
                                         pixsize_x=cell_rad,
                                         pixsize_y=cell_rad,
+                                        center_x=x0,
+                                        center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
                                         epsilon=epsilon,
                                         do_wgridding=True,
                                         nthreads=8)
@@ -127,6 +145,11 @@ def test_polproducts(do_gains, ms_name):
                                         dirty=model[3, c],
                                         pixsize_x=cell_rad,
                                         pixsize_y=cell_rad,
+                                        center_x=x0,
+                                        center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
                                         epsilon=epsilon,
                                         do_wgridding=True,
                                         nthreads=8)

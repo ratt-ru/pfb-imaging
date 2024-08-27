@@ -1,6 +1,7 @@
 import pytest
 from pathlib import Path
 from pfb.utils.weighting import _compute_counts
+from pfb.operators.gridder import wgridder_conventions
 
 pmp = pytest.mark.parametrize
 
@@ -57,12 +58,14 @@ def test_counts(ms_name):
     ny = npix
 
     print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
-
-
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
+    usign = 1.0 if not flip_u else -1.0
+    vsign = 1.0 if not flip_v else -1.0
     mask = np.ones((nrow, nchan), dtype=bool)
     wgt = np.ones((nrow, nchan), dtype=uvw.dtype)
     counts = _compute_counts(uvw, freq, mask, wgt, nx, ny, cell_rad, cell_rad,
-                             dtype=np.float64, k=0, ngrid=2)
+                             dtype=np.float64, k=0, ngrid=2,
+                             usign=usign, vsign=vsign)
     ku = np.sort(np.fft.fftfreq(nx, cell_rad))
     # shift by half a pixel to get bin edges
     kucell = ku[1] - ku[0]
@@ -74,8 +77,8 @@ def test_counts(ms_name):
     kv -= kvcell/2
     kv = np.append(kv, kv.max() + kvcell)
     weights = np.ones((nrow*nchan), dtype=np.float64)
-    u = (uvw[:, 0:1] * freq[None, :]/lightspeed).ravel()
-    v = (uvw[:, 1:2] * freq[None, :]/lightspeed).ravel()
+    u = (usign*uvw[:, 0:1] * freq[None, :]/lightspeed).ravel()
+    v = (vsign*uvw[:, 1:2] * freq[None, :]/lightspeed).ravel()
     counts2, _, _ = np.histogram2d(u, v, bins=[ku, kv], weights=weights)
 
     assert_allclose(counts, counts2)
