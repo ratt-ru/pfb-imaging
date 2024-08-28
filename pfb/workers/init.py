@@ -82,17 +82,19 @@ def init(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    with ExitStack() as stack:
-        import dask
-        dask.config.set(**{'array.slicing.split_large_chunks': False})
-        from pfb import set_client
-        from distributed import wait, get_client
-        client = set_client(opts.nworkers, stack, log)
+    # with ExitStack() as stack:
+    import dask
+    dask.config.set(**{'array.slicing.split_large_chunks': False})
+    from pfb import set_client
+    from distributed import wait, get_client
+    client = set_client(opts.nworkers, log)
 
-        ti = time.time()
-        _init(**opts)
+    ti = time.time()
+    _init(**opts)
 
-        print(f"All done after {time.time() - ti}s", file=log)
+    print(f"All done after {time.time() - ti}s", file=log)
+
+    client.close()
 
 def _init(**kw):
     opts = OmegaConf.create(kw)
@@ -376,8 +378,10 @@ def _init(**kw):
         associated_workers[future] = worker
         n_launched += 1
 
-        worker_info = client.scheduler_info()['workers']
-        print(f'Total memory {worker} MB = ', worker_info[worker]['metrics']['memory'])
+        if opts.memory_reporting:
+            worker_info = client.scheduler_info()['workers']
+            print(f'Total memory {worker} MB = ',
+                  worker_info[worker]['metrics']['memory']/1e6, file=log)
 
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)

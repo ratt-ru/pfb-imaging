@@ -163,6 +163,11 @@ inputs:
     default: false
     info:
       Compute naural gradient
+  memory_reporting:
+    dtype: bool
+    default: false
+    info:
+      Report worker memory as tasks complete
 
   _include:
     - (.)gridding.yml

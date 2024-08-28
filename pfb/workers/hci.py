@@ -87,7 +87,7 @@ def hci(**kw):
         dask.config.set(**{'array.slicing.split_large_chunks': False})
         from pfb import set_client
         from distributed import wait, get_client
-        client = set_client(opts.nworkers, stack, log)
+        client = set_client(opts.nworkers, log, stack)
 
         ti = time.time()
         _hci(**opts)
@@ -414,6 +414,11 @@ def _hci(**kw):
         ac_iter.add(future)
         associated_workers[future] = worker
         n_launched += 1
+
+        if opts.memory_reporting:
+            worker_info = client.scheduler_info()['workers']
+            print(f'Total memory {worker} MB = ',
+                  worker_info[worker]['metrics']['memory']/1e6, file=log)
 
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)

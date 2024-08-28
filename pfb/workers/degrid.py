@@ -76,7 +76,7 @@ def degrid(**kw):
 
     with ExitStack() as stack:
         from pfb import set_client
-        client = set_client(opts.nworkers, stack, log)
+        client = set_client(opts.nworkers, log, stack)
 
         ti = time.time()
         _degrid(**opts)

@@ -121,6 +121,12 @@ inputs:
     info:
       Display progress.
       Use --no-progressbar to deactivate.
+  memory_reporting:
+    dtype: bool
+    default: false
+    info:
+      Report worker memory as tasks complete
+
   _include:
     - (.)out.yml
     - (.)dist.yml

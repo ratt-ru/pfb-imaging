@@ -30,7 +30,7 @@ def set_envs(nthreads, ncpu):
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 
 
-def set_client(nworkers, stack, log,
+def set_client(nworkers, log, stack=None,
                host_address=None, direct_to_workers=False):
     import dask
     dask.config.set({'distributed.comm.compression': 'lz4'})
@@ -54,10 +54,12 @@ def set_client(nworkers, stack, log,
                                threads_per_worker=1,
                                memory_limit=0,  # str(mem_limit/nworkers)+'GB'
                                asynchronous=False)
-        cluster = stack.enter_context(cluster)
+        if stack is not None:
+            cluster = stack.enter_context(cluster)
         client = Client(cluster,
                         direct_to_workers=direct_to_workers)
-        client = stack.enter_context(client)
+        if stack is not None:
+            client = stack.enter_context(client)
 
     client.wait_for_workers(nworkers)
     dashboard_url = client.dashboard_link
