@@ -136,8 +136,6 @@ def single_stokes_image(
     freq_min = freq.min()
     freq_max = freq.max()
 
-    print(freq_min, freq_max)
-
     if data.dtype != complex_type:
         data = data.astype(complex_type)
 
