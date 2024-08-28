@@ -337,46 +337,42 @@ def _init(**kw):
             print(completed_future.result())
             raise RuntimeError('Something went wrong')
 
-        # Stop once all jobs have been launched.
-        if not len(datasets):
-            break
+        worker = associated_workers.pop(completed_future)
+        # we need this here to release memory for some reason
+        client.cancel(completed_future)
 
         # pop so len(datasets) -> 0
-        (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
-        radeci, fi, ti, ims, ms) = datasets.pop(0)
+        if len(datasets):
+            (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
+            radeci, fi, ti, ims, ms) = datasets.pop(0)
 
-        worker = associated_workers.pop(completed_future)
+            future = client.submit(single_stokes,
+                            dc1=dc1,
+                            dc2=dc2,
+                            operator=operator,
+                            ds=subds,
+                            jones=jones,
+                            opts=opts,
+                            freq=freqsi,
+                            chan_width=chan_widthi,
+                            utime=utimesi,
+                            tbin_idx=ridx,
+                            tbin_counts=rcnts,
+                            radec=radeci,
+                            antpos=antpos[ms],
+                            poltype=poltype[ms],
+                            xds_store=xds_store.url,
+                            bandid=fi,
+                            timeid=ti,
+                            msid=ims,
+                            wid=worker,
+                            pure=False,
+                            workers=worker,
+                            key='image-'+uuid4().hex)
 
-        client.cancel(completed_future)
-        client.run(clear_memory, workers=idle_workers)
-
-        future = client.submit(single_stokes,
-                        dc1=dc1,
-                        dc2=dc2,
-                        operator=operator,
-                        ds=subds,
-                        jones=jones,
-                        opts=opts,
-                        freq=freqsi,
-                        chan_width=chan_widthi,
-                        utime=utimesi,
-                        tbin_idx=ridx,
-                        tbin_counts=rcnts,
-                        radec=radeci,
-                        antpos=antpos[ms],
-                        poltype=poltype[ms],
-                        xds_store=xds_store.url,
-                        bandid=fi,
-                        timeid=ti,
-                        msid=ims,
-                        wid=worker,
-                        pure=False,
-                        workers=worker,
-                        key='image-'+uuid4().hex)
-
-        ac_iter.add(future)
-        associated_workers[future] = worker
-        n_launched += 1
+            ac_iter.add(future)
+            associated_workers[future] = worker
+            n_launched += 1
 
         if opts.memory_reporting:
             worker_info = client.scheduler_info()['workers']
@@ -397,7 +393,3 @@ def _init(**kw):
           f"{ntime} output times", file=log)
 
     return
-
-
-def clear_memory():
-    gc.collect()
