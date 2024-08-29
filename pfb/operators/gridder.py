@@ -313,7 +313,7 @@ def image_data_products(dsl,
                         epsilon=1e-7,
                         do_wgridding=True,
                         double_accum=True,
-                        l2reweight_dof=None,
+                        l2_reweight_dof=None,
                         do_dirty=True,
                         do_psf=True,
                         do_residual=True,
@@ -387,7 +387,7 @@ def image_data_products(dsl,
         dso['COUNTS'] = (('x', 'y'), counts)
 
     if model is None:
-        if l2reweight_dof:
+        if l2_reweight_dof:
             raise ValueError('Requested l2 reweight but no model passed in. '
                              'Perhaps transfer model from somewhere?')
     else:
@@ -412,7 +412,7 @@ def image_data_products(dsl,
         residual_vis *= -1  # negate model
         residual_vis += vis
 
-    if l2reweight_dof:
+    if l2_reweight_dof:
         ressq = (residual_vis*residual_vis.conj()).real
         # mask needs to be bool here
         ssq = ressq[mask>0].sum()
@@ -420,7 +420,7 @@ def image_data_products(dsl,
         chi2_dofp = np.mean(ressq[mask>0]*wgt[mask>0])
         mean_dev = np.mean(ressq[mask>0]/ovar)
         if ovar:
-            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)
+            wgt = (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
             # now divide by ovar to scale to absolute units
             # the chi2_dof after reweighting should be closer to one
             wgt /= ovar

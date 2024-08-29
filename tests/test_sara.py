@@ -187,7 +187,7 @@ def test_sara(ms_name):
     sara_args["pd_tol"] = [1e-3]
     sara_args["rmsfactor"] = 1.0
     sara_args["epsfactor"] = 4.0
-    sara_args["l1reweight_from"] = 5
+    sara_args["l1_reweight_from"] = 5
     sara_args["bases"] = 'self,db1'
     sara_args["nlevels"] = 3
     sara_args["nthreads"] = 8

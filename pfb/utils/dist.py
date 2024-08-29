@@ -300,7 +300,7 @@ class band_actor(object):
                                 do_wgridding=self.opts.do_wgridding,
                                 double_accum=self.opts.double_accum,
                                 # divide_by_n=False,
-                                l2reweight_dof=dof,
+                                l2_reweight_dof=dof,
                                 do_dirty=True,
                                 do_psf=True,
                                 do_residual=True,

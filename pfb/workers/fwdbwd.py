@@ -290,7 +290,7 @@
 #         l1weight = np.ones((nbasis, nmax), dtype=dirty.dtype)
 #         reweighter = None
 #     else:
-#         if opts.l1reweight_from == 0:
+#         if opts.l1_reweight_from == 0:
 #             print('Initialising with L1 reweighted', file=log)
 #             reweighter = partial(l1reweight_func, psiH, psiHoutvar, opts.rmsfactor, rms_comps)
 #             l1weight = reweighter(x)
@@ -415,7 +415,7 @@
 #               f"rms = {rms:.3e}, eps = {eps:.3e}",
 #               file=log)
 
-#         if k+1 >= opts.l1reweight_from:
+#         if k+1 >= opts.l1_reweight_from:
 #             print('Computing L1 weights', file=log)
 #             # convert residual units so it is comparable to model
 #             # tmp2[fsel] = residual[fsel] * wsum/wsums[fsel, None, None]

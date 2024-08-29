@@ -419,11 +419,11 @@ def _spotless(xdsi=None, **kw):
 
     # a value less than zero turns L1 reweighting off
     # we'll start on convergence or at the iteration
-    # indicated by l1reweight_from, whichever comes first
-    l1reweight_from = opts.l1reweight_from
+    # indicated by l1_reweight_from, whichever comes first
+    l1_reweight_from = opts.l1_reweight_from
     l1reweight_active = False
 
-    if l1reweight_from == 0:
+    if l1_reweight_from == 0:
         print(f'Initialising with L1 reweighted', file=log)
         l1weight, rms_comps = l1reweight_func(actors,
                                    opts.rmsfactor,
@@ -438,7 +438,7 @@ def _spotless(xdsi=None, **kw):
     best_rmax = rmax
     best_model = model.copy()
     diverge_count = 0
-    l2reweights = 0
+    l2_reweights = 0
     print(f"It {iter0}: max resid = {rmax:.3e}, rms = {rms:.3e}", file=log)
     for k in range(iter0, iter0 + opts.niter):
         print('Solving for update', file=log)
@@ -525,14 +525,14 @@ def _spotless(xdsi=None, **kw):
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
         if eps < opts.tol:
             # do not converge prematurely
-            if l1reweight_from > 0 and not l1reweight_active:  # only happens once
+            if l1_reweight_from > 0 and not l1reweight_active:  # only happens once
                 # start reweighting
-                l1reweight_from = k+1 - iter0
+                l1_reweight_from = k+1 - iter0
                 # don't start L2 reweighting before L1 reweighting
                 # if it is enabled
                 dof = None
                 l1reweight_active = True
-            elif l2reweights < opts.max_l2_reweight:
+            elif l2_reweights < opts.max_l2_reweight:
                 # L1 reweighting has already kicked in and we have
                 # converged again so perform L2 reweight
                 dof = opts.l2_reweight_dof
@@ -544,7 +544,7 @@ def _spotless(xdsi=None, **kw):
             # do not perform an L2 reweight unless the M step has converged
             dof = None
 
-        if k+1 - iter0 >= opts.l2_reweight_from and l2reweights < opts.max_l2_reweight:
+        if k+1 - iter0 >= opts.l2_reweight_from and l2_reweights < opts.max_l2_reweight:
             dof = opts.l2_reweight_dof
 
         if dof is not None:
@@ -575,7 +575,7 @@ def _spotless(xdsi=None, **kw):
             # hess_norm = power_method(actors, nx, ny, nband)
             # print(f'hess-norm = {hess_norm:.3e}', file=log)
 
-            l2reweights += 1
+            l2_reweights += 1
         else:
             # compute normal residual, no need to redo PSF etc
             print('Computing residual', file=log)
@@ -602,7 +602,7 @@ def _spotless(xdsi=None, **kw):
         print(f"It {k+1}: max resid = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}",
               file=log)
 
-        if k+1 - iter0 >= l1reweight_from:
+        if k+1 - iter0 >= l1_reweight_from:
             print('L1 reweighting', file=log)
             l1weight, rms_comps = l1reweight_func(actors,
                                        opts.rmsfactor,

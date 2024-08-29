@@ -225,13 +225,13 @@ def single_stokes_image(
     if opts.model_column is not None:
         ne.evaluate('(data-model_vis)*mask', out=data)
 
-    if opts.l2reweight_dof:
+    if opts.l2_reweight_dof:
         # data should contain residual_vis at this point
         ressq = (data*data.conj()).real * mask
         wcount = mask.sum()
         if wcount:
             ovar = ressq.sum()/wcount  # use 67% quantile?
-            weight = (opts.l2reweight_dof + 1)/(opts.l2reweight_dof + ressq/ovar)/ovar
+            weight = (opts.l2_reweight_dof + 1)/(opts.l2_reweight_dof + ressq/ovar)/ovar
         else:
             weight = None
 

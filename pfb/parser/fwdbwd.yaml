@@ -52,7 +52,7 @@ inputs:
     abbreviation: sig21
     info:
       Wavelet thresholding level
-  l1reweight-from:
+  l1-reweight-from:
     dtype: int
     default: 5
     info:

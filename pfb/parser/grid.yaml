@@ -102,7 +102,7 @@ inputs:
     info:
       This can be predefined celestial objects known to astropy or a string in
       the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
-  l2reweight-dof:
+  l2-reweight-dof:
     dtype: float
     abbreviation: dof
     info:

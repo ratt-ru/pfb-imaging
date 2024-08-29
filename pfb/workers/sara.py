@@ -301,14 +301,14 @@ def _sara(**kw):
 
     # a value less than zero turns L1 reweighting off
     # we'll start on convergence or at the iteration
-    # indicated by l1reweight_from, whichever comes first
-    l1reweight_from = opts.l1reweight_from
+    # indicated by l1-reweight-from, whichever comes first
+    l1_reweight_from = opts.l1_reweight_from
     l1reweight_active = False
     # we need an array to put the components in for reweighting
     outvar = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=real_type)
 
     dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=residual.dtype)
-    if l1reweight_from == 0:
+    if l1_reweight_from == 0:
         print('Initialising with L1 reweighted', file=log)
         if not update.any():
             raise ValueError("Cannot reweight before any updates have been performed")
@@ -524,15 +524,15 @@ def _sara(**kw):
 
         if eps < opts.tol:
             # do not converge prematurely
-            if l1reweight_from > 0 and not l1reweight_active:  # only happens once
+            if l1_reweight_from > 0 and not l1reweight_active:  # only happens once
                 # start reweighting
-                l1reweight_from = k+1 - iter0
+                l1_reweight_from = k+1 - iter0
                 l1reweight_active = True
             else:
                 print(f"Converged after {k+1} iterations.", file=log)
                 break
 
-        if k+1 - iter0 >= l1reweight_from:
+        if k+1 - iter0 >= l1_reweight_from:
             print('Computing L1 weights', file=log)
             # divide by taper so as not to bias rms_comps
             psi.dot(update/taperxy, outvar)
@@ -560,131 +560,5 @@ def _sara(**kw):
             if diverge_count > opts.diverge_count:
                 print("Algorithm is diverging. Terminating.", file=log)
                 break
-
-
-    if opts.do_res:
-        rmsf = rms
-        print("Getting intrinsic model resolution", file=log)
-
-        # fix this upfront
-        psi.dot(update/taperxy, outvar)
-        tmp = np.sum(outvar, axis=0)
-        # exclude zeros from padding DWT's
-        rms_comps = np.std(tmp[tmp!=0])
-        l = -(nx//2) + np.arange(nx)
-        m = -(ny//2) + np.arange(ny)
-        xx, yy = np.meshgrid(l, m, indexing='ij')
-
-        # initialise to clean beam
-        from pfb.utils.misc import Gaussian2D
-        cbeam = np.zeros((nband, nx, ny))
-        for b, ds in enumerate(dds):
-            cbeam[b] = Gaussian2D(xx, yy, ds.gaussparn, normalise=True)
-        dual = np.zeros((nband, nbasis, Nymax, Nxmax))
-        l1weight = np.ones((nbasis, Nymax, Nxmax))
-        reweighter = None
-        l1reweight_active = False
-        nxpadl = (nx_psf - nx)//2
-        nxpadr = nx_psf - nx - nxpadl
-        nypadl = (ny_psf - ny)//2
-        nypadr = ny_psf - ny - nypadl
-        if nx_psf != nx:
-            unpad_x = slice(nxpadl, -nxpadr)
-        else:
-            unpad_x = slice(None)
-        if ny_psf != ny:
-            unpad_y = slice(nypadl, -nypadr)
-        else:
-            unpad_y = slice(None)
-        residual = psf[:, unpad_x, unpad_y].copy()
-        residual_mfs = np.sum(residual, axis=0)
-        rms = np.std(residual_mfs)
-        for k in range(iter0, iter0 + opts.niter):
-            update = hess_direct(
-                        residual,
-                        xpad=xpad,
-                        xhat=xhat,
-                        xout=xout,
-                        psfhat=abspsf,
-                        taperxy=taperxy,
-                        lastsize=ny_psf,
-                        nthreads=opts.nthreads,
-                        sigmainvsq=1.0,
-                        mode='backward')
-            xtilde = cbeam + opts.gamma * update
-            grad21 = lambda x: -precond(xtilde - x)/opts.gamma
-            cbeamp = cbeam.copy()
-            cbeam, dual = primal_dual(cbeam,
-                                    dual,
-                                    opts.rmsfactor*rmsf,
-                                    # opts.rmsfactor*np.maximum(rms, rmsf),
-                                    psi.hdot,
-                                    psi.dot,
-                                    hess_norm,
-                                    prox_21,
-                                    l1weight,
-                                    reweighter,
-                                    grad21,
-                                    nu=nbasis,
-                                    positivity=opts.positivity,
-                                    tol=pd_tolf,
-                                    maxit=opts.pd_maxit,
-                                    verbosity=opts.pd_verbose,
-                                    report_freq=opts.pd_report_freq,
-                                    gamma=opts.gamma)
-
-            eps = np.linalg.norm(cbeam - cbeamp)/np.linalg.norm(cbeam)
-            if eps < opts.tol:
-                # do not converge prematurely
-                if l1reweight_from > 0 and not l1reweight_active:  # only happens once
-                    # start reweighting
-                    l1reweight_from = k+1 - iter0
-                    l1reweight_active = True
-                else:
-                    print(f"Converged after {k+1} iterations.", file=log)
-                    break
-
-            if k+1 - iter0 >= l1reweight_from:
-                print('Computing L1 weights', file=log)
-                # rms_comps fixed
-                reweighter = partial(l1reweight_func,
-                                    psiH=psi.dot,
-                                    outvar=outvar,
-                                    rmsfactor=opts.rmsfactor,
-                                    rms_comps=rms_comps,
-                                    alpha=opts.alpha)
-                l1weight = reweighter(cbeam)
-                l1reweight_active = True
-
-            # the psf approximation shoul dbe more than good enough for this
-            residual = psf[:, unpad_x, unpad_y] - hessian_psf_cube(
-                                xpad,  # preallocated array to store padded image
-                                xhat,  # preallocated array to store FTd image
-                                xout,  # preallocated array to store output image
-                                None,
-                                psfhat,
-                                lastsize,
-                                cbeam,     # input image, not overwritten
-                                nthreads=opts.nthreads,
-                                sigmainv=0,
-                                wsum=1.0  # already normalised
-            )
-            residual_mfs = np.sum(residual, axis=0)
-            rmax = np.abs(residual_mfs).max()
-            rms = np.std(residual_mfs)
-            print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
-              f"rms = {rms:.3e}, eps = {eps:.3e}",
-              file=log)
-
-        # only do this right at the end
-        gaussparm = fitcleanbeam(cbeam, level=0.25, pixsize=1.0)
-        for ds_name, ds in zip(dds_list, dds):
-            b = int(ds.bandid)
-            ds = ds.assign(**{
-                'MPSF': (('x', 'y'), cbeam[b]/cbeam[b].max())
-            })
-            ds = ds.assign_attrs(gaussparm=gaussparm[b])
-            ds.to_zarr(ds_name, mode='a')
-            print(f'Band {b} has intrinsic resolution of {gaussparm[b]}', file=log)
 
     return

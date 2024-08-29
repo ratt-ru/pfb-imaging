@@ -35,7 +35,7 @@ inputs:
     info: 'Wavelet decomposition level'
     default: 3
     abbreviation: nlevels
-  l1reweight-from:
+  l1-reweight-from:
     dtype: int
     default: 5
     info:
