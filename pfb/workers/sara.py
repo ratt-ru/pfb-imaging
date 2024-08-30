@@ -435,7 +435,6 @@ def _sara(**kw):
                     mattrs[key] = pd_tolf
                 else:
                     mattrs[key] = val
-            # import ipdb; ipdb.set_trace()
 
             coeff_dataset = xr.Dataset(data_vars=data_vars,
                                coords=coords,

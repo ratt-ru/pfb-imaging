@@ -77,3 +77,6 @@ inputs:
 
 outputs:
   {}
+
+policies:
+  pass_missing_as_none: true

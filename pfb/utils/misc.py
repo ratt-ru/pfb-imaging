@@ -197,7 +197,6 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None,
     ax = (1, 2)  # axes over which to perform fft
     lastsize = ny + np.sum(padding[-1])
 
-    # import ipdb; ipdb.set_trace()
     padding = ((0,0),) + padding
     image = np.pad(image, padding, mode='constant')
     imhat = r2c(iFs(image, axes=ax), axes=ax, forward=True, nthreads=nthreads,

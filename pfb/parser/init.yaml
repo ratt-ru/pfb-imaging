@@ -6,22 +6,22 @@ inputs:
     info:
       Path to measurement set
   scans:
-    dtype: List[int]
+    dtype: Optional[List[int]]
     info:
       List of SCAN_NUMBERS to image. Defaults to all.
       Input as comma separated list 0,2 if running from CLI
   ddids:
-    dtype: List[int]
+    dtype: Optional[List[int]]
     info:
       List of DATA_DESC_ID's to images. Defaults to all.
       Input as comma separated list 0,2 if running from CLI
   fields:
-    dtype: List[int]
+    dtype: Optional[List[int]]
     info:
       List of FIELD_ID's to image. Defaults to all.
       Input as comma separated list 0,2 if running from CLI
   freq-range:
-    dtype: str
+    dtype: Optional[str]
     info:
       Frequency range to image in Hz.
       Specify as a string with colon delimiter eg. '1e9:1.1e9'
@@ -133,3 +133,6 @@ inputs:
 
 outputs:
     {}
+
+policies:
+  pass_missing_as_none: true

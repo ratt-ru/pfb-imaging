@@ -75,6 +75,7 @@ def init(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
+    quit()
     basename = f'{basedir}/{oname}'
 
     from pfb import set_envs
@@ -183,11 +184,12 @@ def _init(**kw):
         operator=None
 
     columns = (dc1,
-               opts.flag_column,
                'UVW', 'ANTENNA1',
                'ANTENNA2', 'TIME', 'INTERVAL', 'FLAG_ROW')
     schema = {}
-    schema[opts.flag_column] = {'dims': ('chan', 'corr')}
+    if opts.flag_column != 'None':
+        columns += (opts.flag_column)
+        schema[opts.flag_column] = {'dims': ('chan', 'corr')}
     schema[dc1] = {'dims': ('chan', 'corr')}
     if dc2 is not None:
         columns += (dc2,)

@@ -13,6 +13,4 @@ from pfb.workers import (init, grid, degrid, klean,
                          fluxmop, hci, smoovie, sara)
 
 if __name__ == '__main__':
-    from pfb.workers.spotless import spotless
-    cli.add_command(spotless)
     cli()

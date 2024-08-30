@@ -73,7 +73,6 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         # right_y = q + Iq < ny
         # mask = (left_x & right_x) & (left_y & right_y)
 
-        # import ipdb; ipdb.set_trace()
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
         # Ipp, Iqq = psf[:, nxo2 - Ip[mask], nyo2 - Iq[mask]]
         A = subtract(A[:, mask], psf,
@@ -138,7 +137,7 @@ def clark(ID,
                          gamma=gamma,
                          th=subth,
                          maxit=submaxit)
-        # import ipdb; ipdb.set_trace()
+
         # subtract from full image (as in major cycle)
         psf_convolve_cube(
                         xpad,

@@ -111,17 +111,17 @@ inputs:
       A sensible value for this parameter depends on the level of RFI in the data.
       Small values (eg. 2) result in aggressive reweighting and should be avoided
       if the model is still incomplete.
-  mf-weighting:
-    dtype: bool
-    default: false
-    info:
-      Base the imaging weights on the uniform weights computed over all
-      data instead of per band. This ensures that the MFS image can truly
-      be uniformly weighted.
   _include:
     - (.)gridding.yml
     - (.)dist.yml
     - (.)out.yml
 
 outputs:
-  {}
+  cds:
+    dtype: Directory
+    info: output cube dataset
+    mkdir: false
+
+
+policies:
+  pass_missing_as_none: true

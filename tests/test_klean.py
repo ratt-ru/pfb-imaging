@@ -252,7 +252,6 @@ def test_klean(do_gains, ms_name):
     dds = xds_from_url(dds_name)
     model_inferred = np.zeros((nchan, nx, ny))
     for ds in dds:
-        # import ipdb; ipdb.set_trace()
         b = int(ds.bandid)
         model_inferred[b] = ds.MODEL.values
 
