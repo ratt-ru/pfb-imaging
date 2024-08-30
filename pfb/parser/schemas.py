@@ -20,6 +20,7 @@ class _CabInputsOutputs(object):
     outputs: Dict[str, Parameter] = EmptyDictDefault()
     policies: Optional[Dict[str, Any]] = None
 
+
 # load schema files
 if schema is None:
 
@@ -38,9 +39,9 @@ if schema is None:
     # and a set containing locations of .yaml configs for pfb workers
     schema = OmegaConf.create(tmp[0])
 
-    # # is this still necessary?
-    # for worker in schema.keys():
-    #     for param in schema[worker]['inputs']:
-    #         if schema[worker]['inputs'][param]['default'] == _UNSET_DEFAULT:
-    #             schema[worker]['inputs'][param]['default'] = None
+    # is this still necessary?
+    for worker in schema.keys():
+        for param in schema[worker]['inputs']:
+            if schema[worker]['inputs'][param]['default'] == _UNSET_DEFAULT:
+                schema[worker]['inputs'][param]['default'] = None
 

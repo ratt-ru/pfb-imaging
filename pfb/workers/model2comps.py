@@ -11,10 +11,6 @@ log = pyscilog.get_logger('MODEL2COMPS')
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
-# create default parameters from schema
-defaults = {}
-for key in schema.model2comps["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.model2comps["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.model2comps)
@@ -22,8 +18,7 @@ def model2comps(**kw):
     '''
     Convert model in dds to components.
     '''
-    defaults.update(kw)
-    opts = OmegaConf.create(defaults)
+    opts = OmegaConf.create(kw)
 
     from pfb.utils.naming import set_output_names
     opts, basedir, oname = set_output_names(opts)
@@ -52,11 +47,6 @@ def model2comps(**kw):
     print('Input Options:', file=log)
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
-
-    # basename = f'{basedir}/{oname}'
-    # fits_oname = f'{opts.fits_output_folder}/{oname}'
-    # dds_name = f'{basename}_{opts.suffix}.dds'
-    # dds_store = DaskMSStore(dds_name)
 
     with ExitStack() as stack:
         ti = time.time()

@@ -11,11 +11,6 @@ log = pyscilog.get_logger('GRID')
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
-# create default parameters from schema
-defaults = {}
-for key in schema.grid["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
-
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.grid)
 def grid(**kw):
@@ -25,9 +20,7 @@ def grid(**kw):
     Set the --fits-cubes flag to also produce fits cubes.
 
     '''
-    defaults.update(kw)
-    opts = OmegaConf.create(defaults)
-
+    opts = OmegaConf.create(kw)
     from pfb.utils.naming import set_output_names
     opts, basedir, oname = set_output_names(opts)
 

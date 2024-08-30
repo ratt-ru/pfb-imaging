@@ -9,14 +9,20 @@ import pyscilog
 pyscilog.init('pfb')
 log = pyscilog.get_logger('INIT')
 import time
+
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
-import psutil
 
-# create default parameters from schema
-defaults = {}
-for key in schema.init["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
+
+# from pfb import parser
+# from scabha.configuratt import load_nested
+# from scabha.schema_utils import Schema
+# config_file = os.path.dirname(parser.__file__) + '/init.yaml'
+# schema, _ = load_nested([config_file],
+#                         structured=OmegaConf.structured(Schema),
+#                         config_class="PfbCleanCabs",
+#                         use_cache=False)
+# schema = OmegaConf.create(schema).init
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.init)
@@ -24,8 +30,7 @@ def init(**kw):
     '''
     Initialise Stokes data products for imaging
     '''
-    defaults.update(kw)
-    opts = OmegaConf.create(defaults)
+    opts = OmegaConf.create(kw)
 
     from pfb.utils.naming import set_output_names
     opts, basedir, oname = set_output_names(opts)
@@ -187,7 +192,7 @@ def _init(**kw):
                'ANTENNA2', 'TIME', 'INTERVAL', 'FLAG_ROW')
     schema = {}
     if opts.flag_column != 'None':
-        columns += (opts.flag_column)
+        columns += (opts.flag_column,)
         schema[opts.flag_column] = {'dims': ('chan', 'corr')}
     schema[dc1] = {'dims': ('chan', 'corr')}
     if dc2 is not None:

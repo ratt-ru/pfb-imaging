@@ -12,10 +12,6 @@ log = pyscilog.get_logger('DEGRID')
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
-# create default parameters from schema
-defaults = {}
-for key in schema.degrid["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.degrid["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.degrid)
@@ -23,8 +19,7 @@ def degrid(**kw):
     '''
     Predict model visibilities to measurement sets.
     '''
-    defaults.update(kw)
-    opts = OmegaConf.create(defaults)
+    opts = OmegaConf.create(kw)
 
     from pfb.utils.naming import set_output_names
     opts, basedir, oname = set_output_names(opts)

@@ -12,10 +12,6 @@ log = pyscilog.get_logger('SARA')
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
-# create default parameters from schema
-defaults = {}
-for key in schema.sara["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.sara["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.sara)
@@ -23,8 +19,7 @@ def sara(**kw):
     '''
     Deconvolution using SARA regularisation
     '''
-    defaults.update(kw)
-    opts = OmegaConf.create(defaults)
+    opts = OmegaConf.create(kw)
 
     from pfb.utils.naming import set_output_names
     opts, basedir, oname = set_output_names(opts)
