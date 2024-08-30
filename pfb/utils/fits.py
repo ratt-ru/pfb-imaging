@@ -1,11 +1,25 @@
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
-from pfb.utils.misc import to4d
 import dask.array as da
 from dask import delayed
 from datetime import datetime
 from casacore.quanta import quantity
+from astropy.time import Time
+from pfb.utils.naming import xds_from_list
+
+
+def to4d(data):
+    if data.ndim == 4:
+        return data
+    elif data.ndim == 2:
+        return data[None, None]
+    elif data.ndim == 3:
+        return data[None]
+    elif data.ndim == 1:
+        return data[None, None, None]
+    else:
+        raise ValueError("Only arrays with ndim <= 4 can be broadcast to 4D.")
 
 
 def data_from_header(hdr, axis=3):
@@ -18,20 +32,20 @@ def data_from_header(hdr, axis=3):
 
 def load_fits(name, dtype=np.float32):
     data = fits.getdata(name)
-    data = np.transpose(to4d(data)[:, :, ::-1], axes=(0, 1, 3, 2))
+    data = np.transpose(to4d(data), axes=(0, 1, 3, 2))
     return np.require(data, dtype=dtype, requirements='C')
 
 
 def save_fits(data, name, hdr, overwrite=True, dtype=np.float32):
     hdu = fits.PrimaryHDU(header=hdr)
-    data = np.transpose(to4d(data), axes=(0, 1, 3, 2))[:, :, ::-1]
+    data = np.transpose(to4d(data), axes=(0, 1, 3, 2))
     hdu.data = np.require(data, dtype=dtype, requirements='F')
     hdu.writeto(name, overwrite=overwrite)
-    return np.ones((1,), dtype=bool)  # so we can use map_blocks
+    return
 
 
 def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
-            unit='Jy/beam', GuassPar=None, unix_time=None):
+            unit='Jy/beam', GuassPar=None, ms_time=None):
     """
     cell_x/y - cell sizes in degrees
     nx/y - number of x and y pixels
@@ -48,32 +62,48 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
     w.wcs.cunit[1] = 'deg'
     w.wcs.cunit[2] = 'Hz'
     if np.size(freq) > 1:
-        ref_freq = freq[0]
-    else:
-        ref_freq = freq
-    w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
-    # LB - y axis treated differently because of stupid fits convention?
-    w.wcs.crpix = [1 + nx//2, ny//2, 1, 1]
-
-    if np.size(freq) > 1:
-        w.wcs.crval[2] = freq[0]
+        nchan = freq.size
+        crpix3 = nchan//2+1
+        ref_freq = freq[crpix3]
         df = freq[1]-freq[0]
         w.wcs.cdelt[2] = df
-        fmean = np.mean(freq)
     else:
-        if isinstance(freq, np.ndarray):
-            fmean = freq[0]
+        if isinstance(freq, np.ndarray) and freq.size == 1:
+            ref_freq = freq[0]
         else:
-            fmean = freq
+            ref_freq = freq
+        crpix3 = 1
+    w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
+    w.wcs.crpix = [1 + nx//2, 1 + ny//2, crpix3, 1]
 
     header = w.to_header()
-    header['RESTFRQ'] = fmean
+    header['RESTFRQ'] = ref_freq
     header['ORIGIN'] = 'pfb-imaging'
     header['BTYPE'] = 'Intensity'
     header['BUNIT'] = unit
     header['SPECSYS'] = 'TOPOCENT'
-    if unix_time is not None:
-        header['UTC_TIME'] = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+    if ms_time is not None:
+        # TODO - this is probably a bit of a round about way of doing this
+        unix_time = quantity(f'{ms_time}s').to_unix_time()
+        utc_iso = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+        header['UTC_TIME'] = utc_iso
+        t = Time(utc_iso)
+        t.format = 'fits'
+        header['DATE-OBS'] = t.value
+
+    # What are these used for?
+    # if 'LONPOLE' in header:
+    #     header.pop('LONPOLE')
+    # if 'LATPOLE' in header:
+    #     header.pop('LATPOLE')
+    # if 'RADESYS' in header:
+    #     header.pop('RADESYS')
+    # if 'MJDREF' in header:
+    #     header.pop('MJDREF')
+
+    header['EQUINOX'] = '2000. / J2000'
+    header['BSCALE'] = 1.0
+    header['BZERO'] = 0.0
 
     return header
 
@@ -120,122 +150,65 @@ def add_beampars(hdr, GaussPar, GaussPars=None, unit2deg=1.0):
     return hdr
 
 
-def set_header_info(mhdr, ref_freq, freq_axis, args, beampars):
-    hdr_keys = ['SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'NAXIS3',
-                'NAXIS4', 'CTYPE1', 'CTYPE2', 'CTYPE3', 'CTYPE4', 'CRPIX1',
-                'CRPIX2', 'CRPIX3', 'CRPIX4', 'CRVAL1', 'CRVAL2', 'CRVAL3',
-                'CRVAL4', 'CDELT1', 'CDELT2', 'CDELT3', 'CDELT4']
-
-    new_hdr = {}
-    for key in hdr_keys:
-        new_hdr[key] = mhdr[key]
-
-    if freq_axis == 3:
-        new_hdr["NAXIS3"] = 1
-        new_hdr["CRVAL3"] = ref_freq
-    elif freq_axis == 4:
-        new_hdr["NAXIS4"] = 1
-        new_hdr["CRVAL4"] = ref_freq
-
-    new_hdr['BMAJ'] = beampars[0]
-    new_hdr['BMIN'] = beampars[1]
-    new_hdr['BPA'] = beampars[2]
-
-    new_hdr = fits.Header(new_hdr)
-
-    return new_hdr
-
-
-def normwsum(data, wsum):
-    if wsum > 0:
-        return data / wsum
-    else:
-        return data
-
-
-def dds2fits(dds, column, outname, norm_wsum=True, otype=np.float32):
-    imsout = []
+def dds2fits(dsl, column, outname, norm_wsum=True,
+             otype=np.float32, nthreads=1,
+             do_mfs=True, do_cube=True):
     basename = outname + '_' + column.lower()
-    for ds in dds:
-        t = ds.timeid
-        b = ds.bandid
-        name = basename + f'_time{t:04d}_band{b:04d}.fits'
-        data = ds.get(column).data
-        if norm_wsum:
-            data = da.map_blocks(normwsum,
-                                 data,
-                                 ds.WSUM.data[0],
-                                 chunks=data.chunks)
-            unit = 'Jy/beam'
-        else:
-            unit = 'Jy/pixel'
+    if norm_wsum:
+        unit = 'Jy/beam'
+    else:
+        unit = 'Jy/pixel'
+    dds = xds_from_list(dsl, drop_all_but=column,
+                        nthreads=nthreads,
+                        order_freq=False)
+    timeids = [ds.timeid for ds in dds]
+    freqs = [ds.freq_out for ds in dds]
+    freqs = np.unique(freqs)
+    nband = freqs.size
+    nx, ny = getattr(dds[0], column).shape
+    for timeid in timeids:
+        cube = np.zeros((nband, nx, ny))
+        wsums = np.zeros(nband)
+        wsum = 0.0
+        for i, ds in enumerate(dds):
+            if ds.timeid == timeid:
+                b = int(ds.bandid)
+                cube[b] = ds.get(column).values
+                wsums[b] = ds.wsum
+                wsum += ds.wsum
         radec = (ds.ra, ds.dec)
         cell_deg = np.rad2deg(ds.cell_rad)
         nx, ny = ds.get(column).shape
         unix_time = quantity(f'{ds.time_out}s').to_unix_time()
-        hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, ds.freq_out,
-                      unit=unit, unix_time=unix_time)
-        imout = da.map_blocks(save_fits,
-                             data,
-                             name,
-                             hdr,
-                             overwrite=True,
-                             chunks=(1,),
-                             drop_axis=tuple(np.arange(1,len(data.shape))),
-                             meta=np.empty((0,), dtype=bool))
-        imsout.append(imout)
-    return imsout
+        fmask = wsums > 0
 
+        if do_mfs:
+            freq_mfs = np.sum(freqs*wsums)/wsum
+            if norm_wsum:
+                # already weighted by wsum
+                cube_mfs = np.sum(cube, axis=0)/wsum
+            else:
+                # weigted sum
+                cube_mfs = np.sum(cube[fmask]*wsums[fmask, None, None],
+                                  axis=0)/wsum
 
-def dds2fits_mfs(dds, column, outname, norm_wsum=True, otype=np.float32):
-    times_out = []
-    freqs = []
-    for ds in dds:
-        times_out.append(ds.time_out)
-        freqs.append(ds.freq_out)
-    times_out = np.unique(np.array(times_out))
-    ntimes_out = times_out.size
-    freq_out = np.mean(np.unique(np.array(freqs)))
-    basename = outname + '_' + column.lower()
-    imsout = []
-    nx, ny = dds[0].get(column).shape
-    datas = [da.zeros((nx, ny), chunks=(-1, -1),
-                dtype=otype) for _ in range(ntimes_out)]
-    wsums = [da.zeros(1) for _ in range(ntimes_out)]
-    counts = [da.zeros(1) for _ in range(ntimes_out)]
-    radecs = [[] for _ in range(ntimes_out)]
-    cell_deg = np.rad2deg(dds[0].cell_rad)
-    for ds in dds:
-        t = ds.timeid
-        datas[t] += ds.get(column).data
-        wsums[t] += ds.WSUM.data[0]
-        counts[t] += 1
-        radecs[t] = (ds.ra, ds.dec)
-    for t in range(ntimes_out):
-        name = basename + f'_time{t:04d}_mfs.fits'
-        if norm_wsum:
-            data = da.map_blocks(normwsum,
-                                 datas[t],
-                                 wsums[t],
-                                 chunks=datas[t].chunks)
-            unit = 'Jy/beam'
-        else:
-            data = da.map_blocks(normwsum,
-                                 datas[t],
-                                 counts[t],
-                                 chunks=datas[t].chunks)
-            unit = 'Jy/pixel'
-        unix_time = quantity(f'{times_out[t]}s').to_unix_time()
-        hdr = set_wcs(cell_deg, cell_deg, nx, ny, radecs[t], freq_out,
-                      unit=unit, unix_time=unix_time)
-        imout = da.map_blocks(save_fits,
-                             data,
-                             name,
-                             hdr,
-                             overwrite=True,
-                             chunks=(1,),
-                             drop_axis=tuple(np.arange(1,len(data.shape))),
-                             meta=np.empty((0,), dtype=bool))
-        imsout.append(imout)
+            name = basename + f'_time{timeid}_mfs.fits'
+            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_mfs,
+                        unit=unit, ms_time=ds.time_out)
+            hdr['WSUM'] = wsum
+            save_fits(cube_mfs, name, hdr, overwrite=True,
+                      dtype=otype)
 
-    return imsout
+        if do_cube:
+            if norm_wsum:
+                cube[fmask] = cube[fmask]/wsums[fmask, None, None]
+            name = basename + f'_time{timeid}.fits'
+            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freqs,
+                          unit=unit, ms_time=ds.time_out)
+            for b in range(fmask.size):
+                hdr[f'WSUM{b}'] = wsums[b]
+            save_fits(cube, name, hdr, overwrite=True,
+                      dtype=otype)
+
+    return column
+

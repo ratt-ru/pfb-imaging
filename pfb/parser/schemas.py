@@ -1,18 +1,25 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os.path
 import glob
 from typing import *
 from scabha import configuratt
+from collections import OrderedDict
 from scabha.cargo import Parameter, _UNSET_DEFAULT
 from omegaconf.omegaconf import OmegaConf
 
+def EmptyDictDefault():
+    return field(default_factory=lambda:OrderedDict())
 
 schema = None
 
 @dataclass
 class _CabInputsOutputs(object):
-    inputs: Dict[str, Parameter]
-    outputs: Dict[str, Parameter]
+    # inputs: Dict[str, Parameter]
+    # outputs: Dict[str, Parameter]
+    inputs: Dict[str, Parameter] = EmptyDictDefault()
+    outputs: Dict[str, Parameter] = EmptyDictDefault()
+    policies: Optional[Dict[str, Any]] = None
+
 
 # load schema files
 if schema is None:
@@ -37,6 +44,4 @@ if schema is None:
         for param in schema[worker]['inputs']:
             if schema[worker]['inputs'][param]['default'] == _UNSET_DEFAULT:
                 schema[worker]['inputs'][param]['default'] = None
-
-
 

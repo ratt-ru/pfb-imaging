@@ -4,11 +4,6 @@ from sympy.physics.quantum import TensorProduct
 from sympy.utilities.lambdify import lambdify
 from numba import njit
 
-# for old style vs new style warnings
-from numba.core.errors import NumbaPendingDeprecationWarning
-import warnings
-
-warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 
 def stokes_funcs(data, jones, product, pol, nc):
     # set up symbolic expressions

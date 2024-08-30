@@ -1,6 +1,6 @@
 pd-tol:
-  dtype: float
-  default: 3e-4
+  dtype: List[float]
+  default: [3e-4]
   info: 'Tolreance of primal dual algorithm'
   abbreviation: pdtol
 pd-maxit:

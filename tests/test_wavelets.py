@@ -97,7 +97,6 @@ def test_dwt_idwt_pywt(wavelet, data_shape, nlevel):
         nay = sy[j]
         lowy2 = highy - 2*nay
         npix_y = highy - lowy
-        # import ipdb; ipdb.set_trace()
         a, b, c = alpha[i]
         # diagonal
         alpha3[lowx:highx, lowy:highy] = c

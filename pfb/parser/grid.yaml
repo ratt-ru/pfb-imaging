@@ -3,12 +3,6 @@ inputs:
     info:
       Optional explicit path to xds.
       Set using output-filename and suffix by default.
-  nband:
-    dtype: int
-    required: true
-    abbreviation: nb
-    info:
-      Number of imaging bands
   suffix:
     dtype: str
     default: 'main'
@@ -42,16 +36,6 @@ inputs:
     abbreviation: rob
     info:
       Robustness factor for Briggs weighting. None means natural
-  fits-mfs:
-    dtype: bool
-    default: true
-    info:
-      Output MFS fits files
-  fits-cubes:
-    dtype: bool
-    default: false
-    info:
-      Output fits cubes
   dirty:
     dtype: bool
     default: true
@@ -62,9 +46,19 @@ inputs:
     default: true
     info:
       Compute the PSF
+  residual:
+    dtype: bool
+    default: true
+    info:
+      Compute the residual (only if model is present)
+  noise:
+    dtype: bool
+    default: true
+    info:
+      Compute noise map by sampling from weights
   psf-oversize:
     dtype: float
-    default: 2.0
+    default: 1.0
     abbreviation: psfo
     info:
       Size of PSF relative to dirty image
@@ -97,28 +91,20 @@ inputs:
     dtype: int
     info:
       Number of y pixels
-  filter-extreme-counts:
-    dtype: bool
-    default: true
-    info:
-      Replace extreme outliers in the weighting grid by their local mean
-  filter-nbox:
-    dtype: int
-    default: 16
-    info:
-      The size of the box to compute local mean over
-  filter-level:
+  filter-counts-level:
     dtype: float
-    default: 5
+    default: 5.0
     info:
-      The level above local mean that renders a grid weight extreme
+      Set minimum counts in the uniform weighting grid to the median divided by this value.
+      This is useful to avoid artificially up-weighting nearly empty uv-cells.
   target:
     dtype: str
     info:
       This can be predefined celestial objects known to astropy or a string in
       the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
-  l2reweight-dof:
+  l2-reweight-dof:
     dtype: float
+    abbreviation: dof
     info:
       The degrees of freedom parameter for L2 reweighting.
       The default (None) means no reweighting.
@@ -131,4 +117,11 @@ inputs:
     - (.)out.yml
 
 outputs:
-    {}
+  cds:
+    dtype: Directory
+    info: output cube dataset
+    mkdir: false
+
+
+policies:
+  pass_missing_as_none: true

@@ -14,7 +14,7 @@ def test_beam(beam_model, nx, ny):
     cell_deg = 1e-2
     beam, l, m = interp_beam(freq, nx, ny, cell_deg, beam_model)
     ll, mm = np.meshgrid(l, m, indexing='ij')
-    bvals = eval_beam(beam, l, m, ll, mm).compute()
+    bvals = eval_beam(beam, l, m, ll, mm)
 
     if beam_model is None:
         assert (bvals==1).all()

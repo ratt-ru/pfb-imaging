@@ -43,15 +43,6 @@ pfb.restore:
   _include:
     - (.)restore.yaml
 
-pfb.fwdbwd:
-  command: pfb.workers.fwdbwd.fwdbwd
-  flavour: python
-  policies:
-    pass_missing_as_none: true
-
-  _include:
-    - (.)fwdbwd.yaml
-
 pfb.fluxmop:
   command: pfb.workers.fluxmop.fluxmop
   flavour: python
@@ -70,6 +61,15 @@ pfb.spotless:
   _include:
     - (.)spotless.yaml
 
+pfb.sara:
+  command: pfb.workers.sara.sara
+  flavour: python
+  policies:
+    pass_missing_as_none: true
+
+  _include:
+    - (.)sara.yaml
+
 pfb.model2comps:
   command: pfb.workers.model2comps.model2comps
   flavour: python
@@ -78,3 +78,12 @@ pfb.model2comps:
 
   _include:
     - (.)model2comps.yaml
+
+pfb.hci:
+  command: pfb.workers.hci.hci
+  flavour: python
+  policies:
+    pass_missing_as_none: true
+
+  _include:
+    - (.)hci.yaml

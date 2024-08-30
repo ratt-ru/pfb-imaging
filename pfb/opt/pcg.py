@@ -4,51 +4,16 @@ import dask.array as da
 from distributed import wait
 from uuid import uuid4
 from ducc0.misc import make_noncritical
-from pfb.utils.misc import norm_diff
-import pyscilog
-log = pyscilog.get_logger('PCG')
+from pfb.utils.misc import norm_diff, fitcleanbeam, Gaussian2D
+from pfb.utils.naming import xds_from_list
+from pfb.operators.hessian import _hessian_impl, hess_direct_slice
+from ducc0.misc import empty_noncritical
+from ducc0.fft import c2c
+iFs = np.fft.ifftshift
+Fs = np.fft.fftshift
 
-
-def cg(A,
-       b,
-       x0=None,
-       tol=1e-5,
-       maxit=500,
-       verbosity=1,
-       report_freq=10):
-
-    if x0 is None:
-        x = np.zeros(b.shape, dtype=b.dtype)
-    else:
-        x = x0.copy()
-
-    # initial residual
-    r = A(x) - b
-    p = -r
-    rnorm = np.vdot(r, r)
-    rnorm0 = rnorm
-    eps = rnorm
-    k = 0
-    while eps > tol and k < maxit:
-        xp = x
-        rp = r
-        Ap = A(p)
-        alpha = rnorm/np.vdot(p, Ap)
-        x += alpha * p
-        r += alpha * Ap
-        rnorm_next = np.vdot(r, r)
-        beta = rnorm_next/rnorm
-        p = beta*p - r
-        rnorm = rnorm_next
-        eps = rnorm #/rnorm0
-
-        k += 1
-
-    if k >= maxit:
-        print(f"Max iters reached eps = {eps}")
-
-    return x
-
+# import pyscilog
+# log = pyscilog.get_logger('PCG')
 
 def pcg(A,
         b,
@@ -71,14 +36,14 @@ def pcg(A,
     r = A(x0) - b
     y = M(r)
     if not np.any(y):
-        print(f"Initial residual is zero", file=log)
+        print(f"Initial residual is zero")  #, file=log)
         return x0
     p = -y
     rnorm = np.vdot(r, y)
     if np.isnan(rnorm) or rnorm == 0.0:
-        eps0 = 1.0
+        phi0 = 1.0
     else:
-        eps0 = rnorm
+        phi0 = rnorm
     k = 0
     x = x0
     eps = 1.0
@@ -109,134 +74,28 @@ def pcg(A,
         k += 1
         epsp = eps
         eps = norm_diff(x, xp)
-        # np.linalg.norm(x - xp) / np.linalg.norm(x)
-        # epsn = rnorm / eps0
-        # eps = rnorm / eps0
-        # eps = np.maximum(epsx, epsn)
+        phi = rnorm / phi0
 
-        # if np.abs(epsp - eps) < 1e-3*tol:
-        #     stall_count += 1
+        if np.abs(epsp - eps) < 1e-3*tol:
+            stall_count += 1
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} epsx = {eps:.3e}",
-                  file=log)
+            print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
+                #   file=log)
 
     if k >= maxit:
         if verbosity:
-            print(f"Max iters reached. eps = {eps:.3e}", file=log)
+            print(f"Max iters reached. eps = {eps:.3e}")  #, file=log)
     elif stall_count >= 5:
         if verbosity:
-            print(f"Stalled after {k} iterations with eps = {eps:.3e}", file=log)
+            print(f"Stalled after {k} iterations with eps = {eps:.3e}")  #, file=log)
     else:
         if verbosity:
-            print(f"Success, converged after {k} iterations", file=log)
+            print(f"Success, converged after {k} iterations")  #, file=log)
     if not return_resid:
         return x
     else:
         return x, r
-
-
-def cg_dct(A,
-           b,
-           x,
-           tol=1e-5,
-           maxit=500,
-           verbosity=1,
-           report_freq=10):
-    '''
-    A specialised version of the pcg that doesn't need x to live on a
-    single grid. As a result x is nested a dictionary keyed on field
-    name and then on time and freq. There is currently no support for
-    overlapping fields i.e. fields need to be distinct. This simplified
-    version does not yet support bactracking or pre-conditioning so it
-    will probably only work if A is a very good approximation of Ax=b
-    '''
-
-    def residual(Ax, b, r, p):
-        for field in Ax.keys():
-            for i in Ax[field].keys():
-                r[field][i] = Ax[field][i] - b[field][i]
-                p[field][i] = -r[field][i]
-        return r, p
-
-    def vdot_dct(a, b):
-        res = 0.0
-        for field in a.keys():
-            for i in a[field].keys():
-                res += np.vdot(a[field][i], b[field][i])
-        return res
-
-    def pluseq_dct(a, b, alpha=1.0):
-        # implement a += alpha * b
-        for field in a.keys():
-            for i in a[field].keys():
-                a[field][i] += alpha * b[field][i]
-        return a
-
-    def pupdate(p, r, beta=1):
-        # implement p = beta * p - r
-        for field in p.keys():
-            for i in p[field].keys():
-                p[field][i] = beta * p[field][i] - r[field][i]
-        return p
-
-    def norm_dct(a, b=None):
-        norm = 0.0
-        for field in a.keys():
-            for i in a[field].keys():
-                if b is not None:
-                    norm += np.linalg.norm(a[field][i] - b[field][i])
-                else:
-                    norm += np.linalg.norm(a[field][i])
-        return norm
-
-    # initial residual
-    Ax = A(x)
-    r = {}
-    p = {}
-    for field in Ax.keys():
-        r[field] = {}
-        p[field] = {}
-        for i in Ax[field].keys():
-            r[field][i] = Ax[field][i] - b[field][i]
-            p[field][i] = -r[field][i]
-
-
-    rnorm = vdot_dct(r, r)
-    rnorm0 = rnorm
-    eps = rnorm
-    k = 0
-    while eps > tol and k < maxit:
-        xp = x
-        rp = r
-        Ap = A(p)
-        pAp = vdot_dct(p, Ap)
-        alpha = rnorm/pAp  #np.vdot(p, Ap)
-        x = pluseq_dct(x, p, alpha=alpha)
-        r = pluseq_dct(r, Ap, alpha=alpha)
-        # x += alpha * p
-        # r += alpha * Ap
-        rnorm_next = vdot_dct(r, r)
-        beta = rnorm_next/rnorm
-        p = pupdate(p, r, beta=beta)
-        # p = beta*p - r
-        rnorm = rnorm_next
-        eps = rnorm
-        # eps = norm_dct(x, b=xp) / norm_dct(x)
-
-        k += 1
-
-        if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} eps = {eps:.3e}",
-                  file=log)
-
-    if k >= maxit:
-        if verbosity:
-            print(f"Max iters reached. eps = {eps:.3e}", file=log)
-    else:
-        if verbosity:
-            print(f"Success, converged after {k} iterations", file=log)
-    return x, r
 
 
 from pfb.operators.hessian import _hessian_psf_slice
@@ -360,63 +219,187 @@ def pcg_psf(psfhat,
         return model
 
 
-def pcg_dist(A, maxit, minit, tol, sigmainv):
+def taperf(shape, taper_width):
+    height, width = shape
+    array = np.ones((height, width))
+
+    # Create 1D taper for both dimensions
+    taper_x = np.ones(width)
+    taper_y = np.ones(height)
+
+    # Apply cosine taper to the edges
+    taper_x[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
+    taper_x[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
+
+    taper_y[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
+    taper_y[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
+
+    return np.outer(taper_y, taper_x)
+
+
+def pcg_dds(ds_name,
+            sigmainvsq,  # regularisation for Hessian approximation
+            sigma,       # regularisation for preconditioner
+            mask=1.0,
+            use_psf=True,
+            residual_name='RESIDUAL',
+            model_name='MODEL',
+            do_wgridding=True,
+            epsilon=5e-4,
+            double_accum=True,
+            nthreads=1,
+            tol=1e-5,
+            maxit=500,
+            verbosity=1,
+            report_freq=10):
     '''
-    kwargs - tol, maxit, minit, nthreads, psf_padding, unpad_x, unpad_y
-             sigmainv, lastsize, hessian
+    pcg for fluxmop
     '''
+    if not isinstance(ds_name, list):
+        ds_name = [ds_name]
 
-    if hasattr(A, 'residual'):
-        b = A.residual/A.wsum
+    # drop_vars = ['PSF']
+    # if not use_psf:
+    #     drop_vars.append('PSFHAT')
+    drop_vars = None
+    ds = xds_from_list(ds_name, nthreads=nthreads,
+                       drop_vars=drop_vars)[0]
+
+    if residual_name in ds:
+        j = getattr(ds, residual_name).values * mask * ds.BEAM.values
+        ds = ds.drop_vars(residual_name)
     else:
-        b = A.dirty/A.wsum
-    x = np.zeros_like(b)
+        j = ds.DIRTY.values * mask * ds.BEAM.values
+        ds = ds.drop_vars(('DIRTY'))
 
-    def M(x):
-        return x / sigmainv
+    psf = ds.PSF.values
+    nx_psf, py_psf = psf.shape
+    nx, ny = j.shape
+    wsum = np.sum(ds.WEIGHT.values * ds.MASK.values)
+    psf /= wsum
+    j /= wsum
+    # set sigmas relative to wsum
+    # sigma *= wsum
+    # sigmainvsq *= wsum
 
-    r = A(x) - b
-    y = M(r)
-    p = -y
-    rnorm = np.vdot(r, y)
-    if np.isnan(rnorm) or rnorm == 0.0:
-        eps0 = 1.0
+    # downweight edges of field compared to center
+    # this allows the PCG to downweight the fit to the edges
+    # which may be contaminated by edge effects and also
+    # stabalises the preconditioner
+    width = np.minimum(int(0.1*nx), 32)
+    taperxy = taperf((nx, ny), width)
+    # sigmainvsq /= taperxy
+
+    # set precond if PSF is present
+    if 'PSFHAT' in ds and use_psf:
+        psfhat = np.abs(ds.PSFHAT.values)/wsum
+        ds.drop_vars(('PSFHAT'))
+        nx_psf, nyo2 = psfhat.shape
+        ny_psf = 2*(nyo2-1)  # is this always the case?
+        nxpadl = (nx_psf - nx)//2
+        nxpadr = nx_psf - nx - nxpadl
+        nypadl = (ny_psf - ny)//2
+        nypadr = ny_psf - ny - nypadl
+        if nx_psf != nx:
+            unpad_x = slice(nxpadl, -nxpadr)
+        else:
+            unpad_x = slice(None)
+        if ny_psf != ny:
+            unpad_y = slice(nypadl, -nypadr)
+        else:
+            unpad_y = slice(None)
+        xpad = empty_noncritical((nx_psf, ny_psf),
+                                 dtype=j.dtype)
+        xhat = empty_noncritical((nx_psf, nyo2),
+                                 dtype='c16')
+        xout = empty_noncritical((nx, ny),
+                                 dtype=j.dtype)
+        precond = partial(
+                    hess_direct_slice,
+                    xpad=xpad,
+                    xhat=xhat,
+                    xout=xout,
+                    psfhat=psfhat,
+                    taperxy=taperxy,
+                    lastsize=ny_psf,
+                    nthreads=nthreads,
+                    sigmainvsq=sigma,
+                    mode='backward')
+
+        x0 = precond(j)
+
+        # get intrinsic resolution by deconvolving psf
+        upsf = precond(psf[unpad_x, unpad_y])
+        upsf /= upsf.max()
+        gaussparu = fitcleanbeam(upsf[None], level=0.25, pixsize=1.0)[0]
+        ds = ds.assign(**{
+            'UPSF': (('x', 'y'), upsf)
+        })
+        ds = ds.assign_attrs(gaussparu=gaussparu)
     else:
-        eps0 = rnorm
-    k = 0
-    eps = 1.0
-    stall_count = 0
-    while (eps > tol or k < minit) and k < maxit and stall_count < 5:
-        xp = x.copy()
-        rp = r.copy()
-        epsp = eps
-        Ap = A(p)
-        rnorm = np.vdot(r, y)
-        alpha = rnorm / np.vdot(p, Ap)
-        x = xp + alpha * p
-        r = rp + alpha * Ap
-        y = M(r)
-        rnorm_next = np.vdot(r, y)
-        while rnorm_next > rnorm:  # TODO - better line search
-            alpha *= 0.75
-            x = xp + alpha * p
-            r = rp + alpha * Ap
-            y = M(r)
-            rnorm_next = np.vdot(r, y)
+        # print('Not using preconditioning')
+        precond = None
+        x0 = np.zeros_like(j)
 
-        beta = rnorm_next / rnorm
-        p = beta * p - y
-        # if p is zero we should stop
-        if not np.any(p):
-            break
-        rnorm = rnorm_next
-        k += 1
-        eps = rnorm / eps0
+    hess = partial(_hessian_impl,
+                   uvw=ds.UVW.values,
+                   weight=ds.WEIGHT.values,
+                   vis_mask=ds.MASK.values,
+                   freq=ds.FREQ.values,
+                   beam=ds.BEAM.values,
+                   cell=ds.cell_rad,
+                   x0=ds.x0,
+                   y0=ds.y0,
+                   do_wgridding=do_wgridding,
+                   epsilon=epsilon,
+                   double_accum=double_accum,
+                   nthreads=nthreads,
+                   sigmainvsq=sigmainvsq,
+                   wsum=wsum)
 
-        if np.abs(eps - epsp) < 1e-3*tol:
-            stall_count += 1
+    x = pcg(hess,
+            j,
+            x0=x0.copy(),
+            M=precond,
+            tol=tol,
+            maxit=maxit,
+            minit=1,
+            verbosity=verbosity,
+            report_freq=report_freq,
+            backtrack=False,
+            return_resid=False)
 
-    print(f'Band={A.bandid}, iters{k}, eps={eps}', file=log)
-    return x
+    if model_name in ds:
+        model = getattr(ds, model_name).values + x
+    else:
+        model = x
+
+
+    resid = ds.DIRTY.values - _hessian_impl(
+                                        model,
+                                        ds.UVW.values,
+                                        ds.WEIGHT.values,
+                                        ds.MASK.values,
+                                        ds.FREQ.values,
+                                        ds.BEAM.values,
+                                        cell=ds.cell_rad,
+                                        x0=ds.x0,
+                                        y0=ds.y0,
+                                        do_wgridding=do_wgridding,
+                                        epsilon=epsilon,
+                                        double_accum=double_accum,
+                                        nthreads=nthreads,
+                                        sigmainvsq=0)
+
+    ds = ds.assign(**{
+        'MODEL_MOPPED': (('x','y'), model),
+        'RESIDUAL_MOPPED': (('x','y'), resid),
+        'UPDATE': (('x','y'), x),
+        'X0': (('x','y'), x0),
+    })
+
+    ds.to_zarr(ds_name[0], mode='a')
+
+    return resid, int(ds.bandid)
 
 

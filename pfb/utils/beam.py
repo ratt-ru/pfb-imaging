@@ -4,17 +4,12 @@ from functools import partial
 from katbeam import JimBeam
 import dask.array as da
 from numba.core.errors import NumbaDeprecationWarning
-import warnings
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=NumbaDeprecationWarning)
-    from africanus.rime.fast_beam_cubes import beam_cube_dde
-    from africanus.rime import parallactic_angles
-# import pyscilog
-# pyscilog.init('pfb')
-# log = pyscilog.get_logger('BEAM')
+from africanus.rime.fast_beam_cubes import beam_cube_dde
+from africanus.rime import parallactic_angles
 
-def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
-                      utime=None, ant_pos=None, phase_dir=None):
+
+def interp_beam(freq, nx, ny, cell_deg, btype,
+                utime=None, ant_pos=None, phase_dir=None):
     '''
     A function that returns an object array containing a function
     returning beam values given (l,m) coordinates at a single frequency.
@@ -25,7 +20,9 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
         assert freq.size == 1, "Only single frequency interpolation currently supported"
         freq = freq[0]
     if btype is None:
-        return np.ones((nx, ny), dtype=float)
+        l = (-(nx//2) + np.arange(nx)) * cell_deg
+        m = (-(ny//2) + np.arange(ny)) * cell_deg
+        return np.ones((nx, ny), dtype=float), l, m
     elif btype.endswith('.npz'):
         # these are expected to be in the format given here
         # https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
@@ -60,7 +57,7 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
         bfreqs = np.array((freq,))
 
     if utime is None:
-        return beam_amp.squeeze()
+        return beam_amp.squeeze(), l, m
 
     parangles = parallactic_angles(utime, ant_pos, phase_dir, backend='astropy')
     # mean over antanna nant -> 1
@@ -77,47 +74,11 @@ def _interp_beam_impl(freq, nx, ny, cell_deg, btype,
                             beam_extents, bfreqs,
                             lm, parangles, point_errs,
                             ant_scale, np.array((freq,))).squeeze()
-    import ipdb; ipdb.set_trace()
-    return beam_image.squeeze()
+
+    return beam_image.squeeze(), l, m
 
 
-def interp_beam(freq, nx, ny, cell_deg, btype,
-                utime=None, ant_pos=None, phase_dir=None):
-    '''
-    Blockwise wrapper that returns an object array containing a function
-    returning beam values given (l,m) coordinates at a single frequency.
-    Frequency mapped to imaging band extenally. Result is meant to be
-    passed into eval_beam below.
-    '''
-    if btype is not None and btype.endswith('.npz'):
-        dct = np.load(btype)
-        l = dct['ldeg']
-        m = dct['mdeg']
-        nx = l.size
-        ny = m.size
-        cell_deg = l[1] - l[0]
-        assert cell_deg == m[1] - m[0], 'Beam coords must be on a square grid'
-    else:
-        l = (-(nx//2) + np.arange(nx)) * cell_deg
-        m = (-(ny//2) + np.arange(ny)) * cell_deg
-
-    beam_image = da.blockwise(_interp_beam_impl, 'xy',
-                        freq, None,
-                        nx, None,
-                        ny, None,
-                        cell_deg, None,
-                        btype, None,
-                        utime, None,
-                        ant_pos, None,
-                        phase_dir, None,
-                        new_axes={'x': nx, 'y': ny},
-                        dtype=float)
-    # l = da.from_array(l, chunks=-1)
-    # m = da.from_array(m, chunks=-1)
-    return beam_image, l, m
-
-
-def _eval_beam(beam_image, l_in, m_in, l_out, m_out):
+def eval_beam(beam_image, l_in, m_in, l_out, m_out):
     if l_out.ndim == 2:
         ll = l_out
         mm = m_out
@@ -127,28 +88,9 @@ def _eval_beam(beam_image, l_in, m_in, l_out, m_out):
         msg = 'Only 1 or 2D coordinates supported for beam evaluation'
         raise ValueError(msg)
 
-    try:
+    if (beam_image == 1.0).all():
+        return np.ones_like(ll)
+    else:  # this gets expensive
         beamo = RGI((l_in, m_in), beam_image,
-                    bounds_error=True, method='linear')
+                    bounds_error=False, method='linear', fill_value=1.0)
         return beamo((ll, mm))
-    except Exception as e:
-        print(e)
-        print(f"{e} raised in beam evaluation. "
-              "Consider setting init.max_field_of_view > grid.field_of_view")
-        beamo = RGI((l_in, m_in), beam_image,
-                    bounds_error=False, method='linear', fill_value=None)
-        return beamo((ll, mm))
-
-
-def eval_beam(beam_image, l_in, m_in, l_out, m_out):
-    nxo = l_out.shape[0]
-    nyo = m_out.shape[-1]
-    return da.blockwise(_eval_beam, 'xy',
-                        beam_image, 'xy',
-                        l_in, None,
-                        m_in, None,
-                        l_out, None,
-                        m_out, None,
-                        adjust_chunks={'x': nxo, 'y': nyo},
-                        dtype=float,
-                        meta=np.empty((nxo, nyo), dtype=float))

@@ -2,6 +2,7 @@
 from contextlib import ExitStack
 from pfb.workers.main import cli
 import click
+import time
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
@@ -11,10 +12,6 @@ log = pyscilog.get_logger('DEGRID')
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
-# create default parameters from schema
-defaults = {}
-for key in schema.degrid["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.degrid["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.degrid)
@@ -22,11 +19,17 @@ def degrid(**kw):
     '''
     Predict model visibilities to measurement sets.
     '''
-    defaults.update(kw)
-    opts = OmegaConf.create(defaults)
-    import time
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    pyscilog.log_to_file(f'degrid_{timestamp}.log')
+    opts = OmegaConf.create(kw)
+
+    from pfb.utils.naming import set_output_names
+    opts, basedir, oname = set_output_names(opts)
+
+    import psutil
+    nthreads = psutil.cpu_count(logical=True)
+    ncpu = psutil.cpu_count(logical=False)
+    if opts.nthreads is None:
+        opts.nthreads = nthreads//2
+        ncpu = ncpu//2
 
     from daskms.fsspec_store import DaskMSStore
     msnames = []
@@ -56,28 +59,33 @@ def degrid(**kw):
                                     # "YY", "RR", "RL", "LR", "LL"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    logname = f'{str(opts.log_directory)}/degrid_{timestamp}.log'
+    pyscilog.log_to_file(logname)
+    print(f'Logs will be written to {logname}', file=log)
+
+    # TODO - prettier config printing
+    print('Input Options:', file=log)
+    for key in opts.keys():
+        print('     %25s = %s' % (key, opts[key]), file=log)
+
     with ExitStack() as stack:
         from pfb import set_client
-        opts = set_client(opts, stack, log, scheduler=opts.scheduler)
+        client = set_client(opts.nworkers, log, stack)
 
-        # TODO - prettier config printing
-        print('Input Options:', file=log)
-        for key in opts.keys():
-            print('     %25s = %s' % (key, opts[key]), file=log)
+        ti = time.time()
+        _degrid(**opts)
 
-        return _degrid(**opts)
+        print(f"All done after {time.time() - ti}s.", file=log)
 
 def _degrid(**kw):
     opts = OmegaConf.create(kw)
-    from omegaconf import ListConfig
-    if not isinstance(opts.ms, list) and not isinstance(opts.ms, ListConfig) :
-        opts.ms = [opts.ms]
     OmegaConf.set_struct(opts, True)
 
     import numpy as np
     from pfb.utils.misc import construct_mappings
     import dask
-    from dask.distributed import performance_report
+    from dask.distributed import performance_report, wait, get_client
     from dask.graph_manipulation import clone
     from daskms.experimental.zarr import xds_from_zarr
     from daskms import xds_from_storage_ms as xds_from_ms
@@ -94,8 +102,13 @@ def _degrid(**kw):
     import sympy as sm
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
+    from ducc0.misc import resize_thread_pool
+    resize_thread_pool(opts.nthreads)
 
+    client = get_client()
     mds = xr.open_zarr(opts.mds)
+    foo = client.scatter(mds, broadcast=True)
+    wait(foo)
 
     # grid spec
     cell_rad = mds.cell_rad_x
@@ -117,9 +130,19 @@ def _degrid(**kw):
     ffunc = lambdify(params[1], fexpr)
 
 
-    # signature (t, f, *params) with
-    # t = utime/ref_time
-    # f = freq/ref_freq
+    if opts.freq_range is not None and len(opts.freq_range):
+        fmin, fmax = opts.freq_range.strip(' ').split(':')
+        if len(fmin) > 0:
+            freq_min = float(fmin)
+        else:
+            freq_min = -np.inf
+        if len(fmax) > 0:
+            freq_max = float(fmax)
+        else:
+            freq_max = np.inf
+    else:
+        freq_min = -np.inf
+        freq_max = np.inf
 
 
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
@@ -136,10 +159,6 @@ def _degrid(**kw):
 
     print("Computing model visibilities", file=log)
     writes = []
-    # avoid reading these more than once
-    coeffs = mds.coefficients.values
-    locx = mds.location_x.values
-    locy = mds.location_y.values
     for ms in opts.ms:
         xds = xds_from_ms(ms,
                           chunks=ms_chunks[ms],
@@ -185,24 +204,21 @@ def _degrid(**kw):
             # and they need to match the number of row chunks
             uvw = clone(ds.UVW.data)
             assert len(uvw.chunks[0]) == len(tidx.chunks[0])
-
             vis = comps2vis(uvw,
                             utime,
                             freq,
                             ridx, rcnts,
                             tidx, tcnts,
                             fidx, fcnts,
-                            coeffs,
-                            locx, locy,
+                            mds,
                             modelf,
                             tfunc,
                             ffunc,
-                            nx, ny,
-                            cell_rad, cell_rad,
-                            x0=x0, y0=y0,
-                            nthreads=opts.nvthreads,
+                            nthreads=opts.nthreads,
                             epsilon=opts.epsilon,
-                            do_wgridding=opts.do_wgridding)
+                            do_wgridding=opts.do_wgridding,
+                            freq_min=freq_min,
+                            freq_max=freq_max)
 
             # convert to single precision to write to MS
             vis = vis.astype(np.complex64)
@@ -225,13 +241,10 @@ def _degrid(**kw):
     # dask.visualize(writes, filename=opts.output_filename +
     #                '_degrid_writes_I_graph.pdf', optimize_graph=False)
 
-    with compute_context(opts.scheduler, opts.mds+'_degrid'):
+    if opts.nworkers > 1:
+        scheduler = 'distributed'
+    else:
+        scheduler = None
+    with compute_context(scheduler, opts.mds+'_degrid'):
         dask.compute(writes, optimize_graph=False)
-
-    if opts.scheduler=='distributed':
-        from distributed import get_client
-        client = get_client()
-        client.close()
-
-    print("All done here.", file=log)
 

@@ -25,6 +25,7 @@ from scipy.linalg import solve_triangular
 import sympy as sm
 from sympy.utilities.lambdify import lambdify
 from sympy.parsing.sympy_parser import parse_expr
+from africanus.constants import c as lightspeed
 import jax.numpy as jnp
 from jax import value_and_grad
 import jax
@@ -91,19 +92,6 @@ def kron_matvec2(A, b):
                     Z[j, k] += Ad[i, j] * X[i, k]
         x[:] = Z.T.ravel()
     return x
-
-
-def to4d(data):
-    if data.ndim == 4:
-        return data
-    elif data.ndim == 2:
-        return data[None, None]
-    elif data.ndim == 3:
-        return data[None]
-    elif data.ndim == 1:
-        return data[None, None, None]
-    else:
-        raise ValueError("Only arrays with ndim <= 4 can be broadcast to 4D.")
 
 
 def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
@@ -177,13 +165,13 @@ def get_padding_info(nx, ny, pfrac):
     nfft = good_size(ny + npad_y, True)
     npad_yl = (nfft - ny) // 2
     npad_yr = nfft - ny - npad_yl
-    padding = ((0, 0), (npad_xl, npad_xr), (npad_yl, npad_yr))
+    padding = ((npad_xl, npad_xr), (npad_yl, npad_yr))
     unpad_x = slice(npad_xl, -npad_xr)
     unpad_y = slice(npad_yl, -npad_yr)
     return padding, unpad_x, unpad_y
 
 
-def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
+def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None,
                       pfrac=0.5, norm_kernel=False):
     """
     Convolves the image to a specified resolution.
@@ -203,34 +191,48 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads, gausspari=None,
                   Will pad by pfrac/2 on both sides of image
     """
     nband, nx, ny = image.shape
+    if gausspari is not None and len(gausspari) != nband:
+        raise ValueError('gausspari must be on length nband')
     padding, unpad_x, unpad_y = get_padding_info(nx, ny, pfrac)
     ax = (1, 2)  # axes over which to perform fft
     lastsize = ny + np.sum(padding[-1])
 
-    gausskern = Gaussian2D(xx, yy, gaussparf, normalise=norm_kernel)
-    gausskern = np.pad(gausskern[None], padding, mode='constant')
-    gausskernhat = r2c(iFs(gausskern, axes=ax), axes=ax, forward=True,
-                       nthreads=nthreads, inorm=0)
-
+    padding = ((0,0),) + padding
     image = np.pad(image, padding, mode='constant')
     imhat = r2c(iFs(image, axes=ax), axes=ax, forward=True, nthreads=nthreads,
                 inorm=0)
+
+    if len(gaussparf) == 3:  # single final resolution
+        gausskern = Gaussian2D(xx, yy, gaussparf, normalise=norm_kernel)
+        gausskern = np.pad(gausskern, padding[1:], mode='constant')
+        gausskernhat = r2c(iFs(gausskern, axes=(0,1)), axes=(0,1),
+                           forward=True, nthreads=nthreads, inorm=0)
+        gausskernhat = np.broadcast_to(gausskernhat[None], imhat.shape)
+    else:
+        assert len(gaussparf) == nband
+        gausskernhat = np.zeros_like(imhat)
+        for b in range(nband):
+            gausskern = Gaussian2D(xx, yy, gaussparf[b], normalise=norm_kernel)
+            gausskern = np.pad(gausskern, padding[1:], mode='constant')
+            r2c(iFs(gausskern, axes=(0,1)), out=gausskernhat[b],
+                axes=(0,1), forward=True, nthreads=nthreads, inorm=0)
+
 
     # convolve to desired resolution
     if gausspari is None:
         imhat *= gausskernhat
     else:
-        for i in range(nband):
-            thiskern = Gaussian2D(xx, yy, gausspari[i], normalise=norm_kernel)
-            thiskern = np.pad(thiskern[None], padding, mode='constant')
-            thiskernhat = r2c(iFs(thiskern, axes=ax), axes=ax, forward=True,
+        for b in range(nband):
+            thiskern = Gaussian2D(xx, yy, gausspari[b], normalise=norm_kernel)
+            thiskern = np.pad(thiskern, padding[1:], mode='constant')
+            thiskernhat = r2c(iFs(thiskern, axes=(0,1)), axes=(0,1), forward=True,
                               nthreads=nthreads, inorm=0)
 
             convkernhat = np.zeros_like(thiskernhat)
             msk = np.abs(thiskernhat) > 0.0
-            convkernhat[msk] = gausskernhat[msk]/thiskernhat[msk]
+            convkernhat[msk] = gausskernhat[b, msk]/thiskernhat[msk]
 
-            imhat[i] *= convkernhat[0]
+            imhat[b] *= convkernhat
 
     image = Fs(c2r(imhat, axes=ax, forward=False, lastsize=lastsize, inorm=2,
                    nthreads=nthreads), axes=ax)[:, unpad_x, unpad_y]
@@ -351,10 +353,9 @@ def construct_mappings(ms_name,
             chan_widths[ms][idt] = spws.CHAN_WIDTH.data[ds.DATA_DESC_ID]
             times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
             uvw = ds.UVW.data
-            u_max = abs(uvw[:, 0].max())
+            u_max = abs(uvw[:, 0]).max()
             v_max = abs(uvw[:, 1]).max()
             uv_maxs.append(da.maximum(u_max, v_max))
-
             if gain_name is not None:
                 gain_times[ms][idt] = gain[ids].gain_time.data
                 gain_freqs[ms][idt] = gain[ids].gain_freq.data
@@ -506,17 +507,16 @@ def _restore_corrs(vis, ncorr):
 @jax.jit
 def psf_errorsq(x, data, xy):
     '''
-    Returns sum of square error for best fit Gaussian to data
+    Returns sum of square error for best fit Gaussian to data.
+    Note emaj must be larger than emin
     '''
     emaj, emin, pa = x
-    Smin = jnp.minimum(emaj, emin)
-    Smaj = jnp.maximum(emaj, emin)
-    A = jnp.array([[1. / Smin ** 2, 0],
-                    [0, 1. / Smaj ** 2]])
+    A = jnp.array([[1. / emin ** 2, 0],
+                    [0, 1. / emaj ** 2]])
 
-    c, s, t = jnp.cos, jnp.sin, jnp.deg2rad(-pa)
-    R = jnp.array([[c(t), -s(t)],
-                    [s(t), c(t)]])
+    t = jnp.deg2rad(-pa)
+    R = jnp.array([[jnp.cos(t), -jnp.sin(t)],
+                    [jnp.sin(t), jnp.cos(t)]])
     B = jnp.dot(jnp.dot(R.T, A), R)
     Q = jnp.einsum('nb,bc,cn->n', xy.T, B, xy)
     # GaussPar should corresponds to FWHM
@@ -661,7 +661,8 @@ def init_mask(mask, model, output_type, log):
     return mask
 
 
-def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
+def dds2cubes(dds, nband, apparent=False, dual=True,
+              modelname='MODEL', residname='RESIDUAL'):
     real_type = dds[0].DIRTY.dtype
     complex_type = np.result_type(real_type, np.complex64)
     nx, ny = dds[0].DIRTY.shape
@@ -669,7 +670,7 @@ def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
                       dtype=real_type) for _ in range(nband)]
     model = [da.zeros((nx, ny), chunks=(-1, -1),
                       dtype=real_type) for _ in range(nband)]
-    if 'RESIDUAL' in dds[0]:
+    if residname in dds[0]:
         residual = [da.zeros((nx, ny), chunks=(-1, -1),
                             dtype=real_type) for _ in range(nband)]
     else:
@@ -677,13 +678,15 @@ def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
     wsums = [da.zeros(1, dtype=real_type) for _ in range(nband)]
     if 'PSF' in dds[0]:
         nx_psf, ny_psf = dds[0].PSF.shape
-        nx_psf, nyo2_psf = dds[0].PSFHAT.shape
         psf = [da.zeros((nx_psf, ny_psf), chunks=(-1, -1),
                         dtype=real_type) for _ in range(nband)]
+    else:
+        psf = None
+    if 'PSFHAT' in dds[0]:
+        nx_psf, nyo2_psf = dds[0].PSFHAT.shape
         psfhat = [da.zeros((nx_psf, nyo2_psf), chunks=(-1, -1),
                             dtype=complex_type) for _ in range(nband)]
     else:
-        psf = None
         psfhat = None
     mean_beam = [da.zeros((nx, ny), chunks=(-1, -1),
                             dtype=real_type) for _ in range(nband)]
@@ -697,14 +700,15 @@ def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
         b = ds.bandid
         if apparent:
             dirty[b] += ds.DIRTY.data
-            if 'RESIDUAL' in ds:
-                residual[b] += ds.RESIDUAL.data
+            if residname in ds:
+                residual[b] += getattr(ds, residname).data
         else:
             dirty[b] += ds.DIRTY.data * ds.BEAM.data
-            if 'RESIDUAL' in ds:
-                residual[b] += ds.RESIDUAL.data * ds.BEAM.data
+            if residname in ds:
+                residual[b] += getattr(ds, residname).data * ds.BEAM.data
         if 'PSF' in ds:
             psf[b] += ds.PSF.data
+        if 'PSFHAT' in ds:
             psfhat[b] += ds.PSFHAT.data
         if modelname in ds:
             model[b] = getattr(ds, modelname).data
@@ -716,10 +720,11 @@ def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
     wsum = wsums.sum()
     dirty = da.stack(dirty)/wsum
     model = da.stack(model)
-    if 'RESIDUAL' in ds:
+    if residname in ds:
         residual = da.stack(residual)/wsum
     if 'PSF' in ds:
         psf = da.stack(psf)/wsum
+    if 'PSFHAT' in ds:
         psfhat = da.stack(psfhat)/wsum
     if dual and 'DUAL' in ds:
         dual = da.stack(dual)
@@ -736,7 +741,8 @@ def dds2cubes(dds, nband, apparent=False, dual=True, modelname='MODEL'):
                                                                 mean_beam,
                                                                 wsums,
                                                                 dual)
-    return dirty, model, residual, psf, psfhat, mean_beam, wsums, dual
+    return (dirty, model, residual, psf, psfhat,
+            mean_beam, wsums, dual)
 
 
 def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):
@@ -894,7 +900,7 @@ def concat_chan(xds, nband_out=1):
             flow = freq_bins[b]
             fhigh = freq_bins[b+1]
             freqsb = all_freqs[all_freqs >= flow]
-            # exlusive except for the last one
+            # exclusive except for the last one
             if b==nband_out-1:
                 freqsb = freqsb[freqsb <= fhigh]
             else:
@@ -932,17 +938,6 @@ def concat_chan(xds, nband_out=1):
             blocker.add_output('masko', 'rf', ((nrow,), (nchan,)), xdst[0].MASK.dtype)
 
             out_dict = blocker.get_dask_outputs()
-
-            # import dask
-            # dask.visualize(out_dict, color="order", cmap="autumn",
-            #             node_attr={"penwidth": "4"},
-            #             filename='/home/landman/testing/pfb/out/outdict_ordered_graph.pdf',
-            #             optimize_graph=False,
-            #             engine='cytoscape')
-            # dask.visualize(out_dict,
-            #             filename='/home/landman/testing/pfb/out/outdict_graph.pdf',
-            #             optimize_graph=False, engine='cytoscape')
-            # quit()
 
             # get weighted sum of beam
             beam = sum_beam(xdst)
@@ -1046,9 +1041,13 @@ def sum_overlap(ufreq, flow, fhigh, **kwargs):
         mask = kwargs[f'mask{i}']
         nu = kwargs[f'freq{i}']
         _, idx0, idx1 = np.intersect1d(nu, ufreq, assume_unique=True, return_indices=True)
-        viso[:, idx1] += vis[:, idx0] * wgt[:, idx0] * mask[:, idx0]
-        wgto[:, idx1] += wgt[:, idx0] * mask[:, idx0]
-        masko[:, idx1] += mask[:, idx0]
+        try:
+            viso[:, idx1] += vis[:, idx0] * wgt[:, idx0] * mask[:, idx0]
+            wgto[:, idx1] += wgt[:, idx0] * mask[:, idx0]
+            masko[:, idx1] += mask[:, idx0]
+        except Exception as e:
+            print(flow, fhigh, ufreq, nu)
+            raise e
 
     # unmasked where at least one data point is unflagged
     masko = np.where(masko > 0, True, False)
@@ -1067,7 +1066,12 @@ def sum_overlap(ufreq, flow, fhigh, **kwargs):
     return out_dict
 
 
-def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model, alpha=4):
+def l1reweight_func(model,
+                    psiH=None,
+                    outvar=None,
+                    rmsfactor=None,
+                    rms_comps=None,
+                    alpha=4):
     '''
     The logic here is that weights should remain the same for model
     components that are rmsfactor times larger than the rms.
@@ -1076,8 +1080,11 @@ def l1reweight_func(psiH, outvar, rmsfactor, rms_comps, model, alpha=4):
     '''
     psiH(model, outvar)
     mcomps = np.abs(np.sum(outvar, axis=0))
-    # the **alpha here results in more agressive reweighting
-    return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
+    # rms_comps can be per basis
+    if isinstance(rms_comps, np.ndarray):
+        return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps[:, None, None]**alpha)
+    else:
+        return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
 
 
 # TODO - this can be done in parallel by splitting the image into facets
@@ -1138,6 +1145,7 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
         wgt = wgt.reshape(ntime*nband, 1)
     else:
         wgt = np.ones((ntime*nband, 1), dtype=float)
+
     # nothing to fit
     if ntime==1 and nband==1:
         coeffs = beta
@@ -1251,6 +1259,10 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
     ffunc = lambdify(params[1], fexpr)
     image_in[Ix, Iy] = modelf(tfunc(time), ffunc(freq), *coeffs)
 
+    pix_area_in = cellxi * cellyi
+    pix_area_out = cellxo * cellyo
+    area_ratio = pix_area_out/pix_area_in
+
     xin = (-(nxi//2) + np.arange(nxi))*cellxi + x0i
     yin = (-(nyi//2) + np.arange(nyi))*cellyi + y0i
     xo = (-(nxo//2) + np.arange(nxo))*cellxo + x0o
@@ -1303,7 +1315,7 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
         interpo = RegularGridInterpolator((xin, yin), image_in,
                                           bounds_error=True, method='linear')
         xx, yy = np.meshgrid(xo, yo, indexing='ij')
-        return interpo((xx, yy))
+        return interpo((xx, yy)) * area_ratio
     # elif (nxi != nxo) or (nyi != nyo):
     #     # only need the overlap in this case
     #     _, idx0, idx1 = np.intersect1d(xin, xo, assume_unique=True, return_indices=True)
@@ -1444,6 +1456,86 @@ def combine_columns(x, y, dc, dc1, dc2):
                 casting='same_kind')
     return x
 
+
+def set_image_size(
+                uv_max,
+                max_freq,
+                field_of_view,
+                super_resolution_factor,
+                cell_size=None,
+                nx=None, ny=None,
+                psf_oversize=2.0):
+    # max cell size
+    cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
+
+    if cell_size is not None:
+        cell_rad = cell_size * np.pi / 60 / 60 / 180
+        if cell_N / cell_rad < 1:
+            raise ValueError("Requested cell size too large. "
+                             "Super resolution factor = ", cell_N / cell_rad)
+
+    else:
+        cell_rad = cell_N / super_resolution_factor
+        cell_size = cell_rad * 60 * 60 * 180 / np.pi
+
+
+    if nx is None:
+        fov = field_of_view * 3600
+        npix = int(fov / cell_size)
+        npix = good_size(npix)
+        while npix % 2:
+            npix += 1
+            npix = good_size(npix)
+        nx = npix
+        ny = npix
+    else:
+        nx = nx
+        ny = ny if ny is not None else nx
+        cell_deg = np.rad2deg(cell_rad)
+        fovx = nx*cell_deg
+        fovy = ny*cell_deg
+
+    nx_psf = good_size(int(psf_oversize * nx))
+    while nx_psf % 2:
+        nx_psf += 1
+        nx_psf = good_size(nx_psf)
+
+    ny_psf = good_size(int(psf_oversize * ny))
+    while ny_psf % 2:
+        ny_psf += 1
+        ny_psf = good_size(ny_psf)
+    nyo2 = ny_psf//2 + 1
+
+    return nx, ny, nx_psf, ny_psf, cell_N, cell_rad
+
+def taperf(shape, taper_width):
+    height, width = shape
+    array = np.ones((height, width))
+
+    # Create 1D taper for both dimensions
+    taper_x = np.ones(width)
+    taper_y = np.ones(height)
+
+    # Apply cosine taper to the edges
+    taper_x[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
+    taper_x[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
+
+    taper_y[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
+    taper_y[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
+
+    return np.outer(taper_y, taper_x)
+
+
+@njit(parallel=True)
+def parallel_standard_normal(shape):
+    rows, cols = shape
+    result = np.empty(shape, dtype=np.float64)
+
+    for i in prange(rows):
+        for j in range(cols):
+            result[i, j] = np.random.standard_normal()
+
+    return result
 
 # def fft_interp(image, cellxi, cellyi, nxo, nyo,
 #                cellxo, cellyo, shiftx, shifty):

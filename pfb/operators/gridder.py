@@ -5,133 +5,52 @@ number of rows after BDA.
 """
 
 import numpy as np
+import numba
+import concurrent.futures as cf
+import xarray as xr
 import dask
 import dask.array as da
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
-from ducc0.fft import c2r, r2c
+from ducc0.fft import c2r, r2c, c2c
 from africanus.constants import c as lightspeed
 from quartical.utils.dask import Blocker
-from pfb.utils.weighting import _counts_to_weights
+from pfb.utils.weighting import counts_to_weights, _compute_counts
+from pfb.utils.beam import eval_beam
+from pfb.utils.naming import xds_from_list
+from pfb.utils.misc import fitcleanbeam
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
-def vis2im(uvw=None,
-           freq=None,
-           vis=None,
-           wgt=None,
-           nx=None, ny=None,
-           cellx=None, celly=None,
-           nthreads=None,
-           epsilon=None,
-           mask=None,
-           do_wgridding=True,
-           flip_v=False,
-           x0=0, y0=0,
-           precision='single',
-           divide_by_n=False,
-           sigma_min=1.1, sigma_max=2.6,
-           double_precision_accumulation=True):
 
-    if precision.lower() == 'single':
-        real_type = np.float32
-    elif precision.lower() == 'double':
-        real_type = np.float64
+def wgridder_conventions(l0, m0):
+    '''
+    Returns
 
-    if wgt is not None:
-        wgt_out = 'rf'
-    else:
-        wgt_out = None
+    flip_u, flip_v, flip_w, x0, y0
 
-    if mask is not None:
-        mask_out = 'rf'
-    else:
-        mask_out = None
+    according to the conventions documented here https://github.com/mreineck/ducc/issues/34
 
-    return da.blockwise(_vis2im, 'xy',
-                        uvw, 'r3',
-                        freq, 'f',
-                        vis, 'rf',
-                        wgt, wgt_out,
-                        mask, mask_out,
-                        nx, None,
-                        ny, None,
-                        cellx, None,
-                        celly, None,
-                        x0, None,
-                        y0, None,
-                        epsilon, None,
-                        precision, None,
-                        flip_v, None,
-                        do_wgridding, None,
-                        divide_by_n, None,
-                        nthreads, None,
-                        sigma_min, None,
-                        sigma_max, None,
-                        double_precision_accumulation, None,
-                        new_axes={'x':nx, 'y': ny},
-                        dtype=real_type)
+    Note that these conventions are stored as dataset attributes in order
+    to call the operators acting on datasets with a consistent convention.
+    '''
+    return False, True, False, -l0, -m0
 
-def _vis2im(uvw,
-            freq,
-            vis,
-            wgt,
-            mask,
-            nx, ny,
-            cellx, celly,
-            x0, y0,
-            epsilon,
-            precision,
-            flip_v,
-            do_wgridding,
-            divide_by_n,
-            nthreads,
-            sigma_min,
-            sigma_max,
-            double_precision_accumulation):
 
-    if wgt is not None:
-        wgt_out = wgt[0][0]
-    else:
-        wgt_out = None
-
-    if mask is not None:
-        mask_out = mask[0][0]
-    else:
-        mask_out = None
-
-    return _vis2im_impl(uvw[0][0],
-                        freq[0],
-                        vis[0][0],
-                        wgt_out,
-                        mask_out,
-                        nx, ny,
-                        cellx, celly,
-                        x0, y0,
-                        epsilon,
-                        precision,
-                        flip_v,
-                        do_wgridding,
-                        divide_by_n,
-                        nthreads,
-                        sigma_min, sigma_max,
-                        double_precision_accumulation)
-
-def _vis2im_impl(uvw,
-                 freq,
-                 vis,
-                 wgt,
-                 mask,
-                 nx, ny,
-                 cellx, celly,
-                 x0, y0,
-                 epsilon,
-                 precision,
-                 flip_v,
-                 do_wgridding,
-                 divide_by_n,
-                 nthreads,
-                 sigma_min, sigma_max,
-                 double_precision_accumulation):
+def vis2im(uvw,
+           freq,
+           vis,
+           wgt,
+           mask,
+           nx, ny,
+           cellx, celly,
+           l0, m0,
+           epsilon,
+           precision,
+           do_wgridding,
+           divide_by_n,
+           nthreads,
+           sigma_min, sigma_max,
+           double_precision_accumulation):
     uvw = np.require(uvw, dtype=np.float64)
     freq = np.require(freq, np.float64)
 
@@ -150,6 +69,8 @@ def _vis2im_impl(uvw,
     if mask is not None:
         mask = np.require(mask, dtype=np.uint8)
 
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
+
     return vis2dirty(uvw=uvw,
                      freq=freq,
                      vis=vis,
@@ -159,7 +80,9 @@ def _vis2im_impl(uvw,
                      pixsize_x=cellx, pixsize_y=celly,
                      center_x=x0, center_y=y0,
                      epsilon=epsilon,
+                     flip_u=flip_u,
                      flip_v=flip_v,
+                     flip_w=flip_w,
                      do_wgridding=do_wgridding,
                      divide_by_n=divide_by_n,
                      nthreads=nthreads,
@@ -167,110 +90,22 @@ def _vis2im_impl(uvw,
                      double_precision_accumulation=double_precision_accumulation)
 
 
-
-# def im2vis(uvw=None,
-#            freq=None,
-#            image=None,
-#            wgt=None,
-#            mask=None,
-#            cellx=None,
-#            celly=None,
-#            nthreads=1,
-#            epsilon=1e-7,
-#            do_wgridding=True,
-#            flip_v=False,
-#            x0=0, y0=0,
-#            precision='single',
-#            divide_by_n=False,
-#            sigma_min=1.1,
-#            sigma_max=2.6):
-
-#     if precision.lower() == 'single':
-#         complex_type = np.float32
-#     elif precision.lower() == 'double':
-#         complex_type = np.float64
-
-#     if wgt is not None:
-#         wgt_out = 'rf'
-#     else:
-#         wgt_out = None
-
-#     if mask is not None:
-#         mask_out = 'rf'
-#     else:
-#         mask_out = None
-
-#     return da.blockwise(_im2vis, 'rf',
-#                         uvw, 'r3',
-#                         freq, 'f',
-#                         image, 'xy',
-#                         wgt, wgt_out,
-#                         mask, mask_out,
-#                         cellx, None,
-#                         celly, None,
-#                         x0, None,
-#                         y0, None,
-#                         epsilon, None,
-#                         flip_v, None,
-#                         do_wgridding, None,
-#                         precision, None,
-#                         divide_by_n, None,
-#                         nthreads, None,
-#                         sigma_min, None,
-#                         sigma_max, None,
-#                         dtype=complex_type)
-
-# def _im2vis(uvw,
-#            freq,
-#            image,
-#            wgt,
-#            mask,
-#            cellx,
-#            celly,
-#            x0=0, y0=0,
-#            epsilon=1e-7,
-#            flip_v=False,
-#            do_wgridding=True,
-#            precision='single',
-#            divide_by_n=False,
-#            nthreads=1,
-#            sigma_min=1.1,
-#            sigma_max=2.6):
-
-#     return _im2vis_impl(uvw[0],
-#                         freq,
-#                         image[0][0],
-#                         wgt,
-#                         mask,
-#                         cellx, celly,
-#                         x0, y0,
-#                         epsilon,
-#                         flip_v,
-#                         do_wgridding,
-#                         precision,
-#                         divide_by_n,
-#                         nthreads,
-#                         sigma_min,
-#                         sigma_max)
-
-
-
-def _im2vis_impl(uvw,
-                 freq,
-                 image,
-                 cellx,
-                 celly,
-                 freq_bin_idx,
-                 freq_bin_counts,
-                 x0=0, y0=0,
-                 epsilon=1e-7,
-                 flip_v=False,
-                 do_wgridding=True,
-                 divide_by_n=False,
-                 nthreads=1):
+def im2vis(uvw,
+           freq,
+           image,
+           cellx,
+           celly,
+           freq_bin_idx,
+           freq_bin_counts,
+           l0=0, m0=0,
+           epsilon=1e-7,
+           do_wgridding=True,
+           divide_by_n=False,
+           nthreads=1):
     # adjust for chunking
     # need a copy here if using multiple row chunks
     freq_bin_idx2 = freq_bin_idx - freq_bin_idx.min()
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
     nband, nx, ny = image.shape
     nrow = uvw.shape[0]
     nchan = freq.size
@@ -285,134 +120,38 @@ def _im2vis_impl(uvw,
             pixsize_y=celly,
             center_x=x0,
             center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
             epsilon=epsilon,
             nthreads=nthreads,
             do_wgridding=do_wgridding,
-            divide_by_n=divide_by_n,
-            flip_v=flip_v
-        )
+            divide_by_n=divide_by_n)
     return vis
 
 
-
-def _loc2psf_vis_impl(uvw,
-                      freq,
-                      cell,
-                      x0=0,
-                      y0=0,
-                      do_wgridding=True,
-                      epsilon=1e-7,
-                      nthreads=1,
-                      precision='single',
-                      divide_by_n=False,
-                      convention='CASA'):
-    if x0 or y0:
-        # LB - what is wrong with this?
-        # n = np.sqrt(1 - x0**2 - y0**2)
-        # if convention.upper() == 'CASA':
-        #     freqfactor = -2j*np.pi*freq[None, :]/lightspeed
-        # else:
-        #     freqfactor = 2j*np.pi*freq[None, :]/lightspeed
-        # psf_vis = np.exp(freqfactor*(uvw[:, 0:1]*x0 +
-        #                              uvw[:, 1:2]*y0 +
-        #                              uvw[:, 2:]*(n-1)))
-        # if divide_by_n:
-        #     psf_vis /= n
-        real_type = np.float32 if precision == 'single' else np.float64
-        x = np.zeros((128,128), dtype=real_type)
-        x[64,64] = 1.0
-        psf_vis = dirty2vis(uvw=uvw,
-                            freq=freq,
-                            dirty=x,
-                            pixsize_x=cell,
-                            pixsize_y=cell,
-                            center_x=x0,
-                            center_y=y0,
-                            epsilon=1e-7,
-                            do_wgridding=do_wgridding,
-                            nthreads=nthreads,
-                            divide_by_n=divide_by_n)
-
-    else:
-        nrow, _ = uvw.shape
-        nchan = freq.size
-        dtype = np.complex64 if precision == 'single' else np.complex128
-        psf_vis = np.ones((nrow, nchan), dtype=dtype)
-    return psf_vis
-
-
-def _loc2psf_vis(uvw,
-                 freq,
-                 cell,
-                 x0=0,
-                 y0=0,
-                 do_wgridding=True,
-                 epsilon=1e-7,
-                 nthreads=1,
-                 precision='single',
-                 divide_by_n=False,
-                 convention='CASA'):
-    return _loc2psf_vis_impl(uvw[0],
-                             freq,
-                             cell,
-                             x0,
-                             y0,
-                             do_wgridding,
-                             epsilon,
-                             nthreads,
-                             precision,
-                             divide_by_n,
-                             convention)
-
-
-def loc2psf_vis(uvw,
-                freq,
-                cell,
-                x0=0,
-                y0=0,
-                do_wgridding=True,
-                epsilon=1e-7,
-                nthreads=1,
-                precision='single',
-                divide_by_n=False,
-                convention='CASA'):
-    return da.blockwise(_loc2psf_vis, 'rf',
-                        uvw, 'r3',
-                        freq, 'f',
-                        cell, None,
-                        x0, None,
-                        y0, None,
-                        do_wgridding, None,
-                        epsilon, None,
-                        nthreads, None,
-                        precision, None,
-                        divide_by_n, None,
-                        convention, None,
-                        dtype=np.complex64 if precision == 'single' else np.complex128)
-
-
-def comps2vis(uvw,
-              utime,
-              freq,
-              rbin_idx, rbin_cnts,
-              tbin_idx, tbin_cnts,
-              fbin_idx, fbin_cnts,
-              comps,
-              Ix, Iy,
-              modelf,
-              tfunc,
-              ffunc,
-              nx, ny,
-              cellx, celly,
-              x0=0, y0=0,
-              epsilon=1e-7,
-              nthreads=1,
-              do_wgridding=True,
-              divide_by_n=False,
-              ncorr_out=4):
+# we still need the collections interface here for the degridder
+def comps2vis(
+            uvw,
+            utime,
+            freq,
+            rbin_idx, rbin_cnts,
+            tbin_idx, tbin_cnts,
+            fbin_idx, fbin_cnts,
+            mds,
+            modelf,
+            tfunc,
+            ffunc,
+            epsilon=1e-7,
+            nthreads=1,
+            do_wgridding=True,
+            divide_by_n=False,
+            ncorr_out=4,
+            freq_min=-np.inf,
+            freq_max=np.inf):
 
     # determine output type
-    complex_type = da.result_type(comps, np.complex64)
+    complex_type = da.result_type(mds.coefficients.dtype, np.complex64)
 
     return da.blockwise(_comps2vis, 'rfc',
                         uvw, 'r3',
@@ -424,68 +163,60 @@ def comps2vis(uvw,
                         tbin_cnts, 'r',
                         fbin_idx, 'f',
                         fbin_cnts, 'f',
-                        comps, None,
-                        Ix, None,
-                        Iy, None,
+                        mds, None,
                         modelf, None,
                         tfunc, None,
                         ffunc, None,
-                        nx, None,
-                        ny, None,
-                        cellx, None,
-                        celly, None,
-                        x0, None,
-                        y0, None,
                         epsilon, None,
                         nthreads, None,
                         do_wgridding, None,
                         divide_by_n, None,
                         ncorr_out, None,
+                        freq_min, None,
+                        freq_max, None,
                         new_axes={'c': ncorr_out},
-                        # it should be pulling these from uvw and freq so shouldn't need this?
+                        # it should be getting these from uvw and freq?
                         adjust_chunks={'r': uvw.chunks[0]},
                         dtype=complex_type,
                         align_arrays=False)
 
 
-def _comps2vis(uvw,
-                utime,
-                freq,
-                rbin_idx, rbin_cnts,
-                tbin_idx, tbin_cnts,
-                fbin_idx, fbin_cnts,
-                comps,
-                Ix, Iy,
-                modelf,
-                tfunc,
-                ffunc,
-                nx, ny,
-                cellx, celly,
-                x0=0, y0=0,
-                epsilon=1e-7,
-                nthreads=1,
-                do_wgridding=True,
-                divide_by_n=False,
-                ncorr_out=4):
-    return _comps2vis_impl(uvw[0],
-                           utime,
-                           freq,
-                           rbin_idx, rbin_cnts,
-                           tbin_idx, tbin_cnts,
-                           fbin_idx, fbin_cnts,
-                           comps,
-                           Ix, Iy,
-                           modelf,
-                           tfunc,
-                           ffunc,
-                           nx, ny,
-                           cellx, celly,
-                           x0=x0, y0=y0,
-                           epsilon=epsilon,
-                           nthreads=nthreads,
-                           do_wgridding=do_wgridding,
-                           divide_by_n=divide_by_n,
-                           ncorr_out=ncorr_out)
+def _comps2vis(
+            uvw,
+            utime,
+            freq,
+            rbin_idx, rbin_cnts,
+            tbin_idx, tbin_cnts,
+            fbin_idx, fbin_cnts,
+            mds,
+            modelf,
+            tfunc,
+            ffunc,
+            epsilon=1e-7,
+            nthreads=1,
+            do_wgridding=True,
+            divide_by_n=False,
+            ncorr_out=4,
+            freq_min=-np.inf,
+            freq_max=np.inf):
+    return _comps2vis_impl(
+                        uvw[0],
+                        utime,
+                        freq,
+                        rbin_idx, rbin_cnts,
+                        tbin_idx, tbin_cnts,
+                        fbin_idx, fbin_cnts,
+                        mds,
+                        modelf,
+                        tfunc,
+                        ffunc,
+                        epsilon=epsilon,
+                        nthreads=nthreads,
+                        do_wgridding=do_wgridding,
+                        divide_by_n=divide_by_n,
+                        ncorr_out=ncorr_out,
+                        freq_min=freq_min,
+                        freq_max=freq_max)
 
 
 
@@ -495,32 +226,46 @@ def _comps2vis_impl(uvw,
                     rbin_idx, rbin_cnts,
                     tbin_idx, tbin_cnts,
                     fbin_idx, fbin_cnts,
-                    comps,
-                    Ix, Iy,
+                    mds,
                     modelf,
                     tfunc,
                     ffunc,
-                    nx, ny,
-                    cellx, celly,
-                    x0=0, y0=0,
                     epsilon=1e-7,
                     nthreads=1,
                     do_wgridding=True,
                     divide_by_n=False,
-                    ncorr_out=4):
+                    ncorr_out=4,
+                    freq_min=-np.inf,
+                    freq_max=np.inf):
     # adjust for chunking
     # need a copy here if using multiple row chunks
     rbin_idx2 = rbin_idx - rbin_idx.min()
     tbin_idx2 = tbin_idx - tbin_idx.min()
     fbin_idx2 = fbin_idx - fbin_idx.min()
 
-    # currently not interpolating in time
     ntime = tbin_idx.size
     nband = fbin_idx.size
 
     nrow = uvw.shape[0]
     nchan = freq.size
-    vis = np.zeros((nrow, nchan, ncorr_out), dtype=np.result_type(comps, np.complex64))
+    vis = np.zeros((nrow, nchan, ncorr_out),
+                   dtype=np.result_type(mds.coefficients.dtype, np.complex64))
+    if not ((freq>=freq_min) & (freq<=freq_max)).any():
+        return vis
+
+    comps = mds.coefficients.values
+    Ix = mds.location_x.values
+    Iy = mds.location_y.values
+    cellx = mds.cell_rad_x
+    celly = mds.cell_rad_x
+    nx = mds.npix_x
+    ny = mds.npix_y
+    # these are taken from dataset attrs to make sure they remain consistent
+    x0 = mds.center_x
+    y0 = mds.center_y
+    flip_u = mds.flip_u
+    flip_v = mds.flip_v
+    flip_w = mds.flip_w
     for t in range(ntime):
         indt = slice(tbin_idx2[t], tbin_idx2[t] + tbin_cnts[t])
         # TODO - clean up this logic. row_mapping holds the number of rows per
@@ -528,17 +273,23 @@ def _comps2vis_impl(uvw,
         indr = slice(rbin_idx2[indt][0], rbin_idx2[indt][-1] + rbin_cnts[indt][-1])
         for b in range(nband):
             indf = slice(fbin_idx2[b], fbin_idx2[b] + fbin_cnts[b])
+            f = freq[indf]
+            # don't degrid outside requested frequency range
+            if not ((f>=freq_min) & (f<=freq_max)).any():
+                continue
             # render components to image
-            # we want to do this on each worker
             tout = tfunc(np.mean(utime[indt]))
             fout = ffunc(np.mean(freq[indf]))
             image = np.zeros((nx, ny), dtype=comps.dtype)
             image[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
             vis[indr, indf, 0] = dirty2vis(uvw=uvw,
-                                           freq=freq[indf],
+                                           freq=f,
                                            dirty=image,
                                            pixsize_x=cellx, pixsize_y=celly,
                                            center_x=x0, center_y=y0,
+                                           flip_u=flip_u,
+                                           flip_v=flip_v,
+                                           flip_w=flip_w,
                                            epsilon=epsilon,
                                            do_wgridding=do_wgridding,
                                            divide_by_n=divide_by_n,
@@ -548,45 +299,100 @@ def _comps2vis_impl(uvw,
     return vis
 
 
-def image_data_products(uvw,
-                        freq,
-                        vis,
-                        wgt,
-                        mask,
+def image_data_products(dsl,
                         counts,
                         nx, ny,
                         nx_psf, ny_psf,
                         cellx, celly,
+                        output_name,
+                        attrs,
                         model=None,
                         robustness=None,
-                        x0=0.0, y0=0.0,
+                        l0=0.0, m0=0.0,
                         nthreads=1,
                         epsilon=1e-7,
                         do_wgridding=True,
                         double_accum=True,
-                        # divide_by_n=False,
-                        l2reweight_dof=None,
+                        l2_reweight_dof=None,
                         do_dirty=True,
                         do_psf=True,
-                        do_weight=True):
+                        do_residual=True,
+                        do_weight=True,
+                        do_noise=False):
     '''
     Function to compute image space data products in one go
+
         dirty
         psf
-        psfhat
-        imweight
         residual
+        noise
+        beam
+        imweight
         wsum
+
+    Assumes all datasets are concatenatable and will compute weighted
+    sum of beam
     '''
-    out_dict = {}
+
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
+
+    # TODO - assign ug,vg-coordinates
+    x = (-nx/2 + np.arange(nx)) * cellx + x0
+    y = (-ny/2 + np.arange(ny)) * celly + y0
+    coords = {
+        'x': x,
+        'y': y
+    }
+
+
+    # expects a list
+    if isinstance(dsl, str):
+        dsl = [dsl]
+
+    dsl = xds_from_list(dsl, nthreads=nthreads)
+
+    # need to take weighted sum of beam before concat
+    beam = np.zeros((nx, ny), dtype=float)
+    wsumb = 0.0
+    freq = dsl[0].FREQ.values  # must all be the same
+    xx, yy = np.meshgrid(np.rad2deg(x), np.rad2deg(y), indexing='ij')
+    for i, ds in enumerate(dsl):
+        wgt = ds.WEIGHT.values
+        mask = ds.MASK.values
+        wsumt = (wgt*mask).sum()
+        wsumb += wsumt
+        l_beam = ds.l_beam.values
+        m_beam = ds.m_beam.values
+        beamt = eval_beam(ds.BEAM.values, l_beam, m_beam,
+                          xx, yy)
+        beam += beamt * wsumt
+        assert (ds.FREQ.values == freq).all()
+        ds = ds.drop_vars(('BEAM','FREQ'))
+        dsl[i] = ds.drop_dims(('l_beam', 'm_beam'))
+
+    # TODO - weighted sum of beam computed using natural weights?
+    beam /= wsumb
+
+    ds = xr.concat(dsl, dim='row')
+    uvw = ds.UVW.values
+    vis = ds.VIS.values
+    wgt = ds.WEIGHT.values
+    mask = ds.MASK.values
+    bandid = int(ds.bandid)
+
+    # output ds
+    dso = xr.Dataset(attrs=attrs, coords=coords)
+    dso['FREQ'] = (('chan',), freq)
+    if counts is not None:
+        dso['COUNTS'] = (('x', 'y'), counts)
 
     if model is None:
-        if l2reweight_dof:
+        if l2_reweight_dof:
             raise ValueError('Requested l2 reweight but no model passed in. '
                              'Perhaps transfer model from somewhere?')
     else:
         # do not apply weights in this direction
-        model_vis = dirty2vis(
+        residual_vis = dirty2vis(
             uvw=uvw,
             freq=freq,
             dirty=model,
@@ -596,65 +402,88 @@ def image_data_products(uvw,
             center_y=y0,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
-            flip_v=False,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
             nthreads=nthreads,
-            divide_by_n=False,
+            divide_by_n=False,  # incorporte in smooth beam
             sigma_min=1.1, sigma_max=3.0)
 
-        residual_vis = vis - model_vis
-        # apply mask to both
-        residual_vis *= mask
+        residual_vis *= -1  # negate model
+        residual_vis += vis
 
-    if l2reweight_dof:
+    if l2_reweight_dof:
         ressq = (residual_vis*residual_vis.conj()).real
-        wcount = mask.sum()
-        if wcount:
-            ovar = ressq.sum()/wcount  # use 67% quantile?
-            wgt = (l2reweight_dof + 1)/(l2reweight_dof + ressq/ovar)/ovar
+        # mask needs to be bool here
+        ssq = ressq[mask>0].sum()
+        ovar = ssq/mask.sum()
+        chi2_dofp = np.mean(ressq[mask>0]*wgt[mask>0])
+        mean_dev = np.mean(ressq[mask>0]/ovar)
+        if ovar:
+            wgt = (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
+            # now divide by ovar to scale to absolute units
+            # the chi2_dof after reweighting should be closer to one
+            wgt /= ovar
+            chi2_dof = np.mean(ressq[mask>0]*wgt[mask>0])
+            print(f'Band {bandid} chi2-dof changed from {chi2_dofp} to {chi2_dof} with mean deviation of {mean_dev}')
         else:
             wgt = None
 
-
     # we usually want to re-evaluate this since the robustness may change
     if robustness is not None:
-        if counts is None:
-            raise ValueError('counts are None but robustness specified. '
-                             'This is probably a bug!')
-        imwgt = _counts_to_weights(
+        counts = _compute_counts(uvw,
+                                 freq,
+                                 mask,
+                                 wgt,
+                                 nx, ny,
+                                 cellx, celly,
+                                 uvw.dtype,
+                                 ngrid=np.minimum(nthreads, 8),  # limit number of grids
+                                 usign=1.0 if flip_u else -1.0,
+                                 vsign=1.0 if flip_v else -1.0)
+        imwgt = counts_to_weights(
             counts,
             uvw,
             freq,
             nx, ny,
             cellx, celly,
-            robustness)
+            robustness,
+            usign=1.0 if flip_u else -1.0,
+            vsign=1.0 if flip_v else -1.0)
         if wgt is not None:
             wgt *= imwgt
         else:
             wgt = imwgt
 
+    # these are always used together
     if do_weight:
-        out_dict['WEIGHT'] = wgt
+        dso['WEIGHT'] = (('row','chan'), wgt)
+        dso['UVW'] = (('row', 'three'), uvw)
+        dso['MASK'] = (('row','chan'), mask)
 
     wsum = wgt[mask.astype(bool)].sum()
-    out_dict['WSUM'] = np.atleast_1d(wsum)
+    dso['WSUM'] = (('scalar',), np.atleast_1d(wsum))
 
-    dirty = vis2dirty(
-        uvw=uvw,
-        freq=freq,
-        vis=vis,
-        wgt=wgt,
-        mask=mask,
-        npix_x=nx, npix_y=ny,
-        pixsize_x=cellx, pixsize_y=celly,
-        center_x=x0, center_y=y0,
-        epsilon=epsilon,
-        flip_v=False,  # hardcoded for now
-        do_wgridding=do_wgridding,
-        divide_by_n=False,  # hardcoded for now
-        nthreads=nthreads,
-        sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=double_accum)
-    out_dict['DIRTY'] = dirty
+    if do_dirty:
+        dirty = vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=vis,
+            wgt=wgt,
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cellx, pixsize_y=celly,
+            center_x=x0, center_y=y0,
+            epsilon=epsilon,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            do_wgridding=do_wgridding,
+            divide_by_n=False,  # incorporte in smooth beam
+            nthreads=nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=double_accum)
+        dso['DIRTY'] = (('x','y'), dirty)
 
     if do_psf:
         if x0 or y0:
@@ -679,17 +508,21 @@ def image_data_products(uvw,
                 pixsize_y=celly,
                 center_x=x0,
                 center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
                 epsilon=epsilon,
                 do_wgridding=do_wgridding,
                 nthreads=nthreads,
-                divide_by_n=False,
-                flip_v=False,  # hardcoded for now
+                divide_by_n=False,  # incorporte in smooth beam
                 sigma_min=1.1, sigma_max=3.0)
 
         else:
             nrow, _ = uvw.shape
             nchan = freq.size
-            psf_vis = np.ones((nrow, nchan), dtype=vis.dtype)
+            tmp = np.ones((1,), dtype=vis.dtype)
+            # should be tiny
+            psf_vis = np.broadcast_to(tmp, vis.shape)
 
         psf = vis2dirty(
             uvw=uvw,
@@ -700,10 +533,12 @@ def image_data_products(uvw,
             npix_x=nx_psf, npix_y=ny_psf,
             pixsize_x=cellx, pixsize_y=celly,
             center_x=x0, center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
             epsilon=epsilon,
-            flip_v=False,  # hardcoded for now
             do_wgridding=do_wgridding,
-            divide_by_n=False,  # hardcoded for now
+            divide_by_n=False,  # incorporte in smooth beam
             nthreads=nthreads,
             sigma_min=1.1, sigma_max=3.0,
             double_precision_accumulation=double_accum)
@@ -713,11 +548,16 @@ def image_data_products(uvw,
                      nthreads=nthreads,
                      forward=True, inorm=0)
 
-        out_dict["PSF"] = psf
-        out_dict["PSFHAT"] = psfhat
+        dso["PSF"] = (('x_psf', 'y_psf'), psf)
+        dso["PSFHAT"] = (('x_psf', 'yo2'), psfhat)
+
+        # add natural resolution info
+        # normalised internally
+        gausspar = fitcleanbeam(psf[None, :, :], level=0.5, pixsize=1.0)[0]
+        dso = dso.assign_attrs(gaussparn=gausspar)
 
 
-    if model is not None:
+    if do_residual and model is not None:
         residual = vis2dirty(
             uvw=uvw,
             freq=freq,
@@ -727,14 +567,146 @@ def image_data_products(uvw,
             npix_x=nx, npix_y=ny,
             pixsize_x=cellx, pixsize_y=celly,
             center_x=x0, center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
             epsilon=epsilon,
-            flip_v=False,  # hardcoded for now
             do_wgridding=do_wgridding,
-            divide_by_n=False,  # hardcoded for now
+            divide_by_n=False,  # incorporte in smooth beam
             nthreads=nthreads,
             sigma_min=1.1, sigma_max=3.0,
             double_precision_accumulation=double_accum)
 
-        out_dict['RESIDUAL'] = residual
+        dso['MODEL'] = (('x','y'), model)
+        dso['RESIDUAL'] = (('x','y'), residual)
 
-    return out_dict
+    if do_noise:
+        # sample noise and project into image space
+        nrow, nchan = vis.shape
+        from pfb.utils.misc import parallel_standard_normal
+        vis = (parallel_standard_normal((nrow, nchan)) +
+               1j*parallel_standard_normal((nrow, nchan)))
+        wmask = wgt > 0.0
+        vis[wmask] /= np.sqrt(wgt[wmask])
+        vis[~wmask] = 0j
+        noise = vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=vis,
+            wgt=wgt,
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cellx, pixsize_y=celly,
+            center_x=x0, center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            divide_by_n=False,  # incorporte in smooth beam
+            nthreads=nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=double_accum)
+
+        dso['NOISE'] = (('x','y'), noise)
+
+    if beam is not None:
+        dso['BEAM'] = (('x', 'y'), beam)
+    else:
+        dso['BEAM'] = (('x', 'y'), np.ones((nx, ny), dtype=wgt.dtype))
+
+    # save
+    dso = dso.assign_attrs(wsum=wsum, x0=x0, y0=y0, l0=l0, m0=m0,
+                           flip_u=flip_u,
+                           flip_v=flip_v,
+                           flip_w=flip_w)
+    dso.to_zarr(output_name, mode='a')
+
+    # return residual to report stats
+    # one of these should always succeed
+    try:
+        return residual, wsum
+    except:
+        return dirty, wsum
+
+
+def compute_residual(dsl,
+                     nx, ny,
+                     cellx, celly,
+                     output_name,
+                     model,
+                     nthreads=1,
+                     epsilon=1e-7,
+                     do_wgridding=True,
+                     double_accum=True):
+    '''
+    Function to compute residual and write it to disk
+    '''
+    # expects a list
+    if isinstance(dsl, str):
+        dsl = [dsl]
+
+    # currently only a single dds
+    ds = xds_from_list(dsl, nthreads=nthreads)[0]
+
+    uvw = ds.UVW.values
+    wgt = ds.WEIGHT.values
+    mask = ds.MASK.values
+    beam = ds.BEAM.values
+    dirty = ds.DIRTY.values
+    freq = ds.FREQ.values
+    flip_u = ds.flip_u
+    flip_v = ds.flip_v
+    flip_w = ds.flip_w
+    x0 = ds.x0
+    y0 = ds.y0
+
+    # do not apply weights in this direction
+    model_vis = dirty2vis(
+        uvw=uvw,
+        freq=freq,
+        dirty=beam*model,
+        pixsize_x=cellx,
+        pixsize_y=celly,
+        center_x=x0,
+        center_y=y0,
+        flip_u=flip_u,
+        flip_v=flip_v,
+        flip_w=flip_w,
+        epsilon=epsilon,
+        do_wgridding=do_wgridding,
+        nthreads=nthreads,
+        divide_by_n=False,  # incorporate in smooth beam
+        sigma_min=1.1, sigma_max=3.0)
+
+
+    convim = vis2dirty(
+        uvw=uvw,
+        freq=freq,
+        vis=model_vis,
+        wgt=wgt,
+        mask=mask,
+        npix_x=nx, npix_y=ny,
+        pixsize_x=cellx, pixsize_y=celly,
+        center_x=x0, center_y=y0,
+        flip_u=flip_u,
+        flip_v=flip_v,
+        flip_w=flip_w,
+        epsilon=epsilon,
+        do_wgridding=do_wgridding,
+        divide_by_n=False,  # incorporate in smooth beam
+        nthreads=nthreads,
+        sigma_min=1.1, sigma_max=3.0,
+        double_precision_accumulation=double_accum)
+
+    # this is the once attenuated residual since
+    # dirty is only attenuated once
+    residual = dirty - convim
+
+    ds['MODEL'] = (('x','y'), model)
+    ds['RESIDUAL'] = (('x','y'), residual)
+
+    # save
+    ds.to_zarr(output_name, mode='a')
+
+    return residual

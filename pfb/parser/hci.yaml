@@ -1,6 +1,6 @@
 inputs:
   ms:
-    dtype: URI
+    dtype: List[URI]
     required: true
     abbreviation: ms
     info:
@@ -9,17 +9,17 @@ inputs:
     dtype: List[int]
     info:
       List of SCAN_NUMBERS to image. Defaults to all.
-      Input as string eg. '[0,2]' if running from CLI
+      Input as comma separated list 0,2 if running from CLI
   ddids:
     dtype: List[int]
     info:
       List of DATA_DESC_ID's to images. Defaults to all.
-      Input as string eg. '[0,1]' if running from CLI
+      Input as comma separated list 0,2 if running from CLI
   fields:
     dtype: List[int]
     info:
       List of FIELD_ID's to image. Defaults to all.
-      Input as string eg. '[0,1,2]' if running from CLI
+      Input as comma separated list 0,2 if running from CLI
   freq-range:
     dtype: str
     info:
@@ -40,7 +40,15 @@ inputs:
     default: DATA
     abbreviation: dc
     info:
-      Data column to image. Must be the same across MSs
+      Data column to image. Must be the same across MSs.
+      Simple arithmetic is supported eg. 'CORRECTED_DATA-MODEL_DATA'.
+      When gains are present this column will be corrected.
+  model-column:
+    dtype: str
+    abbreviation: mc
+    info:
+      Model column to subtract from corrected data column.
+      Useful to avoid high time res degridding.
   weight-column:
     dtype: str
     abbreviation: wc
@@ -60,26 +68,21 @@ inputs:
     info:
       Column containing data flags. Must be the same across MSs
   gain-table:
-    dtype: URI
+    dtype: List[URI]
     info:
       Path to Quartical gain table containing NET gains.
+      There must be a table for each MS and glob(ms) and
+      glob(gt) should match up when running from CLI.
   integrations-per-image:
     dtype: int
     abbreviation: ipi
-    default: -1
+    default: 1
     info:
       Number of time integrations per image.
       Default (-1, 0, None) -> dataset per scan.
-  channels-per-degrid-image:
+  channels-per-image:
     dtype: int
-    abbreviation: cpdi
-    default: 32
-    info:
-      Number of channels per image for degridding resolution.
-      Any of (-1, 0, None) implies single dataset per spw.
-  channels-per-grid-image:
-    dtype: int
-    abbreviation: cpgi
+    abbreviation: cpi
     default: -1
     info:
       Number of channels per image for gridding resolution.
@@ -95,12 +98,12 @@ inputs:
   field-of-view:
     dtype: float
     abbreviation: fov
-    default: 3.0
+    default: 1.0
     info:
       Field of view in degrees
   super-resolution-factor:
     dtype: float
-    default: 2
+    default: 1.4
     abbreviation: srf
     info:
       Will over-sample Nyquist by this factor at max frequency
@@ -121,27 +124,12 @@ inputs:
     abbreviation: rob
     info:
       Robustness factor for Briggs weighting. None means natural
-  filter-extreme-counts:
-    dtype: bool
-    default: false
-    info:
-      Replace extreme outliers in the weighting grid by their local mean
-  filter-nbox:
-    dtype: int
-    default: 16
-    info:
-      The size of the box to compute local mean over
-  filter-level:
-    dtype: float
-    default: 10
-    info:
-      The level above local mean that renders a grid weight extreme
   target:
     dtype: str
     info:
       This can be predefined celestial objects known to astropy or a string in
       the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
-  l2reweight-dof:
+  l2-reweight-dof:
     dtype: float
     info:
       The degrees of freedom parameter for L2 reweighting.
@@ -149,45 +137,46 @@ inputs:
       A sensible value for this parameter depends on the level of RFI in the data.
       Small values (eg. 2) result in aggressive reweighting and should be avoided
       if the model is still incomplete.
-  host-address:
-    dtype: str
-    abbreviation: ha
-    info:
-      Address where the distributed client lives.
-      Uses LocalCluster if no address is provided
-      and scheduler is set to distributed.
-  nworkers:
-    dtype: int
-    default: 1
-    abbreviation: nw
-    info:
-      Number of worker processes.
-      Use with distributed scheduler.
-  nthreads-dask:
-    dtype: int
-    default: 1
-    abbreviation: ntd
-    info:
-      Number of dask threads.
-      This will largely determine the memory footprint.
-      Used as nthreads per worker when using distributed scheduler.
-  nvthreads:
-    dtype: int
-    abbreviation: nvt
-    info:
-      Number of threads used to scale vertically (eg. for FFTs and gridding).
-      Each dask thread can in principle spawn this many threads.
-      Will attempt to use half the available threads by default.
   progressbar:
     dtype: bool
     default: true
     info:
       Display progress.
       Use --no-progressbar to deactivate.
+  output-format:
+    default: zarr
+    info:
+      zarr or fits output
+  sigmainvsq:
+    dtype: float
+    default: 1e-5
+    info:
+      Value to add to Hessian to make it invertible.
+      Smaller values tend to fit more noise and make the inversion less stable.
+  concat-time:
+    dtype: bool
+    default: false
+    info:
+      Concatenate gains and times across scan
+  natural-grad:
+    dtype: bool
+    default: false
+    info:
+      Compute naural gradient
+  memory_reporting:
+    dtype: bool
+    default: false
+    info:
+      Report worker memory as tasks complete
 
   _include:
     - (.)gridding.yml
     - (.)out.yml
+    - (.)dist.yml
+    - (.)cgopts.yml
 
 outputs:
     {}
+
+policies:
+  pass_missing_as_none: true

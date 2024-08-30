@@ -4,17 +4,27 @@ inputs:
     default: false
     info:
       Allow overwrite of existing model
+  mds:
+    dtype: str
+    info:
+      An optional input model to append to the model.
+      Will be rendered to the same resolution as the model in the dds.
   nbasisf:
     dtype: int
-    default: 4
     info:
-      Order of interpolating polynomial for frequency axis
+      Order of interpolating polynomial for frequency axis.
+      One less than the number of bands by default.
   nbasist:
     dtype: int
     default: 1
     info:
       Order of interpolating polynomial for time axis.
       This is hypothetical for the time being.
+  nthreads:
+    dtype: int
+    abbreviation: nt
+    info:
+      Number of threads
   fit-mode:
     dtype: str
     default: Legendre
@@ -33,10 +43,6 @@ inputs:
     abbreviation: mname
     info:
       Name of model in mds
-  model-fits:
-    dtype: str
-    info:
-      Specify to degrid from a fits file
   use-wsum:
     dtype: bool
     default: true
@@ -60,10 +66,17 @@ inputs:
       - json
     info:
       Format to dump model to.
+  out-freqs:
+    dtype: str
+    info:
+      A string flow:fhigh:step of frequencies in hertz where the
+      output cube needs to be evaluated.
 
   _include:
-    - (.)dist.yml
     - (.)out.yml
 
 outputs:
   {}
+
+policies:
+  pass_missing_as_none: true

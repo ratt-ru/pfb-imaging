@@ -12,6 +12,14 @@ def test_polproducts(do_gains, ms_name):
     '''
     Tests polarisation products
     '''
+    # we need the client for the init step
+    from dask.distributed import LocalCluster, Client
+    cluster = LocalCluster(processes=False,
+                           n_workers=1,
+                           threads_per_worker=1,
+                           memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                           asynchronous=False)
+    client = Client(cluster, direct_to_workers=False)
 
     import numpy as np
     np.random.seed(420)
@@ -19,6 +27,9 @@ def test_polproducts(do_gains, ms_name):
     from daskms import xds_from_ms, xds_from_table, xds_to_table
     from daskms.experimental.zarr import xds_to_zarr
     from africanus.constants import c as lightspeed
+    from ducc0.wgridder.experimental import dirty2vis
+    from pfb.utils.naming import xds_from_url
+    from pfb.operators.gridder import wgridder_conventions
 
 
     test_dir = Path(ms_name).resolve().parent
@@ -62,6 +73,8 @@ def test_polproducts(do_gains, ms_name):
     nx = npix
     ny = npix
 
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
+
     print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
 
     # first axis is Stokes
@@ -80,7 +93,6 @@ def test_polproducts(do_gains, ms_name):
 
     # model vis
     epsilon = 1e-7
-    from ducc0.wgridder.experimental import dirty2vis
     model_vis_I = np.zeros((nrow, nchan), dtype=np.complex128)
     for c in range(nchan):
         model_vis_I[:, c:c+1] = dirty2vis(uvw=uvw,
@@ -88,6 +100,11 @@ def test_polproducts(do_gains, ms_name):
                                         dirty=model[0, c],
                                         pixsize_x=cell_rad,
                                         pixsize_y=cell_rad,
+                                        center_x=x0,
+                                        center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
                                         epsilon=epsilon,
                                         do_wgridding=True,
                                         nthreads=8)
@@ -98,6 +115,11 @@ def test_polproducts(do_gains, ms_name):
                                         dirty=model[1, c],
                                         pixsize_x=cell_rad,
                                         pixsize_y=cell_rad,
+                                        center_x=x0,
+                                        center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
                                         epsilon=epsilon,
                                         do_wgridding=True,
                                         nthreads=8)
@@ -108,6 +130,11 @@ def test_polproducts(do_gains, ms_name):
                                         dirty=model[2, c],
                                         pixsize_x=cell_rad,
                                         pixsize_y=cell_rad,
+                                        center_x=x0,
+                                        center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
                                         epsilon=epsilon,
                                         do_wgridding=True,
                                         nthreads=8)
@@ -118,6 +145,11 @@ def test_polproducts(do_gains, ms_name):
                                         dirty=model[3, c],
                                         pixsize_x=cell_rad,
                                         pixsize_y=cell_rad,
+                                        center_x=x0,
+                                        center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
                                         epsilon=epsilon,
                                         do_wgridding=True,
                                         nthreads=8)
@@ -203,8 +235,8 @@ def test_polproducts(do_gains, ms_name):
         }
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
         gain_path = str(test_dir / Path("gains.qc"))
-        out_path = f'{gain_path}::NET'
-        dask.compute(xds_to_zarr(net_xds_list, out_path))
+        dask.compute(xds_to_zarr(net_xds_list, f'{gain_path}::NET'))
+        gain_path = [f'{gain_path}/NET']
 
     else:
         # # add iid noise
@@ -216,51 +248,48 @@ def test_polproducts(do_gains, ms_name):
         dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
         gain_path = None
 
-    suffix = "main"
     outname = str(test_dir / 'test')
     from pfb.parser.schemas import schema
     for p in ['I', 'Q', 'U', 'V']:
         basename = f'{outname}_{p}'
-        dds_name = f'{basename}_{suffix}.dds'
+        dds_name = f'{basename}_main.dds'
         # set defaults from schema
         init_args = {}
         for key in schema.init["inputs"].keys():
             init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
         # overwrite defaults
-        init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
-        init_args["output_filename"] = outname
+        init_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
+        init_args["output_filename"] = basename
         init_args["data_column"] = "DATA"
         init_args["flag_column"] = 'FLAG'
         init_args["gain_table"] = gain_path
         init_args["max_field_of_view"] = fov*1.1
+        init_args["bda_decorr"] = 1.0
         init_args["overwrite"] = True
         init_args["channels_per_image"] = 1
         init_args["product"] = p
         from pfb.workers.init import _init
-        xds = _init(**init_args)
+        _init(**init_args)
 
         # grid data to produce dirty image
         grid_args = {}
         for key in schema.grid["inputs"].keys():
             grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
         # overwrite defaults
-        grid_args["output_filename"] = outname
-        grid_args["suffix"] = suffix
-        grid_args["nband"] = nchan
+        grid_args["output_filename"] = basename
         grid_args["field_of_view"] = fov
         grid_args["fits_mfs"] = True
         grid_args["psf"] = True
         grid_args["residual"] = False
-        grid_args["nthreads"] = 8  # has to be set when calling _grid
-        grid_args["nvthreads"] = 8
+        grid_args["nthreads"] = 8
         grid_args["overwrite"] = True
         grid_args["robustness"] = 0.0
         grid_args["do_wgridding"] = True
         grid_args["product"] = p
         from pfb.workers.grid import _grid
-        dds = _grid(xdsi=xds, **grid_args)
+        _grid(**grid_args)
 
-        dds = dask.compute(dds)[0]
+        dds = xds_from_url(dds_name)
 
         for ds in dds:
             wsum = ds.WSUM.values

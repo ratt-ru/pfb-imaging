@@ -16,12 +16,24 @@ def test_klean(do_gains, ms_name):
     TODO - add per scan PB variations
     '''
 
+    # we need the client for the init step
+    from dask.distributed import LocalCluster, Client
+    cluster = LocalCluster(processes=False,
+                           n_workers=1,
+                           threads_per_worker=1,
+                           memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                           asynchronous=False)
+    client = Client(cluster, direct_to_workers=False)
+
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
     from daskms import xds_from_ms, xds_from_table, xds_to_table
     from daskms.experimental.zarr import xds_to_zarr
+    from pfb.utils.naming import xds_from_url
     from africanus.constants import c as lightspeed
+    from ducc0.wgridder.experimental import dirty2vis
+    from pfb.operators.gridder import wgridder_conventions
 
 
     test_dir = Path(ms_name).resolve().parent
@@ -79,7 +91,7 @@ def test_klean(do_gains, ms_name):
 
     # model vis
     epsilon = 1e-7
-    from ducc0.wgridder.experimental import dirty2vis
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     for c in range(nchan):
         model_vis[:, c:c+1, 0] = dirty2vis(uvw=uvw,
@@ -88,6 +100,9 @@ def test_klean(do_gains, ms_name):
                                            pixsize_x=cell_rad,
                                            pixsize_y=cell_rad,
                                            epsilon=epsilon,
+                                           flip_u=flip_u,
+                                           flip_v=flip_v,
+                                           flip_w=flip_w,
                                            do_wgridding=True,
                                            nthreads=8)
         model_vis[:, c, -1] = model_vis[:, c, 0]
@@ -165,8 +180,8 @@ def test_klean(do_gains, ms_name):
         }
         net_xds_list = Dataset(data_vars, coords=coords, attrs=attrs)
         gain_path = str(test_dir / Path("gains.qc"))
-        out_path = f'{gain_path}::NET'
-        dask.compute(xds_to_zarr(net_xds_list, out_path))
+        dask.compute(xds_to_zarr(net_xds_list, f'{gain_path}::NET'))
+        gain_path = [f'{gain_path}/NET']
 
     else:
         xds['DATA'] = (('row','chan','corr'),
@@ -174,17 +189,15 @@ def test_klean(do_gains, ms_name):
         dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
         gain_path = None
 
-    suffix = "main"
-    outname = str(test_dir / 'test')
-    basename = f'{outname}_I'
-    dds_name = f'{basename}_{suffix}.dds'
+    outname = str(test_dir / 'test_I')
+    dds_name = f'{outname}_main.dds'
     # set defaults from schema
     from pfb.parser.schemas import schema
     init_args = {}
     for key in schema.init["inputs"].keys():
         init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
     # overwrite defaults
-    init_args["ms"] = str(test_dir / 'test_ascii_1h60.0s.MS')
+    init_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
     init_args["output_filename"] = outname
     init_args["data_column"] = "DATA"
     init_args["flag_column"] = 'FLAG'
@@ -192,8 +205,9 @@ def test_klean(do_gains, ms_name):
     init_args["max_field_of_view"] = fov*1.1
     init_args["overwrite"] = True
     init_args["channels_per_image"] = 1
+    init_args["bda_decorr"] = 1.0
     from pfb.workers.init import _init
-    xds = _init(**init_args)
+    _init(**init_args)
 
     # grid data to produce dirty image
     grid_args = {}
@@ -201,52 +215,44 @@ def test_klean(do_gains, ms_name):
         grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
     # overwrite defaults
     grid_args["output_filename"] = outname
-    grid_args["suffix"] = suffix
-    grid_args["nband"] = nchan
     grid_args["field_of_view"] = fov
     grid_args["fits_mfs"] = True
     grid_args["psf"] = True
     grid_args["residual"] = False
-    grid_args["nthreads"] = 8  # has to be set when calling _grid
-    grid_args["nvthreads"] = 8
+    grid_args["nthreads"] = 8
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
     grid_args["do_wgridding"] = True
+    grid_args["psf_oversize"] = 2.0
     from pfb.workers.grid import _grid
-    dds = _grid(xdsi=xds, **grid_args)
+    _grid(**grid_args)
 
     # run klean
     klean_args = {}
     for key in schema.klean["inputs"].keys():
         klean_args[key.replace("-", "_")] = schema.klean["inputs"][key]["default"]
     klean_args["output_filename"] = outname
-    klean_args["suffix"] = suffix
-    klean_args["nband"] = nchan
     klean_args["dirosion"] = 0
     klean_args["do_residual"] = False
     klean_args["niter"] = 100
-    threshold = 1e-5
+    threshold = 1e-1
     klean_args["threshold"] = threshold
     klean_args["gamma"] = 0.1
     klean_args["peak_factor"] = 0.75
     klean_args["sub_peak_factor"] = 0.75
     klean_args["nthreads"] = 8
-    klean_args["nvthreads"] = 8
-    klean_args["scheduler"] = 'sync'
     klean_args["do_wgridding"] = True
     klean_args["epsilon"] = epsilon
     klean_args["mop_flux"] = True
     klean_args["fits_mfs"] = False
     from pfb.workers.klean import _klean
-    _klean(ddsi=dds, **klean_args)
+    _klean(**klean_args)
 
     # get inferred model
-    basename = f'{outname}_I'
-    dds_name = f'{basename}_{suffix}.dds'
-    dds = xds_from_zarr(dds_name, chunks={'x':-1, 'y': -1})
+    dds = xds_from_url(dds_name)
     model_inferred = np.zeros((nchan, nx, ny))
     for ds in dds:
-        b = ds.bandid
+        b = int(ds.bandid)
         model_inferred[b] = ds.MODEL.values
 
     # we actually reconstruct I/n(l,m) so we need to correct for that

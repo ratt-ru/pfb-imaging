@@ -1,10 +1,4 @@
 inputs:
-  nband:
-    dtype: int
-    required: true
-    abbreviation: nb
-    info:
-      Number of imaging bands
   suffix:
     dtype: str
     default: 'main'
@@ -20,16 +14,6 @@ inputs:
     default: 1
     info:
       Perform dilation followed by erosion with structure element of this width
-  fits-mfs:
-    dtype: bool
-    default: true
-    info:
-      Output MFS fits files
-  fits-cubes:
-    dtype: bool
-    default: false
-    info:
-      Output fits cubes
   mop-flux:
     dtype: bool
     default: true
@@ -48,6 +32,12 @@ inputs:
     abbreviation: niter
     info:
       Number of major iterations
+  nthreads:
+    dtype: int
+    abbreviation: nt
+    info:
+      Total number of threads to use.
+      Defaults to half the total number available.
   threshold:
     dtype: float
     info:
@@ -137,15 +127,13 @@ inputs:
     default: true
     info:
       Ensure residual decreases at every iteration
-  memory-greedy:
-    dtype: bool
-    default: false
-    info:
-      Holds data in memory if set
+
   _include:
     - (.)gridding.yml
-    - (.)dist.yml
     - (.)out.yml
 
 outputs:
   {}
+
+policies:
+  pass_missing_as_none: true

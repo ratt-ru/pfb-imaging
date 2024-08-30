@@ -31,6 +31,7 @@ def power_method(
         betap = beta
         beta = np.vdot(bp, b) / np.vdot(bp, bp)
         b /= bnorm
+        # this is a scalar
         eps = np.linalg.norm(beta - betap) / betap
         k += 1
         bp[...] = b[...]
@@ -49,9 +50,9 @@ def power_method(
     return beta, b
 
 
-def power(A, bp, bnorm):
+def power(A, bp, bnorm, sigmainv):
     bp /= bnorm
-    b = A(bp)
+    b = A(bp, sigmainv)
     bsumsq = np.sum(b**2)
     beta_num = np.vdot(b, bp)
     beta_den = np.vdot(bp, bp)
@@ -67,99 +68,43 @@ def bnormf(bsumsq):
 def betaf(beta_num, beta_den):
     return np.sum(beta_num)/np.sum(beta_den)
 
-def power_method_dist(Afs,
+
+from time import time
+def power_method_dist(actors,
                       nx,
                       ny,
                       nband,
-                      tol=1e-5,
-                      maxit=200):
+                      tol=1e-4,
+                      maxit=200,
+                      report_freq=10,
+                      verbosity=1,):
 
     client = get_client()
-    names = [w['name'] for w in client.scheduler_info()['workers'].values()]
 
-    b = []
-    bssq = []
-    bnum = []
-    bden = []
-    for i, (wid, A) in enumerate(Afs.items()):
-        b.append(client.submit(np.random.randn, nx, ny,
-                          workers={wid}))
-        bssq.append(client.submit(sumsq, b[i],
-                             workers={wid}))
-        # this just initialises the lists required below
-        bnum.append(1)
-        bden.append(1)
-    # wid corresponds to last worker
-    bnorm = client.submit(bnormf, bssq,
-                          workers={names[0]}).result()
+    bssq = list(map(lambda a: a.init_random(), actors))
+    # custom gather?
+    bssq = list(map(lambda o: o.result(), bssq))
+    bnorm = np.sqrt(np.sum(bssq))
     beta = 1
     for k in range(maxit):
-        for i, (wid, A) in enumerate(Afs.items()):
-            fut = client.submit(power, A, b[i], bnorm,
-                                workers={wid})
+        futures = list(map(lambda a: a.pm_update(bnorm), actors))
 
-            b[i] = client.submit(getitem, fut, 0, workers={wid})
-            bssq[i] = client.submit(getitem, fut, 1, workers={wid})
-            bnum[i] = client.submit(getitem, fut, 2, workers={wid})
-            bden[i] = client.submit(getitem, fut, 3, workers={wid})
+        results = list(map(lambda f: f.result(), futures))
+        # what is wrong here?
+        # bssq = list(map(getitem, results, 0))
+        bssq = [r[0] for r in results]
+        bnum = [r[1] for r in results]
+        bden = [r[2] for r in results]
 
-        bnorm = client.submit(bnormf, bssq,
-                              workers={wid})
+        bnorm = np.sqrt(np.sum(bssq))
         betap = beta
-        beta = client.submit(betaf, bnum, bden,
-                             workers={wid}).result()
+        beta = np.sum(bnum)/np.sum(bden)
 
         eps = np.abs(betap - beta)/betap
         if eps < tol:
             break
 
+        if not k % report_freq and verbosity > 1:
+            print(f"At iteration {k} eps = {eps:.3e}", file=log)
+
     return beta
-
-
-def power2(A, bp, bnorm):
-    bp /= bnorm
-    b = A(bp)
-    bsumsq = da.sum(b**2)
-    beta_num = da.vdot(b, bp)
-    beta_den = da.vdot(bp, bp)
-
-    return b, bsumsq, beta_num, beta_den
-
-
-def power_method_persist(ddsf,
-                         Af,
-                         nx,
-                         ny,
-                         nband,
-                         tol=1e-5,
-                         maxit=200):
-
-    client = get_client()
-    b = []
-    bssq = []
-    for ds in ddsf:
-        wid = ds.worker
-        tmp = client.persist(da.random.normal(0, 1, (nx, ny)),
-                             workers={wid})
-        b.append(tmp)
-        bssq.append(da.sum(b**2))
-
-    bssq = da.stack(bssq)
-    bnorm = da.sqrt(da.sum(bssq))
-    bp = deepcopy(b)
-    beta_num = [da.array()]
-
-    for k in range(maxit):
-        for i, ds, A in enumerate(zip(ddsf, Af)):
-            bp[i] = b[i]/bnorm
-            b[i] = A(bp[i])
-            bssq[i] = da.sum(b[i]**2)
-            beta_num = da.vdot(b, bp)
-            beta_den = da.vdot(bp, bp)
-
-
-
-
-
-
-

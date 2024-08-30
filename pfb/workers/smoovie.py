@@ -11,10 +11,6 @@ import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
-# create default parameters from schema
-defaults = {}
-for key in schema.smoovie["inputs"].keys():
-    defaults[key.replace("-", "_")] = schema.smoovie["inputs"][key]["default"]
 
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.smoovie)
@@ -22,13 +18,13 @@ def smoovie(**kw):
     '''
     Smooth high cadence imaging results
     '''
-    defaults.update(kw)
-    opts = OmegaConf.create(defaults)
+    opts = OmegaConf.create(kw)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     ldir = Path(opts.log_directory).resolve()
     ldir.mkdir(parents=True, exist_ok=True)
-    pyscilog.log_to_file(f'{ldir}/smoovie_{timestamp}.log')
-    print(f'Logs will be written to {str(ldir)}/smoovie_{timestamp}.log', file=log)
+    logname = f'{ldir}/smoovie_{timestamp}.log'
+    pyscilog.log_to_file(logname)
+    print(f'Logs will be written to {logname}', file=log)
     from daskms.fsspec_store import DaskMSStore
     fdsstore = DaskMSStore(opts.fds.rstrip('/'))
     try:

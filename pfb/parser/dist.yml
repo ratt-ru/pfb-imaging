@@ -12,25 +12,16 @@ nworkers:
   info:
     Number of worker processes.
     Use with distributed scheduler.
-nthreads-dask:
+nthreads:
   dtype: int
-  default: 1
-  abbreviation: ntd
-  info:
-    Number of dask threads.
-    This will largely determine the memory footprint.
-    Used as nthreads per worker when using distributed scheduler.
-nvthreads:
-  dtype: int
-  abbreviation: nvt
+  abbreviation: nt
   info:
     Number of threads used to scale vertically (eg. for FFTs and gridding).
     Each dask thread can in principle spawn this many threads.
     Will attempt to use half the available threads by default.
-scheduler:
-  dtype: str
-  default: threads
-  choices: ["threads", "single-threaded", "sync", "distributed", "processes"]
-  abbreviation: scheduler
+direct_to_workers:
+  dtype: bool
+  default: true
   info:
-    Which dask scheduler to use.
+    Connect direct to workers i.e. bypass scheduler.
+    Faster but then the dashboard isn't very useful.

@@ -5,20 +5,29 @@ with open("README.rst", "r") as fh:
     long_description = fh.read()
 
 requirements = [
-                'numpy',
+                'numpy <= 2.0.0',
                 'scikit-image',
                 'PyWavelets',
                 'katbeam',
                 'numexpr',
                 'pyscilog >= 0.1.2',
                 'Click',
-                "ducc0",
-                "QuartiCal >= 0.2.3",
+                "ducc0"
+                "@git+https://github.com/mreineck/ducc.git"
+                "@tweak_wgridder_conventions",
+                "QuartiCal"
+                "@git+https://github.com/ratt-ru/QuartiCal.git"
+                "@unpinneddeps",
                 "sympy",
                 "stimela >= 2.0rc18",
                 "streamjoy >= 0.0.8",
+                "codex-africanus[complete] >= 0.3.7",
                 "tbb",
                 "jax[cpu]",
+                "ipycytoscape",
+                "lz4",
+                "ipdb",
+                "psutil"
             ]
 
 
