@@ -244,7 +244,7 @@ def _model2comps(**kw):
         print(f"Exception {e} raised during fit ."
               f"Do you perhaps have empty sub-bands?"
               f"Decreasing nbasisf", file=log)
-        quit()
+        raise e
 
     # save interpolated dataset
     data_vars = {

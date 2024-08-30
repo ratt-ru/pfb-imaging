@@ -75,7 +75,6 @@ def init(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    quit()
     basename = f'{basedir}/{oname}'
 
     from pfb import set_envs
