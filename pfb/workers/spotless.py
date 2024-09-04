@@ -125,7 +125,7 @@ def spotless(**kw):
     print(f"All done after {time.time() - ti}s.", file=log)
 
 
-def _spotless(xdsi=None, **kw):
+def _spotless(**kw):
     '''
     Distributed spotless algorithm.
 
@@ -185,20 +185,12 @@ def _spotless(xdsi=None, **kw):
     # xds contains vis products, no imaging weights applied
     xds_name = f'{basename}.xds' if opts.xds is None else opts.xds
     xds_store = DaskMSStore(xds_name)
-    if xdsi is not None:
-        xds = []
-        for ds in xdsi:
-            xds.append(ds.chunk({'row':-1,
-                                 'chan': -1,
-                                 'l_beam': -1,
-                                 'm_beam': -1}))
-    else:
-        try:
-            assert xds_store.exists()
-        except Exception as e:
-            raise ValueError(f"There must be a dataset at {xds_store.url}")
+    try:
+        assert xds_store.exists()
+    except Exception as e:
+        raise ValueError(f"There must be a dataset at {xds_store.url}")
 
-        xds = xds_from_url(xds_name)
+    xds = xds_from_url(xds_name)
 
     # TODO - how to glob with protocol in tact?
     xds_list = xds_store.fs.glob(f'{xds_store.url}/*')

@@ -17,7 +17,7 @@ from quartical.utils.dask import Blocker
 from pfb.utils.weighting import counts_to_weights, _compute_counts
 from pfb.utils.beam import eval_beam
 from pfb.utils.naming import xds_from_list
-from pfb.utils.misc import fitcleanbeam, numba_threads
+from pfb.utils.misc import fitcleanbeam
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
@@ -431,26 +431,26 @@ def image_data_products(dsl,
 
     # we usually want to re-evaluate this since the robustness may change
     if robustness is not None:
-        with numba_threads(nthreads):
-            counts = _compute_counts(uvw,
-                                    freq,
-                                    mask,
-                                    wgt,
-                                    nx, ny,
-                                    cellx, celly,
-                                    uvw.dtype,
-                                    ngrid=np.minimum(nthreads, 8),  # limit number of grids
-                                    usign=1.0 if flip_u else -1.0,
-                                    vsign=1.0 if flip_v else -1.0)
-            imwgt = counts_to_weights(
-                counts,
-                uvw,
-                freq,
-                nx, ny,
-                cellx, celly,
-                robustness,
-                usign=1.0 if flip_u else -1.0,
-                vsign=1.0 if flip_v else -1.0)
+        numba.set_num_threads(nthreads)
+        counts = _compute_counts(uvw,
+                                freq,
+                                mask,
+                                wgt,
+                                nx, ny,
+                                cellx, celly,
+                                uvw.dtype,
+                                ngrid=np.minimum(nthreads, 8),  # limit number of grids
+                                usign=1.0 if flip_u else -1.0,
+                                vsign=1.0 if flip_v else -1.0)
+        imwgt = counts_to_weights(
+            counts,
+            uvw,
+            freq,
+            nx, ny,
+            cellx, celly,
+            robustness,
+            usign=1.0 if flip_u else -1.0,
+            vsign=1.0 if flip_v else -1.0)
         if wgt is not None:
             wgt *= imwgt
         else:

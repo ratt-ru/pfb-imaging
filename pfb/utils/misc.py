@@ -1,5 +1,5 @@
 import sys
-from contextlib import contextmanager, nullcontext
+from contextlib import nullcontext
 import numpy as np
 import numexpr as ne
 import numba
@@ -50,17 +50,6 @@ class ForkedPdb(pdb.Pdb):
             pdb.Pdb.interaction(self, *args, **kwargs)
         finally:
             sys.stdin = _stdin
-
-
-@contextmanager
-def numba_threads(n):
-    """Context manager for controlling Numba's number of threads."""
-    old_value = numba.config.NUMBA_NUM_THREADS
-    numba.config.NUMBA_NUM_THREADS = n
-    try:
-        yield
-    finally:
-        numba.config.NUMBA_NUM_THREADS = old_value
 
 
 def compute_context(scheduler, output_filename, boring=True):

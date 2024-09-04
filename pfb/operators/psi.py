@@ -8,7 +8,6 @@ import pywt
 from scipy.datasets import ascent
 from pfb.wavelets import coeff_size, signal_size, dwt2d, idwt2d, copyT
 from time import time
-from pfb.utils.misc import numba_threads
 
 
 @numba.njit
@@ -261,14 +260,14 @@ class psi_band(object):
 
 
 def psi_dot_impl(x, alphao, psib, b, nthreads=1):
-    with numba_threads(nthreads):
-        psib.dot(x, alphao)
+    numba.set_num_threads(nthreads)
+    psib.dot(x, alphao)
     return b
 
 
 def psi_hdot_impl(alpha, xo, psib, b, nthreads=1):
-    with numba_threads(nthreads):
-        psib.hdot(alpha, xo)
+    numba.set_num_threads(nthreads)
+    psib.hdot(alpha, xo)
     return b
 
 

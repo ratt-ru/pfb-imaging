@@ -171,7 +171,7 @@ def grid(**kw):
         except Exception as e:
             raise e
 
-def _grid(xdsi=None, **kw):
+def _grid(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -204,20 +204,12 @@ def _grid(xdsi=None, **kw):
     # xds contains vis products, no imaging weights applied
     xds_name = f'{basename}.xds' if opts.xds is None else opts.xds
     xds_store = DaskMSStore(xds_name)
-    if xdsi is not None:
-        xds = []
-        for ds in xdsi:
-            xds.append(ds.chunk({'row':-1,
-                                 'chan': -1,
-                                 'l_beam': -1,
-                                 'm_beam': -1}))
-    else:
-        try:
-            assert xds_store.exists()
-        except Exception as e:
-            raise ValueError(f"There must be a dataset at {xds_store.url}")
+    try:
+        assert xds_store.exists()
+    except Exception as e:
+        raise ValueError(f"There must be a dataset at {xds_store.url}")
 
-        xds = xds_from_url(xds_name)
+    xds = xds_from_url(xds_name)
 
     times_in = []
     freqs_in = []
