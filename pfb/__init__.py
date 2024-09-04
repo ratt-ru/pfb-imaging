@@ -40,7 +40,7 @@ def set_client(nworkers, log, stack=None, host_address=None,
     if client_log_level == 'error':
         logging.getLogger("distributed").setLevel(logging.ERROR)
         logging.getLogger("bokeh").setLevel(logging.ERROR)
-        logging.getLogger("tornado").setLevel(logging.ERROR)
+        logging.getLogger("tornado").setLevel(logging.CRITICAL)
     elif client_log_level == 'warning':
         logging.getLogger("distributed").setLevel(logging.WARNING)
         logging.getLogger("bokeh").setLevel(logging.WARNING)
@@ -55,7 +55,6 @@ def set_client(nworkers, log, stack=None, host_address=None,
         logging.getLogger("tornado").setLevel(logging.DEBUG)
 
     import dask
-    dask.config.set({'distributed.comm.compression': 'lz4'})
     # set up client
     host_address = host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
     if host_address is not None:
@@ -68,7 +67,7 @@ def set_client(nworkers, log, stack=None, host_address=None,
         dask.config.set({
                 'distributed.comm.compression': {
                     'on': True,
-                    'type': 'blosc'
+                    'type': 'lz4'
                 }
         })
         cluster = LocalCluster(processes=True,

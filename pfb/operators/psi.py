@@ -286,7 +286,7 @@ class Psi(object):
         self.Nxmax = self.psib[0].Nxmax
         self.Nymax = self.psib[0].Nymax
 
-        self.nthreads_per_band = nthreads//nband
+        self.nthreads_per_band = np.maximum(1, nthreads//nband)
 
     def dot(self, x, alphao):
         '''

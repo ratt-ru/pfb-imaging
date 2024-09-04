@@ -14,16 +14,6 @@ from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 
-# from pfb import parser
-# from scabha.configuratt import load_nested
-# from scabha.schema_utils import Schema
-# config_file = os.path.dirname(parser.__file__) + '/init.yaml'
-# schema, _ = load_nested([config_file],
-#                         structured=OmegaConf.structured(Schema),
-#                         config_class="PfbCleanCabs",
-#                         use_cache=False)
-# schema = OmegaConf.create(schema).init
-
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.init)
 def init(**kw):
@@ -144,7 +134,10 @@ def _init(**kw):
         gain_names = None
 
     if opts.freq_range is not None and len(opts.freq_range):
-        fmin, fmax = opts.freq_range.strip(' ').split(':')
+        try:
+            fmin, fmax = opts.freq_range.strip(' ').split(':')
+        except:
+            import ipdb; ipdb.set_trace()
         if len(fmin) > 0:
             freq_min = float(fmin)
         else:

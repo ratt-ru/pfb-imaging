@@ -6,12 +6,10 @@ from dask.graph_manipulation import clone
 from distributed import worker_client
 import dask.array as da
 from xarray import Dataset
-# from quartical.utils.numba import coerce_literal
 from operator import getitem
 from pfb.utils.beam import interp_beam
 from pfb.utils.misc import weight_from_sigma, combine_columns
 import dask
-from quartical.utils.dask import Blocker
 from pfb.utils.stokes import stokes_funcs
 from pfb.utils.weighting import weight_data
 from uuid import uuid4
