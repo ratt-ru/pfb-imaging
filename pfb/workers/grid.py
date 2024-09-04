@@ -74,7 +74,7 @@ def grid(**kw):
     with ExitStack() as stack:
         from pfb import set_client
         if opts.nworkers > 1:
-            client = set_client(opts.nworkers, log, stack)
+            client = set_client(opts.nworkers, log, stack, client_log_level=opts.log_level)
             from distributed import as_completed
         else:
             print("Faking client", file=log)
@@ -89,6 +89,7 @@ def grid(**kw):
         ti = time.time()
         residual_mfs = _grid(**opts)
 
+        dds = xds_from_url(dds_store.url)
         dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
 
         # convert to fits files
@@ -115,29 +116,26 @@ def grid(**kw):
                                     do_mfs=opts.fits_mfs,
                                     do_cube=opts.fits_cubes)
                 futures.append(fut)
-            if opts.residual:
-                try:
-                    fut = client.submit(dds2fits,
-                                        dds_list,
-                                        'MODEL',
-                                        f'{fits_oname}_{opts.suffix}',
-                                        norm_wsum=False,
-                                        nthreads=opts.nthreads,
-                                        do_mfs=opts.fits_mfs,
-                                        do_cube=opts.fits_cubes)
-                    futures.append(fut)
-
-                    fut = client.submit(dds2fits,
-                                        dds_list,
-                                        'RESIDUAL',
-                                        f'{fits_oname}_{opts.suffix}',
-                                        norm_wsum=True,
-                                        nthreads=opts.nthreads,
-                                        do_mfs=opts.fits_mfs,
-                                        do_cube=opts.fits_cubes)
-                    futures.append(fut)
-                except:
-                    pass
+            if opts.residual and 'RESIDUAL' in dds[0]:
+                fut = client.submit(dds2fits,
+                                    dds_list,
+                                    'MODEL',
+                                    f'{fits_oname}_{opts.suffix}',
+                                    norm_wsum=False,
+                                    nthreads=opts.nthreads,
+                                    do_mfs=opts.fits_mfs,
+                                    do_cube=opts.fits_cubes)
+                futures.append(fut)
+            if 'MODEL' in dds[0]:
+                fut = client.submit(dds2fits,
+                                    dds_list,
+                                    'RESIDUAL',
+                                    f'{fits_oname}_{opts.suffix}',
+                                    norm_wsum=True,
+                                    nthreads=opts.nthreads,
+                                    do_mfs=opts.fits_mfs,
+                                    do_cube=opts.fits_cubes)
+                futures.append(fut)
             if opts.noise:
                 fut = client.submit(dds2fits,
                                     dds_list,
@@ -149,15 +147,16 @@ def grid(**kw):
                                     do_cube=opts.fits_cubes)
                 futures.append(fut)
 
-            fut = client.submit(dds2fits,
-                                dds_list,
-                                'BEAM',
-                                f'{fits_oname}_{opts.suffix}',
-                                norm_wsum=False,
-                                nthreads=opts.nthreads,
-                                do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
-            futures.append(fut)
+            if 'BEAM' in dds[0]:
+                fut = client.submit(dds2fits,
+                                    dds_list,
+                                    'BEAM',
+                                    f'{fits_oname}_{opts.suffix}',
+                                    norm_wsum=False,
+                                    nthreads=opts.nthreads,
+                                    do_mfs=opts.fits_mfs,
+                                    do_cube=opts.fits_cubes)
+                futures.append(fut)
 
             for fut in as_completed(futures):
                 try:

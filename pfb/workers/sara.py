@@ -287,6 +287,8 @@ def _sara(**kw):
     Nxmax = psi.Nxmax
     Nymax = psi.Nymax
 
+    print(f"Using {psi.nthreads_per_band} numba threads for each band", file=log)
+
     # number of frequency basis functions
     if opts.nbasisf is None:
         nbasisf = int(np.sum(fsel))

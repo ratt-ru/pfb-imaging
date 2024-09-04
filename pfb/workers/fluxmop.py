@@ -64,7 +64,7 @@ def fluxmop(**kw):
         from distributed import wait
         from pfb import set_client
         if opts.nworkers > 1:
-            client = set_client(opts.nworkers, log, stack)
+            client = set_client(opts.nworkers, log, stack, client_log_level=opts.log_level)
             from distributed import as_completed
         else:
             print("Faking client", file=log)

@@ -31,7 +31,6 @@ def init(**kw):
     Initialise Stokes data products for imaging
     '''
     opts = OmegaConf.create(kw)
-
     from pfb.utils.naming import set_output_names
     opts, basedir, oname = set_output_names(opts)
 
@@ -92,7 +91,7 @@ def init(**kw):
     dask.config.set(**{'array.slicing.split_large_chunks': False})
     from pfb import set_client
     from distributed import wait, get_client
-    client = set_client(opts.nworkers, log)
+    client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
 
     ti = time.time()
     _init(**opts)

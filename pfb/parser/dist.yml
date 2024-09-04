@@ -25,3 +25,7 @@ direct_to_workers:
   info:
     Connect direct to workers i.e. bypass scheduler.
     Faster but then the dashboard isn't very useful.
+log-level:
+  dtype: str
+  default: error
+  choices: [error, warning, info, debug]

@@ -8,19 +8,7 @@ import pywt
 from scipy.datasets import ascent
 from pfb.wavelets import coeff_size, signal_size, dwt2d, idwt2d, copyT
 from time import time
-
-
-from contextlib import contextmanager
-
-@contextmanager
-def numba_threads(n):
-    """Context manager for controlling Numba's number of threads."""
-    old_value = numba.config.NUMBA_NUM_THREADS
-    numba.config.NUMBA_NUM_THREADS = n
-    try:
-        yield
-    finally:
-        numba.config.NUMBA_NUM_THREADS = old_value
+from pfb.utils.misc import numba_threads
 
 
 @numba.njit

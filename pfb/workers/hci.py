@@ -77,17 +77,18 @@ def hci(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    with ExitStack() as stack:
-        import dask
-        dask.config.set(**{'array.slicing.split_large_chunks': False})
-        from pfb import set_client
-        from distributed import wait, get_client
-        client = set_client(opts.nworkers, log, stack)
+    import dask
+    dask.config.set(**{'array.slicing.split_large_chunks': False})
+    from pfb import set_client
+    from distributed import wait, get_client
+    client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
 
-        ti = time.time()
-        _hci(**opts)
+    ti = time.time()
+    _hci(**opts)
 
-        print(f"All done after {time.time() - ti}s", file=log)
+    print(f"All done after {time.time() - ti}s", file=log)
+
+    client.close()
 
 def _hci(**kw):
     opts = OmegaConf.create(kw)

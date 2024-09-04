@@ -1,6 +1,8 @@
 import sys
+from contextlib import contextmanager, nullcontext
 import numpy as np
 import numexpr as ne
+import numba
 from numba import jit, njit, prange
 from numba.extending import overload
 import dask
@@ -50,12 +52,22 @@ class ForkedPdb(pdb.Pdb):
             sys.stdin = _stdin
 
 
+@contextmanager
+def numba_threads(n):
+    """Context manager for controlling Numba's number of threads."""
+    old_value = numba.config.NUMBA_NUM_THREADS
+    numba.config.NUMBA_NUM_THREADS = n
+    try:
+        yield
+    finally:
+        numba.config.NUMBA_NUM_THREADS = old_value
+
+
 def compute_context(scheduler, output_filename, boring=True):
     if scheduler == "distributed":
         return performance_report(filename=output_filename + "_dask_report.html")
     else:
         if boring:
-            from contextlib import nullcontext
             return nullcontext()
         else:
             return ProgressBar()
