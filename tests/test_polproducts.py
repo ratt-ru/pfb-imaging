@@ -107,7 +107,7 @@ def test_polproducts(do_gains, ms_name):
                                         flip_w=flip_w,
                                         epsilon=epsilon,
                                         do_wgridding=True,
-                                        nthreads=8)
+                                        nthreads=1)
     model_vis_Q = np.zeros((nrow, nchan), dtype=np.complex128)
     for c in range(nchan):
         model_vis_Q[:, c:c+1] = dirty2vis(uvw=uvw,
@@ -122,7 +122,7 @@ def test_polproducts(do_gains, ms_name):
                                         flip_w=flip_w,
                                         epsilon=epsilon,
                                         do_wgridding=True,
-                                        nthreads=8)
+                                        nthreads=1)
     model_vis_U = np.zeros((nrow, nchan), dtype=np.complex128)
     for c in range(nchan):
         model_vis_U[:, c:c+1] = dirty2vis(uvw=uvw,
@@ -137,7 +137,7 @@ def test_polproducts(do_gains, ms_name):
                                         flip_w=flip_w,
                                         epsilon=epsilon,
                                         do_wgridding=True,
-                                        nthreads=8)
+                                        nthreads=1)
     model_vis_V = np.zeros((nrow, nchan), dtype=np.complex128)
     for c in range(nchan):
         model_vis_V[:, c:c+1] = dirty2vis(uvw=uvw,
@@ -152,7 +152,7 @@ def test_polproducts(do_gains, ms_name):
                                         flip_w=flip_w,
                                         epsilon=epsilon,
                                         do_wgridding=True,
-                                        nthreads=8)
+                                        nthreads=1)
 
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
     model_vis[:, :, 0] = model_vis_I + model_vis_Q
@@ -281,7 +281,7 @@ def test_polproducts(do_gains, ms_name):
         grid_args["fits_mfs"] = True
         grid_args["psf"] = True
         grid_args["residual"] = False
-        grid_args["nthreads"] = 8
+        grid_args["nthreads"] = 1
         grid_args["overwrite"] = True
         grid_args["robustness"] = 0.0
         grid_args["do_wgridding"] = True
