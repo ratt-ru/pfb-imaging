@@ -71,101 +71,105 @@ def grid(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    with ExitStack() as stack:
-        from pfb import set_client
-        if opts.nworkers > 1:
-            client = set_client(opts.nworkers, log, stack, client_log_level=opts.log_level)
-            from distributed import as_completed
-        else:
-            print("Faking client", file=log)
-            from pfb.utils.dist import fake_client
-            client = fake_client()
-            names = [0]
-            as_completed = lambda x: x
+    from pfb import set_client
+    if opts.nworkers > 1:
+        client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
+        from distributed import as_completed
+    else:
+        print("Faking client", file=log)
+        from pfb.utils.dist import fake_client
+        client = fake_client()
+        names = [0]
+        as_completed = lambda x: x
 
-        from pfb.utils.naming import xds_from_url
-        from pfb.utils.fits import dds2fits
+    from pfb.utils.naming import xds_from_url
+    from pfb.utils.fits import dds2fits
 
-        ti = time.time()
-        residual_mfs = _grid(**opts)
+    ti = time.time()
+    residual_mfs = _grid(**opts)
 
-        dds = xds_from_url(dds_store.url)
-        dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
+    dds = xds_from_url(dds_store.url)
+    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
 
-        # convert to fits files
-        futures = []
-        if opts.fits_mfs or opts.fits_cubes:
-            print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
-            if opts.dirty:
-                fut = client.submit(dds2fits,
-                                    dds_list,
-                                    'DIRTY',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True,
-                                    nthreads=opts.nthreads,
-                                    do_mfs=opts.fits_mfs,
-                                    do_cube=opts.fits_cubes)
-                futures.append(fut)
-            if opts.psf:
-                fut = client.submit(dds2fits,
-                                    dds_list,
-                                    'PSF',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True,
-                                    nthreads=opts.nthreads,
-                                    do_mfs=opts.fits_mfs,
-                                    do_cube=opts.fits_cubes)
-                futures.append(fut)
-            if opts.residual and 'RESIDUAL' in dds[0]:
-                fut = client.submit(dds2fits,
-                                    dds_list,
-                                    'MODEL',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=False,
-                                    nthreads=opts.nthreads,
-                                    do_mfs=opts.fits_mfs,
-                                    do_cube=opts.fits_cubes)
-                futures.append(fut)
-            if 'MODEL' in dds[0]:
-                fut = client.submit(dds2fits,
-                                    dds_list,
-                                    'RESIDUAL',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True,
-                                    nthreads=opts.nthreads,
-                                    do_mfs=opts.fits_mfs,
-                                    do_cube=opts.fits_cubes)
-                futures.append(fut)
-            if opts.noise:
-                fut = client.submit(dds2fits,
-                                    dds_list,
-                                    'NOISE',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True,
-                                    nthreads=opts.nthreads,
-                                    do_mfs=opts.fits_mfs,
-                                    do_cube=opts.fits_cubes)
-                futures.append(fut)
+    # convert to fits files
+    futures = []
+    if opts.fits_mfs or opts.fits_cubes:
+        print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
+        if opts.dirty:
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'DIRTY',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=True,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
+        if opts.psf:
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'PSF',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=True,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
+        if opts.residual and 'RESIDUAL' in dds[0]:
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'MODEL',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=False,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
+        if 'MODEL' in dds[0]:
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'RESIDUAL',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=True,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
+        if opts.noise:
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'NOISE',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=True,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
 
-            if 'BEAM' in dds[0]:
-                fut = client.submit(dds2fits,
-                                    dds_list,
-                                    'BEAM',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=False,
-                                    nthreads=opts.nthreads,
-                                    do_mfs=opts.fits_mfs,
-                                    do_cube=opts.fits_cubes)
-                futures.append(fut)
+        if 'BEAM' in dds[0]:
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'BEAM',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=False,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
 
-            for fut in as_completed(futures):
-                try:
-                    column = fut.result()
-                except:
-                    continue
-                print(f'Done writing {column}', file=log)
+        for fut in as_completed(futures):
+            try:
+                column = fut.result()
+            except:
+                continue
+            print(f'Done writing {column}', file=log)
 
         print(f"All done after {time.time() - ti}s", file=log)
+
+        try:
+            client.close()
+        except Exception as e:
+            raise e
 
 def _grid(xdsi=None, **kw):
     opts = OmegaConf.create(kw)

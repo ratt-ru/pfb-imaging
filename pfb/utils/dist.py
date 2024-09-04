@@ -62,6 +62,9 @@ class fake_client(object):
     def gather(self, futures):
         return [f.result() for f in futures]
 
+    def close(self):
+        return
+
 
 def l1reweight_func(actors, rmsfactor, rms_comps=None, alpha=4):
     '''
