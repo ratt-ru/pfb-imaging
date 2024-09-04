@@ -26,7 +26,8 @@ requirements = [
                 "jax[cpu]",
                 "lz4",
                 "ipdb",
-                "psutil"
+                "psutil",
+                "bokeh < 3.0.0"
             ]
 
 

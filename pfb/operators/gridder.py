@@ -430,7 +430,7 @@ def image_data_products(dsl,
 
     # we usually want to re-evaluate this since the robustness may change
     if robustness is not None:
-        numba.set_num_threads(nthreads)
+        numba.set_num_threads(np.maximum(nthreads, 1))
         counts = _compute_counts(uvw,
                                 freq,
                                 mask,
