@@ -299,7 +299,7 @@ def _comps2vis_impl(uvw,
 
 
 def image_data_products(dsl,
-                        counts,
+                        dsp,
                         nx, ny,
                         nx_psf, ny_psf,
                         cellx, celly,
@@ -343,7 +343,6 @@ def image_data_products(dsl,
         'y': y
     }
 
-
     # expects a list
     if isinstance(dsl, str):
         dsl = [dsl]
@@ -382,8 +381,6 @@ def image_data_products(dsl,
     # output ds
     dso = xr.Dataset(attrs=attrs, coords=coords)
     dso['FREQ'] = (('chan',), freq)
-    if counts is not None:
-        dso['COUNTS'] = (('x', 'y'), counts)
 
     if model is None:
         if l2_reweight_dof:
@@ -391,6 +388,7 @@ def image_data_products(dsl,
                              'Perhaps transfer model from somewhere?')
     else:
         # do not apply weights in this direction
+        # actually model vis, this saves memory
         residual_vis = dirty2vis(
             uvw=uvw,
             freq=freq,
@@ -412,48 +410,58 @@ def image_data_products(dsl,
         residual_vis += vis
 
     if l2_reweight_dof:
-        ressq = (residual_vis*residual_vis.conj()).real
+        if dsp:
+            dsp = xds_from_list([dsp], drop_all_but='WEIGHT')
+            wgtp = dsp[0].WEIGHT.values
+        else:
+            wgtp = 1.0
         # mask needs to be bool here
+        ressq = (residual_vis*wgtp*residual_vis.conj()).real
         ssq = ressq[mask>0].sum()
         ovar = ssq/mask.sum()
-        chi2_dofp = np.mean(ressq[mask>0]*wgt[mask>0])
-        mean_dev = np.mean(ressq[mask>0]/ovar)
+        # chi2_dofp = np.mean(ressq[mask>0])
         if ovar:
-            wgt = (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
-            # now divide by ovar to scale to absolute units
-            # the chi2_dof after reweighting should be closer to one
-            wgt /= ovar
-            chi2_dof = np.mean(ressq[mask>0]*wgt[mask>0])
-            print(f'Band {bandid} chi2-dof changed from {chi2_dofp} to {chi2_dof} with mean deviation of {mean_dev}')
+            # scale the natural weights
+            # RHS is weight relative to unity since wgtp included in ressq
+            wgt *= (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
         else:
             wgt = None
 
-    # we usually want to re-evaluate this since the robustness may change
+    # re-evaluate since robustness and or wgt after reweight may change
     if robustness is not None:
-        numba.set_num_threads(np.maximum(nthreads, 1))
+        numba_threads = np.maximum(nthreads, 1)
+        numba.set_num_threads(numba_threads)
         counts = _compute_counts(uvw,
-                                freq,
-                                mask,
-                                wgt,
-                                nx, ny,
-                                cellx, celly,
-                                uvw.dtype,
-                                ngrid=np.minimum(nthreads, 8),  # limit number of grids
-                                usign=1.0 if flip_u else -1.0,
-                                vsign=1.0 if flip_v else -1.0)
-        imwgt = counts_to_weights(
+                                 freq,
+                                 mask,
+                                 wgt,
+                                 nx, ny,
+                                 cellx, celly,
+                                 uvw.dtype,
+                                 # limit number of grids
+                                 ngrid=np.minimum(numba_threads, 8),
+                                 usign=1.0 if flip_u else -1.0,
+                                 vsign=1.0 if flip_v else -1.0)
+        wgt = counts_to_weights(
             counts,
             uvw,
             freq,
+            wgt,
             nx, ny,
             cellx, celly,
             robustness,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
-        if wgt is not None:
-            wgt *= imwgt
-        else:
-            wgt = imwgt
+
+    if l2_reweight_dof:
+        # normalise to absolute units
+        ressq = (residual_vis*wgt*residual_vis.conj()).real
+        ssq = ressq[mask>0].sum()
+        ovar = ssq/mask.sum()
+        wgt /= ovar
+        ressq = (residual_vis*wgt*residual_vis.conj()).real
+        # chi2_dof = np.mean(ressq[mask>0])
+        # print(f'Band {bandid} chi2-dof changed from {chi2_dofp} to {chi2_dof}')
 
     # these are always used together
     if do_weight:

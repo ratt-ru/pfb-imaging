@@ -380,8 +380,11 @@ def _grid(**kw):
         freq_out = ds_dct['freq_out']
 
         if from_cache:
-            out_ds = xr.open_zarr(f'{dds_store.url}/time{timeid}_band{bandid}.zarr',
+            out_ds_name = f'{dds_store.url}/time{timeid}_band{bandid}.zarr'
+            out_ds = xr.open_zarr(out_ds_name,
                                   chunks=None)
+        else:
+            out_ds_name = None
 
         # compute lm coordinates of target
         if opts.target is not None:
@@ -457,7 +460,7 @@ def _grid(**kw):
 
         fut = client.submit(image_data_products,
                             dsl,
-                            None,  # counts
+                            out_ds_name,
                             nx, ny,
                             nx_psf, ny_psf,
                             cell_rad, cell_rad,

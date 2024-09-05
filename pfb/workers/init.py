@@ -324,7 +324,11 @@ def _init(**kw):
     ac_iter = as_completed(futures)
     for completed_future in ac_iter:
 
-        result = completed_future.result()
+        try:
+            result = completed_future.result()
+        except Exception as e:
+            raise e
+
         try:
             times_out.append(result[0])
             freqs_out.append(result[1])

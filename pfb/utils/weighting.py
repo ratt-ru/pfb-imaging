@@ -99,8 +99,9 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
         for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
             uvw_row = uvw[r]
             wgt_row = wgt[r]
+            mask_row = mask[r]
             for c in range(nchan):
-                if not mask[r, c]:
+                if not mask_row[c]:
                     continue
                 # current uv coords
                 chan_normfreq = normfreq[c]
@@ -136,9 +137,9 @@ def _es_kernel(x, beta, k):
 
 
 @njit(nogil=True, cache=True, parallel=True)
-def counts_to_weights(counts, uvw, freq, nx, ny,
-                       cell_size_x, cell_size_y, robust,
-                       usign=1.0, vsign=-1.0):
+def counts_to_weights(counts, uvw, freq, weight, nx, ny,
+                      cell_size_x, cell_size_y, robust,
+                      usign=1.0, vsign=-1.0):
     # ufreq
     u_cell = 1/(nx*cell_size_x)
     umax = np.abs(-1/cell_size_x/2 - u_cell/2)
@@ -152,9 +153,8 @@ def counts_to_weights(counts, uvw, freq, nx, ny,
     nchan = freq.size
     nrow = uvw.shape[0]
 
-    weights = np.zeros((nrow, nchan), dtype=counts.dtype)
     if not counts.any():
-        return weights
+        return weight
 
     # Briggs weighting factor
     if robust > -2:
@@ -166,6 +166,7 @@ def counts_to_weights(counts, uvw, freq, nx, ny,
     normfreq = freq / lightspeed
     for r in prange(nrow):
         uvw_row = uvw[r]
+        weight_row = weight[r]
         for c in range(nchan):
             # get current uv
             chan_normfreq = normfreq[c]
@@ -176,8 +177,8 @@ def counts_to_weights(counts, uvw, freq, nx, ny,
             # get v index
             v_idx = int(np.floor((v_tmp + vmax)/v_cell))
             if counts[u_idx, v_idx]:
-                weights[r, c] = 1.0/counts[u_idx, v_idx]
-    return weights
+                weight_row[c] = weight_row[c]/counts[u_idx, v_idx]
+    return weight
 
 
 
