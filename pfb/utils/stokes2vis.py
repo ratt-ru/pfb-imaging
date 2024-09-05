@@ -1,6 +1,7 @@
 import numpy as np
 import numexpr as ne
 import xarray as xr
+import numba
 from numba import njit, prange, literally
 from dask.graph_manipulation import clone
 from distributed import worker_client
@@ -41,6 +42,8 @@ def single_stokes(
                 timeid=None,
                 msid=None,
                 wid=None):
+
+    print('              Numba cache = ', numba.config.CACHE_DIR)
 
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
