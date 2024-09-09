@@ -92,17 +92,17 @@ def sara(**kw):
                      do_mfs=opts.fits_mfs,
                      do_cube=opts.fits_cubes)
             print('Done writing UPDATE', file=log)
-            try:
-                dds2fits(dds_list,
-                     'MPSF',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False,
-                     nthreads=opts.nthreads,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
-                print('Done writing MPSF', file=log)
-            except Exception as e:
-                print(e)
+            # try:
+            #     dds2fits(dds_list,
+            #          'MPSF',
+            #          f'{fits_oname}_{opts.suffix}',
+            #          norm_wsum=False,
+            #          nthreads=opts.nthreads,
+            #          do_mfs=opts.fits_mfs,
+            #          do_cube=opts.fits_cubes)
+            #     print('Done writing MPSF', file=log)
+            # except Exception as e:
+            #     print(e)
 
         print(f"All done after {time.time() - ti}s", file=log)
 
@@ -120,8 +120,8 @@ def _sara(**kw):
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
     from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
-    from pfb.utils.misc import l1reweight_func, taperf
-    from pfb.operators.hessian import hess_direct, hessian_psf_cube
+    from pfb.utils.misc import l1reweight_func
+    from pfb.operators.hessian import hess_psf
     from pfb.operators.psi import Psi
     from pfb.operators.gridder import compute_residual
     from copy import copy, deepcopy
@@ -161,7 +161,6 @@ def _sara(**kw):
     nband = freq_out.size
 
     # only need this to get ny_psf
-    psf = np.stack([ds.PSF.values for ds in dds], axis=0)
     dds = [ds.drop_vars('PSF') for ds in dds]
 
     # stitch dirty/psf in apparent scale
@@ -185,7 +184,7 @@ def _sara(**kw):
         dds = [ds.drop_vars('UPDATE') for ds in dds]
     else:
         update = np.zeros((nband, nx, ny))
-    psfhat = np.stack([ds.PSFHAT.values for ds in dds], axis=0)
+    abspsf = np.stack([np.abs(ds.PSFHAT.values) for ds in dds], axis=0)
     dds = [ds.drop_vars('PSFHAT') for ds in dds]
     beam = np.stack([ds.BEAM.values for ds in dds], axis=0)
     wsums = np.stack([ds.wsum for ds in dds], axis=0)
@@ -193,9 +192,7 @@ def _sara(**kw):
 
     wsum = np.sum(wsums)
     wsums /= wsum
-    psf /= wsum
-    psfhat /= wsum
-    abspsf = np.abs(psfhat)
+    abspsf /= wsum
     residual /= wsum
     residual_mfs = np.sum(residual, axis=0)
     model_mfs = np.mean(model[fsel], axis=0)
@@ -234,31 +231,15 @@ def _sara(**kw):
     # pre-allocate arrays for doing FFT's
     real_type = 'f8'
     complex_type = 'c16'
-    if opts.hess_approx == 'direct':
-        npix = np.maximum(nx, ny)
-        nyo2 = psfhat.shape[-1]
-        taperxy = taperf((nx, ny), np.minimum(int(0.1*npix), 32))
-        xhat = empty_noncritical((nband, nx_psf, nyo2),
-                                dtype=complex_type)
-        xpad = empty_noncritical((nband, nx_psf, ny_psf),
-                                dtype=real_type)
-        xout = empty_noncritical((nband, nx, ny),
-                                dtype=real_type)
-        precond = lambda x, mode : hess_direct(
-                                    x,
-                                    xpad=xpad,
-                                    xhat=xhat,
-                                    xout=xout,
-                                    psfhat=abspsf,
-                                    taperxy=taperxy,
-                                    lastsize=ny_psf,
-                                    nthreads=opts.nthreads,
-                                    sigmainvsq=wsums[:, None, None]*opts.epsfactor,
-                                    mode=mode)
-    elif opts.hess_approx == 'psf':
-        raise NotImplementedError
-    elif opts.hess_approx == 'wgt':
-        raise NotImplementedError
+    precond = hess_psf(nx, ny, abspsf,
+                       beam=beam,
+                       eta=opts.eta*wsums,
+                       nthreads=opts.nthreads,
+                       cgtol=opts.cg_tol,
+                       cgmaxit=opts.cg_maxit,
+                       cgverbose=opts.cg_verbose,
+                       cgrf=opts.cg_report_freq,
+                       taper_width=np.minimum(int(0.1*nx), 32))
 
     if opts.hess_norm is None:
         # if the grid worker had been rerun hess_norm won't be in attrs
@@ -268,8 +249,8 @@ def _sara(**kw):
                   file=log)
         else:
             print("Finding spectral norm of Hessian approximation", file=log)
-            func = lambda x: precond(x, 'forward')
-            hess_norm, hessbeta = power_method(func, (nband, nx, ny),
+            hess_norm, hessbeta = power_method(
+                                            precond.dot, (nband, nx, ny),
                                             tol=opts.pm_tol,
                                             maxit=opts.pm_maxit,
                                             verbosity=opts.pm_verbose,
@@ -309,8 +290,7 @@ def _sara(**kw):
         print('Initialising with L1 reweighted', file=log)
         if not update.any():
             raise ValueError("Cannot reweight before any updates have been performed")
-        # divide by taper so as not to bias rms_comps
-        psi.dot(update/taperxy, outvar)
+        psi.dot(update, outvar)
         tmp = np.sum(outvar, axis=0)
         # exclude zeros from padding DWT's
         # rms_comps = np.std(tmp[tmp!=0])
@@ -353,7 +333,10 @@ def _sara(**kw):
         mrange = range(iter0, iter0 + opts.niter)
     for k in mrange:
         print('Solving for update', file=log)
-        update = precond(residual, 'backward')
+        residual *= beam  # avoid copy
+        update = precond.idot(residual,
+                              mode=opts.hess_approx,
+                              x0=update)
         update_mfs = np.mean(update, axis=0)
         save_fits(update_mfs,
                   fits_oname + f'_{opts.suffix}_update_{k+1}.fits',
@@ -361,7 +344,7 @@ def _sara(**kw):
 
         modelp = deepcopy(model)
         xtilde = model + opts.gamma * update
-        grad21 = lambda x: -precond(xtilde - x, 'forward')/opts.gamma
+        grad21 = lambda x: -precond.dot(xtilde - x)/opts.gamma
         if iter0 == 0:
             lam = opts.init_factor * opts.rmsfactor * rms
         else:
@@ -467,16 +450,16 @@ def _sara(**kw):
         print(f'Computing residual', file=log)
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
-            resid = compute_residual(ds_name,
-                                     nx, ny,
-                                     cell_rad, cell_rad,
-                                     ds_name,
-                                     model[b],
-                                     nthreads=opts.nthreads,
-                                     epsilon=opts.epsilon,
-                                     do_wgridding=opts.do_wgridding,
-                                     double_accum=opts.double_accum)
-            residual[b] = resid
+            residual[b] = compute_residual(
+                                    ds_name,
+                                    nx, ny,
+                                    cell_rad, cell_rad,
+                                    ds_name,
+                                    model[b],
+                                    nthreads=opts.nthreads,
+                                    epsilon=opts.epsilon,
+                                    do_wgridding=opts.do_wgridding,
+                                    double_accum=opts.double_accum)
         residual /= wsum
         residual_mfs = np.sum(residual, axis=0)
         save_fits(residual_mfs,
@@ -530,8 +513,7 @@ def _sara(**kw):
 
         if k+1 - iter0 >= l1_reweight_from:
             print('Computing L1 weights', file=log)
-            # divide by taper so as not to bias rms_comps
-            psi.dot(update/taperxy, outvar)
+            psi.dot(update, outvar)
             tmp = np.sum(outvar, axis=0)
             # exclude zeros from padding DWT's
             # rms_comps = np.std(tmp[tmp!=0])

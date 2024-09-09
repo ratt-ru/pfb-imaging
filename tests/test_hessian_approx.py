@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 from pathlib import Path
 from pfb.operators.gridder import wgridder_conventions
-from pfb.operators.hessian import _hessian_impl as hessian
+from pfb.operators.hessian import _hessian_slice as hessian
 from pfb.operators.psf import psf_convolve_slice
 from pfb.utils.misc import set_image_size
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis

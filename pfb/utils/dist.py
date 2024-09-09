@@ -5,7 +5,7 @@ import numexpr as ne
 import xarray as xr
 from pfb.opt.pcg import pcg
 from pfb.operators.gridder import image_data_products, compute_residual
-from pfb.operators.hessian import _hessian_impl
+from pfb.operators.hessian import _hessian_slice
 from pfb.operators.psf import psf_convolve_slice
 from pfb.utils.weighting import _compute_counts
 from pfb.utils.misc import taperf, set_image_size
@@ -218,16 +218,16 @@ class band_actor(object):
                                        dtype=self.real_type)
 
 
-        self.sigmainvsq = opts.sigmainvsq
+        self.eta = opts.eta
         if opts.hess_approx=='wgt':
             self.hess = self.hess_wgt
         elif opts.hess_approx=='psf':
             self.hess = self.hess_psf
         elif opts.hess_approx=='direct':
             self.hess = self.hess_direct
-            if self.sigmainvsq < 1:
+            if self.eta < 1:
                 print(f'Warning - using dangerously low value of '
-                      f'{self.sigmainvsq} with direct Hessian approximation')
+                      f'{self.eta} with direct Hessian approximation')
         npix = np.maximum(self.nx, self.ny)
         self.taperxy = taperf((self.nx, self.ny), int(0.1*npix))
 
@@ -391,7 +391,7 @@ class band_actor(object):
 
     def hess_direct(self, x, mode='forward', sigma=None):
         if sigma is None:
-            sigma = self.sigmainvsq
+            sigma = self.eta
         if self.wsumb == 0:  # should not happen
             return np.zeros((self.nx, self.ny), dtype=self.real_type)
         self.xpad[...] = 0.0
@@ -418,7 +418,8 @@ class band_actor(object):
             return convx
 
         if mode=='forward':
-            convx += _hessian_impl(x,
+            convx += _hessian_slice(
+                                x,
                                 self.dds.UVW.values,
                                 self.dds.WEIGHT.values,
                                 self.dds.MASK.values,
@@ -431,7 +432,7 @@ class band_actor(object):
                                 double_accum=self.opts.double_accum,
                                 nthreads=self.nthreads)
 
-            return convx/self.wsum + self.sigmainvsq * x
+            return convx/self.wsum + self.eta * x
         else:
             raise NotImplementedError('Not yet')
 

@@ -27,7 +27,7 @@ inputs:
     default: 1e-5
     info:
       If using mask to construct model construct it where model > min-model
-  sigmainvsq:
+  eta:
     dtype: float
     default: 1e-5
     abbreviation: sinv

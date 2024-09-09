@@ -1233,6 +1233,17 @@ def parallel_standard_normal(shape):
 
     return result
 
+
+def taperf(shape, taper_width):
+    tapers1d = ()
+    for npix in shape:
+        taper = np.ones(npix)
+        taper[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
+        taper[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
+        tapers1d += (taper,)
+    return np.outer(*tapers1d)
+
+
 # def fft_interp(image, cellxi, cellyi, nxo, nyo,
 #                cellxo, cellyo, shiftx, shifty):
 #     '''

@@ -354,7 +354,7 @@ def _klean(**kw):
                         mopmask,
                         lastsize,
                         opts.nthreads,
-                        rmax,  # used as sigmainv
+                        rmax,  # used as eta
                         cgopts)
 
             model += opts.mop_gamma*x

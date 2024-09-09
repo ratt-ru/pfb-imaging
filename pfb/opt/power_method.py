@@ -50,9 +50,9 @@ def power_method(
     return beta, b
 
 
-def power(A, bp, bnorm, sigmainv):
+def power(A, bp, bnorm, eta):
     bp /= bnorm
-    b = A(bp, sigmainv)
+    b = A(bp, eta)
     bsumsq = np.sum(b**2)
     beta_num = np.vdot(b, bp)
     beta_den = np.vdot(bp, bp)

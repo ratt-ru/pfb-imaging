@@ -29,7 +29,7 @@ inputs:
     default: 'main'
     info:
       Can be used to specify a custom name for the image space data products
-  sigmainv:
+  eta:
     dtype: float
     default: 1e-5
     abbreviation: sinv

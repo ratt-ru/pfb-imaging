@@ -1,32 +1,35 @@
+from functools import partial
 import numpy as np
 import dask
 import dask.array as da
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from ducc0.fft import r2c, c2r
-from ducc0.misc import make_noncritical
+from ducc0.misc import empty_noncritical
 from uuid import uuid4
 from pfb.operators.psf import (psf_convolve_slice,
                                psf_convolve_cube)
+from pfb.opt.pcg import pcg
+from pfb.utils.misc import taperf
 
-
-def _hessian_impl(x,
-                  uvw=None,
-                  weight=None,
-                  vis_mask=None,
-                  freq=None,
-                  beam=None,
-                  x0=0.0,
-                  y0=0.0,
-                  flip_u=False,
-                  flip_v=True,
-                  flip_w=False,
-                  cell=None,
-                  do_wgridding=None,
-                  epsilon=None,
-                  double_accum=None,
-                  nthreads=None,
-                  sigmainvsq=None,
-                  wsum=1.0):
+def _hessian_slice(x,
+                   xout=None,
+                   uvw=None,
+                   weight=None,
+                   vis_mask=None,
+                   freq=None,
+                   beam=None,
+                   cell=None,
+                   x0=0.0,
+                   y0=0.0,
+                   flip_u=False,
+                   flip_v=True,
+                   flip_w=False,
+                   do_wgridding=True,
+                   epsilon=1e-7,
+                   double_accum=True,
+                   nthreads=1,
+                   eta=1.0,
+                   wsum=None):
     '''
     Apply vis space Hessian approximation on a slice of an image.
 
@@ -63,6 +66,7 @@ def _hessian_impl(x,
                     vis=mvis,
                     wgt=weight,
                     mask=vis_mask,
+                    dirty=xout,  # return in case xout is None
                     npix_x=nx,
                     npix_y=ny,
                     pixsize_x=cell,
@@ -77,69 +81,50 @@ def _hessian_impl(x,
                     do_wgridding=do_wgridding,
                     double_precision_accumulation=double_accum,
                     divide_by_n=False)
-    convim /= wsum
+
+    if wsum is not None:
+        convim /= wsum
 
     if beam is not None:
         convim *= beam
 
-    if sigmainvsq is not None:
-        convim += sigmainvsq * x
+    if eta is not None:
+        convim += eta * x
 
     return convim
 
 
-# Kept in case we need them in the future
-# def _hessian(x, uvw, weight, vis_mask, freq, beam, hessopts):
-#     return _hessian_impl(x, uvw[0][0], weight[0][0], vis_mask[0][0], freq[0],
-#                          beam, **hessopts)
-
-# def hessian(x, uvw, weight, vis_mask, freq, beam, hessopts):
-#     if beam is None:
-#         bout = None
-#     else:
-#         bout = ('nx', 'ny')
-#     return da.blockwise(_hessian, ('nx', 'ny'),
-#                         x, ('nx', 'ny'),
-#                         uvw, ('row', 'three'),
-#                         weight, ('row', 'chan'),
-#                         vis_mask, ('row', 'chan'),
-#                         freq, ('chan',),
-#                         beam, bout,
-#                         hessopts, None,
-#                         dtype=x.dtype)
-
-
-def _hessian_psf_slice(
-                    xpad,  # preallocated array to store padded image
-                    xhat,  # preallocated array to store FTd image
-                    xout,  # preallocated array to store output image
-                    psfhat,
-                    beam,
-                    lastsize,
-                    x,     # input image, not overwritten
+def _hessian_psf_slice(x,       # input image, not overwritten
+                    xpad=None,  # preallocated array to store padded image
+                    xhat=None,  # preallocated array to store FTd image
+                    xout=None,  # preallocated array to store output image
+                    abspsf=None,
+                    beam=None,
+                    lastsize=None,
                     nthreads=1,
-                    sigmainv=1,
-                    wsum=None):
+                    eta=None):
     """
     Tikhonov regularised Hessian approx
     """
+    nx, ny = x.shape
+    xpad[...] = 0.0
     if beam is not None:
-        psf_convolve_slice(xpad, xhat, xout,
-                           psfhat, lastsize, x*beam,
-                           nthreads=nthreads)
+        xpad[0:nx, 0:ny] = x*beam
     else:
-        psf_convolve_slice(xpad, xhat, xout,
-                           psfhat, lastsize, x,
-                           nthreads=nthreads)
+        xpad[0:nx, 0:ny] = x
+    r2c(xpad, axes=(0, 1), nthreads=nthreads,
+        forward=True, inorm=0, out=xhat)
+    xhat *= abspsf
+    c2r(xhat, axes=(0, 1), forward=False, out=xpad,
+        lastsize=lastsize, inorm=2, nthreads=nthreads,
+        allow_overwriting_input=True)
+    xout[...] = xpad[0:nx, 0:ny]
 
     if beam is not None:
         xout *= beam
 
-    if wsum is not None:
-        xout /= wsum
-
-    if sigmainv:
-        xout += x * sigmainv
+    if eta is not None:
+        xout += x * eta
 
     return xout
 
@@ -149,32 +134,28 @@ def hessian_psf_cube(
                     xhat,  # preallocated array to store FTd image
                     xout,  # preallocated array to store output image
                     beam,
-                    psfhat,
+                    abspsf,
                     lastsize,
                     x,     # input image, not overwritten
                     nthreads=1,
-                    sigmainv=1,
-                    wsum=None,
+                    eta=1,
                     mode='forward'):
     """
     Tikhonov regularised Hessian approx
     """
     if mode=='forward':
         if beam is not None:
-            psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x*beam,
+            psf_convolve_cube(xpad, xhat, xout, abspsf, lastsize, x*beam,
                             nthreads=nthreads)
         else:
-            psf_convolve_cube(xpad, xhat, xout, psfhat, lastsize, x,
+            psf_convolve_cube(xpad, xhat, xout, abspsf, lastsize, x,
                             nthreads=nthreads)
 
         if beam is not None:
             xout *= beam
 
-        if wsum is not None:
-            xout /= wsum
-
-        if sigmainv:
-            xout += x * sigmainv
+        if eta:
+            xout += x * eta
 
         return xout
     else:
@@ -185,32 +166,25 @@ def hess_direct(x,     # input image, not overwritten
                 xpad=None,  # preallocated array to store padded image
                 xhat=None,  # preallocated array to store FTd image
                 xout=None,  # preallocated array to store output image
-                psfhat=None,
+                abspsf=None,
                 taperxy=None,
                 lastsize=None,
                 nthreads=1,
-                sigmainvsq=1,
-                wsum=None,
+                eta=1,
                 mode='forward'):
     nband, nx, ny = x.shape
     xpad[...] = 0.0
-    # if mode == 'forward':
-    #     xpad[:, 0:nx, 0:ny] = x / taperxy[None]
-    # else:
     xpad[:, 0:nx, 0:ny] = x * taperxy[None]
     r2c(xpad, out=xhat, axes=(1,2),
         forward=True, inorm=0, nthreads=nthreads)
     if mode=='forward':
-        xhat *= (psfhat + sigmainvsq)
+        xhat *= (abspsf + eta)
     else:
-        xhat /= (psfhat + sigmainvsq)
+        xhat /= (abspsf + eta)
     c2r(xhat, axes=(1, 2), forward=False, out=xpad,
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)
     xout[...] = xpad[:, 0:nx, 0:ny]
-    # if mode=='forward':
-    #     xout /= taperxy[None]
-    # else:
     xout *= taperxy[None]
     return xout
 
@@ -219,31 +193,180 @@ def hess_direct_slice(x,     # input image, not overwritten
                 xpad=None,  # preallocated array to store padded image
                 xhat=None,  # preallocated array to store FTd image
                 xout=None,  # preallocated array to store output image
-                psfhat=None,
+                abspsf=None,
                 taperxy=None,
                 lastsize=None,
                 nthreads=1,
-                sigmainvsq=1,
-                wsum=None,
+                eta=1,
                 mode='forward'):
+    '''
+    Note eta must be relative to wsum (peak of PSF)
+    '''
     nx, ny = x.shape
     xpad[...] = 0.0
-    # if mode == 'forward':
-    #     xpad[0:nx, 0:ny] = x / taperxy
-    # else:
     xpad[0:nx, 0:ny] = x * taperxy
     r2c(xpad, out=xhat, axes=(0,1),
         forward=True, inorm=0, nthreads=nthreads)
     if mode=='forward':
-        xhat *= (psfhat + sigmainvsq)
+        xhat *= (abspsf + eta)
     else:
-        xhat /= (psfhat + sigmainvsq)
+        xhat /= (abspsf + eta)
     c2r(xhat, axes=(0, 1), forward=False, out=xpad,
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)
     xout[...] = xpad[0:nx, 0:ny]
-    # if mode=='forward':
-    #     xout /= taperxy
-    # else:
     xout *= taperxy
     return xout
+
+
+class hess_psf(object):
+    def __init__(self, nx, ny, abspsf,
+                 beam=None,
+                 eta=1.0,
+                 nthreads=1,
+                 cgtol=1e-3,
+                 cgmaxit=300,
+                 cgverbose=2,
+                 cgrf=25,
+                 taper_width=32,
+                 min_beam=5e-3):
+        self.nx = nx
+        self.ny = ny
+        self.abspsf = abspsf
+        self.nband, self.nx_psf, self.nyo2 = abspsf.shape
+        if beam is not None:
+            assert self.nband == beam.shape[0]
+            assert self.nx == beam.shape[1]
+            assert self.ny == beam.shape[2]
+            self.beam = beam
+        else:
+            self.beam = (None,)*self.nband
+        self.ny_psf = 2*(self.nyo2-1)
+        self.nthreads = nthreads
+        if isinstance(eta, float):
+            self.eta = np.tile(eta, self.nband)
+        else:
+            try:
+                self.eta = np.array(eta)
+                assert self.eta.size == self.nband
+            except Exception as e:
+                raise e
+
+
+        # per band tmp arrays
+        self.xhat = empty_noncritical((self.nx_psf, self.nyo2),
+                                      dtype='c16')
+        self.xpad = empty_noncritical((self.nx_psf, self.ny_psf),
+                                      dtype='f8')
+        # output cube
+        self.xout = empty_noncritical((self.nband, self.nx, self.ny),
+                                      dtype='f8')
+
+        # conjugate gradient params
+        self.cgtol=cgtol
+        self.cgmaxit=cgmaxit
+        self.cgverbose=cgverbose
+        self.cgrf=cgrf
+
+        # taper for direct mode
+        self.taperxy = taperf((nx, ny), taper_width)
+
+        # for beam application in direct mode
+        self.min_beam = min_beam
+
+    def dot(self, x):
+        if len(x.shape) == 3:
+            xtmp = x
+        elif len(x.shape) == 2:
+            xtmp = x[None, :, :]
+        else:
+            raise ValueError("Unsupported number of input dimensions")
+
+        nband, nx, ny = xtmp.shape
+        assert nband == self.nband
+        assert nx == self.nx
+        assert ny == self.ny
+
+        for b in range(nband):
+            self.xpad[...] = 0.0
+            if self.beam[b] is None:
+                self.xpad[0:self.nx, 0:self.ny] = xtmp[b]
+            else:
+                self.xpad[0:self.nx, 0:self.ny] = xtmp[b]*self.beam[b]
+            r2c(self.xpad, axes=(0, 1), nthreads=self.nthreads,
+                forward=True, inorm=0, out=self.xhat)
+            self.xhat *= self.abspsf[b]
+            c2r(self.xhat, axes=(0, 1), forward=False, out=self.xpad,
+                lastsize=self.ny_psf, inorm=2, nthreads=self.nthreads,
+                allow_overwriting_input=True)
+            if self.beam[b] is None:
+                self.xout[b] = self.xpad[0:nx, 0:ny]
+            else:
+                self.xout[b] = self.xpad[0:nx, 0:ny]*self.beam[b]
+
+        self.xout += xtmp * self.eta[:, None, None]
+
+        return self.xout
+
+    def hdot(self, x):
+        # Hermitian operator
+        return self.dot(x)
+
+    def idot(self, x, mode='psf', x0=None):
+        if len(x.shape) == 3:
+            xtmp = x
+        elif len(x.shape) == 2:
+            xtmp = x[None, :, :]
+        else:
+            raise ValueError("Unsupported number of dimensions")
+
+        nband, nx, ny = xtmp.shape
+        assert nband == self.nband
+        assert nx == self.nx
+        assert ny == self.ny
+
+        if x0 is None:
+            x0 = (None,)*self.nband
+
+        if mode=='direct':
+            for b in range(self.nband):
+                self.xout[b] = hess_direct_slice(x,
+                                    xpad=self.xpad,
+                                    xhat=self.xhat,
+                                    xout=self.xout[b],
+                                    abspsf=self.abspsf[b],
+                                    taperxy=self.taperxy,
+                                    lastsize=self.ny_psf,
+                                    nthreads=self.nthreads,
+                                    eta=self.eta[b],
+                                    mode='backward')
+                if self.beam[b] is not None:
+                    mask = (self.xout[b] > 0) & (self.beam[b] > self.min_beam)
+                    self.xout[b, mask] /= self.beam[b, mask]**2
+
+        elif mode=='psf':
+            for b in range(self.nband):
+                hess = partial(_hessian_psf_slice,
+                            xpad=self.xpad,
+                            xhat=self.xhat,
+                            xout=self.xout[b],
+                            abspsf=self.abspsf[b],
+                            beam=self.beam[b],
+                            lastsize=self.ny_psf,
+                            nthreads=self.nthreads,
+                            eta=self.eta[b])
+                self.xout[b] = pcg(hess,
+                            xtmp[b],
+                            x0=x0[b],
+                            tol=self.cgtol,
+                            maxit=self.cgmaxit,
+                            minit=1,
+                            verbosity=self.cgverbose,
+                            report_freq=self.cgrf,
+                            backtrack=False,
+                            return_resid=False)
+        else:
+            raise ValueError(f"Unknown mode {mode}")
+
+        return self.xout.copy()
+

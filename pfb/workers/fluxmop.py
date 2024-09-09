@@ -270,7 +270,7 @@ def _fluxmop(**kw):
         fut = client.submit(
             pcg_dds,
             ds_name,
-            opts.sigmainvsq,
+            opts.eta,
             opts.sigma,
             use_psf=opts.use_psf,
             residual_name=opts.residual_name,

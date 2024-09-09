@@ -3,10 +3,8 @@ from functools import partial
 import dask.array as da
 from distributed import wait
 from uuid import uuid4
-from ducc0.misc import make_noncritical
-from pfb.utils.misc import norm_diff, fitcleanbeam, Gaussian2D
+from pfb.utils.misc import norm_diff, fitcleanbeam, Gaussian2D, taperf
 from pfb.utils.naming import xds_from_list
-from pfb.operators.hessian import _hessian_impl, hess_direct_slice
 from ducc0.misc import empty_noncritical
 from ducc0.fft import c2c
 iFs = np.fft.ifftshift
@@ -105,7 +103,7 @@ def _pcg_psf_impl(psfhat,
                   beam,
                   lastsize,
                   nthreads,
-                  sigmainv,
+                  eta,
                   tol=1e-5,
                   maxit=500,
                   minit=100,
@@ -120,18 +118,15 @@ def _pcg_psf_impl(psfhat,
     _, nx_psf, nyo2 = psfhat.shape
     model = np.zeros((nband, nx, ny), dtype=b.dtype, order='C')
     # PCG preconditioner
-    if sigmainv > 0:
-        def M(x): return x / sigmainv
+    if eta > 0:
+        def M(x): return x / eta
     else:
         M = None
 
     for k in range(nband):
-        xpad = np.empty((nx_psf, lastsize), dtype=b.dtype, order='C')
-        xpad = make_noncritical(xpad)
-        xhat = np.empty((nx_psf, nyo2), dtype=psfhat.dtype, order='C')
-        xhat = make_noncritical(xhat)
-        xout = np.empty((nx, ny), dtype=b.dtype, order='C')
-        xout = make_noncritical(xout)
+        xpad = empty_noncritical((nx_psf, lastsize), dtype=b.dtype, order='C')
+        xhat = empty_noncritical((nx_psf, nyo2), dtype=psfhat.dtype, order='C')
+        xout = empty_noncritical((nx, ny), dtype=b.dtype, order='C')
         A = partial(_hessian_psf_slice,
                     xpad,
                     xhat,
@@ -140,7 +135,7 @@ def _pcg_psf_impl(psfhat,
                     beam[k],
                     lastsize,
                     nthreads=nthreads,
-                    sigmainv=sigmainv)
+                    eta=eta)
 
         model[k] = pcg(A, b[k], x0[k],
                        M=M, tol=tol, maxit=maxit, minit=minit,
@@ -155,7 +150,7 @@ def _pcg_psf(psfhat,
              beam,
              lastsize,
              nthreads,
-             sigmainv,
+             eta,
              cgopts):
     return _pcg_psf_impl(psfhat,
                          b,
@@ -163,7 +158,7 @@ def _pcg_psf(psfhat,
                          beam,
                          lastsize,
                          nthreads,
-                         sigmainv,
+                         eta,
                          **cgopts)
 
 def pcg_psf(psfhat,
@@ -172,7 +167,7 @@ def pcg_psf(psfhat,
             beam,
             lastsize,
             nthreads,
-            sigmainv,
+            eta,
             cgopts,
             compute=True):
 
@@ -209,7 +204,7 @@ def pcg_psf(psfhat,
                          beam, bout,
                          lastsize, None,
                          nthreads, None,
-                         sigmainv, None,
+                         eta, None,
                          cgopts, None,
                          align_arrays=False,
                          dtype=b.dtype)
@@ -219,26 +214,8 @@ def pcg_psf(psfhat,
         return model
 
 
-def taperf(shape, taper_width):
-    height, width = shape
-    array = np.ones((height, width))
-
-    # Create 1D taper for both dimensions
-    taper_x = np.ones(width)
-    taper_y = np.ones(height)
-
-    # Apply cosine taper to the edges
-    taper_x[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
-    taper_x[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
-
-    taper_y[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
-    taper_y[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
-
-    return np.outer(taper_y, taper_x)
-
-
 def pcg_dds(ds_name,
-            sigmainvsq,  # regularisation for Hessian approximation
+            eta,  # regularisation for Hessian approximation
             sigma,       # regularisation for preconditioner
             mask=1.0,
             use_psf=True,
@@ -255,6 +232,10 @@ def pcg_dds(ds_name,
     '''
     pcg for fluxmop
     '''
+    # avoid circular import
+    from pfb.operators.hessian import _hessian_slice, hess_direct_slice
+
+    # expects a list
     if not isinstance(ds_name, list):
         ds_name = [ds_name]
 
@@ -280,7 +261,7 @@ def pcg_dds(ds_name,
     j /= wsum
     # set sigmas relative to wsum
     # sigma *= wsum
-    # sigmainvsq *= wsum
+    # eta *= wsum
 
     # downweight edges of field compared to center
     # this allows the PCG to downweight the fit to the edges
@@ -288,7 +269,7 @@ def pcg_dds(ds_name,
     # stabalises the preconditioner
     width = np.minimum(int(0.1*nx), 32)
     taperxy = taperf((nx, ny), width)
-    # sigmainvsq /= taperxy
+    # eta /= taperxy
 
     # set precond if PSF is present
     if 'PSFHAT' in ds and use_psf:
@@ -323,7 +304,7 @@ def pcg_dds(ds_name,
                     taperxy=taperxy,
                     lastsize=ny_psf,
                     nthreads=nthreads,
-                    sigmainvsq=sigma,
+                    eta=sigma,
                     mode='backward')
 
         x0 = precond(j)
@@ -341,7 +322,7 @@ def pcg_dds(ds_name,
         precond = None
         x0 = np.zeros_like(j)
 
-    hess = partial(_hessian_impl,
+    hess = partial(_hessian_slice,
                    uvw=ds.UVW.values,
                    weight=ds.WEIGHT.values,
                    vis_mask=ds.MASK.values,
@@ -354,7 +335,7 @@ def pcg_dds(ds_name,
                    epsilon=epsilon,
                    double_accum=double_accum,
                    nthreads=nthreads,
-                   sigmainvsq=sigmainvsq,
+                   eta=eta,
                    wsum=wsum)
 
     x = pcg(hess,
@@ -375,7 +356,7 @@ def pcg_dds(ds_name,
         model = x
 
 
-    resid = ds.DIRTY.values - _hessian_impl(
+    resid = ds.DIRTY.values - _hessian_slice(
                                         model,
                                         ds.UVW.values,
                                         ds.WEIGHT.values,
@@ -389,7 +370,7 @@ def pcg_dds(ds_name,
                                         epsilon=epsilon,
                                         double_accum=double_accum,
                                         nthreads=nthreads,
-                                        sigmainvsq=0)
+                                        eta=0)
 
     ds = ds.assign(**{
         'MODEL_MOPPED': (('x','y'), model),
