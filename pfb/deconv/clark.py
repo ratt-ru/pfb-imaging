@@ -116,9 +116,9 @@ def clark(ID,
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
     IR = ID.copy()
     # pre-allocate arrays for doing FFT's
-    xout = empty_noncritical(ID.shape, dtype=ID.dtype)
-    xpad = empty_noncritical(PSF.shape, dtype=ID.dtype)
-    xhat = empty_noncritical(PSFHAT.shape, dtype=PSFHAT.dtype)
+    xout = empty_noncritical(ID.shape, dtype='f8')
+    xpad = empty_noncritical(PSF.shape, dtype='f8')
+    xhat = empty_noncritical(PSFHAT.shape, dtype='c16')
     # square avoids abs of full array
     IRsearch = np.sum(IR, axis=0)**2
     pq = IRsearch.argmax()

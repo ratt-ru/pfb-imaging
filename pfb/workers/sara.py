@@ -325,6 +325,7 @@ def _sara(**kw):
     best_rmax = rmax
     best_model = model.copy()
     diverge_count = 0
+    eps = 1.0
     print(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
     if opts.skip_model:
@@ -336,7 +337,8 @@ def _sara(**kw):
         residual *= beam  # avoid copy
         update = precond.idot(residual,
                               mode=opts.hess_approx,
-                              x0=update)
+                              # only warm start close to convergence
+                              x0=update if eps < 0.1 else None)
         update_mfs = np.mean(update, axis=0)
         save_fits(update_mfs,
                   fits_oname + f'_{opts.suffix}_update_{k+1}.fits',

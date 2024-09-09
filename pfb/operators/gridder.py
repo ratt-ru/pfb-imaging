@@ -423,6 +423,7 @@ def image_data_products(dsl,
         if ovar:
             # scale the natural weights
             # RHS is weight relative to unity since wgtp included in ressq
+            # tmp = (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
             wgt *= (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
         else:
             wgt = None
@@ -459,9 +460,28 @@ def image_data_products(dsl,
         ssq = ressq[mask>0].sum()
         ovar = ssq/mask.sum()
         wgt /= ovar
-        ressq = (residual_vis*wgt*residual_vis.conj()).real
+        # ressq = (residual_vis*wgt*residual_vis.conj()).real
         # chi2_dof = np.mean(ressq[mask>0])
         # print(f'Band {bandid} chi2-dof changed from {chi2_dofp} to {chi2_dof}')
+
+        import matplotlib.pyplot as plt
+        from scipy.stats import norm
+        x = np.linspace(-5, 5, 150)
+        y = norm.pdf(x, 0, 1)
+        fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(8, 12))
+        ax[0,0].hist((residual_vis.real*wgtp).ravel(), bins=15, density=True)
+        ax[0,0].plot(x, y, 'k')
+        ax[0,1].hist((residual_vis.real*wgt).ravel(), bins=15, density=True)
+        ax[0,1].plot(x, y, 'k')
+        ax[1,0].hist((residual_vis.imag*wgtp).ravel(), bins=15, density=True)
+        ax[1,0].plot(x, y, 'k')
+        ax[1,1].hist((residual_vis.imag*wgt).ravel(), bins=15, density=True)
+        ax[1,1].plot(x, y, 'k')
+        import os
+        cwd = os.getcwd()
+        bid = dso.attrs['bandid']
+        fig.savefig(f'{cwd}/resid_hist_{bid}.png')
+        # import ipdb; ipdb.set_trace()
 
     # these are always used together
     if do_weight:

@@ -63,32 +63,23 @@ def klean(**kw):
 
         dds = xds_from_url(dds_store.url)
 
-        from pfb.utils.fits import dds2fits, dds2fits_mfs
+        from pfb.utils.fits import dds2fits
 
 
         if opts.fits_mfs or opts.fits:
             print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
-
-        # convert to fits files
-        if opts.fits_mfs:
-            dds2fits_mfs(dds,
-                         'RESIDUAL',
-                         f'{fits_oname}_{opts.suffix}',
-                         norm_wsum=True)
-            dds2fits_mfs(dds,
-                         'MODEL',
-                         f'{fits_oname}_{opts.suffix}',
-                         norm_wsum=False)
-
-        if opts.fits_cubes:
             dds2fits(dds,
                      'RESIDUAL',
                      f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=True)
+                     norm_wsum=True,
+                     do_mfs=opts.fits_mfs,
+                     do_cube=opts.fits_cubes)
             dds2fits(dds,
                      'MODEL',
                      f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False)
+                     norm_wsum=False,
+                     do_mfs=opts.fits_mfs,
+                     do_cube=opts.fits_cubes)
 
         print(f"All done after {time.time() - ti}s", file=log)
 

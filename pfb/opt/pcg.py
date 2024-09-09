@@ -1,4 +1,6 @@
+from time import time
 import numpy as np
+import numexpr as ne
 from functools import partial
 import dask.array as da
 from distributed import wait
@@ -46,14 +48,35 @@ def pcg(A,
     x = x0
     eps = 1.0
     stall_count = 0
+    xp = x.copy()
+    rp = r.copy()
+    tcopy = 0.0
+    tA = 0.0
+    tvdot = 0.0
+    tupdate = 0.0
+    tp = 0.0
+    tnorm = 0.0
+    tii = time()
     while (eps > tol or k < minit) and k < maxit and stall_count < 5:
-        xp = x.copy()
-        rp = r.copy()
+        ti = time()
+        np.copyto(xp, x)
+        np.copyto(rp, r)
+        tcopy += (time() - ti)
+        ti = time()
         Ap = A(p)
+        tA += (time() - ti)
+        ti = time()
         rnorm = np.vdot(r, y)
         alpha = rnorm / np.vdot(p, Ap)
-        x = xp + alpha * p
-        r = rp + alpha * Ap
+        tvdot += (time() - ti)
+        ti = time()
+        ne.evaluate('xp + alpha*p',
+                    out=x)
+        ne.evaluate('rp + alpha*Ap',
+                    out=r)
+        # x = xp + alpha * p
+        # r = rp + alpha * Ap
+        tupdate += (time() - ti)
         y = M(r)
         rnorm_next = np.vdot(r, y)
         while rnorm_next > rnorm and backtrack:  # TODO - better line search
@@ -63,16 +86,22 @@ def pcg(A,
             y = M(r)
             rnorm_next = np.vdot(r, y)
 
+        ti = time()
         beta = rnorm_next / rnorm
-        p = beta * p - y
+        ne.evaluate('beta*p-y',
+                    out=p)
+        # p = beta * p - y
+        tp += (time() - ti)
         # if p is zero we should stop
         if not np.any(p):
             break
         rnorm = rnorm_next
         k += 1
         epsp = eps
+        ti = time()
         eps = norm_diff(x, xp)
         phi = rnorm / phi0
+        tnorm += (time() - ti)
 
         if np.abs(epsp - eps) < 1e-3*tol:
             stall_count += 1
@@ -80,6 +109,21 @@ def pcg(A,
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
                 #   file=log)
+    ttot = time() - tii
+    tcopy /= ttot
+    tA /= ttot
+    tvdot /= ttot
+    tupdate /= ttot
+    tp /= ttot
+    tnorm /= ttot
+    ttally = tcopy + tA + tvdot + tupdate + tp + tnorm
+    print('tcopy = ', tcopy)
+    print('tA = ', tA)
+    print('tvdot = ', tvdot)
+    print('tupdate = ', tupdate)
+    print('tp = ', tp)
+    print('tnorm = ', tnorm)
+    print('ttally = ', ttally)
 
     if k >= maxit:
         if verbosity:
@@ -124,16 +168,16 @@ def _pcg_psf_impl(psfhat,
         M = None
 
     for k in range(nband):
-        xpad = empty_noncritical((nx_psf, lastsize), dtype=b.dtype, order='C')
-        xhat = empty_noncritical((nx_psf, nyo2), dtype=psfhat.dtype, order='C')
-        xout = empty_noncritical((nx, ny), dtype=b.dtype, order='C')
+        xpad = empty_noncritical((nx_psf, lastsize), dtype=b.dtype)
+        xhat = empty_noncritical((nx_psf, nyo2), dtype=psfhat.dtype)
+        xout = empty_noncritical((nx, ny), dtype=b.dtype)
         A = partial(_hessian_psf_slice,
-                    xpad,
-                    xhat,
-                    xout,
-                    psfhat[k],
-                    beam[k],
-                    lastsize,
+                    xpad=xpad,
+                    xhat=xhat,
+                    xout=xout,
+                    abspsf=np.abs(psfhat[k]),
+                    beam=beam[k],
+                    lastsize=lastsize,
                     nthreads=nthreads,
                     eta=eta)
 

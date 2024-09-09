@@ -360,7 +360,7 @@ class hess_psf(object):
                             x0=x0[b],
                             tol=self.cgtol,
                             maxit=self.cgmaxit,
-                            minit=1,
+                            minit=3,
                             verbosity=self.cgverbose,
                             report_freq=self.cgrf,
                             backtrack=False,
