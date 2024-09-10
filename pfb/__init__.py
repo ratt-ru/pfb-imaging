@@ -11,10 +11,11 @@ import logging
 __version__ = '0.0.4'
 
 def set_envs(nthreads, ncpu):
-    os.environ["OMP_NUM_THREADS"] = str(nthreads)
-    os.environ["OPENBLAS_NUM_THREADS"] = str(nthreads)
-    os.environ["MKL_NUM_THREADS"] = str(nthreads)
-    os.environ["VECLIB_MAXIMUM_THREADS"] = str(nthreads)
+    os.environ["OMP_NUM_THREADS"] = '2'
+    os.environ["OPENBLAS_NUM_THREADS"] = '2'
+    os.environ["MKL_NUM_THREADS"] = '2'
+    os.environ["VECLIB_MAXIMUM_THREADS"] = '2'
+    os.environ["NPY_NUM_THREADS"] = '2'
     os.environ["NUMBA_NUM_THREADS"] = str(nthreads)
     os.environ["JAX_PLATFORMS"] = 'cpu'
     os.environ["JAX_ENABLE_X64"] = 'True'
