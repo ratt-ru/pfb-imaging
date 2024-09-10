@@ -1,5 +1,6 @@
 from functools import partial
 import numpy as np
+import numexpr as ne
 import dask
 import dask.array as da
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
@@ -10,6 +11,7 @@ from pfb.operators.psf import (psf_convolve_slice,
                                psf_convolve_cube)
 from pfb.opt.pcg import pcg
 from pfb.utils.misc import taperf
+from time import time
 
 def _hessian_slice(x,
                    xout=None,
@@ -107,14 +109,21 @@ def _hessian_psf_slice(x,       # input image, not overwritten
     Tikhonov regularised Hessian approx
     """
     nx, ny = x.shape
-    xpad[...] = 0.0
-    if beam is not None:
-        xpad[0:nx, 0:ny] = x*beam
-    else:
+    xpad[nx:, :] = 0.0
+    xpad[0:nx, ny:] = 0.0
+    if beam is None:
         xpad[0:nx, 0:ny] = x
+    else:
+        xpad[0:nx, 0:ny] = x*beam
     r2c(xpad, axes=(0, 1), nthreads=nthreads,
         forward=True, inorm=0, out=xhat)
-    xhat *= abspsf
+    # xhat *= abspsf
+    ne.evaluate('xhat * abspsf',
+                out=xhat,
+                local_dict={
+                    'xhat': xhat,
+                    'abspsf': abspsf},
+                casting='unsafe')
     c2r(xhat, axes=(0, 1), forward=False, out=xpad,
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)
@@ -123,8 +132,15 @@ def _hessian_psf_slice(x,       # input image, not overwritten
     if beam is not None:
         xout *= beam
 
-    if eta is not None:
-        xout += x * eta
+    ne.evaluate('xout + x * eta',
+                out=xout,
+                local_dict={
+                    'xout': xout,
+                    'x': x,
+                    'eta': eta
+                },
+                casting='unsafe')
+    # xout += x * eta
 
     return xout
 
@@ -234,7 +250,7 @@ class hess_psf(object):
         self.ny = ny
         self.abspsf = abspsf
         self.nband, self.nx_psf, self.nyo2 = abspsf.shape
-        if beam is not None:
+        if beam is not None and not (beam==1).all():
             assert self.nband == beam.shape[0]
             assert self.nx == beam.shape[1]
             assert self.ny == beam.shape[2]
@@ -242,6 +258,8 @@ class hess_psf(object):
         else:
             self.beam = (None,)*self.nband
         self.ny_psf = 2*(self.nyo2-1)
+        self.nx_pad = self.nx_psf - self.nx
+        self.ny_pad = self.ny_psf - self.ny
         self.nthreads = nthreads
         if isinstance(eta, float):
             self.eta = np.tile(eta, self.nband)
@@ -274,6 +292,19 @@ class hess_psf(object):
         # for beam application in direct mode
         self.min_beam = min_beam
 
+        self.xpad[...] = 0.0
+        self.xpad[nx:, :] = 1.0
+        self.xpad[0:nx, ny:] = 1.0
+        self.pad_mask = self.xpad>0
+        self.ix_pad = np.argwhere(self.pad_mask)[:, 0]
+        self.iy_pad = np.argwhere(self.pad_mask)[:, 1]
+        # self.xpad[...] = 0.0
+        # self.xpad[self.ix_pad, self.iy_pad] = 1.0
+        # import matplotlib.pyplot as plt
+        # plt.imshow(self.pad_mask.astype(np.float64))
+        # plt.show()
+        # import ipdb; ipdb.set_trace()
+
     def dot(self, x):
         if len(x.shape) == 3:
             xtmp = x
@@ -287,25 +318,56 @@ class hess_psf(object):
         assert nx == self.nx
         assert ny == self.ny
 
+        tr2c = 0.0
+        tconv = 0.0
+        tc2r = 0.0
+        ttot = 0.0
+        tii = time()
         for b in range(nband):
-            self.xpad[...] = 0.0
+            self.xpad[nx:, :] = 0.0
+            self.xpad[0:nx, ny:] = 0.0
             if self.beam[b] is None:
-                self.xpad[0:self.nx, 0:self.ny] = xtmp[b]
+                self.xpad[0:nx, 0:ny] = xtmp[b]
             else:
-                self.xpad[0:self.nx, 0:self.ny] = xtmp[b]*self.beam[b]
+                self.xpad[0:nx, 0:ny] = xtmp[b]*self.beam[b]
+            ti = time()
             r2c(self.xpad, axes=(0, 1), nthreads=self.nthreads,
                 forward=True, inorm=0, out=self.xhat)
-            self.xhat *= self.abspsf[b]
+            tr2c += (time() - ti)
+            ti = time()
+            ne.evaluate('xhat * abspsf',
+                        out=self.xhat,
+                        local_dict={
+                            'xhat': self.xhat,
+                            'abspsf': self.abspsf[b]},
+                        casting='unsafe')
+            # self.xhat *= self.abspsf[b]
+            tconv += (time() - ti)
+            ti = time()
             c2r(self.xhat, axes=(0, 1), forward=False, out=self.xpad,
                 lastsize=self.ny_psf, inorm=2, nthreads=self.nthreads,
                 allow_overwriting_input=True)
+            tc2r += (time() - ti)
             if self.beam[b] is None:
                 self.xout[b] = self.xpad[0:nx, 0:ny]
             else:
                 self.xout[b] = self.xpad[0:nx, 0:ny]*self.beam[b]
-
-        self.xout += xtmp * self.eta[:, None, None]
-
+        ne.evaluate('xout + xtmp * eta',
+                    out=self.xout,
+                    local_dict={
+                        'xout': self.xout,
+                        'xtmp': xtmp,
+                        'eta': self.eta[:, None, None]},
+                    casting='unsafe')
+        ttot = time() - tii
+        ttally = (tr2c + tconv + tc2r)/ttot
+        tr2c /= ttot
+        tconv /= ttot
+        tc2r /= ttot
+        print('tr2c = ', tr2c)
+        print('tconv =', tconv)
+        print('tc2r = ', tc2r)
+        print('ttally = ', ttally)
         return self.xout
 
     def hdot(self, x):

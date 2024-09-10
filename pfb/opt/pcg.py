@@ -71,9 +71,19 @@ def pcg(A,
         tvdot += (time() - ti)
         ti = time()
         ne.evaluate('xp + alpha*p',
-                    out=x)
+                    out=x,
+                    local_dict={
+                        'xp': xp,
+                        'alpha': alpha,
+                        'p': p},
+                    casting='unsafe')
         ne.evaluate('rp + alpha*Ap',
-                    out=r)
+                    out=r,
+                    local_dict={
+                        'rp': rp,
+                        'alpha': alpha,
+                        'Ap': Ap},
+                    casting='unsafe')
         # x = xp + alpha * p
         # r = rp + alpha * Ap
         tupdate += (time() - ti)
@@ -89,7 +99,12 @@ def pcg(A,
         ti = time()
         beta = rnorm_next / rnorm
         ne.evaluate('beta*p-y',
-                    out=p)
+                    out=p,
+                    local_dict={
+                        'beta': beta,
+                        'p': p,
+                        'y': y},
+                    casting='unsafe')
         # p = beta * p - y
         tp += (time() - ti)
         # if p is zero we should stop
