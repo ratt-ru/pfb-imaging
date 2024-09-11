@@ -329,11 +329,9 @@ def _init(**kw):
         except Exception as e:
             raise e
 
-        try:
+        if result is not None:
             times_out.append(result[0])
             freqs_out.append(result[1])
-        except:
-            pass  # no result if chunk fully flagged
 
         if isinstance(completed_future.result(), BaseException):
             print(completed_future.result())
@@ -372,6 +370,7 @@ def _init(**kw):
                             workers=worker,
                             key='image-'+uuid4().hex)
 
+
             ac_iter.add(future)
             associated_workers[future] = worker
             n_launched += 1
@@ -383,6 +382,10 @@ def _init(**kw):
 
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
+
+        # this should not be necessary but just in case
+        if ac_iter.is_empty():
+            break
 
     times_out = np.unique(times_out)
     freqs_out = np.unique(freqs_out)

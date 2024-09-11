@@ -419,11 +419,10 @@ def image_data_products(dsl,
         ressq = (residual_vis*wgtp*residual_vis.conj()).real
         ssq = ressq[mask>0].sum()
         ovar = ssq/mask.sum()
-        # chi2_dofp = np.mean(ressq[mask>0])
         if ovar:
             # scale the natural weights
             # RHS is weight relative to unity since wgtp included in ressq
-            # tmp = (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
+            print(np.mean(ressq[mask>0]/ovar), np.std(ressq[mask>0]/ovar))
             wgt *= (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
         else:
             wgt = None
@@ -460,9 +459,10 @@ def image_data_products(dsl,
         ssq = ressq[mask>0].sum()
         ovar = ssq/mask.sum()
         wgt /= ovar
-        # ressq = (residual_vis*wgt*residual_vis.conj()).real
-        # chi2_dof = np.mean(ressq[mask>0])
-        # print(f'Band {bandid} chi2-dof changed from {chi2_dofp} to {chi2_dof}')
+        ressq = (residual_vis*wgt*residual_vis.conj()).real
+        print(np.mean(ressq[mask>0]), np.std(ressq[mask>0]))
+
+        # import ipdb; ipdb.set_trace()
 
         import matplotlib.pyplot as plt
         from scipy.stats import norm

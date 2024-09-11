@@ -434,9 +434,10 @@ class hess_psf(object):
         assert ny == self.ny
 
         if x0 is None:
+            # initialise with direct estimate
             x0 = np.zeros_like(xtmp)
             for b in range(self.nband):
-                x0[b] = hess_direct_slice(xtmp,
+                x0[b] = hess_direct_slice(xtmp[b],
                                     xpad=self.xpad,
                                     xhat=self.xhat,
                                     xout=self.xout[b],
@@ -444,7 +445,7 @@ class hess_psf(object):
                                     taperxy=self.taperxy,
                                     lastsize=self.ny_psf,
                                     nthreads=self.nthreads,
-                                    eta=self.eta[b],
+                                    eta=self.eta[b]*np.sqrt(nx*ny),
                                     mode='backward')
                 if self.beam[b] is not None:
                     mask = (self.xout[b] > 0) & (self.beam[b] > self.min_beam)
@@ -452,7 +453,7 @@ class hess_psf(object):
 
         if mode=='direct':
             for b in range(self.nband):
-                self.xout[b] = hess_direct_slice(x,
+                self.xout[b] = hess_direct_slice(xtmp[b],
                                     xpad=self.xpad,
                                     xhat=self.xhat,
                                     xout=self.xout[b],
@@ -460,7 +461,7 @@ class hess_psf(object):
                                     taperxy=self.taperxy,
                                     lastsize=self.ny_psf,
                                     nthreads=self.nthreads,
-                                    eta=self.eta[b],
+                                    eta=self.eta[b]*np.sqrt(nx*ny),
                                     mode='backward')
                 if self.beam[b] is not None:
                     mask = (self.xout[b] > 0) & (self.beam[b] > self.min_beam)
