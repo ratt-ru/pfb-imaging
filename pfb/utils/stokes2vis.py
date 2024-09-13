@@ -101,7 +101,7 @@ def single_stokes(
     # we rely on this to check the number of output bands and
     # to ensure we don't end up with fully flagged chunks
     if flag.all():
-        return 1
+        return None
 
     nrow, nchan, ncorr = data.shape
 
