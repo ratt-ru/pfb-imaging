@@ -241,7 +241,7 @@ def _degrid(**kw):
                                 ridx, rcnts,
                                 tidx, tcnts,
                                 fidx, fcnts,
-                                remainder,
+                                mask,
                                 mds,
                                 modelf,
                                 tfunc,
