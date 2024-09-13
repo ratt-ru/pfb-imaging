@@ -177,7 +177,9 @@ def _degrid(**kw):
         # get a mask for each region
         for region in rfile:
             pixel_region = region.to_pixel(wcs)
-            region_mask = pixel_region.to_mask().to_image((nx, ny))
+            # why the transpose?
+            region_mask = pixel_region.to_mask().to_image((ny, nx))
+            region_mask = region_mask.T
             mask += region_mask
             masks.append(region_mask)
         if (mask > 1).any():
@@ -187,6 +189,27 @@ def _degrid(**kw):
         masks = [remainder] + masks
     else:
         masks = [np.ones((nx, ny), dtype=np.float64)]
+
+    # utime = utimes['file:///home/landman/testing/pfb/MS/point_gauss_nb.MS_p0']['FIELD0_DDID0_SCAN0']
+    # freq = freqs['file:///home/landman/testing/pfb/MS/point_gauss_nb.MS_p0']['FIELD0_DDID0_SCAN0']
+    # model = np.zeros((nx, ny), dtype=np.float64)
+    # tout = tfunc(np.mean(utime))
+    # fout = ffunc(np.mean(freq))
+    # image = np.zeros((nx, ny), dtype=np.float64)
+    # Ix = mds.location_x.values
+    # Iy = mds.location_y.values
+    # comps = mds.coefficients.values
+    # model[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
+    # import matplotlib.pyplot as plt
+    # for mask in masks:
+    #     plt.figure(1)
+    #     plt.imshow(mask)
+    #     plt.colorbar()
+    #     plt.figure(2)
+    #     plt.imshow(model)
+    #     plt.colorbar()
+    #     plt.show()
+    # import ipdb; ipdb.set_trace()
 
     print("Computing model visibilities", file=log)
     writes = []
