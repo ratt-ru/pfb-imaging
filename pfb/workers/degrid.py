@@ -160,18 +160,22 @@ def _degrid(**kw):
     # load region file if given
     masks = []
     if opts.region_file is not None:
-        rfile = Regions(opts.region_file)  # should detect format
+        # import ipdb; ipdb.set_trace()
+        rfile = Regions.read(opts.region_file)  # should detect format
         # get wcs for model
-        wcs = set_wcs(np.rad2deg(mds.cell_size_x),
-                      np.rad2deg(mds.cell_size_y),
+        wcs = set_wcs(np.rad2deg(mds.cell_rad_x),
+                      np.rad2deg(mds.cell_rad_y),
                       mds.npix_x,
                       mds.npix_y,
                       (mds.ra, mds.dec),
+                      mds.freqs.values,
                       header=False)
+        wcs = wcs.dropaxis(-1)
+        wcs = wcs.dropaxis(-1)
 
-        mask = np.zeros((nx, ny), dtype=np.uint8)
+        mask = np.zeros((nx, ny), dtype=np.float64)
         # get a mask for each region
-        for reg in rfile:
+        for region in rfile:
             pixel_region = region.to_pixel(wcs)
             region_mask = pixel_region.to_mask().to_image((nx, ny))
             mask += region_mask
@@ -182,7 +186,7 @@ def _degrid(**kw):
         # place DI component first
         masks = [remainder] + masks
     else:
-        masks = [np.ones((nx, ny), dtype=np.uint8)]
+        masks = [np.ones((nx, ny), dtype=np.float64)]
 
     print("Computing model visibilities", file=log)
     writes = []
