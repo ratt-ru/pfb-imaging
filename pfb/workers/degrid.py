@@ -95,7 +95,8 @@ def _degrid(**kw):
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import model as im2vis
     from pfb.operators.gridder import comps2vis, _comps2vis_impl
-    from pfb.utils.fits import load_fits, data_from_header
+    from pfb.utils.fits import load_fits, data_from_header, set_wcs
+    from regions import Regions
     from astropy.io import fits
     from pfb.utils.misc import compute_context
     import xarray as xr
@@ -156,6 +157,59 @@ def _degrid(**kw):
                                ipi=opts.integrations_per_image,
                                cpi=opts.channels_per_image)
 
+    # load region file if given
+    masks = []
+    if opts.region_file is not None:
+        # import ipdb; ipdb.set_trace()
+        rfile = Regions.read(opts.region_file)  # should detect format
+        # get wcs for model
+        wcs = set_wcs(np.rad2deg(mds.cell_rad_x),
+                      np.rad2deg(mds.cell_rad_y),
+                      mds.npix_x,
+                      mds.npix_y,
+                      (mds.ra, mds.dec),
+                      mds.freqs.values,
+                      header=False)
+        wcs = wcs.dropaxis(-1)
+        wcs = wcs.dropaxis(-1)
+
+        mask = np.zeros((nx, ny), dtype=np.float64)
+        # get a mask for each region
+        for region in rfile:
+            pixel_region = region.to_pixel(wcs)
+            # why the transpose?
+            region_mask = pixel_region.to_mask().to_image((ny, nx))
+            region_mask = region_mask.T
+            mask += region_mask
+            masks.append(region_mask)
+        if (mask > 1).any():
+            raise ValueError("Overlapping regions are not supported")
+        remainder = 1 - mask
+        # place DI component first
+        masks = [remainder] + masks
+    else:
+        masks = [np.ones((nx, ny), dtype=np.float64)]
+
+    # utime = utimes['file:///home/landman/testing/pfb/MS/point_gauss_nb.MS_p0']['FIELD0_DDID0_SCAN0']
+    # freq = freqs['file:///home/landman/testing/pfb/MS/point_gauss_nb.MS_p0']['FIELD0_DDID0_SCAN0']
+    # model = np.zeros((nx, ny), dtype=np.float64)
+    # tout = tfunc(np.mean(utime))
+    # fout = ffunc(np.mean(freq))
+    # image = np.zeros((nx, ny), dtype=np.float64)
+    # Ix = mds.location_x.values
+    # Iy = mds.location_y.values
+    # comps = mds.coefficients.values
+    # model[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
+    # import matplotlib.pyplot as plt
+    # for mask in masks:
+    #     plt.figure(1)
+    #     plt.imshow(mask)
+    #     plt.colorbar()
+    #     plt.figure(2)
+    #     plt.imshow(model)
+    #     plt.colorbar()
+    #     plt.show()
+    # import ipdb; ipdb.set_trace()
 
     print("Computing model visibilities", file=log)
     writes = []
@@ -164,82 +218,81 @@ def _degrid(**kw):
                           chunks=ms_chunks[ms],
                           group_cols=group_by)
 
-        out_data = []
-        for ds in xds:
-            # TODO - rephase if fields don't match
-            # radec = radecs[ms][idt]
-            # if not np.array_equal(radec, field.PHASE_DIR.data.squeeze()):
-            #     continue
-            fid = ds.FIELD_ID
-            ddid = ds.DATA_DESC_ID
-            scanid = ds.SCAN_NUMBER
-            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+        for i, mask in enumerate(masks):
+            out_data = []
+            columns = []
+            for ds in xds:
+                if i == 0:
+                    column_name = opts.model_column
+                else:
+                    column_name = f'{opts.model_column}{i}'
+                columns.append(column_name)
 
-            # time <-> row mapping
-            utime = da.from_array(utimes[ms][idt],
-                                  chunks=opts.integrations_per_image)
-            tidx = da.from_array(time_mapping[ms][idt]['start_indices'],
-                                 chunks=1)
-            tcnts = da.from_array(time_mapping[ms][idt]['counts'],
-                                  chunks=1)
+                fid = ds.FIELD_ID
+                ddid = ds.DATA_DESC_ID
+                scanid = ds.SCAN_NUMBER
+                idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
 
-            ridx = da.from_array(row_mapping[ms][idt]['start_indices'],
-                                 chunks=opts.integrations_per_image)
-            rcnts = da.from_array(row_mapping[ms][idt]['counts'],
-                                  chunks=opts.integrations_per_image)
+                # time <-> row mapping
+                utime = da.from_array(utimes[ms][idt],
+                                    chunks=opts.integrations_per_image)
+                tidx = da.from_array(time_mapping[ms][idt]['start_indices'],
+                                    chunks=1)
+                tcnts = da.from_array(time_mapping[ms][idt]['counts'],
+                                    chunks=1)
 
-            # freq <-> band mapping
-            freq = da.from_array(freqs[ms][idt],
-                                 chunks=opts.channels_per_image)
-            fidx = da.from_array(freq_mapping[ms][idt]['start_indices'],
-                                 chunks=1)
-            fcnts = da.from_array(freq_mapping[ms][idt]['counts'],
-                                  chunks=1)
+                ridx = da.from_array(row_mapping[ms][idt]['start_indices'],
+                                    chunks=opts.integrations_per_image)
+                rcnts = da.from_array(row_mapping[ms][idt]['counts'],
+                                    chunks=opts.integrations_per_image)
 
-            # number of chunks need to math in mapping and coord
-            ntime_out = len(tidx.chunks[0])
-            assert len(utime.chunks[0]) == ntime_out
-            nfreq_out = len(fidx.chunks[0])
-            assert len(freq.chunks[0]) == nfreq_out
-            # and they need to match the number of row chunks
-            uvw = clone(ds.UVW.data)
-            assert len(uvw.chunks[0]) == len(tidx.chunks[0])
-            vis = comps2vis(uvw,
-                            utime,
-                            freq,
-                            ridx, rcnts,
-                            tidx, tcnts,
-                            fidx, fcnts,
-                            mds,
-                            modelf,
-                            tfunc,
-                            ffunc,
-                            nthreads=opts.nthreads,
-                            epsilon=opts.epsilon,
-                            do_wgridding=opts.do_wgridding,
-                            freq_min=freq_min,
-                            freq_max=freq_max)
+                # freq <-> band mapping
+                freq = da.from_array(freqs[ms][idt],
+                                    chunks=opts.channels_per_image)
+                fidx = da.from_array(freq_mapping[ms][idt]['start_indices'],
+                                    chunks=1)
+                fcnts = da.from_array(freq_mapping[ms][idt]['counts'],
+                                    chunks=1)
 
-            # convert to single precision to write to MS
-            vis = vis.astype(np.complex64)
+                # number of chunks need to math in mapping and coord
+                ntime_out = len(tidx.chunks[0])
+                assert len(utime.chunks[0]) == ntime_out
+                nfreq_out = len(fidx.chunks[0])
+                assert len(freq.chunks[0]) == nfreq_out
+                # and they need to match the number of row chunks
+                uvw = clone(ds.UVW.data)
+                assert len(uvw.chunks[0]) == len(tidx.chunks[0])
+                vis = comps2vis(uvw,
+                                utime,
+                                freq,
+                                ridx, rcnts,
+                                tidx, tcnts,
+                                fidx, fcnts,
+                                mask,
+                                mds,
+                                modelf,
+                                tfunc,
+                                ffunc,
+                                nthreads=opts.nthreads,
+                                epsilon=opts.epsilon,
+                                do_wgridding=opts.do_wgridding,
+                                freq_min=freq_min,
+                                freq_max=freq_max)
 
-            if opts.accumulate:
-                vis += getattr(ds, opts.model_column).data
+                # convert to single precision to write to MS
+                vis = vis.astype(np.complex64)
 
-            out_ds = ds.assign(**{opts.model_column:
-                                 (("row", "chan", "corr"), vis)})
-            out_data.append(out_ds)
+                if opts.accumulate:
+                    vis += getattr(ds, column_name).data
 
-        writes.append(xds_to_table(out_data, ms,
-                                   columns=[opts.model_column],
-                                   rechunk=True))
+                out_ds = ds.assign(**{column_name:
+                                    (("row", "chan", "corr"), vis)})
+                out_data.append(out_ds)
 
-    # dask.visualize(writes, color="order", cmap="autumn",
-    #                node_attr={"penwidth": "4"},
-    #                filename=opts.output_filename + '_degrid_writes_I_ordered_graph.pdf',
-    #                optimize_graph=False)
-    # dask.visualize(writes, filename=opts.output_filename +
-    #                '_degrid_writes_I_graph.pdf', optimize_graph=False)
+            writes.append(xds_to_table(
+                                    out_data, ms,
+                                    columns=columns,
+                                    rechunk=True))
 
     if opts.nworkers > 1:
         scheduler = 'distributed'

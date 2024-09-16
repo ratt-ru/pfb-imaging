@@ -47,6 +47,12 @@ inputs:
     default: false
     info:
       Accumulate onto model column
+  region-file:
+    dtype: str
+    info:
+      A region file containing regions that need to be converted to separate measurement set columns.
+      Each region in the file will end up in a separate column labelled as model-column{#} with the
+      remainder going into model-column.
 
   _include:
     - (.)gridding.yml

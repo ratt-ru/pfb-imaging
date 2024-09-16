@@ -137,6 +137,7 @@ def comps2vis(
             rbin_idx, rbin_cnts,
             tbin_idx, tbin_cnts,
             fbin_idx, fbin_cnts,
+            region_mask,
             mds,
             modelf,
             tfunc,
@@ -162,6 +163,7 @@ def comps2vis(
                         tbin_cnts, 'r',
                         fbin_idx, 'f',
                         fbin_cnts, 'f',
+                        region_mask, None,
                         mds, None,
                         modelf, None,
                         tfunc, None,
@@ -187,6 +189,7 @@ def _comps2vis(
             rbin_idx, rbin_cnts,
             tbin_idx, tbin_cnts,
             fbin_idx, fbin_cnts,
+            region_mask,
             mds,
             modelf,
             tfunc,
@@ -205,6 +208,7 @@ def _comps2vis(
                         rbin_idx, rbin_cnts,
                         tbin_idx, tbin_cnts,
                         fbin_idx, fbin_cnts,
+                        region_mask,
                         mds,
                         modelf,
                         tfunc,
@@ -225,6 +229,7 @@ def _comps2vis_impl(uvw,
                     rbin_idx, rbin_cnts,
                     tbin_idx, tbin_cnts,
                     fbin_idx, fbin_cnts,
+                    region_mask,
                     mds,
                     modelf,
                     tfunc,
@@ -281,20 +286,22 @@ def _comps2vis_impl(uvw,
             fout = ffunc(np.mean(freq[indf]))
             image = np.zeros((nx, ny), dtype=comps.dtype)
             image[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
-            vis[indr, indf, 0] = dirty2vis(uvw=uvw,
-                                           freq=f,
-                                           dirty=image,
-                                           pixsize_x=cellx, pixsize_y=celly,
-                                           center_x=x0, center_y=y0,
-                                           flip_u=flip_u,
-                                           flip_v=flip_v,
-                                           flip_w=flip_w,
-                                           epsilon=epsilon,
-                                           do_wgridding=do_wgridding,
-                                           divide_by_n=divide_by_n,
-                                           nthreads=nthreads)
-            if ncorr_out > 1:
-                vis[indr, indf, -1] = vis[indr, indf, 0]
+            if np.any(region_mask):
+                image = np.where(region_mask, image, 0.0)
+                vis[indr, indf, 0] = dirty2vis(uvw=uvw,
+                                            freq=f,
+                                            dirty=image,
+                                            pixsize_x=cellx, pixsize_y=celly,
+                                            center_x=x0, center_y=y0,
+                                            flip_u=flip_u,
+                                            flip_v=flip_v,
+                                            flip_w=flip_w,
+                                            epsilon=epsilon,
+                                            do_wgridding=do_wgridding,
+                                            divide_by_n=divide_by_n,
+                                            nthreads=nthreads)
+                if ncorr_out > 1:
+                    vis[indr, indf, -1] = vis[indr, indf, 0]
     return vis
 
 
@@ -422,11 +429,13 @@ def image_data_products(dsl,
         if ovar:
             # scale the natural weights
             # RHS is weight relative to unity since wgtp included in ressq
-            print(np.mean(ressq[mask>0]/ovar), np.std(ressq[mask>0]/ovar))
+            # print(np.mean(ressq[mask>0]/ovar), np.std(ressq[mask>0]/ovar))
+            # wgt_relative_one = (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
+            # wgt *= wgt_relative_one
             wgt *= (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
         else:
             wgt = None
-
+        # import ipdb; ipdb.set_trace()
     # re-evaluate since robustness and or wgt after reweight may change
     if robustness is not None:
         numba_threads = np.maximum(nthreads, 1)
