@@ -67,7 +67,8 @@ def set_output_names(opts):
 
 def xds_from_url(url, columns='ALL', chunks=-1):
     '''
-    Returns a lazy view of the dataset
+    Returns a lazy view of all datasets contained in url
+    as well as a list of full paths to each one
     '''
     if columns.upper() != 'ALL':
         raise NotImplementedError
@@ -75,16 +76,22 @@ def xds_from_url(url, columns='ALL', chunks=-1):
         raise NotImplementedError
 
     url = url.rstrip('/')
-    from daskms.fsspec_store import DaskMSStore
-    store = DaskMSStore(url)
-
+    if '://' in url:
+        protocol = url.split('://')[0]
+        prefix = f'{protocol}://'
+    else:
+        protocol = 'file'
+        prefix = ''
+    fs = fsspec.filesystem(protocol)
+    ds_list = fs.glob(f'{url}/*.zarr')
+    ds_list = list(map(lambda x: prefix + x, ds_list))
     # these will only be read in on first value access and won't be chunked
     open_zarr = partial(xr.open_zarr, chunks=None)
-    xds = list(map(open_zarr, store.fs.glob(f'{url}/*.zarr')))
+    xds = list(map(open_zarr, ds_list))
 
     if not len(xds):
         raise ValueError(f'Nothing found at {url}')
-    return xds
+    return xds, ds_list
 
 
 def read_var(ds, var):

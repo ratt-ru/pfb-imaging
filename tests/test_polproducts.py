@@ -289,7 +289,7 @@ def test_polproducts(do_gains, ms_name):
         from pfb.workers.grid import _grid
         _grid(**grid_args)
 
-        dds = xds_from_url(dds_name)
+        dds, _ = xds_from_url(dds_name)
 
         for ds in dds:
             wsum = ds.WSUM.values

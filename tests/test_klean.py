@@ -249,7 +249,7 @@ def test_klean(do_gains, ms_name):
     _klean(**klean_args)
 
     # get inferred model
-    dds = xds_from_url(dds_name)
+    dds, _ = xds_from_url(dds_name)
     model_inferred = np.zeros((nchan, nx, ny))
     for ds in dds:
         b = int(ds.bandid)

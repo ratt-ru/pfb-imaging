@@ -9,7 +9,7 @@ import time
 if __name__=='__main__':
     # xds_name = '/scratch/bester/stage7_combined_bda_I.xds'
     xds_name = '/home/landman/testing/pfb/out/data_I.xds'
-    xds = xds_from_url(xds_name)
+    xds, _ = xds_from_url(xds_name)
     xds_store = DaskMSStore(xds_name)
     xds_list = xds_store.fs.glob(f'{xds_store.url}/*')
 

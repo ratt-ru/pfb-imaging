@@ -88,8 +88,7 @@ def grid(**kw):
     ti = time.time()
     residual_mfs = _grid(**opts)
 
-    dds = xds_from_url(dds_store.url)
-    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
+    dds, dds_list = xds_from_url(dds_store.url)
 
     # convert to fits files
     futures = []
@@ -210,7 +209,7 @@ def _grid(**kw):
         raise ValueError(f"There must be a dataset at {xds_store.url}")
 
     print(f"Lazy loading xds from {xds_store.url}", file=log)
-    xds = xds_from_url(xds_store.url)
+    xds, xds_list = xds_from_url(xds_store.url)
 
     times_in = []
     freqs_in = []
@@ -253,16 +252,6 @@ def _grid(**kw):
     print(f"Cell size set to {cell_size:.5e} arcseconds", file=log)
     print(f"Field of view is ({nx*cell_deg:.3e},{ny*cell_deg:.3e}) degrees",
           file=log)
-
-
-    # TODO - how to glob with protocol in tact?
-    ds_list = xds_store.fs.glob(f'{xds_store.url}/*')
-    if '://' in xds_store.url:
-        protocol = xds_store.url.split('://')[0]
-    else:
-        protocol = 'file'
-    url_prepend = protocol + '://'
-    ds_list = list(map(lambda x: url_prepend + x, ds_list))
 
     # create dds and cache
     dds_name = opts.output_filename + f'_{opts.suffix}' + '.dds'
@@ -322,7 +311,7 @@ def _grid(**kw):
         ntime = 1
         times_out = np.mean(times_in, keepdims=True)
         for b in range(nband):
-            for ds, ds_name in zip(xds, ds_list):
+            for ds, ds_name in zip(xds, xds_list):
                 if ds.bandid == b:
                     tbid = f'time0000_band{b:04d}'
                     xds_dct.setdefault(tbid, {})
@@ -336,7 +325,7 @@ def _grid(**kw):
         times_out = times_in
         for t in range(times_in.size):
             for b in range(nband):
-                for ds, ds_name in zip(xds, ds_list):
+                for ds, ds_name in zip(xds, xds_list):
                     if ds.time_out == times_in[t] and ds.bandid == b:
                         tbid = f'time{t:04d}_band{b:04d}'
                         xds_dct.setdefault(tbid, {})

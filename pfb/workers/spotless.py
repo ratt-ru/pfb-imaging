@@ -190,16 +190,7 @@ def _spotless(**kw):
     except Exception as e:
         raise ValueError(f"There must be a dataset at {xds_store.url}")
 
-    xds = xds_from_url(xds_name)
-
-    # TODO - how to glob with protocol in tact?
-    xds_list = xds_store.fs.glob(f'{xds_store.url}/*')
-    if '://' in xds_store.url:
-        protocol = xds_store.url.split('://')[0]
-    else:
-        protocol = 'file'
-    url_prepend = protocol + '://'
-    xds_list = list(map(lambda x: url_prepend + x, xds_list))
+    xds, xds_list = xds_from_url(xds_store.url)
 
     # create dds and cache
     dds_name = opts.output_filename + f'_{opts.suffix}' + '.dds'
@@ -231,7 +222,7 @@ def _spotless(**kw):
 
             from_cache = True
             print("Initialising from cached data products", file=log)
-            dds = xds_from_url(dds_store.url)
+            dds, dds_list = xds_from_url(dds_store.url)
             iter0 = dds[0].niters
         except Exception as e:
             print(f'Cache verification failed on {attr}. '

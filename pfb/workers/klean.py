@@ -61,7 +61,7 @@ def klean(**kw):
         ti = time.time()
         _klean(**opts)
 
-        dds = xds_from_url(dds_store.url)
+        dds, dds_list = xds_from_url(dds_store.url)
 
         from pfb.utils.fits import dds2fits
 

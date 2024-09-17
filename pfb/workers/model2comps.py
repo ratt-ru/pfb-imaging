@@ -81,8 +81,7 @@ def _model2comps(**kw):
 
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
-    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
-    dds = xds_from_url(dds_store.url)
+    dds, dds_list = xds_from_url(dds_store.url)
 
     if opts.model_out is not None:
         coeff_name = opts.model_out

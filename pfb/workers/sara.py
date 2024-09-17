@@ -55,13 +55,12 @@ def sara(**kw):
     basename = opts.output_filename
     fits_oname = f'{opts.fits_output_folder}/{oname}'
     dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
-    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
 
     with ExitStack() as stack:
         ti = time.time()
         _sara(**opts)
 
-        dds = xds_from_url(dds_store.url)
+        dds, dds_list = xds_from_url(dds_store.url)
 
         if opts.fits_mfs or opts.fits:
             from pfb.utils.fits import dds2fits
