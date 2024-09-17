@@ -310,7 +310,6 @@ def pcg_dds(ds_name,
         ds = ds.drop_vars(residual_name)
     else:
         j = ds.DIRTY.values * mask * ds.BEAM.values
-        ds = ds.drop_vars(('DIRTY'))
 
     psf = ds.PSF.values
     nx_psf, py_psf = psf.shape
@@ -318,9 +317,6 @@ def pcg_dds(ds_name,
     wsum = np.sum(ds.WEIGHT.values * ds.MASK.values)
     psf /= wsum
     j /= wsum
-    # set sigmas relative to wsum
-    # sigma *= wsum
-    # eta *= wsum
 
     # downweight edges of field compared to center
     # this allows the PCG to downweight the fit to the edges
@@ -359,7 +355,7 @@ def pcg_dds(ds_name,
                     xpad=xpad,
                     xhat=xhat,
                     xout=xout,
-                    psfhat=psfhat,
+                    abspsf=psfhat,
                     taperxy=taperxy,
                     lastsize=ny_psf,
                     nthreads=nthreads,
@@ -417,19 +413,18 @@ def pcg_dds(ds_name,
 
     resid = ds.DIRTY.values - _hessian_slice(
                                         model,
-                                        ds.UVW.values,
-                                        ds.WEIGHT.values,
-                                        ds.MASK.values,
-                                        ds.FREQ.values,
-                                        ds.BEAM.values,
+                                        uvw=ds.UVW.values,
+                                        weight=ds.WEIGHT.values,
+                                        vis_mask=ds.MASK.values,
+                                        freq=ds.FREQ.values,
+                                        beam=ds.BEAM.values,
                                         cell=ds.cell_rad,
                                         x0=ds.x0,
                                         y0=ds.y0,
                                         do_wgridding=do_wgridding,
                                         epsilon=epsilon,
                                         double_accum=double_accum,
-                                        nthreads=nthreads,
-                                        eta=0)
+                                        nthreads=nthreads)
 
     ds = ds.assign(**{
         'MODEL_MOPPED': (('x','y'), model),
