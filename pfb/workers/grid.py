@@ -37,7 +37,7 @@ def grid(**kw):
             ncpu = ncpu//2
 
     from daskms.fsspec_store import DaskMSStore
-    basename = f'{basedir}/{oname}'
+    basename = opts.output_filename
     fits_oname = f'{opts.fits_output_folder}/{oname}'
     dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
 

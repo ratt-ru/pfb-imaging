@@ -69,8 +69,6 @@ def init(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    basename = f'{basedir}/{oname}'
-
     from pfb import set_envs
     from ducc0.misc import resize_thread_pool, thread_pool_size
     resize_thread_pool(opts.nthreads)
