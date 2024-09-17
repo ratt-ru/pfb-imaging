@@ -199,7 +199,7 @@ def _grid(**kw):
         names = [0]
         as_completed = lambda x: x
 
-    basename = f'{opts.output_filename}'
+    basename = opts.output_filename
 
     # xds contains vis products, no imaging weights applied
     xds_name = f'{basename}.xds' if opts.xds is None else opts.xds
@@ -209,7 +209,8 @@ def _grid(**kw):
     except Exception as e:
         raise ValueError(f"There must be a dataset at {xds_store.url}")
 
-    xds = xds_from_url(xds_name)
+    print(f"Lazy loading xds from {xds_store.url}", file=log)
+    xds = xds_from_url(xds_store.url)
 
     times_in = []
     freqs_in = []
