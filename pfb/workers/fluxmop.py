@@ -56,7 +56,7 @@ def fluxmop(**kw):
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import xds_from_url
 
-    basename = f'{basedir}/{oname}'
+    basename = opts.output_filename
     fits_oname = f'{opts.fits_output_folder}/{oname}'
     dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
 
