@@ -27,7 +27,8 @@ requirements = [
                 "lz4",
                 "ipdb",
                 "psutil",
-                "bokeh < 3.0.0"
+                "bokeh < 3.0.0",
+                "regions"
             ]
 
 
