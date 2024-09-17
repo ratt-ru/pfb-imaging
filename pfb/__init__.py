@@ -61,7 +61,10 @@ def set_client(nworkers, log, stack=None, host_address=None,
     if host_address is not None:
         from distributed import Client
         print("Initialising distributed client.", file=log)
-        client = stack.enter_context(Client(host_address))
+        if stack is not None:
+            client = stack.enter_context(Client(host_address))
+        else:
+            client = Client(host_address)
     else:
         from dask.distributed import Client, LocalCluster
         print("Initialising client with LocalCluster.", file=log)
