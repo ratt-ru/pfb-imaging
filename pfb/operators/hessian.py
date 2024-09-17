@@ -30,7 +30,7 @@ def _hessian_slice(x,
                    epsilon=1e-7,
                    double_accum=True,
                    nthreads=1,
-                   eta=1.0,
+                   eta=None,
                    wsum=None):
     '''
     Apply vis space Hessian approximation on a slice of an image.
