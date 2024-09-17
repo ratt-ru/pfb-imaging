@@ -1,4 +1,5 @@
 import fsspec
+import s3fs
 from functools import partial
 import pickle
 import xarray as xr
@@ -159,9 +160,11 @@ def cache_opts(opts, url, protocol, name='opts.pkl'):
         with fs.open(f'{url}/{name}', 'wb') as f:
             pickle.dump(opts, f)
     elif protocol == 's3':
-        s3_client.put_object(Bucket=url,
-                             Key=name,
-                             Body=pickle.dumps(opts))
+        s3_client = s3fs.S3FileSystem(anon=False)
+        bucket = url.split('://')[1]
+        s3_path = f"{bucket}/{name}"
+        with s3_client.open(s3_path, 'wb') as f:
+            pickle.dump(opts, f)
     else:
         raise ValueError(f"protocol {protocol} not yet supported")
 
@@ -171,13 +174,11 @@ def get_opts(url, protocol, name='opts.pkl'):
         with fs.open(f'{url}/{name}', 'rb') as f:
             optsp = pickle.load(f)
     elif protocol == 's3':
-        import boto3
-        s3_client = boto3.client('s3')
-        response = s3_client.get_object(Bucket=url,
-                                        Key=name)
-        pickled_data = response['Body'].read()
-        # Deserialize the object with pickle
-        optsp = pickle.loads(pickled_data)
+        s3_client = s3fs.S3FileSystem(anon=False)
+        bucket = url.split('://')[1]
+        s3_path = f"{bucket}/{name}"
+        with s3_client.open(s3_path, 'rb') as f:
+            optsp = pickle.load(f)
     else:
         raise ValueError(f"protocol {protocol} not yet supported")
 
