@@ -55,13 +55,13 @@ def klean(**kw):
 
     basename = f'{basedir}/{oname}'
     fits_oname = f'{opts.fits_output_folder}/{oname}'
-    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
+    dds_name = f'{basename}_{opts.suffix}.dds'
 
     with ExitStack() as stack:
         ti = time.time()
         _klean(**opts)
 
-        dds, dds_list = xds_from_url(dds_store.url)
+        dds, dds_list = xds_from_url(dds_name)
 
         from pfb.utils.fits import dds2fits
 
@@ -108,11 +108,7 @@ def _klean(**kw):
         fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
-    dds_store = DaskMSStore(dds_name)
-    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
-    drop_vars = ['UVW','WEIGHT','MASK']
-    dds = xds_from_list(dds_list, nthreads=opts.nthreads,
-                        drop_vars=drop_vars)
+    dds, dds_list = xds_from_url(dds_name)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size

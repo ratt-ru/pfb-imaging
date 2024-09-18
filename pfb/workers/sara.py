@@ -54,13 +54,13 @@ def sara(**kw):
 
     basename = opts.output_filename
     fits_oname = f'{opts.fits_output_folder}/{oname}'
-    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
+    dds_name = f'{basename}_{opts.suffix}.dds'
 
     with ExitStack() as stack:
         ti = time.time()
         _sara(**opts)
 
-        dds, dds_list = xds_from_url(dds_store.url)
+        dds, dds_list = xds_from_url(dds_name)
 
         if opts.fits_mfs or opts.fits:
             from pfb.utils.fits import dds2fits
@@ -138,11 +138,7 @@ def _sara(**kw):
         fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
-    dds_store = DaskMSStore(dds_name)
-    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
-    dds = xds_from_list(dds_list,
-                        drop_vars=['UVW', 'WEIGHT', 'MASK'],
-                        nthreads=opts.nthreads)
+    dds, dds_list = xds_from_url(dds_name)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
@@ -159,11 +155,7 @@ def _sara(**kw):
 
     nband = freq_out.size
 
-    # only need this to get ny_psf
-    dds = [ds.drop_vars('PSF') for ds in dds]
-
-    # stitch dirty/psf in apparent scale
-    # drop_vars to avoid duplicates in memory
+    # drop_vars after access to avoid duplicates in memory
     # and avoid unintentional side effects?
     output_type = dds[0].DIRTY.dtype
     if 'RESIDUAL' in dds[0]:

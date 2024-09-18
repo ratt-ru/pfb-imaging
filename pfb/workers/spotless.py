@@ -49,7 +49,7 @@ def spotless(**kw):
         xds_store = DaskMSStore(xds_name)
         opts.xds = xds_name
     fits_oname = f'{opts.fits_output_folder}/{oname}'
-    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
+    dds_name = f'{basename}_{opts.suffix}.dds'
 
     OmegaConf.set_struct(opts, True)
 
@@ -81,7 +81,7 @@ def spotless(**kw):
         ti = time.time()
         _spotless(**opts)
 
-        dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
+        dds, dds_list = xds_from_url(dds_name)
 
         # convert to fits files
         futures = []
