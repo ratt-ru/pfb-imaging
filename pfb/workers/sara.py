@@ -34,7 +34,7 @@ def sara(**kw):
     OmegaConf.set_struct(opts, True)
 
     from pfb import set_envs
-    from ducc0.misc import resize_thread_pool, thread_pool_size
+    from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
@@ -56,54 +56,53 @@ def sara(**kw):
     fits_oname = f'{opts.fits_output_folder}/{oname}'
     dds_name = f'{basename}_{opts.suffix}.dds'
 
-    with ExitStack() as stack:
-        ti = time.time()
-        _sara(**opts)
+    ti = time.time()
+    _sara(**opts)
 
-        dds, dds_list = xds_from_url(dds_name)
+    dds, dds_list = xds_from_url(dds_name)
 
-        if opts.fits_mfs or opts.fits:
-            from pfb.utils.fits import dds2fits
-            print(f"Writing fits files to {fits_oname}_{opts.suffix}",
-                  file=log)
+    if opts.fits_mfs or opts.fits:
+        from pfb.utils.fits import dds2fits
+        print(f"Writing fits files to {fits_oname}_{opts.suffix}",
+                file=log)
 
-            dds2fits(dds_list,
-                     'RESIDUAL',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=True,
-                     nthreads=opts.nthreads,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
-            print('Done writing RESIDUAL', file=log)
-            dds2fits(dds_list,
-                     'MODEL',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False,
-                     nthreads=opts.nthreads,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
-            print('Done writing MODEL', file=log)
-            dds2fits(dds_list,
-                     'UPDATE',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False,
-                     nthreads=opts.nthreads,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
-            print('Done writing UPDATE', file=log)
-            # try:
-            #     dds2fits(dds_list,
-            #          'MPSF',
-            #          f'{fits_oname}_{opts.suffix}',
-            #          norm_wsum=False,
-            #          nthreads=opts.nthreads,
-            #          do_mfs=opts.fits_mfs,
-            #          do_cube=opts.fits_cubes)
-            #     print('Done writing MPSF', file=log)
-            # except Exception as e:
-            #     print(e)
+        dds2fits(dds_list,
+                'RESIDUAL',
+                f'{fits_oname}_{opts.suffix}',
+                norm_wsum=True,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes)
+        print('Done writing RESIDUAL', file=log)
+        dds2fits(dds_list,
+                'MODEL',
+                f'{fits_oname}_{opts.suffix}',
+                norm_wsum=False,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes)
+        print('Done writing MODEL', file=log)
+        dds2fits(dds_list,
+                'UPDATE',
+                f'{fits_oname}_{opts.suffix}',
+                norm_wsum=False,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes)
+        print('Done writing UPDATE', file=log)
+        # try:
+        #     dds2fits(dds_list,
+        #          'MPSF',
+        #          f'{fits_oname}_{opts.suffix}',
+        #          norm_wsum=False,
+        #          nthreads=opts.nthreads,
+        #          do_mfs=opts.fits_mfs,
+        #          do_cube=opts.fits_cubes)
+        #     print('Done writing MPSF', file=log)
+        # except Exception as e:
+        #     print(e)
 
-        print(f"All done after {time.time() - ti}s", file=log)
+    print(f"All done after {time.time() - ti}s", file=log)
 
 
 def _sara(**kw):
@@ -124,7 +123,7 @@ def _sara(**kw):
     from pfb.operators.psi import Psi
     from pfb.operators.gridder import compute_residual
     from copy import copy, deepcopy
-    from ducc0.misc import empty_noncritical
+    from ducc0.misc import empty_noncritical, thread_pool_size
     from pfb.prox.prox_21m import prox_21m_numba as prox_21
     # from pfb.prox.prox_21 import prox_21
     from pfb.utils.misc import fitcleanbeam, fit_image_cube, eval_coeffs_to_slice
@@ -260,6 +259,7 @@ def _sara(**kw):
     Nymax = psi.Nymax
 
     print(f"Using {psi.nthreads_per_band} numba threads for each band", file=log)
+    print(f"Using {thread_pool_size} threads for gridding", file=log)
 
     # number of frequency basis functions
     if opts.nbasisf is None:
@@ -504,7 +504,7 @@ def _sara(**kw):
                 print(f"Converged after {k+1} iterations.", file=log)
                 break
 
-        if k+1 - iter0 >= l1_reweight_from:
+        if (k+1 - iter0 >= l1_reweight_from) and (k+1 - iter0 < opts.niter):
             print('Computing L1 weights', file=log)
             psi.dot(update, outvar)
             tmp = np.sum(outvar, axis=0)

@@ -311,7 +311,7 @@ class hess_psf(object):
         assert nx == self.nx
         assert ny == self.ny
 
-        tii = time()
+        # tii = time()
         for b in range(nband):
             self.xpad.fill(0.0)
             if self.beam[b] is None:
@@ -340,7 +340,7 @@ class hess_psf(object):
                         'xtmp': xtmp,
                         'eta': self.eta[:, None, None]},
                     casting='unsafe')
-        print('ttot = ', time() - tii)
+        # print('ttot = ', time() - tii)
         return self.xout
 
     # def dot(self, x):

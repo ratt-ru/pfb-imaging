@@ -716,7 +716,8 @@ def compute_residual(dsl,
         do_wgridding=do_wgridding,
         nthreads=nthreads,
         divide_by_n=False,  # incorporate in smooth beam
-        sigma_min=1.1, sigma_max=3.0)
+        sigma_min=1.1, sigma_max=3.0,
+        verbosity=1)
 
 
     convim = vis2dirty(
@@ -736,7 +737,8 @@ def compute_residual(dsl,
         divide_by_n=False,  # incorporate in smooth beam
         nthreads=nthreads,
         sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=double_accum)
+        double_precision_accumulation=double_accum,
+        verbosity=1)
 
     # this is the once attenuated residual since
     # dirty is only attenuated once
