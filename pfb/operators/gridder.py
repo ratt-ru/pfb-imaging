@@ -3,7 +3,7 @@ Dask wrappers around the wgridder. These operators are per band
 because we are not guaranteed that each imaging band has the same
 number of rows after BDA.
 """
-
+from time import time
 import numpy as np
 import numba
 import concurrent.futures as cf
@@ -685,7 +685,10 @@ def compute_residual(dsl,
     if isinstance(dsl, str):
         dsl = [dsl]
 
+    tii = time()
+
     # currently only a single dds
+    ti = time()
     ds = xds_from_list(dsl, nthreads=nthreads)[0]
 
     uvw = ds.UVW.values
@@ -700,6 +703,9 @@ def compute_residual(dsl,
     x0 = ds.x0
     y0 = ds.y0
 
+    tread = time() - ti
+
+    ti = time()
     # do not apply weights in this direction
     model_vis = dirty2vis(
         uvw=uvw,
@@ -717,9 +723,10 @@ def compute_residual(dsl,
         nthreads=nthreads,
         divide_by_n=False,  # incorporate in smooth beam
         sigma_min=1.1, sigma_max=3.0,
-        verbosity=1)
+        verbosity=0)
+    tdegrid = time() - ti
 
-
+    ti = time()
     convim = vis2dirty(
         uvw=uvw,
         freq=freq,
@@ -738,16 +745,29 @@ def compute_residual(dsl,
         nthreads=nthreads,
         sigma_min=1.1, sigma_max=3.0,
         double_precision_accumulation=double_accum,
-        verbosity=1)
+        verbosity=0)
+    tgrid = time() - ti
 
     # this is the once attenuated residual since
     # dirty is only attenuated once
+    ti = time()
     residual = dirty - convim
+    tdiff = time() - ti
 
+    ti = time()
     ds['MODEL'] = (('x','y'), model)
     ds['RESIDUAL'] = (('x','y'), residual)
 
     # save
     ds.to_zarr(output_name, mode='a')
+    twrite = time() - ti
 
+    ttot = time() - tii
+    ttally = tread + tdegrid + tgrid + tdiff + twrite
+    print(f'tread = {tread/ttot}')
+    print(f'tdegrid = {tdegrid/ttot}')
+    print(f'tgrid = {tgrid/ttot}')
+    print(f'tdiff = {tdiff/ttot}')
+    print(f'twrite = {twrite/ttot}')
+    print(f'ttally = {ttally/ttot}')
     return residual
