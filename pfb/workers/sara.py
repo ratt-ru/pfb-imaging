@@ -259,7 +259,7 @@ def _sara(**kw):
     Nymax = psi.Nymax
 
     print(f"Using {psi.nthreads_per_band} numba threads for each band", file=log)
-    print(f"Using {thread_pool_size} threads for gridding", file=log)
+    print(f"Using {thread_pool_size()} threads for gridding", file=log)
 
     # number of frequency basis functions
     if opts.nbasisf is None:

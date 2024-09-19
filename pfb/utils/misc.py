@@ -1021,7 +1021,7 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
         return image_in
 
 
-@njit(**JIT_OPTIONS)
+@njit(**JIT_OPTIONS, parallel=True)
 def norm_diff(x, xp):
     return norm_diff_impl(x, xp)
 
@@ -1030,7 +1030,7 @@ def norm_diff_impl(x, xp):
     return NotImplementedError
 
 
-@overload(norm_diff_impl, jit_options=JIT_OPTIONS)
+@overload(norm_diff_impl, jit_options=JIT_OPTIONS, parallel=True)
 def nb_norm_diff_impl(x, xp):
     if x.ndim==3:
         def impl(x, xp):
@@ -1038,7 +1038,7 @@ def nb_norm_diff_impl(x, xp):
             num = 0.0
             den = 1e-12  # avoid div by zero
             for b in range(nband):
-                for i in range(nx):
+                for i in prange(nx):
                     for j in range(ny):
                         num += (x[b, i, j] - xp[b, i, j])**2
                         den += x[b, i, j]**2
@@ -1048,7 +1048,7 @@ def nb_norm_diff_impl(x, xp):
             nx, ny = x.shape
             num = 0.0
             den = 1e-12  # avoid div by zero
-            for i in range(nx):
+            for i in prange(nx):
                 for j in range(ny):
                     num += (x[i, j] - xp[i, j])**2
                     den += x[i, j]**2
