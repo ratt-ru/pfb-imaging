@@ -2,6 +2,7 @@
 import os
 import sys
 from contextlib import ExitStack
+import concurrent.futures as cf
 from pfb.workers.main import cli
 import click
 from omegaconf import OmegaConf
@@ -328,8 +329,7 @@ def _sara(**kw):
         residual *= beam  # avoid copy
         update = precond.idot(residual,
                               mode=opts.hess_approx,
-                              # only warm start close to convergence
-                              x0=update if eps < 0.1 else None)
+                              x0=update if update.any() else None)
         update_mfs = np.mean(update, axis=0)
         save_fits(update_mfs,
                   fits_oname + f'_{opts.suffix}_update_{k+1}.fits',
@@ -441,9 +441,10 @@ def _sara(**kw):
                   hdr_mfs)
 
         print(f'Computing residual', file=log)
+        write_futures = []
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
-            residual[b] = compute_residual(
+            residual[b], fut = compute_residual(
                                     ds_name,
                                     nx, ny,
                                     cell_rad, cell_rad,
@@ -453,6 +454,8 @@ def _sara(**kw):
                                     epsilon=opts.epsilon,
                                     do_wgridding=opts.do_wgridding,
                                     double_accum=opts.double_accum)
+            write_futures.append(fut)
+
         residual /= wsum
         residual_mfs = np.sum(residual, axis=0)
         save_fits(residual_mfs,
@@ -531,5 +534,8 @@ def _sara(**kw):
             if diverge_count > opts.diverge_count:
                 print("Algorithm is diverging. Terminating.", file=log)
                 break
+
+    # make sure write futures have finished
+    cf.wait(write_futures)
 
     return

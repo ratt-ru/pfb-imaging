@@ -273,7 +273,7 @@ def _klean(**kw):
         print(f'Computing residual', file=log)
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
-            resid = compute_residual(ds_name,
+            resid, _ = compute_residual(ds_name,
                                      nx, ny,
                                      cell_rad, cell_rad,
                                      ds_name,
@@ -349,7 +349,7 @@ def _klean(**kw):
             print(f'Computing residual', file=log)
             for ds_name, ds in zip(dds_list, dds):
                 b = int(ds.bandid)
-                resid = compute_residual(ds_name,
+                resid, _ = compute_residual(ds_name,
                                         nx, ny,
                                         cell_rad, cell_rad,
                                         ds_name,

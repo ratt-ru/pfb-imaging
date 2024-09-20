@@ -356,7 +356,7 @@ class band_actor(object):
             return np.zeros_like(x)
 
         # we don;t need counts here because we use the weights in the dds
-        residual = compute_residual(
+        residual, _ = compute_residual(
                                 self.cache_path,
                                 self.nx, self.ny,
                                 self.cell_rad, self.cell_rad,

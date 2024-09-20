@@ -3,6 +3,7 @@ Dask wrappers around the wgridder. These operators are per band
 because we are not guaranteed that each imaging band has the same
 number of rows after BDA.
 """
+import concurrent.futures as cf
 from time import time
 import numpy as np
 import numba
@@ -757,17 +758,27 @@ def compute_residual(dsl,
     ti = time()
     ds['MODEL'] = (('x','y'), model)
     ds['RESIDUAL'] = (('x','y'), residual)
+    tassign = time() - ti
 
     # save
-    ds.to_zarr(output_name, mode='a')
+    ti = time()
+    with cf.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(dataset_to_zarr, ds, output_name)
+    # future =None
+    # ti = time()
+    # ds.to_zarr(output_name, mode='a')
     twrite = time() - ti
 
     ttot = time() - tii
-    ttally = tread + tdegrid + tgrid + tdiff + twrite
+    ttally = tread + tdegrid + tgrid + tdiff + tassign + twrite
     print(f'tread = {tread/ttot}')
     print(f'tdegrid = {tdegrid/ttot}')
     print(f'tgrid = {tgrid/ttot}')
     print(f'tdiff = {tdiff/ttot}')
+    print(f'tassign = {tassign/ttot}')
     print(f'twrite = {twrite/ttot}')
     print(f'ttally = {ttally/ttot}')
-    return residual
+    return residual, future
+
+def dataset_to_zarr(ds, output_name):
+    ds.to_zarr(output_name, mode='a')
