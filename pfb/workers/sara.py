@@ -318,6 +318,7 @@ def _sara(**kw):
     best_model = model.copy()
     diverge_count = 0
     eps = 1.0
+    write_futures = None
     print(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
     if opts.skip_model:
@@ -440,6 +441,10 @@ def _sara(**kw):
                   fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
+        # make sure write futures have finished
+        if write_futures is not None:
+            cf.wait(write_futures)
+
         print(f'Computing residual', file=log)
         write_futures = []
         for ds_name, ds in zip(dds_list, dds):
@@ -479,18 +484,32 @@ def _sara(**kw):
         # these are not updated in compute_residual
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
-            ds = ds.assign(**{
-                'MODEL': (('x', 'y'), model[b]),
-                'MODEL_BEST': (('x', 'y'), best_model[b]),
-                'UPDATE': (('x', 'y'), update[b]),
-            })
+            ds['UPDATE'] = (('x', 'y'), update[b])
+            # don't write unecessarily
+            for var in ds.data_vars:
+                if var != 'UPDATE':
+                    ds = ds.drop_vars(var)
+
+            if (model==best_model).all():
+                ds['MODEL_BEST'] = (('x', 'y'), best_model[b])
+
+            # ds.assign(**{
+            #     'MODEL_BEST': (('x', 'y'), best_model[b]),
+            #     'UPDATE': (('x', 'y'), update[b]),
+            # })
             attrs = {}
             attrs['rms'] = best_rms
             attrs['rmax'] = best_rmax
             attrs['niters'] = k+1
             attrs['hess_norm'] = hess_norm
             ds = ds.assign_attrs(**attrs)
-            ds.to_zarr(ds_name, mode='a')
+
+
+            with cf.ThreadPoolExecutor(max_workers=1) as executor:
+                fut = executor.submit(ds.to_zarr, ds_name, mode='a')
+                write_futures.append(fut)
+
+            # ds.to_zarr(ds_name, mode='a')
 
 
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
