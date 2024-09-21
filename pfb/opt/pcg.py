@@ -1,11 +1,13 @@
 from time import time
 import numpy as np
+from numba import njit, prange
+from numba.extending import overload
 import numexpr as ne
 from functools import partial
 import dask.array as da
 from distributed import wait
 from uuid import uuid4
-from pfb.utils.misc import norm_diff, fitcleanbeam, Gaussian2D, taperf
+from pfb.utils.misc import norm_diff, fitcleanbeam, Gaussian2D, taperf, JIT_OPTIONS
 from pfb.utils.naming import xds_from_list
 from ducc0.misc import empty_noncritical
 from ducc0.fft import c2c
@@ -14,6 +16,161 @@ Fs = np.fft.fftshift
 
 # import pyscilog
 # log = pyscilog.get_logger('PCG')
+
+@njit(**JIT_OPTIONS, parallel=True)
+def update(x, xp, r, rp, p, Ap, alpha):
+    return update_impl(x, xp, r, rp, p, Ap, alpha)
+
+
+def update_impl(x, xp, r, rp, p, Ap, alpha):
+    return NotImplementedError
+
+
+@overload(update_impl, jit_options=JIT_OPTIONS, parallel=True)
+def nb_update_impl(x, xp, r, rp, p, Ap, alpha):
+    if x.ndim==3:
+        def impl(x, xp, r, rp, p, Ap, alpha):
+            nband, nx, ny = x.shape
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        x[b, i, j] = xp[b, i, j] + alpha * p[b, i, j]
+                        r[b, i, j] = rp[b, i, j] + alpha * Ap[b, i, j]
+            return x, r
+    elif x.ndim==2:
+        def impl(x, xp, r, rp, p, Ap, alpha):
+            nx, ny = x.shape
+            for i in prange(nx):
+                for j in range(ny):
+                    x[i, j] = xp[i, j] + alpha * p[i, j]
+                    r[i, j] = rp[i, j] + alpha * Ap[i, j]
+            return x, r
+    else:
+        raise ValueError("norm_diff is only implemented for 2D or 3D arrays")
+
+    return impl
+
+
+@njit(**JIT_OPTIONS, parallel=True)
+def alpha_update(r, y, p, Ap):
+    return alpha_update_impl(r, y, p, Ap)
+
+
+def alpha_update_impl(r, y, p, Ap):
+    return NotImplementedError
+
+
+@overload(alpha_update_impl, jit_options=JIT_OPTIONS, parallel=True)
+def nb_alpha_update_impl(r, y, p, Ap):
+    if r.ndim==2:
+        def impl(r, y, p, Ap):
+            rnorm = 0.0
+            rnorm_den = 0.0
+            nx, ny = r.shape
+            for i in prange(nx):
+                for j in range(ny):
+                    rnorm += r[i,j]*y[i,j]
+                    rnorm_den += p[i,j]*Ap[i,j]
+
+            alpha = rnorm/rnorm_den
+            return rnorm, alpha
+    elif r.ndim==3:
+        def impl(r, y, p, Ap):
+            rnorm = 0.0
+            rnorm_den = 0.0
+            nband, nx, ny = r.shape
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        rnorm += r[b,i,j]*y[b,i,j]
+                        rnorm_den += p[b,i,j]*Ap[b,i,j]
+
+            alpha = rnorm/rnorm_den
+            return rnorm, alpha
+    return impl
+
+
+@njit(**JIT_OPTIONS, parallel=True)
+def alpha_update(r, y, p, Ap):
+    return alpha_update_impl(r, y, p, Ap)
+
+
+def alpha_update_impl(r, y, p, Ap):
+    return NotImplementedError
+
+
+@overload(alpha_update_impl, jit_options=JIT_OPTIONS, parallel=True)
+def nb_alpha_update_impl(r, y, p, Ap):
+    if r.ndim==2:
+        def impl(r, y, p, Ap):
+            rnorm = 0.0
+            rnorm_den = 0.0
+            nx, ny = r.shape
+            for i in prange(nx):
+                for j in range(ny):
+                    rnorm += r[i,j]*y[i,j]
+                    rnorm_den += p[i,j]*Ap[i,j]
+
+            alpha = rnorm/rnorm_den
+            return rnorm, alpha
+    elif r.ndim==3:
+        def impl(r, y, p, Ap):
+            rnorm = 0.0
+            rnorm_den = 0.0
+            nband, nx, ny = r.shape
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        rnorm += r[b,i,j]*y[b,i,j]
+                        rnorm_den += p[b,i,j]*Ap[b,i,j]
+
+            alpha = rnorm/rnorm_den
+            return rnorm, alpha
+    return impl
+
+
+@njit(**JIT_OPTIONS, parallel=True)
+def beta_update(r, y, p, rnorm):
+    return beta_update_impl(r, y, p, rnorm)
+
+
+def beta_update_impl(r, y, p, rnorm):
+    return NotImplementedError
+
+
+@overload(beta_update_impl, jit_options=JIT_OPTIONS, parallel=True)
+def nb_beta_update_impl(r, y, p, rnorm):
+    if r.ndim==2:
+        def impl(r, y, p, rnorm):
+            rnorm_next = 0.0
+            nx, ny = r.shape
+            for i in prange(nx):
+                for j in range(ny):
+                    rnorm_next += r[i,j]*y[i,j]
+
+            beta = rnorm_next/rnorm
+
+            for i in prange(nx):
+                for j in range(ny):
+                    p[i,j] = beta * p[i,j] - y[i,j]
+            return rnorm_next, p
+    elif r.ndim==3:
+        def impl(r, y, p, rnorm):
+            rnorm_next = 0.0
+            nband, nx, ny = r.shape
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        rnorm_next += r[b,i,j]*y[b,i,j]
+
+            beta = rnorm_next/rnorm
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        p[b,i,j] = beta * p[b,i,j] - y[b,i,j]
+            return rnorm_next, p
+    return impl
+
 
 def pcg(A,
         b,
@@ -66,51 +223,32 @@ def pcg(A,
         Ap = A(p)
         tA += (time() - ti)
         ti = time()
-        rnorm = np.vdot(r, y)
-        alpha = rnorm / np.vdot(p, Ap)
+        # rnorm = np.vdot(r, y)
+        # alpha = rnorm / np.vdot(p, Ap)
+        # import ipdb; ipdb.set_trace()
+        rnorm, alpha = alpha_update(r, y, p, Ap)
         tvdot += (time() - ti)
         ti = time()
-        ne.evaluate('xp + alpha*p',
-                    out=x,
-                    local_dict={
-                        'xp': xp,
-                        'alpha': alpha,
-                        'p': p},
-                    casting='unsafe')
-        ne.evaluate('rp + alpha*Ap',
-                    out=r,
-                    local_dict={
-                        'rp': rp,
-                        'alpha': alpha,
-                        'Ap': Ap},
-                    casting='unsafe')
         # x = xp + alpha * p
         # r = rp + alpha * Ap
+        x, r = update(x, xp, r, rp, p, Ap, alpha)
         tupdate += (time() - ti)
         y = M(r)
-        rnorm_next = np.vdot(r, y)
-        while rnorm_next > rnorm and backtrack:  # TODO - better line search
-            alpha *= 0.75
-            x = xp + alpha * p
-            r = rp + alpha * Ap
-            y = M(r)
-            rnorm_next = np.vdot(r, y)
+
+        # while rnorm_next > rnorm and backtrack:  # TODO - better line search
+        #     alpha *= 0.75
+        #     x = xp + alpha * p
+        #     r = rp + alpha * Ap
+        #     y = M(r)
+        #     rnorm_next = np.vdot(r, y)
 
         ti = time()
-        beta = rnorm_next / rnorm
-        ne.evaluate('beta*p-y',
-                    out=p,
-                    local_dict={
-                        'beta': beta,
-                        'p': p,
-                        'y': y},
-                    casting='unsafe')
+        # rnorm_next = np.vdot(r, y)
+        # beta = rnorm_next / rnorm
         # p = beta * p - y
+        rnorm, p = beta_update(r, y, p, rnorm)
         tp += (time() - ti)
-        # if p is zero we should stop
-        if not np.any(p):
-            break
-        rnorm = rnorm_next
+        # rnorm = rnorm_next
         k += 1
         epsp = eps
         ti = time()
@@ -125,20 +263,14 @@ def pcg(A,
             print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
                 #   file=log)
     ttot = time() - tii
-    tcopy /= ttot
-    tA /= ttot
-    tvdot /= ttot
-    tupdate /= ttot
-    tp /= ttot
-    tnorm /= ttot
     ttally = tcopy + tA + tvdot + tupdate + tp + tnorm
-    print('tcopy = ', tcopy)
-    print('tA = ', tA)
-    print('tvdot = ', tvdot)
-    print('tupdate = ', tupdate)
-    print('tp = ', tp)
-    print('tnorm = ', tnorm)
-    print('ttally = ', ttally)
+    print('tcopy = ', tcopy/ttot)
+    print('tA = ', tA/ttot)
+    print('tvdot = ', tvdot/ttot)
+    print('tupdate = ', tupdate/ttot)
+    print('tp = ', tp/ttot)
+    print('tnorm = ', tnorm/ttot)
+    print('ttally = ', ttally/ttot)
 
     if k >= maxit:
         if verbosity:
