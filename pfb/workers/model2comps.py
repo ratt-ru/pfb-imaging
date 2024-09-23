@@ -336,8 +336,3 @@ def _model2comps(**kw):
                   fits_name,
                   hdr,
                   overwrite=True)
-
-
-
-
-    print("All done here.", file=log)

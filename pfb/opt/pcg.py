@@ -223,15 +223,29 @@ def pcg(A,
         Ap = A(p)
         tA += (time() - ti)
         ti = time()
-        # rnorm = np.vdot(r, y)
-        # alpha = rnorm / np.vdot(p, Ap)
+        rnorm = np.vdot(r, y)
+        alpha = rnorm / np.vdot(p, Ap)
         # import ipdb; ipdb.set_trace()
-        rnorm, alpha = alpha_update(r, y, p, Ap)
+        # rnorm, alpha = alpha_update(r, y, p, Ap)
         tvdot += (time() - ti)
         ti = time()
         # x = xp + alpha * p
         # r = rp + alpha * Ap
-        x, r = update(x, xp, r, rp, p, Ap, alpha)
+        ne.evaluate('xp + alpha*p',
+                    out=x,
+                    local_dict={
+                        'xp': xp,
+                        'alpha': alpha,
+                        'p': p},
+                    casting='unsafe')
+        ne.evaluate('rp + alpha*Ap',
+                    out=r,
+                    local_dict={
+                        'rp': rp,
+                        'alpha': alpha,
+                        'Ap': Ap},
+                    casting='unsafe')
+        # x, r = update(x, xp, r, rp, p, Ap, alpha)
         tupdate += (time() - ti)
         y = M(r)
 
@@ -243,12 +257,20 @@ def pcg(A,
         #     rnorm_next = np.vdot(r, y)
 
         ti = time()
-        # rnorm_next = np.vdot(r, y)
-        # beta = rnorm_next / rnorm
+        rnorm_next = np.vdot(r, y)
+        beta = rnorm_next / rnorm
+        ne.evaluate('beta*p-y',
+                    out=p,
+                    local_dict={
+                        'beta': beta,
+                        'p': p,
+                        'y': y},
+                    casting='unsafe')
+
         # p = beta * p - y
-        rnorm, p = beta_update(r, y, p, rnorm)
+        # rnorm, p = beta_update(r, y, p, rnorm)
         tp += (time() - ti)
-        # rnorm = rnorm_next
+        rnorm = rnorm_next
         k += 1
         epsp = eps
         ti = time()
