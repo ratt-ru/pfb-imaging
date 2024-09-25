@@ -166,6 +166,7 @@ def grid(**kw):
 
         print(f"All done after {time.time() - ti}s", file=log)
 
+    if opts.nworkers > 1:
         try:
             client.close()
         except Exception as e:
