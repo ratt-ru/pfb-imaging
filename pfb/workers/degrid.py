@@ -69,14 +69,19 @@ def degrid(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    with ExitStack() as stack:
-        from pfb import set_client
-        client = set_client(opts.nworkers, log, stack, client_log_level=opts.log_level)
+    # we need the collections
+    from pfb import set_client
+    client = set_client(opts.nworkers, log, None, client_log_level=opts.log_level)
 
-        ti = time.time()
-        _degrid(**opts)
+    ti = time.time()
+    _degrid(**opts)
 
-        print(f"All done after {time.time() - ti}s.", file=log)
+    print(f"All done after {time.time() - ti}s.", file=log)
+
+    try:
+        client.close()
+    except Exception as e:
+        raise e
 
 def _degrid(**kw):
     opts = OmegaConf.create(kw)
@@ -294,10 +299,6 @@ def _degrid(**kw):
                                     columns=columns,
                                     rechunk=True))
 
-    if opts.nworkers > 1:
-        scheduler = 'distributed'
-    else:
-        scheduler = None
-    with compute_context(scheduler, opts.mds+'_degrid'):
-        dask.compute(writes, optimize_graph=False)
+    # optimize_graph can make things much worse
+    dask.compute(writes)  #, optimize_graph=False)
 

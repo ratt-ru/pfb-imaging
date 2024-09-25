@@ -86,7 +86,10 @@ def init(**kw):
 
     print(f"All done after {time.time() - ti}s", file=log)
 
-    client.close()
+    try:
+        client.close()
+    except Exception as e:
+        raise e
 
 def _init(**kw):
     opts = OmegaConf.create(kw)
