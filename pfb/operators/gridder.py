@@ -241,6 +241,9 @@ def _comps2vis_impl(uvw,
                     ncorr_out=4,
                     freq_min=-np.inf,
                     freq_max=np.inf):
+    # why is this necessary?
+    resize_thread_pool(nthreads)
+
     # adjust for chunking
     # need a copy here if using multiple row chunks
     rbin_idx2 = rbin_idx - rbin_idx.min()
