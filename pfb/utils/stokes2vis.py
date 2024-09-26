@@ -43,8 +43,6 @@ def single_stokes(
                 msid=None,
                 wid=None):
 
-    print('              Numba cache = ', numba.config.CACHE_DIR)
-
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
     scanid = ds.SCAN_NUMBER

@@ -1021,7 +1021,7 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
         return image_in
 
 
-@njit(**JIT_OPTIONS, parallel=True)
+@njit(nogil=True, cache=True)
 def norm_diff(x, xp):
     return norm_diff_impl(x, xp)
 
@@ -1030,7 +1030,8 @@ def norm_diff_impl(x, xp):
     return NotImplementedError
 
 
-@overload(norm_diff_impl, jit_options=JIT_OPTIONS, parallel=True)
+# @overload(norm_diff_impl, jit_options={**JIT_OPTIONS, "parallel":True})
+@overload(norm_diff_impl, jit_options={**JIT_OPTIONS})  # parallel reduction slower?
 def nb_norm_diff_impl(x, xp):
     if x.ndim==3:
         def impl(x, xp):

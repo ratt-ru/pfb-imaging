@@ -17,7 +17,7 @@ Fs = np.fft.fftshift
 # import pyscilog
 # log = pyscilog.get_logger('PCG')
 
-@njit(**JIT_OPTIONS, parallel=True)
+@njit(nogil=True, cache=False, parallel=False)
 def update(x, xp, r, rp, p, Ap, alpha):
     return update_impl(x, xp, r, rp, p, Ap, alpha)
 
@@ -26,7 +26,7 @@ def update_impl(x, xp, r, rp, p, Ap, alpha):
     return NotImplementedError
 
 
-@overload(update_impl, jit_options=JIT_OPTIONS, parallel=True)
+@overload(update_impl, jit_options={**JIT_OPTIONS})  #, "parallel":True})
 def nb_update_impl(x, xp, r, rp, p, Ap, alpha):
     if x.ndim==3:
         def impl(x, xp, r, rp, p, Ap, alpha):
@@ -60,46 +60,7 @@ def alpha_update_impl(r, y, p, Ap):
     return NotImplementedError
 
 
-@overload(alpha_update_impl, jit_options=JIT_OPTIONS, parallel=True)
-def nb_alpha_update_impl(r, y, p, Ap):
-    if r.ndim==2:
-        def impl(r, y, p, Ap):
-            rnorm = 0.0
-            rnorm_den = 0.0
-            nx, ny = r.shape
-            for i in prange(nx):
-                for j in range(ny):
-                    rnorm += r[i,j]*y[i,j]
-                    rnorm_den += p[i,j]*Ap[i,j]
-
-            alpha = rnorm/rnorm_den
-            return rnorm, alpha
-    elif r.ndim==3:
-        def impl(r, y, p, Ap):
-            rnorm = 0.0
-            rnorm_den = 0.0
-            nband, nx, ny = r.shape
-            for b in range(nband):
-                for i in prange(nx):
-                    for j in range(ny):
-                        rnorm += r[b,i,j]*y[b,i,j]
-                        rnorm_den += p[b,i,j]*Ap[b,i,j]
-
-            alpha = rnorm/rnorm_den
-            return rnorm, alpha
-    return impl
-
-
-@njit(**JIT_OPTIONS, parallel=True)
-def alpha_update(r, y, p, Ap):
-    return alpha_update_impl(r, y, p, Ap)
-
-
-def alpha_update_impl(r, y, p, Ap):
-    return NotImplementedError
-
-
-@overload(alpha_update_impl, jit_options=JIT_OPTIONS, parallel=True)
+@overload(alpha_update_impl, jit_options={**JIT_OPTIONS, 'parallel':True})
 def nb_alpha_update_impl(r, y, p, Ap):
     if r.ndim==2:
         def impl(r, y, p, Ap):
@@ -138,7 +99,7 @@ def beta_update_impl(r, y, p, rnorm):
     return NotImplementedError
 
 
-@overload(beta_update_impl, jit_options=JIT_OPTIONS, parallel=True)
+@overload(beta_update_impl, jit_options={**JIT_OPTIONS, 'parallel':True})
 def nb_beta_update_impl(r, y, p, rnorm):
     if r.ndim==2:
         def impl(r, y, p, rnorm):
@@ -231,21 +192,21 @@ def pcg(A,
         ti = time()
         # x = xp + alpha * p
         # r = rp + alpha * Ap
-        ne.evaluate('xp + alpha*p',
-                    out=x,
-                    local_dict={
-                        'xp': xp,
-                        'alpha': alpha,
-                        'p': p},
-                    casting='unsafe')
-        ne.evaluate('rp + alpha*Ap',
-                    out=r,
-                    local_dict={
-                        'rp': rp,
-                        'alpha': alpha,
-                        'Ap': Ap},
-                    casting='unsafe')
-        # x, r = update(x, xp, r, rp, p, Ap, alpha)
+        # ne.evaluate('xp + alpha*p',
+        #             out=x,
+        #             local_dict={
+        #                 'xp': xp,
+        #                 'alpha': alpha,
+        #                 'p': p},
+        #             casting='unsafe')
+        # ne.evaluate('rp + alpha*Ap',
+        #             out=r,
+        #             local_dict={
+        #                 'rp': rp,
+        #                 'alpha': alpha,
+        #                 'Ap': Ap},
+        #             casting='unsafe')
+        x, r = update(x, xp, r, rp, p, Ap, alpha)
         tupdate += (time() - ti)
         y = M(r)
 
@@ -259,15 +220,17 @@ def pcg(A,
         ti = time()
         rnorm_next = np.vdot(r, y)
         beta = rnorm_next / rnorm
-        ne.evaluate('beta*p-y',
-                    out=p,
-                    local_dict={
-                        'beta': beta,
-                        'p': p,
-                        'y': y},
-                    casting='unsafe')
+        # ne.evaluate('beta*p-y',
+        #             out=p,
+        #             local_dict={
+        #                 'beta': beta,
+        #                 'p': p,
+        #                 'y': y},
+        #             casting='unsafe')
 
         # p = beta * p - y
+        p *= beta
+        p -= y
         # rnorm, p = beta_update(r, y, p, rnorm)
         tp += (time() - ti)
         rnorm = rnorm_next

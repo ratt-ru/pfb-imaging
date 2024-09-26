@@ -198,7 +198,7 @@ def filter_extreme_counts(counts, level=10.0):
     return counts
 
 
-@njit(**JIT_OPTIONS, parallel=True)
+@njit(nogil=True, cache=False, parallel=False)
 def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
                 ant1, ant2, pol, product, nc):
 
@@ -217,7 +217,7 @@ def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
     raise NotImplementedError
 
 
-@overload(_weight_data_impl, **JIT_OPTIONS, parallel=True, prefer_literal=True)
+@overload(_weight_data_impl, prefer_literal=True, jit_options={**JIT_OPTIONS, "parallel":True})
 def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product, nc):
 

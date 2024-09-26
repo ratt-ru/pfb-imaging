@@ -431,7 +431,9 @@ def image_data_products(dsl,
         if ovar:
             # scale the natural weights
             # RHS is weight relative to unity since wgtp included in ressq
-            # print(np.mean(ressq[mask>0]/ovar), np.std(ressq[mask>0]/ovar))
+            meani = np.mean(ressq[mask>0]/ovar)
+            stdi = np.std(ressq[mask>0]/ovar)
+            print(f"Band {bandid} before: mean = {meani:.3e}, std = {stdi:.3e}")
             # wgt_relative_one = (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
             # wgt *= wgt_relative_one
             wgt *= (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
@@ -471,7 +473,9 @@ def image_data_products(dsl,
         ovar = ssq/mask.sum()
         wgt /= ovar
         ressq = (residual_vis*wgt*residual_vis.conj()).real
-        print(np.mean(ressq[mask>0]), np.std(ressq[mask>0]))
+        meanf = np.mean(ressq[mask>0])
+        stdf = np.std(ressq[mask>0])
+        print(f"Band {bandid} after: mean = {meani:.3e}, std = {stdi:.3e}")
 
         # import ipdb; ipdb.set_trace()
 
