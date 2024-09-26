@@ -12,6 +12,7 @@ import dask
 import dask.array as da
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from ducc0.fft import c2r, r2c, c2c
+from ducc0.misc import resize_thread_pool
 from africanus.constants import c as lightspeed
 from pfb.utils.weighting import counts_to_weights, _compute_counts
 from pfb.utils.beam import eval_beam
