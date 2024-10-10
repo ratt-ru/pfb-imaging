@@ -117,11 +117,7 @@ inputs:
     - (.)out.yml
 
 outputs:
-  cds:
-    dtype: Directory
-    info: output cube dataset
-    mkdir: false
-
+  {}
 
 policies:
   pass_missing_as_none: true

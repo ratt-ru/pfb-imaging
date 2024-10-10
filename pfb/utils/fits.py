@@ -45,7 +45,7 @@ def save_fits(data, name, hdr, overwrite=True, dtype=np.float32):
 
 
 def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
-            unit='Jy/beam', GuassPar=None, ms_time=None):
+            unit='Jy/beam', GuassPar=None, ms_time=None, header=True):
     """
     cell_x/y - cell sizes in degrees
     nx/y - number of x and y pixels
@@ -75,37 +75,41 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         crpix3 = 1
     w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
     w.wcs.crpix = [1 + nx//2, 1 + ny//2, crpix3, 1]
+    w.wcs.equinox = 2000.0
 
-    header = w.to_header()
-    header['RESTFRQ'] = ref_freq
-    header['ORIGIN'] = 'pfb-imaging'
-    header['BTYPE'] = 'Intensity'
-    header['BUNIT'] = unit
-    header['SPECSYS'] = 'TOPOCENT'
-    if ms_time is not None:
-        # TODO - this is probably a bit of a round about way of doing this
-        unix_time = quantity(f'{ms_time}s').to_unix_time()
-        utc_iso = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
-        header['UTC_TIME'] = utc_iso
-        t = Time(utc_iso)
-        t.format = 'fits'
-        header['DATE-OBS'] = t.value
+    if header:
+        header = w.to_header()
+        header['RESTFRQ'] = ref_freq
+        header['ORIGIN'] = 'pfb-imaging'
+        header['BTYPE'] = 'Intensity'
+        header['BUNIT'] = unit
+        header['SPECSYS'] = 'TOPOCENT'
+        if ms_time is not None:
+            # TODO - this is probably a bit of a round about way of doing this
+            unix_time = quantity(f'{ms_time}s').to_unix_time()
+            utc_iso = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+            header['UTC_TIME'] = utc_iso
+            t = Time(utc_iso)
+            t.format = 'fits'
+            header['DATE-OBS'] = t.value
 
-    # What are these used for?
-    # if 'LONPOLE' in header:
-    #     header.pop('LONPOLE')
-    # if 'LATPOLE' in header:
-    #     header.pop('LATPOLE')
-    # if 'RADESYS' in header:
-    #     header.pop('RADESYS')
-    # if 'MJDREF' in header:
-    #     header.pop('MJDREF')
+        # What are these used for?
+        # if 'LONPOLE' in header:
+        #     header.pop('LONPOLE')
+        # if 'LATPOLE' in header:
+        #     header.pop('LATPOLE')
+        # if 'RADESYS' in header:
+        #     header.pop('RADESYS')
+        # if 'MJDREF' in header:
+        #     header.pop('MJDREF')
 
-    header['EQUINOX'] = '2000. / J2000'
-    header['BSCALE'] = 1.0
-    header['BZERO'] = 0.0
+        # header['EQUINOX'] = 2000.0
+        header['BSCALE'] = 1.0
+        header['BZERO'] = 0.0
 
-    return header
+        return header
+    else:
+        return w
 
 
 def compare_headers(hdr1, hdr2):

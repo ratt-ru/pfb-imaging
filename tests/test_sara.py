@@ -199,7 +199,7 @@ def test_sara(ms_name):
 
     # the residual computed by the grid worker should be identical
     # to that computed in sara when transferring model
-    dds = xds_from_url(dds_name)
+    dds, _ = xds_from_url(dds_name)
 
     # grid data to produce dirty image
     grid_args = {}
@@ -221,7 +221,7 @@ def test_sara(ms_name):
     grid_args["suffix"] = 'subtract'
     _grid(**grid_args)
 
-    dds2 = xds_from_url(f'{outname}_subtract.dds')
+    dds2, _ = xds_from_url(f'{outname}_subtract.dds')
 
     for ds, ds2 in zip(dds, dds2):
         wsum = ds.WSUM.values
@@ -275,7 +275,7 @@ def test_sara(ms_name):
 
     dds_name = f'{outname}_main.dds'
 
-    dds2 = xds_from_url(dds_name)
+    dds2, _ = xds_from_url(dds_name)
 
     for ds, ds2 in zip(dds, dds2):
         wsum = ds.WSUM.values

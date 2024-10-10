@@ -50,7 +50,7 @@ def restore(**kw):
     with ExitStack() as stack:
         if opts.nworkers > 1:
             from pfb import set_client
-            client = set_client(opts.nworkers, log, stack)
+            client = set_client(opts.nworkers, log, stack=stack, client_log_level=opts.log_level)
         else:
             print("Faking client", file=log)
             from pfb.utils.dist import fake_client
@@ -93,9 +93,7 @@ def _restore(**kw):
         fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
-    dds_store = DaskMSStore(dds_name)
-    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
-    dds = xds_from_url(dds_store.url)
+    dds, dds_list = xds_from_url(dds_name)
 
     if opts.drop_bands is not None:
         ddso = []
@@ -227,7 +225,7 @@ def _restore(**kw):
         fut = client.submit(
                         dds2fits,
                         dds_list,
-                        'MODEL',
+                        opts.model_name,
                         f'{fits_oname}_{opts.suffix}',
                         norm_wsum=False,
                         nthreads=opts.nthreads,
@@ -239,7 +237,7 @@ def _restore(**kw):
         fut = client.submit(
                         dds2fits,
                         dds_list,
-                        'RESIDUAL',
+                        opts.residual_name,
                         f'{fits_oname}_{opts.suffix}',
                         norm_wsum=True,
                         nthreads=opts.nthreads,
@@ -254,8 +252,8 @@ def _restore(**kw):
                         restore_cube,
                         dds_list,
                         f'{fits_oname}_{opts.suffix}' + '_image',
-                        'MODEL',
-                        'RESIDUAL',
+                        opts.model_name,
+                        opts.residual_name,
                         gaussparn,
                         gaussparn_mfs,
                         gaussparf,
@@ -274,7 +272,7 @@ def _restore(**kw):
                         restore_cube,
                         dds_list,
                         f'{fits_oname}_{opts.suffix}' + '_uimage',
-                        'MODEL',
+                        'MODEL_MOPPED',
                         'UPDATE',
                         gaussparu,
                         gaussparu_mfs,

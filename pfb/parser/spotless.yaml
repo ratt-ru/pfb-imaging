@@ -158,7 +158,7 @@ inputs:
     default: false
     info:
       Hard reset the cache
-  sigmainvsq:
+  eta:
     dtype: float
     default: 1.0
     info:

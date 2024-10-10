@@ -289,10 +289,10 @@ def single_stokes_image(
 
     if opts.natural_grad:
         from pfb.opt.pcg import pcg
-        from pfb.operators.hessian import _hessian_impl
+        from pfb.operators.hessian import _hessian_slice
         from functools import partial
 
-        hess = partial(_hessian_impl,
+        hess = partial(_hessian_slice,
                        uvw=uvw,
                        weight=weight,
                        vis_mask=mask,
@@ -305,7 +305,7 @@ def single_stokes_image(
                        epsilon=opts.epsilon,
                        double_accum=opts.double_accum,
                        nthreads=opts.nthreads,
-                       sigmainvsq=opts.sigmainvsq*wsum,
+                       eta=opts.eta*wsum,
                        wsum=1.0)  # we haven't normalised residual
 
         x = pcg(hess,

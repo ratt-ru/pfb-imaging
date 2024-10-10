@@ -14,16 +14,6 @@ from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 
-# from pfb import parser
-# from scabha.configuratt import load_nested
-# from scabha.schema_utils import Schema
-# config_file = os.path.dirname(parser.__file__) + '/init.yaml'
-# schema, _ = load_nested([config_file],
-#                         structured=OmegaConf.structured(Schema),
-#                         config_class="PfbCleanCabs",
-#                         use_cache=False)
-# schema = OmegaConf.create(schema).init
-
 @cli.command(context_settings={'show_default': True})
 @clickify_parameters(schema.init)
 def init(**kw):
@@ -31,7 +21,6 @@ def init(**kw):
     Initialise Stokes data products for imaging
     '''
     opts = OmegaConf.create(kw)
-
     from pfb.utils.naming import set_output_names
     opts, basedir, oname = set_output_names(opts)
 
@@ -80,8 +69,6 @@ def init(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    basename = f'{basedir}/{oname}'
-
     from pfb import set_envs
     from ducc0.misc import resize_thread_pool, thread_pool_size
     resize_thread_pool(opts.nthreads)
@@ -92,14 +79,17 @@ def init(**kw):
     dask.config.set(**{'array.slicing.split_large_chunks': False})
     from pfb import set_client
     from distributed import wait, get_client
-    client = set_client(opts.nworkers, log)
+    client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
 
     ti = time.time()
     _init(**opts)
 
     print(f"All done after {time.time() - ti}s", file=log)
 
-    client.close()
+    try:
+        client.close()
+    except Exception as e:
+        raise e
 
 def _init(**kw):
     opts = OmegaConf.create(kw)
@@ -145,7 +135,10 @@ def _init(**kw):
         gain_names = None
 
     if opts.freq_range is not None and len(opts.freq_range):
-        fmin, fmax = opts.freq_range.strip(' ').split(':')
+        try:
+            fmin, fmax = opts.freq_range.strip(' ').split(':')
+        except:
+            import ipdb; ipdb.set_trace()
         if len(fmin) > 0:
             freq_min = float(fmin)
         else:
@@ -332,12 +325,14 @@ def _init(**kw):
     ac_iter = as_completed(futures)
     for completed_future in ac_iter:
 
-        result = completed_future.result()
         try:
+            result = completed_future.result()
+        except Exception as e:
+            raise e
+
+        if result is not None:
             times_out.append(result[0])
             freqs_out.append(result[1])
-        except:
-            pass  # no result if chunk fully flagged
 
         if isinstance(completed_future.result(), BaseException):
             print(completed_future.result())
@@ -376,6 +371,7 @@ def _init(**kw):
                             workers=worker,
                             key='image-'+uuid4().hex)
 
+
             ac_iter.add(future)
             associated_workers[future] = worker
             n_launched += 1
@@ -387,6 +383,10 @@ def _init(**kw):
 
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
+
+        # this should not be necessary but just in case
+        if ac_iter.is_empty():
+            break
 
     times_out = np.unique(times_out)
     freqs_out = np.unique(freqs_out)
