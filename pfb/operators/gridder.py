@@ -478,7 +478,7 @@ def image_data_products(dsl,
         ressq = (residual_vis*wgt*residual_vis.conj()).real
         meanf = np.mean(ressq[mask>0])
         stdf = np.std(ressq[mask>0])
-        print(f"Band {bandid} after: mean = {meani:.3e}, std = {stdi:.3e}")
+        print(f"Band {bandid} after: mean = {meanf:.3e}, std = {stdf:.3e}")
 
         # import ipdb; ipdb.set_trace()
 
@@ -768,6 +768,7 @@ def compute_residual(dsl,
     tassign = time() - ti
 
     # we only need to write MODEL and RESIDUAL
+    # ds = ds[['RESIDUAL','MODEL']]
     for var in ds.data_vars:
         if var not in ['RESIDUAL', 'MODEL']:
             ds = ds.drop_vars(var)
