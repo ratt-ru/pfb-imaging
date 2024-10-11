@@ -369,11 +369,13 @@ def _grid(**kw):
         dsl = ds_dct['dsl']
         time_out = ds_dct['time_out']
         freq_out = ds_dct['freq_out']
-
+        iter0 = 0
         if from_cache:
             out_ds_name = f'{dds_store.url}/time{timeid}_band{bandid}.zarr'
             out_ds = xr.open_zarr(out_ds_name,
                                   chunks=None)
+            if 'niters' in out_ds:
+                iter0 = niters
         else:
             out_ds_name = None
 
@@ -415,7 +417,8 @@ def _grid(**kw):
             'robustness': opts.robustness,
             'super_resolution_factor': opts.super_resolution_factor,
             'field_of_view': opts.field_of_view,
-            'product': opts.product
+            'product': opts.product,
+            'niters': iter0
         }
 
         # get the model
@@ -470,6 +473,7 @@ def _grid(**kw):
                             do_weight=opts.weight,
                             do_residual=opts.residual,
                             do_noise=opts.noise,
+                            do_beam=opts.beam,
                             workers=wname)
         futures.append(fut)
 

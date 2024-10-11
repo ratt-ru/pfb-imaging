@@ -329,7 +329,8 @@ def image_data_products(dsl,
                         do_psf=True,
                         do_residual=True,
                         do_weight=True,
-                        do_noise=False):
+                        do_noise=False,
+                        do_beam=False):
     '''
     Function to compute image space data products in one go
 
@@ -415,7 +416,7 @@ def image_data_products(dsl,
             flip_v=flip_v,
             flip_w=flip_w,
             nthreads=nthreads,
-            divide_by_n=False,  # incorporte in smooth beam
+            divide_by_n=False,  # incorporate in smooth beam
             sigma_min=1.1, sigma_max=3.0)
 
         residual_vis *= -1  # negate model
@@ -656,10 +657,11 @@ def image_data_products(dsl,
 
         dso['NOISE'] = (('x','y'), noise)
 
-    if beam is not None:
-        dso['BEAM'] = (('x', 'y'), beam)
-    else:
-        dso['BEAM'] = (('x', 'y'), np.ones((nx, ny), dtype=wgt.dtype))
+    if do_beam:
+        if beam is not None:
+            dso['BEAM'] = (('x', 'y'), beam)
+        else:
+            dso['BEAM'] = (('x', 'y'), np.ones((nx, ny), dtype=wgt.dtype))
 
     # save
     dso = dso.assign_attrs(wsum=wsum, x0=x0, y0=y0, l0=l0, m0=m0,
