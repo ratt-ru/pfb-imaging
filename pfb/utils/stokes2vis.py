@@ -156,17 +156,12 @@ def single_stokes(
                         dtype=complex_type)
 
     # check that there are no missing antennas
-    ant1u = np.unique(ant1)
-    ant2u = np.unique(ant2)
-    try:
-        assert (ant1u[1:] - ant1u[0:-1] == 1).all()
-        assert (ant2u[1:] - ant2u[0:-1] == 1).all()
-    except Exception as e:
-        raise NotImplementedError('You seem to have missing antennas. '
-                                  'This is not currently supported.')
+    ant1u = np.unique(ant1[~frow])
+    ant2u = np.unique(ant2[~frow])
+    allants = np.unique(np.concatenate((ant1u, ant2u)))
 
     # check that antpos gives the correct size table
-    antmax = np.maximum(ant1.max(), ant2.max()) + 1
+    antmax = allants.size
     try:
         assert antmax == nant
     except Exception as e:
@@ -176,8 +171,13 @@ def single_stokes(
                          f'Table size is {antpos.shape} but got {antmax}. '
                          f'{oname}')
 
-    # we currently need this extra loop through the data because
-    # we don't have access to the grid
+    # relabel antennas by index
+    # this only works because allants is sorted in ascending order
+    for a, ant in enumerate(allants):
+        ant1 = np.where(ant1==ant, a, ant1)
+        ant2 = np.where(ant2==ant, a, ant2)
+
+    # apply gains and convert to Stokes
     data, weight = weight_data(data, weight, flag, jones,
                             tbin_idx, tbin_counts,
                             ant1, ant2,
