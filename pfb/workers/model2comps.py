@@ -186,7 +186,7 @@ def _model2comps(**kw):
             model = np.concatenate((mlow[:, None], model), axis=1)
             mfreqs = np.concatenate((np.array((flow,)), mfreqs))
             # TODO - duplicate first non-null value?
-            wsums = np.concatenate((wsums[:, Ilow][:, None], wsums),
+            wsums = np.concatenate((0.5*wsums[:, Ilow][:, None], wsums),
                                    axis=1)
             nband = mfreqs.size
         if fhigh > mfreqs.max():
@@ -203,7 +203,7 @@ def _model2comps(**kw):
             mhigh = slopes * fhigh + intercepts
             model = np.concatenate((model, mhigh[:, None]), axis=1)
             mfreqs = np.concatenate((mfreqs, np.array((fhigh,))))
-            wsums = np.concatenate((wsums, wsums[:, Ihigh][:, None]),
+            wsums = np.concatenate((wsums, 0.5*wsums[:, Ihigh][:, None]),
                                    axis=1)
             nband = mfreqs.size
 

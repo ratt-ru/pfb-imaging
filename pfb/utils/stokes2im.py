@@ -249,19 +249,16 @@ def single_stokes_image(
                                  usign=1.0 if flip_u else -1.0,
                                  vsign=1.0 if flip_v else -1.0)
 
-        imwgt = counts_to_weights(
+        weight = counts_to_weights(
             counts,
             uvw,
             freq,
+            weight,
             nx, ny,
             cell_rad, cell_rad,
             opts.robustness,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
-        if weight is not None:
-            weight *= imwgt
-        else:
-            weight = imwgt
 
     wsum = weight[~flag].sum()
 

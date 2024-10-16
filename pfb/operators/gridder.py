@@ -770,15 +770,12 @@ def compute_residual(dsl,
     tassign = time() - ti
 
     # we only need to write MODEL and RESIDUAL
-    # ds = ds[['RESIDUAL','MODEL']]
-    for var in ds.data_vars:
-        if var not in ['RESIDUAL', 'MODEL']:
-            ds = ds.drop_vars(var)
+    ds = ds[['RESIDUAL','MODEL']]
 
     # save
     ti = time()
     with cf.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(dataset_to_zarr, ds, output_name)
+        future = executor.submit(ds.to_zarr, output_name, mode='a')
     twrite = time() - ti
 
     ttot = time() - tii
