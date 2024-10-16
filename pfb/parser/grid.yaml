@@ -56,6 +56,11 @@ inputs:
     default: true
     info:
       Compute noise map by sampling from weights
+  beam:
+    dtype: bool
+    default: true
+    info:
+      Interpolate average beam pattern
   psf-oversize:
     dtype: float
     default: 1.0
@@ -117,11 +122,7 @@ inputs:
     - (.)out.yml
 
 outputs:
-  cds:
-    dtype: Directory
-    info: output cube dataset
-    mkdir: false
-
+  {}
 
 policies:
   pass_missing_as_none: true

@@ -56,27 +56,7 @@ def psf_convolve_cube(xpad,    # preallocated array to store padded image
     return xout
 
 
-def psf_convolve_cube2(xhat,    # preallocated array to store results
-                       psfhat,
-                       slicex,
-                       slicey,
-                       x,       # input image, not overwritten
-                       nthreads=1):
-    '''
-    The copyto is not necessarily faster it just allows us to see where time is spent
-    '''
-    _, nx, ny = x.shape
-    xhat[...] = 0j
-    xhat[:, slicex, slicey] = x[...]
-    c2c(xhat, out=xhat, axes=(1, 2), nthreads=nthreads,
-        forward=True, inorm=0)
-    xhat *= psfhat
-    c2c(xhat, out=xhat, axes=(1, 2), forward=False,
-        inorm=2, nthreads=nthreads)
-    return xhat[:, slicex, slicey].real
-
-
-def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, mask,
+def psf_convolve_xds(x, xds, psfopts, wsum, eta, mask,
                      compute=True, use_beam=True):
     '''
     Image space Hessian with reduction over dataset
@@ -111,45 +91,11 @@ def psf_convolve_xds(x, xds, psfopts, wsum, sigmainv, mask,
 
     convim = da.stack(convims)/wsum
 
-    if sigmainv:
-        convim += x * sigmainv**2
+    if eta:
+        convim += x * eta**2
 
     if compute:
         return convim.compute()
     else:
         return convim
 
-
-def psf_convolve_cube_dask(x, psfhat, beam, psfopts,
-                      wsum=1, sigmainv=None, compute=True):
-    if not isinstance(x, da.Array):
-        x = da.from_array(x, chunks=(1, -1, -1),
-                          name="x-" + uuid4().hex)
-    if not isinstance(psfhat, da.Array):
-        psfhat = da.from_array(psfhat, chunks=(1, -1, -1),
-                               name="psfhat-" + uuid4().hex)
-
-    if beam is None:
-        bout = None
-    else:
-        bout = ('nb', 'nx', 'ny')
-        if not isinstance(beam, da.Array):
-            beam = da.from_array(beam, chunks=(1, -1, -1),
-                                 name="beam-" + uuid4().hex)
-
-    convim = da.blockwise(_psf_convolve_cube, ('nb', 'nx', 'ny'),
-                          x, ('nb', 'nx', 'ny'),
-                          psfhat, ('nb', 'nx', 'ny'),
-                          beam, bout,
-                          psfopts, None,
-                          align_arrays=False,
-                          dtype=x.dtype)
-    convim /= wsum
-
-    if np.any(sigmainv):
-        convim += x * sigmainv
-
-    if compute:
-        return convim.compute()
-    else:
-        return convim

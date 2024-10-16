@@ -249,19 +249,16 @@ def single_stokes_image(
                                  usign=1.0 if flip_u else -1.0,
                                  vsign=1.0 if flip_v else -1.0)
 
-        imwgt = counts_to_weights(
+        weight = counts_to_weights(
             counts,
             uvw,
             freq,
+            weight,
             nx, ny,
             cell_rad, cell_rad,
             opts.robustness,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
-        if weight is not None:
-            weight *= imwgt
-        else:
-            weight = imwgt
 
     wsum = weight[~flag].sum()
 
@@ -289,10 +286,10 @@ def single_stokes_image(
 
     if opts.natural_grad:
         from pfb.opt.pcg import pcg
-        from pfb.operators.hessian import _hessian_impl
+        from pfb.operators.hessian import _hessian_slice
         from functools import partial
 
-        hess = partial(_hessian_impl,
+        hess = partial(_hessian_slice,
                        uvw=uvw,
                        weight=weight,
                        vis_mask=mask,
@@ -305,7 +302,7 @@ def single_stokes_image(
                        epsilon=opts.epsilon,
                        double_accum=opts.double_accum,
                        nthreads=opts.nthreads,
-                       sigmainvsq=opts.sigmainvsq*wsum,
+                       eta=opts.eta*wsum,
                        wsum=1.0)  # we haven't normalised residual
 
         x = pcg(hess,

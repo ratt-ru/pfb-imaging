@@ -147,7 +147,7 @@ inputs:
     default: zarr
     info:
       zarr or fits output
-  sigmainvsq:
+  eta:
     dtype: float
     default: 1e-5
     info:

@@ -10,19 +10,6 @@ from pfb.wavelets import coeff_size, signal_size, dwt2d, idwt2d, copyT
 from time import time
 
 
-from contextlib import contextmanager
-
-@contextmanager
-def numba_threads(n):
-    """Context manager for controlling Numba's number of threads."""
-    old_value = numba.config.NUMBA_NUM_THREADS
-    numba.config.NUMBA_NUM_THREADS = n
-    try:
-        yield
-    finally:
-        numba.config.NUMBA_NUM_THREADS = old_value
-
-
 @numba.njit
 def create_dict(items):
     return {k: v for k,v in items}
@@ -273,14 +260,14 @@ class psi_band(object):
 
 
 def psi_dot_impl(x, alphao, psib, b, nthreads=1):
-    with numba_threads(nthreads):
-        psib.dot(x, alphao)
+    numba.set_num_threads(nthreads)
+    psib.dot(x, alphao)
     return b
 
 
 def psi_hdot_impl(alpha, xo, psib, b, nthreads=1):
-    with numba_threads(nthreads):
-        psib.hdot(alpha, xo)
+    numba.set_num_threads(nthreads)
+    psib.hdot(alpha, xo)
     return b
 
 
@@ -299,7 +286,7 @@ class Psi(object):
         self.Nxmax = self.psib[0].Nxmax
         self.Nymax = self.psib[0].Nymax
 
-        self.nthreads_per_band = nthreads//nband
+        self.nthreads_per_band = np.maximum(1, nthreads//nband)
 
     def dot(self, x, alphao):
         '''
