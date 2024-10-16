@@ -156,8 +156,8 @@ def single_stokes(
                         dtype=complex_type)
 
     # check that there are no missing antennas
-    ant1u = np.unique(ant1[~frow])
-    ant2u = np.unique(ant2[~frow])
+    ant1u = np.unique(ant1)
+    ant2u = np.unique(ant2)
     allants = np.unique(np.concatenate((ant1u, ant2u)))
 
     # check that antpos gives the correct size table
