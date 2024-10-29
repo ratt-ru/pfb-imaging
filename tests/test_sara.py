@@ -235,6 +235,7 @@ def test_sara(ms_name):
         degrid_args[key.replace("-", "_")] = schema.degrid["inputs"][key]["default"]
     degrid_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
     degrid_args["mds"] = f'{outname}_main_model.mds'
+    degrid_args["dds"] = f'{outname}_main.dds'
     degrid_args["channels_per_image"] = 1
     degrid_args["nthreads"] = 8
     degrid_args["do_wgridding"] = do_wgridding

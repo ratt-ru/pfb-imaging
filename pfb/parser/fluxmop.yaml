@@ -70,7 +70,10 @@ inputs:
     - (.)out.yml
 
 outputs:
-  {}
+  dds-out:
+    implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
+    dtype: Directory
+    must_exist: false
 
 policies:
   pass_missing_as_none: true

@@ -321,6 +321,8 @@ def _grid(**kw):
                     xds_dct[tbid]['radec'] = (ds.ra, ds.dec)
                     xds_dct[tbid]['time_out'] = times_out[0]
                     xds_dct[tbid]['freq_out'] = freqs_out[b]
+                    xds_dct[tbid]['chan_low'] = ds.chan_low
+                    xds_dct[tbid]['chan_high'] = ds.chan_high
     else:
         ntime = ntime_in
         times_out = times_in
@@ -335,6 +337,8 @@ def _grid(**kw):
                         xds_dct[tbid]['radec'] = (ds.ra, ds.dec)
                         xds_dct[tbid]['time_out'] = times_out[t]
                         xds_dct[tbid]['freq_out'] = freqs_out[b]
+                        xds_dct[tbid]['chan_low'] = ds.chan_low
+                        xds_dct[tbid]['chan_high'] = ds.chan_high
 
     if opts.dirty:
         print(f"Image size = (ntime={ntime}, nband={nband}, "
@@ -369,6 +373,8 @@ def _grid(**kw):
         dsl = ds_dct['dsl']
         time_out = ds_dct['time_out']
         freq_out = ds_dct['freq_out']
+        chan_low = ds_dct['chan_low']
+        chan_high = ds_dct['chan_high']
         iter0 = 0
         if from_cache:
             out_ds_name = f'{dds_store.url}/time{timeid}_band{bandid}.zarr'
@@ -418,7 +424,9 @@ def _grid(**kw):
             'super_resolution_factor': opts.super_resolution_factor,
             'field_of_view': opts.field_of_view,
             'product': opts.product,
-            'niters': iter0
+            'niters': iter0,
+            'chan_low': chan_low,
+            'chan_high': chan_high,
         }
 
         # get the model

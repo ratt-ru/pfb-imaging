@@ -276,7 +276,7 @@ def _init(**kw):
                                     utimes[ms][idt][It],
                                     ridx, rcnts,
                                     radecs[ms][idt],
-                                    fi, ti, ims, ms])
+                                    fi, ti, ims, ms, flow, flow+fcounts])
 
     futures = []
     associated_workers = {}
@@ -286,7 +286,7 @@ def _init(**kw):
     while idle_workers and len(datasets):   # Seed each worker with a task.
         # pop so len(datasets) -> 0
         (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
-         radeci, fi, ti, ims, ms) = datasets.pop(0)
+         radeci, fi, ti, ims, ms, chan_low, chan_high) = datasets.pop(0)
 
         worker = idle_workers.pop()
         future = client.submit(single_stokes,
@@ -301,6 +301,8 @@ def _init(**kw):
                         utime=utimesi,
                         tbin_idx=ridx,
                         tbin_counts=rcnts,
+                        chan_low=chan_low,
+                        chan_high=chan_high,
                         radec=radeci,
                         antpos=antpos[ms],
                         poltype=poltype[ms],
@@ -345,7 +347,7 @@ def _init(**kw):
         # pop so len(datasets) -> 0
         if len(datasets):
             (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
-            radeci, fi, ti, ims, ms) = datasets.pop(0)
+            radeci, fi, ti, ims, ms, chan_low, chan_high) = datasets.pop(0)
 
             future = client.submit(single_stokes,
                             dc1=dc1,
@@ -359,6 +361,8 @@ def _init(**kw):
                             utime=utimesi,
                             tbin_idx=ridx,
                             tbin_counts=rcnts,
+                            chan_low=chan_low,
+                            chan_high=chan_high,
                             radec=radeci,
                             antpos=antpos[ms],
                             poltype=poltype[ms],

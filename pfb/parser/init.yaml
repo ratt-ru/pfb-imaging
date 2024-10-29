@@ -132,7 +132,10 @@ inputs:
     - (.)dist.yml
 
 outputs:
-    {}
+  xds-out:
+    implicit: '{current.output-filename}_{current.product}.xds'
+    dtype: Directory
+    must_exist: false
 
 policies:
   pass_missing_as_none: true

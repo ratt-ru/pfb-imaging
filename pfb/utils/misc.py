@@ -399,7 +399,6 @@ def construct_mappings(ms_name,
             if not idx.any():
                 continue
             idx0 = np.argmax(idx) # returns index of first True element
-            # np.searchsorted here?
             try:
                 # returns zero if not idx.any()
                 assert idx[idx0]
@@ -446,11 +445,27 @@ def construct_mappings(ms_name,
             row_mapping[ms][idt]['start_indices'] = ridx
             row_mapping[ms][idt]['counts'] = rcounts
 
-            nfreq_chunks = nchan_in // cpit
-            freq_chunks = (cpit,)*nfreq_chunks
-            rem = nchan_in - nfreq_chunks * cpit
-            if rem:
-                freq_chunks += (rem,)
+            freq_idx0 = freq_mapping[ms][idt]['start_indices'][0]
+            if freq_idx0 != 0:
+                freq_chunks = (freq_idx0,) + tuple(freq_mapping[ms][idt]['counts'])
+            else:
+                freq_chunks = tuple(freq_mapping[ms][idt]['counts'])
+            freq_idxf = np.sum(freq_chunks)
+            if freq_idxf != nchan_in:
+                freq_chunkf = nchan_in - freq_idxf
+                freq_chunks += (freq_chunkf,)
+
+            try:
+                assert np.sum(freq_chunks) == nchan_in
+            except Exception as e:
+                raise RuntimeError("Something went wrong constructing the "
+                                   "frequency mapping. sum(fchunks != nchan)")
+
+            # nfreq_chunks = nchan_in // cpit
+            # freq_chunks = (cpit,)*nfreq_chunks
+            # rem = nchan_in - nfreq_chunks * cpit
+            # if rem:
+            #     freq_chunks += (rem,)
 
             ms_chunks[ms].append({'row': row_chunks,
                                   'chan': freq_chunks})

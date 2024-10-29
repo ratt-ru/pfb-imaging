@@ -18,6 +18,9 @@ from pfb.parser.schemas import schema
 def degrid(**kw):
     '''
     Predict model visibilities to measurement sets.
+    The default behaviour is to read the frequency mapping from the dds and
+    degrid one image per band.
+    If channels-per-image is provided, the model is evaluated from the mds.
     '''
     opts = OmegaConf.create(kw)
 
@@ -41,17 +44,28 @@ def degrid(**kw):
             msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
         except:
             raise ValueError(f"No MS at {ms}")
-    if len(opts.ms) > 1:
-        raise ValueError(f"There must be a single MS at {opts.ms}")
     opts.ms = msnames
-    modelstore = DaskMSStore(opts.mds.rstrip('/'))
-    try:
-        assert modelstore.exists()
-    except Exception as e:
-        raise ValueError(f"There must be a model at  "
-                         f"to {opts.mds}")
-    opts.mds = modelstore.url
 
+    basename = opts.output_filename
+
+    if opts.mds is None:
+        mds_store = DaskMSStore(f'{basename}_{opts.suffix}_model.mds')
+    else:
+        mds_store = DaskMSStore(opts.mds)
+        try:
+            assert mds_store.exists()
+        except Exception as e:
+            raise ValueError(f"No mds at {opts.mds}")
+    opts.mds = mds_store.url
+
+    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
+    if opts.channels_per_image is None and not mds_store.exists():
+        try:
+            assert dds_store.exists()
+        except Exception as e:
+            raise ValueError(f"There must be a dds at {dds_store.url}. "
+                             "Specify mds and channels-per-image to degrid from mds.")
+    opts.dds = dds_store.url
     OmegaConf.set_struct(opts, True)
 
     if opts.product.upper() not in ["I"]:
@@ -96,6 +110,7 @@ def _degrid(**kw):
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms import xds_to_storage_table as xds_to_table
+    from daskms.fsspec_store import DaskMSStore
     import dask.array as da
     from africanus.constants import c as lightspeed
     from africanus.gridding.wgridder.dask import model as im2vis
@@ -103,7 +118,7 @@ def _degrid(**kw):
     from pfb.utils.fits import load_fits, data_from_header, set_wcs
     from regions import Regions
     from astropy.io import fits
-    from pfb.utils.misc import compute_context
+    from pfb.utils.naming import xds_from_url
     import xarray as xr
     import sympy as sm
     from sympy.utilities.lambdify import lambdify
@@ -112,29 +127,18 @@ def _degrid(**kw):
     resize_thread_pool(opts.nthreads)
 
     client = get_client()
-    mds = xr.open_zarr(opts.mds)
-    foo = client.scatter(mds, broadcast=True)
-    wait(foo)
 
-    # grid spec
-    cell_rad = mds.cell_rad_x
-    cell_deg = np.rad2deg(cell_rad)
-    nx = mds.npix_x
-    ny = mds.npix_y
-    x0 = mds.center_x
-    y0 = mds.center_y
-    radec = (mds.ra, mds.dec)
+    dds_store = DaskMSStore(opts.dds)
+    mds_store = DaskMSStore(opts.mds)
 
-    # model func
-    params = sm.symbols(('t','f'))
-    params += sm.symbols(tuple(mds.params.values))
-    symexpr = parse_expr(mds.parametrisation)
-    modelf = lambdify(params, symexpr)
-    texpr = parse_expr(mds.texpr)
-    tfunc = lambdify(params[0], texpr)
-    fexpr = parse_expr(mds.fexpr)
-    ffunc = lambdify(params[1], fexpr)
-
+    if opts.channels_per_image is None:
+        if dds_store.exists():
+            dds, dds_list = xds_from_url(dds_store.url)
+            cpi = 0
+            for ds in dds:
+                cpi = np.maximum(ds.chan.size, cpi)
+    else:
+        cpi = opts.channels_per_image
 
     if opts.freq_range is not None and len(opts.freq_range):
         fmin, fmax = opts.freq_range.strip(' ').split(':')
@@ -160,7 +164,32 @@ def _degrid(**kw):
             construct_mappings(opts.ms,
                                None,
                                ipi=opts.integrations_per_image,
-                               cpi=opts.channels_per_image)
+                               cpi=cpi,
+                               freq_min=freq_min,
+                               freq_max=freq_max)
+
+    mds = xr.open_zarr(opts.mds)
+    foo = client.scatter(mds, broadcast=True)
+    wait(foo)
+
+    # grid spec
+    cell_rad = mds.cell_rad_x
+    cell_deg = np.rad2deg(cell_rad)
+    nx = mds.npix_x
+    ny = mds.npix_y
+    x0 = mds.center_x
+    y0 = mds.center_y
+    radec = (mds.ra, mds.dec)
+
+    # model func
+    params = sm.symbols(('t','f'))
+    params += sm.symbols(tuple(mds.params.values))
+    symexpr = parse_expr(mds.parametrisation)
+    modelf = lambdify(params, symexpr)
+    texpr = parse_expr(mds.texpr)
+    tfunc = lambdify(params[0], texpr)
+    fexpr = parse_expr(mds.fexpr)
+    ffunc = lambdify(params[1], fexpr)
 
     # load region file if given
     masks = []
@@ -226,7 +255,7 @@ def _degrid(**kw):
         for i, mask in enumerate(masks):
             out_data = []
             columns = []
-            for ds in xds:
+            for k, ds in enumerate(xds):
                 if i == 0:
                     column_name = opts.model_column
                 else:
@@ -240,26 +269,29 @@ def _degrid(**kw):
 
                 # time <-> row mapping
                 utime = da.from_array(utimes[ms][idt],
-                                    chunks=opts.integrations_per_image)
+                                      chunks=opts.integrations_per_image)
                 tidx = da.from_array(time_mapping[ms][idt]['start_indices'],
-                                    chunks=1)
+                                     chunks=1)
                 tcnts = da.from_array(time_mapping[ms][idt]['counts'],
-                                    chunks=1)
+                                      chunks=1)
 
                 ridx = da.from_array(row_mapping[ms][idt]['start_indices'],
-                                    chunks=opts.integrations_per_image)
+                                     chunks=opts.integrations_per_image)
                 rcnts = da.from_array(row_mapping[ms][idt]['counts'],
-                                    chunks=opts.integrations_per_image)
+                                      chunks=opts.integrations_per_image)
 
-                # freq <-> band mapping
+                # freq <-> band mapping (entire freq axis)
                 freq = da.from_array(freqs[ms][idt],
-                                    chunks=opts.channels_per_image)
-                fidx = da.from_array(freq_mapping[ms][idt]['start_indices'],
-                                    chunks=1)
-                fcnts = da.from_array(freq_mapping[ms][idt]['counts'],
-                                    chunks=1)
+                                     chunks=ms_chunks[ms][k]['chan'])
+                fcnts = np.array(ms_chunks[ms][k]['chan'])
+                fidx = np.concatenate((np.array([0]), np.cumsum(fcnts)))[0:-1]
 
-                # number of chunks need to math in mapping and coord
+                fidx = da.from_array(fidx,
+                                     chunks=1)
+                fcnts = da.from_array(fcnts,
+                                      chunks=1)
+
+                # number of chunks need to match in mapping and coord
                 ntime_out = len(tidx.chunks[0])
                 assert len(utime.chunks[0]) == ntime_out
                 nfreq_out = len(fidx.chunks[0])
@@ -267,6 +299,7 @@ def _degrid(**kw):
                 # and they need to match the number of row chunks
                 uvw = clone(ds.UVW.data)
                 assert len(uvw.chunks[0]) == len(tidx.chunks[0])
+
                 vis = comps2vis(uvw,
                                 utime,
                                 freq,
