@@ -686,7 +686,8 @@ def compute_residual(dsl,
                      nthreads=1,
                      epsilon=1e-7,
                      do_wgridding=True,
-                     double_accum=True):
+                     double_accum=True,
+                     verbosity=1):
     '''
     Function to compute residual and write it to disk
     '''
@@ -780,13 +781,14 @@ def compute_residual(dsl,
 
     ttot = time() - tii
     ttally = tread + tdegrid + tgrid + tdiff + tassign + twrite
-    print(f'tread = {tread/ttot}')
-    print(f'tdegrid = {tdegrid/ttot}')
-    print(f'tgrid = {tgrid/ttot}')
-    print(f'tdiff = {tdiff/ttot}')
-    print(f'tassign = {tassign/ttot}')
-    print(f'twrite = {twrite/ttot}')
-    print(f'ttally = {ttally/ttot}')
+    if verbosity > 1:
+        print(f'tread = {tread/ttot}')
+        print(f'tdegrid = {tdegrid/ttot}')
+        print(f'tgrid = {tgrid/ttot}')
+        print(f'tdiff = {tdiff/ttot}')
+        print(f'tassign = {tassign/ttot}')
+        print(f'twrite = {twrite/ttot}')
+        print(f'ttally = {ttally/ttot}')
     return residual, future
 
 def dataset_to_zarr(ds, output_name):

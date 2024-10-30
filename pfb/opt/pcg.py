@@ -246,13 +246,14 @@ def pcg(A,
                 #   file=log)
     ttot = time() - tii
     ttally = tcopy + tA + tvdot + tupdate + tp + tnorm
-    print('tcopy = ', tcopy/ttot)
-    print('tA = ', tA/ttot)
-    print('tvdot = ', tvdot/ttot)
-    print('tupdate = ', tupdate/ttot)
-    print('tp = ', tp/ttot)
-    print('tnorm = ', tnorm/ttot)
-    print('ttally = ', ttally/ttot)
+    if verbosity > 1:
+        print('tcopy = ', tcopy/ttot)
+        print('tA = ', tA/ttot)
+        print('tvdot = ', tvdot/ttot)
+        print('tupdate = ', tupdate/ttot)
+        print('tp = ', tp/ttot)
+        print('tnorm = ', tnorm/ttot)
+        print('ttally = ', ttally/ttot)
 
     if k >= maxit:
         if verbosity:

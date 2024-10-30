@@ -458,7 +458,8 @@ def _sara(**kw):
                                     nthreads=opts.nthreads,
                                     epsilon=opts.epsilon,
                                     do_wgridding=opts.do_wgridding,
-                                    double_accum=opts.double_accum)
+                                    double_accum=opts.double_accum,
+                                    verbosity=opts.verbosity)
             write_futures.append(fut)
 
         residual /= wsum
