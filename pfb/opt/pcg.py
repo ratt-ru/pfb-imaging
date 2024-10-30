@@ -403,7 +403,7 @@ def pcg_dds(ds_name,
             verbosity=1,
             report_freq=10):
     '''
-    pcg for fluxmop
+    pcg for fluxtractor
     '''
     # avoid circular import
     from pfb.operators.hessian import _hessian_slice, hess_direct_slice

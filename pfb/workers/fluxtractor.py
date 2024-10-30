@@ -5,15 +5,15 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('FLUXMOP')
+log = pyscilog.get_logger('FLUXTRACTOR')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.fluxmop)
-def fluxmop(**kw):
+@clickify_parameters(schema.fluxtractor)
+def fluxtractor(**kw):
     '''
     Forward step aka flux mop.
 
@@ -44,7 +44,7 @@ def fluxmop(**kw):
 
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f'{str(opts.log_directory)}/fluxmop_{timestamp}.log'
+    logname = f'{str(opts.log_directory)}/fluxtractor_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
 
@@ -74,7 +74,7 @@ def fluxmop(**kw):
             as_completed = lambda x: x
 
         ti = time.time()
-        _fluxmop(**opts)
+        _fluxtractor(**opts)
 
         _, dds_list = xds_from_url(dds_name)
 
@@ -144,7 +144,7 @@ def fluxmop(**kw):
 
         print(f"All done after {time.time() - ti}s", file=log)
 
-def _fluxmop(**kw):
+def _fluxtractor(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 

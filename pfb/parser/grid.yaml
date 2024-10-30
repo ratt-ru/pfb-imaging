@@ -63,7 +63,7 @@ inputs:
       Interpolate average beam pattern
   psf-oversize:
     dtype: float
-    default: 1.0
+    default: 1.4
     abbreviation: psfo
     info:
       Size of PSF relative to dirty image
