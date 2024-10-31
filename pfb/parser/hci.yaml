@@ -147,7 +147,7 @@ inputs:
     default: zarr
     info:
       zarr or fits output
-  sigmainvsq:
+  eta:
     dtype: float
     default: 1e-5
     info:
@@ -176,7 +176,10 @@ inputs:
     - (.)cgopts.yml
 
 outputs:
-    {}
+  dir-out:
+    implicit: '{current.output-filename}_{current.product}.fds'
+    dtype: Directory
+    must_exist: false
 
 policies:
   pass_missing_as_none: true

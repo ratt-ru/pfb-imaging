@@ -9,8 +9,8 @@ def cli():
 
 
 from pfb.workers import (init, grid, degrid, klean,
-                         restore, spotless, model2comps,
-                         fluxmop, hci, smoovie, sara)
+                         restore, model2comps,
+                         fluxtractor, hci, smoovie, sara)
 
 if __name__ == '__main__':
     cli()

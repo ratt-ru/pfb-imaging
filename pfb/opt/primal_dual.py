@@ -142,6 +142,7 @@ def primal_dual_optimised(
     tpos = 0.0
     tnorm = 0.0
     tcopy = 0.0
+    tii = time()
     for k in range(maxit):
         ti = time()
         psi(xp, v)
@@ -205,15 +206,19 @@ def primal_dual_optimised(
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {eps:.3e}", file=log)
 
-    print('Time taken per step', file=log)
-    print(f'psi = {tpsi}', file=log)
-    print(f'psiH = {tpsiH}', file=log)
-    print(f'grad = {tgrad}', file=log)
-    print(f'update = {tupdate}', file=log)
-    print(f'eval1 = {teval1}', file=log)
-    print(f'eval2 = {teval2}', file=log)
-    print(f'pos = {tpos}', file=log)
-    print(f'norm = {tnorm}', file=log)
+    ttot = time() - tii
+    ttally = tpsi + tpsiH + tgrad + tupdate + teval1 + teval2 + tpos + tnorm
+    if verbosity > 1:
+        print('Time taken per step', file=log)
+        print(f'psi = {tpsi/ttot}', file=log)
+        print(f'psiH = {tpsiH/ttot}', file=log)
+        print(f'grad = {tgrad/ttot}', file=log)
+        print(f'update = {tupdate/ttot}', file=log)
+        print(f'eval1 = {teval1/ttot}', file=log)
+        print(f'eval2 = {teval2/ttot}', file=log)
+        print(f'pos = {tpos/ttot}', file=log)
+        print(f'norm = {tnorm/ttot}', file=log)
+        print(f'tally = {ttally/ttot}', file=log)
 
     if k == maxit-1:
         if verbosity:

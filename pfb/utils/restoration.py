@@ -3,7 +3,6 @@ import numpy as np
 from pfb.utils.misc import Gaussian2D, convolve2gaussres, fitcleanbeam
 from pfb.utils.fits import set_wcs, add_beampars, save_fits
 from pfb.utils.naming import xds_from_list
-from pfb.operators.hessian import _hessian_impl
 from pfb.opt.pcg import pcg
 
 

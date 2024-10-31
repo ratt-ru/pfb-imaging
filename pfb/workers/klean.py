@@ -55,40 +55,31 @@ def klean(**kw):
 
     basename = f'{basedir}/{oname}'
     fits_oname = f'{opts.fits_output_folder}/{oname}'
-    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
+    dds_name = f'{basename}_{opts.suffix}.dds'
 
     with ExitStack() as stack:
         ti = time.time()
         _klean(**opts)
 
-        dds = xds_from_url(dds_store.url)
+        dds, dds_list = xds_from_url(dds_name)
 
-        from pfb.utils.fits import dds2fits, dds2fits_mfs
+        from pfb.utils.fits import dds2fits
 
 
         if opts.fits_mfs or opts.fits:
             print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
-
-        # convert to fits files
-        if opts.fits_mfs:
-            dds2fits_mfs(dds,
-                         'RESIDUAL',
-                         f'{fits_oname}_{opts.suffix}',
-                         norm_wsum=True)
-            dds2fits_mfs(dds,
-                         'MODEL',
-                         f'{fits_oname}_{opts.suffix}',
-                         norm_wsum=False)
-
-        if opts.fits_cubes:
             dds2fits(dds,
                      'RESIDUAL',
                      f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=True)
+                     norm_wsum=True,
+                     do_mfs=opts.fits_mfs,
+                     do_cube=opts.fits_cubes)
             dds2fits(dds,
                      'MODEL',
                      f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False)
+                     norm_wsum=False,
+                     do_mfs=opts.fits_mfs,
+                     do_cube=opts.fits_cubes)
 
         print(f"All done after {time.time() - ti}s", file=log)
 
@@ -117,11 +108,7 @@ def _klean(**kw):
         fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
-    dds_store = DaskMSStore(dds_name)
-    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
-    drop_vars = ['UVW','WEIGHT','MASK']
-    dds = xds_from_list(dds_list, nthreads=opts.nthreads,
-                        drop_vars=drop_vars)
+    dds, dds_list = xds_from_url(dds_name)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
@@ -286,7 +273,7 @@ def _klean(**kw):
         print(f'Computing residual', file=log)
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
-            resid = compute_residual(ds_name,
+            resid, _ = compute_residual(ds_name,
                                      nx, ny,
                                      cell_rad, cell_rad,
                                      ds_name,
@@ -354,7 +341,7 @@ def _klean(**kw):
                         mopmask,
                         lastsize,
                         opts.nthreads,
-                        rmax,  # used as sigmainv
+                        rmax,  # used as eta
                         cgopts)
 
             model += opts.mop_gamma*x
@@ -362,7 +349,7 @@ def _klean(**kw):
             print(f'Computing residual', file=log)
             for ds_name, ds in zip(dds_list, dds):
                 b = int(ds.bandid)
-                resid = compute_residual(ds_name,
+                resid, _ = compute_residual(ds_name,
                                         nx, ny,
                                         cell_rad, cell_rad,
                                         ds_name,

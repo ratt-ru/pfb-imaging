@@ -104,7 +104,7 @@ def test_klean(do_gains, ms_name):
                                            flip_v=flip_v,
                                            flip_w=flip_w,
                                            do_wgridding=True,
-                                           nthreads=8)
+                                           nthreads=1)
         model_vis[:, c, -1] = model_vis[:, c, 0]
 
 
@@ -219,7 +219,7 @@ def test_klean(do_gains, ms_name):
     grid_args["fits_mfs"] = True
     grid_args["psf"] = True
     grid_args["residual"] = False
-    grid_args["nthreads"] = 8
+    grid_args["nthreads"] = 1
     grid_args["overwrite"] = True
     grid_args["robustness"] = 0.0
     grid_args["do_wgridding"] = True
@@ -240,7 +240,7 @@ def test_klean(do_gains, ms_name):
     klean_args["gamma"] = 0.1
     klean_args["peak_factor"] = 0.75
     klean_args["sub_peak_factor"] = 0.75
-    klean_args["nthreads"] = 8
+    klean_args["nthreads"] = 1
     klean_args["do_wgridding"] = True
     klean_args["epsilon"] = epsilon
     klean_args["mop_flux"] = True
@@ -249,7 +249,7 @@ def test_klean(do_gains, ms_name):
     _klean(**klean_args)
 
     # get inferred model
-    dds = xds_from_url(dds_name)
+    dds, _ = xds_from_url(dds_name)
     model_inferred = np.zeros((nchan, nx, ny))
     for ds in dds:
         b = int(ds.bandid)

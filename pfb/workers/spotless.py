@@ -49,7 +49,7 @@ def spotless(**kw):
         xds_store = DaskMSStore(xds_name)
         opts.xds = xds_name
     fits_oname = f'{opts.fits_output_folder}/{oname}'
-    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
+    dds_name = f'{basename}_{opts.suffix}.dds'
 
     OmegaConf.set_struct(opts, True)
 
@@ -67,8 +67,9 @@ def spotless(**kw):
     with ExitStack() as stack:
         from pfb import set_client
         if opts.nworkers > 1:
-            client = set_client(opts.nworkers, log, stack,
-                                direct_to_workers=opts.direct_to_workers)
+            client = set_client(opts.nworkers, log, stack=stack,
+                                direct_to_workers=opts.direct_to_workers,
+                                client_log_level=opts.log_level)
             from distributed import as_completed
         else:
             print("Faking client", file=log)
@@ -80,7 +81,7 @@ def spotless(**kw):
         ti = time.time()
         _spotless(**opts)
 
-        dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
+        dds, dds_list = xds_from_url(dds_name)
 
         # convert to fits files
         futures = []
@@ -124,7 +125,7 @@ def spotless(**kw):
     print(f"All done after {time.time() - ti}s.", file=log)
 
 
-def _spotless(xdsi=None, **kw):
+def _spotless(**kw):
     '''
     Distributed spotless algorithm.
 
@@ -184,29 +185,12 @@ def _spotless(xdsi=None, **kw):
     # xds contains vis products, no imaging weights applied
     xds_name = f'{basename}.xds' if opts.xds is None else opts.xds
     xds_store = DaskMSStore(xds_name)
-    if xdsi is not None:
-        xds = []
-        for ds in xdsi:
-            xds.append(ds.chunk({'row':-1,
-                                 'chan': -1,
-                                 'l_beam': -1,
-                                 'm_beam': -1}))
-    else:
-        try:
-            assert xds_store.exists()
-        except Exception as e:
-            raise ValueError(f"There must be a dataset at {xds_store.url}")
+    try:
+        assert xds_store.exists()
+    except Exception as e:
+        raise ValueError(f"There must be a dataset at {xds_store.url}")
 
-        xds = xds_from_url(xds_name)
-
-    # TODO - how to glob with protocol in tact?
-    xds_list = xds_store.fs.glob(f'{xds_store.url}/*')
-    if '://' in xds_store.url:
-        protocol = xds_store.url.split('://')[0]
-    else:
-        protocol = 'file'
-    url_prepend = protocol + '://'
-    xds_list = list(map(lambda x: url_prepend + x, xds_list))
+    xds, xds_list = xds_from_url(xds_store.url)
 
     # create dds and cache
     dds_name = opts.output_filename + f'_{opts.suffix}' + '.dds'
@@ -238,7 +222,7 @@ def _spotless(xdsi=None, **kw):
 
             from_cache = True
             print("Initialising from cached data products", file=log)
-            dds = xds_from_url(dds_store.url)
+            dds, dds_list = xds_from_url(dds_store.url)
             iter0 = dds[0].niters
         except Exception as e:
             print(f'Cache verification failed on {attr}. '

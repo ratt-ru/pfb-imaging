@@ -80,9 +80,7 @@ def _model2comps(**kw):
         fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
-    dds_store = DaskMSStore(dds_name)
-    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
-    dds = xds_from_url(dds_store.url)
+    dds, dds_list = xds_from_url(dds_name)
 
     if opts.model_out is not None:
         coeff_name = opts.model_out
@@ -188,7 +186,7 @@ def _model2comps(**kw):
             model = np.concatenate((mlow[:, None], model), axis=1)
             mfreqs = np.concatenate((np.array((flow,)), mfreqs))
             # TODO - duplicate first non-null value?
-            wsums = np.concatenate((wsums[:, Ilow][:, None], wsums),
+            wsums = np.concatenate((0.5*wsums[:, Ilow][:, None], wsums),
                                    axis=1)
             nband = mfreqs.size
         if fhigh > mfreqs.max():
@@ -205,7 +203,7 @@ def _model2comps(**kw):
             mhigh = slopes * fhigh + intercepts
             model = np.concatenate((model, mhigh[:, None]), axis=1)
             mfreqs = np.concatenate((mfreqs, np.array((fhigh,))))
-            wsums = np.concatenate((wsums, wsums[:, Ihigh][:, None]),
+            wsums = np.concatenate((wsums, 0.5*wsums[:, Ihigh][:, None]),
                                    axis=1)
             nband = mfreqs.size
 
@@ -260,7 +258,7 @@ def _model2comps(**kw):
         'center_y': y0,
         'flip_u': dds[0].flip_u,
         'flip_v': dds[0].flip_v,
-        'flip_v': dds[0].flip_v,
+        'flip_w': dds[0].flip_w,
         'ra': dds[0].ra,
         'dec': dds[0].dec,
         'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
@@ -338,8 +336,3 @@ def _model2comps(**kw):
                   fits_name,
                   hdr,
                   overwrite=True)
-
-
-
-
-    print("All done here.", file=log)

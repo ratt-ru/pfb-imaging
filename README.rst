@@ -75,7 +75,7 @@ By default only a single worker is used so that datasets will be processed one a
 This results in the smallest memory footprint but won't always result in optimal resource utilisation.
 It also allows for easy debugging as there is no Dask cluster involved in this case.
 However, for better resource utilisation and or distributing computations over a cluster, you may wish to set `--nworkers` larger than one.
-This uses multiple Dask workers (processes) to process chunks in parallel and is especially useful for the `init`, `grid` and `fluxmop` applications.
+This uses multiple Dask workers (processes) to process chunks in parallel and is especially useful for the `init`, `grid` and `fluxtractor` applications.
 It is usually advisable to set `--nworkers` to the number of desired imaging bands which is set by the `--channels-per-image` parameter when initialising corrected Stokes visibilities with the `init` application.
 The product of `--nworkers` and `--nthreads-per-worker` should not exceed the available resources.
 

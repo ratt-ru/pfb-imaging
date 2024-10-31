@@ -2,6 +2,7 @@
 import os
 import sys
 from contextlib import ExitStack
+import concurrent.futures as cf
 from pfb.workers.main import cli
 import click
 from omegaconf import OmegaConf
@@ -34,7 +35,7 @@ def sara(**kw):
     OmegaConf.set_struct(opts, True)
 
     from pfb import set_envs
-    from ducc0.misc import resize_thread_pool, thread_pool_size
+    from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
@@ -52,59 +53,57 @@ def sara(**kw):
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import xds_from_url
 
-    basename = f'{basedir}/{oname}'
+    basename = opts.output_filename
     fits_oname = f'{opts.fits_output_folder}/{oname}'
-    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
-    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
+    dds_name = f'{basename}_{opts.suffix}.dds'
 
-    with ExitStack() as stack:
-        ti = time.time()
-        _sara(**opts)
+    ti = time.time()
+    _sara(**opts)
 
-        dds = xds_from_url(dds_store.url)
+    dds, dds_list = xds_from_url(dds_name)
 
-        if opts.fits_mfs or opts.fits:
-            from pfb.utils.fits import dds2fits
-            print(f"Writing fits files to {fits_oname}_{opts.suffix}",
-                  file=log)
+    if opts.fits_mfs or opts.fits:
+        from pfb.utils.fits import dds2fits
+        print(f"Writing fits files to {fits_oname}_{opts.suffix}",
+                file=log)
 
-            dds2fits(dds_list,
-                     'RESIDUAL',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=True,
-                     nthreads=opts.nthreads,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
-            print('Done writing RESIDUAL', file=log)
-            dds2fits(dds_list,
-                     'MODEL',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False,
-                     nthreads=opts.nthreads,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
-            print('Done writing MODEL', file=log)
-            dds2fits(dds_list,
-                     'UPDATE',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False,
-                     nthreads=opts.nthreads,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
-            print('Done writing UPDATE', file=log)
-            try:
-                dds2fits(dds_list,
-                     'MPSF',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False,
-                     nthreads=opts.nthreads,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
-                print('Done writing MPSF', file=log)
-            except Exception as e:
-                print(e)
+        dds2fits(dds_list,
+                'RESIDUAL',
+                f'{fits_oname}_{opts.suffix}',
+                norm_wsum=True,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes)
+        print('Done writing RESIDUAL', file=log)
+        dds2fits(dds_list,
+                'MODEL',
+                f'{fits_oname}_{opts.suffix}',
+                norm_wsum=False,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes)
+        print('Done writing MODEL', file=log)
+        dds2fits(dds_list,
+                'UPDATE',
+                f'{fits_oname}_{opts.suffix}',
+                norm_wsum=False,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes)
+        print('Done writing UPDATE', file=log)
+        # try:
+        #     dds2fits(dds_list,
+        #          'MPSF',
+        #          f'{fits_oname}_{opts.suffix}',
+        #          norm_wsum=False,
+        #          nthreads=opts.nthreads,
+        #          do_mfs=opts.fits_mfs,
+        #          do_cube=opts.fits_cubes)
+        #     print('Done writing MPSF', file=log)
+        # except Exception as e:
+        #     print(e)
 
-        print(f"All done after {time.time() - ti}s", file=log)
+    print(f"All done after {time.time() - ti}s", file=log)
 
 
 def _sara(**kw):
@@ -120,12 +119,12 @@ def _sara(**kw):
     from pfb.opt.power_method import power_method
     from pfb.opt.pcg import pcg
     from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
-    from pfb.utils.misc import l1reweight_func, taperf
-    from pfb.operators.hessian import hess_direct, hessian_psf_cube
+    from pfb.utils.misc import l1reweight_func
+    from pfb.operators.hessian import hess_psf
     from pfb.operators.psi import Psi
     from pfb.operators.gridder import compute_residual
     from copy import copy, deepcopy
-    from ducc0.misc import empty_noncritical
+    from ducc0.misc import empty_noncritical, thread_pool_size
     from pfb.prox.prox_21m import prox_21m_numba as prox_21
     # from pfb.prox.prox_21 import prox_21
     from pfb.utils.misc import fitcleanbeam, fit_image_cube, eval_coeffs_to_slice
@@ -139,11 +138,7 @@ def _sara(**kw):
         fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
-    dds_store = DaskMSStore(dds_name)
-    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
-    dds = xds_from_list(dds_list,
-                        drop_vars=['UVW', 'WEIGHT', 'MASK'],
-                        nthreads=opts.nthreads)
+    dds, dds_list = xds_from_url(dds_name)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
@@ -160,12 +155,7 @@ def _sara(**kw):
 
     nband = freq_out.size
 
-    # only need this to get ny_psf
-    psf = np.stack([ds.PSF.values for ds in dds], axis=0)
-    dds = [ds.drop_vars('PSF') for ds in dds]
-
-    # stitch dirty/psf in apparent scale
-    # drop_vars to avoid duplicates in memory
+    # drop_vars after access to avoid duplicates in memory
     # and avoid unintentional side effects?
     output_type = dds[0].DIRTY.dtype
     if 'RESIDUAL' in dds[0]:
@@ -185,7 +175,7 @@ def _sara(**kw):
         dds = [ds.drop_vars('UPDATE') for ds in dds]
     else:
         update = np.zeros((nband, nx, ny))
-    psfhat = np.stack([ds.PSFHAT.values for ds in dds], axis=0)
+    abspsf = np.stack([np.abs(ds.PSFHAT.values) for ds in dds], axis=0)
     dds = [ds.drop_vars('PSFHAT') for ds in dds]
     beam = np.stack([ds.BEAM.values for ds in dds], axis=0)
     wsums = np.stack([ds.wsum for ds in dds], axis=0)
@@ -193,9 +183,7 @@ def _sara(**kw):
 
     wsum = np.sum(wsums)
     wsums /= wsum
-    psf /= wsum
-    psfhat /= wsum
-    abspsf = np.abs(psfhat)
+    abspsf /= wsum
     residual /= wsum
     residual_mfs = np.sum(residual, axis=0)
     model_mfs = np.mean(model[fsel], axis=0)
@@ -234,31 +222,15 @@ def _sara(**kw):
     # pre-allocate arrays for doing FFT's
     real_type = 'f8'
     complex_type = 'c16'
-    if opts.hess_approx == 'direct':
-        npix = np.maximum(nx, ny)
-        nyo2 = psfhat.shape[-1]
-        taperxy = taperf((nx, ny), np.minimum(int(0.1*npix), 32))
-        xhat = empty_noncritical((nband, nx_psf, nyo2),
-                                dtype=complex_type)
-        xpad = empty_noncritical((nband, nx_psf, ny_psf),
-                                dtype=real_type)
-        xout = empty_noncritical((nband, nx, ny),
-                                dtype=real_type)
-        precond = lambda x, mode : hess_direct(
-                                    x,
-                                    xpad=xpad,
-                                    xhat=xhat,
-                                    xout=xout,
-                                    psfhat=abspsf,
-                                    taperxy=taperxy,
-                                    lastsize=ny_psf,
-                                    nthreads=opts.nthreads,
-                                    sigmainvsq=wsums[:, None, None]*opts.epsfactor,
-                                    mode=mode)
-    elif opts.hess_approx == 'psf':
-        raise NotImplementedError
-    elif opts.hess_approx == 'wgt':
-        raise NotImplementedError
+    precond = hess_psf(nx, ny, abspsf,
+                       beam=beam,
+                       eta=opts.eta*wsums,
+                       nthreads=opts.nthreads,
+                       cgtol=opts.cg_tol,
+                       cgmaxit=opts.cg_maxit,
+                       cgverbose=opts.cg_verbose,
+                       cgrf=opts.cg_report_freq,
+                       taper_width=np.minimum(int(0.1*nx), 32))
 
     if opts.hess_norm is None:
         # if the grid worker had been rerun hess_norm won't be in attrs
@@ -268,8 +240,8 @@ def _sara(**kw):
                   file=log)
         else:
             print("Finding spectral norm of Hessian approximation", file=log)
-            func = lambda x: precond(x, 'forward')
-            hess_norm, hessbeta = power_method(func, (nband, nx, ny),
+            hess_norm, hessbeta = power_method(
+                                            precond.dot, (nband, nx, ny),
                                             tol=opts.pm_tol,
                                             maxit=opts.pm_maxit,
                                             verbosity=opts.pm_verbose,
@@ -286,6 +258,9 @@ def _sara(**kw):
     psi = Psi(nband, nx, ny, bases, opts.nlevels, opts.nthreads)
     Nxmax = psi.Nxmax
     Nymax = psi.Nymax
+
+    print(f"Using {psi.nthreads_per_band} numba threads for each band", file=log)
+    print(f"Using {thread_pool_size()} threads for gridding", file=log)
 
     # number of frequency basis functions
     if opts.nbasisf is None:
@@ -307,8 +282,7 @@ def _sara(**kw):
         print('Initialising with L1 reweighted', file=log)
         if not update.any():
             raise ValueError("Cannot reweight before any updates have been performed")
-        # divide by taper so as not to bias rms_comps
-        psi.dot(update/taperxy, outvar)
+        psi.dot(update, outvar)
         tmp = np.sum(outvar, axis=0)
         # exclude zeros from padding DWT's
         # rms_comps = np.std(tmp[tmp!=0])
@@ -343,6 +317,8 @@ def _sara(**kw):
     best_rmax = rmax
     best_model = model.copy()
     diverge_count = 0
+    eps = 1.0
+    write_futures = None
     print(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
     if opts.skip_model:
@@ -351,7 +327,10 @@ def _sara(**kw):
         mrange = range(iter0, iter0 + opts.niter)
     for k in mrange:
         print('Solving for update', file=log)
-        update = precond(residual, 'backward')
+        residual *= beam  # avoid copy
+        update = precond.idot(residual,
+                              mode=opts.hess_approx,
+                              x0=update if update.any() else None)
         update_mfs = np.mean(update, axis=0)
         save_fits(update_mfs,
                   fits_oname + f'_{opts.suffix}_update_{k+1}.fits',
@@ -359,7 +338,7 @@ def _sara(**kw):
 
         modelp = deepcopy(model)
         xtilde = model + opts.gamma * update
-        grad21 = lambda x: -precond(xtilde - x, 'forward')/opts.gamma
+        grad21 = lambda x: -precond.dot(xtilde - x)/opts.gamma
         if iter0 == 0:
             lam = opts.init_factor * opts.rmsfactor * rms
         else:
@@ -462,19 +441,27 @@ def _sara(**kw):
                   fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
+        # make sure write futures have finished
+        if write_futures is not None:
+            cf.wait(write_futures)
+
         print(f'Computing residual', file=log)
+        write_futures = []
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
-            resid = compute_residual(ds_name,
-                                     nx, ny,
-                                     cell_rad, cell_rad,
-                                     ds_name,
-                                     model[b],
-                                     nthreads=opts.nthreads,
-                                     epsilon=opts.epsilon,
-                                     do_wgridding=opts.do_wgridding,
-                                     double_accum=opts.double_accum)
-            residual[b] = resid
+            residual[b], fut = compute_residual(
+                                    ds_name,
+                                    nx, ny,
+                                    cell_rad, cell_rad,
+                                    ds_name,
+                                    model[b],
+                                    nthreads=opts.nthreads,
+                                    epsilon=opts.epsilon,
+                                    do_wgridding=opts.do_wgridding,
+                                    double_accum=opts.double_accum,
+                                    verbosity=opts.verbosity)
+            write_futures.append(fut)
+
         residual /= wsum
         residual_mfs = np.sum(residual, axis=0)
         save_fits(residual_mfs,
@@ -498,18 +485,32 @@ def _sara(**kw):
         # these are not updated in compute_residual
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
-            ds = ds.assign(**{
-                'MODEL': (('x', 'y'), model[b]),
-                'MODEL_BEST': (('x', 'y'), best_model[b]),
-                'UPDATE': (('x', 'y'), update[b]),
-            })
+            ds['UPDATE'] = (('x', 'y'), update[b])
+            # don't write unecessarily
+            for var in ds.data_vars:
+                if var != 'UPDATE':
+                    ds = ds.drop_vars(var)
+
+            if (model==best_model).all():
+                ds['MODEL_BEST'] = (('x', 'y'), best_model[b])
+
+            # ds.assign(**{
+            #     'MODEL_BEST': (('x', 'y'), best_model[b]),
+            #     'UPDATE': (('x', 'y'), update[b]),
+            # })
             attrs = {}
             attrs['rms'] = best_rms
             attrs['rmax'] = best_rmax
             attrs['niters'] = k+1
             attrs['hess_norm'] = hess_norm
             ds = ds.assign_attrs(**attrs)
-            ds.to_zarr(ds_name, mode='a')
+
+
+            with cf.ThreadPoolExecutor(max_workers=1) as executor:
+                fut = executor.submit(ds.to_zarr, ds_name, mode='a')
+                write_futures.append(fut)
+
+            # ds.to_zarr(ds_name, mode='a')
 
 
         print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
@@ -526,10 +527,9 @@ def _sara(**kw):
                 print(f"Converged after {k+1} iterations.", file=log)
                 break
 
-        if k+1 - iter0 >= l1_reweight_from:
+        if (k+1 - iter0 >= l1_reweight_from) and (k+1 - iter0 < opts.niter):
             print('Computing L1 weights', file=log)
-            # divide by taper so as not to bias rms_comps
-            psi.dot(update/taperxy, outvar)
+            psi.dot(update, outvar)
             tmp = np.sum(outvar, axis=0)
             # exclude zeros from padding DWT's
             # rms_comps = np.std(tmp[tmp!=0])
@@ -554,5 +554,8 @@ def _sara(**kw):
             if diverge_count > opts.diverge_count:
                 print("Algorithm is diverging. Terminating.", file=log)
                 break
+
+    # make sure write futures have finished
+    cf.wait(write_futures)
 
     return

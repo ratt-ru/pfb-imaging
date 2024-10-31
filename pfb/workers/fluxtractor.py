@@ -5,15 +5,15 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('FLUXMOP')
+log = pyscilog.get_logger('FLUXTRACTOR')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.fluxmop)
-def fluxmop(**kw):
+@clickify_parameters(schema.fluxtractor)
+def fluxtractor(**kw):
     '''
     Forward step aka flux mop.
 
@@ -44,7 +44,7 @@ def fluxmop(**kw):
 
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f'{str(opts.log_directory)}/fluxmop_{timestamp}.log'
+    logname = f'{str(opts.log_directory)}/fluxtractor_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
 
@@ -56,15 +56,15 @@ def fluxmop(**kw):
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import xds_from_url
 
-    basename = f'{basedir}/{oname}'
+    basename = opts.output_filename
     fits_oname = f'{opts.fits_output_folder}/{oname}'
-    dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
+    dds_name =f'{basename}_{opts.suffix}.dds'
 
     with ExitStack() as stack:
         from distributed import wait
         from pfb import set_client
         if opts.nworkers > 1:
-            client = set_client(opts.nworkers, log, stack)
+            client = set_client(opts.nworkers, log, stack, client_log_level=opts.log_level)
             from distributed import as_completed
         else:
             print("Faking client", file=log)
@@ -74,9 +74,9 @@ def fluxmop(**kw):
             as_completed = lambda x: x
 
         ti = time.time()
-        _fluxmop(**opts)
+        _fluxtractor(**opts)
 
-        dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
+        _, dds_list = xds_from_url(dds_name)
 
         # convert to fits files
         if opts.fits_mfs or opts.fits_cubes:
@@ -144,7 +144,7 @@ def fluxmop(**kw):
 
         print(f"All done after {time.time() - ti}s", file=log)
 
-def _fluxmop(**kw):
+def _fluxtractor(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -169,8 +169,7 @@ def _fluxmop(**kw):
 
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
-    dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
-    dds = xds_from_url(dds_store.url)
+    dds, dds_list = xds_from_url(dds_store.url)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
@@ -270,7 +269,7 @@ def _fluxmop(**kw):
         fut = client.submit(
             pcg_dds,
             ds_name,
-            opts.sigmainvsq,
+            opts.eta,
             opts.sigma,
             use_psf=opts.use_psf,
             residual_name=opts.residual_name,

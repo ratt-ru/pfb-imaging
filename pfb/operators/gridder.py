@@ -3,7 +3,8 @@ Dask wrappers around the wgridder. These operators are per band
 because we are not guaranteed that each imaging band has the same
 number of rows after BDA.
 """
-
+import concurrent.futures as cf
+from time import time
 import numpy as np
 import numba
 import concurrent.futures as cf
@@ -12,8 +13,8 @@ import dask
 import dask.array as da
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from ducc0.fft import c2r, r2c, c2c
+from ducc0.misc import resize_thread_pool
 from africanus.constants import c as lightspeed
-from quartical.utils.dask import Blocker
 from pfb.utils.weighting import counts_to_weights, _compute_counts
 from pfb.utils.beam import eval_beam
 from pfb.utils.naming import xds_from_list
@@ -138,6 +139,7 @@ def comps2vis(
             rbin_idx, rbin_cnts,
             tbin_idx, tbin_cnts,
             fbin_idx, fbin_cnts,
+            region_mask,
             mds,
             modelf,
             tfunc,
@@ -163,6 +165,7 @@ def comps2vis(
                         tbin_cnts, 'r',
                         fbin_idx, 'f',
                         fbin_cnts, 'f',
+                        region_mask, None,
                         mds, None,
                         modelf, None,
                         tfunc, None,
@@ -188,6 +191,7 @@ def _comps2vis(
             rbin_idx, rbin_cnts,
             tbin_idx, tbin_cnts,
             fbin_idx, fbin_cnts,
+            region_mask,
             mds,
             modelf,
             tfunc,
@@ -206,6 +210,7 @@ def _comps2vis(
                         rbin_idx, rbin_cnts,
                         tbin_idx, tbin_cnts,
                         fbin_idx, fbin_cnts,
+                        region_mask,
                         mds,
                         modelf,
                         tfunc,
@@ -226,6 +231,7 @@ def _comps2vis_impl(uvw,
                     rbin_idx, rbin_cnts,
                     tbin_idx, tbin_cnts,
                     fbin_idx, fbin_cnts,
+                    region_mask,
                     mds,
                     modelf,
                     tfunc,
@@ -237,6 +243,9 @@ def _comps2vis_impl(uvw,
                     ncorr_out=4,
                     freq_min=-np.inf,
                     freq_max=np.inf):
+    # why is this necessary?
+    resize_thread_pool(nthreads)
+
     # adjust for chunking
     # need a copy here if using multiple row chunks
     rbin_idx2 = rbin_idx - rbin_idx.min()
@@ -282,25 +291,27 @@ def _comps2vis_impl(uvw,
             fout = ffunc(np.mean(freq[indf]))
             image = np.zeros((nx, ny), dtype=comps.dtype)
             image[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
-            vis[indr, indf, 0] = dirty2vis(uvw=uvw,
-                                           freq=f,
-                                           dirty=image,
-                                           pixsize_x=cellx, pixsize_y=celly,
-                                           center_x=x0, center_y=y0,
-                                           flip_u=flip_u,
-                                           flip_v=flip_v,
-                                           flip_w=flip_w,
-                                           epsilon=epsilon,
-                                           do_wgridding=do_wgridding,
-                                           divide_by_n=divide_by_n,
-                                           nthreads=nthreads)
-            if ncorr_out > 1:
-                vis[indr, indf, -1] = vis[indr, indf, 0]
+            if np.any(region_mask):
+                image = np.where(region_mask, image, 0.0)
+                vis[indr, indf, 0] = dirty2vis(uvw=uvw,
+                                            freq=f,
+                                            dirty=image,
+                                            pixsize_x=cellx, pixsize_y=celly,
+                                            center_x=x0, center_y=y0,
+                                            flip_u=flip_u,
+                                            flip_v=flip_v,
+                                            flip_w=flip_w,
+                                            epsilon=epsilon,
+                                            do_wgridding=do_wgridding,
+                                            divide_by_n=divide_by_n,
+                                            nthreads=nthreads)
+                if ncorr_out > 1:
+                    vis[indr, indf, -1] = vis[indr, indf, 0]
     return vis
 
 
 def image_data_products(dsl,
-                        counts,
+                        dsp,
                         nx, ny,
                         nx_psf, ny_psf,
                         cellx, celly,
@@ -318,7 +329,8 @@ def image_data_products(dsl,
                         do_psf=True,
                         do_residual=True,
                         do_weight=True,
-                        do_noise=False):
+                        do_noise=False,
+                        do_beam=False):
     '''
     Function to compute image space data products in one go
 
@@ -333,7 +345,7 @@ def image_data_products(dsl,
     Assumes all datasets are concatenatable and will compute weighted
     sum of beam
     '''
-
+    resize_thread_pool(nthreads)
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
 
     # TODO - assign ug,vg-coordinates
@@ -343,7 +355,6 @@ def image_data_products(dsl,
         'x': x,
         'y': y
     }
-
 
     # expects a list
     if isinstance(dsl, str):
@@ -383,8 +394,6 @@ def image_data_products(dsl,
     # output ds
     dso = xr.Dataset(attrs=attrs, coords=coords)
     dso['FREQ'] = (('chan',), freq)
-    if counts is not None:
-        dso['COUNTS'] = (('x', 'y'), counts)
 
     if model is None:
         if l2_reweight_dof:
@@ -392,6 +401,7 @@ def image_data_products(dsl,
                              'Perhaps transfer model from somewhere?')
     else:
         # do not apply weights in this direction
+        # actually model vis, this saves memory
         residual_vis = dirty2vis(
             uvw=uvw,
             freq=freq,
@@ -406,31 +416,38 @@ def image_data_products(dsl,
             flip_v=flip_v,
             flip_w=flip_w,
             nthreads=nthreads,
-            divide_by_n=False,  # incorporte in smooth beam
+            divide_by_n=False,  # incorporate in smooth beam
             sigma_min=1.1, sigma_max=3.0)
 
         residual_vis *= -1  # negate model
         residual_vis += vis
 
     if l2_reweight_dof:
-        ressq = (residual_vis*residual_vis.conj()).real
+        if dsp:
+            dsp = xds_from_list([dsp], drop_all_but='WEIGHT')
+            wgtp = dsp[0].WEIGHT.values
+        else:
+            wgtp = 1.0
         # mask needs to be bool here
+        ressq = (residual_vis*wgtp*residual_vis.conj()).real
         ssq = ressq[mask>0].sum()
         ovar = ssq/mask.sum()
-        chi2_dofp = np.mean(ressq[mask>0]*wgt[mask>0])
-        mean_dev = np.mean(ressq[mask>0]/ovar)
         if ovar:
-            wgt = (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
-            # now divide by ovar to scale to absolute units
-            # the chi2_dof after reweighting should be closer to one
-            wgt /= ovar
-            chi2_dof = np.mean(ressq[mask>0]*wgt[mask>0])
-            print(f'Band {bandid} chi2-dof changed from {chi2_dofp} to {chi2_dof} with mean deviation of {mean_dev}')
+            # scale the natural weights
+            # RHS is weight relative to unity since wgtp included in ressq
+            meani = np.mean(ressq[mask>0]/ovar)
+            stdi = np.std(ressq[mask>0]/ovar)
+            print(f"Band {bandid} before: mean = {meani:.3e}, std = {stdi:.3e}")
+            # wgt_relative_one = (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
+            # wgt *= wgt_relative_one
+            wgt *= (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
         else:
             wgt = None
-
-    # we usually want to re-evaluate this since the robustness may change
+        # import ipdb; ipdb.set_trace()
+    # re-evaluate since robustness and or wgt after reweight may change
     if robustness is not None:
+        numba_threads = np.maximum(nthreads, 1)
+        numba.set_num_threads(numba_threads)
         counts = _compute_counts(uvw,
                                  freq,
                                  mask,
@@ -438,22 +455,52 @@ def image_data_products(dsl,
                                  nx, ny,
                                  cellx, celly,
                                  uvw.dtype,
-                                 ngrid=np.minimum(nthreads, 8),  # limit number of grids
+                                 # limit number of grids
+                                 ngrid=np.minimum(numba_threads, 8),
                                  usign=1.0 if flip_u else -1.0,
                                  vsign=1.0 if flip_v else -1.0)
-        imwgt = counts_to_weights(
+        wgt = counts_to_weights(
             counts,
             uvw,
             freq,
+            wgt,
             nx, ny,
             cellx, celly,
             robustness,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
-        if wgt is not None:
-            wgt *= imwgt
-        else:
-            wgt = imwgt
+
+    if l2_reweight_dof:
+        # normalise to absolute units
+        ressq = (residual_vis*wgt*residual_vis.conj()).real
+        ssq = ressq[mask>0].sum()
+        ovar = ssq/mask.sum()
+        wgt /= ovar
+        ressq = (residual_vis*wgt*residual_vis.conj()).real
+        meanf = np.mean(ressq[mask>0])
+        stdf = np.std(ressq[mask>0])
+        print(f"Band {bandid} after: mean = {meanf:.3e}, std = {stdf:.3e}")
+
+        # import ipdb; ipdb.set_trace()
+
+        import matplotlib.pyplot as plt
+        from scipy.stats import norm
+        x = np.linspace(-5, 5, 150)
+        y = norm.pdf(x, 0, 1)
+        fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(8, 12))
+        ax[0,0].hist((residual_vis.real*np.sqrt(wgtp/2)).ravel(), bins=15, density=True)
+        ax[0,0].plot(x, y, 'k')
+        ax[0,1].hist((residual_vis.real*np.sqrt(wgt/2)).ravel(), bins=15, density=True)
+        ax[0,1].plot(x, y, 'k')
+        ax[1,0].hist((residual_vis.imag*np.sqrt(wgtp/2)).ravel(), bins=15, density=True)
+        ax[1,0].plot(x, y, 'k')
+        ax[1,1].hist((residual_vis.imag*np.sqrt(wgt/2)).ravel(), bins=15, density=True)
+        ax[1,1].plot(x, y, 'k')
+        import os
+        cwd = os.getcwd()
+        bid = dso.attrs['bandid']
+        fig.savefig(f'{cwd}/resid_hist_{bid}.png')
+        # import ipdb; ipdb.set_trace()
 
     # these are always used together
     if do_weight:
@@ -610,10 +657,11 @@ def image_data_products(dsl,
 
         dso['NOISE'] = (('x','y'), noise)
 
-    if beam is not None:
-        dso['BEAM'] = (('x', 'y'), beam)
-    else:
-        dso['BEAM'] = (('x', 'y'), np.ones((nx, ny), dtype=wgt.dtype))
+    if do_beam:
+        if beam is not None:
+            dso['BEAM'] = (('x', 'y'), beam)
+        else:
+            dso['BEAM'] = (('x', 'y'), np.ones((nx, ny), dtype=wgt.dtype))
 
     # save
     dso = dso.assign_attrs(wsum=wsum, x0=x0, y0=y0, l0=l0, m0=m0,
@@ -638,15 +686,20 @@ def compute_residual(dsl,
                      nthreads=1,
                      epsilon=1e-7,
                      do_wgridding=True,
-                     double_accum=True):
+                     double_accum=True,
+                     verbosity=1):
     '''
     Function to compute residual and write it to disk
     '''
+    resize_thread_pool(nthreads)
     # expects a list
     if isinstance(dsl, str):
         dsl = [dsl]
 
+    tii = time()
+
     # currently only a single dds
+    ti = time()
     ds = xds_from_list(dsl, nthreads=nthreads)[0]
 
     uvw = ds.UVW.values
@@ -661,6 +714,9 @@ def compute_residual(dsl,
     x0 = ds.x0
     y0 = ds.y0
 
+    tread = time() - ti
+
+    ti = time()
     # do not apply weights in this direction
     model_vis = dirty2vis(
         uvw=uvw,
@@ -677,9 +733,11 @@ def compute_residual(dsl,
         do_wgridding=do_wgridding,
         nthreads=nthreads,
         divide_by_n=False,  # incorporate in smooth beam
-        sigma_min=1.1, sigma_max=3.0)
+        sigma_min=1.1, sigma_max=3.0,
+        verbosity=0)
+    tdegrid = time() - ti
 
-
+    ti = time()
     convim = vis2dirty(
         uvw=uvw,
         freq=freq,
@@ -697,16 +755,41 @@ def compute_residual(dsl,
         divide_by_n=False,  # incorporate in smooth beam
         nthreads=nthreads,
         sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=double_accum)
+        double_precision_accumulation=double_accum,
+        verbosity=0)
+    tgrid = time() - ti
 
     # this is the once attenuated residual since
     # dirty is only attenuated once
+    ti = time()
     residual = dirty - convim
+    tdiff = time() - ti
 
+    ti = time()
     ds['MODEL'] = (('x','y'), model)
     ds['RESIDUAL'] = (('x','y'), residual)
+    tassign = time() - ti
+
+    # we only need to write MODEL and RESIDUAL
+    ds = ds[['RESIDUAL','MODEL']]
 
     # save
-    ds.to_zarr(output_name, mode='a')
+    ti = time()
+    with cf.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(ds.to_zarr, output_name, mode='a')
+    twrite = time() - ti
 
-    return residual
+    ttot = time() - tii
+    ttally = tread + tdegrid + tgrid + tdiff + tassign + twrite
+    if verbosity > 1:
+        print(f'tread = {tread/ttot}')
+        print(f'tdegrid = {tdegrid/ttot}')
+        print(f'tgrid = {tgrid/ttot}')
+        print(f'tdiff = {tdiff/ttot}')
+        print(f'tassign = {tassign/ttot}')
+        print(f'twrite = {twrite/ttot}')
+        print(f'ttally = {ttally/ttot}')
+    return residual, future
+
+def dataset_to_zarr(ds, output_name):
+    ds.to_zarr(output_name, mode='a')

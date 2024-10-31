@@ -5,12 +5,17 @@ inputs:
     abbreviation: ms
     info:
       Path to measurement set.
+  suffix:
+    dtype: str
+    default: 'main'
+    info:
+      Can be used to specify a custom name for the image space data products
   mds:
     dtype: str
-    required: true
     abbreviation: mds
     info:
-      Path to the mds that needs to be degridded
+      Optional path to mds to use for degridding.
+      By default mds is inferred from output-filename.
   model-column:
     dtype: str
     default: MODEL_DATA
@@ -38,15 +43,21 @@ inputs:
   channels-per-image:
     dtype: int
     abbreviation: cpi
-    default: -1
     info:
       Number of channels per image.
-      Default (-1, 0, None) -> dataset per spw.
+      Default (None) -> read mapping from dds.
+      (-1, 0) -> one band per SPW.
   accumulate:
     dtype: bool
     default: false
     info:
       Accumulate onto model column
+  region-file:
+    dtype: str
+    info:
+      A region file containing regions that need to be converted to separate measurement set columns.
+      Each region in the file will end up in a separate column labelled as model-column{#} with the
+      remainder going into model-column.
 
   _include:
     - (.)gridding.yml

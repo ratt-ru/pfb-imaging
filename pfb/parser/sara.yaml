@@ -3,6 +3,7 @@ inputs:
     - (.)gridding.yml
     - (.)pdopts.yml
     - (.)pmopts.yml
+    - (.)cgopts.yml
     - (.)out.yml
   suffix:
     dtype: str
@@ -32,7 +33,7 @@ inputs:
       Spectral norm of hessian approximation
   hess-approx:
     dtype: str
-    default: direct
+    default: 'psf'
     abbreviation: hess-approx
     choices: ['wgt','psf','direct']
     info:
@@ -44,11 +45,11 @@ inputs:
     default: 1.0
     info:
       By default will threshold by rmsfactor*rms at every iteration
-  epsfactor:
+  eta:
     dtype: float
     default: 1.0
     info:
-      Will use epsfactor*wsum to regularise the inversion of the Hessian approximation.
+      Will use eta*wsum to regularise the inversion of the Hessian approximation.
   gamma:
     dtype: float
     default: 1.0
@@ -76,7 +77,7 @@ inputs:
       How to apply positivity constraint
       0 -> no positivity,
       1 -> normal positivity constraint
-      and 2 -> strong positivity i.e. all pixels in a band > 0
+      2 -> strong positivity i.e. all pixels in a band > 0
   niter:
     dtype: int
     default: 10
@@ -117,9 +118,21 @@ inputs:
     default: 0.5
     info:
       Reduce the regularisation strength by this fraction at the outset.
+  verbosity:
+    dtype: int
+    default: 1
+    info:
+      Set to larger than 1 to report timings during residual computation
 
 outputs:
-  {}
+  dds-out:
+    implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
+    dtype: Directory
+    must_exist: false
+  mds-out:
+    implicit: '{current.output-filename}_{current.product}_{current.suffix}_model.mds'
+    dtype: Directory
+    must_exist: false
 
 policies:
   pass_missing_as_none: true

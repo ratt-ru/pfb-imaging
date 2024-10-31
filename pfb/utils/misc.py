@@ -1,6 +1,8 @@
 import sys
+from contextlib import nullcontext
 import numpy as np
 import numexpr as ne
+import numba
 from numba import jit, njit, prange
 from numba.extending import overload
 import dask
@@ -19,7 +21,6 @@ from scipy.optimize import curve_fit, fmin_l_bfgs_b
 from collections import namedtuple
 from africanus.coordinates.coordinates import radec_to_lmn
 import xarray as xr
-from quartical.utils.dask import Blocker
 from scipy.interpolate import RegularGridInterpolator
 from scipy.linalg import solve_triangular
 import sympy as sm
@@ -55,7 +56,6 @@ def compute_context(scheduler, output_filename, boring=True):
         return performance_report(filename=output_filename + "_dask_report.html")
     else:
         if boring:
-            from contextlib import nullcontext
             return nullcontext()
         else:
             return ProgressBar()
@@ -399,7 +399,6 @@ def construct_mappings(ms_name,
             if not idx.any():
                 continue
             idx0 = np.argmax(idx) # returns index of first True element
-            # np.searchsorted here?
             try:
                 # returns zero if not idx.any()
                 assert idx[idx0]
@@ -446,11 +445,27 @@ def construct_mappings(ms_name,
             row_mapping[ms][idt]['start_indices'] = ridx
             row_mapping[ms][idt]['counts'] = rcounts
 
-            nfreq_chunks = nchan_in // cpit
-            freq_chunks = (cpit,)*nfreq_chunks
-            rem = nchan_in - nfreq_chunks * cpit
-            if rem:
-                freq_chunks += (rem,)
+            freq_idx0 = freq_mapping[ms][idt]['start_indices'][0]
+            if freq_idx0 != 0:
+                freq_chunks = (freq_idx0,) + tuple(freq_mapping[ms][idt]['counts'])
+            else:
+                freq_chunks = tuple(freq_mapping[ms][idt]['counts'])
+            freq_idxf = np.sum(freq_chunks)
+            if freq_idxf != nchan_in:
+                freq_chunkf = nchan_in - freq_idxf
+                freq_chunks += (freq_chunkf,)
+
+            try:
+                assert np.sum(freq_chunks) == nchan_in
+            except Exception as e:
+                raise RuntimeError("Something went wrong constructing the "
+                                   "frequency mapping. sum(fchunks != nchan)")
+
+            # nfreq_chunks = nchan_in // cpit
+            # freq_chunks = (cpit,)*nfreq_chunks
+            # rem = nchan_in - nfreq_chunks * cpit
+            # if rem:
+            #     freq_chunks += (rem,)
 
             ms_chunks[ms].append({'row': row_chunks,
                                   'chan': freq_chunks})
@@ -762,310 +777,6 @@ def chunkify_rows(time, utimes_per_chunk, daskify_idx=False):
     return tuple(row_chunks), time_bin_indices, time_bin_counts
 
 
-def rephase_vis(vis, uvw, radec_in, radec_out):
-    return da.blockwise(_rephase_vis, 'rf',
-                        vis, 'rf',
-                        uvw, 'r3',
-                        radec_in, None,
-                        radec_out, None,
-                        dtype=vis.dtype)
-
-def _rephase_vis(vis, uvw, radec_in, radec_out):
-    l_in, m_in, n_in = radec_to_lmn(radec_in)
-    l_out, m_out, n_out = radec_to_lmn(radec_out)
-    return vis * np.exp(1j*(uvw[:, 0]*(l_out-l_in) +
-                            uvw[:, 1]*(m_out-m_in) +
-                            uvw[:, 2]*(n_out-n_in)))
-
-
-# TODO - should allow coarsening to values other than 1
-def concat_row(xds):
-    times_in = []
-    freqs = []
-    for ds in xds:
-        times_in.append(ds.time_out)
-        freqs.append(ds.freq_out)
-
-    times_in = np.unique(times_in)
-    freqs = np.unique(freqs)
-
-    nband = freqs.size
-    ntime_in = times_in.size
-
-    if ntime_in == 1:  # no need to concatenate
-        return xds
-
-    # do merge manually because different variables require different
-    # treatment anyway eg. the BEAM should be computed as a weighted sum
-    xds_out = []
-    for b in range(nband):
-        xdsb = []
-        times = []
-        freq_max = []
-        freq_min = []
-        time_max = []
-        time_min = []
-        nu = freqs[b]
-        for ds in xds:
-            if ds.freq_out == nu:
-                xdsb.append(ds)
-                times.append(ds.time_out)
-                freq_max.append(ds.freq_max)
-                freq_min.append(ds.freq_min)
-                time_max.append(ds.time_max)
-                time_min.append(ds.time_min)
-
-        wgt = [ds.WEIGHT for ds in xdsb]
-        vis = [ds.VIS for ds in xdsb]
-        mask = [ds.MASK for ds in xdsb]
-        uvw = [ds.UVW for ds in xdsb]
-
-        # get weighted sum of beams
-        beam = sum_beam(xdsb)
-        l_beam = xdsb[0].l_beam.data
-        m_beam = xdsb[0].m_beam.data
-
-        wgto = xr.concat(wgt, dim='row')
-        viso = xr.concat(vis, dim='row')
-        masko = xr.concat(mask, dim='row')
-        uvwo = xr.concat(uvw, dim='row')
-
-        xdso = xr.merge((wgto, viso, masko, uvwo))
-        xdso = xdso.assign({'BEAM': (('l_beam', 'm_beam'), beam)})
-        xdso['FREQ'] = xdsb[0].FREQ  # is this always going to be the case?
-
-        xdso = xdso.chunk({'row':-1, 'l_beam':-1, 'm_beam':-1})
-
-        xdso = xdso.assign_coords({
-            'chan': (('chan',), xdsb[0].chan.data),
-            'l_beam': (('l_beam',), l_beam),
-            'm_beam': (('m_beam',), m_beam)
-        })
-
-        times = np.array(times)
-        freq_max = np.array(freq_max)
-        freq_min = np.array(freq_min)
-        time_max = np.array(time_max)
-        time_min = np.array(time_min)
-        tout = np.round(np.mean(times), 5)  # avoid precision issues
-        xdso = xdso.assign_attrs({
-            'dec': xdsb[0].dec,  # always the case?
-            'ra': xdsb[0].ra,    # always the case?
-            'time_out': tout,
-            'time_max': time_max.max(),
-            'time_min': time_min.min(),
-            'timeid': 0,
-            'freq_out': nu,
-            'freq_max': freq_max.max(),
-            'freq_min': freq_min.min(),
-        })
-        xds_out.append(xdso)
-    return xds_out
-
-
-def concat_chan(xds, nband_out=1):
-    times = []
-    freqs_in = []
-    freqs_min = []
-    freqs_max = []
-    all_freqs = []
-    for ds in xds:
-        times.append(ds.time_out)
-        freqs_in.append(ds.freq_out)
-        freqs_min.append(ds.freq_min)
-        freqs_max.append(ds.freq_max)
-        all_freqs.append(ds.chan)
-
-    times = np.unique(times)
-    freqs_in = np.unique(freqs_in)
-    freqs_min = np.unique(freqs_min)
-    freqs_max = np.unique(freqs_max)
-    all_freqs = np.unique(np.concatenate(all_freqs))
-
-    nband_in = freqs_in.size
-    ntime = times.size
-
-    if nband_in == nband_out or nband_in == 1:  # no need to concatenate
-        return xds
-
-    # currently assuming linearly spaced frequencies
-    freq_bins = np.linspace(freqs_min.min(), freqs_max.max(), nband_out+1)
-    bin_centers = (freq_bins[1:] + freq_bins[0:-1])/2
-
-    xds_out = []
-    for t in range(ntime):
-        time = times[t]
-        for b in range(nband_out):
-            xdst = []
-            flow = freq_bins[b]
-            fhigh = freq_bins[b+1]
-            freqsb = all_freqs[all_freqs >= flow]
-            # exclusive except for the last one
-            if b==nband_out-1:
-                freqsb = freqsb[freqsb <= fhigh]
-            else:
-                freqsb = freqsb[freqsb < fhigh]
-            time_max = []
-            time_min = []
-            for ds in xds:
-                # ds overlaps output if either ds.freq_min or ds.freq_max lies in the bin
-                low_in = ds.freq_min > flow and ds.freq_min < fhigh
-                high_in = ds.freq_max > flow and ds.freq_max < fhigh
-
-                if ds.time_out == time and (low_in or high_in):
-                    xdst.append(ds)
-                    time_max.append(ds.time_max)
-                    time_min.append(ds.time_min)
-
-            nrow = xdst[0].row.size
-            nchan = freqsb.size
-
-            freqs_dask = da.from_array(freqsb, chunks=nchan)
-            blocker = Blocker(sum_overlap, 'rc')
-            blocker.add_input('ufreq', freqs_dask, 'f')
-            blocker.add_input('flow', flow, None)
-            blocker.add_input('fhigh', fhigh, None)
-
-            for i, ds in enumerate(xdst):
-                ds = ds.chunk({'row':-1, 'chan':-1})
-                blocker.add_input(f'vis{i}', ds.VIS.data, 'rc')
-                blocker.add_input(f'wgt{i}', ds.WEIGHT.data, 'rc')
-                blocker.add_input(f'mask{i}', ds.MASK.data, 'rc')
-                blocker.add_input(f'freq{i}', ds.FREQ.data, 'c')
-
-            blocker.add_output('viso', 'rf', ((nrow,), (nchan,)), xdst[0].VIS.dtype)
-            blocker.add_output('wgto', 'rf', ((nrow,), (nchan,)), xdst[0].WEIGHT.dtype)
-            blocker.add_output('masko', 'rf', ((nrow,), (nchan,)), xdst[0].MASK.dtype)
-
-            out_dict = blocker.get_dask_outputs()
-
-            # get weighted sum of beam
-            beam = sum_beam(xdst)
-            l_beam = xdst[0].l_beam.data
-            m_beam = xdst[0].m_beam.data
-
-            data_vars = {
-                'VIS': (('row', 'chan'), out_dict['viso']),
-                'WEIGHT': (('row', 'chan'), out_dict['wgto']),
-                'MASK': (('row', 'chan'), out_dict['masko']),
-                'FREQ': (('chan',), freqs_dask),
-                'UVW': (('row', 'three'), xdst[0].UVW.data), # should be the same across data sets
-                'BEAM': (('l_beam', 'm_beam'), beam)
-            }
-
-            coords = {
-                'chan': (('chan',), freqsb),
-                'l_beam': (('l_beam',), l_beam),
-                'm_beam': (('m_beam',), m_beam)
-            }
-
-            fout = np.round(bin_centers[b], 5)  # avoid precision issues
-            time_max = np.array(time_max)
-            time_min = np.array(time_min)
-            attrs = {
-                'freq_out': fout,
-                'freq_max': fhigh,
-                'freq_min': flow,
-                'bandid': b,
-                'dec': xdst[0].dec,
-                'ra': xdst[0].ra,
-                'time_out': time,
-                'time_max': time_max.max(),
-                'time_min': time_min.min()
-            }
-
-            xdso = xr.Dataset(data_vars=data_vars,
-                              coords=coords,
-                              attrs=attrs)
-
-            xds_out.append(xdso)
-    return xds_out
-
-
-def sum_beam(xds):
-    '''
-    Compute the weighted sum of the beams contained in xds
-    weighting by the sum of the weights in each ds
-    '''
-    nx, ny = xds[0].BEAM.shape
-    btype = xds[0].BEAM.dtype
-    blocker = Blocker(_sum_beam, 'xy')
-    blocker.add_input('nx', nx, None)
-    blocker.add_input('ny', ny, None)
-    blocker.add_input('btype', btype, None)
-    for i, ds in enumerate(xds):
-        blocker.add_input(f'beam{i}', ds.BEAM.data, 'xy')
-        blocker.add_input(f'wgt{i}', ds.WEIGHT.data, 'rf')
-
-    blocker.add_output('beam', 'xy', ((nx,),(ny,)), btype)
-    out_dict = blocker.get_dask_outputs()
-    return out_dict['beam']
-
-def _sum_beam(nx, ny, btype, **kwargs):
-    beam = np.zeros((nx, ny), dtype=btype)
-    # need to separate the different variables in kwargs
-    # i.e. beam, wgt -> nvars=2
-    nitems = len(kwargs)//2
-    wsum = 0.0
-    for i in range(nitems):
-        wgti = kwargs[f'wgt{i}']
-        wsumi = wgti.sum()
-        beam += wsumi * kwargs[f'beam{i}']
-        wsum += wsumi
-
-    if wsum:
-        beam /= wsum
-
-    # blocker expects dict as output
-    out_dict = {}
-    out_dict['beam'] = beam
-
-    return out_dict
-
-def sum_overlap(ufreq, flow, fhigh, **kwargs):
-    # need to separate the different variables in kwargs
-    # i.e. vis, wgt, mask, freq -> nvars=4
-    nitems = len(kwargs)//4
-
-    # output grids
-    nchan = ufreq.size
-    nrow = kwargs['vis0'].shape[0]
-    viso = np.zeros((nrow, nchan), dtype=kwargs['vis0'].dtype)
-    wgto = np.zeros((nrow, nchan), dtype=kwargs['wgt0'].dtype)
-    masko = np.zeros((nrow, nchan), dtype=kwargs['mask0'].dtype)
-
-    # weighted sum at overlap
-    for i in range(nitems):
-        vis = kwargs[f'vis{i}']
-        wgt = kwargs[f'wgt{i}']
-        mask = kwargs[f'mask{i}']
-        nu = kwargs[f'freq{i}']
-        _, idx0, idx1 = np.intersect1d(nu, ufreq, assume_unique=True, return_indices=True)
-        try:
-            viso[:, idx1] += vis[:, idx0] * wgt[:, idx0] * mask[:, idx0]
-            wgto[:, idx1] += wgt[:, idx0] * mask[:, idx0]
-            masko[:, idx1] += mask[:, idx0]
-        except Exception as e:
-            print(flow, fhigh, ufreq, nu)
-            raise e
-
-    # unmasked where at least one data point is unflagged
-    masko = np.where(masko > 0, True, False)
-    # TODO - why does this get trigerred?
-    # if (wgto[masko]==0).any():
-    #     print(np.where(wgto[masko]==0))
-    #     raise ValueError("Weights are zero at unflagged location")
-    viso[masko] = viso[masko]/wgto[masko]
-
-    # blocker expects a dictionary as output
-    out_dict = {}
-    out_dict['viso'] = viso
-    out_dict['wgto'] = wgto
-    out_dict['masko'] = masko.astype(np.uint8)
-
-    return out_dict
-
-
 def l1reweight_func(model,
                     psiH=None,
                     outvar=None,
@@ -1325,7 +1036,7 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
         return image_in
 
 
-@njit(**JIT_OPTIONS)
+@njit(nogil=True, cache=True)
 def norm_diff(x, xp):
     return norm_diff_impl(x, xp)
 
@@ -1334,7 +1045,8 @@ def norm_diff_impl(x, xp):
     return NotImplementedError
 
 
-@overload(norm_diff_impl, jit_options=JIT_OPTIONS)
+# @overload(norm_diff_impl, jit_options={**JIT_OPTIONS, "parallel":True})
+@overload(norm_diff_impl, jit_options={**JIT_OPTIONS})  # parallel reduction slower?
 def nb_norm_diff_impl(x, xp):
     if x.ndim==3:
         def impl(x, xp):
@@ -1342,7 +1054,7 @@ def nb_norm_diff_impl(x, xp):
             num = 0.0
             den = 1e-12  # avoid div by zero
             for b in range(nband):
-                for i in range(nx):
+                for i in prange(nx):
                     for j in range(ny):
                         num += (x[b, i, j] - xp[b, i, j])**2
                         den += x[b, i, j]**2
@@ -1352,7 +1064,7 @@ def nb_norm_diff_impl(x, xp):
             nx, ny = x.shape
             num = 0.0
             den = 1e-12  # avoid div by zero
-            for i in range(nx):
+            for i in prange(nx):
                 for j in range(ny):
                     num += (x[i, j] - xp[i, j])**2
                     den += x[i, j]**2
@@ -1536,6 +1248,17 @@ def parallel_standard_normal(shape):
             result[i, j] = np.random.standard_normal()
 
     return result
+
+
+def taperf(shape, taper_width):
+    tapers1d = ()
+    for npix in shape:
+        taper = np.ones(npix)
+        taper[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
+        taper[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
+        tapers1d += (taper,)
+    return np.outer(*tapers1d)
+
 
 # def fft_interp(image, cellxi, cellyi, nxo, nyo,
 #                cellxo, cellyo, shiftx, shifty):

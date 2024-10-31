@@ -160,7 +160,7 @@
 #     # always clean in apparent scale so no beam
 #     # mask is applied to residual after hessian application
 #     hess = partial(hessian_xds, xds=dds, hessopts=hessopts,
-#                    wsum=wsum, sigmainv=0,
+#                    wsum=wsum, eta=0,
 #                    mask=np.ones((nx, ny), dtype=output_type),
 #                    compute=True, use_beam=False)
 
@@ -245,13 +245,13 @@
 #     def gradf(residual, x, dhf):
 #         return -2*residual
 
-#     def hessian_psf(psfo, x0, sigmainv, df, dhf, v):
+#     def hessian_psf(psfo, x0, eta, df, dhf, v):
 #         '''
 #         psfo is the convolution operator and x0 is the fixed value of x at which
 #         we evaluate the operator. v is the vector to be acted on.
 #         '''
 #         dx0 = df(x0)
-#         return 2 * dhf(psfo(df(v)))  + v*sigmainv
+#         return 2 * dhf(psfo(df(v)))  + v*eta
 
 #     def get_scaling(hessf):
 #         tmpx = np.random.randn(*dirty.shape)
@@ -315,9 +315,9 @@
 #         dhf = partial(dhfunc, xp)
 #         j = -gradf(residual, xp, dhf)
 #         print("Finding spectral norm of Hessian approximation", file=log)
-#         # hessian depends on x and sigmainv so need to do this at every iteration
-#         sigmainv = np.maximum(np.std(j), opts.sigmainv)
-#         hesspsf = partial(hessian_psf, psf_convolve, xp, sigmainv, df, dhf)
+#         # hessian depends on x and eta so need to do this at every iteration
+#         eta = np.maximum(np.std(j), opts.eta)
+#         hesspsf = partial(hessian_psf, psf_convolve, xp, eta, df, dhf)
 #         hess_norm, hessbeta = power_method(hesspsf, (nband, nx, ny),
 #                                           b0=hessbeta,
 #                                           tol=opts.pm_tol,
@@ -325,7 +325,7 @@
 #                                           verbosity=opts.pm_verbose,
 #                                           report_freq=opts.pm_report_freq)
 
-#         print(f"Solving forward step with sigmainv = {sigmainv}", file=log)
+#         print(f"Solving forward step with eta = {eta}", file=log)
 #         delx = pcg(hesspsf,
 #                    j,
 #                    tol=opts.cg_tol,

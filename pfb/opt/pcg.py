@@ -1,12 +1,14 @@
+from time import time
 import numpy as np
+from numba import njit, prange
+from numba.extending import overload
+import numexpr as ne
 from functools import partial
 import dask.array as da
 from distributed import wait
 from uuid import uuid4
-from ducc0.misc import make_noncritical
-from pfb.utils.misc import norm_diff, fitcleanbeam, Gaussian2D
+from pfb.utils.misc import norm_diff, fitcleanbeam, Gaussian2D, taperf, JIT_OPTIONS
 from pfb.utils.naming import xds_from_list
-from pfb.operators.hessian import _hessian_impl, hess_direct_slice
 from ducc0.misc import empty_noncritical
 from ducc0.fft import c2c
 iFs = np.fft.ifftshift
@@ -14,6 +16,122 @@ Fs = np.fft.fftshift
 
 # import pyscilog
 # log = pyscilog.get_logger('PCG')
+
+@njit(nogil=True, cache=False, parallel=False)
+def update(x, xp, r, rp, p, Ap, alpha):
+    return update_impl(x, xp, r, rp, p, Ap, alpha)
+
+
+def update_impl(x, xp, r, rp, p, Ap, alpha):
+    return NotImplementedError
+
+
+@overload(update_impl, jit_options={**JIT_OPTIONS})  #, "parallel":True})
+def nb_update_impl(x, xp, r, rp, p, Ap, alpha):
+    if x.ndim==3:
+        def impl(x, xp, r, rp, p, Ap, alpha):
+            nband, nx, ny = x.shape
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        x[b, i, j] = xp[b, i, j] + alpha * p[b, i, j]
+                        r[b, i, j] = rp[b, i, j] + alpha * Ap[b, i, j]
+            return x, r
+    elif x.ndim==2:
+        def impl(x, xp, r, rp, p, Ap, alpha):
+            nx, ny = x.shape
+            for i in prange(nx):
+                for j in range(ny):
+                    x[i, j] = xp[i, j] + alpha * p[i, j]
+                    r[i, j] = rp[i, j] + alpha * Ap[i, j]
+            return x, r
+    else:
+        raise ValueError("norm_diff is only implemented for 2D or 3D arrays")
+
+    return impl
+
+
+@njit(**JIT_OPTIONS, parallel=True)
+def alpha_update(r, y, p, Ap):
+    return alpha_update_impl(r, y, p, Ap)
+
+
+def alpha_update_impl(r, y, p, Ap):
+    return NotImplementedError
+
+
+@overload(alpha_update_impl, jit_options={**JIT_OPTIONS, 'parallel':True})
+def nb_alpha_update_impl(r, y, p, Ap):
+    if r.ndim==2:
+        def impl(r, y, p, Ap):
+            rnorm = 0.0
+            rnorm_den = 0.0
+            nx, ny = r.shape
+            for i in prange(nx):
+                for j in range(ny):
+                    rnorm += r[i,j]*y[i,j]
+                    rnorm_den += p[i,j]*Ap[i,j]
+
+            alpha = rnorm/rnorm_den
+            return rnorm, alpha
+    elif r.ndim==3:
+        def impl(r, y, p, Ap):
+            rnorm = 0.0
+            rnorm_den = 0.0
+            nband, nx, ny = r.shape
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        rnorm += r[b,i,j]*y[b,i,j]
+                        rnorm_den += p[b,i,j]*Ap[b,i,j]
+
+            alpha = rnorm/rnorm_den
+            return rnorm, alpha
+    return impl
+
+
+@njit(**JIT_OPTIONS, parallel=True)
+def beta_update(r, y, p, rnorm):
+    return beta_update_impl(r, y, p, rnorm)
+
+
+def beta_update_impl(r, y, p, rnorm):
+    return NotImplementedError
+
+
+@overload(beta_update_impl, jit_options={**JIT_OPTIONS, 'parallel':True})
+def nb_beta_update_impl(r, y, p, rnorm):
+    if r.ndim==2:
+        def impl(r, y, p, rnorm):
+            rnorm_next = 0.0
+            nx, ny = r.shape
+            for i in prange(nx):
+                for j in range(ny):
+                    rnorm_next += r[i,j]*y[i,j]
+
+            beta = rnorm_next/rnorm
+
+            for i in prange(nx):
+                for j in range(ny):
+                    p[i,j] = beta * p[i,j] - y[i,j]
+            return rnorm_next, p
+    elif r.ndim==3:
+        def impl(r, y, p, rnorm):
+            rnorm_next = 0.0
+            nband, nx, ny = r.shape
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        rnorm_next += r[b,i,j]*y[b,i,j]
+
+            beta = rnorm_next/rnorm
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        p[b,i,j] = beta * p[b,i,j] - y[b,i,j]
+            return rnorm_next, p
+    return impl
+
 
 def pcg(A,
         b,
@@ -48,33 +166,77 @@ def pcg(A,
     x = x0
     eps = 1.0
     stall_count = 0
+    xp = x.copy()
+    rp = r.copy()
+    tcopy = 0.0
+    tA = 0.0
+    tvdot = 0.0
+    tupdate = 0.0
+    tp = 0.0
+    tnorm = 0.0
+    tii = time()
     while (eps > tol or k < minit) and k < maxit and stall_count < 5:
-        xp = x.copy()
-        rp = r.copy()
+        ti = time()
+        np.copyto(xp, x)
+        np.copyto(rp, r)
+        tcopy += (time() - ti)
+        ti = time()
         Ap = A(p)
+        tA += (time() - ti)
+        ti = time()
         rnorm = np.vdot(r, y)
         alpha = rnorm / np.vdot(p, Ap)
-        x = xp + alpha * p
-        r = rp + alpha * Ap
+        tvdot += (time() - ti)
+        ti = time()
+        # x = xp + alpha * p
+        # r = rp + alpha * Ap
+        ne.evaluate('xp + alpha*p',
+                    out=x,
+                    local_dict={
+                        'xp': xp,
+                        'alpha': alpha,
+                        'p': p},
+                    casting='unsafe')
+        ne.evaluate('rp + alpha*Ap',
+                    out=r,
+                    local_dict={
+                        'rp': rp,
+                        'alpha': alpha,
+                        'Ap': Ap},
+                    casting='unsafe')
+        # x, r = update(x, xp, r, rp, p, Ap, alpha)
+        tupdate += (time() - ti)
         y = M(r)
-        rnorm_next = np.vdot(r, y)
-        while rnorm_next > rnorm and backtrack:  # TODO - better line search
-            alpha *= 0.75
-            x = xp + alpha * p
-            r = rp + alpha * Ap
-            y = M(r)
-            rnorm_next = np.vdot(r, y)
 
+        # while rnorm_next > rnorm and backtrack:  # TODO - better line search
+        #     alpha *= 0.75
+        #     x = xp + alpha * p
+        #     r = rp + alpha * Ap
+        #     y = M(r)
+        #     rnorm_next = np.vdot(r, y)
+
+        ti = time()
+        rnorm_next = np.vdot(r, y)
         beta = rnorm_next / rnorm
-        p = beta * p - y
-        # if p is zero we should stop
-        if not np.any(p):
-            break
+        ne.evaluate('beta*p-y',
+                    out=p,
+                    local_dict={
+                        'beta': beta,
+                        'p': p,
+                        'y': y},
+                    casting='unsafe')
+        # p = beta * p - y
+        # p *= beta
+        # p -= y
+        # rnorm, p = beta_update(r, y, p, rnorm)
+        tp += (time() - ti)
         rnorm = rnorm_next
         k += 1
         epsp = eps
+        ti = time()
         eps = norm_diff(x, xp)
         phi = rnorm / phi0
+        tnorm += (time() - ti)
 
         if np.abs(epsp - eps) < 1e-3*tol:
             stall_count += 1
@@ -82,6 +244,16 @@ def pcg(A,
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
                 #   file=log)
+    ttot = time() - tii
+    ttally = tcopy + tA + tvdot + tupdate + tp + tnorm
+    if verbosity > 1:
+        print('tcopy = ', tcopy/ttot)
+        print('tA = ', tA/ttot)
+        print('tvdot = ', tvdot/ttot)
+        print('tupdate = ', tupdate/ttot)
+        print('tp = ', tp/ttot)
+        print('tnorm = ', tnorm/ttot)
+        print('ttally = ', ttally/ttot)
 
     if k >= maxit:
         if verbosity:
@@ -105,7 +277,7 @@ def _pcg_psf_impl(psfhat,
                   beam,
                   lastsize,
                   nthreads,
-                  sigmainv,
+                  eta,
                   tol=1e-5,
                   maxit=500,
                   minit=100,
@@ -120,27 +292,24 @@ def _pcg_psf_impl(psfhat,
     _, nx_psf, nyo2 = psfhat.shape
     model = np.zeros((nband, nx, ny), dtype=b.dtype, order='C')
     # PCG preconditioner
-    if sigmainv > 0:
-        def M(x): return x / sigmainv
+    if eta > 0:
+        def M(x): return x / eta
     else:
         M = None
 
     for k in range(nband):
-        xpad = np.empty((nx_psf, lastsize), dtype=b.dtype, order='C')
-        xpad = make_noncritical(xpad)
-        xhat = np.empty((nx_psf, nyo2), dtype=psfhat.dtype, order='C')
-        xhat = make_noncritical(xhat)
-        xout = np.empty((nx, ny), dtype=b.dtype, order='C')
-        xout = make_noncritical(xout)
+        xpad = empty_noncritical((nx_psf, lastsize), dtype=b.dtype)
+        xhat = empty_noncritical((nx_psf, nyo2), dtype=psfhat.dtype)
+        xout = empty_noncritical((nx, ny), dtype=b.dtype)
         A = partial(_hessian_psf_slice,
-                    xpad,
-                    xhat,
-                    xout,
-                    psfhat[k],
-                    beam[k],
-                    lastsize,
+                    xpad=xpad,
+                    xhat=xhat,
+                    xout=xout,
+                    abspsf=np.abs(psfhat[k]),
+                    beam=beam[k],
+                    lastsize=lastsize,
                     nthreads=nthreads,
-                    sigmainv=sigmainv)
+                    eta=eta)
 
         model[k] = pcg(A, b[k], x0[k],
                        M=M, tol=tol, maxit=maxit, minit=minit,
@@ -155,7 +324,7 @@ def _pcg_psf(psfhat,
              beam,
              lastsize,
              nthreads,
-             sigmainv,
+             eta,
              cgopts):
     return _pcg_psf_impl(psfhat,
                          b,
@@ -163,7 +332,7 @@ def _pcg_psf(psfhat,
                          beam,
                          lastsize,
                          nthreads,
-                         sigmainv,
+                         eta,
                          **cgopts)
 
 def pcg_psf(psfhat,
@@ -172,7 +341,7 @@ def pcg_psf(psfhat,
             beam,
             lastsize,
             nthreads,
-            sigmainv,
+            eta,
             cgopts,
             compute=True):
 
@@ -209,7 +378,7 @@ def pcg_psf(psfhat,
                          beam, bout,
                          lastsize, None,
                          nthreads, None,
-                         sigmainv, None,
+                         eta, None,
                          cgopts, None,
                          align_arrays=False,
                          dtype=b.dtype)
@@ -219,26 +388,8 @@ def pcg_psf(psfhat,
         return model
 
 
-def taperf(shape, taper_width):
-    height, width = shape
-    array = np.ones((height, width))
-
-    # Create 1D taper for both dimensions
-    taper_x = np.ones(width)
-    taper_y = np.ones(height)
-
-    # Apply cosine taper to the edges
-    taper_x[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
-    taper_x[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
-
-    taper_y[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
-    taper_y[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
-
-    return np.outer(taper_y, taper_x)
-
-
 def pcg_dds(ds_name,
-            sigmainvsq,  # regularisation for Hessian approximation
+            eta,  # regularisation for Hessian approximation
             sigma,       # regularisation for preconditioner
             mask=1.0,
             use_psf=True,
@@ -253,8 +404,12 @@ def pcg_dds(ds_name,
             verbosity=1,
             report_freq=10):
     '''
-    pcg for fluxmop
+    pcg for fluxtractor
     '''
+    # avoid circular import
+    from pfb.operators.hessian import _hessian_slice, hess_direct_slice
+
+    # expects a list
     if not isinstance(ds_name, list):
         ds_name = [ds_name]
 
@@ -270,7 +425,6 @@ def pcg_dds(ds_name,
         ds = ds.drop_vars(residual_name)
     else:
         j = ds.DIRTY.values * mask * ds.BEAM.values
-        ds = ds.drop_vars(('DIRTY'))
 
     psf = ds.PSF.values
     nx_psf, py_psf = psf.shape
@@ -278,9 +432,6 @@ def pcg_dds(ds_name,
     wsum = np.sum(ds.WEIGHT.values * ds.MASK.values)
     psf /= wsum
     j /= wsum
-    # set sigmas relative to wsum
-    # sigma *= wsum
-    # sigmainvsq *= wsum
 
     # downweight edges of field compared to center
     # this allows the PCG to downweight the fit to the edges
@@ -288,7 +439,7 @@ def pcg_dds(ds_name,
     # stabalises the preconditioner
     width = np.minimum(int(0.1*nx), 32)
     taperxy = taperf((nx, ny), width)
-    # sigmainvsq /= taperxy
+    # eta /= taperxy
 
     # set precond if PSF is present
     if 'PSFHAT' in ds and use_psf:
@@ -319,11 +470,11 @@ def pcg_dds(ds_name,
                     xpad=xpad,
                     xhat=xhat,
                     xout=xout,
-                    psfhat=psfhat,
+                    abspsf=psfhat,
                     taperxy=taperxy,
                     lastsize=ny_psf,
                     nthreads=nthreads,
-                    sigmainvsq=sigma,
+                    eta=sigma,
                     mode='backward')
 
         x0 = precond(j)
@@ -341,7 +492,7 @@ def pcg_dds(ds_name,
         precond = None
         x0 = np.zeros_like(j)
 
-    hess = partial(_hessian_impl,
+    hess = partial(_hessian_slice,
                    uvw=ds.UVW.values,
                    weight=ds.WEIGHT.values,
                    vis_mask=ds.MASK.values,
@@ -354,7 +505,7 @@ def pcg_dds(ds_name,
                    epsilon=epsilon,
                    double_accum=double_accum,
                    nthreads=nthreads,
-                   sigmainvsq=sigmainvsq,
+                   eta=eta,
                    wsum=wsum)
 
     x = pcg(hess,
@@ -375,21 +526,20 @@ def pcg_dds(ds_name,
         model = x
 
 
-    resid = ds.DIRTY.values - _hessian_impl(
+    resid = ds.DIRTY.values - _hessian_slice(
                                         model,
-                                        ds.UVW.values,
-                                        ds.WEIGHT.values,
-                                        ds.MASK.values,
-                                        ds.FREQ.values,
-                                        ds.BEAM.values,
+                                        uvw=ds.UVW.values,
+                                        weight=ds.WEIGHT.values,
+                                        vis_mask=ds.MASK.values,
+                                        freq=ds.FREQ.values,
+                                        beam=ds.BEAM.values,
                                         cell=ds.cell_rad,
                                         x0=ds.x0,
                                         y0=ds.y0,
                                         do_wgridding=do_wgridding,
                                         epsilon=epsilon,
                                         double_accum=double_accum,
-                                        nthreads=nthreads,
-                                        sigmainvsq=0)
+                                        nthreads=nthreads)
 
     ds = ds.assign(**{
         'MODEL_MOPPED': (('x','y'), model),

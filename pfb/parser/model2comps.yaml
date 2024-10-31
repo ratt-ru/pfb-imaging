@@ -76,7 +76,14 @@ inputs:
     - (.)out.yml
 
 outputs:
-  {}
+  mds-out:
+    implicit: =IFSET(current.model-out, current.model-out, '{current.output-filename}_{current.product}_{current.suffix}_{current.model-name}.mds')
+    dtype: Directory
+    must_exist: false
+  # fits-out:
+  #   implicit: =IFSET(current.model-out, STRIPEXT(current.model-out)+.fits, '{current.output-filename}_{current.product}_{current.suffix}_{current.model-name}.mds')
+  #   dtype: Directory
+  #   must_exist: false
 
 policies:
   pass_missing_as_none: true

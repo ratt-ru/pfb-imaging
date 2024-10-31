@@ -14,20 +14,21 @@ requirements = [
                 'Click',
                 "ducc0"
                 "@git+https://github.com/mreineck/ducc.git"
-                "@tweak_wgridder_conventions",
-                "QuartiCal"
-                "@git+https://github.com/ratt-ru/QuartiCal.git"
-                "@unpinneddeps",
+                "@ducc0",
                 "sympy",
-                "stimela >= 2.0rc18",
+                "stimela"
+                "@git+https://github.com/caracal-pipeline/stimela.git"
+                "@clickify_missing_as_none",
                 "streamjoy >= 0.0.8",
                 "codex-africanus[complete] >= 0.3.7",
+                "dask-ms[xarray, zarr, s3]",
                 "tbb",
                 "jax[cpu]",
-                "ipycytoscape",
                 "lz4",
                 "ipdb",
-                "psutil"
+                "psutil",
+                "bokeh < 3.0.0",
+                "regions"
             ]
 
 

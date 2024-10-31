@@ -1,17 +1,16 @@
 import numpy as np
 import numexpr as ne
 import xarray as xr
+import numba
 from numba import njit, prange, literally
 from dask.graph_manipulation import clone
 from distributed import worker_client
 import dask.array as da
 from xarray import Dataset
-# from quartical.utils.numba import coerce_literal
 from operator import getitem
 from pfb.utils.beam import interp_beam
 from pfb.utils.misc import weight_from_sigma, combine_columns
 import dask
-from quartical.utils.dask import Blocker
 from pfb.utils.stokes import stokes_funcs
 from pfb.utils.weighting import weight_data
 from uuid import uuid4
@@ -35,6 +34,8 @@ def single_stokes(
                 utime=None,
                 tbin_idx=None,
                 tbin_counts=None,
+                chan_low=None,
+                chan_high=None,
                 radec=None,
                 antpos=None,
                 poltype=None,
@@ -100,7 +101,7 @@ def single_stokes(
     # we rely on this to check the number of output bands and
     # to ensure we don't end up with fully flagged chunks
     if flag.all():
-        return 1
+        return None
 
     nrow, nchan, ncorr = data.shape
 
@@ -159,15 +160,10 @@ def single_stokes(
     # check that there are no missing antennas
     ant1u = np.unique(ant1)
     ant2u = np.unique(ant2)
-    try:
-        assert (ant1u[1:] - ant1u[0:-1] == 1).all()
-        assert (ant2u[1:] - ant2u[0:-1] == 1).all()
-    except Exception as e:
-        raise NotImplementedError('You seem to have missing antennas. '
-                                  'This is not currently supported.')
+    allants = np.unique(np.concatenate((ant1u, ant2u)))
 
     # check that antpos gives the correct size table
-    antmax = np.maximum(ant1.max(), ant2.max()) + 1
+    antmax = allants.size
     try:
         assert antmax == nant
     except Exception as e:
@@ -177,8 +173,13 @@ def single_stokes(
                          f'Table size is {antpos.shape} but got {antmax}. '
                          f'{oname}')
 
-    # we currently need this extra loop through the data because
-    # we don't have access to the grid
+    # relabel antennas by index
+    # this only works because allants is sorted in ascending order
+    for a, ant in enumerate(allants):
+        ant1 = np.where(ant1==ant, a, ant1)
+        ant2 = np.where(ant2==ant, a, ant2)
+
+    # apply gains and convert to Stokes
     data, weight = weight_data(data, weight, flag, jones,
                             tbin_idx, tbin_counts,
                             ant1, ant2,
@@ -316,6 +317,8 @@ def single_stokes(
         'freq_out': freq_out,
         'freq_min': freq_min,
         'freq_max': freq_max,
+        'chan_low': chan_low,
+        'chan_high': chan_high,
         'bandid': bandid,
         'time_out': time_out,
         'time_min': utime.min(),

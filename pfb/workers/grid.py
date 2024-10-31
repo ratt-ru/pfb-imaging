@@ -37,7 +37,7 @@ def grid(**kw):
             ncpu = ncpu//2
 
     from daskms.fsspec_store import DaskMSStore
-    basename = f'{basedir}/{oname}'
+    basename = opts.output_filename
     fits_oname = f'{opts.fits_output_folder}/{oname}'
     dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
 
@@ -71,84 +71,81 @@ def grid(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    with ExitStack() as stack:
-        from pfb import set_client
-        if opts.nworkers > 1:
-            client = set_client(opts.nworkers, log, stack)
-            from distributed import as_completed
-        else:
-            print("Faking client", file=log)
-            from pfb.utils.dist import fake_client
-            client = fake_client()
-            names = [0]
-            as_completed = lambda x: x
+    from pfb import set_client
+    if opts.nworkers > 1:
+        client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
+        from distributed import as_completed
+    else:
+        print("Faking client", file=log)
+        from pfb.utils.dist import fake_client
+        client = fake_client()
+        names = [0]
+        as_completed = lambda x: x
 
-        from pfb.utils.naming import xds_from_url
-        from pfb.utils.fits import dds2fits
+    from pfb.utils.naming import xds_from_url
+    from pfb.utils.fits import dds2fits
 
-        ti = time.time()
-        residual_mfs = _grid(**opts)
+    ti = time.time()
+    residual_mfs = _grid(**opts)
 
-        dds_list = dds_store.fs.glob(f'{dds_store.url}/*.zarr')
+    dds, dds_list = xds_from_url(dds_store.url)
 
-        # convert to fits files
-        futures = []
-        if opts.fits_mfs or opts.fits_cubes:
-            print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
-            if opts.dirty:
-                fut = client.submit(dds2fits,
-                                    dds_list,
-                                    'DIRTY',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True,
-                                    nthreads=opts.nthreads,
-                                    do_mfs=opts.fits_mfs,
-                                    do_cube=opts.fits_cubes)
-                futures.append(fut)
-            if opts.psf:
-                fut = client.submit(dds2fits,
-                                    dds_list,
-                                    'PSF',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True,
-                                    nthreads=opts.nthreads,
-                                    do_mfs=opts.fits_mfs,
-                                    do_cube=opts.fits_cubes)
-                futures.append(fut)
-            if opts.residual:
-                try:
-                    fut = client.submit(dds2fits,
-                                        dds_list,
-                                        'MODEL',
-                                        f'{fits_oname}_{opts.suffix}',
-                                        norm_wsum=False,
-                                        nthreads=opts.nthreads,
-                                        do_mfs=opts.fits_mfs,
-                                        do_cube=opts.fits_cubes)
-                    futures.append(fut)
+    # convert to fits files
+    futures = []
+    if opts.fits_mfs or opts.fits_cubes:
+        print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
+        if opts.dirty:
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'DIRTY',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=True,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
+        if opts.psf:
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'PSF',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=True,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
+        if opts.residual and 'RESIDUAL' in dds[0]:
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'MODEL',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=False,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
+        if 'MODEL' in dds[0]:
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'RESIDUAL',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=True,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
+        if opts.noise:
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'NOISE',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=True,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes)
+            futures.append(fut)
 
-                    fut = client.submit(dds2fits,
-                                        dds_list,
-                                        'RESIDUAL',
-                                        f'{fits_oname}_{opts.suffix}',
-                                        norm_wsum=True,
-                                        nthreads=opts.nthreads,
-                                        do_mfs=opts.fits_mfs,
-                                        do_cube=opts.fits_cubes)
-                    futures.append(fut)
-                except:
-                    pass
-            if opts.noise:
-                fut = client.submit(dds2fits,
-                                    dds_list,
-                                    'NOISE',
-                                    f'{fits_oname}_{opts.suffix}',
-                                    norm_wsum=True,
-                                    nthreads=opts.nthreads,
-                                    do_mfs=opts.fits_mfs,
-                                    do_cube=opts.fits_cubes)
-                futures.append(fut)
-
+        if 'BEAM' in dds[0]:
             fut = client.submit(dds2fits,
                                 dds_list,
                                 'BEAM',
@@ -159,16 +156,22 @@ def grid(**kw):
                                 do_cube=opts.fits_cubes)
             futures.append(fut)
 
-            for fut in as_completed(futures):
-                try:
-                    column = fut.result()
-                except:
-                    continue
-                print(f'Done writing {column}', file=log)
+        for fut in as_completed(futures):
+            try:
+                column = fut.result()
+            except:
+                continue
+            print(f'Done writing {column}', file=log)
 
         print(f"All done after {time.time() - ti}s", file=log)
 
-def _grid(xdsi=None, **kw):
+    if opts.nworkers > 1:
+        try:
+            client.close()
+        except Exception as e:
+            raise e
+
+def _grid(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -196,25 +199,18 @@ def _grid(xdsi=None, **kw):
         names = [0]
         as_completed = lambda x: x
 
-    basename = f'{opts.output_filename}'
+    basename = opts.output_filename
 
     # xds contains vis products, no imaging weights applied
     xds_name = f'{basename}.xds' if opts.xds is None else opts.xds
     xds_store = DaskMSStore(xds_name)
-    if xdsi is not None:
-        xds = []
-        for ds in xdsi:
-            xds.append(ds.chunk({'row':-1,
-                                 'chan': -1,
-                                 'l_beam': -1,
-                                 'm_beam': -1}))
-    else:
-        try:
-            assert xds_store.exists()
-        except Exception as e:
-            raise ValueError(f"There must be a dataset at {xds_store.url}")
+    try:
+        assert xds_store.exists()
+    except Exception as e:
+        raise ValueError(f"There must be a dataset at {xds_store.url}")
 
-        xds = xds_from_url(xds_name)
+    print(f"Lazy loading xds from {xds_store.url}", file=log)
+    xds, xds_list = xds_from_url(xds_store.url)
 
     times_in = []
     freqs_in = []
@@ -257,16 +253,6 @@ def _grid(xdsi=None, **kw):
     print(f"Cell size set to {cell_size:.5e} arcseconds", file=log)
     print(f"Field of view is ({nx*cell_deg:.3e},{ny*cell_deg:.3e}) degrees",
           file=log)
-
-
-    # TODO - how to glob with protocol in tact?
-    ds_list = xds_store.fs.glob(f'{xds_store.url}/*')
-    if '://' in xds_store.url:
-        protocol = xds_store.url.split('://')[0]
-    else:
-        protocol = 'file'
-    url_prepend = protocol + '://'
-    ds_list = list(map(lambda x: url_prepend + x, ds_list))
 
     # create dds and cache
     dds_name = opts.output_filename + f'_{opts.suffix}' + '.dds'
@@ -326,7 +312,7 @@ def _grid(xdsi=None, **kw):
         ntime = 1
         times_out = np.mean(times_in, keepdims=True)
         for b in range(nband):
-            for ds, ds_name in zip(xds, ds_list):
+            for ds, ds_name in zip(xds, xds_list):
                 if ds.bandid == b:
                     tbid = f'time0000_band{b:04d}'
                     xds_dct.setdefault(tbid, {})
@@ -335,12 +321,14 @@ def _grid(xdsi=None, **kw):
                     xds_dct[tbid]['radec'] = (ds.ra, ds.dec)
                     xds_dct[tbid]['time_out'] = times_out[0]
                     xds_dct[tbid]['freq_out'] = freqs_out[b]
+                    xds_dct[tbid]['chan_low'] = ds.chan_low
+                    xds_dct[tbid]['chan_high'] = ds.chan_high
     else:
         ntime = ntime_in
         times_out = times_in
         for t in range(times_in.size):
             for b in range(nband):
-                for ds, ds_name in zip(xds, ds_list):
+                for ds, ds_name in zip(xds, xds_list):
                     if ds.time_out == times_in[t] and ds.bandid == b:
                         tbid = f'time{t:04d}_band{b:04d}'
                         xds_dct.setdefault(tbid, {})
@@ -349,6 +337,8 @@ def _grid(xdsi=None, **kw):
                         xds_dct[tbid]['radec'] = (ds.ra, ds.dec)
                         xds_dct[tbid]['time_out'] = times_out[t]
                         xds_dct[tbid]['freq_out'] = freqs_out[b]
+                        xds_dct[tbid]['chan_low'] = ds.chan_low
+                        xds_dct[tbid]['chan_high'] = ds.chan_high
 
     if opts.dirty:
         print(f"Image size = (ntime={ntime}, nband={nband}, "
@@ -383,10 +373,17 @@ def _grid(xdsi=None, **kw):
         dsl = ds_dct['dsl']
         time_out = ds_dct['time_out']
         freq_out = ds_dct['freq_out']
-
+        chan_low = ds_dct['chan_low']
+        chan_high = ds_dct['chan_high']
+        iter0 = 0
         if from_cache:
-            out_ds = xr.open_zarr(f'{dds_store.url}/time{timeid}_band{bandid}.zarr',
+            out_ds_name = f'{dds_store.url}/time{timeid}_band{bandid}.zarr'
+            out_ds = xr.open_zarr(out_ds_name,
                                   chunks=None)
+            if 'niters' in out_ds:
+                iter0 = niters
+        else:
+            out_ds_name = None
 
         # compute lm coordinates of target
         if opts.target is not None:
@@ -426,7 +423,10 @@ def _grid(xdsi=None, **kw):
             'robustness': opts.robustness,
             'super_resolution_factor': opts.super_resolution_factor,
             'field_of_view': opts.field_of_view,
-            'product': opts.product
+            'product': opts.product,
+            'niters': iter0,
+            'chan_low': chan_low,
+            'chan_high': chan_high,
         }
 
         # get the model
@@ -462,7 +462,7 @@ def _grid(xdsi=None, **kw):
 
         fut = client.submit(image_data_products,
                             dsl,
-                            None,  # counts
+                            out_ds_name,
                             nx, ny,
                             nx_psf, ny_psf,
                             cell_rad, cell_rad,
@@ -481,6 +481,7 @@ def _grid(xdsi=None, **kw):
                             do_weight=opts.weight,
                             do_residual=opts.residual,
                             do_noise=opts.noise,
+                            do_beam=opts.beam,
                             workers=wname)
         futures.append(fut)
 

@@ -5,7 +5,6 @@ from numba.extending import overload
 import dask.array as da
 from ducc0.fft import c2c
 from africanus.constants import c as lightspeed
-from quartical.utils.dask import Blocker
 from pfb.utils.misc import JIT_OPTIONS
 from pfb.utils.stokes import stokes_funcs
 from pfb.utils.naming import xds_from_list
@@ -100,8 +99,9 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
         for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
             uvw_row = uvw[r]
             wgt_row = wgt[r]
+            mask_row = mask[r]
             for c in range(nchan):
-                if not mask[r, c]:
+                if not mask_row[c]:
                     continue
                 # current uv coords
                 chan_normfreq = normfreq[c]
@@ -137,9 +137,9 @@ def _es_kernel(x, beta, k):
 
 
 @njit(nogil=True, cache=True, parallel=True)
-def counts_to_weights(counts, uvw, freq, nx, ny,
-                       cell_size_x, cell_size_y, robust,
-                       usign=1.0, vsign=-1.0):
+def counts_to_weights(counts, uvw, freq, weight, nx, ny,
+                      cell_size_x, cell_size_y, robust,
+                      usign=1.0, vsign=-1.0):
     # ufreq
     u_cell = 1/(nx*cell_size_x)
     umax = np.abs(-1/cell_size_x/2 - u_cell/2)
@@ -153,9 +153,8 @@ def counts_to_weights(counts, uvw, freq, nx, ny,
     nchan = freq.size
     nrow = uvw.shape[0]
 
-    weights = np.zeros((nrow, nchan), dtype=counts.dtype)
     if not counts.any():
-        return weights
+        return weight
 
     # Briggs weighting factor
     if robust > -2:
@@ -167,6 +166,7 @@ def counts_to_weights(counts, uvw, freq, nx, ny,
     normfreq = freq / lightspeed
     for r in prange(nrow):
         uvw_row = uvw[r]
+        weight_row = weight[r]
         for c in range(nchan):
             # get current uv
             chan_normfreq = normfreq[c]
@@ -177,8 +177,8 @@ def counts_to_weights(counts, uvw, freq, nx, ny,
             # get v index
             v_idx = int(np.floor((v_tmp + vmax)/v_cell))
             if counts[u_idx, v_idx]:
-                weights[r, c] = 1.0/counts[u_idx, v_idx]
-    return weights
+                weight_row[c] = weight_row[c]/counts[u_idx, v_idx]
+    return weight
 
 
 
@@ -198,7 +198,7 @@ def filter_extreme_counts(counts, level=10.0):
     return counts
 
 
-@njit(**JIT_OPTIONS, parallel=True)
+@njit(nogil=True, cache=False, parallel=False)
 def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts,
                 ant1, ant2, pol, product, nc):
 
@@ -217,7 +217,7 @@ def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
     raise NotImplementedError
 
 
-@overload(_weight_data_impl, **JIT_OPTIONS, parallel=True, prefer_literal=True)
+@overload(_weight_data_impl, prefer_literal=True, jit_options={**JIT_OPTIONS, "parallel":True})
 def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product, nc):
 
