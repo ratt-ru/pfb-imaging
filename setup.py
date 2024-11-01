@@ -6,7 +6,7 @@ with open("README.rst", "r") as fh:
 
 requirements = [
                 'numpy',
-                'pytest >= 8.0.0'
+                'pytest >= 8.0.0',
                 'scikit-image',
                 'PyWavelets',
                 'katbeam',
