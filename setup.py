@@ -5,7 +5,7 @@ with open("README.rst", "r") as fh:
     long_description = fh.read()
 
 requirements = [
-                'numpy <= 2.0.0',
+                'numpy',
                 'scikit-image',
                 'PyWavelets',
                 'katbeam',
@@ -20,7 +20,10 @@ requirements = [
                 "@git+https://github.com/caracal-pipeline/stimela.git"
                 "@clickify_missing_as_none",
                 "streamjoy >= 0.0.8",
-                "codex-africanus[complete] >= 0.3.7",
+                # "codex-africanus[complete] >= 0.3.7",
+                "codex-africanus"
+                "@git+https://github.com/ratt-ru/codex-africanus.git"
+                "@relax-dependencies",
                 "dask-ms[xarray, zarr, s3]",
                 "tbb",
                 "jax[cpu]",
