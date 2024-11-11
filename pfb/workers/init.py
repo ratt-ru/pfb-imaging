@@ -208,9 +208,9 @@ def _init(**kw):
         print(f"No weights provided, using unity weights", file=log)
 
     # distinct freq groups
-    igroup = 0
     sgroup = 0
-    freq_groups = {}
+    freq_groups = []
+    freq_sgroups = []
     for ms in opts.ms:
         for idt, freq in freqs[ms].items():
             ilo = idt.find('DDID') + 4
@@ -218,20 +218,20 @@ def _init(**kw):
             ddid = int(idt[ilo:ihi])
             if (opts.ddids is not None) and (ddid not in opts.ddids):
                 continue
-            if not len(freq_groups.keys()):
-                freq_groups[igroup] = {}
-                freq_groups[igroup]['freq'] = freq
-                freq_groups[igroup]['sgroup'] = sgroup
-                igroup += 1
+            if not len(freq_groups):
+                freq_groups.append(freq)
+                freq_sgroups.append(sgroup)
                 sgroup += freq_mapping[ms][idt]['counts'].size
             else:
-                for i, fs in freq_groups.items():
-                    if not np.all(freq == fs['freq']):
-                        freq_groups[igroup] = {}
-                        freq_groups[igroup]['freq'] = freq
-                        freq_groups[igroup]['sgroup'] = sgroup
-                        igroup += 1
-                        sgroup += freq_mapping[ms][idt]['counts'].size
+                in_group = False
+                for fs in freq_groups:
+                    if freq.size == fs.size and np.all(freq == fs):
+                        in_group = True
+                        break
+                if not in_group:
+                    freq_groups.append(freq)
+                    freq_sgroups.append(sgroup)
+                    sgroup += freq_mapping[ms][idt]['counts'].size
 
     # band mapping
     msddid2bid = {}
@@ -239,13 +239,12 @@ def _init(**kw):
         msddid2bid[ms] = {}
         for idt, freq in freqs[ms].items():
             # find group where it matches
-            for igroup, fs in freq_groups.items():
-                if np.all(freq == fs['freq']):
-                    msddid2bid[ms][idt] = fs['sgroup']
+            for sgroup, fs in zip(freq_sgroups, freq_groups):
+                if freq.size == fs.size and np.all(freq == fs):
+                    msddid2bid[ms][idt] = sgroup
 
     # a flat list to use with as_completed
     datasets = []
-
     for ims, ms in enumerate(opts.ms):
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
                           table_schema=schema, group_cols=group_by)
