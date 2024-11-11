@@ -1,0 +1,49 @@
+[tool.poetry]
+name = "pfb-imaging"
+version = "0.0.4"
+description = "Radio interferometric imaging suite based on a preconditioned forward-backward approach"
+authors = ["Landman Bester <lbester@sarao.ac.za>"]
+license = "MIT"
+readme = "README.rst"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Astronomy"
+]
+packages = [{include = "pfb"}]
+
+[tool.poetry.dependencies]
+python = ">=3.10, <3.12"
+pytest = ">=8.0.0"
+scikit-image = ">=0.24.0"
+PyWavelets = ">=1.7.0"
+katbeam = ">=0.1"
+numexpr = ">=2.10.1"
+pyscilog = ">=0.1.2"
+Click = ">=8.1"
+ducc0 = ">=0.34.0"
+sympy = ">=1.13"
+stimela = { git = "https://github.com/caracal-pipeline/stimela.git", branch = "clickify_missing_as_none" }
+streamjoy = ">=0.0.8"
+codex-africanus = {extras = ["dask", "scipy", "astropy", "python-casacore"], version = ">=0.3.7, <=0.3.7"}
+dask-ms = {extras = ["s3", "xarray", "zarr"], version = ">=0.2.20, <=0.2.20"}
+tbb = ">=2021.13.1"
+jax = {extras = ["cpu"], version = ">=0.4.31"}
+lz4 = ">=4.3.3"
+bokeh = ">=3.1.0"
+regions = ">=0.9"
+psutil = ">=5.9.8"
+
+[tool.poetry.scripts]
+pfb = "pfb.workers.main:cli"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+## add section for dev component which installs builder and Dockerfiles
