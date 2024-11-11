@@ -30,6 +30,7 @@ ducc0 = ">=0.34.0"
 sympy = ">=1.13"
 stimela = { git = "https://github.com/caracal-pipeline/stimela.git", branch = "clickify_missing_as_none" }
 streamjoy = ">=0.0.8"
+dask = ">=2023.1.1, <2024.11.0"
 codex-africanus = {extras = ["dask", "scipy", "astropy", "python-casacore"], version = ">=0.4.1"}
 dask-ms = {extras = ["s3", "xarray", "zarr"], version = ">=0.2.22"}
 tbb = ">=2021.13.1"
