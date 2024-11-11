@@ -254,7 +254,7 @@ def _init(**kw):
                 Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
 
                 fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
-                                    freq_mapping[ms][idt]['counts']))
+                                     freq_mapping[ms][idt]['counts']))
 
                 for fi, (flow, fcounts) in fitr:
                     Inu = slice(flow, flow + fcounts)
@@ -276,7 +276,7 @@ def _init(**kw):
                                     utimes[ms][idt][It],
                                     ridx, rcnts,
                                     radecs[ms][idt],
-                                    fi, ti, ims, ms, flow, flow+fcounts])
+                                    ddid + fi, ti, ims, ms, flow, flow+fcounts])
 
     futures = []
     associated_workers = {}
