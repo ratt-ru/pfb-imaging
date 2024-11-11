@@ -214,7 +214,7 @@ def _sara(**kw):
         ntol = 1
         pd_tol = [opts.pd_tol]
     niters = opts.niter
-    if ntol < niters:
+    if ntol <= niters:
         pd_tolf = pd_tol[-1]
         pd_tol += [pd_tolf]*niters  # no harm in too many
 
