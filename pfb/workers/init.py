@@ -208,6 +208,20 @@ def _init(**kw):
         print(f"No weights provided, using unity weights", file=log)
 
 
+    # band mapping
+    ddid2bid = {}
+    b0 = 0
+    for ms in opts.ms:
+        for idt, fmap in freq_mapping[ms].items():
+            ilo = idt.find('DDID') + 4
+            ihi = idt.rfind('_')
+            ddid = int(idt[ilo:ihi])
+            if (opts.ddids is not None) and (ddid not in opts.ddids):
+                continue
+            elif ddid not in ddid2bid.keys():
+                ddid2bid[ddid] = b0
+                b0 += fmap['counts'].size
+
     # a flat list to use with as_completed
     datasets = []
 
@@ -223,17 +237,12 @@ def _init(**kw):
             fid = ds.FIELD_ID
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
-            # TODO - cleaner syntax
-            if opts.fields is not None:
-                if fid not in opts.fields:
-                    continue
-            if opts.ddids is not None:
-                if ddid not in opts.ddids:
-                    continue
-            if opts.scans is not None:
-                if scanid not in opts.scans:
-                    continue
-
+            if (opts.fields is not None) and (fid not in opts.fields):
+                continue
+            if (opts.ddids is not None) and (ddid not in opts.ddids):
+                continue
+            if (opts.scans is not None) and (scanid not in opts.scans):
+                continue
 
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
             nrow = ds.sizes['row']
@@ -255,7 +264,7 @@ def _init(**kw):
 
                 fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
                                      freq_mapping[ms][idt]['counts']))
-
+                b0 = ddid2bid[ddid]
                 for fi, (flow, fcounts) in fitr:
                     Inu = slice(flow, flow + fcounts)
 
@@ -276,7 +285,7 @@ def _init(**kw):
                                     utimes[ms][idt][It],
                                     ridx, rcnts,
                                     radecs[ms][idt],
-                                    ddid + fi, ti, ims, ms, flow, flow+fcounts])
+                                    b0 + fi, ti, ims, ms, flow, flow+fcounts])
 
     futures = []
     associated_workers = {}
