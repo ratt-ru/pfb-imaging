@@ -461,12 +461,6 @@ def construct_mappings(ms_name,
                 raise RuntimeError("Something went wrong constructing the "
                                    "frequency mapping. sum(fchunks != nchan)")
 
-            # nfreq_chunks = nchan_in // cpit
-            # freq_chunks = (cpit,)*nfreq_chunks
-            # rem = nchan_in - nfreq_chunks * cpit
-            # if rem:
-            #     freq_chunks += (rem,)
-
             ms_chunks[ms].append({'row': row_chunks,
                                   'chan': freq_chunks})
 

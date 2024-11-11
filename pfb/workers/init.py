@@ -207,20 +207,41 @@ def _init(**kw):
     else:
         print(f"No weights provided, using unity weights", file=log)
 
-
-    # band mapping
-    ddid2bid = {}
-    b0 = 0
+    # distinct freq groups
+    igroup = 0
+    sgroup = 0
+    freq_groups = {}
     for ms in opts.ms:
-        for idt, fmap in freq_mapping[ms].items():
+        for idt, freq in freqs[ms].items():
             ilo = idt.find('DDID') + 4
             ihi = idt.rfind('_')
             ddid = int(idt[ilo:ihi])
             if (opts.ddids is not None) and (ddid not in opts.ddids):
                 continue
-            elif ddid not in ddid2bid.keys():
-                ddid2bid[ddid] = b0
-                b0 += fmap['counts'].size
+            if not len(freq_groups.keys()):
+                freq_groups[igroup] = {}
+                freq_groups[igroup]['freq'] = freq
+                freq_groups[igroup]['sgroup'] = sgroup
+                igroup += 1
+                sgroup += freq_mapping[ms][idt]['counts'].size
+            else:
+                for i, fs in freq_groups.items():
+                    if not np.all(freq == fs['freq']):
+                        freq_groups[igroup] = {}
+                        freq_groups[igroup]['freq'] = freq
+                        freq_groups[igroup]['sgroup'] = sgroup
+                        igroup += 1
+                        sgroup += freq_mapping[ms][idt]['counts'].size
+
+    # band mapping
+    msddid2bid = {}
+    for ms in opts.ms:
+        msddid2bid[ms] = {}
+        for idt, freq in freqs[ms].items():
+            # find group where it matches
+            for igroup, fs in freq_groups.items():
+                if np.all(freq == fs['freq']):
+                    msddid2bid[ms][idt] = fs['sgroup']
 
     # a flat list to use with as_completed
     datasets = []
@@ -264,7 +285,7 @@ def _init(**kw):
 
                 fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
                                      freq_mapping[ms][idt]['counts']))
-                b0 = ddid2bid[ddid]
+                b0 = msddid2bid[ms][idt]
                 for fi, (flow, fcounts) in fitr:
                     Inu = slice(flow, flow + fcounts)
 
