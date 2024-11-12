@@ -30,14 +30,9 @@ inputs:
   eta:
     dtype: float
     default: 1e-5
-    abbreviation: sinv
+    abbreviation: eta
     info:
       Standard deviation of assumed GRF prior
-  sigma:
-    dtype: float
-    default: 1
-    info:
-      The value that is added to |psfhat| for preconditioning.
   model-name:
     dtype: str
     default: MODEL

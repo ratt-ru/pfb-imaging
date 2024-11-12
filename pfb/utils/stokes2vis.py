@@ -164,14 +164,15 @@ def single_stokes(
 
     # check that antpos gives the correct size table
     antmax = allants.size
-    try:
-        assert antmax == nant
-    except Exception as e:
-        raise ValueError('Inconsistent ANTENNA table. '
-                         'Shape does not match max number of antennas '
-                         'as inferred from ant1 and ant2. '
-                         f'Table size is {antpos.shape} but got {antmax}. '
-                         f'{oname}')
+    if opts.check_ants:
+        try:
+            assert antmax == nant
+        except Exception as e:
+            raise ValueError('Inconsistent ANTENNA table. '
+                            'Shape does not match max number of antennas '
+                            'as inferred from ant1 and ant2. '
+                            f'Table size is {antpos.shape} but got {antmax}. '
+                            f'{oname}')
 
     # relabel antennas by index
     # this only works because allants is sorted in ascending order

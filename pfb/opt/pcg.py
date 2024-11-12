@@ -390,7 +390,6 @@ def pcg_psf(psfhat,
 
 def pcg_dds(ds_name,
             eta,  # regularisation for Hessian approximation
-            sigma,       # regularisation for preconditioner
             mask=1.0,
             use_psf=True,
             residual_name='RESIDUAL',
@@ -399,6 +398,7 @@ def pcg_dds(ds_name,
             epsilon=5e-4,
             double_accum=True,
             nthreads=1,
+            zero_model_outside_mask=False,
             tol=1e-5,
             maxit=500,
             verbosity=1,
@@ -413,83 +413,50 @@ def pcg_dds(ds_name,
     if not isinstance(ds_name, list):
         ds_name = [ds_name]
 
-    # drop_vars = ['PSF']
-    # if not use_psf:
-    #     drop_vars.append('PSFHAT')
-    drop_vars = None
+    drop_vars = ['PSF', 'PSFHAT']
     ds = xds_from_list(ds_name, nthreads=nthreads,
                        drop_vars=drop_vars)[0]
-
-    if residual_name in ds:
-        j = getattr(ds, residual_name).values * mask * ds.BEAM.values
-        ds = ds.drop_vars(residual_name)
+    beam = mask * ds.BEAM.values
+    if zero_model_outside_mask:
+        if model_name not in ds:
+            raise RuntimeError(f"Asked to zero model outside mask but {model_name} not in dds")
+        model = getattr(ds, model_name).values
+        model = np.where(mask > 0, model, 0.0)
+        print("Zeroing model outside mask")
+        resid = ds.DIRTY.values - _hessian_slice(
+                                        model,
+                                        uvw=ds.UVW.values,
+                                        weight=ds.WEIGHT.values,
+                                        vis_mask=ds.MASK.values,
+                                        freq=ds.FREQ.values,
+                                        beam=ds.BEAM.values,
+                                        cell=ds.cell_rad,
+                                        x0=ds.x0,
+                                        y0=ds.y0,
+                                        do_wgridding=do_wgridding,
+                                        epsilon=epsilon,
+                                        double_accum=double_accum,
+                                        nthreads=nthreads)
+        j = resid * beam
     else:
-        j = ds.DIRTY.values * mask * ds.BEAM.values
+        if model_name in ds:
+            model = getattr(ds, model_name).values
+        else:
+            model = np.zeros(mask.shape, dtype=float)
 
-    psf = ds.PSF.values
-    nx_psf, py_psf = psf.shape
+        if residual_name in ds:
+            j = getattr(ds, residual_name).values * beam
+            ds = ds.drop_vars(residual_name)
+        else:
+            j = ds.DIRTY.values * beam
+
     nx, ny = j.shape
-    wsum = np.sum(ds.WEIGHT.values * ds.MASK.values)
-    psf /= wsum
+    wsum = ds.wsum
     j /= wsum
-
-    # downweight edges of field compared to center
-    # this allows the PCG to downweight the fit to the edges
-    # which may be contaminated by edge effects and also
-    # stabalises the preconditioner
-    width = np.minimum(int(0.1*nx), 32)
-    taperxy = taperf((nx, ny), width)
-    # eta /= taperxy
-
-    # set precond if PSF is present
-    if 'PSFHAT' in ds and use_psf:
-        psfhat = np.abs(ds.PSFHAT.values)/wsum
-        ds.drop_vars(('PSFHAT'))
-        nx_psf, nyo2 = psfhat.shape
-        ny_psf = 2*(nyo2-1)  # is this always the case?
-        nxpadl = (nx_psf - nx)//2
-        nxpadr = nx_psf - nx - nxpadl
-        nypadl = (ny_psf - ny)//2
-        nypadr = ny_psf - ny - nypadl
-        if nx_psf != nx:
-            unpad_x = slice(nxpadl, -nxpadr)
-        else:
-            unpad_x = slice(None)
-        if ny_psf != ny:
-            unpad_y = slice(nypadl, -nypadr)
-        else:
-            unpad_y = slice(None)
-        xpad = empty_noncritical((nx_psf, ny_psf),
-                                 dtype=j.dtype)
-        xhat = empty_noncritical((nx_psf, nyo2),
-                                 dtype='c16')
-        xout = empty_noncritical((nx, ny),
-                                 dtype=j.dtype)
-        precond = partial(
-                    hess_direct_slice,
-                    xpad=xpad,
-                    xhat=xhat,
-                    xout=xout,
-                    abspsf=psfhat,
-                    taperxy=taperxy,
-                    lastsize=ny_psf,
-                    nthreads=nthreads,
-                    eta=sigma,
-                    mode='backward')
-
-        x0 = precond(j)
-
-        # get intrinsic resolution by deconvolving psf
-        upsf = precond(psf[unpad_x, unpad_y])
-        upsf /= upsf.max()
-        gaussparu = fitcleanbeam(upsf[None], level=0.25, pixsize=1.0)[0]
-        ds = ds.assign(**{
-            'UPSF': (('x', 'y'), upsf)
-        })
-        ds = ds.assign_attrs(gaussparu=gaussparu)
+    precond = None
+    if 'UPDATE' in ds:
+        x0 = ds.UPDATE.values * mask
     else:
-        # print('Not using preconditioning')
-        precond = None
         x0 = np.zeros_like(j)
 
     hess = partial(_hessian_slice,
@@ -497,10 +464,13 @@ def pcg_dds(ds_name,
                    weight=ds.WEIGHT.values,
                    vis_mask=ds.MASK.values,
                    freq=ds.FREQ.values,
-                   beam=ds.BEAM.values,
+                   beam=beam,
                    cell=ds.cell_rad,
                    x0=ds.x0,
                    y0=ds.y0,
+                   flip_u=ds.flip_u,
+                   flip_v=ds.flip_v,
+                   flip_w=ds.flip_w,
                    do_wgridding=do_wgridding,
                    epsilon=epsilon,
                    double_accum=double_accum,
@@ -520,11 +490,7 @@ def pcg_dds(ds_name,
             backtrack=False,
             return_resid=False)
 
-    if model_name in ds:
-        model = getattr(ds, model_name).values + x
-    else:
-        model = x
-
+    model += x
 
     resid = ds.DIRTY.values - _hessian_slice(
                                         model,

@@ -207,10 +207,44 @@ def _init(**kw):
     else:
         print(f"No weights provided, using unity weights", file=log)
 
+    # distinct freq groups
+    sgroup = 0
+    freq_groups = []
+    freq_sgroups = []
+    for ms in opts.ms:
+        for idt, freq in freqs[ms].items():
+            ilo = idt.find('DDID') + 4
+            ihi = idt.rfind('_')
+            ddid = int(idt[ilo:ihi])
+            if (opts.ddids is not None) and (ddid not in opts.ddids):
+                continue
+            if not len(freq_groups):
+                freq_groups.append(freq)
+                freq_sgroups.append(sgroup)
+                sgroup += freq_mapping[ms][idt]['counts'].size
+            else:
+                in_group = False
+                for fs in freq_groups:
+                    if freq.size == fs.size and np.all(freq == fs):
+                        in_group = True
+                        break
+                if not in_group:
+                    freq_groups.append(freq)
+                    freq_sgroups.append(sgroup)
+                    sgroup += freq_mapping[ms][idt]['counts'].size
+
+    # band mapping
+    msddid2bid = {}
+    for ms in opts.ms:
+        msddid2bid[ms] = {}
+        for idt, freq in freqs[ms].items():
+            # find group where it matches
+            for sgroup, fs in zip(freq_sgroups, freq_groups):
+                if freq.size == fs.size and np.all(freq == fs):
+                    msddid2bid[ms][idt] = sgroup
 
     # a flat list to use with as_completed
     datasets = []
-
     for ims, ms in enumerate(opts.ms):
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
                           table_schema=schema, group_cols=group_by)
@@ -223,17 +257,12 @@ def _init(**kw):
             fid = ds.FIELD_ID
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
-            # TODO - cleaner syntax
-            if opts.fields is not None:
-                if fid not in opts.fields:
-                    continue
-            if opts.ddids is not None:
-                if ddid not in opts.ddids:
-                    continue
-            if opts.scans is not None:
-                if scanid not in opts.scans:
-                    continue
-
+            if (opts.fields is not None) and (fid not in opts.fields):
+                continue
+            if (opts.ddids is not None) and (ddid not in opts.ddids):
+                continue
+            if (opts.scans is not None) and (scanid not in opts.scans):
+                continue
 
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
             nrow = ds.sizes['row']
@@ -254,8 +283,8 @@ def _init(**kw):
                 Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
 
                 fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
-                                    freq_mapping[ms][idt]['counts']))
-
+                                     freq_mapping[ms][idt]['counts']))
+                b0 = msddid2bid[ms][idt]
                 for fi, (flow, fcounts) in fitr:
                     Inu = slice(flow, flow + fcounts)
 
@@ -276,7 +305,7 @@ def _init(**kw):
                                     utimes[ms][idt][It],
                                     ridx, rcnts,
                                     radecs[ms][idt],
-                                    fi, ti, ims, ms, flow, flow+fcounts])
+                                    b0 + fi, ti, ims, ms, flow, flow+fcounts])
 
     futures = []
     associated_workers = {}

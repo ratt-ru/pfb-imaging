@@ -124,19 +124,6 @@ def fluxtractor(**kw):
                     do_mfs=opts.fits_mfs,
                     do_cube=opts.fits_cubes)
             futures.append(fut)
-            try:
-                fut = client.submit(
-                        dds2fits,
-                        dds_list,
-                        'UPSF',
-                        f'{fits_oname}_{opts.suffix}',
-                        norm_wsum=False,
-                        nthreads=opts.nthreads,
-                        do_mfs=opts.fits_mfs,
-                        do_cube=opts.fits_cubes)
-                futures.append(fut)
-            except Exception as e:
-                print(e)
 
             for fut in as_completed(futures):
                 column = fut.result()
@@ -228,22 +215,6 @@ def _fluxtractor(**kw):
 
             mask = mask.astype(residual.dtype)
             print('Using provided fits mask', file=log)
-            if opts.zero_model_outside_mask and not opts.or_mask_with_model:
-                model[:, mask<1] = 0
-                print("Recomputing residual since asked to zero model", file=log)
-                convimage = hess(model)
-                ne.evaluate('dirty - convimage', out=residual,
-                            casting='same_kind')
-                ne.evaluate('sum(residual, axis=0)', out=residual_mfs,
-                            casting='same_kind')
-                save_fits(np.mean(model[fsel], axis=0),
-                  basename + f'_{opts.suffix}_model_mfs_zeroed.fits',
-                  hdr_mfs)
-                save_fits(residual_mfs,
-                  basename + f'_{opts.suffix}_residual_mfs_zeroed.fits',
-                  hdr_mfs)
-
-
     else:
         mask = np.ones((nx, ny), dtype=residual.dtype)
         print('Caution - No mask is being applied', file=log)
@@ -255,22 +226,22 @@ def _fluxtractor(**kw):
 
     print("Solving for update", file=log)
     try:
-        from distributed import get_client
+        from distributed import get_client, wait, as_completed
         client = get_client()
         names = list(client.scheduler_info()['workers'].keys())
-        from distributed import as_completed
+        foo = client.scatter(mask, broadcast=True)
+        wait(foo)
     except:
         from pfb.utils.dist import fake_client
         client = fake_client()
         names = [0]
         as_completed = lambda x: x
     futures = []
-    for wname, ds, ds_name in zip(cycle(names), dds, dds_list):
+    for wname, ds_name in zip(cycle(names), dds_list):
         fut = client.submit(
             pcg_dds,
             ds_name,
             opts.eta,
-            opts.sigma,
             use_psf=opts.use_psf,
             residual_name=opts.residual_name,
             model_name=opts.model_name,
@@ -279,6 +250,7 @@ def _fluxtractor(**kw):
             epsilon=opts.epsilon,
             double_accum=opts.double_accum,
             nthreads=opts.nthreads,
+            zero_model_outside_mask=opts.zero_model_outside_mask,
             tol=opts.cg_tol,
             maxit=opts.cg_maxit,
             verbosity=opts.cg_verbose,

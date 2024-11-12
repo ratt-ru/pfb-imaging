@@ -25,14 +25,14 @@ pfb.degrid:
   _include:
     - (.)degrid.yaml
 
-pfb.klean:
-  command: pfb.workers.klean.klean
+pfb.kclean:
+  command: pfb.workers.kclean.kclean
   flavour: python
   policies:
     pass_missing_as_none: true
 
   _include:
-    - (.)klean.yaml
+    - (.)kclean.yaml
 
 pfb.restore:
   command: pfb.workers.restore.restore

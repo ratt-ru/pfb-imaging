@@ -1,14 +1,14 @@
 # flake8: noqa
 import click
 from pfb import logo
-logo()
 
 @click.group()
 def cli():
+    logo()
     pass
 
 
-from pfb.workers import (init, grid, degrid, klean,
+from pfb.workers import (init, grid, degrid, kclean,
                          restore, model2comps,
                          fluxtractor, hci, smoovie, sara)
 

@@ -121,11 +121,16 @@ inputs:
     info:
       Display progress.
       Use --no-progressbar to deactivate.
-  memory_reporting:
+  memory-reporting:
     dtype: bool
     default: false
     info:
       Report worker memory as tasks complete
+  check_ants:
+    dtype: bool
+    default: false
+    info:
+      Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.
 
   _include:
     - (.)out.yml
