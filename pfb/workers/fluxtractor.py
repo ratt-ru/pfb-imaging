@@ -250,6 +250,7 @@ def _fluxtractor(**kw):
             epsilon=opts.epsilon,
             double_accum=opts.double_accum,
             nthreads=opts.nthreads,
+            zero_model_outside_mask=opts.zero_model_outside_mask,
             tol=opts.cg_tol,
             maxit=opts.cg_maxit,
             verbosity=opts.cg_verbose,

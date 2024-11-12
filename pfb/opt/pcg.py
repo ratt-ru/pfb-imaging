@@ -422,6 +422,7 @@ def pcg_dds(ds_name,
             raise RuntimeError(f"Asked to zero model outside mask but {model_name} not in dds")
         model = getattr(ds, model_name).values
         model = np.where(mask > 0, model, 0.0)
+        print("Zeroing model outside mask")
         resid = ds.DIRTY.values - _hessian_slice(
                                         model,
                                         uvw=ds.UVW.values,
