@@ -8,7 +8,7 @@ from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 @pmp('do_gains', (True, False))
-def test_klean(do_gains, ms_name):
+def test_kclean(do_gains, ms_name):
     '''
     Here we test that clean correctly infers the fluxes of point sources
     placed at the centers of pixels in the presence of the wterm and DI gain
@@ -227,26 +227,26 @@ def test_klean(do_gains, ms_name):
     from pfb.workers.grid import _grid
     _grid(**grid_args)
 
-    # run klean
-    klean_args = {}
-    for key in schema.klean["inputs"].keys():
-        klean_args[key.replace("-", "_")] = schema.klean["inputs"][key]["default"]
-    klean_args["output_filename"] = outname
-    klean_args["dirosion"] = 0
-    klean_args["do_residual"] = False
-    klean_args["niter"] = 100
+    # run kclean
+    kclean_args = {}
+    for key in schema.kclean["inputs"].keys():
+        kclean_args[key.replace("-", "_")] = schema.kclean["inputs"][key]["default"]
+    kclean_args["output_filename"] = outname
+    kclean_args["dirosion"] = 0
+    kclean_args["do_residual"] = False
+    kclean_args["niter"] = 100
     threshold = 1e-1
-    klean_args["threshold"] = threshold
-    klean_args["gamma"] = 0.1
-    klean_args["peak_factor"] = 0.75
-    klean_args["sub_peak_factor"] = 0.75
-    klean_args["nthreads"] = 1
-    klean_args["do_wgridding"] = True
-    klean_args["epsilon"] = epsilon
-    klean_args["mop_flux"] = True
-    klean_args["fits_mfs"] = False
-    from pfb.workers.klean import _klean
-    _klean(**klean_args)
+    kclean_args["threshold"] = threshold
+    kclean_args["gamma"] = 0.1
+    kclean_args["peak_factor"] = 0.75
+    kclean_args["sub_peak_factor"] = 0.75
+    kclean_args["nthreads"] = 1
+    kclean_args["do_wgridding"] = True
+    kclean_args["epsilon"] = epsilon
+    kclean_args["mop_flux"] = True
+    kclean_args["fits_mfs"] = False
+    from pfb.workers.kclean import _kclean
+    _kclean(**kclean_args)
 
     # get inferred model
     dds, _ = xds_from_url(dds_name)

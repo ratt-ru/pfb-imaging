@@ -7,15 +7,15 @@ import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
-log = pyscilog.get_logger('KLEAN')
+log = pyscilog.get_logger('kclean')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 
 @cli.command(context_settings={'show_default': True})
-@clickify_parameters(schema.klean)
-def klean(**kw):
+@clickify_parameters(schema.kclean)
+def kclean(**kw):
     '''
     Modified single-scale clean.
     '''
@@ -40,7 +40,7 @@ def klean(**kw):
 
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f'{str(opts.log_directory)}/klean_{timestamp}.log'
+    logname = f'{str(opts.log_directory)}/kclean_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
 
@@ -59,7 +59,7 @@ def klean(**kw):
 
     with ExitStack() as stack:
         ti = time.time()
-        _klean(**opts)
+        _kclean(**opts)
 
         dds, dds_list = xds_from_url(dds_name)
 
@@ -84,7 +84,7 @@ def klean(**kw):
         print(f"All done after {time.time() - ti}s", file=log)
 
 
-def _klean(**kw):
+def _kclean(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -113,7 +113,7 @@ def _klean(**kw):
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     if nx_psf//2 < nx or ny_psf//2 < ny:
-        raise ValueError("klean currently assumes a double sized PSF")
+        raise ValueError("kclean currently assumes a double sized PSF")
     lastsize = ny_psf
     freq_out = []
     time_out = []
