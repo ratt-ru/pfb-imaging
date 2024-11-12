@@ -426,6 +426,7 @@ def pcg_dds(ds_name,
     else:
         j = ds.DIRTY.values * mask * ds.BEAM.values
 
+    beam = mask*ds.BEAM.values
     psf = ds.PSF.values
     nx_psf, py_psf = psf.shape
     nx, ny = j.shape
@@ -497,10 +498,13 @@ def pcg_dds(ds_name,
                    weight=ds.WEIGHT.values,
                    vis_mask=ds.MASK.values,
                    freq=ds.FREQ.values,
-                   beam=ds.BEAM.values,
+                   beam=beam,
                    cell=ds.cell_rad,
                    x0=ds.x0,
                    y0=ds.y0,
+                   flip_u=ds.flip_u,
+                   flip_v=ds.flip_v,
+                   flip_w=ds.flip_w,
                    do_wgridding=do_wgridding,
                    epsilon=epsilon,
                    double_accum=double_accum,
