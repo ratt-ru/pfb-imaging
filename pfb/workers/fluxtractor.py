@@ -275,4 +275,60 @@ def _fluxtractor(**kw):
     print(f"Final peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
 
+    print(f"Writing model to {basename}_{opts.suffix}_model.mds",
+          file=log)
+
+    try:
+        coeffs, Ix, Iy, expr, params, texpr, fexpr = \
+            fit_image_cube(time_out,
+                           freq_out[fsel],
+                           model[None, fsel, :, :],
+                           wgt=wsums[None, fsel],
+                           nbasisf=fsel.size,
+                           method='Legendre',
+                           sigmasq=1e-10)
+        # save interpolated dataset
+        data_vars = {
+            'coefficients': (('par', 'comps'), coeffs),
+        }
+        coords = {
+            'location_x': (('x',), Ix),
+            'location_y': (('y',), Iy),
+            # 'shape_x':,
+            'params': (('par',), params),  # already converted to list
+            'times': (('t',), time_out),  # to allow rendering to original grid
+            'freqs': (('f',), freq_out)
+        }
+        mattrs = {
+            'spec': 'genesis',
+            'cell_rad_x': cell_rad,
+            'cell_rad_y': cell_rad,
+            'npix_x': nx,
+            'npix_y': ny,
+            'texpr': texpr,
+            'fexpr': fexpr,
+            'center_x': dds[0].x0,
+            'center_y': dds[0].y0,
+            'flip_u': dds[0].flip_u,
+            'flip_v': dds[0].flip_v,
+            'flip_w': dds[0].flip_w,
+            'ra': dds[0].ra,
+            'dec': dds[0].dec,
+            'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
+            'parametrisation': expr  # already converted to str
+        }
+        for key, val in opts.items():
+            if key == 'pd_tol':
+                mattrs[key] = pd_tolf
+            else:
+                mattrs[key] = val
+
+        coeff_dataset = xr.Dataset(data_vars=data_vars,
+                            coords=coords,
+                            attrs=mattrs)
+        coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model_mopped.mds",
+                              mode='w')
+    except Exception as e:
+            print(f"Exception {e} raised during model fit .", file=log)
+
     return

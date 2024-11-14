@@ -219,7 +219,7 @@ def _model2comps(**kw):
         nbasisf = opts.nbasisf
 
     nbasis = nbasisf
-    print(f"Fitting coefficients with {nbasis} basis functions",
+    print(f"Fitting {nband} bands with {nbasis} basis functions",
           file=log)
     try:
         coeffs, Ix, Iy, expr, params, texpr, fexpr = \

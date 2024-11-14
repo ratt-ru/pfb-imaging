@@ -224,27 +224,6 @@ def _degrid(**kw):
     else:
         masks = [np.ones((nx, ny), dtype=np.float64)]
 
-    # utime = utimes['file:///home/landman/testing/pfb/MS/point_gauss_nb.MS_p0']['FIELD0_DDID0_SCAN0']
-    # freq = freqs['file:///home/landman/testing/pfb/MS/point_gauss_nb.MS_p0']['FIELD0_DDID0_SCAN0']
-    # model = np.zeros((nx, ny), dtype=np.float64)
-    # tout = tfunc(np.mean(utime))
-    # fout = ffunc(np.mean(freq))
-    # image = np.zeros((nx, ny), dtype=np.float64)
-    # Ix = mds.location_x.values
-    # Iy = mds.location_y.values
-    # comps = mds.coefficients.values
-    # model[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
-    # import matplotlib.pyplot as plt
-    # for mask in masks:
-    #     plt.figure(1)
-    #     plt.imshow(mask)
-    #     plt.colorbar()
-    #     plt.figure(2)
-    #     plt.imshow(model)
-    #     plt.colorbar()
-    #     plt.show()
-    # import ipdb; ipdb.set_trace()
-
     print("Computing model visibilities", file=log)
     writes = []
     for ms in opts.ms:

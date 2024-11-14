@@ -325,6 +325,7 @@ def _hci(**kw):
                                 radecs[ms][idt],
                                 fi, ti, ms])
 
+    nds = len(datasets)
     futures = []
     associated_workers = {}
     idle_workers = set(client.scheduler_info()['workers'].keys())
@@ -364,7 +365,6 @@ def _hci(**kw):
         n_launched += 1
 
     ac_iter = as_completed(futures)
-    nds = len(datasets)
     for completed_future in ac_iter:
         if isinstance(completed_future.result(), BaseException):
             print(completed_future.result())
