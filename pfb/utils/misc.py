@@ -385,6 +385,14 @@ def construct_mappings(ms_name,
             gains[ms] = {}
 
         for idt in idts[ms]:
+            ilo = idt.find('FIELD') + 5
+            ihi = idt.find('_')
+            fid = int(idt[ilo:ihi])
+            ilo = idt.find('DDID') + 4
+            ihi = idt.rfind('_')
+            ddid = int(idt[ilo:ihi])
+            ilo = idt.find('SCAN') + 4
+            scanid = int(idt[ilo:])
             freq = freqs[ms][idt]
             nchan_in = freq.size
             idx = (freq>=freq_min) & (freq<=freq_max)
