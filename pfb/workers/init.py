@@ -1,9 +1,7 @@
 # flake8: noqa
 import os
 import sys
-from contextlib import ExitStack
 from pfb.workers.main import cli
-import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
@@ -56,15 +54,6 @@ def init(**kw):
             except Exception as e:
                 raise ValueError(f"No gain table  at {gt}")
         opts.gain_table = gainnames
-
-    # Single element lists not parsed correctly by clickify_parameters?
-    if opts.fields is not None and not isinstance(opts.fields, list):
-        opts.fields = [opts.fields]
-    if opts.ddids is not None and not isinstance(opts.ddids, list):
-        opts.ddids = [opts.ddids]
-    if opts.scans is not None and not isinstance(opts.scans, list):
-        opts.scans = [opts.scans]    
-
 
     OmegaConf.set_struct(opts, True)
 
@@ -158,14 +147,17 @@ def _init(**kw):
 
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
-        freqs, utimes, ms_chunks, gain_chunks, radecs, \
+        freqs, utimes, ms_chunks, gains, radecs, \
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms,
                                gain_names,
                                ipi=opts.integrations_per_image,
                                cpi=opts.channels_per_image,
                                freq_min=freq_min,
-                               freq_max=freq_max)
+                               freq_max=freq_max,
+                               FIELD_IDs=opts.fields,
+                               DDIDs=opts.ddids,
+                               SCANs=opts.scans)
 
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
@@ -251,11 +243,7 @@ def _init(**kw):
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
                           table_schema=schema, group_cols=group_by)
 
-        if opts.gain_table is not None:
-            gds = xds_from_zarr(gain_names[ims],
-                                chunks=gain_chunks[ms])
-
-        for ids, ds in enumerate(xds):
+        for ds in xds:
             fid = ds.FIELD_ID
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
@@ -267,27 +255,10 @@ def _init(**kw):
                 continue
 
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
-            nrow = ds.sizes['row']
-            ncorr = ds.sizes['corr']
 
             idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
             if not idx.any():
                 continue
-
-            # gds can't be indexed by ids since it may not contain the same
-            # fields, spws and scans as the MS
-            if opts.gain_table is not None:
-                gdsf = [dsg for dsg in gds if dsg.FIELD_ID == fid]
-                gdsfd = [dsg for dsg in gdsf if dsg.DATA_DESC_ID == ddid]
-                gdsfds = [dsg for dsg in gdsfd if dsg.SCAN_NUMBER == scanid]
-                try:
-                    assert len(gdsfds) == 1
-                except Exception as e:
-                    raise RuntimeError(f"Gain datasets don't align for ms {ms} at "
-                                       f"FIELD_ID = {fid}, DATA_DESC_ID = {ddid}, "
-                                       f"SCAN_NUMBER = {scanid}. "
-                                       f"len(gds) = {len(gdsfds)}")
-                gdsfds = gdsfds[0]
 
             titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
                                 time_mapping[ms][idt]['counts']))
@@ -304,12 +275,9 @@ def _init(**kw):
                 b0 = msddid2bid[ms][idt]
                 for fi, (flow, fcounts) in fitr:
                     Inu = slice(flow, flow + fcounts)
-
                     subds = ds[{'row': Irow, 'chan': Inu}]
-                    subds = subds.chunk({'row':-1, 'chan': -1})
-                    if opts.gain_table is not None:
-                        subgds = gdsfds[{'gain_time': It, 'gain_freq': Inu}]
-                        subgds = subgds.chunk({'gain_time': -1, 'gain_freq': -1})
+                    if gains[ms][idt] is not None:
+                        subgds = gains[ms][idt][{'gain_time': It, 'gain_freq': Inu}]
                         jones = subgds.gains.data
                     else:
                         jones = None

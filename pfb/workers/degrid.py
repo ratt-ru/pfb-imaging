@@ -159,7 +159,7 @@ def _degrid(**kw):
 
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
-        freqs, utimes, ms_chunks, gain_chunks, radecs, \
+        freqs, utimes, ms_chunks, gains, radecs, \
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms,
                                None,

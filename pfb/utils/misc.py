@@ -254,7 +254,10 @@ def construct_mappings(ms_name,
                        ipi=None,
                        cpi=None,
                        freq_min=-np.inf,
-                       freq_max=np.inf):
+                       freq_max=np.inf,
+                       FIELD_IDs=None,
+                       DDIDs=None,
+                       SCANs=None):
     '''
     Construct dictionaries containing per MS, FIELD, DDID and SCAN
     time and frequency mappings.
@@ -300,10 +303,7 @@ def construct_mappings(ms_name,
     freqs = {}
     chan_widths = {}
     times = {}
-    gain_times = {}
-    gain_freqs = {}
-    gain_axes = {}
-    gain_spec = {}
+    gains = {}
     radecs = {}
     antpos = {}
     poltype = {}
@@ -334,40 +334,55 @@ def construct_mappings(ms_name,
 
         idts[ms] = []
         if gain_name is not None:
-            gain = xds_from_zarr(gain_name[ims])
-            gain_times[ms] = {}
-            gain_freqs[ms] = {}
-            gain_axes[ms] = {}
-            gain_spec[ms] = {}
+            gds = xds_from_zarr(gain_name[ims])
+            gains[ms] = {}
 
         freqs[ms] = {}
         times[ms] = {}
         radecs[ms] = {}
         chan_widths[ms] = {}
         for ids, ds in enumerate(xds):
-            idt = f"FIELD{ds.FIELD_ID}_DDID{ds.DATA_DESC_ID}_SCAN{ds.SCAN_NUMBER}"
-            idts[ms].append(idt)
-            radecs[ms][idt] = fields.PHASE_DIR.data[ds.FIELD_ID].squeeze()
+            fid = ds.FIELD_ID
+            ddid = ds.DATA_DESC_ID
+            scanid = ds.SCAN_NUMBER
+            if (FIELD_IDs is not None) and (fid not in FIELD_IDs):
+                continue
+            if (DDIDs is not None) and (ddid not in DDIDs):
+                continue
+            if (SCANs is not None) and (scanid not in SCANs):
+                continue
 
-            freqs[ms][idt] = spws.CHAN_FREQ.data[ds.DATA_DESC_ID]
-            chan_widths[ms][idt] = spws.CHAN_WIDTH.data[ds.DATA_DESC_ID]
+            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+            idts[ms].append(idt)
+            radecs[ms][idt] = fields.PHASE_DIR.data[fid].squeeze()
+
+            freqs[ms][idt] = spws.CHAN_FREQ.data[ddid]
+            chan_widths[ms][idt] = spws.CHAN_WIDTH.data[ddid]
             times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
             uvw = ds.UVW.data
             u_max = abs(uvw[:, 0]).max()
             v_max = abs(uvw[:, 1]).max()
             uv_maxs.append(da.maximum(u_max, v_max))
             if gain_name is not None:
-                gain_times[ms][idt] = gain[ids].gain_time.data
-                gain_freqs[ms][idt] = gain[ids].gain_freq.data
-                gain_axes[ms][idt] = gain[ids].GAIN_AXES
-                gain_spec[ms][idt] = gain[ids].GAIN_SPEC
+                gdsf = [dsg for dsg in gds if dsg.FIELD_ID == fid]
+                gdsfd = [dsg for dsg in gdsf if dsg.DATA_DESC_ID == ddid]
+                gdsfds = [dsg for dsg in gdsfd if dsg.SCAN_NUMBER == scanid]
+                try:
+                    assert len(gdsfds) == 1
+                except Exception as e:
+                    raise RuntimeError(f"Gain datasets don't align for ms {ms} at "
+                                       f"FIELD_ID = {fid}, DATA_DESC_ID = {ddid}, "
+                                       f"SCAN_NUMBER = {scanid}. "
+                                       f"len(gds) = {len(gdsfds)}")
+                gains[ms][idt] = gdsfds[0]
+            else:
+                gains[ms][idt] = None
 
 
     # Early compute to get metadata
-    times, freqs, gain_times, gain_freqs, gain_axes, gain_spec, radecs,\
-        chan_widths, uv_maxs, antpos, poltype = dask.compute(times, freqs,\
-        gain_times, gain_freqs, gain_axes, gain_spec, radecs, chan_widths,\
-        uv_maxs, antpos, poltype)
+    times, freqs, radecs, chan_widths, uv_maxs, antpos, poltype = \
+        dask.compute(times, freqs,radecs, chan_widths,uv_maxs,
+                     antpos, poltype)
 
     uv_max = max(uv_maxs)
     all_freqs = []
@@ -377,19 +392,17 @@ def construct_mappings(ms_name,
     time_mapping = {}
     utimes = {}
     ms_chunks = {}
-    gain_chunks = {}
     for ms in ms_name:
         freq_mapping[ms] = {}
         row_mapping[ms] = {}
         time_mapping[ms] = {}
         utimes[ms] = {}
         ms_chunks[ms] = []
-        gain_chunks[ms] = []
         for idt in idts[ms]:
             freq = freqs[ms][idt]
-            if gain_name is not None:
+            if gains[ms][idt] is not None:
                 try:
-                    assert (gain_freqs[ms][idt] == freq).all()
+                    assert (gains[ms][idt].gain_freq.values == freq).all()
                 except Exception as e:
                     raise ValueError(f'Mismatch between gain and MS '
                                      f'frequencies for {ms} at {idt}')
@@ -473,27 +486,33 @@ def construct_mappings(ms_name,
             else:
                 time_mapping[ms][idt]['counts'] = np.array((ntime,))
 
-            # we may need to rechunk gains in time and freq to line up with MS
-            if gain_name is not None:
-                tmp_dict = {}
-                for name, val in zip(gain_axes[ms][idt], gain_spec[ms][idt]):
-                    if name == 'gain_time':
-                        tmp_dict[name] = tuple(time_mapping[ms][idt]['counts'])
-                    elif name == 'gain_freq':
-                        tmp_dict[name] = freq_chunks
-                    elif name == 'direction':
-                        if len(val) > 1:
-                            raise ValueError("DD gains not supported yet")
-                        if val[0] > 1:
-                            raise ValueError("DD gains not supported yet")
-                        tmp_dict[name] = tuple(val)
-                    else:
-                        tmp_dict[name] = tuple(val)
+            # rechunk gains to align with MS chunks
+            if gains[ms][idt] is not None:
+                # tmp_dict = {}
+                # for name, val in zip(gain_axes[ms][idt], gain_spec[ms][idt]):
+                #     if name == 'gain_time':
+                #         tmp_dict[name] = tuple(time_mapping[ms][idt]['counts'])
+                #     elif name == 'gain_freq':
+                #         tmp_dict[name] = freq_chunks
+                #     elif name == 'direction':
+                #         if len(val) > 1:
+                #             raise ValueError("DD gains not supported yet")
+                #         if val[0] > 1:
+                #             raise ValueError("DD gains not supported yet")
+                #         tmp_dict[name] = tuple(val)
+                #     else:
+                #         tmp_dict[name] = tuple(val)
 
-                gain_chunks[ms].append(tmp_dict)
+                gains[ms][idt] = gains[ms][idt].chunk({
+                    'gain_time': tuple(time_mapping[ms][idt]['counts']),
+                    'gain_freq': freq_chunks,
+                    'antenna': (-1,),
+                    'direction': (1,),
+                    'correlation': (-1,),
+                })
 
     return row_mapping, freq_mapping, time_mapping, \
-           freqs, utimes, ms_chunks, gain_chunks, radecs, \
+           freqs, utimes, ms_chunks, gains, radecs, \
            chan_widths, uv_max, antpos, poltype
 
 
