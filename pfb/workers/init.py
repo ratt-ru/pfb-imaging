@@ -97,18 +97,11 @@ def _init(**kw):
 
     import numpy as np
     from pfb.utils.misc import construct_mappings
-    import dask
-    from dask.graph_manipulation import clone
-    from distributed import get_client, wait, as_completed, Semaphore
+    from distributed import get_client, as_completed
     from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms import xds_from_storage_table as xds_from_table
     from daskms.experimental.zarr import xds_from_zarr
     from daskms.fsspec_store import DaskMSStore
-    import dask.array as da
-    from africanus.constants import c as lightspeed
-    from ducc0.fft import good_size
     from pfb.utils.stokes2vis import single_stokes
-    import xarray as xr
     from uuid import uuid4
     import fsspec
 
@@ -272,6 +265,21 @@ def _init(**kw):
             if not idx.any():
                 continue
 
+            # gds can't be indexed by ids since it may not contain the same
+            # fields, spws and scans as the MS
+            if opts.gain_table is not None:
+                gdsf = [dsg for dsg in gds if dsg.FIELD_ID == fid]
+                gdsfd = [dsg for dsg in gdsf if dsg.DATA_DESC_ID == ddid]
+                gdsfds = [dsg for dsg in gdsfd if dsg.SCAN_NUMBER == scanid]
+                try:
+                    assert len(gdsfds) == 1
+                except Exception as e:
+                    raise RuntimeError(f"Gain datasets don't align for ms {ms} at "
+                                       f"FIELD_ID = {fid}, DATA_DESC_ID = {ddid}, "
+                                       f"SCAN_NUMBER = {scanid}. "
+                                       f"len(gds) = {len(gdsfds)}")
+                gdsfds = gdsfds[0]
+
             titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
                                 time_mapping[ms][idt]['counts']))
             for ti, (tlow, tcounts) in titr:
@@ -291,8 +299,7 @@ def _init(**kw):
                     subds = ds[{'row': Irow, 'chan': Inu}]
                     subds = subds.chunk({'row':-1, 'chan': -1})
                     if opts.gain_table is not None:
-                        # Only DI gains currently supported
-                        subgds = gds[ids][{'gain_time': It, 'gain_freq': Inu}]
+                        subgds = gdsfds[{'gain_time': It, 'gain_freq': Inu}]
                         subgds = subgds.chunk({'gain_time': -1, 'gain_freq': -1})
                         jones = subgds.gains.data
                     else:
