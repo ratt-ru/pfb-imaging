@@ -333,15 +333,11 @@ def construct_mappings(ms_name,
             raise ValueError("Unsupported feed type/configuration.")
 
         idts[ms] = []
-        if gain_name is not None:
-            gds = xds_from_zarr(gain_name[ims])
-            gains[ms] = {}
-
         freqs[ms] = {}
         times[ms] = {}
         radecs[ms] = {}
         chan_widths[ms] = {}
-        for ids, ds in enumerate(xds):
+        for ds in xds:
             fid = ds.FIELD_ID
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
@@ -363,21 +359,6 @@ def construct_mappings(ms_name,
             u_max = abs(uvw[:, 0]).max()
             v_max = abs(uvw[:, 1]).max()
             uv_maxs.append(da.maximum(u_max, v_max))
-            if gain_name is not None:
-                gdsf = [dsg for dsg in gds if dsg.FIELD_ID == fid]
-                gdsfd = [dsg for dsg in gdsf if dsg.DATA_DESC_ID == ddid]
-                gdsfds = [dsg for dsg in gdsfd if dsg.SCAN_NUMBER == scanid]
-                try:
-                    assert len(gdsfds) == 1
-                except Exception as e:
-                    raise RuntimeError(f"Gain datasets don't align for ms {ms} at "
-                                       f"FIELD_ID = {fid}, DATA_DESC_ID = {ddid}, "
-                                       f"SCAN_NUMBER = {scanid}. "
-                                       f"len(gds) = {len(gdsfds)}")
-                gains[ms][idt] = gdsfds[0]
-            else:
-                gains[ms][idt] = None
-
 
     # Early compute to get metadata
     times, freqs, radecs, chan_widths, uv_maxs, antpos, poltype = \
@@ -392,12 +373,17 @@ def construct_mappings(ms_name,
     time_mapping = {}
     utimes = {}
     ms_chunks = {}
-    for ms in ms_name:
+    for ims, ms in enumerate(ms_name):
         freq_mapping[ms] = {}
         row_mapping[ms] = {}
         time_mapping[ms] = {}
         utimes[ms] = {}
         ms_chunks[ms] = []
+
+        if gain_name is not None:
+            gds = xds_from_zarr(gain_name[ims])
+            gains[ms] = {}
+
         for idt in idts[ms]:
             freq = freqs[ms][idt]
             if gains[ms][idt] is not None:
@@ -436,12 +422,6 @@ def construct_mappings(ms_name,
 
             time = times[ms][idt]
             utime = np.unique(time)
-            if gain_name is not None:
-                try:
-                    assert (gain_times[ms][idt] == utime).all()
-                except Exception as e:
-                    raise ValueError(f'Mismatch between gain and MS '
-                                     f'utimes for {ms} at {idt}')
             utimes[ms][idt] = utime
             all_times.append(utime)
 
@@ -486,30 +466,38 @@ def construct_mappings(ms_name,
             else:
                 time_mapping[ms][idt]['counts'] = np.array((ntime,))
 
-            # rechunk gains to align with MS chunks
-            if gains[ms][idt] is not None:
-                # tmp_dict = {}
-                # for name, val in zip(gain_axes[ms][idt], gain_spec[ms][idt]):
-                #     if name == 'gain_time':
-                #         tmp_dict[name] = tuple(time_mapping[ms][idt]['counts'])
-                #     elif name == 'gain_freq':
-                #         tmp_dict[name] = freq_chunks
-                #     elif name == 'direction':
-                #         if len(val) > 1:
-                #             raise ValueError("DD gains not supported yet")
-                #         if val[0] > 1:
-                #             raise ValueError("DD gains not supported yet")
-                #         tmp_dict[name] = tuple(val)
-                #     else:
-                #         tmp_dict[name] = tuple(val)
-
-                gains[ms][idt] = gains[ms][idt].chunk({
-                    'gain_time': tuple(time_mapping[ms][idt]['counts']),
-                    'gain_freq': freq_chunks,
-                    'antenna': (-1,),
-                    'direction': (1,),
-                    'correlation': (-1,),
-                })
+            if gain_name is not None:
+                gdsf = [dsg for dsg in gds if dsg.FIELD_ID == fid]
+                gdsfd = [dsg for dsg in gdsf if dsg.DATA_DESC_ID == ddid]
+                # gains may have been solved over scans
+                if 'SCAN_NUMBER' in gdsfd[0]:
+                    gdsfds = [dsg for dsg in gdsfd if dsg.SCAN_NUMBER == scanid]
+                    try:
+                        assert len(gdsfds) == 1
+                    except Exception as e:
+                        raise RuntimeError(f"Gain datasets don't align for "
+                                           f"ms {ms} at FIELD_ID = {fid}, "
+                                           f"DATA_DESC_ID = {ddid}, "
+                                           f"SCAN_NUMBER = {scanid}. "
+                                           f"len(gds) = {len(gdsfds)}")
+                    try:
+                        assert (gdsfds[0].gain_time == utime).all()
+                    except Exception as e:
+                        raise ValueError(f'Mismatch between gain and MS '
+                                            f'utimes for {ms} at {idt}')
+                    gains[ms][idt] = gdsfds[0]
+                else:
+                    try:
+                        assert len(gdsfd) == 1
+                    except Exception as e:
+                        raise RuntimeError("Multiple gain datasets per "
+                                           "FIELD and DDID but SCAN_NUMBER "
+                                           "not in attributes")
+                    t0 = utime[0]
+                    tf = utime[-1]
+                    gains[ms][idt] = gdsfd[0].sel(gain_time=slice(t0, tf))
+            else:
+                gains[ms][idt] = None
 
     return row_mapping, freq_mapping, time_mapping, \
            freqs, utimes, ms_chunks, gains, radecs, \
