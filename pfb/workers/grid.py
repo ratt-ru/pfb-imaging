@@ -211,6 +211,7 @@ def _grid(**kw):
 
     print(f"Lazy loading xds from {xds_store.url}", file=log)
     xds, xds_list = xds_from_url(xds_store.url)
+    valid_bands = np.unique([ds.bandid for ds in xds])
 
     times_in = []
     freqs_in = []
@@ -311,9 +312,9 @@ def _grid(**kw):
     if opts.concat_row:
         ntime = 1
         times_out = np.mean(times_in, keepdims=True)
-        for b in range(nband):
+        for b, bid in enumerate(valid_bands):
             for ds, ds_name in zip(xds, xds_list):
-                if ds.bandid == b:
+                if ds.bandid == bid:
                     tbid = f'time0000_band{b:04d}'
                     xds_dct.setdefault(tbid, {})
                     xds_dct[tbid].setdefault('dsl', [])
@@ -327,7 +328,7 @@ def _grid(**kw):
         ntime = ntime_in
         times_out = times_in
         for t in range(times_in.size):
-            for b in range(nband):
+            for b, bid in enumerate(valid_bands):
                 for ds, ds_name in zip(xds, xds_list):
                     if ds.time_out == times_in[t] and ds.bandid == b:
                         tbid = f'time{t:04d}_band{b:04d}'
