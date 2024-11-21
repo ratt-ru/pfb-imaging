@@ -379,10 +379,10 @@ def construct_mappings(ms_name,
         time_mapping[ms] = {}
         utimes[ms] = {}
         ms_chunks[ms] = []
+        gains[ms] = {}
 
         if gain_name is not None:
             gds = xds_from_zarr(gain_name[ims])
-            gains[ms] = {}
 
         for idt in idts[ms]:
             ilo = idt.find('FIELD') + 5
