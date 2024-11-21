@@ -57,6 +57,15 @@ def init(**kw):
                 raise ValueError(f"No gain table  at {gt}")
         opts.gain_table = gainnames
 
+    # Single element lists not parsed correctly by clickify_parameters?
+    if opts.fields is not None and not isinstance(opts.fields, list):
+        opts.fields = [opts.fields]
+    if opts.ddids is not None and not isinstance(opts.ddids, list):
+        opts.ddids = [opts.ddids]
+    if opts.scans is not None and not isinstance(opts.scans, list):
+        opts.scans = [opts.scans]    
+
+
     OmegaConf.set_struct(opts, True)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
