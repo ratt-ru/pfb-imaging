@@ -330,7 +330,7 @@ def _grid(**kw):
         for t in range(times_in.size):
             for b, bid in enumerate(valid_bands):
                 for ds, ds_name in zip(xds, xds_list):
-                    if ds.time_out == times_in[t] and ds.bandid == b:
+                    if ds.time_out == times_in[t] and ds.bandid == bid:
                         tbid = f'time{t:04d}_band{b:04d}'
                         xds_dct.setdefault(tbid, {})
                         xds_dct[tbid].setdefault('dsl', [])
