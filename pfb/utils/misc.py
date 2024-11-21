@@ -386,13 +386,6 @@ def construct_mappings(ms_name,
 
         for idt in idts[ms]:
             freq = freqs[ms][idt]
-            if gains[ms][idt] is not None:
-                try:
-                    assert (gains[ms][idt].gain_freq.values == freq).all()
-                except Exception as e:
-                    raise ValueError(f'Mismatch between gain and MS '
-                                     f'frequencies for {ms} at {idt}')
-
             nchan_in = freq.size
             idx = (freq>=freq_min) & (freq<=freq_max)
             if not idx.any():
@@ -467,6 +460,8 @@ def construct_mappings(ms_name,
                 time_mapping[ms][idt]['counts'] = np.array((ntime,))
 
             if gain_name is not None:
+                freq0 = freq[0]
+                freqf = freq[-1]
                 gdsf = [dsg for dsg in gds if dsg.FIELD_ID == fid]
                 gdsfd = [dsg for dsg in gdsf if dsg.DATA_DESC_ID == ddid]
                 # gains may have been solved over scans
@@ -485,7 +480,9 @@ def construct_mappings(ms_name,
                     except Exception as e:
                         raise ValueError(f'Mismatch between gain and MS '
                                             f'utimes for {ms} at {idt}')
-                    gains[ms][idt] = gdsfds[0]
+                    
+                    gains[ms][idt] = gdsfds[0].sel(
+                                        gain_freq=slice(freq0, freqf))
                 else:
                     try:
                         assert len(gdsfd) == 1
@@ -495,7 +492,9 @@ def construct_mappings(ms_name,
                                            "not in attributes")
                     t0 = utime[0]
                     tf = utime[-1]
-                    gains[ms][idt] = gdsfd[0].sel(gain_time=slice(t0, tf))
+                    gains[ms][idt] = gdsfd[0].sel(
+                                        gain_time=slice(t0, tf),
+                                        gain_freq=slice(freq0, freqf))
             else:
                 gains[ms][idt] = None
 
