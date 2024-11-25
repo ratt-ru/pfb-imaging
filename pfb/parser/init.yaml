@@ -126,7 +126,7 @@ inputs:
     default: false
     info:
       Report worker memory as tasks complete
-  check_ants:
+  check-ants:
     dtype: bool
     default: false
     info:
