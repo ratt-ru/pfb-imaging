@@ -39,6 +39,7 @@ lz4 = ">=4.3.3"
 bokeh = ">=3.1.0"
 regions = ">=0.9"
 psutil = ">=5.9.8"
+matplotlib = ">=3.9.2"
 
 [tool.poetry.scripts]
 pfb = "pfb.workers.main:cli"

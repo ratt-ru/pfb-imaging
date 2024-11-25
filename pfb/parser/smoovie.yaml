@@ -1,16 +1,9 @@
 inputs:
   fds:
     dtype: str
-    required: true
     info:
-      Path to fds produced by fastim worker
-  outname:
-    dtype: str
-    required: true
-    info:
-      The name of the output.
-      Fits images will be suffixed by band and time ID's.
-      Mp4 movies will suffixed by .mp4
+      Optional path to fds produced by fastim worker.
+      Default naming convention is used if not provided.
   animate-axis:
     dtype: str
     default: time

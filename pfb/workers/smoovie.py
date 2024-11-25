@@ -37,13 +37,6 @@ def smoovie(**kw):
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
 
-
-    from daskms.fsspec_store import DaskMSStore
-    fdsstore = DaskMSStore(opts.fds.rstrip('/'))
-    try:
-        assert fdsstore.exists()
-    except:
-        raise ValueError(f"No fds at {opts.fds}")
     OmegaConf.set_struct(opts, True)
 
     # TODO - prettier config printing
@@ -56,7 +49,6 @@ def smoovie(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    # with ExitStack() as stack:
     import dask
     dask.config.set(**{'array.slicing.split_large_chunks': False})
     from pfb import set_client
@@ -80,56 +72,37 @@ def _smoovie(**kw):
 
     import xarray as xr
     import numpy as np
-    from pfb.utils.fits import dds2fits, dds2fits_mfs
+    from pfb.utils.fits import dds2fits
+    from pfb.utils.naming import xds_from_url
     from distributed import get_client, as_completed
     from PIL import Image, ImageDraw, ImageFont
     import matplotlib.pyplot as plt
     from mpl_toolkits.axes_grid1 import make_axes_locatable
     from streamjoy import stream, wrap_matplotlib
     from distributed.diagnostics.progressbar import progress
+    from daskms.fsspec_store import DaskMSStore
 
-    @wrap_matplotlib()
-    def plot_frame(frame):
-        # frame is a list containing
-        # 0 - out image
-        # 1 - median rms
-        # 2 - utc
-        # 3 - scan number
-        # 4 - frame fraction
-        # 5 - band id
-        im = frame[0]
-        rms = frame[1]
-        utc = frame[2]
-        scan = frame[3]
-        fnum = frame[4]
-        band = frame[5]
-        fig, ax = plt.subplots(figsize=(10, 10))
-        fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=None, hspace=None)
-        im1 = ax.imshow(im,
-                    vmin=-opts.min_frac*rms,
-                    vmax=opts.max_frac*rms,
-                    cmap=opts.cmap)
-        # divider = make_axes_locatable(ax)
-        # cax = divider.append_axes('right', size='5%', pad=0.05)
-        # fig.colorbar(im1, cax=cax, orientation='vertical')
+    try:
+        client = get_client()
+        names = list(client.scheduler_info()['workers'].keys())
+    except:
+        from pfb.utils.dist import fake_client
+        client = fake_client()
+        names = [0]
+        as_completed = lambda x: x
 
-        plt.xticks([]), plt.yticks([])
-        ax.annotate(
-            f'{opts.outname}_band{band:04d}_scan{scan:04d}' + '\n' + fnum + '\n' + utc,
-            xy=(0.0, 0.0),
-            xytext=(0.05, 0.05),
-            xycoords='axes fraction',
-            textcoords='axes fraction',
-            ha='left', va='bottom',
-            fontsize=20,
-            color=opts.text_colour)
-        return fig
+    basename = opts.output_filename
 
-    # returns sorted list
-    fdslist = fdsstore.fs.glob(f'{opts.fds}/*')
+    # xds contains vis products, no imaging weights applied
+    fds_name = f'{basename}.fds' if opts.fds is None else opts.fds
+    fds_store = DaskMSStore(fds_name)
+    try:
+        assert fds_store.exists()
+    except Exception as e:
+        raise ValueError(f"There must be a dataset at {fds_store.url}")
 
-    # lazy load fds
-    fds = list(map(xr.open_zarr, fdslist))
+    print(f"Lazy loading fds from {fds_store.url}", file=log)
+    fds, fds_list = xds_from_url(fds_store.url)
 
     # TODO - scan selection
 
@@ -149,16 +122,18 @@ def _smoovie(**kw):
     # filter freq
     if opts.freq_range is not None:
         fmin, fmax = opts.freq_range.split(':')
-        for ds in fds:
+        for ds, dsl in zip(fds, fds_list):
             if ds.freq_out < fmin or ds.freq_out > fmax:
                     fds.pop(ds)
+                    fds_list.pop(dsl)
 
     # filter time
     if opts.time_range is not None:
         tmin, tmax = opts.time_range.split(':')
-        for ds in fds:
+        for ds, dsl in zip(fds, fds_list):
             if ds.time_out < tmin or ds.time_out > tmax:
                     fds.pop(ds)
+                    fds_list.pop(dsl)
 
     # get output times and frequencies
     b0 = np.inf
@@ -244,6 +219,43 @@ def _smoovie(**kw):
     print(f"Time and freq binning takes ({nfreqs_out},{ntimes_out}) cube to ({nf},{nt})", file=log)
 
 
+    @wrap_matplotlib()
+    def plot_frame(frame):
+        # frame is a list containing
+        # 0 - out image
+        # 1 - median rms
+        # 2 - utc
+        # 3 - scan number
+        # 4 - frame fraction
+        # 5 - band id
+        im = frame[0]
+        rms = frame[1]
+        utc = frame[2]
+        scan = frame[3]
+        fnum = frame[4]
+        band = frame[5]
+        fig, ax = plt.subplots(figsize=(10, 10))
+        fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=None, hspace=None)
+        im1 = ax.imshow(im,
+                    vmin=-opts.min_frac*rms,
+                    vmax=opts.max_frac*rms,
+                    cmap=opts.cmap)
+        # divider = make_axes_locatable(ax)
+        # cax = divider.append_axes('right', size='5%', pad=0.05)
+        # fig.colorbar(im1, cax=cax, orientation='vertical')
+
+        plt.xticks([]), plt.yticks([])
+        ax.annotate(
+            f'{basename}_band{band:04d}_scan{scan:04d}' + '\n' + fnum + '\n' + utc,
+            xy=(0.0, 0.0),
+            xytext=(0.05, 0.05),
+            xycoords='axes fraction',
+            textcoords='axes fraction',
+            ha='left', va='bottom',
+            fontsize=20,
+            color=opts.text_colour)
+        return fig
+
 
     if opts.animate_axis == 'time':
         # bin freq axis and make ovie for each bin
@@ -300,30 +312,30 @@ def _smoovie(**kw):
                 outim = stream(
                         results,
                         renderer=plot_frame,
-                        intro_title=f"{opts.outname}-Band{b:04d}",
+                        intro_title=f"{basename}-Band{b:04d}",
                         optimize=opts.optimize,
                         threads_per_worker=1,
                         fps=opts.fps,
                         max_frames=-1,
-                        uri=f'{opts.outname}_band{b}_{idfy}.gif'
+                        uri=f'{basename}_band{b}_{idfy}.gif'
                     )
             elif opts.out_format.lower() == 'mp4':
                 outim = stream(
                         results,
                         renderer=plot_frame,
-                        intro_title=f"{opts.outname}-Band{b:04d}",
+                        intro_title=f"{basename}-Band{b:04d}",
                         write_kwargs={'crf':opts.crf},
                         threads_per_worker=1,
                         fps=opts.fps,
                         max_frames=-1,
-                        uri=f'{opts.outname}_band{b}_{idfy}.mp4'
+                        uri=f'{basename}_band{b}_{idfy}.mp4'
                     )
             else:
                 raise ValueError(f"Unsupported format {opts.out_format}")
 
 
             # outim.fps = opts.fps
-            # outim.write(f'{opts.outname}_band{b}_fps{opts.fps}_tbin'
+            # outim.write(f'{basename}_band{b}_fps{opts.fps}_tbin'
             #             f'{opts.time_bin}_fbin{opts.freq_bin}.gif')
 
 
@@ -338,101 +350,6 @@ def _smoovie(**kw):
             fdso[t].append(ds)
     else:
         raise ValueError(f"Can't animate axis {opts.animate_axis}")
-
-
-
-
-    # # convert to fits files
-    # if opts.fits_mfs or opts.fits_cubes:
-    #     print("Writing fits", file=log)
-    #     tj = time.time()
-
-    # fitsout = []
-    # if opts.fits_mfs:
-    #     fitsout.append(dds2fits_mfs(fds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
-
-    # if opts.fits_cubes:
-    #     fitsout.append(dds2fits(fds, 'RESIDUAL', f'{basename}_{opts.suffix}', norm_wsum=True))
-
-    # if len(fitsout):
-    #     with compute_context(opts.scheduler, f'{ldir}/fastim_fits_{timestamp}'):
-    #         dask.compute(fitsout)
-    #     print(f"Fits writing took {time.time() - tj}s", file=log)
-
-    # if opts.movie_mfs or opts.movie_cubes:
-    #     print("Filming", file=log)
-    #     fontPath = '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf'
-    #     sans30  =  ImageFont.truetype ( fontPath, 30 )
-    #     tj = time.time()
-
-    # if opts.movie_mfs:
-    #     frames = []
-    #     for t in range(len(times_out)):
-    #         res = np.zeros(fds[0].RESIDUAL.shape)
-    #         rmss = np.zeros(len(times_out))
-    #         wsum = 0.0
-    #         for ds in fds:
-    #             # bands share same time axis so accumulate
-    #             if ds.timeid != t:
-    #                 continue
-    #             else:
-    #                 res += ds.RESIDUAL.values
-    #                 wsum += ds.WSUM.values
-    #                 utc = ds.utc
-
-    #         # min to zero
-    #         res -= res.min()
-    #         # max to 255
-    #         res *= 255/res.max()
-    #         res = res.astype('uint8')
-    #         nn = Image.fromarray(res)
-    #         prog = str(t).zfill(len(str(nframes)))+' / '+str(nframes)
-    #         draw = ImageDraw.Draw(nn)
-    #         draw.text((0.03*nx,0.90*ny),'Frame : '+prog,fill=('white'),font=sans30)
-    #         draw.text((0.03*nx,0.93*ny),'Time  : '+utc,fill=('white'),font=sans30)
-    #         # draw.text((0.03*nx,0.96*ny),'Image : '+ff,fill=('white'),font=sans30)
-    #         frames.append(nn)
-    #     frames[0].save(f'{basename}_{opts.suffix}_animated_mfs.gif',
-    #                    save_all=True,
-    #                    append_images=frames[1:],
-    #                    duration=35,
-    #                    loop=1)
-
-    # if opts.movie_cubes:
-    #     for b in range(len(freqs_out)):
-    #         frames = []
-    #         for ds in fds:
-    #             if ds.bandid != b:
-    #                 continue
-    #             res = ds.RESIDUAL.values
-    #             # min to zero
-    #             res -= res.min()
-    #             # max to 255
-    #             res *= 255/res.max()
-    #             res = res.astype('uint8')
-    #             nn = Image.fromarray(res)
-    #             tt = ds.utc
-    #             t = ds.timeid
-    #             prog = str(t).zfill(len(str(nframes)))+' / '+str(nframes)
-    #             draw = ImageDraw.Draw(nn)
-    #             draw = ImageDraw.Draw(nn)
-    #             draw.text((0.03*nx,0.90*ny),'Frame : '+prog,fill=('white'),font=sans30)
-    #             draw.text((0.03*nx,0.93*ny),'Time  : '+utc,fill=('white'),font=sans30)
-    #             frames.append(nn)
-    #         frames[0].save(f'{basename}_{opts.suffix}_animated_band{b:04d}.gif',
-    #                        save_all=True,
-    #                        append_images=frames[1:],
-    #                        duration=35,
-    #                        loop=1)
-
-
-    # if opts.movie_mfs or opts.movie_cubes:
-    #     print(f"Filming took {time.time() - tj}s", file=log)
-
-
-    client.close()
-
-    print("All done here.", file=log)
 
 
 import dask
