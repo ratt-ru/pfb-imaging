@@ -68,7 +68,7 @@ def init(**kw):
         print('     %25s = %s' % (key, opts[key]), file=log)
 
     from pfb import set_envs
-    from ducc0.misc import resize_thread_pool, thread_pool_size
+    from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
@@ -76,7 +76,6 @@ def init(**kw):
     import dask
     dask.config.set(**{'array.slicing.split_large_chunks': False})
     from pfb import set_client
-    from distributed import wait, get_client
     client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
 
     ti = time.time()

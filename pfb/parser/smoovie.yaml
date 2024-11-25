@@ -44,12 +44,6 @@ inputs:
     default: 'cyan'
     info:
       Colour to render text on image
-  log-directory:
-    dtype: str
-    required: true
-    abbreviation: ldir
-    info:
-      Directory to write logs and performance reports to
   freq-bin:
     dtype: int
     default: 1
@@ -75,66 +69,6 @@ inputs:
     default: false
     info:
       Allow overwrite of output files with the same names.
-  fits-mfs:
-    dtype: bool
-    default: true
-    info:
-      Output MFS fits files
-  fits-cubes:
-    dtype: bool
-    default: false
-    info:
-      Output fits cubes
-  movie-mfs:
-    dtype: bool
-    default: true
-    info:
-      Output MFS movie
-  movie-cubes:
-    dtype: bool
-    default: false
-    info:
-      Output movie per freq band
-  host-address:
-    dtype: str
-    abbreviation: ha
-    info:
-      Address where the distributed client lives.
-      Uses LocalCluster if no address is provided
-      and scheduler is set to distributed.
-  nworkers:
-    dtype: int
-    default: 1
-    abbreviation: nw
-    info:
-      Number of worker processes.
-      Use with distributed scheduler.
-  nthreads:
-    dtype: int
-    default: 1
-    abbreviation: nt
-    info:
-      Number of threads.
-  # TBD
-  field-of-view:
-    dtype: float
-    abbreviation: fov
-    default: 3.0
-    info:
-      Field of view in degrees
-  nx:
-    dtype: int
-    info:
-      Number of x pixels
-  ny:
-    dtype: int
-    info:
-      Number of y pixels
-  target:
-    dtype: str
-    info:
-      This can be predefined celestial objects known to astropy or a string in
-      the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
   respect-scan-boundaries:
     dtype: bool
     default: true
@@ -161,6 +95,10 @@ inputs:
     default: 12
     info:
       Constant rate factor for controlling mp4 output quality.
+
+  _include:
+    - (.)out.yml
+    - (.)dist.yml
 
 outputs:
     {}
