@@ -473,7 +473,7 @@ def construct_mappings(ms_name,
                 gdsf = [dsg for dsg in gds if dsg.FIELD_ID == fid]
                 gdsfd = [dsg for dsg in gdsf if dsg.DATA_DESC_ID == ddid]
                 # gains may have been solved over scans
-                if 'SCAN_NUMBER' in gdsfd[0]:
+                if 'SCAN_NUMBER' in gdsfd[0].attrs:
                     gdsfds = [dsg for dsg in gdsfd if dsg.SCAN_NUMBER == scanid]
                     try:
                         assert len(gdsfds) == 1
