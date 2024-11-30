@@ -23,12 +23,9 @@ def smoovie(**kw):
     opts, basedir, oname = set_output_names(opts)
 
     import psutil
-    nthreads = psutil.cpu_count(logical=True)
     ncpu = psutil.cpu_count(logical=False)
-    if opts.nthreads is None:
-        opts.nthreads = nthreads//2
-        ncpu = ncpu//2
-
+    # to prevent flickering 
+    opts.nthreads = 1
     if opts.product.upper() not in ["I","Q", "U", "V"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
     
@@ -36,7 +33,6 @@ def smoovie(**kw):
     logname = f'{str(opts.log_directory)}/smoovie_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
-
     OmegaConf.set_struct(opts, True)
 
     # TODO - prettier config printing
