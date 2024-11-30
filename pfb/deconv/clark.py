@@ -8,7 +8,7 @@ from ducc0.misc import empty_noncritical
 import pyscilog
 log = pyscilog.get_logger('CLARK')
 
-# @njit(nogil=True, cache=True)  # parallel=True,
+@njit(nogil=True, cache=True)  # parallel=True,
 def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     '''
     Subtract psf centered at location of xhat
@@ -25,7 +25,7 @@ def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     return A
 
 
-# @njit(nogil=True, cache=True)  # parallel=True,
+@njit(nogil=True, cache=True)  # parallel=True,
 def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     """
     Run subminor loop in active set
@@ -83,9 +83,6 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         # mask = (left_x & right_x) & (left_y & right_y)
 
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
-        assert mask.size == Ip.size
-        assert mask.all()
-        # import ipdb; ipdb.set_trace()
         # Ipp, Iqq = psf[:, nxo2 - Ip[mask], nyo2 - Iq[mask]]
         A = subtract(A[:, mask], psf,
                      Idelp[mask], Idelq[mask],
