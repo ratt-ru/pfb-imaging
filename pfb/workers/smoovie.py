@@ -45,10 +45,10 @@ def smoovie(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    import dask
-    dask.config.set(**{'array.slicing.split_large_chunks': False})
-    from pfb import set_client
-    client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
+    # import dask
+    # dask.config.set(**{'array.slicing.split_large_chunks': False})
+    # from pfb import set_client
+    # client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
 
     ti = time.time()
     _smoovie(**opts)
@@ -74,10 +74,10 @@ def _smoovie(**kw):
     from streamjoy import stream, wrap_matplotlib
     from daskms.fsspec_store import DaskMSStore
 
-    try:
-        client = get_client()
-    except:
-        client = None
+    # try:
+    #     client = get_client()
+    # except:
+    #     client = None
 
     basename = opts.output_filename
     if opts.scratch_dir is not None:
@@ -177,7 +177,7 @@ def _smoovie(**kw):
                         max_frames=-1,
                         uri=f'{basename}_band{b}_{idfy}.gif',
                         scratch_dir=f'{scratch_dir}/streamjoy_scratch',
-                        client=client
+                        # client=client
                     )
             elif opts.out_format.lower() == 'mp4':
                 outim = stream(
@@ -191,7 +191,7 @@ def _smoovie(**kw):
                         max_frames=-1,
                         uri=f'{basename}_band{b}_{idfy}.mp4',
                         scratch_dir=f'{scratch_dir}/streamjoy_scratch',
-                        client=client
+                        # client=client
                     )
             else:
                 raise ValueError(f"Unsupported format {opts.out_format}")
