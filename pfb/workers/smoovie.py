@@ -119,108 +119,10 @@ def _smoovie(**kw):
     ntimes_in = times_in.size
     nfreqs_in = freqs_in.size
 
-    # filter freq
-    if opts.freq_range is not None:
-        fmin, fmax = opts.freq_range.split(':')
-        for ds, dsl in zip(fds, fds_list):
-            if ds.freq_out < fmin or ds.freq_out > fmax:
-                    fds.pop(ds)
-                    fds_list.pop(dsl)
-
-    # filter time
-    if opts.time_range is not None:
-        tmin, tmax = opts.time_range.split(':')
-        for ds, dsl in zip(fds, fds_list):
-            if ds.time_out < tmin or ds.time_out > tmax:
-                    fds.pop(ds)
-                    fds_list.pop(dsl)
-
-    # get output times and frequencies
-    b0 = np.inf
-    t0 = np.inf
-    freqs_out = []
-    times_out = []
-    for ds in fds:
-        freqs_out.append(ds.freq_out)
-        times_out.append(ds.time_out)
-        if ds.bandid < b0:
-            b0 = ds.bandid
-        if ds.timeid < t0:
-            t0 = ds.timeid
-
-    freqs_out = np.unique(np.array(freqs_out))
-    times_out = np.unique(np.array(times_out))
-    ntimes_out = times_out.size
-    nfreqs_out = freqs_out.size
-
-    # get scan numbers
-    scan_bins = {}
-    for ds in fds:
-        scan_bins.setdefault(ds.scanid, 0)
-        scan_bins[ds.scanid] += 1
-
-    # adjust tid and bid after selection
-    # this should make tid and bid unique
-    scan_numbers = list(scan_bins.keys())
-    bin_counts = np.array(list(scan_bins.values()))
-    bin_cumcounts = np.cumsum(np.concatenate(([0],bin_counts)))
-    for i, ds in enumerate(fds):
-        tid = ds.timeid
-        bid = ds.bandid
-        # index of scan number
-        sid = scan_numbers.index(ds.scanid)
-        fds[i] = ds.assign_attrs(**{
-            'timeid': tid + bin_cumcounts[sid] - t0,
-            'bandid': bid + bin_cumcounts[sid] - b0
-        })
-
-    # Time and freq selection
-    print(f"Time and freq selection takes ({nfreqs_in},{ntimes_in}) cube to ({nfreqs_out},{ntimes_out})", file=log)
-    fbin = nfreqs_out if opts.freq_bin in (-1, None, 0) else opts.freq_bin
-    nf = int(np.ceil(nfreqs_out/fbin))
-
-    # time and freq binning
-    if opts.respect_scan_boundaries:  # and len(scan_numbers) > 1:
-        max_bin = np.max(bin_counts)
-        if opts.time_bin in (-1, None, 0) or opts.time_bin > max_bin:
-            # one bin per scan
-            tbins = bin_counts
-            nt = bin_counts.size
-        else:
-            nts = list(map(lambda x: int(np.ceil(x/opts.time_bin)), bin_counts))
-            nt = np.sum(nts)
-            tbins = np.zeros(nt)
-            nlow = 0
-            ntot = np.sum(bin_counts)
-            for t in range(nt):
-                nhigh = np.minimum(nlow + opts.time_bin, ntot)
-                # check if scan would be straddled
-                idxl = np.where(nlow < bin_cumcounts)[0][0]
-                idxh = np.where(nhigh <= bin_cumcounts)[0][0]
-                if idxl == idxh and t < nt-1:
-                    # not straddled
-                    tbins[t] = opts.time_bin
-                    nlow += opts.time_bin
-                else:
-                    # straddled
-                    tbins[t] = bin_cumcounts[idxl] - nlow
-                    nlow = bin_cumcounts[idxl]
-
-    else:
-        max_bin = ntimes_out if opts.time_bin in (-1, None, 0) else opts.time_bin
-        if opts.time_bin > ntimes_out:
-            max_bin = ntimes_out
-        nt = int(np.ceil(ntimes_out/max_bin))
-        tbins = np.array([max_bin]*nt)
-        if ntimes_out % max_bin:
-            tbins[-1] = ntimes_out - (nt-1)*max_bin
-    tidx = np.cumsum(np.concatenate(([0], tbins))).astype(int)
-    tbins = tbins.astype(int)
-    print(f"Time and freq binning takes ({nfreqs_out},{ntimes_out}) cube to ({nf},{nt})", file=log)
-
-
     @wrap_matplotlib()
-    def plot_frame(frame):
+    def plot_frame(ds):
+        # with worker_client() as client:
+        #     ds = client.compute(frame, sync=True)
         # frame is a list containing
         # 0 - out image
         # 1 - median rms
@@ -228,21 +130,18 @@ def _smoovie(**kw):
         # 3 - scan number
         # 4 - frame fraction
         # 5 - band id
-        im = frame[0]
-        rms = frame[1]
-        utc = frame[2]
-        scan = frame[3]
-        fnum = frame[4]
-        band = frame[5]
+        wsum = ds.wsum
+        utc = ds.utc
+        scan = ds.scanid
+        fnum = ds.ffrac
+        band = ds.bandid
+        resid = ds.RESIDUAL.values/wsum
         fig, ax = plt.subplots(figsize=(10, 10))
         fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=None, hspace=None)
-        im1 = ax.imshow(im,
-                    vmin=-opts.min_frac*rms,
-                    vmax=opts.max_frac*rms,
+        im1 = ax.imshow(resid,
+                    vmin=-opts.min_frac*ds.rms,
+                    vmax=opts.max_frac*ds.rms,
                     cmap=opts.cmap)
-        # divider = make_axes_locatable(ax)
-        # cax = divider.append_axes('right', size='5%', pad=0.05)
-        # fig.colorbar(im1, cax=cax, orientation='vertical')
 
         plt.xticks([]), plt.yticks([])
         ax.annotate(
@@ -258,43 +157,20 @@ def _smoovie(**kw):
 
 
     if opts.animate_axis == 'time':
-        # bin freq axis and make ovie for each bin
-        fbins = np.arange(fbin/2, nfreqs_out + fbin/2, fbin)
-        fdso = {}
+        # bin freq axis and make movie for each bin
+        fds_dict = {}
         for ds in fds:
-            tmp = np.abs(fbins - ds.bandid)
-            b = np.where(tmp == tmp.min())[0][-1]
-            fdso.setdefault(b, [])
-            fdso[b].append(ds)
+            b = ds.bandid
+            fds_dict.setdefault(b, [])
+            fds_dict[b].append(ds)
 
-        for b, dlist in fdso.items():
-            futures = []
-            for t in range(nt):
-                nlow = tidx[t]
-                nhigh = nlow + tbins[t]
-                fut = client.submit(sum_blocks, dlist[nlow:nhigh],
-                                    priority=-t)
-                futures.append(fut)
-
-            # this should preserve order
-            progress(futures)
-            results = client.gather(futures)
-
-            # drop empty frames
-            nframes = len(results)
-            for i, res in enumerate(results):
-                if not res[1]:
-                    results.pop(i)
-            nframeso = len(results)
-            print(f"Dropped {nframes - nframeso} empty frames in band {b}", file=log)
-            # get median rms
-            medrms = np.median([res[1] for res in results])
-
-            # replace rms with medrms and add metadata
-            for i, res in enumerate(results):
-                res[1] = medrms
-                res.append(f'{str(i)}/{nt}')  # frame fraction
-                res.append(b)  # band number
+        for b, dslist in fdso.items():
+            rmss = [ds.rms for ds in dslist]
+            medrms = np.median(rmss)
+            nframe = len(dslist)
+            for i, ds in enumerate(dslist):
+                ds.attrs['rms'] = medrms
+                ds.attrs['ffrac'] = f'{i}/{nframe}'
 
             # results should have
             # 0 - out image
@@ -307,10 +183,10 @@ def _smoovie(**kw):
             # TODO:
             # - progressbar
             # - investigate writing frames to disk as xarray dataset and passing instead of frames
-            idfy = f'fps{opts.fps}_tbin{opts.time_bin}_fbin{opts.freq_bin}'
+            idfy = f'fps{opts.fps}'
             if opts.out_format.lower() == 'gif':
                 outim = stream(
-                        results,
+                        dslist,
                         renderer=plot_frame,
                         intro_title=f"{basename}-Band{b:04d}",
                         optimize=opts.optimize,
@@ -321,7 +197,7 @@ def _smoovie(**kw):
                     )
             elif opts.out_format.lower() == 'mp4':
                 outim = stream(
-                        results,
+                        dslist,
                         renderer=plot_frame,
                         intro_title=f"{basename}-Band{b:04d}",
                         write_kwargs={'crf':opts.crf},
@@ -335,21 +211,10 @@ def _smoovie(**kw):
 
 
             # outim.fps = opts.fps
-            # outim.write(f'{basename}_band{b}_fps{opts.fps}_tbin'
-            #             f'{opts.time_bin}_fbin{opts.freq_bin}.gif')
+            # outim.write(f'{basename}_band{b}.gif')
 
-
-    elif opts.animate_axis == 'freq':
-        tbins = np.arange(0, ntimes_out, opts.time_bin)
-        tbins = np.append(tbins, ntimes_out)
-        fdso = {}
-        for ds in fds:
-            tmp = np.abs(tbins - ds.timeid)
-            t = np.where(tmp == tmp.min())[0][0]
-            fdso.setdefault(t, [])
-            fdso[t].append(ds)
     else:
-        raise ValueError(f"Can't animate axis {opts.animate_axis}")
+        raise NotImplementedError(f"Can't animate axis {opts.animate_axis}")
 
 
 import dask

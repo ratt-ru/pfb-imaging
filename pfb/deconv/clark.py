@@ -8,7 +8,7 @@ from ducc0.misc import empty_noncritical
 import pyscilog
 log = pyscilog.get_logger('CLARK')
 
-@njit(nogil=True, cache=True)  # parallel=True,
+# @njit(nogil=True, cache=True)  # parallel=True,
 def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     '''
     Subtract psf centered at location of xhat
@@ -25,7 +25,7 @@ def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
     return A
 
 
-@njit(nogil=True, cache=True)  # parallel=True,
+# @njit(nogil=True, cache=True)  # parallel=True,
 def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     """
     Run subminor loop in active set
@@ -64,16 +64,28 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     while Amax > th and k < maxit:
         xhat = A[:, pq]
         model[fsel, p, q] += gamma * xhat[fsel]/wsums[fsel]
+        
         Idelp = p - Ip
         Idelq = q - Iq
+
+        # coordinates in PSF
+        # pp = nxo2 - (p - Ip)
+        # qq = nyo2 - (q - Iq)
+        # 
+        # nxo2 - p : nxo2 + nx - p
+        # nyo2 - q : nyo2 + ny - q
+
         # # find where PSF overlaps with image
-        # left_x =  p - Ip >= 0
+        # left_x = p - Ip >= 0
         # right_x = p + Ip < nx
         # left_y =  q - Iq >= 0
         # right_y = q + Iq < ny
         # mask = (left_x & right_x) & (left_y & right_y)
 
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
+        assert mask.size == Ip.size
+        assert mask.all()
+        # import ipdb; ipdb.set_trace()
         # Ipp, Iqq = psf[:, nxo2 - Ip[mask], nyo2 - Iq[mask]]
         A = subtract(A[:, mask], psf,
                      Idelp[mask], Idelq[mask],
@@ -99,8 +111,6 @@ def clark(ID,
           submaxit=1000,
           report_freq=1,
           verbosity=1,
-          psfopts=None,
-          sigmathreshold=2,
           nthreads=1):
     nband, nx, ny = ID.shape
     _, nx_psf, ny_psf = PSF.shape
@@ -109,10 +119,6 @@ def clark(ID,
     # axis i.e. the MFS image is in units of Jy/beam
     wsum = wsums.sum()
     assert np.allclose(wsum, 1)
-    # ID /= wsum
-    # PSF /= wsum
-    # PSFHAT /= wsum
-    # wsums = wsums/wsum
     model = np.zeros((nband, nx, ny), dtype=ID.dtype)
     IR = ID.copy()
     # pre-allocate arrays for doing FFT's

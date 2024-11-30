@@ -37,16 +37,6 @@ inputs:
     default: 'cyan'
     info:
       Colour to render text on image
-  freq-bin:
-    dtype: int
-    default: 1
-    info:
-      How many freqs to bin into single frame
-  time-bin:
-    dtype: int
-    default: 1
-    info:
-      How many times to bin into single frame
   freq-range:
     dtype: str
     info:
@@ -62,11 +52,6 @@ inputs:
     default: false
     info:
       Allow overwrite of output files with the same names.
-  respect-scan-boundaries:
-    dtype: bool
-    default: true
-    info:
-      Whether to allow averaging across scan boundaries
   out-format:
     dtype: str
     default: gif
