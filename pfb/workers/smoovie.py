@@ -69,7 +69,7 @@ def _smoovie(**kw):
     import xarray as xr
     import numpy as np
     from pfb.utils.naming import xds_from_url
-    from distributed import get_client
+    # from distributed import get_client
     import matplotlib.pyplot as plt
     from streamjoy import stream, wrap_matplotlib
     from daskms.fsspec_store import DaskMSStore
@@ -113,15 +113,6 @@ def _smoovie(**kw):
 
     @wrap_matplotlib()
     def plot_frame(ds):
-        # with worker_client() as client:
-        #     ds = client.compute(frame, sync=True)
-        # frame is a list containing
-        # 0 - out image
-        # 1 - median rms
-        # 2 - utc
-        # 3 - scan number
-        # 4 - frame fraction
-        # 5 - band id
         wsum = ds.wsum
         utc = ds.utc
         scan = ds.scanid
@@ -202,32 +193,3 @@ def _smoovie(**kw):
 
     else:
         raise NotImplementedError(f"Can't animate axis {opts.animate_axis}")
-
-
-import dask
-import numpy as np
-from casacore.quanta import quantity
-from datetime import datetime
-from distributed import worker_client
-# from pfb.utils.fits import save_fits
-def sum_blocks(fds, animate='time'):
-    with worker_client() as client:
-        fds = client.compute(fds, sync=True)
-    # fds = dask.compute(fds)[0]
-    outim = np.zeros((fds[0].x.size, fds[0].y.size))
-    wsum = 0.0
-    cout = 0.0
-    for ds in fds:
-        outim += ds.RESIDUAL.values * ds.wsum
-        cout += getattr(ds, f'{animate}_out') * ds.wsum
-        wsum += ds.wsum
-
-    if wsum:
-        outim /= wsum
-        cout /= wsum
-    if animate=='time':
-        unix_time = quantity(f'{cout}s').to_unix_time()
-        utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
-    rms = np.std(outim)
-
-    return [outim, rms, utc, fds[0].scanid]
