@@ -41,8 +41,6 @@ def smoovie(**kw):
         print('     %25s = %s' % (key, opts[key]), file=log)
 
     from pfb import set_envs
-    from ducc0.misc import resize_thread_pool
-    resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
     # import dask
@@ -54,11 +52,6 @@ def smoovie(**kw):
     _smoovie(**opts)
 
     print(f"All done after {time.time() - ti}s", file=log)
-
-    try:
-        client.close()
-    except Exception as e:
-        raise e
 
 
 def _smoovie(**kw):
@@ -162,7 +155,7 @@ def _smoovie(**kw):
                         renderer=plot_frame,
                         intro_title=f"{basename}-Band{b:04d}",
                         optimize=opts.optimize,
-                        processes=False,
+                        processes=True,
                         threads_per_worker=1,
                         fps=opts.fps,
                         max_frames=-1,
@@ -176,7 +169,7 @@ def _smoovie(**kw):
                         renderer=plot_frame,
                         intro_title=f"{basename}-Band{b:04d}",
                         write_kwargs={'crf':opts.crf},
-                        processes=False,
+                        processes=True,
                         threads_per_worker=1,
                         fps=opts.fps,
                         max_frames=-1,
