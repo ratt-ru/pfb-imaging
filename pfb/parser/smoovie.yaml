@@ -73,6 +73,10 @@ inputs:
     default: 12
     info:
       Constant rate factor for controlling mp4 output quality.
+  scratch-dir:
+    dtype: URI
+    info:
+      Streamjoy scratch directory. 
 
   _include:
     - (.)out.yml
