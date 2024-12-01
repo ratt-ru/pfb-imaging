@@ -53,6 +53,13 @@ def smoovie(**kw):
 
     print(f"All done after {time.time() - ti}s", file=log)
 
+    try:
+        from distributed import get_client
+        client = get_client()
+        client.close()
+    except Exception as e:
+        pass
+
 
 def _smoovie(**kw):
     opts = OmegaConf.create(kw)
