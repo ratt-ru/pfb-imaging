@@ -69,15 +69,9 @@ def _smoovie(**kw):
     import xarray as xr
     import numpy as np
     from pfb.utils.naming import xds_from_url
-    # from distributed import get_client
     import matplotlib.pyplot as plt
     from streamjoy import stream, wrap_matplotlib
     from daskms.fsspec_store import DaskMSStore
-
-    # try:
-    #     client = get_client()
-    # except:
-    #     client = None
 
     basename = opts.output_filename
     if opts.scratch_dir is not None:
@@ -138,6 +132,8 @@ def _smoovie(**kw):
             color=opts.text_colour)
         return fig
 
+    outfmt = opts.out_format.lower()
+    print(f"Writing movie to {basename}_band{b}_{idfy}.{opts.out_format.lower(outfmt)}", file=log)
 
     if opts.animate_axis == 'time':
         # bin freq axis and make movie for each bin
@@ -156,7 +152,7 @@ def _smoovie(**kw):
                 ds.attrs['ffrac'] = f'{i}/{nframe}'
 
             idfy = f'fps{opts.fps}'
-            if opts.out_format.lower() == 'gif':
+            if outfmt == 'gif':
                 outim = stream(
                         dslist,
                         renderer=plot_frame,
@@ -170,7 +166,7 @@ def _smoovie(**kw):
                         scratch_dir=f'{scratch_dir}/streamjoy_scratch',
                         # client=client
                     )
-            elif opts.out_format.lower() == 'mp4':
+            elif outfmt == 'mp4':
                 outim = stream(
                         dslist,
                         renderer=plot_frame,
@@ -186,10 +182,6 @@ def _smoovie(**kw):
                     )
             else:
                 raise ValueError(f"Unsupported format {opts.out_format}")
-
-
-            # outim.fps = opts.fps
-            # outim.write(f'{basename}_band{b}.gif')
 
     else:
         raise NotImplementedError(f"Can't animate axis {opts.animate_axis}")
