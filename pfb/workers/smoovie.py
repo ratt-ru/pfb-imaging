@@ -133,7 +133,7 @@ def _smoovie(**kw):
         return fig
 
     outfmt = opts.out_format.lower()
-
+    idfy = f'fps{opts.fps}'
     if opts.animate_axis == 'time':
         # bin freq axis and make movie for each bin
         fds_dict = {}
@@ -143,7 +143,9 @@ def _smoovie(**kw):
             fds_dict[b].append(ds)
 
         for b, dslist in fds_dict.items():
-            print(f"Writing movie to {basename}_band{b}_{idfy}.{outfmt}", file=log)
+            
+            print(f"Writing movie to {basename}_band{b}_{idfy}.{outfmt}",
+                   file=log)
             rmss = [ds.rms for ds in dslist]
             medrms = np.median(rmss)
             nframe = len(dslist)
@@ -151,7 +153,6 @@ def _smoovie(**kw):
                 ds.attrs['rms'] = medrms
                 ds.attrs['ffrac'] = f'{i}/{nframe}'
 
-            idfy = f'fps{opts.fps}'
             if outfmt == 'gif':
                 outim = stream(
                         dslist,
