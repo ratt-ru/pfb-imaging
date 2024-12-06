@@ -44,7 +44,7 @@ inputs:
       Absolute threshold at which to stop cleaning.
       By default it is set automatically using sigmathreshold parameter
     abbreviation: th
-  sigmathreshold:
+  rmsfactor:
     dtype: float
     default: 3.0
     info:

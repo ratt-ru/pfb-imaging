@@ -168,7 +168,11 @@ inputs:
     default: false
     info:
       Report worker memory as tasks complete
-
+  check-ants:
+    dtype: bool
+    default: false
+    info:
+      Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.
   _include:
     - (.)gridding.yml
     - (.)out.yml

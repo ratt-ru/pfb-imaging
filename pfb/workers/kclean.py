@@ -49,39 +49,36 @@ def kclean(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-
-    from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import xds_from_url
 
     basename = f'{basedir}/{oname}'
     fits_oname = f'{opts.fits_output_folder}/{oname}'
     dds_name = f'{basename}_{opts.suffix}.dds'
 
-    with ExitStack() as stack:
-        ti = time.time()
-        _kclean(**opts)
+    ti = time.time()
+    _kclean(**opts)
 
-        dds, dds_list = xds_from_url(dds_name)
+    dds, dds_list = xds_from_url(dds_name)
 
-        from pfb.utils.fits import dds2fits
+    from pfb.utils.fits import dds2fits
 
 
-        if opts.fits_mfs or opts.fits:
-            print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
-            dds2fits(dds,
-                     'RESIDUAL',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=True,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
-            dds2fits(dds,
-                     'MODEL',
-                     f'{fits_oname}_{opts.suffix}',
-                     norm_wsum=False,
-                     do_mfs=opts.fits_mfs,
-                     do_cube=opts.fits_cubes)
+    if opts.fits_mfs or opts.fits:
+        print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
+        dds2fits(dds_list,
+                 'RESIDUAL',
+                 f'{fits_oname}_{opts.suffix}',
+                 norm_wsum=True,
+                 do_mfs=opts.fits_mfs,
+                 do_cube=opts.fits_cubes)
+        dds2fits(dds_list,
+                 'MODEL',
+                 f'{fits_oname}_{opts.suffix}',
+                 norm_wsum=False,
+                 do_mfs=opts.fits_mfs,
+                 do_cube=opts.fits_cubes)
 
-        print(f"All done after {time.time() - ti}s", file=log)
+    print(f"All done after {time.time() - ti}s", file=log)
 
 
 def _kclean(**kw):
@@ -152,7 +149,7 @@ def _kclean(**kw):
     psf_mfs = np.sum(psf, axis=0)
     residual_mfs = np.sum(residual, axis=0)
 
-    # for intermediary results (not currently written)
+    # for intermediary results
     nx = dds[0].x.size
     ny = dds[0].y.size
     ra = dds[0].ra
@@ -196,7 +193,7 @@ def _kclean(**kw):
     best_model = model.copy()
     diverge_count = 0
     if opts.threshold is None:
-        threshold = opts.sigmathreshold * rms
+        threshold = opts.rmsfactor * rms
     else:
         threshold = opts.threshold
 
@@ -214,7 +211,6 @@ def _kclean(**kw):
                           submaxit=opts.subminor_maxit,
                           verbosity=opts.verbose,
                           report_freq=opts.report_freq,
-                          sigmathreshold=opts.sigmathreshold,
                           nthreads=opts.nthreads)
         model += x
 
@@ -316,7 +312,7 @@ def _kclean(**kw):
             ds.to_zarr(ds_name, mode='a')
 
         if opts.threshold is None:
-            threshold = opts.sigmathreshold * rms
+            threshold = opts.rmsfactor * rms
         else:
             threshold = opts.threshold
 
@@ -389,7 +385,7 @@ def _kclean(**kw):
                     ds.to_zarr(ds_name, mode='a')
 
             if opts.threshold is None:
-                threshold = opts.sigmathreshold * rms
+                threshold = opts.rmsfactor * rms
             else:
                 threshold = opts.threshold
 
