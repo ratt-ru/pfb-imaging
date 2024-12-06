@@ -28,7 +28,7 @@ pyscilog = ">=0.1.2"
 Click = ">=8.1"
 ducc0 = ">=0.35.0"
 sympy = ">=1.13"
-stimela = { git = "https://github.com/caracal-pipeline/stimela.git", branch = "master" }
+stimela = ">=2.0.1.1"
 streamjoy = ">=0.0.8"
 dask = ">=2023.1.1, <2024.11.0"
 codex-africanus = {extras = ["dask", "scipy", "astropy", "python-casacore"], version = ">=0.4.1"}
