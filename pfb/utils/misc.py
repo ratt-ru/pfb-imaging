@@ -1044,6 +1044,22 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
         return image_in
 
 
+def model_from_mds(mds_name):
+    '''
+    Evaluate component model at the original resolution
+    '''
+    mds = xr.open_zarr(mds_name, chunks=None)
+    return eval_coeffs_to_cube(mds.times.values,
+                               mds.freqs.values,
+                               mds.npix_x, mds.npix_y,
+                               mds.coefficients.values,
+                               mds.location_x.values, mds.location_y.values,
+                               mds.parametrisation,
+                               mds.params.values,
+                               mds.texpr, mds.fexpr)
+
+
+
 @njit(nogil=True, cache=True)
 def norm_diff(x, xp):
     return norm_diff_impl(x, xp)

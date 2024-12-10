@@ -15,6 +15,7 @@ from datetime import datetime
 from ducc0.fft import c2r, r2c, good_size
 from ducc0.misc import resize_thread_pool
 from africanus.constants import c as lightspeed
+from pfb.utils.astrometry import get_coordinates
 import gc
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
