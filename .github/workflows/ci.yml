@@ -18,7 +18,20 @@ jobs:
       - id: check
         run: |
           message="${{ github.event.head_commit.message }}"
-          skip_patterns=('[skip ci]' '[ci skip]' '[no ci]' 'skip-ci' 'ci-skip')
+          message="${message,,}"  # Convert to lowercase for case-insensitive matching
+          
+          # Define skip patterns
+          skip_patterns=(
+            'skip ci'
+            'ci skip'
+            'no ci'
+            'skip-ci'
+            'ci-skip'
+            'skip_ci'
+            'ci_skip'
+            'noci'
+          )
+          
           should_run=true
           
           for pattern in "${skip_patterns[@]}"; do
