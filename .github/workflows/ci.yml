@@ -10,10 +10,31 @@ env:
   POETRY_VERSION: 1.5
 
 jobs:
+  should-run:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - id: check
+        run: |
+          message="${{ github.event.head_commit.message }}"
+          skip_patterns=('[skip ci]' '[ci skip]' '[no ci]' 'skip-ci' 'ci-skip')
+          should_run=true
+          
+          for pattern in "${skip_patterns[@]}"; do
+            if [[ $message == *"$pattern"* ]]; then
+              should_run=false
+              break
+            fi
+          done
+          
+          echo "should_run=$should_run" >> $GITHUB_OUTPUT
+
   test:
+    needs: should-run
+    if: needs.should-run.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
     continue-on-error: true
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
 
     env:
       NUMBA_CACHE_DIR: /tmp/numba-cache
