@@ -16,6 +16,7 @@ jobs:
       run: ${{ steps.check.outputs.should_run }}
     steps:
       - id: check
+        shell: bash
         run: |
           message="${{ github.event.head_commit.message }}"
           message="${message,,}"  # Convert to lowercase for case-insensitive matching
@@ -35,14 +36,17 @@ jobs:
           should_run=true
           
           for pattern in "${skip_patterns[@]}"; do
-            if [[ $message == *"$pattern"* ]]; then
-              should_run=false
+            echo "Testing pattern: '$pattern'"
+            if echo "$message" | grep -q "$pattern"; then
+              echo "MATCH FOUND for pattern: '$pattern'"
+              should_run="false"
               break
+            else
+              echo "No match for pattern: '$pattern'"
             fi
           done
           
-          echo "Skip patterns: $skip_patterns"
-          echo "Final decision: $should_run"
+          echo "Should run: $should_run"
           echo "should_run=$should_run" >> $GITHUB_OUTPUT
 
   test:
