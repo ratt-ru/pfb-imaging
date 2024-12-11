@@ -18,17 +18,20 @@ jobs:
       - id: check
         shell: bash
         run: |
-          echo "DEBUG: Raw github.event.head_commit.message:"
-          echo "${{ toJSON(github.event.head_commit.message) }}"
-          echo "DEBUG: Length of message:"
-          echo -n "${{ github.event.head_commit.message }}" | wc -c
-          echo "DEBUG: Hexdump of message to see any hidden characters:"
-          echo -n "${{ github.event.head_commit.message }}" | xxd
-
-          message="${{ github.event.head_commit.message }}"
-          message="${message,,}"  # Convert to lowercase for case-insensitive matching
+          if [ "${{ github.event_name }}" == "pull_request" ] || [ "${{ github.event_name }}" == "pull_request_target" ]; then
+            message="${{ github.event.pull_request.head.sha }}"
+            # Fetch the actual commit message since we only get the SHA in PR context
+            message=$(git ls-remote "${{ github.event.pull_request.head.repo.clone_url }}" "${{ github.event.pull_request.head.ref }}" | cut -f1 | xargs git show --format=%B -s)
+          else
+            message="${{ github.event.head_commit.message }}"
+          fi
           
-          # Define skip patterns
+          echo "Event type: ${{ github.event_name }}"
+          echo "Original message: '$message'"
+          
+          message="${message,,}"  # Convert to lowercase
+          echo "Lowercase message: '$message'"
+          
           skip_patterns=(
             'skip ci'
             'ci skip'
@@ -40,7 +43,7 @@ jobs:
             'noci'
           )
           
-          should_run=true
+          should_run="true"
           
           for pattern in "${skip_patterns[@]}"; do
             echo "Testing pattern: '$pattern'"
