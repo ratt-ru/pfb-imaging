@@ -18,6 +18,13 @@ jobs:
       - id: check
         shell: bash
         run: |
+          echo "DEBUG: Raw github.event.head_commit.message:"
+          echo "${{ toJSON(github.event.head_commit.message) }}"
+          echo "DEBUG: Length of message:"
+          echo -n "${{ github.event.head_commit.message }}" | wc -c
+          echo "DEBUG: Hexdump of message to see any hidden characters:"
+          echo -n "${{ github.event.head_commit.message }}" | xxd
+
           message="${{ github.event.head_commit.message }}"
           message="${message,,}"  # Convert to lowercase for case-insensitive matching
           
