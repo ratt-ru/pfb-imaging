@@ -1035,11 +1035,6 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
                                           bounds_error=True, method='linear')
         xx, yy = np.meshgrid(xo, yo, indexing='ij')
         return interpo((xx, yy)) * area_ratio
-    # elif (nxi != nxo) or (nyi != nyo):
-    #     # only need the overlap in this case
-    #     _, idx0, idx1 = np.intersect1d(xin, xo, assume_unique=True, return_indices=True)
-    #     _, idy0, idy1 = np.intersect1d(yin, yo, assume_unique=True, return_indices=True)
-    #     return image[idx0, idy0]
     else:
         return image_in
 
