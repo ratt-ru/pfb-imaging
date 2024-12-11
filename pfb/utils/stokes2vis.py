@@ -1,17 +1,11 @@
 import numpy as np
 import numexpr as ne
 import xarray as xr
-import numba
-from numba import njit, prange, literally
+from numba import literally
 from dask.graph_manipulation import clone
 from distributed import worker_client
-import dask.array as da
-from xarray import Dataset
 from operator import getitem
 from pfb.utils.beam import interp_beam
-from pfb.utils.misc import weight_from_sigma, combine_columns
-import dask
-from pfb.utils.stokes import stokes_funcs
 from pfb.utils.weighting import weight_data
 from uuid import uuid4
 import gc
@@ -104,7 +98,6 @@ def single_stokes(
         return None
 
     nrow, nchan, ncorr = data.shape
-
 
     if opts.sigma_column is not None:
         weight = ne.evaluate('1.0/sigma**2',
@@ -300,7 +293,6 @@ def single_stokes(
 
 
     coords = {'chan': (('chan',), freq),
-            #   'time': (('time',), utime),
               'l_beam': (('l_beam',), l_beam),
               'm_beam': (('m_beam',), m_beam)
     }
@@ -308,7 +300,6 @@ def single_stokes(
     unix_time = quantity(f'{time_out}s').to_unix_time()
     utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
 
-    # TODO - provide time and freq centroids
     attrs = {
         'ra' : radec[0],
         'dec': radec[1],

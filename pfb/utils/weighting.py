@@ -2,8 +2,6 @@ import concurrent.futures as cf
 import numpy as np
 from numba import njit, prange, literally
 from numba.extending import overload
-import dask.array as da
-from ducc0.fft import c2c
 from africanus.constants import c as lightspeed
 from pfb.utils.misc import JIT_OPTIONS
 from pfb.utils.stokes import stokes_funcs

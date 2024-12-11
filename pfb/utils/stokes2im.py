@@ -4,7 +4,6 @@ from numba import literally
 from distributed import worker_client
 import xarray as xr
 from uuid import uuid4
-from pfb.utils.stokes import stokes_funcs
 from pfb.utils.weighting import (_compute_counts, counts_to_weights,
                                  weight_data, filter_extreme_counts)
 from pfb.utils.fits import set_wcs, save_fits
@@ -12,9 +11,7 @@ from pfb.operators.gridder import wgridder_conventions
 from ducc0.wgridder.experimental import vis2dirty
 from casacore.quanta import quantity
 from datetime import datetime
-from ducc0.fft import c2r, r2c, good_size
 from ducc0.misc import resize_thread_pool
-from africanus.constants import c as lightspeed
 from pfb.utils.astrometry import get_coordinates
 import gc
 iFs = np.fft.ifftshift

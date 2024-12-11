@@ -1,8 +1,5 @@
 # flake8: noqa
-import os
-from contextlib import ExitStack
 from pfb.workers.main import cli
-import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')

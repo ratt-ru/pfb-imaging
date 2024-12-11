@@ -1,9 +1,5 @@
 # flake8: noqa
-import os
-import sys
-from contextlib import ExitStack
 from pfb.workers.main import cli
-import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
@@ -34,7 +30,7 @@ def kclean(**kw):
     OmegaConf.set_struct(opts, True)
 
     from pfb import set_envs
-    from ducc0.misc import resize_thread_pool, thread_pool_size
+    from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 

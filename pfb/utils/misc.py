@@ -2,8 +2,7 @@ import sys
 from contextlib import nullcontext
 import numpy as np
 import numexpr as ne
-import numba
-from numba import jit, njit, prange
+from numba import njit, prange
 from numba.extending import overload
 import dask
 import dask.array as da
@@ -17,9 +16,7 @@ from daskms import xds_from_storage_table as xds_from_table
 from daskms.experimental.zarr import xds_from_zarr
 from omegaconf import ListConfig
 from skimage.morphology import label
-from scipy.optimize import curve_fit, fmin_l_bfgs_b
-from collections import namedtuple
-from africanus.coordinates.coordinates import radec_to_lmn
+from scipy.optimize import fmin_l_bfgs_b
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
 from scipy.linalg import solve_triangular

@@ -1,7 +1,6 @@
 # flake8: noqa
 from contextlib import ExitStack
 from pfb.workers.main import cli
-import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
@@ -38,7 +37,7 @@ def fluxtractor(**kw):
     OmegaConf.set_struct(opts, True)
 
     from pfb import set_envs
-    from ducc0.misc import resize_thread_pool, thread_pool_size
+    from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
@@ -53,7 +52,6 @@ def fluxtractor(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import xds_from_url
 
     basename = opts.output_filename
@@ -138,10 +136,9 @@ def _fluxtractor(**kw):
     from itertools import cycle
     import numpy as np
     import xarray as xr
-    from pfb.utils.fits import load_fits, set_wcs, save_fits
+    from pfb.utils.fits import load_fits, set_wcs
     from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.naming import xds_from_url, xds_from_list
-    from pfb.utils.misc import init_mask, dds2cubes
+    from pfb.utils.naming import xds_from_url
     from pfb.opt.pcg import pcg_dds
     from ducc0.misc import resize_thread_pool, thread_pool_size
     from ducc0.fft import c2c
@@ -149,10 +146,6 @@ def _fluxtractor(**kw):
     Fs = np.fft.fftshift
 
     basename = opts.output_filename
-    if opts.fits_output_folder is not None:
-        fits_oname = opts.fits_output_folder + '/' + basename.split('/')[-1]
-    else:
-        fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)

@@ -1,6 +1,4 @@
 # flake8: noqa
-import os
-import sys
 import concurrent.futures as cf
 from pfb.workers.main import cli
 from omegaconf import OmegaConf

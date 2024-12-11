@@ -1,7 +1,5 @@
 # flake8: noqa
-from contextlib import ExitStack
 from pfb.workers.main import cli
-import click
 import time
 from omegaconf import OmegaConf
 import pyscilog
@@ -104,20 +102,15 @@ def _degrid(**kw):
     import numpy as np
     from pfb.utils.misc import construct_mappings
     import dask
-    from dask.distributed import performance_report, wait, get_client
+    from dask.distributed import wait, get_client
     from dask.graph_manipulation import clone
-    from daskms.experimental.zarr import xds_from_zarr
     from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms import xds_from_storage_table as xds_from_table
     from daskms import xds_to_storage_table as xds_to_table
     from daskms.fsspec_store import DaskMSStore
     import dask.array as da
-    from africanus.constants import c as lightspeed
-    from africanus.gridding.wgridder.dask import model as im2vis
-    from pfb.operators.gridder import comps2vis, _comps2vis_impl
-    from pfb.utils.fits import load_fits, data_from_header, set_wcs
+    from pfb.operators.gridder import comps2vis
+    from pfb.utils.fits import set_wcs
     from regions import Regions
-    from astropy.io import fits
     from pfb.utils.naming import xds_from_url
     import xarray as xr
     import sympy as sm
