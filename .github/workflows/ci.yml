@@ -1,5 +1,9 @@
 name: pfb-imaging CI Workflow
 
+permissions:
+  contents: read
+  pull-requests: read
+
 on:
   push:
     tags:
