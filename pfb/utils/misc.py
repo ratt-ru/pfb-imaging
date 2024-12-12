@@ -486,8 +486,7 @@ def construct_mappings(ms_name,
                         raise ValueError(f'Mismatch between gain and MS '
                                             f'utimes for {ms} at {idt}')
                     
-                    gains[ms][idt] = gdsfds[0].sel(
-                                        gain_freq=slice(freq0, freqf))
+                    gains[ms][idt] = gdsfds[0]
                 else:
                     try:
                         assert len(gdsfd) == 1
@@ -498,8 +497,7 @@ def construct_mappings(ms_name,
                     t0 = utime[0]
                     tf = utime[-1]
                     gains[ms][idt] = gdsfd[0].sel(
-                                        gain_time=slice(t0, tf),
-                                        gain_freq=slice(freq0, freqf))
+                                        gain_time=slice(t0, tf))
             else:
                 gains[ms][idt] = None
 
