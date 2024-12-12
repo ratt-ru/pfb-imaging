@@ -5,12 +5,10 @@ from numba.extending import overload
 import numexpr as ne
 from functools import partial
 import dask.array as da
-from distributed import wait
 from uuid import uuid4
-from pfb.utils.misc import norm_diff, fitcleanbeam, Gaussian2D, taperf, JIT_OPTIONS
+from pfb.utils.misc import norm_diff, JIT_OPTIONS
 from pfb.utils.naming import xds_from_list
 from ducc0.misc import empty_noncritical
-from ducc0.fft import c2c
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 

@@ -1,9 +1,6 @@
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator as RGI
-from functools import partial
 from katbeam import JimBeam
-import dask.array as da
-from numba.core.errors import NumbaDeprecationWarning
 from africanus.rime.fast_beam_cubes import beam_cube_dde
 from africanus.rime import parallactic_angles
 

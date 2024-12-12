@@ -4,7 +4,6 @@ from functools import partial
 import pickle
 import xarray as xr
 import concurrent.futures as cf
-import time
 
 def set_output_names(opts):
     '''

@@ -18,7 +18,7 @@ classifiers = [
 packages = [{include = "pfb"}]
 
 [tool.poetry.dependencies]
-python = ">=3.10, <3.12"
+python = ">=3.10, <3.13"
 pytest = ">=8.0.0"
 scikit-image = ">=0.24.0"
 PyWavelets = ">=1.7.0"
@@ -26,8 +26,8 @@ katbeam = ">=0.1"
 numexpr = ">=2.10.1"
 pyscilog = ">=0.1.2"
 Click = ">=8.1"
-ducc0 = ">=0.34.0"
-sympy = ">=1.13"
+ducc0 = ">=0.35.0"
+sympy = ">=1.9"
 stimela = ">=2.0.1.1"
 streamjoy = ">=0.0.8"
 dask = ">=2023.1.1, <2024.11.0"
@@ -39,6 +39,7 @@ lz4 = ">=4.3.3"
 bokeh = ">=3.1.0"
 regions = ">=0.9"
 psutil = ">=5.9.8"
+matplotlib = ">=3.9.2"
 
 [tool.poetry.scripts]
 pfb = "pfb.workers.main:cli"

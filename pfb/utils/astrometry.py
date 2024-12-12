@@ -102,6 +102,7 @@ def synthesize_uvw(station_ECEF, time, a1, a2,
 
 # Pirated from
 # https://github.com/ratt-ru/solarkat/blob/main/solarkat-pipeline/find_sun_stimela.py
+# obs_lat and obs_lon hardcoded for MeerKAT
 def get_coordinates(obs_time,
                     obs_lat=-30.71323598930457,
                     obs_lon=21.443001467965008,
@@ -124,7 +125,7 @@ def get_coordinates(obs_time,
 
 
     loc = EarthLocation.from_geodetic(obs_lat,obs_lon) #,obs_height,ellipsoid)
-    t = Time(obs_time/86400.0,format='mjd')  # where is this factor from?
+    t = Time(obs_time/86400.0,format='mjd')  # factor converts Jsecs to Jdays 24 * 60**2
     with solar_system_ephemeris.set('builtin'):
         sun = get_body(target, t, loc)
         sun_ra = sun.ra.value

@@ -87,3 +87,12 @@ pfb.hci:
 
   _include:
     - (.)hci.yaml
+
+pfb.smoovie:
+  command: pfb.workers.smoovie.smoovie
+  flavour: python
+  policies:
+    pass_missing_as_none: true
+
+  _include:
+    - (.)smoovie.yaml
