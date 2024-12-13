@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pfb-imaging"
-version = "0.0.5"
+version = "0.0.4"
 description = "Radio interferometric imaging suite based on a preconditioned forward-backward approach"
 authors = ["Landman Bester <lbester@sarao.ac.za>"]
 license = "MIT"
