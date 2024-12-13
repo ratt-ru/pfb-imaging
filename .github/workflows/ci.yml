@@ -150,9 +150,13 @@ jobs:
   deploy:
     needs: [test]
     runs-on: ubuntu-latest
-    # Run on a push to a tag or master
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
@@ -166,24 +170,23 @@ jobs:
       - name: Check poetry install
         run: poetry --version
 
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+      - name: Install dependencies
+        run: poetry install
 
       - name: Build distributions
         run: poetry build
 
       - name: Publish distribution to Test PyPI
-        uses: pypa/gh-action-pypi-publish@1.8.6
+        uses: pypa/gh-action-pypi-publish@v1
         with:
           user: __token__
           password: ${{ secrets.PYPI_TEST_API_TOKEN }}
           repository_url: https://test.pypi.org/legacy/
-        continue-on-error: false
+          verbose: true
 
-      - name: Publish distribution 📦 to PyPI
-        uses: pypa/gh-action-pypi-publish@1.8.6
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@v1
         with:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
+          verbose: true
