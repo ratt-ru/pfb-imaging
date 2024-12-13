@@ -436,8 +436,6 @@ def image_data_products(dsl,
             meani = np.mean(ressq[mask>0]/ovar)
             stdi = np.std(ressq[mask>0]/ovar)
             print(f"Band {bandid} before: mean = {meani:.3e}, std = {stdi:.3e}")
-            # wgt_relative_one = (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
-            # wgt *= wgt_relative_one
             wgt *= (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
         else:
             wgt = None
