@@ -5,7 +5,7 @@ pfb-imaging
 Radio interferometric imaging suite base on the pre-conditioned forward-backward algorithm.
 
 Installation
-~~~~~~~~~~~~
+~~~~~~~~~~~~~~
 
 Install the package by cloning and running
 
@@ -25,7 +25,7 @@ no binary mode eg
 :code:`$ pip install -e ducc`
 
 Default naming conventions
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The default outputs are named using a conbination of the following parameters
 
@@ -61,7 +61,7 @@ Logs are stored by application name with a time stamp to prevent inadvertently o
 The output paths for all files are reported in the log.
 
 Parallelism settings
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
 
 There are two settings controlling parallelism viz.
 
@@ -77,7 +77,7 @@ It is usually advisable to set `--nworkers` to the number of desired imaging ban
 The product of `--nworkers` and `--nthreads-per-worker` should not exceed the available resources.
 
 Module of workers
-~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~
 
 Each worker module can be run as a standalone program.
 Run
@@ -92,7 +92,7 @@ Documentation for each worker is listed under
 
 
 Acknowledgement
-~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
 
 If you find any of this useful please cite (for now)
 
