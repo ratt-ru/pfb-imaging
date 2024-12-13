@@ -450,8 +450,6 @@ def _spotless(**kw):
             model[b] = results[i][0]
 
         if np.isnan(model).any():
-            import ipdb; ipdb.set_trace()
-
             raise ValueError('Model is nan')
 
         save_fits(np.mean(model[fsel], axis=0),

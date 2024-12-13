@@ -123,10 +123,7 @@ def _init(**kw):
         gain_names = None
 
     if opts.freq_range is not None and len(opts.freq_range):
-        try:
-            fmin, fmax = opts.freq_range.strip(' ').split(':')
-        except:
-            import ipdb; ipdb.set_trace()
+        fmin, fmax = opts.freq_range.strip(' ').split(':')
         if len(fmin) > 0:
             freq_min = float(fmin)
         else:

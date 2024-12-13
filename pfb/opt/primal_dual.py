@@ -302,8 +302,6 @@ def primal_dual_dist(
         eps = np.sqrt(np.sum(eps_num)/np.sum(eps_den))
 
         if np.isnan(eps):
-            import ipdb; ipdb.set_trace()
-
             raise ValueError('eps is nan')
 
 

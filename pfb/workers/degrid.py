@@ -187,7 +187,6 @@ def _degrid(**kw):
     # load region file if given
     masks = []
     if opts.region_file is not None:
-        # import ipdb; ipdb.set_trace()
         rfile = Regions.read(opts.region_file)  # should detect format
         # get wcs for model
         wcs = set_wcs(np.rad2deg(mds.cell_rad_x),

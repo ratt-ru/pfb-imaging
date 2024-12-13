@@ -441,7 +441,6 @@ def image_data_products(dsl,
             wgt *= (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
         else:
             wgt = None
-        # import ipdb; ipdb.set_trace()
     # re-evaluate since robustness and or wgt after reweight may change
     if robustness is not None:
         numba_threads = np.maximum(nthreads, 1)

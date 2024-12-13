@@ -293,7 +293,6 @@ class hess_psf(object):
 
         # for beam application in direct mode
         self.min_beam = min_beam
-        # import ipdb; ipdb.set_trace()
 
     def dot(self, x):
         if len(x.shape) == 3:
