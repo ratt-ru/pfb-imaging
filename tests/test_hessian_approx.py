@@ -9,7 +9,7 @@ from pfb.utils.misc import set_image_size
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from scipy.constants import c as lightspeed
 from daskms import xds_from_ms, xds_from_table
-from ducc0.fft import c2r, r2c
+from ducc0.fft import r2c
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 pmp = pytest.mark.parametrize
