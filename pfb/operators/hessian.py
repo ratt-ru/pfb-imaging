@@ -274,11 +274,6 @@ class hess_psf(object):
                                       dtype='c16')
         self.xpad = empty_noncritical((self.nx_psf, self.ny_psf),
                                       dtype='f8')
-        # output cube
-        # self.xhat = empty_noncritical((self.nband, self.nx_psf, self.nyo2),
-        #                               dtype='c16')
-        # self.xpad = empty_noncritical((self.nband, self.nx_psf, self.ny_psf),
-        #                               dtype='f8')
         self.xout = empty_noncritical((self.nband, self.nx, self.ny),
                                       dtype='f8')
 

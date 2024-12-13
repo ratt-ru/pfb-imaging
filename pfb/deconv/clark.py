@@ -21,7 +21,6 @@ def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
             pp = nxo2 - Ip[i]
             qq = nyo2 - Iq[i]
             A[b, i] -= xhat[b] * psf[b, pp, qq]
-            # print(b, pp, qq, psf[b, pp, qq])
     return A
 
 
@@ -68,22 +67,7 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         Idelp = p - Ip
         Idelq = q - Iq
 
-        # coordinates in PSF
-        # pp = nxo2 - (p - Ip)
-        # qq = nyo2 - (q - Iq)
-        # 
-        # nxo2 - p : nxo2 + nx - p
-        # nyo2 - q : nyo2 + ny - q
-
-        # # find where PSF overlaps with image
-        # left_x = p - Ip >= 0
-        # right_x = p + Ip < nx
-        # left_y =  q - Iq >= 0
-        # right_y = q + Iq < ny
-        # mask = (left_x & right_x) & (left_y & right_y)
-
         mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
-        # Ipp, Iqq = psf[:, nxo2 - Ip[mask], nyo2 - Iq[mask]]
         A = subtract(A[:, mask], psf,
                      Idelp[mask], Idelq[mask],
                      xhat, nxo2, nyo2)
