@@ -2,7 +2,7 @@
 github_url = "https://github.com/ratt-ru/pfb-imaging/"
 
 [version]
-current = "0.0.5"
+current = "0.0.4"
 
 # Example of a semver regexp.
 # Make sure this matches current_version before
