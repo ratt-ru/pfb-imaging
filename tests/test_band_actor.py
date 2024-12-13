@@ -1,5 +1,5 @@
 import numpy as np
-from pfb.utils.naming import xds_from_list, xds_from_url
+from pfb.utils.naming import xds_from_url
 from daskms.fsspec_store import DaskMSStore
 from omegaconf import OmegaConf
 from pfb.utils.dist import band_actor
@@ -7,7 +7,6 @@ from pfb.opt.primal_dual import get_ratio
 import time
 
 if __name__=='__main__':
-    # xds_name = '/scratch/bester/stage7_combined_bda_I.xds'
     xds_name = '/home/landman/testing/pfb/out/data_I.xds'
     xds, _ = xds_from_url(xds_name)
     xds_store = DaskMSStore(xds_name)
@@ -22,7 +21,6 @@ if __name__=='__main__':
         bid = ds_name[idx:idx+4]
         uv_max = np.maximum(uv_max, ds.uv_max)
         max_freq = np.maximum(max_freq, ds.max_freq)
-        # import ipdb; ipdb.set_trace()
         if bid == '0001':
             ds_list.append(ds_name)
 
@@ -35,7 +33,6 @@ if __name__=='__main__':
     opts['field_of_view'] = 2.0
     opts['super_resolution_factor'] = 4.0
 
-    # import ipdb; ipdb.set_trace()
     actor = band_actor(ds_list,
                        opts,
                        1,

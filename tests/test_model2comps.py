@@ -1,10 +1,5 @@
 import pytest
 from pathlib import Path
-from xarray import Dataset
-from collections import namedtuple
-import dask
-import dask.array as da
-from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 
@@ -17,8 +12,7 @@ def test_model2comps(ms_name):
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
-    from daskms import xds_from_ms, xds_from_table, xds_to_table
-    from daskms.experimental.zarr import xds_to_zarr
+    from daskms import xds_from_ms, xds_from_table
     from pfb.utils.misc import Gaussian2D, give_edges
     from africanus.constants import c as lightspeed
     from pfb.utils.misc import (fit_image_cube,

@@ -248,8 +248,15 @@ def test_polproducts(do_gains, ms_name):
         dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
         gain_path = None
 
-    outname = str(test_dir / 'test')
+    from scabha.cargo import _UNSET_DEFAULT
     from pfb.parser.schemas import schema
+    # is this still necessary?
+    for worker in schema.keys():
+        for param in schema[worker]['inputs']:
+            if schema[worker]['inputs'][param]['default'] == _UNSET_DEFAULT:
+                schema[worker]['inputs'][param]['default'] = None
+
+    outname = str(test_dir / 'test')
     for p in ['I', 'Q', 'U', 'V']:
         basename = f'{outname}_{p}'
         dds_name = f'{basename}_main.dds'

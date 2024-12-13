@@ -4,17 +4,15 @@ from numba import literally
 from distributed import worker_client
 import xarray as xr
 from uuid import uuid4
-from pfb.utils.stokes import stokes_funcs
 from pfb.utils.weighting import (_compute_counts, counts_to_weights,
                                  weight_data, filter_extreme_counts)
-from pfb.utils.misc import eval_coeffs_to_slice
 from pfb.utils.fits import set_wcs, save_fits
 from pfb.operators.gridder import wgridder_conventions
-from ducc0.wgridder import vis2dirty
+from ducc0.wgridder.experimental import vis2dirty
 from casacore.quanta import quantity
 from datetime import datetime
-from ducc0.fft import c2r, r2c, good_size
-from africanus.constants import c as lightspeed
+from ducc0.misc import resize_thread_pool
+from pfb.utils.astrometry import get_coordinates
 import gc
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
@@ -42,6 +40,7 @@ def single_stokes_image(
                     timeid=None,
                     wid=None):
 
+    resize_thread_pool(opts.nthreads)
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
     scanid = ds.SCAN_NUMBER
@@ -165,23 +164,25 @@ def single_stokes_image(
     # check that there are no missing antennas
     ant1u = np.unique(ant1)
     ant2u = np.unique(ant2)
-    try:
-        assert (ant1u[1:] - ant1u[0:-1] == 1).all()
-        assert (ant2u[1:] - ant2u[0:-1] == 1).all()
-    except Exception as e:
-        raise NotImplementedError('You seem to have missing antennas. '
-                                  'This is not currently supported.')
+    allants = np.unique(np.concatenate((ant1u, ant2u)))
 
     # check that antpos gives the correct size table
-    antmax = np.maximum(ant1.max(), ant2.max()) + 1
-    try:
-        assert antmax == nant
-    except Exception as e:
-        raise ValueError('Inconsistent ANTENNA table. '
-                         'Shape does not match max number of antennas '
-                         'as inferred from ant1 and ant2. '
-                         f'Table size is {antpos.shape} but got {antmax}. '
-                         f'{oname}')
+    antmax = allants.size
+    if opts.check_ants:
+        try:
+            assert antmax == nant
+        except Exception as e:
+            raise ValueError('Inconsistent ANTENNA table. '
+                            'Shape does not match max number of antennas '
+                            'as inferred from ant1 and ant2. '
+                            f'Table size is {antpos.shape} but got {antmax}. '
+                            f'{oname}')
+
+    # relabel antennas by index
+    # this only works because allants is sorted in ascending order
+    for a, ant in enumerate(allants):
+        ant1 = np.where(ant1==ant, a, ant1)
+        ant2 = np.where(ant2==ant, a, ant2)
 
     # compute lm coordinates of target
     if opts.target is not None:

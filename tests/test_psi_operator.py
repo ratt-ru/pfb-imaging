@@ -1,6 +1,4 @@
 import numpy as np
-from functools import partial
-import dask.array as da
 from numpy.testing import assert_array_almost_equal
 from pfb.prox.prox_21 import prox_21
 from pfb.prox.prox_21m import prox_21m

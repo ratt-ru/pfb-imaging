@@ -1,9 +1,5 @@
 # flake8: noqa
-import os
-import sys
-from contextlib import ExitStack
 from pfb.workers.main import cli
-import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
@@ -70,17 +66,14 @@ def hci(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    basename = f'{basedir}/{oname}'
-
     from pfb import set_envs
-    from ducc0.misc import resize_thread_pool, thread_pool_size
+    from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
     import dask
     dask.config.set(**{'array.slicing.split_large_chunks': False})
     from pfb import set_client
-    from distributed import wait, get_client
     client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
 
     ti = time.time()
@@ -92,14 +85,12 @@ def hci(**kw):
 
 def _hci(**kw):
     opts = OmegaConf.create(kw)
-    from omegaconf import ListConfig, open_dict
     OmegaConf.set_struct(opts, True)
 
     import numpy as np
     from pfb.utils.misc import construct_mappings
     import dask
-    from dask.graph_manipulation import clone
-    from distributed import get_client, wait, as_completed, Semaphore
+    from distributed import get_client, as_completed
     from daskms import xds_from_storage_ms as xds_from_ms
     from daskms import xds_from_storage_table as xds_from_table
     from daskms.experimental.zarr import xds_from_zarr
@@ -160,14 +151,17 @@ def _hci(**kw):
 
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
-        freqs, utimes, ms_chunks, gain_chunks, radecs, \
+        freqs, utimes, ms_chunks, gains, radecs, \
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms,
                                gain_names,
                                ipi=opts.integrations_per_image,
                                cpi=opts.channels_per_image,
                                freq_min=freq_min,
-                               freq_max=freq_max)
+                               freq_max=freq_max,
+                               FIELD_IDs=opts.fields,
+                               DDIDs=opts.ddids,
+                               SCANs=opts.scans)
 
     max_freq = 0
 
@@ -251,6 +245,42 @@ def _hci(**kw):
     else:
         print(f"No weights provided, using unity weights", file=log)
 
+    # distinct freq groups
+    sgroup = 0
+    freq_groups = []
+    freq_sgroups = []
+    for ms in opts.ms:
+        for idt, freq in freqs[ms].items():
+            ilo = idt.find('DDID') + 4
+            ihi = idt.rfind('_')
+            ddid = int(idt[ilo:ihi])
+            if (opts.ddids is not None) and (ddid not in opts.ddids):
+                continue
+            if not len(freq_groups):
+                freq_groups.append(freq)
+                freq_sgroups.append(sgroup)
+                sgroup += freq_mapping[ms][idt]['counts'].size
+            else:
+                in_group = False
+                for fs in freq_groups:
+                    if freq.size == fs.size and np.all(freq == fs):
+                        in_group = True
+                        break
+                if not in_group:
+                    freq_groups.append(freq)
+                    freq_sgroups.append(sgroup)
+                    sgroup += freq_mapping[ms][idt]['counts'].size
+
+    # band mapping
+    msddid2bid = {}
+    for ms in opts.ms:
+        msddid2bid[ms] = {}
+        for idt, freq in freqs[ms].items():
+            # find group where it matches
+            for sgroup, fs in zip(freq_sgroups, freq_groups):
+                if freq.size == fs.size and np.all(freq == fs):
+                    msddid2bid[ms][idt] = sgroup
+
     if opts.model_column is not None:
         columns += (opts.model_column,)
         schema[opts.model_column] = {'dims': ('chan', 'corr')}
@@ -260,10 +290,6 @@ def _hci(**kw):
                       columns=columns,
                       table_schema=schema,
                       group_cols=group_by)
-
-    if opts.gain_table is not None:
-        gds = xds_from_zarr(gain_name,
-                            chunks=gain_chunks[ms])
 
     # a flat list to use with as_completed
     datasets = []
@@ -284,8 +310,6 @@ def _hci(**kw):
 
 
         idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
-        nrow = ds.sizes['row']
-        ncorr = ds.sizes['corr']
 
         idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
         if not idx.any():
@@ -303,16 +327,14 @@ def _hci(**kw):
 
             fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
                                     freq_mapping[ms][idt]['counts']))
-
+            b0 = msddid2bid[ms][idt]
             for fi, (flow, fcounts) in fitr:
                 Inu = slice(flow, flow + fcounts)
 
                 subds = ds[{'row': Irow, 'chan': Inu}]
                 subds = subds.chunk({'row':-1, 'chan': -1})
-                if opts.gain_table is not None:
-                    # Only DI gains currently supported
-                    subgds = gds[ids][{'gain_time': It, 'gain_freq': Inu}]
-                    subgds = subgds.chunk({'gain_time': -1, 'gain_freq': -1})
+                if gains[ms][idt] is not None:
+                    subgds = gains[ms][idt][{'gain_time': It, 'gain_freq': Inu}]
                     jones = subgds.gains.data
                 else:
                     jones = None
@@ -323,8 +345,9 @@ def _hci(**kw):
                                 utimes[ms][idt][It],
                                 ridx, rcnts,
                                 radecs[ms][idt],
-                                fi, ti, ms])
+                                b0 + fi, ti, ms])
 
+    nds = len(datasets)
     futures = []
     associated_workers = {}
     idle_workers = set(client.scheduler_info()['workers'].keys())
@@ -364,7 +387,6 @@ def _hci(**kw):
         n_launched += 1
 
     ac_iter = as_completed(futures)
-    nds = len(datasets)
     for completed_future in ac_iter:
         if isinstance(completed_future.result(), BaseException):
             print(completed_future.result())
@@ -378,8 +400,6 @@ def _hci(**kw):
         if len(datasets):
             (subds, jones, freqsi, utimesi, ridx, rcnts,
             radeci, fi, ti, ms) = datasets.pop(0)
-
-
 
             future = client.submit(single_stokes_image,
                             dc1=dc1,
@@ -416,6 +436,10 @@ def _hci(**kw):
 
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
+
+        # this should not be necessary but just in case
+        if ac_iter.is_empty():
+            break
     print("\n")  # after progressbar above
 
     return

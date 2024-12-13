@@ -1,9 +1,5 @@
 # flake8: noqa
-import os
-import sys
-from contextlib import ExitStack
 from pfb.workers.main import cli
-import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
@@ -70,7 +66,7 @@ def init(**kw):
         print('     %25s = %s' % (key, opts[key]), file=log)
 
     from pfb import set_envs
-    from ducc0.misc import resize_thread_pool, thread_pool_size
+    from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
@@ -78,7 +74,6 @@ def init(**kw):
     import dask
     dask.config.set(**{'array.slicing.split_large_chunks': False})
     from pfb import set_client
-    from distributed import wait, get_client
     client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
 
     ti = time.time()
@@ -97,18 +92,11 @@ def _init(**kw):
 
     import numpy as np
     from pfb.utils.misc import construct_mappings
-    import dask
-    from dask.graph_manipulation import clone
-    from distributed import get_client, wait, as_completed, Semaphore
+    from distributed import get_client, as_completed
     from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms import xds_from_storage_table as xds_from_table
     from daskms.experimental.zarr import xds_from_zarr
     from daskms.fsspec_store import DaskMSStore
-    import dask.array as da
-    from africanus.constants import c as lightspeed
-    from ducc0.fft import good_size
     from pfb.utils.stokes2vis import single_stokes
-    import xarray as xr
     from uuid import uuid4
     import fsspec
 
@@ -135,10 +123,7 @@ def _init(**kw):
         gain_names = None
 
     if opts.freq_range is not None and len(opts.freq_range):
-        try:
-            fmin, fmax = opts.freq_range.strip(' ').split(':')
-        except:
-            import ipdb; ipdb.set_trace()
+        fmin, fmax = opts.freq_range.strip(' ').split(':')
         if len(fmin) > 0:
             freq_min = float(fmin)
         else:
@@ -156,14 +141,17 @@ def _init(**kw):
 
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
-        freqs, utimes, ms_chunks, gain_chunks, radecs, \
+        freqs, utimes, ms_chunks, gains, radecs, \
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms,
                                gain_names,
                                ipi=opts.integrations_per_image,
                                cpi=opts.channels_per_image,
                                freq_min=freq_min,
-                               freq_max=freq_max)
+                               freq_max=freq_max,
+                               FIELD_IDs=opts.fields,
+                               DDIDs=opts.ddids,
+                               SCANs=opts.scans)
 
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
@@ -249,11 +237,7 @@ def _init(**kw):
         xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
                           table_schema=schema, group_cols=group_by)
 
-        if opts.gain_table is not None:
-            gds = xds_from_zarr(gain_names[ims],
-                                chunks=gain_chunks[ms])
-
-        for ids, ds in enumerate(xds):
+        for ds in xds:
             fid = ds.FIELD_ID
             ddid = ds.DATA_DESC_ID
             scanid = ds.SCAN_NUMBER
@@ -265,8 +249,6 @@ def _init(**kw):
                 continue
 
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
-            nrow = ds.sizes['row']
-            ncorr = ds.sizes['corr']
 
             idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
             if not idx.any():
@@ -287,13 +269,9 @@ def _init(**kw):
                 b0 = msddid2bid[ms][idt]
                 for fi, (flow, fcounts) in fitr:
                     Inu = slice(flow, flow + fcounts)
-
                     subds = ds[{'row': Irow, 'chan': Inu}]
-                    subds = subds.chunk({'row':-1, 'chan': -1})
-                    if opts.gain_table is not None:
-                        # Only DI gains currently supported
-                        subgds = gds[ids][{'gain_time': It, 'gain_freq': Inu}]
-                        subgds = subgds.chunk({'gain_time': -1, 'gain_freq': -1})
+                    if gains[ms][idt] is not None:
+                        subgds = gains[ms][idt][{'gain_time': It, 'gain_freq': Inu}]
                         jones = subgds.gains.data
                     else:
                         jones = None

@@ -1,14 +1,6 @@
 import os
 import sys
 import logging
-# import psutil
-# import resource
-
-# mem_total = psutil.virtual_memory().total
-# _, hardlim = resource.getrlimit(resource.RLIMIT_AS)
-# resource.setrlimit(resource.RLIMIT_AS, (mem_total, hardlim))
-
-__version__ = '0.0.4'
 
 def set_envs(nthreads, ncpu):
     os.environ["OMP_NUM_THREADS"] = str(nthreads)

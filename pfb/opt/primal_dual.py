@@ -1,16 +1,11 @@
 import numpy as np
 import numexpr as ne
-import dask.array as da
 from pfb.utils.dist import l1reweight_func
-from operator import getitem
-from ducc0.misc import make_noncritical
 from pfb.utils.misc import norm_diff
 from numba import njit, prange
 from uuid import uuid4
 import pyscilog
-import gc
 from time import time
-# gc.set_debug(gc.DEBUG_LEAK)
 log = pyscilog.get_logger('PD')
 
 
@@ -307,8 +302,6 @@ def primal_dual_dist(
         eps = np.sqrt(np.sum(eps_num)/np.sum(eps_den))
 
         if np.isnan(eps):
-            import ipdb; ipdb.set_trace()
-
             raise ValueError('eps is nan')
 
 

@@ -2,9 +2,6 @@
 pfb-imaging
 ===========
 
-.. .. image:: /logo/Gemini_Generated_Image_m19n6gm19n6gm19n.jpg
-..    :align: center
-
 Radio interferometric imaging suite base on the pre-conditioned forward-backward algorithm.
 
 Installation
@@ -78,6 +75,21 @@ However, for better resource utilisation and or distributing computations over a
 This uses multiple Dask workers (processes) to process chunks in parallel and is especially useful for the `init`, `grid` and `fluxtractor` applications.
 It is usually advisable to set `--nworkers` to the number of desired imaging bands which is set by the `--channels-per-image` parameter when initialising corrected Stokes visibilities with the `init` application.
 The product of `--nworkers` and `--nthreads-per-worker` should not exceed the available resources.
+
+Module of workers
+~~~~~~~~~~~~~~~~~
+
+Each worker module can be run as a standalone program.
+Run
+
+:code:`$ pfb --help``
+
+for a list of available workers.
+
+Documentation for each worker is listed under
+
+:code:`$ pfb workername --help``
+
 
 Acknowledgement
 ~~~~~~~~~~~~~~

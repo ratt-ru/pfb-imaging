@@ -1,9 +1,7 @@
-from functools import partial
 import numpy as np
-from pfb.utils.misc import Gaussian2D, convolve2gaussres, fitcleanbeam
+from pfb.utils.misc import convolve2gaussres
 from pfb.utils.fits import set_wcs, add_beampars, save_fits
 from pfb.utils.naming import xds_from_list
-from pfb.opt.pcg import pcg
 
 
 def restore_cube(ds_name,

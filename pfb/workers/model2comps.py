@@ -1,7 +1,6 @@
 # flake8: noqa
 from contextlib import ExitStack
 from pfb.workers.main import cli
-import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
@@ -219,7 +218,7 @@ def _model2comps(**kw):
         nbasisf = opts.nbasisf
 
     nbasis = nbasisf
-    print(f"Fitting coefficients with {nbasis} basis functions",
+    print(f"Fitting {nband} bands with {nbasis} basis functions",
           file=log)
     try:
         coeffs, Ix, Iy, expr, params, texpr, fexpr = \

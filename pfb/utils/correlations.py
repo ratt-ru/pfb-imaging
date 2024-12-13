@@ -1,7 +1,5 @@
 import numpy as np
 from numba import njit
-from numba.types import literal
-from dask.graph_manipulation import clone
 import dask.array as da
 from xarray import Dataset
 from operator import getitem

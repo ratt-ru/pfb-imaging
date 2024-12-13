@@ -1,10 +1,6 @@
 # flake8: noqa
-import os
-import sys
-from contextlib import ExitStack
 import concurrent.futures as cf
 from pfb.workers.main import cli
-import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
@@ -50,7 +46,6 @@ def sara(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import xds_from_url
 
     basename = opts.output_filename

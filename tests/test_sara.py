@@ -37,15 +37,10 @@ def test_sara(ms_name):
     from ducc0.fft import good_size
     from ducc0.wgridder.experimental import dirty2vis
     from pfb.operators.gridder import wgridder_conventions
-    from pfb.parser.schemas import schema
     from pfb.workers.init import _init
     from pfb.workers.grid import _grid
     from pfb.workers.sara import _sara
-    from pfb.workers.model2comps import _model2comps
     from pfb.workers.degrid import _degrid
-    import sympy as sm
-    from sympy.utilities.lambdify import lambdify
-    from sympy.parsing.sympy_parser import parse_expr
 
 
     test_dir = Path(ms_name).resolve().parent
@@ -140,10 +135,17 @@ def test_sara(ms_name):
     writes = [xds_to_table(xds, ms_name, columns='DATA')]
     dask.compute(writes)
 
-    # set defaults from schema
+    from scabha.cargo import _UNSET_DEFAULT
+    from pfb.parser.schemas import schema
+    for worker in schema.keys():
+        for param in schema[worker]['inputs']:
+            if schema[worker]['inputs'][param]['default'] == _UNSET_DEFAULT:
+                schema[worker]['inputs'][param]['default'] = None
+
     init_args = {}
     for key in schema.init["inputs"].keys():
         init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
+    
     # overwrite defaults
     outname = str(test_dir / 'test_I')
     init_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]

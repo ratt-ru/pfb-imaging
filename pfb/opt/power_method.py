@@ -1,9 +1,6 @@
 import numpy as np
-import dask.array as da
-from operator import getitem
-from distributed import wait, get_client, as_completed
+from distributed import get_client
 from scipy.linalg import norm
-from copy import deepcopy
 import pyscilog
 log = pyscilog.get_logger('PM')
 
@@ -68,8 +65,6 @@ def bnormf(bsumsq):
 def betaf(beta_num, beta_den):
     return np.sum(beta_num)/np.sum(beta_den)
 
-
-from time import time
 def power_method_dist(actors,
                       nx,
                       ny,

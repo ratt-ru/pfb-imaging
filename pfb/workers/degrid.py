@@ -1,7 +1,5 @@
 # flake8: noqa
-from contextlib import ExitStack
 from pfb.workers.main import cli
-import click
 import time
 from omegaconf import OmegaConf
 import pyscilog
@@ -104,20 +102,15 @@ def _degrid(**kw):
     import numpy as np
     from pfb.utils.misc import construct_mappings
     import dask
-    from dask.distributed import performance_report, wait, get_client
+    from dask.distributed import wait, get_client
     from dask.graph_manipulation import clone
-    from daskms.experimental.zarr import xds_from_zarr
     from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms import xds_from_storage_table as xds_from_table
     from daskms import xds_to_storage_table as xds_to_table
     from daskms.fsspec_store import DaskMSStore
     import dask.array as da
-    from africanus.constants import c as lightspeed
-    from africanus.gridding.wgridder.dask import model as im2vis
-    from pfb.operators.gridder import comps2vis, _comps2vis_impl
-    from pfb.utils.fits import load_fits, data_from_header, set_wcs
+    from pfb.operators.gridder import comps2vis
+    from pfb.utils.fits import set_wcs
     from regions import Regions
-    from astropy.io import fits
     from pfb.utils.naming import xds_from_url
     import xarray as xr
     import sympy as sm
@@ -159,7 +152,7 @@ def _degrid(**kw):
 
     print('Constructing mapping', file=log)
     row_mapping, freq_mapping, time_mapping, \
-        freqs, utimes, ms_chunks, gain_chunks, radecs, \
+        freqs, utimes, ms_chunks, gains, radecs, \
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms,
                                None,
@@ -194,7 +187,6 @@ def _degrid(**kw):
     # load region file if given
     masks = []
     if opts.region_file is not None:
-        # import ipdb; ipdb.set_trace()
         rfile = Regions.read(opts.region_file)  # should detect format
         # get wcs for model
         wcs = set_wcs(np.rad2deg(mds.cell_rad_x),
@@ -223,27 +215,6 @@ def _degrid(**kw):
         masks = [remainder] + masks
     else:
         masks = [np.ones((nx, ny), dtype=np.float64)]
-
-    # utime = utimes['file:///home/landman/testing/pfb/MS/point_gauss_nb.MS_p0']['FIELD0_DDID0_SCAN0']
-    # freq = freqs['file:///home/landman/testing/pfb/MS/point_gauss_nb.MS_p0']['FIELD0_DDID0_SCAN0']
-    # model = np.zeros((nx, ny), dtype=np.float64)
-    # tout = tfunc(np.mean(utime))
-    # fout = ffunc(np.mean(freq))
-    # image = np.zeros((nx, ny), dtype=np.float64)
-    # Ix = mds.location_x.values
-    # Iy = mds.location_y.values
-    # comps = mds.coefficients.values
-    # model[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
-    # import matplotlib.pyplot as plt
-    # for mask in masks:
-    #     plt.figure(1)
-    #     plt.imshow(mask)
-    #     plt.colorbar()
-    #     plt.figure(2)
-    #     plt.imshow(model)
-    #     plt.colorbar()
-    #     plt.show()
-    # import ipdb; ipdb.set_trace()
 
     print("Computing model visibilities", file=log)
     writes = []

@@ -9,12 +9,10 @@ import numpy as np
 import numba
 import concurrent.futures as cf
 import xarray as xr
-import dask
 import dask.array as da
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
-from ducc0.fft import c2r, r2c, c2c
+from ducc0.fft import r2c
 from ducc0.misc import resize_thread_pool
-from africanus.constants import c as lightspeed
 from pfb.utils.weighting import counts_to_weights, _compute_counts
 from pfb.utils.beam import eval_beam
 from pfb.utils.naming import xds_from_list
@@ -443,7 +441,6 @@ def image_data_products(dsl,
             wgt *= (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
         else:
             wgt = None
-        # import ipdb; ipdb.set_trace()
     # re-evaluate since robustness and or wgt after reweight may change
     if robustness is not None:
         numba_threads = np.maximum(nthreads, 1)
@@ -481,26 +478,23 @@ def image_data_products(dsl,
         stdf = np.std(ressq[mask>0])
         print(f"Band {bandid} after: mean = {meanf:.3e}, std = {stdf:.3e}")
 
-        # import ipdb; ipdb.set_trace()
-
-        import matplotlib.pyplot as plt
-        from scipy.stats import norm
-        x = np.linspace(-5, 5, 150)
-        y = norm.pdf(x, 0, 1)
-        fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(8, 12))
-        ax[0,0].hist((residual_vis.real*np.sqrt(wgtp/2)).ravel(), bins=15, density=True)
-        ax[0,0].plot(x, y, 'k')
-        ax[0,1].hist((residual_vis.real*np.sqrt(wgt/2)).ravel(), bins=15, density=True)
-        ax[0,1].plot(x, y, 'k')
-        ax[1,0].hist((residual_vis.imag*np.sqrt(wgtp/2)).ravel(), bins=15, density=True)
-        ax[1,0].plot(x, y, 'k')
-        ax[1,1].hist((residual_vis.imag*np.sqrt(wgt/2)).ravel(), bins=15, density=True)
-        ax[1,1].plot(x, y, 'k')
-        import os
-        cwd = os.getcwd()
-        bid = dso.attrs['bandid']
-        fig.savefig(f'{cwd}/resid_hist_{bid}.png')
-        # import ipdb; ipdb.set_trace()
+        # import matplotlib.pyplot as plt
+        # from scipy.stats import norm
+        # x = np.linspace(-5, 5, 150)
+        # y = norm.pdf(x, 0, 1)
+        # fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(8, 12))
+        # ax[0,0].hist((residual_vis.real*np.sqrt(wgtp/2)).ravel(), bins=15, density=True)
+        # ax[0,0].plot(x, y, 'k')
+        # ax[0,1].hist((residual_vis.real*np.sqrt(wgt/2)).ravel(), bins=15, density=True)
+        # ax[0,1].plot(x, y, 'k')
+        # ax[1,0].hist((residual_vis.imag*np.sqrt(wgtp/2)).ravel(), bins=15, density=True)
+        # ax[1,0].plot(x, y, 'k')
+        # ax[1,1].hist((residual_vis.imag*np.sqrt(wgt/2)).ravel(), bins=15, density=True)
+        # ax[1,1].plot(x, y, 'k')
+        # import os
+        # cwd = os.getcwd()
+        # bid = dso.attrs['bandid']
+        # fig.savefig(f'{cwd}/resid_hist_{bid}.png')
 
     # these are always used together
     if do_weight:

@@ -218,10 +218,4 @@ def stokes_funcs(data, jones, product, pol, nc):
     else:
         raise ValueError(f"Jones term has incorrect number of dimensions")
 
-    # import inspect
-    # print(inspect.getsource(Djfn))
-    # print(inspect.getsource(Wjfn))
-
-    # quit()
-
     return vfunc, wfunc

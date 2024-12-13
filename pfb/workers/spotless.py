@@ -1,10 +1,6 @@
 # flake8: noqa
-import os
-import sys
 from contextlib import ExitStack
 from pfb.workers.main import cli
-from functools import partial
-import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
@@ -33,7 +29,7 @@ def spotless(**kw):
         ncpu = ncpu//2
 
     from pfb import set_envs
-    from ducc0.misc import resize_thread_pool, thread_pool_size
+    from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
@@ -454,8 +450,6 @@ def _spotless(**kw):
             model[b] = results[i][0]
 
         if np.isnan(model).any():
-            import ipdb; ipdb.set_trace()
-
             raise ValueError('Model is nan')
 
         save_fits(np.mean(model[fsel], axis=0),

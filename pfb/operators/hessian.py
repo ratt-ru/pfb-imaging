@@ -1,12 +1,9 @@
 from functools import partial
 import numpy as np
 import numexpr as ne
-import dask
-import dask.array as da
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from ducc0.fft import r2c, c2r
 from ducc0.misc import empty_noncritical
-from uuid import uuid4
 from pfb.operators.psf import (psf_convolve_slice,
                                psf_convolve_cube)
 from pfb.opt.pcg import pcg
@@ -296,7 +293,6 @@ class hess_psf(object):
 
         # for beam application in direct mode
         self.min_beam = min_beam
-        # import ipdb; ipdb.set_trace()
 
     def dot(self, x):
         if len(x.shape) == 3:

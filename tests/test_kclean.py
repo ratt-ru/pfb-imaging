@@ -21,7 +21,7 @@ def test_kclean(do_gains, ms_name):
     cluster = LocalCluster(processes=False,
                            n_workers=1,
                            threads_per_worker=1,
-                           memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                           memory_limit=0,
                            asynchronous=False)
     client = Client(cluster, direct_to_workers=False)
 
@@ -192,7 +192,14 @@ def test_kclean(do_gains, ms_name):
     outname = str(test_dir / 'test_I')
     dds_name = f'{outname}_main.dds'
     # set defaults from schema
+    from scabha.cargo import _UNSET_DEFAULT
     from pfb.parser.schemas import schema
+    # is this still necessary?
+    for worker in schema.keys():
+        for param in schema[worker]['inputs']:
+            if schema[worker]['inputs'][param]['default'] == _UNSET_DEFAULT:
+                schema[worker]['inputs'][param]['default'] = None
+
     init_args = {}
     for key in schema.init["inputs"].keys():
         init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]

@@ -1,6 +1,5 @@
 import numpy as np
 from katbeam import JimBeam
-import dask.array as da
 from pfb.utils.beam import interp_beam, eval_beam
 import pytest
 

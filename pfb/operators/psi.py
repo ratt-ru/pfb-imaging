@@ -5,9 +5,7 @@ import numba
 from numba import types, typed
 from numba.experimental import jitclass
 import pywt
-from scipy.datasets import ascent
 from pfb.wavelets import coeff_size, signal_size, dwt2d, idwt2d, copyT
-from time import time
 
 
 @numba.njit
@@ -285,7 +283,6 @@ class Psi(object):
         self.nthreads = nthreads
         self.Nxmax = self.psib[0].Nxmax
         self.Nymax = self.psib[0].Nymax
-
         self.nthreads_per_band = np.maximum(1, nthreads//nband)
 
     def dot(self, x, alphao):

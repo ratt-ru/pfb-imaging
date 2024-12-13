@@ -1,7 +1,6 @@
 # flake8: noqa
 from contextlib import ExitStack
 from pfb.workers.main import cli
-import click
 from omegaconf import OmegaConf
 import pyscilog
 pyscilog.init('pfb')
@@ -38,7 +37,7 @@ def fluxtractor(**kw):
     OmegaConf.set_struct(opts, True)
 
     from pfb import set_envs
-    from ducc0.misc import resize_thread_pool, thread_pool_size
+    from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
@@ -53,7 +52,6 @@ def fluxtractor(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import xds_from_url
 
     basename = opts.output_filename
@@ -138,10 +136,9 @@ def _fluxtractor(**kw):
     from itertools import cycle
     import numpy as np
     import xarray as xr
-    from pfb.utils.fits import load_fits, set_wcs, save_fits
+    from pfb.utils.fits import load_fits, set_wcs
     from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.naming import xds_from_url, xds_from_list
-    from pfb.utils.misc import init_mask, dds2cubes
+    from pfb.utils.naming import xds_from_url
     from pfb.opt.pcg import pcg_dds
     from ducc0.misc import resize_thread_pool, thread_pool_size
     from ducc0.fft import c2c
@@ -149,10 +146,6 @@ def _fluxtractor(**kw):
     Fs = np.fft.fftshift
 
     basename = opts.output_filename
-    if opts.fits_output_folder is not None:
-        fits_oname = opts.fits_output_folder + '/' + basename.split('/')[-1]
-    else:
-        fits_oname = basename
 
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds_store = DaskMSStore(dds_name)
@@ -274,5 +267,61 @@ def _fluxtractor(**kw):
     rmax = np.abs(residual_mfs).max()
     print(f"Final peak residual = {rmax:.3e}, rms = {rms:.3e}",
           file=log)
+
+    print(f"Writing model to {basename}_{opts.suffix}_model.mds",
+          file=log)
+
+    try:
+        coeffs, Ix, Iy, expr, params, texpr, fexpr = \
+            fit_image_cube(time_out,
+                           freq_out[fsel],
+                           model[None, fsel, :, :],
+                           wgt=wsums[None, fsel],
+                           nbasisf=fsel.size,
+                           method='Legendre',
+                           sigmasq=1e-10)
+        # save interpolated dataset
+        data_vars = {
+            'coefficients': (('par', 'comps'), coeffs),
+        }
+        coords = {
+            'location_x': (('x',), Ix),
+            'location_y': (('y',), Iy),
+            # 'shape_x':,
+            'params': (('par',), params),  # already converted to list
+            'times': (('t',), time_out),  # to allow rendering to original grid
+            'freqs': (('f',), freq_out)
+        }
+        mattrs = {
+            'spec': 'genesis',
+            'cell_rad_x': cell_rad,
+            'cell_rad_y': cell_rad,
+            'npix_x': nx,
+            'npix_y': ny,
+            'texpr': texpr,
+            'fexpr': fexpr,
+            'center_x': dds[0].x0,
+            'center_y': dds[0].y0,
+            'flip_u': dds[0].flip_u,
+            'flip_v': dds[0].flip_v,
+            'flip_w': dds[0].flip_w,
+            'ra': dds[0].ra,
+            'dec': dds[0].dec,
+            'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
+            'parametrisation': expr  # already converted to str
+        }
+        for key, val in opts.items():
+            if key == 'pd_tol':
+                mattrs[key] = pd_tolf
+            else:
+                mattrs[key] = val
+
+        coeff_dataset = xr.Dataset(data_vars=data_vars,
+                            coords=coords,
+                            attrs=mattrs)
+        coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model_mopped.mds",
+                              mode='w')
+    except Exception as e:
+            print(f"Exception {e} raised during model fit .", file=log)
 
     return
