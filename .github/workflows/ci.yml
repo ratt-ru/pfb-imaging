@@ -177,7 +177,7 @@ jobs:
         run: poetry build
 
       - name: Publish distribution to Test PyPI
-        uses: pypa/gh-action-pypi-publish@v1
+        uses: pypa/gh-action-pypi-publish/v1
         with:
           user: __token__
           password: ${{ secrets.PYPI_TEST_API_TOKEN }}
@@ -185,7 +185,7 @@ jobs:
           verbose: true
 
       - name: Publish distribution to PyPI
-        uses: pypa/gh-action-pypi-publish@v1
+        uses: pypa/gh-action-pypi-publish/v1
         with:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
