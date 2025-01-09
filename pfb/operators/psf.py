@@ -95,3 +95,24 @@ def psf_convolve_xds(x, xds, psfopts, wsum, eta, mask,
     else:
         return convim
 
+
+
+
+##################### jax #####################################
+import jax
+import jax.numpy as jnp
+from functools import partial
+
+@partial(jax.jit, static_argnums=(0,1,2,3))
+def psf_convolve_slice_jax(
+                    nx, ny,
+                    nx_psf, ny_psf,
+                    psfhat,
+                    x):
+    xhat = jnp.fft.rfft2(x,
+                         s=(nx_psf, ny_psf),
+                         norm='backward')
+    xout = jnp.fft.irfft2(xhat*psfhat,
+                          s=(nx_psf, ny_psf),
+                          norm='backward')[0:nx, 0:ny]
+    return xout
