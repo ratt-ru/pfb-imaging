@@ -8,21 +8,6 @@ from ducc0.misc import empty_noncritical
 import pyscilog
 log = pyscilog.get_logger('CLARK')
 
-@njit(nogil=True, cache=True)  # parallel=True,
-def subtract(A, psf, Ip, Iq, xhat, nxo2, nyo2):
-    '''
-    Subtract psf centered at location of xhat
-    '''
-    # loop over active indices
-    nband = xhat.size
-    # for b in numba.prange(nband):
-    for b in range(nband):
-        for i in range(Ip.size):
-            pp = nxo2 - Ip[i]
-            qq = nyo2 - Iq[i]
-            A[b, i] -= xhat[b] * psf[b, pp, qq]
-    return A
-
 
 @njit(nogil=True, cache=True)  # parallel=True,
 def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
@@ -44,8 +29,6 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     q = Iq[pq]
 
     where pq is the location of the maximum in A.
-
-    # TODO - this does not work unless the PSF is twice the size of the image
     """
     nband, nx_psf, ny_psf = psf.shape
     nxo2 = nx_psf//2
@@ -64,13 +47,12 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         xhat = A[:, pq]
         model[fsel, p, q] += gamma * xhat[fsel]/wsums[fsel]
         
-        Idelp = p - Ip
-        Idelq = q - Iq
-
-        mask = (np.abs(Idelp) <= nxo2) & (np.abs(Idelq) <= nyo2)
-        A = subtract(A[:, mask], psf,
-                     Idelp[mask], Idelq[mask],
-                     xhat, nxo2, nyo2)
+        for b in range(nband):
+            for i in range(Ip.size):
+                pp = nxo2 - (Ip[i] - p)
+                qq = nyo2 - (Iq[i] - q)
+                if (pp >= 0) & (pp < nx_psf) & (qq >= 0) & (qq < ny_psf):
+                    A[b, i] -= gamma * xhat[b] * psf[b, pp, qq]
 
         Asearch = np.sum(A, axis=0)**2
         pq = Asearch.argmax()
