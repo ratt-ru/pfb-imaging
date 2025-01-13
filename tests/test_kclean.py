@@ -242,7 +242,7 @@ def test_kclean(do_gains, ms_name):
     kclean_args["dirosion"] = 0
     kclean_args["do_residual"] = False
     kclean_args["niter"] = 100
-    threshold = 1e-1
+    threshold = 1e-4
     kclean_args["threshold"] = threshold
     kclean_args["gamma"] = 0.1
     kclean_args["peak_factor"] = 0.75

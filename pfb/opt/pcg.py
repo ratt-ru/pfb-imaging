@@ -268,122 +268,121 @@ def pcg(A,
         return x, r
 
 
-# from pfb.operators.hessian import _hessian_psf_slice
-# def _pcg_psf_impl(psfhat,
-#                   b,
-#                   x0,
-#                   beam,
-#                   lastsize,
-#                   nthreads,
-#                   eta,
-#                   tol=1e-5,
-#                   maxit=500,
-#                   minit=100,
-#                   verbosity=1,
-#                   report_freq=10,
-#                   backtrack=True):
-#     '''
-#     A specialised distributed version of pcg when the operator implements
-#     convolution with the psf (+ L2 regularisation by sigma**2)
-#     '''
-#     nband, nx, ny = b.shape
-#     _, nx_psf, nyo2 = psfhat.shape
-#     model = np.zeros((nband, nx, ny), dtype=b.dtype, order='C')
-#     # PCG preconditioner
-#     if eta > 0:
-#         def M(x): return x / eta
-#     else:
-#         M = None
+def _pcg_psf_impl(psfhat,
+                  b,
+                  x0,
+                  beam,
+                  lastsize,
+                  nthreads,
+                  eta,
+                  tol=1e-5,
+                  maxit=500,
+                  minit=100,
+                  verbosity=1,
+                  report_freq=10,
+                  backtrack=True):
+    '''
+    A specialised distributed version of pcg when the operator implements
+    convolution with the psf (+ L2 regularisation by sigma**2)
+    '''
+    nband, nx, ny = b.shape
+    _, nx_psf, nyo2 = psfhat.shape
+    model = np.zeros((nband, nx, ny), dtype=b.dtype, order='C')
+    # PCG preconditioner
+    if eta > 0:
+        def M(x): return x / eta
+    else:
+        M = None
+    from pfb.operators.hessian import _hessian_psf_slice
+    for k in range(nband):
+        xpad = empty_noncritical((nx_psf, lastsize), dtype=b.dtype)
+        xhat = empty_noncritical((nx_psf, nyo2), dtype=psfhat.dtype)
+        xout = empty_noncritical((nx, ny), dtype=b.dtype)
+        A = partial(_hessian_psf_slice,
+                    xpad=xpad,
+                    xhat=xhat,
+                    xout=xout,
+                    abspsf=np.abs(psfhat[k]),
+                    beam=beam[k],
+                    lastsize=lastsize,
+                    nthreads=nthreads,
+                    eta=eta)
 
-#     for k in range(nband):
-#         xpad = empty_noncritical((nx_psf, lastsize), dtype=b.dtype)
-#         xhat = empty_noncritical((nx_psf, nyo2), dtype=psfhat.dtype)
-#         xout = empty_noncritical((nx, ny), dtype=b.dtype)
-#         A = partial(_hessian_psf_slice,
-#                     xpad=xpad,
-#                     xhat=xhat,
-#                     xout=xout,
-#                     abspsf=np.abs(psfhat[k]),
-#                     beam=beam[k],
-#                     lastsize=lastsize,
-#                     nthreads=nthreads,
-#                     eta=eta)
+        model[k] = pcg(A, b[k], x0[k],
+                       M=M, tol=tol, maxit=maxit, minit=minit,
+                       verbosity=verbosity, report_freq=report_freq,
+                       backtrack=backtrack)
 
-#         model[k] = pcg(A, b[k], x0[k],
-#                        M=M, tol=tol, maxit=maxit, minit=minit,
-#                        verbosity=verbosity, report_freq=report_freq,
-#                        backtrack=backtrack)
+    return model
 
-#     return model
+def _pcg_psf(psfhat,
+             b,
+             x0,
+             beam,
+             lastsize,
+             nthreads,
+             eta,
+             cgopts):
+    return _pcg_psf_impl(psfhat,
+                         b,
+                         x0,
+                         beam,
+                         lastsize,
+                         nthreads,
+                         eta,
+                         **cgopts)
 
-# def _pcg_psf(psfhat,
-#              b,
-#              x0,
-#              beam,
-#              lastsize,
-#              nthreads,
-#              eta,
-#              cgopts):
-#     return _pcg_psf_impl(psfhat,
-#                          b,
-#                          x0,
-#                          beam,
-#                          lastsize,
-#                          nthreads,
-#                          eta,
-#                          **cgopts)
+def pcg_psf(psfhat,
+            b,
+            x0,
+            beam,
+            lastsize,
+            nthreads,
+            eta,
+            cgopts,
+            compute=True):
 
-# def pcg_psf(psfhat,
-#             b,
-#             x0,
-#             beam,
-#             lastsize,
-#             nthreads,
-#             eta,
-#             cgopts,
-#             compute=True):
+    if not isinstance(x0, da.Array):
+        x0 = da.from_array(x0, chunks=(1, -1, -1),
+                          name="x-" + uuid4().hex)
 
-#     if not isinstance(x0, da.Array):
-#         x0 = da.from_array(x0, chunks=(1, -1, -1),
-#                           name="x-" + uuid4().hex)
+    if not isinstance(psfhat, da.Array):
+        psfhat = da.from_array(psfhat, chunks=(1, -1, -1),
+                               name="psfhat-" + uuid4().hex)
+    if not isinstance(b, da.Array):
+        b = da.from_array(b, chunks=(1, -1, -1),
+                          name="psfhat-" + uuid4().hex)
 
-#     if not isinstance(psfhat, da.Array):
-#         psfhat = da.from_array(psfhat, chunks=(1, -1, -1),
-#                                name="psfhat-" + uuid4().hex)
-#     if not isinstance(b, da.Array):
-#         b = da.from_array(b, chunks=(1, -1, -1),
-#                           name="psfhat-" + uuid4().hex)
+    if beam is None:
+        bout = None
+    else:
+        bout = ('nb', 'nx', 'ny')
+        if beam.ndim == 2:
+            beam = beam[None]
 
-#     if beam is None:
-#         bout = None
-#     else:
-#         bout = ('nb', 'nx', 'ny')
-#         if beam.ndim == 2:
-#             beam = beam[None]
+        if not isinstance(beam, da.Array):
+            beam = da.from_array(beam, chunks=(1, -1, -1),
+                                 name="beam-" + uuid4().hex)
+        if beam.shape[0] == 1:
+            beam = da.tile(beam, (psfhat.shape[0], 1, 1))
+        elif beam.shape[0] != psfhat.shape[0]:
+            raise ValueError('Beam has incorrect shape')
 
-#         if not isinstance(beam, da.Array):
-#             beam = da.from_array(beam, chunks=(1, -1, -1),
-#                                  name="beam-" + uuid4().hex)
-#         if beam.shape[0] == 1:
-#             beam = da.tile(beam, (psfhat.shape[0], 1, 1))
-#         elif beam.shape[0] != psfhat.shape[0]:
-#             raise ValueError('Beam has incorrect shape')
-
-#     model = da.blockwise(_pcg_psf, ('nb', 'nx', 'ny'),
-#                          psfhat, ('nb', 'nx', 'ny'),
-#                          b, ('nb', 'nx', 'ny'),
-#                          x0, ('nb', 'nx', 'ny'),
-#                          beam, bout,
-#                          lastsize, None,
-#                          nthreads, None,
-#                          eta, None,
-#                          cgopts, None,
-#                          align_arrays=False,
-#                          dtype=b.dtype)
-#     if compute:
-#         return model.compute()
-#     else:
-#         return model
+    model = da.blockwise(_pcg_psf, ('nb', 'nx', 'ny'),
+                         psfhat, ('nb', 'nx', 'ny'),
+                         b, ('nb', 'nx', 'ny'),
+                         x0, ('nb', 'nx', 'ny'),
+                         beam, bout,
+                         lastsize, None,
+                         nthreads, None,
+                         eta, None,
+                         cgopts, None,
+                         align_arrays=False,
+                         dtype=b.dtype)
+    if compute:
+        return model.compute()
+    else:
+        return model
 
 
 def pcg_dds(ds_name,

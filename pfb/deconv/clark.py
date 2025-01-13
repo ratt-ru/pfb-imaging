@@ -1,7 +1,7 @@
 import numpy as np
 import numexpr as ne
 from functools import partial
-from numba import njit
+from numba import njit, prange
 import dask.array as da
 from pfb.operators.psf import psf_convolve_cube
 from ducc0.misc import empty_noncritical
@@ -9,7 +9,7 @@ import pyscilog
 log = pyscilog.get_logger('CLARK')
 
 
-@njit(nogil=True, cache=True)  # parallel=True,
+@njit(nogil=True, cache=True, parallel=True)
 def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     """
     Run subminor loop in active set
@@ -47,12 +47,12 @@ def subminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
         xhat = A[:, pq]
         model[fsel, p, q] += gamma * xhat[fsel]/wsums[fsel]
         
-        for b in range(nband):
+        for b in prange(nband):
             for i in range(Ip.size):
                 pp = nxo2 - (Ip[i] - p)
                 qq = nyo2 - (Iq[i] - q)
                 if (pp >= 0) & (pp < nx_psf) & (qq >= 0) & (qq < ny_psf):
-                    A[b, i] -= gamma * xhat[b] * psf[b, pp, qq]
+                    A[b, i] -= gamma * xhat[b] * psf[b, pp, qq]/wsums[b]
 
         Asearch = np.sum(A, axis=0)**2
         pq = Asearch.argmax()
