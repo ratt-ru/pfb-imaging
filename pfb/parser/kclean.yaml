@@ -42,13 +42,13 @@ inputs:
     dtype: float
     info:
       Absolute threshold at which to stop cleaning.
-      By default it is set automatically using sigmathreshold parameter
+      By default it is set automatically using rmsfactor parameter
     abbreviation: th
   rmsfactor:
     dtype: float
     default: 3.0
     info:
-      Multiple of the rms at which to terminate the minor cycle
+      Multiple of the rms at which to stop cleaning
   gamma:
     dtype: float
     default: 0.1

@@ -66,6 +66,7 @@ def clark(ID,
           PSF,
           PSFHAT,
           wsums,
+          mask,
           threshold=0,
           gamma=0.05,
           pf=0.05,
@@ -89,7 +90,7 @@ def clark(ID,
     xpad = empty_noncritical(PSF.shape, dtype='f8')
     xhat = empty_noncritical(PSFHAT.shape, dtype='c16')
     # square avoids abs of full array
-    IRsearch = np.sum(IR, axis=0)**2
+    IRsearch = np.sum(IR, axis=0)**2 * mask
     pq = IRsearch.argmax()
     p = pq//ny
     q = pq - p*ny
@@ -117,7 +118,7 @@ def clark(ID,
                         model,
                         nthreads=nthreads)
         IR = ID - xout
-        IRsearch = np.sum(IR, axis=0)**2
+        IRsearch = np.sum(IR, axis=0)**2 * mask
         pq = IRsearch.argmax()
         p = pq//ny
         q = pq - p*ny

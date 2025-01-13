@@ -83,16 +83,14 @@ def _kclean(**kw):
 
     from functools import partial
     import numpy as np
-    from copy import copy, deepcopy
     import xarray as xr
     from pfb.utils.fits import set_wcs, save_fits, load_fits
     from pfb.deconv.clark import clark
-    from pfb.utils.naming import xds_from_url, xds_from_list
+    from pfb.utils.naming import xds_from_url
     from pfb.opt.pcg import pcg, pcg_psf
     from pfb.operators.gridder import compute_residual
     from scipy import ndimage
     from pfb.utils.misc import fit_image_cube
-    from daskms.fsspec_store import DaskMSStore
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
@@ -105,8 +103,6 @@ def _kclean(**kw):
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
-    if nx_psf//2 < nx or ny_psf//2 < ny:
-        raise ValueError("kclean currently assumes a double sized PSF")
     lastsize = ny_psf
     freq_out = []
     time_out = []
@@ -165,9 +161,8 @@ def _kclean(**kw):
     # TODO - check coordinates match
     # Add option to interp onto coordinates?
     if opts.mask is not None:
-        mask = load_fits(mask, dtype=residual.dtype).squeeze()
+        mask = load_fits(opts.mask, dtype=residual.dtype).squeeze()
         assert mask.shape == (nx, ny)
-        mask = mask.astype(residual.dtype)
         print('Using provided fits mask', file=log)
     else:
         mask = np.ones((nx, ny), dtype=residual.dtype)
@@ -197,8 +192,7 @@ def _kclean(**kw):
           file=log)
     for k in range(iter0, iter0 + opts.niter):
         print("Cleaning", file=log)
-        modelp = deepcopy(model)
-        x, status = clark(mask*residual, psf, psfhat, wsums/wsum,
+        x, status = clark(residual, psf, psfhat, wsums/wsum, mask,
                           threshold=threshold,
                           gamma=opts.gamma,
                           pf=opts.peak_factor,
@@ -281,11 +275,11 @@ def _kclean(**kw):
                   fits_oname + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
 
-        # report rms where there aren't any model components
+        # report rms and rmax inside mask
         rmsp = rms
-        tmp_mask = ~np.any(model, axis=0)
-        rms = np.std(residual_mfs[tmp_mask])
-        rmax = np.abs(residual_mfs).max()
+        # tmp_mask = ~np.any(model, axis=0)
+        rms = np.std(residual_mfs[mask>0])
+        rmax = np.abs(residual_mfs[mask>0]).max()
 
         # base this on rmax?
         if rms < best_rms:
@@ -324,9 +318,9 @@ def _kclean(**kw):
                 mopmask = ndimage.binary_dilation(mopmask, structure=struct)
                 mopmask = ndimage.binary_erosion(mopmask, structure=struct)
             x0 = np.zeros_like(x)
-            x0[:, mopmask] = residual_mfs[mopmask]
+            # x0[:, mopmask] = residual_mfs[mopmask]
             # TODO - applying mask as beam is wasteful
-            mopmask = mopmask[None, :, :].astype(residual.dtype)
+            mopmask = (mopmask.astype(residual.dtype) * mask)[None, :, :]
             x = pcg_psf(psfhat,
                         mopmask*residual,
                         x0,
@@ -355,17 +349,17 @@ def _kclean(**kw):
             residual_mfs = np.sum(residual, axis=0)
 
             save_fits(residual_mfs,
-                      f'{fits_oname}_{opts.suffix}_postmop{k}_residual_mfs.fits',
+                      f'{fits_oname}_{opts.suffix}_postmop{k+1}_residual_mfs.fits',
                       hdr_mfs)
 
             save_fits(np.mean(model[fsel], axis=0),
-                      f'{fits_oname}_{opts.suffix}_postmop{k}_model_mfs.fits',
+                      f'{fits_oname}_{opts.suffix}_postmop{k+1}_model_mfs.fits',
                       hdr_mfs)
 
             rmsp = rms
-            tmp_mask = ~np.any(model, axis=0)
-            rms = np.std(residual_mfs[tmp_mask])
-            rmax = np.abs(residual_mfs).max()
+            # tmp_mask = ~np.any(model, axis=0)
+            rms = np.std(residual_mfs[mask>0])
+            rmax = np.abs(residual_mfs[mask>0]).max()
 
             # base this on rmax?
             if rms < best_rms:
