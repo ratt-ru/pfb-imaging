@@ -27,7 +27,7 @@ def init(**kw):
         opts.nthreads = nthreads//2
         ncpu = ncpu//2
 
-    if opts.product.upper() not in ["I","Q", "U", "V"]:
+    if opts.product.upper() not in ["I","Q","U","V","DS","FS"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
     from daskms.fsspec_store import DaskMSStore

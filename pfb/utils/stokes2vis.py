@@ -283,8 +283,8 @@ def single_stokes(
 
     # set after averaging
     data_vars = {}
-    data_vars['VIS'] = (('row', 'chan'), data)
-    data_vars['WEIGHT'] = (('row', 'chan'), weight)
+    data_vars['VIS'] = (('row', 'chan', 'corr'), data)
+    data_vars['WEIGHT'] = (('row', 'chan', 'corr'), weight)
     data_vars['MASK'] = (('row', 'chan'), mask)
     data_vars['UVW'] = (('row', 'three'), uvw)
     data_vars['FREQ'] = (('chan',), freq)

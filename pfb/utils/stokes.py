@@ -51,16 +51,30 @@ def stokes_funcs(data, jones, product, pol, nc):
 
     # Full Stokes coherencies
     C = Winv * (T.H * (Mpq.H * (Sinv * Vpq)))
-    # C = T.H * (Mpq.H * (Sinv * Vpq))
+    # Only keep diagonal of weights
+    W = W.diagonal().T  # diagonal() returns row vector
 
     if product.literal_value == 'I':
-        i = 0
+        i = (0,)
     elif product.literal_value == 'Q':
-        i = 1
+        i = (1,)
     elif product.literal_value == 'U':
-        i = 2
+        i = (2,)
     elif product.literal_value == 'V':
-        i = 3
+        i = (3,)
+    elif product.literal_value == 'DS':
+        if pol.literal_value == 'linear':
+            i = (0,1)
+        elif pol.literal_value == 'circular':
+            i = (0,-1)
+    elif product.literal_value == 'FS':
+        if nc.literal_value == '2':
+            if pol.literal_value == 'linear':
+                i = (0,1)
+            elif pol.literal_value == 'circular':
+                i = (0,-1)
+        elif nc.literal_value == '4':
+            i = (0,1,2,3)
     else:
         raise ValueError(f"Unknown polarisation product {product}")
 
@@ -68,7 +82,7 @@ def stokes_funcs(data, jones, product, pol, nc):
         Wsymb = lambdify((gp00, gp01, gp10, gp11,
                           gq00, gq01, gq10, gq11,
                           w0, w1, w2, w3),
-                          sm.simplify(sm.expand(W[i,i])))
+                          sm.simplify(W[i,0]))
         Wjfn = njit(nogil=True, inline='always')(Wsymb)
 
 
@@ -76,7 +90,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                           gq00, gq01, gq10, gq11,
                           w0, w1, w2, w3,
                           v00, v01, v10, v11),
-                          sm.simplify(sm.expand(C[i])))
+                          sm.simplify(C[i,0]))
         Djfn = njit(nogil=True, inline='always')(Dsymb)
 
         @njit(nogil=True, inline='always')
@@ -95,7 +109,7 @@ def stokes_funcs(data, jones, product, pol, nc):
             W11 = W[3]
             return Wjfn(gp00, gp01, gp10, gp11,
                         gq00, gq01, gq10, gq11,
-                        W00, W01, W10, W11).real
+                        W00, W01, W10, W11).real.ravel()
 
         @njit(nogil=True, inline='always')
         def vfunc(gp, gq, W, V):
@@ -118,7 +132,7 @@ def stokes_funcs(data, jones, product, pol, nc):
             return Djfn(gp00, gp01, gp10, gp11,
                         gq00, gq01, gq10, gq11,
                         W00, W01, W10, W11,
-                        V00, V01, V10, V11)
+                        V00, V01, V10, V11).ravel()
 
     elif jones.ndim == 5:  # DIAG mode
         W = W.subs(gp10, 0)
@@ -133,7 +147,7 @@ def stokes_funcs(data, jones, product, pol, nc):
         Wsymb = lambdify((gp00, gp11,
                           gq00, gq11,
                           w0, w1, w2, w3),
-                          sm.simplify(sm.expand(W[i,i])))
+                          sm.simplify(W[i,0]))
         Wjfn = njit(nogil=True, inline='always')(Wsymb)
 
 
@@ -141,7 +155,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                           gq00, gq11,
                           w0, w1, w2, w3,
                           v00, v01, v10, v11),
-                          sm.simplify(sm.expand(C[i])))
+                          sm.simplify(C[i,0]))
         Djfn = njit(nogil=True, inline='always')(Dsymb)
 
         if nc.literal_value == '4':
@@ -157,7 +171,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                 W11 = W[3]
                 return Wjfn(gp00, gp11,
                             gq00, gq11,
-                            W00, W01, W10, W11).real
+                            W00, W01, W10, W11).real.ravel()
 
             @njit(nogil=True, inline='always')
             def vfunc(gp, gq, W, V):
@@ -176,7 +190,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                 return Djfn(gp00, gp11,
                             gq00, gq11,
                             W00, W01, W10, W11,
-                            V00, V01, V10, V11)
+                            V00, V01, V10, V11).ravel()
         elif nc.literal_value == '2':
             @njit(nogil=True, inline='always')
             def wfunc(gp, gq, W):
@@ -190,7 +204,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                 W11 = W[-1]
                 return Wjfn(gp00, gp11,
                             gq00, gq11,
-                            W00, W01, W10, W11).real
+                            W00, W01, W10, W11).real.ravel()
 
             @njit(nogil=True, inline='always')
             def vfunc(gp, gq, W, V):
@@ -209,7 +223,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                 return Djfn(gp00, gp11,
                             gq00, gq11,
                             W00, W01, W10, W11,
-                            V00, V01, V10, V11)
+                            V00, V01, V10, V11).ravel()
         else:
             raise ValueError(f"Selected product is only available from 2 or 4"
                              f"correlation data while you have ncorr={nc}.")

@@ -261,29 +261,33 @@ def single_stokes_image(
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
 
-    wsum = weight[~flag].sum()
+    nstokes = weight.shape[-1]
+    wsum = np.zeros(nstokes)
+    residual = np.zeros((nstokes, nx, ny), dtype=np.float64)
+    for c in range(nstokes):
+        wsum[c] = weight[~flag, c].sum()
+        vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=data[:, :, c],
+            wgt=weight[:, :, c],
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cell_rad, pixsize_y=cell_rad,
+            center_x=x0, center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=opts.epsilon,
+            do_wgridding=opts.do_wgridding,
+            divide_by_n=True,  # no rephasing or smooth beam so do it here
+            nthreads=opts.nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=opts.double_accum,
+            verbosity=0,
+            dirty=residual[c])
 
-    residual = vis2dirty(
-        uvw=uvw,
-        freq=freq,
-        vis=data,
-        wgt=weight,
-        mask=mask,
-        npix_x=nx, npix_y=ny,
-        pixsize_x=cell_rad, pixsize_y=cell_rad,
-        center_x=x0, center_y=y0,
-        flip_u=flip_u,
-        flip_v=flip_v,
-        flip_w=flip_w,
-        epsilon=opts.epsilon,
-        do_wgridding=opts.do_wgridding,
-        divide_by_n=True,  # no rephasing or smooth beam so do it here
-        nthreads=opts.nthreads,
-        sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=opts.double_accum,
-        verbosity=0)
-
-    rms = np.std(residual/wsum)
+    rms = np.std(residual/wsum[:, None, None], axis=(1,2))
 
     if opts.natural_grad:
         from pfb.opt.pcg import pcg
@@ -331,12 +335,13 @@ def single_stokes_image(
     oname = f'spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
     if opts.output_format == 'zarr':
         data_vars = {}
-        data_vars['RESIDUAL'] = (('x', 'y'), residual.astype(np.float32))
+        data_vars['RESIDUAL'] = (('c', 'x', 'y'), residual.astype(np.float32))
         if x is not None:
-            data_vars['NATGRAD'] = (('x', 'y'), residual.astype(np.float32))
+            data_vars['NATGRAD'] = (('c', 'x', 'y'), residual.astype(np.float32))
 
-        coords = {'chan': (('chan',), freq),
-                'time': (('time',), utime),
+        coords = {
+            'chan': (('chan',), freq),
+            'time': (('time',), utime),
         }
 
 
@@ -365,10 +370,12 @@ def single_stokes_image(
             # 'header': hdr.items()
         }
 
-        out_ds = xr.Dataset(data_vars,  #coords=coords,
-                        attrs=attrs)
-        out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr',
-                                mode='w')
+        out_ds = xr.Dataset(
+            data_vars,
+            coords=coords,
+            attrs=attrs)
+        out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr', mode='w')
     elif opts.output_format == 'fits':
-        save_fits(residual/wsum, f'{fds_store.full_path}/{oname}.fits', hdr)
+        save_fits(residual/wsum[:, None, None],
+                  f'{fds_store.full_path}/{oname}.fits', hdr)
     return 1
