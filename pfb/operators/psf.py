@@ -109,10 +109,11 @@ def psf_convolve_slice_jax(
                     nx_psf, ny_psf,
                     psfhat,
                     x):
+    psfh = jax.lax.stop_gradient(psfhat)
     xhat = jnp.fft.rfft2(x,
                          s=(nx_psf, ny_psf),
                          norm='backward')
-    xout = jnp.fft.irfft2(xhat*psfhat,
+    xout = jnp.fft.irfft2(xhat*psfh,
                           s=(nx_psf, ny_psf),
                           norm='backward')[0:nx, 0:ny]
     return xout

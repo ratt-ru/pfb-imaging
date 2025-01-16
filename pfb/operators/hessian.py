@@ -484,3 +484,39 @@ class hess_psf(object):
 
         return self.xout.copy()
 
+
+##################### jax #####################################
+import jax
+import jax.numpy as jnp
+from functools import partial
+
+@partial(jax.jit, static_argnums=(0,1,2,3,4))
+def hessian_slice_jax(
+                    nx, ny,
+                    nx_psf, ny_psf,
+                    eta,
+                    psfhat,
+                    x):
+    psfh = jax.lax.stop_gradient(psfhat)
+    xhat = jnp.fft.rfft2(x,
+                         s=(nx_psf, ny_psf),
+                         norm='backward')
+    xout = jnp.fft.irfft2(xhat*psfh,
+                          s=(nx_psf, ny_psf),
+                          norm='backward')[0:nx, 0:ny]
+    return xout + eta*x
+
+@partial(jax.jit, static_argnums=(0,1,2,3,4,5))
+def hessian_jax(nband, nx, ny,
+                nx_psf, ny_psf,
+                eta,
+                psfhat,
+                x):
+    psfh = jax.lax.stop_gradient(psfhat)
+    xhat = jnp.fft.rfft2(x,
+                         s=(nx_psf, ny_psf),
+                         norm='backward')
+    xout = jnp.fft.irfft2(xhat*psfh,
+                          s=(nx_psf, ny_psf),
+                          norm='backward')[:, 0:nx, 0:ny]
+    return xout + eta*x

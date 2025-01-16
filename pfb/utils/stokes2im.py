@@ -1,3 +1,4 @@
+from functools import partial
 import numpy as np
 import numexpr as ne
 from numba import literally
@@ -13,6 +14,7 @@ from casacore.quanta import quantity
 from datetime import datetime
 from ducc0.misc import resize_thread_pool
 from pfb.utils.astrometry import get_coordinates
+from scipy.constants import c as lightspeed
 import gc
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
@@ -237,6 +239,17 @@ def single_stokes_image(
             weight = None
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
+    signu = -1.0 if flip_u else 1.0
+    signv = -1.0 if flip_v else 1.0
+    # we need these in the test because of flipped wgridder convention
+    # https://github.com/mreineck/ducc/issues/34
+    signx = -1.0 if flip_u else 1.0
+    signy = -1.0 if flip_v else 1.0
+    n = np.sqrt(1 - x0**2 - y0**2)
+    freqfactor = -2j*np.pi*freq[None, :]/lightspeed
+    psf_vis = np.exp(freqfactor*(signu*uvw[:, 0:1]*x0*signx +
+                                 signv*uvw[:, 1:2]*y0*signy -
+                                 uvw[:, 2:]*(n-1)))
 
     if opts.robustness is not None:
         counts = _compute_counts(uvw,
@@ -264,6 +277,7 @@ def single_stokes_image(
     nstokes = weight.shape[-1]
     wsum = np.zeros(nstokes)
     residual = np.zeros((nstokes, nx, ny), dtype=np.float64)
+    psf = np.zeros((nstokes, 2*nx, 2*ny), dtype=np.float64)
     for c in range(nstokes):
         wsum[c] = weight[~flag, c].sum()
         vis2dirty(
@@ -286,41 +300,52 @@ def single_stokes_image(
             double_precision_accumulation=opts.double_accum,
             verbosity=0,
             dirty=residual[c])
+        
+        vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=psf_vis,
+            wgt=weight[:, :, c],
+            mask=mask,
+            npix_x=2*nx, npix_y=2*ny,
+            pixsize_x=cell_rad, pixsize_y=cell_rad,
+            center_x=x0, center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=opts.epsilon,
+            do_wgridding=opts.do_wgridding,
+            divide_by_n=True,  # no rephasing or smooth beam so do it here
+            nthreads=opts.nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=opts.double_accum,
+            verbosity=0,
+            dirty=psf[c])
 
     rms = np.std(residual/wsum[:, None, None], axis=(1,2))
 
     if opts.natural_grad:
-        from pfb.opt.pcg import pcg
-        from pfb.operators.hessian import _hessian_slice
-        from functools import partial
+        from pfb.operators.hessian import hessian_jax
+        import jax.numpy as jnp
+        from jax.scipy.sparse.linalg import cg
+        iFs = jnp.fft.ifftshift
 
-        hess = partial(_hessian_slice,
-                       uvw=uvw,
-                       weight=weight,
-                       vis_mask=mask,
-                       freq=freq,
-                       beam=None,
-                       cell=cell_rad,
-                       x0=x0,
-                       y0=y0,
-                       do_wgridding=opts.do_wgridding,
-                       epsilon=opts.epsilon,
-                       double_accum=opts.double_accum,
-                       nthreads=opts.nthreads,
-                       eta=opts.eta*wsum,
-                       wsum=1.0)  # we haven't normalised residual
+        abspsf = jnp.abs(jnp.fft.rfft2(
+                                    iFs(psf.astype(np.float32), axes=(1,2)),
+                                    axes=(1, 2),
+                                    norm='backward'))
 
-        x = pcg(hess,
-                residual,
-                x0=np.zeros_like(residual),
-                # M=precond,
-                minit=1,
-                tol=opts.cg_tol,
-                maxit=opts.cg_maxit,
-                verbosity=opts.cg_verbose,
-                report_freq=opts.cg_report_freq,
-                backtrack=False,
-                return_resid=False)
+        hess = partial(hessian_jax,
+                       nstokes,
+                       nx, ny,
+                       2*nx, 2*ny,
+                       opts.eta,
+                       abspsf)
+
+        x = cg(hess,
+               residual.astype(np.float32),
+               tol=opts.cg_tol,
+               maxiter=opts.cg_maxit)
     else:
         x = None
 
