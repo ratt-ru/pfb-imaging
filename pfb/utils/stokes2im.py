@@ -8,6 +8,7 @@ from uuid import uuid4
 from pfb.utils.weighting import (_compute_counts, counts_to_weights,
                                  weight_data, filter_extreme_counts)
 from pfb.utils.fits import set_wcs, save_fits
+from pfb.utils.misc import fitcleanbeam
 from pfb.operators.gridder import wgridder_conventions
 from ducc0.wgridder.experimental import vis2dirty
 from casacore.quanta import quantity
@@ -321,6 +322,9 @@ def single_stokes_image(
             double_precision_accumulation=opts.double_accum,
             verbosity=0,
             dirty=psf[c])
+        
+    
+    Gausspars = fitcleanbeam(psf)
 
     rms = np.std(residual/wsum[:, None, None], axis=(1,2))
 
@@ -336,16 +340,17 @@ def single_stokes_image(
                                     norm='backward'))
 
         hess = partial(hessian_jax,
-                       nstokes,
                        nx, ny,
                        2*nx, 2*ny,
                        opts.eta,
                        abspsf)
 
+        print("using jax")
         x = cg(hess,
                residual.astype(np.float32),
                tol=opts.cg_tol,
                maxiter=opts.cg_maxit)
+        print('done')
     else:
         x = None
 
@@ -361,8 +366,10 @@ def single_stokes_image(
     if opts.output_format == 'zarr':
         data_vars = {}
         data_vars['RESIDUAL'] = (('c', 'x', 'y'), residual.astype(np.float32))
+        if opts.psf_out:
+            data_vars['PSF'] = (('c', 'x_psf', 'y_psf'), psf.astype(np.float32))
         if x is not None:
-            data_vars['NATGRAD'] = (('c', 'x', 'y'), residual.astype(np.float32))
+            data_vars['NATGRAD'] = (('c', 'x', 'y'), x.astype(np.float32))
 
         coords = {
             'chan': (('chan',), freq),
@@ -403,4 +410,13 @@ def single_stokes_image(
     elif opts.output_format == 'fits':
         save_fits(residual/wsum[:, None, None],
                   f'{fds_store.full_path}/{oname}.fits', hdr)
+        if opts.psf_out:
+            hdr_psf = set_wcs(cell_deg, cell_deg, 2*nx, 2*ny, [tra, tdec],
+                  freq_out, GuassPar=(1, 1, 0),  # fake for now
+                  ms_time=time_out)
+            save_fits(psf/wsum[:, None, None],
+                  f'{fds_store.full_path}/{oname}_psf.fits', hdr_psf)
+        if x is not None:
+            save_fits(x,
+                  f'{fds_store.full_path}/{oname}_x.fits', hdr)
     return 1

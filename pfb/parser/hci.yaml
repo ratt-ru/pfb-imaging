@@ -158,12 +158,17 @@ inputs:
     default: false
     info:
       Concatenate gains and times across scan
+  psf-out:
+    dtype: bool
+    default: false
+    info:
+      Whether to produce output PSF's or not.
   natural-grad:
     dtype: bool
     default: false
     info:
       Compute naural gradient
-  memory_reporting:
+  memory-reporting:
     dtype: bool
     default: false
     info:

@@ -506,8 +506,8 @@ def hessian_slice_jax(
                           norm='backward')[0:nx, 0:ny]
     return xout + eta*x
 
-@partial(jax.jit, static_argnums=(0,1,2,3,4,5))
-def hessian_jax(nband, nx, ny,
+@partial(jax.jit, static_argnums=(0,1,2,3,4))
+def hessian_jax(nx, ny,
                 nx_psf, ny_psf,
                 eta,
                 psfhat,
