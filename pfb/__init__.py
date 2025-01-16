@@ -10,9 +10,9 @@ def set_envs(nthreads, ncpu):
     os.environ["NPY_NUM_THREADS"] = str(nthreads)
     os.environ["NUMBA_NUM_THREADS"] = str(nthreads)
     # os.environ["JAX_PLATFORMS"] = 'cpu'
-    os.environ["XLA_FLAGS"] = ("--xla_cpu_multi_thread_eigen=true "
-                               "--xla_force_host_platform_device_count=4"
-                               f"intra_op_parallelism_threads={str(nthreads)}")
+    # os.environ["XLA_FLAGS"] = ("--xla_cpu_multi_thread_eigen=true "
+    #                            "--xla_force_host_platform_device_count=4 "
+    #                            f"intra_op_parallelism_threads={str(nthreads)}")
     os.environ["JAX_ENABLE_X64"] = 'True'
     # this may be required for numba parallelism
     # find python and set LD_LIBRARY_PATH
