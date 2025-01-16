@@ -345,12 +345,10 @@ def single_stokes_image(
                        opts.eta,
                        abspsf)
 
-        print("using jax")
         x = cg(hess,
                residual.astype(np.float32),
                tol=opts.cg_tol,
-               maxiter=opts.cg_maxit)
-        print('done')
+               maxiter=opts.cg_maxit)[0]
     else:
         x = None
 
