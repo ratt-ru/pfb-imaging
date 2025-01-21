@@ -2,10 +2,10 @@ import concurrent.futures as cf
 import numpy as np
 from numba import njit, prange, literally, types
 from numba.extending import overload
-from africanus.constants import c as lightspeed
-from pfb.utils.misc import JIT_OPTIONS
+from pfb.utils.misc import JIT_OPTIONS, _es_kernel
 from pfb.utils.stokes import stokes_funcs
 from pfb.utils.naming import xds_from_list
+from scipy.constants import c as lightspeed
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
@@ -121,11 +121,6 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                         for c in range(ncorr):
                             counts[g, x_idx, y_idx, c] += xkern * ykern * wrf[c]
     return counts.sum(axis=0)
-
-
-@njit(nogil=True, cache=True, inline='always')
-def _es_kernel(x, beta, k):
-    return np.exp(beta*k*(np.sqrt((1-x)*(1+x)) - 1))
 
 
 @njit(nogil=True, cache=True, parallel=True)

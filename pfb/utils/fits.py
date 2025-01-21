@@ -171,6 +171,7 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
     for timeid in timeids:
         cube = np.zeros((nband, nx, ny))
         wsums = np.zeros(nband)
+        Gausspars = []
         wsum = 0.0
         for i, ds in enumerate(dds):
             if ds.timeid == timeid:
@@ -178,10 +179,10 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
                 cube[b] = ds.get(column).values
                 wsums[b] = ds.wsum
                 wsum += ds.wsum
+                Gausspars.append(ds.gaussparn)
         radec = (ds.ra, ds.dec)
         cell_deg = np.rad2deg(ds.cell_rad)
         nx, ny = ds.get(column).shape
-        unix_time = quantity(f'{ds.time_out}s').to_unix_time()
         fmask = wsums > 0
 
         if do_mfs:
@@ -207,7 +208,9 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
             name = basename + f'_time{timeid}.fits'
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freqs,
                           unit=unit, ms_time=ds.time_out)
+            hdr = add_beampars(hdr, Gausspars[0], GaussPars=Gausspars)
             for b in range(fmask.size):
+                Gausspars.append()
                 hdr[f'WSUM{b}'] = wsums[b]
             save_fits(cube, name, hdr, overwrite=True,
                       dtype=otype)

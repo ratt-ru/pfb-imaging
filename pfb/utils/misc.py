@@ -1274,6 +1274,10 @@ def taperf(shape, taper_width):
     return np.outer(*tapers1d)
 
 
+@njit(nogil=True, cache=True, inline='always')
+def _es_kernel(x, beta, k):
+    return np.exp(beta*k*(np.sqrt((1-x)*(1+x)) - 1))
+
 # def fft_interp(image, cellxi, cellyi, nxo, nyo,
 #                cellxo, cellyo, shiftx, shifty):
 #     '''

@@ -7,7 +7,7 @@ import xarray as xr
 from uuid import uuid4
 from pfb.utils.weighting import (_compute_counts, counts_to_weights,
                                  weight_data, filter_extreme_counts)
-from pfb.utils.fits import set_wcs, save_fits
+from pfb.utils.fits import set_wcs, save_fits, add_beampars
 from pfb.utils.misc import fitcleanbeam
 from pfb.operators.gridder import wgridder_conventions
 from ducc0.wgridder.experimental import vis2dirty
@@ -335,7 +335,7 @@ def single_stokes_image(
         iFs = jnp.fft.ifftshift
 
         abspsf = jnp.abs(jnp.fft.rfft2(
-                                    iFs(psf.astype(np.float32), axes=(1,2)),
+                                    iFs(psf/wsum[:, None, None], axes=(1,2)),
                                     axes=(1, 2),
                                     norm='backward'))
 
@@ -346,7 +346,7 @@ def single_stokes_image(
                        abspsf)
 
         x = cg(hess,
-               residual.astype(np.float32),
+               residual/wsum[:, None, None],
                tol=opts.cg_tol,
                maxiter=opts.cg_maxit)[0]
     else:
@@ -359,6 +359,7 @@ def single_stokes_image(
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
                   freq_out, GuassPar=(1, 1, 0),  # fake for now
                   ms_time=time_out)
+    hdr = add_beampars(hdr, Gausspars[0], GaussPars=Gausspars)
 
     oname = f'spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
     if opts.output_format == 'zarr':
@@ -412,6 +413,7 @@ def single_stokes_image(
             hdr_psf = set_wcs(cell_deg, cell_deg, 2*nx, 2*ny, [tra, tdec],
                   freq_out, GuassPar=(1, 1, 0),  # fake for now
                   ms_time=time_out)
+            hdr_psf = add_beampars(hdr_psf, Gausspars[0], GaussPars=Gausspars)
             save_fits(psf/wsum[:, None, None],
                   f'{fds_store.full_path}/{oname}_psf.fits', hdr_psf)
         if x is not None:

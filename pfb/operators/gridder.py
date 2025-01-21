@@ -7,6 +7,8 @@ import concurrent.futures as cf
 from time import time
 import numpy as np
 import numba
+from numba import njit, prange, literally, types
+from numba.extending import overload
 import concurrent.futures as cf
 import xarray as xr
 import dask.array as da
@@ -17,6 +19,9 @@ from pfb.utils.weighting import counts_to_weights, _compute_counts
 from pfb.utils.beam import eval_beam
 from pfb.utils.naming import xds_from_list
 from pfb.utils.misc import fitcleanbeam
+from pfb.utils.stokes import stokes_funcs
+from pfb.utils.misc import JIT_OPTIONS, _es_kernel
+from scipy.constants import c as lightspeed
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
