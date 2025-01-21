@@ -98,6 +98,8 @@ def sara(**kw):
         # except Exception as e:
         #     print(e)
 
+    from numba import threading_layer
+    print(f"Numba use the {threading_layer()} threading layer", file=log)
     print(f"All done after {time.time() - ti}s", file=log)
 
 
