@@ -130,6 +130,9 @@ def _degrid(**kw):
             cpi = 0
             for ds in dds:
                 cpi = np.maximum(ds.chan.size, cpi)
+        else:
+            raise ValueError("You must supply channels per image in the "
+                             "absence of a dds")
     else:
         cpi = opts.channels_per_image
 
@@ -271,6 +274,8 @@ def _degrid(**kw):
                 uvw = clone(ds.UVW.data)
                 assert len(uvw.chunks[0]) == len(tidx.chunks[0])
 
+                nrow, nchan, ncorr = getattr(ds, column_name).data.shape
+
                 vis = comps2vis(uvw,
                                 utime,
                                 freq,
@@ -286,7 +291,10 @@ def _degrid(**kw):
                                 epsilon=opts.epsilon,
                                 do_wgridding=opts.do_wgridding,
                                 freq_min=freq_min,
-                                freq_max=freq_max)
+                                freq_max=freq_max,
+                                ncorr_out=ncorr,
+                                product=opts.product,
+                                poltype=poltype)
 
                 # convert to single precision to write to MS
                 vis = vis.astype(np.complex64)
