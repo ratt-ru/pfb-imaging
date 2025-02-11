@@ -9,6 +9,18 @@ from scipy.constants import c as lightspeed
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
+JIT_OPTIONS = {
+    "nogil": True,
+    "cache": True,
+    "error_model": 'numpy',
+    "fastmath": True
+}
+
+@njit(**JIT_OPTIONS, inline='always')
+def _es_kernel(x, y, xkern, ykern, betak):
+    for i in range(x.size):
+        xkern[i] = np.exp(betak*(np.sqrt(1-x[i]*x[i]) - 1))
+        ykern[i] = np.exp(betak*(np.sqrt(1-y[i]*y[i]) - 1))
 
 def compute_counts(dsl,
                    nx, ny,
@@ -73,11 +85,11 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
     vmax = np.abs(-1/cell_size_y/2 - v_cell/2)
 
     # are we always passing in wgt? 
-    nrow, nchan, ncorr = wgt.shape
+    ncorr, nrow, nchan = wgt.shape
 
     # initialise array to store counts
     # the additional axis is to allow chunking over row
-    counts = np.zeros((ngrid, nx, ny, ncorr), dtype=dtype)
+    counts = np.zeros((ngrid, ncorr, nx, ny), dtype=dtype)
 
     # accumulate counts
     bin_counts = [nrow // ngrid + (1 if x < nrow % ngrid else 0)  for x in range (ngrid)]
@@ -85,19 +97,21 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
     bin_counts = np.asarray(bin_counts).astype(bin_idx.dtype)
     bin_idx[1:] = np.cumsum(bin_counts)[0:-1]
 
-    normfreq = freq / lightspeed
     ko2 = k//2
-
+    betak = 2.3*k
+    pos = np.arange(k) - ko2
+    xkern = np.zeros(k)
+    ykern = np.zeros(k)
     for g in prange(ngrid):
         for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
             uvw_row = uvw[r]
-            wgt_row = wgt[r]
+            wgt_row = wgt[:, r]
             mask_row = mask[r]
             for f in range(nchan):
                 if not mask_row[f]:
                     continue
                 # current uv coords
-                chan_normfreq = normfreq[f]
+                chan_normfreq = freq[f] / lightspeed
                 u_tmp = uvw_row[0] * chan_normfreq * usign
                 v_tmp = uvw_row[1] * chan_normfreq * vsign
                 # pixel coordinates
@@ -106,25 +120,28 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                 # indices
                 u_idx = int(np.round(ug))
                 v_idx = int(np.round(vg))
-                # per correlation weights
-                wrf = wgt_row[f]
-                for i in range(k):
-                    idx = i - ko2
-                    x_idx = idx + u_idx
-                    x = x_idx - ug + 0.5
-                    xkern = _es_kernel(x/ko2, 2.3, k)
-                    for j in range(k):
-                        jdx = j - ko2
-                        y_idx = jdx + v_idx
-                        y = y_idx - vg + 0.5
-                        ykern = _es_kernel(y/ko2, 2.3, k)
-                        for c in range(ncorr):
-                            counts[g, x_idx, y_idx, c] += xkern * ykern * wrf[c]
+                # corr weights
+                wrf = wgt_row[:, f]
+
+                # the kernel is separable and only defined on [-1,1]
+                # do we ever need to check these bounds?
+                x_idx = pos + u_idx
+                x = (x_idx - ug + 0.5)/ko2
+                y_idx = pos + v_idx
+                y = (y_idx - vg + 0.5)/ko2
+                _es_kernel(x, y, xkern, ykern, betak)
+
+                for c in range(ncorr):
+                    wrfc = wrf[c]
+                    for i, xi in zip(x_idx, xkern):
+                        for j, yj in zip(y_idx, ykern):
+                            counts[g, c, i, j] += xi*yj*wrfc
+
     return counts.sum(axis=0)
 
 
-@njit(nogil=True, cache=True, parallel=True)
-def counts_to_weights(counts, uvw, freq, weight, nx, ny,
+@njit(**JIT_OPTIONS)
+def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
                       cell_size_x, cell_size_y, robust,
                       usign=1.0, vsign=-1.0):
     # when does this happen?
@@ -139,7 +156,7 @@ def counts_to_weights(counts, uvw, freq, weight, nx, ny,
     v_cell = 1/(ny*cell_size_y)
     vmax = np.abs(-1/cell_size_y/2 - v_cell/2)
 
-    nrow, nchan, ncorr = weight.shape
+    ncorr, nrow, nchan = weight.shape
     
     # Briggs weighting factor
     if robust > -2:
@@ -148,22 +165,25 @@ def counts_to_weights(counts, uvw, freq, weight, nx, ny,
         ssq = numsqrt * numsqrt/avgW
         counts = 1 + counts * ssq
 
-    normfreq = freq / lightspeed
     for r in prange(nrow):
         uvw_row = uvw[r]
-        weight_row = weight[r]
+        weight_row = weight[:, r]
+        mask_row = mask[r]
         for f in range(nchan):
-            # get current uv
-            chan_normfreq = normfreq[f]
+            if not mask_row[f]:
+                continue
+            # current uv coords
+            chan_normfreq = freq[f] / lightspeed
             u_tmp = uvw_row[0] * chan_normfreq * usign
             v_tmp = uvw_row[1] * chan_normfreq * vsign
-            # get u index
-            u_idx = int(np.floor((u_tmp + umax)/u_cell))
-            # get v index
-            v_idx = int(np.floor((v_tmp + vmax)/v_cell))
-            for c in range(ncorr):
-                if counts[u_idx, v_idx, c]:
-                    weight_row[f, c] = weight_row[f, c]/counts[u_idx, v_idx, c]
+            # pixel coordinates
+            ug = (u_tmp + umax)/u_cell
+            vg = (v_tmp + vmax)/v_cell
+            # indices
+            u_idx = int(np.round(ug))
+            v_idx = int(np.round(vg))
+            # counts should never be zero if we are at an unflagged location
+            weight_row[:, f] = weight_row[:, f]/counts[:, u_idx, v_idx]
     return weight
 
 
@@ -175,12 +195,12 @@ def filter_extreme_counts(counts, level=10.0):
     upweighting nearly empty cells
     '''
     # get the median counts value
-    ix, iy = np.where(counts > 0)
-    cnts = counts[ix,iy]
+    ic, ix, iy = np.where(counts > 0)
+    cnts = counts[ic, ix,iy]
     med = np.median(cnts)
     lowval = med/level
     cnts = np.maximum(cnts, lowval)
-    counts[ix,iy] = cnts
+    counts[ic, ix,iy] = cnts
     return counts
 
 
@@ -235,7 +255,7 @@ def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
                 gp = jones[t, p, :, 0]
                 gq = jones[t, q, :, 0]
                 for chan in range(nchan):
-                    if flag[row, chan]:
+                    if flag[row, chan].any():
                         continue
                     wgt[row, chan] = wgt_func(gp[chan], gq[chan],
                                               weight[row, chan])

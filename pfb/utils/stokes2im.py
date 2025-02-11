@@ -361,6 +361,31 @@ def single_stokes_image(
                   ms_time=time_out)
     hdr = add_beampars(hdr, Gausspars[0], GaussPars=Gausspars)
 
+    # set corr coords
+    if opts.product == 'I':
+        corr = ['I']
+    elif opts.product == 'Q':
+        corr = ['Q']
+    elif opts.product == 'U':
+        corr = ['U']
+    elif opts.product == 'V':
+        corr = ['V']
+    elif opts.product == 'DS':
+        if poltype == 'linear':
+            corr = ['I','Q']
+        elif poltype == 'circular':
+            corr = ['I','V']
+    elif opts.product == 'FS':
+        if ncorr == 2:
+            if poltype == 'linear':
+                corr = ['I','Q']
+            elif poltype == 'circular':
+                corr = ['I','V']
+        elif ncorr == 4:
+            corr = ['I','Q','U','V']
+    else:
+        raise ValueError(f"Unknown polarisation product {opts.product}")
+
     oname = f'spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
     if opts.output_format == 'zarr':
         data_vars = {}
@@ -373,6 +398,7 @@ def single_stokes_image(
         coords = {
             'chan': (('chan',), freq),
             'time': (('time',), utime),
+            'corr': (('corr',), corr)
         }
 
 

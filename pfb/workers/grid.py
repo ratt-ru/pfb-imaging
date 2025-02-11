@@ -338,13 +338,16 @@ def _grid(**kw):
                         xds_dct[tbid]['chan_low'] = ds.chan_low
                         xds_dct[tbid]['chan_high'] = ds.chan_high
 
+
+    ncorr = ds.corr.size
+    corrs = ds.corr.values
     if opts.dirty:
         print(f"Image size = (ntime={ntime}, nband={nband}, "
-              f"nx={nx}, ny={ny})", file=log)
+              f"ncorr={ncorr}, nx={nx}, ny={ny})", file=log)
 
     if opts.psf:
         print(f"PSF size = (ntime={ntime}, nband={nband}, "
-              f"nx={nx_psf}, ny={ny_psf})", file=log)
+              f"ncorr={ncorr}, nx={nx_psf}, ny={ny_psf})", file=log)
 
     # check if model exists
     if opts.transfer_model_from:
@@ -353,7 +356,7 @@ def _grid(**kw):
         except Exception as e:
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
 
-        # we only want to load these once
+        # should we load these inside the worker calls?
         model_coeffs = mds.coefficients.values
         locx = mds.location_x.values
         locy = mds.location_y.values
@@ -379,7 +382,7 @@ def _grid(**kw):
             out_ds = xr.open_zarr(out_ds_name,
                                   chunks=None)
             if 'niters' in out_ds:
-                iter0 = niters
+                iter0 = out_ds.niters
         else:
             out_ds_name = None
 
@@ -457,7 +460,7 @@ def _grid(**kw):
                 model = None
         else:
             model = None
-
+        
         fut = client.submit(image_data_products,
                             dsl,
                             out_ds_name,
@@ -483,8 +486,8 @@ def _grid(**kw):
                             workers=wname)
         futures.append(fut)
 
-    residual_mfs = np.zeros((nx, ny))
-    wsum = 0.0
+    residual_mfs = np.zeros((ncorr, nx, ny), dtype=float)
+    wsum = np.zeros(ncorr, dtype=float)
     nds = len(futures)
     n_launched = 1
     for fut in as_completed(futures):
@@ -496,8 +499,8 @@ def _grid(**kw):
 
     print("\n")  # after progressbar above
 
-    residual_mfs /= wsum
-    rms = np.std(residual_mfs)
-    rmax = np.abs(residual_mfs).max()
-
-    print(f"Initial max resid = {rmax:.3e}, rms resid = {rms:.3e}", file=log)
+    residual_mfs /= wsum[:, None, None]
+    for c in range(ncorr):
+        rms = np.std(residual_mfs[c])
+        rmax = np.abs(residual_mfs[c]).max()
+        print(f"Initial max resid for {corrs[c]} = {rmax:.3e}, rms resid = {rms:.3e}", file=log)

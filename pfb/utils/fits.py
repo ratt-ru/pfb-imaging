@@ -5,6 +5,7 @@ from datetime import datetime
 from casacore.quanta import quantity
 from astropy.time import Time
 from pfb.utils.naming import xds_from_list
+import xarray as xr
 
 
 def to4d(data):
@@ -34,11 +35,15 @@ def load_fits(name, dtype=np.float32):
     return np.require(data, dtype=dtype, requirements='C')
 
 
-def save_fits(data, name, hdr, overwrite=True, dtype=np.float32):
+def save_fits(data, name, hdr, overwrite=True, dtype=np.float32, beams_hdu=None):
     hdu = fits.PrimaryHDU(header=hdr)
     data = np.transpose(to4d(data), axes=(0, 1, 3, 2))
     hdu.data = np.require(data, dtype=dtype, requirements='F')
-    hdu.writeto(name, overwrite=overwrite)
+    if beams_hdu is not None:
+        hdul = fits.HDUList([hdu, beams_hdu])
+        hdul.writeto(name, overwrite=overwrite)
+    else:
+        hdu.writeto(name, overwrite=overwrite)
     return
 
 
@@ -152,6 +157,49 @@ def add_beampars(hdr, GaussPar, GaussPars=None, unit2deg=1.0):
     return hdr
 
 
+def create_beams_table(beams_data, cell2deg):
+    """
+    Add a BEAMS subtable to a FITS file.
+    
+    Parameters:
+    -----------
+    filename : str
+        The FITS file to modify
+    beams_data : dict
+        Dictionary containing arrays for:
+        - chan_id: Channel indices
+        - pol_id: Polarization indices
+        - bmaj: Major axis values (in degrees)
+        - bmin: Minor axis values (in degrees)
+        - bpa: Position angles (in degrees)
+    """
+    # Create the columns for the BEAMS table
+    nband = beams_data.band.size
+    npol = beams_data.corr.size
+    band_id = []
+    pol_id = []
+    for p in range(npol):
+        for b in range(nband):
+            band_id.append(b)
+            pol_id.append(p)
+    # we need the transpose for C -> F ordering
+    bmaj = beams_data.sel({'bpar': 'BMAJ'}).values.T.ravel() * cell2deg
+    bmin = beams_data.sel({'bpar': 'BMIN'}).values.T.ravel() * cell2deg
+    bpa = beams_data.sel({'bpar': 'BPA'}).values.T.ravel() * 180/np.pi
+    col1 = fits.Column(name='CHAN_ID', format='I', array=np.array(band_id))
+    col2 = fits.Column(name='POL_ID', format='I', array=np.array(pol_id))
+    col3 = fits.Column(name='BMAJ', format='E', array=bmaj, unit='deg')
+    col4 = fits.Column(name='BMIN', format='E', array=bmin, unit='deg')
+    col5 = fits.Column(name='BPA', format='E', array=bpa, unit='deg')
+    
+    # Create the BEAMS table HDU
+    cols = fits.ColDefs([col1, col2, col3, col4, col5])
+    beams_hdu = fits.BinTableHDU.from_columns(cols)
+    beams_hdu.name = 'BEAMS'
+
+    return beams_hdu
+
+
 def dds2fits(dsl, column, outname, norm_wsum=True,
              otype=np.float32, nthreads=1,
              do_mfs=True, do_cube=True):
@@ -160,60 +208,64 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
         unit = 'Jy/beam'
     else:
         unit = 'Jy/pixel'
-    dds = xds_from_list(dsl, drop_all_but=column,
+    dds = xds_from_list(dsl, drop_all_but=[column, 'PSFPARSN', 'WSUM'],
                         nthreads=nthreads,
                         order_freq=False)
     timeids = [ds.timeid for ds in dds]
     freqs = [ds.freq_out for ds in dds]
     freqs = np.unique(freqs)
     nband = freqs.size
-    nx, ny = getattr(dds[0], column).shape
     for timeid in timeids:
-        cube = np.zeros((nband, nx, ny))
-        wsums = np.zeros(nband)
-        Gausspars = []
-        wsum = 0.0
-        for i, ds in enumerate(dds):
-            if ds.timeid == timeid:
-                b = int(ds.bandid)
-                cube[b] = ds.get(column).values
-                wsums[b] = ds.wsum
-                wsum += ds.wsum
-                Gausspars.append(ds.gaussparn)
-        radec = (ds.ra, ds.dec)
-        cell_deg = np.rad2deg(ds.cell_rad)
-        nx, ny = ds.get(column).shape
-        fmask = wsums > 0
+        # filter by time ID
+        dst = [ds for ds in dds if ds.timeid==timeid]
+        # concat creating a new band axis
+        dsb = xr.concat(dst, dim='band')
+        # LB - do these remain in the correct order?
+        dsb = dsb.assign_coords({'band': np.arange(nband)})
+        wsums = dsb.WSUM.values
+        wsum = dsb.WSUM.sum(dim='band').values
+        cube = dsb.get(column).values
+        _, _, nx, ny = cube.shape
+        # these should be the same across band and corr axes
+        radec = (dsb.ra, dsb.dec)
+        cell_deg = np.rad2deg(dsb.cell_rad)
 
         if do_mfs:
-            freq_mfs = np.sum(freqs*wsums)/wsum
+            # we need a single freq_mfs for the cube
+            freq_mfs = np.sum(freqs[:, None]*wsums)/wsum.sum()
             if norm_wsum:
                 # already weighted by wsum
-                cube_mfs = np.sum(cube, axis=0)/wsum
+                cube_mfs = np.sum(cube, axis=0)/wsum[:, None, None]
             else:
                 # weigted sum
-                cube_mfs = np.sum(cube[fmask]*wsums[fmask, None, None],
-                                  axis=0)/wsum
+                cube_mfs = np.sum(cube*wsums[:, :, None, None],
+                                  axis=0)/wsum[:, None, None]
 
             name = basename + f'_time{timeid}_mfs.fits'
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_mfs,
-                        unit=unit, ms_time=ds.time_out)
-            hdr['WSUM'] = wsum
+                          unit=unit, ms_time=dsb.time_out)
+            # hdr['WSUM'] = wsum
+
+            # we should probably be fitting the MFS PSF instead
+            # of taking the mean here 
+            beams_hdu = create_beams_table(dsb.PSFPARSN, cell2deg=cell_deg)
+
             save_fits(cube_mfs, name, hdr, overwrite=True,
-                      dtype=otype)
+                      dtype=otype, beams_hdu=beams_hdu)
 
         if do_cube:
             if norm_wsum:
-                cube[fmask] = cube[fmask]/wsums[fmask, None, None]
+                cube = cube/wsums[:, :, None, None]
             name = basename + f'_time{timeid}.fits'
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freqs,
-                          unit=unit, ms_time=ds.time_out)
-            hdr = add_beampars(hdr, Gausspars[0], GaussPars=Gausspars)
-            for b in range(fmask.size):
-                Gausspars.append()
-                hdr[f'WSUM{b}'] = wsums[b]
+                          unit=unit, ms_time=dsb.time_out)
+            
+            beams_hdu = create_beams_table(dsb.PSFPARSN, cell2deg=cell_deg)
+            # for b in range(fmask.size):
+            #     Gausspars.append()
+            #     hdr[f'WSUM{b}'] = wsums[b]
             save_fits(cube, name, hdr, overwrite=True,
-                      dtype=otype)
+                      dtype=otype, beams_hdu=beams_hdu)
 
     return column
 

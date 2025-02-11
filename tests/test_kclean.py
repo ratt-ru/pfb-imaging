@@ -232,6 +232,7 @@ def test_kclean(do_gains, ms_name):
     grid_args["do_wgridding"] = True
     grid_args["psf_oversize"] = 2.0
     from pfb.workers.grid import _grid
+    import ipdb; ipdb.set_trace()
     _grid(**grid_args)
 
     # run kclean
