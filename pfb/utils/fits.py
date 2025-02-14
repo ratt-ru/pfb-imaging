@@ -1,7 +1,7 @@
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
-from datetime import datetime
+from datetime import datetime, timezone
 from casacore.quanta import quantity
 from astropy.time import Time
 from pfb.utils.naming import xds_from_list
@@ -57,27 +57,27 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
     """
 
     w = WCS(naxis=4)
-    w.wcs.ctype = ['RA---SIN', 'DEC--SIN', 'FREQ', 'STOKES']
+    w.wcs.ctype = ['RA---SIN', 'DEC--SIN', 'STOKES', 'FREQ']
     w.wcs.cdelt[0] = -cell_x
     w.wcs.cdelt[1] = cell_y
     w.wcs.cdelt[3] = 1
     w.wcs.cunit[0] = 'deg'
     w.wcs.cunit[1] = 'deg'
-    w.wcs.cunit[2] = 'Hz'
+    w.wcs.cunit[3] = 'Hz'
     if np.size(freq) > 1:
         nchan = freq.size
         crpix3 = nchan//2+1
         ref_freq = freq[crpix3]
         df = freq[1]-freq[0]
-        w.wcs.cdelt[2] = df
+        w.wcs.cdelt[3] = df
     else:
         if isinstance(freq, np.ndarray) and freq.size == 1:
             ref_freq = freq[0]
         else:
             ref_freq = freq
         crpix3 = 1
-    w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
-    w.wcs.crpix = [1 + nx//2, 1 + ny//2, crpix3, 1]
+    w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, 1, ref_freq]
+    w.wcs.crpix = [1 + nx//2, 1 + ny//2, 1, crpix3]
     w.wcs.equinox = 2000.0
 
     if header:
@@ -88,9 +88,10 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         header['BUNIT'] = unit
         header['SPECSYS'] = 'TOPOCENT'
         if ms_time is not None:
-            # TODO - this is probably a bit of a round about way of doing this
+            # TODO - probably a round about way of doing this
             unix_time = quantity(f'{ms_time}s').to_unix_time()
-            utc_iso = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+            utc_iso = datetime.fromtimestamp(unix_time,
+                            tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             header['UTC_TIME'] = utc_iso
             t = Time(utc_iso)
             t.format = 'fits'
@@ -113,22 +114,6 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         return header
     else:
         return w
-
-
-def compare_headers(hdr1, hdr2):
-    '''
-    utility function to ensure that WCS's are compatible
-    'NAXIS1', 'NAXIS2', 'NAXIS3', 'NAXIS4',
-    '''
-    keys = ['CTYPE1', 'CTYPE2', 'CTYPE3', 'CTYPE4',
-            'CDELT1', 'CDELT2', 'CDELT3', 'CDELT4',
-            'CRPIX1', 'CRPIX2', 'CRPIX3', 'CRPIX4',
-            'CUNIT1', 'CUNIT2', 'CUNIT3']
-    for key in keys:
-        try:
-            assert hdr1[key] == hdr2[key]
-        except BaseException:
-            raise ValueError("Headers do not match on key %s. " % key, hdr1[key], hdr2[key])
 
 
 def add_beampars(hdr, GaussPar, GaussPars=None, unit2deg=1.0):
@@ -196,13 +181,15 @@ def create_beams_table(beams_data, cell2deg):
     cols = fits.ColDefs([col1, col2, col3, col4, col5])
     beams_hdu = fits.BinTableHDU.from_columns(cols)
     beams_hdu.name = 'BEAMS'
+    beams_hdu.header['EXTNAME'] = 'BEAMS'
 
     return beams_hdu
 
 
 def dds2fits(dsl, column, outname, norm_wsum=True,
              otype=np.float32, nthreads=1,
-             do_mfs=True, do_cube=True):
+             do_mfs=True, do_cube=True,
+             psfpars_mfs=None):
     basename = outname + '_' + column.lower()
     if norm_wsum:
         unit = 'Jy/beam'
@@ -245,10 +232,14 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_mfs,
                           unit=unit, ms_time=dsb.time_out)
             # hdr['WSUM'] = wsum
-
-            # we should probably be fitting the MFS PSF instead
-            # of taking the mean here 
-            beams_hdu = create_beams_table(dsb.PSFPARSN, cell2deg=cell_deg)
+            da_mfs = xr.DataArray(data=np.array(psfpars_mfs[timeid])[None, :, :],
+                                  coords={'band': np.arange(1),
+                                          'corr': dsb.corr.values,
+                                          'bpar': dsb.bpar.values})
+            if psfpars_mfs is not None:
+                beams_hdu = create_beams_table(da_mfs, cell2deg=cell_deg)
+            else:
+                beams_hdu = None
 
             save_fits(cube_mfs, name, hdr, overwrite=True,
                       dtype=otype, beams_hdu=beams_hdu)
@@ -260,10 +251,8 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freqs,
                           unit=unit, ms_time=dsb.time_out)
             
-            beams_hdu = create_beams_table(dsb.PSFPARSN, cell2deg=cell_deg)
-            # for b in range(fmask.size):
-            #     Gausspars.append()
-            #     hdr[f'WSUM{b}'] = wsums[b]
+            if 'PSFPARSN' in dsb:
+                beams_hdu = create_beams_table(dsb.PSFPARSN, cell2deg=cell_deg)
             save_fits(cube, name, hdr, overwrite=True,
                       dtype=otype, beams_hdu=beams_hdu)
 

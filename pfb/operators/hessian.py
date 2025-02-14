@@ -520,3 +520,4 @@ def hessian_jax(nx, ny,
                           s=(nx_psf, ny_psf),
                           norm='backward')[:, 0:nx, 0:ny]
     return xout + eta*x
+

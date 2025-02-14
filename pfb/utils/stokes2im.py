@@ -12,7 +12,7 @@ from pfb.utils.misc import fitcleanbeam
 from pfb.operators.gridder import wgridder_conventions
 from ducc0.wgridder.experimental import vis2dirty
 from casacore.quanta import quantity
-from datetime import datetime
+from datetime import datetime, timezone
 from ducc0.misc import resize_thread_pool
 from pfb.utils.astrometry import get_coordinates
 from scipy.constants import c as lightspeed
@@ -353,7 +353,7 @@ def single_stokes_image(
         x = None
 
     unix_time = quantity(f'{time_out}s').to_unix_time()
-    utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+    utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
     cell_deg = np.rad2deg(cell_rad)
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],

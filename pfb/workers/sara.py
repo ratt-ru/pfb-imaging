@@ -137,8 +137,11 @@ def _sara(**kw):
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds, dds_list = xds_from_url(dds_name)
 
-    nx, ny = dds[0].x.size, dds[0].y.size
-    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
+    ncorr, nx, ny = dds[0].x.size, dds[0].y.size
+    if ncorr > 1:
+        raise NotImplementedError("Joint polarisation deconvolution not "
+                                  "yet supported for sara algorithm")
+    _, nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
     freq_out = []
     time_out = []
@@ -178,6 +181,8 @@ def _sara(**kw):
     wsums = np.stack([ds.wsum for ds in dds], axis=0)
     fsel = wsums > 0  # keep track of empty bands
 
+    # remove corr axis
+
     wsum = np.sum(wsums)
     wsums /= wsum
     abspsf /= wsum
@@ -207,7 +212,7 @@ def _sara(**kw):
         ntol = len(opts.pd_tol)
         pd_tol = opts.pd_tol
     except TypeError:
-        assert ininstance(opts.pd_tol, float)
+        assert isinstance(opts.pd_tol, float)
         ntol = 1
         pd_tol = [opts.pd_tol]
     niters = opts.niter

@@ -739,12 +739,18 @@ def image_data_products(dsl,
                            flip_w=flip_w)
     dso.to_zarr(output_name, mode='a')
 
+    outputs = {}
     # return residual to report stats
-    # one of these should always succeed
-    try:
-        return residual, wsum
-    except:
-        return dirty, wsum
+    if do_residual and model is not None:
+        outputs['residual'] = residual
+    else:
+        outputs['residual'] = dirty
+    # PSF returned to fit MFS PSFPARS
+    if do_psf:
+        outputs['psf'] = psf
+    outputs['wsum'] = wsum
+    outputs['timeid'] = attrs['timeid']
+    return outputs
 
 
 def compute_residual(dsl,
@@ -782,50 +788,52 @@ def compute_residual(dsl,
     flip_w = ds.flip_w
     x0 = ds.x0
     y0 = ds.y0
+    ncorr = ds.corr.size
 
     tread = time() - ti
 
     ti = time()
     # do not apply weights in this direction
-    model_vis = dirty2vis(
-        uvw=uvw,
-        freq=freq,
-        dirty=beam*model,
-        pixsize_x=cellx,
-        pixsize_y=celly,
-        center_x=x0,
-        center_y=y0,
-        flip_u=flip_u,
-        flip_v=flip_v,
-        flip_w=flip_w,
-        epsilon=epsilon,
-        do_wgridding=do_wgridding,
-        nthreads=nthreads,
-        divide_by_n=False,  # incorporate in smooth beam
-        sigma_min=1.1, sigma_max=3.0,
-        verbosity=0)
-    tdegrid = time() - ti
-
-    ti = time()
-    convim = vis2dirty(
-        uvw=uvw,
-        freq=freq,
-        vis=model_vis,
-        wgt=wgt,
-        mask=mask,
-        npix_x=nx, npix_y=ny,
-        pixsize_x=cellx, pixsize_y=celly,
-        center_x=x0, center_y=y0,
-        flip_u=flip_u,
-        flip_v=flip_v,
-        flip_w=flip_w,
-        epsilon=epsilon,
-        do_wgridding=do_wgridding,
-        divide_by_n=False,  # incorporate in smooth beam
-        nthreads=nthreads,
-        sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=double_accum,
-        verbosity=0)
+    convim = np.zeros_like(dirty)
+    for c in range(ncorr):
+        model_vis = dirty2vis(
+            uvw=uvw,
+            freq=freq,
+            dirty=beam[c]*model[c],
+            pixsize_x=cellx,
+            pixsize_y=celly,
+            center_x=x0,
+            center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            nthreads=nthreads,
+            divide_by_n=False,  # incorporate in smooth beam
+            sigma_min=1.1, sigma_max=3.0,
+            verbosity=0)
+    
+        vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=model_vis,
+            wgt=wgt[c],
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cellx, pixsize_y=celly,
+            center_x=x0, center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            divide_by_n=False,  # incorporate in smooth beam
+            nthreads=nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=double_accum,
+            verbosity=0,
+            dirty=convim[c])
     tgrid = time() - ti
 
     # this is the once attenuated residual since
@@ -835,24 +843,24 @@ def compute_residual(dsl,
     tdiff = time() - ti
 
     ti = time()
-    ds['MODEL'] = (('x','y'), model)
-    ds['RESIDUAL'] = (('x','y'), residual)
+    ds['MODEL'] = (('corr', 'x','y'), model)
+    ds['RESIDUAL'] = (('corr', 'x','y'), residual)
     tassign = time() - ti
 
     # we only need to write MODEL and RESIDUAL
     ds = ds[['RESIDUAL','MODEL']]
 
     # save
+    # LB - Why is twrite still siginificant?
     ti = time()
     with cf.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(ds.to_zarr, output_name, mode='a')
     twrite = time() - ti
 
     ttot = time() - tii
-    ttally = tread + tdegrid + tgrid + tdiff + tassign + twrite
+    ttally = tread + tgrid + tdiff + tassign + twrite
     if verbosity > 1:
         print(f'tread = {tread/ttot}')
-        print(f'tdegrid = {tdegrid/ttot}')
         print(f'tgrid = {tgrid/ttot}')
         print(f'tdiff = {tdiff/ttot}')
         print(f'tassign = {tassign/ttot}')

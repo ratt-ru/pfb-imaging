@@ -83,7 +83,7 @@ def grid(**kw):
     from pfb.utils.fits import dds2fits
 
     ti = time.time()
-    residual_mfs = _grid(**opts)
+    psfpars_mfs = _grid(**opts)
 
     dds, dds_list = xds_from_url(dds_store.url)
 
@@ -99,7 +99,8 @@ def grid(**kw):
                                 norm_wsum=True,
                                 nthreads=opts.nthreads,
                                 do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
             futures.append(fut)
         if opts.psf:
             fut = client.submit(dds2fits,
@@ -109,7 +110,8 @@ def grid(**kw):
                                 norm_wsum=True,
                                 nthreads=opts.nthreads,
                                 do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
             futures.append(fut)
         if opts.residual and 'RESIDUAL' in dds[0]:
             fut = client.submit(dds2fits,
@@ -119,7 +121,8 @@ def grid(**kw):
                                 norm_wsum=False,
                                 nthreads=opts.nthreads,
                                 do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
             futures.append(fut)
         if 'MODEL' in dds[0]:
             fut = client.submit(dds2fits,
@@ -129,7 +132,8 @@ def grid(**kw):
                                 norm_wsum=True,
                                 nthreads=opts.nthreads,
                                 do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
             futures.append(fut)
         if opts.noise:
             fut = client.submit(dds2fits,
@@ -139,7 +143,8 @@ def grid(**kw):
                                 norm_wsum=True,
                                 nthreads=opts.nthreads,
                                 do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
             futures.append(fut)
 
         if 'BEAM' in dds[0]:
@@ -150,7 +155,8 @@ def grid(**kw):
                                 norm_wsum=False,
                                 nthreads=opts.nthreads,
                                 do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
             futures.append(fut)
 
         for fut in as_completed(futures):
@@ -177,15 +183,12 @@ def _grid(**kw):
     from itertools import cycle
     import fsspec
     from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.misc import set_image_size
+    from pfb.utils.misc import set_image_size, fitcleanbeam
     from pfb.operators.gridder import image_data_products, wgridder_conventions
     import xarray as xr
     from pfb.utils.astrometry import get_coordinates
     from africanus.coordinates import radec_to_lm
     from pfb.utils.naming import xds_from_url, cache_opts, get_opts
-    import sympy as sm
-    from sympy.utilities.lambdify import lambdify
-    from sympy.parsing.sympy_parser import parse_expr
 
     try:
         client = get_client()
@@ -264,7 +267,6 @@ def _grid(**kw):
         print(f"Removing {dds_store.url}", file=log)
         dds_store.rm(recursive=True)
 
-    optsp_name = dds_store.url + '/opts.pkl'
     fs = fsspec.filesystem(protocol)
     if dds_store.exists() and not opts.overwrite:
         # get opts from previous run
@@ -486,21 +488,42 @@ def _grid(**kw):
                             workers=wname)
         futures.append(fut)
 
-    residual_mfs = np.zeros((ncorr, nx, ny), dtype=float)
-    wsum = np.zeros(ncorr, dtype=float)
+    residual_mfs = {}
+    wsum = {}
+    if opts.psf:
+        psf_mfs = {}
     nds = len(futures)
     n_launched = 1
     for fut in as_completed(futures):
         print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
-        residual, wsumb = fut.result()
-        residual_mfs += residual
-        wsum += wsumb
+        outputs = fut.result()
+        timeid = outputs['timeid']
+        residual_mfs.setdefault(timeid, np.zeros((ncorr, nx, ny), dtype=float))
+        residual_mfs[timeid] += outputs['residual']
+        wsum.setdefault(timeid, np.zeros(ncorr, dtype=float))
+        wsum[timeid] += outputs['wsum']
+        if opts.psf:
+            psf_mfs.setdefault(timeid, np.zeros((ncorr, nx_psf, ny_psf), dtype=float))
+            psf_mfs[timeid] += outputs['psf']
         n_launched += 1
 
     print("\n")  # after progressbar above
 
-    residual_mfs /= wsum[:, None, None]
-    for c in range(ncorr):
-        rms = np.std(residual_mfs[c])
-        rmax = np.abs(residual_mfs[c]).max()
-        print(f"Initial max resid for {corrs[c]} = {rmax:.3e}, rms resid = {rms:.3e}", file=log)
+    for timeid in residual_mfs.keys():
+        # get MFS PSFPARSN
+        # resolution in pixels
+        if opts.psf:
+            psfparsn = {}
+            psf_mfs[timeid] /= wsum[timeid][:, None, None]
+            psfparsn[timeid] = fitcleanbeam(psf_mfs[timeid])
+        else:
+            psfparsn = None
+        
+        residual_mfs[timeid] /= wsum[timeid][:, None, None]
+        for c in range(ncorr):
+            rms = np.std(residual_mfs[timeid][c])
+            rmax = np.abs(residual_mfs[timeid][c]).max()
+            print(f"Time ID {timeid}: {corrs[c]} - resid max = {rmax:.3e}, "
+                  f"rms = {rms:.3e}", file=log)
+            
+    return psfparsn
