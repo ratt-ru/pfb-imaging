@@ -523,16 +523,16 @@ def image_data_products(dsl,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
 
-    if l2_reweight_dof:
-        # normalise to absolute units
-        ressq = (residual_vis*wgt*residual_vis.conj()).real
-        ssq = ressq[mask>0].sum()
-        ovar = ssq/mask.sum()
-        wgt /= ovar
-        ressq = (residual_vis*wgt*residual_vis.conj()).real
-        meanf = np.mean(ressq[mask>0])
-        stdf = np.std(ressq[mask>0])
-        print(f"Band {bandid} after: mean = {meanf:.3e}, std = {stdf:.3e}")
+    # if l2_reweight_dof:
+    #     # normalise to absolute units
+    #     ressq = (residual_vis*wgt*residual_vis.conj()).real
+    #     ssq = ressq[mask>0].sum()
+    #     ovar = ssq/mask.sum()
+    #     wgt /= ovar
+    #     ressq = (residual_vis*wgt*residual_vis.conj()).real
+    #     meanf = np.mean(ressq[mask>0])
+    #     stdf = np.std(ressq[mask>0])
+    #     print(f"Band {bandid} after: mean = {meanf:.3e}, std = {stdf:.3e}")
 
         # import matplotlib.pyplot as plt
         # from scipy.stats import norm
