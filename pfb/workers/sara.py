@@ -14,13 +14,19 @@ from pfb.parser.schemas import schema
 @clickify_parameters(schema.sara)
 def sara(**kw):
     '''
-    Deconvolution using SARA regularisation
+    Deconvolution using some type of convex regularizer sara.
+
     '''
+
+    # Import options in OmegaConf object from kwargs dict
     opts = OmegaConf.create(kw)
 
+    # Make sure base folders exist and set default naming conventions
     from pfb.utils.naming import set_output_names
-    opts, basedir, oname = set_output_names(opts)
+    opts, _ , oname = set_output_names(opts)
 
+
+    # Instantiate nthreads and ncpu
     import psutil
     nthreads = psutil.cpu_count(logical=True)
     ncpu = psutil.cpu_count(logical=False)
@@ -28,26 +34,32 @@ def sara(**kw):
         opts.nthreads = nthreads//2
         ncpu = ncpu//2
 
+    
+    # No more opts can be added by writting into opts.
     OmegaConf.set_struct(opts, True)
 
+    
+    # Environment variables setup (mostly for parralelization using numba)
     from pfb import set_envs
     from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
+
+    # Initialize log file and timestamps
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/sara_{timestamp}.log'
     pyscilog.log_to_file(logname)
     print(f'Logs will be written to {logname}', file=log)
-
     # TODO - prettier config printing
     print('Input Options:', file=log)
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    from pfb.utils.naming import xds_from_url
 
+    # Running sara from DDS
+    from pfb.utils.naming import xds_from_url
     basename = opts.output_filename
     fits_oname = f'{opts.fits_output_folder}/{oname}'
     dds_name = f'{basename}_{opts.suffix}.dds'
@@ -55,8 +67,10 @@ def sara(**kw):
     ti = time.time()
     _sara(**opts)
 
-    dds, dds_list = xds_from_url(dds_name)
+    _, dds_list = xds_from_url(dds_name)
 
+
+    # Writing FITS Files
     if opts.fits_mfs or opts.fits:
         from pfb.utils.fits import dds2fits
         print(f"Writing fits files to {fits_oname}_{opts.suffix}",
@@ -105,6 +119,7 @@ def _sara(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
+    # Imports
     from functools import partial
     import numpy as np
     import xarray as xr
@@ -126,6 +141,7 @@ def _sara(**kw):
     from daskms.fsspec_store import DaskMSStore
     from ducc0.fft import c2c
 
+    # Reading DDS
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
         fits_oname = opts.fits_output_folder + '/' + basename.split('/')[-1]
@@ -135,24 +151,32 @@ def _sara(**kw):
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds, dds_list = xds_from_url(dds_name)
 
+    
+    # Reading image size (nx,ny)
     nx, ny = dds[0].x.size, dds[0].y.size
-    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
-    lastsize = ny_psf
+
+    # Getting all times and freqs from all bands
     freq_out = []
     time_out = []
     for ds in dds:
         freq_out.append(ds.freq_out)
         time_out.append(ds.time_out)
+
+    # Looking at unique values to get number of bands
     freq_out = np.unique(np.array(freq_out))
     time_out = np.unique(np.array(time_out))
+
     if time_out.size > 1:
         raise NotImplementedError('Only static models currently supported')
-
     nband = freq_out.size
+
+
+
 
     # drop_vars after access to avoid duplicates in memory
     # and avoid unintentional side effects?
-    output_type = dds[0].DIRTY.dtype
+
+    # Reading RESIDUAL, MODEL and UPDATE if exist else setting default.
     if 'RESIDUAL' in dds[0]:
         residual = np.stack([ds.RESIDUAL.values for ds in dds], axis=0)
         dds = [ds.drop_vars('DIRTY') for ds in dds]
@@ -160,63 +184,75 @@ def _sara(**kw):
     else:
         residual = np.stack([ds.DIRTY.values for ds in dds], axis=0)
         dds = [ds.drop_vars('DIRTY') for ds in dds]
+
     if 'MODEL' in dds[0]:
         model = np.stack([ds.MODEL.values for ds in dds], axis=0)
         dds = [ds.drop_vars('MODEL') for ds in dds]
     else:
         model = np.zeros((nband, nx, ny))
+
+
     if 'UPDATE' in dds[0]:
         update = np.stack([ds.UPDATE.values for ds in dds], axis=0)
         dds = [ds.drop_vars('UPDATE') for ds in dds]
     else:
         update = np.zeros((nband, nx, ny))
+
+
+    # Reading PSF, BEAM and current weigths.
     abspsf = np.stack([np.abs(ds.PSFHAT.values) for ds in dds], axis=0)
     dds = [ds.drop_vars('PSFHAT') for ds in dds]
     beam = np.stack([ds.BEAM.values for ds in dds], axis=0)
-    wsums = np.stack([ds.wsum for ds in dds], axis=0)
-    fsel = wsums > 0  # keep track of empty bands
+    
 
-    wsum = np.sum(wsums)
-    wsums /= wsum
-    abspsf /= wsum
+    # Applying weights to residual, model and psf. 
+    wsums = np.stack([ds.wsum for ds in dds], axis=0) # sum of weights per bands
+    fsel = wsums > 0  # keep track of empty bands
+    wsum = np.sum(wsums) # global sum of weights 
+    wsums /= wsum # ?
     residual /= wsum
     residual_mfs = np.sum(residual, axis=0)
     model_mfs = np.mean(model[fsel], axis=0)
+    abspsf /= wsum 
 
-    # for intermediary results
-    nx = dds[0].x.size
-    ny = dds[0].y.size
+
+    # Reading from first band : RA, DEC, cell sizes and ref frequencies. 
+    # Setting FITS header for intermediary results
     ra = dds[0].ra
     dec = dds[0].dec
-    x0 = dds[0].x0
-    y0 = dds[0].y0
     radec = [ra, dec]
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
     ref_freq = np.mean(freq_out)
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq) 
+
+    # If from previous run, get current niter else starting from 0.
     if 'niters' in dds[0].attrs:
         iter0 = dds[0].niters
     else:
         iter0 = 0
 
-    # Allow calling with pd_tol as float
+    # Allow calling with pd_tol as float,
+    # (pd_tol is either a float or a list of float giving the primal dual tolerance for convergence per major iteration).
     try:
         ntol = len(opts.pd_tol)
         pd_tol = opts.pd_tol
     except TypeError:
-        assert ininstance(opts.pd_tol, float)
+        assert isinstance(opts.pd_tol, float)
         ntol = 1
         pd_tol = [opts.pd_tol]
+
+
     niters = opts.niter
     if ntol <= niters:
-        pd_tolf = pd_tol[-1]
-        pd_tol += [pd_tolf]*niters  # no harm in too many
+        pd_tolf = pd_tol[-1] # pd_tolf is the final tolerance.
+        pd_tol += [pd_tolf]*niters  # no harm in too many.
 
-    # image space hessian
-    # pre-allocate arrays for doing FFT's
+    # Image space hessian.
+    # Pre-allocate arrays for doing FFT's.
     real_type = 'f8'
-    complex_type = 'c16'
+
+    # Defining the preconditionner.
     precond = hess_psf(nx, ny, abspsf,
                        beam=beam,
                        eta=opts.eta*wsums,
@@ -226,7 +262,6 @@ def _sara(**kw):
                        cgverbose=opts.cg_verbose,
                        cgrf=opts.cg_report_freq,
                        taper_width=np.minimum(int(0.1*nx), 32))
-
     if opts.hess_norm is None:
         # if the grid worker had been rerun hess_norm won't be in attrs
         if 'hess_norm' in dds[0].attrs:
@@ -247,6 +282,9 @@ def _sara(**kw):
         hess_norm = opts.hess_norm
         print(f"Using provided hess-norm of beta = {hess_norm:.3e}", file=log)
 
+
+
+    # Setting up the dictionary.
     print("Setting up dictionary", file=log)
     bases = tuple(opts.bases.split(','))
     nbasis = len(bases)
@@ -257,22 +295,23 @@ def _sara(**kw):
     print(f"Using {psi.nthreads_per_band} numba threads for each band", file=log)
     print(f"Using {thread_pool_size()} threads for gridding", file=log)
 
-    # number of frequency basis functions
+
+    # Setting up the number of frequency basis functions.
     if opts.nbasisf is None:
         nbasisf = int(np.sum(fsel))
     else:
         nbasisf = opts.nbasisf
     print(f"Using {nbasisf} frequency basis functions", file=log)
 
-    # a value less than zero turns L1 reweighting off
-    # we'll start on convergence or at the iteration
-    # indicated by l1-reweight-from, whichever comes first
+
+    # Setting up L1 reweighting.
+    ### a value less than zero turns L1 reweighting off
+    ### we'll start on convergence or at the iteration
+    ### indicated by l1-reweight-from, whichever comes first
+    ### we need an array to put the components in for reweighting
     l1_reweight_from = opts.l1_reweight_from
     l1reweight_active = False
-    # we need an array to put the components in for reweighting
     outvar = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=real_type)
-
-    dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=residual.dtype)
     if l1_reweight_from == 0:
         print('Initialising with L1 reweighted', file=log)
         if not update.any():
@@ -302,6 +341,10 @@ def _sara(**kw):
         reweighter = None
         l1reweight_active = False
 
+
+    # Compute the RMS from the RESIDUAL. 
+    ### If rms_outside_model will compute std by using exclusively pixels where model is 0.
+    ### Computing max RMS as well.
     if opts.rms_outside_model and model.any():
         rms_mask = model_mfs == 0
         rms = np.std(residual_mfs[rms_mask])
@@ -311,6 +354,8 @@ def _sara(**kw):
     best_rms = rms
     best_rmax = rmax
     best_model = model.copy()
+
+    # Initializing hyper parameters.
     diverge_count = 0
     eps = 1.0
     write_futures = None
@@ -318,9 +363,25 @@ def _sara(**kw):
           file=log)
     if opts.skip_model:
         mrange = []
-    else:
+    else: # If worker ran after iter0 iteration already done.
         mrange = range(iter0, iter0 + opts.niter)
+
+
+    # Initializing dual variable.
+    dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=residual.dtype)
+
+    # Major loop.
     for k in mrange:
+
+    ## Compute regularizer hyperparameter.
+        if iter0 == 0:
+            lam = opts.init_factor * opts.rmsfactor * rms
+        else:
+            lam = opts.rmsfactor*rms
+        print(f'Solving for model with lambda = {lam}', file=log)
+    
+
+    ## Compute update (gradient descent on data fitting term).
         print('Solving for update', file=log)
         residual *= beam  # avoid copy
         update = precond.idot(residual,
@@ -331,14 +392,11 @@ def _sara(**kw):
                   fits_oname + f'_{opts.suffix}_update_{k+1}.fits',
                   hdr_mfs)
 
+
+    ## Compute Prox of regularizer using a primal dual algorithm.
         modelp = deepcopy(model)
         xtilde = model + opts.gamma * update
         grad21 = lambda x: -precond.dot(xtilde - x)/opts.gamma
-        if iter0 == 0:
-            lam = opts.init_factor * opts.rmsfactor * rms
-        else:
-            lam = opts.rmsfactor*rms
-        print(f'Solving for model with lambda = {lam}', file=log)
         model, dual = primal_dual(model,
                                   dual,
                                   lam,
@@ -357,7 +415,7 @@ def _sara(**kw):
                                   report_freq=opts.pd_report_freq,
                                   gamma=opts.gamma)
 
-        # write component model
+    ## Interpolate Multi frequency model, compute residual and write in MDS and FITS.
         print(f"Writing model to {basename}_{opts.suffix}_model.mds",
               file=log)
         try:
@@ -399,6 +457,8 @@ def _sara(**kw):
                 'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
                 'parametrisation': expr  # already converted to str
             }
+
+
             for key, val in opts.items():
                 if key == 'pd_tol':
                     mattrs[key] = pd_tolf
@@ -431,10 +491,12 @@ def _sara(**kw):
         except Exception as e:
             print(f"Exception {e} raised during model fit .", file=log)
 
+
         model_mfs = np.mean(model[fsel], axis=0)
         save_fits(model_mfs,
                   fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
+
 
         # make sure write futures have finished
         if write_futures is not None:
@@ -462,6 +524,8 @@ def _sara(**kw):
         save_fits(residual_mfs,
                   fits_oname + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
+        
+    ## Compute new RMS and check convergence (divergence) of algorithm.
         rmsp = rms
         if opts.rms_outside_model:
             rms_mask = model_mfs == 0
@@ -477,6 +541,10 @@ def _sara(**kw):
             best_rmax = rmax
             best_model = model.copy()
 
+        print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
+              f"rms = {rms:.3e}, eps = {eps:.3e}",
+              file=log)
+        
         # these are not updated in compute_residual
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
@@ -489,10 +557,6 @@ def _sara(**kw):
             if (model==best_model).all():
                 ds['MODEL_BEST'] = (('x', 'y'), best_model[b])
 
-            # ds.assign(**{
-            #     'MODEL_BEST': (('x', 'y'), best_model[b]),
-            #     'UPDATE': (('x', 'y'), update[b]),
-            # })
             attrs = {}
             attrs['rms'] = best_rms
             attrs['rmax'] = best_rmax
@@ -500,17 +564,11 @@ def _sara(**kw):
             attrs['hess_norm'] = hess_norm
             ds = ds.assign_attrs(**attrs)
 
-
             with cf.ThreadPoolExecutor(max_workers=1) as executor:
                 fut = executor.submit(ds.to_zarr, ds_name, mode='a')
                 write_futures.append(fut)
 
-            # ds.to_zarr(ds_name, mode='a')
 
-
-        print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
-              f"rms = {rms:.3e}, eps = {eps:.3e}",
-              file=log)
 
         if eps < opts.tol:
             # do not converge prematurely
