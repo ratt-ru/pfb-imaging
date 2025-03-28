@@ -110,6 +110,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         # header['EQUINOX'] = 2000.0
         header['BSCALE'] = 1.0
         header['BZERO'] = 0.0
+        header['CASAMBM'] = True  # we need this to pick up the beams table
 
         return header
     else:
@@ -171,17 +172,22 @@ def create_beams_table(beams_data, cell2deg):
     bmaj = beams_data.sel({'bpar': 'BMAJ'}).values.T.ravel() * cell2deg
     bmin = beams_data.sel({'bpar': 'BMIN'}).values.T.ravel() * cell2deg
     bpa = beams_data.sel({'bpar': 'BPA'}).values.T.ravel() * 180/np.pi
-    col1 = fits.Column(name='CHAN_ID', format='I', array=np.array(band_id))
-    col2 = fits.Column(name='POL_ID', format='I', array=np.array(pol_id))
-    col3 = fits.Column(name='BMAJ', format='E', array=bmaj, unit='deg')
-    col4 = fits.Column(name='BMIN', format='E', array=bmin, unit='deg')
-    col5 = fits.Column(name='BPA', format='E', array=bpa, unit='deg')
+    col1 = fits.Column(name='BMAJ', format='1E', array=bmaj, unit='arcsec')
+    col2 = fits.Column(name='BMIN', format='1E', array=bmin, unit='arcsec')
+    col3 = fits.Column(name='BPA', format='1E', array=bpa, unit='deg')
+    col4 = fits.Column(name='CHAN', format='1J', array=np.array(band_id))
+    col5 = fits.Column(name='POL', format='1J', array=np.array(pol_id))
     
     # Create the BEAMS table HDU
     cols = fits.ColDefs([col1, col2, col3, col4, col5])
     beams_hdu = fits.BinTableHDU.from_columns(cols)
     beams_hdu.name = 'BEAMS'
     beams_hdu.header['EXTNAME'] = 'BEAMS'
+    beams_hdu.header['EXTVER'] = 1
+    beams_hdu.header['XTENSION'] = 'BINTABLE'
+    beams_hdu.header.comments['XTENSION'] = 'Binary extension'
+    beams_hdu.header['NCHAN'] = nband
+    beams_hdu.header['NPOL'] = npol
 
     return beams_hdu
 

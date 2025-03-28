@@ -274,7 +274,7 @@ def _degrid(**kw):
                 uvw = clone(ds.UVW.data)
                 assert len(uvw.chunks[0]) == len(tidx.chunks[0])
 
-                nrow, nchan, ncorr = getattr(ds, column_name).data.shape
+                ncorr = ds.corr.size
 
                 vis = comps2vis(uvw,
                                 utime,
