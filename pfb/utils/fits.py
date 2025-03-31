@@ -133,14 +133,14 @@ def add_beampars(hdr, GaussPar, GaussPars=None, unit2deg=1.0):
     if not np.isnan(GaussPar).any():
         hdr['BMAJ'] = GaussPar[0]*unit2deg
         hdr['BMIN'] = GaussPar[1]*unit2deg
-        hdr['BPA'] = GaussPar[2]*unit2deg
+        hdr['BPA'] = 90-GaussPar[2]*unit2deg
 
     if GaussPars is not None:
         for i in range(len(GaussPars)):
             if not np.isnan(GaussPars[i]).any():
                 hdr['BMAJ' + str(i+1)] = GaussPars[i][0]*unit2deg
                 hdr['BMIN' + str(i+1)] = GaussPars[i][1]*unit2deg
-                hdr['PA' + str(i+1)] = GaussPars[i][2]*unit2deg
+                hdr['PA' + str(i+1)] = 90-GaussPars[i][2]*unit2deg
 
     return hdr
 
