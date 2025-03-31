@@ -313,8 +313,6 @@ def single_stokes(
     else:
         raise ValueError(f"Unknown beam model {opts.beam_model}")
 
-    # print(data.shape, weight.shape, mask.shape)
-
     # for operations that follow it will be preferable to have the corr axis
     # first for contiguity
     data_vars = {}

@@ -517,9 +517,9 @@ def image_data_products(dsl,
         if ovar:
             # scale the natural weights
             # RHS is weight relative to unity since wgtp included in ressq
-            meani = np.mean(ressq[:, mask>0]/ovar)
-            stdi = np.std(ressq[:, mask>0]/ovar)
-            print(f"Band {bandid} before: mean = {meani:.3e}, std = {stdi:.3e}")
+            # meani = np.mean(ressq[:, mask>0]/ovar)
+            # stdi = np.std(ressq[:, mask>0]/ovar)
+            # print(f"Band {bandid} before: mean = {meani:.3e}, std = {stdi:.3e}")
             denom = (l2_reweight_dof + ressq/ovar[:, None, None])
             # the expectation value of the complex ressq above is 2
             # if we do this jointly over correlations this should be 2*ncorr
@@ -530,7 +530,6 @@ def image_data_products(dsl,
     if robustness is not None:
         numba_threads = np.maximum(nthreads, 1)
         numba.set_num_threads(numba_threads)
-        # import ipdb; ipdb.set_trace()
         counts = _compute_counts(uvw,
                                  freq,
                                  mask,
@@ -554,16 +553,16 @@ def image_data_products(dsl,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
 
-    if l2_reweight_dof:
-        # normalise to absolute units
-        ressq = (residual_vis*wgt*residual_vis.conj()).real
-        ssq = ressq[:, mask>0].sum()
-        ovar = ssq/mask.sum()/2  # complex
-        wgt /= ovar[:, None, None]
-        ressq = (residual_vis*wgt*residual_vis.conj()).real
-        meanf = np.mean(ressq[mask>0])
-        stdf = np.std(ressq[mask>0])
-        print(f"Band {bandid} after: mean = {meanf:.3e}, std = {stdf:.3e}")
+    # if l2_reweight_dof:
+    #     # normalise to absolute units
+    #     ressq = (residual_vis*wgt*residual_vis.conj()).real
+    #     ssq = ressq[mask>0].sum()
+    #     ovar = ssq/mask.sum()
+    #     wgt /= ovar
+    #     ressq = (residual_vis*wgt*residual_vis.conj()).real
+    #     meanf = np.mean(ressq[mask>0])
+    #     stdf = np.std(ressq[mask>0])
+    #     print(f"Band {bandid} after: mean = {meanf:.3e}, std = {stdf:.3e}")
 
         # import matplotlib.pyplot as plt
         # from scipy.stats import norm
