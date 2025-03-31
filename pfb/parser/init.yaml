@@ -76,7 +76,7 @@ inputs:
   channels-per-image:
     dtype: int
     abbreviation: cpi
-    default: 32
+    default: -1
     info:
       Number of channels per image for degridding resolution.
       Any of (-1, 0, None) implies single dataset per spw.
@@ -141,6 +141,7 @@ outputs:
     implicit: '{current.output-filename}_{current.product}.xds'
     dtype: Directory
     must_exist: false
+    mkdir: false
 
 policies:
   pass_missing_as_none: true

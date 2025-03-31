@@ -256,8 +256,6 @@ def single_stokes(
 
     if opts.bda_decorr < 1:
         from africanus.averaging import bda
-
-        print(' ~~~~~~~~~~~~~~~~~~~~  Here:', flag.shape, weight.shape, data.shape)
         res = bda(time,
                   interval,
                   ant1, ant2,
