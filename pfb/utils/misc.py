@@ -91,38 +91,6 @@ def kron_matvec2(A, b):
     return x
 
 
-def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
-    S0, S1, PA = GaussPar
-    Smaj = S0  #np.maximum(S0, S1)
-    Smin = S1  #np.minimum(S0, S1)
-    # print(f'using ex = {Smaj}, ey = {Smin}')
-    A = np.array([[1. / Smin ** 2, 0],
-                  [0, 1. / Smaj ** 2]])
-
-    c, s, t = np.cos, np.sin, np.deg2rad(-PA)
-    R = np.array([[c(t), -s(t)],
-                  [s(t), c(t)]])
-    A = np.dot(np.dot(R.T, A), R)
-    sOut = xin.shape
-    # only compute the result out to 5 * emaj
-    extent = (nsigma * Smaj)**2
-    xflat = xin.squeeze()
-    yflat = yin.squeeze()
-    idx, idy = np.where(xflat**2 + yflat**2 <= extent)
-    x = np.array([xflat[idx, idy].ravel(), yflat[idx, idy].ravel()])
-    R = np.einsum('nb,bc,cn->n', x.T, A, x)
-    # need to adjust for the fact that GaussPar corresponds to FWHM
-    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
-    tmp = np.exp(-fwhm_conv * R)
-    gausskern = np.zeros(xflat.shape, dtype=np.float64)
-    gausskern[idx, idy] = tmp
-
-    if normalise:
-        gausskern /= np.sum(gausskern)
-    return np.ascontiguousarray(gausskern.reshape(sOut),
-                                dtype=np.float64)
-
-
 def give_edges(p, q, nx, ny, nx_psf, ny_psf):
     nx0 = nx_psf//2
     ny0 = ny_psf//2
@@ -522,6 +490,40 @@ def _restore_corrs(vis, ncorr):
     return model_vis
 
 
+def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
+    ''' 
+    xin         - grid of x coordinates
+    yin         - grid of y coordinates
+    GaussPar    - (emaj, emin, pa) with emaj/emin in units x and pa in radians.
+    normalise   - normalise kernel to have volume 1
+    nsigma      - compute kernel out to this many sigmas
+    '''
+    Smaj, Smin, PA = GaussPar
+    A = np.array([[1. / Smaj ** 2, 0],
+                  [0, 1. / Smin ** 2]])
+    R = np.array([[np.cos(PA), -np.sin(PA)],
+                  [np.sin(PA), np.cos(PA)]])
+    A = np.dot(np.dot(R.T, A), R)
+    sOut = xin.shape
+    # only compute the result out to 5 * emaj
+    extent = (nsigma * Smaj)**2
+    xflat = xin.squeeze()
+    yflat = yin.squeeze()
+    idx, idy = np.where(xflat**2 + yflat**2 <= extent)
+    x = np.array([xflat[idx, idy].ravel(), yflat[idx, idy].ravel()])
+    R = np.einsum('nb,bc,cn->n', x.T, A, x)
+    # need to adjust for the fact that GaussPar corresponds to FWHM
+    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
+    tmp = np.exp(-fwhm_conv * R)
+    gausskern = np.zeros(xflat.shape, dtype=np.float64)
+    gausskern[idx, idy] = tmp
+
+    if normalise:
+        gausskern /= np.sum(gausskern)
+    return np.ascontiguousarray(gausskern.reshape(sOut),
+                                dtype=np.float64)
+
+
 @jax.jit
 def psf_errorsq(x, data, xy):
     '''
@@ -529,10 +531,10 @@ def psf_errorsq(x, data, xy):
     Note emaj must be larger than emin
     '''
     emaj, emin, pa = x
-    A = jnp.array([[1. / emin ** 2, 0],
-                    [0, 1. / emaj ** 2]])
+    A = jnp.array([[1. / emaj ** 2, 0],
+                    [0, 1. / emin ** 2]])
 
-    t = jnp.deg2rad(-pa)
+    t = pa
     R = jnp.array([[jnp.cos(t), -jnp.sin(t)],
                     [jnp.sin(t), jnp.cos(t)]])
     B = jnp.dot(jnp.dot(R.T, A), R)
@@ -557,8 +559,8 @@ def fitcleanbeam(psf: np.ndarray,
     nband, nx, ny = psf.shape
 
     # pixel coordinates
-    x = np.arange(-nx / 2, nx / 2)
-    y = np.arange(-ny / 2, ny / 2)
+    x = -(nx//2) + np.arange(nx)
+    y = -(ny//2) + np.arange(ny)
     xx, yy = np.meshgrid(x, y, indexing='ij')
 
     Gausspars = []
@@ -589,15 +591,29 @@ def fitcleanbeam(psf: np.ndarray,
         x = xx[idxs]
         y = yy[idxs]
         xy = np.vstack((x, y))
-        emaj0 = np.maximum(xdiff, ydiff)
-        emin0 = np.minimum(xdiff, ydiff)
+        if xdiff > ydiff:  # x is major axis
+            emaj0 = xdiff
+            emin0 = ydiff
+            PA0 = 0.0
+        else:  # y is the major axis
+            emaj0 = ydiff
+            emin0 = xdiff
+            PA0 = np.pi/2
         dfunc = value_and_grad(psf_errorsq)
         p, f, d = fmin_l_bfgs_b(dfunc,
-                                np.array((emaj0, emin0, 0.0)),
+                                np.array((emaj0, emin0, PA0)),
                                 args=(psfv, xy),
-                                bounds=((0, None), (0, None), (None, None)),
+                                bounds=((0, None), (0, None), (0, np.pi)),
                                 factr=1e11)
-        Gausspars.append([p[0] * pixsize, p[1] * pixsize, p[2]])
+        if p[0] >= p[1]:  # major and minor axes correct
+            emaj = p[0]
+            emin = p[1]
+            PA = p[2]
+        else:  # major and minor axes have been swapped
+            emaj = p[1]
+            emin = p[0]
+            PA = p[2] + np.pi/2
+        Gausspars.append([emaj * pixsize, emin * pixsize, PA])
 
     return Gausspars
 

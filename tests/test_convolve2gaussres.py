@@ -1,7 +1,7 @@
 import numpy as np
 from africanus.model.spi import fit_spi_components
 from numpy.testing._private.utils import assert_allclose
-from pfb.utils.misc import convolve2gaussres, Gaussian2D
+from pfb.utils.misc import convolve2gaussres, Gaussian2D, fitcleanbeam
 import pytest
 
 pmp = pytest.mark.parametrize
@@ -43,3 +43,21 @@ def test_convolve2gaussres(nx, ny, nband, alpha):
     # offset for relative difference
     assert_allclose(1+alpha, 1+out[0, :], atol=5e-4, rtol=5e-4)
     assert_allclose(out[2, :], restored[0, Ix, Iy], atol=5e-4, rtol=5e-4)
+
+
+@pmp("nx", [128])
+@pmp("ny", [80, 220])
+@pmp("gpars", [(10.0, 5.0, 0.0), (7.0, 4.0, 1.0)])
+def test_fitcleanbeam(nx, ny, gpars):
+    # generate a grid
+    x = -(nx//2) + np.arange(nx)
+    y = -(ny//2) + np.arange(ny)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    gauss = Gaussian2D(X, Y, GaussPar=gpars, normalise=False)
+
+    gpars_fit = fitcleanbeam(gauss[None, :, :])[0]
+
+    # low precision used in fitcleanbeam
+    assert np.abs(gpars[0] - gpars_fit[0]) < 1e-3
+    assert np.abs(gpars[1] - gpars_fit[1]) < 1e-3
+    assert np.abs(gpars[2] - gpars_fit[2]) < 1e-3 

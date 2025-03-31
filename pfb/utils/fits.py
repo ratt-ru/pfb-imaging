@@ -31,13 +31,13 @@ def data_from_header(hdr, axis=3):
 
 def load_fits(name, dtype=np.float32):
     data = fits.getdata(name)
-    data = np.transpose(to4d(data), axes=(0, 1, 3, 2))
+    data = np.transpose(to4d(data), axes=(1, 0, 3, 2))  # fits and beams table
     return np.require(data, dtype=dtype, requirements='C')
 
 
 def save_fits(data, name, hdr, overwrite=True, dtype=np.float32, beams_hdu=None):
     hdu = fits.PrimaryHDU(header=hdr)
-    data = np.transpose(to4d(data), axes=(0, 1, 3, 2))
+    data = np.transpose(to4d(data), axes=(1, 0, 3, 2))
     hdu.data = np.require(data, dtype=dtype, requirements='F')
     if beams_hdu is not None:
         hdul = fits.HDUList([hdu, beams_hdu])
@@ -57,27 +57,28 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
     """
 
     w = WCS(naxis=4)
-    w.wcs.ctype = ['RA---SIN', 'DEC--SIN', 'STOKES', 'FREQ']
+    w.wcs.ctype = ['RA---SIN', 'DEC--SIN', 'FREQ', 'STOKES']
     w.wcs.cdelt[0] = -cell_x
     w.wcs.cdelt[1] = cell_y
     w.wcs.cdelt[3] = 1
     w.wcs.cunit[0] = 'deg'
     w.wcs.cunit[1] = 'deg'
-    w.wcs.cunit[3] = 'Hz'
+    w.wcs.cunit[2] = 'Hz'
+    w.wcs.cunit[3] = ''
     if np.size(freq) > 1:
         nchan = freq.size
         crpix3 = nchan//2+1
         ref_freq = freq[crpix3]
         df = freq[1]-freq[0]
-        w.wcs.cdelt[3] = df
+        w.wcs.cdelt[2] = df
     else:
         if isinstance(freq, np.ndarray) and freq.size == 1:
             ref_freq = freq[0]
         else:
             ref_freq = freq
         crpix3 = 1
-    w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, 1, ref_freq]
-    w.wcs.crpix = [1 + nx//2, 1 + ny//2, 1, crpix3]
+    w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
+    w.wcs.crpix = [1 + nx//2, 1 + ny//2, crpix3, 1]
     w.wcs.equinox = 2000.0
 
     if header:
@@ -155,25 +156,26 @@ def create_beams_table(beams_data, cell2deg):
         Dictionary containing arrays for:
         - chan_id: Channel indices
         - pol_id: Polarization indices
-        - bmaj: Major axis values (in degrees)
-        - bmin: Minor axis values (in degrees)
-        - bpa: Position angles (in degrees)
+        - bmaj: Major axis values (in pixels)
+        - bmin: Minor axis values (in pixels)
+        - bpa: Position angles (in radians)
     """
     # Create the columns for the BEAMS table
     nband = beams_data.band.size
     npol = beams_data.corr.size
     band_id = []
     pol_id = []
-    for p in range(npol):
-        for b in range(nband):
+    for b in range(nband):
+        for p in range(npol):
             band_id.append(b)
             pol_id.append(p)
+
     # we need the transpose for C -> F ordering
-    bmaj = beams_data.sel({'bpar': 'BMAJ'}).values.T.ravel() * cell2deg
-    bmin = beams_data.sel({'bpar': 'BMIN'}).values.T.ravel() * cell2deg
-    bpa = beams_data.sel({'bpar': 'BPA'}).values.T.ravel() * 180/np.pi
-    col1 = fits.Column(name='BMAJ', format='1E', array=bmaj, unit='arcsec')
-    col2 = fits.Column(name='BMIN', format='1E', array=bmin, unit='arcsec')
+    bmaj = beams_data.sel({'bpar': 'BMAJ'}).values.ravel() * cell2deg
+    bmin = beams_data.sel({'bpar': 'BMIN'}).values.ravel() * cell2deg
+    bpa = 90 - beams_data.sel({'bpar': 'BPA'}).values.ravel() * 180/np.pi
+    col1 = fits.Column(name='BMAJ', format='1E', array=bmaj, unit='deg')
+    col2 = fits.Column(name='BMIN', format='1E', array=bmin, unit='deg')
     col3 = fits.Column(name='BPA', format='1E', array=bpa, unit='deg')
     col4 = fits.Column(name='CHAN', format='1J', array=np.array(band_id))
     col5 = fits.Column(name='POL', format='1J', array=np.array(pol_id))
@@ -204,16 +206,16 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
     dds = xds_from_list(dsl, drop_all_but=[column, 'PSFPARSN', 'WSUM'],
                         nthreads=nthreads,
                         order_freq=False)
-    timeids = [ds.timeid for ds in dds]
+    timeids = np.unique(np.array([int(ds.timeid) for ds in dds]))
     freqs = [ds.freq_out for ds in dds]
     freqs = np.unique(freqs)
     nband = freqs.size
     for timeid in timeids:
         # filter by time ID
-        dst = [ds for ds in dds if ds.timeid==timeid]
+        dst = [ds for ds in dds if int(ds.timeid)==timeid]
         # concat creating a new band axis
         dsb = xr.concat(dst, dim='band')
-        # LB - do these remain in the correct order?
+        # LB - these seem to remain in the correct order
         dsb = dsb.assign_coords({'band': np.arange(nband)})
         wsums = dsb.WSUM.values
         wsum = dsb.WSUM.sum(dim='band').values
@@ -234,11 +236,11 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
                 cube_mfs = np.sum(cube*wsums[:, :, None, None],
                                   axis=0)/wsum[:, None, None]
 
-            name = basename + f'_time{timeid}_mfs.fits'
+            name = basename + f'_time{dsb.timeid}_mfs.fits'
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_mfs,
                           unit=unit, ms_time=dsb.time_out)
             # hdr['WSUM'] = wsum
-            da_mfs = xr.DataArray(data=np.array(psfpars_mfs[timeid])[None, :, :],
+            da_mfs = xr.DataArray(data=np.array(psfpars_mfs[dsb.timeid])[None, :, :],
                                   coords={'band': np.arange(1),
                                           'corr': dsb.corr.values,
                                           'bpar': dsb.bpar.values})
@@ -253,7 +255,7 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
         if do_cube:
             if norm_wsum:
                 cube = cube/wsums[:, :, None, None]
-            name = basename + f'_time{timeid}.fits'
+            name = basename + f'_time{dsb.timeid}.fits'
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freqs,
                           unit=unit, ms_time=dsb.time_out)
             
