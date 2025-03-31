@@ -389,11 +389,11 @@ def single_stokes_image(
     oname = f'spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
     if opts.output_format == 'zarr':
         data_vars = {}
-        data_vars['RESIDUAL'] = (('c', 'x', 'y'), residual.astype(np.float32))
+        data_vars['RESIDUAL'] = (('corr', 'x', 'y'), residual.astype(np.float32))
         if opts.psf_out:
-            data_vars['PSF'] = (('c', 'x_psf', 'y_psf'), psf.astype(np.float32))
+            data_vars['PSF'] = (('corr', 'x_psf', 'y_psf'), psf.astype(np.float32))
         if x is not None:
-            data_vars['NATGRAD'] = (('c', 'x', 'y'), x.astype(np.float32))
+            data_vars['NATGRAD'] = (('corr', 'x', 'y'), x.astype(np.float32))
 
         coords = {
             'chan': (('chan',), freq),

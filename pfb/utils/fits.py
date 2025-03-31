@@ -48,7 +48,8 @@ def save_fits(data, name, hdr, overwrite=True, dtype=np.float32, beams_hdu=None)
 
 
 def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
-            unit='Jy/beam', GuassPar=None, ms_time=None, header=True):
+            unit='Jy/beam', GuassPar=None, ms_time=None,
+            header=True, casambm=True):
     """
     cell_x/y - cell sizes in degrees
     nx/y - number of x and y pixels
@@ -111,7 +112,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         # header['EQUINOX'] = 2000.0
         header['BSCALE'] = 1.0
         header['BZERO'] = 0.0
-        header['CASAMBM'] = True  # we need this to pick up the beams table
+        header['CASAMBM'] = casambm  # we need this to pick up the beams table
 
         return header
     else:

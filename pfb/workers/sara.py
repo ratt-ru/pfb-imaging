@@ -137,11 +137,13 @@ def _sara(**kw):
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds, dds_list = xds_from_url(dds_name)
 
-    ncorr, nx, ny = dds[0].x.size, dds[0].y.size
-    if ncorr > 1:
+    if dds[0].corr.size > 1:
         raise NotImplementedError("Joint polarisation deconvolution not "
                                   "yet supported for sara algorithm")
-    _, nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
+
+    nx, ny = dds[0].x.size, dds[0].y.size
+    
+    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
     freq_out = []
     time_out = []
@@ -159,29 +161,27 @@ def _sara(**kw):
     # and avoid unintentional side effects?
     output_type = dds[0].DIRTY.dtype
     if 'RESIDUAL' in dds[0]:
-        residual = np.stack([ds.RESIDUAL.values for ds in dds], axis=0)
+        residual = np.stack([ds.RESIDUAL.values[0] for ds in dds], axis=0)
         dds = [ds.drop_vars('DIRTY') for ds in dds]
         dds = [ds.drop_vars('RESIDUAL') for ds in dds]
     else:
-        residual = np.stack([ds.DIRTY.values for ds in dds], axis=0)
+        residual = np.stack([ds.DIRTY.values[0] for ds in dds], axis=0)
         dds = [ds.drop_vars('DIRTY') for ds in dds]
     if 'MODEL' in dds[0]:
-        model = np.stack([ds.MODEL.values for ds in dds], axis=0)
+        model = np.stack([ds.MODEL.values[0] for ds in dds], axis=0)
         dds = [ds.drop_vars('MODEL') for ds in dds]
     else:
         model = np.zeros((nband, nx, ny))
     if 'UPDATE' in dds[0]:
-        update = np.stack([ds.UPDATE.values for ds in dds], axis=0)
+        update = np.stack([ds.UPDATE.values[0] for ds in dds], axis=0)
         dds = [ds.drop_vars('UPDATE') for ds in dds]
     else:
         update = np.zeros((nband, nx, ny))
-    abspsf = np.stack([np.abs(ds.PSFHAT.values) for ds in dds], axis=0)
+    abspsf = np.stack([np.abs(ds.PSFHAT.values[0]) for ds in dds], axis=0)
     dds = [ds.drop_vars('PSFHAT') for ds in dds]
-    beam = np.stack([ds.BEAM.values for ds in dds], axis=0)
-    wsums = np.stack([ds.wsum for ds in dds], axis=0)
+    beam = np.stack([ds.BEAM.values[0] for ds in dds], axis=0)
+    wsums = np.stack([ds.WSUM.values[0] for ds in dds], axis=0)
     fsel = wsums > 0  # keep track of empty bands
-
-    # remove corr axis
 
     wsum = np.sum(wsums)
     wsums /= wsum
@@ -201,7 +201,7 @@ def _sara(**kw):
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
     ref_freq = np.mean(freq_out)
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq, casambm=False)
     if 'niters' in dds[0].attrs:
         iter0 = dds[0].niters
     else:
@@ -252,7 +252,7 @@ def _sara(**kw):
             hess_norm *= 1.05
     else:
         hess_norm = opts.hess_norm
-        print(f"Using provided hess-norm of beta = {hess_norm:.3e}", file=log)
+        print(f"Using provided hess-norm of = {hess_norm:.3e}", file=log)
 
     print("Setting up dictionary", file=log)
     bases = tuple(opts.bases.split(','))
@@ -451,18 +451,19 @@ def _sara(**kw):
         write_futures = []
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
-            residual[b], fut = compute_residual(
+            resid, fut = compute_residual(
                                     ds_name,
                                     nx, ny,
                                     cell_rad, cell_rad,
                                     ds_name,
-                                    model[b],
+                                    model[b][None, :, :],  # add corr axis
                                     nthreads=opts.nthreads,
                                     epsilon=opts.epsilon,
                                     do_wgridding=opts.do_wgridding,
                                     double_accum=opts.double_accum,
                                     verbosity=opts.verbosity)
             write_futures.append(fut)
+            residual[b] = resid[0]  # remove corr axis
 
         residual /= wsum
         residual_mfs = np.sum(residual, axis=0)
@@ -487,19 +488,15 @@ def _sara(**kw):
         # these are not updated in compute_residual
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
-            ds['UPDATE'] = (('x', 'y'), update[b])
+            ds['UPDATE'] = (('corr', 'x', 'y'), update[b][None, :, :])
             # don't write unecessarily
             for var in ds.data_vars:
                 if var != 'UPDATE':
                     ds = ds.drop_vars(var)
 
             if (model==best_model).all():
-                ds['MODEL_BEST'] = (('x', 'y'), best_model[b])
+                ds['MODEL_BEST'] = (('corr', 'x', 'y'), best_model[b][None, :, :])
 
-            # ds.assign(**{
-            #     'MODEL_BEST': (('x', 'y'), best_model[b]),
-            #     'UPDATE': (('x', 'y'), update[b]),
-            # })
             attrs = {}
             attrs['rms'] = best_rms
             attrs['rmax'] = best_rmax

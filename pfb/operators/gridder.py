@@ -672,7 +672,7 @@ def image_data_products(dsl,
                 uvw=uvw,
                 freq=freq,
                 vis=residual_vis[c],
-                wgt=wgt,
+                wgt=wgt[c],
                 mask=mask,
                 npix_x=nx, npix_y=ny,
                 pixsize_x=cellx, pixsize_y=celly,
@@ -686,7 +686,7 @@ def image_data_products(dsl,
                 nthreads=nthreads,
                 sigma_min=1.1, sigma_max=3.0,
                 double_precision_accumulation=double_accum,
-                dirty=dirty[c])
+                dirty=residual[c])
 
         dso['MODEL'] = (('corr','x','y'), model)
         dso['RESIDUAL'] = (('corr','x','y'), residual)

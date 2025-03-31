@@ -101,6 +101,10 @@ def _kclean(**kw):
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds, dds_list = xds_from_url(dds_name)
 
+    if dds[0].corr.size > 1:
+        raise NotImplementedError("Joint polarisation deconvolution not "
+                                  "yet supported for kclean algorithm")
+
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
@@ -117,18 +121,18 @@ def _kclean(**kw):
     # stitch dirty/psf in apparent scale
     # drop_vars to avoid duplicates in memory
     if 'RESIDUAL' in dds[0]:
-        residual = np.stack([ds.RESIDUAL.values for ds in dds], axis=0)
+        residual = np.stack([ds.RESIDUAL.values[0] for ds in dds], axis=0)
         dds = [ds.drop_vars('RESIDUAL') for ds in dds]
     else:
-        residual = np.stack([ds.DIRTY.values for ds in dds], axis=0)
+        residual = np.stack([ds.DIRTY.values[0] for ds in dds], axis=0)
         dds = [ds.drop_vars('DIRTY') for ds in dds]
     if 'MODEL' in dds[0]:
-        model = np.stack([ds.MODEL.values for ds in dds], axis=0)
+        model = np.stack([ds.MODEL.values[0] for ds in dds], axis=0)
         dds = [ds.drop_vars('MODEL') for ds in dds]
     else:
         model = np.zeros((nband, nx, ny))
-    psf = np.stack([ds.PSF.values for ds in dds], axis=0)
-    psfhat = np.stack([ds.PSFHAT.values for ds in dds], axis=0)
+    psf = np.stack([ds.PSF.values[0] for ds in dds], axis=0)
+    psfhat = np.stack([ds.PSFHAT.values[0] for ds in dds], axis=0)
     dds = [ds.drop_vars('PSF') for ds in dds]
     wsums = np.stack([ds.WSUM.values[0] for ds in dds], axis=0)
     fsel = wsums > 0  # keep track of empty bands
@@ -152,7 +156,7 @@ def _kclean(**kw):
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
     ref_freq = np.mean(freq_out)
-    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq)
+    hdr_mfs = set_wcs(cell_deg, cell_deg, nx, ny, radec, ref_freq, casambm=False)
     if 'niters' in dds[0].attrs:
         iter0 = dds[0].niters
     else:
@@ -220,7 +224,6 @@ def _kclean(**kw):
             coords = {
                 'location_x': (('x',), Ix),
                 'location_y': (('y',), Iy),
-                # 'shape_x':,
                 'params': (('par',), params),  # already converted to list
                 'times': (('t',), time_out),  # to allow rendering to original grid
                 'freqs': (('f',), freq_out)
@@ -245,8 +248,8 @@ def _kclean(**kw):
             }
 
             coeff_dataset = xr.Dataset(data_vars=data_vars,
-                               coords=coords,
-                               attrs=attrs)
+                                       coords=coords,
+                                       attrs=attrs)
             coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model.mds",
                                   mode='w')
         except Exception as e:
@@ -263,12 +266,12 @@ def _kclean(**kw):
                                      nx, ny,
                                      cell_rad, cell_rad,
                                      ds_name,
-                                     model[b],
+                                     model[b][None, :, :],  # add back corr axis
                                      nthreads=opts.nthreads,
                                      epsilon=opts.epsilon,
                                      do_wgridding=opts.do_wgridding,
                                      double_accum=opts.double_accum)
-            residual[b] = resid
+            residual[b] = resid[0]  # remove corr axis
         residual /= wsum
         residual_mfs = np.sum(residual, axis=0)
         save_fits(residual_mfs,
@@ -291,8 +294,8 @@ def _kclean(**kw):
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
             ds = ds.assign(**{
-                'MODEL': (('x', 'y'), model[b]),
-                'MODEL_BEST': (('x', 'y'), best_model[b]),
+                'MODEL': (('corr', 'x', 'y'), model[b][None, :, :]),
+                'MODEL_BEST': (('corr', 'x', 'y'), best_model[b][None, :, :]),
             })
             attrs = {}
             attrs['rms'] = best_rms
@@ -339,12 +342,12 @@ def _kclean(**kw):
                                         nx, ny,
                                         cell_rad, cell_rad,
                                         ds_name,
-                                        model[b],
+                                        model[b][None, :, :],  # add back corr axis
                                         nthreads=opts.nthreads,
                                         epsilon=opts.epsilon,
                                         do_wgridding=opts.do_wgridding,
                                         double_accum=opts.double_accum)
-                residual[b] = resid
+                residual[b] = resid[0]  # remove corr axis
             residual /= wsum
             residual_mfs = np.sum(residual, axis=0)
 
@@ -369,7 +372,7 @@ def _kclean(**kw):
                 for ds_name, ds in zip(dds_list, dds):
                     b = int(ds.bandid)
                     ds = ds.assign(**{
-                        'MODEL_BEST': (('x', 'y'), best_model[b])
+                        'MODEL_BEST': (('corr', 'x', 'y'), best_model[b][None, :, :])
                     })
 
                     ds.to_zarr(ds_name, mode='a')

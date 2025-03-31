@@ -452,6 +452,7 @@ def _grid(**kw):
                 cell_rad, cell_rad,
                 x0, y0
             )
+            model = model[None, :, :]  # hack to get the corr axis
 
         elif from_cache:
             if opts.use_best_model and 'BEST_MODEL' in out_ds:

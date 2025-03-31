@@ -10,7 +10,7 @@ from pfb.utils.weighting import weight_data
 from uuid import uuid4
 import gc
 from casacore.quanta import quantity
-from datetime import datetime
+from datetime import datetime, timezone
 from katbeam import JimBeam
 from scipy import ndimage
 from scipy.constants import c as lightspeed
@@ -330,7 +330,7 @@ def single_stokes(
     }
 
     unix_time = quantity(f'{time_out}s').to_unix_time()
-    utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+    utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
     attrs = {
         'ra' : radec[0],

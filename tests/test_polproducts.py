@@ -299,8 +299,8 @@ def test_polproducts(do_gains, ms_name):
         dds, _ = xds_from_url(dds_name)
 
         for ds in dds:
-            wsum = ds.WSUM.values
-            comp = ds.DIRTY.values[locx, locy]
+            wsum = ds.WSUM.values[0]
+            comp = ds.DIRTY.values[0, locx, locy]
             # print(flux[p], comp/wsum)
             assert_allclose(flux[p], comp/wsum, rtol=1e-4, atol=1e-4)
 
