@@ -178,6 +178,10 @@ def single_stokes(
                             literally(poltype),
                             literally(opts.product),
                             literally(str(ncorr)))
+    
+    # TODO - check if wsum for any of the correlations is zero
+    # This happens e.g. if selecting out diagonal correlations
+    # with QC and making CORRECTED_WEIGHTS 
 
     # do after weight_data otherwise mappings need to be recomputed
     # drop fully flagged rows
@@ -253,6 +257,7 @@ def single_stokes(
     if opts.bda_decorr < 1:
         from africanus.averaging import bda
 
+        print(' ~~~~~~~~~~~~~~~~~~~~  Here:', flag.shape, weight.shape, data.shape)
         res = bda(time,
                   interval,
                   ant1, ant2,
