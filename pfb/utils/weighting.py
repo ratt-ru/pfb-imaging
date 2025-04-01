@@ -117,11 +117,20 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                 # pixel coordinates
                 ug = (u_tmp + umax)/u_cell
                 vg = (v_tmp + vmax)/v_cell
+                
+                # corr weights
+                wrf = wgt_row[:, f]
+
+                # nearest neighbour
+                if k==0:
+                    u_idx = int(np.floor(ug))
+                    v_idx = int(np.floor(vg))
+                    counts[g, :, u_idx, v_idx] += wrf
+                    continue
+
                 # indices
                 u_idx = int(np.round(ug))
                 v_idx = int(np.round(vg))
-                # corr weights
-                wrf = wgt_row[:, f]
 
                 # the kernel is separable and only defined on [-1,1]
                 # do we ever need to check these bounds?
