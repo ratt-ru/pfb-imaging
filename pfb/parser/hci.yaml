@@ -189,6 +189,10 @@ outputs:
     implicit: '{current.output-filename}_{current.product}.fds'
     dtype: Directory
     must_exist: false
+    mkdir: false
+  # optional-fits:
+  #   implicit: '{current.output-filename}_{current.product}.fits'
+  #   required: false
 
 policies:
   pass_missing_as_none: true

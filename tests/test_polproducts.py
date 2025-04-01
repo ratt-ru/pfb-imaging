@@ -84,6 +84,7 @@ def test_polproducts(do_gains, ms_name):
     flux['Q'] = 0.6
     flux['U'] = 0.3
     flux['V'] = 0.1
+    flux['FS'] = np.array([flux['I'], flux['Q'], flux['U'], flux['V']])
     locx = int(3*npix//4)
     locy = int(npix//4)
     model[0, :, locx, locy] = flux['I']
@@ -256,6 +257,7 @@ def test_polproducts(do_gains, ms_name):
             if schema[worker]['inputs'][param]['default'] == _UNSET_DEFAULT:
                 schema[worker]['inputs'][param]['default'] = None
 
+    # test each polarisation product separately
     outname = str(test_dir / 'test')
     for p in ['I', 'Q', 'U', 'V']:
         basename = f'{outname}_{p}'
@@ -304,4 +306,51 @@ def test_polproducts(do_gains, ms_name):
             # print(flux[p], comp/wsum)
             assert_allclose(flux[p], comp/wsum, rtol=1e-4, atol=1e-4)
 
+    # test FS
+    outname = str(test_dir / 'test')
+    for p in ['FS']:
+        basename = f'{outname}_{p}'
+        dds_name = f'{basename}_main.dds'
+        # set defaults from schema
+        init_args = {}
+        for key in schema.init["inputs"].keys():
+            init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
+        # overwrite defaults
+        init_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
+        init_args["output_filename"] = basename
+        init_args["data_column"] = "DATA"
+        init_args["flag_column"] = 'FLAG'
+        init_args["gain_table"] = gain_path
+        init_args["max_field_of_view"] = fov*1.1
+        init_args["bda_decorr"] = 1.0
+        init_args["overwrite"] = True
+        init_args["channels_per_image"] = 1
+        init_args["product"] = p
+        from pfb.workers.init import _init
+        _init(**init_args)
 
+        # grid data to produce dirty image
+        grid_args = {}
+        for key in schema.grid["inputs"].keys():
+            grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
+        # overwrite defaults
+        grid_args["output_filename"] = basename
+        grid_args["field_of_view"] = fov
+        grid_args["fits_mfs"] = True
+        grid_args["psf"] = True
+        grid_args["residual"] = False
+        grid_args["nthreads"] = 1
+        grid_args["overwrite"] = True
+        grid_args["robustness"] = 0.0
+        grid_args["do_wgridding"] = True
+        grid_args["product"] = p
+        from pfb.workers.grid import _grid
+        _grid(**grid_args)
+
+        dds, _ = xds_from_url(dds_name)
+
+        for ds in dds:
+            wsum = ds.WSUM.values[:]
+            comp = ds.DIRTY.values[:, locx, locy]
+            # print(flux[p], comp/wsum)
+            assert_allclose(flux[p], comp/wsum, rtol=1e-4, atol=1e-4)

@@ -66,7 +66,7 @@ def stokes_from_abcd(a, b, c, d):
     return I, Q, U, V
 
 
-def corr_to_stokes(x, wsum):
+def corr_to_stokes(x, wsum=1.0):
     '''
     x = [I+Q, U+1jV, U-1jV, I-Q]
     out = [I, Q, U, V]
@@ -103,8 +103,8 @@ if __name__=="__main__":
     Q[idx, idy] = 1
     U[idx, idy] = -1
     V[idx, idy] = 0.1
-    p = 1.5
-    I = p*np.sqrt(Q**2 + U**2 + V**2)
+    p = 0.7
+    I = p*np.sqrt(Q**2 + U**2 + V**2)/p
 
     # make vis
     m = 10000
