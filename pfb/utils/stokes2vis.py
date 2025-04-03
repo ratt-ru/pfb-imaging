@@ -198,6 +198,8 @@ def single_stokes(
 
     # number of output correlations will be set by required Stokes products
     ncorr = data.shape[-1]
+    # we need this for averaging
+    flag = np.tile(flag.any(axis=-1, keepdims=True), (1,1,ncorr))
 
     # do before averaging
     uv_max = np.maximum(np.abs(uvw[:, 0]).max(), np.abs(uvw[:, 1]).max())

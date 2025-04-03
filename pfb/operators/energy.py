@@ -1,3 +1,18 @@
+'''
+This is an attempt to develop a minor cycle for the resolve polarisation model.
+
+The rationale here is that primary beam patterns are actually for corellations, not Stokes parameters.
+
+As a starting point, we try to figure out how to compute the dirty image as
+a convolution of the model with the PSF i.e.
+
+ID = PSF.conv(B) = R.H Ninv V
+
+where B is the brightness matrix.
+
+'''
+
+
 import numpy as np
 import jax
 jax.config.update("jax_enable_x64", True)
@@ -8,6 +23,7 @@ import nifty8.re as jft
 from functools import partial
 from ducc0.wgridder import dirty2vis, vis2dirty
 from ducc0.fft import c2c, r2c, c2r
+from ducc0.nufft import u2nu, nu2u
 from numpy.fft import fftshift, ifftshift
 Fs = fftshift
 iFs = ifftshift
@@ -203,7 +219,7 @@ if __name__=="__main__":
     psf = vis2dirty(uvw=uvw, freq=freq, vis=2*np.ones((m, 1), dtype=np.complex128),
                     npix_x=2*n, npix_y=2*n,
                     pixsize_x=cell_N, pixsize_y=cell_N,
-                    epsilon=1e-6, do_wgridding=False,
+                    epsilon=epsilon, do_wgridding=False,
                     nthreads=8).astype("f8")
     
     wsum = psf.max()
@@ -230,9 +246,8 @@ if __name__=="__main__":
     plt.show()
 
 
-    # we do not do the rfft because the corrs are complex
+    # don't use rfft since corrs could be complex
     psfhat = np.fft.fft2(iFs(psf), axes=(0, 1), norm='backward')
-    # psfhat = c2c()
     psfhat = np.tile(psfhat[:, :, None], (1, 1, 4))
 
 
@@ -308,10 +323,7 @@ if __name__=="__main__":
     print(np.abs(res1.imag - res2.imag).max()/wsum)
     print(np.abs(res1.real + res2.real).max()/wsum)
 
-
-    import ipdb; ipdb.set_trace()
-
-    # let us now take the real valued route in an attempt to mimick the gridder
+    # use rfft in an attempt to mimick the gridder
     psfhat = jnp.fft.rfft2(iFs(psf),
                            s=(2*n, 2*n),
                            axes=(0, 1), norm='backward')
@@ -387,6 +399,113 @@ if __name__=="__main__":
     res3 = ID[:, :, 3] - Bconv2[:, :, 3]
 
     
+    # plt.figure('Dirty 0 real')
+    # plt.imshow(res0.real/wsum)
+    # plt.colorbar()
+
+    # plt.figure('Dirty 0 imag')
+    # plt.imshow(res0.imag/wsum)
+    # plt.colorbar()
+
+    # plt.figure('Dirty 1 real')
+    # plt.imshow(res1.real/wsum)
+    # plt.colorbar()
+
+    # plt.figure('Dirty 1 imag')
+    # plt.imshow(res1.imag/wsum)
+    # plt.colorbar()
+
+    # plt.figure('Dirty 2 real')
+    # plt.imshow(res2.real/wsum)
+    # plt.colorbar()
+
+    # plt.figure('Dirty 2 imag')
+    # plt.imshow(res2.imag/wsum)
+    # plt.colorbar()
+
+    # plt.figure('Dirty 3 real')
+    # plt.imshow(res3.real/wsum)
+    # plt.colorbar()
+
+    # plt.figure('Dirty 3 imag')
+    # plt.imshow(res3.imag/wsum)
+    # plt.colorbar()
+
+    # plt.show()
+
+    print(np.abs(res1.imag - res2.imag).max()/wsum)
+    print(np.abs(res1.real + res2.real).max()/wsum)
+
+
+    # compare with complex nufft
+    uv_freq = np.stack((u, v), axis=-1) * freq[None, :] / lightspeed
+    IDnufft = np.zeros((n, n, 4), dtype=np.complex128)
+    periodicity  = 2 * uv_max * freq[0] / lightspeed
+    for c in range(4):
+
+        nu2u(points=vis[:, 0, c],  # single freq
+            coord=uv_freq,
+            forward=False,
+            out=IDnufft[:, :, c],
+            epsilon=epsilon,
+            nthreads=8,
+            periodicity=periodicity)
+
+    dirtyI4, dirtyQ4, dirtyU4, dirtyV4 = corr_to_stokes(IDnufft, wsum=wsum)
+
+    plt.figure('1')
+    plt.imshow(dirtyI4)
+    plt.colorbar()
+
+    plt.figure('2')
+    plt.imshow(dirtyQ4)
+    plt.colorbar()
+
+    plt.figure('3')
+    plt.imshow(dirtyU4)
+    plt.colorbar()
+
+    plt.figure('4')
+    plt.imshow(dirtyV4)
+    plt.colorbar()
+
+    plt.show()
+
+    # compare Stokes dirty images
+    resI = np.abs(dirtyI - dirtyI4)
+    resQ = np.abs(dirtyQ - dirtyQ4)
+    resU = np.abs(dirtyU - dirtyU4)
+    resV = np.abs(dirtyV - dirtyV4)
+
+    plt.figure('1')
+    plt.imshow(resI)
+    plt.colorbar()
+
+    plt.figure('2')
+    plt.imshow(resQ)
+    plt.colorbar()
+
+    plt.figure('3')
+    plt.imshow(resU)
+    plt.colorbar()
+
+    plt.figure('4')
+    plt.imshow(resV)
+    plt.colorbar()
+
+    plt.show()
+
+    assert np.allclose(resI, 0, atol=epsilon)
+    assert np.allclose(resQ, 0, atol=epsilon)
+    assert np.allclose(resU, 0, atol=epsilon)
+    assert np.allclose(resV, 0, atol=epsilon)
+
+    # compare corr dirty images
+    res0 = IDnufft[:, :, 0] - Bconv[:, :, 0]
+    res1 = IDnufft[:, :, 1] - Bconv[:, :, 1]
+    res2 = IDnufft[:, :, 2] - Bconv[:, :, 2]
+    res3 = IDnufft[:, :, 3] - Bconv[:, :, 3]
+
     plt.figure('Dirty 0 real')
     plt.imshow(res0.real/wsum)
     plt.colorbar()
@@ -421,22 +540,15 @@ if __name__=="__main__":
 
     plt.show()
 
-    print(np.abs(res1.imag - res2.imag).max()/wsum)
-    print(np.abs(res1.real + res2.real).max()/wsum)
+    # ID = jnp.array(ID)
+    # psfhat = jnp.array(psfhat)
+    # # x = jnp.zeros((n, n, 4), dtype=float)
+    # x = jnp.zeros((n*n*4), dtype=float)
 
-    import ipdb; ipdb.set_trace()
+    # phi = pol_energy_approx(ID, psfhat, x)
 
+    # fun = partial(pol_energy_approx, ID, psfhat)
 
+    # print(phi, fun(x))
 
-    ID = jnp.array(ID)
-    psfhat = jnp.array(psfhat)
-    # x = jnp.zeros((n, n, 4), dtype=float)
-    x = jnp.zeros((n*n*4), dtype=float)
-
-    phi = pol_energy_approx(ID, psfhat, x)
-
-    fun = partial(pol_energy_approx, ID, psfhat)
-
-    print(phi, fun(x))
-
-    x = jft.newton_cg(fun=fun, x0=x)
+    # x = jft.newton_cg(fun=fun, x0=x)
