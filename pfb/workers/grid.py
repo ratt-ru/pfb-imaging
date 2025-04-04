@@ -527,4 +527,11 @@ def _grid(**kw):
             print(f"Time ID {timeid}: {corrs[c]} - resid max = {rmax:.3e}, "
                   f"rms = {rms:.3e}", file=log)
             
+    # put these in the dds for futur reference
+    if psfparsn is not None:
+        cache_opts(psfparsn,
+                   dds_store.url,
+                   protocol,
+                   name='psfparsn_mfs.pkl')
+    
     return psfparsn

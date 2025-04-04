@@ -241,11 +241,11 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_mfs,
                           unit=unit, ms_time=dsb.time_out)
             # hdr['WSUM'] = wsum
-            da_mfs = xr.DataArray(data=np.array(psfpars_mfs[dsb.timeid])[None, :, :],
-                                  coords={'band': np.arange(1),
-                                          'corr': dsb.corr.values,
-                                          'bpar': dsb.bpar.values})
             if psfpars_mfs is not None:
+                da_mfs = xr.DataArray(data=np.array(psfpars_mfs[dsb.timeid])[None, :, :],
+                                      coords={'band': np.arange(1),
+                                              'corr': dsb.corr.values,
+                                              'bpar': dsb.bpar.values})
                 beams_hdu = create_beams_table(da_mfs, cell2deg=cell_deg)
             else:
                 beams_hdu = None

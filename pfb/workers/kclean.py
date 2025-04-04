@@ -45,7 +45,7 @@ def kclean(**kw):
     for key in opts.keys():
         print('     %25s = %s' % (key, opts[key]), file=log)
 
-    from pfb.utils.naming import xds_from_url
+    from pfb.utils.naming import xds_from_url, get_opts
 
     basename = f'{basedir}/{oname}'
     fits_oname = f'{opts.fits_output_folder}/{oname}'
@@ -56,23 +56,33 @@ def kclean(**kw):
 
     dds, dds_list = xds_from_url(dds_name)
 
-    from pfb.utils.fits import dds2fits
-
-
     if opts.fits_mfs or opts.fits:
+        from daskms.fsspec_store import DaskMSStore
+        from pfb.utils.fits import dds2fits
+        # get the psfpars for the mfs cube
+        dds_store = DaskMSStore(dds_name)
+        if '://' in dds_store.url:
+            protocol = dds_store.url.split('://')[0]
+        else:
+            protocol = 'file'
+        psfpars_mfs = get_opts(dds_store.url,
+                               protocol,
+                               name='psfparsn_mfs.pkl')
         print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
         dds2fits(dds_list,
                  'RESIDUAL',
                  f'{fits_oname}_{opts.suffix}',
                  norm_wsum=True,
                  do_mfs=opts.fits_mfs,
-                 do_cube=opts.fits_cubes)
+                 do_cube=opts.fits_cubes,
+                 psfpars_mfs=psfpars_mfs)
         dds2fits(dds_list,
                  'MODEL',
                  f'{fits_oname}_{opts.suffix}',
                  norm_wsum=False,
                  do_mfs=opts.fits_mfs,
-                 do_cube=opts.fits_cubes)
+                 do_cube=opts.fits_cubes,
+                 psfpars_mfs=psfpars_mfs)
 
     print(f"All done after {time.time() - ti}s", file=log)
 
