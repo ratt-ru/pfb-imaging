@@ -19,6 +19,9 @@ from scipy.constants import c as lightspeed
 import gc
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
+from astropy import units
+from astropy.coordinates import SkyCoord
+from africanus.coordinates import radec_to_lm
 
 
 def single_stokes_image(
@@ -194,16 +197,14 @@ def single_stokes_image(
             obs_time = time_out
             tra, tdec = get_coordinates(obs_time, target=opts.target)
         else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
-            from astropy import units as u
-            from astropy.coordinates import SkyCoord
-            c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(u.hourangle, u.deg))
+            c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(units.hourangle, units.deg))
             tra = np.deg2rad(c.ra.value)
             tdec = np.deg2rad(c.dec.value)
 
         tcoords=np.zeros((1,2))
         tcoords[0,0] = tra
         tcoords[0,1] = tdec
-        coords0 = np.array((ds.ra, ds.dec))
+        coords0 = np.array((radec[0], radec[1]))
         lm0 = radec_to_lm(tcoords, coords0).squeeze()
         x0 = lm0[0]
         y0 = lm0[1]
@@ -242,7 +243,7 @@ def single_stokes_image(
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     signu = -1.0 if flip_u else 1.0
     signv = -1.0 if flip_v else 1.0
-    # we need these in the test because of flipped wgridder convention
+    # we need these because of flipped wgridder convention
     # https://github.com/mreineck/ducc/issues/34
     signx = -1.0 if flip_u else 1.0
     signy = -1.0 if flip_v else 1.0
@@ -251,6 +252,38 @@ def single_stokes_image(
     psf_vis = np.exp(freqfactor*(signu*uvw[:, 0:1]*x0*signx +
                                  signv*uvw[:, 1:2]*y0*signy -
                                  uvw[:, 2:]*(n-1)))
+
+    # TODO - polarisation parameters?
+    if opts.inject_transient is not None:
+        import yaml
+        from pfb.utils.misc import dynamic_spectrum
+        with open(opts.inject_transient, 'r') as f:
+            transient_list = yaml.safe_load(f)
+        for transient in transient_list:
+            # parametric dspec model
+            dspec = dynamic_spectrum(time, freq, transient_list[transient])
+            
+            # convert radec to lm
+            tmp = transient_list[transient]['radec'].split(',')
+            if len(tmp) != 2:
+                raise ValueError(f"Invalid radec format {tmp} for transient {transient}")
+            c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(units.hourangle, units.deg))
+            ra_rad = np.deg2rad(c.ra.value)
+            dec_rad = np.deg2rad(c.dec.value)
+            tcoords=np.zeros((1,2))
+            tcoords[0,0] = ra_rad
+            tcoords[0,1] = dec_rad
+            coords0 = np.array((radec[0], radec[1]))
+            lm0t = radec_to_lm(tcoords, coords0).squeeze()
+            x0t = lm0t[0]
+            y0t = lm0t[1]
+            
+            # inject transient at x0t, y0t
+            data += dspec * np.exp(freqfactor*(
+                                 signu*uvw[:, 0:1]*x0t*signx +
+                                 signv*uvw[:, 1:2]*y0t*signy -
+                                 uvw[:, 2:]*(n-1)))
+
 
     if opts.robustness is not None:
         counts = _compute_counts(uvw,

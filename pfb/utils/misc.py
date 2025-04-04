@@ -1294,6 +1294,33 @@ def taperf(shape, taper_width):
 def _es_kernel(x, beta, k):
     return np.exp(beta*k*(np.sqrt((1-x)*(1+x)) - 1))
 
+
+def dynamic_spectrum(time, freq, transient):
+    '''
+    Inputs:
+        time      - time in seconds
+        freq      - frequency in Hz
+        transient - dict containing transient object parameters
+
+    Outputs:
+        dynamic spectrum for transient
+    '''
+    type = transient['type']
+    I0 = transient['I0']
+    alpha = transient['alpha']
+    nu0 = transient['nu0']
+    spectrum = I0 * (freq[None, :]/nu0)**alpha
+    if type.lower()=='periodic':
+        period = transient['period']
+        phase0 = transient['phase0']
+        dspec = spectrum * np.cos(2*np.pi*(time[:, None] - phase0)/period)
+    elif type.lower()=='flare':
+        sigma = transient['sigma']
+        t0 = transient['t0']
+        dspec = spectrum * np.exp(-0.5*((time[:, None] - t0)/sigma)**2)
+
+    return dspec
+
 # def fft_interp(image, cellxi, cellyi, nxo, nyo,
 #                cellxo, cellyo, shiftx, shifty):
 #     '''
