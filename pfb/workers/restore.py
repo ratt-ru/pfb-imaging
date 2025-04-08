@@ -67,10 +67,10 @@ def _restore(**kw):
 
     import numpy as np
     from pfb.utils.naming import xds_from_url, xds_from_list
-    from pfb.utils.fits import save_fits, add_beampars, set_wcs, dds2fits
+    from pfb.utils.fits import dds2fits
     from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres
     from ducc0.fft import c2c
-    from pfb.utils.restoration import restore_cube
+    from pfb.utils.restoration import restore_image
     from itertools import cycle
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import get_opts
@@ -125,7 +125,7 @@ def _restore(**kw):
     freqs = np.unique(freqs)
     nband = freqs.size
     ntime = timeids.size
-    ncorr = ds.corr.size
+    ncorr = dds[0].corr.size
     print(f'Number of output times = {ntime}', file=log)
     print(f'Number of output bands = {nband}', file=log)
 
@@ -218,7 +218,7 @@ def _restore(**kw):
         futures.append(fut)
 
     if opts.nworkers > 1:
-        wait(furesstore)
+        wait(futrestore)
 
     if 'i' in opts.outputs.lower():
         fut = client.submit(

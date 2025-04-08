@@ -22,7 +22,7 @@ def restore_image(ds_name,
     dds = xds_from_list(ds_name, nthreads=nthreads,
                         drop_all_but=drop_all_but)
     if len(dds) > 1:
-        raise RuntimeError('Some thing went wrong. "
+        raise RuntimeError('Some thing went wrong. '
                            'This should return a single dataset')
     ds = dds[0]
     if model_name not in ds:

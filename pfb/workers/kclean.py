@@ -160,8 +160,6 @@ def _kclean(**kw):
     ny = dds[0].y.size
     ra = dds[0].ra
     dec = dds[0].dec
-    x0 = dds[0].x0
-    y0 = dds[0].y0
     radec = [ra, dec]
     cell_rad = dds[0].cell_rad
     cell_deg = np.rad2deg(cell_rad)
