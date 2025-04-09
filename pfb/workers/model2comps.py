@@ -416,10 +416,10 @@ def _model2comps_fits(**kw):
             celly_deg = np.abs(hdu[0].header['CDELT1'])
         else:
             assert celly_deg == np.abs(hdu[0].header['CDELT1'])
-        if nx is None:
-            nx = hdu[0].header['NAXIS2']
+        if ny is None:
+            ny = hdu[0].header['NAXIS2']
         else:
-            assert nx == hdu[0].header['NAXIS2']
+            assert ny == hdu[0].header['NAXIS2']
         if nx is None:
             nx = hdu[0].header['NAXIS1']
         else:
@@ -442,7 +442,7 @@ def _model2comps_fits(**kw):
     cell_rad = np.deg2rad(cell_deg)
     x0 = 0.0
     y0 = 0.0
-    wsums = np.array(wsums[None, :], dtype=np.float64)
+    wsums = np.array(wsums, dtype=np.float64)[None, :]
     ra = np.deg2rad(ra)
     dec = np.deg2rad(dec)
     mtimes = np.ones((1,), dtype=np.float64)
@@ -621,8 +621,11 @@ def _model2comps_fits(**kw):
                                             nx, ny,
                                             cell_rad, cell_rad,
                                             x0, y0)
-
-        save_fits(modelo,
-                  fits_name,
-                  hdr,
-                  overwrite=True)
+    else:  # we just write it back at input frequencies as a sanity check
+        hdr = set_wcs(cell_deg, cell_deg, nx, ny, [ra, dec],
+                      mfreqs, GuassPar=(1, 1, 0), casambm=False)
+                      
+    save_fits(modelo[:, None, :, :],
+              fits_name,
+              hdr,
+              overwrite=True)

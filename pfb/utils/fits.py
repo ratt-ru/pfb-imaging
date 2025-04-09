@@ -112,7 +112,8 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         # header['EQUINOX'] = 2000.0
         header['BSCALE'] = 1.0
         header['BZERO'] = 0.0
-        header['CASAMBM'] = casambm  # we need this to pick up the beams table
+        if casambm:
+            header['CASAMBM'] = casambm  # we need this to pick up the beams table
 
         return header
     else:
