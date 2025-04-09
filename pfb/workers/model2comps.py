@@ -382,7 +382,7 @@ def _model2comps_fits(**kw):
 
 
     images_list = sorted(
-            glob(f"{opts.from_fits}-[0-9][0-9][0-9][0-9]-{opts.product.upper()}-model.fits"),
+            glob(f"{opts.from_fits}-[0-9][0-9][0-9][0-9]-model.fits"),
             key=os.path.getctime)
 
     # get cube info
