@@ -5,6 +5,37 @@ from sympy.utilities.lambdify import lambdify
 from numba import njit
 
 
+def corr_to_stokes(x, wsum=1.0, axis=0, poltype='linear'):
+    '''
+    x = [I+Q, U+1jV, U-1jV, I-Q]
+    out = [I, Q, U, V]
+    '''
+    if poltype.lower() != 'linear':
+        raise NotImplementedError("Only linear polarisation is implemented")
+    if x.shape[axis] != 4:
+        raise ValueError(f"Expected 4 polarisation products, got {x.shape[axis]}")
+    dirtyI = (np.take(x, 0, axis=axis) + np.take(x, 3, axis=axis)).real/wsum
+    dirtyQ = (np.take(x, 0, axis=axis) - np.take(x, 3, axis=axis)).real/wsum
+    dirtyU = (np.take(x, 1, axis=axis) + np.take(x, 2, axis=axis)).real/wsum
+    dirtyV = (np.take(x, 1, axis=axis) - np.take(x, 2, axis=axis)).imag/wsum
+    return np.stack((dirtyI, dirtyQ, dirtyU, dirtyV), axis=axis)
+
+def stokes_to_corr(x, axis=0, poltype='linear'):
+    '''
+    x = [I, Q, U, V]
+    out = [I+Q, U+1jV, U-1jV, I-Q]
+    '''
+    if poltype.lower() != 'linear':
+        raise NotImplementedError("Only linear polarisation is implemented")
+    if x.shape[axis] != 4:
+        raise ValueError(f"Expected 4 polarisation products, got {x.shape[axis]}")
+    dirty0 = np.take(x, 0, axis=axis) + np.take(x, 1, axis=axis)
+    dirty1 = np.take(x, 2, axis=axis) + 1j*np.take(x, 3, axis=axis)
+    dirty2 = np.take(x, 2, axis=axis) - 1j*np.take(x, 3, axis=axis)
+    dirty3 = np.take(x, 0, axis=axis) - np.take(x, 1, axis=axis)
+    return np.stack((dirty0, dirty1, dirty2, dirty3), axis=axis)
+
+
 def stokes_funcs(data, jones, product, pol, nc):
     # set up symbolic expressions
     gp00, gp10, gp01, gp11 = sm.symbols("gp00 gp10 gp01 gp11", real=False)
