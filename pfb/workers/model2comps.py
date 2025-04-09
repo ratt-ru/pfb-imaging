@@ -49,7 +49,10 @@ def model2comps(**kw):
 
     with ExitStack() as stack:
         ti = time.time()
-        _model2comps(**opts)
+        if opts.from_fits:
+            _model2comps_fits(**opts)
+        else:
+            _model2comps(**opts)
 
 
     print(f"All done after {time.time() - ti}s", file=log)
@@ -314,6 +317,294 @@ def _model2comps(**kw):
         hdr = set_wcs(cell_deg, cell_deg, nx, ny, [ra, dec],
                     freq_out, GuassPar=(1, 1, 0),  # fake for now
                     ms_time=mtimes[0])
+        modelo = np.zeros((nbando, nx, ny))
+        for b in range(nbando):
+            modelo[b] = eval_coeffs_to_slice(mtimes[0],
+                                            freq_out[b],
+                                            coeffs,
+                                            Ix, Iy,
+                                            expr,
+                                            params,
+                                            texpr,
+                                            fexpr,
+                                            nx, ny,
+                                            cell_rad, cell_rad,
+                                            x0, y0,
+                                            nx, ny,
+                                            cell_rad, cell_rad,
+                                            x0, y0)
+
+        save_fits(modelo,
+                  fits_name,
+                  hdr,
+                  overwrite=True)
+        
+def _model2comps_fits(**kw):
+    opts = OmegaConf.create(kw)
+    OmegaConf.set_struct(opts, True)
+
+    import os
+    import numpy as np
+    from africanus.constants import c as lightspeed
+    from pfb.utils.misc import fit_image_cube
+    from pfb.utils.fits import set_wcs, save_fits, load_fits
+    from pfb.utils.misc import eval_coeffs_to_slice, norm_diff
+    import xarray as xr
+    import fsspec as fs
+    from daskms.fsspec_store import DaskMSStore
+    import json
+    from casacore.quanta import quantity
+    from pfb.utils.misc import eval_coeffs_to_slice
+    from astropy.io import fits
+    from glob import glob
+
+    basename = opts.output_filename
+    if opts.fits_output_folder is not None:
+        fits_oname = opts.fits_output_folder + '/' + basename.split('/')[-1]
+    else:
+        fits_oname = basename
+
+    if opts.model_out is not None:
+        coeff_name = opts.model_out
+        fits_name = opts.model_out.rstrip('.mds') + '.fits'
+    else:
+        coeff_name = f'{basename}_{opts.suffix}_{opts.model_name.lower()}.mds'
+        fits_name = f'{basename}_{opts.suffix}_{opts.model_name.lower()}.fits'
+
+    mdsstore = DaskMSStore(coeff_name)
+    if mdsstore.exists():
+        if opts.overwrite:
+            print(f"Overwriting {coeff_name}", file=log)
+            mdsstore.rm(recursive=True)
+        else:
+            raise ValueError(f"{coeff_name} exists. "
+                             "Set --overwrite to overwrite it. ")
+
+
+    images_list = sorted(
+            glob(f"{opts.from_fits}-[0-9][0-9][0-9][0-9]-{opts.product.upper()}-model.fits"),
+            key=os.path.getctime)
+
+    # get cube info
+    nband = len(images_list)
+    ntime = 1
+    mfreqs = []
+    model_list = []
+    cellx_deg = None
+    celly_deg = None
+    nx = None
+    ny = None
+    ra = None
+    dec = None
+    wsums = []
+    for image in images_list:
+        print(f"Loading {image}", file=log)
+        hdu = fits.open(image)
+        model_list.append(hdu[0].data.squeeze().T)
+        mfreqs.append(hdu[0].header['CRVAL3'])
+        if 'WSCVWSUM' in hdu[0].header:
+            wsums.append(hdu[0].header['WSCVWSUM'])
+        elif 'WSCIMGWG' in hdu[0].header:
+            wsums.append(hdu[0].header['WSCIMGWG'])
+        else:
+            wsums.append(1.0)
+        if cellx_deg is None:
+            cellx_deg = np.abs(hdu[0].header['CDELT1'])
+        else:
+            assert cellx_deg == np.abs(hdu[0].header['CDELT1'])
+        if celly_deg is None:
+            celly_deg = np.abs(hdu[0].header['CDELT4'])
+        else:
+            assert cellx_deg == np.abs(hdu[0].header['CDELT2'])
+        if nx is None:
+            nx = hdu[0].header['NAXIS1']
+        else:
+            assert nx == hdu[0].header['NAXIS1']
+        if nx is None:
+            nx = hdu[0].header['NAXIS2']
+        else:
+            assert nx == hdu[0].header['NAXIS2']
+        if ra is None:
+            ra = hdu[0].header['CRVAL1']
+        else:
+            assert ra == hdu[0].header['CRVAL1']
+        if dec is None:
+            dec = hdu[0].header['CRVAL2']
+        else:
+            assert dec == hdu[0].header['CRVAL2']
+        hdu.close()
+    mfreqs = np.unique(np.array(mfreqs))
+    assert mfreqs.size == nband
+    for b in range(nband):
+        print(f"Found {mfreqs[b]}Hz model at index {b}", file=log)
+    assert cellx_deg == celly_deg
+    cell_deg = cellx_deg
+    cell_rad = np.deg2rad(cell_deg)
+    x0 = 0.0
+    y0 = 0.0
+    wsums = np.array(wsums[None, :], dtype=np.float64)
+    ra = np.deg2rad(ra)
+    dec = np.deg2rad(dec)
+    mtimes = np.ones((1,), dtype=np.float64)
+    model = np.zeros((ntime, nband, nx, ny), dtype=np.float64)
+    for b in range(nband):
+        model[0, b] = model_list[b]
+
+    if not opts.use_wsum:
+        wsums[...] = 1.0
+    else:
+        # normalise so ridge param has more intuitive meaning
+        wsums /= wsums.max()
+
+    if not np.any(model):
+        raise ValueError(f'Model is empty')
+    radec = (ra, dec)
+
+    if opts.out_freqs is not None:
+        flow, fhigh, step = list(map(float, opts.out_freqs.split(':')))
+        fsel = np.all(wsums > 0, axis=0)
+        if flow < mfreqs.min():
+            print(f"Linearly extrapolating to {flow:.3e}Hz",
+                  file=log)
+            # linear extrapolation from first two non-null bands
+            Ilow = np.argmax(fsel)  # first non-null index
+            Ihigh = Ilow + 1
+            while not fsel[Ihigh]:
+                Ihigh += 1
+            nudiff = mfreqs[Ihigh] - mfreqs[Ilow]
+            slopes = (model[:, Ihigh] - model[:, Ilow])/nudiff
+            intercepts = model[:, Ihigh] - slopes * mfreqs[Ihigh]
+            mlow = slopes * flow + intercepts
+            model = np.concatenate((mlow[:, None], model), axis=1)
+            mfreqs = np.concatenate((np.array((flow,)), mfreqs))
+            # TODO - duplicate first non-null value?
+            wsums = np.concatenate((0.5*wsums[:, Ilow][:, None], wsums),
+                                   axis=1)
+            nband = mfreqs.size
+        if fhigh > mfreqs.max():
+            print(f"Linearly extrapolating to {fhigh:.3e}Hz",
+                  file=log)
+            # linear extrapolation from last two non-null bands
+            Ihigh = nband - np.argmax(fsel[::-1]) - 1  # last non-null index
+            Ilow = Ihigh - 1
+            while not fsel[Ilow]:
+                Ilow -= 1
+            nudiff = mfreqs[Ihigh] - mfreqs[Ilow]
+            slopes = (model[:, Ihigh] - model[:, Ilow])/nudiff
+            intercepts = model[:, Ihigh] - slopes * mfreqs[Ihigh]
+            mhigh = slopes * fhigh + intercepts
+            model = np.concatenate((model, mhigh[:, None]), axis=1)
+            mfreqs = np.concatenate((mfreqs, np.array((fhigh,))))
+            wsums = np.concatenate((wsums, 0.5*wsums[:, Ihigh][:, None]),
+                                   axis=1)
+            nband = mfreqs.size
+
+    if opts.min_val is not None:
+        model = np.where(model > opts.min_val, model, 0.0)
+
+    if not np.any(model):
+        raise ValueError(f'Model has no components above {opts.min_val}')
+
+    if opts.nbasisf is None:
+        nbasisf = nband-1
+    else:
+        nbasisf = opts.nbasisf
+
+    nbasis = nbasisf
+    print(f"Fitting {nband} bands with {nbasis} basis functions",
+          file=log)
+    try:
+        coeffs, Ix, Iy, expr, params, texpr, fexpr = \
+            fit_image_cube(mtimes, mfreqs, model,
+                           wgt=wsums,
+                           nbasisf=nbasisf,
+                           method=opts.fit_mode,
+                           sigmasq=opts.sigmasq)
+    except np.linalg.LinAlgError as e:
+        print(f"Exception {e} raised during fit ."
+              f"Do you perhaps have empty sub-bands?"
+              f"Decreasing nbasisf", file=log)
+        raise e
+
+    # save interpolated dataset
+    data_vars = {
+        'coefficients': (('par', 'comps'), coeffs),
+    }
+    coords = {
+        'location_x': (('x',), Ix),
+        'location_y': (('y',), Iy),
+        # 'shape_x':,
+        'params': (('par',), params),  # already converted to list
+        'times': (('t',), mtimes),  # to allow rendering to original grid
+        'freqs': (('f',), mfreqs)
+    }
+    attrs = {
+        'spec': 'genesis',
+        'cell_rad_x': cell_rad,
+        'cell_rad_y': cell_rad,
+        'npix_x': nx,
+        'npix_y': ny,
+        'texpr': texpr,
+        'fexpr': fexpr,
+        'center_x': x0,
+        'center_y': y0,
+        'flip_u': False,
+        'flip_v': True,
+        'flip_w': False,
+        'ra': ra,
+        'dec': dec,
+        'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
+        'parametrisation': expr  # already converted to str
+    }
+
+
+    coeff_dataset = xr.Dataset(data_vars=data_vars,
+                               coords=coords,
+                               attrs=attrs)
+    print(f'Writing interpolated model to {coeff_name}',
+          file=log)
+
+    if opts.out_format == 'zarr':
+        coeff_dataset.to_zarr(mdsstore.url)
+    elif opts.out_format == 'json':
+        coeff_dict = coeff_dataset.to_dict()
+        with fs.open(mdsstore.url, 'w') as f:
+            json.dump(coeff_dict, f)
+
+
+    # interpolation error
+    modelo = np.zeros((nband, nx, ny))
+    for b in range(nband):
+        modelo[b] = eval_coeffs_to_slice(mtimes[0],
+                                         mfreqs[b],
+                                         coeffs,
+                                         Ix, Iy,
+                                         expr,
+                                         params,
+                                         texpr,
+                                         fexpr,
+                                         nx, ny,
+                                         cell_rad, cell_rad,
+                                         x0, y0,
+                                         nx, ny,
+                                         cell_rad, cell_rad,
+                                         x0, y0)
+
+    eps = norm_diff(modelo, model[0])
+    print(f"Fractional interpolation error is {eps:.3e}", file=log)
+
+
+    # TODO - doesn't work with multiple fields
+    # render model to cube
+    if opts.out_freqs is not None:
+        flow, fhigh, step = list(map(float, opts.out_freqs.split(':')))
+        nbando = int((fhigh - flow)/step)
+        print(f"Rendering model cube to {nbando} output bands",
+              file=log)
+        freq_out = np.linspace(flow, fhigh, nbando)
+        hdr = set_wcs(cell_deg, cell_deg, nx, ny, [ra, dec],
+                      freq_out, GuassPar=(1, 1, 0),  # fake for now
+                      ms_time=mtimes[0])
         modelo = np.zeros((nbando, nx, ny))
         for b in range(nbando):
             modelo[b] = eval_coeffs_to_slice(mtimes[0],

@@ -553,35 +553,6 @@ def image_data_products(dsl,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
 
-    # if l2_reweight_dof:
-    #     # normalise to absolute units
-    #     ressq = (residual_vis*wgt*residual_vis.conj()).real
-    #     ssq = ressq[mask>0].sum()
-    #     ovar = ssq/mask.sum()
-    #     wgt /= ovar
-    #     ressq = (residual_vis*wgt*residual_vis.conj()).real
-    #     meanf = np.mean(ressq[mask>0])
-    #     stdf = np.std(ressq[mask>0])
-    #     print(f"Band {bandid} after: mean = {meanf:.3e}, std = {stdf:.3e}")
-
-        # import matplotlib.pyplot as plt
-        # from scipy.stats import norm
-        # x = np.linspace(-5, 5, 150)
-        # y = norm.pdf(x, 0, 1)
-        # fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(8, 12))
-        # ax[0,0].hist((residual_vis.real*np.sqrt(wgtp/2)).ravel(), bins=15, density=True)
-        # ax[0,0].plot(x, y, 'k')
-        # ax[0,1].hist((residual_vis.real*np.sqrt(wgt/2)).ravel(), bins=15, density=True)
-        # ax[0,1].plot(x, y, 'k')
-        # ax[1,0].hist((residual_vis.imag*np.sqrt(wgtp/2)).ravel(), bins=15, density=True)
-        # ax[1,0].plot(x, y, 'k')
-        # ax[1,1].hist((residual_vis.imag*np.sqrt(wgt/2)).ravel(), bins=15, density=True)
-        # ax[1,1].plot(x, y, 'k')
-        # import os
-        # cwd = os.getcwd()
-        # bid = dso.attrs['bandid']
-        # fig.savefig(f'{cwd}/resid_hist_{bid}.png')
-
     # these are always used together
     if do_weight:
         dso['WEIGHT'] = (('corr', 'row','chan'), wgt)
