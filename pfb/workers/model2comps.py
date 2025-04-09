@@ -409,21 +409,21 @@ def _model2comps_fits(**kw):
         else:
             wsums.append(1.0)
         if cellx_deg is None:
-            cellx_deg = np.abs(hdu[0].header['CDELT1'])
-        else:
-            assert cellx_deg == np.abs(hdu[0].header['CDELT1'])
-        if celly_deg is None:
-            celly_deg = np.abs(hdu[0].header['CDELT4'])
+            cellx_deg = np.abs(hdu[0].header['CDELT2'])
         else:
             assert cellx_deg == np.abs(hdu[0].header['CDELT2'])
-        if nx is None:
-            nx = hdu[0].header['NAXIS1']
+        if celly_deg is None:
+            celly_deg = np.abs(hdu[0].header['CDELT1'])
         else:
-            assert nx == hdu[0].header['NAXIS1']
+            assert celly_deg == np.abs(hdu[0].header['CDELT1'])
         if nx is None:
             nx = hdu[0].header['NAXIS2']
         else:
             assert nx == hdu[0].header['NAXIS2']
+        if nx is None:
+            nx = hdu[0].header['NAXIS1']
+        else:
+            assert nx == hdu[0].header['NAXIS1']
         if ra is None:
             ra = hdu[0].header['CRVAL1']
         else:
