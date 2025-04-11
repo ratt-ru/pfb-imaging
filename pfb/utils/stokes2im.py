@@ -303,6 +303,7 @@ def stokes_image(
             uvw,
             freq,
             weight,
+            mask,
             nx, ny,
             cell_rad, cell_rad,
             opts.robustness,
