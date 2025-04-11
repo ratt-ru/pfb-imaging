@@ -384,6 +384,8 @@ def _model2comps_fits(**kw):
     images_list = sorted(
             glob(f"{opts.from_fits}-[0-9][0-9][0-9][0-9]-model.fits"),
             key=os.path.getctime)
+    if len(images_list) == 0:
+        raise ValueError(f"No images found at {opts.from_fits}")
 
     # get cube info
     nband = len(images_list)

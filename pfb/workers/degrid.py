@@ -163,6 +163,9 @@ def _degrid(**kw):
                                cpi=cpi,
                                freq_min=freq_min,
                                freq_max=freq_max)
+                            #    FIELD_IDs=opts.fields,
+                            #    DDIDs=opts.ddids,
+                            #    SCANs=opts.scans)
 
     mds = xr.open_zarr(opts.mds)
     foo = client.scatter(mds, broadcast=True)
@@ -219,27 +222,34 @@ def _degrid(**kw):
     else:
         masks = [np.ones((nx, ny), dtype=np.float64)]
 
-    print("Computing model visibilities", file=log)
+    
     writes = []
     for ms in opts.ms:
         xds = xds_from_ms(ms,
                           chunks=ms_chunks[ms],
                           group_cols=group_by)
+        
 
         for i, mask in enumerate(masks):
             out_data = []
             columns = []
             for k, ds in enumerate(xds):
+                fid = ds.FIELD_ID
+                ddid = ds.DATA_DESC_ID
+                scanid = ds.SCAN_NUMBER
+                if (opts.fields is not None) and (fid not in opts.fields):
+                    continue
+                if (opts.ddids is not None) and (ddid not in opts.ddids):
+                    continue
+                if (opts.scans is not None) and (scanid not in opts.scans):
+                    continue
+                idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+
                 if i == 0:
                     column_name = opts.model_column
                 else:
                     column_name = f'{opts.model_column}{i}'
                 columns.append(column_name)
-
-                fid = ds.FIELD_ID
-                ddid = ds.DATA_DESC_ID
-                scanid = ds.SCAN_NUMBER
-                idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
 
                 # time <-> row mapping
                 utime = da.from_array(utimes[ms][idt],
@@ -312,5 +322,6 @@ def _degrid(**kw):
                                     rechunk=True))
 
     # optimize_graph can make things much worse
+    print("Computing model visibilities", file=log)
     dask.compute(writes)  #, optimize_graph=False)
 
