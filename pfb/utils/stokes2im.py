@@ -24,27 +24,27 @@ from astropy.coordinates import SkyCoord
 from africanus.coordinates import radec_to_lm
 
 
-def single_stokes_image(
-                    dc1=None,
-                    dc2=None,
-                    operator=None,
-                    ds=None,
-                    jones=None,
-                    opts=None,
-                    nx=None,
-                    ny=None,
-                    freq=None,
-                    cell_rad=None,
-                    utime=None,
-                    tbin_idx=None,
-                    tbin_counts=None,
-                    radec=None,
-                    antpos=None,
-                    poltype=None,
-                    fds_store=None,
-                    bandid=None,
-                    timeid=None,
-                    wid=None):
+def stokes_image(
+                dc1=None,
+                dc2=None,
+                operator=None,
+                ds=None,
+                jones=None,
+                opts=None,
+                nx=None,
+                ny=None,
+                freq=None,
+                cell_rad=None,
+                utime=None,
+                tbin_idx=None,
+                tbin_counts=None,
+                radec=None,
+                antpos=None,
+                poltype=None,
+                fds_store=None,
+                bandid=None,
+                timeid=None,
+                wid=None):
 
     resize_thread_pool(opts.nthreads)
     fieldid = ds.FIELD_ID
@@ -96,10 +96,8 @@ def single_stokes_image(
     frow = ds.FLAG_ROW.values | (ant1 == ant2)
     ds = ds.drop_vars('FLAG_ROW')
 
-    # flag if any of the correlations flagged
-    flag = np.any(flag, axis=2)
     # combine flag and frow
-    flag = np.logical_or(flag, frow[:, None])
+    flag = np.logical_or(flag, frow[:, None, None])
 
     # we rely on this to check the number of output bands and
     # to ensure we don't end up with fully flagged chunks
@@ -224,6 +222,8 @@ def single_stokes_image(
                             literally(opts.product),
                             literally(str(ncorr)))
 
+    # flag if any correlation is flagged
+    flag = flag.any(axis=-1)
     mask = (~flag).astype(np.uint8)
 
     # TODO - this subtraction would be better to do inside weight_data
