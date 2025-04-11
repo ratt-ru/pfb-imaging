@@ -178,6 +178,10 @@ inputs:
     default: false
     info:
       Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.
+  inject-transients:
+    dtype: str
+    info:
+      YAML file containing transients to inject into the data.
   _include:
     - (.)gridding.yml
     - (.)out.yml
