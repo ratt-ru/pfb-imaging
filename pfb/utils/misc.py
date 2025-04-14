@@ -818,35 +818,33 @@ def l1reweight_func(model,
         return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
 
 
-# TODO - this can be done in parallel by splitting the image into facets
 def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
                    method='poly', sigmasq=0):
     '''
     Fit the time and frequency axes of an image cube where
 
+    time    - (ntime) time axis
+    freq    - (nband) frequency axis
     image   - (ntime, nband, nx, ny) pixelated image
     wgt     - (ntime, nband) optional per time and frequency weights
     nbasist - number of time basis functions
     nbasisf - number of frequency basis functions
-    method  - method to use for fitting
+    method  - method to use for fitting (poly or Legendre)
+    sigmasq - optional regularisation term to add to the Hessian
+              to improve conditioning
 
-    If wgt is not supplied equal weights are assumed.
-    If nbasist/f are not supplied we return the coefficients
-    of a bilinear fit regardless of method.
-
-    methods:
-    poly    - fit a monomials in time and frequency
-
+    method:
+    poly     - fit a monomials in time and frequency
+    Legendre - fit a Legendre polynomial in time and frequency
 
     returns:
     coeffs  - fitted coefficients
-    locx    - x pixel values
-    locy    - y pixel values
+    Ix, Iy  - pixel locations of non-zero pixels in the image
     expr    - a string representing the symbolic expression describing the fit
     params  - tuple of str, parameters to pass into function (excluding t and f)
-    ref_time    - reference time
-    ref_freq    - reference frequency
-
+    tfunc   - function which scales the time domain appropriately for method
+    ffunc   - function which scales the frequency domain appropriately for method
+    
 
     The fit is performed in scaled coordinates (t=time/ref_time,f=freq/ref_freq)
     '''
@@ -940,7 +938,7 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
             Xfit = np.hstack((Xfit, Xf))
             params += paramsf
     else:
-        raise NotImplementedError("Please help us!")
+        raise NotImplementedError(f"Method {method} not implemented")
 
     dirty_coeffs = Xfit.T.dot(wgt*beta)
     hess_coeffs = Xfit.T.dot(wgt*Xfit)
@@ -949,8 +947,96 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
         hess_coeffs += sigmasq*np.eye(hess_coeffs.shape[0])
     coeffs = np.linalg.solve(hess_coeffs, dirty_coeffs)
 
-
     return coeffs, Ix, Iy, str(expr), list(map(str,params)), str(tfunc),str(ffunc)
+
+
+def fit_image_fscube(freq, image,
+                     wgt=None, nbasisf=None,
+                     method='Legendre', sigmasq=0):
+    '''
+    Fit the frequency axis of an image cube where
+
+    freq    - (nband,) frequency axis
+    image   - (nband, ncorr, nx, ny) pixelated image
+    wgt     - (nband, ncorr) optional per time and frequency weights
+    nbasisf - number of frequency basis functions
+    method  - method to use for fitting (poly or Legendre)
+    sigmasq - optional regularisation term to add to the Hessian
+              to improve conditioning
+
+    method:
+    poly     - fit a monomials to frequency axis
+    Legendre - fit a Legendre polynomial to frequency
+
+    returns:
+    coeffs  - (ncorr, nbasisf, ncomps) fitted coefficients
+    Ix, Iy  - (ncomps,) pixel locations of non-zero pixels in the image
+    expr    - a string representing the symbolic expression describing the fit
+    params  - tuple of str, parameters to pass into function (excluding t and f)
+    ffunc   - function which scales the frequency domain appropriately for method
+    '''
+    nband = freq.size
+    ref_freq = freq[0]
+    import sympy as sm
+    from sympy.abc import f
+
+    if nbasisf is None:
+        nbasisf = nband
+    else:
+        assert nbasisf <= nband
+
+    nband, ncorr, nx, ny = image.shape
+    mask = np.any(image, axis=(0,1))  # over freq and corr axes
+    Ix, Iy = np.where(mask)
+    ncomps = Ix.size
+
+    # components excluding zeros
+    beta = image[:, :, Ix, Iy].reshape(nband, ncorr, ncomps)
+    if wgt is not None:
+        wgt = wgt.reshape(nband, ncorr, 1)
+    else:
+        wgt = np.ones((nband, ncorr, 1), dtype=float)
+
+    params = sm.symbols(f'f(0:{nbasisf})')
+    if nband==1:  # nothing to fit
+        coeffs = beta
+        expr = f
+        params = (f,)
+    elif method=='poly':
+        wf = freq/ref_freq
+        ffunc = f/ref_freq
+        Xf = np.tile(wf[:, None], (1, nbasisf))**np.arange(nbasisf)
+        expr = sum(co*f**i for i, co in enumerate(params))
+
+    elif method=='Legendre':
+        Xf = np.zeros((nband, nbasisf), dtype=float)
+        fmax = freq.max()
+        fmin = freq.min()
+        wf = freq - (fmax + fmin)/2
+        wfmax = wf.max()
+        wf /= wfmax
+        ffunc = (f - (fmax + fmin)/2)/wfmax
+        Xf[:, 0] = 1.0
+        expr = params[0]
+        for i in range(1, nbasisf):
+            vals = np.polynomial.Legendre.basis(i)(wf)
+            Xf[:, i] = vals
+            expr += sm.polys.orthopolys.legendre_poly(i, f)*params[i]
+    else:
+        raise NotImplementedError(f"Method {method} not implemented")
+
+    # fit each correlation separately
+    coeffs = np.zeros((ncorr, nbasisf, ncomps), dtype=beta.dtype)
+    for c in range(ncorr):
+        dirty_coeffs = Xf.T.dot(wgt[:, c]*beta[:, c])
+        hess_coeffs = Xf.T.dot(wgt[:, c]*Xf)
+        # to improve conditioning
+        if sigmasq:
+            hess_coeffs += sigmasq*np.eye(hess_coeffs.shape[0])
+        coeffs[c] = np.linalg.solve(hess_coeffs, dirty_coeffs)
+    
+
+    return coeffs, Ix, Iy, str(expr), list(map(str,params)), str(ffunc)
 
 
 def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy,

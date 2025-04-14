@@ -226,7 +226,7 @@ def _restore(**kw):
                         dds_list,
                         'IMAGE',
                         f'{fits_oname}_{opts.suffix}',
-                        norm_wsum=True,
+                        norm_wsum=False,
                         nthreads=opts.nthreads,
                         do_mfs='i' in opts.outputs,
                         do_cube='I' in opts.outputs,

@@ -52,6 +52,27 @@ def psf_convolve_cube(xpad,    # preallocated array to store padded image
     return xout
 
 
+def psf_convolve_fscube(xpad,    # preallocated array to store padded image
+                        xhat,    # preallocated array to store FTd image
+                        xout,    # preallocated array to store output image
+                        psfhat,
+                        lastsize,
+                        x,       # input image, not overwritten
+                        nthreads=1):
+    _, ncorr, nx, ny = x.shape
+    xpad[...] = 0.0
+    xpad[:, :, 0:nx, 0:ny] = x
+    r2c(xpad, axes=(-2, -1), nthreads=nthreads,
+        forward=True, inorm=0, out=xhat)
+    xhat *= psfhat
+    c2r(xhat, axes=(-2, -1), forward=False, out=xpad,
+        lastsize=lastsize, inorm=2, nthreads=nthreads,
+        allow_overwriting_input=True)
+    xout[...] = xpad[:, :, 0:nx, 0:ny]
+    return xout
+
+
+
 def psf_convolve_xds(x, xds, psfopts, wsum, eta, mask,
                      compute=True, use_beam=True):
     '''
