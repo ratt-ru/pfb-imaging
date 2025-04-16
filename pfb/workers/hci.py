@@ -27,7 +27,7 @@ def hci(**kw):
         opts.nthreads = nthreads//2
         ncpu = ncpu//2
 
-    if opts.product.upper() not in ["I","Q", "U", "V"]:
+    if opts.product.upper() not in ["I","Q","U","V","DS","FS"]:
         raise NotImplementedError(f"Product {opts.product} not yet supported")
 
 
@@ -99,7 +99,7 @@ def _hci(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.stokes2im import single_stokes_image
+    from pfb.utils.stokes2im import stokes_image
     import xarray as xr
 
     basename = f'{opts.output_filename}'
@@ -358,7 +358,7 @@ def _hci(**kw):
          radeci, fi, ti, ms) = datasets.pop(0)
 
         worker = idle_workers.pop()
-        future = client.submit(single_stokes_image,
+        future = client.submit(stokes_image,
                         dc1=dc1,
                         dc2=dc2,
                         operator=operator,
@@ -401,7 +401,7 @@ def _hci(**kw):
             (subds, jones, freqsi, utimesi, ridx, rcnts,
             radeci, fi, ti, ms) = datasets.pop(0)
 
-            future = client.submit(single_stokes_image,
+            future = client.submit(stokes_image,
                             dc1=dc1,
                             dc2=dc2,
                             operator=operator,

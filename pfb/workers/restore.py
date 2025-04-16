@@ -67,12 +67,13 @@ def _restore(**kw):
 
     import numpy as np
     from pfb.utils.naming import xds_from_url, xds_from_list
-    from pfb.utils.fits import save_fits, add_beampars, set_wcs, dds2fits
+    from pfb.utils.fits import dds2fits
     from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres
     from ducc0.fft import c2c
-    from pfb.utils.restoration import restore_cube
+    from pfb.utils.restoration import restore_image
     from itertools import cycle
     from daskms.fsspec_store import DaskMSStore
+    from pfb.utils.naming import get_opts
     from distributed import wait
     try:
         from distributed import get_client
@@ -93,7 +94,21 @@ def _restore(**kw):
 
     dds_name = f'{basename}_{opts.suffix}.dds'
     dds, dds_list = xds_from_url(dds_name)
-
+    dds_store = DaskMSStore(dds_name)
+    if '://' in dds_store.url:
+        protocol = dds_store.url.split('://')[0]
+    else:
+        protocol = 'file'
+    
+    # get MFS PSF PARS
+    try:
+        psfpars_mfs = get_opts(dds_store.url,
+                            protocol,
+                            name='psfparsn_mfs.pkl')
+    except:
+        raise RuntimeError("Could not load MFS PSF pamaters. "
+                           "Run grid worker with psf=true to remake.")
+    
     if opts.drop_bands is not None:
         ddso = []
         ddso_list = []
@@ -105,107 +120,62 @@ def _restore(**kw):
         dds = ddso
         dds_list = ddso_list
 
-    freq_out = []
-    time_out = []
-    for ds in dds:
-        freq_out.append(ds.freq_out)
-        time_out.append(ds.time_out)
-    freq_out = np.unique(np.array(freq_out))
-    time_out = np.unique(np.array(time_out))
-    nband = freq_out.size
-    ntime = time_out.size
-    if ntime > 1:
-        raise NotImplementedError('Multiple output times not yet supported')
+    timeids = np.unique(np.array([int(ds.timeid) for ds in dds]))
+    freqs = [ds.freq_out for ds in dds]
+    freqs = np.unique(freqs)
+    nband = freqs.size
+    ntime = timeids.size
+    ncorr = dds[0].corr.size
+    print(f'Number of output times = {ntime}', file=log)
     print(f'Number of output bands = {nband}', file=log)
 
-    # get available gausspars
-    # we need to compute MFS gausspars on the runner
-    wsums = np.array([ds.wsum for ds in dds])
-    wsum = np.sum(wsums)
-    cell_rad = dds[0].cell_rad
-    cell_deg = np.rad2deg(cell_rad)
-    cell_asec = cell_deg*3600
-    if 'gaussparn' in dds[0].attrs:
-        gaussparn = [ds.gaussparn for ds in dds]
-        psf_mfs = np.sum([ds.PSF.values for ds in dds], axis=0)/wsum
-        gaussparn_mfs = fitcleanbeam(psf_mfs[None], level=0.5, pixsize=1.0)[0]
-    else:
-        gaussparn = None
-        gaussparn_mfs = None
-
-    if 'gaussparu' in dds[0].attrs:
-        gaussparu = [ds.gaussparu for ds in dds]
-        upsf_mfs = np.sum([ds.UPSF.values * ds.wsum for ds in dds], axis=0)/wsum
-        gaussparu_mfs = fitcleanbeam(upsf_mfs[None], level=0.5, pixsize=1.0)[0]
-    else:
-        gaussparu = None
-        gaussparu_mfs = None
-
-    if 'gaussparm' in dds[0].attrs:
-        gaussparm = [ds.gaussparm for ds in dds]
-        mpsf_mfs = np.sum([ds.MPSF.values * ds.wsum for ds in dds], axis=0)/wsum
-        gaussparm_mfs = fitcleanbeam(mpsf_mfs[None], level=0.5, pixsize=1.0)[0]
-    else:
-        gaussparm = None
-        gaussparm_mfs = None
 
     if opts.gausspar is None:
-        gaussparf = gaussparn
-        gaussparf_mfs = gaussparn_mfs
-        gaussparfu = gaussparu
-        gaussparfu_mfs = gaussparu_mfs
+        gaussparf = None
+        gaussparf_mfs = None
         print("Using native resolution", file=log)
     elif opts.gausspar == [0,0,0]:
-        gaussparf = [gaussparn[0]]*nband
-        emaj = gaussparf[0][0] * cell_asec
-        emin = gaussparf[0][1] * cell_asec
-        pa = gaussparf[0][2]
-        gaussparf_mfs = gaussparn[0]
-        print(f"Using lowest resolution of ({emaj:.3e} asec, {emin:.3e} asec, "
-              f"{pa:.3e} degrees) for restored images", file=log)
-
-        if gaussparu is not None:
-            # inflate and cicularise
-            emaj = gaussparu[0][0]
-            emin = gaussparu[0][1]
-            emaj = np.maximum(emaj, emin)
-            print(f"Lowest uniform resolution is {emaj*cell_asec:.3e} asec",
-                  file=log)
-            emaj *= opts.inflate_factor
-            gaussparfu = gaussparu[0]
-            gaussparfu[0] = emaj
-            gaussparfu[1] = emaj
-            gaussparfu[2] = 0.0
-            print(f"Setting uniformly blurred image resolution to {emaj*cell_asec:.3e} asec",
-                  file=log)
-            gaussparfu_mfs = gaussparfu
-            gaussparfu = [gaussparfu]*nband
-
+        # This is just to figure out what resolution to convolve to
+        dds = xds_from_list(dds_list, nthreads=nthreads,
+                            drop_all_but=['PSFPARSN'])
+        emaj = 0.0
+        emin = 0.0
+        pas = []
+        for ds in dds:
+            gausspars = ds.PSFPARSN.values
+            emaj = np.maximum(emaj, gausspars[:, 0].max())
+            emin = np.maximum(emin, gausspars[:, 1].max())
+            pas.append(np.mean(gausspars[:, 2]))
+        pa = np.mean(np.array(pas))
+        print(f"Using lowest resolution of ({emaj*cell_asec:.3e} asec, "
+              f"{emin*cell_asec:.3e} asec, {pa:.3e} degrees) for restored images",
+              file=log)
+        # these are n pixel units
+        gaussparf_mfs = [emaj, emin, pa]
+        gaussparf = gaussparf_mfs * ncorr
     else:
-        gaussparf = list(opts.gausspar)
-        emaj = gaussparf[0]
-        emin = gaussparf[1]
-        pa = gaussparf[2]
+        gaussparf_mfs = list(opts.gausspar)
+        emaj = gaussparf_mfs[0]
+        emin = gaussparf_mfs[1]
+        pa = gaussparf_mfs[2]
         if 'i' in opts.outputs.lower():
             print(f"Using specified resolution of ({emaj:.3e} asec, {emin:.3e} asec, "
                 f"{pa:.3e} degrees) for restored image", file=log)
-        gaussparfu = [opts.gausspar[0]*opts.inflate_factor,
-                      opts.gausspar[1]*opts.inflate_factor,
-                      opts.gausspar[2]]  # don't inflat PA
-        emaj = gaussparfu[0]
-        emin = gaussparfu[1]
-        pa = gaussparfu[2]
-        if 'u' in opts.outputs.lower():
-            print(f"Using inflated resolution of ({emaj:.3e} asec, {emin:.3e} asec, "
-                f"{pa:.3e} degrees) for uniformly blurred image", file=log)
         # convert to pixel units
         for i in range(2):
-            gaussparf[i] /= cell_asec
-            gaussparfu[i] /= cell_asec
-        gaussparf_mfs = gaussparf
-        gaussparfu_mfs = gaussparfu
-        gaussparf = [gaussparf]*nband
-        gaussparfu = [gaussparfu]*nband
+            gaussparf_mfs[i] /= cell_asec
+        gaussparf = [gaussparf_mfs]*ncorr
+
+    # create restored images
+    futrestore = []
+    for ds_name in dds_list:
+        fut = client.submit(restore_image,
+                            ds_name,
+                            opts.model_name,
+                            opts.residual_name,
+                            gaussparf=gaussparf,
+                            nthreads=opts.nthreads)
+        futrestore.append(fut)
 
     futures = []
     if 'd' in opts.outputs.lower():
@@ -217,7 +187,8 @@ def _restore(**kw):
                         norm_wsum=True,
                         nthreads=opts.nthreads,
                         do_mfs='d' in opts.outputs,
-                        do_cube='D' in opts.outputs)
+                        do_cube='D' in opts.outputs,
+                        psfpars_mfs=psfpars_mfs)
         futures.append(fut)
 
     if 'm' in opts.outputs.lower():
@@ -229,7 +200,8 @@ def _restore(**kw):
                         norm_wsum=False,
                         nthreads=opts.nthreads,
                         do_mfs='m' in opts.outputs,
-                        do_cube='M' in opts.outputs)
+                        do_cube='M' in opts.outputs,
+                        psfpars_mfs=psfpars_mfs)
         futures.append(fut)
 
     if 'r' in opts.outputs.lower():
@@ -241,47 +213,24 @@ def _restore(**kw):
                         norm_wsum=True,
                         nthreads=opts.nthreads,
                         do_mfs='r' in opts.outputs,
-                        do_cube='R' in opts.outputs)
+                        do_cube='R' in opts.outputs,
+                        psfpars_mfs=psfpars_mfs)
         futures.append(fut)
+
+    if opts.nworkers > 1:
+        wait(futrestore)
 
     if 'i' in opts.outputs.lower():
-        if gaussparn is None:
-            raise ValueError('Could not make restored image since Gausspars not in dds')
         fut = client.submit(
-                        restore_cube,
+                        dds2fits,
                         dds_list,
-                        f'{fits_oname}_{opts.suffix}' + '_image',
-                        opts.model_name,
-                        opts.residual_name,
-                        gaussparn,
-                        gaussparn_mfs,
-                        gaussparf,
-                        gaussparf_mfs,
-                        gaussparm=gaussparm,
-                        gaussparm_mfs=gaussparm_mfs,
+                        'IMAGE',
+                        f'{fits_oname}_{opts.suffix}',
+                        norm_wsum=False,
                         nthreads=opts.nthreads,
-                        unit='Jy/beam',
-                        output_dtype='f4')
-        futures.append(fut)
-
-    if 'u' in opts.outputs.lower():
-        if gaussparu is None:
-            raise ValueError('Could not make uniformly blurred image since Gausspars not in dds')
-        fut = client.submit(
-                        restore_cube,
-                        dds_list,
-                        f'{fits_oname}_{opts.suffix}' + '_uimage',
-                        'MODEL_MOPPED',
-                        'UPDATE',
-                        gaussparu,
-                        gaussparu_mfs,
-                        gaussparfu,
-                        gaussparfu_mfs,
-                        gaussparm=gaussparm,
-                        gaussparm_mfs=gaussparm_mfs,
-                        nthreads=opts.nthreads,
-                        unit='Jy/pixel',
-                        output_dtype='f4')
+                        do_mfs='i' in opts.outputs,
+                        do_cube='I' in opts.outputs,
+                        psfpars_mfs=psfpars_mfs)
         futures.append(fut)
 
     # if 'f' in opts.outputs:

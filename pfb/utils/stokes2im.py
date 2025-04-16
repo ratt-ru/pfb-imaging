@@ -1,3 +1,4 @@
+from functools import partial
 import numpy as np
 import numexpr as ne
 from numba import literally
@@ -6,39 +7,44 @@ import xarray as xr
 from uuid import uuid4
 from pfb.utils.weighting import (_compute_counts, counts_to_weights,
                                  weight_data, filter_extreme_counts)
-from pfb.utils.fits import set_wcs, save_fits
+from pfb.utils.fits import set_wcs, save_fits, add_beampars
+from pfb.utils.misc import fitcleanbeam
 from pfb.operators.gridder import wgridder_conventions
 from ducc0.wgridder.experimental import vis2dirty
 from casacore.quanta import quantity
-from datetime import datetime
+from datetime import datetime, timezone
 from ducc0.misc import resize_thread_pool
 from pfb.utils.astrometry import get_coordinates
+from scipy.constants import c as lightspeed
 import gc
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
+from astropy import units
+from astropy.coordinates import SkyCoord
+from africanus.coordinates import radec_to_lm
 
 
-def single_stokes_image(
-                    dc1=None,
-                    dc2=None,
-                    operator=None,
-                    ds=None,
-                    jones=None,
-                    opts=None,
-                    nx=None,
-                    ny=None,
-                    freq=None,
-                    cell_rad=None,
-                    utime=None,
-                    tbin_idx=None,
-                    tbin_counts=None,
-                    radec=None,
-                    antpos=None,
-                    poltype=None,
-                    fds_store=None,
-                    bandid=None,
-                    timeid=None,
-                    wid=None):
+def stokes_image(
+                dc1=None,
+                dc2=None,
+                operator=None,
+                ds=None,
+                jones=None,
+                opts=None,
+                nx=None,
+                ny=None,
+                freq=None,
+                cell_rad=None,
+                utime=None,
+                tbin_idx=None,
+                tbin_counts=None,
+                radec=None,
+                antpos=None,
+                poltype=None,
+                fds_store=None,
+                bandid=None,
+                timeid=None,
+                wid=None):
 
     resize_thread_pool(opts.nthreads)
     fieldid = ds.FIELD_ID
@@ -90,10 +96,8 @@ def single_stokes_image(
     frow = ds.FLAG_ROW.values | (ant1 == ant2)
     ds = ds.drop_vars('FLAG_ROW')
 
-    # flag if any of the correlations flagged
-    flag = np.any(flag, axis=2)
     # combine flag and frow
-    flag = np.logical_or(flag, frow[:, None])
+    flag = np.logical_or(flag, frow[:, None, None])
 
     # we rely on this to check the number of output bands and
     # to ensure we don't end up with fully flagged chunks
@@ -191,16 +195,14 @@ def single_stokes_image(
             obs_time = time_out
             tra, tdec = get_coordinates(obs_time, target=opts.target)
         else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
-            from astropy import units as u
-            from astropy.coordinates import SkyCoord
-            c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(u.hourangle, u.deg))
+            c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(units.hourangle, units.deg))
             tra = np.deg2rad(c.ra.value)
             tdec = np.deg2rad(c.dec.value)
 
         tcoords=np.zeros((1,2))
         tcoords[0,0] = tra
         tcoords[0,1] = tdec
-        coords0 = np.array((ds.ra, ds.dec))
+        coords0 = np.array((radec[0], radec[1]))
         lm0 = radec_to_lm(tcoords, coords0).squeeze()
         x0 = lm0[0]
         y0 = lm0[1]
@@ -220,6 +222,8 @@ def single_stokes_image(
                             literally(opts.product),
                             literally(str(ncorr)))
 
+    # flag if any correlation is flagged
+    flag = flag.any(axis=-1)
     mask = (~flag).astype(np.uint8)
 
     # TODO - this subtraction would be better to do inside weight_data
@@ -237,6 +241,50 @@ def single_stokes_image(
             weight = None
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
+    signu = -1.0 if flip_u else 1.0
+    signv = -1.0 if flip_v else 1.0
+    # we need these because of flipped wgridder convention
+    # https://github.com/mreineck/ducc/issues/34
+    signx = -1.0 if flip_u else 1.0
+    signy = -1.0 if flip_v else 1.0
+    n = np.sqrt(1 - x0**2 - y0**2)
+    freqfactor = -2j*np.pi*freq[None, :]/lightspeed
+    psf_vis = np.exp(freqfactor*(signu*uvw[:, 0:1]*x0*signx +
+                                 signv*uvw[:, 1:2]*y0*signy -
+                                 uvw[:, 2:]*(n-1)))
+
+    # TODO - polarisation parameters?
+    if opts.inject_transients is not None:
+        raise NotImplementedError("Transient injection not yet implemented")
+        import yaml
+        from pfb.utils.misc import dynamic_spectrum
+        with open(opts.inject_transient, 'r') as f:
+            transient_list = yaml.safe_load(f)
+        for transient in transient_list:
+            # parametric dspec model
+            dspec = dynamic_spectrum(time, freq, transient_list[transient])
+            
+            # convert radec to lm
+            tmp = transient_list[transient]['radec'].split(',')
+            if len(tmp) != 2:
+                raise ValueError(f"Invalid radec format {tmp} for transient {transient}")
+            c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(units.hourangle, units.deg))
+            ra_rad = np.deg2rad(c.ra.value)
+            dec_rad = np.deg2rad(c.dec.value)
+            tcoords=np.zeros((1,2))
+            tcoords[0,0] = ra_rad
+            tcoords[0,1] = dec_rad
+            coords0 = np.array((radec[0], radec[1]))
+            lm0t = radec_to_lm(tcoords, coords0).squeeze()
+            x0t = lm0t[0]
+            y0t = lm0t[1]
+            
+            # inject transient at x0t, y0t
+            data += dspec * np.exp(freqfactor*(
+                                 signu*uvw[:, 0:1]*x0t*signx +
+                                 signv*uvw[:, 1:2]*y0t*signy -
+                                 uvw[:, 2:]*(n-1)))
+
 
     if opts.robustness is not None:
         counts = _compute_counts(uvw,
@@ -255,88 +303,137 @@ def single_stokes_image(
             uvw,
             freq,
             weight,
+            mask,
             nx, ny,
             cell_rad, cell_rad,
             opts.robustness,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
 
-    wsum = weight[~flag].sum()
+    nstokes = weight.shape[-1]
+    wsum = np.zeros(nstokes)
+    residual = np.zeros((nstokes, nx, ny), dtype=np.float64)
+    psf = np.zeros((nstokes, 2*nx, 2*ny), dtype=np.float64)
+    for c in range(nstokes):
+        wsum[c] = weight[~flag, c].sum()
+        vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=data[:, :, c],
+            wgt=weight[:, :, c],
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cell_rad, pixsize_y=cell_rad,
+            center_x=x0, center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=opts.epsilon,
+            do_wgridding=opts.do_wgridding,
+            divide_by_n=True,  # no rephasing or smooth beam so do it here
+            nthreads=opts.nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=opts.double_accum,
+            verbosity=0,
+            dirty=residual[c])
+        
+        vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=psf_vis,
+            wgt=weight[:, :, c],
+            mask=mask,
+            npix_x=2*nx, npix_y=2*ny,
+            pixsize_x=cell_rad, pixsize_y=cell_rad,
+            center_x=x0, center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=opts.epsilon,
+            do_wgridding=opts.do_wgridding,
+            divide_by_n=True,  # no rephasing or smooth beam so do it here
+            nthreads=opts.nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=opts.double_accum,
+            verbosity=0,
+            dirty=psf[c])
+        
+    
+    Gausspars = fitcleanbeam(psf)
 
-    residual = vis2dirty(
-        uvw=uvw,
-        freq=freq,
-        vis=data,
-        wgt=weight,
-        mask=mask,
-        npix_x=nx, npix_y=ny,
-        pixsize_x=cell_rad, pixsize_y=cell_rad,
-        center_x=x0, center_y=y0,
-        flip_u=flip_u,
-        flip_v=flip_v,
-        flip_w=flip_w,
-        epsilon=opts.epsilon,
-        do_wgridding=opts.do_wgridding,
-        divide_by_n=True,  # no rephasing or smooth beam so do it here
-        nthreads=opts.nthreads,
-        sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=opts.double_accum,
-        verbosity=0)
-
-    rms = np.std(residual/wsum)
+    rms = np.std(residual/wsum[:, None, None], axis=(1,2))
 
     if opts.natural_grad:
-        from pfb.opt.pcg import pcg
-        from pfb.operators.hessian import _hessian_slice
-        from functools import partial
+        from pfb.operators.hessian import hessian_jax
+        import jax.numpy as jnp
+        from jax.scipy.sparse.linalg import cg
+        iFs = jnp.fft.ifftshift
 
-        hess = partial(_hessian_slice,
-                       uvw=uvw,
-                       weight=weight,
-                       vis_mask=mask,
-                       freq=freq,
-                       beam=None,
-                       cell=cell_rad,
-                       x0=x0,
-                       y0=y0,
-                       do_wgridding=opts.do_wgridding,
-                       epsilon=opts.epsilon,
-                       double_accum=opts.double_accum,
-                       nthreads=opts.nthreads,
-                       eta=opts.eta*wsum,
-                       wsum=1.0)  # we haven't normalised residual
+        abspsf = jnp.abs(jnp.fft.rfft2(
+                                    iFs(psf/wsum[:, None, None], axes=(1,2)),
+                                    axes=(1, 2),
+                                    norm='backward'))
 
-        x = pcg(hess,
-                residual,
-                x0=np.zeros_like(residual),
-                # M=precond,
-                minit=1,
-                tol=opts.cg_tol,
-                maxit=opts.cg_maxit,
-                verbosity=opts.cg_verbose,
-                report_freq=opts.cg_report_freq,
-                backtrack=False,
-                return_resid=False)
+        hess = partial(hessian_jax,
+                       nx, ny,
+                       2*nx, 2*ny,
+                       opts.eta,
+                       abspsf)
+
+        x = cg(hess,
+               residual/wsum[:, None, None],
+               tol=opts.cg_tol,
+               maxiter=opts.cg_maxit)[0]
     else:
         x = None
 
     unix_time = quantity(f'{time_out}s').to_unix_time()
-    utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+    utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
     cell_deg = np.rad2deg(cell_rad)
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
                   freq_out, GuassPar=(1, 1, 0),  # fake for now
                   ms_time=time_out)
+    hdr = add_beampars(hdr, Gausspars[0], GaussPars=Gausspars)
+
+    # set corr coords
+    if opts.product == 'I':
+        corr = ['I']
+    elif opts.product == 'Q':
+        corr = ['Q']
+    elif opts.product == 'U':
+        corr = ['U']
+    elif opts.product == 'V':
+        corr = ['V']
+    elif opts.product == 'DS':
+        if poltype == 'linear':
+            corr = ['I','Q']
+        elif poltype == 'circular':
+            corr = ['I','V']
+    elif opts.product == 'FS':
+        if ncorr == 2:
+            if poltype == 'linear':
+                corr = ['I','Q']
+            elif poltype == 'circular':
+                corr = ['I','V']
+        elif ncorr == 4:
+            corr = ['I','Q','U','V']
+    else:
+        raise ValueError(f"Unknown polarisation product {opts.product}")
 
     oname = f'spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
     if opts.output_format == 'zarr':
         data_vars = {}
-        data_vars['RESIDUAL'] = (('x', 'y'), residual.astype(np.float32))
+        data_vars['RESIDUAL'] = (('corr', 'x', 'y'), residual.astype(np.float32))
+        if opts.psf_out:
+            data_vars['PSF'] = (('corr', 'x_psf', 'y_psf'), psf.astype(np.float32))
         if x is not None:
-            data_vars['NATGRAD'] = (('x', 'y'), residual.astype(np.float32))
+            data_vars['NATGRAD'] = (('corr', 'x', 'y'), x.astype(np.float32))
 
-        coords = {'chan': (('chan',), freq),
-                'time': (('time',), utime),
+        coords = {
+            'chan': (('chan',), freq),
+            'time': (('time',), utime),
+            'corr': (('corr',), corr)
         }
 
 
@@ -365,10 +462,22 @@ def single_stokes_image(
             # 'header': hdr.items()
         }
 
-        out_ds = xr.Dataset(data_vars,  #coords=coords,
-                        attrs=attrs)
-        out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr',
-                                mode='w')
+        out_ds = xr.Dataset(
+            data_vars,
+            coords=coords,
+            attrs=attrs)
+        out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr', mode='w')
     elif opts.output_format == 'fits':
-        save_fits(residual/wsum, f'{fds_store.full_path}/{oname}.fits', hdr)
+        save_fits(residual/wsum[:, None, None],
+                  f'{fds_store.full_path}/{oname}.fits', hdr)
+        if opts.psf_out:
+            hdr_psf = set_wcs(cell_deg, cell_deg, 2*nx, 2*ny, [tra, tdec],
+                  freq_out, GuassPar=(1, 1, 0),  # fake for now
+                  ms_time=time_out)
+            hdr_psf = add_beampars(hdr_psf, Gausspars[0], GaussPars=Gausspars)
+            save_fits(psf/wsum[:, None, None],
+                  f'{fds_store.full_path}/{oname}_psf.fits', hdr_psf)
+        if x is not None:
+            save_fits(x,
+                  f'{fds_store.full_path}/{oname}_x.fits', hdr)
     return 1

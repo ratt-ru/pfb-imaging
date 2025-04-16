@@ -61,8 +61,9 @@ def test_counts(ms_name):
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
     usign = 1.0 if not flip_u else -1.0
     vsign = 1.0 if not flip_v else -1.0
-    mask = np.ones((nrow, nchan), dtype=bool)
-    wgt = np.ones((nrow, nchan), dtype=uvw.dtype)
+    mask = np.ones((nrow, nchan), dtype=np.uint8)
+    wgt = np.ones((ncorr, nrow, nchan), dtype=uvw.dtype)
+
     counts = _compute_counts(uvw, freq, mask, wgt, nx, ny, cell_rad, cell_rad,
                              dtype=np.float64, k=0, ngrid=2,
                              usign=usign, vsign=vsign)
@@ -81,4 +82,6 @@ def test_counts(ms_name):
     v = (vsign*uvw[:, 1:2] * freq[None, :]/lightspeed).ravel()
     counts2, _, _ = np.histogram2d(u, v, bins=[ku, kv], weights=weights)
 
-    assert_allclose(counts, counts2)
+    for c in range(ncorr):
+        # import ipdb; ipdb.set_trace()
+        assert_allclose(counts[c], counts2)

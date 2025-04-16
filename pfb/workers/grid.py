@@ -83,7 +83,7 @@ def grid(**kw):
     from pfb.utils.fits import dds2fits
 
     ti = time.time()
-    residual_mfs = _grid(**opts)
+    psfpars_mfs = _grid(**opts)
 
     dds, dds_list = xds_from_url(dds_store.url)
 
@@ -99,7 +99,8 @@ def grid(**kw):
                                 norm_wsum=True,
                                 nthreads=opts.nthreads,
                                 do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
             futures.append(fut)
         if opts.psf:
             fut = client.submit(dds2fits,
@@ -109,7 +110,8 @@ def grid(**kw):
                                 norm_wsum=True,
                                 nthreads=opts.nthreads,
                                 do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
             futures.append(fut)
         if opts.residual and 'RESIDUAL' in dds[0]:
             fut = client.submit(dds2fits,
@@ -119,7 +121,8 @@ def grid(**kw):
                                 norm_wsum=False,
                                 nthreads=opts.nthreads,
                                 do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
             futures.append(fut)
         if 'MODEL' in dds[0]:
             fut = client.submit(dds2fits,
@@ -129,7 +132,8 @@ def grid(**kw):
                                 norm_wsum=True,
                                 nthreads=opts.nthreads,
                                 do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
             futures.append(fut)
         if opts.noise:
             fut = client.submit(dds2fits,
@@ -139,7 +143,8 @@ def grid(**kw):
                                 norm_wsum=True,
                                 nthreads=opts.nthreads,
                                 do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
             futures.append(fut)
 
         if 'BEAM' in dds[0]:
@@ -150,7 +155,8 @@ def grid(**kw):
                                 norm_wsum=False,
                                 nthreads=opts.nthreads,
                                 do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
             futures.append(fut)
 
         for fut in as_completed(futures):
@@ -177,15 +183,12 @@ def _grid(**kw):
     from itertools import cycle
     import fsspec
     from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.misc import set_image_size
+    from pfb.utils.misc import set_image_size, fitcleanbeam
     from pfb.operators.gridder import image_data_products, wgridder_conventions
     import xarray as xr
     from pfb.utils.astrometry import get_coordinates
     from africanus.coordinates import radec_to_lm
     from pfb.utils.naming import xds_from_url, cache_opts, get_opts
-    import sympy as sm
-    from sympy.utilities.lambdify import lambdify
-    from sympy.parsing.sympy_parser import parse_expr
 
     try:
         client = get_client()
@@ -264,7 +267,6 @@ def _grid(**kw):
         print(f"Removing {dds_store.url}", file=log)
         dds_store.rm(recursive=True)
 
-    optsp_name = dds_store.url + '/opts.pkl'
     fs = fsspec.filesystem(protocol)
     if dds_store.exists() and not opts.overwrite:
         # get opts from previous run
@@ -338,13 +340,16 @@ def _grid(**kw):
                         xds_dct[tbid]['chan_low'] = ds.chan_low
                         xds_dct[tbid]['chan_high'] = ds.chan_high
 
+
+    ncorr = ds.corr.size
+    corrs = ds.corr.values
     if opts.dirty:
         print(f"Image size = (ntime={ntime}, nband={nband}, "
-              f"nx={nx}, ny={ny})", file=log)
+              f"ncorr={ncorr}, nx={nx}, ny={ny})", file=log)
 
     if opts.psf:
         print(f"PSF size = (ntime={ntime}, nband={nband}, "
-              f"nx={nx_psf}, ny={ny_psf})", file=log)
+              f"ncorr={ncorr}, nx={nx_psf}, ny={ny_psf})", file=log)
 
     # check if model exists
     if opts.transfer_model_from:
@@ -353,7 +358,7 @@ def _grid(**kw):
         except Exception as e:
             raise ValueError(f"No dataset found at {opts.transfer_model_from}")
 
-        # we only want to load these once
+        # should we load these inside the worker calls?
         model_coeffs = mds.coefficients.values
         locx = mds.location_x.values
         locy = mds.location_y.values
@@ -379,7 +384,7 @@ def _grid(**kw):
             out_ds = xr.open_zarr(out_ds_name,
                                   chunks=None)
             if 'niters' in out_ds:
-                iter0 = niters
+                iter0 = out_ds.niters
         else:
             out_ds_name = None
 
@@ -447,6 +452,7 @@ def _grid(**kw):
                 cell_rad, cell_rad,
                 x0, y0
             )
+            model = model[None, :, :]  # hack to get the corr axis
 
         elif from_cache:
             if opts.use_best_model and 'BEST_MODEL' in out_ds:
@@ -457,7 +463,7 @@ def _grid(**kw):
                 model = None
         else:
             model = None
-
+        
         fut = client.submit(image_data_products,
                             dsl,
                             out_ds_name,
@@ -483,21 +489,49 @@ def _grid(**kw):
                             workers=wname)
         futures.append(fut)
 
-    residual_mfs = np.zeros((nx, ny))
-    wsum = 0.0
+    residual_mfs = {}
+    wsum = {}
+    if opts.psf:
+        psf_mfs = {}
     nds = len(futures)
     n_launched = 1
     for fut in as_completed(futures):
         print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
-        residual, wsumb = fut.result()
-        residual_mfs += residual
-        wsum += wsumb
+        outputs = fut.result()
+        timeid = outputs['timeid']
+        residual_mfs.setdefault(timeid, np.zeros((ncorr, nx, ny), dtype=float))
+        residual_mfs[timeid] += outputs['residual']
+        wsum.setdefault(timeid, np.zeros(ncorr, dtype=float))
+        wsum[timeid] += outputs['wsum']
+        if opts.psf:
+            psf_mfs.setdefault(timeid, np.zeros((ncorr, nx_psf, ny_psf), dtype=float))
+            psf_mfs[timeid] += outputs['psf']
         n_launched += 1
 
     print("\n")  # after progressbar above
 
-    residual_mfs /= wsum
-    rms = np.std(residual_mfs)
-    rmax = np.abs(residual_mfs).max()
-
-    print(f"Initial max resid = {rmax:.3e}, rms resid = {rms:.3e}", file=log)
+    for timeid in residual_mfs.keys():
+        # get MFS PSFPARSN
+        # resolution in pixels
+        if opts.psf:
+            psfparsn = {}
+            psf_mfs[timeid] /= wsum[timeid][:, None, None]
+            psfparsn[timeid] = fitcleanbeam(psf_mfs[timeid])
+        else:
+            psfparsn = None
+        
+        residual_mfs[timeid] /= wsum[timeid][:, None, None]
+        for c in range(ncorr):
+            rms = np.std(residual_mfs[timeid][c])
+            rmax = np.abs(residual_mfs[timeid][c]).max()
+            print(f"Time ID {timeid}: {corrs[c]} - resid max = {rmax:.3e}, "
+                  f"rms = {rms:.3e}", file=log)
+            
+    # put these in the dds for futur reference
+    if psfparsn is not None:
+        cache_opts(psfparsn,
+                   dds_store.url,
+                   protocol,
+                   name='psfparsn_mfs.pkl')
+    
+    return psfparsn

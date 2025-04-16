@@ -91,38 +91,6 @@ def kron_matvec2(A, b):
     return x
 
 
-def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
-    S0, S1, PA = GaussPar
-    Smaj = S0  #np.maximum(S0, S1)
-    Smin = S1  #np.minimum(S0, S1)
-    # print(f'using ex = {Smaj}, ey = {Smin}')
-    A = np.array([[1. / Smin ** 2, 0],
-                  [0, 1. / Smaj ** 2]])
-
-    c, s, t = np.cos, np.sin, np.deg2rad(-PA)
-    R = np.array([[c(t), -s(t)],
-                  [s(t), c(t)]])
-    A = np.dot(np.dot(R.T, A), R)
-    sOut = xin.shape
-    # only compute the result out to 5 * emaj
-    extent = (nsigma * Smaj)**2
-    xflat = xin.squeeze()
-    yflat = yin.squeeze()
-    idx, idy = np.where(xflat**2 + yflat**2 <= extent)
-    x = np.array([xflat[idx, idy].ravel(), yflat[idx, idy].ravel()])
-    R = np.einsum('nb,bc,cn->n', x.T, A, x)
-    # need to adjust for the fact that GaussPar corresponds to FWHM
-    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
-    tmp = np.exp(-fwhm_conv * R)
-    gausskern = np.zeros(xflat.shape, dtype=np.float64)
-    gausskern[idx, idy] = tmp
-
-    if normalise:
-        gausskern /= np.sum(gausskern)
-    return np.ascontiguousarray(gausskern.reshape(sOut),
-                                dtype=np.float64)
-
-
 def give_edges(p, q, nx, ny, nx_psf, ny_psf):
     nx0 = nx_psf//2
     ny0 = ny_psf//2
@@ -186,6 +154,7 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None,
     nthreads    - number of threads to use for the FFT's.
     pfrac       - padding used for the FFT based convolution.
                   Will pad by pfrac/2 on both sides of image
+    norm_kernel - 
     """
     nband, nx, ny = image.shape
     if gausspari is not None and len(gausspari) != nband:
@@ -522,6 +491,40 @@ def _restore_corrs(vis, ncorr):
     return model_vis
 
 
+def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
+    ''' 
+    xin         - grid of x coordinates
+    yin         - grid of y coordinates
+    GaussPar    - (emaj, emin, pa) with emaj/emin in units x and pa in radians.
+    normalise   - normalise kernel to have volume 1
+    nsigma      - compute kernel out to this many sigmas
+    '''
+    Smaj, Smin, PA = GaussPar
+    A = np.array([[1. / Smaj ** 2, 0],
+                  [0, 1. / Smin ** 2]])
+    R = np.array([[np.cos(PA), -np.sin(PA)],
+                  [np.sin(PA), np.cos(PA)]])
+    A = np.dot(np.dot(R.T, A), R)
+    sOut = xin.shape
+    # only compute the result out to 5 * emaj
+    extent = (nsigma * Smaj)**2
+    xflat = xin.squeeze()
+    yflat = yin.squeeze()
+    idx, idy = np.where(xflat**2 + yflat**2 <= extent)
+    x = np.array([xflat[idx, idy].ravel(), yflat[idx, idy].ravel()])
+    R = np.einsum('nb,bc,cn->n', x.T, A, x)
+    # need to adjust for the fact that GaussPar corresponds to FWHM
+    fwhm_conv = 2 * np.sqrt(2 * np.log(2))
+    tmp = np.exp(-fwhm_conv * R)
+    gausskern = np.zeros(xflat.shape, dtype=np.float64)
+    gausskern[idx, idy] = tmp
+
+    if normalise:
+        gausskern /= np.sum(gausskern)
+    return np.ascontiguousarray(gausskern.reshape(sOut),
+                                dtype=np.float64)
+
+
 @jax.jit
 def psf_errorsq(x, data, xy):
     '''
@@ -529,10 +532,10 @@ def psf_errorsq(x, data, xy):
     Note emaj must be larger than emin
     '''
     emaj, emin, pa = x
-    A = jnp.array([[1. / emin ** 2, 0],
-                    [0, 1. / emaj ** 2]])
+    A = jnp.array([[1. / emaj ** 2, 0],
+                    [0, 1. / emin ** 2]])
 
-    t = jnp.deg2rad(-pa)
+    t = pa
     R = jnp.array([[jnp.cos(t), -jnp.sin(t)],
                     [jnp.sin(t), jnp.cos(t)]])
     B = jnp.dot(jnp.dot(R.T, A), R)
@@ -557,8 +560,8 @@ def fitcleanbeam(psf: np.ndarray,
     nband, nx, ny = psf.shape
 
     # pixel coordinates
-    x = np.arange(-nx / 2, nx / 2)
-    y = np.arange(-ny / 2, ny / 2)
+    x = -(nx//2) + np.arange(nx)
+    y = -(ny//2) + np.arange(ny)
     xx, yy = np.meshgrid(x, y, indexing='ij')
 
     Gausspars = []
@@ -589,15 +592,29 @@ def fitcleanbeam(psf: np.ndarray,
         x = xx[idxs]
         y = yy[idxs]
         xy = np.vstack((x, y))
-        emaj0 = np.maximum(xdiff, ydiff)
-        emin0 = np.minimum(xdiff, ydiff)
+        if xdiff > ydiff:  # x is major axis
+            emaj0 = xdiff
+            emin0 = ydiff
+            PA0 = 0.0
+        else:  # y is the major axis
+            emaj0 = ydiff
+            emin0 = xdiff
+            PA0 = np.pi/2
         dfunc = value_and_grad(psf_errorsq)
         p, f, d = fmin_l_bfgs_b(dfunc,
-                                np.array((emaj0, emin0, 0.0)),
+                                np.array((emaj0, emin0, PA0)),
                                 args=(psfv, xy),
-                                bounds=((0, None), (0, None), (None, None)),
+                                bounds=((0, None), (0, None), (0, np.pi)),
                                 factr=1e11)
-        Gausspars.append([p[0] * pixsize, p[1] * pixsize, p[2]])
+        if p[0] >= p[1]:  # major and minor axes correct
+            emaj = p[0]
+            emin = p[1]
+            PA = p[2]
+        else:  # major and minor axes have been swapped
+            emaj = p[1]
+            emin = p[0]
+            PA = p[2] + np.pi/2
+        Gausspars.append([emaj * pixsize, emin * pixsize, PA])
 
     return Gausspars
 
@@ -801,35 +818,33 @@ def l1reweight_func(model,
         return (1 + rmsfactor)/(1 + mcomps**alpha/rms_comps**alpha)
 
 
-# TODO - this can be done in parallel by splitting the image into facets
 def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
                    method='poly', sigmasq=0):
     '''
     Fit the time and frequency axes of an image cube where
 
+    time    - (ntime) time axis
+    freq    - (nband) frequency axis
     image   - (ntime, nband, nx, ny) pixelated image
     wgt     - (ntime, nband) optional per time and frequency weights
     nbasist - number of time basis functions
     nbasisf - number of frequency basis functions
-    method  - method to use for fitting
+    method  - method to use for fitting (poly or Legendre)
+    sigmasq - optional regularisation term to add to the Hessian
+              to improve conditioning
 
-    If wgt is not supplied equal weights are assumed.
-    If nbasist/f are not supplied we return the coefficients
-    of a bilinear fit regardless of method.
-
-    methods:
-    poly    - fit a monomials in time and frequency
-
+    method:
+    poly     - fit a monomials in time and frequency
+    Legendre - fit a Legendre polynomial in time and frequency
 
     returns:
     coeffs  - fitted coefficients
-    locx    - x pixel values
-    locy    - y pixel values
+    Ix, Iy  - pixel locations of non-zero pixels in the image
     expr    - a string representing the symbolic expression describing the fit
     params  - tuple of str, parameters to pass into function (excluding t and f)
-    ref_time    - reference time
-    ref_freq    - reference frequency
-
+    tfunc   - function which scales the time domain appropriately for method
+    ffunc   - function which scales the frequency domain appropriately for method
+    
 
     The fit is performed in scaled coordinates (t=time/ref_time,f=freq/ref_freq)
     '''
@@ -923,7 +938,7 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
             Xfit = np.hstack((Xfit, Xf))
             params += paramsf
     else:
-        raise NotImplementedError("Please help us!")
+        raise NotImplementedError(f"Method {method} not implemented")
 
     dirty_coeffs = Xfit.T.dot(wgt*beta)
     hess_coeffs = Xfit.T.dot(wgt*Xfit)
@@ -932,8 +947,96 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
         hess_coeffs += sigmasq*np.eye(hess_coeffs.shape[0])
     coeffs = np.linalg.solve(hess_coeffs, dirty_coeffs)
 
-
     return coeffs, Ix, Iy, str(expr), list(map(str,params)), str(tfunc),str(ffunc)
+
+
+def fit_image_fscube(freq, image,
+                     wgt=None, nbasisf=None,
+                     method='Legendre', sigmasq=0):
+    '''
+    Fit the frequency axis of an image cube where
+
+    freq    - (nband,) frequency axis
+    image   - (nband, ncorr, nx, ny) pixelated image
+    wgt     - (nband, ncorr) optional per time and frequency weights
+    nbasisf - number of frequency basis functions
+    method  - method to use for fitting (poly or Legendre)
+    sigmasq - optional regularisation term to add to the Hessian
+              to improve conditioning
+
+    method:
+    poly     - fit a monomials to frequency axis
+    Legendre - fit a Legendre polynomial to frequency
+
+    returns:
+    coeffs  - (ncorr, nbasisf, ncomps) fitted coefficients
+    Ix, Iy  - (ncomps,) pixel locations of non-zero pixels in the image
+    expr    - a string representing the symbolic expression describing the fit
+    params  - tuple of str, parameters to pass into function (excluding t and f)
+    ffunc   - function which scales the frequency domain appropriately for method
+    '''
+    nband = freq.size
+    ref_freq = freq[0]
+    import sympy as sm
+    from sympy.abc import f
+
+    if nbasisf is None:
+        nbasisf = nband
+    else:
+        assert nbasisf <= nband
+
+    nband, ncorr, nx, ny = image.shape
+    mask = np.any(image, axis=(0,1))  # over freq and corr axes
+    Ix, Iy = np.where(mask)
+    ncomps = Ix.size
+
+    # components excluding zeros
+    beta = image[:, :, Ix, Iy].reshape(nband, ncorr, ncomps)
+    if wgt is not None:
+        wgt = wgt.reshape(nband, ncorr, 1)
+    else:
+        wgt = np.ones((nband, ncorr, 1), dtype=float)
+
+    params = sm.symbols(f'f(0:{nbasisf})')
+    if nband==1:  # nothing to fit
+        coeffs = beta
+        expr = f
+        params = (f,)
+    elif method=='poly':
+        wf = freq/ref_freq
+        ffunc = f/ref_freq
+        Xf = np.tile(wf[:, None], (1, nbasisf))**np.arange(nbasisf)
+        expr = sum(co*f**i for i, co in enumerate(params))
+
+    elif method=='Legendre':
+        Xf = np.zeros((nband, nbasisf), dtype=float)
+        fmax = freq.max()
+        fmin = freq.min()
+        wf = freq - (fmax + fmin)/2
+        wfmax = wf.max()
+        wf /= wfmax
+        ffunc = (f - (fmax + fmin)/2)/wfmax
+        Xf[:, 0] = 1.0
+        expr = params[0]
+        for i in range(1, nbasisf):
+            vals = np.polynomial.Legendre.basis(i)(wf)
+            Xf[:, i] = vals
+            expr += sm.polys.orthopolys.legendre_poly(i, f)*params[i]
+    else:
+        raise NotImplementedError(f"Method {method} not implemented")
+
+    # fit each correlation separately
+    coeffs = np.zeros((ncorr, nbasisf, ncomps), dtype=beta.dtype)
+    for c in range(ncorr):
+        dirty_coeffs = Xf.T.dot(wgt[:, c]*beta[:, c])
+        hess_coeffs = Xf.T.dot(wgt[:, c]*Xf)
+        # to improve conditioning
+        if sigmasq:
+            hess_coeffs += sigmasq*np.eye(hess_coeffs.shape[0])
+        coeffs[c] = np.linalg.solve(hess_coeffs, dirty_coeffs)
+    
+
+    return coeffs, Ix, Iy, str(expr), list(map(str,params)), str(ffunc)
 
 
 def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy,
@@ -1273,6 +1376,37 @@ def taperf(shape, taper_width):
         tapers1d += (taper,)
     return np.outer(*tapers1d)
 
+
+@njit(nogil=True, cache=True, inline='always')
+def _es_kernel(x, beta, k):
+    return np.exp(beta*k*(np.sqrt((1-x)*(1+x)) - 1))
+
+
+def dynamic_spectrum(time, freq, transient):
+    '''
+    Inputs:
+        time      - time in seconds
+        freq      - frequency in Hz
+        transient - dict containing transient object parameters
+
+    Outputs:
+        dynamic spectrum for transient
+    '''
+    type = transient['type']
+    I0 = transient['I0']
+    alpha = transient['alpha']
+    nu0 = transient['nu0']
+    spectrum = I0 * (freq[None, :]/nu0)**alpha
+    if type.lower()=='periodic':
+        period = transient['period']
+        phase0 = transient['phase0']
+        dspec = spectrum * np.cos(2*np.pi*(time[:, None] - phase0)/period)
+    elif type.lower()=='flare':
+        sigma = transient['sigma']
+        t0 = transient['t0']
+        dspec = spectrum * np.exp(-0.5*((time[:, None] - t0)/sigma)**2)
+
+    return dspec
 
 # def fft_interp(image, cellxi, cellyi, nxo, nyo,
 #                cellxo, cellyo, shiftx, shifty):

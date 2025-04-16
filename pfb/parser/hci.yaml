@@ -158,12 +158,17 @@ inputs:
     default: false
     info:
       Concatenate gains and times across scan
+  psf-out:
+    dtype: bool
+    default: false
+    info:
+      Whether to produce output PSF's or not.
   natural-grad:
     dtype: bool
     default: false
     info:
       Compute naural gradient
-  memory_reporting:
+  memory-reporting:
     dtype: bool
     default: false
     info:
@@ -173,6 +178,10 @@ inputs:
     default: false
     info:
       Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.
+  inject-transients:
+    dtype: str
+    info:
+      YAML file containing transients to inject into the data.
   _include:
     - (.)gridding.yml
     - (.)out.yml
@@ -184,6 +193,10 @@ outputs:
     implicit: '{current.output-filename}_{current.product}.fds'
     dtype: Directory
     must_exist: false
+    mkdir: false
+  # optional-fits:
+  #   implicit: '{current.output-filename}_{current.product}.fits'
+  #   required: false
 
 policies:
   pass_missing_as_none: true

@@ -7,6 +7,8 @@ import concurrent.futures as cf
 from time import time
 import numpy as np
 import numba
+from numba import njit, prange, literally, types
+from numba.extending import overload
 import concurrent.futures as cf
 import xarray as xr
 import dask.array as da
@@ -17,6 +19,9 @@ from pfb.utils.weighting import counts_to_weights, _compute_counts
 from pfb.utils.beam import eval_beam
 from pfb.utils.naming import xds_from_list
 from pfb.utils.misc import fitcleanbeam
+from pfb.utils.stokes import stokes_funcs
+from pfb.utils.misc import JIT_OPTIONS, _es_kernel
+from scipy.constants import c as lightspeed
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
@@ -403,14 +408,17 @@ def image_data_products(dsl,
     '''
     resize_thread_pool(nthreads)
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
+    signu = -1.0 if flip_u else 1.0
+    signv = -1.0 if flip_v else 1.0
+    # we need these in the test because of flipped wgridder convention
+    # https://github.com/mreineck/ducc/issues/34
+    signx = -1.0 if flip_u else 1.0
+    signy = -1.0 if flip_v else 1.0
 
     # TODO - assign ug,vg-coordinates
     x = (-nx/2 + np.arange(nx)) * cellx + x0
     y = (-ny/2 + np.arange(ny)) * celly + y0
-    coords = {
-        'x': x,
-        'y': y
-    }
+    n = np.sqrt(1 - x0**2 - y0**2)
 
     # expects a list
     if isinstance(dsl, str):
@@ -418,27 +426,30 @@ def image_data_products(dsl,
 
     dsl = xds_from_list(dsl, nthreads=nthreads)
 
+    ncorr = dsl[0].corr.size
+
     # need to take weighted sum of beam before concat
-    beam = np.zeros((nx, ny), dtype=float)
-    wsumb = 0.0
+    beam = np.zeros((ncorr, nx, ny), dtype=float)
+    wsumb = np.zeros(ncorr, dtype=float)
     freq = dsl[0].FREQ.values  # must all be the same
     xx, yy = np.meshgrid(np.rad2deg(x), np.rad2deg(y), indexing='ij')
     for i, ds in enumerate(dsl):
         wgt = ds.WEIGHT.values
         mask = ds.MASK.values
-        wsumt = (wgt*mask).sum()
-        wsumb += wsumt
-        l_beam = ds.l_beam.values
-        m_beam = ds.m_beam.values
-        beamt = eval_beam(ds.BEAM.values, l_beam, m_beam,
-                          xx, yy)
-        beam += beamt * wsumt
-        assert (ds.FREQ.values == freq).all()
+        for c in range(ncorr):
+            wsumt = (wgt[c]*mask).sum()
+            wsumb[c] += wsumt
+            l_beam = ds.l_beam.values
+            m_beam = ds.m_beam.values
+            beamt = eval_beam(ds.BEAM.values[c], l_beam, m_beam,
+                              xx, yy)
+            beam[c] += beamt * wsumt
+            assert (ds.FREQ.values == freq).all()
         ds = ds.drop_vars(('BEAM','FREQ'))
         dsl[i] = ds.drop_dims(('l_beam', 'm_beam'))
 
     # TODO - weighted sum of beam computed using natural weights?
-    beam /= wsumb
+    beam /= wsumb[:, None, None]
 
     ds = xr.concat(dsl, dim='row')
     uvw = ds.UVW.values
@@ -446,6 +457,15 @@ def image_data_products(dsl,
     wgt = ds.WEIGHT.values
     mask = ds.MASK.values
     bandid = int(ds.bandid)
+
+    _, nrow, nchan = vis.shape
+
+    coords = {
+        'x': x,
+        'y': y,
+        'corr': ds.corr.values,
+        'bpar': ['BMAJ', 'BMIN', 'BPA']
+    }
 
     # output ds
     dso = xr.Dataset(attrs=attrs, coords=coords)
@@ -458,23 +478,27 @@ def image_data_products(dsl,
     else:
         # do not apply weights in this direction
         # actually model vis, this saves memory
-        residual_vis = dirty2vis(
-            uvw=uvw,
-            freq=freq,
-            dirty=model,
-            pixsize_x=cellx,
-            pixsize_y=celly,
-            center_x=x0,
-            center_y=y0,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            flip_u=flip_u,
-            flip_v=flip_v,
-            flip_w=flip_w,
-            nthreads=nthreads,
-            divide_by_n=False,  # incorporate in smooth beam
-            sigma_min=1.1, sigma_max=3.0)
+        residual_vis = np.zeros_like(vis)
+        for c in range(ncorr):
+            dirty2vis(
+                uvw=uvw,
+                freq=freq,
+                dirty=model[c],
+                pixsize_x=cellx,
+                pixsize_y=celly,
+                center_x=x0,
+                center_y=y0,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                nthreads=nthreads,
+                divide_by_n=False,  # incorporate in smooth beam
+                sigma_min=1.1, sigma_max=3.0,
+                vis=residual_vis[c])
 
+        # this is an attempt to avoid the tmp model_vis array
         residual_vis *= -1  # negate model
         residual_vis += vis
 
@@ -486,15 +510,20 @@ def image_data_products(dsl,
             wgtp = 1.0
         # mask needs to be bool here
         ressq = (residual_vis*wgtp*residual_vis.conj()).real
-        ssq = ressq[mask>0].sum()
-        ovar = ssq/mask.sum()
+        # we are currently doing this per correlation
+        # should it be done jointly?
+        ssq = ressq[:, mask>0].sum(axis=-1)
+        ovar = ssq/mask.sum()  # same mask for all corrs
         if ovar:
             # scale the natural weights
             # RHS is weight relative to unity since wgtp included in ressq
-            meani = np.mean(ressq[mask>0]/ovar)
-            stdi = np.std(ressq[mask>0]/ovar)
-            print(f"Band {bandid} before: mean = {meani:.3e}, std = {stdi:.3e}")
-            wgt *= (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)
+            # meani = np.mean(ressq[:, mask>0]/ovar)
+            # stdi = np.std(ressq[:, mask>0]/ovar)
+            # print(f"Band {bandid} before: mean = {meani:.3e}, std = {stdi:.3e}")
+            denom = (l2_reweight_dof + ressq/ovar[:, None, None])
+            # the expectation value of the complex ressq above is 2
+            # if we do this jointly over correlations this should be 2*ncorr
+            wgt *= (l2_reweight_dof + 2)/denom
         else:
             wgt = None
     # re-evaluate since robustness and or wgt after reweight may change
@@ -517,201 +546,161 @@ def image_data_products(dsl,
             uvw,
             freq,
             wgt,
+            mask,
             nx, ny,
             cellx, celly,
             robustness,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
 
-    # if l2_reweight_dof:
-    #     # normalise to absolute units
-    #     ressq = (residual_vis*wgt*residual_vis.conj()).real
-    #     ssq = ressq[mask>0].sum()
-    #     ovar = ssq/mask.sum()
-    #     wgt /= ovar
-    #     ressq = (residual_vis*wgt*residual_vis.conj()).real
-    #     meanf = np.mean(ressq[mask>0])
-    #     stdf = np.std(ressq[mask>0])
-    #     print(f"Band {bandid} after: mean = {meanf:.3e}, std = {stdf:.3e}")
-
-        # import matplotlib.pyplot as plt
-        # from scipy.stats import norm
-        # x = np.linspace(-5, 5, 150)
-        # y = norm.pdf(x, 0, 1)
-        # fig, ax = plt.subplots(nrows=2, ncols=2, figsize=(8, 12))
-        # ax[0,0].hist((residual_vis.real*np.sqrt(wgtp/2)).ravel(), bins=15, density=True)
-        # ax[0,0].plot(x, y, 'k')
-        # ax[0,1].hist((residual_vis.real*np.sqrt(wgt/2)).ravel(), bins=15, density=True)
-        # ax[0,1].plot(x, y, 'k')
-        # ax[1,0].hist((residual_vis.imag*np.sqrt(wgtp/2)).ravel(), bins=15, density=True)
-        # ax[1,0].plot(x, y, 'k')
-        # ax[1,1].hist((residual_vis.imag*np.sqrt(wgt/2)).ravel(), bins=15, density=True)
-        # ax[1,1].plot(x, y, 'k')
-        # import os
-        # cwd = os.getcwd()
-        # bid = dso.attrs['bandid']
-        # fig.savefig(f'{cwd}/resid_hist_{bid}.png')
-
     # these are always used together
     if do_weight:
-        dso['WEIGHT'] = (('row','chan'), wgt)
+        dso['WEIGHT'] = (('corr', 'row','chan'), wgt)
         dso['UVW'] = (('row', 'three'), uvw)
         dso['MASK'] = (('row','chan'), mask)
 
-    wsum = wgt[mask.astype(bool)].sum()
-    dso['WSUM'] = (('scalar',), np.atleast_1d(wsum))
+    wsum = wgt[:, mask.astype(bool)].sum(axis=-1)
+    dso['WSUM'] = (('corr',), wsum)
 
     if do_dirty:
-        dirty = vis2dirty(
-            uvw=uvw,
-            freq=freq,
-            vis=vis,
-            wgt=wgt,
-            mask=mask,
-            npix_x=nx, npix_y=ny,
-            pixsize_x=cellx, pixsize_y=celly,
-            center_x=x0, center_y=y0,
-            epsilon=epsilon,
-            flip_u=flip_u,
-            flip_v=flip_v,
-            flip_w=flip_w,
-            do_wgridding=do_wgridding,
-            divide_by_n=False,  # incorporte in smooth beam
-            nthreads=nthreads,
-            sigma_min=1.1, sigma_max=3.0,
-            double_precision_accumulation=double_accum)
-        dso['DIRTY'] = (('x','y'), dirty)
-
-    if do_psf:
-        if x0 or y0:
-        # LB - what is wrong with this?
-        # n = np.sqrt(1 - x0**2 - y0**2)
-        # if convention.upper() == 'CASA':
-        #     freqfactor = -2j*np.pi*freq[None, :]/lightspeed
-        # else:
-        #     freqfactor = 2j*np.pi*freq[None, :]/lightspeed
-        # psf_vis = np.exp(freqfactor*(uvw[:, 0:1]*x0 +
-        #                              uvw[:, 1:2]*y0 +
-        #                              uvw[:, 2:]*(n-1)))
-        # if divide_by_n:
-        #     psf_vis /= n
-            x = np.zeros((128,128), dtype=wgt.dtype)
-            x[64,64] = 1.0
-            psf_vis = dirty2vis(
+        dirty = np.zeros((ncorr, nx, ny), dtype=float)
+        for c in range(ncorr):
+            vis2dirty(
                 uvw=uvw,
                 freq=freq,
-                dirty=x,
-                pixsize_x=cellx,
-                pixsize_y=celly,
-                center_x=x0,
-                center_y=y0,
+                vis=vis[c],
+                wgt=wgt[c],
+                mask=mask,
+                npix_x=nx, npix_y=ny,
+                pixsize_x=cellx, pixsize_y=celly,
+                center_x=x0, center_y=y0,
+                epsilon=epsilon,
                 flip_u=flip_u,
                 flip_v=flip_v,
                 flip_w=flip_w,
-                epsilon=epsilon,
                 do_wgridding=do_wgridding,
-                nthreads=nthreads,
                 divide_by_n=False,  # incorporte in smooth beam
-                sigma_min=1.1, sigma_max=3.0)
+                nthreads=nthreads,
+                sigma_min=1.1, sigma_max=3.0,
+                double_precision_accumulation=double_accum,
+                dirty=dirty[c])
+        dso['DIRTY'] = (('corr', 'x','y'), dirty)
+
+    if do_psf:
+        if x0 or y0:
+            freqfactor = 2j*np.pi*freq[None, :]/lightspeed
+            psf_vis = np.exp(freqfactor*(signu*uvw[:, 0:1]*x0*signx +
+                             signv*uvw[:, 1:2]*y0*signy -
+                             uvw[:, 2:]*(n-1)))
 
         else:
             nrow, _ = uvw.shape
             nchan = freq.size
             tmp = np.ones((1,), dtype=vis.dtype)
             # should be tiny
-            psf_vis = np.broadcast_to(tmp, vis.shape)
+            psf_vis = np.broadcast_to(tmp, (nrow, nchan))
 
-        psf = vis2dirty(
-            uvw=uvw,
-            freq=freq,
-            vis=psf_vis,
-            wgt=wgt,
-            mask=mask,
-            npix_x=nx_psf, npix_y=ny_psf,
-            pixsize_x=cellx, pixsize_y=celly,
-            center_x=x0, center_y=y0,
-            flip_u=flip_u,
-            flip_v=flip_v,
-            flip_w=flip_w,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            divide_by_n=False,  # incorporte in smooth beam
-            nthreads=nthreads,
-            sigma_min=1.1, sigma_max=3.0,
-            double_precision_accumulation=double_accum)
+        psf = np.zeros((ncorr, nx_psf, ny_psf), dtype=float)
+        for c in range(ncorr):
+            vis2dirty(
+                uvw=uvw,
+                freq=freq,
+                vis=psf_vis,
+                wgt=wgt[c],
+                mask=mask,
+                npix_x=nx_psf, npix_y=ny_psf,
+                pixsize_x=cellx, pixsize_y=celly,
+                center_x=x0, center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                divide_by_n=False,  # incorporte in smooth beam
+                nthreads=nthreads,
+                sigma_min=1.1, sigma_max=3.0,
+                double_precision_accumulation=double_accum,
+                dirty=psf[c])
 
         # get FT of psf
-        psfhat = r2c(iFs(psf, axes=(0, 1)), axes=(0, 1),
+        psfhat = r2c(iFs(psf, axes=(1, 2)), axes=(1, 2),
                      nthreads=nthreads,
                      forward=True, inorm=0)
 
-        dso["PSF"] = (('x_psf', 'y_psf'), psf)
-        dso["PSFHAT"] = (('x_psf', 'yo2'), psfhat)
+        dso["PSF"] = (('corr', 'x_psf', 'y_psf'), psf)
+        dso["PSFHAT"] = (('corr', 'x_psf', 'yo2'), psfhat)
 
         # add natural resolution info
         # normalised internally
-        gausspar = fitcleanbeam(psf[None, :, :], level=0.5, pixsize=1.0)[0]
-        dso = dso.assign_attrs(gaussparn=gausspar)
+        gausspar = fitcleanbeam(psf, level=0.5, pixsize=1.0)
+        dso["PSFPARSN"] = (('corr', 'bpar'), np.array(gausspar))
 
 
     if do_residual and model is not None:
-        residual = vis2dirty(
-            uvw=uvw,
-            freq=freq,
-            vis=residual_vis,
-            wgt=wgt,
-            mask=mask,
-            npix_x=nx, npix_y=ny,
-            pixsize_x=cellx, pixsize_y=celly,
-            center_x=x0, center_y=y0,
-            flip_u=flip_u,
-            flip_v=flip_v,
-            flip_w=flip_w,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            divide_by_n=False,  # incorporte in smooth beam
-            nthreads=nthreads,
-            sigma_min=1.1, sigma_max=3.0,
-            double_precision_accumulation=double_accum)
+        residual = np.zeros((ncorr, nx, ny), dtype=float)
+        for c in range(ncorr):
+            vis2dirty(
+                uvw=uvw,
+                freq=freq,
+                vis=residual_vis[c],
+                wgt=wgt[c],
+                mask=mask,
+                npix_x=nx, npix_y=ny,
+                pixsize_x=cellx, pixsize_y=celly,
+                center_x=x0, center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                divide_by_n=False,  # incorporte in smooth beam
+                nthreads=nthreads,
+                sigma_min=1.1, sigma_max=3.0,
+                double_precision_accumulation=double_accum,
+                dirty=residual[c])
 
-        dso['MODEL'] = (('x','y'), model)
-        dso['RESIDUAL'] = (('x','y'), residual)
+        dso['MODEL'] = (('corr','x','y'), model)
+        dso['RESIDUAL'] = (('corr','x','y'), residual)
 
     if do_noise:
         # sample noise and project into image space
-        nrow, nchan = vis.shape
+        _, nrow, nchan = vis.shape
         from pfb.utils.misc import parallel_standard_normal
-        vis = (parallel_standard_normal((nrow, nchan)) +
-               1j*parallel_standard_normal((nrow, nchan)))
-        wmask = wgt > 0.0
-        vis[wmask] /= np.sqrt(wgt[wmask])
-        vis[~wmask] = 0j
-        noise = vis2dirty(
-            uvw=uvw,
-            freq=freq,
-            vis=vis,
-            wgt=wgt,
-            mask=mask,
-            npix_x=nx, npix_y=ny,
-            pixsize_x=cellx, pixsize_y=celly,
-            center_x=x0, center_y=y0,
-            flip_u=flip_u,
-            flip_v=flip_v,
-            flip_w=flip_w,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            divide_by_n=False,  # incorporte in smooth beam
-            nthreads=nthreads,
-            sigma_min=1.1, sigma_max=3.0,
-            double_precision_accumulation=double_accum)
+        noise = np.zeros((ncorr, nx, ny), dtype=float)
+        for c in range(ncorr):
+            vis = (parallel_standard_normal((nrow, nchan)) +
+                1j*parallel_standard_normal((nrow, nchan)))
+            wmask = wgt[c] > 0.0
+            vis[wmask] /= np.sqrt(wgt[c, wmask])
+            vis[~wmask] = 0j
+            vis2dirty(
+                uvw=uvw,
+                freq=freq,
+                vis=vis,
+                wgt=wgt[c],
+                mask=mask,
+                npix_x=nx, npix_y=ny,
+                pixsize_x=cellx, pixsize_y=celly,
+                center_x=x0, center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                divide_by_n=False,  # incorporte in smooth beam
+                nthreads=nthreads,
+                sigma_min=1.1, sigma_max=3.0,
+                double_precision_accumulation=double_accum,
+                dirty=noise[c])
 
-        dso['NOISE'] = (('x','y'), noise)
+        dso['NOISE'] = (('corr', 'x','y'), noise)
 
     if do_beam:
         if beam is not None:
-            dso['BEAM'] = (('x', 'y'), beam)
+            dso['BEAM'] = (('corr', 'x', 'y'), beam)
         else:
-            dso['BEAM'] = (('x', 'y'), np.ones((nx, ny), dtype=wgt.dtype))
+            dso['BEAM'] = (('corr', 'x', 'y'), np.ones((ncorr, nx, ny),
+                                                       dtype=wgt.dtype))
 
     # save
     dso = dso.assign_attrs(wsum=wsum, x0=x0, y0=y0, l0=l0, m0=m0,
@@ -720,12 +709,18 @@ def image_data_products(dsl,
                            flip_w=flip_w)
     dso.to_zarr(output_name, mode='a')
 
+    outputs = {}
     # return residual to report stats
-    # one of these should always succeed
-    try:
-        return residual, wsum
-    except:
-        return dirty, wsum
+    if do_residual and model is not None:
+        outputs['residual'] = residual
+    else:
+        outputs['residual'] = dirty
+    # PSF returned to fit MFS PSFPARS
+    if do_psf:
+        outputs['psf'] = psf
+    outputs['wsum'] = wsum
+    outputs['timeid'] = attrs['timeid']
+    return outputs
 
 
 def compute_residual(dsl,
@@ -763,50 +758,55 @@ def compute_residual(dsl,
     flip_w = ds.flip_w
     x0 = ds.x0
     y0 = ds.y0
+    ncorr = ds.corr.size
 
     tread = time() - ti
 
     ti = time()
     # do not apply weights in this direction
-    model_vis = dirty2vis(
-        uvw=uvw,
-        freq=freq,
-        dirty=beam*model,
-        pixsize_x=cellx,
-        pixsize_y=celly,
-        center_x=x0,
-        center_y=y0,
-        flip_u=flip_u,
-        flip_v=flip_v,
-        flip_w=flip_w,
-        epsilon=epsilon,
-        do_wgridding=do_wgridding,
-        nthreads=nthreads,
-        divide_by_n=False,  # incorporate in smooth beam
-        sigma_min=1.1, sigma_max=3.0,
-        verbosity=0)
-    tdegrid = time() - ti
-
-    ti = time()
-    convim = vis2dirty(
-        uvw=uvw,
-        freq=freq,
-        vis=model_vis,
-        wgt=wgt,
-        mask=mask,
-        npix_x=nx, npix_y=ny,
-        pixsize_x=cellx, pixsize_y=celly,
-        center_x=x0, center_y=y0,
-        flip_u=flip_u,
-        flip_v=flip_v,
-        flip_w=flip_w,
-        epsilon=epsilon,
-        do_wgridding=do_wgridding,
-        divide_by_n=False,  # incorporate in smooth beam
-        nthreads=nthreads,
-        sigma_min=1.1, sigma_max=3.0,
-        double_precision_accumulation=double_accum,
-        verbosity=0)
+    convim = np.zeros_like(dirty)
+    for c in range(ncorr):
+        try:
+            model_vis = dirty2vis(
+                uvw=uvw,
+                freq=freq,
+                dirty=beam[c]*model[c],
+                pixsize_x=cellx,
+                pixsize_y=celly,
+                center_x=x0,
+                center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                nthreads=nthreads,
+                divide_by_n=False,  # incorporate in smooth beam
+                sigma_min=1.1, sigma_max=3.0,
+                verbosity=0)
+        except:
+            import ipdb; ipdb.set_trace()
+    
+        vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=model_vis,
+            wgt=wgt[c],
+            mask=mask,
+            npix_x=nx, npix_y=ny,
+            pixsize_x=cellx, pixsize_y=celly,
+            center_x=x0, center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            divide_by_n=False,  # incorporate in smooth beam
+            nthreads=nthreads,
+            sigma_min=1.1, sigma_max=3.0,
+            double_precision_accumulation=double_accum,
+            verbosity=0,
+            dirty=convim[c])
     tgrid = time() - ti
 
     # this is the once attenuated residual since
@@ -816,24 +816,24 @@ def compute_residual(dsl,
     tdiff = time() - ti
 
     ti = time()
-    ds['MODEL'] = (('x','y'), model)
-    ds['RESIDUAL'] = (('x','y'), residual)
+    ds['MODEL'] = (('corr', 'x','y'), model)
+    ds['RESIDUAL'] = (('corr', 'x','y'), residual)
     tassign = time() - ti
 
     # we only need to write MODEL and RESIDUAL
     ds = ds[['RESIDUAL','MODEL']]
 
     # save
+    # LB - Why is twrite still siginificant?
     ti = time()
     with cf.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(ds.to_zarr, output_name, mode='a')
     twrite = time() - ti
 
     ttot = time() - tii
-    ttally = tread + tdegrid + tgrid + tdiff + tassign + twrite
+    ttally = tread + tgrid + tdiff + tassign + twrite
     if verbosity > 1:
         print(f'tread = {tread/ttot}')
-        print(f'tdegrid = {tdegrid/ttot}')
         print(f'tgrid = {tgrid/ttot}')
         print(f'tdiff = {tdiff/ttot}')
         print(f'tassign = {tassign/ttot}')

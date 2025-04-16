@@ -27,7 +27,7 @@ def signal_size(ncoeff, nfilter):
     return 2*ncoeff - nfilter + 2
 
 
-@numba.njit(nogil=True, cache=True, inline='always')
+@numba.njit(nogil=True, cache=True, inline='always', fastmath=True, error_model='numpy')
 def downsampling_convolution(input, output, filter, step):
 
     i = step - 1
@@ -95,26 +95,36 @@ def downsampling_convolution(input, output, filter, step):
         o += 1
 
 
-@numba.njit(nogil=True, cache=True, inline='always')
+@numba.njit(nogil=True, cache=True, inline='always', fastmath=True, error_model='numpy')
 def upsampling_convolution_valid_sf(input, filter, output):
 
     N = input.shape[0]
     F = filter.shape[0]
     O = output.shape[0]
 
+    # if F % 2:
+    #     raise ValueError("even filter required for upsampling")
+
+    # if N < (F // 2):
+    #     raise ValueError("input.shape[0] < (filter.shape[0] // 2)")
+
     o = 0
-    Fo2 = F//2
-    i = Fo2 - 1
+    i = (F // 2) - 1
+    stopping_criteria = F // 2
 
     while i < N and o < O:
         sum_even = input.dtype.type(0)
         sum_odd = input.dtype.type(0)
+        j = 0
+        j2 = 0
 
-        for j in range(Fo2):
-            j2 = 2*j
-            inimj = input[i-j]
-            sum_odd += filter[j2 + 1] * inimj
-            sum_even += filter[j2] * inimj
+        while j < stopping_criteria:
+            input_element = input[i - j]
+            sum_even += filter[j2] * input_element
+            sum_odd += filter[j2 + 1] * input_element
+
+            j += 1
+            j2 += 2
 
         output[o] += sum_even
         output[o + 1] += sum_odd
