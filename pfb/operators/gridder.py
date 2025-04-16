@@ -766,23 +766,26 @@ def compute_residual(dsl,
     # do not apply weights in this direction
     convim = np.zeros_like(dirty)
     for c in range(ncorr):
-        model_vis = dirty2vis(
-            uvw=uvw,
-            freq=freq,
-            dirty=beam[c]*model[c],
-            pixsize_x=cellx,
-            pixsize_y=celly,
-            center_x=x0,
-            center_y=y0,
-            flip_u=flip_u,
-            flip_v=flip_v,
-            flip_w=flip_w,
-            epsilon=epsilon,
-            do_wgridding=do_wgridding,
-            nthreads=nthreads,
-            divide_by_n=False,  # incorporate in smooth beam
-            sigma_min=1.1, sigma_max=3.0,
-            verbosity=0)
+        try:
+            model_vis = dirty2vis(
+                uvw=uvw,
+                freq=freq,
+                dirty=beam[c]*model[c],
+                pixsize_x=cellx,
+                pixsize_y=celly,
+                center_x=x0,
+                center_y=y0,
+                flip_u=flip_u,
+                flip_v=flip_v,
+                flip_w=flip_w,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                nthreads=nthreads,
+                divide_by_n=False,  # incorporate in smooth beam
+                sigma_min=1.1, sigma_max=3.0,
+                verbosity=0)
+        except:
+            import ipdb; ipdb.set_trace()
     
         vis2dirty(
             uvw=uvw,

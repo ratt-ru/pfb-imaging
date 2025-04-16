@@ -194,7 +194,7 @@ def test_kclean(do_gains, ms_name):
     # set defaults from schema
     from scabha.cargo import _UNSET_DEFAULT
     from pfb.parser.schemas import schema
-    # is this still necessary?
+    # this still necessary because we are not calling through clickify_parameters
     for worker in schema.keys():
         for param in schema[worker]['inputs']:
             if schema[worker]['inputs'][param]['default'] == _UNSET_DEFAULT:
@@ -271,3 +271,244 @@ def test_kclean(do_gains, ms_name):
         assert_allclose(1.0 + model_inferred[:, Ix[i], Iy[i]] * n[Ix[i], Iy[i]] -
                         model[:, Ix[i], Iy[i]], 1.0,
                         atol=5*threshold)
+
+
+def test_fskclean(ms_name):
+        # we need the client for the init step
+    from dask.distributed import LocalCluster, Client
+    cluster = LocalCluster(processes=False,
+                           n_workers=1,
+                           threads_per_worker=1,
+                           memory_limit=0,  # str(mem_limit/nworkers)+'GB'
+                           asynchronous=False)
+    client = Client(cluster, direct_to_workers=False)
+
+    import numpy as np
+    np.random.seed(420)
+    from numpy.testing import assert_allclose
+    from daskms import xds_from_ms, xds_from_table, xds_to_table
+    from daskms.experimental.zarr import xds_to_zarr
+    from africanus.constants import c as lightspeed
+    from ducc0.wgridder.experimental import dirty2vis
+    from pfb.utils.naming import xds_from_url
+    from pfb.operators.gridder import wgridder_conventions
+    from pfb.utils.stokes import stokes_to_corr, corr_to_stokes
+
+
+    test_dir = Path(ms_name).resolve().parent
+    xds = xds_from_ms(ms_name,
+                      chunks={'row': -1, 'chan': -1})[0]
+    spw = xds_from_table(f'{ms_name}::SPECTRAL_WINDOW')[0]
+
+    utime = np.unique(xds.TIME.values)
+    freq = spw.CHAN_FREQ.values.squeeze()
+    freq0 = np.mean(freq)
+
+    ntime = utime.size
+    nchan = freq.size
+    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA2.values.max()) + 1
+
+    ncorr = xds.corr.size
+
+    uvw = xds.UVW.values
+    nrow = uvw.shape[0]
+    u_max = abs(uvw[:, 0]).max()
+    v_max = abs(uvw[:, 1]).max()
+    uv_max = np.maximum(u_max, v_max)
+
+    # image size
+    cell_N = 1.0 / (2 * uv_max * freq.max() / lightspeed)
+
+    srf = 2.0
+    cell_rad = cell_N / srf
+    cell_deg = cell_rad * 180 / np.pi
+    cell_size = cell_deg * 3600
+    print("Cell size set to %5.5e arcseconds" % cell_size)
+
+    from ducc0.fft import good_size
+    # the test will fail in intrinsic if sources fall near beam sidelobes
+    fov = 1.0
+    npix = good_size(int(fov / cell_deg))
+    while npix % 2:
+        npix += 1
+        npix = good_size(npix)
+
+    nx = npix
+    ny = npix
+
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
+
+    print(f"Image size set to ({nchan}, {ncorr}, {nx}, {ny})")
+
+    # model
+    model = np.zeros((nchan, ncorr, nx, ny), dtype=np.float64)
+    nsource = 10
+    Ix = np.random.randint(0, npix, nsource)
+    Iy = np.random.randint(0, npix, nsource)
+    alpha = -0.7 + 0.1 * np.random.randn(nsource)
+    Q0 = np.random.randn(nsource)
+    U0 = np.random.randn(nsource)
+    V0 = np.random.randn(nsource)
+    pfrac = 0.7
+    for i in range(nsource):
+        Q = Q0[i] * (freq/freq0) ** alpha[i]
+        U = U0[i] * (freq/freq0) ** alpha[i]
+        V = V0[i] * (freq/freq0) ** alpha[i]
+        I = np.sqrt(Q**2 + U**2 + V**2)/pfrac
+        model[:, 0, Ix[i], Iy[i]] = I
+        model[:, 1, Ix[i], Iy[i]] = Q
+        model[:, 2, Ix[i], Iy[i]] = U
+        model[:, 3, Ix[i], Iy[i]] = V
+
+    # model vis
+    epsilon = 1e-7
+    stokes_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
+    for c in range(nchan):
+        stokes_vis[:, c:c+1, 0] = dirty2vis(uvw=uvw,
+                                        freq=freq[c:c+1],
+                                        dirty=model[c, 0],
+                                        pixsize_x=cell_rad,
+                                        pixsize_y=cell_rad,
+                                        center_x=x0,
+                                        center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
+                                        epsilon=epsilon,
+                                        do_wgridding=True,
+                                        nthreads=1)
+        stokes_vis[:, c:c+1, 1] = dirty2vis(uvw=uvw,
+                                        freq=freq[c:c+1],
+                                        dirty=model[c, 1],
+                                        pixsize_x=cell_rad,
+                                        pixsize_y=cell_rad,
+                                        center_x=x0,
+                                        center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
+                                        epsilon=epsilon,
+                                        do_wgridding=True,
+                                        nthreads=1)
+        stokes_vis[:, c:c+1, 2] = dirty2vis(uvw=uvw,
+                                        freq=freq[c:c+1],
+                                        dirty=model[c, 2],
+                                        pixsize_x=cell_rad,
+                                        pixsize_y=cell_rad,
+                                        center_x=x0,
+                                        center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
+                                        epsilon=epsilon,
+                                        do_wgridding=True,
+                                        nthreads=1)
+        stokes_vis[:, c:c+1, 3] = dirty2vis(uvw=uvw,
+                                        freq=freq[c:c+1],
+                                        dirty=model[c, 3],
+                                        pixsize_x=cell_rad,
+                                        pixsize_y=cell_rad,
+                                        center_x=x0,
+                                        center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
+                                        epsilon=epsilon,
+                                        do_wgridding=True,
+                                        nthreads=1)
+
+    model_vis = stokes_to_corr(stokes_vis, axis=-1)
+
+    xds['DATA'] = (('row','chan','corr'),
+                    da.from_array(model_vis, chunks=(-1,-1,-1)))
+    dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
+    gain_path = None
+
+    from scabha.cargo import _UNSET_DEFAULT
+    from pfb.parser.schemas import schema
+    # this still necessary because we are not calling through clickify_parameters
+    for worker in schema.keys():
+        for param in schema[worker]['inputs']:
+            if schema[worker]['inputs'][param]['default'] == _UNSET_DEFAULT:
+                schema[worker]['inputs'][param]['default'] = None
+
+    p = 'FS'
+    outname = str(test_dir / 'test')
+    basename = f'{outname}_{p}'
+    dds_name = f'{basename}_main.dds'
+    # set defaults from schema
+    init_args = {}
+    for key in schema.init["inputs"].keys():
+        init_args[key.replace("-", "_")] = schema.init["inputs"][key]["default"]
+    # overwrite defaults
+    init_args["ms"] = [str(test_dir / 'test_ascii_1h60.0s.MS')]
+    init_args["output_filename"] = basename
+    init_args["data_column"] = "DATA"
+    init_args["flag_column"] = 'FLAG'
+    init_args["gain_table"] = gain_path
+    init_args["max_field_of_view"] = fov*1.1
+    init_args["bda_decorr"] = 1.0
+    init_args["overwrite"] = True
+    init_args["channels_per_image"] = 1
+    init_args["product"] = p
+    from pfb.workers.init import _init
+    _init(**init_args)
+
+    # grid data to produce dirty image
+    grid_args = {}
+    for key in schema.grid["inputs"].keys():
+        grid_args[key.replace("-", "_")] = schema.grid["inputs"][key]["default"]
+    # overwrite defaults
+    grid_args["output_filename"] = basename
+    grid_args["field_of_view"] = fov
+    grid_args["fits_mfs"] = True
+    grid_args["psf"] = True
+    grid_args["residual"] = False
+    grid_args["nthreads"] = 1
+    grid_args["overwrite"] = True
+    grid_args["robustness"] = 0.0
+    grid_args["do_wgridding"] = True
+    grid_args["product"] = p
+    from pfb.workers.grid import _grid
+    _grid(**grid_args)
+
+    # run kclean
+    kclean_args = {}
+    for key in schema.kclean["inputs"].keys():
+        kclean_args[key.replace("-", "_")] = schema.kclean["inputs"][key]["default"]
+    kclean_args["output_filename"] = basename
+    kclean_args["dirosion"] = 0
+    kclean_args["do_residual"] = False
+    kclean_args["niter"] = 100
+    threshold = 1e-4
+    kclean_args["threshold"] = threshold
+    kclean_args["gamma"] = 0.1
+    kclean_args["peak_factor"] = 0.75
+    kclean_args["sub_peak_factor"] = 0.75
+    kclean_args["nthreads"] = 1
+    kclean_args["do_wgridding"] = True
+    kclean_args["epsilon"] = epsilon
+    kclean_args["mop_flux"] = True
+    kclean_args["fits_mfs"] = False
+    kclean_args["product"] = p
+    from pfb.workers.kclean import _fskclean
+    _fskclean(**kclean_args)
+
+    # get inferred model
+    dds, _ = xds_from_url(dds_name)
+    model_inferred = np.zeros((nchan, ncorr, nx, ny))
+    for ds in dds:
+        b = int(ds.bandid)
+        model_inferred[b] = ds.MODEL.values
+
+    # we actually reconstruct I/n(l,m) so we need to correct for that
+    l, m = np.meshgrid(dds[0].x.values, dds[0].y.values,
+                       indexing='ij')
+    eps = l**2+m**2
+    n = -eps/(np.sqrt(1.-eps)+1.) + 1  # more stable form
+    for i in range(nsource):
+        assert_allclose(1.0 + model_inferred[:, :, Ix[i], Iy[i]] * n[Ix[i], Iy[i]] -
+                        model[:, :, Ix[i], Iy[i]], 1.0,
+                        atol=5*threshold)
+
+    

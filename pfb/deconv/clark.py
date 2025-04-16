@@ -192,7 +192,7 @@ def fssubminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     k = 0
     while Amax > th and k < maxit:
         xhat = A[:, :, pq]
-        model[fsel, :, p, q] += gamma * xhat[fsel, :]/wsums[fsel, :]
+        model[:, :, p, q] += gamma * xhat[:, :]/wsums[:, :]
         
         for b in prange(nband):
             for c in range(ncorr):
@@ -256,10 +256,10 @@ def fsclark(ID,
         subth = subpf * IRmax
         Ip, Iq = np.where(IRsearch > subth**2)
         # run substep in active set
-        model = subminor(IR[:, :, Ip, Iq], PSF, Ip, Iq, model, wsums,
-                         gamma=gamma,
-                         th=subth,
-                         maxit=submaxit)
+        model = fssubminor(IR[:, :, Ip, Iq], PSF, Ip, Iq, model, wsums,
+                           gamma=gamma,
+                           th=subth,
+                           maxit=submaxit)
 
         # subtract from full image (as in major cycle)
         psf_convolve_fscube(

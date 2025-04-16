@@ -199,10 +199,6 @@ def test_polproducts(do_gains, ms_name):
         vis = corrupt_vis(tbin_idx, tbin_counts, ant1, ant2,
                           gains, model_vis).reshape(nrow, nchan, ncorr)
 
-        # add iid noise
-        # vis += (np.random.randn(nrow, nchan, ncorr) +
-        #         1j*np.random.randn(nrow, nchan, ncorr))/np.sqrt(2)
-
         xds['DATA'] = (('row','chan','corr'),
                        da.from_array(vis, chunks=(-1,-1,-1)))
         dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
@@ -240,10 +236,6 @@ def test_polproducts(do_gains, ms_name):
         gain_path = [f'{gain_path}/NET']
 
     else:
-        # # add iid noise
-        # model_vis += (np.random.randn(nrow, nchan, ncorr) +
-        #               1j*np.random.randn(nrow, nchan, ncorr))/np.sqrt(2)
-
         xds['DATA'] = (('row','chan','corr'),
                        da.from_array(model_vis, chunks=(-1,-1,-1)))
         dask.compute(xds_to_table(xds, ms_name, columns='DATA'))
@@ -251,7 +243,7 @@ def test_polproducts(do_gains, ms_name):
 
     from scabha.cargo import _UNSET_DEFAULT
     from pfb.parser.schemas import schema
-    # is this still necessary?
+    # this still necessary because we are not calling through clickify_parameters
     for worker in schema.keys():
         for param in schema[worker]['inputs']:
             if schema[worker]['inputs'][param]['default'] == _UNSET_DEFAULT:

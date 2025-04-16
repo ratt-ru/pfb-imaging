@@ -52,7 +52,10 @@ def kclean(**kw):
     dds_name = f'{basename}_{opts.suffix}.dds'
 
     ti = time.time()
-    _kclean(**opts)
+    if opts.product == 'FS':
+        _fskclean(**opts)
+    else:
+        _kclean(**opts)
 
     dds, dds_list = xds_from_url(dds_name)
 
@@ -426,10 +429,11 @@ def _fskclean(**kw):
     from pfb.utils.fits import set_wcs, save_fits, load_fits
     from pfb.deconv.clark import fsclark
     from pfb.utils.naming import xds_from_url
-    from pfb.opt.pcg import pcg, pcg_psf
     from pfb.operators.gridder import compute_residual
+    from pfb.operators.hessian import fshessian_jax
     from scipy import ndimage
     from pfb.utils.misc import fit_image_fscube
+    from jax.scipy.sparse.linalg import cg
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
@@ -452,6 +456,7 @@ def _fskclean(**kw):
     time_out = np.unique(np.array(time_out))
 
     nband = freq_out.size
+    ncorr = dds[0].corr.size
 
     # stitch dirty/psf in apparent scale
     # drop_vars to avoid duplicates in memory
@@ -465,10 +470,10 @@ def _fskclean(**kw):
         model = np.stack([ds.MODEL.values for ds in dds], axis=0)
         dds = [ds.drop_vars('MODEL') for ds in dds]
     else:
-        model = np.zeros((nband, nx, ny))
+        model = np.zeros((nband, ncorr, nx, ny))
     psf = np.stack([ds.PSF.values for ds in dds], axis=0)
     psfhat = np.stack([ds.PSFHAT.values for ds in dds], axis=0)
-    dds = [ds.drop_vars('PSF') for ds in dds]
+    dds = [ds.drop_vars(['PSF', 'PSFHAT']) for ds in dds]
     wsums = np.stack([ds.WSUM.values for ds in dds], axis=0)
 
     wsum = np.sum(wsums, axis=0)
@@ -477,7 +482,6 @@ def _fskclean(**kw):
     psf /= wsum[None, :, None, None]
     psfhat /= wsum[None, :, None, None]
     residual /= wsum[None, :, None, None]
-    psf_mfs = np.sum(psf, axis=0)
     residual_mfs = np.sum(residual, axis=0)
 
     # for intermediary results
@@ -511,7 +515,6 @@ def _fskclean(**kw):
     cgopts['minit'] = opts.cg_minit
     cgopts['verbosity'] = opts.cg_verbose
     cgopts['report_freq'] = opts.cg_report_freq
-    cgopts['backtrack'] = opts.backtrack
 
 
     rms = np.std(residual_mfs, axis=(-2,-1)).max()
@@ -547,7 +550,7 @@ def _fskclean(**kw):
               f"{basename}_{opts.suffix}_model.mds", file=log)
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
-                fit_image_fscube(time_out, freq_out, model,
+                fit_image_fscube(freq_out, model,
                                  wgt=wsums,
                                  nbasisf=int(nband),
                                  method='Legendre')
@@ -629,25 +632,21 @@ def _fskclean(**kw):
         status |= rmax <= threshold
         if opts.mop_flux and status:
             print(f"Mopping flux at iter {k+1}", file=log)
-            mopmask = np.any(model, axis=0)
+            mopmask = np.any(model, axis=(0,1))
             if opts.dirosion:
                 struct = ndimage.generate_binary_structure(2, opts.dirosion)
                 mopmask = ndimage.binary_dilation(mopmask, structure=struct)
                 mopmask = ndimage.binary_erosion(mopmask, structure=struct)
-            x0 = np.zeros_like(x)
-            # x0[:, mopmask] = residual_mfs[mopmask]
-            # TODO - applying mask as beam is wasteful
-            mopmask = (mopmask.astype(residual.dtype) * mask)[None, :, :]
-            x = pcg_psf(psfhat,
-                        mopmask*residual,
-                        x0,
-                        mopmask,
-                        lastsize,
-                        opts.nthreads,
-                        rmax,  # used as eta
-                        cgopts)
+            # TODO - apply beam/n with mask
+            mopmask = (mopmask.astype(residual.dtype) * mask)
+            A = partial(fshessian_jax, nx, ny, nx_psf, ny_psf, rmax,
+                        mopmask, np.abs(psfhat))
+            x, _ = cg(A,
+                      residual*mopmask[None, None, :, :],
+                      tol=opts.cg_tol,
+                      maxiter=opts.cg_maxit)
 
-            model += opts.mop_gamma*x
+            model += opts.mop_gamma*np.array(x)
 
             print(f'Computing residual', file=log)
             for ds_name, ds in zip(dds_list, dds):
@@ -662,7 +661,7 @@ def _fskclean(**kw):
                                         do_wgridding=opts.do_wgridding,
                                         double_accum=opts.double_accum)
                 residual[b] = resid
-            residual /= wsum
+            residual /= wsum[None, :, None, None]
             residual_mfs = np.sum(residual, axis=0)
 
             save_fits(residual_mfs,
@@ -674,8 +673,8 @@ def _fskclean(**kw):
                       hdr_mfs)
 
             rmsp = rms
-            rms = np.std(residual_mfs[mask>0])
-            rmax = np.abs(residual_mfs[mask>0]).max()
+            rms = np.std(residual_mfs, axis=(-2,-1)).max()
+            rmax = np.abs(residual_mfs).max()
 
             # base this on rmax?
             if rms < best_rms:
@@ -695,7 +694,9 @@ def _fskclean(**kw):
             attrs['rmax'] = best_rmax
             attrs['niters'] = k+1
             ds = ds.assign_attrs(**attrs)
-            ds.to_zarr(ds_name, mode='a')
+            # we don't want to write everything to disk
+            dsw = ds[['MODEL_BEST']]
+            dsw.to_zarr(ds_name, mode='a')
 
         if opts.threshold is None:
             threshold = opts.rmsfactor * rms

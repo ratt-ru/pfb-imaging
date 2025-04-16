@@ -521,3 +521,45 @@ def hessian_jax(nx, ny,
                           norm='backward')[:, 0:nx, 0:ny]
     return xout + eta*x
 
+@partial(jax.jit, static_argnums=(0,1,2,3,4))
+def hessian_jax(nx, ny,
+                nx_psf, ny_psf,
+                eta,
+                psfhat,
+                x):
+    psfh = jax.lax.stop_gradient(psfhat)
+    xhat = jnp.fft.rfft2(x,
+                         s=(nx_psf, ny_psf),
+                         norm='backward')
+    xout = jnp.fft.irfft2(xhat*psfh,
+                          s=(nx_psf, ny_psf),
+                          norm='backward')[:, 0:nx, 0:ny]
+    return xout + eta*x
+
+@partial(jax.jit, static_argnums=(0,1,2,3,4))
+def fshessian_jax(nx, ny,
+                  nx_psf, ny_psf,
+                  eta,
+                  mask,
+                  psfhat,
+                  x):
+    '''
+    Assumes both x and psfhat is a 4D cube with the last two dimensions
+    corresponding to spatial dimensions along which FFT us taken.
+
+    nx, ny          - int: npix in two spatial coordinates
+    nx_psf, ny_psf  - int: npix in two spatial coordinates of psf 
+    eta             - float: regularisation parameter
+    mask            - ndarray(nx, ny): spatial mask
+    psfhat          - ndarray(nband, ncorr, nx, ny): psf in uv space
+    x               - ndarray(nband, ncorr, nx, ny): image
+    '''
+    mask = jax.lax.stop_gradient(mask)[None, None, :, :]
+    psfhat = jax.lax.stop_gradient(psfhat)
+    xhat = jnp.fft.rfft2(x*mask,
+                         s=(nx_psf, ny_psf),
+                         norm='backward')
+    xout = jnp.fft.irfft2(xhat*psfhat,
+                          s=(nx_psf, ny_psf),
+                          norm='backward')[:, :, 0:nx, 0:ny]
+    return xout*mask + eta*x
