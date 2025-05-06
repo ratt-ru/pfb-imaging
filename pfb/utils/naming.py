@@ -11,7 +11,10 @@ def set_output_names(opts):
     '''
     output_filename = opts.output_filename
     product = opts.product
-    fits_output_folder = opts.fits_output_folder
+    if 'fits_output_folder' in opts:
+        fits_output_folder = opts.fits_output_folder
+    else:
+        fits_output_folder = None
     log_directory = opts.log_directory
 
     if '://' in output_filename:
@@ -30,21 +33,20 @@ def set_output_names(opts):
 
     opts.output_filename = f'{prefix}{basedir}/{oname}'
 
-    if fits_output_folder is not None:
-        # this should be a file system
-        fs = fsspec.filesystem('file')
-        fbasedir = fs.expand_path(fits_output_folder)[0]
-        if not fs.exists(fbasedir):
-            fs.makedirs(fbasedir)
-        fits_output_folder = fbasedir
-    else:
-        if protocol != 'file':
-            raise ValueError('You must provide a separate fits-output-'
-                             'folder when output protocol is '
-                             f'{protocol}')
-        fits_output_folder = basedir
-
-    opts.fits_output_folder = fits_output_folder
+    if 'fits_output_folder' in opts:
+        if opts.fits_output_folder is not None:
+            # this should be a file system
+            fs = fsspec.filesystem('file')
+            fbasedir = fs.expand_path(fits_output_folder)[0]
+            if not fs.exists(fbasedir):
+                fs.makedirs(fbasedir)
+            opts.fits_output_folder = fbasedir
+        else:
+            if protocol != 'file':
+                raise ValueError('You must provide a separate fits-output-'
+                                'folder when output protocol is '
+                                f'{protocol}')
+            opts.fits_output_folder = basedir
 
     if log_directory is not None:
         # this should be a file system

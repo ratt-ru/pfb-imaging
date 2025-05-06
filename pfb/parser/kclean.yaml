@@ -131,10 +131,15 @@ inputs:
   _include:
     - (.)gridding.yml
     - (.)out.yml
+    - (.)fits.yml
 
 outputs:
   dds-out:
     implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
+    dtype: Directory
+    must_exist: false
+  mds-out: 
+    implicit: '{current.output-filename}_{current.product}_{current.suffix}_model.mds'
     dtype: Directory
     must_exist: false
 

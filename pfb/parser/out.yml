@@ -17,20 +17,3 @@ product:
   info:
     Imaging products to produce.
     DS and FS correspond to Diagonal and Full Stokes, respectively.
-fits-output-folder:
-  dtype: str
-  abbreviation: fitso
-  info:
-    Optional path to write fits files to.
-    Set to output-filename if not provided.
-    The same naming conventions apply.
-fits-mfs:
-  dtype: bool
-  default: true
-  info:
-    Output MFS fits files
-fits-cubes:
-  dtype: bool
-  default: true
-  info:
-    Output fits cubes

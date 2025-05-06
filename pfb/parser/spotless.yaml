@@ -6,6 +6,7 @@ inputs:
     - (.)cgopts.yml
     - (.)dist.yml
     - (.)out.yml
+    - (.)fits.yml
   xds:
     info:
       Optional explicit path to xds.

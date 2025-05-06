@@ -5,6 +5,7 @@ inputs:
     - (.)pmopts.yml
     - (.)cgopts.yml
     - (.)out.yml
+    - (.)fits.yml
   suffix:
     dtype: str
     default: 'main'

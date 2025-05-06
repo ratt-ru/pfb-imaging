@@ -79,6 +79,7 @@ inputs:
 
   _include:
     - (.)out.yml
+    - (.)fits.yml
 
 outputs:
   mds-out:

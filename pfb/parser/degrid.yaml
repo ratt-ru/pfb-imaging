@@ -8,21 +8,21 @@ inputs:
   scans:
     dtype: List[int]
     info:
-      List of SCAN_NUMBERS to image. Defaults to all.
+      List of SCAN_NUMBERS to predict. Defaults to all.
       Input as comma separated list 0,2 if running from CLI
   ddids:
     dtype: List[int]
     info:
-      List of DATA_DESC_ID's to images. Defaults to all.
+      List of DATA_DESC_ID's to predict. Defaults to all.
       Input as comma separated list 0,2 if running from CLI
   fields:
     dtype: List[int]
     info:
-      List of FIELD_ID's to image. Defaults to all.
+      List of FIELD_ID's to predict. Defaults to all.
       Input as comma separated list 0,2 if running from CLI
   suffix:
     dtype: str
-    default: 'main'
+    default: main
     info:
       Can be used to specify a custom name for the image space data products
   mds:
@@ -36,13 +36,6 @@ inputs:
     default: MODEL_DATA
     info:
       Column to write model data to
-  product:
-    dtype: str
-    abbreviation: p
-    default: I
-    info:
-      Imaging products to degrid. Options are I, Q, U, V.
-      Only single Stokes products are currently supported.
   freq-range:
     dtype: str
     info:
