@@ -32,7 +32,7 @@ sympy = ">=1.9"
 stimela = ">=2.0.2"
 streamjoy = ">=0.0.8"
 codex-africanus = {extras = ["dask", "scipy", "astropy", "python-casacore"], version = ">=0.4.1"}
-dask-ms = {extras = ["s3", "xarray", "zarr"], version = ">=0.2.22"}
+dask-ms = {extras = ["s3", "xarray", "zarr"], version = ">=0.2.23"}
 tbb = ">=2021.13.1"
 jax = {extras = ["cpu"], version = ">=0.4.31"}
 lz4 = ">=4.3.3"
