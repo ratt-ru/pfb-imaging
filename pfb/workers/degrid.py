@@ -249,7 +249,9 @@ def _degrid(**kw):
                     column_name = opts.model_column
                 else:
                     column_name = f'{opts.model_column}{i}'
-                columns.append(column_name)
+                
+                if column_name not in columns:
+                    columns.append(column_name)
 
                 # time <-> row mapping
                 utime = da.from_array(utimes[ms][idt],
@@ -312,14 +314,19 @@ def _degrid(**kw):
                 if opts.accumulate:
                     vis += getattr(ds, column_name).data
 
+                # assign and select only output column
                 out_ds = ds.assign(**{column_name:
-                                    (("row", "chan", "corr"), vis)})
+                                    (("row", "chan", "corr"), vis)})[[column_name]]
                 out_data.append(out_ds)
 
-            writes.append(xds_to_table(
-                                    out_data, ms,
-                                    columns=columns,
-                                    rechunk=True))
+            
+            if opts.output_format.lower() == 'ms':
+                writes.append(xds_to_table(
+                                        out_data, ms,
+                                        rechunk=True))
+            else:
+                raise NotImplementedError(f"Output format {opts.output_format} not yet supported")
+                
 
     # optimize_graph can make things much worse
     print("Computing model visibilities", file=log)

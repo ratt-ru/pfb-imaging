@@ -14,21 +14,15 @@ inputs:
     default: 1
     info:
       Perform dilation followed by erosion with structure element of this width
-  mop-flux:
-    dtype: bool
-    default: true
-    info:
-      Trigger PCG based flux mop if minor cycle stalls,
-      the final threshold is reached or on the final iteration.
-  mop-gamma:
+  gamma:
     dtype: float
-    default: 0.65
+    default: 0.99
     info:
-      Step size for flux mop. Should be between (0,1).
-      A value of 1 is most aggressive.
+      Step size for forward backward steps.
+      Must be less than 1.0.
   niter:
     dtype: int
-    default: 5
+    default: 10
     abbreviation: niter
     info:
       Number of major iterations
@@ -40,16 +34,16 @@ inputs:
       Defaults to half the total number available.
   threshold:
     dtype: float
+    abbreviation: th
     info:
       Absolute threshold at which to stop cleaning.
       By default it is set automatically using rmsfactor parameter
-    abbreviation: th
   rmsfactor:
     dtype: float
     default: 3.0
     info:
       Multiple of the rms at which to stop cleaning
-  gamma:
+  clean-gamma:
     dtype: float
     default: 0.1
     abbreviation: gamma
@@ -103,31 +97,18 @@ inputs:
     abbreviation: cgmaxit
     info:
       Maximum iterations for conjugate gradient algorithm
-  cg-minit:
-    dtype: int
-    default: 1
-    abbreviation: cgminit
+  fista-tol:
+    dtype: float
+    default: 1e-4
+    abbreviation: ftol
     info:
-      Minimum iterations for conjugate gradient algorithm
-  cg-verbose:
-    dtype: int
-    default: 1
-    abbreviation: cgverb
-    info:
-      Verbosity of conjugate gradient algorithm.
-      Set to > 1 for debugging, 0 for silence
-  cg-report_freq:
+      Tolerance for FISTA algorithm
+  fista-maxit:
     dtype: int
     default: 100
-    abbreviation: cgrf
+    abbreviation: fmaxit
     info:
-      Report frequency of conjugate gradient algorithm
-  backtrack:
-    dtype: bool
-    default: true
-    info:
-      Ensure residual decreases at every iteration
-
+      Maximum iterations for FISTA algorithm
   _include:
     - (.)gridding.yml
     - (.)out.yml

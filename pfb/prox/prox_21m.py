@@ -1,6 +1,32 @@
 import numpy as np
+import jax
+import jax.numpy as jnp
 from numba import njit, prange
 
+
+def prox_21m_jax(weight, axis, v, sigma):
+    """
+    Computes weighted version of
+
+    prox_{sigma * || . ||_{21}}(v)
+
+    Assumed that v has shape (nband, ncorr, nx, ny) where
+
+    nband   - number of imaging bands
+    ncorr   - number of correlations
+    nx      - number of x pixels
+    ny      - number of y pixels
+
+    sigma   - ncorr array setting overall threshold level per correlation/Stokes
+    weight  - (ncorr, nx, ny) setting relative weights per components in the "MFS" cube
+    """
+    l2_norm = jnp.sum(v, axis=axis)  # drops axis
+    threshold = sigma[:, None, None] * weight
+    l2_soft = jnp.maximum(jnp.abs(l2_norm) - threshold, 0.0) * jnp.sign(l2_norm)
+    mask = l2_norm != 0
+    ratio = jnp.zeros(mask.shape, dtype=v.dtype)
+    ratio = jax.lax.select(mask, l2_soft / l2_norm, ratio)
+    return v * jnp.expand_dims(ratio, axis=axis)  # restores axis
 
 def prox_21m(v, sigma, weight=1.0, axis=0):
     """

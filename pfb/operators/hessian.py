@@ -540,7 +540,7 @@ def hessian_jax(nx, ny,
 def fshessian_jax(nx, ny,
                   nx_psf, ny_psf,
                   eta,
-                  mask,
+                  beam,
                   psfhat,
                   x):
     '''
@@ -550,16 +550,17 @@ def fshessian_jax(nx, ny,
     nx, ny          - int: npix in two spatial coordinates
     nx_psf, ny_psf  - int: npix in two spatial coordinates of psf 
     eta             - float: regularisation parameter
-    mask            - ndarray(nx, ny): spatial mask
+    beam            - ndarray(nband, ncorr, nx, ny): beam (optionally including spatial mask)
     psfhat          - ndarray(nband, ncorr, nx, ny): psf in uv space
     x               - ndarray(nband, ncorr, nx, ny): image
     '''
-    mask = jax.lax.stop_gradient(mask)[None, None, :, :]
+    beam = jax.lax.stop_gradient(beam)
     psfhat = jax.lax.stop_gradient(psfhat)
-    xhat = jnp.fft.rfft2(x*mask,
+    x = jax.lax.stop_gradient(x)
+    xhat = jnp.fft.rfft2(x*beam,
                          s=(nx_psf, ny_psf),
                          norm='backward')
     xout = jnp.fft.irfft2(xhat*psfhat,
                           s=(nx_psf, ny_psf),
                           norm='backward')[:, :, 0:nx, 0:ny]
-    return xout*mask + eta*x
+    return xout*beam + eta*x

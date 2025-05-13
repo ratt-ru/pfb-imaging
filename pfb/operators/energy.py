@@ -19,7 +19,6 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from jax.scipy.linalg import expm
 from jax._src.scipy.sparse.linalg import _vdot_tree
-import nifty8.re as jft
 from functools import partial
 from ducc0.wgridder import dirty2vis, vis2dirty
 from ducc0.fft import c2c, r2c, c2r
@@ -29,6 +28,37 @@ Fs = fftshift
 iFs = ifftshift
 import matplotlib.pyplot as plt
 from pfb.utils.stokes import stokes_to_corr, corr_to_stokes
+from pfb.operators.hessian import fshessian_jax
+
+
+@partial(jax.jit, static_argnums=(0,))
+def stokes_energy(A,
+                  y,
+                  x):
+    '''
+    A               - callable: preconditioning operator
+    y               - ndarray(nband, ncorr, nx, ny): data image
+    x               - ndarray(nband, ncorr, nx, ny): image
+
+    Returns value of gradient of the energy function
+
+    (y - x).H A (y - x)
+    
+    '''
+    # we don't need to track gradients
+    y = jax.lax.stop_gradient(y)
+    x = jax.lax.stop_gradient(x)
+
+    r = y - x 
+    rconv = A(r)
+    
+    # value and grad
+    return jnp.vdot(r, rconv), -rconv
+
+
+
+
+
 
 
 @jax.jit

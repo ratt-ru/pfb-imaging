@@ -840,6 +840,3 @@ def compute_residual(dsl,
         print(f'twrite = {twrite/ttot}')
         print(f'ttally = {ttally/ttot}')
     return residual, future
-
-def dataset_to_zarr(ds, output_name):
-    ds.to_zarr(output_name, mode='a')

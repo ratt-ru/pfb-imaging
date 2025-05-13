@@ -66,6 +66,16 @@ inputs:
       A region file containing regions that need to be converted to separate measurement set columns.
       Each region in the file will end up in a separate column labelled as model-column{#} with the
       remainder going into model-column.
+  output-format:
+    dtype: str
+    default: ms
+    choices:
+      - zarr
+      - ms
+    info:
+      Format to write model visibilities to.
+      ms will write to the model column of the measurement set (even a zarr backed one).
+      zarr will write to a separate zarr file.
 
   _include:
     - (.)gridding.yml
