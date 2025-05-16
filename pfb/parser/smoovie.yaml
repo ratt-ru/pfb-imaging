@@ -2,7 +2,7 @@ inputs:
   fds:
     dtype: str
     info:
-      Optional path to fds produced by fastim worker.
+      Optional path to fds produced by fastim worker in zarr output format.
       Default naming convention is used if not provided.
   animate-axis:
     dtype: str

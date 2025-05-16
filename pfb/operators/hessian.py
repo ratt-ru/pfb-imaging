@@ -556,7 +556,7 @@ def fshessian_jax(nx, ny,
     '''
     beam = jax.lax.stop_gradient(beam)
     psfhat = jax.lax.stop_gradient(psfhat)
-    x = jax.lax.stop_gradient(x)
+    # x = jax.lax.stop_gradient(x)
     xhat = jnp.fft.rfft2(x*beam,
                          s=(nx_psf, ny_psf),
                          norm='backward')

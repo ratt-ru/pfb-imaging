@@ -1,12 +1,13 @@
 import numpy as np
 import numexpr as ne
 from functools import partial
-from numba import njit, prange
+from numba import njit, prange, objmode
 import dask.array as da
 from pfb.operators.psf import psf_convolve_cube, psf_convolve_fscube
 from ducc0.misc import empty_noncritical
 import pyscilog
 log = pyscilog.get_logger('CLARK')
+from time import time
 
 
 @njit(nogil=True, cache=True, parallel=True)
@@ -153,7 +154,7 @@ def clark(ID,
         return model, 0
 
 
-@njit(nogil=True, cache=True, parallel=True)
+@njit(nogil=True, cache=True, parallel=True, error_model='numpy')
 def fssubminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     """
     Full Stokes subminor loop in active set
@@ -180,34 +181,47 @@ def fssubminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     # _, nx, ny = model.shape
     # MFS image
     Amfs = np.sum(A, axis=0)
-    # total pol image (always positive)
-    Asearch = np.sum(Amfs**2, axis=0)
+    Aabs = np.abs(Amfs)
+    Asearch = np.sum(Aabs, axis=0)
     pq = Asearch.argmax()
     p = Ip[pq]
     q = Iq[pq]
-    Amax = np.sqrt(Asearch[pq])
-    fsel = wsums > 0
-    if fsel.sum() == 0:
-        raise ValueError("wsums are all zero")
+    Amax = Aabs[:, pq]
+    if (wsums == 0).any():
+        raise ValueError("zero-wsums not supported")
+    valid_mask = np.zeros(Ip.size, dtype=np.bool_)
     k = 0
-    while Amax > th and k < maxit:
-        xhat = A[:, :, pq]
-        model[:, :, p, q] += gamma * xhat[:, :]/wsums[:, :]
-        
+    while (Amax > th).any() and k < maxit:
+        pp = nxo2 - (Ip - p)
+        qq = nyo2 - (Iq - q)
+        valid_mask[:] = (pp >= 0) & (pp < nx_psf) & (qq >= 0) & (qq < ny_psf)
+        valid_indices = np.nonzero(valid_mask)[0]
+        ppi = pp[valid_mask]
+        qqi = qq[valid_mask]
         for b in prange(nband):
+            Ab = A[b]
+            psfb = psf[b]
+            wb = wsums[b]
+            modelb = model[b]
             for c in range(ncorr):
-                for i in range(Ip.size):
-                    pp = nxo2 - (Ip[i] - p)
-                    qq = nyo2 - (Iq[i] - q)
-                    if (pp >= 0) & (pp < nx_psf) & (qq >= 0) & (qq < ny_psf):
-                        A[b, c, i] -= gamma * xhat[b, c] * psf[b, c, pp, qq]/wsums[b, c]
+                gx = gamma * Ab[c, pq]/wb[c]
+                modelb[c, p, q] += gx                
+                # for i in valid_indices:
+                for i, pi, qi in zip(valid_indices, ppi, qqi):
+                    Ab[c, i] -= gx * psfb[c, pi, qi]
 
-        Amfs = np.sum(A, axis=0)
-        Asearch = np.sum(Amfs**2, axis=0)
+        Amfs.fill(0.0)
+        for b in range(nband):
+            Amfs += A[b]
+        Asearch.fill(0.0)
+        for c in range(ncorr):
+            for i in range(Ip.size):
+                Aabs[c, i] = abs(Amfs[c, i])
+                Asearch[i] += Aabs[c, i]
         pq = Asearch.argmax()
         p = Ip[pq]
         q = Iq[pq]
-        Amax = np.sqrt(Asearch[pq])
+        Amax[...] = Aabs[:, pq]
         k += 1
     return model
 
@@ -241,27 +255,30 @@ def fsclark(ID,
     xhat = empty_noncritical(PSFHAT.shape, dtype='c16')
     # MFS image
     IRmfs = np.sum(IR, axis=0)
-    # total pol image (always positive)
-    # Do we technically need a weighted sum here?
-    IRsearch = np.sum(IRmfs**2, axis=0) * mask
+    IRabs = np.abs(IRmfs)
+    IRsearch = np.sum(IRabs, axis=0) * mask
     pq = IRsearch.argmax()
     p = pq//ny
     q = pq - p*ny
-    IRmax = np.sqrt(IRsearch[p, q])
+    IRmax = IRabs[: ,p, q]
     tol = np.maximum(pf * IRmax, threshold)
     k = 0
     stall_count = 0
-    while IRmax > tol and k < maxit and stall_count < 5:
+    while (IRmax > tol).any() and k < maxit and stall_count < 5:
         # identify active set
         subth = subpf * IRmax
-        Ip, Iq = np.where(IRsearch > subth**2)
+        tmask = (IRabs > subth[:, None, None]).any(axis=0)
+        Ip, Iq = np.where(tmask)
         # run substep in active set
-        model = fssubminor(IR[:, :, Ip, Iq], PSF, Ip, Iq, model, wsums,
+        ti = time()
+        model = fssubminor(IR[:, :, Ip, Iq].copy(),
+                           PSF, Ip, Iq, model, wsums,
                            gamma=gamma,
                            th=subth,
                            maxit=submaxit)
-
+        print('subminor time = ', time() - ti)
         # subtract from full image (as in major cycle)
+        ti = time()
         psf_convolve_fscube(
                         xpad,
                         xhat,
@@ -270,38 +287,34 @@ def fsclark(ID,
                         ny_psf,
                         model,
                         nthreads=nthreads)
+        print('convolve time = ', time() - ti)
         IR = ID - xout
-        IRmfs = np.sum(IR, axis=0)
-        IRsearch = np.sum(IRmfs**2, axis=0) * mask
+        IRmfs[...] = np.sum(IR, axis=0)
+        IRabs[...] = np.abs(IRmfs)
+        IRsearch[...] = np.sum(IRabs, axis=0) * mask
         pq = IRsearch.argmax()
         p = pq//ny
         q = pq - p*ny
         IRmaxp = IRmax
-        IRmax = np.sqrt(IRsearch[p, q])
+        IRmax[...] = IRabs[:, p, q]
         k += 1
 
-        if np.abs(IRmaxp - IRmax) / np.abs(IRmaxp) < 1e-3:
+        if np.abs(IRmaxp - IRmax).max() / np.abs(IRmaxp).max() < 1e-3:
             stall_count += stall_count
 
-        if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} max resid = {IRmax}",
-                  file=log)
-
-    IRmfs = np.sum(IR, axis=0)
-    rms = np.std(IRmfs, axis=(-2,-1)).max()
+        if not k % report_freq and verbosity:
+            ncomp = model.any(axis=(0,1)).sum()
+            print(f"Iteration {k} ncomp = {ncomp}", file=log)
+            print(f"Max resids = {IRmax}", file=log)
 
     if k >= maxit:
-        if verbosity:
-            print(f"Max iters reached. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
-        return model, 1
+        print(f"Max iters reached. ", file=log)
+        status = 1
     elif stall_count >= 5:
-        if verbosity:
-            print(f"Stalled. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
-        return model, 1
+        print(f"Stalled. ", file=log)
+        status = 1
     else:
-        if verbosity:
-            print(f"Success, converged after {k} iterations. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
-        return model, 0
+        print(f"Success, converged after {k} iterations. ", file=log)
+        status = 0
+    
+    return model, status

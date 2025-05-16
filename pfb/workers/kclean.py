@@ -425,7 +425,7 @@ def _kclean(**kw):
     import xarray as xr
     from pfb.utils.fits import set_wcs, save_fits, load_fits
     from pfb.deconv.clark import fsclark
-    from pfb.utils.naming import xds_from_url
+    from pfb.utils.naming import xds_from_url, xds_from_list
     from pfb.operators.gridder import compute_residual
     from pfb.operators.hessian import fshessian_jax
     from scipy import ndimage
@@ -461,6 +461,10 @@ def _kclean(**kw):
 
     # stitch dirty/psf in apparent scale
     # drop_vars to avoid duplicates in memory
+    print("Loading image space data products", file=log)
+    dds = xds_from_list(dds_list, nthreads=opts.nthreads,
+                        drop_all_but=['RESIDUAL', 'DIRTY', 'MODEL', 'PSF',
+                                      'PSFHAT','BEAM', 'WSUM'])
     if 'RESIDUAL' in dds[0]:
         residual = np.stack([ds.RESIDUAL.values for ds in dds], axis=0)
         dds = [ds.drop_vars('RESIDUAL') for ds in dds]
@@ -478,6 +482,7 @@ def _kclean(**kw):
     dds = [ds.drop_vars(['PSF', 'PSFHAT', 'BEAM']) for ds in dds]
     wsums = np.stack([ds.WSUM.values for ds in dds], axis=0)
 
+    print("Normalising by wsum", file=log)
     wsum = np.sum(wsums, axis=0)
     # ensure wsums sum to one for each correlation
     wsums /= wsum[None, :]
@@ -519,16 +524,18 @@ def _kclean(**kw):
         threshold = opts.threshold * np.ones(corrs.size)
 
     weights21 = np.ones((ncorr, nx, ny), dtype=residual.dtype)
-
+    dofb = False
     for i, c in enumerate(corrs):
         print(f"Iter {iter0}: peak {c} residual = {rmax[i]:.3e}, rms = {rms[i]:.3e}",
             file=log)
     for k in range(iter0, iter0 + opts.niter):
         print("Cleaning", file=log)
+        for i, c in enumerate(corrs):
+            print(f"Threshold {c} = {threshold[i]:.3e}", file=log)
         x, status = fsclark(residual, psf, psfhat,
                             wsums, mask,
                             threshold=threshold,
-                            gamma=opts.gamma,
+                            gamma=opts.clean_gamma,
                             pf=opts.peak_factor,
                             maxit=opts.minor_maxit,
                             subpf=opts.sub_peak_factor,
@@ -536,42 +543,52 @@ def _kclean(**kw):
                             verbosity=opts.verbose,
                             report_freq=opts.report_freq,
                             nthreads=opts.nthreads)
-        # model += x
 
-        print("Forward step", file=log)
-        mopmask = np.any(model + x, axis=(0,1))
-        if opts.dirosion:
-            struct = ndimage.generate_binary_structure(2, opts.dirosion)
-            mopmask = ndimage.binary_dilation(mopmask, structure=struct)
-            mopmask = ndimage.binary_erosion(mopmask, structure=struct)
-        mopmask = (mopmask.astype(residual.dtype) * mask)
-        mbeam = beam * mopmask[None, None, :, :]
-        A = partial(fshessian_jax, nx, ny, nx_psf, ny_psf, rmax,
-                    mbeam, np.abs(psfhat))
-        x, _ = cg(A,
-                  residual*mbeam,
-                  x0=x,
-                  tol=opts.cg_tol,
-                  maxiter=opts.cg_maxit)
+        # trigger FB steps if clean has stalled, not converged or
+        # we have reached the final iteration/threshold
+        status |= k == iter0 + opts.niter-1
+        status |= rmax <= threshold
+        if status or dofb:
+            dofb = True
+            print("CG step", file=log)
+            mopmask = np.any(model + x, axis=(0,1))
+            if opts.dirosion:
+                struct = ndimage.generate_binary_structure(2, opts.dirosion)
+                mopmask = ndimage.binary_dilation(mopmask, structure=struct)
+                mopmask = ndimage.binary_erosion(mopmask, structure=struct)
+            mopmask = (mopmask.astype(residual.dtype) * mask)
+            mbeam = beam * mopmask[None, None, :, :]
+            A = partial(fshessian_jax, nx, ny, nx_psf, ny_psf, rmax,
+                        mbeam, np.abs(psfhat))
+            x, _ = cg(A,
+                    residual*mbeam,
+                    x0=x,
+                    tol=opts.cg_tol,
+                    maxiter=opts.cg_maxit)
         
-        print("Backward step", file=log)
-        y = model + opts.mop_gamma*np.array(x)
-        value_and_grad = partial(stokes_energy, A, y)
-        prox = partial(prox_21m_jax, weights21, 0)
-        model, _ = fista(value_and_grad,
-                         prox, 
-                         model,
-                         threshold,
-                         maxit=opts.fista_maxit,
-                         tol=opts.fista_tol,
-                         L0=10)
+        
+            print("FISTA step", file=log)
+            y = model + opts.gamma*np.array(x)
+            value_and_grad = partial(stokes_energy, A, y)
+            prox = partial(prox_21m_jax, weights21, 0)
+            model, _ = fista(value_and_grad,
+                            prox, 
+                            model,
+                            threshold,
+                            maxit=opts.fista_maxit,
+                            tol=opts.fista_tol,
+                            L0=10)
+        else:
+            # correct using mean beam
+            # can use time dependent beam once FB iterations kick in
+            model = np.where(beam > 0, model + x/beam, model)
 
 
         # write component model
         print(f"Writing model at iter {k+1} to "
               f"{basename}_{opts.suffix}_model.mds", file=log)
         try:
-            coeffs, Ix, Iy, expr, params, texpr, fexpr = \
+            coeffs, Ix, Iy, expr, params, fexpr = \
                 fit_image_fscube(freq_out, model,
                                  wgt=wsums,
                                  nbasisf=int(nband),
@@ -594,7 +611,6 @@ def _kclean(**kw):
                 'cell_rad_y': cell_rad,
                 'npix_x': nx,
                 'npix_y': ny,
-                'texpr': texpr,
                 'fexpr': fexpr,
                 'center_x': dds[0].x0,
                 'center_y': dds[0].y0,
@@ -656,7 +672,7 @@ def _kclean(**kw):
             threshold = opts.rmsfactor * rms
 
         for i, c in enumerate(corrs):
-            print(f"Iter {iter0}: peak {c} residual = {rmax[i]:.3e}, rms = {rms[i]:.3e}",
+            print(f"Iter {k}: peak {c} residual = {rmax[i]:.3e}, rms = {rms[i]:.3e}",
                 file=log)
         
         if (rmax <= threshold).all():
