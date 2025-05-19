@@ -544,44 +544,34 @@ def _kclean(**kw):
                             report_freq=opts.report_freq,
                             nthreads=opts.nthreads)
 
-        # trigger FB steps if clean has stalled, not converged or
-        # we have reached the final iteration/threshold
-        status |= k == iter0 + opts.niter-1
-        status |= rmax <= threshold
-        if status or dofb:
-            dofb = True
-            print("CG step", file=log)
-            mopmask = np.any(model + x, axis=(0,1))
-            if opts.dirosion:
-                struct = ndimage.generate_binary_structure(2, opts.dirosion)
-                mopmask = ndimage.binary_dilation(mopmask, structure=struct)
-                mopmask = ndimage.binary_erosion(mopmask, structure=struct)
-            mopmask = (mopmask.astype(residual.dtype) * mask)
-            mbeam = beam * mopmask[None, None, :, :]
-            A = partial(fshessian_jax, nx, ny, nx_psf, ny_psf, rmax,
-                        mbeam, np.abs(psfhat))
-            x, _ = cg(A,
-                    residual*mbeam,
-                    x0=x,
-                    tol=opts.cg_tol,
-                    maxiter=opts.cg_maxit)
-        
-        
-            print("FISTA step", file=log)
-            y = model + opts.gamma*np.array(x)
-            value_and_grad = partial(stokes_energy, A, y)
-            prox = partial(prox_21m_jax, weights21, 0)
-            model, _ = fista(value_and_grad,
-                            prox, 
-                            model,
-                            threshold,
-                            maxit=opts.fista_maxit,
-                            tol=opts.fista_tol,
-                            L0=10)
-        else:
-            # correct using mean beam
-            # can use time dependent beam once FB iterations kick in
-            model = np.where(beam > 0, model + x/beam, model)
+        print("CG step", file=log)
+        mopmask = np.any(model + x, axis=(0,1))
+        if opts.dirosion:
+            struct = ndimage.generate_binary_structure(2, opts.dirosion)
+            mopmask = ndimage.binary_dilation(mopmask, structure=struct)
+            mopmask = ndimage.binary_erosion(mopmask, structure=struct)
+        mopmask = (mopmask.astype(residual.dtype) * mask)
+        mbeam = beam * mopmask[None, None, :, :]
+        A = partial(fshessian_jax, nx, ny, nx_psf, ny_psf, rmax,
+                    mbeam, np.abs(psfhat))
+        x, _ = cg(A,
+                residual*mbeam,
+                x0=x,
+                tol=opts.cg_tol,
+                maxiter=opts.cg_maxit)
+    
+    
+        print("FISTA step", file=log)
+        y = model + opts.gamma*np.array(x)
+        value_and_grad = partial(stokes_energy, A, y)
+        prox = partial(prox_21m_jax, weights21, 0)
+        model, _ = fista(value_and_grad,
+                        prox, 
+                        model,
+                        threshold,
+                        maxit=opts.fista_maxit,
+                        tol=opts.fista_tol,
+                        L0=10)
 
 
         # write component model

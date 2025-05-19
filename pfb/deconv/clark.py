@@ -178,6 +178,7 @@ def fssubminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     nband, ncorr, nx_psf, ny_psf = psf.shape
     nxo2 = nx_psf//2
     nyo2 = ny_psf//2
+    ncomp = Ip.size
     # _, nx, ny = model.shape
     # MFS image
     Amfs = np.sum(A, axis=0)
@@ -194,11 +195,11 @@ def fssubminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     while (Amax > th).any() and k < maxit:
         pp = nxo2 - (Ip - p)
         qq = nyo2 - (Iq - q)
-        valid_mask[:] = (pp >= 0) & (pp < nx_psf) & (qq >= 0) & (qq < ny_psf)
-        valid_indices = np.nonzero(valid_mask)[0]
-        ppi = pp[valid_mask]
-        qqi = qq[valid_mask]
-        for b in prange(nband):
+        # valid_mask[:] = (pp >= 0) & (pp < nx_psf) & (qq >= 0) & (qq < ny_psf)
+        # valid_indices = np.nonzero(valid_mask)[0]
+        # ppi = pp[valid_mask]
+        # qqi = qq[valid_mask]
+        for b in range(nband):
             Ab = A[b]
             psfb = psf[b]
             wb = wsums[b]
@@ -206,9 +207,13 @@ def fssubminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
             for c in range(ncorr):
                 gx = gamma * Ab[c, pq]/wb[c]
                 modelb[c, p, q] += gx                
-                # for i in valid_indices:
-                for i, pi, qi in zip(valid_indices, ppi, qqi):
-                    Ab[c, i] -= gx * psfb[c, pi, qi]
+                for i in prange(ncomp):
+                    pi = nxo2 - (Ip[i] - p)
+                    qi = nyo2 - (Iq[i] - q)
+                    if (pi >= 0) & (pi < nx_psf) & (qi >= 0) & (qi < ny_psf):
+                        Ab[c, i] -= gx * psfb[c, pi, qi]/wb[c]
+                # for i, pi, qi in zip(valid_indices, ppi, qqi):
+                #     Ab[c, i] -= gx * psfb[c, pi, qi]
 
         Amfs.fill(0.0)
         for b in range(nband):
@@ -276,7 +281,7 @@ def fsclark(ID,
                            gamma=gamma,
                            th=subth,
                            maxit=submaxit)
-        print('subminor time = ', time() - ti)
+        print(f'ncomps = {Ip.size}, subminor time = ', time() - ti)
         # subtract from full image (as in major cycle)
         ti = time()
         psf_convolve_fscube(
