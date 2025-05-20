@@ -285,6 +285,8 @@ def stokes_image(
                                  signv*uvw[:, 1:2]*y0t*signy -
                                  uvw[:, 2:]*(n-1)))
 
+    data = data.transpose(2, 0, 1)
+    weight = weight.transpose(2, 0, 1)
 
     if opts.robustness is not None:
         counts = _compute_counts(uvw,
@@ -310,17 +312,17 @@ def stokes_image(
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
 
-    nstokes = weight.shape[-1]
+    nstokes = weight.shape[0]
     wsum = np.zeros(nstokes)
     residual = np.zeros((nstokes, nx, ny), dtype=np.float64)
     psf = np.zeros((nstokes, 2*nx, 2*ny), dtype=np.float64)
     for c in range(nstokes):
-        wsum[c] = weight[~flag, c].sum()
+        wsum[c] = weight[c, ~flag].sum()
         vis2dirty(
             uvw=uvw,
             freq=freq,
-            vis=data[:, :, c],
-            wgt=weight[:, :, c],
+            vis=data[c],
+            wgt=weight[c],
             mask=mask,
             npix_x=nx, npix_y=ny,
             pixsize_x=cell_rad, pixsize_y=cell_rad,
@@ -341,7 +343,7 @@ def stokes_image(
             uvw=uvw,
             freq=freq,
             vis=psf_vis,
-            wgt=weight[:, :, c],
+            wgt=weight[c],
             mask=mask,
             npix_x=2*nx, npix_y=2*ny,
             pixsize_x=cell_rad, pixsize_y=cell_rad,
@@ -357,7 +359,6 @@ def stokes_image(
             double_precision_accumulation=opts.double_accum,
             verbosity=0,
             dirty=psf[c])
-        
     
     Gausspars = fitcleanbeam(psf)
 
