@@ -1,7 +1,7 @@
 import numpy as np
 import numexpr as ne
 from functools import partial
-from numba import njit, prange, objmode
+from numba import njit, prange, objmode, set_num_threads
 import dask.array as da
 from pfb.operators.psf import psf_convolve_cube, psf_convolve_fscube
 from ducc0.misc import empty_noncritical
@@ -195,39 +195,114 @@ def fssubminor(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
     while (Amax > th).any() and k < maxit:
         pp = nxo2 - (Ip - p)
         qq = nyo2 - (Iq - q)
-        # valid_mask[:] = (pp >= 0) & (pp < nx_psf) & (qq >= 0) & (qq < ny_psf)
-        # valid_indices = np.nonzero(valid_mask)[0]
-        # ppi = pp[valid_mask]
-        # qqi = qq[valid_mask]
-        for b in range(nband):
+        valid_mask[:] = (pp >= 0) & (pp < nx_psf) & (qq >= 0) & (qq < ny_psf)
+        valid_indices = np.nonzero(valid_mask)[0]
+        ppi = pp[valid_mask]
+        qqi = qq[valid_mask]
+        for b in prange(nband):
             Ab = A[b]
             psfb = psf[b]
             wb = wsums[b]
             modelb = model[b]
             for c in range(ncorr):
-                gx = gamma * Ab[c, pq]/wb[c]
-                modelb[c, p, q] += gx                
-                for i in prange(ncomp):
-                    pi = nxo2 - (Ip[i] - p)
-                    qi = nyo2 - (Iq[i] - q)
-                    if (pi >= 0) & (pi < nx_psf) & (qi >= 0) & (qi < ny_psf):
-                        Ab[c, i] -= gx * psfb[c, pi, qi]/wb[c]
-                # for i, pi, qi in zip(valid_indices, ppi, qqi):
-                #     Ab[c, i] -= gx * psfb[c, pi, qi]
+                Abc = Ab[c]
+                gx = gamma * Abc[pq]/wb[c]
+                modelb[c, p, q] += gx      
+                psfbc = psfb[c]
+                for i, pi, qi in zip(valid_indices, ppi, qqi):
+                    Abc[i] -= gx * psfbc[pi, qi]
 
         Amfs.fill(0.0)
         for b in range(nband):
-            Amfs += A[b]
+            for c in range(ncorr):
+                for i in prange(ncomp):
+                    Amfs[c, i] += A[b, c, i]
+            
         Asearch.fill(0.0)
         for c in range(ncorr):
-            for i in range(Ip.size):
+            for i in prange(ncomp):
                 Aabs[c, i] = abs(Amfs[c, i])
                 Asearch[i] += Aabs[c, i]
         pq = Asearch.argmax()
         p = Ip[pq]
         q = Iq[pq]
-        Amax[...] = Aabs[:, pq]
+        for c in range(ncorr):
+            Amax[c] = Aabs[c, pq]
         k += 1
+    print(f"fssubminor: {k} iterations")
+    return model
+
+
+@njit(nogil=True, cache=True, parallel=True, error_model='numpy')
+def substep(A, psf, model, wsums, gamma, nband, ncorr, pq, p, q, valid_indices):
+    for b in prange(nband):
+        Ab = A[b]
+        psfb = psf[b]
+        wb = wsums[b]
+        modelb = model[b]
+        for c in range(ncorr):
+            Abc = Ab[c]
+            gx = gamma * Abc[pq]/wb[c]
+            modelb[c, p, q] += gx      
+            psfbc = psfb[c]
+            for i, k in enumerate(valid_indices):
+                Abc[k] -= gx * psfbc[i]
+
+
+def fssubminornp(A, psf, Ip, Iq, model, wsums, gamma=0.05, th=0.0, maxit=10000):
+    """
+    Full Stokes subminor loop in active set
+
+    A       - active set (all pixels above subminor threshold)
+    psf     - psf image
+    Ip      - x indices of active set
+    Iq      - y indices of active set
+    model   - current model image
+    gamma   - loop gain
+    th      - threshold to clean down to
+    maxit   - maximum number of iterations
+
+    Pixels in A map to pixels in the image via
+
+    p = Ip[pq]
+    q = Iq[pq]
+
+    where pq is the location of the maximum in A.
+    """
+    nband, ncorr, nx_psf, ny_psf = psf.shape
+    nxo2 = nx_psf//2
+    nyo2 = ny_psf//2
+    Amfs = np.sum(A, axis=0)
+    Aabs = np.abs(Amfs)
+    Asearch = np.sum(Aabs, axis=0)
+    pq = Asearch.argmax()
+    p = Ip[pq]
+    q = Iq[pq]
+    Amax = Aabs[:, pq]
+    if (wsums == 0).any():
+        raise ValueError("zero-wsums not supported")
+    valid_mask = np.zeros(Ip.size, dtype=np.bool_)
+    k = 0
+    while (Amax > th).any() and k < maxit:
+        pp = nxo2 - (Ip - p)
+        qq = nyo2 - (Iq - q)
+        valid_mask[:] = (pp >= 0) & (pp < nx_psf) & (qq >= 0) & (qq < ny_psf)
+        valid_indices = np.nonzero(valid_mask)[0]
+        ppi = pp[valid_mask]
+        qqi = qq[valid_mask]
+        
+        psfpq = np.copy(psf[:,:,ppi,qqi], order='C')
+        substep(A, psfpq, model, wsums, gamma, nband, ncorr, pq, p, q, valid_indices)
+        
+        ne.evaluate('sum(A, axis=0)', out=Amfs)
+        ne.evaluate('abs(Amfs)', out=Aabs)
+        ne.evaluate('sum(Aabs, axis=0)', out=Asearch)
+        pq = Asearch.argmax()
+        p = Ip[pq]
+        q = Iq[pq]
+        Amax[:] = Aabs[:, pq]
+        k += 1
+    print(f"fssubminornp: {k} iterations")
     return model
 
 
@@ -258,6 +333,7 @@ def fsclark(ID,
     xout = empty_noncritical(ID.shape, dtype='f8')
     xpad = empty_noncritical(PSF.shape, dtype='f8')
     xhat = empty_noncritical(PSFHAT.shape, dtype='c16')
+    # set_num_threads(nband)
     # MFS image
     IRmfs = np.sum(IR, axis=0)
     IRabs = np.abs(IRmfs)

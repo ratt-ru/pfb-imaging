@@ -524,7 +524,6 @@ def _kclean(**kw):
         threshold = opts.threshold * np.ones(corrs.size)
 
     weights21 = np.ones((ncorr, nx, ny), dtype=residual.dtype)
-    dofb = False
     for i, c in enumerate(corrs):
         print(f"Iter {iter0}: peak {c} residual = {rmax[i]:.3e}, rms = {rms[i]:.3e}",
             file=log)
@@ -532,17 +531,19 @@ def _kclean(**kw):
         print("Cleaning", file=log)
         for i, c in enumerate(corrs):
             print(f"Threshold {c} = {threshold[i]:.3e}", file=log)
-        x, status = fsclark(residual, psf, psfhat,
-                            wsums, mask,
-                            threshold=threshold,
-                            gamma=opts.clean_gamma,
-                            pf=opts.peak_factor,
-                            maxit=opts.minor_maxit,
-                            subpf=opts.sub_peak_factor,
-                            submaxit=opts.subminor_maxit,
-                            verbosity=opts.verbose,
-                            report_freq=opts.report_freq,
-                            nthreads=opts.nthreads)
+        # x, status = fsclark(residual, psf, psfhat,
+        #                     wsums, mask,
+        #                     threshold=threshold,
+        #                     gamma=opts.clean_gamma,
+        #                     pf=opts.peak_factor,
+        #                     maxit=opts.minor_maxit,
+        #                     subpf=opts.sub_peak_factor,
+        #                     submaxit=opts.subminor_maxit,
+        #                     verbosity=opts.verbose,
+        #                     report_freq=opts.report_freq,
+        #                     nthreads=opts.nthreads)
+        status = 1
+        x = np.zeros_like(residual)
 
         print("CG step", file=log)
         mopmask = np.any(model + x, axis=(0,1))
@@ -552,8 +553,8 @@ def _kclean(**kw):
             mopmask = ndimage.binary_erosion(mopmask, structure=struct)
         mopmask = (mopmask.astype(residual.dtype) * mask)
         mbeam = beam * mopmask[None, None, :, :]
-        A = partial(fshessian_jax, nx, ny, nx_psf, ny_psf, rmax,
-                    mbeam, np.abs(psfhat))
+        A = partial(fshessian_jax, nx, ny, nx_psf, ny_psf,
+                    rmax.max(), mbeam, np.abs(psfhat))
         x, _ = cg(A,
                 residual*mbeam,
                 x0=x,
@@ -571,7 +572,8 @@ def _kclean(**kw):
                         threshold,
                         maxit=opts.fista_maxit,
                         tol=opts.fista_tol,
-                        L0=10)
+                        L0=10,
+                        report_freq=opts.report_freq)
 
 
         # write component model
