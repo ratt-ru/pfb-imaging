@@ -360,7 +360,9 @@ def stokes_image(
             verbosity=0,
             dirty=psf[c])
     
-    Gausspars = fitcleanbeam(psf)
+    # these will be in units of pixels
+    cell_deg = np.rad2deg(cell_rad)
+    GaussPars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
 
     rms = np.std(residual/wsum[:, None, None], axis=(1,2))
 
@@ -391,11 +393,11 @@ def stokes_image(
     unix_time = quantity(f'{time_out}s').to_unix_time()
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
-    cell_deg = np.rad2deg(cell_rad)
+    # if there is more than one polarisation product
+    # we currently assume all have the same beam
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
-                  freq_out, GuassPar=(1, 1, 0),  # fake for now
+                  freq_out, GuassPar=GaussPars[0],
                   ms_time=time_out)
-    hdr = add_beampars(hdr, Gausspars[0], GaussPars=Gausspars)
 
     # set corr coords
     if opts.product == 'I':
@@ -473,9 +475,8 @@ def stokes_image(
                   f'{fds_store.full_path}/{oname}.fits', hdr)
         if opts.psf_out:
             hdr_psf = set_wcs(cell_deg, cell_deg, 2*nx, 2*ny, [tra, tdec],
-                  freq_out, GuassPar=(1, 1, 0),  # fake for now
+                  freq_out, GuassPar=GaussPars[0],  # fake for now
                   ms_time=time_out)
-            hdr_psf = add_beampars(hdr_psf, Gausspars[0], GaussPars=Gausspars)
             save_fits(psf/wsum[:, None, None],
                   f'{fds_store.full_path}/{oname}_psf.fits', hdr_psf)
         if x is not None:

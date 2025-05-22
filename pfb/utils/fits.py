@@ -55,6 +55,11 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
     nx/y - number of x and y pixels
     radec - right ascention and declination in radians
     freq - frequencies in Hz
+    unit - Jy/beam or Jy/pixel
+    GuassPar - MFS beam parameters in degrees
+    ms_time - measurement set time
+    header - if True, return a header, otherwise return a WCS object
+    casambm - if True, add the CASAMBM keyword to the header
     """
 
     w = WCS(naxis=4)
@@ -114,6 +119,9 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         header['BZERO'] = 0.0
         if casambm:
             header['CASAMBM'] = casambm  # we need this to pick up the beams table
+        
+        if GuassPar is not None:
+            header = add_beampars(header, GuassPar)
 
         return header
     else:
