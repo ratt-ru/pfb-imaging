@@ -178,8 +178,7 @@ def _hci(**kw):
         cell_size = opts.cell_size
         cell_rad = cell_size * np.pi / 60 / 60 / 180
         if cell_N / cell_rad < 1:
-            raise ValueError("Requested cell size too large. "
-                             "Super resolution factor = ", cell_N / cell_rad)
+            print(f"Requested cell size of {cell_size} arcseconds could be sub-Nyquist.", file=log)
         print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
     else:
         cell_rad = cell_N / opts.super_resolution_factor

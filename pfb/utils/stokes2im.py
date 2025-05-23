@@ -14,6 +14,7 @@ from ducc0.wgridder.experimental import vis2dirty
 from casacore.quanta import quantity
 from datetime import datetime, timezone
 from ducc0.misc import resize_thread_pool
+from ducc0.fft import good_size
 from pfb.utils.astrometry import get_coordinates
 from scipy.constants import c as lightspeed
 import gc
@@ -312,10 +313,25 @@ def stokes_image(
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
 
+    psf_min_size = 128
+    if opts.psf_relative_size is None:
+        nx_psf = psf_min_size
+        ny_psf = psf_min_size
+    else:
+        nx_psf = good_size(int(nx * opts.psf_relative_size))
+        while nx_psf % 2:
+            nx_psf = good_size(nx_psf + 1)
+        ny_psf = good_size(int(ny * opts.psf_relative_size))
+        while ny_psf % 2:
+            ny_psf = good_size(ny_psf + 1)
+        if nx_psf < psf_min_size or ny_psf < psf_min_size:
+            nx_psf = psf_min_size
+            ny_psf = psf_min_size
+
     nstokes = weight.shape[0]
     wsum = np.zeros(nstokes)
     residual = np.zeros((nstokes, nx, ny), dtype=np.float64)
-    psf = np.zeros((nstokes, 2*nx, 2*ny), dtype=np.float64)
+    psf = np.zeros((nstokes, nx_psf, ny_psf), dtype=np.float64)
     for c in range(nstokes):
         wsum[c] = weight[c, ~flag].sum()
         vis2dirty(
@@ -345,7 +361,7 @@ def stokes_image(
             vis=psf_vis,
             wgt=weight[c],
             mask=mask,
-            npix_x=2*nx, npix_y=2*ny,
+            npix_x=nx_psf, npix_y=ny_psf,
             pixsize_x=cell_rad, pixsize_y=cell_rad,
             center_x=x0, center_y=y0,
             flip_u=flip_u,
@@ -436,7 +452,11 @@ def stokes_image(
         coords = {
             'chan': (('chan',), freq),
             'time': (('time',), utime),
-            'corr': (('corr',), corr)
+            'corr': (('corr',), corr),
+            'x': (('x',), np.arange(nx) * cell_deg),
+            'y': (('y',), np.arange(ny) * cell_deg),
+            'x_psf': (('x_psf',), np.arange(nx_psf) * cell_deg),
+            'y_psf': (('y_psf',), np.arange(ny_psf) * cell_deg),
         }
 
 
@@ -474,7 +494,7 @@ def stokes_image(
         save_fits(residual/wsum[:, None, None],
                   f'{fds_store.full_path}/{oname}.fits', hdr)
         if opts.psf_out:
-            hdr_psf = set_wcs(cell_deg, cell_deg, 2*nx, 2*ny, [tra, tdec],
+            hdr_psf = set_wcs(cell_deg, cell_deg, nx_psf, ny_psf, [tra, tdec],
                   freq_out, GuassPar=GaussPars[0],  # fake for now
                   ms_time=time_out)
             save_fits(psf/wsum[:, None, None],

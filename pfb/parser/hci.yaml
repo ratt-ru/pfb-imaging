@@ -119,6 +119,13 @@ inputs:
     dtype: int
     info:
       Number of y pixels
+  psf-relative-size:
+    dtype: float
+    info:
+      Relative size of the PSF in pixels.
+      A value of 1.0 means the PSF will be the same size as the image.
+      The default is to make the PSF just big enough to extract the PSF parameters.
+      If the natural gradient is required the PSF needs to ideally be twice the size of the image.
   robustness:
     dtype: float
     abbreviation: rob
