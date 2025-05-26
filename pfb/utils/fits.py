@@ -133,6 +133,12 @@ def add_beampars(hdr, GaussPar, GaussPars=None, unit2deg=1.0):
     Add beam keywords to header.
     GaussPar - MFS beam pars
     GaussPars - beam pars for cube
+    unit2deg - conversion factor to convert BMAJ/BMIN to degrees
+
+    PA is passed in radians and follows the parametrisation in
+    
+    pfb/utils/misc/Gaussian2D
+    
     """
     if len(GaussPar) == 1:
         GaussPar = GaussPar[0]
@@ -142,7 +148,7 @@ def add_beampars(hdr, GaussPar, GaussPars=None, unit2deg=1.0):
     if not np.isnan(GaussPar).any():
         hdr['BMAJ'] = GaussPar[0]*unit2deg
         hdr['BMIN'] = GaussPar[1]*unit2deg
-        hdr['BPA'] = 90-GaussPar[2]*unit2deg
+        hdr['BPA'] = 90-GaussPar[2]*180/np.pi
 
     if GaussPars is not None:
         for i in range(len(GaussPars)):
