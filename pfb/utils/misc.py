@@ -502,8 +502,9 @@ def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     Smaj, Smin, PA = GaussPar
     A = np.array([[1. / Smaj ** 2, 0],
                   [0, 1. / Smin ** 2]])
-    R = np.array([[np.cos(PA), -np.sin(PA)],
-                  [np.sin(PA), np.cos(PA)]])
+    t = np.pi/2 - PA
+    R = np.array([[np.cos(t), -np.sin(t)],
+                  [np.sin(t), np.cos(t)]])
     A = np.dot(np.dot(R.T, A), R)
     sOut = xin.shape
     # only compute the result out to 5 * emaj
@@ -535,7 +536,7 @@ def psf_errorsq(x, data, xy):
     A = jnp.array([[1. / emaj ** 2, 0],
                     [0, 1. / emin ** 2]])
 
-    t = pa
+    t = np.pi/2 - pa
     R = jnp.array([[jnp.cos(t), -jnp.sin(t)],
                     [jnp.sin(t), jnp.cos(t)]])
     B = jnp.dot(jnp.dot(R.T, A), R)

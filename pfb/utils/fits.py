@@ -148,14 +148,14 @@ def add_beampars(hdr, GaussPar, GaussPars=None, unit2deg=1.0):
     if not np.isnan(GaussPar).any():
         hdr['BMAJ'] = GaussPar[0]*unit2deg
         hdr['BMIN'] = GaussPar[1]*unit2deg
-        hdr['BPA'] = 90-GaussPar[2]*180/np.pi
+        hdr['BPA'] = GaussPar[2]*180/np.pi
 
     if GaussPars is not None:
         for i in range(len(GaussPars)):
             if not np.isnan(GaussPars[i]).any():
                 hdr['BMAJ' + str(i+1)] = GaussPars[i][0]*unit2deg
                 hdr['BMIN' + str(i+1)] = GaussPars[i][1]*unit2deg
-                hdr['PA' + str(i+1)] = 90-GaussPars[i][2]*180/np.pi
+                hdr['PA' + str(i+1)] = GaussPars[i][2]*180/np.pi
 
     return hdr
 
@@ -189,7 +189,7 @@ def create_beams_table(beams_data, cell2deg):
     # we need the transpose for C -> F ordering
     bmaj = beams_data.sel({'bpar': 'BMAJ'}).values.ravel() * cell2deg
     bmin = beams_data.sel({'bpar': 'BMIN'}).values.ravel() * cell2deg
-    bpa = 90 - beams_data.sel({'bpar': 'BPA'}).values.ravel() * 180/np.pi
+    bpa = beams_data.sel({'bpar': 'BPA'}).values.ravel() * 180/np.pi
     col1 = fits.Column(name='BMAJ', format='1E', array=bmaj, unit='deg')
     col2 = fits.Column(name='BMIN', format='1E', array=bmin, unit='deg')
     col3 = fits.Column(name='BPA', format='1E', array=bpa, unit='deg')
