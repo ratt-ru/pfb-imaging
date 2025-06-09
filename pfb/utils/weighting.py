@@ -224,6 +224,8 @@ def filter_extreme_counts(counts, level=10.0):
     upweighting nearly empty cells
     '''
     # get the median counts value
+    if not level:
+        return counts
     ic, ix, iy = np.where(counts > 0)
     cnts = counts[ic, ix,iy]
     med = np.median(cnts)
