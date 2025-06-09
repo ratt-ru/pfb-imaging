@@ -45,19 +45,21 @@ def test_convolve2gaussres(nx, ny, nband, alpha):
     assert_allclose(out[2, :], restored[0, Ix, Iy], atol=5e-4, rtol=5e-4)
 
 
-@pmp("nx", [128])
+@pmp("nx", [128, 256])
 @pmp("ny", [80, 220])
-@pmp("gpars", [(10.0, 5.0, 0.0), (7.0, 4.0, 1.0)])
+@pmp("gpars", [(10.0, 5.0, 0.0), (7.0, 4.0, 1.0), (7.5, 3.0, 2.0), (7.0, 1.1, 3.0)])
 def test_fitcleanbeam(nx, ny, gpars):
     # generate a grid
     x = -(nx//2) + np.arange(nx)
     y = -(ny//2) + np.arange(ny)
     X, Y = np.meshgrid(x, y, indexing='ij')
+    print(gpars)
     gauss = Gaussian2D(X, Y, GaussPar=gpars, normalise=False)
 
     gpars_fit = fitcleanbeam(gauss[None, :, :])[0]
 
-    # low precision used in fitcleanbeam
-    assert np.abs(gpars[0] - gpars_fit[0]) < 1e-3
-    assert np.abs(gpars[1] - gpars_fit[1]) < 1e-3
-    assert np.abs(gpars[2] - gpars_fit[2]) < 1e-3 
+    assert np.abs(gpars[0] - gpars_fit[0]) < 1e-4
+    assert np.abs(gpars[1] - gpars_fit[1]) < 1e-4
+    # if 0 and pi are equivalent
+    PAdiff = np.abs(gpars[2] - gpars_fit[2])
+    assert np.sin(PAdiff) < 1e-4

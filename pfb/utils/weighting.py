@@ -100,8 +100,12 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
     ko2 = k//2
     betak = 2.3*k
     pos = np.arange(k) - ko2
-    xkern = np.zeros(k)
-    ykern = np.zeros(k)
+    xkern = np.zeros(k, dtype=dtype)
+    ykern = np.zeros(k, dtype=dtype)
+    x = np.zeros(k, dtype=dtype)
+    y = np.zeros(k, dtype=dtype)
+    x_idx = np.zeros(k, dtype=np.int64)
+    y_idx = np.zeros(k, dtype=np.int64)
     for g in prange(ngrid):
         for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
             uvw_row = uvw[r]
@@ -121,30 +125,36 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                 # corr weights
                 wrf = wgt_row[:, f]
 
-                # nearest neighbour
-                if k==0:
-                    u_idx = int(np.floor(ug))
-                    v_idx = int(np.floor(vg))
-                    counts[g, :, u_idx, v_idx] += wrf
-                    continue
-
                 # indices
                 u_idx = int(np.round(ug))
                 v_idx = int(np.round(vg))
 
+                # nearest neighbour
+                if k==0:
+                    # u_idx = int(np.floor(ug))
+                    # v_idx = int(np.floor(vg))
+                    counts[g, :, u_idx, v_idx] += wrf
+                    continue
+
                 # the kernel is separable and only defined on [-1,1]
                 # do we ever need to check these bounds?
-                x_idx = pos + u_idx
-                x = (x_idx - ug + 0.5)/ko2
-                y_idx = pos + v_idx
-                y = (y_idx - vg + 0.5)/ko2
+                x_idx[:] = pos + u_idx
+                x[:] = (x_idx - ug + 0.5)/ko2
+                y_idx[:] = pos + v_idx
+                y[:] = (y_idx - vg + 0.5)/ko2
                 _es_kernel(x, y, xkern, ykern, betak)
+                valid_ix = np.nonzero((x_idx >= 0) & (x_idx < nx))
+                valid_iy = np.nonzero((y_idx >= 0) & (y_idx < ny)) 
 
                 for c in range(ncorr):
                     wrfc = wrf[c]
-                    for i, xi in zip(x_idx, xkern):
-                        for j, yj in zip(y_idx, ykern):
-                            counts[g, c, i, j] += xi*yj*wrfc
+                    for i in valid_ix:
+                        ix = x_idx[i]
+                        xi = xkern[i]
+                        for j in valid_iy:
+                            iy = y_idx[j]
+                            yi = ykern[j]
+                            counts[g, c, ix, iy] += xi*yi*wrfc
 
     return counts.sum(axis=0)
 
@@ -157,6 +167,8 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
     if not counts.any():
         return weight
     
+    real_type = weight.dtype
+
     # ufreq
     u_cell = 1/(nx*cell_size_x)
     umax = np.abs(-1/cell_size_x/2 - u_cell/2)
@@ -170,9 +182,17 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
     # Briggs weighting factor
     if robust > -2:
         numsqrt = 5*10**(-robust)
-        avgW = (counts ** 2).sum() / counts.sum()
-        ssq = numsqrt * numsqrt/avgW
-        counts = 1 + counts * ssq
+        avgWnum = np.zeros(ncorr, dtype=real_type)
+        avgWden = np.zeros(ncorr, dtype=real_type)
+        for c in range(ncorr):
+            for i in range(nx):
+                for j in range(ny):
+                    cval = counts[c, i, j]
+                    avgWnum[c] += cval*cval
+                    avgWden[c] += cval
+        ssq = numsqrt * numsqrt * avgWden / avgWnum
+        counts *= ssq[:, None, None]
+        counts += 1
 
     for r in prange(nrow):
         uvw_row = uvw[r]

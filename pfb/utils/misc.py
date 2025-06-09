@@ -502,9 +502,13 @@ def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     Smaj, Smin, PA = GaussPar
     A = np.array([[1. / Smaj ** 2, 0],
                   [0, 1. / Smin ** 2]])
-    t = np.pi/2 - PA
-    R = np.array([[np.cos(t), -np.sin(t)],
-                  [np.sin(t), np.cos(t)]])
+    # R = np.array([[np.cos(PA), -np.sin(PA)],
+    #               [np.sin(PA), np.cos(PA)]])
+    # this parametrisation is equivalent to the above with
+    # t = np.pi/2 - pa
+    # use this for compatibility with fits 
+    R = np.array([[np.sin(PA), -np.cos(PA)],
+                  [np.cos(PA), np.sin(PA)]])
     A = np.dot(np.dot(R.T, A), R)
     sOut = xin.shape
     # only compute the result out to 5 * emaj
@@ -536,9 +540,13 @@ def psf_errorsq(x, data, xy):
     A = jnp.array([[1. / emaj ** 2, 0],
                     [0, 1. / emin ** 2]])
 
-    t = np.pi/2 - pa
-    R = jnp.array([[jnp.cos(t), -jnp.sin(t)],
-                    [jnp.sin(t), jnp.cos(t)]])
+    # R = jnp.array([[jnp.cos(pa), -jnp.sin(pa)],
+    #                 [jnp.sin(pa), jnp.cos(pa)]])
+    # this parametrisation is equivalent to the above with
+    # t = np.pi/2 - pa
+    # use this for compatibility with fits 
+    R = jnp.array([[jnp.sin(pa), -jnp.cos(pa)],
+                    [jnp.cos(pa), jnp.sin(pa)]])
     B = jnp.dot(jnp.dot(R.T, A), R)
     Q = jnp.einsum('nb,bc,cn->n', xy.T, B, xy)
     # GaussPar should corresponds to FWHM
@@ -551,7 +559,7 @@ def psf_errorsq(x, data, xy):
 def fitcleanbeam(psf: np.ndarray,
                  level: float = 0.5,
                  pixsize: float = 1.0,
-                 extent: float = 15.0):
+                 extent: float = 5.0):
     """
     Find the Gaussian that approximates the PSF.
     First find the main lobe by identifying where PSF > level
@@ -582,13 +590,30 @@ def fitcleanbeam(psf: np.ndarray,
         # get extend of main lobe
         x = xx[islands == ncenter]
         y = yy[islands == ncenter]
-        xdiff = x.max() - x.min()
-        ydiff = y.max() - y.min()
+        
+        # initial guess for emaj and emin
+        # x and y are reversed because of the parametrisation
+        # of the 2D Gaussian (for fits) 
+        xdiff = np.maximum(y.max() - y.min(), 1)
+        ydiff = np.maximum(x.max() - x.min(), 1)
+
+        # initial guess for PA
+        dx = x-np.mean(x)
+        dy = y-np.mean(y)
+        psftmp = psfv[islands == ncenter]
+        mxx = np.mean(psftmp * dx**2)
+        myy = np.mean(psftmp * dy**2)
+        mxy = np.mean(psftmp * dx * dy)
+        PA0 = np.pi/2 + 0.5 * np.arctan2(2 * mxy, mxx - myy)
+        # ensure PA is in (0, pi)
+        PA0 = np.maximum(PA0, 0.0)
+        PA0 = np.minimum(PA0, np.pi)
+
         rsq = np.abs(x).max()**2 + np.abs(y).max()**2
         rrsq = xx**2 + yy**2
         idxs = rrsq < extent * rsq
 
-        # select psf main lobe
+        # select psf in fit region
         psfv = psfv[idxs]
         x = xx[idxs]
         y = yy[idxs]
@@ -596,17 +621,20 @@ def fitcleanbeam(psf: np.ndarray,
         if xdiff > ydiff:  # x is major axis
             emaj0 = xdiff
             emin0 = ydiff
-            PA0 = 0.0
+            # PA0 = 0.0
         else:  # y is the major axis
             emaj0 = ydiff
             emin0 = xdiff
-            PA0 = np.pi/2
+            # PA0 = np.pi/2
         dfunc = value_and_grad(psf_errorsq)
         p, f, d = fmin_l_bfgs_b(dfunc,
                                 np.array((emaj0, emin0, PA0)),
                                 args=(psfv, xy),
                                 bounds=((0, None), (0, None), (0, np.pi)),
-                                factr=1e11)
+                                factr=1e7)
+        if d['warnflag'] != 0:
+            print('WARNING - warning flag raised during psf fit')
+        
         if p[0] >= p[1]:  # major and minor axes correct
             emaj = p[0]
             emin = p[1]
@@ -615,6 +643,8 @@ def fitcleanbeam(psf: np.ndarray,
             emaj = p[1]
             emin = p[0]
             PA = p[2] + np.pi/2
+            print('WARNING - emaj/emin flipped in solver')
+        
         Gausspars.append([emaj * pixsize, emin * pixsize, PA])
 
     return Gausspars

@@ -252,7 +252,7 @@ def stokes_image(
     freqfactor = -2j*np.pi*freq[None, :]/lightspeed
     psf_vis = np.exp(freqfactor*(signu*uvw[:, 0:1]*x0*signx +
                                  signv*uvw[:, 1:2]*y0*signy -
-                                 uvw[:, 2:]*(n-1)))
+                                 uvw[:, 2:]*(n-1))).astype(complex_type)
 
     # TODO - polarisation parameters?
     if opts.inject_transients is not None:
@@ -289,15 +289,18 @@ def stokes_image(
     data = data.transpose(2, 0, 1)
     weight = weight.transpose(2, 0, 1)
 
+    # the fact that uvw and freq are in double precision
+    # complicates the numba implementation so we just cast
+    # them to the appropriate type for this step.
     if opts.robustness is not None:
-        counts = _compute_counts(uvw,
-                                 freq,
+        counts = _compute_counts(uvw.astype(real_type),
+                                 freq.astype(real_type),
                                  mask,
-                                 #  weight,
-                                 np.ones_like(weight, dtype=real_type),
+                                 weight,
                                  nx, ny,
                                  cell_rad, cell_rad,
-                                 uvw.dtype,
+                                 real_type,
+                                 k=0,
                                  ngrid=1,
                                  usign=1.0 if flip_u else -1.0,
                                  vsign=1.0 if flip_v else -1.0)
@@ -307,8 +310,8 @@ def stokes_image(
 
         weight = counts_to_weights(
             counts,
-            uvw,
-            freq,
+            uvw.astype(real_type),
+            freq.astype(real_type),
             weight,
             mask,
             nx, ny,
@@ -334,8 +337,8 @@ def stokes_image(
 
     nstokes = weight.shape[0]
     wsum = np.zeros(nstokes)
-    residual = np.zeros((nstokes, nx, ny), dtype=np.float64)
-    psf = np.zeros((nstokes, nx_psf, ny_psf), dtype=np.float64)
+    residual = np.zeros((nstokes, nx, ny), dtype=real_type)
+    psf = np.zeros((nstokes, nx_psf, ny_psf), dtype=real_type)
     for c in range(nstokes):
         wsum[c] = weight[c, ~flag].sum()
         vis2dirty(
@@ -496,7 +499,7 @@ def stokes_image(
         out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr', mode='w')
     elif opts.output_format == 'fits':
         save_fits(residual/wsum[:, None, None],
-                  f'{fds_store.full_path}/{oname}.fits', hdr)
+                  f'{fds_store.full_path}/{oname}_image.fits', hdr)
         if opts.psf_out:
             hdr_psf = set_wcs(cell_deg, cell_deg, nx_psf, ny_psf, [tra, tdec],
                   freq_out, GuassPar=GaussPars[0],  # fake for now
