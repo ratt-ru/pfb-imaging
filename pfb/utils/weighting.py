@@ -118,6 +118,9 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                 chan_normfreq = freq[f] / lightspeed
                 u_tmp = uvw_row[0] * chan_normfreq * usign
                 v_tmp = uvw_row[1] * chan_normfreq * vsign
+                if v_tmp < 0:
+                    u_tmp = -u_tmp
+                    v_tmp = -v_tmp
                 # pixel coordinates
                 ug = (u_tmp + umax)/u_cell
                 vg = (v_tmp + vmax)/v_cell
@@ -137,14 +140,14 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                     continue
 
                 # the kernel is separable and only defined on [-1,1]
-                # do we ever need to check these bounds?
                 x_idx[:] = pos + u_idx
                 x[:] = (x_idx - ug + 0.5)/ko2
                 y_idx[:] = pos + v_idx
                 y[:] = (y_idx - vg + 0.5)/ko2
                 _es_kernel(x, y, xkern, ykern, betak)
-                valid_ix = np.nonzero((x_idx >= 0) & (x_idx < nx))
-                valid_iy = np.nonzero((y_idx >= 0) & (y_idx < ny)) 
+                # check bounds
+                valid_ix = np.nonzero((x_idx >= 0) & (x_idx < nx))[0]
+                valid_iy = np.nonzero((y_idx >= 0) & (y_idx < ny))[0] 
 
                 for c in range(ncorr):
                     wrfc = wrf[c]
@@ -205,6 +208,9 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
             chan_normfreq = freq[f] / lightspeed
             u_tmp = uvw_row[0] * chan_normfreq * usign
             v_tmp = uvw_row[1] * chan_normfreq * vsign
+            if v_tmp < 0:
+                u_tmp = -u_tmp
+                v_tmp = -v_tmp
             # pixel coordinates
             ug = (u_tmp + umax)/u_cell
             vg = (v_tmp + vmax)/v_cell

@@ -523,11 +523,13 @@ def _grid(**kw):
         residual_mfs[timeid] /= wsum[timeid][:, None, None]
         for c in range(ncorr):
             rms = np.std(residual_mfs[timeid][c])
+            if np.isnan(rms):
+                raise ValueError('RMS of residual in nan, something went wrong')
             rmax = np.abs(residual_mfs[timeid][c]).max()
             print(f"Time ID {timeid}: {corrs[c]} - resid max = {rmax:.3e}, "
                   f"rms = {rms:.3e}", file=log)
             
-    # put these in the dds for futur reference
+    # put these in the dds for future reference
     if psfparsn is not None:
         cache_opts(psfparsn,
                    dds_store.url,

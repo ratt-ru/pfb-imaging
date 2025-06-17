@@ -305,8 +305,8 @@ def stokes_image(
                                  usign=1.0 if flip_u else -1.0,
                                  vsign=1.0 if flip_v else -1.0)
 
-        counts = filter_extreme_counts(counts,
-                                       level=opts.filter_counts_level)
+        # counts = filter_extreme_counts(counts,
+        #                                level=opts.filter_counts_level)
 
         weight = counts_to_weights(
             counts,
