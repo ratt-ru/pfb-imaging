@@ -83,7 +83,6 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
     v_cell = 1/(ny*cell_size_y)
     vmax = np.abs(-1/cell_size_y/2)
 
-    # are we always passing in wgt? 
     ncorr, nrow, nchan = wgt.shape
 
     # initialise array to store counts
@@ -130,10 +129,8 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                 # indices
                 u_idx = int(np.floor(ug))
                 v_idx = int(np.floor(vg))
-                if (u_idx<0) or (u_idx>nx):
-                    raise ValueError('u is out of bound ')
-                if (v_idx<0) or (v_idx>ny):
-                    raise ValueError('v is out of bound ')
+                if (u_idx<0) or (u_idx>nx) or (v_idx<0) or (v_idx>ny):
+                    print('uv out of bounds in cc')
                 # nearest neighbour
                 if k==0:
                     counts[g, :, u_idx, v_idx] += wrf
@@ -199,7 +196,7 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
 
     for r in prange(nrow):
         uvw_row = uvw[r]
-        weight_row = weight[:, r]
+        wgt_row = weight[:, r]
         mask_row = mask[r]
         for f in range(nchan):
             if not mask_row[f]:
@@ -214,17 +211,19 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
             # pixel coordinates
             ug = (u_tmp + umax)/u_cell
             vg = (v_tmp + vmax)/v_cell
+            
             # indices
             u_idx = int(np.floor(ug))
             v_idx = int(np.floor(vg))
-            if (u_idx<0) or (u_idx>nx):
-                raise ValueError('u is out of bound ')
-            if (v_idx<0) or (v_idx>ny):
-                raise ValueError('v is out of bound ')
-            if np.any(counts[:, u_idx, v_idx] == 0):
-                raise ValueError(f"counts are zero at {u_idx}, {v_idx}")
-            # counts should never be zero if we are at an unflagged location
-            weight_row[:, f] = weight_row[:, f]/counts[:, u_idx, v_idx]
+            if (u_idx<0) or (u_idx>nx) or (v_idx<0) or (v_idx>ny):
+                print('uv is out of bounds in c2w')
+            
+            if not np.any(counts[:, u_idx, v_idx] == 0):
+                wgt_row[:, f] /= counts[:, u_idx, v_idx]
+            else:
+                # counts should never be zero at unflagged
+                # locations so we should raise an error here
+                print(f"counts are zero at {u_idx}, {v_idx}")
     return weight
 
 

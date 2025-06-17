@@ -293,8 +293,8 @@ def stokes_image(
     # complicates the numba implementation so we just cast
     # them to the appropriate type for this step.
     if opts.robustness is not None:
-        counts = _compute_counts(uvw.astype(real_type),
-                                 freq.astype(real_type),
+        counts = _compute_counts(uvw,
+                                 freq,
                                  mask,
                                  weight,
                                  nx, ny,
@@ -310,8 +310,8 @@ def stokes_image(
 
         weight = counts_to_weights(
             counts,
-            uvw.astype(real_type),
-            freq.astype(real_type),
+            uvw,
+            freq,
             weight,
             mask,
             nx, ny,
