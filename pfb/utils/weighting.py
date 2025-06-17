@@ -130,7 +130,10 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                 # indices
                 u_idx = int(np.floor(ug))
                 v_idx = int(np.floor(vg))
-
+                if (u_idx<0) or (u_idx>nx):
+                    raise ValueError('u is out of bound ')
+                if (v_idx<0) or (v_idx>ny):
+                    raise ValueError('v is out of bound ')
                 # nearest neighbour
                 if k==0:
                     counts[g, :, u_idx, v_idx] += wrf
@@ -214,6 +217,12 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
             # indices
             u_idx = int(np.floor(ug))
             v_idx = int(np.floor(vg))
+            if (u_idx<0) or (u_idx>nx):
+                raise ValueError('u is out of bound ')
+            if (v_idx<0) or (v_idx>ny):
+                raise ValueError('v is out of bound ')
+            if np.any(counts[:, u_idx, v_idx] == 0):
+                raise ValueError(f"counts are zero at {u_idx}, {v_idx}")
             # counts should never be zero if we are at an unflagged location
             weight_row[:, f] = weight_row[:, f]/counts[:, u_idx, v_idx]
     return weight
