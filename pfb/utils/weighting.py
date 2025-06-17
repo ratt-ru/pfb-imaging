@@ -70,19 +70,18 @@ def compute_counts(dsl,
 
 
 
-@njit(nogil=True, cache=True, parallel=True)
+# @njit(nogil=True, cache=True, parallel=True)
 def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                     cell_size_x, cell_size_y, dtype,
                     k=6, ngrid=1, usign=1.0, vsign=-1.0):  # support hardcoded for now
     # ufreq
     u_cell = 1/(nx*cell_size_x)
-    # shifts fftfreq such that they start at zero
-    # convenient to look up the pixel value
-    umax = np.abs(-1/cell_size_x/2 - u_cell/2)
+    # factor of 2 because -umax/2 <= u < umax
+    umax = np.abs(-1/cell_size_x/2)
 
     # vfreq
     v_cell = 1/(ny*cell_size_y)
-    vmax = np.abs(-1/cell_size_y/2 - v_cell/2)
+    vmax = np.abs(-1/cell_size_y/2)
 
     # are we always passing in wgt? 
     ncorr, nrow, nchan = wgt.shape
@@ -129,13 +128,11 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                 wrf = wgt_row[:, f]
 
                 # indices
-                u_idx = int(np.round(ug))
-                v_idx = int(np.round(vg))
+                u_idx = int(np.floor(ug))
+                v_idx = int(np.floor(vg))
 
                 # nearest neighbour
                 if k==0:
-                    # u_idx = int(np.floor(ug))
-                    # v_idx = int(np.floor(vg))
                     counts[g, :, u_idx, v_idx] += wrf
                     continue
 
@@ -174,11 +171,11 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
 
     # ufreq
     u_cell = 1/(nx*cell_size_x)
-    umax = np.abs(-1/cell_size_x/2 - u_cell/2)
+    umax = np.abs(-1/cell_size_x/2)
 
     # vfreq
     v_cell = 1/(ny*cell_size_y)
-    vmax = np.abs(-1/cell_size_y/2 - v_cell/2)
+    vmax = np.abs(-1/cell_size_y/2)
 
     ncorr, nrow, nchan = weight.shape
     
@@ -215,8 +212,8 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
             ug = (u_tmp + umax)/u_cell
             vg = (v_tmp + vmax)/v_cell
             # indices
-            u_idx = int(np.round(ug))
-            v_idx = int(np.round(vg))
+            u_idx = int(np.floor(ug))
+            v_idx = int(np.floor(vg))
             # counts should never be zero if we are at an unflagged location
             weight_row[:, f] = weight_row[:, f]/counts[:, u_idx, v_idx]
     return weight

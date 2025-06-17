@@ -85,3 +85,21 @@ def test_counts(ms_name):
     for c in range(ncorr):
         # import ipdb; ipdb.set_trace()
         assert_allclose(counts[c], counts2)
+
+
+def test_uv2xy():
+    import numpy as np
+    np.random.seed(42)
+    nx = 128
+    cellx = 1.0
+    x = np.arange(0, 128)
+    
+    ucell = 1.0/(nx*cellx)  # 1/fov
+    umax = np.abs(-1/cellx/2)
+    u = (-(nx//2) + np.arange(nx)) * ucell
+
+    utmp = u + np.random.random(nx)*ucell
+
+    ug = (utmp + umax)/ucell
+
+    assert ((np.floor(ug) - x) == 0).all()
