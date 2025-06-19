@@ -117,6 +117,8 @@ def stokes_image(
     else:
         weight = np.ones((nrow, nchan, ncorr),
                          dtype=real_type)
+        
+    # weight *= ds.IMAGING_WEIGHT_SPECTRUM.values
 
     if opts.model_column is not None:
         model_vis = getattr(ds, opts.model_column).values.astype(complex_type)
@@ -293,20 +295,33 @@ def stokes_image(
     # complicates the numba implementation so we just cast
     # them to the appropriate type for this step.
     if opts.robustness is not None:
+        # we need to compute the weights on the padded grid
+        # but we don't have control over the optimal gridding
+        # parameters so assume a minimum
+        nx_pad = int(np.ceil(opts.min_padding*nx))
+        if nx_pad%2:
+            nx_pad += 1
+        ny_pad = int(np.ceil(opts.min_padding*ny))
+        if ny_pad%2:
+            ny_pad += 1
         counts = _compute_counts(uvw,
                                  freq,
                                  mask,
                                  weight,
-                                 nx, ny,
+                                 nx_pad, ny_pad,
                                  cell_rad, cell_rad,
                                  real_type,
                                  k=0,
                                  ngrid=1,
                                  usign=1.0 if flip_u else -1.0,
                                  vsign=1.0 if flip_v else -1.0)
+        
+        counts = filter_extreme_counts(counts,
+                                       level=opts.filter_counts_level)
 
-        # counts = filter_extreme_counts(counts,
-        #                                level=opts.filter_counts_level)
+        # # combine mirror image
+        # # this should not be necessary
+        # counts += counts[:, ::-1, ::-1]
 
         weight = counts_to_weights(
             counts,
@@ -314,7 +329,7 @@ def stokes_image(
             freq,
             weight,
             mask,
-            nx, ny,
+            nx_pad, ny_pad,
             cell_rad, cell_rad,
             opts.robustness,
             usign=1.0 if flip_u else -1.0,
@@ -357,7 +372,7 @@ def stokes_image(
             do_wgridding=opts.do_wgridding,
             divide_by_n=True,  # no rephasing or smooth beam so do it here
             nthreads=opts.nthreads,
-            sigma_min=1.1, sigma_max=3.0,
+            sigma_min=opts.min_padding, sigma_max=3.0,
             double_precision_accumulation=opts.double_accum,
             verbosity=0,
             dirty=residual[c])
@@ -378,7 +393,7 @@ def stokes_image(
             do_wgridding=opts.do_wgridding,
             divide_by_n=True,  # no rephasing or smooth beam so do it here
             nthreads=opts.nthreads,
-            sigma_min=1.1, sigma_max=3.0,
+            sigma_min=opts.min_padding, sigma_max=3.0,
             double_precision_accumulation=opts.double_accum,
             verbosity=0,
             dirty=psf[c])
@@ -500,6 +515,17 @@ def stokes_image(
     elif opts.output_format == 'fits':
         save_fits(residual/wsum[:, None, None],
                   f'{fds_store.full_path}/{oname}_image.fits', hdr)
+        if opts.robustness is not None:
+            save_fits(counts,
+                    f'{fds_store.full_path}/{oname}_counts.fits', hdr)
+            # save_fits(counts2,
+            #         f'{fds_store.full_path}/{oname}_counts2.fits', hdr)
+            ix, iy = np.where(counts[0] > 0)
+            wgt = np.zeros_like(counts[0])
+            wgt[ix, iy] = 1.0/counts[0, ix, iy]
+            save_fits(wgt,
+                    f'{fds_store.full_path}/{oname}_weight.fits', hdr)
+        
         if opts.psf_out:
             hdr_psf = set_wcs(cell_deg, cell_deg, nx_psf, ny_psf, [tra, tdec],
                   freq_out, GuassPar=GaussPars[0],  # fake for now

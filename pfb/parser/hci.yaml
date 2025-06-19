@@ -191,10 +191,15 @@ inputs:
       YAML file containing transients to inject into the data.
   filter-counts-level:
     dtype: float
-    default: 5.0
+    default: 10.0
     info:
       Set minimum counts in the uniform weighting grid to the median divided by this value.
       This is useful to avoid artificially up-weighting nearly empty uv-cells.
+  min-padding:
+    dtype: float
+    default: 2.0
+    info:
+      Minimum padding to be applied during gridding.
   _include:
     - (.)gridding.yml
     - (.)out.yml

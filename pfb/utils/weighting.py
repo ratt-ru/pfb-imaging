@@ -13,7 +13,7 @@ JIT_OPTIONS = {
     "nogil": True,
     "cache": True,
     "error_model": 'numpy',
-    "fastmath": True
+    # "fastmath": True  # causes weighting tests to fail
 }
 
 @njit(**JIT_OPTIONS, inline='always')
@@ -70,18 +70,18 @@ def compute_counts(dsl,
 
 
 
-# @njit(nogil=True, cache=True, parallel=True)
+@njit(nogil=True, cache=True, parallel=True)
 def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                     cell_size_x, cell_size_y, dtype,
                     k=6, ngrid=1, usign=1.0, vsign=-1.0):  # support hardcoded for now
     # ufreq
     u_cell = 1/(nx*cell_size_x)
     # factor of 2 because -umax/2 <= u < umax
-    umax = np.abs(-1/cell_size_x/2)
+    umax = np.abs(1/cell_size_x/2)
 
     # vfreq
     v_cell = 1/(ny*cell_size_y)
-    vmax = np.abs(-1/cell_size_y/2)
+    vmax = np.abs(1/cell_size_y/2)
 
     ncorr, nrow, nchan = wgt.shape
 
@@ -95,15 +95,15 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
     bin_counts = np.asarray(bin_counts).astype(bin_idx.dtype)
     bin_idx[1:] = np.cumsum(bin_counts)[0:-1]
 
-    ko2 = k//2
-    betak = 2.3*k
-    pos = np.arange(k) - ko2
-    xkern = np.zeros(k, dtype=dtype)
-    ykern = np.zeros(k, dtype=dtype)
-    x = np.zeros(k, dtype=dtype)
-    y = np.zeros(k, dtype=dtype)
-    x_idx = np.zeros(k, dtype=np.int64)
-    y_idx = np.zeros(k, dtype=np.int64)
+    # ko2 = k//2
+    # betak = 2.3*k
+    # pos = np.arange(k) - ko2
+    # xkern = np.zeros(k, dtype=dtype)
+    # ykern = np.zeros(k, dtype=dtype)
+    # x = np.zeros(k, dtype=dtype)
+    # y = np.zeros(k, dtype=dtype)
+    # x_idx = np.zeros(k, dtype=np.int64)
+    # y_idx = np.zeros(k, dtype=np.int64)
     for g in prange(ngrid):
         for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
             uvw_row = uvw[r]
@@ -129,32 +129,37 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                 # indices
                 u_idx = int(np.floor(ug))
                 v_idx = int(np.floor(vg))
+                # LB - is there an easier check for this?
                 if (u_idx<0) or (u_idx>nx) or (v_idx<0) or (v_idx>ny):
                     print('uv out of bounds in cc')
-                # nearest neighbour
-                if k==0:
-                    counts[g, :, u_idx, v_idx] += wrf
                     continue
 
-                # the kernel is separable and only defined on [-1,1]
-                x_idx[:] = pos + u_idx
-                x[:] = (x_idx - ug + 0.5)/ko2
-                y_idx[:] = pos + v_idx
-                y[:] = (y_idx - vg + 0.5)/ko2
-                _es_kernel(x, y, xkern, ykern, betak)
-                # check bounds
-                valid_ix = np.nonzero((x_idx >= 0) & (x_idx < nx))[0]
-                valid_iy = np.nonzero((y_idx >= 0) & (y_idx < ny))[0] 
+                counts[g, :, u_idx, v_idx] += wrf
 
-                for c in range(ncorr):
-                    wrfc = wrf[c]
-                    for i in valid_ix:
-                        ix = x_idx[i]
-                        xi = xkern[i]
-                        for j in valid_iy:
-                            iy = y_idx[j]
-                            yi = ykern[j]
-                            counts[g, c, ix, iy] += xi*yi*wrfc
+                # # nearest neighbour
+                # if k==0:
+                #     counts[g, :, u_idx, v_idx] += wrf
+                #     continue
+
+                # # the kernel is separable and only defined on [-1,1]
+                # x_idx[:] = pos + u_idx
+                # x[:] = (x_idx - ug + 0.5)/ko2
+                # y_idx[:] = pos + v_idx
+                # y[:] = (y_idx - vg + 0.5)/ko2
+                # _es_kernel(x, y, xkern, ykern, betak)
+                # # check bounds
+                # valid_ix = np.nonzero((x_idx >= 0) & (x_idx < nx))[0]
+                # valid_iy = np.nonzero((y_idx >= 0) & (y_idx < ny))[0] 
+
+                # for c in range(ncorr):
+                #     wrfc = wrf[c]
+                #     for i in valid_ix:
+                #         ix = x_idx[i]
+                #         xi = xkern[i]
+                #         for j in valid_iy:
+                #             iy = y_idx[j]
+                #             yi = ykern[j]
+                #             counts[g, c, ix, iy] += xi*yi*wrfc
 
     return counts.sum(axis=0)
 
@@ -171,11 +176,11 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
 
     # ufreq
     u_cell = 1/(nx*cell_size_x)
-    umax = np.abs(-1/cell_size_x/2)
+    umax = np.abs(1/cell_size_x/2)
 
     # vfreq
     v_cell = 1/(ny*cell_size_y)
-    vmax = np.abs(-1/cell_size_y/2)
+    vmax = np.abs(1/cell_size_y/2)
 
     ncorr, nrow, nchan = weight.shape
     
@@ -215,18 +220,16 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
             # indices
             u_idx = int(np.floor(ug))
             v_idx = int(np.floor(vg))
+            
             if (u_idx<0) or (u_idx>nx) or (v_idx<0) or (v_idx>ny):
                 print('uv is out of bounds in c2w')
+                continue
             
+            # counts can be zero if there are zero weights
             if not np.any(counts[:, u_idx, v_idx] == 0):
                 wgt_row[:, f] /= counts[:, u_idx, v_idx]
-            else:
-                # counts should never be zero at unflagged
-                # locations so we should raise an error here
-                print(f"counts are zero at {u_idx}, {v_idx}")
+            
     return weight
-
-
 
 # @njit(nogil=True, cache=True)
 def filter_extreme_counts(counts, level=10.0):
