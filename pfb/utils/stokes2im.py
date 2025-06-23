@@ -464,12 +464,6 @@ def stokes_image(
 
     oname = f'spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
     if opts.output_format == 'zarr':
-        data_vars = {}
-        data_vars['RESIDUAL'] = (('corr', 'x', 'y'), residual.astype(np.float32))
-        if opts.psf_out:
-            data_vars['PSF'] = (('corr', 'x_psf', 'y_psf'), psf.astype(np.float32))
-        if x is not None:
-            data_vars['NATGRAD'] = (('corr', 'x', 'y'), x.astype(np.float32))
 
         coords = {
             'chan': (('chan',), freq),
@@ -477,9 +471,22 @@ def stokes_image(
             'corr': (('corr',), corr),
             'x': (('x',), np.arange(nx) * cell_deg),
             'y': (('y',), np.arange(ny) * cell_deg),
-            'x_psf': (('x_psf',), np.arange(nx_psf) * cell_deg),
-            'y_psf': (('y_psf',), np.arange(ny_psf) * cell_deg),
         }
+        data_vars = {}
+        data_vars['RESIDUAL'] = (('corr', 'x', 'y'), residual.astype(np.float32))
+        if opts.psf_out:
+            coords['x_psf'] = (('x_psf',), np.arange(nx_psf) * cell_deg)
+            coords['y_psf'] = (('y_psf',), np.arange(ny_psf) * cell_deg)
+            data_vars['PSF'] = (('corr', 'x_psf', 'y_psf'), psf.astype(np.float32))
+        if x is not None:
+            data_vars['NATGRAD'] = (('corr', 'x', 'y'), x.astype(np.float32))
+        if opts.robustness is not None and opts.weight_grid_out:
+            ic, ix, iy = np.where(counts > 0)
+            wgt = np.zeros_like(counts)
+            wgt[ic, ix, iy] = 1.0/counts[ic, ix, iy]
+            coords['x_pad'] = (('x_pad',), np.arange(nx_pad) * cell_deg)
+            coords['y_pad'] = (('y_pad',), np.arange(ny_pad) * cell_deg)
+            data_vars['WGTGRID'] = (('corr', 'x_pad', 'y_pad'), wgt.astype(np.float32))
 
 
         # TODO - provide time and freq centroids
@@ -515,14 +522,11 @@ def stokes_image(
     elif opts.output_format == 'fits':
         save_fits(residual/wsum[:, None, None],
                   f'{fds_store.full_path}/{oname}_image.fits', hdr)
-        if opts.robustness is not None:
-            save_fits(counts,
-                    f'{fds_store.full_path}/{oname}_counts.fits', hdr)
-            # save_fits(counts2,
-            #         f'{fds_store.full_path}/{oname}_counts2.fits', hdr)
-            ix, iy = np.where(counts[0] > 0)
-            wgt = np.zeros_like(counts[0])
-            wgt[ix, iy] = 1.0/counts[0, ix, iy]
+        if opts.robustness is not None and opts.weight_grid_out:
+            ic, ix, iy = np.where(counts > 0)
+            wgt = np.zeros_like(counts)
+            wgt[ic, ix, iy] = 1.0/counts[ic, ix, iy]
+            # TODO - add mirror image
             save_fits(wgt,
                     f'{fds_store.full_path}/{oname}_weight.fits', hdr)
         

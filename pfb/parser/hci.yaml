@@ -170,6 +170,11 @@ inputs:
     default: false
     info:
       Whether to produce output PSF's or not.
+  weight-grid-out:
+    dtype: bool
+    default: false
+    info:
+      Whether to produce an image of the weighted grid or not.
   natural-grad:
     dtype: bool
     default: false

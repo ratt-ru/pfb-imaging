@@ -122,13 +122,13 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                 # pixel coordinates
                 ug = (u_tmp + umax)/u_cell
                 vg = (v_tmp + vmax)/v_cell
-                
+
                 # corr weights
                 wrf = wgt_row[:, f]
 
                 # indices
-                u_idx = int(np.floor(ug))
-                v_idx = int(np.floor(vg))
+                u_idx = np.int32(np.floor(ug))
+                v_idx = np.int32(np.floor(vg))
                 # LB - is there an easier check for this?
                 if (u_idx<0) or (u_idx>nx) or (v_idx<0) or (v_idx>ny):
                     print('uv out of bounds in cc')
@@ -149,7 +149,7 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                 # _es_kernel(x, y, xkern, ykern, betak)
                 # # check bounds
                 # valid_ix = np.nonzero((x_idx >= 0) & (x_idx < nx))[0]
-                # valid_iy = np.nonzero((y_idx >= 0) & (y_idx < ny))[0] 
+                # valid_iy = np.nonzero((y_idx >= 0) & (y_idx < ny))[0]
 
                 # for c in range(ncorr):
                 #     wrfc = wrf[c]
@@ -171,7 +171,7 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
     # when does this happen?
     if not counts.any():
         return weight
-    
+
     real_type = weight.dtype
 
     # ufreq
@@ -183,7 +183,7 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
     vmax = np.abs(1/cell_size_y/2)
 
     ncorr, nrow, nchan = weight.shape
-    
+
     # Briggs weighting factor
     if robust > -2:
         numsqrt = 5*10**(-robust)
@@ -216,19 +216,19 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
             # pixel coordinates
             ug = (u_tmp + umax)/u_cell
             vg = (v_tmp + vmax)/v_cell
-            
+
             # indices
-            u_idx = int(np.floor(ug))
-            v_idx = int(np.floor(vg))
-            
+            u_idx = np.int32(np.floor(ug))
+            v_idx = np.int32(np.floor(vg))
+
             if (u_idx<0) or (u_idx>nx) or (v_idx<0) or (v_idx>ny):
                 print('uv is out of bounds in c2w')
                 continue
-            
+
             # counts can be zero if there are zero weights
             if not np.any(counts[:, u_idx, v_idx] == 0):
                 wgt_row[:, f] /= counts[:, u_idx, v_idx]
-            
+
     return weight
 
 # @njit(nogil=True, cache=True)
@@ -309,7 +309,7 @@ def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
                                               data[row, chan])
 
         return (vis, wgt)
-    
+
     _impl.returns = types.Tuple([types.Array(types.complex128, 3, 'C'),
                                  types.Array(types.float64, 3, 'C')])
     return _impl

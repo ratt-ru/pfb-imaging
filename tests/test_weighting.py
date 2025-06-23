@@ -55,7 +55,7 @@ def test_counts(ms_name, srf, fov):
     nx = npix
     ny = npix
 
-    print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
+    print("Image size set to (%i, %i, %i)" % (ncorr, nx, ny))
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
     usign = 1.0 if not flip_u else -1.0
     vsign = 1.0 if not flip_v else -1.0
@@ -74,7 +74,7 @@ def test_counts(ms_name, srf, fov):
                               cell_rad, cell_rad,
                               -3,
                               usign=usign, vsign=vsign)
-    
+
     # computing counts with uniform weights should yield
     # ones everywhere
     counts2 = _compute_counts(uvw, freq, mask,
@@ -82,7 +82,7 @@ def test_counts(ms_name, srf, fov):
                               nx, ny, cell_rad, cell_rad,
                               dtype=np.float64, k=0, ngrid=1,
                               usign=usign, vsign=vsign)
-    
+
     ic, ix, iy = np.where(counts2 > 0)
     assert np.allclose(counts2[ic, ix, iy], 1.0, rtol=1e-8, atol=1e-8)
 
@@ -93,7 +93,7 @@ def test_uv2xy(nx, cellx):
     import numpy as np
     np.random.seed(42)
     x = np.arange(0, nx)
-    
+
     ucell = 1.0/(nx*cellx)  # 1/fov
     umax = np.abs(1/cellx/2)
     u = (-(nx//2) + np.arange(nx)) * ucell
