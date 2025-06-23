@@ -13,10 +13,9 @@ product:
   dtype: str
   abbreviation: p
   default: I
-  choices: [I, Q, U, V, DS, FS]  # [0, 1, 2, 3, DC, FC]
   info:
-    Imaging products to produce.
-    DS and FS correspond to Diagonal and Full Stokes, respectively.
+    String specifying which Stokes products to produce.
+    Outputs are always be alphabetically ordered.
 fits-output-folder:
   dtype: str
   abbreviation: fitso

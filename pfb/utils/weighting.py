@@ -274,13 +274,7 @@ def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
                       ant1, ant2, pol, product, nc):
 
     vis_func, wgt_func = stokes_funcs(data, jones, product, pol, nc)
-
-    if product.literal_value in ['I','Q','U','V']:
-        ns = 1
-    elif product.literal_value == 'DS':
-        ns = 2
-    elif product.literal_value == 'FS':
-        ns = int(nc.literal_value)
+    ns = len(product.literal_value)
 
     def _impl(data, weight, flag, jones, tbin_idx, tbin_counts,
               ant1, ant2, pol, product, nc):

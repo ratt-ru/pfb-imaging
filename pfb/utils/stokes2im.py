@@ -117,7 +117,7 @@ def stokes_image(
     else:
         weight = np.ones((nrow, nchan, ncorr),
                          dtype=real_type)
-        
+
     # weight *= ds.IMAGING_WEIGHT_SPECTRUM.values
 
     if opts.model_column is not None:
@@ -266,7 +266,7 @@ def stokes_image(
         for transient in transient_list:
             # parametric dspec model
             dspec = dynamic_spectrum(time, freq, transient_list[transient])
-            
+
             # convert radec to lm
             tmp = transient_list[transient]['radec'].split(',')
             if len(tmp) != 2:
@@ -281,7 +281,7 @@ def stokes_image(
             lm0t = radec_to_lm(tcoords, coords0).squeeze()
             x0t = lm0t[0]
             y0t = lm0t[1]
-            
+
             # inject transient at x0t, y0t
             data += dspec * np.exp(freqfactor*(
                                  signu*uvw[:, 0:1]*x0t*signx +
@@ -315,7 +315,7 @@ def stokes_image(
                                  ngrid=1,
                                  usign=1.0 if flip_u else -1.0,
                                  vsign=1.0 if flip_v else -1.0)
-        
+
         counts = filter_extreme_counts(counts,
                                        level=opts.filter_counts_level)
 
@@ -376,7 +376,7 @@ def stokes_image(
             double_precision_accumulation=opts.double_accum,
             verbosity=0,
             dirty=residual[c])
-        
+
         vis2dirty(
             uvw=uvw,
             freq=freq,
@@ -397,7 +397,7 @@ def stokes_image(
             double_precision_accumulation=opts.double_accum,
             verbosity=0,
             dirty=psf[c])
-    
+
     # these will be in units of pixels
     cell_deg = np.rad2deg(cell_rad)
     GaussPars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
@@ -437,38 +437,17 @@ def stokes_image(
                   freq_out, GuassPar=GaussPars[0],
                   ms_time=time_out)
 
-    # set corr coords
-    if opts.product == 'I':
-        corr = ['I']
-    elif opts.product == 'Q':
-        corr = ['Q']
-    elif opts.product == 'U':
-        corr = ['U']
-    elif opts.product == 'V':
-        corr = ['V']
-    elif opts.product == 'DS':
-        if poltype == 'linear':
-            corr = ['I','Q']
-        elif poltype == 'circular':
-            corr = ['I','V']
-    elif opts.product == 'FS':
-        if ncorr == 2:
-            if poltype == 'linear':
-                corr = ['I','Q']
-            elif poltype == 'circular':
-                corr = ['I','V']
-        elif ncorr == 4:
-            corr = ['I','Q','U','V']
-    else:
-        raise ValueError(f"Unknown polarisation product {opts.product}")
+    # set corr coords (removing duplicates and sorting)
+    corr = "".join(dict.fromkeys(sorted(opts.product)))
 
+    # save outputs
     oname = f'spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
     if opts.output_format == 'zarr':
 
         coords = {
             'chan': (('chan',), freq),
             'time': (('time',), utime),
-            'corr': (('corr',), corr),
+            'corr': (('corr',), list(corr)),
             'x': (('x',), np.arange(nx) * cell_deg),
             'y': (('y',), np.arange(ny) * cell_deg),
         }
@@ -520,6 +499,7 @@ def stokes_image(
             attrs=attrs)
         out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr', mode='w')
     elif opts.output_format == 'fits':
+        hdr['STOKES'] = corr
         save_fits(residual/wsum[:, None, None],
                   f'{fds_store.full_path}/{oname}_image.fits', hdr)
         if opts.robustness is not None and opts.weight_grid_out:
@@ -529,11 +509,12 @@ def stokes_image(
             # TODO - add mirror image
             save_fits(wgt,
                     f'{fds_store.full_path}/{oname}_weight.fits', hdr)
-        
+
         if opts.psf_out:
             hdr_psf = set_wcs(cell_deg, cell_deg, nx_psf, ny_psf, [tra, tdec],
                   freq_out, GuassPar=GaussPars[0],  # fake for now
                   ms_time=time_out)
+            hdr_psf['STOKES'] = corr
             save_fits(psf/wsum[:, None, None],
                   f'{fds_store.full_path}/{oname}_psf.fits', hdr_psf)
         if x is not None:

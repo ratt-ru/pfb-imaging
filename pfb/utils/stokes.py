@@ -85,29 +85,32 @@ def stokes_funcs(data, jones, product, pol, nc):
     # Only keep diagonal of weights
     W = W.diagonal().T  # diagonal() returns row vector
 
-    if product.literal_value == 'I':
-        i = (0,)
-    elif product.literal_value == 'Q':
-        i = (1,)
-    elif product.literal_value == 'U':
-        i = (2,)
-    elif product.literal_value == 'V':
-        i = (3,)
-    elif product.literal_value == 'DS':
-        if pol.literal_value == 'linear':
-            i = (0,1)
-        elif pol.literal_value == 'circular':
-            i = (0,-1)
-    elif product.literal_value == 'FS':
-        if nc.literal_value == '2':
-            if pol.literal_value == 'linear':
-                i = (0,1)
-            elif pol.literal_value == 'circular':
-                i = (0,-1)
-        elif nc.literal_value == '4':
-            i = (0,1,2,3)
-    else:
-        raise ValueError(f"Unknown polarisation product {product}")
+    # this should ensure that outputs are always ordered as
+    # [I, Q, U, V]
+    i = ()
+    if 'I' in product.literal_value:
+        i += (0,)
+
+    if 'Q' in product.literal_value:
+        i += (1,)
+        if pol.literal_value == 'circular' and nc.literal_value == '2':
+            raise ValueError("Q is not available in circular polarisation with 2 correlations")
+
+    if 'U' in product.literal_value:
+        i += (2,)
+        if pol.literal_value == 'linear' and nc.literal_value == '2':
+            raise ValueError("U is not available in linear polarisation with 2 correlations")
+        elif pol.literal_value == 'circular' and nc.literal_value == '2':
+            raise ValueError("U is not available in circular polarisation with 2 correlations")
+
+    if 'V' in product.literal_value:
+        i += (3,)
+        if pol.literal_value == 'linear' and nc.literal_value == '2':
+            raise ValueError("V is not available in linear polarisation with 2 correlations")
+
+    remprod = product.literal_value.strip('IQUV')
+    if len(remprod):
+        raise ValueError(f"Unknown polarisation product {remprod}")
 
     if jones.ndim == 6:  # Full mode
         Wsymb = lambdify((gp00, gp01, gp10, gp11,
