@@ -160,11 +160,6 @@ inputs:
     info:
       Value to add to Hessian to make it invertible.
       Smaller values tend to fit more noise and make the inversion less stable.
-  concat-time:
-    dtype: bool
-    default: false
-    info:
-      Concatenate gains and times across scan
   psf-out:
     dtype: bool
     default: false
@@ -205,6 +200,16 @@ inputs:
     default: 2.0
     info:
       Minimum padding to be applied during gridding.
+  # flag-excess-rms:
+  #   dtype: float
+  #   default: 1.5
+  #   info:
+  #     Flag data with RMS above flag-excess-rms * median(rms).
+  # concat-time:
+  #   dtype: bool
+  #   default: false
+  #   info:
+  #     Concatenate gains and times across scan
   _include:
     - (.)gridding.yml
     - (.)out.yml

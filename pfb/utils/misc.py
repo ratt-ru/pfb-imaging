@@ -154,7 +154,7 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None,
     nthreads    - number of threads to use for the FFT's.
     pfrac       - padding used for the FFT based convolution.
                   Will pad by pfrac/2 on both sides of image
-    norm_kernel - 
+    norm_kernel -
     """
     nband, nx, ny = image.shape
     if gausspari is not None and len(gausspari) != nband:
@@ -454,7 +454,7 @@ def construct_mappings(ms_name,
                     except Exception as e:
                         raise ValueError(f'Mismatch between gain and MS '
                                             f'utimes for {ms} at {idt}')
-                    
+
                     gains[ms][idt] = gdsfds[0]
                 else:
                     try:
@@ -492,7 +492,7 @@ def _restore_corrs(vis, ncorr):
 
 
 def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
-    ''' 
+    '''
     xin         - grid of x coordinates
     yin         - grid of y coordinates
     GaussPar    - (emaj, emin, pa) with emaj/emin in units x and pa in radians.
@@ -506,7 +506,7 @@ def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     #               [np.sin(PA), np.cos(PA)]])
     # this parametrisation is equivalent to the above with
     # t = np.pi/2 - pa
-    # use this for compatibility with fits 
+    # use this for compatibility with fits
     R = np.array([[np.sin(PA), -np.cos(PA)],
                   [np.cos(PA), np.sin(PA)]])
     A = np.dot(np.dot(R.T, A), R)
@@ -544,7 +544,7 @@ def psf_errorsq(x, data, xy):
     #                 [jnp.sin(pa), jnp.cos(pa)]])
     # this parametrisation is equivalent to the above with
     # t = np.pi/2 - pa
-    # use this for compatibility with fits 
+    # use this for compatibility with fits
     R = jnp.array([[jnp.sin(pa), -jnp.cos(pa)],
                     [jnp.cos(pa), jnp.sin(pa)]])
     B = jnp.dot(jnp.dot(R.T, A), R)
@@ -590,10 +590,10 @@ def fitcleanbeam(psf: np.ndarray,
         # get extend of main lobe
         x = xx[islands == ncenter]
         y = yy[islands == ncenter]
-        
+
         # initial guess for emaj and emin
         # x and y are reversed because of the parametrisation
-        # of the 2D Gaussian (for fits) 
+        # of the 2D Gaussian (for fits)
         xdiff = np.maximum(y.max() - y.min(), 1)
         ydiff = np.maximum(x.max() - x.min(), 1)
 
@@ -634,7 +634,7 @@ def fitcleanbeam(psf: np.ndarray,
                                 factr=1e7)
         if d['warnflag'] != 0:
             print('WARNING - warning flag raised during psf fit')
-        
+
         if p[0] >= p[1]:  # major and minor axes correct
             emaj = p[0]
             emin = p[1]
@@ -644,7 +644,7 @@ def fitcleanbeam(psf: np.ndarray,
             emin = p[0]
             PA = p[2] + np.pi/2
             print('WARNING - emaj/emin flipped in solver')
-        
+
         Gausspars.append([emaj * pixsize, emin * pixsize, PA])
 
     return Gausspars
@@ -875,7 +875,7 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
     params  - tuple of str, parameters to pass into function (excluding t and f)
     tfunc   - function which scales the time domain appropriately for method
     ffunc   - function which scales the frequency domain appropriately for method
-    
+
 
     The fit is performed in scaled coordinates (t=time/ref_time,f=freq/ref_freq)
     '''
@@ -1065,7 +1065,7 @@ def fit_image_fscube(freq, image,
         if sigmasq:
             hess_coeffs += sigmasq*np.eye(hess_coeffs.shape[0])
         coeffs[c] = np.linalg.solve(hess_coeffs, dirty_coeffs)
-    
+
 
     return coeffs, Ix, Iy, str(expr), list(map(str,params)), str(ffunc)
 
@@ -1506,3 +1506,12 @@ def dynamic_spectrum(time, freq, transient):
 
 
 
+def wplanar(uvw):
+    uvw_centered = uvw - np.mean(uvw, axis=0)
+    cov_mat = np.cov(uvw_centered, rowvar=False)
+    eigenvalues, eigenvectors = np.linalg.eigh(cov_mat)
+    # Sort eigenvalues and eigenvectors in descending order
+    idx = np.argsort(eigenvalues)[::-1]
+    eigenvalues = eigenvalues[idx]
+    eigenvectors = eigenvectors[:, idx]
+    print("Planarity ratio = ", eigenvalues[-1]/eigenvalues[0])
