@@ -49,7 +49,7 @@ def save_fits(data, name, hdr, overwrite=True, dtype=np.float32, beams_hdu=None)
 
 def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
             unit='Jy/beam', GuassPar=None, ms_time=None,
-            header=True, casambm=True):
+            header=True, casambm=True, ncorr=1):
     """
     cell_x/y - cell sizes in degrees
     nx/y - number of x and y pixels
@@ -82,6 +82,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
             ref_freq = freq[0]
         else:
             ref_freq = freq
+        nchan = 1
         crpix3 = 1
     w.wcs.crval = [radec[0]*180.0/np.pi, radec[1]*180.0/np.pi, ref_freq, 1]
     w.wcs.crpix = [1 + nx//2, 1 + ny//2, crpix3, 1]
@@ -94,6 +95,11 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         header['BTYPE'] = 'Intensity'
         header['BUNIT'] = unit
         header['SPECSYS'] = 'TOPOCENT'
+        header['NAXIS'] = 4
+        header['NAXIS1'] = nx
+        header['NAXIS2'] = ny
+        header['NAXIS3'] = nchan
+        header['NAXIS4'] = ncorr
         if ms_time is not None:
             # TODO - probably a round about way of doing this
             unix_time = quantity(f'{ms_time}s').to_unix_time()

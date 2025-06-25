@@ -434,14 +434,14 @@ def stokes_image(
     unix_time = quantity(f'{time_out}s').to_unix_time()
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
+    # set corr coords (removing duplicates and sorting)
+    corr = "".join(dict.fromkeys(sorted(opts.product)))
+
     # if there is more than one polarisation product
     # we currently assume all have the same beam
     hdr = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
                   freq_out, GuassPar=GaussPars[0],
-                  ms_time=time_out)
-
-    # set corr coords (removing duplicates and sorting)
-    corr = "".join(dict.fromkeys(sorted(opts.product)))
+                  ms_time=time_out, ncorr=len(corr))
 
     # save outputs
     oname = f'spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
