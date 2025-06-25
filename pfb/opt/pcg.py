@@ -152,7 +152,7 @@ def pcg(A,
     r = A(x0) - b
     y = M(r)
     if not np.any(y):
-        print(f"Initial residual is zero")  #, file=log)
+        print(f"Initial residual is zero")
         return x0
     p = -y
     rnorm = np.vdot(r, y)
@@ -241,7 +241,6 @@ def pcg(A,
 
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
-                #   file=log)
     ttot = time() - tii
     ttally = tcopy + tA + tvdot + tupdate + tp + tnorm
     if verbosity > 1:
@@ -255,13 +254,13 @@ def pcg(A,
 
     if k >= maxit:
         if verbosity:
-            print(f"Max iters reached. eps = {eps:.3e}")  #, file=log)
+            print(f"Max iters reached. eps = {eps:.3e}")
     elif stall_count >= 5:
         if verbosity:
-            print(f"Stalled after {k} iterations with eps = {eps:.3e}")  #, file=log)
+            print(f"Stalled after {k} iterations with eps = {eps:.3e}")
     else:
         if verbosity:
-            print(f"Success, converged after {k} iterations")  #, file=log)
+            print(f"Success, converged after {k} iterations")
     if not return_resid:
         return x
     else:

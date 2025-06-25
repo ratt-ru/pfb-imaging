@@ -93,7 +93,7 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
     for m in range(psi.nbasis):
         alpha[m] = np.std(resid_comps[m])
         _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
-        print("Basis %i, alpha %f, sigma %f"%(m, alpha[m], sigmas[m]), file=log)
+        log.info("Basis %i, alpha %f, sigma %f"%(m, alpha[m], sigmas[m]))
 
     # l21 weights and dual
     weights21 = np.ones((psi.nbasis, psi.nmax), dtype=residual.dtype)
@@ -163,15 +163,15 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
                                      tol=pmtol, maxit=pmmaxit,
                                      verbosity=pmverbose)
 
-        print("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
-              i+1, rmax, rms, eps), file=log)
+        log.info("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
+              i+1, rmax, rms, eps))
 
         # reweight
         l2_norm = np.linalg.norm(psi.hdot(model), axis=1)
         for m in range(psi.nbasis):
             if adapt_sig21:
                 _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
-                print('basis %i, sigma %f'%sigmas[m], file=log)
+                log.info('basis %i, sigma %f'%sigmas[m])
 
             weights21[m] = alpha[m]/(alpha[m] + l2_norm[m]) * sigmas[m]/sig_21
 
@@ -200,8 +200,7 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
 
 
         if eps < tol:
-            print("Success, convergence after %i iterations" % (i+1),
-                  file=log)
+            log.info("Success, convergence after %i iterations" % (i+1))
             break
 
     return model

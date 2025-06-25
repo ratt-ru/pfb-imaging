@@ -74,12 +74,12 @@ def degrid(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/degrid_{timestamp}.log'
     pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing
-    print('Input Options:', file=log)
+    log.info('Input Options:')
     for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+        log.info('     %25s = %s' % (key, opts[key]))
 
     # we need the collections
     from pfb import set_client
@@ -88,7 +88,7 @@ def degrid(**kw):
     ti = time.time()
     _degrid(**opts)
 
-    print(f"All done after {time.time() - ti}s.", file=log)
+    log.info(f"All done after {time.time() - ti}s.")
 
     try:
         client.close()
@@ -153,7 +153,7 @@ def _degrid(**kw):
 
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
-    print('Constructing mapping', file=log)
+    log.info('Constructing mapping')
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gains, radecs, \
         chan_widths, uv_max, antpos, poltype = \
@@ -322,6 +322,6 @@ def _degrid(**kw):
                                     rechunk=True))
 
     # optimize_graph can make things much worse
-    print("Computing model visibilities", file=log)
+    log.info("Computing model visibilities")
     dask.compute(writes)  #, optimize_graph=False)
 

@@ -73,16 +73,15 @@ def primal_dual(
         if not k % report_freq and verbosity > 1:
             # res = xbar-x
             # phi = np.vdot(res, A(res))
-            print(f"At iteration {k} eps = {eps:.3e}",  # and phi = {phi:.3e}",
-                  file=log)
+            log.info(f"At iteration {k} eps = {eps:.3e}")
         k += 1
 
     if k == maxit:
         if verbosity:
-            print(f"Max iters reached. eps = {eps:.3e}", file=log)
+            log.info(f"Max iters reached. eps = {eps:.3e}")
     else:
         if verbosity:
-            print(f"Success, converged after {k} iterations", file=log)
+            log.info(f"Success, converged after {k} iterations")
 
     return x, v
 
@@ -178,7 +177,7 @@ def primal_dual_optimised(
             if reweighter is not None and numreweight < maxreweight:
                 # ti = time()
                 l1weight = reweighter(x)
-                # print("reweight = ", time() - ti)
+                # log.info("reweight = ", time() - ti)
                 if k-last_reweight_iter==1:
                     numreweight += 1
                 else:
@@ -187,7 +186,7 @@ def primal_dual_optimised(
 
             else:
                 if numreweight >= maxreweight:
-                    print("Maximum reweighting steps reached", file=log)
+                    log.info("Maximum reweighting steps reached")
                 break
 
         # copy contents to avoid allocating new memory
@@ -199,28 +198,28 @@ def primal_dual_optimised(
             import pdb; pdb.set_trace()
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} eps = {eps:.3e}", file=log)
+            log.info(f"At iteration {k} eps = {eps:.3e}")
 
     ttot = time() - tii
     ttally = tpsi + tpsiH + tgrad + tupdate + teval1 + teval2 + tpos + tnorm
     if verbosity > 1:
-        print('Time taken per step', file=log)
-        print(f'psi = {tpsi/ttot}', file=log)
-        print(f'psiH = {tpsiH/ttot}', file=log)
-        print(f'grad = {tgrad/ttot}', file=log)
-        print(f'update = {tupdate/ttot}', file=log)
-        print(f'eval1 = {teval1/ttot}', file=log)
-        print(f'eval2 = {teval2/ttot}', file=log)
-        print(f'pos = {tpos/ttot}', file=log)
-        print(f'norm = {tnorm/ttot}', file=log)
-        print(f'tally = {ttally/ttot}', file=log)
+        log.info('Time taken per step')
+        log.info(f'psi = {tpsi/ttot}')
+        log.info(f'psiH = {tpsiH/ttot}')
+        log.info(f'grad = {tgrad/ttot}')
+        log.info(f'update = {tupdate/ttot}')
+        log.info(f'eval1 = {teval1/ttot}')
+        log.info(f'eval2 = {teval2/ttot}')
+        log.info(f'pos = {tpos/ttot}')
+        log.info(f'norm = {tnorm/ttot}')
+        log.info(f'tally = {ttally/ttot}')
 
     if k == maxit-1:
         if verbosity:
-            print(f"Max iters reached. eps = {eps:.3e}", file=log)
+            log.info(f"Max iters reached. eps = {eps:.3e}")
     else:
         if verbosity:
-            print(f"Success, converged after {k} iterations", file=log)
+            log.info(f"Success, converged after {k} iterations")
 
     return x, v
 
@@ -282,7 +281,7 @@ def primal_dual_dist(
         ti = time()
         get_ratio(vtilde, l1weight, sigma, lam, ratio)
         # get_ratio(np.array(vtilde), l1weight, sigma, lam, ratio)
-        print('ratio - ', time() - ti)
+        log.info('ratio - ', time() - ti)
 
         ti = time()
         # do on individual workers
@@ -294,7 +293,7 @@ def primal_dual_dist(
             eps_den[b] = epsd
 
         # results = list(map(lambda f: f.result(), futures))
-        print('update - ', time() - ti)
+        log.info('update - ', time() - ti)
 
         # vtilde = [r[0] for r in results]
         # eps_num = [r[1] for r in results]
@@ -306,7 +305,7 @@ def primal_dual_dist(
 
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} eps = {eps:.3e}", file=log)
+            log.info(f"At iteration {k} eps = {eps:.3e}")
 
         if eps < tol:
             if do_reweight and numreweight < maxreweight:
@@ -315,16 +314,16 @@ def primal_dual_dist(
                                            rms_comps=rms_comps,
                                            alpha=alpha)
                 numreweight += 1
-                print(f"Reweighting iter {numreweight}", file=log)
+                log.info(f"Reweighting iter {numreweight}")
             else:
                 if numreweight >= maxreweight:
-                    print("Maximum reweighting steps reached", file=log)
+                    log.info("Maximum reweighting steps reached")
                 break
 
     if k >= maxit-1:
-        print(f'Maximum iterations reached. eps={eps:.3e}', file=log)
+        log.info(f'Maximum iterations reached. eps={eps:.3e}')
     else:
-        print(f'Success converged after {k} iterations', file=log)
+        log.info(f'Success converged after {k} iterations')
 
     return
 

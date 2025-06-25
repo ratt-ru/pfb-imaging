@@ -60,12 +60,12 @@ def hci(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/hci_{timestamp}.log'
     pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing
-    print('Input Options:', file=log)
+    log.info('Input Options:')
     for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+        log.info('     %25s = %s' % (key, opts[key]))
 
     from pfb import set_envs
     from ducc0.misc import resize_thread_pool
@@ -80,7 +80,7 @@ def hci(**kw):
     ti = time.time()
     _hci(**opts)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+    log.info(f"All done after {time.time() - ti}s")
 
     client.close()
 
@@ -109,7 +109,7 @@ def _hci(**kw):
     fdsstore = DaskMSStore(f'{basename}.fds')
     if fdsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {basename}.fds", file=log)
+            log.info(f"Overwriting {basename}.fds")
             fdsstore.rm(recursive=True)
         else:
             raise ValueError(f"{basename}.fds exists. "
@@ -151,7 +151,7 @@ def _hci(**kw):
     if opts.transfer_model_from is not None:
         raise NotImplementedError('Use the degrid app to populate a model column instead')
 
-    print('Constructing mapping', file=log)
+    log.info('Constructing mapping')
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gains, radecs, \
         chan_widths, uv_max, antpos, poltype = \
@@ -180,12 +180,12 @@ def _hci(**kw):
         cell_size = opts.cell_size
         cell_rad = cell_size * np.pi / 60 / 60 / 180
         if cell_N / cell_rad < 1:
-            print(f"Requested cell size of {cell_size} arcseconds could be sub-Nyquist.", file=log)
-        print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
+            log.info(f"Requested cell size of {cell_size} arcseconds could be sub-Nyquist.")
+        log.info(f"Super resolution factor = {cell_N/cell_rad}")
     else:
         cell_rad = cell_N / opts.super_resolution_factor
         cell_size = cell_rad * 60 * 60 * 180 / np.pi
-        print(f"Cell size set to {cell_size} arcseconds", file=log)
+        log.info(f"Cell size set to {cell_size} arcseconds")
 
     if opts.nx is None:
         fov = opts.field_of_view * 3600
@@ -202,10 +202,9 @@ def _hci(**kw):
         cell_deg = np.rad2deg(cell_rad)
         fovx = nx*cell_deg
         fovy = ny*cell_deg
-        print(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees",
-              file=log)
+        log.info(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
 
-    print(f"Image size = (nx={nx}, ny={ny})", file=log)
+    log.info(f"Image size = (nx={nx}, ny={ny})")
 
     # crude column arithmetic
     dc = opts.data_column.replace(" ", "")
@@ -234,17 +233,17 @@ def _hci(**kw):
     # only WEIGHT column gets special treatment
     # any other column must have channel axis
     if opts.sigma_column is not None:
-        print(f"Initialising weights from {opts.sigma_column} column", file=log)
+        log.info(f"Initialising weights from {opts.sigma_column} column")
         columns += (opts.sigma_column,)
         schema[opts.sigma_column] = {'dims': ('chan', 'corr')}
     elif opts.weight_column is not None:
-        print(f"Using weights from {opts.weight_column} column", file=log)
+        log.info(f"Using weights from {opts.weight_column} column")
         columns += (opts.weight_column,)
         # hack for https://github.com/ratt-ru/dask-ms/issues/268
         if opts.weight_column != 'WEIGHT':
             schema[opts.weight_column] = {'dims': ('chan', 'corr')}
     else:
-        print(f"No weights provided, using unity weights", file=log)
+        log.info(f"No weights provided, using unity weights")
 
     # distinct freq groups
     sgroup = 0
@@ -391,7 +390,10 @@ def _hci(**kw):
     ac_iter = as_completed(futures)
     for completed_future in ac_iter:
         if isinstance(completed_future.result(), BaseException):
-            print(completed_future.result())
+            e = completed_future.result()
+            log.error(f"Operation failed: {e}")
+            import traceback
+            log.error(f"Traceback:\n{traceback.format_exc()}")
             raise RuntimeError('Something went wrong')
 
         worker = associated_workers.pop(completed_future)
@@ -433,8 +435,8 @@ def _hci(**kw):
 
         if opts.memory_reporting:
             worker_info = client.scheduler_info()['workers']
-            print(f'Total memory {worker} MB = ',
-                worker_info[worker]['metrics']['memory']/1e6, file=log)
+            log.info(f'Total memory {worker} MB = ',
+                worker_info[worker]['metrics']['memory']/1e6)
 
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)

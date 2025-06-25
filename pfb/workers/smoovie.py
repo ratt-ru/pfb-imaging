@@ -29,13 +29,13 @@ def smoovie(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/smoovie_{timestamp}.log'
     pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    log.info(f'Logs will be written to {logname}')
     OmegaConf.set_struct(opts, True)
 
     # TODO - prettier config printing
-    print('Input Options:', file=log)
+    log.info('Input Options:')
     for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+        log.info('     %25s = %s' % (key, opts[key]))
 
     from pfb import set_envs
     set_envs(opts.nthreads, ncpu)
@@ -48,7 +48,7 @@ def smoovie(**kw):
     ti = time.time()
     _smoovie(**opts)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+    log.info(f"All done after {time.time() - ti}s")
 
     try:
         from distributed import get_client
@@ -84,7 +84,7 @@ def _smoovie(**kw):
     except Exception as e:
         raise ValueError(f"There must be a dataset at {fds_store.url}")
 
-    print(f"Lazy loading fds from {fds_store.url}", file=log)
+    log.info(f"Lazy loading fds from {fds_store.url}")
     fds, fds_list = xds_from_url(fds_store.url)
 
     # TODO - scan selection
@@ -141,8 +141,7 @@ def _smoovie(**kw):
 
         for b, dslist in fds_dict.items():
             
-            print(f"Writing movie to {basename}_band{b}_{idfy}.{outfmt}",
-                   file=log)
+            log.info(f"Writing movie to {basename}_band{b}_{idfy}.{outfmt}")
             rmss = [ds.rms for ds in dslist]
             medrms = np.median(rmss)
             nframe = len(dslist)

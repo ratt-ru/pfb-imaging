@@ -40,12 +40,12 @@ def model2comps(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/model2comps_{timestamp}.log'
     pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing
-    print('Input Options:', file=log)
+    log.info('Input Options:')
     for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+        log.info('     %25s = %s' % (key, opts[key]))
 
     with ExitStack() as stack:
         ti = time.time()
@@ -55,7 +55,7 @@ def model2comps(**kw):
             _model2comps(**opts)
 
 
-    print(f"All done after {time.time() - ti}s", file=log)
+    log.info(f"All done after {time.time() - ti}s")
 
 def _model2comps(**kw):
     opts = OmegaConf.create(kw)
@@ -94,7 +94,7 @@ def _model2comps(**kw):
     mdsstore = DaskMSStore(coeff_name)
     if mdsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {coeff_name}", file=log)
+            log.info(f"Overwriting {coeff_name}")
             mdsstore.rm(recursive=True)
         else:
             raise ValueError(f"{coeff_name} exists. "
@@ -174,8 +174,7 @@ def _model2comps(**kw):
         flow, fhigh, step = list(map(float, opts.out_freqs.split(':')))
         fsel = np.all(wsums > 0, axis=0)
         if flow < mfreqs.min():
-            print(f"Linearly extrapolating to {flow:.3e}Hz",
-                  file=log)
+            log.info(f"Linearly extrapolating to {flow:.3e}Hz")
             # linear extrapolation from first two non-null bands
             Ilow = np.argmax(fsel)  # first non-null index
             Ihigh = Ilow + 1
@@ -192,8 +191,7 @@ def _model2comps(**kw):
                                    axis=1)
             nband = mfreqs.size
         if fhigh > mfreqs.max():
-            print(f"Linearly extrapolating to {fhigh:.3e}Hz",
-                  file=log)
+            log.info(f"Linearly extrapolating to {fhigh:.3e}Hz")
             # linear extrapolation from last two non-null bands
             Ihigh = nband - np.argmax(fsel[::-1]) - 1  # last non-null index
             Ilow = Ihigh - 1
@@ -221,8 +219,7 @@ def _model2comps(**kw):
         nbasisf = opts.nbasisf
 
     nbasis = nbasisf
-    print(f"Fitting {nband} bands with {nbasis} basis functions",
-          file=log)
+    log.info(f"Fitting {nband} bands with {nbasis} basis functions")
     try:
         coeffs, Ix, Iy, expr, params, texpr, fexpr = \
             fit_image_cube(mtimes, mfreqs, model,
@@ -231,9 +228,9 @@ def _model2comps(**kw):
                            method=opts.fit_mode,
                            sigmasq=opts.sigmasq)
     except np.linalg.LinAlgError as e:
-        print(f"Exception {e} raised during fit ."
+        log.info(f"Exception {e} raised during fit ."
               f"Do you perhaps have empty sub-bands?"
-              f"Decreasing nbasisf", file=log)
+              f"Decreasing nbasisf")
         raise e
 
     # save interpolated dataset
@@ -271,8 +268,7 @@ def _model2comps(**kw):
     coeff_dataset = xr.Dataset(data_vars=data_vars,
                                coords=coords,
                                attrs=attrs)
-    print(f'Writing interpolated model to {coeff_name}',
-          file=log)
+    log.info(f'Writing interpolated model to {coeff_name}')
 
     if opts.out_format == 'zarr':
         coeff_dataset.to_zarr(mdsstore.url)
@@ -301,7 +297,7 @@ def _model2comps(**kw):
                                          x0, y0)
 
     eps = norm_diff(modelo, model[0])
-    print(f"Fractional interpolation error is {eps:.3e}", file=log)
+    log.info(f"Fractional interpolation error is {eps:.3e}")
 
 
     # TODO - doesn't work with multiple fields
@@ -309,8 +305,7 @@ def _model2comps(**kw):
     if opts.out_freqs is not None:
         flow, fhigh, step = list(map(float, opts.out_freqs.split(':')))
         nbando = int((fhigh - flow)/step)
-        print(f"Rendering model cube to {nbando} output bands",
-              file=log)
+        log.info(f"Rendering model cube to {nbando} output bands")
         freq_out = np.linspace(flow, fhigh, nbando)
         ra = dds[0].ra
         dec  = dds[0].dec
@@ -374,7 +369,7 @@ def _model2comps_fits(**kw):
     mdsstore = DaskMSStore(coeff_name)
     if mdsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {coeff_name}", file=log)
+            log.info(f"Overwriting {coeff_name}")
             mdsstore.rm(recursive=True)
         else:
             raise ValueError(f"{coeff_name} exists. "
@@ -400,7 +395,7 @@ def _model2comps_fits(**kw):
     dec = None
     wsums = []
     for image in images_list:
-        print(f"Loading {image}", file=log)
+        log.info(f"Loading {image}")
         hdu = fits.open(image)
         model_list.append(hdu[0].data.squeeze().T)
         mfreqs.append(hdu[0].header['CRVAL3'])
@@ -438,7 +433,7 @@ def _model2comps_fits(**kw):
     mfreqs = np.unique(np.array(mfreqs))
     assert mfreqs.size == nband
     for b in range(nband):
-        print(f"Found {mfreqs[b]}Hz model at index {b}", file=log)
+        log.info(f"Found {mfreqs[b]}Hz model at index {b}")
     assert cellx_deg == celly_deg
     cell_deg = cellx_deg
     cell_rad = np.deg2rad(cell_deg)
@@ -466,8 +461,7 @@ def _model2comps_fits(**kw):
         flow, fhigh, step = list(map(float, opts.out_freqs.split(':')))
         fsel = np.all(wsums > 0, axis=0)
         if flow < mfreqs.min():
-            print(f"Linearly extrapolating to {flow:.3e}Hz",
-                  file=log)
+            log.info(f"Linearly extrapolating to {flow:.3e}Hz")
             # linear extrapolation from first two non-null bands
             Ilow = np.argmax(fsel)  # first non-null index
             Ihigh = Ilow + 1
@@ -484,8 +478,7 @@ def _model2comps_fits(**kw):
                                    axis=1)
             nband = mfreqs.size
         if fhigh > mfreqs.max():
-            print(f"Linearly extrapolating to {fhigh:.3e}Hz",
-                  file=log)
+            log.info(f"Linearly extrapolating to {fhigh:.3e}Hz")
             # linear extrapolation from last two non-null bands
             Ihigh = nband - np.argmax(fsel[::-1]) - 1  # last non-null index
             Ilow = Ihigh - 1
@@ -513,8 +506,7 @@ def _model2comps_fits(**kw):
         nbasisf = opts.nbasisf
 
     nbasis = nbasisf
-    print(f"Fitting {nband} bands with {nbasis} basis functions",
-          file=log)
+    log.info(f"Fitting {nband} bands with {nbasis} basis functions")
     try:
         coeffs, Ix, Iy, expr, params, texpr, fexpr = \
             fit_image_cube(mtimes, mfreqs, model,
@@ -523,9 +515,9 @@ def _model2comps_fits(**kw):
                            method=opts.fit_mode,
                            sigmasq=opts.sigmasq)
     except np.linalg.LinAlgError as e:
-        print(f"Exception {e} raised during fit ."
+        log.info(f"Exception {e} raised during fit ."
               f"Do you perhaps have empty sub-bands?"
-              f"Decreasing nbasisf", file=log)
+              f"Decreasing nbasisf")
         raise e
 
     # save interpolated dataset
@@ -563,8 +555,7 @@ def _model2comps_fits(**kw):
     coeff_dataset = xr.Dataset(data_vars=data_vars,
                                coords=coords,
                                attrs=attrs)
-    print(f'Writing interpolated model to {coeff_name}',
-          file=log)
+    log.info(f'Writing interpolated model to {coeff_name}')
 
     if opts.out_format == 'zarr':
         coeff_dataset.to_zarr(mdsstore.url)
@@ -593,7 +584,7 @@ def _model2comps_fits(**kw):
                                          x0, y0)
 
     eps = norm_diff(modelo, model[0])
-    print(f"Fractional interpolation error is {eps:.3e}", file=log)
+    log.info(f"Fractional interpolation error is {eps:.3e}")
 
 
     # TODO - doesn't work with multiple fields
@@ -601,8 +592,7 @@ def _model2comps_fits(**kw):
     if opts.out_freqs is not None:
         flow, fhigh, step = list(map(float, opts.out_freqs.split(':')))
         nbando = int((fhigh - flow)/step)
-        print(f"Rendering model cube to {nbando} output bands",
-              file=log)
+        log.info(f"Rendering model cube to {nbando} output bands")
         freq_out = np.linspace(flow, fhigh, nbando)
         hdr = set_wcs(cell_deg, cell_deg, nx, ny, [ra, dec],
                       freq_out, GuassPar=(1, 1, 0),  # fake for now

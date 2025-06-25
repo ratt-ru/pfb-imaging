@@ -38,12 +38,12 @@ def kclean(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/kclean_{timestamp}.log'
     pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing
-    print('Input Options:', file=log)
+    log.info('Input Options:')
     for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+        log.info('     %25s = %s' % (key, opts[key]))
 
     from pfb.utils.naming import xds_from_url, get_opts
 
@@ -71,7 +71,7 @@ def kclean(**kw):
         psfpars_mfs = get_opts(dds_store.url,
                                protocol,
                                name='psfparsn_mfs.pkl')
-        print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
+        log.info(f"Writing fits files to {fits_oname}_{opts.suffix}")
         dds2fits(dds_list,
                  'RESIDUAL',
                  f'{fits_oname}_{opts.suffix}',
@@ -87,7 +87,7 @@ def kclean(**kw):
                  do_cube=opts.fits_cubes,
                  psfpars_mfs=psfpars_mfs)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+    log.info(f"All done after {time.time() - ti}s")
 
 
 def _kclean(**kw):
@@ -178,7 +178,7 @@ def _kclean(**kw):
     if opts.mask is not None:
         mask = load_fits(opts.mask, dtype=residual.dtype).squeeze()
         assert mask.shape == (nx, ny)
-        print('Using provided fits mask', file=log)
+        log.info('Using provided fits mask')
     else:
         mask = np.ones((nx, ny), dtype=residual.dtype)
 
@@ -203,10 +203,9 @@ def _kclean(**kw):
     else:
         threshold = opts.threshold
 
-    print(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
-          file=log)
+    log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
     for k in range(iter0, iter0 + opts.niter):
-        print("Cleaning", file=log)
+        log.info("Cleaning")
         x, status = clark(residual, psf, psfhat, wsums/wsum, mask,
                           threshold=threshold,
                           gamma=opts.gamma,
@@ -220,8 +219,8 @@ def _kclean(**kw):
         model += x
 
         # write component model
-        print(f"Writing model at iter {k+1} to "
-              f"{basename}_{opts.suffix}_model.mds", file=log)
+        log.info(f"Writing model at iter {k+1} to "
+              f"{basename}_{opts.suffix}_model.mds")
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
                 fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
@@ -264,13 +263,13 @@ def _kclean(**kw):
             coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model.mds",
                                   mode='w')
         except Exception as e:
-            print(f"Exception {e} raised during model fit .", file=log)
+            log.info(f"Exception {e} raised during model fit .")
 
         save_fits(np.mean(model[fsel], axis=0),
                   fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
-        print(f'Computing residual', file=log)
+        log.info(f'Computing residual')
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
             resid, _ = compute_residual(ds_name,
@@ -325,7 +324,7 @@ def _kclean(**kw):
         status |= k == iter0 + opts.niter-1
         status |= rmax <= threshold
         if opts.mop_flux and status:
-            print(f"Mopping flux at iter {k+1}", file=log)
+            log.info(f"Mopping flux at iter {k+1}")
             mopmask = np.any(model, axis=0)
             if opts.dirosion:
                 struct = ndimage.generate_binary_structure(2, opts.dirosion)
@@ -346,7 +345,7 @@ def _kclean(**kw):
 
             model += opts.mop_gamma*x
 
-            print(f'Computing residual', file=log)
+            log.info(f'Computing residual')
             for ds_name, ds in zip(dds_list, dds):
                 b = int(ds.bandid)
                 resid, _ = compute_residual(ds_name,
@@ -393,18 +392,16 @@ def _kclean(**kw):
             else:
                 threshold = opts.threshold
 
-        print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
-              file=log)
+        log.info(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
 
         if rmax <= threshold:
-            print("Terminating because final threshold has been reached",
-                  file=log)
+            log.info("Terminating because final threshold has been reached")
             break
 
         if rms > rmsp:
             diverge_count += 1
             if diverge_count > 3:
-                print("Algorithm is diverging. Terminating.", file=log)
+                log.info("Algorithm is diverging. Terminating.")
                 break
 
         # keep track of total number of iterations
@@ -504,7 +501,7 @@ def _fskclean(**kw):
     if opts.mask is not None:
         mask = load_fits(opts.mask, dtype=residual.dtype).squeeze()
         assert mask.shape == (nx, ny)
-        print('Using provided fits mask', file=log)
+        log.info('Using provided fits mask')
     else:
         mask = np.ones((nx, ny), dtype=residual.dtype)
 
@@ -528,10 +525,9 @@ def _fskclean(**kw):
     else:
         threshold = opts.threshold
 
-    print(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
-          file=log)
+    log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
     for k in range(iter0, iter0 + opts.niter):
-        print("Cleaning", file=log)
+        log.info("Cleaning")
         x, status = fsclark(residual, psf, psfhat,
                             wsums, mask,
                             threshold=threshold,
@@ -546,8 +542,8 @@ def _fskclean(**kw):
         model += x
 
         # write component model
-        print(f"Writing model at iter {k+1} to "
-              f"{basename}_{opts.suffix}_model.mds", file=log)
+        log.info(f"Writing model at iter {k+1} to "
+              f"{basename}_{opts.suffix}_model.mds")
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
                 fit_image_fscube(freq_out, model,
@@ -590,13 +586,13 @@ def _fskclean(**kw):
             coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model.mds",
                                   mode='w')
         except Exception as e:
-            print(f"Exception {e} raised during model fit .", file=log)
+            log.info(f"Exception {e} raised during model fit .")
 
         save_fits(np.mean(model, axis=0),
                   fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
-        print(f'Computing residual', file=log)
+        log.info(f'Computing residual')
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
             resid, _ = compute_residual(ds_name,
@@ -631,7 +627,7 @@ def _fskclean(**kw):
         status |= k == iter0 + opts.niter-1
         status |= rmax <= threshold
         if opts.mop_flux and status:
-            print(f"Mopping flux at iter {k+1}", file=log)
+            log.info(f"Mopping flux at iter {k+1}")
             mopmask = np.any(model, axis=(0,1))
             if opts.dirosion:
                 struct = ndimage.generate_binary_structure(2, opts.dirosion)
@@ -648,7 +644,7 @@ def _fskclean(**kw):
 
             model += opts.mop_gamma*np.array(x)
 
-            print(f'Computing residual', file=log)
+            log.info(f'Computing residual')
             for ds_name, ds in zip(dds_list, dds):
                 b = int(ds.bandid)
                 resid, _ = compute_residual(ds_name,
@@ -703,18 +699,16 @@ def _fskclean(**kw):
         else:
             threshold = opts.threshold
 
-        print(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
-              file=log)
+        log.info(f"Iter {k+1}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
 
         if rmax <= threshold:
-            print("Terminating because final threshold has been reached",
-                  file=log)
+            log.info("Terminating because final threshold has been reached")
             break
 
         if rms > rmsp:
             diverge_count += 1
             if diverge_count > 3:
-                print("Algorithm is diverging. Terminating.", file=log)
+                log.info("Algorithm is diverging. Terminating.")
                 break
 
     return

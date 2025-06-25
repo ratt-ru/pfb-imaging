@@ -105,8 +105,8 @@ def nnls(psf, model, residual, mask=None, beam_image=None,
         rms = np.std(residual_mfs)
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
-        print("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
-              i+1, rmax, rms, eps), file=log)
+        log.info("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
+              i+1, rmax, rms, eps))
 
         # save current iteration
         if outfile is not None:
@@ -123,8 +123,7 @@ def nnls(psf, model, residual, mask=None, beam_image=None,
                         residual_mfs, hdr_mfs)
 
         if eps < tol:
-            print("Success, convergence after %i iterations" % (i+1),
-                file=log)
+            log.info("Success, convergence after %i iterations" % (i+1))
             break
 
     return model

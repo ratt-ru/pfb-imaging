@@ -633,7 +633,7 @@ def fitcleanbeam(psf: np.ndarray,
                                 bounds=((0, None), (0, None), (0, np.pi)),
                                 factr=1e7)
         if d['warnflag'] != 0:
-            print('WARNING - warning flag raised during psf fit')
+            log.info('WARNING - warning flag raised during psf fit')
 
         if p[0] >= p[1]:  # major and minor axes correct
             emaj = p[0]
@@ -643,7 +643,7 @@ def fitcleanbeam(psf: np.ndarray,
             emaj = p[1]
             emin = p[0]
             PA = p[2] + np.pi/2
-            print('WARNING - emaj/emin flipped in solver')
+            log.info('WARNING - emaj/emin flipped in solver')
 
         Gausspars.append([emaj * pixsize, emin * pixsize, PA])
 
@@ -709,19 +709,19 @@ def _model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
 
 def init_mask(mask, model, output_type, log):
     if mask is None:
-        print("No mask provided", file=log)
+        log.info("No mask provided")
         mask = np.ones((mds.nx, mds.ny), dtype=output_type)
     elif mask.endswith('.fits'):
         try:
             mask = load_fits(mask, dtype=output_type).squeeze()
             assert mask.shape == (mds.nx, mds.ny)
-            print('Using provided fits mask', file=log)
+            log.info('Using provided fits mask')
         except Exception as e:
-            print(f"No mask found at {mask}", file=log)
+            log.info(f"No mask found at {mask}")
             raise e
     elif mask.lower() == 'model':
         mask = np.any(model, axis=0)
-        print('Using model to construct mask', file=log)
+        log.info('Using model to construct mask')
     else:
         raise ValueError(f'Unsupported masking option {mask}')
     return mask
@@ -1472,7 +1472,7 @@ def dynamic_spectrum(time, freq, transient):
 #     impad = np.pad(imhat, ((nx//2, nx//2), (ny//2, ny//2)), mode='constant')
 #     imo = ifftn(iFs(impad)).real
 
-#     print(np.sum(image) - np.sum(imo))
+#     log.info(np.sum(image) - np.sum(imo))
 
 #     plt.figure(1)
 #     plt.imshow(image/image.max(), vmin=0, vmax=1, interpolation=None)
@@ -1514,4 +1514,4 @@ def wplanar(uvw):
     idx = np.argsort(eigenvalues)[::-1]
     eigenvalues = eigenvalues[idx]
     eigenvectors = eigenvectors[:, idx]
-    print("Planarity ratio = ", eigenvalues[-1]/eigenvalues[0])
+    log.info("Planarity ratio = ", eigenvalues[-1]/eigenvalues[0])

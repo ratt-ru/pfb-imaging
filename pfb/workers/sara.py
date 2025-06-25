@@ -39,12 +39,12 @@ def sara(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/sara_{timestamp}.log'
     pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing
-    print('Input Options:', file=log)
+    log.info('Input Options:')
     for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+        log.info('     %25s = %s' % (key, opts[key]))
 
     from pfb.utils.naming import xds_from_url, get_opts
 
@@ -69,8 +69,7 @@ def sara(**kw):
         psfpars_mfs = get_opts(dds_store.url,
                                protocol,
                                name='psfparsn_mfs.pkl')
-        print(f"Writing fits files to {fits_oname}_{opts.suffix}",
-                file=log)
+        log.info(f"Writing fits files to {fits_oname}_{opts.suffix}")
 
         dds2fits(dds_list,
                 'RESIDUAL',
@@ -80,7 +79,7 @@ def sara(**kw):
                 do_mfs=opts.fits_mfs,
                 do_cube=opts.fits_cubes,
                 psfpars_mfs=psfpars_mfs)
-        print('Done writing RESIDUAL', file=log)
+        log.info('Done writing RESIDUAL')
         dds2fits(dds_list,
                 'MODEL',
                 f'{fits_oname}_{opts.suffix}',
@@ -89,7 +88,7 @@ def sara(**kw):
                 do_mfs=opts.fits_mfs,
                 do_cube=opts.fits_cubes,
                 psfpars_mfs=psfpars_mfs)
-        print('Done writing MODEL', file=log)
+        log.info('Done writing MODEL')
         dds2fits(dds_list,
                 'UPDATE',
                 f'{fits_oname}_{opts.suffix}',
@@ -98,7 +97,7 @@ def sara(**kw):
                 do_mfs=opts.fits_mfs,
                 do_cube=opts.fits_cubes,
                 psfpars_mfs=psfpars_mfs)
-        print('Done writing UPDATE', file=log)
+        log.info('Done writing UPDATE')
         # try:
         #     dds2fits(dds_list,
         #          'MPSF',
@@ -107,13 +106,13 @@ def sara(**kw):
         #          nthreads=opts.nthreads,
         #          do_mfs=opts.fits_mfs,
         #          do_cube=opts.fits_cubes)
-        #     print('Done writing MPSF', file=log)
+        #     log.info('Done writing MPSF')
         # except Exception as e:
         #     print(e)
 
     from numba import threading_layer
-    print(f"Numba use the {threading_layer()} threading layer", file=log)
-    print(f"All done after {time.time() - ti}s", file=log)
+    log.info(f"Numba use the {threading_layer()} threading layer")
+    log.info(f"All done after {time.time() - ti}s")
 
 
 def _sara(**kw):
@@ -249,10 +248,9 @@ def _sara(**kw):
         # if the grid worker had been rerun hess_norm won't be in attrs
         if 'hess_norm' in dds[0].attrs:
             hess_norm = dds[0].hess_norm
-            print(f"Using previously estimated hess_norm of {hess_norm:.3e}",
-                  file=log)
+            log.info(f"Using previously estimated hess_norm of {hess_norm:.3e}")
         else:
-            print("Finding spectral norm of Hessian approximation", file=log)
+            log.info("Finding spectral norm of Hessian approximation")
             hess_norm, hessbeta = power_method(
                                             precond.dot, (nband, nx, ny),
                                             tol=opts.pm_tol,
@@ -263,24 +261,24 @@ def _sara(**kw):
             hess_norm *= 1.05
     else:
         hess_norm = opts.hess_norm
-        print(f"Using provided hess-norm of = {hess_norm:.3e}", file=log)
+        log.info(f"Using provided hess-norm of = {hess_norm:.3e}")
 
-    print("Setting up dictionary", file=log)
+    log.info("Setting up dictionary")
     bases = tuple(opts.bases.split(','))
     nbasis = len(bases)
     psi = Psi(nband, nx, ny, bases, opts.nlevels, opts.nthreads)
     Nxmax = psi.Nxmax
     Nymax = psi.Nymax
 
-    print(f"Using {psi.nthreads_per_band} numba threads for each band", file=log)
-    print(f"Using {thread_pool_size()} threads for gridding", file=log)
+    log.info(f"Using {psi.nthreads_per_band} numba threads for each band")
+    log.info(f"Using {thread_pool_size()} threads for gridding")
 
     # number of frequency basis functions
     if opts.nbasisf is None:
         nbasisf = int(np.sum(fsel))
     else:
         nbasisf = opts.nbasisf
-    print(f"Using {nbasisf} frequency basis functions", file=log)
+    log.info(f"Using {nbasisf} frequency basis functions")
 
     # a value less than zero turns L1 reweighting off
     # we'll start on convergence or at the iteration
@@ -292,21 +290,20 @@ def _sara(**kw):
 
     dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=residual.dtype)
     if l1_reweight_from == 0:
-        print('Initialising with L1 reweighted', file=log)
+        log.info('Initialising with L1 reweighted')
         if not update.any():
             raise ValueError("Cannot reweight before any updates have been performed")
         psi.dot(update, outvar)
         tmp = np.sum(outvar, axis=0)
         # exclude zeros from padding DWT's
         # rms_comps = np.std(tmp[tmp!=0])
-        # print(f'rms_comps updated to {rms_comps}', file=log)
+        # log.info(f'rms_comps updated to {rms_comps}')
         # per basis rms_comps
         rms_comps = np.ones((nbasis,), dtype=float)
         for i, base in enumerate(bases):
             tmpb = tmp[i]
             rms_comps[i] = np.std(tmpb[tmpb!=0])
-            print(f'rms_comps for base {base} is {rms_comps[i]}',
-                    file=log)
+            log.info(f'rms_comps for base {base} is {rms_comps[i]}')
         reweighter = partial(l1reweight_func,
                              psiH=psi.dot,
                              outvar=outvar,
@@ -332,14 +329,13 @@ def _sara(**kw):
     diverge_count = 0
     eps = 1.0
     write_futures = None
-    print(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}",
-          file=log)
+    log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
     if opts.skip_model:
         mrange = []
     else:
         mrange = range(iter0, iter0 + opts.niter)
     for k in mrange:
-        print('Solving for update', file=log)
+        log.info('Solving for update')
         residual *= beam  # avoid copy
         update = precond.idot(residual,
                               mode=opts.hess_approx,
@@ -356,7 +352,7 @@ def _sara(**kw):
             lam = opts.init_factor * opts.rmsfactor * rms
         else:
             lam = opts.rmsfactor*rms
-        print(f'Solving for model with lambda = {lam}', file=log)
+        log.info(f'Solving for model with lambda = {lam}')
         model, dual = primal_dual(model,
                                   dual,
                                   lam,
@@ -376,8 +372,7 @@ def _sara(**kw):
                                   gamma=opts.gamma)
 
         # write component model
-        print(f"Writing model to {basename}_{opts.suffix}_model.mds",
-              file=log)
+        log.info(f"Writing model to {basename}_{opts.suffix}_model.mds")
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
                 fit_image_cube(time_out,
@@ -447,7 +442,7 @@ def _sara(**kw):
                         dds[0].x0, dds[0].y0
                 )
         except Exception as e:
-            print(f"Exception {e} raised during model fit .", file=log)
+            log.info(f"Exception {e} raised during model fit .")
 
         model_mfs = np.mean(model[fsel], axis=0)
         save_fits(model_mfs,
@@ -458,7 +453,7 @@ def _sara(**kw):
         if write_futures is not None:
             cf.wait(write_futures)
 
-        print(f'Computing residual', file=log)
+        log.info(f'Computing residual')
         write_futures = []
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
@@ -523,9 +518,8 @@ def _sara(**kw):
             # ds.to_zarr(ds_name, mode='a')
 
 
-        print(f"Iter {k+1}: peak residual = {rmax:.3e}, "
-              f"rms = {rms:.3e}, eps = {eps:.3e}",
-              file=log)
+        log.info(f"Iter {k+1}: peak residual = {rmax:.3e}, "
+              f"rms = {rms:.3e}, eps = {eps:.3e}")
 
         if eps < opts.tol:
             # do not converge prematurely
@@ -534,22 +528,21 @@ def _sara(**kw):
                 l1_reweight_from = k+1 - iter0
                 l1reweight_active = True
             else:
-                print(f"Converged after {k+1} iterations.", file=log)
+                log.info(f"Converged after {k+1} iterations.")
                 break
 
         if (k+1 - iter0 >= l1_reweight_from) and (k+1 - iter0 < opts.niter):
-            print('Computing L1 weights', file=log)
+            log.info('Computing L1 weights')
             psi.dot(update, outvar)
             tmp = np.sum(outvar, axis=0)
             # exclude zeros from padding DWT's
             # rms_comps = np.std(tmp[tmp!=0])
             rms_comps = np.ones((nbasis,), dtype=float)
-            # print(f'rms_comps updated to {rms_comps}', file=log)
+            # log.info(f'rms_comps updated to {rms_comps}')
             for i, base in enumerate(bases):
                 tmpb = tmp[i]
                 rms_comps[i] = np.std(tmpb[tmpb!=0])
-                print(f'rms_comps for base {base} is {rms_comps[i]}',
-                      file=log)
+                log.info(f'rms_comps for base {base} is {rms_comps[i]}')
             reweighter = partial(l1reweight_func,
                                  psiH=psi.dot,
                                  outvar=outvar,
@@ -562,7 +555,7 @@ def _sara(**kw):
         if rms > rmsp:
             diverge_count += 1
             if diverge_count > opts.diverge_count:
-                print("Algorithm is diverging. Terminating.", file=log)
+                log.info("Algorithm is diverging. Terminating.")
                 break
 
     # make sure write futures have finished

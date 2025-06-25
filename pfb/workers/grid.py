@@ -56,12 +56,12 @@ def grid(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/grid_{timestamp}.log'
     pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing
-    print('Input Options:', file=log)
+    log.info('Input Options:')
     for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+        log.info('     %25s = %s' % (key, opts[key]))
 
     from pfb import set_envs
     from ducc0.misc import resize_thread_pool, thread_pool_size
@@ -73,7 +73,7 @@ def grid(**kw):
         client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
         from distributed import as_completed
     else:
-        print("Faking client", file=log)
+        log.info("Faking client")
         from pfb.utils.dist import fake_client
         client = fake_client()
         names = [0]
@@ -90,7 +90,7 @@ def grid(**kw):
     # convert to fits files
     futures = []
     if opts.fits_mfs or opts.fits_cubes:
-        print(f"Writing fits files to {fits_oname}_{opts.suffix}", file=log)
+        log.info(f"Writing fits files to {fits_oname}_{opts.suffix}")
         if opts.dirty:
             fut = client.submit(dds2fits,
                                 dds_list,
@@ -164,9 +164,9 @@ def grid(**kw):
                 column = fut.result()
             except:
                 continue
-            print(f'Done writing {column}', file=log)
+            log.info(f'Done writing {column}')
 
-        print(f"All done after {time.time() - ti}s", file=log)
+        log.info(f"All done after {time.time() - ti}s")
 
     if opts.nworkers > 1:
         try:
@@ -209,7 +209,7 @@ def _grid(**kw):
     except Exception as e:
         raise ValueError(f"There must be a dataset at {xds_store.url}")
 
-    print(f"Lazy loading xds from {xds_store.url}", file=log)
+    log.info(f"Lazy loading xds from {xds_store.url}")
     xds, xds_list = xds_from_url(xds_store.url)
     valid_bands = np.unique([ds.bandid for ds in xds])
 
@@ -250,10 +250,9 @@ def _grid(**kw):
     )
     cell_deg = np.rad2deg(cell_rad)
     cell_size = cell_deg * 3600
-    print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
-    print(f"Cell size set to {cell_size:.5e} arcseconds", file=log)
-    print(f"Field of view is ({nx*cell_deg:.3e},{ny*cell_deg:.3e}) degrees",
-          file=log)
+    log.info(f"Super resolution factor = {cell_N/cell_rad}")
+    log.info(f"Cell size set to {cell_size:.5e} arcseconds")
+    log.info(f"Field of view is ({nx*cell_deg:.3e},{ny*cell_deg:.3e}) degrees")
 
     # create dds and cache
     dds_name = opts.output_filename + f'_{opts.suffix}' + '.dds'
@@ -264,7 +263,7 @@ def _grid(**kw):
         protocol = 'file'
 
     if dds_store.exists() and opts.overwrite:
-        print(f"Removing {dds_store.url}", file=log)
+        log.info(f"Removing {dds_store.url}")
         dds_store.rm(recursive=True)
 
     fs = fsspec.filesystem(protocol)
@@ -283,10 +282,10 @@ def _grid(**kw):
                 assert optsp[attr] == opts[attr]
 
             from_cache = True
-            print("Initialising from cached data products", file=log)
+            log.info("Initialising from cached data products")
         except Exception as e:
-            print(f'Cache verification failed on {attr}. '
-                  'Will remake image data products', file=log)
+            log.info(f'Cache verification failed on {attr}. '
+                  'Will remake image data products')
             dds_store.rm(recursive=True)
             fs.makedirs(dds_store.url, exist_ok=True)
             # dump opts to validate cache on rerun
@@ -302,9 +301,9 @@ def _grid(**kw):
                    protocol,
                    name='opts.pkl')
         from_cache = False
-        print("Initialising from scratch.", file=log)
+        log.info("Initialising from scratch.")
 
-    print(f"Data products will be cached in {dds_store.url}", file=log)
+    log.info(f"Data products will be cached in {dds_store.url}")
 
     # filter datasets by time and band
     xds_dct = {}
@@ -344,12 +343,12 @@ def _grid(**kw):
     ncorr = ds.corr.size
     corrs = ds.corr.values
     if opts.dirty:
-        print(f"Image size = (ntime={ntime}, nband={nband}, "
-              f"ncorr={ncorr}, nx={nx}, ny={ny})", file=log)
+        log.info(f"Image size = (ntime={ntime}, nband={nband}, "
+              f"ncorr={ncorr}, nx={nx}, ny={ny})")
 
     if opts.psf:
-        print(f"PSF size = (ntime={ntime}, nband={nband}, "
-              f"ncorr={ncorr}, nx={nx_psf}, ny={ny_psf})", file=log)
+        log.info(f"PSF size = (ntime={ntime}, nband={nband}, "
+              f"ncorr={ncorr}, nx={nx_psf}, ny={ny_psf})")
 
     # check if model exists
     if opts.transfer_model_from:
@@ -364,8 +363,7 @@ def _grid(**kw):
         locy = mds.location_y.values
         params = mds.params.values
 
-        print(f"Loading model from {opts.transfer_model_from}. ",
-              file=log)
+        log.info(f"Loading model from {opts.transfer_model_from}. ")
 
     futures = []
     for wname, (tbid, ds_dct) in zip(cycle(names), xds_dct.items()):
@@ -526,8 +524,8 @@ def _grid(**kw):
             if np.isnan(rms):
                 raise ValueError('RMS of residual in nan, something went wrong')
             rmax = np.abs(residual_mfs[timeid][c]).max()
-            print(f"Time ID {timeid}: {corrs[c]} - resid max = {rmax:.3e}, "
-                  f"rms = {rms:.3e}", file=log)
+            log.info(f"Time ID {timeid}: {corrs[c]} - resid max = {rmax:.3e}, "
+                  f"rms = {rms:.3e}")
             
     # put these in the dds for future reference
     if psfparsn is not None:

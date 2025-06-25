@@ -39,26 +39,26 @@ def restore(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{opts.log_directory}/restore_{timestamp}.log'
     pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing
-    print('Input Options:', file=log)
+    log.info('Input Options:')
     for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+        log.info('     %25s = %s' % (key, opts[key]))
 
     with ExitStack() as stack:
         if opts.nworkers > 1:
             from pfb import set_client
             client = set_client(opts.nworkers, log, stack=stack, client_log_level=opts.log_level)
         else:
-            print("Faking client", file=log)
+            log.info("Faking client")
             from pfb.utils.dist import fake_client
             client = fake_client()
             names = [0]
         ti = time.time()
         _restore(**opts)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+    log.info(f"All done after {time.time() - ti}s")
 
 def _restore(**kw):
     opts = OmegaConf.create(kw)
@@ -126,14 +126,14 @@ def _restore(**kw):
     nband = freqs.size
     ntime = timeids.size
     ncorr = dds[0].corr.size
-    print(f'Number of output times = {ntime}', file=log)
-    print(f'Number of output bands = {nband}', file=log)
+    log.info(f'Number of output times = {ntime}')
+    log.info(f'Number of output bands = {nband}')
 
 
     if opts.gausspar is None:
         gaussparf = None
         gaussparf_mfs = None
-        print("Using native resolution", file=log)
+        log.info("Using native resolution")
     elif opts.gausspar == [0,0,0]:
         # This is just to figure out what resolution to convolve to
         dds = xds_from_list(dds_list, nthreads=nthreads,
@@ -147,9 +147,8 @@ def _restore(**kw):
             emin = np.maximum(emin, gausspars[:, 1].max())
             pas.append(np.mean(gausspars[:, 2]))
         pa = np.mean(np.array(pas))
-        print(f"Using lowest resolution of ({emaj*cell_asec:.3e} asec, "
-              f"{emin*cell_asec:.3e} asec, {pa:.3e} degrees) for restored images",
-              file=log)
+        log.info(f"Using lowest resolution of ({emaj*cell_asec:.3e} asec, "
+              f"{emin*cell_asec:.3e} asec, {pa:.3e} degrees) for restored images")
         # these are n pixel units
         gaussparf_mfs = [emaj, emin, pa]
         gaussparf = gaussparf_mfs * ncorr
@@ -159,8 +158,8 @@ def _restore(**kw):
         emin = gaussparf_mfs[1]
         pa = gaussparf_mfs[2]
         if 'i' in opts.outputs.lower():
-            print(f"Using specified resolution of ({emaj:.3e} asec, {emin:.3e} asec, "
-                f"{pa:.3e} degrees) for restored image", file=log)
+            log.info(f"Using specified resolution of ({emaj:.3e} asec, {emin:.3e} asec, "
+                f"{pa:.3e} degrees) for restored image")
         # convert to pixel units
         for i in range(2):
             gaussparf_mfs[i] /= cell_asec

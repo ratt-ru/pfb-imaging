@@ -130,26 +130,25 @@ def clark(ID,
             stall_count += stall_count
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} max resid = {IRmax}",
-                  file=log)
+            log.info(f"At iteration {k} max resid = {IRmax}")
 
     IRmfs = np.sum(IR, axis=0)
     rms = np.std(IRmfs[~np.any(model, axis=0)])
 
     if k >= maxit:
         if verbosity:
-            print(f"Max iters reached. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+            log.info(f"Max iters reached. "
+                     f"Max resid = {IRmax:.3e}, rms = {rms:.3e}")
         return model, 1
     elif stall_count >= 5:
         if verbosity:
-            print(f"Stalled. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+            log.info(f"Stalled. "
+                     f"Max resid = {IRmax:.3e}, rms = {rms:.3e}")
         return model, 1
     else:
         if verbosity:
-            print(f"Success, converged after {k} iterations. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+            log.info(f"Success, converged after {k} iterations. "
+                     f"Max resid = {IRmax:.3e}, rms = {rms:.3e}")
         return model, 0
 
 
@@ -284,24 +283,23 @@ def fsclark(ID,
             stall_count += stall_count
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} max resid = {IRmax}",
-                  file=log)
+            log.info(f"At iteration {k} max resid = {IRmax}")
 
     IRmfs = np.sum(IR, axis=0)
     rms = np.std(IRmfs, axis=(-2,-1)).max()
 
     if k >= maxit:
         if verbosity:
-            print(f"Max iters reached. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+            log.info(f"Max iters reached. "
+                     f"Max resid = {IRmax:.3e}, rms = {rms:.3e}")
         return model, 1
     elif stall_count >= 5:
         if verbosity:
-            print(f"Stalled. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+            log.info(f"Stalled. "
+                     f"Max resid = {IRmax:.3e}, rms = {rms:.3e}")
         return model, 1
     else:
         if verbosity:
-            print(f"Success, converged after {k} iterations. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+            log.info(f"Success, converged after {k} iterations. "
+                     f"Max resid = {IRmax:.3e}, rms = {rms:.3e}")
         return model, 0
