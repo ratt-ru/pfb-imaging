@@ -349,17 +349,60 @@ def _hci(**kw):
                                 radecs[ms][idt],
                                 b0 + fi, ti, ms])
 
-        nds = len(datasets)
-        futures = []
-        associated_workers = {}
-        idle_workers = set(client.scheduler_info()['workers'].keys())
-        n_launched = 0
-        while idle_workers and len(datasets):   # Seed each worker with a task.
-            # pop so len(datasets) -> 0
+    nds = len(datasets)
+    futures = []
+    associated_workers = {}
+    idle_workers = set(client.scheduler_info()['workers'].keys())
+    n_launched = 0
+    while idle_workers and len(datasets):   # Seed each worker with a task.
+        # pop so len(datasets) -> 0
+        (subds, jones, freqsi, utimesi, ridx, rcnts,
+        radeci, fi, ti, ms) = datasets.pop(0)
+
+        worker = idle_workers.pop()
+        future = client.submit(stokes_image,
+                        dc1=dc1,
+                        dc2=dc2,
+                        operator=operator,
+                        ds=subds,
+                        jones=jones,
+                        opts=opts,
+                        nx=nx,
+                        ny=ny,
+                        freq=freqsi,
+                        utime=utimesi,
+                        tbin_idx=ridx,
+                        tbin_counts=rcnts,
+                        cell_rad=cell_rad,
+                        radec=radeci,
+                        antpos=antpos[ms],
+                        poltype=poltype[ms],
+                        fds_store=fdsstore,
+                        bandid=fi,
+                        timeid=ti,
+                        wid=worker,
+                        pure=False,
+                        workers=worker)
+
+        futures.append(future)
+        associated_workers[future] = worker
+        n_launched += 1
+
+    ac_iter = as_completed(futures)
+    for completed_future in ac_iter:
+        if isinstance(completed_future.result(), BaseException):
+            print(completed_future.result())
+            raise RuntimeError('Something went wrong')
+
+        worker = associated_workers.pop(completed_future)
+        # need this to release memory for some reason
+        client.cancel(completed_future)
+
+        # pop so len(datasets) -> 0
+        if len(datasets):
             (subds, jones, freqsi, utimesi, ridx, rcnts,
             radeci, fi, ti, ms) = datasets.pop(0)
 
-            worker = idle_workers.pop()
             future = client.submit(stokes_image,
                             dc1=dc1,
                             dc2=dc2,
@@ -384,64 +427,21 @@ def _hci(**kw):
                             pure=False,
                             workers=worker)
 
-            futures.append(future)
+            ac_iter.add(future)
             associated_workers[future] = worker
             n_launched += 1
 
-        ac_iter = as_completed(futures)
-        for completed_future in ac_iter:
-            if isinstance(completed_future.result(), BaseException):
-                print(completed_future.result())
-                raise RuntimeError('Something went wrong')
+        if opts.memory_reporting:
+            worker_info = client.scheduler_info()['workers']
+            print(f'Total memory {worker} MB = ',
+                worker_info[worker]['metrics']['memory']/1e6, file=log)
 
-            worker = associated_workers.pop(completed_future)
-            # need this to release memory for some reason
-            client.cancel(completed_future)
+        if opts.progressbar:
+            print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
 
-            # pop so len(datasets) -> 0
-            if len(datasets):
-                (subds, jones, freqsi, utimesi, ridx, rcnts,
-                radeci, fi, ti, ms) = datasets.pop(0)
-
-                future = client.submit(stokes_image,
-                                dc1=dc1,
-                                dc2=dc2,
-                                operator=operator,
-                                ds=subds,
-                                jones=jones,
-                                opts=opts,
-                                nx=nx,
-                                ny=ny,
-                                freq=freqsi,
-                                utime=utimesi,
-                                tbin_idx=ridx,
-                                tbin_counts=rcnts,
-                                cell_rad=cell_rad,
-                                radec=radeci,
-                                antpos=antpos[ms],
-                                poltype=poltype[ms],
-                                fds_store=fdsstore,
-                                bandid=fi,
-                                timeid=ti,
-                                wid=worker,
-                                pure=False,
-                                workers=worker)
-
-                ac_iter.add(future)
-                associated_workers[future] = worker
-                n_launched += 1
-
-            if opts.memory_reporting:
-                worker_info = client.scheduler_info()['workers']
-                print(f'Total memory {worker} MB = ',
-                    worker_info[worker]['metrics']['memory']/1e6, file=log)
-
-            if opts.progressbar:
-                print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
-
-            # this should not be necessary but just in case
-            if ac_iter.is_empty():
-                break
-        print("\n")  # after progressbar above
+        # this should not be necessary but just in case
+        if ac_iter.is_empty():
+            break
+    print("\n")  # after progressbar above
 
     return
