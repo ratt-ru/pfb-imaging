@@ -432,7 +432,7 @@ def test_fskclean(ms_name):
             if schema[worker]['inputs'][param]['default'] == _UNSET_DEFAULT:
                 schema[worker]['inputs'][param]['default'] = None
 
-    p = 'FS'
+    p = 'IQUV'
     outname = str(test_dir / 'test')
     basename = f'{outname}_{p}'
     dds_name = f'{basename}_main.dds'

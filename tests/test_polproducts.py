@@ -84,7 +84,7 @@ def test_polproducts(do_gains, ms_name):
     flux['Q'] = 0.6
     flux['U'] = 0.3
     flux['V'] = 0.1
-    flux['FS'] = np.array([flux['I'], flux['Q'], flux['U'], flux['V']])
+    flux['IQUV'] = np.array([flux['I'], flux['Q'], flux['U'], flux['V']])
     locx = int(3*npix//4)
     locy = int(npix//4)
     model[0, :, locx, locy] = flux['I']
@@ -298,9 +298,9 @@ def test_polproducts(do_gains, ms_name):
             # print(flux[p], comp/wsum)
             assert_allclose(flux[p], comp/wsum, rtol=1e-4, atol=1e-4)
 
-    # test FS
+    # test IQUV
     outname = str(test_dir / 'test')
-    for p in ['FS']:
+    for p in ['IQUV']:
         basename = f'{outname}_{p}'
         dds_name = f'{basename}_main.dds'
         # set defaults from schema

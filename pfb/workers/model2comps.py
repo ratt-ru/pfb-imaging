@@ -97,8 +97,8 @@ def _model2comps(**kw):
             log.info(f"Overwriting {coeff_name}")
             mdsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{coeff_name} exists. "
-                             "Set --overwrite to overwrite it. ")
+            log.error_and_raise(f"{coeff_name} exists. Set --overwrite to overwrite it. ",
+                                ValueError)
 
 
     cell_rad = dds[0].cell_rad
@@ -167,7 +167,7 @@ def _model2comps(**kw):
                 )
 
     if not np.any(model):
-        raise ValueError(f'Model is empty')
+        log.error_and_raise(f'Model is empty', RuntimeError)
     radec = (dds[0].ra, dds[0].dec)
 
     if opts.out_freqs is not None:
@@ -211,7 +211,8 @@ def _model2comps(**kw):
         model = np.where(model > opts.min_val, model, 0.0)
 
     if not np.any(model):
-        raise ValueError(f'Model has no components above {opts.min_val}')
+        log.error_and_raise(f'Model has no components above {opts.min_val}',
+                            RuntimeError)
 
     if opts.nbasisf is None:
         nbasisf = nband-1
@@ -228,10 +229,9 @@ def _model2comps(**kw):
                            method=opts.fit_mode,
                            sigmasq=opts.sigmasq)
     except np.linalg.LinAlgError as e:
-        log.info(f"Exception {e} raised during fit ."
+        log.error_and_raise(f"Exception raised during fit ."
               f"Do you perhaps have empty sub-bands?"
-              f"Decreasing nbasisf")
-        raise e
+              f"Decreasing nbasisf", e)
 
     # save interpolated dataset
     data_vars = {
@@ -372,15 +372,17 @@ def _model2comps_fits(**kw):
             log.info(f"Overwriting {coeff_name}")
             mdsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{coeff_name} exists. "
-                             "Set --overwrite to overwrite it. ")
+            log.error_and_raise(f"{coeff_name} exists. "
+                                "Set --overwrite to overwrite it. ",
+                                RuntimeError)
 
 
     images_list = sorted(
             glob(f"{opts.from_fits}-[0-9][0-9][0-9][0-9]-model.fits"),
             key=os.path.getctime)
     if len(images_list) == 0:
-        raise ValueError(f"No images found at {opts.from_fits}")
+        log.error_and_raise(f"No images found at {opts.from_fits}",
+                            ValueError)
 
     # get cube info
     nband = len(images_list)
@@ -454,7 +456,7 @@ def _model2comps_fits(**kw):
         wsums /= wsums.max()
 
     if not np.any(model):
-        raise ValueError(f'Model is empty')
+        log.error_and_raise('Model is empty', ValueError)
     radec = (ra, dec)
 
     if opts.out_freqs is not None:
@@ -498,7 +500,8 @@ def _model2comps_fits(**kw):
         model = np.where(model > opts.min_val, model, 0.0)
 
     if not np.any(model):
-        raise ValueError(f'Model has no components above {opts.min_val}')
+        log.error_and_raise(f'Model has no components above {opts.min_val}',
+                            ValueError)
 
     if opts.nbasisf is None:
         nbasisf = nband-1
@@ -515,10 +518,9 @@ def _model2comps_fits(**kw):
                            method=opts.fit_mode,
                            sigmasq=opts.sigmasq)
     except np.linalg.LinAlgError as e:
-        log.info(f"Exception {e} raised during fit ."
+        log.error_and_raise(f"Exception raised during fit ."
               f"Do you perhaps have empty sub-bands?"
-              f"Decreasing nbasisf")
-        raise e
+              f"Decreasing nbasisf", e)
 
     # save interpolated dataset
     data_vars = {

@@ -31,7 +31,8 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
          pmtol=1e-5, pmmaxit=50, pmverbose=1):
 
     if len(residual.shape) > 3:
-        raise ValueError("Residual must have shape (nband, nx, ny)")
+        log.error_and_raise("Residual must have shape (nband, nx, ny)",
+                            ValueError)
 
     nband, nx, ny = residual.shape
 
@@ -44,7 +45,8 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
             def beam(x): return beam_image * x
             def beaminv(x): return np.where(beam_image > 0.01,  x / beam_image, x)
         except BaseException:
-            raise ValueError("Beam has incorrect shape")
+            log.error_and_raise("Beam has incorrect shape",
+                                ValueError)
 
     if mask is None:
         def mask(x): return x
@@ -57,15 +59,16 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
                 assert mask.shape == (1, nx, ny)
                 def mask(x): return mask * x
             else:
-                raise ValueError
+                raise
         except BaseException:
-            raise ValueError("Mask has incorrect shape")
+            log.error_and_raise("Mask has incorrect shape",
+                                ValueError)
 
     # PSF operator
     psfo = PSF(psf, residual.shape, nthreads=nthreads)  #, backward_undersize=1.2)
 
     if cpsf is None:
-        raise ValueError
+        log.error_and_raise("Need to pass in cpsf", ValueError)
     else:
         cpsfo = PSF(cpsf, residual.shape, nthreads=nthreads)
 

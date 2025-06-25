@@ -150,8 +150,9 @@ def _sara(**kw):
     dds, dds_list = xds_from_url(dds_name)
 
     if dds[0].corr.size > 1:
-        raise NotImplementedError("Joint polarisation deconvolution not "
-                                  "yet supported for sara algorithm")
+        log.error_and_raise("Joint polarisation deconvolution not "
+                            "yet supported for sara algorithm",
+                            NotImplementedError)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     
@@ -165,7 +166,8 @@ def _sara(**kw):
     freq_out = np.unique(np.array(freq_out))
     time_out = np.unique(np.array(time_out))
     if time_out.size > 1:
-        raise NotImplementedError('Only static models currently supported')
+        log.error_and_raise('Only static models currently supported',
+                            NotImplementedError)
 
     nband = freq_out.size
 
@@ -292,7 +294,8 @@ def _sara(**kw):
     if l1_reweight_from == 0:
         log.info('Initialising with L1 reweighted')
         if not update.any():
-            raise ValueError("Cannot reweight before any updates have been performed")
+            log.error_and_raise("Cannot reweight before any updates have been performed",
+                                ValueError)
         psi.dot(update, outvar)
         tmp = np.sum(outvar, axis=0)
         # exclude zeros from padding DWT's

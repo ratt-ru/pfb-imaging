@@ -52,7 +52,7 @@ def kclean(**kw):
     dds_name = f'{basename}_{opts.suffix}.dds'
 
     ti = time.time()
-    if opts.product == 'FS':
+    if opts.product != 'I':
         _fskclean(**opts)
     else:
         _kclean(**opts)
@@ -115,8 +115,8 @@ def _kclean(**kw):
     dds, dds_list = xds_from_url(dds_name)
 
     if dds[0].corr.size > 1:
-        raise NotImplementedError("Joint polarisation deconvolution not "
-                                  "yet supported for kclean algorithm")
+        log.error_and_raise("Joint polarisation deconvolution not yet supported for kclean algorithm",
+                            NotImplementedError)
 
     nx, ny = dds[0].x.size, dds[0].y.size
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size

@@ -29,7 +29,8 @@ def init(**kw):
 
     remprod = opts.product.upper().strip('IQUV')
     if len(remprod):
-        raise NotImplementedError(f"Product {remprod} not yet supported")
+        log.error_and_raise(f"Product {remprod} not yet supported",
+                            NotImplementedError)
 
     from daskms.fsspec_store import DaskMSStore
     msnames = []
@@ -40,7 +41,7 @@ def init(**kw):
             assert len(mslist) > 0
             msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
         except:
-            raise ValueError(f"No MS at {ms}")
+            log.error_and_raise(f"No MS at {ms}", ValueError)
     opts.ms = msnames
     if opts.gain_table is not None:
         gainnames = []
@@ -51,7 +52,7 @@ def init(**kw):
                 assert len(gtlist) > 0
                 gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
             except Exception as e:
-                raise ValueError(f"No gain table  at {gt}")
+                log.error_and_raise(f"No gain table  at {gt}", ValueError)
         opts.gain_table = gainnames
 
     OmegaConf.set_struct(opts, True)
@@ -85,7 +86,7 @@ def init(**kw):
     try:
         client.close()
     except Exception as e:
-        raise e
+        pass
 
 def _init(**kw):
     opts = OmegaConf.create(kw)
@@ -109,8 +110,9 @@ def _init(**kw):
             log.info(f"Overwriting {basename}.xds")
             xds_store.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.xds exists. "
-                             "Set overwrite to overwrite it. ")
+            log.error_and_raise(f"{basename}.xds exists. "
+                                "Set overwrite to overwrite it. ",
+                                RuntimeError)
 
     fs = fsspec.filesystem(xds_store.protocol)
     fs.makedirs(xds_store.url, exist_ok=True)
@@ -328,28 +330,21 @@ def _init(**kw):
         n_launched += 1
 
         if opts.progressbar:
-            log.info(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
+            print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
 
     times_out = []
     freqs_out = []
     ac_iter = as_completed(futures)
     for completed_future in ac_iter:
+        if isinstance(completed_future.result(), BaseException):
+            e = completed_future.result()
+            import traceback
+            log.error_and_raise(f"Traceback:\n{traceback.format_exc()}", e)
 
-        try:
-            result = completed_future.result()
-        except Exception as e:
-            raise e
-
+        result = completed_future.result()
         if result is not None:
             times_out.append(result[0])
             freqs_out.append(result[1])
-
-        if isinstance(completed_future.result(), BaseException):
-            e = completed_future.result()
-            log.error(f"Operation failed: {e}")
-            import traceback
-            log.error(f"Traceback:\n{traceback.format_exc()}")
-            raise RuntimeError('Something went wrong')
 
         worker = associated_workers.pop(completed_future)
         # we need this here to release memory for some reason
@@ -397,7 +392,7 @@ def _init(**kw):
                   worker_info[worker]['metrics']['memory']/1e6)
 
         if opts.progressbar:
-            log.info(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
+            print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
 
         # this should not be necessary but just in case
         if ac_iter.is_empty():

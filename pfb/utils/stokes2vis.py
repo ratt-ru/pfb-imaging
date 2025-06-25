@@ -205,31 +205,10 @@ def single_stokes(
     uv_max = np.maximum(np.abs(uvw[:, 0]).max(), np.abs(uvw[:, 1]).max())
     max_freq = freq.max()
 
-    # set corr coords
-    if opts.product == 'I':
-        corr = ['I']
-    elif opts.product == 'Q':
-        corr = ['Q']
-    elif opts.product == 'U':
-        corr = ['U']
-    elif opts.product == 'V':
-        corr = ['V']
-    elif opts.product == 'DS':
-        if poltype == 'linear':
-            corr = ['I','Q']
-        elif poltype == 'circular':
-            corr = ['I','V']
-    elif opts.product == 'FS':
-        if ncorr == 2:
-            if poltype == 'linear':
-                corr = ['I','Q']
-            elif poltype == 'circular':
-                corr = ['I','V']
-        elif ncorr == 4:
-            corr = ['I','Q','U','V']
-    else:
-        raise ValueError(f"Unknown polarisation product {opts.product}")
-
+    # set corr coords (removing duplicates and sorting)
+    corr = list("".join(dict.fromkeys(sorted(opts.product))))
+    ncorr = len(corr)
+    
     # simple average over channels
     if opts.chan_average > 1:
         from africanus.averaging import time_and_channel

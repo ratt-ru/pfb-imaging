@@ -29,7 +29,8 @@ def hci(**kw):
 
     remprod = opts.product.upper().strip('IQUV')
     if len(remprod):
-        raise NotImplementedError(f"Product {remprod} not yet supported")
+        log.error_and_raise(f"Product {remprod} not yet supported",
+                            NotImplementedError)
 
 
     from daskms.fsspec_store import DaskMSStore
@@ -41,7 +42,8 @@ def hci(**kw):
             assert len(mslist) > 0
             msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
         except:
-            raise ValueError(f"No MS at {ms}")
+            log.error_and_raise(f"No MS at {ms}",
+                                ValueError)
     opts.ms = msnames
     if opts.gain_table is not None:
         gainnames = []
@@ -52,7 +54,8 @@ def hci(**kw):
                 assert len(gtlist) > 0
                 gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
             except Exception as e:
-                raise ValueError(f"No gain table  at {gt}")
+                log.error_and_raise(f"No gain table  at {gt}",
+                                    ValueError)
         opts.gain_table = gainnames
 
     OmegaConf.set_struct(opts, True)
@@ -112,8 +115,9 @@ def _hci(**kw):
             log.info(f"Overwriting {basename}.fds")
             fdsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.fds exists. "
-                             "Set overwrite to overwrite it. ")
+            log.error_and_raise(f"{basename}.fds exists. "
+                                "Set overwrite to overwrite it. ",
+                                RuntimeError)
 
     fs = fsspec.filesystem(fdsstore.url.split(':', 1)[0])
     fs.makedirs(fdsstore.url, exist_ok=True)
@@ -149,7 +153,8 @@ def _hci(**kw):
 
     # write model to tmp ds
     if opts.transfer_model_from is not None:
-        raise NotImplementedError('Use the degrid app to populate a model column instead')
+        log.error_and_raise('Use the degrid app to populate a model column instead',
+                            NotImplementedError)
 
     log.info('Constructing mapping')
     row_mapping, freq_mapping, time_mapping, \
@@ -391,10 +396,9 @@ def _hci(**kw):
     for completed_future in ac_iter:
         if isinstance(completed_future.result(), BaseException):
             e = completed_future.result()
-            log.error(f"Operation failed: {e}")
             import traceback
-            log.error(f"Traceback:\n{traceback.format_exc()}")
-            raise RuntimeError('Something went wrong')
+            log.error_and_raise(f"Traceback:\n{traceback.format_exc()}",
+                                e)
 
         worker = associated_workers.pop(completed_future)
         # need this to release memory for some reason

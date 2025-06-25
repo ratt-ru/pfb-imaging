@@ -301,7 +301,8 @@ def primal_dual_dist(
         eps = np.sqrt(np.sum(eps_num)/np.sum(eps_den))
 
         if np.isnan(eps):
-            raise ValueError('eps is nan')
+            log.error_and_raise("eps is nan",
+                                ValueError)
 
 
         if not k % report_freq and verbosity > 1:

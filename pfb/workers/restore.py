@@ -106,8 +106,9 @@ def _restore(**kw):
                             protocol,
                             name='psfparsn_mfs.pkl')
     except:
-        raise RuntimeError("Could not load MFS PSF pamaters. "
-                           "Run grid worker with psf=true to remake.")
+        log.error_and_raise("Could not load MFS PSF pamaters. "
+                            "Run grid worker with psf=true to remake.",
+                            RuntimeError)
     
     if opts.drop_bands is not None:
         ddso = []

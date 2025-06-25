@@ -41,7 +41,7 @@ def degrid(**kw):
             assert len(mslist) > 0
             msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
         except:
-            raise ValueError(f"No MS at {ms}")
+            log.error_and_raise(f"No MS at {ms}", ValueError)
     opts.ms = msnames
 
     basename = opts.output_filename
@@ -53,7 +53,7 @@ def degrid(**kw):
         try:
             assert mds_store.exists()
         except Exception as e:
-            raise ValueError(f"No mds at {opts.mds}")
+            log.error_and_raise(f"No mds at {opts.mds}", ValueError)
     opts.mds = mds_store.url
 
     dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
@@ -61,15 +61,17 @@ def degrid(**kw):
         try:
             assert dds_store.exists()
         except Exception as e:
-            raise ValueError(f"There must be a dds at {dds_store.url}. "
-                             "Specify mds and channels-per-image to degrid from mds.")
+            log.error_and_raise(f"There must be a dds at {dds_store.url}. "
+                                "Specify mds and channels-per-image to degrid from mds.",
+                                ValueError)
     opts.dds = dds_store.url
     OmegaConf.set_struct(opts, True)
 
     if opts.product.upper() not in ["I"]:
                                     # , "Q", "U", "V", "XX", "YX", "XY",
                                     # "YY", "RR", "RL", "LR", "LL"]:
-        raise NotImplementedError(f"Product {opts.product} not yet supported")
+        log.error_and_raise(f"Product {opts.product} not yet supported",
+                            NotImplementedError)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/degrid_{timestamp}.log'
@@ -93,7 +95,7 @@ def degrid(**kw):
     try:
         client.close()
     except Exception as e:
-        raise e
+        pass
 
 def _degrid(**kw):
     opts = OmegaConf.create(kw)
@@ -131,8 +133,8 @@ def _degrid(**kw):
             for ds in dds:
                 cpi = np.maximum(ds.chan.size, cpi)
         else:
-            raise ValueError("You must supply channels per image in the "
-                             "absence of a dds")
+            log.error_and_raise("You must supply channels per image in the "
+                                "absence of a dds", ValueError)
     else:
         cpi = opts.channels_per_image
 
@@ -215,7 +217,8 @@ def _degrid(**kw):
             mask += region_mask
             masks.append(region_mask)
         if (mask > 1).any():
-            raise ValueError("Overlapping regions are not supported")
+            log.error_and_raise("Overlapping regions are not supported",
+                                ValueError)
         remainder = 1 - mask
         # place DI component first
         masks = [remainder] + masks

@@ -184,7 +184,8 @@ def _spotless(**kw):
     try:
         assert xds_store.exists()
     except Exception as e:
-        raise ValueError(f"There must be a dataset at {xds_store.url}")
+        log.error_and_raise(f"There must be a dataset at {xds_store.url}",
+                            ValueError)
 
     xds, xds_list = xds_from_url(xds_store.url)
 
@@ -259,12 +260,6 @@ def _spotless(**kw):
         xdsb[bid].append(ds)
 
     nband = len(xdsb.keys())
-    # try:
-    #     assert len(names) == nband
-    # except Exception as e:
-    #     raise ValueError(f"You must initialise {nband} workers. "
-    #                      "One for each imaging band.")
-
 
     # set up band actors
     log.info("Setting up actors")
@@ -450,7 +445,7 @@ def _spotless(**kw):
             model[b] = results[i][0]
 
         if np.isnan(model).any():
-            raise ValueError('Model is nan')
+            log.error_and_raise('Model is nan', RuntimeError)
 
         save_fits(np.mean(model[fsel], axis=0),
                   fits_oname + f'_{opts.suffix}_model_{k+1}.fits',

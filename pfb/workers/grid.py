@@ -47,8 +47,8 @@ def grid(**kw):
     try:
         assert xds_store.exists()
     except Exception as e:
-        raise ValueError(f"There must be an xds at {xds_name}. "
-                            f"Original traceback {e}")
+        log.error_and_raise(f"There must be an xds at {xds_name}. ",
+                            RuntimeError)
     opts.xds = xds_store.url
     OmegaConf.set_struct(opts, True)
 
@@ -172,7 +172,7 @@ def grid(**kw):
         try:
             client.close()
         except Exception as e:
-            raise e
+            pass
 
 def _grid(**kw):
     opts = OmegaConf.create(kw)
@@ -207,7 +207,8 @@ def _grid(**kw):
     try:
         assert xds_store.exists()
     except Exception as e:
-        raise ValueError(f"There must be a dataset at {xds_store.url}")
+        log.error_and_raise(f"There must be a dataset at {xds_store.url}",
+                            RuntimeError)
 
     log.info(f"Lazy loading xds from {xds_store.url}")
     xds, xds_list = xds_from_url(xds_store.url)
@@ -355,7 +356,8 @@ def _grid(**kw):
         try:
             mds = xr.open_zarr(opts.transfer_model_from, chunks=None)
         except Exception as e:
-            raise ValueError(f"No dataset found at {opts.transfer_model_from}")
+            log.error_and_raise(f"No dataset found at {opts.transfer_model_from}",
+                                RuntimeError)
 
         # should we load these inside the worker calls?
         model_coeffs = mds.coefficients.values
@@ -522,7 +524,8 @@ def _grid(**kw):
         for c in range(ncorr):
             rms = np.std(residual_mfs[timeid][c])
             if np.isnan(rms):
-                raise ValueError('RMS of residual in nan, something went wrong')
+                log.error_and_raise('RMS of residual in nan, something went wrong',
+                                    RuntimeError)
             rmax = np.abs(residual_mfs[timeid][c]).max()
             log.info(f"Time ID {timeid}: {corrs[c]} - resid max = {rmax:.3e}, "
                   f"rms = {rms:.3e}")

@@ -24,7 +24,8 @@ def smoovie(**kw):
     # to prevent flickering 
     opts.nthreads = 1
     if opts.product.upper() not in ["I","Q", "U", "V"]:
-        raise NotImplementedError(f"Product {opts.product} not yet supported")
+        log.error_and_raise(f"Product {opts.product} not yet supported",
+                            NotImplementedError)
     
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/smoovie_{timestamp}.log'
@@ -82,7 +83,8 @@ def _smoovie(**kw):
     try:
         assert fds_store.exists()
     except Exception as e:
-        raise ValueError(f"There must be a dataset at {fds_store.url}")
+        log.error_and_raise(f"There must be a dataset at {fds_store.url}",
+                            ValueError)
 
     log.info(f"Lazy loading fds from {fds_store.url}")
     fds, fds_list = xds_from_url(fds_store.url)
@@ -178,7 +180,8 @@ def _smoovie(**kw):
                         # client=client
                     )
             else:
-                raise ValueError(f"Unsupported format {opts.out_format}")
+                log.error_and_raise(f"Unsupported format {opts.out_format}", ValueError)
 
     else:
-        raise NotImplementedError(f"Can't animate axis {opts.animate_axis}")
+        log.error_and_raise(f"Can't animate axis {opts.animate_axis}",
+                            NotImplementedError)
