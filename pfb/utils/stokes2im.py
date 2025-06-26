@@ -216,6 +216,8 @@ def stokes_image(
         tdec = radec[1]
 
     ra_deg = np.rad2deg(tra)
+    if ra_deg > 180:
+        ra_deg -= 360
     dec_deg = np.rad2deg(tdec)
 
 
@@ -456,7 +458,7 @@ def stokes_image(
             'FREQ': (('FREQ',), np.array([freq_out])),
             'TIME': (('TIME',), utime),
             'STOKES': (('STOKES',), list(corr)),
-            'X': (('X',), ra_deg + np.arange(-(nx//2), nx//2) * cell_deg),
+            'X': (('X',), ra_deg + np.arange(nx//2, -(nx//2), -1) * cell_deg),
             'Y': (('Y',), dec_deg + np.arange(-(ny//2), ny//2) * cell_deg),
         }
         # X and Y are transposed for compatibility with breifast
