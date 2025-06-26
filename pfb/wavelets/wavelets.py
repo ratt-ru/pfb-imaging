@@ -27,7 +27,7 @@ def signal_size(ncoeff, nfilter):
     return 2*ncoeff - nfilter + 2
 
 
-@numba.njit(nogil=True, cache=True, inline='always', fastmath=True, error_model='numpy')
+@numba.njit(nogil=True, cache=True, inline='always', fastmath=False, error_model='numpy')
 def downsampling_convolution(input, output, filter, step):
 
     i = step - 1
@@ -95,7 +95,7 @@ def downsampling_convolution(input, output, filter, step):
         o += 1
 
 
-@numba.njit(nogil=True, cache=True, inline='always', fastmath=True, error_model='numpy')
+@numba.njit(nogil=True, cache=True, inline='always', fastmath=False, error_model='numpy')
 def upsampling_convolution_valid_sf(input, filter, output):
 
     N = input.shape[0]
