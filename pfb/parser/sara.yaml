@@ -109,7 +109,7 @@ inputs:
     info:
       Mask residual where model is non-zero when computing rms.
       This is not recommended for largely non-empty fields.
-  init_factor:
+  init-factor:
     dtype: float
     default: 0.5
     info:
