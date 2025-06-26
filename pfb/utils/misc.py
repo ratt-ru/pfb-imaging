@@ -633,7 +633,7 @@ def fitcleanbeam(psf: np.ndarray,
                                 bounds=((0, None), (0, None), (0, np.pi)),
                                 factr=1e7)
         if d['warnflag'] != 0:
-            log.info('WARNING - warning flag raised during psf fit')
+            print('WARNING - warning flag raised during psf fit')
 
         if p[0] >= p[1]:  # major and minor axes correct
             emaj = p[0]
@@ -643,7 +643,7 @@ def fitcleanbeam(psf: np.ndarray,
             emaj = p[1]
             emin = p[0]
             PA = p[2] + np.pi/2
-            log.info('WARNING - emaj/emin flipped in solver')
+            print('WARNING - emaj/emin flipped in solver')
 
         Gausspars.append([emaj * pixsize, emin * pixsize, PA])
 
@@ -708,20 +708,25 @@ def _model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
 
 
 def init_mask(mask, model, output_type, log):
+    if model.ndim==3:
+        _, nx, ny = model.shape
+    elif model.ndim==2:
+        nx, ny = model.shape
     if mask is None:
-        log.info("No mask provided")
-        mask = np.ones((mds.nx, mds.ny), dtype=output_type)
+        print("No mask provided")
+        mask = np.ones((nx, ny), dtype=output_type)
     elif mask.endswith('.fits'):
         try:
+            from pfb.utils.fits import load_fits
             mask = load_fits(mask, dtype=output_type).squeeze()
-            assert mask.shape == (mds.nx, mds.ny)
-            log.info('Using provided fits mask')
+            assert mask.shape == (nx, ny)
+            print('Using provided fits mask')
         except Exception as e:
-            log.info(f"No mask found at {mask}")
+            print(f"No mask found at {mask}")
             raise e
     elif mask.lower() == 'model':
         mask = np.any(model, axis=0)
-        log.info('Using model to construct mask')
+        print('Using model to construct mask')
     else:
         raise ValueError(f'Unsupported masking option {mask}')
     return mask
@@ -1439,72 +1444,6 @@ def dynamic_spectrum(time, freq, transient):
 
     return dspec
 
-# def fft_interp(image, cellxi, cellyi, nxo, nyo,
-#                cellxo, cellyo, shiftx, shifty):
-#     '''
-#     Use non-uniform fft to interpolate image in a flux conservative way
-
-#     image   - input image
-#     cellxi  - input x cell-size
-#     cellyi  - input y cell-size
-#     nxo     - number of x pixels in output
-#     nyo     - number of y pixels in output
-#     cellxo  - output x cell size
-#     cellyo  - output y cell size
-#     shiftx  - shift x coordinate by this amount
-#     shifty  - shift y coordinate by this amount
-
-#     All sizes are assumed to be in radians.
-#         '''
-#     import matplotlib.pyplot as plt
-#     from scipy.fft import fftn, ifftn
-#     Fs = np.fft.fftshift
-#     iFs = np.fft.ifftshift
-#     # basic
-#     nx, ny = image.shape
-#     imhat = Fs(fftn(image))
-
-#     imabs = np.abs(imhat)
-#     imphase = np.angle(imhat) - 1.0
-#     # imphase = np.roll(imphase, nx//2, axis=0)
-#     imshift = ifftn(iFs(imabs*np.exp(1j*imphase))).real
-
-#     impad = np.pad(imhat, ((nx//2, nx//2), (ny//2, ny//2)), mode='constant')
-#     imo = ifftn(iFs(impad)).real
-
-#     log.info(np.sum(image) - np.sum(imo))
-
-#     plt.figure(1)
-#     plt.imshow(image/image.max(), vmin=0, vmax=1, interpolation=None)
-#     plt.colorbar()
-#     plt.figure(2)
-#     plt.imshow(imo/imo.max(), vmin=0, vmax=1, interpolation=None)
-#     plt.colorbar()
-#     plt.figure(3)
-#     plt.imshow(imshift/imshift.max() - image/image.max(), vmin=0, vmax=1, interpolation=None)
-#     plt.colorbar()
-
-#     plt.show()
-
-    # # coordinates on input grid
-    # nx, ny = image.shapeimhat
-    # x = np.arange(-(nx//2), nx//2) * cellxi
-    # y = np.arange(-(ny//2), ny//2) * cellyi
-    # xx, yy = np.meshgrid(x, y, indexing='ij')
-
-    # # frequencies on output grid
-    # celluo = 1/(nxo*cellxo)
-    # cellvo = 1/(nyo*cellyo)
-    # uo = np.arange(-(nxo//2), nxo//2) * celluo/nxo
-    # vo = np.arange(-(nyo//2), nyo//2) * cellvo/nyo
-
-    # uu, vv = np.meshgrid(uo, vo, indexing='ij')
-    # uv = np.vstack((uo, vo)).T
-
-
-    # res1 = finufft.nufft2d3(xx.ravel(), yy.ravel(), image.ravel(), uu.ravel(), vv.ravel())
-
-
 
 def wplanar(uvw):
     uvw_centered = uvw - np.mean(uvw, axis=0)
@@ -1514,4 +1453,4 @@ def wplanar(uvw):
     idx = np.argsort(eigenvalues)[::-1]
     eigenvalues = eigenvalues[idx]
     eigenvectors = eigenvectors[:, idx]
-    log.info("Planarity ratio = ", eigenvalues[-1]/eigenvalues[0])
+    print("Planarity ratio = ", eigenvalues[-1]/eigenvalues[0])
