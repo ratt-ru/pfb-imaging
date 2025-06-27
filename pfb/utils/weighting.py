@@ -19,8 +19,14 @@ JIT_OPTIONS = {
 @njit(**JIT_OPTIONS, inline='always')
 def _es_kernel(x, y, xkern, ykern, betak):
     for i in range(x.size):
-        xkern[i] = np.exp(betak*(np.sqrt(1-x[i]*x[i]) - 1))
-        ykern[i] = np.exp(betak*(np.sqrt(1-y[i]*y[i]) - 1))
+        if x[i]*x[i] < 1:
+            xkern[i] = np.exp(betak*(np.sqrt(1-x[i]*x[i]) - 1))
+        else:
+            xkern[i] = 0.0
+        if y[i]*y[i] < 1:
+            ykern[i] = np.exp(betak*(np.sqrt(1-y[i]*y[i]) - 1))
+        else:
+            ykern[i] = 0.0
 
 def compute_counts(dsl,
                    nx, ny,
@@ -122,19 +128,17 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                 # pixel coordinates
                 ug = (u_tmp + umax)/u_cell
                 vg = (v_tmp + vmax)/v_cell
-
-                # corr weights
-                wrf = wgt_row[:, f]
-
                 # indices
                 u_idx = np.int32(np.floor(ug))
                 v_idx = np.int32(np.floor(vg))
+
+                # corr weights
+                wrf = wgt_row[:, f]
+                
                 # LB - is there an easier check for this?
                 if (u_idx<0) or (u_idx>nx) or (v_idx<0) or (v_idx>ny):
                     print('uv out of bounds in cc')
                     continue
-
-                # counts[g, :, u_idx, v_idx] += wrf
 
                 # nearest neighbour
                 if k==0:
