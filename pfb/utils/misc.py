@@ -1445,12 +1445,16 @@ def dynamic_spectrum(time, freq, transient):
     return dspec
 
 
-def wplanar(uvw):
-    uvw_centered = uvw - np.mean(uvw, axis=0)
-    cov_mat = np.cov(uvw_centered, rowvar=False)
-    eigenvalues, eigenvectors = np.linalg.eigh(cov_mat)
-    # Sort eigenvalues and eigenvectors in descending order
-    idx = np.argsort(eigenvalues)[::-1]
-    eigenvalues = eigenvalues[idx]
-    eigenvectors = eigenvectors[:, idx]
-    print("Planarity ratio = ", eigenvalues[-1]/eigenvalues[0])
+def wplanar(uvw, threshold=1e-5):
+    '''
+    Checks if uv lie in a plane using PCA.
+
+    '''
+    cov_mat = np.cov(uvw, rowvar=False)
+    eigenvalues = np.linalg.eigvalsh(cov_mat)
+    # sorted in ascending order
+    ratio = eigenvalues[0]/eigenvalues[-1]
+    if ratio > threshold:
+        return False
+    else:
+        return True

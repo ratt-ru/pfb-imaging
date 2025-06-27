@@ -359,6 +359,11 @@ def stokes_image(
     wsum = np.zeros(nstokes)
     residual = np.zeros((nstokes, nx, ny), dtype=real_type)
     psf = np.zeros((nstokes, nx_psf, ny_psf), dtype=real_type)
+    # TODO - the wgridder doesn't check if wgridding is actually
+    # required and always makes a minimum of nsupp number of wplanes
+    # where nsupp is the gridding kernel support. We could check this
+    # with pfb.utils.misc.wplanar if we can figure out the relationship
+    # between epsilon on the wplanar threshold parameter. 
     for c in range(nstokes):
         wsum[c] = weight[c, ~flag].sum()
         vis2dirty(
@@ -448,7 +453,6 @@ def stokes_image(
     # save outputs
     oname = f'spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
     if opts.output_format == 'zarr':
-        encoding = {}
         tchunk = 1
         fchunk = 1
         xchunk = 128
@@ -463,22 +467,21 @@ def stokes_image(
         }
         # X and Y are transposed for compatibility with breifast
         data_vars = {}
+        residual /= wsum[:, None, None]
         residual = np.transpose(residual[:, None, :, :].astype(np.float32),
                                 axes=(0, 1, 3, 2))
         data_vars['cube'] = (('STOKES', 'TIME', 'Y', 'X'), residual)
-        encoding['cube'] = {'chunks': (cchunk, tchunk, ychunk, xchunk),}
         if opts.psf_out:
             coords['X_PSF'] = (('X_PSF',), np.arange(nx_psf) * cell_deg)
             coords['Y_PSF'] = (('Y_PSF',), np.arange(ny_psf) * cell_deg)
+            psf /= wsum[:, None, None]
             psf = np.transpose(psf[:, None, :, :].astype(np.float32),
                                axes=(0, 1, 3, 2))
             data_vars['psf'] = (('corr', 'TIME', 'Y_PSF', 'X_PSF'), psf)
-            encoding['psf'] = {'chunks': (cchunk, tchunk, ychunk, xchunk),}
         if x is not None:
             x = np.transpose(x[:, None, :, :].astype(np.float32),
                              axes=(0, 1, 3, 2))
             data_vars['xhat'] = (('STOKES', 'TIME', 'Y', 'X'), x)
-            encoding['xhat'] = {'chunks': (cchunk, tchunk, ychunk, xchunk),}
         if opts.robustness is not None and opts.weight_grid_out:
             ic, ix, iy = np.where(counts > 0)
             wgt = np.zeros_like(counts)
@@ -488,21 +491,15 @@ def stokes_image(
             wgt = np.transpose(wgt[:, None, :, :].astype(np.float32),
                                axes=(0, 1, 3, 2))
             data_vars['wgtgrid'] = (('STOKES', 'TIME', 'Y_PAD', 'X_PAD'), wgt)
-            encoding['wgtgrid'] = {'chunks': (cchunk, tchunk, ychunk, xchunk),}
 
         data_vars['rms'] = (('STOKES', 'TIME'), rms[:, None].astype(np.float32))
-        encoding['rms'] = {'chunks': (cchunk, tchunk),}
         data_vars['wsum'] = (('STOKES', 'TIME'), wsum[:, None].astype(np.float32))
-        encoding['wsum'] = {'chunks': (cchunk, tchunk),}
         bmaj = np.array([gp[0] for gp in GaussPars], dtype=np.float32)
         bmin = np.array([gp[1] for gp in GaussPars], dtype=np.float32)
         bpa = np.array([gp[2] for gp in GaussPars], dtype=np.float32)
         data_vars['psf_maj'] = (('STOKES', 'TIME'), bmaj[:, None])
-        encoding['psf_maj'] = {'chunks': (cchunk, tchunk),}
         data_vars['psf_min'] = (('STOKES', 'TIME'), bmin[:, None])
-        encoding['psf_min'] = {'chunks': (cchunk, tchunk),}
         data_vars['psf_pa'] = (('STOKES', 'TIME'), bpa[:, None])
-        encoding['psf_pa'] = {'chunks': (cchunk, tchunk),}
 
         # TODO - provide time and freq centroids
         attrs = {
@@ -526,8 +523,7 @@ def stokes_image(
             coords=coords,
             attrs=attrs)
         out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr',
-                       mode='w',
-                       encoding=encoding,)
+                       mode='w')
     elif opts.output_format == 'fits':
         hdr['STOKES'] = corr
         save_fits(residual/wsum[:, None, None],
