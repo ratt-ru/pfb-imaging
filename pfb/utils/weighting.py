@@ -95,15 +95,15 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
     bin_counts = np.asarray(bin_counts).astype(bin_idx.dtype)
     bin_idx[1:] = np.cumsum(bin_counts)[0:-1]
 
-    # ko2 = k//2
-    # betak = 2.3*k
-    # pos = np.arange(k) - ko2
-    # xkern = np.zeros(k, dtype=dtype)
-    # ykern = np.zeros(k, dtype=dtype)
-    # x = np.zeros(k, dtype=dtype)
-    # y = np.zeros(k, dtype=dtype)
-    # x_idx = np.zeros(k, dtype=np.int64)
-    # y_idx = np.zeros(k, dtype=np.int64)
+    ko2 = k//2
+    betak = 2.3*k
+    pos = np.arange(k) - ko2
+    xkern = np.zeros(k, dtype=dtype)
+    ykern = np.zeros(k, dtype=dtype)
+    x = np.zeros(k, dtype=dtype)
+    y = np.zeros(k, dtype=dtype)
+    x_idx = np.zeros(k, dtype=np.int64)
+    y_idx = np.zeros(k, dtype=np.int64)
     for g in prange(ngrid):
         for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
             uvw_row = uvw[r]
@@ -134,32 +134,32 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                     print('uv out of bounds in cc')
                     continue
 
-                counts[g, :, u_idx, v_idx] += wrf
+                # counts[g, :, u_idx, v_idx] += wrf
 
-                # # nearest neighbour
-                # if k==0:
-                #     counts[g, :, u_idx, v_idx] += wrf
-                #     continue
+                # nearest neighbour
+                if k==0:
+                    counts[g, :, u_idx, v_idx] += wrf
+                    continue
 
-                # # the kernel is separable and only defined on [-1,1]
-                # x_idx[:] = pos + u_idx
-                # x[:] = (x_idx - ug + 0.5)/ko2
-                # y_idx[:] = pos + v_idx
-                # y[:] = (y_idx - vg + 0.5)/ko2
-                # _es_kernel(x, y, xkern, ykern, betak)
-                # # check bounds
-                # valid_ix = np.nonzero((x_idx >= 0) & (x_idx < nx))[0]
-                # valid_iy = np.nonzero((y_idx >= 0) & (y_idx < ny))[0]
+                # the kernel is separable and only defined on [-1,1]
+                x_idx[:] = pos + u_idx
+                x[:] = (x_idx - ug + 0.5)/ko2
+                y_idx[:] = pos + v_idx
+                y[:] = (y_idx - vg + 0.5)/ko2
+                _es_kernel(x, y, xkern, ykern, betak)
+                # check bounds
+                valid_ix = np.nonzero((x_idx >= 0) & (x_idx < nx))[0]
+                valid_iy = np.nonzero((y_idx >= 0) & (y_idx < ny))[0]
 
-                # for c in range(ncorr):
-                #     wrfc = wrf[c]
-                #     for i in valid_ix:
-                #         ix = x_idx[i]
-                #         xi = xkern[i]
-                #         for j in valid_iy:
-                #             iy = y_idx[j]
-                #             yi = ykern[j]
-                #             counts[g, c, ix, iy] += xi*yi*wrfc
+                for c in range(ncorr):
+                    wrfc = wrf[c]
+                    for i in valid_ix:
+                        ix = x_idx[i]
+                        xi = xkern[i]
+                        for j in valid_iy:
+                            iy = y_idx[j]
+                            yi = ykern[j]
+                            counts[g, c, ix, iy] += xi*yi*wrfc
 
     return counts.sum(axis=0)
 

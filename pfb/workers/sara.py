@@ -485,6 +485,7 @@ def _sara(**kw):
             rms = np.std(residual_mfs[rms_mask])
         else:
             rms = np.std(residual_mfs)
+        rmaxp = rmax
         rmax = np.abs(residual_mfs).max()
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
@@ -555,7 +556,7 @@ def _sara(**kw):
             l1weight = reweighter(model)
             l1reweight_active = True
 
-        if rms > rmsp:
+        if (rms > rmsp) and (rmax > rmaxp):
             diverge_count += 1
             if diverge_count > opts.diverge_count:
                 log.info("Algorithm is diverging. Terminating.")
