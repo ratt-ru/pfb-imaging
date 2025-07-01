@@ -89,17 +89,31 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
     w.wcs.equinox = 2000.0
 
     if header:
-        header = w.to_header()
+        # the order does seem to metter here,
+        # especially when using with StreamingHDU
+        header = fits.Header()
+        header['SIMPLE'] = (True, 'conforms to FITS standard')
+        header['BITPIX'] = (-32, 'array data type')
+        header['NAXIS'] = (4, 'number of array dimensions')
+        data_shape = (nx, ny, nchan, ncorr)
+        for i, size in enumerate(data_shape, 1):
+            header[f'NAXIS{i}'] = (size, f'length of data axis {i}')
+        
+        header['EXTEND'] = True
+        header['BSCALE'] = 1.0
+        header['BZERO'] = 0.0
+        header['BUNIT'] = unit
+        header['EQUINOX'] = 2000.0
+        header['BTYPE'] = 'Intensity'
+        
+
+        # add wcs keywords
+        wcs_header = w.to_header()
+        header.update(wcs_header)
+
         header['RESTFRQ'] = ref_freq
         header['ORIGIN'] = 'pfb-imaging'
-        header['BTYPE'] = 'Intensity'
-        header['BUNIT'] = unit
         header['SPECSYS'] = 'TOPOCENT'
-        header['NAXIS'] = 4
-        header['NAXIS1'] = nx
-        header['NAXIS2'] = ny
-        header['NAXIS3'] = nchan
-        header['NAXIS4'] = ncorr
         if ms_time is not None:
             # TODO - probably a round about way of doing this
             unix_time = quantity(f'{ms_time}s').to_unix_time()
@@ -120,9 +134,8 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
         # if 'MJDREF' in header:
         #     header.pop('MJDREF')
 
-        # header['EQUINOX'] = 2000.0
-        header['BSCALE'] = 1.0
-        header['BZERO'] = 0.0
+        # 
+        
         if casambm:
             header['CASAMBM'] = casambm  # we need this to pick up the beams table
         

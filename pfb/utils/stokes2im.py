@@ -501,7 +501,12 @@ def stokes_image(
         data_vars['psf_min'] = (('STOKES', 'TIME'), bmin[:, None])
         data_vars['psf_pa'] = (('STOKES', 'TIME'), bpa[:, None])
 
-        # TODO - provide time and freq centroids
+        # convert header to cards to maintain 
+        # order when writing to and from zarr
+        cards = []
+        for key, value in hdr.items():
+            cards.append((key, value))
+
         attrs = {
             'ra' : tra,
             'dec': tdec,
@@ -515,7 +520,7 @@ def stokes_image(
             'timeid': timeid,
             'robustness': opts.robustness,
             'utc': utc,
-            'header': {k: v for k, v in sorted(hdr.items())}
+            'header': cards
         }
 
         out_ds = xr.Dataset(
