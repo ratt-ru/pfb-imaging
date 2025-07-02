@@ -496,7 +496,8 @@ def stokes_image(
         data_vars['wsum'] = (('STOKES', 'TIME'), wsum[:, None].astype(np.float32))
         bmaj = np.array([gp[0] for gp in GaussPars], dtype=np.float32)
         bmin = np.array([gp[1] for gp in GaussPars], dtype=np.float32)
-        bpa = np.array([gp[2] for gp in GaussPars], dtype=np.float32)
+        # convert bpa to degrees
+        bpa = np.array([gp[2]*180/np.pi for gp in GaussPars], dtype=np.float32)
         data_vars['psf_maj'] = (('STOKES', 'TIME'), bmaj[:, None])
         data_vars['psf_min'] = (('STOKES', 'TIME'), bmin[:, None])
         data_vars['psf_pa'] = (('STOKES', 'TIME'), bpa[:, None])
