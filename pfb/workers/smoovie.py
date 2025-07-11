@@ -1,8 +1,8 @@
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
-import pyscilog
-pyscilog.init('pfb')
-log = pyscilog.get_logger('SMOOVIE')
+from pfb.utils import logging as pfb_logging
+pfb_logging.init('pfb')
+log = pfb_logging.get_logger('SMOOVIE')
 import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
@@ -29,7 +29,7 @@ def smoovie(**kw):
     
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/smoovie_{timestamp}.log'
-    pyscilog.log_to_file(logname)
+    pfb_logging.log_to_file(logname)
     log.info(f'Logs will be written to {logname}')
     OmegaConf.set_struct(opts, True)
 

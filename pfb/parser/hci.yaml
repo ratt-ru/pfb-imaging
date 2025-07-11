@@ -200,16 +200,12 @@ inputs:
     default: 2.0
     info:
       Minimum padding to be applied during gridding.
-  # flag-excess-rms:
-  #   dtype: float
-  #   default: 1.5
-  #   info:
-  #     Flag data with RMS above flag-excess-rms * median(rms).
-  # concat-time:
-  #   dtype: bool
-  #   default: false
-  #   info:
-  #     Concatenate gains and times across scan
+  phase-dir:
+    dtype: str
+    info:
+      Rephase visibilities to this phase center.
+      Should be a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+
   _include:
     - (.)gridding.yml
     - (.)out.yml

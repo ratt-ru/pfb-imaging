@@ -2,9 +2,9 @@
 from contextlib import ExitStack
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
-import pyscilog
-pyscilog.init('pfb')
-log = pyscilog.get_logger('SPOTLESS')
+from pfb.utils import logging as pfb_logging
+pfb_logging.init('pfb')
+log = pfb_logging.get_logger('SPOTLESS')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
@@ -52,7 +52,7 @@ def spotless(**kw):
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{opts.log_directory}/spotless_{timestamp}.log'
-    pyscilog.log_to_file(logname)
+    pfb_logging.log_to_file(logname)
     log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing

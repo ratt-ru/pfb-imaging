@@ -1,8 +1,8 @@
 import numpy as np
 from distributed import get_client
 from scipy.linalg import norm
-import pyscilog
-log = pyscilog.get_logger('PM')
+from pfb.utils import logging as pfb_logging
+log = pfb_logging.get_logger('PM')
 
 
 def power_method(

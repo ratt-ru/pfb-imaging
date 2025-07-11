@@ -1458,3 +1458,32 @@ def wplanar(uvw, threshold=1e-5):
         return False
     else:
         return True
+    
+def fit_hyperplane(x, y):
+    """Approximate a surface by a hyperplane in D dimensions
+
+    inputs:
+        x - D x N array of coordinates.
+        y - N array of (possibly noisy) observations.
+            Can be complex valued.
+
+    outputs:
+        theta - a vector of coefficients suct that X.T.dot(theta)
+                is the hyperplane approximation of y and X is x
+                with a row of ones appended as the final axis
+    """
+    D, N = x.shape
+    y = y.squeeze()[None, :]
+    z = np.vstack((x, y))
+    cov = np.cov(z)
+    s, V = np.linalg.eigh(cov)
+    n = V[:, 0].conj()  # defines normal to the plane
+    theta = np.zeros(D+1, dtype=y.dtype)
+    for d in range(D+1):
+        if d < D:
+            theta[d] = -n[d]/n[-1]
+        else:
+            # we need to take the mean here because y can be noisy
+            # i.e. we do not have a point exactly in the plane
+            theta[d] = np.mean(n[None, 0:-1].dot(x)/n[-1] + y)
+    return theta

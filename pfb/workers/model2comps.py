@@ -2,9 +2,9 @@
 from contextlib import ExitStack
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
-import pyscilog
-pyscilog.init('pfb')
-log = pyscilog.get_logger('MODEL2COMPS')
+from pfb.utils import logging as pfb_logging
+pfb_logging.init('pfb')
+log = pfb_logging.get_logger('MODEL2COMPS')
 
 
 from scabha.schema_utils import clickify_parameters
@@ -39,7 +39,7 @@ def model2comps(**kw):
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/model2comps_{timestamp}.log'
-    pyscilog.log_to_file(logname)
+    pfb_logging.log_to_file(logname)
     log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing

@@ -5,8 +5,8 @@ from numba import njit, prange
 import dask.array as da
 from pfb.operators.psf import psf_convolve_cube, psf_convolve_fscube
 from ducc0.misc import empty_noncritical
-import pyscilog
-log = pyscilog.get_logger('CLARK')
+from pfb.utils import logging as pfb_logging
+log = pfb_logging.get_logger('CLARK')
 
 
 @njit(nogil=True, cache=True, parallel=True)

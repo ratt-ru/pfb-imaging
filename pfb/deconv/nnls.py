@@ -4,8 +4,8 @@ from pfb.opt.fista import fista
 from pfb.operators.psf import PSF
 from pfb.utils.fits import save_fits
 from pfb.opt.power_method import power_method
-import pyscilog
-log = pyscilog.get_logger('NNLS')
+from pfb.utils import logging as pfb_logging
+log = pfb_logging.get_logger('NNLS')
 
 
 def resid_func(x, dirty, hessian, mask, beam, wsum):

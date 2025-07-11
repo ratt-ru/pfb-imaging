@@ -12,8 +12,8 @@ from ducc0.misc import empty_noncritical
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
-# import pyscilog
-# log = pyscilog.get_logger('PCG')
+# from pfb.utils import logging as pfb_logging
+# log = pfb_logging.get_logger('PCG')
 
 @njit(nogil=True, cache=False, parallel=False)
 def update(x, xp, r, rp, p, Ap, alpha):

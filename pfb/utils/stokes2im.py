@@ -127,7 +127,8 @@ def stokes_image(
             model_vis = (model_vis[:, :, 0] + model_vis[:, :, -1])/2.0
         else:
             raise NotImplementedError(f'Model subtraction not supported for product {opts.product}')
-
+    else:
+        model_vis = None
     # this seems to help with memory consumption
     # note the ds.drop_vars above
     del ds
@@ -220,6 +221,28 @@ def stokes_image(
         ra_deg -= 360
     dec_deg = np.rad2deg(tdec)
 
+    # # rephase if asked
+    # if opts.phase_dir is not None:
+    #     new_ra, new_dec = opts.phase_dir.split(',')
+    #     c = SkyCoord(new_ra, new_dec, frame='fk5', unit=(units.hourangle, units.deg))
+    #     new_ra_rad = np.deg2rad(c.ra.value)
+    #     new_dec_rad = np.deg2rad(c.dec.value)
+    #     from tart2ms.fixvis import synthesize_uvw, rephase
+    #     data = rephase(data, uvw, (ddid,), sel, freq, 
+    #                    (new_ra_rad, new_dec_rad),
+    #                    (tra, tdec), phasesign=-1)
+    #     if model_vis is not None:
+    #         model_vis = rephase(model_vis, uvw,
+    #                             (ddid,), sel, freq, 
+    #                             (new_ra_rad, new_dec_rad),
+    #                             (tra, tdec), phasesign=-1)
+    #     dct = synthesize_uvw(antpos, time, ant1, ant2,
+    #                (tra, tdec),
+    #                stopctr_units=["rad", "rad"], stopctr_epoch="j2000",
+    #                time_TZ="UTC", time_unit="s",
+    #                posframe="ITRF", posunits=["m", "m", "m"], ack=True)
+        
+
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
@@ -293,8 +316,9 @@ def stokes_image(
                                  signv*uvw[:, 1:2]*y0t*signy -
                                  uvw[:, 2:]*(n-1)))
 
-    data = data.transpose(2, 0, 1)
-    weight = weight.transpose(2, 0, 1)
+    # TODO - why do we need to cast here?
+    data = data.transpose(2, 0, 1).astype(complex_type)
+    weight = weight.transpose(2, 0, 1).astype(real_type)
 
     # the fact that uvw and freq are in double precision
     # complicates the numba implementation so we just cast

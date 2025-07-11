@@ -25,7 +25,6 @@ scikit-image = ">=0.24.0"
 PyWavelets = ">=1.7.0"
 katbeam = ">=0.1"
 numexpr = ">=2.10.1"
-pyscilog = { git = "https://github.com/gijzelaerr/pyscilog", branch = "main" }
 Click = ">=8.1"
 ducc0 = ">=0.35.0"
 sympy = ">=1.9"
@@ -40,6 +39,8 @@ bokeh = ">=3.1.0"
 regions = ">=0.9"
 psutil = ">=5.9.8"
 matplotlib = ">=3.9.2"
+rich = ">=13.0.0"
+tart2ms = "*"
 
 [tool.poetry.scripts]
 pfb = "pfb.workers.main:cli"

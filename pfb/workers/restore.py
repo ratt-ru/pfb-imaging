@@ -2,9 +2,9 @@
 from contextlib import ExitStack
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
-import pyscilog
-pyscilog.init('pfb')
-log = pyscilog.get_logger('RESTORE')
+from pfb.utils import logging as pfb_logging
+pfb_logging.init('pfb')
+log = pfb_logging.get_logger('RESTORE')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
@@ -38,7 +38,7 @@ def restore(**kw):
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{opts.log_directory}/restore_{timestamp}.log'
-    pyscilog.log_to_file(logname)
+    pfb_logging.log_to_file(logname)
     log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing

@@ -1,6 +1,6 @@
 import numpy as np
-import pyscilog
-log = pyscilog.get_logger('FISTA')
+from pfb.utils import logging as pfb_logging
+log = pfb_logging.get_logger('FISTA')
 
 
 def back_track_func(x, xp, gradp, likp, L):

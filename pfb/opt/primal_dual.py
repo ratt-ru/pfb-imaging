@@ -4,9 +4,9 @@ from pfb.utils.dist import l1reweight_func
 from pfb.utils.misc import norm_diff
 from numba import njit, prange
 from uuid import uuid4
-import pyscilog
+from pfb.utils import logging as pfb_logging
 from time import time
-log = pyscilog.get_logger('PD')
+log = pfb_logging.get_logger('PD')
 
 
 def primal_dual(

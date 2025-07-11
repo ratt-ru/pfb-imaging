@@ -1,8 +1,8 @@
 import numpy as np
 import numexpr as ne
 from pfb.utils.misc import give_edges
-import pyscilog
-log = pyscilog.get_logger('HOGBOM')
+from pfb.utils import logging as pfb_logging
+log = pfb_logging.get_logger('HOGBOM')
 
 
 def hogbom(

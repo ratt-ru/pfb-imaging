@@ -8,8 +8,8 @@ from pfb.operators.psf import PSF
 from pfb.prox.prox_21 import prox_21
 from pfb.utils.fits import save_fits
 from pfb.utils.misc import Gaussian2D
-import pyscilog
-log = pyscilog.get_logger('SARA')
+from pfb.utils import logging as pfb_logging
+log = pfb_logging.get_logger('SARA')
 
 
 def resid_func(x, dirty, hessian, mask, beam, wsum):
