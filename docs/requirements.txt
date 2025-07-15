@@ -1,4 +1,4 @@
-# Documentation requirements for Read the Docs
+# Documentation requirements for GitHub Pages
 # These are the minimal requirements needed to build documentation
 
 mkdocs>=1.5.0

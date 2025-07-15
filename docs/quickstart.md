@@ -1,17 +1,17 @@
 # Quick Start
 
-This guide will walk you through your first PFB-Imaging workflow, from raw measurement set to final image.
+This guide will walk you through your first pfb-imaging workflow, from raw measurement set to final image.
 
 ## Prerequisites
 
 Ensure you have:
-- PFB-Imaging installed ([Installation Guide](installation.md))
+- pfb-imaging installed ([Installation Guide](installation.md))
 - A measurement set (MS) file
 - Basic familiarity with radio interferometry concepts
 
 ## Basic Workflow
 
-The PFB-Imaging pipeline follows a sequential workflow:
+The pfb-imaging pipeline follows a sequential workflow:
 
 ```mermaid
 graph LR
@@ -26,7 +26,7 @@ graph LR
 
 ### Step 1: Initialize Data
 
-Convert your measurement set to PFB-Imaging format:
+Convert your measurement set to pfb-imaging format:
 
 ```bash
 pfb init --ms my_data.ms --output-filename my_output

@@ -2,20 +2,18 @@
 
 ## Requirements
 
-PFB-Imaging requires Python 3.10 or later and is tested on Linux systems. The package depends on several scientific Python libraries and specialized radio astronomy tools.
+pfb-imaging requires Python 3.10 or later and is tested on Linux systems. The package depends on several scientific Python libraries and specialized radio astronomy tools.
 
 ### System Requirements
 
 - **Python**: 3.10, 3.11, or 3.12
 - **Operating System**: Linux (Ubuntu 20.04+, CentOS 8+, or similar)
-- **Memory**: At least 8GB RAM (16GB+ recommended for large datasets)
-- **Storage**: Fast SSD recommended for optimal performance
 
 ## Installation Methods
 
 ### 1. PyPI Installation (Recommended)
 
-The easiest way to install PFB-Imaging is from PyPI:
+The easiest way to install pfb-imaging is from PyPI:
 
 ```bash
 pip install pfb-imaging
@@ -54,21 +52,9 @@ pip install -e ducc
 
 This provides optimized FFT and gridding operations.
 
-### JAX Backend
-
-PFB-Imaging uses JAX for automatic differentiation. For GPU acceleration:
-
-```bash
-# For CUDA support
-pip install jax[cuda] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-
-# For TPU support
-pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-```
-
 ## CASA Measures Data
 
-PFB-Imaging requires CASA measures data for coordinate transformations. This is automatically downloaded during the first run, but you can pre-install it:
+pfb-imaging requires CASA measures data for coordinate transformations. This is automatically downloaded during the first run, but you can pre-install it:
 
 ```bash
 mkdir -p ~/measures
@@ -84,7 +70,7 @@ Verify your installation by running:
 pfb --help
 ```
 
-You should see the PFB-Imaging command-line interface with available workers.
+You should see the pfb-imaging command-line interface with available workers.
 
 ## Docker Installation
 
@@ -97,76 +83,3 @@ docker build -t pfb-imaging .
 # Run with data mounted
 docker run -v /path/to/data:/data pfb-imaging pfb init --ms /data/my_data.ms
 ```
-
-## Troubleshooting
-
-### Common Issues
-
-#### Import Errors
-
-If you encounter import errors, ensure all dependencies are installed:
-
-```bash
-pip install -r requirements.txt
-```
-
-#### Memory Issues
-
-For large datasets, increase memory limits:
-
-```bash
-export NUMBA_CACHE_DIR=/tmp/numba-cache
-export OMP_NUM_THREADS=4
-```
-
-#### Performance Issues
-
-1. **Use SSD storage** for intermediate files
-2. **Adjust chunk sizes** in configuration
-3. **Increase number of workers** for parallel processing
-
-```bash
-pfb grid --nworkers 8 --nthreads-per-worker 2
-```
-
-### Environment Variables
-
-Configure PFB-Imaging behavior with environment variables:
-
-```bash
-# Numba cache directory
-export NUMBA_CACHE_DIR=/tmp/numba-cache
-
-# OpenMP thread count
-export OMP_NUM_THREADS=4
-
-# Dask configuration
-export DASK_CONFIG=/path/to/dask.yaml
-```
-
-## Dependencies
-
-### Core Dependencies
-
-- **NumPy**: Numerical computing
-- **SciPy**: Scientific computing
-- **Dask**: Distributed computing
-- **Xarray**: Labeled arrays
-- **JAX**: Automatic differentiation
-
-### Radio Astronomy Dependencies
-
-- **codex-africanus**: Radio astronomy algorithms
-- **dask-ms**: Measurement set I/O
-- **katbeam**: Beam models
-- **python-casacore**: CASA table access
-
-### Optional Dependencies
-
-- **matplotlib**: Plotting
-- **bokeh**: Interactive visualization
-- **jupyter**: Notebook support
-
-## Next Steps
-
-After installation, check out the [Quick Start](quickstart.md) guide to begin processing your data.

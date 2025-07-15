@@ -1,6 +1,6 @@
 # Performance Benchmarks
 
-This section provides performance benchmarks for PFB-Imaging algorithms, helping users understand computational requirements and optimize their workflows.
+This section provides performance benchmarks for pfb-imaging algorithms, helping users understand computational requirements and optimize their workflows.
 
 ## Benchmark Environment
 
@@ -351,7 +351,7 @@ import psutil
 from pathlib import Path
 
 class BenchmarkSuite:
-    """Comprehensive benchmark suite for PFB-Imaging."""
+    """Comprehensive benchmark suite for pfb-imaging."""
     
     def __init__(self, output_dir="benchmarks"):
         self.output_dir = Path(output_dir)
@@ -459,4 +459,4 @@ jobs:
           output-file-path: benchmark_results.json
 ```
 
-This comprehensive benchmarking framework helps users optimize their PFB-Imaging workflows and developers identify performance regressions.
+This comprehensive benchmarking framework helps users optimize their pfb-imaging workflows and developers identify performance regressions.

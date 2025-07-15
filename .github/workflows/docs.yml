@@ -31,16 +31,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Poetry
-        uses: abatilo/actions-poetry@v3
-        with:
-          poetry-version: "1.8.4"
-
-      - name: Configure Poetry
-        run: poetry config virtualenvs.create false
-
       - name: Install dependencies
-        run: poetry install --only=main,docs
+        run: pip install -r docs-requirements.txt
 
       - name: Setup Pages
         id: pages
@@ -48,7 +40,7 @@ jobs:
 
       - name: Build documentation
         run: |
-          poetry run mkdocs build --clean --verbose
+          mkdocs build --clean --verbose
           # Create .nojekyll file to bypass Jekyll processing
           touch site/.nojekyll
 
@@ -84,24 +76,16 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Poetry
-        uses: abatilo/actions-poetry@v3
-        with:
-          poetry-version: "1.8.4"
-
-      - name: Configure Poetry
-        run: poetry config virtualenvs.create false
-
       - name: Install dependencies
-        run: poetry install --only=main,docs
+        run: pip install -r docs-requirements.txt
 
       - name: Check documentation builds
         run: |
-          poetry run mkdocs build --clean --verbose --strict
+          mkdocs build --clean --verbose --strict
           
       - name: Test documentation links
         run: |
-          poetry run mkdocs build --clean
+          mkdocs build --clean
           # Test that basic pages exist
           test -f site/index.html
           test -f site/installation/index.html
@@ -111,12 +95,12 @@ jobs:
       - name: Check for broken internal links
         run: |
           # Simple check for common broken link patterns
-          poetry run mkdocs build --clean
+          mkdocs build --clean
           grep -r "404" site/ && exit 1 || echo "No 404 errors found"
           
       - name: Validate MkDocs configuration
         run: |
-          poetry run python -c "
+          python -c "
           import yaml
           with open('mkdocs.yml', 'r') as f:
               config = yaml.safe_load(f)
@@ -136,21 +120,13 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Poetry
-        uses: abatilo/actions-poetry@v3
-        with:
-          poetry-version: "1.8.4"
-
-      - name: Configure Poetry
-        run: poetry config virtualenvs.create false
-
       - name: Install dependencies
-        run: poetry install --only=main,docs
+        run: pip install -r docs-requirements.txt
 
       - name: Build and time documentation
         run: |
           echo "Building documentation..."
-          time poetry run mkdocs build --clean --verbose
+          time mkdocs build --clean --verbose
           
       - name: Check site size
         run: |

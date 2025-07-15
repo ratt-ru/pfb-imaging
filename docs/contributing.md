@@ -1,6 +1,6 @@
-# Contributing to PFB-Imaging
+# Contributing to pfb-imaging
 
-Thank you for your interest in contributing to PFB-Imaging! This guide will help you get started with development and contributing to the project.
+Thank you for your interest in contributing to pfb-imaging! This guide will help you get started with development and contributing to the project.
 
 ## Getting Started
 
@@ -413,4 +413,4 @@ Contributors are recognized in:
 - Release notes
 - Documentation acknowledgments
 
-Thank you for contributing to PFB-Imaging!
+Thank you for contributing to pfb-imaging!

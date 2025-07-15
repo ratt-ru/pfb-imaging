@@ -1,5 +1,5 @@
 """
-Logging utilities for PFB-Imaging using standard Python logging with Rich formatting.
+Logging utilities for pfb-imaging using standard Python logging with Rich formatting.
 
 This module provides a drop-in replacement for pyscilog with enhanced
 formatting using the Rich library for better console output.

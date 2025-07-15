@@ -1,12 +1,12 @@
 # Configuration
 
-PFB-Imaging uses a flexible configuration system based on YAML schemas. Each worker has its own configuration schema that automatically generates CLI parameters.
+pfb-imaging uses a flexible configuration system based on YAML schemas. Each worker has its own configuration schema that automatically generates CLI parameters.
 
 ## Configuration Methods
 
 ### 1. Command Line Arguments
 
-The simplest way to configure PFB-Imaging:
+The simplest way to configure pfb-imaging:
 
 ```bash
 pfb kclean --niter 1000 --threshold 0.01 --gain 0.1
@@ -121,7 +121,7 @@ maxit: 500                    # Maximum iterations
 
 ## Schema-Based Configuration
 
-PFB-Imaging uses YAML schemas to define configuration parameters. Schemas are located in `pfb/parser/` and automatically generate CLI interfaces.
+pfb-imaging uses YAML schemas to define configuration parameters. Schemas are located in `pfb/parser/` and automatically generate CLI interfaces.
 
 ### Example Schema
 
@@ -270,7 +270,7 @@ loggers:
 
 ## Configuration Validation
 
-PFB-Imaging validates configuration parameters:
+pfb-imaging validates configuration parameters:
 
 ```bash
 # Check configuration

@@ -1,38 +1,23 @@
-# PFB-Imaging
+# pfb-imaging
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![Documentation Status](https://readthedocs.org/projects/pfb-imaging/badge/?version=latest)](https://pfb-imaging.readthedocs.io/en/latest/?badge=latest)
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://ratt-ru.github.io/pfb-imaging/)
 
-**PFB-Imaging** is a radio interferometric imaging suite based on the preconditioned forward-backward algorithm. It's designed for high-performance astronomical data processing with distributed computing capabilities.
+`pfb-imaging` is a flexible radio interferometric imaging suite based on the preconditioned forward-backward algorithm. It exposes common steps in a typical radio astronomy imaging pipeline as individual applications (a.k.a **workers**) which can be run from the command line or strung together into a highly customizable imager using [`stimela`](https://github.com/caracal-pipeline/stimela). It is part of the **africanus** ecosystem documented in the paper following series:
 
-## Overview
+- [**Africanus I. Scalable, distributed and efficient radio data processing with Dask-MS and Codex Africanus**](https://arxiv.org/abs/2412.12052)
+- [**Africanus II. QuartiCal: calibrating radio interferometer data at scale using Numba and Dask**](https://arxiv.org/abs/2412.10072)
+- [**Africanus III. pfb-imaging -- a flexible radio interferometric imaging suite**](https://arxiv.org/abs/2412.10073)
+- [**Africanus IV. The Stimela2 framework: scalable and reproducible workflows, from local to cloud compute**](https://arxiv.org/abs/2412.10080)
 
-PFB-Imaging provides a comprehensive suite of tools for processing radio interferometric data, with a focus on:
-
-- **High-performance computing**: Distributed processing using Dask
-- **Advanced algorithms**: Preconditioned forward-backward optimization
-- **Flexible deconvolution**: Support for classical and modern sparsity-based methods
-- **Scientific accuracy**: Built on proven mathematical foundations
 
 ## Key Features
 
-### 🚀 Performance
-- **Distributed computing** with Dask for scalability
-- **Memory-efficient** chunked processing for large datasets
-- **Optimized algorithms** using Numba JIT compilation and DUCC0
-
-### 🔬 Scientific Capabilities
-- **Full Stokes polarization** processing
-- **Advanced deconvolution** algorithms (SARA, Hogbom, Clark)
-- **Sparsity regularization** with wavelet transforms
-- **Preconditioned optimization** for faster convergence
-
-### 🛠️ Developer-Friendly
-- **Modular architecture** with worker-based processing pipeline
-- **Configuration-driven** with YAML schemas
-- **Comprehensive testing** with automated CI/CD
-- **Extensive documentation** with examples and tutorials
+- Uses [`dask-ms`](https://github.com/ratt-ru/dask-ms) to interface with measurement set-like objects exposed as `xarray` datasets 
+- Interfaces with [`QuartiCal`](https://github.com/ratt-ru/QuartiCal) gain tables to apply gains on the fly
+- On the fly averaging using the averaging modules in [`codex-africanus`](https://github.com/ratt-ru/codex-africanus)
+- Exposes `stimela` cabs for each worker making it easy to construct custom imaging pipelines. 
 
 ## Quick Start
 
@@ -51,54 +36,30 @@ pip install -e .
 ### Basic Usage
 
 ```bash
-# Initialize measurement set
-pfb init --ms my_data.ms --output-filename my_output
+# Get the list of available workers 
+pfb --help
 
-# Create dirty image and PSF
-pfb grid --output-filename my_output
+# Get help on a specific worker
+pfb <worker> --help
 
-# Deconvolve using classical methods
-pfb kclean --output-filename my_output
-
-# Restore clean components
-pfb restore --output-filename my_output
+# Or using stimela
+stimela doc -l pfb::stimela_cabs.yml
+stimela doc pfb::stimela_cabs.yml pfb.init
 ```
 
-## Mathematical Foundation
-
-PFB-Imaging is built on the **preconditioned forward-backward algorithm**, which solves the optimization problem:
-
-$$
-\min_x \frac{1}{2} \|Ax - b\|^2_2 + \lambda \|Wx\|_1
-$$
-
-Where:
-- $A$ is the measurement operator (gridding + FFT)
-- $x$ is the image to be reconstructed
-- $b$ are the observed visibilities
-- $W$ is a sparsifying transform (wavelets)
-- $\lambda$ controls the regularization strength
-
-The algorithm alternates between:
-1. **Forward step**: Gradient descent on the data fidelity term
-2. **Backward step**: Proximal operator of the regularization term
-
-## Architecture
-
-The system follows a modular **worker-based pattern** where each processing step is a separate CLI command:
+A typical imaging pipeline strings these workers together in a specific order. For example:
 
 ```mermaid
 graph LR
-    A[Measurement Set] --> B[pfb init]
-    B --> C[pfb grid]
-    C --> D[pfb kclean/sara]
-    D --> E[pfb restore]
-    E --> F[FITS Output]
+    A[pfb init] --> B[pfb grid]
+    B --> C[pfb kclean/sara]
+    C --> D[pfb restore]
+    D --> E[pfb degrid]
 ```
 
 ## Getting Help
 
-- 📖 **Documentation**: [https://pfb-imaging.readthedocs.io/](https://pfb-imaging.readthedocs.io/)
+- 📖 **Documentation**: [https://ratt-ru.github.io/pfb-imaging/](https://ratt-ru.github.io/pfb-imaging/)
 - 🐛 **Issues**: [GitHub Issues](https://github.com/ratt-ru/pfb-imaging/issues)
 - 💬 **Discussions**: [GitHub Discussions](https://github.com/ratt-ru/pfb-imaging/discussions)
 
@@ -108,18 +69,20 @@ We welcome contributions! Please see our [Contributing Guide](contributing.md) f
 
 ## Citation
 
-If you use PFB-Imaging in your research, please cite:
+If you use `pfb-imaging` in your research, please cite:
 
 ```bibtex
-@software{pfb_imaging,
-  author = {Bester, Landman},
-  title = {PFB-Imaging: Radio interferometric imaging suite},
-  url = {https://github.com/ratt-ru/pfb-imaging},
-  version = {0.0.5},
-  year = {2024}
+@misc{bester2024africanusiiipfbimaging,
+      title={Africanus III. pfb-imaging -- a flexible radio interferometric imaging suite}, 
+      author={Hertzog L. Bester and Jonathan S. Kenyon and Audrey Repetti and Simon J. Perkins and Oleg M. Smirnov and Tariq Blecher and Yassine Mhiri and Jakob Roth and Ian Heywood and Yves Wiaux and Benjamin V. Hugo},
+      year={2024},
+      eprint={2412.10073},
+      archivePrefix={arXiv},
+      primaryClass={astro-ph.IM},
+      url={https://arxiv.org/abs/2412.10073}, 
 }
 ```
 
 ## License
 
-PFB-Imaging is licensed under the MIT License. See [LICENSE](https://github.com/ratt-ru/pfb-imaging/blob/main/LICENSE) for details.
+`pfb-imaging` is licensed under the MIT License. See [LICENSE](https://github.com/ratt-ru/pfb-imaging/blob/main/LICENSE) for details.

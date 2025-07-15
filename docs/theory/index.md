@@ -1,6 +1,6 @@
 # Mathematical Background
 
-This section provides the mathematical foundation for the algorithms implemented in PFB-Imaging.
+This section provides the mathematical foundation for the algorithms implemented in pfb-imaging.
 
 ## Radio Interferometry Forward Model
 

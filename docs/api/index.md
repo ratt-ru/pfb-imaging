@@ -1,10 +1,10 @@
 # API Reference
 
-This section provides comprehensive API documentation for PFB-Imaging, automatically generated from the source code docstrings.
+This section provides comprehensive API documentation for pfb-imaging, automatically generated from the source code docstrings.
 
 ## Package Structure
 
-PFB-Imaging is organized into several main modules:
+pfb-imaging is organized into several main modules:
 
 ### Workers
 CLI workers that implement the main processing pipeline:
