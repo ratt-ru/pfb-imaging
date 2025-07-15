@@ -1,7 +1,8 @@
 site_name: PFB-Imaging Documentation
 site_description: Radio interferometric imaging suite based on a preconditioned forward-backward approach
 site_author: Landman Bester
-site_url: https://pfb-imaging.readthedocs.io/
+# site_url: https://pfb-imaging.readthedocs.io/
+site_url: https://ratt-ru.github.io/pfb-imaging/
 
 # Repository
 repo_name: pfb-imaging
