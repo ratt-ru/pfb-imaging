@@ -2,9 +2,9 @@
 from contextlib import ExitStack
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
-import pyscilog
-pyscilog.init('pfb')
-log = pyscilog.get_logger('FLUXTRACTOR')
+from pfb.utils import logging as pfb_logging
+pfb_logging.init('pfb')
+log = pfb_logging.get_logger('FLUXTRACTOR')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
@@ -44,13 +44,13 @@ def fluxtractor(**kw):
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/fluxtractor_{timestamp}.log'
-    pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    pfb_logging.log_to_file(logname)
+    log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing
-    print('Input Options:', file=log)
+    log.info('Input Options:')
     for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+        log.info('     %25s = %s' % (key, opts[key]))
 
     from pfb.utils.naming import xds_from_url
 
@@ -65,7 +65,7 @@ def fluxtractor(**kw):
             client = set_client(opts.nworkers, log, stack, client_log_level=opts.log_level)
             from distributed import as_completed
         else:
-            print("Faking client", file=log)
+            log.info("Faking client")
             from pfb.utils.dist import fake_client
             client = fake_client()
             names = [0]
@@ -79,8 +79,7 @@ def fluxtractor(**kw):
         # convert to fits files
         if opts.fits_mfs or opts.fits_cubes:
             from pfb.utils.fits import dds2fits
-            print(f"Writing fits files to {fits_oname}_{opts.suffix}",
-                  file=log)
+            log.info(f"Writing fits files to {fits_oname}_{opts.suffix}")
             futures = []
             fut = client.submit(
                     dds2fits,
@@ -125,9 +124,9 @@ def fluxtractor(**kw):
 
             for fut in as_completed(futures):
                 column = fut.result()
-                print(f'Done writing {column}', file=log)
+                log.info(f'Done writing {column}')
 
-        print(f"All done after {time.time() - ti}s", file=log)
+        log.info(f"All done after {time.time() - ti}s")
 
 def _fluxtractor(**kw):
     opts = OmegaConf.create(kw)
@@ -177,7 +176,7 @@ def _fluxtractor(**kw):
         residual = np.stack([getattr(ds, opts.residual_name).values for ds in dds],
                             axis=0)
     else:
-        print("Using dirty image as residual", file=log)
+        log.info("Using dirty image as residual")
         residual = np.stack([ds.DIRTY.values for ds in dds], axis=0)
     if opts.model_name in dds[0]:
         model = np.stack([getattr(ds, opts.model_name).values for ds in dds],
@@ -197,27 +196,26 @@ def _fluxtractor(**kw):
             mask = np.any(model > opts.min_model, axis=0)
             assert mask.shape == (nx, ny)
             mask = mask.astype(residual.dtype)
-            print('Using model > 0 to create mask', file=log)
+            log.info('Using model > 0 to create mask')
         else:
             mask = load_fits(opts.mask, dtype=residual.dtype).squeeze()
             assert mask.shape == (nx, ny)
             if opts.or_mask_with_model:
-                print("Combining model with input mask", file=log)
+                log.info("Combining model with input mask")
                 mask = np.logical_or(mask>0, model_mfs>0).astype(residual.dtype)
 
 
             mask = mask.astype(residual.dtype)
-            print('Using provided fits mask', file=log)
+            log.info('Using provided fits mask')
     else:
         mask = np.ones((nx, ny), dtype=residual.dtype)
-        print('Caution - No mask is being applied', file=log)
+        log.info('Caution - No mask is being applied')
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
-    print(f"Initial peak residual = {rmax:.3e}, rms = {rms:.3e}",
-          file=log)
+    log.info(f"Initial peak residual = {rmax:.3e}, rms = {rms:.3e}")
 
-    print("Solving for update", file=log)
+    log.info("Solving for update")
     try:
         from distributed import get_client, wait, as_completed
         client = get_client()
@@ -265,11 +263,9 @@ def _fluxtractor(**kw):
     residual_mfs = np.sum(residual/wsum, axis=0)
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
-    print(f"Final peak residual = {rmax:.3e}, rms = {rms:.3e}",
-          file=log)
+    log.info(f"Final peak residual = {rmax:.3e}, rms = {rms:.3e}")
 
-    print(f"Writing model to {basename}_{opts.suffix}_model.mds",
-          file=log)
+    log.info(f"Writing model to {basename}_{opts.suffix}_model.mds")
 
     try:
         coeffs, Ix, Iy, expr, params, texpr, fexpr = \
@@ -322,6 +318,6 @@ def _fluxtractor(**kw):
         coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model_mopped.mds",
                               mode='w')
     except Exception as e:
-            print(f"Exception {e} raised during model fit .", file=log)
+            log.info(f"Exception {e} raised during model fit .")
 
     return

@@ -8,8 +8,8 @@ from pfb.operators.psf import PSF
 from pfb.prox.prox_21 import prox_21
 from pfb.utils.fits import save_fits
 from pfb.utils.misc import Gaussian2D
-import pyscilog
-log = pyscilog.get_logger('SARA')
+from pfb.utils import logging as pfb_logging
+log = pfb_logging.get_logger('SARA')
 
 
 def resid_func(x, dirty, hessian, mask, beam, wsum):
@@ -31,7 +31,8 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
          pmtol=1e-5, pmmaxit=50, pmverbose=1):
 
     if len(residual.shape) > 3:
-        raise ValueError("Residual must have shape (nband, nx, ny)")
+        log.error_and_raise("Residual must have shape (nband, nx, ny)",
+                            ValueError)
 
     nband, nx, ny = residual.shape
 
@@ -44,7 +45,8 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
             def beam(x): return beam_image * x
             def beaminv(x): return np.where(beam_image > 0.01,  x / beam_image, x)
         except BaseException:
-            raise ValueError("Beam has incorrect shape")
+            log.error_and_raise("Beam has incorrect shape",
+                                ValueError)
 
     if mask is None:
         def mask(x): return x
@@ -57,15 +59,16 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
                 assert mask.shape == (1, nx, ny)
                 def mask(x): return mask * x
             else:
-                raise ValueError
+                raise
         except BaseException:
-            raise ValueError("Mask has incorrect shape")
+            log.error_and_raise("Mask has incorrect shape",
+                                ValueError)
 
     # PSF operator
     psfo = PSF(psf, residual.shape, nthreads=nthreads)  #, backward_undersize=1.2)
 
     if cpsf is None:
-        raise ValueError
+        log.error_and_raise("Need to pass in cpsf", ValueError)
     else:
         cpsfo = PSF(cpsf, residual.shape, nthreads=nthreads)
 
@@ -93,7 +96,7 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
     for m in range(psi.nbasis):
         alpha[m] = np.std(resid_comps[m])
         _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
-        print("Basis %i, alpha %f, sigma %f"%(m, alpha[m], sigmas[m]), file=log)
+        log.info("Basis %i, alpha %f, sigma %f"%(m, alpha[m], sigmas[m]))
 
     # l21 weights and dual
     weights21 = np.ones((psi.nbasis, psi.nmax), dtype=residual.dtype)
@@ -163,15 +166,15 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
                                      tol=pmtol, maxit=pmmaxit,
                                      verbosity=pmverbose)
 
-        print("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
-              i+1, rmax, rms, eps), file=log)
+        log.info("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
+              i+1, rmax, rms, eps))
 
         # reweight
         l2_norm = np.linalg.norm(psi.hdot(model), axis=1)
         for m in range(psi.nbasis):
             if adapt_sig21:
                 _, sigmas[m] = expon.fit(l2_norm[m], floc=0.0)
-                print('basis %i, sigma %f'%sigmas[m], file=log)
+                log.info('basis %i, sigma %f'%sigmas[m])
 
             weights21[m] = alpha[m]/(alpha[m] + l2_norm[m]) * sigmas[m]/sig_21
 
@@ -200,8 +203,7 @@ def sara(psf, model, residual, mask=None, beam_image=None, hessian=None,
 
 
         if eps < tol:
-            print("Success, convergence after %i iterations" % (i+1),
-                  file=log)
+            log.info("Success, convergence after %i iterations" % (i+1))
             break
 
     return model

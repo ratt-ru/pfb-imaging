@@ -10,7 +10,7 @@ from pfb.utils.weighting import weight_data
 from uuid import uuid4
 import gc
 from casacore.quanta import quantity
-from datetime import datetime
+from datetime import datetime, timezone
 from katbeam import JimBeam
 from scipy import ndimage
 from scipy.constants import c as lightspeed
@@ -87,10 +87,8 @@ def single_stokes(
     frow = ds.FLAG_ROW.values | (ant1 == ant2)
     ds = ds.drop_vars('FLAG_ROW')
 
-    # flag if any of the correlations flagged
-    flag = np.any(flag, axis=2)
     # combine flag and frow
-    flag = np.logical_or(flag, frow[:, None])
+    flag = np.logical_or(flag, frow[:, None, None])
 
     # we rely on this to check the number of output bands and
     # to ensure we don't end up with fully flagged chunks
@@ -180,6 +178,10 @@ def single_stokes(
                             literally(poltype),
                             literally(opts.product),
                             literally(str(ncorr)))
+    
+    # TODO - check if wsum for any of the correlations is zero
+    # This happens e.g. if selecting out diagonal correlations
+    # with QC and making CORRECTED_WEIGHTS 
 
     # do after weight_data otherwise mappings need to be recomputed
     # drop fully flagged rows
@@ -192,13 +194,21 @@ def single_stokes(
     uvw = uvw[mrow]
     flag = flag[mrow]
     weight = weight[mrow]
-
     gc.collect()
 
-    # LB - do before or after averaging?
+    # number of output correlations will be set by required Stokes products
+    ncorr = data.shape[-1]
+    # we need this for averaging
+    flag = np.tile(flag.any(axis=-1, keepdims=True), (1,1,ncorr))
+
+    # do before averaging
     uv_max = np.maximum(np.abs(uvw[:, 0]).max(), np.abs(uvw[:, 1]).max())
     max_freq = freq.max()
 
+    # set corr coords (removing duplicates and sorting)
+    corr = list("".join(dict.fromkeys(sorted(opts.product))))
+    ncorr = len(corr)
+    
     # simple average over channels
     if opts.chan_average > 1:
         from africanus.averaging import time_and_channel
@@ -209,32 +219,31 @@ def single_stokes(
                     ant1,
                     ant2,
                     uvw=uvw,
-                    flag=flag[:, :, None],
-                    weight_spectrum=weight[:, :, None],
-                    visibilities=data[:, :, None],
+                    flag=flag,
+                    weight_spectrum=weight,
+                    visibilities=data,
                     chan_freq=freq,
                     chan_width=chan_width,
                     time_bin_secs=1e-15,
                     chan_bin_size=opts.chan_average)
 
-        data = res.visibilities[:, :, 0]
-        weight = res.weight_spectrum[:, :, 0]
-        flag = res.flag[:, :, 0]
+        data = res.visibilities
+        weight = res.weight_spectrum
+        flag = res.flag
         freq = res.chan_freq
         chan_width = res.chan_width
         uvw = res.uvw
-        nrow, nchan = data.shape
+        nchan = freq.size
 
     if opts.bda_decorr < 1:
         from africanus.averaging import bda
-
         res = bda(time,
                   interval,
                   ant1, ant2,
                   uvw=uvw,
-                  flag=flag[:, :, None],
-                  weight_spectrum=weight[:, :, None],
-                  visibilities=data[:, :, None],
+                  flag=flag,
+                  weight_spectrum=weight,
+                  visibilities=data,
                   chan_freq=freq,
                   chan_width=chan_width,
                   decorrelation=opts.bda_decorr,
@@ -243,10 +252,11 @@ def single_stokes(
 
         offsets = res.offsets
         uvw = res.uvw[offsets[:-1], :]
-        weight = res.weight_spectrum.reshape(-1, nchan).squeeze()
-        data = res.visibilities.reshape(-1, nchan).squeeze()
-        flag = res.flag.reshape(-1, nchan).squeeze()
+        weight = res.weight_spectrum.reshape(-1, nchan, ncorr)
+        data = res.visibilities.reshape(-1, nchan, ncorr)
+        flag = res.flag.reshape(-1, nchan, ncorr)
 
+    flag = flag.any(axis=-1)
     mask = (~flag).astype(np.uint8)
 
 
@@ -254,11 +264,11 @@ def single_stokes(
     fov = opts.max_field_of_view
     cell_rad = 1.0 / (uv_max * max_freq / lightspeed)
     cell_deg = np.rad2deg(cell_rad)
-    npix = int(opts.max_field_of_view/cell_deg)
+    npix = int(fov/cell_deg)
     l_beam = (-(npix//2) + np.arange(npix)) * cell_deg
     m_beam = (-(npix//2) + np.arange(npix)) * cell_deg
     if opts.beam_model is None:
-        beam = np.ones((npix, npix), dtype=real_type)
+        beam = np.ones((ncorr, npix, npix), dtype=real_type)
     elif opts.beam_model.lower() == 'katbeam':
         if freq_min >= 8.5e8 and freq_max <= 1.8e9:
             beamo = JimBeam('MKAT-AA-L-JIM-2020')
@@ -269,36 +279,39 @@ def single_stokes(
         else:
             raise ValueError(f"Freq range not covered by katbeam")
         xx, yy = np.meshgrid(l_beam, m_beam, indexing='ij')
-        beam0 = getattr(beamo, opts.product.upper())(xx, yy, freq_out/1e6)
-        step = 25
-        angles = np.linspace(0, 359, step)
-        beam = np.zeros((npix, npix), dtype=np.float64)
-        for angle in angles:
-            beam += ndimage.rotate(beam0, angle, reshape=False, mode='nearest')
-        beam /= angles.size
-        beam /= beam.max()
+        # katbeam expects freq in MHz
+        fMHz = freq_out/1e6
+        beam = np.zeros((ncorr, npix, npix), dtype=np.float64)
+        for i, product in enumerate(corr):
+            beam0 = getattr(beamo, product)(xx, yy, fMHz)
+            step = 25
+            angles = np.linspace(0, 359, step)
+            for angle in angles:
+                beam[i] += ndimage.rotate(beam0, angle, reshape=False, mode='nearest')
+            beam[i] /= angles.size
+            # how to normalise the center for other Stokes products?
+            # beam[i] /= beam[i].max()
     else:
         raise ValueError(f"Unknown beam model {opts.beam_model}")
 
-
-    # set after averaging
+    # for operations that follow it will be preferable to have the corr axis
+    # first for contiguity
     data_vars = {}
-    data_vars['VIS'] = (('row', 'chan'), data)
-    data_vars['WEIGHT'] = (('row', 'chan'), weight)
+    data_vars['VIS'] = (('corr', 'row', 'chan'), data.transpose(2, 0, 1))
+    data_vars['WEIGHT'] = (('corr', 'row', 'chan'), weight.transpose(2, 0, 1))
     data_vars['MASK'] = (('row', 'chan'), mask)
     data_vars['UVW'] = (('row', 'three'), uvw)
     data_vars['FREQ'] = (('chan',), freq)
-    data_vars['BEAM'] = (('l_beam','m_beam'), beam)
-
-
+    data_vars['BEAM'] = (('corr', 'l_beam','m_beam'), beam)
 
     coords = {'chan': (('chan',), freq),
               'l_beam': (('l_beam',), l_beam),
-              'm_beam': (('m_beam',), m_beam)
+              'm_beam': (('m_beam',), m_beam),
+              'corr': (('corr',), corr)
     }
 
     unix_time = quantity(f'{time_out}s').to_unix_time()
-    utc = datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+    utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
     attrs = {
         'ra' : radec[0],

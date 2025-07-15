@@ -14,8 +14,8 @@ product:
   abbreviation: p
   default: I
   info:
-    Imaging products to produce. Options are I, Q, U, V.
-    Only single Stokes products are currently supported
+    String specifying which Stokes products to produce.
+    Outputs are always be alphabetically ordered.
 fits-output-folder:
   dtype: str
   abbreviation: fitso

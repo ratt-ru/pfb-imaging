@@ -1,11 +1,13 @@
 import pytest
 from pathlib import Path
-from pfb.utils.weighting import _compute_counts
+from pfb.utils.weighting import _compute_counts, counts_to_weights
 from pfb.operators.gridder import wgridder_conventions
 
 pmp = pytest.mark.parametrize
 
-def test_counts(ms_name):
+@pmp("srf", [1.0, 2.0, 3.2])
+@pmp("fov", [0.1, 0.33, 1.0])
+def test_counts(ms_name, srf, fov):
     '''
     Compares _compute_counts to memory greedy numpy implementation
     '''
@@ -39,16 +41,12 @@ def test_counts(ms_name):
 
     # image size
     cell_N = 1.0 / (2 * uv_max * freq.max() / lightspeed)
-
-    srf = 2.0
     cell_rad = cell_N / srf
     cell_deg = cell_rad * 180 / np.pi
     cell_size = cell_deg * 3600
     print("Cell size set to %5.5e arcseconds" % cell_size)
 
     from ducc0.fft import good_size
-    # the test will fail in intrinsic if sources fall near beam sidelobes
-    fov = 1.0
     npix = good_size(int(fov / cell_deg))
     while npix % 2:
         npix += 1
@@ -57,28 +55,51 @@ def test_counts(ms_name):
     nx = npix
     ny = npix
 
-    print("Image size set to (%i, %i, %i)" % (nchan, nx, ny))
+    print("Image size set to (%i, %i, %i)" % (ncorr, nx, ny))
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(0.0, 0.0)
     usign = 1.0 if not flip_u else -1.0
     vsign = 1.0 if not flip_v else -1.0
-    mask = np.ones((nrow, nchan), dtype=bool)
-    wgt = np.ones((nrow, nchan), dtype=uvw.dtype)
-    counts = _compute_counts(uvw, freq, mask, wgt, nx, ny, cell_rad, cell_rad,
-                             dtype=np.float64, k=0, ngrid=2,
-                             usign=usign, vsign=vsign)
-    ku = np.sort(np.fft.fftfreq(nx, cell_rad))
-    # shift by half a pixel to get bin edges
-    kucell = ku[1] - ku[0]
-    ku -= kucell/2
-    # add upper edge
-    ku = np.append(ku, ku.max() + kucell)
-    kv = np.sort(np.fft.fftfreq(ny, cell_rad))
-    kvcell = kv[1] - kv[0]
-    kv -= kvcell/2
-    kv = np.append(kv, kv.max() + kvcell)
-    weights = np.ones((nrow*nchan), dtype=np.float64)
-    u = (usign*uvw[:, 0:1] * freq[None, :]/lightspeed).ravel()
-    v = (vsign*uvw[:, 1:2] * freq[None, :]/lightspeed).ravel()
-    counts2, _, _ = np.histogram2d(u, v, bins=[ku, kv], weights=weights)
+    mask = np.ones((nrow, nchan), dtype=np.uint8)
+    # wgt = np.ones((ncorr, nrow, nchan), dtype=uvw.dtype)
+    wgt = np.exp(np.random.randn(ncorr, nrow, nchan))
 
-    assert_allclose(counts, counts2)
+    counts = _compute_counts(uvw, freq, mask, wgt, nx, ny, cell_rad, cell_rad,
+                             dtype=np.float64, k=0, ngrid=1,
+                             usign=usign, vsign=vsign)
+
+    # convert counts to imaging weights
+    imwgt = counts_to_weights(counts, uvw, freq,
+                              np.ones_like(wgt),
+                              mask, nx, ny,
+                              cell_rad, cell_rad,
+                              -3,
+                              usign=usign, vsign=vsign)
+
+    # computing counts with uniform weights should yield
+    # ones everywhere
+    counts2 = _compute_counts(uvw, freq, mask,
+                              wgt*imwgt,
+                              nx, ny, cell_rad, cell_rad,
+                              dtype=np.float64, k=0, ngrid=1,
+                              usign=usign, vsign=vsign)
+
+    ic, ix, iy = np.where(counts2 > 0)
+    assert np.allclose(counts2[ic, ix, iy], 1.0, rtol=1e-8, atol=1e-8)
+
+
+@pmp("nx", [128, 1034, 44, 10000])
+@pmp("cellx", [1.0, 0.01, 100, 1e-5])
+def test_uv2xy(nx, cellx):
+    import numpy as np
+    np.random.seed(42)
+    x = np.arange(0, nx)
+
+    ucell = 1.0/(nx*cellx)  # 1/fov
+    umax = np.abs(1/cellx/2)
+    u = (-(nx//2) + np.arange(nx)) * ucell
+
+    utmp = u + np.random.random(nx)*ucell
+
+    ug = (utmp + umax)/ucell
+
+    assert ((np.floor(ug) - x) == 0).all()

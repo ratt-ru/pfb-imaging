@@ -1,6 +1,6 @@
 import numpy as np
-import pyscilog
-log = pyscilog.get_logger('FISTA')
+from pfb.utils import logging as pfb_logging
+log = pfb_logging.get_logger('FISTA')
 
 
 def back_track_func(x, xp, gradp, likp, L):
@@ -39,7 +39,7 @@ def fista(x0,
         while fidn > fidp and i < 10:
             L *= 2.0
             if verbosity > 1:
-                print("Step size too large, adjusting %f" % L, file=log)
+                log.info("Step size too large, adjusting %f" % L)
 
             # gradient update
             x = y - gradp / L
@@ -53,7 +53,7 @@ def fista(x0,
 
         if i == 10:
             if verbosity > 1:
-                print("Stalled", file=log)
+                log.info("Stalled")
             k = maxit - 1
             break
 
@@ -72,16 +72,16 @@ def fista(x0,
         gradp = gradn
 
         if not k % report_freq and verbosity > 1:
-            print("At iteration %i eps = %f" % (k, eps), file=log)
+            log.info("At iteration %i eps = %f" % (k, eps))
 
     if k == maxit - 1:
         if verbosity:
-            print("Maximum iterations reached. "
+            log.info("Maximum iterations reached. "
                   "Relative difference between updates = %f" %
-                  eps, file=log)
+                  eps)
     else:
         if verbosity:
-            print("Success, converged after %i iterations" % k, file=log)
+            log.info("Success, converged after %i iterations" % k)
 
     return x
 

@@ -1,9 +1,9 @@
 # flake8: noqa
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
-import pyscilog
-pyscilog.init('pfb')
-log = pyscilog.get_logger('HCI')
+from pfb.utils import logging as pfb_logging
+pfb_logging.init('pfb')
+log = pfb_logging.get_logger('HCI')
 import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
@@ -27,8 +27,10 @@ def hci(**kw):
         opts.nthreads = nthreads//2
         ncpu = ncpu//2
 
-    if opts.product.upper() not in ["I","Q", "U", "V"]:
-        raise NotImplementedError(f"Product {opts.product} not yet supported")
+    remprod = opts.product.upper().strip('IQUV')
+    if len(remprod):
+        log.error_and_raise(f"Product {remprod} not yet supported",
+                            NotImplementedError)
 
 
     from daskms.fsspec_store import DaskMSStore
@@ -40,7 +42,8 @@ def hci(**kw):
             assert len(mslist) > 0
             msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
         except:
-            raise ValueError(f"No MS at {ms}")
+            log.error_and_raise(f"No MS at {ms}",
+                                ValueError)
     opts.ms = msnames
     if opts.gain_table is not None:
         gainnames = []
@@ -51,20 +54,21 @@ def hci(**kw):
                 assert len(gtlist) > 0
                 gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
             except Exception as e:
-                raise ValueError(f"No gain table  at {gt}")
+                log.error_and_raise(f"No gain table  at {gt}",
+                                    ValueError)
         opts.gain_table = gainnames
 
     OmegaConf.set_struct(opts, True)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/hci_{timestamp}.log'
-    pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    pfb_logging.log_to_file(logname)
+    log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing
-    print('Input Options:', file=log)
+    log.info('Input Options:')
     for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+        log.info('     %25s = %s' % (key, opts[key]))
 
     from pfb import set_envs
     from ducc0.misc import resize_thread_pool
@@ -79,7 +83,7 @@ def hci(**kw):
     ti = time.time()
     _hci(**opts)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+    log.info(f"All done after {time.time() - ti}s")
 
     client.close()
 
@@ -99,19 +103,21 @@ def _hci(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.stokes2im import single_stokes_image
+    from pfb.utils.stokes2im import stokes_image
     import xarray as xr
+    from glob import glob
 
     basename = f'{opts.output_filename}'
 
     fdsstore = DaskMSStore(f'{basename}.fds')
     if fdsstore.exists():
         if opts.overwrite:
-            print(f"Overwriting {basename}.fds", file=log)
+            log.info(f"Overwriting {basename}.fds")
             fdsstore.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.fds exists. "
-                             "Set overwrite to overwrite it. ")
+            log.error_and_raise(f"{basename}.fds exists. "
+                                "Set overwrite to overwrite it. ",
+                                RuntimeError)
 
     fs = fsspec.filesystem(fdsstore.url.split(':', 1)[0])
     fs.makedirs(fdsstore.url, exist_ok=True)
@@ -147,9 +153,10 @@ def _hci(**kw):
 
     # write model to tmp ds
     if opts.transfer_model_from is not None:
-        raise NotImplementedError('Use the degrid app to populate a model column instead')
+        log.error_and_raise('Use the degrid app to populate a model column instead',
+                            NotImplementedError)
 
-    print('Constructing mapping', file=log)
+    log.info('Constructing mapping')
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gains, radecs, \
         chan_widths, uv_max, antpos, poltype = \
@@ -178,13 +185,12 @@ def _hci(**kw):
         cell_size = opts.cell_size
         cell_rad = cell_size * np.pi / 60 / 60 / 180
         if cell_N / cell_rad < 1:
-            raise ValueError("Requested cell size too large. "
-                             "Super resolution factor = ", cell_N / cell_rad)
-        print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
+            log.info(f"Requested cell size of {cell_size} arcseconds could be sub-Nyquist.")
+        log.info(f"Super resolution factor = {cell_N/cell_rad}")
     else:
         cell_rad = cell_N / opts.super_resolution_factor
         cell_size = cell_rad * 60 * 60 * 180 / np.pi
-        print(f"Cell size set to {cell_size} arcseconds", file=log)
+        log.info(f"Cell size set to {cell_size} arcseconds")
 
     if opts.nx is None:
         fov = opts.field_of_view * 3600
@@ -201,10 +207,9 @@ def _hci(**kw):
         cell_deg = np.rad2deg(cell_rad)
         fovx = nx*cell_deg
         fovy = ny*cell_deg
-        print(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees",
-              file=log)
+        log.info(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
 
-    print(f"Image size = (nx={nx}, ny={ny})", file=log)
+    log.info(f"Image size = (nx={nx}, ny={ny})")
 
     # crude column arithmetic
     dc = opts.data_column.replace(" ", "")
@@ -233,17 +238,17 @@ def _hci(**kw):
     # only WEIGHT column gets special treatment
     # any other column must have channel axis
     if opts.sigma_column is not None:
-        print(f"Initialising weights from {opts.sigma_column} column", file=log)
+        log.info(f"Initialising weights from {opts.sigma_column} column")
         columns += (opts.sigma_column,)
         schema[opts.sigma_column] = {'dims': ('chan', 'corr')}
     elif opts.weight_column is not None:
-        print(f"Using weights from {opts.weight_column} column", file=log)
+        log.info(f"Using weights from {opts.weight_column} column")
         columns += (opts.weight_column,)
         # hack for https://github.com/ratt-ru/dask-ms/issues/268
         if opts.weight_column != 'WEIGHT':
             schema[opts.weight_column] = {'dims': ('chan', 'corr')}
     else:
-        print(f"No weights provided, using unity weights", file=log)
+        log.info(f"No weights provided, using unity weights")
 
     # distinct freq groups
     sgroup = 0
@@ -285,8 +290,9 @@ def _hci(**kw):
         columns += (opts.model_column,)
         schema[opts.model_column] = {'dims': ('chan', 'corr')}
 
+    # import ipdb; ipdb.set_trace()
     xds = xds_from_ms(ms,
-                      chunks=ms_chunks[ms],
+                    #   chunks=ms_chunks[ms],
                       columns=columns,
                       table_schema=schema,
                       group_cols=group_by)
@@ -355,10 +361,10 @@ def _hci(**kw):
     while idle_workers and len(datasets):   # Seed each worker with a task.
         # pop so len(datasets) -> 0
         (subds, jones, freqsi, utimesi, ridx, rcnts,
-         radeci, fi, ti, ms) = datasets.pop(0)
+        radeci, fi, ti, ms) = datasets.pop(0)
 
         worker = idle_workers.pop()
-        future = client.submit(single_stokes_image,
+        future = client.submit(stokes_image,
                         dc1=dc1,
                         dc2=dc2,
                         operator=operator,
@@ -389,8 +395,10 @@ def _hci(**kw):
     ac_iter = as_completed(futures)
     for completed_future in ac_iter:
         if isinstance(completed_future.result(), BaseException):
-            print(completed_future.result())
-            raise RuntimeError('Something went wrong')
+            e = completed_future.result()
+            import traceback
+            log.error_and_raise(f"Traceback:\n{traceback.format_exc()}",
+                                e)
 
         worker = associated_workers.pop(completed_future)
         # need this to release memory for some reason
@@ -401,7 +409,7 @@ def _hci(**kw):
             (subds, jones, freqsi, utimesi, ridx, rcnts,
             radeci, fi, ti, ms) = datasets.pop(0)
 
-            future = client.submit(single_stokes_image,
+            future = client.submit(stokes_image,
                             dc1=dc1,
                             dc2=dc2,
                             operator=operator,
@@ -431,8 +439,8 @@ def _hci(**kw):
 
         if opts.memory_reporting:
             worker_info = client.scheduler_info()['workers']
-            print(f'Total memory {worker} MB = ',
-                  worker_info[worker]['metrics']['memory']/1e6, file=log)
+            log.info(f'Total memory {worker} MB = ',
+                worker_info[worker]['metrics']['memory']/1e6)
 
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)

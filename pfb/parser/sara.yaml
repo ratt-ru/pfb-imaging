@@ -69,10 +69,6 @@ inputs:
   positivity:
     dtype: int
     default: 1
-    # choices:
-    #   - 0
-    #   - 1
-    #   - 2
     info:
       How to apply positivity constraint
       0 -> no positivity,
@@ -113,7 +109,7 @@ inputs:
     info:
       Mask residual where model is non-zero when computing rms.
       This is not recommended for largely non-empty fields.
-  init_factor:
+  init-factor:
     dtype: float
     default: 0.5
     info:

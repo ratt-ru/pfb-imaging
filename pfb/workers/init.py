@@ -1,9 +1,9 @@
 # flake8: noqa
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
-import pyscilog
-pyscilog.init('pfb')
-log = pyscilog.get_logger('INIT')
+from pfb.utils import logging as pfb_logging
+pfb_logging.init('pfb')
+log = pfb_logging.get_logger('INIT')
 import time
 
 from scabha.schema_utils import clickify_parameters
@@ -27,8 +27,10 @@ def init(**kw):
         opts.nthreads = nthreads//2
         ncpu = ncpu//2
 
-    if opts.product.upper() not in ["I","Q", "U", "V"]:
-        raise NotImplementedError(f"Product {opts.product} not yet supported")
+    remprod = opts.product.upper().strip('IQUV')
+    if len(remprod):
+        log.error_and_raise(f"Product {remprod} not yet supported",
+                            NotImplementedError)
 
     from daskms.fsspec_store import DaskMSStore
     msnames = []
@@ -39,7 +41,7 @@ def init(**kw):
             assert len(mslist) > 0
             msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
         except:
-            raise ValueError(f"No MS at {ms}")
+            log.error_and_raise(f"No MS at {ms}", ValueError)
     opts.ms = msnames
     if opts.gain_table is not None:
         gainnames = []
@@ -50,20 +52,20 @@ def init(**kw):
                 assert len(gtlist) > 0
                 gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
             except Exception as e:
-                raise ValueError(f"No gain table  at {gt}")
+                log.error_and_raise(f"No gain table  at {gt}", ValueError)
         opts.gain_table = gainnames
 
     OmegaConf.set_struct(opts, True)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/init_{timestamp}.log'
-    pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    pfb_logging.log_to_file(logname)
+    log.info(f'Logs will be written to {logname}')
 
     # TODO - prettier config printing
-    print('Input Options:', file=log)
+    log.info('Input Options:')
     for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+        log.info('     %25s = %s' % (key, opts[key]))
 
     from pfb import set_envs
     from ducc0.misc import resize_thread_pool
@@ -79,12 +81,12 @@ def init(**kw):
     ti = time.time()
     _init(**opts)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+    log.info(f"All done after {time.time() - ti}s")
 
     try:
         client.close()
     except Exception as e:
-        raise e
+        pass
 
 def _init(**kw):
     opts = OmegaConf.create(kw)
@@ -105,16 +107,17 @@ def _init(**kw):
     xds_store = DaskMSStore(f'{basename}.xds')
     if xds_store.exists():
         if opts.overwrite:
-            print(f"Overwriting {basename}.xds", file=log)
+            log.info(f"Overwriting {basename}.xds")
             xds_store.rm(recursive=True)
         else:
-            raise ValueError(f"{basename}.xds exists. "
-                             "Set overwrite to overwrite it. ")
+            log.error_and_raise(f"{basename}.xds exists. "
+                                "Set overwrite to overwrite it. ",
+                                RuntimeError)
 
     fs = fsspec.filesystem(xds_store.protocol)
     fs.makedirs(xds_store.url, exist_ok=True)
 
-    print(f"Data products will be stored in {xds_store.url}", file=log)
+    log.info(f"Data products will be stored in {xds_store.url}")
 
     if opts.gain_table is not None:
         tmpf = lambda x: '::'.join(x.rsplit('/', 1))
@@ -139,7 +142,7 @@ def _init(**kw):
     client = get_client()
     worker_keys = client.scheduler_info()['workers'].keys()
 
-    print('Constructing mapping', file=log)
+    log.info('Constructing mapping')
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gains, radecs, \
         chan_widths, uv_max, antpos, poltype = \
@@ -183,17 +186,17 @@ def _init(**kw):
     # only WEIGHT column gets special treatment
     # any other column must have channel axis
     if opts.sigma_column is not None:
-        print(f"Initialising weights from {opts.sigma_column} column", file=log)
+        log.info(f"Initialising weights from {opts.sigma_column} column")
         columns += (opts.sigma_column,)
         schema[opts.sigma_column] = {'dims': ('chan', 'corr')}
     elif opts.weight_column is not None:
-        print(f"Using weights from {opts.weight_column} column", file=log)
+        log.info(f"Using weights from {opts.weight_column} column")
         columns += (opts.weight_column,)
         # hack for https://github.com/ratt-ru/dask-ms/issues/268
         if opts.weight_column != 'WEIGHT':
             schema[opts.weight_column] = {'dims': ('chan', 'corr')}
     else:
-        print(f"No weights provided, using unity weights", file=log)
+        log.info(f"No weights provided, using unity weights")
 
     # distinct freq groups
     sgroup = 0
@@ -333,19 +336,15 @@ def _init(**kw):
     freqs_out = []
     ac_iter = as_completed(futures)
     for completed_future in ac_iter:
+        if isinstance(completed_future.result(), BaseException):
+            e = completed_future.result()
+            import traceback
+            log.error_and_raise(f"Traceback:\n{traceback.format_exc()}", e)
 
-        try:
-            result = completed_future.result()
-        except Exception as e:
-            raise e
-
+        result = completed_future.result()
         if result is not None:
             times_out.append(result[0])
             freqs_out.append(result[1])
-
-        if isinstance(completed_future.result(), BaseException):
-            print(completed_future.result())
-            raise RuntimeError('Something went wrong')
 
         worker = associated_workers.pop(completed_future)
         # we need this here to release memory for some reason
@@ -389,8 +388,8 @@ def _init(**kw):
 
         if opts.memory_reporting:
             worker_info = client.scheduler_info()['workers']
-            print(f'Total memory {worker} MB = ',
-                  worker_info[worker]['metrics']['memory']/1e6, file=log)
+            log.info(f'Total memory {worker} MB = ',
+                  worker_info[worker]['metrics']['memory']/1e6)
 
         if opts.progressbar:
             print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
@@ -406,7 +405,7 @@ def _init(**kw):
     ntime = times_out.size
 
     print("\n")  # after progressbar above
-    print(f"Freq and time selection resulted in {nband} output bands and "
-          f"{ntime} output times", file=log)
+    log.info(f"Freq and time selection resulted in {nband} output bands and "
+          f"{ntime} output times")
 
     return

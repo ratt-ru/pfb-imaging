@@ -109,18 +109,11 @@ def _hessian_psf_slice(x,       # input image, not overwritten
     xpad.fill(0.0)
     if beam is None:
         np.copyto(xpad[0:nx, 0:ny], x)
-        # xpad[0:nx, 0:ny] = x
     else:
         xpad[0:nx, 0:ny] = x*beam
     r2c(xpad, axes=(0, 1), nthreads=nthreads,
         forward=True, inorm=0, out=xhat)
-    # xhat *= abspsf
-    ne.evaluate('xhat * abspsf',
-                out=xhat,
-                local_dict={
-                    'xhat': xhat,
-                    'abspsf': abspsf},
-                casting='unsafe')
+    xhat *= abspsf
     c2r(xhat, axes=(0, 1), forward=False, out=xpad,
         lastsize=lastsize, inorm=2, nthreads=nthreads,
         allow_overwriting_input=True)
@@ -129,15 +122,8 @@ def _hessian_psf_slice(x,       # input image, not overwritten
     if beam is not None:
         xout *= beam
 
-    ne.evaluate('xout + x * eta',
-                out=xout,
-                local_dict={
-                    'xout': xout,
-                    'x': x,
-                    'eta': eta
-                },
-                casting='unsafe')
-    # xout += x * eta
+    if eta:
+        xout += x * eta
 
     return xout
 
@@ -302,7 +288,6 @@ class hess_psf(object):
         assert nx == self.nx
         assert ny == self.ny
 
-        # tii = time()
         for b in range(nband):
             self.xpad.fill(0.0)
             if self.beam[b] is None:
@@ -311,12 +296,7 @@ class hess_psf(object):
                 self.xpad[0:nx, 0:ny] = xtmp[b]*self.beam[b]
             r2c(self.xpad, axes=(0, 1), nthreads=self.nthreads,
                 forward=True, inorm=0, out=self.xhat)
-            ne.evaluate('xhat * abspsf',
-                        out=self.xhat,
-                        local_dict={
-                            'xhat': self.xhat,
-                            'abspsf': self.abspsf[b]},
-                        casting='unsafe')
+            self.xhat *= self.abspsf[b]
             c2r(self.xhat, axes=(0, 1), forward=False, out=self.xpad,
                 lastsize=self.ny_psf, inorm=2, nthreads=self.nthreads,
                 allow_overwriting_input=True)
@@ -324,88 +304,8 @@ class hess_psf(object):
                 np.copyto(self.xout[b], self.xpad[0:nx, 0:ny])
             else:
                 self.xout[b] = self.xpad[0:nx, 0:ny]*self.beam[b]
-        ne.evaluate('xout + xtmp * eta',
-                    out=self.xout,
-                    local_dict={
-                        'xout': self.xout,
-                        'xtmp': xtmp,
-                        'eta': self.eta[:, None, None]},
-                    casting='unsafe')
-        # print('ttot = ', time() - tii)
+        self.xout += xtmp * self.eta[:, None, None]
         return self.xout
-
-    # def dot(self, x):
-    #     if len(x.shape) == 3:
-    #         xtmp = x
-    #     elif len(x.shape) == 2:
-    #         xtmp = x[None, :, :]
-    #     else:
-    #         raise ValueError("Unsupported number of input dimensions")
-
-    #     nband, nx, ny = xtmp.shape
-    #     assert nband == self.nband
-    #     assert nx == self.nx
-    #     assert ny == self.ny
-
-    #     tii = time()
-    #     ti = time()
-    #     self.xpad.fill(0.0)
-    #     tfill = time() - ti
-    #     ti = time()
-    #     if self.beam is None:
-    #         np.copyto(self.xpad[:, 0:nx, 0:ny], xtmp)
-    #     else:
-    #         self.xpad[:, 0:nx, 0:ny] = xtmp*self.beam
-    #     tpad = time() - ti
-    #     ti = time()
-    #     r2c(self.xpad, axes=(1, 2), nthreads=self.nthreads,
-    #         forward=True, inorm=0, out=self.xhat)
-    #     tr2c = time() - ti
-    #     ti = time()
-    #     ne.evaluate('xhat * abspsf',
-    #                 out=self.xhat,
-    #                 local_dict={
-    #                     'xhat': self.xhat,
-    #                     'abspsf': self.abspsf},
-    #                 casting='unsafe')
-    #     tconv = time() - ti
-    #     ti = time()
-    #     c2r(self.xhat, axes=(1, 2), forward=False, out=self.xpad,
-    #         lastsize=self.ny_psf, inorm=2, nthreads=self.nthreads,
-    #         allow_overwriting_input=True)
-    #     tc2r = time() - ti
-    #     ti = time()
-    #     if self.beam is None:
-    #         np.copyto(self.xout, self.xpad[:, 0:nx, 0:ny])
-    #     else:
-    #         self.xout = self.xpad[:, 0:nx, 0:ny]*self.beam
-    #     tcopy = time() - ti
-    #     ti = time()
-    #     ne.evaluate('xout + xtmp * eta',
-    #                 out=self.xout,
-    #                 local_dict={
-    #                     'xout': self.xout,
-    #                     'xtmp': xtmp,
-    #                     'eta': self.eta[:, None, None]},
-    #                 casting='unsafe')
-    #     tplus = time() - ti
-    #     ttot = time() - tii
-    #     tfill /= ttot
-    #     tpad /= ttot
-    #     tr2c /= ttot
-    #     tconv /= ttot
-    #     tc2r /= ttot
-    #     tcopy /= ttot
-    #     tplus /= ttot
-    #     # print('tfill = ', tfill)
-    #     # print('tpad = ', tpad)
-    #     # print('tr2c = ', tr2c)
-    #     # print('tconv = ', tconv)
-    #     # print('tc2r = ', tc2r)
-    #     # print('tcopy = ', tcopy)
-    #     # print('tplus = ', tplus)
-    #     print('ttot = ', time() - tii)
-    #     return self.xout
 
     def hdot(self, x):
         # Hermitian operator
@@ -484,3 +384,82 @@ class hess_psf(object):
 
         return self.xout.copy()
 
+
+##################### jax #####################################
+import jax
+import jax.numpy as jnp
+from functools import partial
+
+@partial(jax.jit, static_argnums=(0,1,2,3,4))
+def hessian_slice_jax(
+                    nx, ny,
+                    nx_psf, ny_psf,
+                    eta,
+                    psfhat,
+                    x):
+    psfh = jax.lax.stop_gradient(psfhat)
+    xhat = jnp.fft.rfft2(x,
+                         s=(nx_psf, ny_psf),
+                         norm='backward')
+    xout = jnp.fft.irfft2(xhat*psfh,
+                          s=(nx_psf, ny_psf),
+                          norm='backward')[0:nx, 0:ny]
+    return xout + eta*x
+
+@partial(jax.jit, static_argnums=(0,1,2,3,4))
+def hessian_jax(nx, ny,
+                nx_psf, ny_psf,
+                eta,
+                psfhat,
+                x):
+    psfh = jax.lax.stop_gradient(psfhat)
+    xhat = jnp.fft.rfft2(x,
+                         s=(nx_psf, ny_psf),
+                         norm='backward')
+    xout = jnp.fft.irfft2(xhat*psfh,
+                          s=(nx_psf, ny_psf),
+                          norm='backward')[:, 0:nx, 0:ny]
+    return xout + eta*x
+
+@partial(jax.jit, static_argnums=(0,1,2,3,4))
+def hessian_jax(nx, ny,
+                nx_psf, ny_psf,
+                eta,
+                psfhat,
+                x):
+    psfh = jax.lax.stop_gradient(psfhat)
+    xhat = jnp.fft.rfft2(x,
+                         s=(nx_psf, ny_psf),
+                         norm='backward')
+    xout = jnp.fft.irfft2(xhat*psfh,
+                          s=(nx_psf, ny_psf),
+                          norm='backward')[:, 0:nx, 0:ny]
+    return xout + eta*x
+
+@partial(jax.jit, static_argnums=(0,1,2,3,4))
+def fshessian_jax(nx, ny,
+                  nx_psf, ny_psf,
+                  eta,
+                  mask,
+                  psfhat,
+                  x):
+    '''
+    Assumes both x and psfhat is a 4D cube with the last two dimensions
+    corresponding to spatial dimensions along which FFT us taken.
+
+    nx, ny          - int: npix in two spatial coordinates
+    nx_psf, ny_psf  - int: npix in two spatial coordinates of psf 
+    eta             - float: regularisation parameter
+    mask            - ndarray(nx, ny): spatial mask
+    psfhat          - ndarray(nband, ncorr, nx, ny): psf in uv space
+    x               - ndarray(nband, ncorr, nx, ny): image
+    '''
+    mask = jax.lax.stop_gradient(mask)[None, None, :, :]
+    psfhat = jax.lax.stop_gradient(psfhat)
+    xhat = jnp.fft.rfft2(x*mask,
+                         s=(nx_psf, ny_psf),
+                         norm='backward')
+    xout = jnp.fft.irfft2(xhat*psfhat,
+                          s=(nx_psf, ny_psf),
+                          norm='backward')[:, :, 0:nx, 0:ny]
+    return xout*mask + eta*x

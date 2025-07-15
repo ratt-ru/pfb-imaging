@@ -11,8 +11,6 @@ Install the package by cloning and running
 
 :code:`$ pip install -e pfb-imaging/`
 
-Note casacore needs to be installed on the system for this to work.
-
 You will probably may also need to update pip eg.
 
 :code:`$ pip install -U pip setuptools wheel`
@@ -94,6 +92,6 @@ Documentation for each worker is listed under
 Acknowledgement
 ~~~~~~~~~~~~~~~~~
 
-If you find any of this useful please cite (for now)
+If you find any of this useful please cite
 
-https://arxiv.org/abs/2101.08072
+https://arxiv.org/abs/2412.10073

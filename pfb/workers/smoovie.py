@@ -1,8 +1,8 @@
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
-import pyscilog
-pyscilog.init('pfb')
-log = pyscilog.get_logger('SMOOVIE')
+from pfb.utils import logging as pfb_logging
+pfb_logging.init('pfb')
+log = pfb_logging.get_logger('SMOOVIE')
 import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
@@ -24,18 +24,19 @@ def smoovie(**kw):
     # to prevent flickering 
     opts.nthreads = 1
     if opts.product.upper() not in ["I","Q", "U", "V"]:
-        raise NotImplementedError(f"Product {opts.product} not yet supported")
+        log.error_and_raise(f"Product {opts.product} not yet supported",
+                            NotImplementedError)
     
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/smoovie_{timestamp}.log'
-    pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    pfb_logging.log_to_file(logname)
+    log.info(f'Logs will be written to {logname}')
     OmegaConf.set_struct(opts, True)
 
     # TODO - prettier config printing
-    print('Input Options:', file=log)
+    log.info('Input Options:')
     for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+        log.info('     %25s = %s' % (key, opts[key]))
 
     from pfb import set_envs
     set_envs(opts.nthreads, ncpu)
@@ -48,7 +49,7 @@ def smoovie(**kw):
     ti = time.time()
     _smoovie(**opts)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+    log.info(f"All done after {time.time() - ti}s")
 
     try:
         from distributed import get_client
@@ -82,9 +83,10 @@ def _smoovie(**kw):
     try:
         assert fds_store.exists()
     except Exception as e:
-        raise ValueError(f"There must be a dataset at {fds_store.url}")
+        log.error_and_raise(f"There must be a dataset at {fds_store.url}",
+                            ValueError)
 
-    print(f"Lazy loading fds from {fds_store.url}", file=log)
+    log.info(f"Lazy loading fds from {fds_store.url}")
     fds, fds_list = xds_from_url(fds_store.url)
 
     # TODO - scan selection
@@ -141,8 +143,7 @@ def _smoovie(**kw):
 
         for b, dslist in fds_dict.items():
             
-            print(f"Writing movie to {basename}_band{b}_{idfy}.{outfmt}",
-                   file=log)
+            log.info(f"Writing movie to {basename}_band{b}_{idfy}.{outfmt}")
             rmss = [ds.rms for ds in dslist]
             medrms = np.median(rmss)
             nframe = len(dslist)
@@ -179,7 +180,8 @@ def _smoovie(**kw):
                         # client=client
                     )
             else:
-                raise ValueError(f"Unsupported format {opts.out_format}")
+                log.error_and_raise(f"Unsupported format {opts.out_format}", ValueError)
 
     else:
-        raise NotImplementedError(f"Can't animate axis {opts.animate_axis}")
+        log.error_and_raise(f"Can't animate axis {opts.animate_axis}",
+                            NotImplementedError)

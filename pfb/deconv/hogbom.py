@@ -1,8 +1,8 @@
 import numpy as np
 import numexpr as ne
 from pfb.utils.misc import give_edges
-import pyscilog
-log = pyscilog.get_logger('HOGBOM')
+from pfb.utils import logging as pfb_logging
+log = pfb_logging.get_logger('HOGBOM')
 
 
 def hogbom(
@@ -52,25 +52,25 @@ def hogbom(
             stall_count += stall_count
 
         if not k % report_freq and verbosity > 1:
-            print("At iteration %i max residual = %f" % (k, IRmax), file=log)
+            log.info("At iteration %i max residual = %f" % (k, IRmax))
 
     IRmfs = np.sum(IR, axis=0)
     rms = np.std(IRmfs[~np.any(x, axis=0)])
 
     if k >= maxit:
         if verbosity:
-            print(f"Max iters reached. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+            log.info(f"Max iters reached. "
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}")
         return x, 1
     elif stall_count >= 5:
         if verbosity:
-            print(f"Stalled. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+            log.info(f"Stalled. "
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}")
         return x, 1
     else:
         if verbosity:
-            print(f"Success, converged after {k} iterations. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}", file=log)
+            log.info(f"Success, converged after {k} iterations. "
+                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}")
         return x, 0
 
 
