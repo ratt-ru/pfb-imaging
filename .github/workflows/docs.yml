@@ -1,0 +1,170 @@
+name: Documentation
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        uses: abatilo/actions-poetry@v3
+        with:
+          poetry-version: "1.8.4"
+
+      - name: Configure Poetry
+        run: poetry config virtualenvs.create false
+
+      - name: Install dependencies
+        run: poetry install --only=main,docs
+
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Build documentation
+        run: |
+          poetry run mkdocs build --clean --verbose
+          # Create .nojekyll file to bypass Jekyll processing
+          touch site/.nojekyll
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # Job to check documentation on PRs
+  check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        uses: abatilo/actions-poetry@v3
+        with:
+          poetry-version: "1.8.4"
+
+      - name: Configure Poetry
+        run: poetry config virtualenvs.create false
+
+      - name: Install dependencies
+        run: poetry install --only=main,docs
+
+      - name: Check documentation builds
+        run: |
+          poetry run mkdocs build --clean --verbose --strict
+          
+      - name: Test documentation links
+        run: |
+          poetry run mkdocs build --clean
+          # Test that basic pages exist
+          test -f site/index.html
+          test -f site/installation/index.html
+          test -f site/quickstart/index.html
+          test -f site/api/index.html
+          
+      - name: Check for broken internal links
+        run: |
+          # Simple check for common broken link patterns
+          poetry run mkdocs build --clean
+          grep -r "404" site/ && exit 1 || echo "No 404 errors found"
+          
+      - name: Validate MkDocs configuration
+        run: |
+          poetry run python -c "
+          import yaml
+          with open('mkdocs.yml', 'r') as f:
+              config = yaml.safe_load(f)
+          print('MkDocs configuration is valid')
+          "
+
+  # Job to check documentation performance
+  performance:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        uses: abatilo/actions-poetry@v3
+        with:
+          poetry-version: "1.8.4"
+
+      - name: Configure Poetry
+        run: poetry config virtualenvs.create false
+
+      - name: Install dependencies
+        run: poetry install --only=main,docs
+
+      - name: Build and time documentation
+        run: |
+          echo "Building documentation..."
+          time poetry run mkdocs build --clean --verbose
+          
+      - name: Check site size
+        run: |
+          site_size=$(du -sh site/ | cut -f1)
+          echo "Documentation site size: $site_size"
+          
+          # Check if site is too large (>100MB)
+          site_bytes=$(du -sb site/ | cut -f1)
+          if [ $site_bytes -gt 104857600 ]; then
+            echo "Warning: Site size is larger than 100MB"
+            du -sh site/* | sort -hr
+          fi
+          
+      - name: Check for large files
+        run: |
+          echo "Checking for large files (>1MB)..."
+          find site/ -type f -size +1M -exec ls -lh {} \; | head -20

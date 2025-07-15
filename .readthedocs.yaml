@@ -1,0 +1,52 @@
+# Read the Docs configuration file
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+
+# Required
+version: 2
+
+# Set the version of Python and other tools you might need
+build:
+  os: ubuntu-22.04
+  tools:
+    python: "3.11"
+    
+  # Install Poetry
+  jobs:
+    pre_create_environment:
+      - pip install poetry
+    pre_build:
+      - poetry config virtualenvs.create false
+    post_build:
+      - poetry run mkdocs build --clean
+
+# Build documentation in the docs/ directory with MkDocs
+mkdocs:
+  configuration: mkdocs.yml
+  fail_on_warning: false
+
+# Optionally declare the Python requirements required to build your docs
+python:
+  install:
+    - method: pip
+      path: .
+      extra_requirements:
+        - docs
+    - requirements: docs/requirements.txt
+
+# Optional but recommended, declare the Python requirements required to build your documentation
+# See https://docs.readthedocs.io/en/stable/guides/reproducible-builds.html
+build:
+  os: ubuntu-22.04
+  tools:
+    python: "3.11"
+  commands:
+    - pip install poetry
+    - poetry config virtualenvs.create false
+    - poetry install --only=main,docs
+    - poetry run mkdocs build --clean --site-dir _build/html
+
+# Formats of the documentation to build
+formats:
+  - pdf
+  - htmlzip
+  - epub
