@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pfb-imaging"
-version = "0.0.5"
+version = "0.0.6"
 description = "Radio interferometric imaging suite based on a preconditioned forward-backward approach"
 authors = ["Landman Bester <lbester@sarao.ac.za>"]
 license = "MIT"
@@ -41,7 +41,6 @@ psutil = ">=5.9.8"
 matplotlib = ">=3.9.2"
 rich = ">=13.0.0"
 tart2ms = "*"
-
 
 [tool.poetry.scripts]
 pfb = "pfb.workers.main:cli"
