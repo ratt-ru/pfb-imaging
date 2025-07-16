@@ -286,7 +286,6 @@ def stokes_image(
 
     # TODO - polarisation parameters?
     if opts.inject_transients is not None:
-        raise NotImplementedError("Transient injection not yet implemented")
         import yaml
         from pfb.utils.misc import dynamic_spectrum
         with open(opts.inject_transient, 'r') as f:
@@ -311,6 +310,7 @@ def stokes_image(
             y0t = lm0t[1]
 
             # inject transient at x0t, y0t
+            # TODO - handle corr axis
             data += dspec * np.exp(freqfactor*(
                                  signu*uvw[:, 0:1]*x0t*signx +
                                  signv*uvw[:, 1:2]*y0t*signy -
