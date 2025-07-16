@@ -103,7 +103,7 @@ def _kclean(**kw):
     from pfb.opt.pcg import pcg, pcg_psf
     from pfb.operators.gridder import compute_residual
     from scipy import ndimage
-    from pfb.utils.misc import fit_image_cube
+    from pfb.utils.modelspec import fit_image_cube
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
@@ -429,7 +429,7 @@ def _fskclean(**kw):
     from pfb.operators.gridder import compute_residual
     from pfb.operators.hessian import fshessian_jax
     from scipy import ndimage
-    from pfb.utils.misc import fit_image_fscube
+    from pfb.utils.modelspec import fit_image_fscube
     from jax.scipy.sparse.linalg import cg
 
     basename = opts.output_filename

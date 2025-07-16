@@ -67,10 +67,9 @@ def degrid(**kw):
     opts.dds = dds_store.url
     OmegaConf.set_struct(opts, True)
 
-    if opts.product.upper() not in ["I"]:
-                                    # , "Q", "U", "V", "XX", "YX", "XY",
-                                    # "YY", "RR", "RL", "LR", "LL"]:
-        log.error_and_raise(f"Product {opts.product} not yet supported",
+    remprod = opts.product.upper().strip('IQUV')
+    if len(remprod):
+        log.error_and_raise(f"Product {remprod} not yet supported",
                             NotImplementedError)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")

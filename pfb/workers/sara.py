@@ -136,7 +136,8 @@ def _sara(**kw):
     from ducc0.misc import empty_noncritical, thread_pool_size
     from pfb.prox.prox_21m import prox_21m_numba as prox_21
     # from pfb.prox.prox_21 import prox_21
-    from pfb.utils.misc import fitcleanbeam, fit_image_cube, eval_coeffs_to_slice
+    from pfb.utils.misc import fitcleanbeam
+    from pfb.utils.modelspec import fit_image_cube, eval_coeffs_to_slice
     from daskms.fsspec_store import DaskMSStore
     from ducc0.fft import c2c
 
