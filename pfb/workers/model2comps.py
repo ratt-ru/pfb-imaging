@@ -73,7 +73,7 @@ def _model2comps(**kw):
     from daskms.fsspec_store import DaskMSStore
     import json
     from casacore.quanta import quantity
-    from pfb.utils.misc import eval_coeffs_to_slice
+    from pfb.utils.modelspec import eval_coeffs_to_slice
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
