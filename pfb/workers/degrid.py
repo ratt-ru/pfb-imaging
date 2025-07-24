@@ -229,7 +229,7 @@ def _degrid(**kw):
     if poltype=='linear':
         output_schema = ['XX', 'XY', 'YX', 'YY']
     else:
-        output_schema = ['RR', 'RL', 'LR', 'RR']
+        output_schema = ['RR', 'RL', 'LR', 'LL']
     
     writes = []
     for ms in opts.ms:
