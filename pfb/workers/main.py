@@ -1,8 +1,11 @@
 # flake8: noqa
 import click
+from importlib.metadata import version
+
 from pfb import logo
 
 @click.group()
+@click.version_option(version=version("pfb-imaging"), prog_name='pfb')
 def cli():
     logo()
     pass
