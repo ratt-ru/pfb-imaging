@@ -209,9 +209,7 @@ def _comps2vis(
             divide_by_n=False,
             freq_min=-np.inf,
             freq_max=np.inf,
-            ncorr_out=4,
-            product='I',
-            poltype='linear'):
+            product='I'):
     return _comps2vis_impl(
                         uvw[0],
                         utime,
@@ -230,9 +228,7 @@ def _comps2vis(
                         divide_by_n=divide_by_n,
                         freq_min=freq_min,
                         freq_max=freq_max,
-                        ncorr_out=ncorr_out,
-                        product=product,
-                        poltype=poltype)
+                        product=product)
 
 
 
@@ -253,13 +249,9 @@ def _comps2vis_impl(uvw,
                     divide_by_n=False,
                     freq_min=-np.inf,
                     freq_max=np.inf,
-                    ncorr_out=4,
-                    product='I',
-                    poltype='linear'):
+                    product='I'):
     # why is this necessary?
     resize_thread_pool(nthreads)
-    msg = f"Polarisation product {product} is not compatible with the "\
-          f"number of correlations {ncorr_out}"
 
     # adjust for chunking
     # need a copy here if using multiple row chunks
@@ -272,7 +264,8 @@ def _comps2vis_impl(uvw,
 
     nrow = uvw.shape[0]
     nchan = freq.size
-    vis = np.zeros((nrow, nchan, ncorr_out),
+    nstokes_out = len(product)
+    vis = np.zeros((nrow, nchan, nstokes_out),
                    dtype=np.result_type(mds.coefficients.dtype, np.complex64))
     if not ((freq>=freq_min) & (freq<=freq_max)).any():
         return vis
@@ -308,65 +301,19 @@ def _comps2vis_impl(uvw,
             image[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
             if np.any(region_mask):
                 image = np.where(region_mask, image, 0.0)
-                vis_stokes = dirty2vis(uvw=uvw,
-                                       freq=f,
-                                       dirty=image,
-                                       pixsize_x=cellx, pixsize_y=celly,
-                                       center_x=x0, center_y=y0,
-                                       flip_u=flip_u,
-                                       flip_v=flip_v,
-                                       flip_w=flip_w,
-                                       epsilon=epsilon,
-                                       do_wgridding=do_wgridding,
-                                       divide_by_n=divide_by_n,
-                                       nthreads=nthreads)
-                if ncorr_out == 1:
-                    vis[indr, indf, 0] = vis_stokes
-                elif ncorr_out == 2:
-                    if product.upper() == 'I':
-                        vis[indr, indf, 0] = vis_stokes
-                        vis[indr, indf, -1] = vis_stokes
-                    elif product.upper() == 'Q':
-                        if poltype.lower() == 'linear':
-                            vis[indr, indf, 0] = vis_stokes
-                            vis[indr, indf, -1] = vis_stokes
-                        else:
-                            raise ValueError(msg)
-                    elif product.upper() == 'V':
-                        if poltype.lower() == 'linear':
-                            raise ValueError(msg)
-                        else:
-                            vis[indr, indf, 0] = vis_stokes
-                            vis[indr, indf, -1] = -vis_stokes
-                    else:
-                        raise ValueError(msg)
-                elif ncorr_out == 4:
-                    if product.upper() == 'I':
-                        vis[indr, indf, 0] = vis_stokes
-                        vis[indr, indf, -1] = vis_stokes
-                    elif product.upper() == 'Q':
-                        if poltype.lower() == 'linear':
-                            vis[indr, indf, 0] = vis_stokes
-                            vis[indr, indf, -1] = vis_stokes
-                        else:
-                            vis[indr, indf, 1] = vis_stokes
-                            vis[indr, indf, 2] = vis_stokes
-                    elif product.upper() == 'U':
-                        if poltype.lower() == 'linear':
-                            vis[indr, indf, 1] = vis_stokes
-                            vis[indr, indf, 2] = vis_stokes
-                        else:
-                            vis[indr, indf, 1] = 1.0j*vis_stokes
-                            vis[indr, indf, 2] = -1.0j*vis_stokes
-                    elif product.upper() == 'V':
-                        if poltype.lower() == 'linear':
-                            vis[indr, indf, 1] = 1.0j*vis_stokes
-                            vis[indr, indf, 2] = -1.0j*vis_stokes
-                        else:
-                            vis[indr, indf, 0] = vis_stokes
-                            vis[indr, indf, 1] = vis_stokes
-                    else:
-                        raise ValueError(f"Unknown product {product}")
+                for c in range(nstokes_out):
+                    vis[indr, indf, c] = dirty2vis(uvw=uvw,
+                                        freq=f,
+                                        dirty=image,
+                                        pixsize_x=cellx, pixsize_y=celly,
+                                        center_x=x0, center_y=y0,
+                                        flip_u=flip_u,
+                                        flip_v=flip_v,
+                                        flip_w=flip_w,
+                                        epsilon=epsilon,
+                                        do_wgridding=do_wgridding,
+                                        divide_by_n=divide_by_n,
+                                        nthreads=nthreads)
 
     return vis
 
