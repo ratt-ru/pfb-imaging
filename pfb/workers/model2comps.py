@@ -65,15 +65,15 @@ def _model2comps(**kw):
     import numpy as np
     from pfb.utils.naming import xds_from_url, xds_from_list
     from africanus.constants import c as lightspeed
-    from pfb.utils.misc import fit_image_cube
+    from pfb.utils.modelspec import fit_image_cube, eval_coeffs_to_slice
     from pfb.utils.fits import set_wcs, save_fits
-    from pfb.utils.misc import eval_coeffs_to_slice, norm_diff
+    from pfb.utils.misc import norm_diff
     import xarray as xr
     import fsspec as fs
     from daskms.fsspec_store import DaskMSStore
     import json
     from casacore.quanta import quantity
-    from pfb.utils.misc import eval_coeffs_to_slice
+    from pfb.utils.modelspec import eval_coeffs_to_slice
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
@@ -341,7 +341,7 @@ def _model2comps_fits(**kw):
     import os
     import numpy as np
     from africanus.constants import c as lightspeed
-    from pfb.utils.misc import fit_image_cube
+    from pfb.utils.modelspec import fit_image_cube
     from pfb.utils.fits import set_wcs, save_fits, load_fits
     from pfb.utils.misc import eval_coeffs_to_slice, norm_diff
     import xarray as xr

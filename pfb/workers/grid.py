@@ -434,7 +434,7 @@ def _grid(**kw):
 
         # get the model
         if opts.transfer_model_from:
-            from pfb.utils.misc import eval_coeffs_to_slice
+            from pfb.utils.modelspec import eval_coeffs_to_slice
             _, _, _, x0, y0 = wgridder_conventions(l0, m0)
             model = eval_coeffs_to_slice(
                 time_out,
