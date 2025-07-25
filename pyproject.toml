@@ -40,7 +40,6 @@ regions = ">=0.9"
 psutil = ">=5.9.8"
 matplotlib = ">=3.9.2"
 rich = ">=13.0.0"
-tart2ms = "*"
 
 [tool.poetry.scripts]
 pfb = "pfb.workers.main:cli"

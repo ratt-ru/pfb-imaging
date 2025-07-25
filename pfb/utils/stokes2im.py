@@ -221,27 +221,36 @@ def stokes_image(
         ra_deg -= 360
     dec_deg = np.rad2deg(tdec)
 
-    # # rephase if asked
-    # if opts.phase_dir is not None:
-    #     new_ra, new_dec = opts.phase_dir.split(',')
-    #     c = SkyCoord(new_ra, new_dec, frame='fk5', unit=(units.hourangle, units.deg))
-    #     new_ra_rad = np.deg2rad(c.ra.value)
-    #     new_dec_rad = np.deg2rad(c.dec.value)
-    #     from tart2ms.fixvis import synthesize_uvw, rephase
-    #     data = rephase(data, uvw, (ddid,), sel, freq, 
-    #                    (new_ra_rad, new_dec_rad),
-    #                    (tra, tdec), phasesign=-1)
-    #     if model_vis is not None:
-    #         model_vis = rephase(model_vis, uvw,
-    #                             (ddid,), sel, freq, 
-    #                             (new_ra_rad, new_dec_rad),
-    #                             (tra, tdec), phasesign=-1)
-    #     dct = synthesize_uvw(antpos, time, ant1, ant2,
-    #                (tra, tdec),
-    #                stopctr_units=["rad", "rad"], stopctr_epoch="j2000",
-    #                time_TZ="UTC", time_unit="s",
-    #                posframe="ITRF", posunits=["m", "m", "m"], ack=True)
+    # rephase if asked
+    if opts.phase_dir is not None:
+        new_ra, new_dec = opts.phase_dir.split(',')
+        c = SkyCoord(new_ra, new_dec, frame='fk5', unit=(units.hourangle, units.deg))
+        new_ra_rad = np.deg2rad(c.ra.value)
+        new_dec_rad = np.deg2rad(c.dec.value)
+        from pfb.utils.astrometry import (rephase, synthesize_uvw,
+                                          dense2sparse_uvw)
+        data = rephase(data, uvw, freq, 
+                       (new_ra_rad, new_dec_rad),
+                       (tra, tdec), phasesign=-1)
+        if model_vis is not None:
+            model_vis = rephase(model_vis, uvw,freq, 
+                                (new_ra_rad, new_dec_rad),
+                                (tra, tdec), phasesign=-1)
+        dct = synthesize_uvw(antpos, time, ant1, ant2,
+                             (tra, tdec))
         
+        uvwn = dct['UVW']
+        ant1n = dct['ANTENNA1']
+        ant2n = dct['ANTENNA2']
+
+        uvw_new = dense2sparse_uvw(ant1, ant2, time, uvwn)
+
+        print(uvw.shape, uvw_new.shape, np.abs(uvw-uvw_new).max())
+        print(uvw[0, 0], uvw_new[0, 0])
+        print(uvw[0, 1], uvw_new[0, 1])
+        print(uvw[0, 2], uvw_new[0, 2])
+
+
 
 
     # we currently need this extra loop through the data because
@@ -484,7 +493,7 @@ def stokes_image(
         cchunk = 1
         coords = {
             'FREQ': (('FREQ',), np.array([freq_out])),
-            'TIME': (('TIME',), utime),
+            'TIME': (('TIME',), np.mean(utime, keepdims=True)),
             'STOKES': (('STOKES',), list(corr)),
             'X': (('X',), ra_deg + np.arange(nx//2, -(nx//2), -1) * cell_deg),
             'Y': (('Y',), dec_deg + np.arange(-(ny//2), ny//2) * cell_deg),

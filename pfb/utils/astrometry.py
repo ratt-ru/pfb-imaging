@@ -1,5 +1,5 @@
 '''
-Shameless pillaged from
+Shamelessly pillaged from
 https://github.com/tart-telescope/tart2ms/blob/master/tart2ms/fixvis.py
 '''
 
@@ -12,6 +12,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.coordinates import solar_system_ephemeris, EarthLocation, AltAz
 from astropy.coordinates import get_body_barycentric, get_body, get_moon
+from scipy.constants import c as lightspeed
 
 def synthesize_uvw(station_ECEF, time, a1, a2,
                    phase_ref,
@@ -59,8 +60,8 @@ def synthesize_uvw(station_ECEF, time, a1, a2,
     dm = measures()
     epoch = dm.epoch(time_TZ, quantity(time[0], time_unit))
     refdir = dm.direction(stopctr_epoch,
-                          quantity(phase_ref[0, 0], stopctr_units[0]),
-                          quantity(phase_ref[0, 1], stopctr_units[1]))
+                          quantity(phase_ref[0], stopctr_units[0]),
+                          quantity(phase_ref[1], stopctr_units[1]))
     obs = dm.position(posframe,
                       quantity(station_ECEF[0, 0], posunits[0]),
                       quantity(station_ECEF[0, 1], posunits[1]),
@@ -133,3 +134,97 @@ def get_coordinates(obs_time,
     sun_hms=format_coords(sun_ra,sun_dec)
     # print(sun_hms[0],sun_hms[1])
     return np.deg2rad(sun_ra), np.deg2rad(sun_dec)
+
+
+def rephase(vis, uvw, freq, radec_new, radec_ref, phasesign=-1):
+    ra = radec_new[0]
+    dec = radec_new[1]
+    ra0 = radec_ref[0]
+    dec0 = radec_ref[1]
+    d_ra = (ra - ra0)
+    d_dec = dec
+    d_decp = dec0
+    c_d_dec = np.cos(d_dec)
+    s_d_dec = np.sin(d_dec)
+    s_d_ra = np.sin(d_ra)
+    c_d_ra = np.cos(d_ra)
+    c_d_decp = np.cos(d_decp)
+    s_d_decp = np.sin(d_decp)
+    ll = c_d_dec * s_d_ra
+    mm = (s_d_dec * c_d_decp - c_d_dec * s_d_decp * c_d_ra)
+    nn = s_d_dec * s_d_decp + c_d_dec * c_d_decp * c_d_ra - 1.0
+
+    nrow, _, _ = vis.shape
+    uvw_freq = np.zeros((nrow, freq.size, 3))
+    uvw_freq[:, :, 0] = uvw[:, 0:1] * freq[None, :]/lightspeed
+    uvw_freq[:, :, 1] = uvw[:, 1:2] * freq[None, :]/lightspeed
+    uvw_freq[:, :, 2] = uvw[:, 2:] * freq[None, :]/lightspeed
+
+    x = np.exp(phasesign * 2.0j * np.pi * (uvw_freq[:, :, 0] * ll +
+                                            uvw_freq[:, :, 1] * mm +
+                                            uvw_freq[:, :, 2] * nn))
+    
+    return vis[:, :, :] * x[:, :, None]
+
+def dense2sparse_uvw(a1, a2, time, padded_uvw):
+    """
+    Copy a dense uvw matrix onto a sparse uvw matrix
+        a1: sparse antenna 1 index
+        a2: sparse antenna 2 index
+        time: sparse time
+        ddid: sparse data discriptor index
+        padded_uvw: a dense ddid-less uvw matrix
+                    returned by synthesize_uvw of shape
+                    (ntime * nbl, 3), fastest varying
+                    by baseline, including auto correlations
+    """
+    assert time.size == a1.size
+    assert a1.size == a2.size
+    na = np.maximum(a1.max(), a2.max()) + 1
+    nbl = na * (na - 1) // 2 + na
+    unique_time = np.unique(time)
+    new_uvw = np.zeros((a1.size, 3), dtype=padded_uvw.dtype)
+    outbl = baseline_index(a1, a2, na) - 1
+    for outrow in range(a1.size):
+        lookupt = np.argwhere(unique_time == time[outrow])[0][0]
+        # print(padded_uvw.shape, lookupt * nbl, outbl[outrow], outrow)
+        # from time import sleep
+        # sleep(1)
+        # note: uvw same for all ddid (in m)
+        new_uvw[outrow][:] = padded_uvw[lookupt * nbl + outbl[outrow], :]
+
+    return new_uvw
+
+def baseline_index(a1, a2, no_antennae):
+    """
+    Computes unique index of a baseline given antenna 1 and antenna 2
+    (zero indexed) as input. The arrays may or may not contain
+    auto-correlations.
+
+    There is a quadratic series expression relating a1 and a2
+    to a unique baseline index(can be found by the double difference
+    method)
+
+    Let slow_varying_index be S = min(a1, a2). The goal is to find
+    the number of fast varying terms. As the slow
+    varying terms increase these get fewer and fewer, because
+    we only consider unique baselines and not the conjugate
+    baselines)
+    B = (-S ^ 2 + 2 * S *  # Ant + S) / 2 + diff between the
+    slowest and fastest varying antenna
+
+    :param a1: array of ANTENNA_1 ids
+    :param a2: array of ANTENNA_2 ids
+    :param no_antennae: number of antennae in the array
+    :return: array of baseline ids
+
+    Note: na must be strictly greater than max of 0-indexed
+          ANTENNA_1 and ANTENNA_2
+    """
+    if a1.shape != a2.shape:
+        raise ValueError("a1 and a2 must have the same shape!")
+
+    slow_index = np.min(np.array([a1, a2]), axis=0)
+
+    return (slow_index * (-slow_index + (2 * no_antennae + 1))) // 2 + \
+        np.abs(a1 - a2)
