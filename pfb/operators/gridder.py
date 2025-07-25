@@ -153,12 +153,11 @@ def comps2vis(
             divide_by_n=False,
             freq_min=-np.inf,
             freq_max=np.inf,
-            ncorr_out=4,
-            product='I',
-            poltype='linear'):
+            product='I'):
 
     # determine output type
     complex_type = da.result_type(mds.coefficients.dtype, np.complex64)
+    ncorr_out = len(product)
 
     return da.blockwise(_comps2vis, 'rfc',
                         uvw, 'r3',
@@ -181,9 +180,7 @@ def comps2vis(
                         divide_by_n, None,
                         freq_min, None,
                         freq_max, None,
-                        ncorr_out, None,
                         product, None,
-                        poltype, None,
                         new_axes={'c': ncorr_out},
                         # it should be getting these from uvw and freq?
                         adjust_chunks={'r': uvw.chunks[0]},
