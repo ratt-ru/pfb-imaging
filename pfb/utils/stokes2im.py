@@ -233,8 +233,7 @@ def stokes_image(
         c = SkyCoord(new_ra, new_dec, frame='fk5', unit=(units.hourangle, units.deg))
         new_ra_rad = np.deg2rad(c.ra.value)
         new_dec_rad = np.deg2rad(c.dec.value)
-        from pfb.utils.astrometry import (rephase, synthesize_uvw,
-                                          dense2sparse_uvw)
+        from pfb.utils.astrometry import (rephase, synthesize_uvw)
         data = rephase(data, uvw, freq, 
                        (new_ra_rad, new_dec_rad),
                        (tra, tdec), phasesign=-1)
@@ -242,12 +241,10 @@ def stokes_image(
             model_vis = rephase(model_vis, uvw,freq, 
                                 (new_ra_rad, new_dec_rad),
                                 (tra, tdec), phasesign=-1)
-        dct = synthesize_uvw(antpos, time, ant1, ant2,
-                             (tra, tdec))
         
-        uvwn = dct['UVW']
-        import ipdb; ipdb.set_trace()
-        uvw = uvwn
+        uvw = synthesize_uvw(antpos, time, ant1, ant2, (tra, tdec))
+        # import ipdb; ipdb.set_trace()
+        # uvw = uvwn
 
         # now for the beam interpolation/reprojection
         # load and interpolate beam to output frequency
