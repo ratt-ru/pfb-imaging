@@ -95,6 +95,10 @@ inputs:
       - double
     info:
       Gridding precision
+  beam-model:
+    dtype: str
+    info:
+      Beam model to use. Only katbeam currently supported.
   field-of-view:
     dtype: float
     abbreviation: fov

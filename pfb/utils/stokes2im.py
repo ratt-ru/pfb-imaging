@@ -20,6 +20,10 @@ Fs = np.fft.fftshift
 from astropy import units
 from astropy.coordinates import SkyCoord
 from africanus.coordinates import radec_to_lm
+from katbeam import JimBeam
+from scipy import ndimage
+from reproject import reproject_interp
+from astropy.wcs import WCS
 
 @ray.remote
 def compute_dataset(dset):
@@ -245,12 +249,48 @@ def stokes_image(
         ant1n = dct['ANTENNA1']
         ant2n = dct['ANTENNA2']
 
-        uvw_new = dense2sparse_uvw(ant1, ant2, time, uvwn)
+        # remove auto-correlations if they are not in original data
+        autos_in_ms = (ant1==ant2).any()
+        if not autos_in_ms:
+            I = ant1n != ant2n
+            uvwn = uvwn[I]
+            ant1n = ant1n[I]
+            ant2n = ant2n[I]
 
-        print(uvw.shape, uvw_new.shape, np.abs(uvw-uvw_new).max())
-        print(uvw[0, 0], uvw_new[0, 0])
-        print(uvw[0, 1], uvw_new[0, 1])
-        print(uvw[0, 2], uvw_new[0, 2])
+        assert (ant1==ant1n).all()
+        assert (ant2==ant2n).all()
+
+        uvw = uvwn
+
+        # now for the beam interpolation/reprojection
+        # load and interpolate beam to output frequency
+        if opts.beam_model is None:
+            pass
+            raise RuntimeError("You have to provide a beam model when changing the phase center")
+        bds = xr.open_zarr(opts.beam_model, chunks=None).interp(chan=[freq_out])
+        l_beam = bds.l_beam.values
+        m_beam = bds.m_beam.values
+        freq = bds.chan.values
+        corr = bds.corr.values
+        beami = bds.BEAM.values
+
+        # header for reference field
+        hdr_ref = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
+                          freq_out, ms_time=time_out)
+        wcs_ref = WCS(hdr_ref).dropaxis(-1).dropaxis(-1)
+        # header for target field
+        hdr_target = set_wcs(cell_deg, cell_deg, nx, ny,
+                          [new_ra_rad, new_dec_rad],
+                          freq_out, ms_time=time_out)
+        wcs_target = WCS(hdr_target).dropaxis(-1).dropaxis(-1)
+
+        pbeam, footprint = reproject_interp((beami, wcs_ref),
+                                            wcs_target,
+                                            shape_out=(nx, ny),
+                                            block_size='auto',
+                                            parallel=4)
+
+        
 
     # vis_func, wgt_func = stokes_funcs(data, jones, opts.product, poltype, str(ncorr))
     # data, weight = weight_data_np(
