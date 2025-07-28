@@ -246,20 +246,7 @@ def stokes_image(
                              (tra, tdec))
         
         uvwn = dct['UVW']
-        ant1n = dct['ANTENNA1']
-        ant2n = dct['ANTENNA2']
-
-        # remove auto-correlations if they are not in original data
-        autos_in_ms = (ant1==ant2).any()
-        if not autos_in_ms:
-            I = ant1n != ant2n
-            uvwn = uvwn[I]
-            ant1n = ant1n[I]
-            ant2n = ant2n[I]
-
-        assert (ant1==ant1n).all()
-        assert (ant2==ant2n).all()
-
+        import ipdb; ipdb.set_trace()
         uvw = uvwn
 
         # now for the beam interpolation/reprojection
