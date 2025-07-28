@@ -79,7 +79,7 @@ def hci(**kw):
     ray.init(num_cpus=opts.nworkers, 
              logging_level='INFO', 
              ignore_reinit_error=True,
-             local_mode=opts.nworkers>1)
+             local_mode=opts.nworkers==1)
     
     ti = time.time()
     _hci(**opts)
