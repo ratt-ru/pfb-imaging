@@ -183,8 +183,6 @@ def _smoovie(**kw):
             else:
                 log.error_and_raise(f"Unsupported format {opts.out_format}", ValueError)
 
-            # import ipdb; ipdb.set_trace()
-
     else:
         log.error_and_raise(f"Can't animate axis {opts.animate_axis}",
                             NotImplementedError)

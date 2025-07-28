@@ -1,19 +1,16 @@
+import ray
 from functools import partial
 import numpy as np
 import numexpr as ne
-from numba import literally
-from distributed import worker_client
 import xarray as xr
-from uuid import uuid4
 from pfb.utils.weighting import (_compute_counts, counts_to_weights,
                                  weight_data, filter_extreme_counts)
+from pfb.utils.stokes import stokes_funcs
 from pfb.utils.fits import set_wcs, save_fits, add_beampars
 from pfb.utils.misc import fitcleanbeam
 from pfb.operators.gridder import wgridder_conventions
-from ducc0.wgridder.experimental import vis2dirty
 from casacore.quanta import quantity
 from datetime import datetime, timezone
-from ducc0.misc import resize_thread_pool
 from ducc0.fft import good_size
 from pfb.utils.astrometry import get_coordinates
 from scipy.constants import c as lightspeed
@@ -24,7 +21,12 @@ from astropy import units
 from astropy.coordinates import SkyCoord
 from africanus.coordinates import radec_to_lm
 
+@ray.remote
+def compute_dataset(dset):
+    """Ray remote function to compute dataset"""
+    return dset
 
+@ray.remote
 def stokes_image(
                 dc1=None,
                 dc2=None,
@@ -46,7 +48,10 @@ def stokes_image(
                 bandid=None,
                 timeid=None,
                 wid=None):
-
+    # serialization fails for these if we import them above
+    from ducc0.misc import resize_thread_pool
+    from ducc0.wgridder import vis2dirty
+    
     resize_thread_pool(opts.nthreads)
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
@@ -61,12 +66,9 @@ def stokes_image(
         real_type = np.float64
         complex_type = np.complex128
 
-    with worker_client() as client:
-        (ds, jones) = client.compute([ds,
-                                      jones],
-                                     sync=True,
-                                     workers=wid,
-                                     key='read-'+uuid4().hex)
+    ds = ray.get(compute_dataset.remote(ds))
+    jones = ray.get(compute_dataset.remote(jones))
+    
     data = getattr(ds, dc1).values
     ds = ds.drop_vars(dc1)
     if dc2 is not None:
@@ -250,17 +252,24 @@ def stokes_image(
         print(uvw[0, 1], uvw_new[0, 1])
         print(uvw[0, 2], uvw_new[0, 2])
 
-
-
+    # vis_func, wgt_func = stokes_funcs(data, jones, opts.product, poltype, str(ncorr))
+    # data, weight = weight_data_np(
+    #         data, weight, flag, jones,
+    #         tbin_idx, tbin_counts,
+    #         ant1, ant2,
+    #         len(opts.product),
+    #         vis_func, 
+    #         wgt_func)
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
-    data, weight = weight_data(data, weight, flag, jones,
-                            tbin_idx, tbin_counts,
-                            ant1, ant2,
-                            literally(poltype),
-                            literally(opts.product),
-                            literally(str(ncorr)))
+    data, weight = weight_data(
+            data, weight, flag, jones,
+            tbin_idx, tbin_counts,
+            ant1, ant2,
+            poltype,
+            opts.product,
+            str(ncorr))
 
     # flag if any correlation is flagged
     flag = flag.any(axis=-1)
