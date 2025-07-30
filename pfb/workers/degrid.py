@@ -322,7 +322,7 @@ def _degrid(**kw):
                 else:
                     out_schema = output_schema
                 
-                vis = convert(vis, input_schema, out_schema)
+                vis = convert(vis, input_schema, out_schema, implicit_stokes=True)
 
                 if opts.accumulate:
                     vis += getattr(ds, column_name).data

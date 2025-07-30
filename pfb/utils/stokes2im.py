@@ -243,7 +243,7 @@ def stokes_image(
                                 (tra, tdec), phasesign=-1)
         
         uvw = synthesize_uvw(antpos, time, ant1, ant2, (tra, tdec))
-        # import ipdb; ipdb.set_trace()
+        import ipdb; ipdb.set_trace()
         # uvw = uvwn
 
         # now for the beam interpolation/reprojection
