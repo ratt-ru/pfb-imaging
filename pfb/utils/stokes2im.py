@@ -5,7 +5,7 @@ import numexpr as ne
 import xarray as xr
 from pfb.utils.weighting import (_compute_counts, counts_to_weights,
                                  weight_data, filter_extreme_counts)
-from pfb.utils.stokes import stokes_funcs
+from pfb.utils.stokes import stokes_funcs, jones_to_mueller, mueller_to_stokes
 from pfb.utils.fits import set_wcs, save_fits, add_beampars
 from pfb.utils.misc import fitcleanbeam
 from pfb.operators.gridder import wgridder_conventions
@@ -31,6 +31,13 @@ def compute_dataset(dset):
     return dset
 
 @ray.remote
+def safe_stokes_image(*args, **kwargs):
+    try:
+        return stokes_image(*args, **kwargs)
+    except Exception as e:
+        raise e
+
+
 def stokes_image(
                 dc1=None,
                 dc2=None,
@@ -226,6 +233,7 @@ def stokes_image(
     if ra_deg > 180:
         ra_deg -= 360
     dec_deg = np.rad2deg(tdec)
+    cell_deg = np.rad2deg(cell_rad)
 
     # rephase if asked
     if opts.phase_dir is not None:
@@ -243,22 +251,61 @@ def stokes_image(
                                 (tra, tdec), phasesign=-1)
         
         uvw = synthesize_uvw(antpos, time, ant1, ant2, (tra, tdec))
-        import ipdb; ipdb.set_trace()
-        # uvw = uvwn
-
+    
         # now for the beam interpolation/reprojection
         # load and interpolate beam to output frequency
         if opts.beam_model is None:
-            pass
             raise RuntimeError("You have to provide a beam model when changing the phase center")
+        # should we compute a weighted mean over freq instead of interpolating here? 
         bds = xr.open_zarr(opts.beam_model, chunks=None).interp(chan=[freq_out])
         l_beam = bds.l_beam.values
         m_beam = bds.m_beam.values
-        freq = bds.chan.values
-        corr = bds.corr.values
-        beami = bds.BEAM.values
+        freq_beam = bds.chan.values
+        corr_beam = bds.corr.values
+        # the beam is in feed plane direction cosine coordinates
+        # we need to flip the beam upside down because of the beam orientation
+        # see https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
+        # shape is (corr, chan, X, Y)
+        beam = bds.BEAM.values[:, :, :, ::-1]
+        # reshape for paralactic angle rotation
+        beam = beam.reshape(2, 2, freq_beam.size, l_beam.size, m_beam.size)
 
-        # header for reference field
+        from africanus.rime import parallactic_angles, feed_rotation
+        # rotate at original field center
+        parangles = parallactic_angles(utime, antpos, np.array((tra, tdec)))
+        # use the mean over antenna
+        parangles = np.mean(parangles, axis=-1, keepdims=True)
+        # squeeze out antenna axis
+        feedrot = feed_rotation(parangles, feed_type=poltype)[:, 0, :]
+        beam = np.einsum('tij,jkfxy->tikfxy', feedrot, beam)
+        # compute the weighted sum over time
+        wsumt = np.zeros((ntime, 2, 2))
+        for i, t in enumerate(utime):
+            sel = time==t
+            wsumt[i] = weight[sel].sum(axis=(0, 1)).reshape(2, 2)
+        beam = np.sum(wsumt[:, :, :, None, None, None] * beam, axis=0)
+        beam /= np.sum(wsumt, axis=0)[:, :, None, None, None]
+
+        # jones to Mueller
+        beam = jones_to_mueller(beam, beam)
+
+        # Mueller to Stokes
+        beam = mueller_to_stokes(beam, poltype=poltype)
+        
+        # select required products
+        i = ()
+        if 'I' in opts.product:
+            i += (0,)
+        if 'Q' in opts.product:
+            i += (1,)
+        if 'U' in opts.product:
+            i += (2,)
+        if 'V' in opts.product:
+            i += (3,)
+        beam = beam[i, ...]
+        
+        # reproject onto target field
+        # header for reference field (header -> wcs to get fits convention right)
         hdr_ref = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
                           freq_out, ms_time=time_out)
         wcs_ref = WCS(hdr_ref).dropaxis(-1).dropaxis(-1)
@@ -268,22 +315,17 @@ def stokes_image(
                           freq_out, ms_time=time_out)
         wcs_target = WCS(hdr_target).dropaxis(-1).dropaxis(-1)
 
-        pbeam, footprint = reproject_interp((beami, wcs_ref),
-                                            wcs_target,
-                                            shape_out=(nx, ny),
-                                            block_size='auto',
-                                            parallel=4)
+        # squeeze out freq axis
+        beam = beam[:, 0]
 
-        
-
-    # vis_func, wgt_func = stokes_funcs(data, jones, opts.product, poltype, str(ncorr))
-    # data, weight = weight_data_np(
-    #         data, weight, flag, jones,
-    #         tbin_idx, tbin_counts,
-    #         ant1, ant2,
-    #         len(opts.product),
-    #         vis_func, 
-    #         wgt_func)
+        pbeam = np.zeros((len(opts.product), nx, ny), dtype=real_type)
+        pmask = np.zeros((len(opts.product), nx, ny), dtype=real_type)
+        for i in range(len(opts.product)):
+            pbeam[i], pmask[i] = reproject_interp((beam[i], wcs_ref),
+                                                wcs_target,
+                                                shape_out=(nx, ny),
+                                                block_size='auto',
+                                                parallel=opts.nthreads)
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
@@ -475,7 +517,6 @@ def stokes_image(
             dirty=psf[c])
 
     # these will be in units of pixels
-    cell_deg = np.rad2deg(cell_rad)
     GaussPars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
 
     rms = np.std(residual/wsum[:, None, None], axis=(1,2))
@@ -617,6 +658,10 @@ def stokes_image(
                   f'{fds_store.full_path}/{oname}_psf.fits', hdr_psf)
         if x is not None:
             save_fits(x,
+                  f'{fds_store.full_path}/{oname}_x.fits', hdr)
+
+        if opts.beam_model is not None:
+            save_fits(pbeam,
                   f'{fds_store.full_path}/{oname}_x.fits', hdr)
     return 1
 

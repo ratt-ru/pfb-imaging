@@ -101,7 +101,7 @@ def _hci(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.stokes2im import stokes_image
+    from pfb.utils.stokes2im import safe_stokes_image
     import xarray as xr
     from glob import glob
 
@@ -289,8 +289,6 @@ def _hci(**kw):
                       table_schema=schema,
                       group_cols=group_by)
 
-    # a flat list to use with as_completed
-    datasets = []
     tasks = []
     for ids, ds in enumerate(xds):
         fid = ds.FIELD_ID
@@ -306,7 +304,6 @@ def _hci(**kw):
         if opts.scans is not None:
             if scanid not in list(map(int, opts.scans)):
                 continue
-
 
         idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
 
@@ -338,15 +335,7 @@ def _hci(**kw):
                 else:
                     jones = None
 
-                # datasets.append([subds,
-                #                 jones,
-                #                 freqs[ms][idt][Inu],
-                #                 utimes[ms][idt][It],
-                #                 ridx, rcnts,
-                #                 radecs[ms][idt],
-                #                 b0 + fi, ti, ms])
-
-                fut = stokes_image.remote(
+                fut = safe_stokes_image.remote(
                         dc1=dc1,
                         dc2=dc2,
                         operator=operator,
@@ -378,8 +367,12 @@ def _hci(**kw):
         
         # Process the completed task
         for task in ready:
-            result = ray.get(task)
-            if isinstance(result, BaseException):
+            try:
+                result = ray.get(task)
+            except Exception as e:
+                import ipdb; ipdb.set_trace()
+                for future in remaining_tasks:
+                    ray.cancel(future)
                 import traceback
                 log.error_and_raise(f"Traceback:\n{traceback.format_exc()}",
                                     result)

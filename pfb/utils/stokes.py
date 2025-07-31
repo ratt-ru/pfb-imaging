@@ -4,7 +4,43 @@ from sympy.physics.quantum import TensorProduct
 from sympy.utilities.lambdify import lambdify
 from numba import njit
 from numba.core import types
+import string
 
+def jones_to_mueller(gp, gq):
+    shape = gp.shape
+    rem_shape = shape[2:]
+    i0 = string.ascii_lowercase.index('m')
+    rem_idx = string.ascii_lowercase[i0:i0+len(rem_shape)]
+    idxp = 'ij' + rem_idx
+    idxq = 'kl' + rem_idx
+    idxo = 'ikjl' + rem_idx
+    out_shape = (4,4) + rem_shape
+    return np.einsum(f'{idxp},{idxq}->{idxo}', gp, np.conjugate(gq)).reshape(*out_shape)
+
+def mueller_to_stokes(mueller, poltype='linear'):
+    '''
+    Convert a Mueller matrix into a diagonal Stokes matrix.
+    '''
+    if poltype=='linear':
+        T = np.array([[1.0, 1.0, 0, 0],
+                      [0, 0, 1.0, 1.0j],
+                      [0, 0, 1.0, -1.0j],
+                      [1.0, -1.0, 0, 0]])
+    elif poltype=='circular':
+        T = np.array([[1.0, 0, 0, 1.0],
+                      [0, 1.0, 1.0j, 0],
+                      [0, 1.0, -1.0j, 0],
+                      [1.0, 0, 0, -1.0]])
+    else:
+        raise ValueError(f'Unknown poltype {poltype}')
+    shape = mueller.shape
+    rem_shape = shape[2:]
+    i0 = string.ascii_lowercase.index('m')
+    rem_idx = string.ascii_lowercase[i0:i0+len(rem_shape)]
+    idxl = 'ij' + rem_idx
+    idxr = 'ji'
+    idxo = 'i' + rem_idx
+    return np.einsum(f'{idxl},{idxr}->{idxo}', mueller, T).real
 
 def corr_to_stokes(x, wsum=1.0, axis=0, poltype='linear'):
     '''
