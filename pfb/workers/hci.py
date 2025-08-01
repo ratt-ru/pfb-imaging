@@ -368,7 +368,6 @@ def _hci(**kw):
             try:
                 result = ray.get(task)
             except Exception as e:
-                import ipdb; ipdb.set_trace()
                 for future in remaining_tasks:
                     ray.cancel(future)
                 import traceback

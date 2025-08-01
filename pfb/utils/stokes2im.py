@@ -67,7 +67,7 @@ def stokes_image(
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
     scanid = ds.SCAN_NUMBER
-    oname = f'ms{fieldid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
+    oname = f'ms{msid:04d}_fid{fieldid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
             f'_band{bandid:04d}_time{timeid:04d}'
 
     if opts.precision.lower() == 'single':
@@ -329,6 +329,9 @@ def stokes_image(
                                                 shape_out=(nx, ny),
                                                 block_size='auto',
                                                 parallel=opts.nthreads)
+            
+        tra = new_ra_rad
+        tdec = new_dec_rad
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
