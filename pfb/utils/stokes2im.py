@@ -58,7 +58,7 @@ def stokes_image(
                 fds_store=None,
                 bandid=None,
                 timeid=None,
-                wid=None):
+                msid=None):
     # serialization fails for these if we import them above
     from ducc0.misc import resize_thread_pool
     from ducc0.wgridder import vis2dirty
@@ -306,7 +306,10 @@ def stokes_image(
         
         # reproject onto target field
         # header for reference field (header -> wcs to get fits convention right)
-        hdr_ref = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
+        cellx_deg_beam = l_beam[1] - l_beam[0]
+        celly_deg_beam = m_beam[1] - m_beam[0]
+        hdr_ref = set_wcs(cellx_deg_beam, celly_deg_beam,
+                          l_beam.size, m_beam.size, [tra, tdec],
                           freq_out, ms_time=time_out)
         wcs_ref = WCS(hdr_ref).dropaxis(-1).dropaxis(-1)
         # header for target field
@@ -558,7 +561,6 @@ def stokes_image(
                   ms_time=time_out, ncorr=len(corr))
 
     # save outputs
-    oname = f'spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
     if opts.output_format == 'zarr':
         tchunk = 1
         fchunk = 1
@@ -598,7 +600,14 @@ def stokes_image(
             wgt = np.transpose(wgt[:, None, :, :].astype(np.float32),
                                axes=(0, 1, 3, 2))
             data_vars['wgtgrid'] = (('STOKES', 'TIME', 'Y_PAD', 'X_PAD'), wgt)
-
+        if opts.beam_model is not None:
+            pbeam = np.transpose(pbeam[:, None, :, :].astype(np.float32),
+                                 axes=(0, 1, 3, 2))
+            pmask = np.transpose(pmask[:, None, :, :].astype(bool),
+                                 axes=(0, 1, 3, 2))
+            data_vars['BEAM'] = (('STOKES', 'TIME', 'Y', 'X'), pbeam)
+            data_vars['MASK'] = (('STOKES', 'TIME', 'Y', 'X'), pmask)
+        
         data_vars['rms'] = (('STOKES', 'TIME'), rms[:, None].astype(np.float32))
         data_vars['wsum'] = (('STOKES', 'TIME'), wsum[:, None].astype(np.float32))
         bmaj = np.array([gp[0] for gp in GaussPars], dtype=np.float32)
@@ -662,7 +671,9 @@ def stokes_image(
 
         if opts.beam_model is not None:
             save_fits(pbeam,
-                  f'{fds_store.full_path}/{oname}_x.fits', hdr)
+                  f'{fds_store.full_path}/{oname}_beam.fits', hdr)
+            save_fits(pmask,
+                  f'{fds_store.full_path}/{oname}_mask.fits', hdr)
     return 1
 
 

@@ -107,18 +107,18 @@ def _hci(**kw):
 
     basename = f'{opts.output_filename}'
 
-    fdsstore = DaskMSStore(f'{basename}.fds')
-    if fdsstore.exists():
+    fds_store = DaskMSStore(f'{basename}.fds')
+    if fds_store.exists():
         if opts.overwrite:
             log.info(f"Overwriting {basename}.fds")
-            fdsstore.rm(recursive=True)
+            fds_store.rm(recursive=True)
         else:
             log.error_and_raise(f"{basename}.fds exists. "
                                 "Set overwrite to overwrite it. ",
                                 RuntimeError)
 
-    fs = fsspec.filesystem(fdsstore.url.split(':', 1)[0])
-    fs.makedirs(fdsstore.url, exist_ok=True)
+    fs = fsspec.filesystem(fds_store.url.split(':', 1)[0])
+    fs.makedirs(fds_store.url, exist_ok=True)
 
     if opts.gain_table is not None:
         tmpf = lambda x: '::'.join(x.rsplit('/', 1))
@@ -284,79 +284,77 @@ def _hci(**kw):
         columns += (opts.model_column,)
         schema[opts.model_column] = {'dims': ('chan', 'corr')}
 
-    xds = xds_from_ms(ms,
-                      columns=columns,
-                      table_schema=schema,
-                      group_cols=group_by)
-
     tasks = []
-    for ids, ds in enumerate(xds):
-        fid = ds.FIELD_ID
-        ddid = ds.DATA_DESC_ID
-        scanid = ds.SCAN_NUMBER
-        # TODO - cleaner syntax
-        if opts.fields is not None:
-            if fid not in list(map(int, opts.fields)):
+    for ims, ms in enumerate(opts.ms):
+        xds = xds_from_ms(ms,
+                        columns=columns,
+                        table_schema=schema,
+                        group_cols=group_by)
+
+        for ds in xds:
+            fid = ds.FIELD_ID
+            ddid = ds.DATA_DESC_ID
+            scanid = ds.SCAN_NUMBER
+            if (opts.fields is not None) and (fid not in opts.fields):
                 continue
-        if opts.ddids is not None:
-            if ddid not in list(map(int, opts.ddids)):
+            if (opts.ddids is not None) and (ddid not in opts.ddids):
                 continue
-        if opts.scans is not None:
-            if scanid not in list(map(int, opts.scans)):
+            if (opts.scans is not None) and (scanid not in opts.scans):
                 continue
 
-        idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
 
-        idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
-        if not idx.any():
-            continue
+            idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
+            if not idx.any():
+                continue
 
-        titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
-                            time_mapping[ms][idt]['counts']))
-        for ti, (tlow, tcounts) in titr:
+            titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
+                                time_mapping[ms][idt]['counts']))
+            for ti, (tlow, tcounts) in titr:
 
-            It = slice(tlow, tlow + tcounts)
-            ridx = row_mapping[ms][idt]['start_indices'][It]
-            rcnts = row_mapping[ms][idt]['counts'][It]
-            # select all rows for output dataset
-            Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
+                It = slice(tlow, tlow + tcounts)
+                ridx = row_mapping[ms][idt]['start_indices'][It]
+                rcnts = row_mapping[ms][idt]['counts'][It]
+                # select all rows for output dataset
+                Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
 
-            fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
-                                    freq_mapping[ms][idt]['counts']))
-            b0 = msddid2bid[ms][idt]
-            for fi, (flow, fcounts) in fitr:
-                Inu = slice(flow, flow + fcounts)
+                fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
+                                        freq_mapping[ms][idt]['counts']))
+                b0 = msddid2bid[ms][idt]
+                for fi, (flow, fcounts) in fitr:
+                    Inu = slice(flow, flow + fcounts)
 
-                subds = ds[{'row': Irow, 'chan': Inu}]
-                subds = subds.chunk({'row':-1, 'chan': -1})
-                if gains[ms][idt] is not None:
-                    subgds = gains[ms][idt][{'gain_time': It, 'gain_freq': Inu}]
-                    jones = subgds.gains.data
-                else:
-                    jones = None
+                    subds = ds[{'row': Irow, 'chan': Inu}]
+                    subds = subds.chunk({'row':-1, 'chan': -1})
+                    if gains[ms][idt] is not None:
+                        subgds = gains[ms][idt][{'gain_time': It, 'gain_freq': Inu}]
+                        jones = subgds.gains.data
+                    else:
+                        jones = None
 
-                fut = safe_stokes_image.remote(
-                        dc1=dc1,
-                        dc2=dc2,
-                        operator=operator,
-                        ds=subds,
-                        jones=jones,
-                        opts=opts,
-                        nx=nx,
-                        ny=ny,
-                        freq=freqs[ms][idt][Inu],
-                        utime=utimes[ms][idt][It],
-                        tbin_idx=ridx,
-                        tbin_counts=rcnts,
-                        cell_rad=cell_rad,
-                        radec=radecs[ms][idt],
-                        antpos=antpos[ms],
-                        poltype=poltype[ms],
-                        fds_store=fdsstore,
-                        bandid=fi,
-                        timeid=ti,
-                )
-                tasks.append(fut)
+                    fut = safe_stokes_image.remote(
+                            dc1=dc1,
+                            dc2=dc2,
+                            operator=operator,
+                            ds=subds,
+                            jones=jones,
+                            opts=opts,
+                            nx=nx,
+                            ny=ny,
+                            freq=freqs[ms][idt][Inu],
+                            utime=utimes[ms][idt][It],
+                            tbin_idx=ridx,
+                            tbin_counts=rcnts,
+                            cell_rad=cell_rad,
+                            radec=radecs[ms][idt],
+                            antpos=antpos[ms],
+                            poltype=poltype[ms],
+                            fds_store=fds_store,
+                            bandid=b0+fi,
+                            timeid=ti,
+                            msid=ims,
+                    )
+                    tasks.append(fut)
 
     nds = len(tasks)
     ncomplete = 0
