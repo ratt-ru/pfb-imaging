@@ -149,17 +149,30 @@ def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
     beamo = beamo[i, ...]
     
     # reproject onto target field
-    # header for reference field (header -> wcs to get fits convention right)
-    hdr_ref = set_wcs(cell_deg_in, cell_deg_in,
-                      nxi, nyi, radec0, 1e9)  # freq not used
-    wcs_ref = WCS(hdr_ref).dropaxis(-1).dropaxis(-1)
+    wcs_ref = WCS(naxis=2)
+    wcs_ref.wcs.ctype = ['RA---SIN', 'DEC--SIN']
+    wcs_ref.wcs.cdelt = np.array((cell_deg_in, cell_deg_in))
+    wcs_ref.wcs.cunit = ['deg', 'deg']
+    wcs_ref.wcs.crval = np.array((radec0[0]*180.0/np.pi, radec0[1]*180.0/np.pi))
+    wcs_ref.wcs.crpix = [1 + nxi//2, 1 + nyi//2]
+    wcs_ref.array_shape = [nxi, nyi]
+    # hdr_ref = set_wcs(cell_deg_in, cell_deg_in, nxi, nyi, radec0, 1e9)
+    # wcs0 = WCS(hdr_ref).dropaxis(-1).dropaxis(-1)
+
     # header for target field
-    hdr_target = set_wcs(cell_deg_out, cell_deg_out,
-                         nxo, nyo, radecf, 1e9)  # freq not used
-    wcs_target = WCS(hdr_target).dropaxis(-1).dropaxis(-1)
+    wcs_target = WCS(naxis=2)
+    wcs_target.wcs.ctype = ['RA---SIN', 'DEC--SIN']
+    wcs_target.wcs.cdelt = np.array((cell_deg_out, cell_deg_out))
+    wcs_target.wcs.cunit = ['deg', 'deg']
+    wcs_target.wcs.crval = np.array((radecf[0]*180.0/np.pi, radecf[1]*180.0/np.pi))
+    wcs_target.wcs.crpix = [1 + nxo//2, 1 + nyo//2]
+    wcs_target.array_shape = [nxo, nyo]
+
+    # hdr_target = set_wcs(cell_deg_out, cell_deg_out, nxo, nyo, radecf, 1e9)
+    # wcsf = WCS(hdr_target).dropaxis(-1).dropaxis(-1)
 
     pbeam = np.zeros((len(product), nxo, nyo), dtype=beamo.dtype)
     pmask = np.zeros((len(product), nxo, nyo), dtype=beamo.dtype)
     for i in range(len(product)):
-        pbeam[i], pmask[i] = reproject_interp((beamo[i], wcs_ref), wcs_target, shape_out=(nxo, nyo), block_size='auto', parallel=nthreads)
+        pbeam[i], pmask[i] = reproject_interp((beamo[i], wcs_ref), wcs_target, shape_out=(nxo, nyo))  # , block_size='auto', parallel=nthreads
     return pbeam, pmask.astype(bool)

@@ -131,8 +131,6 @@ def stokes_image(
         weight = np.ones((nrow, nchan, ncorr),
                          dtype=real_type)
 
-    # weight *= ds.IMAGING_WEIGHT_SPECTRUM.values
-
     if opts.model_column is not None:
         model_vis = getattr(ds, opts.model_column).values.astype(complex_type)
         ds = ds.drop(opts.model_column)
@@ -207,6 +205,14 @@ def stokes_image(
 
     cell_deg = np.rad2deg(cell_rad)
 
+    # make sure ra is in (0, 2pi)
+    # need a copy since write only
+    radec = radec.copy()
+    if radec[0] < 0:
+        radec[0] += 2*np.pi
+    elif radec[0] > 2*np.pi:
+        radec[0] -= 2*np.pi
+
     # rephase if asked
     if opts.phase_dir is not None:
         new_ra, new_dec = opts.phase_dir.split(',')
@@ -214,14 +220,10 @@ def stokes_image(
         new_ra_rad = np.deg2rad(c.ra.value)
         new_dec_rad = np.deg2rad(c.dec.value)
         from pfb.utils.astrometry import (rephase, synthesize_uvw)
-        data = rephase(data, uvw, freq, (new_ra_rad, new_dec_rad),radec, phasesign=-1)
+        data = rephase(data, uvw, freq, (new_ra_rad, new_dec_rad), radec, phasesign=-1)
         if model_vis is not None:
-            model_vis = rephase(model_vis, uvw,freq, 
-                                (new_ra_rad, new_dec_rad),
-                                radec, phasesign=-1)
-        
+            model_vis = rephase(model_vis, uvw,freq, (new_ra_rad, new_dec_rad), radec, phasesign=-1)
         uvw = synthesize_uvw(antpos, time, ant1, ant2, (new_ra_rad, new_dec_rad))
-
         radec_new = np.array((new_ra_rad, new_dec_rad))
     else:
         radec_new = radec
@@ -276,9 +278,10 @@ def stokes_image(
         tdec = radec_new[1]
 
     ra_deg = np.rad2deg(tra)
-    if ra_deg > 180:
-        ra_deg -= 360
     dec_deg = np.rad2deg(tdec)
+    # why was this required?
+    # if ra_deg > 180:
+    #     ra_deg -= 360
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
@@ -620,6 +623,12 @@ def stokes_image(
                   f'{fds_store.full_path}/{oname}_x.fits', hdr)
 
         if opts.beam_model is not None:
+            pbeam = np.transpose(pbeam.astype(np.float32),
+                                 axes=(0, 2, 1))
+            pmask = np.transpose(pmask.astype(bool),
+                                 axes=(0, 2, 1))
+            pbeam = pbeam[:, :, ::-1]
+            pmask = pmask[:, :, ::-1]
             save_fits(pbeam,
                   f'{fds_store.full_path}/{oname}_beam.fits', hdr)
             save_fits(pmask,

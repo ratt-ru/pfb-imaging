@@ -2,7 +2,7 @@ import numpy as np
 from pyrap.measures import measures
 from pyrap.quanta import quantity
 from astropy.time import Time
-from astropy import units as u
+from astropy import units
 from astropy.coordinates import SkyCoord
 from astropy.coordinates import solar_system_ephemeris, EarthLocation, AltAz
 from astropy.coordinates import get_body_barycentric, get_body, get_moon
@@ -112,6 +112,13 @@ def rephase(vis, uvw, freq, radec_new, radec_ref, phasesign=-1):
     return vis[:, :, :] * x[:, :, None]
 
 
+def format_coords(ra0,dec0):
+    c = SkyCoord(ra0*units.deg,dec0*units.deg,frame='fk5')
+    hms = str(c.ra.to_string(units.hour))
+    dms = str(c.dec)
+    return hms,dms
+
+
 # Pillaged from
 # https://github.com/ratt-ru/solarkat/blob/main/solarkat-pipeline/find_sun_stimela.py
 # obs_lat and obs_lon hardcoded for MeerKAT
@@ -129,19 +136,12 @@ def get_coordinates(obs_time,
     obs_lat  - telescope lattitude in degrees
     obs_lon  - telescope longitude in degrees
     '''
-    def format_coords(ra0,dec0):
-        c = SkyCoord(ra0*u.deg,dec0*u.deg,frame='fk5')
-        hms = str(c.ra.to_string(u.hour))
-        dms = str(c.dec)
-        return hms,dms
-
-
     loc = EarthLocation.from_geodetic(obs_lat,obs_lon) #,obs_height,ellipsoid)
     t = Time(obs_time/86400.0,format='mjd')  # factor converts Jsecs to Jdays 24 * 60**2
     with solar_system_ephemeris.set('builtin'):
         sun = get_body(target, t, loc)
         sun_ra = sun.ra.value
         sun_dec = sun.dec.value
-    sun_hms=format_coords(sun_ra,sun_dec)
+    # sun_hms=format_coords(sun_ra,sun_dec)
     # print(sun_hms[0],sun_hms[1])
     return np.deg2rad(sun_ra), np.deg2rad(sun_dec)

@@ -33,7 +33,6 @@ def hci(**kw):
         log.error_and_raise(f"Product {remprod} not yet supported",
                             NotImplementedError)
 
-
     from daskms.fsspec_store import DaskMSStore
     msnames = []
     for ms in opts.ms:
@@ -41,7 +40,7 @@ def hci(**kw):
         mslist = msstore.fs.glob(ms.rstrip('/'))
         try:
             assert len(mslist) > 0
-            msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
+            msnames += list(map(msstore.fs.unstrip_protocol, mslist))
         except:
             log.error_and_raise(f"No MS at {ms}",
                                 ValueError)
@@ -53,7 +52,7 @@ def hci(**kw):
             gtlist = gainstore.fs.glob(gt.rstrip('/'))
             try:
                 assert len(gtlist) > 0
-                gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
+                gainnames += list(map(gainstore.fs.unstrip_protocol, gtlist))
             except Exception as e:
                 log.error_and_raise(f"No gain table  at {gt}",
                                     ValueError)
@@ -141,8 +140,6 @@ def _hci(**kw):
         freq_min = -np.inf
         freq_max = np.inf
 
-    # only a single MS for now
-    ms = opts.ms[0]
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
     # write model to tmp ds
@@ -166,11 +163,11 @@ def _hci(**kw):
 
     max_freq = 0
 
-    # for ms in opts.ms:
-    for idt in freqs[ms].keys():
-        freq = freqs[ms][idt]
-        mask  = (freq <= freq_max) & (freq >= freq_min)
-        max_freq = np.maximum(max_freq, freq[mask].max())
+    for ms in opts.ms:
+        for idt in freqs[ms].keys():
+            freq = freqs[ms][idt]
+            mask  = (freq <= freq_max) & (freq >= freq_min)
+            max_freq = np.maximum(max_freq, freq[mask].max())
 
     # cell size
     cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
