@@ -1017,6 +1017,8 @@ def set_image_size(
     else:
         nx = nx
         ny = ny if ny is not None else nx
+        if nx%2 or ny%2:
+            raise NotImplementedError('Only even number of pixels currently supported')
         cell_deg = np.rad2deg(cell_rad)
         fovx = nx*cell_deg
         fovy = ny*cell_deg

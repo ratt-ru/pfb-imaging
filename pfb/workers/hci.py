@@ -199,6 +199,8 @@ def _hci(**kw):
         nx = opts.nx
         ny = opts.ny if opts.ny is not None else nx
         cell_deg = np.rad2deg(cell_rad)
+        if nx%2 or ny%2:
+            raise NotImplementedError('Only even number of pixels currently supported')
         fovx = nx*cell_deg
         fovy = ny*cell_deg
         log.info(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
