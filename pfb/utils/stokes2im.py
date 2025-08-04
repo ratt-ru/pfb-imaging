@@ -5,7 +5,7 @@ import numexpr as ne
 import xarray as xr
 from pfb.utils.weighting import (_compute_counts, counts_to_weights,
                                  weight_data, filter_extreme_counts)
-from pfb.utils.stokes import stokes_funcs, jones_to_mueller, mueller_to_stokes
+from pfb.utils.beam import reproject_and_interp_beam
 from pfb.utils.fits import set_wcs, save_fits, add_beampars
 from pfb.utils.misc import fitcleanbeam
 from pfb.operators.gridder import wgridder_conventions
@@ -250,89 +250,38 @@ def stokes_image(
                                 (new_ra_rad, new_dec_rad),
                                 (tra, tdec), phasesign=-1)
         
-        uvw = synthesize_uvw(antpos, time, ant1, ant2, (tra, tdec))
+        uvw = synthesize_uvw(antpos, time, ant1, ant2, (new_ra, new_dec))
+
+        radec_new = np.array((new_ra, new_dec))
     
         # now for the beam interpolation/reprojection
         # load and interpolate beam to output frequency
         if opts.beam_model is None:
             raise RuntimeError("You have to provide a beam model when changing the phase center")
+        
+    if opts.beam_model is not None:
         # should we compute a weighted mean over freq instead of interpolating here? 
         bds = xr.open_zarr(opts.beam_model, chunks=None).interp(chan=[freq_out])
         l_beam = bds.l_beam.values
         m_beam = bds.m_beam.values
-        freq_beam = bds.chan.values
-        corr_beam = bds.corr.values
         # the beam is in feed plane direction cosine coordinates
         # we need to flip the beam upside down because of the beam orientation
         # see https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
-        # shape is (corr, chan, X, Y)
-        beam = bds.BEAM.values[:, :, :, ::-1]
-        # reshape for paralactic angle rotation
-        beam = beam.reshape(2, 2, freq_beam.size, l_beam.size, m_beam.size)
-
-        from africanus.rime import parallactic_angles, feed_rotation
-        # rotate at original field center
-        parangles = parallactic_angles(utime, antpos, np.array((tra, tdec)))
-        # use the mean over antenna
-        parangles = np.mean(parangles, axis=-1, keepdims=True)
-        # squeeze out antenna axis
-        feedrot = feed_rotation(parangles, feed_type=poltype)[:, 0, :]
-        beam = np.einsum('tij,jkfxy->tikfxy', feedrot, beam)
-        # compute the weighted sum over time
-        wsumt = np.zeros((ntime, 2, 2))
-        for i, t in enumerate(utime):
-            sel = time==t
-            wsumt[i] = weight[sel].sum(axis=(0, 1)).reshape(2, 2)
-        beam = np.sum(wsumt[:, :, :, None, None, None] * beam, axis=0)
-        beam /= np.sum(wsumt, axis=0)[:, :, None, None, None]
-
-        # jones to Mueller
-        beam = jones_to_mueller(beam, beam)
-
-        # Mueller to Stokes
-        beam = mueller_to_stokes(beam, poltype=poltype)
+        # shape is (corr, chan, X, Y) -> squeeze out freq
+        beam = bds.BEAM.values[:, 0, :, ::-1]
+        # reshape for feed and spatial rotations
+        beam = beam.reshape(2, 2, l_beam.size, m_beam.size)
+        cell_deg_in = l_beam[1] - l_beam[0]
+        beam, mask = reproject_and_interp_beam(beam, time, antpos,
+                                               radec, radec_new,
+                                               cell_deg_in, cell_deg, nx, ny,
+                                               poltype, opts.product,
+                                               weight=weight, nthreads=opts.nthreads)
         
-        # select required products
-        i = ()
-        if 'I' in opts.product:
-            i += (0,)
-        if 'Q' in opts.product:
-            i += (1,)
-        if 'U' in opts.product:
-            i += (2,)
-        if 'V' in opts.product:
-            i += (3,)
-        beam = beam[i, ...]
-        
-        # reproject onto target field
-        # header for reference field (header -> wcs to get fits convention right)
-        cellx_deg_beam = l_beam[1] - l_beam[0]
-        celly_deg_beam = m_beam[1] - m_beam[0]
-        hdr_ref = set_wcs(cellx_deg_beam, celly_deg_beam,
-                          l_beam.size, m_beam.size, [tra, tdec],
-                          freq_out, ms_time=time_out)
-        wcs_ref = WCS(hdr_ref).dropaxis(-1).dropaxis(-1)
-        # header for target field
-        hdr_target = set_wcs(cell_deg, cell_deg, nx, ny,
-                          [new_ra_rad, new_dec_rad],
-                          freq_out, ms_time=time_out)
-        wcs_target = WCS(hdr_target).dropaxis(-1).dropaxis(-1)
-
-        # squeeze out freq axis
-        beam = beam[:, 0]
-
-        pbeam = np.zeros((len(opts.product), nx, ny), dtype=real_type)
-        pmask = np.zeros((len(opts.product), nx, ny), dtype=real_type)
-        for i in range(len(opts.product)):
-            pbeam[i], pmask[i] = reproject_interp((beam[i], wcs_ref),
-                                                wcs_target,
-                                                shape_out=(nx, ny),
-                                                block_size='auto',
-                                                parallel=opts.nthreads)
-            
-        tra = new_ra_rad
-        tdec = new_dec_rad
-
+    else:
+        beam = np.ones((len(opts.product, nx, ny)), dtype=real_type)
+        mask = np.ones((len(opts.product, nx, ny)), dtype=bool)
+    
     # we currently need this extra loop through the data because
     # we don't have access to the grid
     data, weight = weight_data(
@@ -604,12 +553,12 @@ def stokes_image(
                                axes=(0, 1, 3, 2))
             data_vars['wgtgrid'] = (('STOKES', 'TIME', 'Y_PAD', 'X_PAD'), wgt)
         if opts.beam_model is not None:
-            pbeam = np.transpose(pbeam[:, None, :, :].astype(np.float32),
+            beam = np.transpose(beam[:, None, :, :].astype(np.float32),
                                  axes=(0, 1, 3, 2))
-            pmask = np.transpose(pmask[:, None, :, :].astype(bool),
+            mask = np.transpose(mask[:, None, :, :].astype(bool),
                                  axes=(0, 1, 3, 2))
-            data_vars['BEAM'] = (('STOKES', 'TIME', 'Y', 'X'), pbeam)
-            data_vars['MASK'] = (('STOKES', 'TIME', 'Y', 'X'), pmask)
+            data_vars['BEAM'] = (('STOKES', 'TIME', 'Y', 'X'), beam)
+            data_vars['MASK'] = (('STOKES', 'TIME', 'Y', 'X'), mask)
         
         data_vars['rms'] = (('STOKES', 'TIME'), rms[:, None].astype(np.float32))
         data_vars['wsum'] = (('STOKES', 'TIME'), wsum[:, None].astype(np.float32))
@@ -673,9 +622,9 @@ def stokes_image(
                   f'{fds_store.full_path}/{oname}_x.fits', hdr)
 
         if opts.beam_model is not None:
-            save_fits(pbeam,
+            save_fits(beam,
                   f'{fds_store.full_path}/{oname}_beam.fits', hdr)
-            save_fits(pmask,
+            save_fits(mask,
                   f'{fds_store.full_path}/{oname}_mask.fits', hdr)
     return 1
 
