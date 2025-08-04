@@ -205,34 +205,6 @@ def stokes_image(
         ant1 = np.where(ant1==ant, a, ant1)
         ant2 = np.where(ant2==ant, a, ant2)
 
-    # compute lm coordinates of target
-    if opts.target is not None:
-        tmp = opts.target.split(',')
-        if len(tmp) == 1 and tmp[0] == opts.target:
-            obs_time = time_out
-            tra, tdec = get_coordinates(obs_time, target=opts.target)
-        else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
-            c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(units.hourangle, units.deg))
-            tra = np.deg2rad(c.ra.value)
-            tdec = np.deg2rad(c.dec.value)
-
-        tcoords=np.zeros((1,2))
-        tcoords[0,0] = tra
-        tcoords[0,1] = tdec
-        coords0 = np.array((radec[0], radec[1]))
-        lm0 = radec_to_lm(tcoords, coords0).squeeze()
-        x0 = lm0[0]
-        y0 = lm0[1]
-    else:
-        x0 = 0.0
-        y0 = 0.0
-        tra = radec[0]
-        tdec = radec[1]
-
-    ra_deg = np.rad2deg(tra)
-    if ra_deg > 180:
-        ra_deg -= 360
-    dec_deg = np.rad2deg(tdec)
     cell_deg = np.rad2deg(cell_rad)
 
     # rephase if asked
@@ -242,23 +214,18 @@ def stokes_image(
         new_ra_rad = np.deg2rad(c.ra.value)
         new_dec_rad = np.deg2rad(c.dec.value)
         from pfb.utils.astrometry import (rephase, synthesize_uvw)
-        data = rephase(data, uvw, freq, 
-                       (new_ra_rad, new_dec_rad),
-                       (tra, tdec), phasesign=-1)
+        data = rephase(data, uvw, freq, (new_ra_rad, new_dec_rad),radec, phasesign=-1)
         if model_vis is not None:
             model_vis = rephase(model_vis, uvw,freq, 
                                 (new_ra_rad, new_dec_rad),
-                                (tra, tdec), phasesign=-1)
+                                radec, phasesign=-1)
         
-        uvw = synthesize_uvw(antpos, time, ant1, ant2, (new_ra, new_dec))
+        uvw = synthesize_uvw(antpos, time, ant1, ant2, (new_ra_rad, new_dec_rad))
 
-        radec_new = np.array((new_ra, new_dec))
-    
-        # now for the beam interpolation/reprojection
-        # load and interpolate beam to output frequency
-        if opts.beam_model is None:
-            raise RuntimeError("You have to provide a beam model when changing the phase center")
-        
+        radec_new = np.array((new_ra_rad, new_dec_rad))
+    else:
+        radec_new = radec
+
     if opts.beam_model is not None:
         # should we compute a weighted mean over freq instead of interpolating here? 
         bds = xr.open_zarr(opts.beam_model, chunks=None).interp(chan=[freq_out])
@@ -269,6 +236,7 @@ def stokes_image(
         # see https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
         # shape is (corr, chan, X, Y) -> squeeze out freq
         beam = bds.BEAM.values[:, 0, :, ::-1]
+        # are the MdV beams transmissive or receptive?
         # reshape for feed and spatial rotations
         beam = beam.reshape(2, 2, l_beam.size, m_beam.size)
         cell_deg_in = l_beam[1] - l_beam[0]
@@ -282,6 +250,36 @@ def stokes_image(
         beam = np.ones((len(opts.product, nx, ny)), dtype=real_type)
         mask = np.ones((len(opts.product, nx, ny)), dtype=bool)
     
+    
+    # compute lm coordinates of target if requested
+    if opts.target is not None:
+        tmp = opts.target.split(',')
+        if len(tmp) == 1 and tmp[0] == opts.target:
+            obs_time = time_out
+            tra, tdec = get_coordinates(obs_time, target=opts.target)
+        else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
+            c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(units.hourangle, units.deg))
+            tra = np.deg2rad(c.ra.value)
+            tdec = np.deg2rad(c.dec.value)
+
+        tcoords=np.zeros((1,2))
+        tcoords[0,0] = tra
+        tcoords[0,1] = tdec
+        coords0 = np.array((radec_new[0], radec_new[1]))
+        lm0 = radec_to_lm(tcoords, coords0).squeeze()
+        x0 = lm0[0]
+        y0 = lm0[1]
+    else:
+        x0 = 0.0
+        y0 = 0.0
+        tra = radec_new[0]
+        tdec = radec_new[1]
+
+    ra_deg = np.rad2deg(tra)
+    if ra_deg > 180:
+        ra_deg -= 360
+    dec_deg = np.rad2deg(tdec)
+
     # we currently need this extra loop through the data because
     # we don't have access to the grid
     data, weight = weight_data(

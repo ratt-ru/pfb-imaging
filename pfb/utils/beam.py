@@ -110,9 +110,9 @@ def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
     ntime = utime.size
     parangles = parallactic_angles(utime, antpos, np.array(radec0))
     # use the mean over antenna
-    parangles = np.mean(parangles, axis=-1, keepdims=True)
+    parangles = np.mean(parangles, axis=-1, keepdims=False)
     _, _, nxi, nyi = beam.shape
-    beamo = np.zeros((ntime, 2, 2, nxi, nyi))
+    beamo = np.zeros((ntime, 2, 2, nxi, nyi), dtype=beam.dtype)
     for i, parang in enumerate(parangles):
         # spatial rotation (assuming position angle is paralactic angle i.e. linear North-South, East-West interferometer)
         beamo[i] = rotate(beam, parang, axes=(-2, -1), reshape=False, order=1, mode='nearest')
@@ -120,7 +120,7 @@ def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
         beamo[i] = rotate(beamo[i], parang, axes=(0, 1), reshape=False, order=1, mode='nearest')
 
     # compute the weighted sum over time
-    if weight is not None:
+    if weight is not None and ntime > 1:
         wsumt = np.zeros((ntime, 2, 2))
         for i, t in enumerate(utime):
             sel = time==t
@@ -146,7 +146,7 @@ def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
         i += (2,)
     if 'V' in product:
         i += (3,)
-    beamo = beam[i, ...]
+    beamo = beamo[i, ...]
     
     # reproject onto target field
     # header for reference field (header -> wcs to get fits convention right)
@@ -161,9 +161,5 @@ def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
     pbeam = np.zeros((len(product), nxo, nyo), dtype=beamo.dtype)
     pmask = np.zeros((len(product), nxo, nyo), dtype=beamo.dtype)
     for i in range(len(product)):
-        pbeam[i], pmask[i] = reproject_interp((beam[i], wcs_ref),
-                                            wcs_target,
-                                            shape_out=(nxo, nyo),
-                                            block_size='auto',
-                                            parallel=nthreads)
+        pbeam[i], pmask[i] = reproject_interp((beamo[i], wcs_ref), wcs_target, shape_out=(nxo, nyo), block_size='auto', parallel=nthreads)
     return pbeam, pmask.astype(bool)
