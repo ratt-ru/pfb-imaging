@@ -240,15 +240,15 @@ def stokes_image(
         # reshape for feed and spatial rotations
         beam = beam.reshape(2, 2, l_beam.size, m_beam.size)
         cell_deg_in = l_beam[1] - l_beam[0]
-        beam, mask = reproject_and_interp_beam(beam, time, antpos,
+        pbeam, pmask = reproject_and_interp_beam(beam, time, antpos,
                                                radec, radec_new,
                                                cell_deg_in, cell_deg, nx, ny,
                                                poltype, opts.product,
                                                weight=weight, nthreads=opts.nthreads)
         
     else:
-        beam = np.ones((len(opts.product, nx, ny)), dtype=real_type)
-        mask = np.ones((len(opts.product, nx, ny)), dtype=bool)
+        pbeam = np.ones((len(opts.product, nx, ny)), dtype=real_type)
+        pmask = np.ones((len(opts.product, nx, ny)), dtype=bool)
     
     
     # compute lm coordinates of target if requested
@@ -551,12 +551,12 @@ def stokes_image(
                                axes=(0, 1, 3, 2))
             data_vars['wgtgrid'] = (('STOKES', 'TIME', 'Y_PAD', 'X_PAD'), wgt)
         if opts.beam_model is not None:
-            beam = np.transpose(beam[:, None, :, :].astype(np.float32),
+            pbeam = np.transpose(pbeam[:, None, :, :].astype(np.float32),
                                  axes=(0, 1, 3, 2))
-            mask = np.transpose(mask[:, None, :, :].astype(bool),
+            pmask = np.transpose(pmask[:, None, :, :].astype(bool),
                                  axes=(0, 1, 3, 2))
-            data_vars['BEAM'] = (('STOKES', 'TIME', 'Y', 'X'), beam)
-            data_vars['MASK'] = (('STOKES', 'TIME', 'Y', 'X'), mask)
+            data_vars['BEAM'] = (('STOKES', 'TIME', 'Y', 'X'), pbeam)
+            data_vars['MASK'] = (('STOKES', 'TIME', 'Y', 'X'), pmask)
         
         data_vars['rms'] = (('STOKES', 'TIME'), rms[:, None].astype(np.float32))
         data_vars['wsum'] = (('STOKES', 'TIME'), wsum[:, None].astype(np.float32))
@@ -620,9 +620,9 @@ def stokes_image(
                   f'{fds_store.full_path}/{oname}_x.fits', hdr)
 
         if opts.beam_model is not None:
-            save_fits(beam,
+            save_fits(pbeam,
                   f'{fds_store.full_path}/{oname}_beam.fits', hdr)
-            save_fits(mask,
+            save_fits(pmask,
                   f'{fds_store.full_path}/{oname}_mask.fits', hdr)
     return 1
 
