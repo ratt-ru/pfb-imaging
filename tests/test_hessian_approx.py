@@ -9,7 +9,7 @@ from pfb.operators.psf import (psf_convolve_slice,
                                psf_convolve_slice_jax) 
 from pfb.utils.misc import set_image_size
 from pfb.utils.stokes import stokes_to_corr, corr_to_stokes
-from ducc0.wgridder.experimental import vis2dirty, dirty2vis
+from ducc0.wgridder import vis2dirty, dirty2vis
 from scipy.constants import c as lightspeed
 from daskms import xds_from_ms, xds_from_table
 import jax.numpy as jnp
@@ -19,7 +19,177 @@ iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 pmp = pytest.mark.parametrize
 
-@pmp("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5)])
+
+def explicit_degridder(uvw, freqs, lmn, pixel_fluxes, negate_w, convention='phys'):
+    vis = np.zeros((len(uvw), len(freqs)), dtype=np.complex128)
+    c = 299792458.  # m/s
+
+    for row, (u, v, w) in enumerate(uvw):
+        if negate_w:
+            w = -w
+            sign = 1 if convention=='phys' else -1
+        else:
+            sign = -1 if convention=='phys' else 1
+        for col, freq in enumerate(freqs):
+            for flux, (l, m, n) in zip(pixel_fluxes, lmn):
+                if negate_w:
+                    l = -l
+                    m = -m
+                wavelength = c / freq
+                phase = sign * 2j * np.pi * (u * l + v * m + w * (n - 1)) / wavelength
+                vis[row, col] += flux * np.exp(phase) / n
+    return vis
+
+
+def explicit_wdegridder(uvw, freqs, lmn, pixel_fluxes):
+    '''
+    This is the formula the wgridder implements with
+    our default conventions as defined here
+
+    https://github.com/ratt-ru/pfb-imaging/blob/32e2c6a1c599e3808ab70fb3e00cb00ff3508782/pfb/operators/gridder.py#L29
+
+    Note that flip_v is True and l and m are always negated
+    '''
+    vis = np.zeros((len(uvw), len(freqs)), dtype=np.complex128)
+    c = 299792458.  # m/s
+
+    flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0,0)
+    signu = -1 if flip_u else 1
+    signv = -1 if flip_v else 1
+    signw = -1 if flip_w else 1
+
+    for row, (u, v, w) in enumerate(uvw):
+        for col, freq in enumerate(freqs):
+            for flux, (l, m, n) in zip(pixel_fluxes, lmn):
+                wavelength = c / freq
+                phase = -2j * np.pi * (signu * u * l + signv * v * m - signw * w * (n - 1)) / wavelength
+                vis[row, col] += flux * np.exp(phase) / n
+    return vis
+
+
+@pmp("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5), (-0.1, 0.2), (-0.15, -0.2)])
+@pmp("negate_w", [False, True])
+def test_gridder_conventions(center_offset, negate_w):
+    np.random.seed(42)
+    N = 1024
+    num_ants = 100
+    num_freqs = 2
+
+    pixsize = 0.5 * np.pi / 180 / 3600.  # 0.5 arcsec ~ 4 pixels / beam, so we'll avoid aliasing
+    l0 = center_offset[0]
+    m0 = center_offset[1]
+    dl = pixsize
+    dm = pixsize
+    dirty = np.zeros((N, N))
+
+    dirty[N // 2, N // 2] = 1.
+    dirty[N // 4, N // 4] = 1.
+
+    def pixel_to_lmn(xi, yi):
+        l = l0 + (-N / 2 + xi) * (-dl)
+        m = m0 + (-N / 2 + yi) * (-dm)
+        n = np.sqrt(1. - l ** 2 - m ** 2)
+        return np.asarray([l, m, n])
+
+    lmn1 = pixel_to_lmn(N // 2, N // 2)
+    lmn2 = pixel_to_lmn(N // 4, N // 4)
+
+    antenna_1, antenna_2 = np.asarray(list(itertools.combinations(range(num_ants), 2))).T
+    antennas = 10e3 * np.random.normal(size=(num_ants, 3))
+    antennas[:, 2] *= 0.001
+    uvw = antennas[antenna_1] - antennas[antenna_2]
+
+    freqs = np.linspace(700e6, 2000e6, num_freqs)
+    vis = dirty2vis(
+        uvw=uvw,
+        freq=freqs,
+        dirty=dirty,
+        wgt=None,
+        pixsize_x=dl,
+        pixsize_y=dm,
+        center_x=-l0,
+        center_y=-m0,
+        epsilon=1e-6,
+        do_wgridding=True,
+        flip_v=False,
+        divide_by_n=True,
+        nthreads=1,
+        verbosity=0,
+    )
+
+    lmn = [lmn1, lmn2]
+    pixel_fluxes = [1., 1.]
+    vis_explicit = explicit_degridder(uvw, freqs, lmn, pixel_fluxes, negate_w, convention='casa')
+
+    np.testing.assert_allclose(vis.real, vis_explicit.real, atol=1e-4)
+    np.testing.assert_allclose(vis.imag, vis_explicit.imag, atol=1e-4)
+
+
+@pmp("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5), (-0.1, 0.2), (-0.15, -0.2)])
+def test_wgridder_conventions(center_offset):
+    np.random.seed(42)
+    N = 1024
+    num_ants = 100
+    num_freqs = 2
+
+    pixsize = 0.5 * np.pi / 180 / 3600.  # 0.5 arcsec ~ 4 pixels / beam, so we'll avoid aliasing
+    l0 = center_offset[0]
+    m0 = center_offset[1]
+    dl = pixsize
+    dm = pixsize
+    dirty = np.zeros((N, N))
+
+    dirty[N // 2, N // 2] = 1.
+    dirty[N // 4, N // 4] = 1.
+
+    def pixel_to_lmn(xi, yi):
+        l = -l0 + (-N / 2 + xi) * dl
+        m = m0 + (-N / 2 + yi) * dm
+        n = np.sqrt(1. - l ** 2 - m ** 2)
+        return np.asarray([l, m, n])
+
+    lmn1 = pixel_to_lmn(N // 2, N // 2)
+    lmn2 = pixel_to_lmn(N // 4, N // 4)
+
+    antenna_1, antenna_2 = np.asarray(list(itertools.combinations(range(num_ants), 2))).T
+    antennas = 10e3 * np.random.normal(size=(num_ants, 3))
+    antennas[:, 2] *= 0.001
+    uvw = antennas[antenna_1] - antennas[antenna_2]
+
+    freqs = np.linspace(700e6, 2000e6, num_freqs)
+    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(l0, m0)
+    vis = dirty2vis(
+        uvw=uvw,
+        freq=freqs,
+        dirty=dirty,
+        wgt=None,
+        pixsize_x=dl,
+        pixsize_y=dm,
+        center_x=x0,
+        center_y=y0,
+        epsilon=1e-6,
+        do_wgridding=True,
+        flip_u=flip_u,
+        flip_v=flip_v,
+        flip_w=flip_w,
+        divide_by_n=True,
+        nthreads=1,
+        verbosity=0,
+    )
+
+    lmn = [lmn1, lmn2]
+    pixel_fluxes = [1., 1.]
+    vis_explicit = explicit_wdegridder(uvw, freqs, lmn, pixel_fluxes)
+
+    # import matplotlib.pyplot as plt
+    # plt.plot(vis.real, 'k')
+    # plt.plot(vis_explicit.real, 'r')
+
+    np.testing.assert_allclose(vis.real, vis_explicit.real, atol=1e-4)
+    np.testing.assert_allclose(vis.imag, vis_explicit.imag, atol=1e-4)
+
+
+@pmp("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5), (-0.1, 0.2), (-0.15, -0.2)])
 def test_psfvis(center_offset, ms_name):
     test_dir = Path(ms_name).resolve().parent
     xds = xds_from_ms(ms_name,
@@ -80,7 +250,7 @@ def test_psfvis(center_offset, ms_name):
 
 
 
-@pmp("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5)])
+@pmp("center_offset", [(0.0, 0.0), (0.1, -0.17), (0.2, 0.5), (-0.1, 0.2), (-0.15, -0.2)])
 def test_hessian(center_offset, ms_name):
     test_dir = Path(ms_name).resolve().parent
     xds = xds_from_ms(ms_name,

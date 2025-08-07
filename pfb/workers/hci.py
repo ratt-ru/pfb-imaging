@@ -369,9 +369,8 @@ def _hci(**kw):
             except Exception as e:
                 for future in remaining_tasks:
                     ray.cancel(future)
-                import traceback
-                log.error_and_raise(f"Traceback:\n{traceback.format_exc()}",
-                                    result)
+                print(e)
+                quit()
             ncomplete += 1
             print(f"Completed: {ncomplete} / {nds}", end='\n', flush=True)
 

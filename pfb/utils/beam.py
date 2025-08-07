@@ -108,29 +108,30 @@ def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
     '''
     utime = np.unique(time)
     ntime = utime.size
-    parangles = parallactic_angles(utime, antpos, np.array(radec0))
-    # use the mean over antenna
-    parangles = np.mean(parangles, axis=-1, keepdims=False)
+    # parangles = parallactic_angles(utime, antpos, np.array(radec0))
+    # # use the mean over antenna
+    # parangles = np.mean(parangles, axis=-1, keepdims=False)
     _, _, nxi, nyi = beam.shape
-    beamo = np.zeros((ntime, 2, 2, nxi, nyi), dtype=beam.dtype)
-    for i, parang in enumerate(parangles):
-        # spatial rotation (assuming position angle is paralactic angle i.e. linear North-South, East-West interferometer)
-        beamo[i] = rotate(beam, parang, axes=(-2, -1), reshape=False, order=1, mode='nearest')
-        # feed rotation
-        beamo[i] = rotate(beamo[i], parang, axes=(0, 1), reshape=False, order=1, mode='nearest')
+    # beamo = np.zeros((ntime, 2, 2, nxi, nyi), dtype=beam.dtype)
+    # for i, parang in enumerate(parangles):
+    #     # spatial rotation (assuming position angle is paralactic angle i.e. linear North-South, East-West interferometer)
+    #     beamo[i] = rotate(beam, parang, axes=(-2, -1), reshape=False, order=1, mode='nearest')
+    #     # feed rotation
+    #     beamo[i] = rotate(beamo[i], parang, axes=(0, 1), reshape=False, order=1, mode='nearest')
 
-    # compute the weighted sum over time
-    if weight is not None and ntime > 1:
-        wsumt = np.zeros((ntime, 2, 2))
-        for i, t in enumerate(utime):
-            sel = time==t
-            wsumt[i] = weight[sel].sum(axis=(0, 1)).reshape(2, 2)
-        beamo = np.sum(wsumt[:, :, :, None, None] * beamo, axis=0)
-        beamo /= np.sum(wsumt, axis=0)[:, :, None, None]
-    else:
-        beamo = np.mean(beamo, axis=0)
+    # # compute the weighted sum over time
+    # if weight is not None and ntime > 1:
+    #     wsumt = np.zeros((ntime, 2, 2))
+    #     for i, t in enumerate(utime):
+    #         sel = time==t
+    #         wsumt[i] = weight[sel].sum(axis=(0, 1)).reshape(2, 2)
+    #     beamo = np.sum(wsumt[:, :, :, None, None] * beamo, axis=0)
+    #     beamo /= np.sum(wsumt, axis=0)[:, :, None, None]
+    # else:
+    #     beamo = np.mean(beamo, axis=0)
 
     # jones to Mueller
+    beamo = beam
     beamo = jones_to_mueller(beamo, beamo)
 
     # Mueller to Stokes
@@ -154,6 +155,7 @@ def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
     wcs_ref.wcs.cdelt = np.array((cell_deg_in, cell_deg_in))
     wcs_ref.wcs.cunit = ['deg', 'deg']
     wcs_ref.wcs.crval = np.array((radec0[0]*180.0/np.pi, radec0[1]*180.0/np.pi))
+    # wcs_ref.wcs.crval = np.array((radec0[1]*180.0/np.pi, radec0[0]*180.0/np.pi))
     wcs_ref.wcs.crpix = [1 + nxi//2, 1 + nyi//2]
     wcs_ref.array_shape = [nxi, nyi]
     # hdr_ref = set_wcs(cell_deg_in, cell_deg_in, nxi, nyi, radec0, 1e9)
@@ -165,6 +167,7 @@ def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
     wcs_target.wcs.cdelt = np.array((cell_deg_out, cell_deg_out))
     wcs_target.wcs.cunit = ['deg', 'deg']
     wcs_target.wcs.crval = np.array((radecf[0]*180.0/np.pi, radecf[1]*180.0/np.pi))
+    # wcs_target.wcs.crval = np.array((radecf[1]*180.0/np.pi, radecf[0]*180.0/np.pi))
     wcs_target.wcs.crpix = [1 + nxo//2, 1 + nyo//2]
     wcs_target.array_shape = [nxo, nyo]
 

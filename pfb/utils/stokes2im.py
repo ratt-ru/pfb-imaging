@@ -213,18 +213,77 @@ def stokes_image(
     elif radec[0] > 2*np.pi:
         radec[0] -= 2*np.pi
 
+    flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
+    signu = -1.0 if flip_u else 1.0
+    signv = -1.0 if flip_v else 1.0
+    # we need these because of flipped wgridder convention
+    # https://github.com/mreineck/ducc/issues/34
+    signx = -1.0 if flip_u else 1.0
+    signy = -1.0 if flip_v else 1.0
+    freqfactor = -2j*np.pi*freq[None, :]/lightspeed
+
     # rephase if asked
     if opts.phase_dir is not None:
         new_ra, new_dec = opts.phase_dir.split(',')
         c = SkyCoord(new_ra, new_dec, frame='fk5', unit=(units.hourangle, units.deg))
         new_ra_rad = np.deg2rad(c.ra.value)
         new_dec_rad = np.deg2rad(c.dec.value)
-        from pfb.utils.astrometry import (rephase, synthesize_uvw)
-        data = rephase(data, uvw, freq, (new_ra_rad, new_dec_rad), radec, phasesign=-1)
-        if model_vis is not None:
-            model_vis = rephase(model_vis, uvw,freq, (new_ra_rad, new_dec_rad), radec, phasesign=-1)
-        uvw = synthesize_uvw(antpos, time, ant1, ant2, (new_ra_rad, new_dec_rad))
         radec_new = np.array((new_ra_rad, new_dec_rad))
+        
+        data += 10*np.ones_like(data)
+        # data[...] = 1+0j
+        # from pfb.utils.astrometry import change_phase_dir
+        # data, uvw_new = change_phase_dir(data, uvw, freq, radec_new, radec, phasesign=-1)
+        # from africanus.coordinates import radec_to_lmn
+        from pfb.utils.astrometry import synthesize_uvw
+        uvw_new = synthesize_uvw(antpos, time, ant1, ant2, radec_new)
+        # uo = uvw[:, 0:1] * freq[None, :]/lightspeed
+        # vo = uvw[:, 1:2] * freq[None, :]/lightspeed
+        wo = uvw[:, 2:] * freq[None, :]/lightspeed
+        # un = uvw_new[:, 0:1] * freq[None, :]/lightspeed
+        # vn = uvw_new[:, 1:2] * freq[None, :]/lightspeed
+        wn = uvw_new[:, 2:] * freq[None, :]/lightspeed
+        
+        # l, m, n = radec_to_lmn(radec_new[None, :], radec)[0]
+        # # original phase direction is [0,0,1]
+        # dl = l
+        # dm = m
+        # dn = n-1
+        # phase = u * dl
+        # phase += v * dm
+        # phase += w * dn
+
+        phase = 2j*np.pi*(wn - wo)
+        data *= np.exp(-phase)[:, :, None]
+
+
+        # data = rephase(data, uvw, freq, radec_new, radec, phasesign=-1)
+        # if model_vis is not None:
+        #     model_vis = rephase(model_vis, uvw,freq, radec_new, radec, phasesign=-1)
+        
+
+        # from pyrap.tables import table
+        # ms = table('/home/bester/projects/victoria/msdir/total_w_beam_OTF_D01-fn-26.ms')
+        # data_wsc = ms.getcol('DATA')
+        # uvw_wsc = ms.getcol('UVW')
+
+        # from pfb.utils.astrometry import uvw_rotate
+        # uvw_ben = uvw_rotate(uvw.copy(), radec[0], radec[1], new_ra_rad, new_dec_rad)
+
+        # import ipdb; ipdb.set_trace()
+        
+
+        # for testing add bright point source at old phase center
+        # l0t, m0t, n0t = radec_to_lmn(new_ra_rad, new_dec_rad)
+        # tmp_vis = 2*np.exp(freqfactor*(
+        #                     signu*uvw[:, 0:1]*l0t +
+        #                     signv*uvw[:, 1:2]*m0t -
+        #                     uvw[:, 2:]*(n0t-1)))/n0t
+        # data[:, :, 0] += tmp_vis
+        # data[:, :, -1] += tmp_vis
+        # also at the new phase center
+        # data += 1*np.ones((nrow, nchan, ncorr), dtype=data.dtype)
+        uvw = uvw_new
     else:
         radec_new = radec
 
@@ -249,8 +308,8 @@ def stokes_image(
                                                weight=weight, nthreads=opts.nthreads)
         
     else:
-        pbeam = np.ones((len(opts.product, nx, ny)), dtype=real_type)
-        pmask = np.ones((len(opts.product, nx, ny)), dtype=bool)
+        pbeam = np.ones((len(opts.product), nx, ny), dtype=real_type)
+        pmask = np.ones((len(opts.product), nx, ny), dtype=bool)
     
     
     # compute lm coordinates of target if requested
@@ -267,10 +326,10 @@ def stokes_image(
         tcoords=np.zeros((1,2))
         tcoords[0,0] = tra
         tcoords[0,1] = tdec
-        coords0 = np.array((radec_new[0], radec_new[1]))
-        lm0 = radec_to_lm(tcoords, coords0).squeeze()
-        x0 = lm0[0]
-        y0 = lm0[1]
+        lm0 = radec_to_lm(tcoords, radec_new[None, :]).squeeze()
+        # flip for wgridder conventions
+        x0 = -lm0[0]
+        y0 = -lm0[1]
     else:
         x0 = 0.0
         y0 = 0.0
@@ -311,15 +370,8 @@ def stokes_image(
         else:
             weight = None
 
-    flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
-    signu = -1.0 if flip_u else 1.0
-    signv = -1.0 if flip_v else 1.0
-    # we need these because of flipped wgridder convention
-    # https://github.com/mreineck/ducc/issues/34
-    signx = -1.0 if flip_u else 1.0
-    signy = -1.0 if flip_v else 1.0
+    
     n = np.sqrt(1 - x0**2 - y0**2)
-    freqfactor = -2j*np.pi*freq[None, :]/lightspeed
     psf_vis = np.exp(freqfactor*(signu*uvw[:, 0:1]*x0*signx +
                                  signv*uvw[:, 1:2]*y0*signy -
                                  uvw[:, 2:]*(n-1))).astype(complex_type)
@@ -627,75 +679,10 @@ def stokes_image(
                                  axes=(0, 2, 1))
             pmask = np.transpose(pmask.astype(bool),
                                  axes=(0, 2, 1))
-            pbeam = pbeam[:, :, ::-1]
-            pmask = pmask[:, :, ::-1]
+            pbeam = pbeam[:, ::-1, :]
+            pmask = pmask[:, ::-1, :]
             save_fits(pbeam,
                   f'{fds_store.full_path}/{oname}_beam.fits', hdr)
             save_fits(pmask,
                   f'{fds_store.full_path}/{oname}_mask.fits', hdr)
     return 1
-
-
-# 'SIMPLE': True,
-# 'BITPIX': -32,
-# 'NAXIS': 4,
-# 'NAXIS1': 3072,
-# 'NAXIS2': 3072,
-# 'NAXIS3': 3644,
-# 'NAXIS4': 2,
-# 'EXTEND': True,
-# 'BSCALE': 1.0,
-# 'BZERO': 0.0,
-# 'BUNIT': 'JY/BEAM',
-# 'EQUINOX': 2000.0,
-# 'LONPOLE': 180.0,
-# 'BTYPE': 'Intensity',
-# 'TELESCOP': 'MeerKAT',
-# 'OBSERVER': 'Sarah Buchner',
-# 'OBJECT': 'J2009-2026',
-# 'ORIGIN': 'WSClean',
-# 'CTYPE1': 'RA---SIN',
-# 'CRPIX1': 1537.0,
-# 'CRVAL1': -57.5966666666667,
-# 'CDELT1': -0.000666666666666667,
-# 'CUNIT1': 'deg',
-# 'CTYPE2': 'DEC--SIN',
-# 'CRPIX2': 1537.0,
-# 'CRVAL2': -20.4461111111111,
-# 'CDELT2': 0.000666666666666667,
-# 'CUNIT2': 'deg',
-# 'CTYPE3': 'INTEGRATION',
-# 'CRPIX3': 1,
-# 'CRVAL3': 0,
-# 'CDELT3': 1,
-# 'CUNIT3': 's',
-# 'CTYPE4': 'STOKES',
-# 'CRPIX4': 1,
-# 'CRVAL4': np.int64(1),
-# 'CDELT4': np.int64(3),
-# 'CUNIT4': '',
-# 'SPECSYS': 'TOPOCENT',
-# 'DATE-OBS': '2021-06-20T19:46:24.8',
-# 'WSCDATAC': 'DATA',
-# 'WSCVDATE': '2025-02-07',
-# 'WSCVERSI': '3.6',
-# 'WSCWEIGH': "Briggs'(0)",
-# 'WSCENVIS': 260048.182542329,
-# 'WSCFIELD': 0.0,
-# 'WSCGAIN': 0.1,
-# 'WSCGKRNL': 7.0,
-# 'WSCIMGWG': 1028445.46788349,
-# 'WSCMAJOR': 0.0,
-# 'WSCMGAIN': 1.0,
-# 'WSCMINOR': 0.0,     
-# 'WSCNEGCM': 1.0,
-# 'WSCNEGST': 0.0,
-# 'WSCNITER': 0.0, 
-# 'WSCNORMF': 1028445.46788349, 
-# 'WSCNVIS': 715461.0,
-# 'WSCNWLAY': 1.0, 
-# 'WSCVWSUM': 11443570.8579464,     
-# 'FREQ0MHZ': 855.8955078125,
-# 'FREQ1MHZ': 1711.8955078125, 
-# 'OBSLABEL': 'L2',
-# 'TIMESCAL': -7.899998664855957}
