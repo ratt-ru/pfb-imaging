@@ -168,7 +168,7 @@ def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
     wcs_target.wcs.cunit = ['deg', 'deg']
     wcs_target.wcs.crval = np.array((radecf[0]*180.0/np.pi, radecf[1]*180.0/np.pi))
     # wcs_target.wcs.crval = np.array((radecf[1]*180.0/np.pi, radecf[0]*180.0/np.pi))
-    wcs_target.wcs.crpix = [1 + nxo//2, 1 + nyo//2]
+    wcs_target.wcs.crpix = [nxo//2, nyo//2]
     wcs_target.array_shape = [nxo, nyo]
 
     # hdr_target = set_wcs(cell_deg_out, cell_deg_out, nxo, nyo, radecf, 1e9)
@@ -178,4 +178,6 @@ def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
     pmask = np.zeros((len(product), nxo, nyo), dtype=beamo.dtype)
     for i in range(len(product)):
         pbeam[i], pmask[i] = reproject_interp((beamo[i], wcs_ref), wcs_target, shape_out=(nxo, nyo))  # , block_size='auto', parallel=nthreads
+
+    # import ipdb; ipdb.set_trace()
     return pbeam, pmask.astype(bool)

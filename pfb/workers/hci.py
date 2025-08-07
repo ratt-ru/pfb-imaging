@@ -44,7 +44,9 @@ def hci(**kw):
         except:
             log.error_and_raise(f"No MS at {ms}",
                                 ValueError)
-    opts.ms = msnames
+    keyf = lambda x: int(x[int(x.rfind('-')) + 1 : int(x.rfind('.'))])
+    opts.ms = sorted(msnames, key=keyf)
+    # opts.ms = msnames
     if opts.gain_table is not None:
         gainnames = []
         for gt in opts.gain_table:

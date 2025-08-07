@@ -296,7 +296,7 @@ def stokes_image(
         # we need to flip the beam upside down because of the beam orientation
         # see https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
         # shape is (corr, chan, X, Y) -> squeeze out freq
-        beam = bds.BEAM.values[:, 0, :, ::-1]
+        beam = bds.BEAM.values[:, 0, :, :]
         # are the MdV beams transmissive or receptive?
         # reshape for feed and spatial rotations
         beam = beam.reshape(2, 2, l_beam.size, m_beam.size)
