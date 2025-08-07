@@ -134,7 +134,6 @@ def format_coords(ra0,dec0):
     dms = str(c.dec)
     return hms,dms
 
-
 # Pillaged from
 # https://github.com/ratt-ru/solarkat/blob/main/solarkat-pipeline/find_sun_stimela.py
 # obs_lat and obs_lon hardcoded for MeerKAT

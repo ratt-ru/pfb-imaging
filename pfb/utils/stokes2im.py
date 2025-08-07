@@ -230,11 +230,6 @@ def stokes_image(
         new_dec_rad = np.deg2rad(c.dec.value)
         radec_new = np.array((new_ra_rad, new_dec_rad))
         
-        data += 10*np.ones_like(data)
-        # data[...] = 1+0j
-        # from pfb.utils.astrometry import change_phase_dir
-        # data, uvw_new = change_phase_dir(data, uvw, freq, radec_new, radec, phasesign=-1)
-        # from africanus.coordinates import radec_to_lmn
         from pfb.utils.astrometry import synthesize_uvw
         uvw_new = synthesize_uvw(antpos, time, ant1, ant2, radec_new)
         # uo = uvw[:, 0:1] * freq[None, :]/lightspeed
@@ -244,45 +239,25 @@ def stokes_image(
         # vn = uvw_new[:, 1:2] * freq[None, :]/lightspeed
         wn = uvw_new[:, 2:] * freq[None, :]/lightspeed
         
+        # TODO - why is this incorrect?
+        # from africanus.coordinates import radec_to_lmn
         # l, m, n = radec_to_lmn(radec_new[None, :], radec)[0]
         # # original phase direction is [0,0,1]
         # dl = l
         # dm = m
         # dn = n-1
-        # phase = u * dl
-        # phase += v * dm
-        # phase += w * dn
+        # phase2 = uo * dl
+        # phase2 += vo * dm
+        # phase2 += wo * dn
+        # tmp2 = np.exp(-2j*np.pi*phase2)
 
+        # TODO - this copies chgcentre but not sure why it gives
+        # better results than computing the phase with lmn differences
         phase = 2j*np.pi*(wn - wo)
         data *= np.exp(-phase)[:, :, None]
-
-
-        # data = rephase(data, uvw, freq, radec_new, radec, phasesign=-1)
-        # if model_vis is not None:
-        #     model_vis = rephase(model_vis, uvw,freq, radec_new, radec, phasesign=-1)
+        if model_vis is not None:
+            model_vis *= np.exp(-phase)[:, :, None]
         
-
-        # from pyrap.tables import table
-        # ms = table('/home/bester/projects/victoria/msdir/total_w_beam_OTF_D01-fn-26.ms')
-        # data_wsc = ms.getcol('DATA')
-        # uvw_wsc = ms.getcol('UVW')
-
-        # from pfb.utils.astrometry import uvw_rotate
-        # uvw_ben = uvw_rotate(uvw.copy(), radec[0], radec[1], new_ra_rad, new_dec_rad)
-
-        # import ipdb; ipdb.set_trace()
-        
-
-        # for testing add bright point source at old phase center
-        # l0t, m0t, n0t = radec_to_lmn(new_ra_rad, new_dec_rad)
-        # tmp_vis = 2*np.exp(freqfactor*(
-        #                     signu*uvw[:, 0:1]*l0t +
-        #                     signv*uvw[:, 1:2]*m0t -
-        #                     uvw[:, 2:]*(n0t-1)))/n0t
-        # data[:, :, 0] += tmp_vis
-        # data[:, :, -1] += tmp_vis
-        # also at the new phase center
-        # data += 1*np.ones((nrow, nchan, ncorr), dtype=data.dtype)
         uvw = uvw_new
     else:
         radec_new = radec
@@ -411,10 +386,6 @@ def stokes_image(
     # TODO - why do we need to cast here?
     data = data.transpose(2, 0, 1).astype(complex_type)
     weight = weight.transpose(2, 0, 1).astype(real_type)
-
-    # the fact that uvw and freq are in double precision
-    # complicates the numba implementation so we just cast
-    # them to the appropriate type for this step.
     if opts.robustness is not None:
         # we need to compute the weights on the padded grid
         # but we don't have control over the optimal gridding
@@ -439,10 +410,6 @@ def stokes_image(
 
         counts = filter_extreme_counts(counts,
                                        level=opts.filter_counts_level)
-
-        # # combine mirror image
-        # # this should not be necessary
-        # counts += counts[:, ::-1, ::-1]
 
         weight = counts_to_weights(
             counts,
@@ -606,12 +573,14 @@ def stokes_image(
                                axes=(0, 1, 3, 2))
             data_vars['wgtgrid'] = (('STOKES', 'TIME', 'Y_PAD', 'X_PAD'), wgt)
         if opts.beam_model is not None:
-            pbeam = np.transpose(pbeam[:, None, :, :].astype(np.float32),
-                                 axes=(0, 1, 3, 2))
-            pmask = np.transpose(pmask[:, None, :, :].astype(bool),
-                                 axes=(0, 1, 3, 2))
-            data_vars['BEAM'] = (('STOKES', 'TIME', 'Y', 'X'), pbeam)
-            data_vars['MASK'] = (('STOKES', 'TIME', 'Y', 'X'), pmask)
+            pbeam = np.transpose(pbeam.astype(np.float32),
+                                 axes=(0, 2, 1))
+            pmask = np.transpose(pmask.astype(bool),
+                                 axes=(0, 2, 1))
+            pbeam = pbeam[:, ::-1, :]
+            pmask = pmask[:, ::-1, :]
+            data_vars['BEAM'] = (('STOKES', 'TIME', 'Y', 'X'), pbeam[:, None, :, :])
+            data_vars['MASK'] = (('STOKES', 'TIME', 'Y', 'X'), pmask[:, None, :, :])
         
         data_vars['rms'] = (('STOKES', 'TIME'), rms[:, None].astype(np.float32))
         data_vars['wsum'] = (('STOKES', 'TIME'), wsum[:, None].astype(np.float32))
