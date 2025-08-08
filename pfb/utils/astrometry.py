@@ -20,7 +20,9 @@ def synthesize_uvw(station_ECEF, time, ant1, ant2,
                    posframe="ITRF", posunits=["m", "m", "m"]):
     """
     Synthesizes new UVW coordinates based on time according to
-    NRAO CASA convention (same as in fixvis)
+    NRAO CASA convention (same as in fixvis). 
+
+    Note - this should work with missing rows as long as 
     
     inputs:
         station_ECEF: ITRF station coordinates read from MS::ANTENNA
@@ -33,14 +35,14 @@ def synthesize_uvw(station_ECEF, time, ant1, ant2,
     """
     assert time.size == ant1.size
     assert ant1.size == ant2.size
-    # assume sorted in time
-    tdiff = time[1:] - time[0:-1]
-    if (tdiff<0).any():
-        raise NotImplementedError("Times must be sorted for UVW computation")
     unique_time = np.unique(time)
 
-    # ant to index mapping (this assumes antennas are sorted)
-    uants = np.unique(np.concatenate((ant1, ant2)))
+    # ant to index mapping
+    uants, iants = np.unique(np.concatenate((ant1, ant2)), return_index=True)
+    # np.unique sorts the outputs, we need to unsort them
+    # for the ant to index mapping to remain consistent
+    isort = np.argsort(iants)
+    uants = uants[isort]
     ants_dct = {uant: i for i, uant in enumerate(uants)}
     nrow = ant1.size
     uvw_new = np.zeros((nrow, 3))
@@ -79,7 +81,6 @@ def synthesize_uvw(station_ECEF, time, ant1, ant2,
             bla1 = ants_dct[a1]
             bla2 = ants_dct[a2]
             uvw_new[row] = station_uv[bla1] - station_uv[bla2]
-
 
     return uvw_new
 
