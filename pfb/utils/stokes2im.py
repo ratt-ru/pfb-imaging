@@ -549,48 +549,55 @@ def stokes_image(
         # X and Y are transposed for compatibility with breifast
         data_vars = {}
         residual /= wsum[:, None, None]
-        residual = np.transpose(residual[:, None, :, :].astype(np.float32),
-                                axes=(0, 1, 3, 2))
-        data_vars['cube'] = (('STOKES', 'TIME', 'Y', 'X'), residual)
+        residual = np.transpose(residual.astype(np.float32),
+                                axes=(0, 2, 1))
+        data_vars['cube'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
+                             residual[:, None, None, :, :])
         if opts.psf_out:
             coords['X_PSF'] = (('X_PSF',), np.arange(nx_psf) * cell_deg)
             coords['Y_PSF'] = (('Y_PSF',), np.arange(ny_psf) * cell_deg)
             psf /= wsum[:, None, None]
-            psf = np.transpose(psf[:, None, :, :].astype(np.float32),
-                               axes=(0, 1, 3, 2))
-            data_vars['psf'] = (('corr', 'TIME', 'Y_PSF', 'X_PSF'), psf)
+            psf = np.transpose(psf.astype(np.float32),
+                               axes=(0, 2, 1))
+            data_vars['psf'] = (('STOKES', 'FREQ', 'TIME', 'Y_PSF', 'X_PSF'),
+                                psf[:, None, None, :, :])
         if x is not None:
-            x = np.transpose(x[:, None, :, :].astype(np.float32),
-                             axes=(0, 1, 3, 2))
-            data_vars['xhat'] = (('STOKES', 'TIME', 'Y', 'X'), x)
+            x = np.transpose(x.astype(np.float32),
+                             axes=(0, 2, 1))
+            data_vars['xhat'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
+                                 x[:, None, None, :, :])
         if opts.robustness is not None and opts.weight_grid_out:
             ic, ix, iy = np.where(counts > 0)
             wgt = np.zeros_like(counts)
             wgt[ic, ix, iy] = 1.0/counts[ic, ix, iy]
             coords['X_PAD'] = (('X_PAD',), np.arange(nx_pad) * cell_deg)
             coords['Y_PAD'] = (('Y_PAD',), np.arange(ny_pad) * cell_deg)
-            wgt = np.transpose(wgt[:, None, :, :].astype(np.float32),
-                               axes=(0, 1, 3, 2))
-            data_vars['wgtgrid'] = (('STOKES', 'TIME', 'Y_PAD', 'X_PAD'), wgt)
+            wgt = np.transpose(wgt.astype(np.float32),
+                               axes=(0, 2, 1))
+            data_vars['wgtgrid'] = (('STOKES', 'FREQ', 'TIME', 'Y_PAD', 'X_PAD'),
+                                    wgt[:, None, None, :, :])
         if opts.beam_model is not None:
-            pbeam = np.transpose(pbeam.astype(np.float32),
-                                 axes=(0, 2, 1))
-            pmask = np.transpose(pmask.astype(bool),
-                                 axes=(0, 2, 1))
-            pbeam = pbeam[:, ::-1, :]
-            pmask = pmask[:, ::-1, :]
-            data_vars['BEAM'] = (('STOKES', 'TIME', 'Y', 'X'), pbeam[:, None, :, :])
-            data_vars['MASK'] = (('STOKES', 'TIME', 'Y', 'X'), pmask[:, None, :, :])
+            # we need to forgo the transpose in this case and reverse the last axis
+            # pbeam = np.transpose(pbeam.astype(np.float32),
+            #                      axes=(0, 2, 1))
+            # pmask = np.transpose(pmask.astype(bool),
+            #                      axes=(0, 2, 1))
+            pbeam = pbeam[:, :, ::-1]
+            pmask = pmask[:, :, ::-1]
+            data_vars['BEAM'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
+                                 pbeam[:, None, None, :, :])
+            data_vars['MASK'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
+                                 pmask[:, None, None, :, :])
         
-        data_vars['rms'] = (('STOKES', 'TIME'), rms[:, None].astype(np.float32))
-        data_vars['wsum'] = (('STOKES', 'TIME'), wsum[:, None].astype(np.float32))
+        data_vars['rms'] = (('STOKES', 'FREQ', 'TIME'), rms[:, None, None].astype(np.float32))
+        data_vars['wsum'] = (('STOKES', 'FREQ', 'TIME'), wsum[:, None, None].astype(np.float32))
         bmaj = np.array([gp[0] for gp in GaussPars], dtype=np.float32)
         bmin = np.array([gp[1] for gp in GaussPars], dtype=np.float32)
         # convert bpa to degrees
         bpa = np.array([gp[2]*180/np.pi for gp in GaussPars], dtype=np.float32)
-        data_vars['psf_maj'] = (('STOKES', 'TIME'), bmaj[:, None])
-        data_vars['psf_min'] = (('STOKES', 'TIME'), bmin[:, None])
-        data_vars['psf_pa'] = (('STOKES', 'TIME'), bpa[:, None])
+        data_vars['psf_maj'] = (('STOKES', 'FREQ', 'TIME'), bmaj[:, None, None])
+        data_vars['psf_min'] = (('STOKES', 'FREQ', 'TIME'), bmin[:, None, None])
+        data_vars['psf_pa'] = (('STOKES', 'FREQ', 'TIME'), bpa[:, None, None])
 
         # convert header to cards to maintain 
         # order when writing to and from zarr
