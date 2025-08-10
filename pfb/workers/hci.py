@@ -202,6 +202,8 @@ def _hci(**kw):
         fovy = ny*cell_deg
         log.info(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
 
+    cell_deg = np.rad2deg(cell_rad)
+
     log.info(f"Image size = (nx={nx}, ny={ny})")
 
     # crude column arithmetic
@@ -279,6 +281,17 @@ def _hci(**kw):
                 if freq.size == fs.size and np.all(freq == fs):
                     msddid2bid[ms][idt] = sgroup
 
+    # construct examplar dataset if asked to stack
+    if opts.stack:
+        if opts.output_format != 'zarr':
+            raise ValueError('Can only stack zarr outputs not fits')
+        cds, attrs = make_dummy_dataset(opts, utimes, freqs, radecs,
+                                        time_mapping, freq_mapping,
+                                        freq_min, freq_max, nx, ny, cell_deg)
+    else:
+        cds = None
+        attrs = None
+
     if opts.model_column is not None:
         columns += (opts.model_column,)
         schema[opts.model_column] = {'dims': ('chan', 'corr')}
@@ -352,6 +365,8 @@ def _hci(**kw):
                             bandid=b0+fi,
                             timeid=ti,
                             msid=ims,
+                            cds=cds,
+                            attrs=attrs
                     )
                     tasks.append(fut)
 
@@ -374,5 +389,217 @@ def _hci(**kw):
             ncomplete += 1
             print(f"Completed: {ncomplete} / {nds}", end='\n', flush=True)
 
-    print("\n")  
+    print("\n")
+
+    log.info("Computing mean and flags")
+    ds = xr.open_zarr(cds)
+    mean = ds.cube.mean(dim='TIME').data
+    rms = ds.rms.values
+    wsum = ds.wsum.values
+    nzero = wsum > 0
+    med_rms = np.median(rms[nzero])
+    flag = rms > opts.flag_excess_rms * med_rms
+    ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  mean)
+    ds['flag'] = (('STOKES', 'FREQ', 'TIME'), flag)
+    ds.to_zarr(cds, mode='a')
     return
+
+
+def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
+                       freq_min, freq_max, nx, ny, cell_deg):
+    import numpy as np
+    import dask.array as da
+    import xarray as xr
+    from daskms import xds_from_storage_ms as xds_from_ms
+    out_ra = []
+    out_dec = []
+    out_times = []
+    out_freqs = []
+    for ms in opts.ms:
+        xds = xds_from_ms(ms,
+                    columns='TIME',
+                    group_cols=['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER'])
+        for ds in xds:
+            fid = ds.FIELD_ID
+            ddid = ds.DATA_DESC_ID
+            scanid = ds.SCAN_NUMBER
+            if (opts.fields is not None) and (fid not in opts.fields):
+                continue
+            if (opts.ddids is not None) and (ddid not in opts.ddids):
+                continue
+            if (opts.scans is not None) and (scanid not in opts.scans):
+                continue
+
+            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+
+            idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
+            if not idx.any():
+                continue
+
+            out_ra.append(radecs[ms][idt][0])
+            out_dec.append(radecs[ms][idt][1])
+
+            titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
+                                time_mapping[ms][idt]['counts']))
+            for ti, (tlow, tcounts) in titr:
+                It = slice(tlow, tlow + tcounts)
+                fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
+                                     freq_mapping[ms][idt]['counts']))
+                for fi, (flow, fcounts) in fitr:
+                    Inu = slice(flow, flow + fcounts)
+                    
+                    out_times.append(np.mean(utimes[ms][idt][It]))
+                    out_freqs.append(np.mean(freqs[ms][idt][Inu]))
+
+    # spatial coordinates
+    if opts.phase_dir is None:
+        out_ra_deg = np.rad2deg(np.unique(out_ra))
+        out_dec_deg = np.rad2deg(np.unique(out_dec))
+        if out_ra_deg.size > 1 or out_dec_deg.size > 1:
+            raise ValueError('phase-dir must be specified when stacking multiple fields')
+    else:
+        from pfb.utils.astrometry import format_coords
+        from astropy import units
+        from astropy.coordinates import SkyCoord
+        ra_str, dec_str = opts.phase_dir.split(',')
+        coord = SkyCoord(ra_str, dec_str, frame='fk5', unit=(units.hourangle, units.deg))
+        out_ra_deg = coord.ra.value
+        out_dec_deg = coord.dec.value
+
+    # remove duplicates
+    out_times = np.unique(out_times)
+    out_freqs = np.unique(out_freqs)
+
+    n_stokes = len(opts.product)
+    n_times = out_times.size
+    n_freqs = out_freqs.size
+
+    cube_dims = (n_stokes, n_freqs, n_times, ny, nx)
+    cube_chunks = (1, 1, 1, 128, 128)
+
+    mean_dims = (n_stokes, n_freqs, ny, nx)
+    mean_chunks = (1, 1, 128, 128)
+
+    rms_dims = (n_stokes, n_freqs, n_times)
+    rms_chunks = (1, 1, 1)
+
+    ra_dim = 'RA--SIN'
+    dec_dim = 'DEC--SIN'
+    if out_freqs.size > 1:
+        delta_freq = np.diff(out_freqs).min()
+    else:
+        delta_freq = 1
+    if out_times.size > 1:
+        delta_time = np.diff(out_times).min()
+    else:
+        delta_time = 1
+
+    # construct reference header
+    
+    from astropy.wcs import WCS
+    from astropy.io import fits
+    w = WCS(naxis=5)
+    w.wcs.ctype = ['RA---SIN', 'DEC--SIN', 'INTEGRATION', 'FREQ', 'STOKES']
+    w.wcs.cdelt = [-cell_deg, cell_deg, delta_time, delta_freq, 1] 
+    w.wcs.cunit = ['deg', 'deg', 's', 'Hz', '']
+    w.wcs.crval = [out_ra_deg[0], out_dec_deg[0], out_times[0], out_freqs[0], 1]
+    w.wcs.crpix = [1 + nx//2, 1 + ny//2, 1, 1, 1]
+    w.wcs.equinox = 2000.0
+    wcs_hdr = w.to_header()
+
+    # the order does seem to matter here,
+    # especially when using with StreamingHDU
+    hdr = fits.Header()
+    hdr['SIMPLE'] = (True, 'conforms to FITS standard')
+    hdr['BITPIX'] = (-32, 'array data type')
+    hdr['NAXIS'] = (5, 'number of array dimensions')
+    data_shape = (nx, ny, n_times, n_freqs, n_stokes)
+    for i, size in enumerate(data_shape, 1):
+        hdr[f'NAXIS{i}'] = (size, f'length of data axis {i}')
+    
+    hdr['EXTEND'] = True
+    hdr['BSCALE'] = 1.0
+    hdr['BZERO'] = 0.0
+    hdr['BUNIT'] = 'Jy/beam'
+    hdr['EQUINOX'] = 2000.0
+    hdr['BTYPE'] = 'Intensity'
+    hdr.update(wcs_hdr)
+    hdr['TIMESCAL'] = delta_time
+
+    # if we don't pass these into stokes2im they get overwritten 
+    attrs={
+            "fits_header": list(dict(hdr).items()),
+            "radec_dims": (ra_dim, dec_dim),
+            "channel_width": delta_freq,
+            "fits_dims": (
+                ("X", ra_dim),
+                ("Y", dec_dim),
+                ("TIME", "TIME"),
+                ("FREQ", "FREQ"),
+                ("STOKES", "STOKES")
+            )
+        }
+
+    dummy_ds = xr.Dataset(
+        data_vars={
+            "cube": (
+                ("STOKES", "FREQ", "TIME", "Y", "X"),
+                da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32)
+            ),
+            "beam": (
+                ("STOKES", "FREQ", "TIME", "Y", "X"),
+                da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32)
+            ),
+            "mask": (
+                ("STOKES", "FREQ", "TIME", "Y", "X"),
+                da.empty(cube_dims, chunks=cube_chunks, dtype=bool)
+            ),
+            "mean":(
+                ("STOKES", "FREQ", "Y", "X"),
+                da.empty(mean_dims, chunks=mean_chunks, dtype=np.float32)
+            ),
+            "rms": (
+                ("STOKES", "FREQ", "TIME"),
+                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
+            ),
+            "nonzero": (
+                ("STOKES", "FREQ", "TIME",),
+                da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_)
+            ),
+            "flag": (
+                ("STOKES",  "FREQ", "TIME"),
+                da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_)
+            ),
+            "wsum": (
+                ("STOKES", "FREQ", "TIME",),
+                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
+            ),
+            "psf_maj": (
+                    ("STOKES", "FREQ", "TIME",),
+                    da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
+            ),
+            "psf_min": (
+                    ("STOKES", "FREQ", "TIME",),
+                    da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
+            ),
+            "psf_pa": (
+                    ("STOKES", "FREQ", "TIME",),
+                    da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
+            ),
+        },
+        coords={
+            "TIME": (("TIME",), out_times),
+            "STOKES": (("STOKES",), list(sorted(opts.product))),
+            "FREQ": (("FREQ",), out_freqs),
+            "X": (("X",), out_ra_deg + np.arange(nx//2, -(nx//2), -1) * cell_deg),
+            "Y": (("Y",), out_dec_deg + np.arange(-(ny//2), ny//2) * cell_deg)
+        }
+        ,
+        # Store dicts as tuples as zarr doesn't seem to maintain dict order.
+        attrs=attrs
+    )
+    
+    # Write scaffold and metadata to disk.
+    cds = f'{opts.output_filename}.zarr'
+    dummy_ds.to_zarr(cds, mode="w", compute=False)
+    return cds, attrs

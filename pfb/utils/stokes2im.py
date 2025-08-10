@@ -58,7 +58,9 @@ def stokes_image(
                 fds_store=None,
                 bandid=None,
                 timeid=None,
-                msid=None):
+                msid=None,
+                cds=None,
+                attrs=None):
     # serialization fails for these if we import them above
     from ducc0.misc import resize_thread_pool
     from ducc0.wgridder import vis2dirty
@@ -113,11 +115,6 @@ def stokes_image(
     # combine flag and frow
     flag = np.logical_or(flag, frow[:, None, None])
 
-    # we rely on this to check the number of output bands and
-    # to ensure we don't end up with fully flagged chunks
-    if flag.all():
-        return 1
-
     nrow, nchan, ncorr = data.shape
 
     if opts.sigma_column is not None:
@@ -151,8 +148,6 @@ def stokes_image(
     time_out = np.mean(utime)
 
     freq_out = np.mean(freq)
-    freq_min = freq.min()
-    freq_max = freq.max()
 
     if data.dtype != complex_type:
         data = data.astype(complex_type)
@@ -526,19 +521,8 @@ def stokes_image(
     # set corr coords (removing duplicates and sorting)
     corr = "".join(dict.fromkeys(sorted(opts.product)))
 
-    # if there is more than one polarisation product
-    # we currently assume all have the same beam
-    hdr = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
-                  freq_out, GuassPar=GaussPars[0],
-                  ms_time=time_out, ncorr=len(corr))
-
     # save outputs
     if opts.output_format == 'zarr':
-        tchunk = 1
-        fchunk = 1
-        xchunk = 128
-        ychunk = 128
-        cchunk = 1
         coords = {
             'FREQ': (('FREQ',), np.array([freq_out])),
             'TIME': (('TIME',), np.mean(utime, keepdims=True)),
@@ -584,9 +568,9 @@ def stokes_image(
             #                      axes=(0, 2, 1))
             pbeam = pbeam[:, :, ::-1]
             pmask = pmask[:, :, ::-1]
-            data_vars['BEAM'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
+            data_vars['beam'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
                                  pbeam[:, None, None, :, :])
-            data_vars['MASK'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
+            data_vars['mask'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
                                  pmask[:, None, None, :, :])
         
         data_vars['rms'] = (('STOKES', 'FREQ', 'TIME'), rms[:, None, None].astype(np.float32))
@@ -599,35 +583,38 @@ def stokes_image(
         data_vars['psf_min'] = (('STOKES', 'FREQ', 'TIME'), bmin[:, None, None])
         data_vars['psf_pa'] = (('STOKES', 'FREQ', 'TIME'), bpa[:, None, None])
 
-        # convert header to cards to maintain 
-        # order when writing to and from zarr
-        cards = []
-        for key, value in hdr.items():
-            cards.append((key, value))
-
-        attrs = {
-            'ra' : tra,
-            'dec': tdec,
-            'x0': x0,
-            'y0': y0,
-            'cell_rad': cell_rad,
-            'fieldid': fieldid,
-            'ddid': ddid,
-            'scanid': scanid,
-            'bandid': bandid,
-            'timeid': timeid,
-            'robustness': opts.robustness,
-            'utc': utc,
-            'header': cards
-        }
+        if attrs is None:
+            attrs = {
+                'ra' : tra,
+                'dec': tdec,
+                'x0': x0,
+                'y0': y0,
+                'cell_rad': cell_rad,
+                'fieldid': fieldid,
+                'ddid': ddid,
+                'scanid': scanid,
+                'bandid': bandid,
+                'timeid': timeid,
+                'robustness': opts.robustness,
+                'utc': utc,
+            }
 
         out_ds = xr.Dataset(
             data_vars,
             coords=coords,
             attrs=attrs)
-        out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr',
-                       mode='w')
+        if cds is not None:
+            out_ds.to_zarr(cds, region='auto', mode='a')
+        else:
+            out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr',
+                        mode='w')
     elif opts.output_format == 'fits':
+        # if there is more than one polarisation product
+        # we currently assume all have the same beam
+        hdr = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
+                    freq_out, GuassPar=GaussPars[0],
+                    ms_time=time_out, ncorr=len(corr))
+
         hdr['STOKES'] = corr
         save_fits(residual/wsum[:, None, None],
                   f'{fds_store.full_path}/{oname}_image.fits', hdr)

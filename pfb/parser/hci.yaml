@@ -209,6 +209,16 @@ inputs:
     info:
       Rephase visibilities to this phase center.
       Should be a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+  stack:
+    dtype: bool
+    default: false
+    info:
+      Stack everything into a single xarray dataset
+  flag-excess-rms:
+    dtype: float
+    default: 1.5
+    info:
+      Slices with an > flag-excess-rms * median(rms) will be flagged. 
 
   _include:
     - (.)gridding.yml
