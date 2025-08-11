@@ -285,9 +285,11 @@ def _hci(**kw):
     if opts.stack:
         if opts.output_format != 'zarr':
             raise ValueError('Can only stack zarr outputs not fits')
+        log.info("Creating scaffold for stacked cube")
         cds, attrs = make_dummy_dataset(opts, utimes, freqs, radecs,
                                         time_mapping, freq_mapping,
                                         freq_min, freq_max, nx, ny, cell_deg)
+        log.info("Scaffolding complete")
     else:
         cds = None
         attrs = None
