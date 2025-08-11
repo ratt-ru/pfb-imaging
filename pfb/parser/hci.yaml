@@ -232,9 +232,11 @@ outputs:
     dtype: Directory
     must_exist: false
     mkdir: false
-  # optional-fits:
-  #   implicit: '{current.output-filename}_{current.product}.fits'
-  #   required: false
+  stacked-ds:
+    implicit: '{current.output-filename}_{current.product}.zarr'
+    dtype: Directory
+    must_exist: false
+    mkdir: false
 
 policies:
   pass_missing_as_none: true
