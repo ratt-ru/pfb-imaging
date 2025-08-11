@@ -409,6 +409,7 @@ def _hci(**kw):
     # we do this with a single worker
     with dask.config.set(pool=ThreadPoolExecutor(8)):
         ds.to_zarr(cds, mode='r+')
+    log.info("Reduction complete")
     return
 
 
