@@ -392,16 +392,21 @@ def _hci(**kw):
     print("\n")
 
     log.info("Computing mean and flags")
-    ds = xr.open_zarr(cds)
+    import dask
+    from concurrent.futures import ThreadPoolExecutor
+    ds = xr.open_zarr(cds, chunks={'TIME':-1})
     mean = ds.cube.mean(dim='TIME').data
     rms = ds.rms.values
     wsum = ds.wsum.values
     nzero = wsum > 0
     med_rms = np.median(rms[nzero])
     flag = rms > opts.flag_excess_rms * med_rms
+    ds = ds.drop_vars(ds.data_vars.keys())
     ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  mean)
     ds['flag'] = (('STOKES', 'FREQ', 'TIME'), flag)
-    ds.to_zarr(cds, mode='a')
+    # we do this with a single worker
+    with dask.config.set(pool=ThreadPoolExecutor(8)):
+        ds.to_zarr(cds, mode='r+')
     return
 
 
