@@ -271,15 +271,14 @@ def stokes_image(
         # reshape for feed and spatial rotations
         beam = beam.reshape(2, 2, l_beam.size, m_beam.size)
         cell_deg_in = l_beam[1] - l_beam[0]
-        pbeam, pmask = reproject_and_interp_beam(beam, time, antpos,
-                                               radec, radec_new,
-                                               cell_deg_in, cell_deg, nx, ny,
-                                               poltype, opts.product,
-                                               weight=weight, nthreads=opts.nthreads)
+        pbeam = reproject_and_interp_beam(beam, time, antpos,
+                                          radec, radec_new,
+                                          cell_deg_in, cell_deg, nx, ny,
+                                          poltype, opts.product,
+                                          weight=weight, nthreads=opts.nthreads)
         
     else:
         pbeam = np.ones((len(opts.product), nx, ny), dtype=real_type)
-        pmask = np.ones((len(opts.product), nx, ny), dtype=bool)
     
     
     # compute lm coordinates of target if requested
@@ -561,17 +560,10 @@ def stokes_image(
             data_vars['wgtgrid'] = (('STOKES', 'FREQ', 'TIME', 'Y_PAD', 'X_PAD'),
                                     wgt[:, None, None, :, :])
         if opts.beam_model is not None:
-            # we need to forgo the transpose in this case and reverse the last axis
-            # pbeam = np.transpose(pbeam.astype(np.float32),
-            #                      axes=(0, 2, 1))
-            # pmask = np.transpose(pmask.astype(bool),
-            #                      axes=(0, 2, 1))
+            # forgo transpose and reverse the last axis (compared to fits)
             pbeam = pbeam[:, :, ::-1]
-            pmask = pmask[:, :, ::-1]
             data_vars['beam'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
                                  pbeam[:, None, None, :, :])
-            data_vars['mask'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
-                                 pmask[:, None, None, :, :])
         
         data_vars['rms'] = (('STOKES', 'FREQ', 'TIME'), rms[:, None, None].astype(np.float32))
         data_vars['wsum'] = (('STOKES', 'FREQ', 'TIME'), wsum[:, None, None].astype(np.float32))
@@ -640,12 +632,7 @@ def stokes_image(
         if opts.beam_model is not None:
             pbeam = np.transpose(pbeam.astype(np.float32),
                                  axes=(0, 2, 1))
-            pmask = np.transpose(pmask.astype(bool),
-                                 axes=(0, 2, 1))
             pbeam = pbeam[:, ::-1, :]
-            pmask = pmask[:, ::-1, :]
             save_fits(pbeam,
                   f'{fds_store.full_path}/{oname}_beam.fits', hdr)
-            save_fits(pmask,
-                  f'{fds_store.full_path}/{oname}_mask.fits', hdr)
     return 1

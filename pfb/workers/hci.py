@@ -398,14 +398,20 @@ def _hci(**kw):
     from concurrent.futures import ThreadPoolExecutor
     ds = xr.open_zarr(cds, chunks={'TIME':-1})
     mean = ds.cube.mean(dim='TIME').data
-    rms = ds.rms.values
-    wsum = ds.wsum.values
-    nzero = wsum > 0
-    med_rms = np.median(rms[nzero])
-    flag = rms > opts.flag_excess_rms * med_rms
+    # the flagging logic is more complicated in breifast
+    # rms = ds.rms.values
+    # wsum = ds.wsum.values
+    # # flag based on median over time
+    # nstokes, nfreq, ntime = wsum.shape
+    # flag = np.zeros((nstokes, nfreq, ntime), dtype=bool)
+    # for s in nstokes:
+    #     for f in nfreq:
+    #         nzero = wsum[s, f] > 0
+    #         med_rms = np.median(rms[s, f, nzero])
+    #         flag[s, f] = rms[s, f] > opts.flag_excess_rms * med_rms
     ds = ds.drop_vars(ds.data_vars.keys())
     ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  mean)
-    ds['flag'] = (('STOKES', 'FREQ', 'TIME'), flag)
+    # ds['flag'] = (('STOKES', 'FREQ', 'TIME'), flag)
     # we do this with a single worker
     with dask.config.set(pool=ThreadPoolExecutor(8)):
         ds.to_zarr(cds, mode='r+')
@@ -557,10 +563,6 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
             "beam": (
                 ("STOKES", "FREQ", "TIME", "Y", "X"),
                 da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32)
-            ),
-            "mask": (
-                ("STOKES", "FREQ", "TIME", "Y", "X"),
-                da.empty(cube_dims, chunks=cube_chunks, dtype=bool)
             ),
             "mean":(
                 ("STOKES", "FREQ", "Y", "X"),
