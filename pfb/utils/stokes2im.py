@@ -566,7 +566,9 @@ def stokes_image(
                                  pbeam[:, None, None, :, :])
         
         data_vars['rms'] = (('STOKES', 'FREQ', 'TIME'), rms[:, None, None].astype(np.float32))
-        data_vars['wsum'] = (('STOKES', 'FREQ', 'TIME'), wsum[:, None, None].astype(np.float32))
+        data_vars['weight'] = (('STOKES', 'FREQ', 'TIME'), wsum[:, None, None].astype(np.float32))
+        nonzero = wsum > 0
+        data_vars['nonzero'] = (('STOKES', 'FREQ', 'TIME'), nonzero[:, None, None])
         bmaj = np.array([gp[0] for gp in GaussPars], dtype=np.float32)
         bmin = np.array([gp[1] for gp in GaussPars], dtype=np.float32)
         # convert bpa to degrees
