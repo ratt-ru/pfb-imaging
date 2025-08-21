@@ -573,10 +573,6 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
                 ("STOKES", "FREQ", "TIME",),
                 da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_)
             ),
-            "flag": (
-                ("STOKES",  "FREQ", "TIME"),
-                da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_)
-            ),
             "psf_maj": (
                     ("STOKES", "FREQ", "TIME",),
                     da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
