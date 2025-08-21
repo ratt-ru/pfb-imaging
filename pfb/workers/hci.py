@@ -425,6 +425,7 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     import dask.array as da
     import xarray as xr
     from daskms import xds_from_storage_ms as xds_from_ms
+    from ducc0.fft import good_size
     out_ra = []
     out_dec = []
     out_times = []
@@ -560,10 +561,6 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
                 ("STOKES", "FREQ", "TIME", "Y", "X"),
                 da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32)
             ),
-            "beam": (
-                ("STOKES", "FREQ", "TIME", "Y", "X"),
-                da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32)
-            ),
             "mean":(
                 ("STOKES", "FREQ", "Y", "X"),
                 da.empty(mean_dims, chunks=mean_chunks, dtype=np.float32)
@@ -576,9 +573,9 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
                 ("STOKES", "FREQ", "TIME",),
                 da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_)
             ),
-            "weight": (
-                ("STOKES", "FREQ", "TIME",),
-                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
+            "flag": (
+                ("STOKES",  "FREQ", "TIME"),
+                da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_)
             ),
             "psf_maj": (
                     ("STOKES", "FREQ", "TIME",),
@@ -605,6 +602,28 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
         attrs=attrs
     )
     
+    if opts.beam_model is not None:
+        dummy_ds['weight'] = (("STOKES", "FREQ", "TIME", "Y", "X"),
+                da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32))
+    else:
+        dummy_ds['weight'] = (("STOKES", "FREQ", "TIME"),
+                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32))
+    
+    if opts.psf_out:
+        nx_psf = good_size(int(opts.psf_relative_size * nx))
+        while nx_psf%2:
+            nx_psf = good_size(nx_psf+1)
+        ny_psf = good_size(int(opts.psf_relative_size * ny))
+        while ny_psf%2:
+            ny_psf = good_size(ny_psf+1)
+        psf_dims = (n_stokes, n_freqs, n_times, ny_psf, nx_psf)
+        dummy_ds['psf'] = (("STOKES", "FREQ", "TIME", "Y_PSF", "X_PSF"),
+                da.empty(psf_dims, chunks=cube_chunks, dtype=np.float32))
+        dummy_ds.set_coords(
+            {'Y_PSF': (("Y_PSF",), out_dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg),
+             'X_PSF': (("X_PSF",), out_ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)}
+        )
+        
     # Write scaffold and metadata to disk.
     cds = f'{opts.output_filename}.zarr'
     dummy_ds.to_zarr(cds, mode="w", compute=False)

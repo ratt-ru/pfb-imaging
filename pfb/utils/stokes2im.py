@@ -488,9 +488,8 @@ def stokes_image(
     # these will be in units of pixels
     GaussPars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
 
-    rms = np.std(residual/wsum[:, None, None], axis=(1,2))
-
     if opts.natural_grad:
+        # TODO - add beam application
         from pfb.operators.hessian import hessian_jax
         import jax.numpy as jnp
         from jax.scipy.sparse.linalg import cg
@@ -507,12 +506,16 @@ def stokes_image(
                        opts.eta,
                        abspsf)
 
-        x = cg(hess,
+        residual = cg(hess,
                residual/wsum[:, None, None],
                tol=opts.cg_tol,
                maxiter=opts.cg_maxit)[0]
+        
     else:
-        x = None
+        residual /= wsum[:, None, None]
+        residual *= pbeam / (pbeam**2 + opts.eta)
+
+    rms = np.std(residual, axis=(1,2))
 
     unix_time = quantity(f'{time_out}s').to_unix_time()
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
@@ -531,24 +534,19 @@ def stokes_image(
         }
         # X and Y are transposed for compatibility with breifast
         data_vars = {}
-        residual /= wsum[:, None, None]
         residual = np.transpose(residual.astype(np.float32),
                                 axes=(0, 2, 1))
         data_vars['cube'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
                              residual[:, None, None, :, :])
         if opts.psf_out:
-            coords['X_PSF'] = (('X_PSF',), np.arange(nx_psf) * cell_deg)
-            coords['Y_PSF'] = (('Y_PSF',), np.arange(ny_psf) * cell_deg)
+            coords['X_PSF'] = (('X_PSF',), ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)
+            coords['Y_PSF'] = (('Y_PSF',), dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg)
             psf /= wsum[:, None, None]
             psf = np.transpose(psf.astype(np.float32),
                                axes=(0, 2, 1))
             data_vars['psf'] = (('STOKES', 'FREQ', 'TIME', 'Y_PSF', 'X_PSF'),
                                 psf[:, None, None, :, :])
-        if x is not None:
-            x = np.transpose(x.astype(np.float32),
-                             axes=(0, 2, 1))
-            data_vars['xhat'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
-                                 x[:, None, None, :, :])
+        
         if opts.robustness is not None and opts.weight_grid_out:
             ic, ix, iy = np.where(counts > 0)
             wgt = np.zeros_like(counts)
@@ -561,12 +559,14 @@ def stokes_image(
                                     wgt[:, None, None, :, :])
         if opts.beam_model is not None:
             # forgo transpose and reverse the last axis (compared to fits)
-            pbeam = pbeam[:, :, ::-1]
-            data_vars['beam'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
-                                 pbeam[:, None, None, :, :])
+            weight = pbeam[:, :, ::-1]**2 * wsum[:, None, None]
+            data_vars['weight'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
+                                    weight[:, None, None, :, :])
+        else:
+            data_vars['weight'] = (('STOKES', 'FREQ', 'TIME'),
+                                    wsum[:, None, None])
         
         data_vars['rms'] = (('STOKES', 'FREQ', 'TIME'), rms[:, None, None].astype(np.float32))
-        data_vars['weight'] = (('STOKES', 'FREQ', 'TIME'), wsum[:, None, None].astype(np.float32))
         nonzero = wsum > 0
         data_vars['nonzero'] = (('STOKES', 'FREQ', 'TIME'), nonzero[:, None, None])
         bmaj = np.array([gp[0] for gp in GaussPars], dtype=np.float32)
@@ -627,9 +627,6 @@ def stokes_image(
             hdr_psf['STOKES'] = corr
             save_fits(psf/wsum[:, None, None],
                   f'{fds_store.full_path}/{oname}_psf.fits', hdr_psf)
-        if x is not None:
-            save_fits(x,
-                  f'{fds_store.full_path}/{oname}_x.fits', hdr)
 
         if opts.beam_model is not None:
             pbeam = np.transpose(pbeam.astype(np.float32),
