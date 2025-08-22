@@ -59,7 +59,6 @@ def stokes_image(
                 bandid=None,
                 timeid=None,
                 msid=None,
-                cds=None,
                 attrs=None):
     # serialization fails for these if we import them above
     from ducc0.misc import resize_thread_pool
@@ -347,7 +346,6 @@ def stokes_image(
 
     # TODO - polarisation parameters?
     if opts.inject_transients is not None:
-        raise NotImplementedError("Transient injection not yet implemented")
         import yaml
         from pfb.utils.misc import dynamic_spectrum
         with open(opts.inject_transient, 'r') as f:
@@ -372,10 +370,13 @@ def stokes_image(
             y0t = lm0t[1]
 
             # inject transient at x0t, y0t
-            data += dspec * np.exp(freqfactor*(
+            dspec *= np.exp(freqfactor*(
                                  signu*uvw[:, 0:1]*x0t*signx +
                                  signv*uvw[:, 1:2]*y0t*signy -
                                  uvw[:, 2:]*(n-1)))
+            # currently Stokes I only
+            data[0] += dspec
+            data[-1] += dspec
 
     # TODO - why do we need to cast here?
     data = data.transpose(2, 0, 1).astype(complex_type)
@@ -597,8 +598,8 @@ def stokes_image(
             data_vars,
             coords=coords,
             attrs=attrs)
-        if cds is not None:
-            out_ds.to_zarr(cds, region='auto', mode='a')
+        if opts.stack:
+            out_ds.to_zarr(fds_store.url, region='auto', mode='a')
         else:
             out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr',
                         mode='w')
