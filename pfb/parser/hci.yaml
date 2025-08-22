@@ -98,7 +98,7 @@ inputs:
   beam-model:
     dtype: str
     info:
-      Beam model to use. Only katbeam currently supported.
+      Path to beam model as an xarray dataset backed by zarr
   field-of-view:
     dtype: float
     abbreviation: fov
