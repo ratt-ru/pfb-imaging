@@ -335,7 +335,8 @@ def image_data_products(dsl,
                         do_residual=True,
                         do_weight=True,
                         do_noise=False,
-                        do_beam=False):
+                        do_beam=False,
+                        min_padding=1.7):
     '''
     Function to compute image space data products in one go
 
@@ -474,11 +475,20 @@ def image_data_products(dsl,
     if robustness is not None:
         numba_threads = np.maximum(nthreads, 1)
         numba.set_num_threads(numba_threads)
+        # we need to compute the weights on the padded grid
+        # but we don't have control over the optimal gridding
+        # parameters so assume a minimum
+        nx_pad = int(np.ceil(min_padding*nx))
+        if nx_pad%2:
+            nx_pad += 1
+        ny_pad = int(np.ceil(min_padding*ny))
+        if ny_pad%2:
+            ny_pad += 1
         counts = _compute_counts(uvw,
                                  freq,
                                  mask,
                                  wgt,
-                                 nx, ny,
+                                 nx_pad, ny_pad,
                                  cellx, celly,
                                  uvw.dtype,
                                  k=0,
@@ -492,7 +502,7 @@ def image_data_products(dsl,
             freq,
             wgt,
             mask,
-            nx, ny,
+            nx_pad, ny_pad,
             cellx, celly,
             robustness,
             usign=1.0 if flip_u else -1.0,
@@ -711,26 +721,23 @@ def compute_residual(dsl,
     # do not apply weights in this direction
     convim = np.zeros_like(dirty)
     for c in range(ncorr):
-        try:
-            model_vis = dirty2vis(
-                uvw=uvw,
-                freq=freq,
-                dirty=beam[c]*model[c],
-                pixsize_x=cellx,
-                pixsize_y=celly,
-                center_x=x0,
-                center_y=y0,
-                flip_u=flip_u,
-                flip_v=flip_v,
-                flip_w=flip_w,
-                epsilon=epsilon,
-                do_wgridding=do_wgridding,
-                nthreads=nthreads,
-                divide_by_n=False,  # incorporate in smooth beam
-                sigma_min=1.1, sigma_max=3.0,
-                verbosity=0)
-        except:
-            import ipdb; ipdb.set_trace()
+        model_vis = dirty2vis(
+            uvw=uvw,
+            freq=freq,
+            dirty=beam[c]*model[c],
+            pixsize_x=cellx,
+            pixsize_y=celly,
+            center_x=x0,
+            center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            nthreads=nthreads,
+            divide_by_n=False,  # incorporate in smooth beam
+            sigma_min=1.1, sigma_max=3.0,
+            verbosity=0)
     
         vis2dirty(
             uvw=uvw,

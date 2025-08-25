@@ -95,6 +95,10 @@ inputs:
       - double
     info:
       Gridding precision
+  beam-model:
+    dtype: str
+    info:
+      Path to beam model as an xarray dataset backed by zarr
   field-of-view:
     dtype: float
     abbreviation: fov
@@ -205,6 +209,11 @@ inputs:
     info:
       Rephase visibilities to this phase center.
       Should be a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+  stack:
+    dtype: bool
+    default: false
+    info:
+      Stack everything into a single xarray dataset
 
   _include:
     - (.)gridding.yml
@@ -218,9 +227,6 @@ outputs:
     dtype: Directory
     must_exist: false
     mkdir: false
-  # optional-fits:
-  #   implicit: '{current.output-filename}_{current.product}.fits'
-  #   required: false
 
 policies:
   pass_missing_as_none: true

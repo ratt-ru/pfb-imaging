@@ -89,7 +89,7 @@ def set_wcs(cell_x, cell_y, nx, ny, radec, freq,
     w.wcs.equinox = 2000.0
 
     if header:
-        # the order does seem to metter here,
+        # the order does seem to matter here,
         # especially when using with StreamingHDU
         header = fits.Header()
         header['SIMPLE'] = (True, 'conforms to FITS standard')

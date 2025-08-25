@@ -2,8 +2,12 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator as RGI
 from katbeam import JimBeam
 from africanus.rime.fast_beam_cubes import beam_cube_dde
-from africanus.rime import parallactic_angles
-
+from africanus.rime import parallactic_angles, feed_rotation
+from pfb.utils.stokes import jones_to_mueller, mueller_to_stokes
+from scipy.ndimage import rotate
+from pfb.utils.fits import set_wcs
+from astropy.wcs import WCS
+from reproject import reproject_interp
 
 def interp_beam(freq, nx, ny, cell_deg, btype,
                 utime=None, ant_pos=None, phase_dir=None):
@@ -91,3 +95,84 @@ def eval_beam(beam_image, l_in, m_in, l_out, m_out):
         beamo = RGI((l_in, m_in), beam_image,
                     bounds_error=False, method='linear', fill_value=1.0)
         return beamo((ll, mm))
+
+def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
+                              cell_deg_in, cell_deg_out, nxo, nyo,
+                              poltype, product, weight=None, nthreads=1):
+    '''
+    beam    - (2, 2, nx, ny)
+    time    - nrow
+    antpos  - (nant, 3)
+    radec0  - original pointing direction
+    radecf  - direction to project to
+    '''
+    utime = np.unique(time)
+    ntime = utime.size
+    # parangles = parallactic_angles(utime, antpos, np.array(radec0))
+    # # use the mean over antenna
+    # parangles = np.mean(parangles, axis=-1, keepdims=False)
+    _, _, nxi, nyi = beam.shape
+    # beamo = np.zeros((ntime, 2, 2, nxi, nyi), dtype=beam.dtype)
+    # for i, parang in enumerate(parangles):
+    #     # spatial rotation (assuming position angle is paralactic angle i.e. linear North-South, East-West interferometer)
+    #     beamo[i] = rotate(beam, parang, axes=(-2, -1), reshape=False, order=1, mode='nearest')
+    #     # feed rotation
+    #     beamo[i] = rotate(beamo[i], parang, axes=(0, 1), reshape=False, order=1, mode='nearest')
+
+    # # compute the weighted sum over time
+    # if weight is not None and ntime > 1:
+    #     wsumt = np.zeros((ntime, 2, 2))
+    #     for i, t in enumerate(utime):
+    #         sel = time==t
+    #         wsumt[i] = weight[sel].sum(axis=(0, 1)).reshape(2, 2)
+    #     beamo = np.sum(wsumt[:, :, :, None, None] * beamo, axis=0)
+    #     beamo /= np.sum(wsumt, axis=0)[:, :, None, None]
+    # else:
+    #     beamo = np.mean(beamo, axis=0)
+
+    # jones to Mueller
+    beamo = beam
+    beamo = jones_to_mueller(beamo, beamo)
+
+    # Mueller to Stokes
+    beamo = mueller_to_stokes(beamo, poltype=poltype)
+    
+    # select required products
+    i = ()
+    if 'I' in product:
+        i += (0,)
+    if 'Q' in product:
+        i += (1,)
+    if 'U' in product:
+        i += (2,)
+    if 'V' in product:
+        i += (3,)
+    beamo = beamo[i, ...]
+    
+    # reproject onto target field
+    wcs_ref = WCS(naxis=2)
+    wcs_ref.wcs.ctype = ['RA---SIN', 'DEC--SIN']
+    wcs_ref.wcs.cdelt = np.array((cell_deg_in, cell_deg_in))
+    wcs_ref.wcs.cunit = ['deg', 'deg']
+    wcs_ref.wcs.crval = np.array((radec0[0]*180.0/np.pi, radec0[1]*180.0/np.pi))
+    wcs_ref.wcs.crpix = [1 + nxi//2, 1 + nyi//2]
+    wcs_ref.array_shape = [nxi, nyi]
+
+    # header for target field
+    wcs_target = WCS(naxis=2)
+    wcs_target.wcs.ctype = ['RA---SIN', 'DEC--SIN']
+    wcs_target.wcs.cdelt = np.array((cell_deg_out, cell_deg_out))
+    wcs_target.wcs.cunit = ['deg', 'deg']
+    wcs_target.wcs.crval = np.array((radecf[0]*180.0/np.pi, radecf[1]*180.0/np.pi))
+    wcs_target.wcs.crpix = [nxo//2, nyo//2]
+    wcs_target.array_shape = [nxo, nyo]
+
+    pbeam = np.zeros((len(product), nxo, nyo), dtype=beamo.dtype)
+    pmask = np.zeros((len(product), nxo, nyo), dtype=beamo.dtype)
+    for i in range(len(product)):
+        pbeam[i], pmask[i] = reproject_interp((beamo[i], wcs_ref), wcs_target, shape_out=(nxo, nyo))  # , block_size='auto', parallel=nthreads
+
+    # set beam to zero where it is not defined
+    pmask = pmask.astype(bool)
+    pbeam[~pmask] = 0.0
+    return pbeam
