@@ -344,23 +344,19 @@ def stokes_image(
                                  signv*uvw[:, 1:2]*y0*signy -
                                  uvw[:, 2:]*(n-1))).astype(complex_type)
 
-    # TODO - polarisation parameters?
+    # TODO - polarisation parameters and handle Stokes axis more elegantly
+    # Should this go before weight_data?
     if opts.inject_transients is not None:
-        import yaml
-        from pfb.utils.misc import dynamic_spectrum
-        with open(opts.inject_transient, 'r') as f:
-            transient_list = yaml.safe_load(f)
-        for transient in transient_list:
-            # parametric dspec model
-            dspec = dynamic_spectrum(time, freq, transient_list[transient])
-
-            # convert radec to lm
-            tmp = transient_list[transient]['radec'].split(',')
-            if len(tmp) != 2:
-                raise ValueError(f"Invalid radec format {tmp} for transient {transient}")
-            c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(units.hourangle, units.deg))
-            ra_rad = np.deg2rad(c.ra.value)
-            dec_rad = np.deg2rad(c.dec.value)
+        transient_name = opts.inject_transients.removesuffix('yaml') + 'zarr'
+        transient_ds = xr.open_zarr(transient_name, chunks=None)
+        all_times = transient_ds.TIME.values
+        all_freqs = transient_ds.FREQ.values
+        names = transient_ds.names
+        ras = transient_ds.ras
+        decs = transient_ds.decs
+        for name, ra, dec in zip(names, ras, decs):
+            ra_rad = np.deg2rad(ra)
+            dec_rad = np.deg2rad(dec)
             tcoords=np.zeros((1,2))
             tcoords[0,0] = ra_rad
             tcoords[0,1] = dec_rad
@@ -369,14 +365,23 @@ def stokes_image(
             x0t = lm0t[0]
             y0t = lm0t[1]
 
-            # inject transient at x0t, y0t
-            dspec *= np.exp(freqfactor*(
+            # these are the profiles on the full domain so interpolate
+            tprofile = getattr(transient_ds, f'{name}_time_profile').values
+            fprofile = getattr(transient_ds, f'{name}_freq_profile').values
+            
+            tprofile = np.interp(time, all_times, tprofile)  # note reorder to ms times
+            fprofile = np.interp(freq, all_freqs, fprofile)
+            
+            # outer product gives dynamic spectrum
+            dspec = tprofile[:, None] * fprofile[None, :]
+
+            # inject transient at x0t, y0t and convert to complex values
+            dspec = dspec * np.exp(freqfactor*(
                                  signu*uvw[:, 0:1]*x0t*signx +
                                  signv*uvw[:, 1:2]*y0t*signy -
                                  uvw[:, 2:]*(n-1)))
             # currently Stokes I only
-            data[0] += dspec
-            data[-1] += dspec
+            data[:, :, 0] += dspec
 
     # TODO - why do we need to cast here?
     data = data.transpose(2, 0, 1).astype(complex_type)
