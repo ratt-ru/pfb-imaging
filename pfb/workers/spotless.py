@@ -150,7 +150,7 @@ def _spotless(**kw):
     from itertools import cycle
     from uuid import uuid4
     from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.misc import eval_coeffs_to_slice, fit_image_cube
+    from pfb.utils.modelspec import eval_coeffs_to_slice, fit_image_cube
     import fsspec
     import pickle
     from pfb.utils.dist import band_actor

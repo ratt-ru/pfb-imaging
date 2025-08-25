@@ -23,8 +23,9 @@ def smoovie(**kw):
     ncpu = psutil.cpu_count(logical=False)
     # to prevent flickering 
     opts.nthreads = 1
-    if opts.product.upper() not in ["I","Q", "U", "V"]:
-        log.error_and_raise(f"Product {opts.product} not yet supported",
+    remprod = opts.product.upper().strip('IQUV')
+    if len(remprod):
+        log.error_and_raise(f"Product {remprod} not yet supported",
                             NotImplementedError)
     
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -95,14 +96,11 @@ def _smoovie(**kw):
     freqs_in = []
     times_in = []
     for ds in fds:
-        freqs_in.append(ds.freq_out)
-        times_in.append(ds.time_out)
+        freqs_in.append(ds.FREQ.values)
+        times_in.append(ds.TIME.values)
 
     freqs_in = np.unique(np.array(freqs_in))
     times_in = np.unique(np.array(times_in))
-
-    ntimes_in = times_in.size
-    nfreqs_in = freqs_in.size
 
     @wrap_matplotlib()
     def plot_frame(ds):
@@ -111,17 +109,20 @@ def _smoovie(**kw):
         scan = ds.scanid
         fnum = ds.ffrac
         band = ds.bandid
-        resid = ds.RESIDUAL.values/wsum
-        fig, ax = plt.subplots(figsize=(10, 10))
+        resid = ds.cube.values[0, 0, :, :]
+        # nstokes = resid.shape[0]
+        fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(10, 10))
         fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=None, hspace=None)
+        # for i, ax in enumerate(axs):
+        rms = ds.rms[0, 0]
         im1 = ax.imshow(resid,
-                    vmin=-opts.min_frac*ds.rms,
-                    vmax=opts.max_frac*ds.rms,
+                    vmin=-opts.min_frac*rms,
+                    vmax=opts.max_frac*rms,
                     cmap=opts.cmap)
 
         plt.xticks([]), plt.yticks([])
         ax.annotate(
-            f'{basename}_band{band:04d}_scan{scan:04d}' + '\n' + fnum + '\n' + utc,
+            f'{basename}_band{band:04d}_scan{scan:04d}_{opts.product[0]}' + '\n' + fnum + '\n' + utc,
             xy=(0.0, 0.0),
             xytext=(0.05, 0.05),
             xycoords='axes fraction',

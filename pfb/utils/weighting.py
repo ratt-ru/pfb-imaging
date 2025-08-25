@@ -1,3 +1,4 @@
+import ray
 import concurrent.futures as cf
 import numpy as np
 from numba import njit, prange, literally, types
@@ -284,7 +285,7 @@ def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
               ant1, ant2, pol, product, nc):
         # for dask arrays we need to adjust the chunks to
         # start counting from zero
-        tbin_idx -= tbin_idx.min()
+        tbin_idx = tbin_idx - tbin_idx.min()
         nt = np.shape(tbin_idx)[0]
         nrow, nchan, ncorr = data.shape
         vis = np.zeros((nrow, nchan, ns), dtype=data.dtype)
@@ -310,4 +311,34 @@ def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts,
 
     _impl.returns = types.Tuple([types.Array(types.complex128, 3, 'C'),
                                  types.Array(types.float64, 3, 'C')])
+
     return _impl
+
+
+@njit
+def weight_data_np(data, weight, flag, jones, tbin_idx, tbin_counts, ant1, ant2, ns, vis_func, wgt_func):
+    # for dask arrays we need to adjust the chunks to
+    # start counting from zero
+    tbin_idx = tbin_idx - tbin_idx.min()
+    nt = np.shape(tbin_idx)[0]
+    nrow, nchan, ncorr = data.shape
+    vis = np.zeros((nrow, nchan, ns), dtype=data.dtype)
+    wgt = np.zeros((nrow, nchan, ns), dtype=data.real.dtype)
+
+    for t in prange(nt):
+        for row in range(tbin_idx[t],
+                            tbin_idx[t] + tbin_counts[t]):
+            p = int(ant1[row])
+            q = int(ant2[row])
+            gp = jones[t, p, :, 0]
+            gq = jones[t, q, :, 0]
+            for chan in range(nchan):
+                if flag[row, chan].any():
+                    continue
+                wgt[row, chan] = wgt_func(gp[chan], gq[chan],
+                                            weight[row, chan])
+                vis[row, chan] = vis_func(gp[chan], gq[chan],
+                                            weight[row, chan],
+                                            data[row, chan])
+
+    return (vis, wgt)

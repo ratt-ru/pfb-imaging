@@ -67,10 +67,9 @@ def degrid(**kw):
     opts.dds = dds_store.url
     OmegaConf.set_struct(opts, True)
 
-    if opts.product.upper() not in ["I"]:
-                                    # , "Q", "U", "V", "XX", "YX", "XY",
-                                    # "YY", "RR", "RL", "LR", "LL"]:
-        log.error_and_raise(f"Product {opts.product} not yet supported",
+    remprod = opts.product.upper().strip('IQUV')
+    if len(remprod):
+        log.error_and_raise(f"Product {remprod} not yet supported",
                             NotImplementedError)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -118,6 +117,7 @@ def _degrid(**kw):
     import sympy as sm
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
+    from africanus.model.coherency.dask import convert
     from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
 
@@ -225,6 +225,11 @@ def _degrid(**kw):
     else:
         masks = [np.ones((nx, ny), dtype=np.float64)]
 
+    input_schema = sorted(opts.product.upper())
+    if poltype=='linear':
+        output_schema = ['XX', 'XY', 'YX', 'YY']
+    else:
+        output_schema = ['RR', 'RL', 'LR', 'LL']
     
     writes = []
     for ms in opts.ms:
@@ -305,12 +310,19 @@ def _degrid(**kw):
                                 do_wgridding=opts.do_wgridding,
                                 freq_min=freq_min,
                                 freq_max=freq_max,
-                                ncorr_out=ncorr,
-                                product=opts.product,
-                                poltype=poltype)
+                                product=opts.product)
 
                 # convert to single precision to write to MS
                 vis = vis.astype(np.complex64)
+                
+                if ncorr==1:
+                    out_schema = output_schema[0]
+                elif ncorr==2:
+                    out_schema = [output_schema[0], output_schema[-1]]
+                else:
+                    out_schema = output_schema
+                
+                vis = convert(vis, input_schema, out_schema, implicit_stokes=True)
 
                 if opts.accumulate:
                     vis += getattr(ds, column_name).data

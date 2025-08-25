@@ -42,8 +42,9 @@ def single_stokes(
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
     scanid = ds.SCAN_NUMBER
-    oname = f'ms{msid:04d}_spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}'
-
+    oname = f'ms{msid:04d}_fid{fieldid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
+            f'_band{bandid:04d}_time{timeid:04d}'
+    
     if opts.precision.lower() == 'single':
         real_type = np.float32
         complex_type = np.complex64

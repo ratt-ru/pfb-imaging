@@ -3,7 +3,44 @@ import sympy as sm
 from sympy.physics.quantum import TensorProduct
 from sympy.utilities.lambdify import lambdify
 from numba import njit
+from numba.core import types
+import string
 
+def jones_to_mueller(gp, gq):
+    shape = gp.shape
+    rem_shape = shape[2:]
+    i0 = string.ascii_lowercase.index('m')
+    rem_idx = string.ascii_lowercase[i0:i0+len(rem_shape)]
+    idxp = 'ij' + rem_idx
+    idxq = 'kl' + rem_idx
+    idxo = 'ikjl' + rem_idx
+    out_shape = (4,4) + rem_shape
+    return np.einsum(f'{idxp},{idxq}->{idxo}', gp, np.conjugate(gq)).reshape(*out_shape)
+
+def mueller_to_stokes(mueller, poltype='linear'):
+    '''
+    Convert a Mueller matrix into a diagonal Stokes matrix.
+    '''
+    if poltype=='linear':
+        T = np.array([[1.0, 1.0, 0, 0],
+                      [0, 0, 1.0, 1.0j],
+                      [0, 0, 1.0, -1.0j],
+                      [1.0, -1.0, 0, 0]])
+    elif poltype=='circular':
+        T = np.array([[1.0, 0, 0, 1.0],
+                      [0, 1.0, 1.0j, 0],
+                      [0, 1.0, -1.0j, 0],
+                      [1.0, 0, 0, -1.0]])
+    else:
+        raise ValueError(f'Unknown poltype {poltype}')
+    shape = mueller.shape
+    rem_shape = shape[2:]
+    i0 = string.ascii_lowercase.index('m')
+    rem_idx = string.ascii_lowercase[i0:i0+len(rem_shape)]
+    idxl = 'ij' + rem_idx
+    idxr = 'ji'
+    idxo = 'i' + rem_idx
+    return np.einsum(f'{idxl},{idxr}->{idxo}', mueller, T).real
 
 def corr_to_stokes(x, wsum=1.0, axis=0, poltype='linear'):
     '''
@@ -37,6 +74,13 @@ def stokes_to_corr(x, axis=0, poltype='linear'):
 
 
 def stokes_funcs(data, jones, product, pol, nc):
+    if isinstance(product, types.StringLiteral):
+        product = product.literal_value
+    if isinstance(pol, types.StringLiteral):
+        pol = pol.literal_value
+    if isinstance(nc, types.StringLiteral):
+        nc = nc.literal_value
+
     # set up symbolic expressions
     gp00, gp10, gp01, gp11 = sm.symbols("gp00 gp10 gp01 gp11", real=False)
     gq00, gq10, gq01, gq11 = sm.symbols("gq00 gq10 gq01 gq11", real=False)
@@ -64,12 +108,12 @@ def stokes_funcs(data, jones, product, pol, nc):
     # Full Stokes to corr operator
     # Is this the only difference between linear and circular pol?
     # What about paralactic angle rotation?
-    if pol.literal_value == 'linear':
+    if pol == 'linear':
         T = sm.Matrix([[1.0, 1.0, 0, 0],
                        [0, 0, 1.0, 1.0j],
                        [0, 0, 1.0, -1.0j],
                        [1.0, -1.0, 0, 0]])
-    elif pol.literal_value == 'circular':
+    elif pol == 'circular':
         T = sm.Matrix([[1.0, 0, 0, 1.0],
                        [0, 1.0, 1.0j, 0],
                        [0, 1.0, -1.0j, 0],
@@ -88,27 +132,27 @@ def stokes_funcs(data, jones, product, pol, nc):
     # this should ensure that outputs are always ordered as
     # [I, Q, U, V]
     i = ()
-    if 'I' in product.literal_value:
+    if 'I' in product:
         i += (0,)
 
-    if 'Q' in product.literal_value:
+    if 'Q' in product:
         i += (1,)
-        if pol.literal_value == 'circular' and nc.literal_value == '2':
+        if pol == 'circular' and nc == '2':
             raise ValueError("Q is not available in circular polarisation with 2 correlations")
 
-    if 'U' in product.literal_value:
+    if 'U' in product:
         i += (2,)
-        if pol.literal_value == 'linear' and nc.literal_value == '2':
+        if pol == 'linear' and nc == '2':
             raise ValueError("U is not available in linear polarisation with 2 correlations")
-        elif pol.literal_value == 'circular' and nc.literal_value == '2':
+        elif pol == 'circular' and nc == '2':
             raise ValueError("U is not available in circular polarisation with 2 correlations")
 
-    if 'V' in product.literal_value:
+    if 'V' in product:
         i += (3,)
-        if pol.literal_value == 'linear' and nc.literal_value == '2':
+        if pol == 'linear' and nc == '2':
             raise ValueError("V is not available in linear polarisation with 2 correlations")
 
-    remprod = product.literal_value.strip('IQUV')
+    remprod = product.strip('IQUV')
     if len(remprod):
         raise ValueError(f"Unknown polarisation product {remprod}")
 
@@ -192,7 +236,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                           sm.simplify(C[i,0]))
         Djfn = njit(nogil=True, inline='always')(Dsymb)
 
-        if nc.literal_value == '4':
+        if nc == '4':
             @njit(nogil=True, inline='always')
             def wfunc(gp, gq, W):
                 gp00 = gp[0]
@@ -225,7 +269,7 @@ def stokes_funcs(data, jones, product, pol, nc):
                             gq00, gq11,
                             W00, W01, W10, W11,
                             V00, V01, V10, V11).ravel()
-        elif nc.literal_value == '2':
+        elif nc == '2':
             @njit(nogil=True, inline='always')
             def wfunc(gp, gq, W):
                 gp00 = gp[0]
