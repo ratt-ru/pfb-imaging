@@ -430,16 +430,17 @@ def _hci(**kw):
 
     print("\n")
 
-    log.info("Computing mean and flags")
-    import dask
-    from concurrent.futures import ThreadPoolExecutor
-    ds = xr.open_zarr(cds, chunks={'TIME':-1})
-    mean = ds.cube.mean(dim='TIME').data
-    ds = ds.drop_vars(ds.data_vars.keys())
-    ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  mean)
-    with dask.config.set(pool=ThreadPoolExecutor(8)):
-        ds.to_zarr(cds, mode='r+')
-    log.info("Reduction complete")
+    if opts.stack:
+        log.info("Computing mean and flags")
+        import dask
+        from concurrent.futures import ThreadPoolExecutor
+        ds = xr.open_zarr(cds, chunks={'TIME':-1})
+        mean = ds.cube.mean(dim='TIME').data
+        ds = ds.drop_vars(ds.data_vars.keys())
+        ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  mean)
+        with dask.config.set(pool=ThreadPoolExecutor(8)):
+            ds.to_zarr(cds, mode='r+')
+        log.info("Reduction complete")
     return
 
 

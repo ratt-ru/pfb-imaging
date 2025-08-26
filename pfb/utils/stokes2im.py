@@ -345,6 +345,7 @@ def stokes_image(
                                  uvw[:, 2:]*(n-1))).astype(complex_type)
 
     # TODO - polarisation parameters and handle Stokes axis more elegantly
+    # add beam application to injected transients
     # Should this go before weight_data?
     if opts.inject_transients is not None:
         transient_name = opts.inject_transients.removesuffix('yaml') + 'zarr'
@@ -604,10 +605,9 @@ def stokes_image(
             coords=coords,
             attrs=attrs)
         if opts.stack:
-            out_ds.to_zarr(fds_store.url, region='auto', mode='a')
+            out_ds.to_zarr(fds_store.url, region='auto')
         else:
-            out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr',
-                        mode='w')
+            out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr', mode='w')
     elif opts.output_format == 'fits':
         # if there is more than one polarisation product
         # we currently assume all have the same beam
