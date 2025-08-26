@@ -466,8 +466,8 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
         from astropy.coordinates import SkyCoord
         ra_str, dec_str = opts.phase_dir.split(',')
         coord = SkyCoord(ra_str, dec_str, frame='fk5', unit=(units.hourangle, units.deg))
-        out_ra_deg = coord.ra.value
-        out_dec_deg = coord.dec.value
+        out_ra_deg = np.array([coord.ra.value])
+        out_dec_deg = np.array([coord.dec.value])
 
     # remove duplicates
     out_times = np.unique(out_times)
