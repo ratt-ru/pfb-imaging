@@ -345,7 +345,7 @@ def stokes_image(
                                  uvw[:, 2:]*(n-1))).astype(complex_type)
 
     # TODO - polarisation parameters and handle Stokes axis more elegantly
-    # add beam application to injected transients
+    # TODO - add beam application to injected transients
     # Should this go before weight_data?
     if opts.inject_transients is not None:
         transient_name = opts.inject_transients.removesuffix('yaml') + 'zarr'
@@ -566,7 +566,7 @@ def stokes_image(
                                     wgt[:, None, None, :, :])
         if opts.beam_model is not None:
             # forgo transpose and reverse the last axis (compared to fits)
-            weight = pbeam[:, :, ::-1]**2 * wsum[:, None, None]
+            weight = pbeam[:, :, ::-1]**2 * wsum[:, None, None] + opts.eta
             data_vars['weight'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
                                     weight[:, None, None, :, :])
         else:
@@ -635,9 +635,9 @@ def stokes_image(
                   f'{fds_store.full_path}/{oname}_psf.fits', hdr_psf)
 
         if opts.beam_model is not None:
-            pbeam = np.transpose(pbeam.astype(np.float32),
+            weight = np.transpose(weight.astype(np.float32),
                                  axes=(0, 2, 1))
-            pbeam = pbeam[:, ::-1, :]
-            save_fits(pbeam,
-                  f'{fds_store.full_path}/{oname}_beam.fits', hdr)
+            weight = weight[:, ::-1, :]
+            save_fits(weight,
+                  f'{fds_store.full_path}/{oname}_weight.fits', hdr)
     return 1
