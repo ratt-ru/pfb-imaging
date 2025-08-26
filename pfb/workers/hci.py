@@ -93,7 +93,6 @@ def _hci(**kw):
 
     import numpy as np
     from pfb.utils.misc import construct_mappings
-    from distributed import get_client, as_completed
     from daskms import xds_from_storage_ms as xds_from_ms
     import fsspec
     from daskms.fsspec_store import DaskMSStore
@@ -102,7 +101,7 @@ def _hci(**kw):
     from ducc0.fft import good_size
     from pfb.utils.stokes2im import safe_stokes_image
     import xarray as xr
-    from glob import glob
+    import yaml
 
     basename = f'{opts.output_filename}'
 
@@ -165,11 +164,19 @@ def _hci(**kw):
 
     max_freq = 0
 
+    # get the full (time, freq) domain
+    all_times = []
+    all_freqs = []
     for ms in opts.ms:
         for idt in freqs[ms].keys():
             freq = freqs[ms][idt]
+            all_freqs.extend(freq)
+            all_times.extend(utimes[ms][idt])
             mask  = (freq <= freq_max) & (freq >= freq_min)
             max_freq = np.maximum(max_freq, freq[mask].max())
+
+    all_freqs = np.unique(all_freqs)
+    all_times = np.unique(all_times)
 
     # cell size
     cell_N = 1.0 / (2 * uv_max * max_freq / lightspeed)
@@ -296,6 +303,35 @@ def _hci(**kw):
         cds = None
         attrs = None
 
+    if opts.inject_transients is not None:
+        # we need to do this here because we don't have access
+        # to the full domain inside the call to stokes2im
+        log.info("Computing transient spectra")
+        from pfb.utils.transients import generate_transient_spectra
+        with open(opts.inject_transients, 'r') as f:
+            config = yaml.safe_load(f)
+        transients = config['transients']
+        coords = {
+            "TIME": (("TIME",), all_times),
+            "FREQ": (("FREQ",), all_freqs),
+        }
+        names = []
+        ras = []
+        decs = []
+        transient_ds = xr.Dataset(coords=coords)
+        for transient in transients:
+            tprofile, fprofile = generate_transient_spectra(all_times, all_freqs, transient)
+            name = transient["name"]
+            transient_ds[f'{name}_time_profile'] = (("TIME",), tprofile)
+            transient_ds[f'{name}_freq_profile'] = (("FREQ",), fprofile)
+            names.append(name)
+            ras.append(transient["position"]["ra"])
+            decs.append(transient["position"]["dec"])
+        transient_ds = transient_ds.assign_attrs({"names": names, "ras": ras, "decs": decs})
+        transient_baseoname = opts.inject_transients.removesuffix('yaml')
+        transient_ds.to_zarr(f"{transient_baseoname}zarr", mode='a')
+        log.info("Spectra computed")
+    
     if opts.model_column is not None:
         columns += (opts.model_column,)
         schema[opts.model_column] = {'dims': ('chan', 'corr')}
@@ -394,16 +430,17 @@ def _hci(**kw):
 
     print("\n")
 
-    log.info("Computing mean and flags")
-    import dask
-    from concurrent.futures import ThreadPoolExecutor
-    ds = xr.open_zarr(cds, chunks={'TIME':-1})
-    mean = ds.cube.mean(dim='TIME').data
-    ds = ds.drop_vars(ds.data_vars.keys())
-    ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  mean)
-    with dask.config.set(pool=ThreadPoolExecutor(8)):
-        ds.to_zarr(cds, mode='r+')
-    log.info("Reduction complete")
+    if opts.stack:
+        log.info("Computing mean and flags")
+        import dask
+        from concurrent.futures import ThreadPoolExecutor
+        ds = xr.open_zarr(cds, chunks={'TIME':-1})
+        mean = ds.cube.mean(dim='TIME').data
+        ds = ds.drop_vars(ds.data_vars.keys())
+        ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  mean)
+        with dask.config.set(pool=ThreadPoolExecutor(8)):
+            ds.to_zarr(cds, mode='r+')
+        log.info("Reduction complete")
     return
 
 
