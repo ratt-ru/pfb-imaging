@@ -594,6 +594,10 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
                 ("STOKES", "FREQ", "TIME"),
                 da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
             ),
+            "weight": (
+                ("STOKES", "FREQ", "TIME"),
+                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
+            ),
             "nonzero": (
                 ("STOKES", "FREQ", "TIME",),
                 da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_)
@@ -624,11 +628,8 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     )
     
     if opts.beam_model is not None:
-        dummy_ds['weight'] = (("STOKES", "FREQ", "TIME", "Y", "X"),
+        dummy_ds['beam_weight'] = (("STOKES", "FREQ", "TIME", "Y", "X"),
                 da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32))
-    else:
-        dummy_ds['weight'] = (("STOKES", "FREQ", "TIME"),
-                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32))
     
     if opts.psf_out:
         nx_psf = good_size(int(opts.psf_relative_size * nx))

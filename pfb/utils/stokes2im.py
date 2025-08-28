@@ -276,6 +276,11 @@ def stokes_image(
                                           poltype, opts.product,
                                           weight=weight, nthreads=opts.nthreads)
         
+        # this is a hack to get the images to align
+        pbeam = np.transpose(pbeam.astype(np.float32),
+                             axes=(0, 2, 1))
+        pbeam = pbeam[:, ::-1, :]
+        
     else:
         pbeam = np.ones((len(opts.product), nx, ny), dtype=real_type)
     
@@ -565,14 +570,10 @@ def stokes_image(
             data_vars['wgtgrid'] = (('STOKES', 'FREQ', 'TIME', 'Y_PAD', 'X_PAD'),
                                     wgt[:, None, None, :, :])
         
-        data_vars['weight'] = (('STOKES','FREQ','TIME'), wsum)
+        data_vars['weight'] = (('STOKES','FREQ','TIME'), wsum[:, None, None])
         
         if opts.beam_model is not None:
             weight = pbeam**2 + opts.eta
-            # this round about transpose ensures compatibility with fits
-            weight = np.transpose(weight.astype(np.float32),
-                                 axes=(0, 2, 1))
-            weight = weight[:, ::-1, :]
             weight = np.transpose(weight.astype(np.float32),
                                   axes=(0, 2, 1))
             data_vars['beam_weight'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
@@ -640,9 +641,9 @@ def stokes_image(
                   f'{fds_store.full_path}/{oname}_psf.fits', hdr_psf)
 
         if opts.beam_model is not None:
-            weight = np.transpose(weight.astype(np.float32),
-                                 axes=(0, 2, 1))
-            weight = weight[:, ::-1, :]
+            # weight = np.transpose(weight.astype(np.float32),
+            #                      axes=(0, 2, 1))
+            # weight = weight[:, ::-1, :]
             save_fits(weight,
                   f'{fds_store.full_path}/{oname}_weight.fits', hdr)
     return 1
