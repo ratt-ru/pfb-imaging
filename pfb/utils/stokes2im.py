@@ -564,14 +564,19 @@ def stokes_image(
                                axes=(0, 2, 1))
             data_vars['wgtgrid'] = (('STOKES', 'FREQ', 'TIME', 'Y_PAD', 'X_PAD'),
                                     wgt[:, None, None, :, :])
+        
+        data_vars['weight'] = (('STOKES','FREQ','TIME'), wsum)
+        
         if opts.beam_model is not None:
-            # forgo transpose and reverse the last axis (compared to fits)
-            weight = pbeam[:, :, ::-1]**2 * wsum[:, None, None] + opts.eta
-            data_vars['weight'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
+            weight = pbeam**2 + opts.eta
+            # this round about transpose ensures compatibility with fits
+            weight = np.transpose(weight.astype(np.float32),
+                                 axes=(0, 2, 1))
+            weight = weight[:, ::-1, :]
+            weight = np.transpose(weight.astype(np.float32),
+                                  axes=(0, 2, 1))
+            data_vars['beam_weight'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
                                     weight[:, None, None, :, :])
-        else:
-            data_vars['weight'] = (('STOKES', 'FREQ', 'TIME'),
-                                    wsum[:, None, None])
         
         data_vars['rms'] = (('STOKES', 'FREQ', 'TIME'), rms[:, None, None].astype(np.float32))
         nonzero = wsum > 0
