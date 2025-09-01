@@ -19,7 +19,7 @@ try:
     from rich.traceback import install as install_rich_traceback
     RICH_AVAILABLE = True
     # Install rich traceback handling
-    install_rich_traceback(show_locals=True)
+    install_rich_traceback(show_locals=False)
 except ImportError:
     RICH_AVAILABLE = False
 
@@ -34,7 +34,8 @@ class PFBLogger:
         self.name = name
         self.app_name = app_name
         self.logger = logging.getLogger(f"{app_name}.{name}")
-        self._console = Console(width=120, force_terminal=True) if RICH_AVAILABLE else None
+        # self._console = Console(width=120, force_terminal=True) if RICH_AVAILABLE else None
+        self._console = Console(force_terminal=True) if RICH_AVAILABLE else None
         
     def info(self, message: str, *args, **kwargs) -> None:
         """Log an info message."""

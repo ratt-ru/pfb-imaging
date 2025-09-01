@@ -49,6 +49,11 @@ inputs:
     default: 3.0
     info:
       Multiple of the rms at which to stop cleaning
+  eta:
+    dtype: float
+    default: 1e-3
+    info:
+      Will use eta*wsum to regularise the inversion of the Hessian approximation.
   gamma:
     dtype: float
     default: 0.1

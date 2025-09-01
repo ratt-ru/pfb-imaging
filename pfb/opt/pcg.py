@@ -305,7 +305,7 @@ def _pcg_psf_impl(psfhat,
                     beam=beam[k],
                     lastsize=lastsize,
                     nthreads=nthreads,
-                    eta=eta)
+                    eta=eta[k])
 
         model[k] = pcg(A, b[k], x0[k],
                        M=M, tol=tol, maxit=maxit, minit=minit,
@@ -351,6 +351,15 @@ def pcg_psf(psfhat,
     if not isinstance(b, da.Array):
         b = da.from_array(b, chunks=(1, -1, -1),
                           name="psfhat-" + uuid4().hex)
+        
+    nband = b.shape[0]
+    if isinstance(eta, float):
+        eta = np.tile(eta, nband)
+    else:
+        eta = np.array(eta)
+        assert eta.size == nband
+    eta = da.from_array(eta, chunks=(1,),
+                        name="eta-" + uuid4().hex)
 
     if beam is None:
         bout = None
@@ -374,7 +383,7 @@ def pcg_psf(psfhat,
                          beam, bout,
                          lastsize, None,
                          nthreads, None,
-                         eta, None,
+                         eta, ('nb',),
                          cgopts, None,
                          align_arrays=False,
                          dtype=b.dtype)
