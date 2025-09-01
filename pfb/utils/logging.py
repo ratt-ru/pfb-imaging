@@ -77,7 +77,12 @@ class PFBLogger:
             *args: Additional arguments for the logger
             **kwargs: Additional keyword arguments for the logger
         """
-        self.logger.error(message, *args, **kwargs)
+        # Format the message with bold text if Rich is available
+        if RICH_AVAILABLE:
+            bold_message = f"[bold red]{message}[/bold red]"
+            self.logger.error(bold_message, *args, **kwargs)
+        else:
+            self.logger.error(message, *args, **kwargs)
         raise exception_type(message)
 
 
