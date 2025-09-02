@@ -46,7 +46,7 @@ These can be exposed by passing the `--obscure` flag to `stimela doc`
 These can be specified explicitly either by setting it from the command line or by adding (or adjusting) it in the recipe schema.
 Usage through stimela is still a bit limited as the structure of the recipe is fixed (although steps can be run in isolation if required, see `stimela run --help` for further details).
 Keep reading if you want to interacting directly with the applications from the command line.
-Note that cabs for all the applications are also available through [cult-cargo](https://github.com/caracal-pipeline/cult-cargo).
+Note that cabs for all the applications are also available through `cult-cargo <https://github.com/caracal-pipeline/cult-cargo/>_`.
 
 Module of workers
 ~~~~~~~~~~~~~~~~~~~
