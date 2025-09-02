@@ -8,6 +8,7 @@ import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 import ray
+import fsspec
 
 
 @cli.command(context_settings={'show_default': True})
@@ -18,8 +19,27 @@ def hci(**kw):
     '''
     opts = OmegaConf.create(kw)
 
-    from pfb.utils.naming import set_output_names
-    opts, basedir, oname = set_output_names(opts)
+    output_filename = opts.output_filename
+    product = opts.product
+
+    if '://' in output_filename:
+        protocol = output_filename.split('://')[0]
+        prefix = f'{protocol}://'
+    else:
+        protocol = 'file'
+        prefix = ''
+
+    fs = fsspec.filesystem(protocol)
+    basedir = fs.expand_path('/'.join(output_filename.split('/')[:-1]))[0]
+    if not fs.exists(basedir):
+        fs.makedirs(basedir)
+
+    oname = output_filename.split('/')[-1] + f'_{product.upper()}'
+
+    opts.output_filename = f'{prefix}{basedir}/{oname}'
+
+    # this should be a file system
+    opts.log_directory = basedir
 
     import psutil
     nthreads = psutil.cpu_count(logical=True)

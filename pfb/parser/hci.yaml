@@ -242,7 +242,7 @@ outputs:
   dir-out:
     implicit: '{current.output-filename}_{current.product}.fds'
     dtype: Directory
-    must_exist: false
+    must_exist: true
     mkdir: false
 
 policies:
