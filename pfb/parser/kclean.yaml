@@ -129,7 +129,7 @@ inputs:
       Report frequency of conjugate gradient algorithm
   backtrack:
     dtype: bool
-    default: true
+    default: false
     info:
       Ensure residual decreases at every iteration
 
@@ -142,6 +142,11 @@ outputs:
     implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
     dtype: Directory
     must_exist: false
+  mds-out:
+    implicit: '{current.output-filename}_{current.product}_{current.suffix}_model.mds'
+    dtype: Directory
+    must_exist: false
+  
 
 policies:
   pass_missing_as_none: true

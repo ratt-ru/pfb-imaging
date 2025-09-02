@@ -5,22 +5,62 @@ pfb-imaging
 Radio interferometric imaging suite base on the pre-conditioned forward-backward algorithm.
 
 Installation
-~~~~~~~~~~~~~~
+~~~~~~~~~~~~
 
-Install the package by cloning and running
+It is best to install the packahe in a fresh virtual environment.
+With the environment activated, update pip etc.
 
-:code:`$ pip install -e pfb-imaging/`
+:code:`pip install -U pip setuptools wheel`
 
-You will probably may also need to update pip eg.
+Now install the package 
 
-:code:`$ pip install -U pip setuptools wheel`
+:code:`pip install pfb-imaging`
 
-For maximum performance it is strongly recommended to install ducc in
-no binary mode eg
+For maximum performance it is strongly recommended to install ducc in no binary mode e.g.
 
-:code:`$ git clone https://gitlab.mpcdf.mpg.de/mtr/ducc.git`
+:code:`pip install ducc0 --no-binary ducc0`
 
-:code:`$ pip install -e ducc`
+This might take some time to compile. 
+
+Quick start
+~~~~~~~~~~~
+
+The easiest way to use `pfb-imaging` is via the stimela recipes given in the `recipes folder <recipes/>`_
+Once the package is installed, a recipe can be queried for its input and output parameters using the `stimela doc` command.
+For example, to see the inputs and outputs of the `sara` recipe, simply run
+
+:code:`stimela doc pfb-imaging/recipes/sara.yml`
+
+The recipe can then be run with the `stimela run` command.
+For example, to run the recipe with all parameters set to the defaults, use 
+
+:code:`stimela run pfb-imaging/recipes/sara.yml sara ms=path/to/data.ms base-dir=path/to/base/output/directory image-name=saraout`
+
+The recipe should contain sensible defaults for MeerKAT data at L-band. 
+Note that the recipe exposes a minimal set of functional parameters.
+More exotic parameters appear lower down in the list and some parameters are not exposed at all.
+These can be exposed by passing the `--obscure` flag to `stimela doc`
+
+:code:`stimela doc --obscure pfb-imaging/recipes/sara.yml`
+
+These can be specified explicitly either by setting it from the command line or by adding (or adjusting) it in the recipe schema.
+Usage through stimela is still a bit limited as the structure of the recipe is fixed (although steps can be run in isolation if required, see `stimela run --help` for further details).
+Keep reading if you want to interacting directly with the applications from the command line.
+Note that cabs for all the applications are also available through [cult-cargo](https://github.com/caracal-pipeline/cult-cargo).
+
+Module of workers
+~~~~~~~~~~~~~~~~~~~
+
+Each worker module can be run as a standalone program.
+Run
+
+:code:`pfb --help``
+
+for a list of available workers.
+
+Documentation for each worker is listed under
+
+:code:`pfb workername --help``
 
 Default naming conventions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -73,20 +113,6 @@ However, for better resource utilisation and or distributing computations over a
 This uses multiple Dask workers (processes) to process chunks in parallel and is especially useful for the `init`, `grid` and `fluxtractor` applications.
 It is usually advisable to set `--nworkers` to the number of desired imaging bands which is set by the `--channels-per-image` parameter when initialising corrected Stokes visibilities with the `init` application.
 The product of `--nworkers` and `--nthreads-per-worker` should not exceed the available resources.
-
-Module of workers
-~~~~~~~~~~~~~~~~~~~
-
-Each worker module can be run as a standalone program.
-Run
-
-:code:`$ pfb --help``
-
-for a list of available workers.
-
-Documentation for each worker is listed under
-
-:code:`$ pfb workername --help``
 
 
 Acknowledgement

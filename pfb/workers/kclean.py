@@ -336,7 +336,7 @@ def _kclean(**kw):
         # we have reached the final iteration/threshold
         status |= k == iter0 + opts.niter-1
         status |= rmax <= threshold
-        if True:  #opts.mop_flux and status:
+        if opts.mop_flux and status:
             log.info(f"Extracting flux at iter {k+1}")
             mopmask = np.any(model, axis=0)
             if opts.dirosion:
@@ -349,8 +349,8 @@ def _kclean(**kw):
             mopmask = (mopmask.astype(residual.dtype) * mask)[None, :, :]
             precond.set_beam(mopmask * beam)
             x = precond.idot(residual * beam,
-                              mode='psf',
-                              init_x0=False)
+                             mode='psf',
+                             init_x0=False)
             model += opts.mop_gamma*x
 
             log.info(f'Computing residual')
