@@ -138,11 +138,8 @@ def _fluxtractor(**kw):
     from pfb.utils.fits import load_fits, set_wcs
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.naming import xds_from_url
+    from pfb.utils.modelspec import fit_image_cube
     from pfb.opt.pcg import pcg_dds
-    from ducc0.misc import resize_thread_pool, thread_pool_size
-    from ducc0.fft import c2c
-    iFs = np.fft.ifftshift
-    Fs = np.fft.fftshift
 
     basename = opts.output_filename
 

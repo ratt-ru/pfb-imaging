@@ -551,12 +551,18 @@ def stokes_image(
         data_vars['cube'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
                              residual[:, None, None, :, :])
         if opts.psf_out:
-            coords['X_PSF'] = (('X_PSF',), ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)
-            coords['Y_PSF'] = (('Y_PSF',), dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg)
+            if opts.psf_relative_size == 1:
+                xpsf = "X"
+                ypsf = "Y"
+            else:
+                xpsf = "X_PSF"
+                ypsf = "Y_PSF"
+                coords['X_PSF'] = (('X_PSF',), ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)
+                coords['Y_PSF'] = (('Y_PSF',), dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg)
             psf /= wsum[:, None, None]
             psf = np.transpose(psf.astype(np.float32),
                                axes=(0, 2, 1))
-            data_vars['psf'] = (('STOKES', 'FREQ', 'TIME', 'Y_PSF', 'X_PSF'),
+            data_vars['psf'] = (('STOKES', 'FREQ', 'TIME', ypsf, xpsf),
                                 psf[:, None, None, :, :])
         
         if opts.robustness is not None and opts.weight_grid_out:

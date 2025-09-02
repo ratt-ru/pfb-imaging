@@ -455,7 +455,13 @@ def _hci(**kw):
             wsumsq = da.sum(wsums**2, axis=(faxis, taxis))
             wsumsqc = wsumsq.compute()[:, None, None]
             weighted_psfsq_mean = da.divide(weighted_psfsq_sum, wsumsq[:, None, None], where=wsumsqc>0)
-            ds['psf2'] = (('STOKES', 'Y_PSF', 'X_PSF'),  weighted_psfsq_mean)
+            if opts.psf_relative_size == 1:
+                xpsf = "X"
+                ypsf = "Y"
+            else:
+                xpsf = "X_PSF"
+                ypsf = "Y_PSF"
+            ds['psf2'] = (('STOKES', ypsf, xpsf),  weighted_psfsq_mean)
         # only write new variables
         drop_vars = [key for key in ds.data_vars.keys() if key != 'psf2']
         ds = ds.drop_vars(drop_vars)
@@ -660,13 +666,19 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
         while ny_psf%2:
             ny_psf = good_size(ny_psf+1)
         psf_dims = (n_stokes, n_freqs, n_times, ny_psf, nx_psf)
+        if opts.psf_relative_size == 1:
+            xpsf = "X"
+            ypsf = "Y"
+        else:
+            xpsf = "X_PSF"
+            ypsf = "Y_PSF"
         dummy_ds = dummy_ds.assign_coords(
-            {'Y_PSF': (("Y_PSF",), out_dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg),
-             'X_PSF': (("X_PSF",), out_ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)}
+            {'Y_PSF': ((ypsf,), out_dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg),
+             'X_PSF': ((xpsf,), out_ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)}
         )
-        dummy_ds['psf'] = (("STOKES", "FREQ", "TIME", "Y_PSF", "X_PSF"),
+        dummy_ds['psf'] = (("STOKES", "FREQ", "TIME", ypsf, xpsf),
                 da.empty(psf_dims, chunks=cube_chunks, dtype=np.float32))
-        dummy_ds['psf2'] = (("STOKES", "Y_PSF", "X_PSF"),
+        dummy_ds['psf2'] = (("STOKES", ypsf, xpsf),
                 da.empty((n_stokes, ny_psf, nx_psf),
                          chunks=(1, 128, 128), dtype=np.float32))
         
