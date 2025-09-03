@@ -451,7 +451,7 @@ def _hci(**kw):
     print("\n")
 
     if opts.stack:
-        log.info("Computing mean and flags")
+        log.info("Computing means")
         import dask
         import dask.array as da
         from concurrent.futures import ThreadPoolExecutor
@@ -492,7 +492,7 @@ def _hci(**kw):
     return
 
 def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
-                       freq_min, freq_max, nx, ny, cell_deg):
+                       freq_min, freq_max, nx, ny, cell_deg, spatial_chunk=128):
     import numpy as np
     import dask.array as da
     import xarray as xr
@@ -562,10 +562,10 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     n_freqs = out_freqs.size
 
     cube_dims = (n_stokes, n_freqs, n_times, ny, nx)
-    cube_chunks = (1, 1, 1, 128, 128)
+    cube_chunks = (1, 1, 1, spatial_chunk, spatial_chunk)
 
     mean_dims = (n_stokes, n_freqs, ny, nx)
-    mean_chunks = (1, 1, 128, 128)
+    mean_chunks = (1, 1, spatial_chunk, spatial_chunk)
 
     rms_dims = (n_stokes, n_freqs, n_times)
     rms_chunks = (1, 1, 1)
@@ -692,15 +692,15 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
         else:
             xpsf = "X_PSF"
             ypsf = "Y_PSF"
-        dummy_ds = dummy_ds.assign_coords(
-            {'Y_PSF': ((ypsf,), out_dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg),
-             'X_PSF': ((xpsf,), out_ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)}
-        )
+            dummy_ds = dummy_ds.assign_coords(
+                {'Y_PSF': ((ypsf,), out_dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg),
+                'X_PSF': ((xpsf,), out_ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)}
+            )
         dummy_ds['psf'] = (("STOKES", "FREQ", "TIME", ypsf, xpsf),
                 da.empty(psf_dims, chunks=cube_chunks, dtype=np.float32))
         dummy_ds['psf2'] = (("STOKES", ypsf, xpsf),
                 da.empty((n_stokes, ny_psf, nx_psf),
-                         chunks=(1, 128, 128), dtype=np.float32))
+                         chunks=(1, spatial_chunk, spatial_chunk), dtype=np.float32))
         
     # Write scaffold and metadata to disk.
     cds = f'{opts.output_filename}.fds'
