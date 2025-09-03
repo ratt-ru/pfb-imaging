@@ -1,5 +1,5 @@
 # flake8: noqa
-from pfb.workers.main import cli
+import click
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
 pfb_logging.init('pfb')
@@ -11,7 +11,7 @@ import ray
 import fsspec
 
 
-@cli.command(context_settings={'show_default': True})
+@click.command(context_settings={'show_default': True})
 @clickify_parameters(schema.hci)
 def hci(**kw):
     '''
