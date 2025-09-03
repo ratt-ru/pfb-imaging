@@ -5,6 +5,24 @@ inputs:
     abbreviation: ms
     info:
       Path to measurement set
+  output-filename:
+    dtype: str
+    required: true
+    abbreviation: o
+    info:
+      Basename of output
+  log-directory:
+    dtype: str
+    abbreviation: ldir
+    info:
+      Directory to write logs and performance reports to.
+  product:
+    dtype: str
+    abbreviation: p
+    default: I
+    info:
+      String specifying which Stokes products to produce.
+      Outputs are always be alphabetically ordered.
   scans:
     dtype: List[int]
     info:
@@ -217,7 +235,6 @@ inputs:
 
   _include:
     - (.)gridding.yml
-    - (.)out.yml
     - (.)dist.yml
     - (.)cgopts.yml
 
@@ -225,7 +242,7 @@ outputs:
   dir-out:
     implicit: '{current.output-filename}_{current.product}.fds'
     dtype: Directory
-    must_exist: false
+    must_exist: true
     mkdir: false
 
 policies:

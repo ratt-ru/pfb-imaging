@@ -1,9 +1,10 @@
 # flake8: noqa
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
+import time
 from pfb.utils import logging as pfb_logging
 pfb_logging.init('pfb')
-log = pfb_logging.get_logger('kclean')
+log = pfb_logging.get_logger('KCLEAN')
 
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
@@ -34,7 +35,6 @@ def kclean(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/kclean_{timestamp}.log'
     pfb_logging.log_to_file(logname)
@@ -100,7 +100,7 @@ def _kclean(**kw):
     from pfb.utils.fits import set_wcs, save_fits, load_fits
     from pfb.deconv.clark import clark
     from pfb.utils.naming import xds_from_url
-    from pfb.opt.pcg import pcg, pcg_psf
+    from pfb.operators.hessian import hess_psf
     from pfb.operators.gridder import compute_residual
     from scipy import ndimage
     from pfb.utils.modelspec import fit_image_cube
@@ -146,16 +146,19 @@ def _kclean(**kw):
         model = np.zeros((nband, nx, ny))
     psf = np.stack([ds.PSF.values[0] for ds in dds], axis=0)
     psfhat = np.stack([ds.PSFHAT.values[0] for ds in dds], axis=0)
-    dds = [ds.drop_vars('PSF') for ds in dds]
+    abspsf = np.stack([np.abs(ds.PSFHAT.values[0]) for ds in dds], axis=0)
+    beam = np.stack([ds.BEAM.values[0] for ds in dds], axis=0)
+    dds = [ds.drop_vars(('PSF','PSFHAT')) for ds in dds]
     wsums = np.stack([ds.WSUM.values[0] for ds in dds], axis=0)
     fsel = wsums > 0  # keep track of empty bands
 
 
     wsum = np.sum(wsums)
+    # TODO - do we really need to keep all three versions of the PSF in memory here?
     psf /= wsum
     psfhat /= wsum
+    abspsf /= wsum
     residual /= wsum
-    psf_mfs = np.sum(psf, axis=0)
     residual_mfs = np.sum(residual, axis=0)
 
     # for intermediary results
@@ -191,7 +194,6 @@ def _kclean(**kw):
     cgopts['report_freq'] = opts.cg_report_freq
     cgopts['backtrack'] = opts.backtrack
 
-
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
     best_rms = rms
@@ -202,6 +204,17 @@ def _kclean(**kw):
         threshold = opts.rmsfactor * rms
     else:
         threshold = opts.threshold
+
+    precond = hess_psf(nx, ny, abspsf,
+                       beam=mask[None, :, :] * beam,
+                       eta=opts.eta*wsums,
+                       nthreads=opts.nthreads,
+                       cgtol=opts.cg_tol,
+                       cgmaxit=opts.cg_maxit,
+                       cgverbose=opts.cg_verbose,
+                       cgrf=opts.cg_report_freq,
+                       taper_width=np.minimum(int(0.1*nx), 32))
+
 
     log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
     for k in range(iter0, iter0 + opts.niter):
@@ -324,7 +337,7 @@ def _kclean(**kw):
         status |= k == iter0 + opts.niter-1
         status |= rmax <= threshold
         if opts.mop_flux and status:
-            log.info(f"Mopping flux at iter {k+1}")
+            log.info(f"Extracting flux at iter {k+1}")
             mopmask = np.any(model, axis=0)
             if opts.dirosion:
                 struct = ndimage.generate_binary_structure(2, opts.dirosion)
@@ -334,15 +347,10 @@ def _kclean(**kw):
             # x0[:, mopmask] = residual_mfs[mopmask]
             # TODO - applying mask as beam is wasteful
             mopmask = (mopmask.astype(residual.dtype) * mask)[None, :, :]
-            x = pcg_psf(psfhat,
-                        mopmask*residual,
-                        x0,
-                        mopmask,
-                        lastsize,
-                        opts.nthreads,
-                        rmax,  # used as eta
-                        cgopts)
-
+            precond.set_beam(mopmask * beam)
+            x = precond.idot(residual * beam,
+                             mode='psf',
+                             init_x0=False)
             model += opts.mop_gamma*x
 
             log.info(f'Computing residual')
@@ -385,6 +393,12 @@ def _kclean(**kw):
                         'MODEL_BEST': (('corr', 'x', 'y'), best_model[b][None, :, :])
                     })
 
+                    attrs = {}
+                    attrs['rms'] = best_rms
+                    attrs['rmax'] = best_rmax
+                    attrs['niters'] = k+1
+                    ds = ds.assign_attrs(**attrs)
+                    ds.to_zarr(ds_name, mode='a')
                     ds.to_zarr(ds_name, mode='a')
 
             if opts.threshold is None:
@@ -627,7 +641,7 @@ def _fskclean(**kw):
         status |= k == iter0 + opts.niter-1
         status |= rmax <= threshold
         if opts.mop_flux and status:
-            log.info(f"Mopping flux at iter {k+1}")
+            log.info(f"Extracting flux at iter {k+1}")
             mopmask = np.any(model, axis=(0,1))
             if opts.dirosion:
                 struct = ndimage.generate_binary_structure(2, opts.dirosion)

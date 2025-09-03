@@ -8,6 +8,7 @@ import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 import ray
+import fsspec
 
 
 @cli.command(context_settings={'show_default': True})
@@ -18,8 +19,27 @@ def hci(**kw):
     '''
     opts = OmegaConf.create(kw)
 
-    from pfb.utils.naming import set_output_names
-    opts, basedir, oname = set_output_names(opts)
+    output_filename = opts.output_filename
+    product = opts.product
+
+    if '://' in output_filename:
+        protocol = output_filename.split('://')[0]
+        prefix = f'{protocol}://'
+    else:
+        protocol = 'file'
+        prefix = ''
+
+    fs = fsspec.filesystem(protocol)
+    basedir = fs.expand_path('/'.join(output_filename.split('/')[:-1]))[0]
+    if not fs.exists(basedir):
+        fs.makedirs(basedir)
+
+    oname = output_filename.split('/')[-1] + f'_{product.upper()}'
+
+    opts.output_filename = f'{prefix}{basedir}/{oname}'
+
+    # this should be a file system
+    opts.log_directory = basedir
 
     import psutil
     nthreads = psutil.cpu_count(logical=True)
@@ -431,21 +451,48 @@ def _hci(**kw):
     print("\n")
 
     if opts.stack:
-        log.info("Computing mean and flags")
+        log.info("Computing means")
         import dask
+        import dask.array as da
         from concurrent.futures import ThreadPoolExecutor
-        ds = xr.open_zarr(cds, chunks={'TIME':-1})
-        mean = ds.cube.mean(dim='TIME').data
-        ds = ds.drop_vars(ds.data_vars.keys())
-        ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  mean)
+        # reduction over FREQ and TIME so use max chunk sizes
+        ds = xr.open_zarr(cds, chunks={'FREQ': -1, 'TIME':-1})
+        cube = ds.cube.data
+        wsums = ds.weight.data
+        # all variables have been normalised by wsum so we first
+        # undo the normalisation (wsum=0 where there is no data)
+        weighted_cube = cube * wsums[:, :, :, None, None]
+        taxis = ds.cube.get_axis_num('TIME')
+        faxis = ds.cube.get_axis_num('FREQ')
+        wsum = da.sum(wsums, axis=taxis)
+        # we need this for the where clause in da.divide, should be cheap
+        wsumc = wsum.compute()[:, :, None, None]  
+        weighted_sum = da.sum(weighted_cube, axis=taxis)
+        weighted_mean = da.divide(weighted_sum, wsum[:, :, None, None], where=wsumc>0)
+        if opts.psf_out:
+            psfsq = (ds.psf.data*wsums[:, :, :, None, None])**2
+            weighted_psfsq_sum = da.sum(psfsq, axis=(faxis, taxis))
+            wsumsq = da.sum(wsums**2, axis=(faxis, taxis))
+            wsumsqc = wsumsq.compute()[:, None, None]
+            weighted_psfsq_mean = da.divide(weighted_psfsq_sum, wsumsq[:, None, None], where=wsumsqc>0)
+            if opts.psf_relative_size == 1:
+                xpsf = "X"
+                ypsf = "Y"
+            else:
+                xpsf = "X_PSF"
+                ypsf = "Y_PSF"
+            ds['psf2'] = (('STOKES', ypsf, xpsf),  weighted_psfsq_mean)
+        # only write new variables
+        drop_vars = [key for key in ds.data_vars.keys() if key != 'psf2']
+        ds = ds.drop_vars(drop_vars)
+        ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  weighted_mean)
         with dask.config.set(pool=ThreadPoolExecutor(8)):
             ds.to_zarr(cds, mode='r+')
         log.info("Reduction complete")
     return
 
-
 def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
-                       freq_min, freq_max, nx, ny, cell_deg):
+                       freq_min, freq_max, nx, ny, cell_deg, spatial_chunk=128):
     import numpy as np
     import dask.array as da
     import xarray as xr
@@ -515,10 +562,10 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     n_freqs = out_freqs.size
 
     cube_dims = (n_stokes, n_freqs, n_times, ny, nx)
-    cube_chunks = (1, 1, 1, 128, 128)
+    cube_chunks = (1, 1, 1, spatial_chunk, spatial_chunk)
 
     mean_dims = (n_stokes, n_freqs, ny, nx)
-    mean_chunks = (1, 1, 128, 128)
+    mean_chunks = (1, 1, spatial_chunk, spatial_chunk)
 
     rms_dims = (n_stokes, n_freqs, n_times)
     rms_chunks = (1, 1, 1)
@@ -594,6 +641,10 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
                 ("STOKES", "FREQ", "TIME"),
                 da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
             ),
+            "weight": (
+                ("STOKES", "FREQ", "TIME"),
+                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
+            ),
             "nonzero": (
                 ("STOKES", "FREQ", "TIME",),
                 da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_)
@@ -624,11 +675,8 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     )
     
     if opts.beam_model is not None:
-        dummy_ds['weight'] = (("STOKES", "FREQ", "TIME", "Y", "X"),
+        dummy_ds['beam_weight'] = (("STOKES", "FREQ", "TIME", "Y", "X"),
                 da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32))
-    else:
-        dummy_ds['weight'] = (("STOKES", "FREQ", "TIME"),
-                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32))
     
     if opts.psf_out:
         nx_psf = good_size(int(opts.psf_relative_size * nx))
@@ -638,12 +686,21 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
         while ny_psf%2:
             ny_psf = good_size(ny_psf+1)
         psf_dims = (n_stokes, n_freqs, n_times, ny_psf, nx_psf)
-        dummy_ds['psf'] = (("STOKES", "FREQ", "TIME", "Y_PSF", "X_PSF"),
+        if opts.psf_relative_size == 1:
+            xpsf = "X"
+            ypsf = "Y"
+        else:
+            xpsf = "X_PSF"
+            ypsf = "Y_PSF"
+            dummy_ds = dummy_ds.assign_coords(
+                {'Y_PSF': ((ypsf,), out_dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg),
+                'X_PSF': ((xpsf,), out_ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)}
+            )
+        dummy_ds['psf'] = (("STOKES", "FREQ", "TIME", ypsf, xpsf),
                 da.empty(psf_dims, chunks=cube_chunks, dtype=np.float32))
-        dummy_ds.set_coords(
-            {'Y_PSF': (("Y_PSF",), out_dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg),
-             'X_PSF': (("X_PSF",), out_ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)}
-        )
+        dummy_ds['psf2'] = (("STOKES", ypsf, xpsf),
+                da.empty((n_stokes, ny_psf, nx_psf),
+                         chunks=(1, spatial_chunk, spatial_chunk), dtype=np.float32))
         
     # Write scaffold and metadata to disk.
     cds = f'{opts.output_filename}.fds'

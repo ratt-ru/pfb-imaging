@@ -123,23 +123,18 @@ def _sara(**kw):
     import numpy as np
     import xarray as xr
     import numexpr as ne
-    from pfb.utils.fits import set_wcs, save_fits, load_fits
-    from pfb.utils.naming import xds_from_url, xds_from_list
+    from pfb.utils.fits import set_wcs, save_fits
+    from pfb.utils.naming import xds_from_url
     from pfb.opt.power_method import power_method
-    from pfb.opt.pcg import pcg
     from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
     from pfb.utils.misc import l1reweight_func
     from pfb.operators.hessian import hess_psf
     from pfb.operators.psi import Psi
     from pfb.operators.gridder import compute_residual
-    from copy import copy, deepcopy
-    from ducc0.misc import empty_noncritical, thread_pool_size
+    from copy import deepcopy
+    from ducc0.misc import thread_pool_size
     from pfb.prox.prox_21m import prox_21m_numba as prox_21
-    # from pfb.prox.prox_21 import prox_21
-    from pfb.utils.misc import fitcleanbeam
     from pfb.utils.modelspec import fit_image_cube, eval_coeffs_to_slice
-    from daskms.fsspec_store import DaskMSStore
-    from ducc0.fft import c2c
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:

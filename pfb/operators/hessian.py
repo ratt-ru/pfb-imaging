@@ -275,6 +275,10 @@ class hess_psf(object):
         # for beam application in direct mode
         self.min_beam = min_beam
 
+    def set_beam(self, beam):
+        assert beam.shape == (self.nband, self.nx, self.ny)
+        self.beam = beam
+
     def dot(self, x):
         if len(x.shape) == 3:
             xtmp = x
@@ -311,7 +315,7 @@ class hess_psf(object):
         # Hermitian operator
         return self.dot(x)
 
-    def idot(self, x, mode='psf', x0=None):
+    def idot(self, x, mode='psf', x0=None, init_x0=True):
         if len(x.shape) == 3:
             xtmp = x
         elif len(x.shape) == 2:
@@ -324,7 +328,7 @@ class hess_psf(object):
         assert nx == self.nx
         assert ny == self.ny
 
-        if x0 is None:
+        if x0 is None and init_x0:
             # initialise with direct estimate
             x0 = np.zeros_like(xtmp)
             for b in range(self.nband):
@@ -341,6 +345,8 @@ class hess_psf(object):
                 if self.beam[b] is not None:
                     mask = (self.xout[b] > 0) & (self.beam[b] > self.min_beam)
                     self.xout[b, mask] /= self.beam[b, mask]**2
+        else:
+            x0 = np.zeros_like(xtmp)
 
         if mode=='direct':
             for b in range(self.nband):

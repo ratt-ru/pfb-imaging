@@ -276,6 +276,11 @@ def stokes_image(
                                           poltype, opts.product,
                                           weight=weight, nthreads=opts.nthreads)
         
+        # this is a hack to get the images to align
+        pbeam = np.transpose(pbeam.astype(np.float32),
+                             axes=(0, 2, 1))
+        pbeam = pbeam[:, ::-1, :]
+        
     else:
         pbeam = np.ones((len(opts.product), nx, ny), dtype=real_type)
     
@@ -546,12 +551,18 @@ def stokes_image(
         data_vars['cube'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
                              residual[:, None, None, :, :])
         if opts.psf_out:
-            coords['X_PSF'] = (('X_PSF',), ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)
-            coords['Y_PSF'] = (('Y_PSF',), dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg)
+            if opts.psf_relative_size == 1:
+                xpsf = "X"
+                ypsf = "Y"
+            else:
+                xpsf = "X_PSF"
+                ypsf = "Y_PSF"
+                coords['X_PSF'] = (('X_PSF',), ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)
+                coords['Y_PSF'] = (('Y_PSF',), dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg)
             psf /= wsum[:, None, None]
             psf = np.transpose(psf.astype(np.float32),
                                axes=(0, 2, 1))
-            data_vars['psf'] = (('STOKES', 'FREQ', 'TIME', 'Y_PSF', 'X_PSF'),
+            data_vars['psf'] = (('STOKES', 'FREQ', 'TIME', ypsf, xpsf),
                                 psf[:, None, None, :, :])
         
         if opts.robustness is not None and opts.weight_grid_out:
@@ -564,14 +575,15 @@ def stokes_image(
                                axes=(0, 2, 1))
             data_vars['wgtgrid'] = (('STOKES', 'FREQ', 'TIME', 'Y_PAD', 'X_PAD'),
                                     wgt[:, None, None, :, :])
+        
+        data_vars['weight'] = (('STOKES','FREQ','TIME'), wsum[:, None, None])
+        
         if opts.beam_model is not None:
-            # forgo transpose and reverse the last axis (compared to fits)
-            weight = pbeam[:, :, ::-1]**2 * wsum[:, None, None] + opts.eta
-            data_vars['weight'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
+            weight = pbeam**2 + opts.eta
+            weight = np.transpose(weight.astype(np.float32),
+                                  axes=(0, 2, 1))
+            data_vars['beam_weight'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
                                     weight[:, None, None, :, :])
-        else:
-            data_vars['weight'] = (('STOKES', 'FREQ', 'TIME'),
-                                    wsum[:, None, None])
         
         data_vars['rms'] = (('STOKES', 'FREQ', 'TIME'), rms[:, None, None].astype(np.float32))
         nonzero = wsum > 0
@@ -635,9 +647,9 @@ def stokes_image(
                   f'{fds_store.full_path}/{oname}_psf.fits', hdr_psf)
 
         if opts.beam_model is not None:
-            weight = np.transpose(weight.astype(np.float32),
-                                 axes=(0, 2, 1))
-            weight = weight[:, ::-1, :]
+            # weight = np.transpose(weight.astype(np.float32),
+            #                      axes=(0, 2, 1))
+            # weight = weight[:, ::-1, :]
             save_fits(weight,
                   f'{fds_store.full_path}/{oname}_weight.fits', hdr)
     return 1
