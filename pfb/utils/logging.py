@@ -34,7 +34,6 @@ class PFBLogger:
         self.name = name
         self.app_name = app_name
         self.logger = logging.getLogger(f"{app_name}.{name}")
-        # self._console = Console(width=120, force_terminal=True) if RICH_AVAILABLE else None
         self._console = Console(force_terminal=True) if RICH_AVAILABLE else None
         
     def info(self, message: str, *args, **kwargs) -> None:

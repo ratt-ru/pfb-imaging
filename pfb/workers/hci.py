@@ -278,7 +278,6 @@ def _hci(**kw):
     sgroup = 0
     freq_groups = []
     freq_sgroups = []
-    chan_widths = []
     for ms in opts.ms:
         for idt, freq in freqs[ms].items():
             ilo = idt.find('DDID') + 4
@@ -290,7 +289,6 @@ def _hci(**kw):
                 freq_groups.append(freq)
                 freq_sgroups.append(sgroup)
                 sgroup += freq_mapping[ms][idt]['counts'].size
-                chan_widths.append(freq.max()-freq.min())
             else:
                 in_group = False
                 for fs in freq_groups:
@@ -301,7 +299,6 @@ def _hci(**kw):
                     freq_groups.append(freq)
                     freq_sgroups.append(sgroup)
                     sgroup += freq_mapping[ms][idt]['counts'].size
-                    chan_widths.append(freq.max()-freq.min())
 
     # band mapping
     msddid2bid = {}
@@ -360,6 +357,7 @@ def _hci(**kw):
         schema[opts.model_column] = {'dims': ('chan', 'corr')}
 
     tasks = []
+    band_widths = {}
     for ims, ms in enumerate(opts.ms):
         xds = xds_from_ms(ms,
                         columns=columns,
@@ -431,6 +429,7 @@ def _hci(**kw):
                             attrs=attrs
                     )
                     tasks.append(fut)
+                    band_widths[b0+fi] = freqs[ms][idt][Inu].max() - freqs[ms][idt][Inu].min()
 
     nds = len(tasks)
     ncomplete = 0
@@ -458,6 +457,9 @@ def _hci(**kw):
         import dask
         import dask.array as da
         from concurrent.futures import ThreadPoolExecutor
+        bwidths = []
+        for _, val in band_widths.items():
+            bwidths.append(val)
         # reduction over FREQ and TIME so use max chunk sizes
         ds = xr.open_zarr(cds, chunks={'FREQ': -1, 'TIME':-1})
         cube = ds.cube.data
@@ -489,7 +491,7 @@ def _hci(**kw):
         drop_vars = [key for key in ds.data_vars.keys() if key != 'psf2']
         ds = ds.drop_vars(drop_vars)
         ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  weighted_mean)
-        ds['chan_widths'] = (('FREQ',), da.from_array(chan_widths, chunks=1))
+        ds['chan_widths'] = (('FREQ',), da.from_array(bwidths, chunks=1))
         with dask.config.set(pool=ThreadPoolExecutor(8)):
             ds.to_zarr(cds, mode='r+')
         log.info("Reduction complete")
