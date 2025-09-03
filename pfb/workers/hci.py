@@ -667,7 +667,7 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
                     ("STOKES", "FREQ", "TIME",),
                     da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
             ),
-            "chan_width": (
+            "chan_widths": (
                     ("FREQ",),
                     da.empty((n_freqs), chunks=(1), dtype=np.float32)
             ),
