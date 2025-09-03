@@ -278,6 +278,7 @@ def _hci(**kw):
     sgroup = 0
     freq_groups = []
     freq_sgroups = []
+    chan_widths = []
     for ms in opts.ms:
         for idt, freq in freqs[ms].items():
             ilo = idt.find('DDID') + 4
@@ -289,6 +290,7 @@ def _hci(**kw):
                 freq_groups.append(freq)
                 freq_sgroups.append(sgroup)
                 sgroup += freq_mapping[ms][idt]['counts'].size
+                chan_widths.append(freq.max()-freq.min())
             else:
                 in_group = False
                 for fs in freq_groups:
@@ -299,6 +301,7 @@ def _hci(**kw):
                     freq_groups.append(freq)
                     freq_sgroups.append(sgroup)
                     sgroup += freq_mapping[ms][idt]['counts'].size
+                    chan_widths.append(freq.max()-freq.min())
 
     # band mapping
     msddid2bid = {}
@@ -403,7 +406,7 @@ def _hci(**kw):
                         jones = subgds.gains.data
                     else:
                         jones = None
-
+                    
                     fut = safe_stokes_image.remote(
                             dc1=dc1,
                             dc2=dc2,
@@ -486,6 +489,7 @@ def _hci(**kw):
         drop_vars = [key for key in ds.data_vars.keys() if key != 'psf2']
         ds = ds.drop_vars(drop_vars)
         ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  weighted_mean)
+        ds['chan_widths'] = (('FREQ',), da.from_array(chan_widths, chunks=1))
         with dask.config.set(pool=ThreadPoolExecutor(8)):
             ds.to_zarr(cds, mode='r+')
         log.info("Reduction complete")
@@ -660,6 +664,10 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
             "psf_pa": (
                     ("STOKES", "FREQ", "TIME",),
                     da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
+            ),
+            "chan_width": (
+                    ("FREQ",),
+                    da.empty((n_freqs), chunks=(1), dtype=np.float32)
             ),
         },
         coords={
