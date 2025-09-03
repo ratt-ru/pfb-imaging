@@ -1,5 +1,5 @@
 # flake8: noqa
-from pfb.workers.main import cli
+import click
 import time
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
@@ -11,7 +11,7 @@ from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
 
-@cli.command(context_settings={'show_default': True})
+@click.command(context_settings={'show_default': True})
 @clickify_parameters(schema.degrid)
 def degrid(**kw):
     '''
