@@ -114,7 +114,7 @@ inputs:
     info:
       Gridding precision
   beam-model:
-    dtype: str
+    dtype: URI
     info:
       Path to beam model as an xarray dataset backed by zarr
   field-of-view:
