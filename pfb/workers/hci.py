@@ -2,13 +2,13 @@
 import click
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
-pfb_logging.init('pfb')
-log = pfb_logging.get_logger('HCI')
 import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 import ray
 import fsspec
+
+log = pfb_logging.get_logger('HCI')
 
 
 @click.command(context_settings={'show_default': True})
@@ -85,21 +85,18 @@ def hci(**kw):
     pfb_logging.log_to_file(logname)
     log.info(f'Logs will be written to {logname}')
 
-    # TODO - prettier config printing
-    log.info('Input Options:')
-    for key in opts.keys():
-        log.info('     %25s = %s' % (key, opts[key]))
+    pfb_logging.log_options_dict(log, opts)
 
     from pfb import set_envs
     from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    ray.init(num_cpus=opts.nworkers, 
-             logging_level='INFO', 
+    ray.init(num_cpus=opts.nworkers,
+             logging_level='INFO',
              ignore_reinit_error=True,
              local_mode=opts.nworkers==1)
-    
+
     ti = time.time()
     _hci(**opts)
 
@@ -127,7 +124,7 @@ def _hci(**kw):
 
     if opts.stack and opts.output_format == 'fits':
         raise RuntimeError("Can't stack in fits mode")
-    
+
     fds_store = DaskMSStore(f'{basename}.fds')
     if fds_store.exists():
         if opts.overwrite:
@@ -351,7 +348,7 @@ def _hci(**kw):
         transient_baseoname = opts.inject_transients.removesuffix('yaml')
         transient_ds.to_zarr(f"{transient_baseoname}zarr", mode='a')
         log.info("Spectra computed")
-    
+
     if opts.model_column is not None:
         columns += (opts.model_column,)
         schema[opts.model_column] = {'dims': ('chan', 'corr')}
@@ -437,7 +434,7 @@ def _hci(**kw):
     while remaining_tasks:
         # Wait for at least 1 task to complete
         ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
-        
+
         # Process the completed task
         for task in ready:
             try:
@@ -471,7 +468,7 @@ def _hci(**kw):
         faxis = ds.cube.get_axis_num('FREQ')
         wsum = da.sum(wsums, axis=taxis)
         # we need this for the where clause in da.divide, should be cheap
-        wsumc = wsum.compute()[:, :, None, None]  
+        wsumc = wsum.compute()[:, :, None, None]
         weighted_sum = da.sum(weighted_cube, axis=taxis)
         weighted_mean = da.divide(weighted_sum, wsum[:, :, None, None], where=wsumc>0)
         if opts.psf_out:
@@ -540,7 +537,7 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
                                      freq_mapping[ms][idt]['counts']))
                 for fi, (flow, fcounts) in fitr:
                     Inu = slice(flow, flow + fcounts)
-                    
+
                     out_times.append(np.mean(utimes[ms][idt][It]))
                     out_freqs.append(np.mean(freqs[ms][idt][Inu]))
 
@@ -588,12 +585,12 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
         delta_time = 1
 
     # construct reference header
-    
+
     from astropy.wcs import WCS
     from astropy.io import fits
     w = WCS(naxis=5)
     w.wcs.ctype = ['RA---SIN', 'DEC--SIN', 'INTEGRATION', 'FREQ', 'STOKES']
-    w.wcs.cdelt = [-cell_deg, cell_deg, delta_time, delta_freq, 1] 
+    w.wcs.cdelt = [-cell_deg, cell_deg, delta_time, delta_freq, 1]
     w.wcs.cunit = ['deg', 'deg', 's', 'Hz', '']
     w.wcs.crval = [out_ra_deg[0], out_dec_deg[0], out_times[0], out_freqs[0], 1]
     w.wcs.crpix = [1 + nx//2, 1 + ny//2, 1, 1, 1]
@@ -609,7 +606,7 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     data_shape = (nx, ny, n_times, n_freqs, n_stokes)
     for i, size in enumerate(data_shape, 1):
         hdr[f'NAXIS{i}'] = (size, f'length of data axis {i}')
-    
+
     hdr['EXTEND'] = True
     hdr['BSCALE'] = 1.0
     hdr['BZERO'] = 0.0
@@ -619,7 +616,7 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     hdr.update(wcs_hdr)
     hdr['TIMESCAL'] = delta_time
 
-    # if we don't pass these into stokes2im they get overwritten 
+    # if we don't pass these into stokes2im they get overwritten
     attrs={
             "fits_header": list(dict(hdr).items()),
             "radec_dims": (ra_dim, dec_dim),
@@ -683,11 +680,11 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
         # Store dicts as tuples as zarr doesn't seem to maintain dict order.
         attrs=attrs
     )
-    
+
     if opts.beam_model is not None:
         dummy_ds['beam_weight'] = (("STOKES", "FREQ", "TIME", "Y", "X"),
                 da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32))
-    
+
     if opts.psf_out:
         nx_psf = good_size(int(opts.psf_relative_size * nx))
         while nx_psf%2:
@@ -711,7 +708,7 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
         dummy_ds['psf2'] = (("STOKES", ypsf, xpsf),
                 da.empty((n_stokes, ny_psf, nx_psf),
                          chunks=(1, spatial_chunk, spatial_chunk), dtype=np.float32))
-        
+
     # Write scaffold and metadata to disk.
     cds = f'{opts.output_filename}.fds'
     dummy_ds.to_zarr(cds, mode="w", compute=False)

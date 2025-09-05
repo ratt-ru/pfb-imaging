@@ -3,12 +3,10 @@ import click
 import time
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
-pfb_logging.init('pfb')
-log = pfb_logging.get_logger('DEGRID')
-
-
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+
+log = pfb_logging.get_logger('DEGRID')
 
 
 @click.command(context_settings={'show_default': True})
@@ -77,10 +75,7 @@ def degrid(**kw):
     pfb_logging.log_to_file(logname)
     log.info(f'Logs will be written to {logname}')
 
-    # TODO - prettier config printing
-    log.info('Input Options:')
-    for key in opts.keys():
-        log.info('     %25s = %s' % (key, opts[key]))
+    pfb_logging.log_options_dict(log, opts)
 
     # we need the collections
     from pfb import set_client
@@ -230,13 +225,13 @@ def _degrid(**kw):
         output_schema = ['XX', 'XY', 'YX', 'YY']
     else:
         output_schema = ['RR', 'RL', 'LR', 'LL']
-    
+
     writes = []
     for ms in opts.ms:
         xds = xds_from_ms(ms,
                           chunks=ms_chunks[ms],
                           group_cols=group_by)
-        
+
 
         for i, mask in enumerate(masks):
             out_data = []
@@ -314,14 +309,14 @@ def _degrid(**kw):
 
                 # convert to single precision to write to MS
                 vis = vis.astype(np.complex64)
-                
+
                 if ncorr==1:
                     out_schema = output_schema[0]
                 elif ncorr==2:
                     out_schema = [output_schema[0], output_schema[-1]]
                 else:
                     out_schema = output_schema
-                
+
                 vis = convert(vis, input_schema, out_schema, implicit_stokes=True)
 
                 if opts.accumulate:

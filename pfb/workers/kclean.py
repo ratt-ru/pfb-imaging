@@ -3,11 +3,10 @@ import click
 from omegaconf import OmegaConf
 import time
 from pfb.utils import logging as pfb_logging
-pfb_logging.init('pfb')
-log = pfb_logging.get_logger('KCLEAN')
-
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+
+log = pfb_logging.get_logger('KCLEAN')
 
 
 @click.command(context_settings={'show_default': True})
@@ -38,12 +37,8 @@ def kclean(**kw):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/kclean_{timestamp}.log'
     pfb_logging.log_to_file(logname)
-    log.info(f'Logs will be written to {logname}')
 
-    # TODO - prettier config printing
-    log.info('Input Options:')
-    for key in opts.keys():
-        log.info('     %25s = %s' % (key, opts[key]))
+    pfb_logging.log_options_dict(log, opts)
 
     from pfb.utils.naming import xds_from_url, get_opts
 

@@ -2,11 +2,11 @@
 import click
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
-pfb_logging.init('pfb')
-log = pfb_logging.get_logger('GRID')
-
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+
+log = pfb_logging.get_logger('GRID')
+
 
 @click.command(context_settings={'show_default': True})
 @clickify_parameters(schema.grid)
@@ -58,10 +58,7 @@ def grid(**kw):
     pfb_logging.log_to_file(logname)
     log.info(f'Logs will be written to {logname}')
 
-    # TODO - prettier config printing
-    log.info('Input Options:')
-    for key in opts.keys():
-        log.info('     %25s = %s' % (key, opts[key]))
+    pfb_logging.log_options_dict(log, opts)
 
     from pfb import set_envs
     from ducc0.misc import resize_thread_pool, thread_pool_size
@@ -463,7 +460,7 @@ def _grid(**kw):
                 model = None
         else:
             model = None
-        
+
         fut = client.submit(image_data_products,
                             dsl,
                             out_ds_name,
@@ -519,7 +516,7 @@ def _grid(**kw):
             psfparsn[timeid] = fitcleanbeam(psf_mfs[timeid])
         else:
             psfparsn = None
-        
+
         residual_mfs[timeid] /= wsum[timeid][:, None, None]
         for c in range(ncorr):
             rms = np.std(residual_mfs[timeid][c])
@@ -529,12 +526,12 @@ def _grid(**kw):
             rmax = np.abs(residual_mfs[timeid][c]).max()
             log.info(f"Time ID {timeid}: {corrs[c]} - resid max = {rmax:.3e}, "
                   f"rms = {rms:.3e}")
-            
+
     # put these in the dds for future reference
     if psfparsn is not None:
         cache_opts(psfparsn,
                    dds_store.url,
                    protocol,
                    name='psfparsn_mfs.pkl')
-    
+
     return psfparsn

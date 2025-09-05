@@ -2,12 +2,11 @@
 import click
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
-pfb_logging.init('pfb')
-log = pfb_logging.get_logger('INIT')
 import time
-
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+
+log = pfb_logging.get_logger('INIT')
 
 
 @click.command(context_settings={'show_default': True})
@@ -62,10 +61,7 @@ def init(**kw):
     pfb_logging.log_to_file(logname)
     log.info(f'Logs will be written to {logname}')
 
-    # TODO - prettier config printing
-    log.info('Input Options:')
-    for key in opts.keys():
-        log.info('     %25s = %s' % (key, opts[key]))
+    pfb_logging.log_options_dict(log, opts)
 
     from pfb import set_envs
     from ducc0.misc import resize_thread_pool
