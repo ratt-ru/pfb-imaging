@@ -1,6 +1,6 @@
 # flake8: noqa
 import concurrent.futures as cf
-from pfb.workers.main import cli
+import click
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
 from scabha.schema_utils import clickify_parameters
@@ -9,7 +9,7 @@ from pfb.parser.schemas import schema
 log = pfb_logging.get_logger('SARA')
 
 
-@cli.command(context_settings={'show_default': True})
+@click.command(context_settings={'show_default': True})
 @clickify_parameters(schema.sara)
 def sara(**kw):
     '''

@@ -1,5 +1,5 @@
 # flake8: noqa
-from pfb.workers.main import cli
+import click
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
 import time
@@ -9,7 +9,7 @@ from pfb.parser.schemas import schema
 log = pfb_logging.get_logger('INIT')
 
 
-@cli.command(context_settings={'show_default': True})
+@click.command(context_settings={'show_default': True})
 @clickify_parameters(schema.init)
 def init(**kw):
     '''
