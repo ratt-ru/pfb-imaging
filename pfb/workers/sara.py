@@ -3,11 +3,10 @@ import concurrent.futures as cf
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
-pfb_logging.init('pfb')
-log = pfb_logging.get_logger('SARA')
-
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+
+log = pfb_logging.get_logger('SARA')
 
 
 @cli.command(context_settings={'show_default': True})
@@ -151,7 +150,7 @@ def _sara(**kw):
                             NotImplementedError)
 
     nx, ny = dds[0].x.size, dds[0].y.size
-    
+
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
     lastsize = ny_psf
     freq_out = []

@@ -3,12 +3,10 @@ from contextlib import ExitStack
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
-pfb_logging.init('pfb')
-log = pfb_logging.get_logger('MODEL2COMPS')
-
-
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+
+log = pfb_logging.get_logger('MODEL2COMPS')
 
 
 @cli.command(context_settings={'show_default': True})
@@ -333,7 +331,7 @@ def _model2comps(**kw):
                   fits_name,
                   hdr,
                   overwrite=True)
-        
+
 def _model2comps_fits(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
@@ -618,7 +616,7 @@ def _model2comps_fits(**kw):
     else:  # we just write it back at input frequencies as a sanity check
         hdr = set_wcs(cell_deg, cell_deg, nx, ny, [ra, dec],
                       mfreqs, GuassPar=(1, 1, 0), casambm=False)
-                      
+
     save_fits(modelo[:, None, :, :],
               fits_name,
               hdr,

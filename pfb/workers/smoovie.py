@@ -1,11 +1,11 @@
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
-pfb_logging.init('pfb')
-log = pfb_logging.get_logger('SMOOVIE')
 import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+
+log = pfb_logging.get_logger('SMOOVIE')
 
 
 @cli.command(context_settings={'show_default': True})
@@ -21,13 +21,13 @@ def smoovie(**kw):
 
     import psutil
     ncpu = psutil.cpu_count(logical=False)
-    # to prevent flickering 
+    # to prevent flickering
     opts.nthreads = 1
     remprod = opts.product.upper().strip('IQUV')
     if len(remprod):
         log.error_and_raise(f"Product {remprod} not yet supported",
                             NotImplementedError)
-    
+
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/smoovie_{timestamp}.log'
     pfb_logging.log_to_file(logname)
@@ -143,7 +143,7 @@ def _smoovie(**kw):
             fds_dict[b].append(ds)
 
         for b, dslist in fds_dict.items():
-            
+
             log.info(f"Writing movie to {basename}_band{b}_{idfy}.{outfmt}")
             rmss = [ds.rms for ds in dslist]
             medrms = np.median(rmss)

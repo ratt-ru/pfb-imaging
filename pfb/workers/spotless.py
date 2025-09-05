@@ -3,11 +3,10 @@ from contextlib import ExitStack
 from pfb.workers.main import cli
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
-pfb_logging.init('pfb')
-log = pfb_logging.get_logger('SPOTLESS')
-
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+
+log = pfb_logging.get_logger('SPOTLESS')
 
 
 @cli.command(context_settings={'show_default': True})
