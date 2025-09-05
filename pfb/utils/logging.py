@@ -299,7 +299,7 @@ def log_options_dict(logger: PFBLogger, options: Dict[str, Any], title: str = "O
     # We cannot log the table neatly, so instead we use console's print command directly
     # and capture the output so we can add an unformatted version to the log.
     with rich_console.capture() as capture:
-        rich_console.print(Panel(options_table, style="cyan", title=title))
+        rich_console.print(Panel(options_table, style="cyan", title=f"[cyan]{title}[/cyan]"))
 
     str_output = Text.from_ansi(capture.get())
     rich_console.print(str_output.markup)  # Display in terminal.
