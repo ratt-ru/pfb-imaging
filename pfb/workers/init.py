@@ -61,10 +61,7 @@ def init(**kw):
     pfb_logging.log_to_file(logname)
     log.info(f'Logs will be written to {logname}')
 
-    # TODO - prettier config printing
-    log.info('Input Options:')
-    for key in opts.keys():
-        log.info('     %25s = %s' % (key, opts[key]))
+    pfb_logging.log_options_dict(log, opts)
 
     from pfb import set_envs
     from ducc0.misc import resize_thread_pool

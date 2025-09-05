@@ -34,10 +34,7 @@ def smoovie(**kw):
     log.info(f'Logs will be written to {logname}')
     OmegaConf.set_struct(opts, True)
 
-    # TODO - prettier config printing
-    log.info('Input Options:')
-    for key in opts.keys():
-        log.info('     %25s = %s' % (key, opts[key]))
+    pfb_logging.log_options_dict(log, opts)
 
     from pfb import set_envs
     set_envs(opts.nthreads, ncpu)

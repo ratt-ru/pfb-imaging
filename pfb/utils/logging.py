@@ -29,7 +29,13 @@ class PFBLogger(logging.Logger):
     with Rich formatting capabilities.
     """
 
-    def error_and_raise(self, message: str, exception_type: Type[Exception] = Exception, *args, **kwargs) -> None:
+    def error_and_raise(
+        self,
+        message: str,
+        exception_type: Type[Exception] = Exception,
+        *args,
+        **kwargs
+    ) -> None:
         """
         Log an error message and raise an exception.
 
@@ -290,12 +296,14 @@ def log_options_dict(logger: PFBLogger, options: Dict[str, Any], title: str = "O
     for key, value in options.items():
         options_table.add_row(f"[green]{key}[/green]", "|", f"[white]{value}[/white]")
 
+    # We cannot log the table neatly, so instead we use console's print command directly
+    # and capture the output so we can add an unformatted version to the log.
     with rich_console.capture() as capture:
-        rich_console.print(Panel(options_table, style="cyan", title="Inputs"))
+        rich_console.print(Panel(options_table, style="cyan", title=title))
 
     str_output = Text.from_ansi(capture.get())
-    rich_console.print(str_output.markup)
-    logger.debug(str_output)
+    rich_console.print(str_output.markup)  # Display in terminal.
+    logger.debug(f"\n{str_output}")  # Print to log - will display twice if log level is DEBUG.
 
 def create_timestamped_log_file(log_directory: Union[str, Path], component_name: str) -> str:
     """

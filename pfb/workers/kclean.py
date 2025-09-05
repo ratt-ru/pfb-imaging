@@ -38,14 +38,7 @@ def kclean(**kw):
     logname = f'{str(opts.log_directory)}/kclean_{timestamp}.log'
     pfb_logging.log_to_file(logname)
 
-    # TODO - prettier config printing
-    pfb_logging.log_options_dict(log, opts, "Input options:")
-
-    import ipdb; ipdb.set_trace()
-
-    # log.info('Input Options:')
-    # for key in opts.keys():
-    #     log.info('     %25s = %s' % (key, opts[key]))
+    pfb_logging.log_options_dict(log, opts)
 
     from pfb.utils.naming import xds_from_url, get_opts
 
