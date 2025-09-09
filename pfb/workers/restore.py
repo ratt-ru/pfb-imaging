@@ -123,6 +123,7 @@ def _restore(**kw):
     nband = freqs.size
     ntime = timeids.size
     ncorr = dds[0].corr.size
+    cell_asec = dds[0].cell_rad * 180/np.pi * 3600
     log.info(f'Number of output times = {ntime}')
     log.info(f'Number of output bands = {nband}')
 
@@ -133,7 +134,7 @@ def _restore(**kw):
         log.info("Using native resolution")
     elif opts.gausspar == [0,0,0]:
         # This is just to figure out what resolution to convolve to
-        dds = xds_from_list(dds_list, nthreads=nthreads,
+        dds = xds_from_list(dds_list, nthreads=opts.nthreads,
                             drop_all_but=['PSFPARSN'])
         emaj = 0.0
         emin = 0.0
@@ -229,6 +230,7 @@ def _restore(**kw):
                         psfpars_mfs=psfpars_mfs)
         futures.append(fut)
 
+    # TODO(LB) - we may want to add these outputs back in, at least the useful ones
     # if 'f' in opts.outputs:
     #     rhat_mfs = c2c(residual_mfs, forward=True,
     #                    nthreads=opts.nthreads, inorm=0)
