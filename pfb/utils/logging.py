@@ -22,6 +22,8 @@ rich_console = Console()
 
 install_rich_traceback(console=rich_console, show_locals=False)
 
+# define log message format
+str_fmt = "%(asctime)s - %(name)-15s - %(levelname)-8s - %(funcName)s:%(lineno)d - %(message)s"
 
 class PFBLogger(logging.Logger):
     """
@@ -87,8 +89,8 @@ class LoggingManager:
         # options. If needed, it is possible to subclass it and modify its methods.
         console_handler = RichHandler(
             console=self._console,
-            show_time=True,
-            show_level=True,
+            show_time=False,
+            show_level=False,
             show_path=False,
             rich_tracebacks=True,
             tracebacks_show_locals=True,
@@ -97,12 +99,11 @@ class LoggingManager:
         console_handler.setLevel(log_level)
 
         # NOTE(JSKenyon): Removed the formatter for now as the RichHandler defaults seem sensible.
-        # formatter = logging.Formatter(
-        #     fmt="%(asctime)s - %(name)-15s - %(levelname)-8s - %(message)s",
-        #     datefmt="%Y-%m-%d %H:%M:%S",
-        #     style="{"
-        # )
-        # console_handler.setFormatter(formatter)
+        formatter = logging.Formatter(
+            fmt=str_fmt,
+            datefmt="%Y-%m-%d %H:%M:%S"
+        )
+        console_handler.setFormatter(formatter)
 
         self._root_logger.addHandler(console_handler)
 
@@ -145,7 +146,7 @@ class LoggingManager:
 
         # File formatter (more detailed than console)
         file_formatter = logging.Formatter(
-            fmt="%(asctime)s - %(name)-15s - %(levelname)-8s - %(funcName)s:%(lineno)d - %(message)s",
+            fmt=str_fmt,
             datefmt="%Y-%m-%d %H:%M:%S"
         )
         file_handler.setFormatter(file_formatter)
@@ -304,43 +305,3 @@ def log_options_dict(logger: PFBLogger, options: Dict[str, Any], title: str = "O
     str_output = Text.from_ansi(capture.get())
     rich_console.print(str_output.markup)  # Display in terminal.
     logger.debug(f"\n{str_output}")  # Print to log - will display twice if log level is DEBUG.
-
-def create_timestamped_log_file(log_directory: Union[str, Path], component_name: str) -> str:
-    """
-    Create a timestamped log file path compatible with pyscilog pattern.
-
-    Args:
-        log_directory: Directory where log files should be stored
-        component_name: Name of the component for the log file
-
-    Returns:
-        Path to the log file
-    """
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    log_directory = Path(log_directory)
-    log_directory.mkdir(parents=True, exist_ok=True)
-
-    logname = log_directory / f'{component_name}_{timestamp}.log'
-    return str(logname)
-
-
-# Context manager for temporary log file
-class TemporaryLogFile:
-    """Context manager for temporary log file setup."""
-
-    def __init__(self, log_directory: Union[str, Path], component_name: str):
-        self.log_directory = log_directory
-        self.component_name = component_name
-        self.log_file = None
-        self.logger = None
-
-    def __enter__(self):
-        self.log_file = create_timestamped_log_file(self.log_directory, self.component_name)
-        self.logger = get_logger(self.component_name)
-        log_to_file(self.log_file, self.component_name)
-        return self.logger
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is not None:
-            self.logger.error(f"Error occurred: {exc_val}")
-        self.logger.info("Logging session ended")
