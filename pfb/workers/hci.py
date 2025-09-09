@@ -442,8 +442,7 @@ def _hci(**kw):
             except Exception as e:
                 for future in remaining_tasks:
                     ray.cancel(future)
-                print(e)
-                quit()
+                raise e
             ncomplete += 1
             print(f"Completed: {ncomplete} / {nds}", end='\n', flush=True)
 
