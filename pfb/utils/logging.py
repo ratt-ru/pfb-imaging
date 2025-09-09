@@ -22,9 +22,6 @@ rich_console = Console()
 
 install_rich_traceback(console=rich_console, show_locals=False)
 
-# define log message format
-str_fmt = "%(asctime)s - %(name)-15s - %(levelname)-8s - %(funcName)s:%(lineno)d - %(message)s"
-
 class PFBLogger(logging.Logger):
     """
     Enhanced logger class that provides pyscilog-compatible interface
@@ -98,9 +95,8 @@ class LoggingManager:
         )
         console_handler.setLevel(log_level)
 
-        # NOTE(JSKenyon): Removed the formatter for now as the RichHandler defaults seem sensible.
         formatter = logging.Formatter(
-            fmt=str_fmt,
+            fmt="%(asctime)s - %(name)-15s - %(levelname)-8s - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S"
         )
         console_handler.setFormatter(formatter)
@@ -146,7 +142,7 @@ class LoggingManager:
 
         # File formatter (more detailed than console)
         file_formatter = logging.Formatter(
-            fmt=str_fmt,
+            fmt="%(asctime)s - %(name)-15s - %(levelname)-8s - %(funcName)s:%(lineno)d - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S"
         )
         file_handler.setFormatter(file_formatter)
