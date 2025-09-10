@@ -313,9 +313,8 @@ def _init(**kw):
                     ray.cancel(future)
                 raise e
             ncomplete += 1
-            print(f"Completed: {ncomplete} / {nds}", end='\n', flush=True)
-
-    print("\n") # after progressbar above
+            if opts.progressbar:
+                print(f"Completed: {ncomplete} / {nds}", end='\n', flush=True)
 
     times_out = np.unique(times_out)
     freqs_out = np.unique(freqs_out)

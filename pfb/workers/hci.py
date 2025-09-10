@@ -444,9 +444,8 @@ def _hci(**kw):
                     ray.cancel(future)
                 raise e
             ncomplete += 1
-            print(f"Completed: {ncomplete} / {nds}", end='\n', flush=True)
-
-    print("\n")
+            if opts.progressbar:
+                print(f"Completed: {ncomplete} / {nds}", end='\n', flush=True)
 
     if opts.stack:
         log.info("Computing means")
