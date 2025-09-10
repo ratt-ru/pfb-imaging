@@ -488,7 +488,7 @@ def _hci(**kw):
         ds = ds.drop_vars(drop_vars)
         ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  weighted_mean)
         ds['channel_width'] = (('FREQ',), da.from_array(cwidths, chunks=1))
-        with dask.config.set(pool=ThreadPoolExecutor(8)):
+        with dask.config.set(pool=ThreadPoolExecutor(opts.nworkers)):
             ds.to_zarr(cds, mode='r+')
         log.info("Reduction complete")
     return

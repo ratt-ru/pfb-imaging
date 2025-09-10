@@ -5,6 +5,8 @@ from pfb.utils import logging as pfb_logging
 import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+import ray
+
 
 log = pfb_logging.get_logger('INIT')
 
@@ -68,21 +70,17 @@ def init(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    # with ExitStack() as stack:
-    import dask
-    dask.config.set(**{'array.slicing.split_large_chunks': False})
-    from pfb import set_client
-    client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
+    ray.init(num_cpus=opts.nworkers,
+             logging_level='INFO',
+             ignore_reinit_error=True,
+             local_mode=opts.nworkers==1)
 
     ti = time.time()
     _init(**opts)
 
     log.info(f"All done after {time.time() - ti}s")
 
-    try:
-        client.close()
-    except Exception as e:
-        pass
+    ray.shutdown()
 
 def _init(**kw):
     opts = OmegaConf.create(kw)
@@ -90,12 +88,9 @@ def _init(**kw):
 
     import numpy as np
     from pfb.utils.misc import construct_mappings
-    from distributed import get_client, as_completed
     from daskms import xds_from_storage_ms as xds_from_ms
-    from daskms.experimental.zarr import xds_from_zarr
     from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.stokes2vis import single_stokes
-    from uuid import uuid4
+    from pfb.utils.stokes2vis import safe_stokes_vis
     import fsspec
 
     basename = f'{opts.output_filename}'
@@ -134,9 +129,6 @@ def _init(**kw):
     else:
         freq_min = -np.inf
         freq_max = np.inf
-
-    client = get_client()
-    worker_keys = client.scheduler_info()['workers'].keys()
 
     log.info('Constructing mapping')
     row_mapping, freq_mapping, time_mapping, \
@@ -230,11 +222,12 @@ def _init(**kw):
                 if freq.size == fs.size and np.all(freq == fs):
                     msddid2bid[ms][idt] = sgroup
 
-    # a flat list to use with as_completed
-    datasets = []
+    tasks = []
     for ims, ms in enumerate(opts.ms):
-        xds = xds_from_ms(ms, chunks=ms_chunks[ms], columns=columns,
-                          table_schema=schema, group_cols=group_by)
+        xds = xds_from_ms(ms, 
+                          columns=columns,
+                          table_schema=schema,
+                          group_cols=group_by)
 
         for ds in xds:
             fid = ds.FIELD_ID
@@ -275,124 +268,54 @@ def _init(**kw):
                     else:
                         jones = None
 
-                    datasets.append([subds,
-                                    jones,
-                                    freqs[ms][idt][Inu],
-                                    chan_widths[ms][idt][Inu],
-                                    utimes[ms][idt][It],
-                                    ridx, rcnts,
-                                    radecs[ms][idt],
-                                    b0 + fi, ti, ims, ms, flow, flow+fcounts])
-
-    futures = []
-    associated_workers = {}
-    idle_workers = set(client.scheduler_info()['workers'].keys())
-    n_launched = 0
-    nds = len(datasets)
-    while idle_workers and len(datasets):   # Seed each worker with a task.
-        # pop so len(datasets) -> 0
-        (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
-         radeci, fi, ti, ims, ms, chan_low, chan_high) = datasets.pop(0)
-
-        worker = idle_workers.pop()
-        future = client.submit(single_stokes,
-                        dc1=dc1,
-                        dc2=dc2,
-                        operator=operator,
-                        ds=subds,
-                        jones=jones,
-                        opts=opts,
-                        freq=freqsi,
-                        chan_width=chan_widthi,
-                        utime=utimesi,
-                        tbin_idx=ridx,
-                        tbin_counts=rcnts,
-                        chan_low=chan_low,
-                        chan_high=chan_high,
-                        radec=radeci,
-                        antpos=antpos[ms],
-                        poltype=poltype[ms],
-                        xds_store=xds_store.url,
-                        bandid=fi,
-                        timeid=ti,
-                        msid=ims,
-                        wid=worker,
-                        pure=False,
-                        workers=worker,
-                        key='image-'+uuid4().hex)
-
-        futures.append(future)
-        associated_workers[future] = worker
-        n_launched += 1
-
-        if opts.progressbar:
-            print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
-
-    times_out = []
-    freqs_out = []
-    ac_iter = as_completed(futures)
-    for completed_future in ac_iter:
-        if isinstance(completed_future.result(), BaseException):
-            e = completed_future.result()
-            import traceback
-            log.error_and_raise(f"Traceback:\n{traceback.format_exc()}", e)
-
-        result = completed_future.result()
-        if result is not None:
-            times_out.append(result[0])
-            freqs_out.append(result[1])
-
-        worker = associated_workers.pop(completed_future)
-        # we need this here to release memory for some reason
-        client.cancel(completed_future)
-
-        # pop so len(datasets) -> 0
-        if len(datasets):
-            (subds, jones, freqsi, chan_widthi, utimesi, ridx, rcnts,
-            radeci, fi, ti, ims, ms, chan_low, chan_high) = datasets.pop(0)
-
-            future = client.submit(single_stokes,
+                    fut = safe_stokes_vis.remote(
                             dc1=dc1,
                             dc2=dc2,
                             operator=operator,
                             ds=subds,
                             jones=jones,
                             opts=opts,
-                            freq=freqsi,
-                            chan_width=chan_widthi,
-                            utime=utimesi,
+                            freq=freqs[ms][idt][Inu],
+                            chan_width=chan_widths[ms][idt][Inu],
+                            utime=utimes[ms][idt][It],
                             tbin_idx=ridx,
                             tbin_counts=rcnts,
-                            chan_low=chan_low,
-                            chan_high=chan_high,
-                            radec=radeci,
+                            chan_low=flow,
+                            chan_high=flow+fcounts,
+                            radec=radecs[ms][idt],
                             antpos=antpos[ms],
                             poltype=poltype[ms],
                             xds_store=xds_store.url,
-                            bandid=fi,
+                            bandid=b0+fi,
                             timeid=ti,
-                            msid=ims,
-                            wid=worker,
-                            pure=False,
-                            workers=worker,
-                            key='image-'+uuid4().hex)
+                            msid=ims
+                    )
+                    tasks.append(fut)
 
+    nds = len(tasks)
+    ncomplete = 0
+    remaining_tasks = tasks.copy()
+    times_out = []
+    freqs_out = []
+    while remaining_tasks:
+        # Wait for at least 1 task to complete
+        ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
 
-            ac_iter.add(future)
-            associated_workers[future] = worker
-            n_launched += 1
+        # Process the completed task
+        for task in ready:
+            try:
+                result = ray.get(task)
+                if result is not None:
+                    times_out.append(result[0])
+                    freqs_out.append(result[1])
+            except Exception as e:
+                for future in remaining_tasks:
+                    ray.cancel(future)
+                raise e
+            ncomplete += 1
+            print(f"Completed: {ncomplete} / {nds}", end='\n', flush=True)
 
-        if opts.memory_reporting:
-            worker_info = client.scheduler_info()['workers']
-            log.info(f'Total memory {worker} MB = ',
-                  worker_info[worker]['metrics']['memory']/1e6)
-
-        if opts.progressbar:
-            print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
-
-        # this should not be necessary but just in case
-        if ac_iter.is_empty():
-            break
+    print("\n") # after progressbar above
 
     times_out = np.unique(times_out)
     freqs_out = np.unique(freqs_out)
@@ -400,7 +323,6 @@ def _init(**kw):
     nband = freqs_out.size
     ntime = times_out.size
 
-    print("\n")  # after progressbar above
     log.info(f"Freq and time selection resulted in {nband} output bands and "
           f"{ntime} output times")
 

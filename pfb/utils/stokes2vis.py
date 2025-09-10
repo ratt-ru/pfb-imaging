@@ -1,13 +1,9 @@
+import ray
 import numpy as np
 import numexpr as ne
 import xarray as xr
 from numba import literally
-from dask.graph_manipulation import clone
-from distributed import worker_client
-from operator import getitem
-from pfb.utils.beam import interp_beam
 from pfb.utils.weighting import weight_data
-from uuid import uuid4
 import gc
 from casacore.quanta import quantity
 from datetime import datetime, timezone
@@ -16,28 +12,40 @@ from scipy import ndimage
 from scipy.constants import c as lightspeed
 
 
-def single_stokes(
-                dc1=None,
-                dc2=None,
-                operator=None,
-                ds=None,
-                jones=None,
-                opts=None,
-                freq=None,
-                chan_width=None,
-                utime=None,
-                tbin_idx=None,
-                tbin_counts=None,
-                chan_low=None,
-                chan_high=None,
-                radec=None,
-                antpos=None,
-                poltype=None,
-                xds_store=None,
-                bandid=None,
-                timeid=None,
-                msid=None,
-                wid=None):
+@ray.remote
+def compute_dataset(dset):
+    """Ray remote function to compute dataset"""
+    return dset.load(scheduler='sync')
+
+@ray.remote
+def safe_stokes_vis(*args, **kwargs):
+    try:
+        return stokes_vis(*args, **kwargs)
+    except Exception as e:
+        raise e
+
+
+def stokes_vis(
+            dc1=None,
+            dc2=None,
+            operator=None,
+            ds=None,
+            jones=None,
+            opts=None,
+            freq=None,
+            chan_width=None,
+            utime=None,
+            tbin_idx=None,
+            tbin_counts=None,
+            chan_low=None,
+            chan_high=None,
+            radec=None,
+            antpos=None,
+            poltype=None,
+            xds_store=None,
+            bandid=None,
+            timeid=None,
+            msid=None):
 
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
@@ -52,12 +60,10 @@ def single_stokes(
         real_type = np.float64
         complex_type = np.complex128
 
-    with worker_client() as client:
-        (ds, jones) = client.compute([clone(ds),
-                                      clone(jones)],
-                                     sync=True,
-                                     workers=wid,
-                                     key='read-'+uuid4().hex)
+    ds = ray.get(compute_dataset.remote(ds))
+    if jones is not None:
+        jones = ray.get(compute_dataset.remote(jones))
+
     data = getattr(ds, dc1).values
     ds = ds.drop_vars(dc1)
     if dc2 is not None:
