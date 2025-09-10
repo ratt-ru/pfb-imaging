@@ -223,6 +223,8 @@ def stokes_image(
         new_ra_rad = np.deg2rad(c.ra.value)
         new_dec_rad = np.deg2rad(c.dec.value)
         radec_new = np.array((new_ra_rad, new_dec_rad))
+
+        # print(c.ra.value, c.dec.value, cell_deg)
         
         from pfb.utils.astrometry import synthesize_uvw
         uvw_new = synthesize_uvw(antpos, time, ant1, ant2, radec_new)
@@ -535,14 +537,19 @@ def stokes_image(
     # set corr coords (removing duplicates and sorting)
     corr = "".join(dict.fromkeys(sorted(opts.product)))
 
+    out_ras = ra_deg + np.arange(nx//2, -(nx//2), -1) * cell_deg
+    out_decs = dec_deg + np.arange(-(ny//2), ny//2) * cell_deg
+    out_ras = np.round(out_ras, decimals=12)
+    out_decs = np.round(out_decs, decimals=12)
+
     # save outputs
     if opts.output_format == 'zarr':
         coords = {
             'FREQ': (('FREQ',), np.array([freq_out])),
             'TIME': (('TIME',), np.mean(utime, keepdims=True)),
             'STOKES': (('STOKES',), list(corr)),
-            'X': (('X',), ra_deg + np.arange(nx//2, -(nx//2), -1) * cell_deg),
-            'Y': (('Y',), dec_deg + np.arange(-(ny//2), ny//2) * cell_deg),
+            'X': (('X',), out_ras),
+            'Y': (('Y',), out_decs),
         }
         # X and Y are transposed for compatibility with breifast
         data_vars = {}
