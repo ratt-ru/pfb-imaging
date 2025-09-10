@@ -354,7 +354,7 @@ def _hci(**kw):
         schema[opts.model_column] = {'dims': ('chan', 'corr')}
 
     tasks = []
-    band_widths = {}
+    channel_width = {}
     for ims, ms in enumerate(opts.ms):
         xds = xds_from_ms(ms,
                         columns=columns,
@@ -426,7 +426,7 @@ def _hci(**kw):
                             attrs=attrs
                     )
                     tasks.append(fut)
-                    band_widths[b0+fi] = freqs[ms][idt][Inu].max() - freqs[ms][idt][Inu].min()
+                    channel_width[b0+fi] = freqs[ms][idt][Inu].max() - freqs[ms][idt][Inu].min()
 
     nds = len(tasks)
     ncomplete = 0
@@ -453,9 +453,9 @@ def _hci(**kw):
         import dask
         import dask.array as da
         from concurrent.futures import ThreadPoolExecutor
-        bwidths = []
-        for _, val in band_widths.items():
-            bwidths.append(val)
+        cwidths = []
+        for _, val in channel_width.items():
+            cwidths.append(val)
         # reduction over FREQ and TIME so use max chunk sizes
         ds = xr.open_zarr(cds, chunks={'FREQ': -1, 'TIME':-1})
         cube = ds.cube.data
@@ -487,7 +487,7 @@ def _hci(**kw):
         drop_vars = [key for key in ds.data_vars.keys() if key != 'psf2']
         ds = ds.drop_vars(drop_vars)
         ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  weighted_mean)
-        ds['chan_widths'] = (('FREQ',), da.from_array(bwidths, chunks=1))
+        ds['channel_width'] = (('FREQ',), da.from_array(cwidths, chunks=1))
         with dask.config.set(pool=ThreadPoolExecutor(8)):
             ds.to_zarr(cds, mode='r+')
         log.info("Reduction complete")
@@ -619,7 +619,6 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     attrs={
             "fits_header": list(dict(hdr).items()),
             "radec_dims": (ra_dim, dec_dim),
-            "channel_width": delta_freq,
             "fits_dims": (
                 ("X", ra_dim),
                 ("Y", dec_dim),
@@ -628,6 +627,13 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
                 ("STOKES", "STOKES")
             )
         }
+
+    # TODO - why do we sometimes need to round here?
+    out_ras = out_ra_deg + np.arange(nx//2, -(nx//2), -1) * cell_deg
+    out_decs = out_dec_deg + np.arange(-(ny//2), ny//2) * cell_deg
+    out_ras = np.round(out_ras, decimals=12)
+    out_decs = np.round(out_decs, decimals=12)
+
 
     dummy_ds = xr.Dataset(
         data_vars={
@@ -663,7 +669,7 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
                     ("STOKES", "FREQ", "TIME",),
                     da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)
             ),
-            "chan_widths": (
+            "channel_width": (
                     ("FREQ",),
                     da.empty((n_freqs), chunks=(1), dtype=np.float32)
             ),
@@ -672,8 +678,8 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
             "TIME": (("TIME",), out_times),
             "STOKES": (("STOKES",), list(sorted(opts.product))),
             "FREQ": (("FREQ",), out_freqs),
-            "X": (("X",), out_ra_deg + np.arange(nx//2, -(nx//2), -1) * cell_deg),
-            "Y": (("Y",), out_dec_deg + np.arange(-(ny//2), ny//2) * cell_deg)
+            "X": (("X",), out_ras),
+            "Y": (("Y",), out_decs)
         }
         ,
         # Store dicts as tuples as zarr doesn't seem to maintain dict order.
