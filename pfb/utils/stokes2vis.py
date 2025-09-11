@@ -13,11 +13,6 @@ from scipy.constants import c as lightspeed
 
 
 @ray.remote
-def compute_dataset(dset):
-    """Ray remote function to compute dataset"""
-    return dset.load(scheduler='sync')
-
-@ray.remote
 def safe_stokes_vis(*args, **kwargs):
     try:
         return stokes_vis(*args, **kwargs)
@@ -60,9 +55,12 @@ def stokes_vis(
         real_type = np.float64
         complex_type = np.complex128
 
-    ds = ray.get(compute_dataset.remote(ds))
+    # LB - is this the correct way to do this? 
+    # we don't want it to end up in the distributed object store 
+    ds = ds.load(scheduler='sync')
     if jones is not None:
-        jones = ray.get(compute_dataset.remote(jones))
+        # we do it this way to force using synchronous scheduler
+        jones = jones.load(scheduler='sync').values
 
     data = getattr(ds, dc1).values
     ds = ds.drop_vars(dc1)

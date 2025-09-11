@@ -42,6 +42,7 @@ matplotlib = ">=3.9.2"
 rich = ">=13.0.0"
 reproject = "*"
 ray = {extras = ["default"], version = "*"}
+debugpy = "*"
 
 [tool.poetry.scripts]
 pfb = "pfb.workers.main:cli"

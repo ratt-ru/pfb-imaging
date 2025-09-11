@@ -23,11 +23,6 @@ iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
 @ray.remote
-def compute_dataset(dset):
-    """Ray remote function to compute dataset"""
-    return dset.load(scheduler='sync')
-
-@ray.remote
 def safe_stokes_image(*args, **kwargs):
     try:
         return stokes_image(*args, **kwargs)
@@ -75,9 +70,12 @@ def stokes_image(
         real_type = np.float64
         complex_type = np.complex128
 
-    ds = ray.get(compute_dataset.remote(ds))
+    # LB - is this the correct way to do this? 
+    # we don't want it to end up in the distributed object store 
+    ds = ds.load(scheduler='sync')
     if jones is not None:
-        jones = ray.get(compute_dataset.remote(jones))
+        # we do it this way to force using synchronous scheduler
+        jones = jones.load(scheduler='sync').values
     
     data = getattr(ds, dc1).values
     ds = ds.drop_vars(dc1)

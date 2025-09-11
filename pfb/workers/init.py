@@ -70,10 +70,15 @@ def init(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
+    if opts.nworkers==1:
+        renv = {"env_vars": {"RAY_DEBUG_POST_MORTEM": "1"}}
+    else:
+        renv = None
+
     ray.init(num_cpus=opts.nworkers,
              logging_level='INFO',
              ignore_reinit_error=True,
-             local_mode=opts.nworkers==1)
+             runtime_env=renv)
 
     ti = time.time()
     _init(**opts)
@@ -264,7 +269,7 @@ def _init(**kw):
                     subds = ds[{'row': Irow, 'chan': Inu}]
                     if gains[ms][idt] is not None:
                         subgds = gains[ms][idt][{'gain_time': It, 'gain_freq': Inu}]
-                        jones = subgds.gains.data
+                        jones = subgds.gains
                     else:
                         jones = None
 
@@ -303,15 +308,10 @@ def _init(**kw):
 
         # Process the completed task
         for task in ready:
-            try:
-                result = ray.get(task)
-                if result is not None:
-                    times_out.append(result[0])
-                    freqs_out.append(result[1])
-            except Exception as e:
-                for future in remaining_tasks:
-                    ray.cancel(future)
-                raise e
+            result = ray.get(task)
+            if result is not None:
+                times_out.append(result[0])
+                freqs_out.append(result[1])
             ncomplete += 1
             if opts.progressbar:
                 print(f"Completed: {ncomplete} / {nds}", end='\n', flush=True)
