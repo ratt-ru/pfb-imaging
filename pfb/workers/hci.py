@@ -125,13 +125,17 @@ def _hci(**kw):
     if opts.stack and opts.output_format == 'fits':
         raise RuntimeError("Can't stack in fits mode")
 
-    fds_store = DaskMSStore(f'{basename}.fds')
+    if opts.stack:
+        ext = 'zarr'
+    else:
+        ext = 'fds'
+    fds_store = DaskMSStore(f'{basename}.{ext}')
     if fds_store.exists():
         if opts.overwrite:
-            log.info(f"Overwriting {basename}.fds")
+            log.info(f"Overwriting {basename}.{ext}")
             fds_store.rm(recursive=True)
         else:
-            log.error_and_raise(f"{basename}.fds exists. "
+            log.error_and_raise(f"{basename}.{ext} exists. "
                                 "Set overwrite to overwrite it. ",
                                 RuntimeError)
 
@@ -717,6 +721,6 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
                          chunks=(1, spatial_chunk, spatial_chunk), dtype=np.float32))
 
     # Write scaffold and metadata to disk.
-    cds = f'{opts.output_filename}.fds'
+    cds = f'{opts.output_filename}.zarr'
     dummy_ds.to_zarr(cds, mode="w", compute=False)
     return cds, attrs
