@@ -614,8 +614,8 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     hdr['BTYPE'] = 'Intensity'
     hdr.update(wcs_hdr)
     hdr['TIMESCAL'] = delta_time
-    if opts.obslabel is not None:
-        hdr['OBSLABEL'] = opts.obslabel
+    if opts.obs_label is not None:
+        hdr['OBSLABEL'] = opts.obs_label
 
     # if we don't pass these into stokes2im they get overwritten
     attrs={
