@@ -471,22 +471,6 @@ def construct_mappings(ms_name,
            chan_widths, uv_max, antpos, poltype
 
 
-def restore_corrs(vis, ncorr):
-    return da.blockwise(_restore_corrs, ('row', 'chan', 'corr'),
-                        vis, ('row', 'chan'),
-                        ncorr, None,
-                        new_axes={"corr": ncorr},
-                        dtype=vis.dtype)
-
-
-def _restore_corrs(vis, ncorr):
-    model_vis = np.zeros(vis.shape+(ncorr,), dtype=vis.dtype)
-    model_vis[:, :, 0] = vis
-    if model_vis.shape[-1] > 1:
-        model_vis[:, :, -1] = vis
-    return model_vis
-
-
 def Gaussian2D(xin, yin, GaussPar=(1., 1., 0.), normalise=True, nsigma=5):
     '''
     xin         - grid of x coordinates
@@ -644,63 +628,6 @@ def fitcleanbeam(psf: np.ndarray,
         Gausspars.append([emaj * pixsize, emin * pixsize, PA])
 
     return Gausspars
-
-
-# utility to produce a model image from fitted components
-def model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
-    '''
-    comps - (order/nband, ncomps) array of fitted components or model vals
-            per band if no fitting was done.
-
-    freq - (nchan) array of output frequencies
-
-    mask - (nx, ny) bool array indicating where model is non-zero.
-           comps need to be aligned with this mask i.e.
-           Ix, Iy = np.where(mask) are the xy locations of non-zero pixels
-           model[:, Ix, Iy] = comps if no fitting was done
-
-    band_mapping - tuple containg the indices of bands mapping to the output.
-                   In the case of a single spectral window we usually have
-                   band_mapping = np.arange(nband).
-
-    ref_freq - reference frequency used during fitting i.e. we made the
-                design matrix using freq/ref_freq as coordinate
-
-    fitted - bool indicating if any fitting actually happened.
-    '''
-    return da.blockwise(_model_from_comps_wrapper, ('out', 'nx', 'ny'),
-                        comps, ('com', 'pix'),
-                        freq, ('chan',),
-                        mask, ('nx', 'ny'),
-                        band_mapping, ('out',),
-                        ref_freq, None,
-                        fitted, None,
-                        align_arrays=False,
-                        dtype=comps.dtype)
-
-
-def _model_from_comps_wrapper(comps, freq, mask, band_mapping, ref_freq, fitted):
-    return _model_from_comps(comps[0][0], freq[0], mask, band_mapping, ref_freq, fitted)
-
-
-def _model_from_comps(comps, freq, mask, band_mapping, ref_freq, fitted):
-    freqo = freq[band_mapping]
-    nband = freqo.size
-    nx, ny = mask.shape
-    model = np.zeros((nband, nx, ny), dtype=comps.dtype)
-    if fitted:
-        order, npix = comps.shape
-        nband = freqo.size
-        nx, ny = mask.shape
-        model = np.zeros((nband, nx, ny), dtype=comps.dtype)
-        w = (freqo / ref_freq).reshape(nband, 1)
-        Xdes = np.tile(w, order) ** np.arange(0, order)
-        beta_rec = Xdes.dot(comps)
-        model[:, mask] = beta_rec
-    else:
-        model[:, mask] = comps[band_mapping]
-
-    return model
 
 
 def init_mask(mask, model, output_type, log):
@@ -1036,23 +963,6 @@ def set_image_size(
 
     return nx, ny, nx_psf, ny_psf, cell_N, cell_rad
 
-def taperf(shape, taper_width):
-    height, width = shape
-    array = np.ones((height, width))
-
-    # Create 1D taper for both dimensions
-    taper_x = np.ones(width)
-    taper_y = np.ones(height)
-
-    # Apply cosine taper to the edges
-    taper_x[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
-    taper_x[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
-
-    taper_y[:taper_width] = 0.5 * (1 + np.cos(np.linspace(1.1*np.pi, 2*np.pi, taper_width)))
-    taper_y[-taper_width:] = 0.5 * (1 + np.cos(np.linspace(0, 0.9*np.pi, taper_width)))
-
-    return np.outer(taper_y, taper_x)
-
 
 @njit(parallel=True)
 def parallel_standard_normal(shape):
@@ -1079,33 +989,6 @@ def taperf(shape, taper_width):
 @njit(nogil=True, cache=True, inline='always')
 def _es_kernel(x, beta, k):
     return np.exp(beta*k*(np.sqrt((1-x)*(1+x)) - 1))
-
-
-def dynamic_spectrum(time, freq, transient):
-    '''
-    Inputs:
-        time      - time in seconds
-        freq      - frequency in Hz
-        transient - dict containing transient object parameters
-
-    Outputs:
-        dynamic spectrum for transient
-    '''
-    type = transient['type']
-    I0 = transient['I0']
-    alpha = transient['alpha']
-    nu0 = transient['nu0']
-    spectrum = I0 * (freq[None, :]/nu0)**alpha
-    if type.lower()=='periodic':
-        period = transient['period']
-        phase0 = transient['phase0']
-        dspec = spectrum * np.cos(2*np.pi*(time[:, None] - phase0)/period)
-    elif type.lower()=='flare':
-        sigma = transient['sigma']
-        t0 = transient['t0']
-        dspec = spectrum * np.exp(-0.5*((time[:, None] - t0)/sigma)**2)
-
-    return dspec
 
 
 def wplanar(uvw, threshold=1e-5):

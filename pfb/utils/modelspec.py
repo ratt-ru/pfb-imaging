@@ -326,13 +326,17 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
         return image_in
 
 
-def model_from_mds(mds_name):
+def model_from_mds(mds_name, freqs=None):
     '''
     Evaluate component model at the original resolution
     '''
     mds = xr.open_zarr(mds_name, chunks=None)
+    if freqs is None:
+        freqs = mds.freqs.values
+    else:
+        freqs = np.atleast_1d(freqs)
     return eval_coeffs_to_cube(mds.times.values,
-                               mds.freqs.values,
+                               freqs,
                                mds.npix_x, mds.npix_y,
                                mds.coefficients.values,
                                mds.location_x.values, mds.location_y.values,

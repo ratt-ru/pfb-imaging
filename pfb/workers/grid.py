@@ -4,6 +4,7 @@ from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+import ray
 
 log = pfb_logging.get_logger('GRID')
 
@@ -65,19 +66,18 @@ def grid(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    from pfb import set_client
-    if opts.nworkers > 1:
-        client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
-        from distributed import as_completed
+    if opts.nworkers==1:
+        renv = {"env_vars": {"RAY_DEBUG_POST_MORTEM": "1"}}
     else:
-        log.info("Faking client")
-        from pfb.utils.dist import fake_client
-        client = fake_client()
-        names = [0]
-        as_completed = lambda x: x
+        renv = None
+
+    ray.init(num_cpus=opts.nworkers,
+             logging_level='INFO',
+             ignore_reinit_error=True,
+             runtime_env=renv)
 
     from pfb.utils.naming import xds_from_url
-    from pfb.utils.fits import dds2fits
+    from pfb.utils.fits import rdds2fits
 
     ti = time.time()
     psfpars_mfs = _grid(**opts)
@@ -85,11 +85,11 @@ def grid(**kw):
     dds, dds_list = xds_from_url(dds_store.url)
 
     # convert to fits files
-    futures = []
+    tasks = []
     if opts.fits_mfs or opts.fits_cubes:
         log.info(f"Writing fits files to {fits_oname}_{opts.suffix}")
         if opts.dirty:
-            fut = client.submit(dds2fits,
+            fut = rdds2fits.remote(
                                 dds_list,
                                 'DIRTY',
                                 f'{fits_oname}_{opts.suffix}',
@@ -98,9 +98,9 @@ def grid(**kw):
                                 do_mfs=opts.fits_mfs,
                                 do_cube=opts.fits_cubes,
                                 psfpars_mfs=psfpars_mfs)
-            futures.append(fut)
+            tasks.append(fut)
         if opts.psf:
-            fut = client.submit(dds2fits,
+            fut = rdds2fits.remote(
                                 dds_list,
                                 'PSF',
                                 f'{fits_oname}_{opts.suffix}',
@@ -109,9 +109,9 @@ def grid(**kw):
                                 do_mfs=opts.fits_mfs,
                                 do_cube=opts.fits_cubes,
                                 psfpars_mfs=psfpars_mfs)
-            futures.append(fut)
+            tasks.append(fut)
         if opts.residual and 'RESIDUAL' in dds[0]:
-            fut = client.submit(dds2fits,
+            fut = rdds2fits.remote(
                                 dds_list,
                                 'MODEL',
                                 f'{fits_oname}_{opts.suffix}',
@@ -120,9 +120,9 @@ def grid(**kw):
                                 do_mfs=opts.fits_mfs,
                                 do_cube=opts.fits_cubes,
                                 psfpars_mfs=psfpars_mfs)
-            futures.append(fut)
+            tasks.append(fut)
         if 'MODEL' in dds[0]:
-            fut = client.submit(dds2fits,
+            fut = rdds2fits.remote(
                                 dds_list,
                                 'RESIDUAL',
                                 f'{fits_oname}_{opts.suffix}',
@@ -131,9 +131,9 @@ def grid(**kw):
                                 do_mfs=opts.fits_mfs,
                                 do_cube=opts.fits_cubes,
                                 psfpars_mfs=psfpars_mfs)
-            futures.append(fut)
+            tasks.append(fut)
         if opts.noise:
-            fut = client.submit(dds2fits,
+            fut = rdds2fits.remote(
                                 dds_list,
                                 'NOISE',
                                 f'{fits_oname}_{opts.suffix}',
@@ -142,10 +142,10 @@ def grid(**kw):
                                 do_mfs=opts.fits_mfs,
                                 do_cube=opts.fits_cubes,
                                 psfpars_mfs=psfpars_mfs)
-            futures.append(fut)
+            tasks.append(fut)
 
         if 'BEAM' in dds[0]:
-            fut = client.submit(dds2fits,
+            fut = rdds2fits.remote(
                                 dds_list,
                                 'BEAM',
                                 f'{fits_oname}_{opts.suffix}',
@@ -154,22 +154,26 @@ def grid(**kw):
                                 do_mfs=opts.fits_mfs,
                                 do_cube=opts.fits_cubes,
                                 psfpars_mfs=psfpars_mfs)
-            futures.append(fut)
+            tasks.append(fut)
 
-        for fut in as_completed(futures):
-            try:
-                column = fut.result()
-            except:
-                continue
-            log.info(f'Done writing {column}')
+        remaining_tasks = tasks.copy()
+        while remaining_tasks:
+            # Wait for at least 1 task to complete
+            ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
+
+            # Process the completed task
+            for task in ready:
+                try:
+                    column = ray.get(task)
+                    log.info(f'Done writing {column}')
+                
+                # LB - why is this except here?
+                except Exception as e:
+                    continue
 
         log.info(f"All done after {time.time() - ti}s")
 
-    if opts.nworkers > 1:
-        try:
-            client.close()
-        except Exception as e:
-            pass
+    ray.shutdown()
 
 def _grid(**kw):
     opts = OmegaConf.create(kw)
@@ -181,20 +185,11 @@ def _grid(**kw):
     import fsspec
     from daskms.fsspec_store import DaskMSStore
     from pfb.utils.misc import set_image_size, fitcleanbeam
-    from pfb.operators.gridder import image_data_products, wgridder_conventions
+    from pfb.operators.gridder import rimage_data_products, wgridder_conventions
     import xarray as xr
     from pfb.utils.astrometry import get_coordinates
     from africanus.coordinates import radec_to_lm
     from pfb.utils.naming import xds_from_url, cache_opts, get_opts
-
-    try:
-        client = get_client()
-        names = list(client.scheduler_info()['workers'].keys())
-    except:
-        from pfb.utils.dist import fake_client
-        client = fake_client()
-        names = [0]
-        as_completed = lambda x: x
 
     basename = opts.output_filename
 
@@ -364,8 +359,8 @@ def _grid(**kw):
 
         log.info(f"Loading model from {opts.transfer_model_from}. ")
 
-    futures = []
-    for wname, (tbid, ds_dct) in zip(cycle(names), xds_dct.items()):
+    tasks = []
+    for tbid, ds_dct in xds_dct.items():
         bandid = tbid[-4:]
         timeid = tbid[4:8]
         ra = ds_dct['radec'][0]
@@ -461,7 +456,7 @@ def _grid(**kw):
         else:
             model = None
 
-        fut = client.submit(image_data_products,
+        task = rimage_data_products.remote(
                             dsl,
                             out_ds_name,
                             nx, ny,
@@ -482,28 +477,33 @@ def _grid(**kw):
                             do_weight=opts.weight,
                             do_residual=opts.residual,
                             do_noise=opts.noise,
-                            do_beam=opts.beam,
-                            workers=wname)
-        futures.append(fut)
+                            do_beam=opts.beam)
+        tasks.append(task)
 
     residual_mfs = {}
     wsum = {}
     if opts.psf:
         psf_mfs = {}
-    nds = len(futures)
+    nds = len(tasks)
     n_launched = 1
-    for fut in as_completed(futures):
-        print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
-        outputs = fut.result()
-        timeid = outputs['timeid']
-        residual_mfs.setdefault(timeid, np.zeros((ncorr, nx, ny), dtype=float))
-        residual_mfs[timeid] += outputs['residual']
-        wsum.setdefault(timeid, np.zeros(ncorr, dtype=float))
-        wsum[timeid] += outputs['wsum']
-        if opts.psf:
-            psf_mfs.setdefault(timeid, np.zeros((ncorr, nx_psf, ny_psf), dtype=float))
-            psf_mfs[timeid] += outputs['psf']
-        n_launched += 1
+    remaining_tasks = tasks.copy()
+    while remaining_tasks:
+        # Wait for at least 1 task to complete
+        ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
+
+        # Process the completed task
+        for task in ready:
+            print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
+            outputs = ray.get(task)
+            timeid = outputs['timeid']
+            residual_mfs.setdefault(timeid, np.zeros((ncorr, nx, ny), dtype=float))
+            residual_mfs[timeid] += outputs['residual']
+            wsum.setdefault(timeid, np.zeros(ncorr, dtype=float))
+            wsum[timeid] += outputs['wsum']
+            if opts.psf:
+                psf_mfs.setdefault(timeid, np.zeros((ncorr, nx_psf, ny_psf), dtype=float))
+                psf_mfs[timeid] += outputs['psf']
+            n_launched += 1
 
     print("\n")  # after progressbar above
 

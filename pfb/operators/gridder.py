@@ -11,6 +11,7 @@ from numba import njit, prange, literally, types
 from numba.extending import overload
 import concurrent.futures as cf
 import xarray as xr
+import ray
 import dask.array as da
 from ducc0.wgridder.experimental import vis2dirty, dirty2vis
 from ducc0.fft import r2c
@@ -314,6 +315,10 @@ def _comps2vis_impl(uvw,
 
     return vis
 
+
+@ray.remote
+def rimage_data_products(*args, **kwargs):
+    return image_data_products(*args, **kwargs)
 
 def image_data_products(dsl,
                         dsp,

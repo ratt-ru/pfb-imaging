@@ -6,6 +6,7 @@ from casacore.quanta import quantity
 from astropy.time import Time
 from pfb.utils.naming import xds_from_list
 import xarray as xr
+import ray
 
 
 def to4d(data):
@@ -228,6 +229,9 @@ def create_beams_table(beams_data, cell2deg):
 
     return beams_hdu
 
+@ray.remote
+def rdds2fits(*args, **kwargs):
+    return dds2fits(*args, **kwargs)
 
 def dds2fits(dsl, column, outname, norm_wsum=True,
              otype=np.float32, nthreads=1,
