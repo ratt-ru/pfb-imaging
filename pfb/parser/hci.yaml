@@ -244,7 +244,7 @@ inputs:
 
 outputs:
   dir-out:
-    implicit: '{current.output-filename}_{current.product}.fds'
+    implicit: ='{current.output-filename}_{current.product}' + IF(current.stack, '.zarr', '.fds')
     dtype: Directory
     must_exist: true
     mkdir: false
