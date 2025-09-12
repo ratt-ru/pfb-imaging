@@ -232,7 +232,7 @@ inputs:
     default: false
     info:
       Stack everything into a single xarray dataset
-  obslabel:
+  obs-label:
     dtype: str
     info:
       Optional observation label to include in the stacked cube

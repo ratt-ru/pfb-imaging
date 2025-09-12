@@ -6,7 +6,7 @@ import xarray as xr
 from pfb.utils.weighting import (_compute_counts, counts_to_weights,
                                  weight_data, filter_extreme_counts)
 from pfb.utils.beam import reproject_and_interp_beam
-from pfb.utils.fits import set_wcs, save_fits, add_beampars
+from pfb.utils.fits import set_wcs, save_fits
 from pfb.utils.misc import fitcleanbeam
 from pfb.operators.gridder import wgridder_conventions
 from casacore.quanta import quantity
@@ -15,20 +15,12 @@ from ducc0.fft import good_size
 from pfb.utils.astrometry import get_coordinates
 from scipy.constants import c as lightspeed
 import gc
-iFs = np.fft.ifftshift
-Fs = np.fft.fftshift
 from astropy import units
 from astropy.coordinates import SkyCoord
 from africanus.coordinates import radec_to_lm
-from katbeam import JimBeam
-from scipy import ndimage
-from reproject import reproject_interp
-from astropy.wcs import WCS
 
-@ray.remote
-def compute_dataset(dset):
-    """Ray remote function to compute dataset"""
-    return dset
+iFs = np.fft.ifftshift
+Fs = np.fft.fftshift
 
 @ray.remote
 def safe_stokes_image(*args, **kwargs):
@@ -78,8 +70,12 @@ def stokes_image(
         real_type = np.float64
         complex_type = np.complex128
 
-    ds = ray.get(compute_dataset.remote(ds))
-    jones = ray.get(compute_dataset.remote(jones))
+    # LB - is this the correct way to do this? 
+    # we don't want it to end up in the distributed object store 
+    ds = ds.load(scheduler='sync')
+    if jones is not None:
+        # we do it this way to force using synchronous scheduler
+        jones = jones.load(scheduler='sync').values
     
     data = getattr(ds, dc1).values
     ds = ds.drop_vars(dc1)
