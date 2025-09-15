@@ -16,15 +16,6 @@ def test_sara(ms_name):
     robustness = None
     do_wgridding = True
 
-    # we need the client for the init step
-    from dask.distributed import LocalCluster, Client
-    cluster = LocalCluster(processes=False,
-                           n_workers=1,
-                           threads_per_worker=1,
-                           memory_limit=0,  # str(mem_limit/nworkers)+'GB'
-                           asynchronous=False)
-    client = Client(cluster, direct_to_workers=False)
-
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
@@ -41,6 +32,18 @@ def test_sara(ms_name):
     from pfb.workers.grid import _grid
     from pfb.workers.sara import _sara
     from pfb.workers.degrid import _degrid
+    import ray
+
+    renv = {"env_vars":{
+        "JAX_ENABLE_X64": 'True',
+        "JAX_LOGGING_LEVEL": "ERROR",
+        "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*"
+    }}
+
+    ray.init(num_cpus=2,
+             logging_level='INFO',
+             ignore_reinit_error=True,
+             runtime_env=renv)
 
 
     test_dir = Path(ms_name).resolve().parent

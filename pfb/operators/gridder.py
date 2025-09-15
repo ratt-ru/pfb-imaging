@@ -692,7 +692,8 @@ def compute_residual(dsl,
                      epsilon=1e-7,
                      do_wgridding=True,
                      double_accum=True,
-                     verbosity=1):
+                     verbosity=1,
+                     async_write=True):
     '''
     Function to compute residual and write it to disk
     '''
@@ -783,8 +784,12 @@ def compute_residual(dsl,
     # save
     # LB - Why is twrite still siginificant?
     ti = time()
-    with cf.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(ds.to_zarr, output_name, mode='a')
+    if async_write:
+        with cf.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(ds.to_zarr, output_name, mode='a')
+    else:
+        ds.to_zarr(output_name, mode='a')
+        future = None
     twrite = time() - ti
 
     ttot = time() - tii

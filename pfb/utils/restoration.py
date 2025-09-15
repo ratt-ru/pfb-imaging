@@ -1,8 +1,11 @@
 import numpy as np
 from pfb.utils.misc import convolve2gaussres
-from pfb.utils.fits import set_wcs, add_beampars, save_fits
 from pfb.utils.naming import xds_from_list
+import ray
 
+@ray.remote
+def rrestore_image(*args, **kwargs):
+    return restore_image(*args, **kwargs)
 
 def restore_image(ds_name,
                   model_name,

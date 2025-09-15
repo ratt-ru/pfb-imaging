@@ -13,7 +13,8 @@ log = pfb_logging.get_logger('INIT')
 
 @click.command(context_settings={'show_default': True})
 @clickify_parameters(schema.init)
-def init(**kw):
+@click.pass_context
+def init(ctx, **kw):
     '''
     Initialise Stokes data products for imaging
     '''
@@ -70,10 +71,10 @@ def init(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
+    # these are passed through to child Ray processes
+    renv = {"env_vars": ctx.obj["env_vars"]}
     if opts.nworkers==1:
-        renv = {"env_vars": {"RAY_DEBUG_POST_MORTEM": "1"}}
-    else:
-        renv = None
+        renv["env_vars"]["RAY_DEBUG_POST_MORTEM"] = "1"
 
     ray.init(num_cpus=opts.nworkers,
              logging_level='INFO',

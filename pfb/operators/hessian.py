@@ -427,20 +427,6 @@ def hessian_jax(nx, ny,
                           norm='backward')[:, 0:nx, 0:ny]
     return xout + eta*x
 
-@partial(jax.jit, static_argnums=(0,1,2,3,4))
-def hessian_jax(nx, ny,
-                nx_psf, ny_psf,
-                eta,
-                psfhat,
-                x):
-    psfh = jax.lax.stop_gradient(psfhat)
-    xhat = jnp.fft.rfft2(x,
-                         s=(nx_psf, ny_psf),
-                         norm='backward')
-    xout = jnp.fft.irfft2(xhat*psfh,
-                          s=(nx_psf, ny_psf),
-                          norm='backward')[:, 0:nx, 0:ny]
-    return xout + eta*x
 
 @partial(jax.jit, static_argnums=(0,1,2,3,4))
 def fshessian_jax(nx, ny,

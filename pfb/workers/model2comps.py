@@ -3,11 +3,26 @@ from contextlib import ExitStack
 import click
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
+import psutil
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+from pfb.utils.naming import set_output_names
+from pfb import set_envs
+from ducc0.misc import resize_thread_pool
+import time
+import os
+import numpy as np
+from pfb.utils.naming import xds_from_url
+from pfb.utils.modelspec import fit_image_cube, eval_coeffs_to_slice
+from pfb.utils.fits import set_wcs, save_fits
+import xarray as xr
+import fsspec as fs
+from daskms.fsspec_store import DaskMSStore
+import json
+from glob import glob
+from astropy.io import fits
 
 log = pfb_logging.get_logger('MODEL2COMPS')
-
 
 @click.command(context_settings={'show_default': True})
 @clickify_parameters(schema.model2comps)
@@ -17,10 +32,8 @@ def model2comps(**kw):
     '''
     opts = OmegaConf.create(kw)
 
-    from pfb.utils.naming import set_output_names
     opts, basedir, oname = set_output_names(opts)
 
-    import psutil
     nthreads = psutil.cpu_count(logical=True)
     ncpu = psutil.cpu_count(logical=False)
     if opts.nthreads is None:
@@ -29,12 +42,10 @@ def model2comps(**kw):
 
     OmegaConf.set_struct(opts, True)
 
-    from pfb import set_envs
-    from ducc0.misc import resize_thread_pool, thread_pool_size
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    import time
+    
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/model2comps_{timestamp}.log'
     pfb_logging.log_to_file(logname)
@@ -55,20 +66,6 @@ def model2comps(**kw):
 def _model2comps(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
-
-    import os
-    import numpy as np
-    from pfb.utils.naming import xds_from_url, xds_from_list
-    from africanus.constants import c as lightspeed
-    from pfb.utils.modelspec import fit_image_cube, eval_coeffs_to_slice
-    from pfb.utils.fits import set_wcs, save_fits
-    from pfb.utils.misc import norm_diff
-    import xarray as xr
-    import fsspec as fs
-    from daskms.fsspec_store import DaskMSStore
-    import json
-    from casacore.quanta import quantity
-    from pfb.utils.modelspec import eval_coeffs_to_slice
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
@@ -291,6 +288,9 @@ def _model2comps(**kw):
                                          cell_rad, cell_rad,
                                          x0, y0)
 
+    # can't import this at the top of the file due to 
+    # https://github.com/ratt-ru/pfb-imaging/issues/145
+    from pfb.utils.misc import norm_diff
     eps = norm_diff(modelo, model[0])
     log.info(f"Fractional interpolation error is {eps:.3e}")
 
@@ -332,21 +332,6 @@ def _model2comps(**kw):
 def _model2comps_fits(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
-
-    import os
-    import numpy as np
-    from africanus.constants import c as lightspeed
-    from pfb.utils.modelspec import fit_image_cube
-    from pfb.utils.fits import set_wcs, save_fits, load_fits
-    from pfb.utils.misc import eval_coeffs_to_slice, norm_diff
-    import xarray as xr
-    import fsspec as fs
-    from daskms.fsspec_store import DaskMSStore
-    import json
-    from casacore.quanta import quantity
-    from pfb.utils.misc import eval_coeffs_to_slice
-    from astropy.io import fits
-    from glob import glob
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:

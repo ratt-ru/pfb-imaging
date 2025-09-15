@@ -1,4 +1,4 @@
-# flake8: noqa
+import os
 import click
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
@@ -8,15 +8,12 @@ import ray
 
 log = pfb_logging.get_logger('GRID')
 
-
 @click.command(context_settings={'show_default': True})
 @clickify_parameters(schema.grid)
-def grid(**kw):
+@click.pass_context
+def grid(ctx, **kw):
     '''
     Compute imaging weights and create a dirty image, psf etc.
-    By default only the MFS images are converted to fits files.
-    Set the --fits-cubes flag to also produce fits cubes.
-
     '''
     opts = OmegaConf.create(kw)
     from pfb.utils.naming import set_output_names
@@ -62,14 +59,14 @@ def grid(**kw):
     pfb_logging.log_options_dict(log, opts)
 
     from pfb import set_envs
-    from ducc0.misc import resize_thread_pool, thread_pool_size
+    from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
+    # these are passed through to child Ray processes
+    renv = {"env_vars": ctx.obj["env_vars"]}
     if opts.nworkers==1:
-        renv = {"env_vars": {"RAY_DEBUG_POST_MORTEM": "1"}}
-    else:
-        renv = None
+        renv["env_vars"]["RAY_DEBUG_POST_MORTEM"] = "1"
 
     ray.init(num_cpus=opts.nworkers,
              logging_level='INFO',
@@ -447,7 +444,7 @@ def _grid(**kw):
             model = model[None, :, :]  # hack to get the corr axis
 
         elif from_cache:
-            if opts.use_best_model and 'BEST_MODEL' in out_ds:
+            if opts.use_best_model and 'MODEL_BEST' in out_ds:
                 model = out_ds.MODEL_BEST.values
             elif 'MODEL' in out_ds:
                 model = out_ds.MODEL.values
@@ -493,7 +490,7 @@ def _grid(**kw):
 
         # Process the completed task
         for task in ready:
-            print(f"\rProcessing: {n_launched}/{nds}", end='', flush=True)
+            print(f"\rProcessing: {n_launched}/{nds}", end='\n', flush=True)
             outputs = ray.get(task)
             timeid = outputs['timeid']
             residual_mfs.setdefault(timeid, np.zeros((ncorr, nx, ny), dtype=float))
@@ -504,8 +501,6 @@ def _grid(**kw):
                 psf_mfs.setdefault(timeid, np.zeros((ncorr, nx_psf, ny_psf), dtype=float))
                 psf_mfs[timeid] += outputs['psf']
             n_launched += 1
-
-    print("\n")  # after progressbar above
 
     for timeid in residual_mfs.keys():
         # get MFS PSFPARSN
