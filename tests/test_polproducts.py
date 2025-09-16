@@ -2,9 +2,6 @@ import pytest
 from pathlib import Path
 from xarray import Dataset
 from collections import namedtuple
-import dask
-import dask.array as da
-from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 @pmp('do_gains', (False,True))
@@ -16,6 +13,8 @@ def test_polproducts(do_gains, ms_name):
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
+    import dask
+    import dask.array as da
     from daskms import xds_from_ms, xds_from_table, xds_to_table
     from daskms.experimental.zarr import xds_to_zarr
     from africanus.constants import c as lightspeed
