@@ -2,9 +2,6 @@ import pytest
 from pathlib import Path
 from xarray import Dataset
 from collections import namedtuple
-import dask
-import dask.array as da
-from daskms.experimental.zarr import xds_to_zarr, xds_from_zarr
 pmp = pytest.mark.parametrize
 
 @pmp('do_gains', (False,True))
@@ -12,24 +9,30 @@ def test_polproducts(do_gains, ms_name):
     '''
     Tests polarisation products
     '''
-    # we need the client for the init step
-    from dask.distributed import LocalCluster, Client
-    cluster = LocalCluster(processes=False,
-                           n_workers=1,
-                           threads_per_worker=1,
-                           memory_limit=0,  # str(mem_limit/nworkers)+'GB'
-                           asynchronous=False)
-    client = Client(cluster, direct_to_workers=False)
 
     import numpy as np
     np.random.seed(420)
     from numpy.testing import assert_allclose
+    import dask
+    import dask.array as da
     from daskms import xds_from_ms, xds_from_table, xds_to_table
     from daskms.experimental.zarr import xds_to_zarr
     from africanus.constants import c as lightspeed
     from ducc0.wgridder.experimental import dirty2vis
     from pfb.utils.naming import xds_from_url
     from pfb.operators.gridder import wgridder_conventions
+    import ray
+
+    renv = {"env_vars":{
+        "JAX_ENABLE_X64": 'True',
+        "JAX_LOGGING_LEVEL": "ERROR",
+        "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*"
+    }}
+
+    ray.init(num_cpus=2,
+             logging_level='INFO',
+             ignore_reinit_error=True,
+             runtime_env=renv)
 
 
     test_dir = Path(ms_name).resolve().parent

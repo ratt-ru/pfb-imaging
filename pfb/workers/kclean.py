@@ -99,6 +99,9 @@ def _kclean(**kw):
     from pfb.operators.gridder import compute_residual
     from scipy import ndimage
     from pfb.utils.modelspec import fit_image_cube
+    import concurrent.futures as cf
+    from numba import set_num_threads
+    set_num_threads(opts.nthreads)
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
@@ -210,7 +213,6 @@ def _kclean(**kw):
                        cgrf=opts.cg_report_freq,
                        taper_width=np.minimum(int(0.1*nx), 32))
 
-
     log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
     for k in range(iter0, iter0 + opts.niter):
         log.info("Cleaning")
@@ -224,6 +226,9 @@ def _kclean(**kw):
                           verbosity=opts.verbose,
                           report_freq=opts.report_freq,
                           nthreads=opts.nthreads)
+        
+        
+        
         model += x
 
         # write component model
@@ -280,7 +285,7 @@ def _kclean(**kw):
         log.info(f'Computing residual')
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
-            resid, _ = compute_residual(ds_name,
+            resid, fut = compute_residual(ds_name,
                                      nx, ny,
                                      cell_rad, cell_rad,
                                      ds_name,
@@ -288,7 +293,8 @@ def _kclean(**kw):
                                      nthreads=opts.nthreads,
                                      epsilon=opts.epsilon,
                                      do_wgridding=opts.do_wgridding,
-                                     double_accum=opts.double_accum)
+                                     double_accum=opts.double_accum,
+                                     async_write=False)
             residual[b] = resid[0]  # remove corr axis
         residual /= wsum
         residual_mfs = np.sum(residual, axis=0)
@@ -359,7 +365,8 @@ def _kclean(**kw):
                                         nthreads=opts.nthreads,
                                         epsilon=opts.epsilon,
                                         do_wgridding=opts.do_wgridding,
-                                        double_accum=opts.double_accum)
+                                        double_accum=opts.double_accum,
+                                        async_write=False)
                 residual[b] = resid[0]  # remove corr axis
             residual /= wsum
             residual_mfs = np.sum(residual, axis=0)
@@ -412,15 +419,6 @@ def _kclean(**kw):
             if diverge_count > 3:
                 log.info("Algorithm is diverging. Terminating.")
                 break
-
-        # keep track of total number of iterations
-        for ds_name, ds in zip(dds_list, dds):
-            b = int(ds.bandid)
-            ds = ds.assign_attrs(**{
-                'niter': k,
-            })
-
-            ds.to_zarr(ds_name, mode='a')
 
     return
 

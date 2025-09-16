@@ -138,7 +138,8 @@ def _compute_counts(uvw, freq, mask, wgt, nx, ny,
                 
                 # LB - is there an easier check for this?
                 if (u_idx<0) or (u_idx>nx) or (v_idx<0) or (v_idx>ny):
-                    print('uv out of bounds in cc')
+                    # out of bounds so continue. 
+                    # raising an error means we can't grid at sub-Nyquist
                     continue
 
                 # nearest neighbour
@@ -227,7 +228,8 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny,
             v_idx = np.int32(np.floor(vg))
 
             if (u_idx<0) or (u_idx>nx) or (v_idx<0) or (v_idx>ny):
-                print('uv is out of bounds in c2w')
+                # out of bounds so continue. 
+                # raising an error means we can't grid at sub-Nyquist
                 continue
 
             # counts can be zero if there are zero weights

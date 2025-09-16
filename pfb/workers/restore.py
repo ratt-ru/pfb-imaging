@@ -1,26 +1,37 @@
-# flake8: noqa
-from contextlib import ExitStack
 import click
 from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+from pfb.utils.naming import set_output_names
+import psutil
+from pfb import set_envs
+from ducc0.misc import resize_thread_pool
+import time
+import ray
+import numpy as np
+from pfb.utils.naming import xds_from_url, xds_from_list
+from pfb.utils.fits import rdds2fits
+from pfb.utils.restoration import rrestore_image
+from daskms.fsspec_store import DaskMSStore
+from pfb.utils.naming import get_opts
 
 log = pfb_logging.get_logger('RESTORE')
 
 
 @click.command(context_settings={'show_default': True})
 @clickify_parameters(schema.restore)
-def restore(**kw):
+@click.pass_context
+def restore(ctx, **kw):
     '''
     Create fits image cubes from data products (eg. restored images).
     '''
     opts = OmegaConf.create(kw)
 
-    from pfb.utils.naming import set_output_names
+    
     opts, basedir, oname = set_output_names(opts)
 
-    import psutil
+    
     nthreads = psutil.cpu_count(logical=True)
     ncpu = psutil.cpu_count(logical=False)
     if opts.nthreads is None:
@@ -29,12 +40,11 @@ def restore(**kw):
 
     OmegaConf.set_struct(opts, True)
 
-    from pfb import set_envs
-    from ducc0.misc import resize_thread_pool, thread_pool_size
+    
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
-    import time
+    
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{opts.log_directory}/restore_{timestamp}.log'
     pfb_logging.log_to_file(logname)
@@ -42,45 +52,26 @@ def restore(**kw):
 
     pfb_logging.log_options_dict(log, opts)
 
-    with ExitStack() as stack:
-        if opts.nworkers > 1:
-            from pfb import set_client
-            client = set_client(opts.nworkers, log, stack=stack, client_log_level=opts.log_level)
-        else:
-            log.info("Faking client")
-            from pfb.utils.dist import fake_client
-            client = fake_client()
-            names = [0]
-        ti = time.time()
-        _restore(**opts)
+    # these are passed through to child Ray processes
+    renv = {"env_vars": ctx.obj["env_vars"]}
+    if opts.nworkers==1:
+        renv["env_vars"]["RAY_DEBUG_POST_MORTEM"] = "1"
+
+    ray.init(num_cpus=opts.nworkers,
+             logging_level='INFO',
+             ignore_reinit_error=True,
+             runtime_env=renv)
+
+    ti = time.time()
+    _restore(**opts)
 
     log.info(f"All done after {time.time() - ti}s")
+
+    ray.shutdown()
 
 def _restore(**kw):
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
-
-
-    import numpy as np
-    from pfb.utils.naming import xds_from_url, xds_from_list
-    from pfb.utils.fits import dds2fits
-    from pfb.utils.misc import Gaussian2D, fitcleanbeam, convolve2gaussres
-    from ducc0.fft import c2c
-    from pfb.utils.restoration import restore_image
-    from itertools import cycle
-    from daskms.fsspec_store import DaskMSStore
-    from pfb.utils.naming import get_opts
-    from distributed import wait
-    try:
-        from distributed import get_client
-        client = get_client()
-        names = list(client.scheduler_info()['workers'].keys())
-        from distributed import as_completed
-    except:
-        from pfb.utils.dist import fake_client
-        client = fake_client()
-        names = [0]
-        as_completed = lambda x: x
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
@@ -101,7 +92,7 @@ def _restore(**kw):
         psfpars_mfs = get_opts(dds_store.url,
                             protocol,
                             name='psfparsn_mfs.pkl')
-    except:
+    except Exception as e:
         log.error_and_raise("Could not load MFS PSF pamaters. "
                             "Run grid worker with psf=true to remake.",
                             RuntimeError)
@@ -164,20 +155,19 @@ def _restore(**kw):
         gaussparf = [gaussparf_mfs]*ncorr
 
     # create restored images
-    futrestore = []
+    tasksiI = []
     for ds_name in dds_list:
-        fut = client.submit(restore_image,
+        task = rrestore_image.remote(
                             ds_name,
                             opts.model_name,
                             opts.residual_name,
                             gaussparf=gaussparf,
                             nthreads=opts.nthreads)
-        futrestore.append(fut)
+        tasksiI.append(task)
 
-    futures = []
+    tasks = []
     if 'd' in opts.outputs.lower():
-        fut = client.submit(
-                        dds2fits,
+        task = rdds2fits.remote(
                         dds_list,
                         'DIRTY',
                         f'{fits_oname}_{opts.suffix}',
@@ -186,11 +176,10 @@ def _restore(**kw):
                         do_mfs='d' in opts.outputs,
                         do_cube='D' in opts.outputs,
                         psfpars_mfs=psfpars_mfs)
-        futures.append(fut)
+        tasks.append(task)
 
     if 'm' in opts.outputs.lower():
-        fut = client.submit(
-                        dds2fits,
+        task = rdds2fits.remote(
                         dds_list,
                         opts.model_name,
                         f'{fits_oname}_{opts.suffix}',
@@ -199,11 +188,10 @@ def _restore(**kw):
                         do_mfs='m' in opts.outputs,
                         do_cube='M' in opts.outputs,
                         psfpars_mfs=psfpars_mfs)
-        futures.append(fut)
+        tasks.append(task)
 
     if 'r' in opts.outputs.lower():
-        fut = client.submit(
-                        dds2fits,
+        task = rdds2fits.remote(
                         dds_list,
                         opts.residual_name,
                         f'{fits_oname}_{opts.suffix}',
@@ -212,14 +200,13 @@ def _restore(**kw):
                         do_mfs='r' in opts.outputs,
                         do_cube='R' in opts.outputs,
                         psfpars_mfs=psfpars_mfs)
-        futures.append(fut)
+        tasks.append(task)
 
-    if opts.nworkers > 1:
-        wait(futrestore)
+    # we need to wait for tasksiI before rendering restored to fits 
+    ray.get(tasksiI)
 
     if 'i' in opts.outputs.lower():
-        fut = client.submit(
-                        dds2fits,
+        task = rdds2fits.remote(
                         dds_list,
                         'IMAGE',
                         f'{fits_oname}_{opts.suffix}',
@@ -228,7 +215,7 @@ def _restore(**kw):
                         do_mfs='i' in opts.outputs,
                         do_cube='I' in opts.outputs,
                         psfpars_mfs=psfpars_mfs)
-        futures.append(fut)
+        tasks.append(task)
 
     # TODO(LB) - we may want to add these outputs back in, at least the useful ones
     # if 'f' in opts.outputs:
@@ -279,7 +266,7 @@ def _restore(**kw):
     #               hdr,
     #               overwrite=opts.overwrite)
 
-    if opts.nworkers > 1:
-        wait(futures)
+    # wait for all tasks to finish before returning
+    ray.get(tasks)
 
     return

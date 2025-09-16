@@ -419,6 +419,7 @@ def _sara(**kw):
             coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model.mds",
                                   mode='w')
 
+            # this is to make the model consistent with the fitted polynomial coefficients
             for b in range(nband):
                 model[b] = eval_coeffs_to_slice(
                         time_out[0],

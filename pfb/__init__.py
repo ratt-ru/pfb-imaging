@@ -8,22 +8,12 @@ def set_envs(nthreads, ncpu):
     os.environ["MKL_NUM_THREADS"] = str(nthreads)
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(nthreads)
     os.environ["NPY_NUM_THREADS"] = str(nthreads)
-    os.environ["NUMBA_NUM_THREADS"] = str(nthreads)
+    # os.environ["NUMBA_NUM_THREADS"] = str(nthreads)
     # os.environ["JAX_PLATFORMS"] = 'cpu'
     # os.environ["XLA_FLAGS"] = ("--xla_cpu_multi_thread_eigen=true "
     #                            "--xla_force_host_platform_device_count=4 "
     #                            f"intra_op_parallelism_threads={str(nthreads)}")
     os.environ["JAX_ENABLE_X64"] = 'True'
-    # this may be required for numba parallelism
-    # find python and set LD_LIBRARY_PATH
-    paths = sys.path
-    ppath = [paths[i] for i in range(len(paths)) if 'pfb/bin' in paths[i]]
-    if len(ppath):
-        ldpath = ppath[0].replace('bin', 'lib')
-        ldcurrent = os.environ.get('LD_LIBRARY_PATH', '')
-        os.environ["LD_LIBRARY_PATH"] = f'{ldpath}:{ldcurrent}'
-        # TODO - should we fall over in else?
-
     ne_threads = min(ncpu, nthreads)
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
 

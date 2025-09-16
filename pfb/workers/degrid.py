@@ -1,10 +1,14 @@
 # flake8: noqa
 import click
+from daskms.fsspec_store import DaskMSStore
 import time
 from omegaconf import OmegaConf
+import psutil
 from pfb.utils import logging as pfb_logging
+from pfb.utils.naming import set_output_names
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+from pfb import set_client
 
 log = pfb_logging.get_logger('DEGRID')
 
@@ -20,17 +24,16 @@ def degrid(**kw):
     '''
     opts = OmegaConf.create(kw)
 
-    from pfb.utils.naming import set_output_names
     opts, basedir, oname = set_output_names(opts)
 
-    import psutil
+    
     nthreads = psutil.cpu_count(logical=True)
     ncpu = psutil.cpu_count(logical=False)
     if opts.nthreads is None:
         opts.nthreads = nthreads//2
         ncpu = ncpu//2
 
-    from daskms.fsspec_store import DaskMSStore
+    
     msnames = []
     for ms in opts.ms:
         msstore = DaskMSStore(ms.rstrip('/'))
@@ -77,8 +80,7 @@ def degrid(**kw):
 
     pfb_logging.log_options_dict(log, opts)
 
-    # we need the collections
-    from pfb import set_client
+    # we still need the collections interface for xds_to_table
     client = set_client(opts.nworkers, log, None, client_log_level=opts.log_level)
 
     ti = time.time()

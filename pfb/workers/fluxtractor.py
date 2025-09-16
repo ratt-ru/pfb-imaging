@@ -5,16 +5,17 @@ from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+import ray
 
 log = pfb_logging.get_logger('FLUXTRACTOR')
 
 
 @click.command(context_settings={'show_default': True})
 @clickify_parameters(schema.fluxtractor)
-def fluxtractor(**kw):
+@click.pass_context
+def fluxtractor(ctx, **kw):
     '''
     Forward step aka flux mop.
-
     '''
     opts = OmegaConf.create(kw)
 
@@ -54,75 +55,83 @@ def fluxtractor(**kw):
     fits_oname = f'{opts.fits_output_folder}/{oname}'
     dds_name =f'{basename}_{opts.suffix}.dds'
 
-    with ExitStack() as stack:
-        from distributed import wait
-        from pfb import set_client
-        if opts.nworkers > 1:
-            client = set_client(opts.nworkers, log, stack, client_log_level=opts.log_level)
-            from distributed import as_completed
-        else:
-            log.info("Faking client")
-            from pfb.utils.dist import fake_client
-            client = fake_client()
-            names = [0]
-            as_completed = lambda x: x
+    # these are passed through to child Ray processes
+    renv = {"env_vars": ctx.obj["env_vars"]}
+    if opts.nworkers==1:
+        renv["env_vars"]["RAY_DEBUG_POST_MORTEM"] = "1"
 
-        ti = time.time()
-        _fluxtractor(**opts)
+    ray.init(num_cpus=opts.nworkers,
+             logging_level='INFO',
+             ignore_reinit_error=True,
+             runtime_env=renv)
 
-        _, dds_list = xds_from_url(dds_name)
+    ti = time.time()
+    _fluxtractor(**opts)
 
-        # convert to fits files
-        if opts.fits_mfs or opts.fits_cubes:
-            from pfb.utils.fits import dds2fits
-            log.info(f"Writing fits files to {fits_oname}_{opts.suffix}")
-            futures = []
-            fut = client.submit(
-                    dds2fits,
-                    dds_list,
-                    'RESIDUAL_MOPPED',
-                    f'{fits_oname}_{opts.suffix}',
-                    norm_wsum=True,
-                    nthreads=opts.nthreads,
-                    do_mfs=opts.fits_mfs,
-                    do_cube=opts.fits_cubes)
-            futures.append(fut)
-            fut = client.submit(
-                    dds2fits,
-                    dds_list,
-                    'MODEL_MOPPED',
-                    f'{fits_oname}_{opts.suffix}',
-                    norm_wsum=False,
-                    nthreads=opts.nthreads,
-                    do_mfs=opts.fits_mfs,
-                    do_cube=opts.fits_cubes)
-            futures.append(fut)
-            fut = client.submit(
-                    dds2fits,
-                    dds_list,
-                    'UPDATE',
-                    f'{fits_oname}_{opts.suffix}',
-                    norm_wsum=False,
-                    nthreads=opts.nthreads,
-                    do_mfs=opts.fits_mfs,
-                    do_cube=opts.fits_cubes)
-            futures.append(fut)
-            fut = client.submit(
-                    dds2fits,
-                    dds_list,
-                    'X0',
-                    f'{fits_oname}_{opts.suffix}',
-                    norm_wsum=False,
-                    nthreads=opts.nthreads,
-                    do_mfs=opts.fits_mfs,
-                    do_cube=opts.fits_cubes)
-            futures.append(fut)
+    _, dds_list = xds_from_url(dds_name)
 
-            for fut in as_completed(futures):
-                column = fut.result()
-                log.info(f'Done writing {column}')
+    # convert to fits files
+    if opts.fits_mfs or opts.fits_cubes:
+        from pfb.utils.fits import rdds2fits
+        log.info(f"Writing fits files to {fits_oname}_{opts.suffix}")
+        tasks = []
+        task = rdds2fits.remote(
+                dds_list,
+                'RESIDUAL_MOPPED',
+                f'{fits_oname}_{opts.suffix}',
+                norm_wsum=True,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes)
+        tasks.append(task)
+
+        task = rdds2fits.remote(
+                dds_list,
+                'MODEL_MOPPED',
+                f'{fits_oname}_{opts.suffix}',
+                norm_wsum=False,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes)
+        tasks.append(task)
+
+        task = rdds2fits(
+                dds_list,
+                'UPDATE',
+                f'{fits_oname}_{opts.suffix}',
+                norm_wsum=False,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes)
+        tasks.append(task)
+        
+        task = rdds2fits(
+                dds_list,
+                'X0',
+                f'{fits_oname}_{opts.suffix}',
+                norm_wsum=False,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes)
+        tasks.append(fut)
+
+        remaining_tasks = tasks.copy()
+        while remaining_tasks:
+            # Wait for at least 1 task to complete
+            ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
+
+            # Process the completed task
+            for task in ready:
+                try:
+                    column = ray.get(task)
+                    log.info(f'Done writing {column}')
+                
+                # LB - why is this except here?
+                except Exception as e:
+                    continue
 
         log.info(f"All done after {time.time() - ti}s")
+        ray.shutdown()
 
 def _fluxtractor(**kw):
     opts = OmegaConf.create(kw)
@@ -209,21 +218,9 @@ def _fluxtractor(**kw):
     log.info(f"Initial peak residual = {rmax:.3e}, rms = {rms:.3e}")
 
     log.info("Solving for update")
-    try:
-        from distributed import get_client, wait, as_completed
-        client = get_client()
-        names = list(client.scheduler_info()['workers'].keys())
-        foo = client.scatter(mask, broadcast=True)
-        wait(foo)
-    except:
-        from pfb.utils.dist import fake_client
-        client = fake_client()
-        names = [0]
-        as_completed = lambda x: x
-    futures = []
-    for wname, ds_name in zip(cycle(names), dds_list):
-        fut = client.submit(
-            pcg_dds,
+    tasks = []
+    for ds_name in dds_list:
+        task = pcg_dds.remote(
             ds_name,
             opts.eta,
             use_psf=opts.use_psf,
@@ -238,20 +235,21 @@ def _fluxtractor(**kw):
             tol=opts.cg_tol,
             maxit=opts.cg_maxit,
             verbosity=opts.cg_verbose,
-            report_freq=opts.cg_report_freq,
-            workers=wname
+            report_freq=opts.cg_report_freq
         )
-        futures.append(fut)
+        tasks.append(task)
 
-    nds = len(futures)
+    nds = len(tasks)
     n_launched = 1
-    for fut in as_completed(futures):
-        print(f"\rProcessed: {n_launched}/{nds}", end='', flush=True)
-        r, b = fut.result()
+    remaining_tasks = tasks.copy()
+    while remaining_tasks:
+        # Wait for at least 1 task to complete
+        ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
+        r, b = ray.get(ready)
         residual[b] = r
         n_launched += 1
 
-    print("\n")  # after progressbar above
+        print(f"\rProcessed: {n_launched}/{nds}", end='\n', flush=True)
 
     residual_mfs = np.sum(residual/wsum, axis=0)
     rms = np.std(residual_mfs)
@@ -300,10 +298,7 @@ def _fluxtractor(**kw):
             'parametrisation': expr  # already converted to str
         }
         for key, val in opts.items():
-            if key == 'pd_tol':
-                mattrs[key] = pd_tolf
-            else:
-                mattrs[key] = val
+            mattrs[key] = val
 
         coeff_dataset = xr.Dataset(data_vars=data_vars,
                             coords=coords,

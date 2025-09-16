@@ -92,10 +92,15 @@ def hci(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
+    if opts.nworkers==1:
+        renv = {"env_vars": {"RAY_DEBUG_POST_MORTEM": "1"}}
+    else:
+        renv = None
+
     ray.init(num_cpus=opts.nworkers,
              logging_level='INFO',
              ignore_reinit_error=True,
-             local_mode=opts.nworkers==1)
+             runtime_env=renv)
 
     ti = time.time()
     _hci(**opts)
@@ -441,16 +446,10 @@ def _hci(**kw):
 
         # Process the completed task
         for task in ready:
-            try:
-                result = ray.get(task)
-            except Exception as e:
-                for future in remaining_tasks:
-                    ray.cancel(future)
-                raise e
+            result = ray.get(task)
             ncomplete += 1
-            print(f"Completed: {ncomplete} / {nds}", end='\n', flush=True)
-
-    print("\n")
+            if opts.progressbar:
+                print(f"Completed: {ncomplete} / {nds}", end='\n', flush=True)
 
     if opts.stack:
         log.info("Computing means")
@@ -492,7 +491,7 @@ def _hci(**kw):
         ds = ds.drop_vars(drop_vars)
         ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  weighted_mean)
         ds['channel_width'] = (('FREQ',), da.from_array(cwidths, chunks=1))
-        with dask.config.set(pool=ThreadPoolExecutor(8)):
+        with dask.config.set(pool=ThreadPoolExecutor(opts.nworkers)):
             ds.to_zarr(cds, mode='r+')
         log.info("Reduction complete")
     return

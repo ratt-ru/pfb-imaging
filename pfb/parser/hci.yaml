@@ -197,11 +197,6 @@ inputs:
     default: false
     info:
       Compute naural gradient
-  memory-reporting:
-    dtype: bool
-    default: false
-    info:
-      Report worker memory as tasks complete
   check-ants:
     dtype: bool
     default: false

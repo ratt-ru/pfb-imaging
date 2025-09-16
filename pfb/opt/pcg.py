@@ -9,6 +9,7 @@ from uuid import uuid4
 from pfb.utils.misc import norm_diff, JIT_OPTIONS
 from pfb.utils.naming import xds_from_list
 from ducc0.misc import empty_noncritical
+import ray
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
@@ -392,7 +393,7 @@ def pcg_psf(psfhat,
     else:
         return model
 
-
+@ray.remote
 def pcg_dds(ds_name,
             eta,  # regularisation for Hessian approximation
             mask=1.0,
