@@ -23,13 +23,97 @@ iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
 @ray.remote
-def safe_stokes_image(*args, **kwargs):
-    try:
-        return stokes_image(*args, **kwargs)
-    except Exception as e:
-        raise e
+def batch_stokes_image(
+                dc1=None,
+                dc2=None,
+                operator=None,
+                ds=None,
+                jones=None,
+                opts=None,
+                nx=None,
+                ny=None,
+                freq=None,
+                cell_rad=None,
+                utime=None,
+                tbin_idx=None,
+                tbin_counts=None,
+                radec=None,
+                antpos=None,
+                poltype=None,
+                fds_store=None,
+                bandid=None,
+                timeid=None,
+                msid=None,
+                attrs=None,
+                integrations_per_image=None,
+                all_times=None,
+                time_slice=None):
+    # load chunk
+    ds.load(scheduler='sync')
 
+    # slice out rows corresponding to single images and submit compute task
+    ntime = utime.size
+    tasks = []
+    for t0 in range(0, ntime, integrations_per_image):
+        nmax = np.minimum(ntime, t0+integrations_per_image)
+        It = slice(t0, nmax)
+        ridx = tbin_idx[It]
+        rcnts = tbin_counts[It]
+        Irow = slice(ridx[0], ridx[-1]+rcnts[-1])
+        dsi = ds[{'row': Irow}]
 
+        if jones is not None:
+            jones_slice = jones[It]
+        else:
+            jones_slice = None
+
+        task = stokes_image.remote(
+                    dc1=dc1,
+                    dc2=dc2,
+                    operator=operator,
+                    ds=ds,
+                    jones=jones_slice,
+                    opts=opts,
+                    nx=nx,
+                    ny=ny,
+                    freq=freq,
+                    cell_rad=cell_rad,
+                    utime=utime[It],
+                    tbin_idx=tbin_idx[It],
+                    tbin_counts=tbin_counts[It],
+                    radec=radec,
+                    antpos=antpos,
+                    poltype=poltype,
+                    fds_store=fds_store,
+                    bandid=bandid,
+                    timeid=timeid,
+                    msid=msid,
+                    attrs=attrs)
+        
+        tasks.append(task)
+
+    # wait for all tasks to finish and get result
+    dso = ray.get(tasks)
+
+    # manually create the region (region='auto' fails?)
+    region = {
+        'STOKES': slice(0, len(opts.product)),
+        'FREQ': slice(bandid, bandid+1),
+        'TIME': time_slice,
+        'Y': slice(0, dso[0].Y.size),
+        'X': slice(0, dso[0].X.size)
+    }
+
+    # if the output is a dataset we stack and write the output
+    if isinstance(dso[0], xr.Dataset):
+        dso = xr.concat(dso, dim='TIME')
+        dso.to_zarr(fds_store.url, region=region)
+    
+
+    return timeid, bandid
+    
+
+@ray.remote
 def stokes_image(
                 dc1=None,
                 dc2=None,
@@ -368,6 +452,7 @@ def stokes_image(
             lm0t = radec_to_lm(tcoords, coords0).squeeze()
             x0t = lm0t[0]
             y0t = lm0t[1]
+            n0t = np.sqrt(1 - x0t**2 - y0t**2)
 
             # these are the profiles on the full domain so interpolate
             tprofile = getattr(transient_ds, f'{name}_time_profile').values
@@ -375,7 +460,7 @@ def stokes_image(
             
             tprofile = np.interp(time, all_times, tprofile)  # note reorder to ms times
             fprofile = np.interp(freq, all_freqs, fprofile)
-            
+
             # outer product gives dynamic spectrum
             dspec = tprofile[:, None] * fprofile[None, :]
 
@@ -383,7 +468,8 @@ def stokes_image(
             dspec = dspec * np.exp(freqfactor*(
                                  signu*uvw[:, 0:1]*x0t*signx +
                                  signv*uvw[:, 1:2]*y0t*signy -
-                                 uvw[:, 2:]*(n-1)))
+                                 uvw[:, 2:]*(n0t-1)))
+            
             # currently Stokes I only
             data[:, :, 0] += dspec
 
@@ -620,7 +706,7 @@ def stokes_image(
             coords=coords,
             attrs=attrs)
         if opts.stack:
-            out_ds.to_zarr(fds_store.url, region='auto')
+            return out_ds
         else:
             out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr', mode='w')
     elif opts.output_format == 'fits':
@@ -653,6 +739,7 @@ def stokes_image(
             # weight = np.transpose(weight.astype(np.float32),
             #                      axes=(0, 2, 1))
             # weight = weight[:, ::-1, :]
+            weight = pbeam**2 + opts.eta
             save_fits(weight,
                   f'{fds_store.full_path}/{oname}_weight.fits', hdr)
     return 1
