@@ -459,7 +459,8 @@ def stokes_image(
             fprofile = np.interp(freq, all_freqs, fprofile)
 
             # outer product gives dynamic spectrum
-            dspec = tprofile[:, None] * fprofile[None, :]
+            # LB - why dp we need the braces?
+            dspec = (tprofile[:, None]) * fprofile[None, :]
 
             # inject transient at x0t, y0t and convert to complex values
             dspec = dspec * np.exp(freqfactor*(
