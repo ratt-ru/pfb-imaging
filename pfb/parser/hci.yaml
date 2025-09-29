@@ -93,7 +93,7 @@ inputs:
       glob(gt) should match up when running from CLI.
   max-simul-chunks:
     dtype: int
-    default: 1
+    default: 3
     info:
       Maximum number of chunks to process simultaneously
   integrations-per-chunk:
