@@ -165,11 +165,10 @@ def stokes_image(
             assert (operator=='+' or operator=='-')
         except Exception as e:
             raise e
-        ne.evaluate(f'data {operator} data2',
-                    local_dict={'data': data,
-                                'data2': getattr(ds, dc2).values},
-                    out=data,
-                    casting='same_kind')
+        data = ne.evaluate(f'data {operator} data2',
+                            local_dict={'data': data,
+                                        'data2': getattr(ds, dc2).values},
+                            casting='same_kind')
         ds = ds.drop_vars(dc2)
 
     time = ds.TIME.values
@@ -411,7 +410,7 @@ def stokes_image(
 
     # TODO - this subtraction would be better to do inside weight_data
     if opts.model_column is not None:
-        ne.evaluate('(data-model_vis)*mask', out=data)
+        data = ne.evaluate('(data-model_vis)*mask')
 
     if opts.l2_reweight_dof:
         # data should contain residual_vis at this point
