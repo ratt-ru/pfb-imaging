@@ -35,8 +35,8 @@ def batch_stokes_image(
                 freq=None,
                 cell_rad=None,
                 utime=None,
-                tbin_idx=None,
-                tbin_counts=None,
+                rbin_idx=None,
+                rbin_counts=None,
                 radec=None,
                 antpos=None,
                 poltype=None,
@@ -48,17 +48,23 @@ def batch_stokes_image(
                 integrations_per_image=None,
                 all_times=None,
                 time_slice=None):
+    
     # load chunk
     ds.load(scheduler='sync')
+    if jones is not None:
+        # we do it this way to force using synchronous scheduler
+        jones = jones.load(scheduler='sync').values
 
     # slice out rows corresponding to single images and submit compute task
     ntime = utime.size
     tasks = []
+    # we need to start counting from zero
+    rbin_idx = rbin_idx - rbin_idx.min()
     for t0 in range(0, ntime, integrations_per_image):
         nmax = np.minimum(ntime, t0+integrations_per_image)
         It = slice(t0, nmax)
-        ridx = tbin_idx[It]
-        rcnts = tbin_counts[It]
+        ridx = rbin_idx[It]
+        rcnts = rbin_counts[It]
         Irow = slice(ridx[0], ridx[-1]+rcnts[-1])
         dsi = ds[{'row': Irow}]
 
@@ -71,7 +77,7 @@ def batch_stokes_image(
                     dc1=dc1,
                     dc2=dc2,
                     operator=operator,
-                    ds=ds,
+                    ds=dsi,
                     jones=jones_slice,
                     opts=opts,
                     nx=nx,
@@ -79,8 +85,8 @@ def batch_stokes_image(
                     freq=freq,
                     cell_rad=cell_rad,
                     utime=utime[It],
-                    tbin_idx=tbin_idx[It],
-                    tbin_counts=tbin_counts[It],
+                    tbin_idx=ridx,
+                    tbin_counts=rcnts,
                     radec=radec,
                     antpos=antpos,
                     poltype=poltype,
@@ -95,19 +101,10 @@ def batch_stokes_image(
     # wait for all tasks to finish and get result
     dso = ray.get(tasks)
 
-    # manually create the region (region='auto' fails?)
-    region = {
-        'STOKES': slice(0, len(opts.product)),
-        'FREQ': slice(bandid, bandid+1),
-        'TIME': time_slice,
-        'Y': slice(0, dso[0].Y.size),
-        'X': slice(0, dso[0].X.size)
-    }
-
     # if the output is a dataset we stack and write the output
     if isinstance(dso[0], xr.Dataset):
         dso = xr.concat(dso, dim='TIME')
-        dso.to_zarr(fds_store.url, region=region)
+        dso.to_zarr(fds_store.url, region="auto")
     
 
     return timeid, bandid
@@ -139,6 +136,13 @@ def stokes_image(
     # serialization fails for these if we import them above
     from ducc0.misc import resize_thread_pool
     from ducc0.wgridder import vis2dirty
+
+    # # LB - is this the correct way to do this? 
+    # # we don't want it to end up in the distributed object store 
+    # ds.load(scheduler='sync')
+    # if jones is not None:
+    #     # we do it this way to force using synchronous scheduler
+    #     jones = jones.load(scheduler='sync').values
     
     resize_thread_pool(opts.nthreads)
     fieldid = ds.FIELD_ID
@@ -153,13 +157,6 @@ def stokes_image(
     elif opts.precision.lower() == 'double':
         real_type = np.float64
         complex_type = np.complex128
-
-    # LB - is this the correct way to do this? 
-    # we don't want it to end up in the distributed object store 
-    ds = ds.load(scheduler='sync')
-    if jones is not None:
-        # we do it this way to force using synchronous scheduler
-        jones = jones.load(scheduler='sync').values
     
     data = getattr(ds, dc1).values
     ds = ds.drop_vars(dc1)
@@ -176,20 +173,20 @@ def stokes_image(
         ds = ds.drop_vars(dc2)
 
     time = ds.TIME.values
-    ds = ds.drop_vars('TIME')
+    # ds = ds.drop_vars('TIME')
     interval = ds.INTERVAL.values
-    ds = ds.drop_vars('INTERVAL')
+    # ds = ds.drop_vars('INTERVAL')
     ant1 = ds.ANTENNA1.values
-    ds = ds.drop_vars('ANTENNA1')
+    # ds = ds.drop_vars('ANTENNA1')
     ant2 = ds.ANTENNA2.values
-    ds = ds.drop_vars('ANTENNA2')
+    # ds = ds.drop_vars('ANTENNA2')
     uvw = ds.UVW.values
-    ds = ds.drop_vars('UVW')
+    # ds = ds.drop_vars('UVW')
     flag = ds.FLAG.values
-    ds = ds.drop_vars('FLAG')
+    # ds = ds.drop_vars('FLAG')
     # MS may contain auto-correlations
     frow = ds.FLAG_ROW.values | (ant1 == ant2)
-    ds = ds.drop_vars('FLAG_ROW')
+    # ds = ds.drop_vars('FLAG_ROW')
 
     # combine flag and frow
     flag = np.logical_or(flag, frow[:, None, None])
@@ -216,10 +213,11 @@ def stokes_image(
             raise NotImplementedError(f'Model subtraction not supported for product {opts.product}')
     else:
         model_vis = None
-    # this seems to help with memory consumption
-    # note the ds.drop_vars above
-    del ds
-    gc.collect()
+    
+    # # this seems to help with memory consumption
+    # # note the ds.drop_vars above
+    # del ds
+    # gc.collect()
 
     nrow, nchan, ncorr = data.shape
     ntime = utime.size
