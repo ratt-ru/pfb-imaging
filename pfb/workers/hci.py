@@ -125,6 +125,7 @@ def _hci(**kw):
     from pfb.utils.stokes2im import batch_stokes_image
     import xarray as xr
     import yaml
+    from zarr import ProcessSynchronizer
 
     basename = f'{opts.output_filename}'
 
@@ -147,6 +148,8 @@ def _hci(**kw):
 
     fs = fsspec.filesystem(fds_store.url.split(':', 1)[0])
     fs.makedirs(fds_store.url, exist_ok=True)
+
+    synchronizer = ProcessSynchronizer(f'{fds_store.url}/.sync')
 
     if opts.gain_table is not None:
         tmpf = lambda x: '::'.join(x.rsplit('/', 1))
@@ -434,8 +437,7 @@ def _hci(**kw):
                             msid=ims,
                             attrs=attrs,
                             integrations_per_image=opts.integrations_per_image,
-                            all_times=all_times,
-                            time_slice=It
+                            synchronizer=synchronizer
                     )
                     tasks.append(fut)
                     channel_width[b0+fi] = freqs[ms][idt][Inu].max() - freqs[ms][idt][Inu].min()

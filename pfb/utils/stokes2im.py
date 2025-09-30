@@ -46,8 +46,7 @@ def batch_stokes_image(
                 msid=None,
                 attrs=None,
                 integrations_per_image=None,
-                all_times=None,
-                time_slice=None):
+                synchronizer=None):
     
     # load chunk
     ds.load(scheduler='sync')
@@ -104,7 +103,10 @@ def batch_stokes_image(
     # if the output is a dataset we stack and write the output
     if isinstance(dso[0], xr.Dataset):
         dso = xr.concat(dso, dim='TIME')
-        dso.to_zarr(fds_store.url, region="auto")
+        dso.to_zarr(fds_store.url,
+                    region="auto",
+                    synchronizer=synchronizer,
+                    safe_chunks=False)
     
 
     return timeid, bandid
@@ -327,9 +329,9 @@ def stokes_image(
         # TODO - this copies chgcentre but not sure why it gives
         # better results than computing the phase with lmn differences
         phase = 2j*np.pi*(wn - wo)
-        data *= np.exp(-phase)[:, :, None]
+        data = data * np.exp(-phase)[:, :, None]
         if model_vis is not None:
-            model_vis *= np.exp(-phase)[:, :, None]
+            model_vis = model_vis * np.exp(-phase)[:, :, None]
         
         uvw = uvw_new
     else:
