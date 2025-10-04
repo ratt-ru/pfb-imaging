@@ -107,7 +107,11 @@ def stokes_vis(
                              local_dict={'sigma': getattr(ds, opts.sigma_column).values})
         ds = ds.drop_vars(opts.sigma_column)
     elif opts.weight_column is not None:
-        weight = getattr(ds, opts.weight_column).values
+        if opts.weight_column == 'WEIGHT':
+            weight = np.broadcast_to(getattr(ds, opts.weight_column).values[:, None, :],
+                                             (nrow, nchan, ncorr))
+        else:
+            weight = getattr(ds, opts.weight_column).values
         ds = ds.drop_vars(opts.weight_column)
     else:
         weight = np.ones((nrow, nchan, ncorr),
