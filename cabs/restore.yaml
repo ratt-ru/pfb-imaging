@@ -1,0 +1,129 @@
+cabs:
+  pfb_restore:
+    command: (pfb.workers.restore)restore
+    flavour: python
+    policies:
+      pass_missing_as_none: true
+
+    inputs:
+      model-name:
+        dtype: str
+        abbreviation: mname
+        default: MODEL
+        info:
+          Name of model in dds
+      residual-name:
+        dtype: str
+        abbreviation: rname
+        default: RESIDUAL
+        info:
+          Name of residual in dds
+      suffix:
+        dtype: str
+        default: 'main'
+        info:
+          Can be used to specify a custom name for the image space data products
+      outputs:
+        dtype: str
+        default: mMrRiI
+        info:
+          Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty,
+          (f)ft_residuals (amplitude and phase will be produced).
+          Use captitals to produce corresponding cubes.
+      overwrite:
+        dtype: bool
+        default: true
+        info:
+          Allow overwriting fits files
+      gausspar:
+        dtype: List[float]
+        info:
+          Gaussian parameters (e-major, e-minor, position-angle) specifying the
+          resolution to restore images to. The major and minor axes need to be
+          specified in units of arcseconds and the position-angle in degrees.
+          The default resolution is the native resolution in each imaging band.
+          This parameter can be used to homogenise the resolution of the cubes.
+          Set to (0,0,0) to use the resolution of the lowest band.
+      inflate-factor:
+        dtype: float
+        default: 1.5
+        info:
+          Inflate the intrinsic resolution of the uniformly blurred image by
+          this amount.
+      drop-bands:
+        dtype: List[int]
+        info:
+          List of bands to discard
+      host-address:
+        dtype: str
+        abbreviation: ha
+        info:
+          Address where the distributed client lives.
+          Uses LocalCluster if no address is provided
+          and scheduler is set to distributed.
+      nworkers:
+        dtype: int
+        default: 1
+        abbreviation: nw
+        info:
+          Number of worker processes.
+          Use with distributed scheduler.
+      nthreads:
+        dtype: int
+        abbreviation: nt
+        info:
+          Number of threads used to scale vertically (eg. for FFTs and gridding).
+          Each dask thread can in principle spawn this many threads.
+          Will attempt to use half the available threads by default.
+      direct-to-workers:
+        dtype: bool
+        default: true
+        info:
+          Connect direct to workers i.e. bypass scheduler.
+          Faster but then the dashboard isn't very useful.
+      log-level:
+        dtype: str
+        default: error
+        choices: [error, warning, info, debug]
+      output-filename:
+        dtype: str
+        required: true
+        abbreviation: o
+        info:
+          Basename of output
+      log-directory:
+        dtype: str
+        abbreviation: ldir
+        info:
+          Directory to write logs and performance reports to.
+      product:
+        dtype: str
+        abbreviation: p
+        default: I
+        info:
+          String specifying which Stokes products to produce.
+          Outputs are always be alphabetically ordered.
+      fits-output-folder:
+        dtype: str
+        abbreviation: fitso
+        info:
+          Optional path to write fits files to.
+          Set to output-filename if not provided.
+          The same naming conventions apply.
+      fits-mfs:
+        dtype: bool
+        default: true
+        info:
+          Output MFS fits files
+      fits-cubes:
+        dtype: bool
+        default: true
+        info:
+          Output fits cubes
+    outputs:
+      mfs-image:
+        dtype: File
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}_image_mfs.fits'
+      image:
+        dtype: File
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}_image.fits'
