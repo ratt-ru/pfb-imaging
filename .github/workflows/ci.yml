@@ -12,6 +12,7 @@ on:
 
 env:
   POETRY_VERSION: 1.8.4
+  PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
 
 jobs:
   should-run:
@@ -76,6 +77,7 @@ jobs:
 
     env:
       NUMBA_CACHE_DIR: /tmp/numba-cache
+      PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
 
     strategy:
       matrix:
