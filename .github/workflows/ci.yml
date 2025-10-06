@@ -97,6 +97,9 @@ jobs:
         with:
           poetry-version: ${{ env.POETRY_VERSION }}
 
+      - name: Disable keyring for Poetry
+        run: poetry config keyring.disabled true
+
       - name: Check poetry install
         run: poetry --version
 
