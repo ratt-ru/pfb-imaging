@@ -12,7 +12,6 @@ on:
 
 env:
   POETRY_VERSION: 1.8.4
-  PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
 
 jobs:
   should-run:
@@ -97,6 +96,11 @@ jobs:
         uses: abatilo/actions-poetry@v4
         with:
           poetry-version: ${{ env.POETRY_VERSION }}
+
+      - name: Configure Poetry
+        run: |
+          poetry config solver.lazy-wheel false
+          poetry config installer.max-workers 10
 
       - name: Check poetry install
         run: poetry --version
