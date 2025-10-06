@@ -23,13 +23,96 @@ iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
 @ray.remote
-def safe_stokes_image(*args, **kwargs):
-    try:
-        return stokes_image(*args, **kwargs)
-    except Exception as e:
-        raise e
+def batch_stokes_image(
+                dc1=None,
+                dc2=None,
+                operator=None,
+                ds=None,
+                jones=None,
+                opts=None,
+                nx=None,
+                ny=None,
+                freq=None,
+                cell_rad=None,
+                utime=None,
+                rbin_idx=None,
+                rbin_counts=None,
+                radec=None,
+                antpos=None,
+                poltype=None,
+                fds_store=None,
+                bandid=None,
+                timeid=None,
+                msid=None,
+                attrs=None,
+                integrations_per_image=None,
+                synchronizer=None):
+    
+    # load chunk
+    ds.load(scheduler='sync')
+    if jones is not None:
+        # we do it this way to force using synchronous scheduler
+        jones = jones.load(scheduler='sync').values
 
+    # slice out rows corresponding to single images and submit compute task
+    ntime = utime.size
+    tasks = []
+    # we need to start counting from zero
+    rbin_idx = rbin_idx - rbin_idx.min()
+    for t0 in range(0, ntime, integrations_per_image):
+        nmax = np.minimum(ntime, t0+integrations_per_image)
+        It = slice(t0, nmax)
+        ridx = rbin_idx[It]
+        rcnts = rbin_counts[It]
+        Irow = slice(ridx[0], ridx[-1]+rcnts[-1])
+        dsi = ds[{'row': Irow}]
 
+        if jones is not None:
+            jones_slice = jones[It]
+        else:
+            jones_slice = None
+
+        task = stokes_image.remote(
+                    dc1=dc1,
+                    dc2=dc2,
+                    operator=operator,
+                    ds=dsi,
+                    jones=jones_slice,
+                    opts=opts,
+                    nx=nx,
+                    ny=ny,
+                    freq=freq,
+                    cell_rad=cell_rad,
+                    utime=utime[It],
+                    tbin_idx=ridx,
+                    tbin_counts=rcnts,
+                    radec=radec,
+                    antpos=antpos,
+                    poltype=poltype,
+                    fds_store=fds_store,
+                    bandid=bandid,
+                    timeid=timeid,
+                    msid=msid,
+                    attrs=attrs)
+        
+        tasks.append(task)
+
+    # wait for all tasks to finish and get result
+    dso = ray.get(tasks)
+
+    # if the output is a dataset we stack and write the output
+    if isinstance(dso[0], xr.Dataset):
+        dso = xr.concat(dso, dim='TIME')
+        dso.to_zarr(fds_store.url,
+                    region="auto",
+                    synchronizer=synchronizer,
+                    safe_chunks=False)
+    
+
+    return timeid, bandid
+    
+
+@ray.remote
 def stokes_image(
                 dc1=None,
                 dc2=None,
@@ -55,6 +138,13 @@ def stokes_image(
     # serialization fails for these if we import them above
     from ducc0.misc import resize_thread_pool
     from ducc0.wgridder import vis2dirty
+
+    # # LB - is this the correct way to do this? 
+    # # we don't want it to end up in the distributed object store 
+    # ds.load(scheduler='sync')
+    # if jones is not None:
+    #     # we do it this way to force using synchronous scheduler
+    #     jones = jones.load(scheduler='sync').values
     
     resize_thread_pool(opts.nthreads)
     fieldid = ds.FIELD_ID
@@ -69,13 +159,6 @@ def stokes_image(
     elif opts.precision.lower() == 'double':
         real_type = np.float64
         complex_type = np.complex128
-
-    # LB - is this the correct way to do this? 
-    # we don't want it to end up in the distributed object store 
-    ds = ds.load(scheduler='sync')
-    if jones is not None:
-        # we do it this way to force using synchronous scheduler
-        jones = jones.load(scheduler='sync').values
     
     data = getattr(ds, dc1).values
     ds = ds.drop_vars(dc1)
@@ -84,28 +167,27 @@ def stokes_image(
             assert (operator=='+' or operator=='-')
         except Exception as e:
             raise e
-        ne.evaluate(f'data {operator} data2',
-                    local_dict={'data': data,
-                                'data2': getattr(ds, dc2).values},
-                    out=data,
-                    casting='same_kind')
+        data = ne.evaluate(f'data {operator} data2',
+                            local_dict={'data': data,
+                                        'data2': getattr(ds, dc2).values},
+                            casting='same_kind')
         ds = ds.drop_vars(dc2)
 
     time = ds.TIME.values
-    ds = ds.drop_vars('TIME')
+    # ds = ds.drop_vars('TIME')
     interval = ds.INTERVAL.values
-    ds = ds.drop_vars('INTERVAL')
+    # ds = ds.drop_vars('INTERVAL')
     ant1 = ds.ANTENNA1.values
-    ds = ds.drop_vars('ANTENNA1')
+    # ds = ds.drop_vars('ANTENNA1')
     ant2 = ds.ANTENNA2.values
-    ds = ds.drop_vars('ANTENNA2')
+    # ds = ds.drop_vars('ANTENNA2')
     uvw = ds.UVW.values
-    ds = ds.drop_vars('UVW')
+    # ds = ds.drop_vars('UVW')
     flag = ds.FLAG.values
-    ds = ds.drop_vars('FLAG')
+    # ds = ds.drop_vars('FLAG')
     # MS may contain auto-correlations
     frow = ds.FLAG_ROW.values | (ant1 == ant2)
-    ds = ds.drop_vars('FLAG_ROW')
+    # ds = ds.drop_vars('FLAG_ROW')
 
     # combine flag and frow
     flag = np.logical_or(flag, frow[:, None, None])
@@ -132,10 +214,11 @@ def stokes_image(
             raise NotImplementedError(f'Model subtraction not supported for product {opts.product}')
     else:
         model_vis = None
-    # this seems to help with memory consumption
-    # note the ds.drop_vars above
-    del ds
-    gc.collect()
+    
+    # # this seems to help with memory consumption
+    # # note the ds.drop_vars above
+    # del ds
+    # gc.collect()
 
     nrow, nchan, ncorr = data.shape
     ntime = utime.size
@@ -246,9 +329,9 @@ def stokes_image(
         # TODO - this copies chgcentre but not sure why it gives
         # better results than computing the phase with lmn differences
         phase = 2j*np.pi*(wn - wo)
-        data *= np.exp(-phase)[:, :, None]
+        data = data * np.exp(-phase)[:, :, None]
         if model_vis is not None:
-            model_vis *= np.exp(-phase)[:, :, None]
+            model_vis = model_vis * np.exp(-phase)[:, :, None]
         
         uvw = uvw_new
     else:
@@ -329,7 +412,7 @@ def stokes_image(
 
     # TODO - this subtraction would be better to do inside weight_data
     if opts.model_column is not None:
-        ne.evaluate('(data-model_vis)*mask', out=data)
+        data = ne.evaluate('(data-model_vis)*mask')
 
     if opts.l2_reweight_dof:
         # data should contain residual_vis at this point
@@ -368,6 +451,7 @@ def stokes_image(
             lm0t = radec_to_lm(tcoords, coords0).squeeze()
             x0t = lm0t[0]
             y0t = lm0t[1]
+            n0t = np.sqrt(1 - x0t**2 - y0t**2)
 
             # these are the profiles on the full domain so interpolate
             tprofile = getattr(transient_ds, f'{name}_time_profile').values
@@ -375,15 +459,17 @@ def stokes_image(
             
             tprofile = np.interp(time, all_times, tprofile)  # note reorder to ms times
             fprofile = np.interp(freq, all_freqs, fprofile)
-            
+
             # outer product gives dynamic spectrum
-            dspec = tprofile[:, None] * fprofile[None, :]
+            # LB - why dp we need the braces?
+            dspec = (tprofile[:, None]) * fprofile[None, :]
 
             # inject transient at x0t, y0t and convert to complex values
             dspec = dspec * np.exp(freqfactor*(
                                  signu*uvw[:, 0:1]*x0t*signx +
                                  signv*uvw[:, 1:2]*y0t*signy -
-                                 uvw[:, 2:]*(n-1)))
+                                 uvw[:, 2:]*(n0t-1)))
+            
             # currently Stokes I only
             data[:, :, 0] += dspec
 
@@ -620,7 +706,7 @@ def stokes_image(
             coords=coords,
             attrs=attrs)
         if opts.stack:
-            out_ds.to_zarr(fds_store.url, region='auto')
+            return out_ds
         else:
             out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr', mode='w')
     elif opts.output_format == 'fits':
@@ -653,6 +739,7 @@ def stokes_image(
             # weight = np.transpose(weight.astype(np.float32),
             #                      axes=(0, 2, 1))
             # weight = weight[:, ::-1, :]
+            weight = pbeam**2 + opts.eta
             save_fits(weight,
                   f'{fds_store.full_path}/{oname}_weight.fits', hdr)
     return 1

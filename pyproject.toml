@@ -30,7 +30,7 @@ ducc0 = ">=0.35.0"
 sympy = ">=1.9"
 stimela = ">=2.0.2"
 streamjoy = ">=0.0.8"
-codex-africanus = {git = "https://github.com/ratt-ru/codex-africanus.git", extras = ["dask", "scipy", "astropy", "python-casacore"], branch = "master"}
+codex-africanus = {extras = ["dask", "scipy", "astropy", "python-casacore"], version = ">=0.4.2"}
 dask-ms = {extras = ["s3", "xarray", "zarr"], version = ">=0.2.23"}
 tbb = ">=2021.13.1"
 jax = {extras = ["cpu"], version = ">=0.4.31"}
@@ -40,8 +40,8 @@ regions = ">=0.9"
 psutil = ">=5.9.8"
 matplotlib = ">=3.9.2"
 rich = ">=13.0.0"
-reproject = "*"
-ray = {extras = ["default"], version = "*"}
+reproject = ">=0.14.1"  # or whatever minimum version you need
+ray = {extras = ["default"], version = ">=2.48.0,<3.0.0"}
 
 [tool.poetry.scripts]
 pfb = "pfb.workers.main:cli"

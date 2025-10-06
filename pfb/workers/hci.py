@@ -92,9 +92,15 @@ def hci(**kw):
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
+    if opts.object_store_memory is not None:
+        mem_limit = opts.object_store_memory * 1e9  # convert GB -> B
+    else:
+        mem_limit = None
+
     ray.init(num_cpus=opts.nworkers,
              logging_level='INFO',
              ignore_reinit_error=True,
+             object_store_memory=mem_limit,
              local_mode=opts.nworkers==1)
 
     ti = time.time()
@@ -116,9 +122,10 @@ def _hci(**kw):
     import dask.array as da
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
-    from pfb.utils.stokes2im import safe_stokes_image
+    from pfb.utils.stokes2im import batch_stokes_image
     import xarray as xr
     import yaml
+    from zarr import ProcessSynchronizer
 
     basename = f'{opts.output_filename}'
 
@@ -141,6 +148,8 @@ def _hci(**kw):
 
     fs = fsspec.filesystem(fds_store.url.split(':', 1)[0])
     fs.makedirs(fds_store.url, exist_ok=True)
+
+    synchronizer = ProcessSynchronizer(f'{fds_store.url}/.sync')
 
     if opts.gain_table is not None:
         tmpf = lambda x: '::'.join(x.rsplit('/', 1))
@@ -168,6 +177,10 @@ def _hci(**kw):
     if opts.transfer_model_from is not None:
         log.error_and_raise('Use the degrid app to populate a model column instead',
                             NotImplementedError)
+        
+    ipc = opts.integrations_per_chunk
+    if ipc % opts.integrations_per_image:
+        log.warning("Warning - integrations-per-image does not divide integrations-per-chunk evenly")
 
     log.info('Constructing mapping')
     row_mapping, freq_mapping, time_mapping, \
@@ -175,7 +188,7 @@ def _hci(**kw):
         chan_widths, uv_max, antpos, poltype = \
             construct_mappings(opts.ms,
                                gain_names,
-                               ipi=opts.integrations_per_image,
+                               ipi=ipc,
                                cpi=opts.channels_per_image,
                                freq_min=freq_min,
                                freq_max=freq_max,
@@ -312,17 +325,11 @@ def _hci(**kw):
                     msddid2bid[ms][idt] = sgroup
 
     # construct examplar dataset if asked to stack
-    if opts.stack:
-        if opts.output_format != 'zarr':
-            raise ValueError('Can only stack zarr outputs not fits')
-        log.info("Creating scaffold for stacked cube")
-        cds, attrs = make_dummy_dataset(opts, utimes, freqs, radecs,
-                                        time_mapping, freq_mapping,
-                                        freq_min, freq_max, nx, ny, cell_deg)
-        log.info("Scaffolding complete")
-    else:
-        cds = None
-        attrs = None
+    if opts.stack and opts.output_format != 'zarr':
+        raise ValueError('Can only stack zarr outputs not fits')
+    cds, attrs, ntasks = make_dummy_dataset(opts, utimes, freqs, radecs,
+                                    time_mapping, freq_mapping,
+                                    freq_min, freq_max, nx, ny, cell_deg, ipc)
 
     if opts.inject_transients is not None:
         # we need to do this here because we don't have access
@@ -359,6 +366,7 @@ def _hci(**kw):
 
     tasks = []
     channel_width = {}
+    ncompleted = 0
     for ims, ms in enumerate(opts.ms):
         xds = xds_from_ms(ms,
                         columns=columns,
@@ -406,7 +414,7 @@ def _hci(**kw):
                     else:
                         jones = None
                     
-                    fut = safe_stokes_image.remote(
+                    fut = batch_stokes_image.remote(
                             dc1=dc1,
                             dc2=dc2,
                             operator=operator,
@@ -417,8 +425,8 @@ def _hci(**kw):
                             ny=ny,
                             freq=freqs[ms][idt][Inu],
                             utime=utimes[ms][idt][It],
-                            tbin_idx=ridx,
-                            tbin_counts=rcnts,
+                            rbin_idx=ridx,
+                            rbin_counts=rcnts,
                             cell_rad=cell_rad,
                             radec=radecs[ms][idt],
                             antpos=antpos[ms],
@@ -427,30 +435,26 @@ def _hci(**kw):
                             bandid=b0+fi,
                             timeid=ti,
                             msid=ims,
-                            attrs=attrs
+                            attrs=attrs,
+                            integrations_per_image=opts.integrations_per_image,
+                            synchronizer=synchronizer
                     )
                     tasks.append(fut)
                     channel_width[b0+fi] = freqs[ms][idt][Inu].max() - freqs[ms][idt][Inu].min()
 
-    nds = len(tasks)
-    ncomplete = 0
+                    # limit the number of chunks that are processed simultaneously
+                    if len(tasks) > opts.max_simul_chunks:
+                        ncompleted += 1
+                        ready, tasks = ray.wait(tasks, num_returns=1)
+                        timeid, bandid = ray.get(ready)[0]
+                        print(f"Processed {ncompleted}/{ntasks}", end='\n', flush=True)
+
     remaining_tasks = tasks.copy()
     while remaining_tasks:
-        # Wait for at least 1 task to complete
+        ncompleted += 1
         ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
-
-        # Process the completed task
-        for task in ready:
-            try:
-                result = ray.get(task)
-            except Exception as e:
-                for future in remaining_tasks:
-                    ray.cancel(future)
-                raise e
-            ncomplete += 1
-            print(f"Completed: {ncomplete} / {nds}", end='\n', flush=True)
-
-    print("\n")
+        timeid, bandid = ray.get(ready)[0]
+        print(f"Processed {ncompleted}/{ntasks}", end='\n', flush=True)
 
     if opts.stack:
         log.info("Computing means")
@@ -490,7 +494,7 @@ def _hci(**kw):
         # only write new variables
         drop_vars = [key for key in ds.data_vars.keys() if key != 'psf2']
         ds = ds.drop_vars(drop_vars)
-        ds['mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  weighted_mean)
+        ds['cube_mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  weighted_mean)
         ds['channel_width'] = (('FREQ',), da.from_array(cwidths, chunks=1))
         with dask.config.set(pool=ThreadPoolExecutor(8)):
             ds.to_zarr(cds, mode='r+')
@@ -498,7 +502,8 @@ def _hci(**kw):
     return
 
 def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
-                       freq_min, freq_max, nx, ny, cell_deg, spatial_chunk=128):
+                       freq_min, freq_max, nx, ny, cell_deg, time_chunk,
+                       spatial_chunk=128):
     import numpy as np
     import dask.array as da
     import xarray as xr
@@ -508,6 +513,7 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     out_dec = []
     out_times = []
     out_freqs = []
+    ntasks = 0
     for ms in opts.ms:
         xds = xds_from_ms(ms,
                     columns='TIME',
@@ -535,14 +541,23 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
             titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
                                 time_mapping[ms][idt]['counts']))
             for ti, (tlow, tcounts) in titr:
-                It = slice(tlow, tlow + tcounts)
+                # It = slice(tlow, tlow + tcounts)
                 fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
                                      freq_mapping[ms][idt]['counts']))
                 for fi, (flow, fcounts) in fitr:
                     Inu = slice(flow, flow + fcounts)
-
-                    out_times.append(np.mean(utimes[ms][idt][It]))
                     out_freqs.append(np.mean(freqs[ms][idt][Inu]))
+                    ntasks += 1
+
+                    # divide tlow:tlow+tcounts into ipi intervals
+                    for t0 in range(tlow, tlow+tcounts, opts.integrations_per_image):
+                        tmax = np.minimum(tlow+tcounts, t0 + opts.integrations_per_image)
+                        It = slice(t0, tmax)
+                        out_times.append(np.mean(utimes[ms][idt][It]))
+    
+    # if not stacking we only run this to get the number of tasks that will be submitted
+    if not opts.stack:
+        return None, None, ntasks
 
     # spatial coordinates
     if opts.phase_dir is None:
@@ -568,13 +583,13 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     n_freqs = out_freqs.size
 
     cube_dims = (n_stokes, n_freqs, n_times, ny, nx)
-    cube_chunks = (1, 1, 1, spatial_chunk, spatial_chunk)
+    cube_chunks = (n_stokes, 1, time_chunk, spatial_chunk, spatial_chunk)
 
     mean_dims = (n_stokes, n_freqs, ny, nx)
-    mean_chunks = (1, 1, spatial_chunk, spatial_chunk)
+    mean_chunks = (n_stokes, 1, spatial_chunk, spatial_chunk)
 
     rms_dims = (n_stokes, n_freqs, n_times)
-    rms_chunks = (1, 1, 1)
+    rms_chunks = (n_stokes, 1, time_chunk)
 
     ra_dim = 'RA--SIN'
     dec_dim = 'DEC--SIN'
@@ -647,7 +662,7 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
                 ("STOKES", "FREQ", "TIME", "Y", "X"),
                 da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32)
             ),
-            "mean":(
+            "cube_mean":(
                 ("STOKES", "FREQ", "Y", "X"),
                 da.empty(mean_dims, chunks=mean_chunks, dtype=np.float32)
             ),
@@ -723,4 +738,4 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     # Write scaffold and metadata to disk.
     cds = f'{opts.output_filename}.zarr'
     dummy_ds.to_zarr(cds, mode="w", compute=False)
-    return cds, attrs
+    return cds, attrs, ntasks

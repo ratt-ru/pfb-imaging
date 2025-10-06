@@ -91,13 +91,25 @@ inputs:
       Path to Quartical gain table containing NET gains.
       There must be a table for each MS and glob(ms) and
       glob(gt) should match up when running from CLI.
+  max-simul-chunks:
+    dtype: int
+    default: 4
+    info:
+      Maximum number of chunks to process simultaneously
+  integrations-per-chunk:
+    dtype: int
+    abbreviation: ipc
+    default: 16
+    info:
+      Number of time integrations per chunk in the output dataset.
+      Default is to use ncpu  dataset per scan.
   integrations-per-image:
     dtype: int
     abbreviation: ipi
     default: 1
     info:
       Number of time integrations per image.
-      Default (-1, 0, None) -> dataset per scan.
+      Default of one results in snapshot imaging.
   channels-per-image:
     dtype: int
     abbreviation: cpi
@@ -236,6 +248,13 @@ inputs:
     dtype: str
     info:
       Optional observation label to include in the stacked cube
+  object-store-memory:
+    dtype: float
+    info:
+      Amount of memory in GB allocated to Ray's object store.
+      By default this should be set to 30% of available system memory.
+      You may want to increase this if processing a large number if chunks simultaneously.
+
 
   _include:
     - (.)gridding.yml
