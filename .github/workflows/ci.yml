@@ -12,6 +12,7 @@ on:
 
 env:
   POETRY_VERSION: 1.8.4
+  PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
 
 jobs:
   should-run:
@@ -96,9 +97,6 @@ jobs:
         uses: abatilo/actions-poetry@v4
         with:
           poetry-version: ${{ env.POETRY_VERSION }}
-
-      - name: Disable keyring for Poetry
-        run: poetry config keyring.disabled true
 
       - name: Check poetry install
         run: poetry --version
