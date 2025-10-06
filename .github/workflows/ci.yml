@@ -101,6 +101,7 @@ jobs:
 
       - name: Configure Poetry
         run: |
+          poetry config keyring.enabled false
           poetry config solver.lazy-wheel false
           poetry config installer.max-workers 10
 
@@ -146,7 +147,8 @@ jobs:
           echo "measures.directory: ~/measures" > ~/.casarc
 
       - name: Install pfb-imaging
-        run: poetry install -vvv
+        run: poetry install -vvv --no-interaction
+        timeout-minutes: 15
 
       - name: Run pfb-imaging
         run: poetry run pfb --help
