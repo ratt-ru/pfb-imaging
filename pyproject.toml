@@ -42,6 +42,7 @@ matplotlib = ">=3.9.2"
 rich = ">=13.0.0"
 reproject = ">=0.14.1"  # or whatever minimum version you need
 ray = {extras = ["default"], version = ">=2.48.0,<3.0.0"}
+av = { version = "<0.0.16"}
 
 [tool.poetry.scripts]
 pfb = "pfb.workers.main:cli"
