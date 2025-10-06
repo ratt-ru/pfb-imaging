@@ -131,7 +131,7 @@ jobs:
           echo "measures.directory: ~/measures" > ~/.casarc
 
       - name: Install pfb-imaging
-        run: pip install -e pfb-imaging
+        run: pip install -e .
         timeout-minutes: 15
 
       - name: Run pfb-imaging
