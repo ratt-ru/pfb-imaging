@@ -104,7 +104,7 @@ jobs:
         uses: chetan/git-restore-mtime-action@v2
 
       - name: Upgrade pip and setuptools
-        run: python -m pip install -U pip setuptools
+        run: python -m pip install -U pip setuptools --verbose
 
       - name: Create Key and Numba Cache Directory
         id: numba-key
@@ -139,7 +139,7 @@ jobs:
           echo "measures.directory: ~/measures" > ~/.casarc
 
       - name: Install pfb-imaging
-        run: poetry install
+        run: poetry install -vvv
 
       - name: Run pfb-imaging
         run: poetry run pfb --help
