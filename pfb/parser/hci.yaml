@@ -260,6 +260,8 @@ outputs:
     required: true
     must_exist: true
     mkdir: false
+    path_policies: 
+      write_parent: true
     abbreviation: o
     info:
       Basename of output
