@@ -20,7 +20,6 @@ def hci(**kw):
     opts = OmegaConf.create(kw)
 
     output_filename = opts.output_filename
-    product = opts.product
 
     if '://' in output_filename:
         protocol = output_filename.split('://')[0]
@@ -34,7 +33,7 @@ def hci(**kw):
     if not fs.exists(basedir):
         fs.makedirs(basedir)
 
-    oname = output_filename.split('/')[-1] + f'_{product.upper()}'
+    oname = output_filename.split('/')[-1]
 
     opts.output_filename = f'{prefix}{basedir}/{oname}'
 
@@ -125,6 +124,7 @@ def _hci(**kw):
     from pfb.utils.stokes2im import batch_stokes_image
     import xarray as xr
     import yaml
+    from tempfile import TemporaryDirectory
     from zarr import ProcessSynchronizer
 
     basename = f'{opts.output_filename}'
@@ -132,24 +132,18 @@ def _hci(**kw):
     if opts.stack and opts.output_format == 'fits':
         raise RuntimeError("Can't stack in fits mode")
 
-    if opts.stack:
-        ext = 'zarr'
-    else:
-        ext = 'fds'
-    fds_store = DaskMSStore(f'{basename}.{ext}')
+    fds_store = DaskMSStore(basename)
     if fds_store.exists():
         if opts.overwrite:
-            log.info(f"Overwriting {basename}.{ext}")
+            log.info(f"Overwriting {basename}")
             fds_store.rm(recursive=True)
         else:
-            log.error_and_raise(f"{basename}.{ext} exists. "
+            log.error_and_raise(f"{basename} exists. "
                                 "Set overwrite to overwrite it. ",
                                 RuntimeError)
 
     fs = fsspec.filesystem(fds_store.url.split(':', 1)[0])
     fs.makedirs(fds_store.url, exist_ok=True)
-
-    synchronizer = ProcessSynchronizer(f'{fds_store.url}/.sync')
 
     if opts.gain_table is not None:
         tmpf = lambda x: '::'.join(x.rsplit('/', 1))
@@ -327,7 +321,7 @@ def _hci(**kw):
     # construct examplar dataset if asked to stack
     if opts.stack and opts.output_format != 'zarr':
         raise ValueError('Can only stack zarr outputs not fits')
-    cds, attrs, ntasks = make_dummy_dataset(opts, utimes, freqs, radecs,
+    attrs, ntasks = make_dummy_dataset(opts, fds_store.url, utimes, freqs, radecs,
                                     time_mapping, freq_mapping,
                                     freq_min, freq_max, nx, ny, cell_deg, ipc)
 
@@ -367,94 +361,97 @@ def _hci(**kw):
     tasks = []
     channel_width = {}
     ncompleted = 0
-    for ims, ms in enumerate(opts.ms):
-        xds = xds_from_ms(ms,
-                        columns=columns,
-                        table_schema=schema,
-                        group_cols=group_by)
+    # if opts.temp-dir is None dir will be /tmp
+    with TemporaryDirectory(prefix='hci-', dir=opts.temp_dir) as tempdir:
+        synchronizer = ProcessSynchronizer(tempdir)
+        for ims, ms in enumerate(opts.ms):
+            xds = xds_from_ms(ms,
+                            columns=columns,
+                            table_schema=schema,
+                            group_cols=group_by)
 
-        for ds in xds:
-            fid = ds.FIELD_ID
-            ddid = ds.DATA_DESC_ID
-            scanid = ds.SCAN_NUMBER
-            if (opts.fields is not None) and (fid not in opts.fields):
-                continue
-            if (opts.ddids is not None) and (ddid not in opts.ddids):
-                continue
-            if (opts.scans is not None) and (scanid not in opts.scans):
-                continue
+            for ds in xds:
+                fid = ds.FIELD_ID
+                ddid = ds.DATA_DESC_ID
+                scanid = ds.SCAN_NUMBER
+                if (opts.fields is not None) and (fid not in opts.fields):
+                    continue
+                if (opts.ddids is not None) and (ddid not in opts.ddids):
+                    continue
+                if (opts.scans is not None) and (scanid not in opts.scans):
+                    continue
 
-            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+                idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
 
-            idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
-            if not idx.any():
-                continue
+                idx = (freqs[ms][idt]>=freq_min) & (freqs[ms][idt]<=freq_max)
+                if not idx.any():
+                    continue
 
-            titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
-                                time_mapping[ms][idt]['counts']))
-            for ti, (tlow, tcounts) in titr:
+                titr = enumerate(zip(time_mapping[ms][idt]['start_indices'],
+                                    time_mapping[ms][idt]['counts']))
+                for ti, (tlow, tcounts) in titr:
 
-                It = slice(tlow, tlow + tcounts)
-                ridx = row_mapping[ms][idt]['start_indices'][It]
-                rcnts = row_mapping[ms][idt]['counts'][It]
-                # select all rows for output dataset
-                Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
+                    It = slice(tlow, tlow + tcounts)
+                    ridx = row_mapping[ms][idt]['start_indices'][It]
+                    rcnts = row_mapping[ms][idt]['counts'][It]
+                    # select all rows for output dataset
+                    Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
 
-                fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
-                                        freq_mapping[ms][idt]['counts']))
-                b0 = msddid2bid[ms][idt]
-                for fi, (flow, fcounts) in fitr:
-                    Inu = slice(flow, flow + fcounts)
+                    fitr = enumerate(zip(freq_mapping[ms][idt]['start_indices'],
+                                            freq_mapping[ms][idt]['counts']))
+                    b0 = msddid2bid[ms][idt]
+                    for fi, (flow, fcounts) in fitr:
+                        Inu = slice(flow, flow + fcounts)
 
-                    subds = ds[{'row': Irow, 'chan': Inu}]
-                    subds = subds.chunk({'row':-1, 'chan': -1})
-                    if gains[ms][idt] is not None:
-                        subgds = gains[ms][idt][{'gain_time': It, 'gain_freq': Inu}]
-                        jones = subgds.gains.data
-                    else:
-                        jones = None
-                    
-                    fut = batch_stokes_image.remote(
-                            dc1=dc1,
-                            dc2=dc2,
-                            operator=operator,
-                            ds=subds,
-                            jones=jones,
-                            opts=opts,
-                            nx=nx,
-                            ny=ny,
-                            freq=freqs[ms][idt][Inu],
-                            utime=utimes[ms][idt][It],
-                            rbin_idx=ridx,
-                            rbin_counts=rcnts,
-                            cell_rad=cell_rad,
-                            radec=radecs[ms][idt],
-                            antpos=antpos[ms],
-                            poltype=poltype[ms],
-                            fds_store=fds_store,
-                            bandid=b0+fi,
-                            timeid=ti,
-                            msid=ims,
-                            attrs=attrs,
-                            integrations_per_image=opts.integrations_per_image,
-                            synchronizer=synchronizer
-                    )
-                    tasks.append(fut)
-                    channel_width[b0+fi] = freqs[ms][idt][Inu].max() - freqs[ms][idt][Inu].min()
+                        subds = ds[{'row': Irow, 'chan': Inu}]
+                        subds = subds.chunk({'row':-1, 'chan': -1})
+                        if gains[ms][idt] is not None:
+                            subgds = gains[ms][idt][{'gain_time': It, 'gain_freq': Inu}]
+                            jones = subgds.gains.data
+                        else:
+                            jones = None
+                        
+                        fut = batch_stokes_image.remote(
+                                dc1=dc1,
+                                dc2=dc2,
+                                operator=operator,
+                                ds=subds,
+                                jones=jones,
+                                opts=opts,
+                                nx=nx,
+                                ny=ny,
+                                freq=freqs[ms][idt][Inu],
+                                utime=utimes[ms][idt][It],
+                                rbin_idx=ridx,
+                                rbin_counts=rcnts,
+                                cell_rad=cell_rad,
+                                radec=radecs[ms][idt],
+                                antpos=antpos[ms],
+                                poltype=poltype[ms],
+                                fds_store=fds_store,
+                                bandid=b0+fi,
+                                timeid=ti,
+                                msid=ims,
+                                attrs=attrs,
+                                integrations_per_image=opts.integrations_per_image,
+                                synchronizer=synchronizer
+                        )
+                        tasks.append(fut)
+                        channel_width[b0+fi] = freqs[ms][idt][Inu].max() - freqs[ms][idt][Inu].min()
 
-                    # limit the number of chunks that are processed simultaneously
-                    if len(tasks) > opts.max_simul_chunks:
-                        ncompleted += 1
-                        ready, tasks = ray.wait(tasks, num_returns=1)
-                        timeid, bandid = ray.get(ready)[0]
-                        print(f"Processed {ncompleted}/{ntasks}", end='\n', flush=True)
+                        # limit the number of chunks that are processed simultaneously
+                        if len(tasks) > opts.max_simul_chunks:
+                            ncompleted += 1
+                            ready, tasks = ray.wait(tasks, num_returns=1)
+                            timeid, bandid = ray.get(ready)[0]
+                            print(f"Processed {ncompleted}/{ntasks}", end='\n', flush=True)
 
-    remaining_tasks = tasks.copy()
-    while remaining_tasks:
-        ncompleted += 1
-        ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
-        timeid, bandid = ray.get(ready)[0]
-        print(f"Processed {ncompleted}/{ntasks}", end='\n', flush=True)
+        remaining_tasks = tasks.copy()
+        while remaining_tasks:
+            ncompleted += 1
+            ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
+            timeid, bandid = ray.get(ready)[0]
+            print(f"Processed {ncompleted}/{ntasks}", end='\n', flush=True)
 
     if opts.stack:
         log.info("Computing means")
@@ -465,7 +462,7 @@ def _hci(**kw):
         for _, val in channel_width.items():
             cwidths.append(val)
         # reduction over FREQ and TIME so use max chunk sizes
-        ds = xr.open_zarr(cds, chunks={'FREQ': -1, 'TIME':-1})
+        ds = xr.open_zarr(fds_store.url, chunks={'FREQ': -1, 'TIME':-1})
         cube = ds.cube.data
         wsums = ds.weight.data
         # all variables have been normalised by wsum so we first
@@ -497,11 +494,11 @@ def _hci(**kw):
         ds['cube_mean'] = (('STOKES', 'FREQ', 'Y', 'X'),  weighted_mean)
         ds['channel_width'] = (('FREQ',), da.from_array(cwidths, chunks=1))
         with dask.config.set(pool=ThreadPoolExecutor(8)):
-            ds.to_zarr(cds, mode='r+')
+            ds.to_zarr(fds_store.url, mode='r+')
         log.info("Reduction complete")
     return
 
-def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
+def make_dummy_dataset(opts, cds_url, utimes, freqs, radecs, time_mapping, freq_mapping,
                        freq_min, freq_max, nx, ny, cell_deg, time_chunk,
                        spatial_chunk=128):
     import numpy as np
@@ -557,7 +554,7 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
     
     # if not stacking we only run this to get the number of tasks that will be submitted
     if not opts.stack:
-        return None, None, ntasks
+        return None, ntasks
 
     # spatial coordinates
     if opts.phase_dir is None:
@@ -736,6 +733,5 @@ def make_dummy_dataset(opts, utimes, freqs, radecs, time_mapping, freq_mapping,
                          chunks=(1, spatial_chunk, spatial_chunk), dtype=np.float32))
 
     # Write scaffold and metadata to disk.
-    cds = f'{opts.output_filename}.zarr'
-    dummy_ds.to_zarr(cds, mode="w", compute=False)
-    return cds, attrs, ntasks
+    dummy_ds.to_zarr(cds_url, mode="w", compute=False)
+    return attrs, ntasks

@@ -138,13 +138,6 @@ def stokes_image(
     # serialization fails for these if we import them above
     from ducc0.misc import resize_thread_pool
     from ducc0.wgridder import vis2dirty
-
-    # # LB - is this the correct way to do this? 
-    # # we don't want it to end up in the distributed object store 
-    # ds.load(scheduler='sync')
-    # if jones is not None:
-    #     # we do it this way to force using synchronous scheduler
-    #     jones = jones.load(scheduler='sync').values
     
     resize_thread_pool(opts.nthreads)
     fieldid = ds.FIELD_ID
@@ -555,7 +548,7 @@ def stokes_image(
             do_wgridding=opts.do_wgridding,
             divide_by_n=True,  # no rephasing or smooth beam so do it here
             nthreads=opts.nthreads,
-            sigma_min=opts.min_padding, sigma_max=3.0,
+            sigma_min=opts.min_padding,
             double_precision_accumulation=opts.double_accum,
             verbosity=0,
             dirty=residual[c])
@@ -576,7 +569,7 @@ def stokes_image(
             do_wgridding=opts.do_wgridding,
             divide_by_n=True,  # no rephasing or smooth beam so do it here
             nthreads=opts.nthreads,
-            sigma_min=opts.min_padding, sigma_max=3.0,
+            sigma_min=opts.min_padding,
             double_precision_accumulation=opts.double_accum,
             verbosity=0,
             dirty=psf[c])

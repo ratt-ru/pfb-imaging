@@ -254,6 +254,10 @@ inputs:
       Amount of memory in GB allocated to Ray's object store.
       By default this should be set to 30% of available system memory.
       You may want to increase this if processing a large number if chunks simultaneously.
+  temp-dir:
+    dtype: Directory
+    info:
+      A temporary directory to store ephemeral files
 
 
   _include:
@@ -263,7 +267,7 @@ inputs:
 
 outputs:
   dir-out:
-    implicit: ='{current.output-filename}_{current.product}' + IF(current.stack, '.zarr', '.fds')
+    implicit: current.output-filename
     dtype: Directory
     must_exist: true
     mkdir: false
