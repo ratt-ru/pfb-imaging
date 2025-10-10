@@ -254,11 +254,6 @@ inputs:
       Amount of memory in GB allocated to Ray's object store.
       By default this should be set to 30% of available system memory.
       You may want to increase this if processing a large number if chunks simultaneously.
-  temp-dir:
-    dtype: Directory
-    info:
-      A temporary directory to store ephemeral files
-
 
   _include:
     - (.)gridding.yml
@@ -271,6 +266,10 @@ outputs:
     dtype: Directory
     must_exist: true
     mkdir: false
+  temp-dir:
+    dtype: Directory
+    info:
+      A temporary directory to store ephemeral files
 
 policies:
   pass_missing_as_none: true
