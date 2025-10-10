@@ -5,7 +5,7 @@ from astropy.time import Time
 from astropy import units
 from astropy.coordinates import SkyCoord
 from astropy.coordinates import solar_system_ephemeris, EarthLocation, AltAz
-from astropy.coordinates import get_body_barycentric, get_body, get_moon
+from astropy.coordinates import get_body_barycentric, get_body
 from scipy.constants import c as lightspeed
 from pfb.operators.gridder import wgridder_conventions
 from africanus.coordinates import radec_to_lmn
