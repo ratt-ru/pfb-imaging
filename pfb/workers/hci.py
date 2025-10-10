@@ -241,8 +241,6 @@ def _hci(**kw):
 
     cell_deg = np.rad2deg(cell_rad)
 
-    log.info(f"Image size = (nx={nx}, ny={ny})")
-
     # crude column arithmetic
     dc = opts.data_column.replace(" ", "")
     if "+" in dc:
@@ -321,9 +319,13 @@ def _hci(**kw):
     # construct examplar dataset if asked to stack
     if opts.stack and opts.output_format != 'zarr':
         raise ValueError('Can only stack zarr outputs not fits')
-    attrs, ntasks = make_dummy_dataset(opts, fds_store.url, utimes, freqs, radecs,
-                                    time_mapping, freq_mapping,
-                                    freq_min, freq_max, nx, ny, cell_deg, ipc)
+    attrs, ntasks, n_timeo, n_freqo = make_dummy_dataset(
+            opts, fds_store.url, utimes, freqs, radecs,
+            time_mapping, freq_mapping,
+            freq_min, freq_max, nx, ny, cell_deg, ipc)
+
+    n_stokes = len(opts.product)
+    log.info(f"Cube size = (n_stokes={n_stokes}, n_freq={n_freqo}, n_time={n_timeo}, n_y={ny}, n_x={nx})")
 
     if opts.inject_transients is not None:
         # we need to do this here because we don't have access
@@ -552,9 +554,15 @@ def make_dummy_dataset(opts, cds_url, utimes, freqs, radecs, time_mapping, freq_
                         It = slice(t0, tmax)
                         out_times.append(np.mean(utimes[ms][idt][It]))
     
+    # remove duplicates
+    out_times = np.unique(out_times)
+    out_freqs = np.unique(out_freqs)
+    n_times = out_times.size
+    n_freqs = out_freqs.size
+
     # if not stacking we only run this to get the number of tasks that will be submitted
     if not opts.stack:
-        return None, ntasks
+        return None, ntasks, n_times, n_freqs
 
     # spatial coordinates
     if opts.phase_dir is None:
@@ -571,13 +579,9 @@ def make_dummy_dataset(opts, cds_url, utimes, freqs, radecs, time_mapping, freq_
         out_ra_deg = np.array([coord.ra.value])
         out_dec_deg = np.array([coord.dec.value])
 
-    # remove duplicates
-    out_times = np.unique(out_times)
-    out_freqs = np.unique(out_freqs)
+    
 
     n_stokes = len(opts.product)
-    n_times = out_times.size
-    n_freqs = out_freqs.size
 
     cube_dims = (n_stokes, n_freqs, n_times, ny, nx)
     cube_chunks = (n_stokes, 1, time_chunk, spatial_chunk, spatial_chunk)
@@ -734,4 +738,4 @@ def make_dummy_dataset(opts, cds_url, utimes, freqs, radecs, time_mapping, freq_
 
     # Write scaffold and metadata to disk.
     dummy_ds.to_zarr(cds_url, mode="w", compute=False)
-    return attrs, ntasks
+    return attrs, ntasks, n_times, n_freqs
