@@ -5,12 +5,6 @@ inputs:
     abbreviation: ms
     info:
       Path to measurement set
-  output-filename:
-    dtype: str
-    required: true
-    abbreviation: o
-    info:
-      Basename of output
   log-directory:
     dtype: str
     abbreviation: ldir
@@ -262,10 +256,13 @@ inputs:
 
 outputs:
   dir-out:
-    implicit: current.output-filename
     dtype: Directory
+    required: true
     must_exist: true
     mkdir: false
+    abbreviation: o
+    info:
+      Basename of output
   temp-dir:
     dtype: Directory
     info:
