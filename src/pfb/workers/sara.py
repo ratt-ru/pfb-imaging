@@ -325,10 +325,7 @@ def _sara(**kw):
     eps = 1.0
     write_futures = None
     log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
-    if opts.skip_model:
-        mrange = []
-    else:
-        mrange = range(iter0, iter0 + opts.niter)
+    mrange = range(iter0, iter0 + opts.niter)
     for k in mrange:
         log.info('Solving for update')
         residual *= beam  # avoid copy

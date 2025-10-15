@@ -98,11 +98,6 @@ inputs:
     info:
       Will terminate the algorithm if the rms increases this many times.
       Set to larger than niter to disable this check.
-  skip-model:
-    dtype: bool
-    default: false
-    info:
-      Skip model creation i.e. use with do-res to do-res only
   rms-outside-model:
     dtype: bool
     default: false

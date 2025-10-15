@@ -1,0 +1,228 @@
+cabs:
+  pfb_grid:
+    command: (pfb.workers.grid)grid
+    flavour: python
+    policies:
+      pass_missing_as_none: true
+
+    inputs:
+      xds:
+        info:
+          Optional explicit path to xds.
+          Set using output-filename and suffix by default.
+      suffix:
+        dtype: str
+        default: 'main'
+        info:
+          Can be used to specify a custom name for the image space data products
+      concat-row:
+        dtype: bool
+        default: True
+        info:
+          Concatenate datasets by row
+      overwrite:
+        dtype: bool
+        default: false
+        info:
+          Allow overwriting of image space data products.
+          Specify suffix to create a new data set.
+      transfer-model-from:
+        dtype: str
+        abbreviation: tmf
+        info:
+          Name of dataset to use for model initialisation
+      use-best-model:
+        dtype: bool
+        default: false
+        info:
+          If this flag is set MODEL_BEST will be used as the model
+          unless transfer-model-from is specified. By default MODEL
+          will be used as the model.
+      robustness:
+        dtype: float
+        abbreviation: rob
+        info:
+          Robustness factor for Briggs weighting. None means natural
+      dirty:
+        dtype: bool
+        default: true
+        info:
+          Compute the dirty image
+      psf:
+        dtype: bool
+        default: true
+        info:
+          Compute the PSF
+      residual:
+        dtype: bool
+        default: true
+        info:
+          Compute the residual (only if model is present)
+      noise:
+        dtype: bool
+        default: true
+        info:
+          Compute noise map by sampling from weights
+      beam:
+        dtype: bool
+        default: true
+        info:
+          Interpolate average beam pattern
+      psf-oversize:
+        dtype: float
+        default: 1.4
+        abbreviation: psfo
+        info:
+          Size of PSF relative to dirty image
+      weight:
+        dtype: bool
+        default: true
+        info:
+          Compute effectve image space weights
+      field-of-view:
+        dtype: float
+        abbreviation: fov
+        info:
+          Field of view in degrees
+        metavar: DEG
+      super-resolution-factor:
+        dtype: float
+        default: 2
+        abbreviation: srf
+        info:
+          Will over-sample Nyquist by this factor at max frequency
+      cell-size:
+        dtype: float
+        info:
+          Cell size in arc-seconds
+      nx:
+        dtype: int
+        info:
+          Number of x pixels
+      ny:
+        dtype: int
+        info:
+          Number of y pixels
+      filter-counts-level:
+        dtype: float
+        default: 5.0
+        info:
+          Set minimum counts in the uniform weighting grid to the median divided by this value.
+          This is useful to avoid artificially up-weighting nearly empty uv-cells.
+      target:
+        dtype: str
+        info:
+          This can be predefined celestial objects known to astropy or a string in
+          the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+      l2-reweight-dof:
+        dtype: float
+        abbreviation: dof
+        info:
+          The degrees of freedom parameter for L2 reweighting.
+          The default (None) means no reweighting.
+          A sensible value for this parameter depends on the level of RFI in the data.
+          Small values (eg. 2) result in aggressive reweighting and should be avoided
+          if the model is still incomplete.
+      epsilon:
+        dtype: float
+        default: 1e-7
+        info: 'Gridder accuracy'
+        abbreviation: eps
+      do-wgridding:
+        dtype: bool
+        default: true
+        info: "Perform w-correction via improved w-stacking"
+      double-accum:
+        dtype: bool
+        default: true
+        info: "Accumulate onto grid using double precision. \
+              Only has an affect when using single precision."
+
+      host-address:
+        dtype: str
+        abbreviation: ha
+        info:
+          Address where the distributed client lives.
+          Uses LocalCluster if no address is provided
+          and scheduler is set to distributed.
+      nworkers:
+        dtype: int
+        default: 1
+        abbreviation: nw
+        info:
+          Number of worker processes.
+          Use with distributed scheduler.
+      nthreads:
+        dtype: int
+        abbreviation: nt
+        info:
+          Number of threads used to scale vertically (eg. for FFTs and gridding).
+          Each dask thread can in principle spawn this many threads.
+          Will attempt to use half the available threads by default.
+      direct-to-workers:
+        dtype: bool
+        default: true
+        info:
+          Connect direct to workers i.e. bypass scheduler.
+          Faster but then the dashboard isn't very useful.
+      log-level:
+        dtype: str
+        default: error
+        choices: [error, warning, info, debug]
+      output-filename:
+        dtype: str
+        required: true
+        abbreviation: o
+        info:
+          Basename of output
+      log-directory:
+        dtype: str
+        abbreviation: ldir
+        info:
+          Directory to write logs and performance reports to.
+      product:
+        dtype: str
+        abbreviation: p
+        default: I
+        info:
+          String specifying which Stokes products to produce.
+          Outputs are always be alphabetically ordered.
+      fits-output-folder:
+        dtype: str
+        abbreviation: fitso
+        info:
+          Optional path to write fits files to.
+          Set to output-filename if not provided.
+          The same naming conventions apply.
+      fits-mfs:
+        dtype: bool
+        default: true
+        info:
+          Output MFS fits files
+      fits-cubes:
+        dtype: bool
+        default: true
+        info:
+          Output fits cubes
+      epsilon:
+        dtype: float
+        default: 1e-7
+        info: 'Gridder accuracy'
+        abbreviation: eps
+      do-wgridding:
+        dtype: bool
+        default: true
+        info: "Perform w-correction via improved w-stacking"
+      double-accum:
+        dtype: bool
+        default: true
+        info: "Accumulate onto grid using double precision. \
+              Only has an affect when using single precision."
+
+
+
+    outputs:
+      dds-out:
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
+        dtype: Directory
+        must_exist: false

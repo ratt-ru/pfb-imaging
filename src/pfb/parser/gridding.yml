@@ -1,14 +1,16 @@
 epsilon:
   dtype: float
   default: 1e-7
-  info: 'Gridder accuracy'
   abbreviation: eps
+  info:
+    Gridder accuracy
 do-wgridding:
   dtype: bool
   default: true
-  info: "Perform w-correction via improved w-stacking"
+  info:
+    Perform w-correction via improved w-stacking
 double-accum:
   dtype: bool
   default: true
-  info: "Accumulate onto grid using double precision. \
-        Only has an affect when using single precision."
+  info:
+    Accumulate onto grid using double precision. Only has an affect when using single precision.

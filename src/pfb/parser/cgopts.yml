@@ -1,30 +1,35 @@
 cg-tol:
   dtype: float
   default: 1e-3
-  info: 'Tolreance of conjugate gradient algorithm'
   abbreviation: cgtol
+  info:
+    Tolreance of conjugate gradient algorithm
 cg-maxit:
   dtype: int
   default: 150
-  info: 'Maximum iterations for conjugate gradient algorithm'
   abbreviation: cgmaxit
+  info:
+    Maximum iterations for conjugate gradient algorithm
 cg-minit:
   dtype: int
   default: 10
-  info: 'Minimum iterations for conjugate gradient algorithm'
   abbreviation: cgminit
+  info:
+    Minimum iterations for conjugate gradient algorithm
 cg-verbose:
   dtype: int
   default: 1
-  info: 'Verbosity of conjugate gradient algorithm. Set to > 1 for \
-        debugging, 0 for silence'
   abbreviation: cgverb
+  info:
+    Verbosity of conjugate gradient algorithm. Set to > 1 for debugging, 0 for silence
 cg-report-freq:
   dtype: int
   default: 10
-  info: 'Report frequency of conjugate gradient algorithm'
   abbreviation: cgrf
+  info:
+    Report frequency of conjugate gradient algorithm
 backtrack:
   dtype: bool
   default: false
-  info: 'Ensure residual decreases at every iteration'
+  info:
+    Ensure residual decreases at every iteration

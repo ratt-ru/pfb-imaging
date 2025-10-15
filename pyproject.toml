@@ -16,7 +16,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Astronomy"
 ]
-packages = [{include = "pfb"}]
+packages = [{include = "pfb", from = "src"}]
 
 [tool.poetry.dependencies]
 python = ">=3.10, <3.13"
@@ -43,9 +43,11 @@ rich = ">=13.0.0"
 reproject = "*"
 ray = {extras = ["default"], version = "*"}
 debugpy = "*"
+hip-cargo = { git = "https://github.com/landmanbester/hip-cargo.git", branch = "main" }
 
 [tool.poetry.scripts]
 pfb = "pfb.workers.main:cli"
+hipfb = "pfb.cli:app"
 
 [build-system]
 requires = ["poetry-core"]
