@@ -255,7 +255,7 @@ inputs:
     - (.)cgopts.yml
 
 outputs:
-  dir-out:
+  output-dataset:
     dtype: Directory
     required: true
     must_exist: true
