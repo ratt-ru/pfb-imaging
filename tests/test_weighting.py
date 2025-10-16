@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
-from pfb.utils.weighting import _compute_counts, counts_to_weights
-from pfb.operators.gridder import wgridder_conventions
+from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights
+from pfb_imaging.operators.gridder import wgridder_conventions
 
 pmp = pytest.mark.parametrize
 

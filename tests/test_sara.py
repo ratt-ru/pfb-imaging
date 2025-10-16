@@ -22,16 +22,16 @@ def test_sara(ms_name):
     import dask
     import xarray as xr
     from daskms import xds_from_ms, xds_from_table, xds_to_table
-    from pfb.utils.naming import xds_from_url
-    from pfb.utils.misc import Gaussian2D, give_edges
+    from pfb_imaging.utils.naming import xds_from_url
+    from pfb_imaging.utils.misc import Gaussian2D, give_edges
     from africanus.constants import c as lightspeed
     from ducc0.fft import good_size
     from ducc0.wgridder.experimental import dirty2vis
-    from pfb.operators.gridder import wgridder_conventions
-    from pfb.workers.init import _init
-    from pfb.workers.grid import _grid
-    from pfb.workers.sara import _sara
-    from pfb.workers.degrid import _degrid
+    from pfb_imaging.operators.gridder import wgridder_conventions
+    from pfb_imaging.workers.init import _init
+    from pfb_imaging.workers.grid import _grid
+    from pfb_imaging.workers.sara import _sara
+    from pfb_imaging.workers.degrid import _degrid
     import ray
 
     renv = {"env_vars":{
@@ -139,7 +139,7 @@ def test_sara(ms_name):
     dask.compute(writes)
 
     from scabha.cargo import _UNSET_DEFAULT
-    from pfb.parser.schemas import schema
+    from pfb_imaging.parser.schemas import schema
     for worker in schema.keys():
         for param in schema[worker]['inputs']:
             if schema[worker]['inputs'][param]['default'] == _UNSET_DEFAULT:

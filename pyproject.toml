@@ -1,10 +1,13 @@
-[tool.poetry]
+[project]
 name = "pfb-imaging"
 version = "0.0.6"
 description = "Radio interferometric imaging suite based on a preconditioned forward-backward approach"
-authors = ["Landman Bester <lbester@sarao.ac.za>"]
-license = "MIT"
+authors = [
+    { name = "landmanbester", email = "lbester@sarao.ac.za" }
+]
+license = {text = "MIT"}
 readme = "README.rst"
+requires-python = ">=3.10, <3.13"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -16,41 +19,80 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Astronomy"
 ]
-packages = [{include = "pfb", from = "src"}]
 
-[tool.poetry.dependencies]
-python = ">=3.10, <3.13"
-pytest = ">=8.0.0"
-scikit-image = ">=0.24.0"
-PyWavelets = ">=1.7.0"
-katbeam = ">=0.1"
-numexpr = ">=2.10.1"
-Click = ">=8.1"
-ducc0 = ">=0.35.0"
-sympy = ">=1.9"
-stimela = ">=2.0.2"
-streamjoy = ">=0.0.8"
-codex-africanus = {git = "https://github.com/ratt-ru/codex-africanus.git", extras = ["dask", "scipy", "astropy", "python-casacore"], branch = "master"}
-dask-ms = {extras = ["s3", "xarray", "zarr"], version = ">=0.2.23"}
-tbb = ">=2021.13.1"
-jax = {extras = ["cpu"], version = ">=0.4.31"}
-lz4 = ">=4.3.3"
-bokeh = ">=3.1.0"
-regions = ">=0.9"
-psutil = ">=5.9.8"
-matplotlib = ">=3.9.2"
-rich = ">=13.0.0"
-reproject = "*"
-ray = {extras = ["default"], version = "*"}
-debugpy = "*"
-hip-cargo = { git = "https://github.com/landmanbester/hip-cargo.git", branch = "main" }
+dependencies = [
+    "typer>=0.12.0",
+    "hip-cargo @ git+https://github.com/landmanbester/hip-cargo.git",
+]
 
-[tool.poetry.scripts]
+[project.urls]
+Homepage = "https://github.com/ratt-ru/pfb-imaging"
+
+[project.optional-dependencies]
+# Full scientific stack
+full = [
+    "katbeam>=0.1",
+    "codex-africanus[dask,scipy,astropy,python-casacore]>=0.4.2",
+    "dask-ms[s3,xarray,zarr]>=0.2.23",
+    "reproject",
+    "ray[default]",
+    "scikit-image>=0.24.0",
+    "PyWavelets>=1.7.0",
+    "numexpr>=2.10.1",
+    "ducc0>=0.35.0",
+    "sympy>=1.9",
+    "stimela>=2.0.2",
+    "streamjoy>=0.0.8",
+    "tbb>=2021.13.1",
+    "jax[cpu]>=0.4.31",
+    "lz4>=4.3.3",
+    "bokeh>=3.1.0",
+    "regions>=0.9",
+    "psutil>=5.9.8",
+    "matplotlib>=3.9.2",
+]
+
+dev = [
+    "pytest>=8.0.0",
+    "tbump>=6.11.0",
+    "ruff>=0.8.0",
+    "pre-commit>=3.0.0",
+    "mypy>=1.0.0",
+]
+
+
+[project.scripts]
 pfb = "pfb.workers.main:cli"
 hipfb = "pfb.cli:app"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["uv_build>=0.8.3,<0.10.0"]
+build-backend = "uv_build"
 
-## add section for dev component which installs builder and Dockerfiles
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Tests that take more time to run",
+]

@@ -13,9 +13,9 @@ def test_model2comps(ms_name):
     np.random.seed(420)
     from numpy.testing import assert_allclose
     from daskms import xds_from_ms, xds_from_table
-    from pfb.utils.misc import Gaussian2D, give_edges
+    from pfb_imaging.utils.misc import Gaussian2D, give_edges
     from africanus.constants import c as lightspeed
-    from pfb.utils.modelspec import (fit_image_cube,
+    from pfb_imaging.utils.modelspec import (fit_image_cube,
                                 eval_coeffs_to_cube,
                                 eval_coeffs_to_slice)
 

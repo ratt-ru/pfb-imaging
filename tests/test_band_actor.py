@@ -1,9 +1,9 @@
 import numpy as np
-from pfb.utils.naming import xds_from_url
+from pfb_imaging.utils.naming import xds_from_url
 from daskms.fsspec_store import DaskMSStore
 from omegaconf import OmegaConf
-from pfb.utils.dist import band_actor
-from pfb.opt.primal_dual import get_ratio
+from pfb_imaging.utils.dist import band_actor
+from pfb_imaging.opt.primal_dual import get_ratio
 import time
 
 if __name__=='__main__':
@@ -24,7 +24,7 @@ if __name__=='__main__':
         if bid == '0001':
             ds_list.append(ds_name)
 
-    from pfb.parser.schemas import schema
+    from pfb_imaging.parser.schemas import schema
     init_args = {}
     for key in schema.spotless["inputs"].keys():
         init_args[key.replace("-", "_")] = schema.spotless["inputs"][key]["default"]

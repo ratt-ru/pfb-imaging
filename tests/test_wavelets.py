@@ -2,7 +2,7 @@ import numpy as np
 import numba
 import pywt
 from numpy.testing import assert_array_almost_equal
-from pfb.wavelets import dwt2d, idwt2d, coeff_size, signal_size
+from pfb_imaging.wavelets import dwt2d, idwt2d, coeff_size, signal_size
 import pytest
 pmp = pytest.mark.parametrize
 

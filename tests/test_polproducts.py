@@ -19,8 +19,8 @@ def test_polproducts(do_gains, ms_name):
     from daskms.experimental.zarr import xds_to_zarr
     from africanus.constants import c as lightspeed
     from ducc0.wgridder.experimental import dirty2vis
-    from pfb.utils.naming import xds_from_url
-    from pfb.operators.gridder import wgridder_conventions
+    from pfb_imaging.utils.naming import xds_from_url
+    from pfb_imaging.operators.gridder import wgridder_conventions
     import ray
 
     renv = {"env_vars":{
@@ -179,8 +179,8 @@ def test_polproducts(do_gains, ms_name):
         Lv = np.linalg.cholesky(Kv + 1e-10*np.eye(nchan))
         L = (Lt, Lv)
 
-        from pfb.utils.misc import kron_matvec
-        from pfb.utils.misc import chunkify_rows
+        from pfb_imaging.utils.misc import kron_matvec
+        from pfb_imaging.utils.misc import chunkify_rows
         from africanus.calibration.utils import corrupt_vis
         jones = np.zeros((ntime, nchan, nant, 1, 2), dtype=np.complex128)
         for p in range(nant):
@@ -245,7 +245,7 @@ def test_polproducts(do_gains, ms_name):
         gain_path = None
 
     from scabha.cargo import _UNSET_DEFAULT
-    from pfb.parser.schemas import schema
+    from pfb_imaging.parser.schemas import schema
     # this still necessary because we are not calling through clickify_parameters
     for worker in schema.keys():
         for param in schema[worker]['inputs']:
@@ -272,7 +272,7 @@ def test_polproducts(do_gains, ms_name):
         init_args["overwrite"] = True
         init_args["channels_per_image"] = 1
         init_args["product"] = p
-        from pfb.workers.init import _init
+        from pfb_imaging.workers.init import _init
         _init(**init_args)
 
         # grid data to produce dirty image
@@ -290,7 +290,7 @@ def test_polproducts(do_gains, ms_name):
         grid_args["robustness"] = 0.0
         grid_args["do_wgridding"] = True
         grid_args["product"] = p
-        from pfb.workers.grid import _grid
+        from pfb_imaging.workers.grid import _grid
         _grid(**grid_args)
 
         dds, _ = xds_from_url(dds_name)
@@ -321,7 +321,7 @@ def test_polproducts(do_gains, ms_name):
         init_args["overwrite"] = True
         init_args["channels_per_image"] = 1
         init_args["product"] = p
-        from pfb.workers.init import _init
+        from pfb_imaging.workers.init import _init
         _init(**init_args)
 
         # grid data to produce dirty image
@@ -339,7 +339,7 @@ def test_polproducts(do_gains, ms_name):
         grid_args["robustness"] = 0.0
         grid_args["do_wgridding"] = True
         grid_args["product"] = p
-        from pfb.workers.grid import _grid
+        from pfb_imaging.workers.grid import _grid
         _grid(**grid_args)
 
         dds, _ = xds_from_url(dds_name)

@@ -1,11 +1,11 @@
 import numpy as np
 from numpy.testing import assert_array_almost_equal
-from pfb.prox.prox_21 import prox_21
-from pfb.prox.prox_21m import prox_21m
-from pfb.prox.prox_21m import prox_21m_numba, dual_update, dual_update_numba
+from pfb_imaging.prox.prox_21 import prox_21
+from pfb_imaging.prox.prox_21m import prox_21m
+from pfb_imaging.prox.prox_21m import prox_21m_numba, dual_update, dual_update_numba
 import pywt
 import pytest
-from pfb.operators.psi import Psi
+from pfb_imaging.operators.psi import Psi
 
 pmp = pytest.mark.parametrize
 

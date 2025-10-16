@@ -1,6 +1,6 @@
 import numpy as np
 from katbeam import JimBeam
-from pfb.utils.beam import interp_beam, eval_beam
+from pfb_imaging.utils.beam import interp_beam, eval_beam
 import pytest
 
 pmp = pytest.mark.parametrize

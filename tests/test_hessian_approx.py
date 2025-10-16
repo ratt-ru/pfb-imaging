@@ -3,12 +3,12 @@ from functools import partial
 import numpy as np
 import pytest
 from pathlib import Path
-from pfb.operators.gridder import wgridder_conventions
-from pfb.operators.hessian import _hessian_slice, hessian_slice_jax
-from pfb.operators.psf import (psf_convolve_slice,
+from pfb_imaging.operators.gridder import wgridder_conventions
+from pfb_imaging.operators.hessian import _hessian_slice, hessian_slice_jax
+from pfb_imaging.operators.psf import (psf_convolve_slice,
                                psf_convolve_slice_jax) 
-from pfb.utils.misc import set_image_size
-from pfb.utils.stokes import stokes_to_corr, corr_to_stokes
+from pfb_imaging.utils.misc import set_image_size
+from pfb_imaging.utils.stokes import stokes_to_corr, corr_to_stokes
 from ducc0.wgridder import vis2dirty, dirty2vis
 from scipy.constants import c as lightspeed
 from daskms import xds_from_ms, xds_from_table
