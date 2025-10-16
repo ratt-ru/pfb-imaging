@@ -36,12 +36,12 @@ def smoovie(**kw):
 
     pfb_logging.log_options_dict(log, opts)
 
-    from pfb import set_envs
+    from pfb_imaging import set_envs
     set_envs(opts.nthreads, ncpu)
 
     # import dask
     # dask.config.set(**{'array.slicing.split_large_chunks': False})
-    # from pfb import set_client
+    # from pfb_imaging import set_client
     # client = set_client(opts.nworkers, log, client_log_level=opts.log_level)
 
     ti = time.time()

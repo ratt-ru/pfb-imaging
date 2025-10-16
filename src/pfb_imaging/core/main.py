@@ -3,7 +3,7 @@ import sys
 import os
 import click
 from importlib.metadata import version
-from pfb import logo
+from pfb_imaging import logo
 import logging
 
 @click.group()

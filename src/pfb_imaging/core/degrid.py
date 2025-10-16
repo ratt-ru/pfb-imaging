@@ -8,7 +8,7 @@ from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.naming import set_output_names
 from scabha.schema_utils import clickify_parameters
 from pfb_imaging.parser.schemas import schema
-from pfb import set_client
+from pfb_imaging import set_client
 
 log = pfb_logging.get_logger('DEGRID')
 

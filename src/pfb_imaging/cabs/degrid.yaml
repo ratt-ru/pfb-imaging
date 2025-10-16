@@ -1,0 +1,137 @@
+cabs:
+  pfb_degrid:
+    command: (pfb.core.degrid)degrid
+    flavour: python
+    policies:
+      pass_missing_as_none: true
+
+    inputs:
+      ms:
+        dtype: List[URI]
+        required: true
+        abbreviation: ms
+        info:
+          Path to measurement set.
+      scans:
+        dtype: List[int]
+        info:
+          List of SCAN_NUMBERS to image. Defaults to all.
+          Input as comma separated list 0,2 if running from CLI
+      ddids:
+        dtype: List[int]
+        info:
+          List of DATA_DESC_ID's to images. Defaults to all.
+          Input as comma separated list 0,2 if running from CLI
+      fields:
+        dtype: List[int]
+        info:
+          List of FIELD_ID's to image. Defaults to all.
+          Input as comma separated list 0,2 if running from CLI
+      suffix:
+        dtype: str
+        default: 'main'
+        info:
+          Can be used to specify a custom name for the image space data products
+      mds:
+        dtype: str
+        abbreviation: mds
+        info:
+          Optional path to mds to use for degridding.
+          By default mds is inferred from output-filename.
+      model-column:
+        dtype: str
+        default: MODEL_DATA
+        info:
+          Column to write model data to
+      product:
+        dtype: str
+        abbreviation: p
+        default: I
+        info:
+          Imaging products to degrid. Options are I, Q, U, V.
+          Only single Stokes products are currently supported.
+      freq-range:
+        dtype: str
+        info:
+          Frequency range to image in Hz.
+          Specify as a string with colon delimiter eg. '1e9:1.1e9'
+      integrations-per-image:
+        dtype: int
+        default: -1
+        abbreviation: ipi
+        info:
+          Number of time integrations corresponding to each image.
+          Default -1 (equivalently 0 or None) implies degrid per scan.
+      channels-per-image:
+        dtype: int
+        abbreviation: cpi
+        info:
+          Number of channels per image.
+          Default (None) -> read mapping from dds.
+          (-1, 0) -> one band per SPW.
+      accumulate:
+        dtype: bool
+        default: false
+        info:
+          Accumulate onto model column
+      region-file:
+        dtype: str
+        info:
+          A region file containing regions that need to be converted to separate measurement set columns.
+          Each region in the file will end up in a separate column labelled as model-column{#} with the
+          remainder going into model-column.
+      epsilon:
+        dtype: float
+        default: 1e-7
+        abbreviation: eps
+        info:
+          Gridder accuracy
+      do-wgridding:
+        dtype: bool
+        default: true
+        info:
+          Perform w-correction via improved w-stacking
+      double-accum:
+        dtype: bool
+        default: true
+        info:
+          Accumulate onto grid using double precision. Only has an affect when using single precision.
+      host-address:
+        dtype: str
+        abbreviation: ha
+        info:
+          Address where the distributed client lives.
+          Uses LocalCluster if no address is provided.
+      nworkers:
+        dtype: int
+        default: 1
+        abbreviation: nw
+        info:
+          Number of worker processes.
+          Use with distributed scheduler.
+      nthreads:
+        dtype: int
+        abbreviation: nt
+        info:
+          Number of threads used to scale vertically (eg. for FFTs and gridding).
+          Each dask thread can in principle spawn this many threads.
+          Will attempt to use half the available threads by default.
+      output-filename:
+        dtype: str
+        required: true
+        abbreviation: o
+        info:
+          Basename of output
+      log-directory:
+        dtype: str
+        abbreviation: ldir
+        info:
+          Directory to write logs and performance reports to.
+      product:
+        dtype: str
+        abbreviation: p
+        default: I
+        info:
+          String specifying which Stokes products to produce.
+          Outputs are always be alphabetically ordered.
+

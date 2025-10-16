@@ -1,0 +1,201 @@
+cabs:
+  pfb_kclean:
+    command: (pfb.core.kclean)kclean
+    flavour: python
+    policies:
+      pass_missing_as_none: true
+    inputs:
+      suffix:
+        dtype: str
+        default: 'main'
+        info:
+          Can be used to specify a custom name for the image space data products.
+      mask:
+        dtype: str
+        abbreviation: mask
+        info:
+          Path to mask.fits
+      dirosion:
+        dtype: int
+        default: 1
+        info:
+          Perform dilation followed by erosion with structure element of this width
+      mop-flux:
+        dtype: bool
+        default: true
+        info:
+          Trigger PCG based flux mop if minor cycle stalls,
+          the final threshold is reached or on the final iteration.
+      mop-gamma:
+        dtype: float
+        default: 0.65
+        info:
+          Step size for flux mop. Should be between (0,1).
+          A value of 1 is most aggressive.
+      niter:
+        dtype: int
+        default: 5
+        abbreviation: niter
+        info:
+          Number of major iterations
+      nthreads:
+        dtype: int
+        abbreviation: nt
+        info:
+          Total number of threads to use.
+          Defaults to half the total number available.
+      threshold:
+        dtype: float
+        info:
+          Absolute threshold at which to stop cleaning.
+          By default it is set automatically using rmsfactor parameter
+        abbreviation: th
+      rmsfactor:
+        dtype: float
+        default: 3.0
+        info:
+          Multiple of the rms at which to stop cleaning
+      eta:
+        dtype: float
+        default: 1e-3
+        info:
+          Will use eta*wsum to regularise the inversion of the Hessian approximation.
+      gamma:
+        dtype: float
+        default: 0.1
+        abbreviation: gamma
+        info:
+          Minor loop gain
+      peak-factor:
+        dtype: float
+        default: 0.15
+        abbreviation: pf
+        info:
+          Peak factor
+      sub-peak-factor:
+        dtype: float
+        default: 0.75
+        abbreviation: spf
+        info:
+          Peak factor of sub-minor loop
+      minor-maxit:
+        dtype: int
+        default: 50
+        abbreviation: mmaxit
+        info:
+          Maximum number of PSF convolutions between major cycles
+      subminor-maxit:
+        dtype: int
+        default: 1000
+        abbreviation: smmaxit
+        info:
+          Maximum number of iterations for the sub-minor cycle
+      verbose:
+        dtype: int
+        default: 1
+        abbreviation: verb
+        info:
+          Verbosity level. Set to 2 for maximum verbosity, 0 for silence
+      report-freq:
+        dtype: int
+        default: 10
+        abbreviation: rf
+        info:
+          Report frequency for minor cycles
+      cg-tol:
+        dtype: float
+        default: 1e-2
+        abbreviation: cgtol
+        info:
+          Tolreance of conjugate gradient algorithm
+      cg-maxit:
+        dtype: int
+        default: 100
+        abbreviation: cgmaxit
+        info:
+          Maximum iterations for conjugate gradient algorithm
+      cg-minit:
+        dtype: int
+        default: 1
+        abbreviation: cgminit
+        info:
+          Minimum iterations for conjugate gradient algorithm
+      cg-verbose:
+        dtype: int
+        default: 1
+        abbreviation: cgverb
+        info:
+          Verbosity of conjugate gradient algorithm.
+          Set to > 1 for debugging, 0 for silence
+      cg-report_freq:
+        dtype: int
+        default: 100
+        abbreviation: cgrf
+        info:
+          Report frequency of conjugate gradient algorithm
+      backtrack:
+        dtype: bool
+        default: false
+        info:
+          Ensure residual decreases at every iteration
+      epsilon:
+        dtype: float
+        default: 1e-7
+        abbreviation: eps
+        info:
+          Gridder accuracy
+      do-wgridding:
+        dtype: bool
+        default: true
+        info:
+          Perform w-correction via improved w-stacking
+      double-accum:
+        dtype: bool
+        default: true
+        info:
+          Accumulate onto grid using double precision. Only has an affect when using single precision.
+      output-filename:
+        dtype: str
+        required: true
+        abbreviation: o
+        info:
+          Basename of output
+      log-directory:
+        dtype: str
+        abbreviation: ldir
+        info:
+          Directory to write logs and performance reports to.
+      product:
+        dtype: str
+        abbreviation: p
+        default: I
+        info:
+          String specifying which Stokes products to produce.
+          Outputs are always be alphabetically ordered.
+      fits-output-folder:
+        dtype: str
+        abbreviation: fitso
+        info:
+          Optional path to write fits files to.
+          Set to output-filename if not provided.
+          The same naming conventions apply.
+      fits-mfs:
+        dtype: bool
+        default: true
+        info:
+          Output MFS fits files
+      fits-cubes:
+        dtype: bool
+        default: true
+        info:
+          Output fits cubes
+
+    outputs:
+      dds-out:
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
+        dtype: Directory
+        must_exist: false
+      mds-out:
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}_model.mds'
+        dtype: Directory
+        must_exist: false

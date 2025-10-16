@@ -27,7 +27,7 @@ def spotless(**kw):
         opts.nthreads = nthreads//2
         ncpu = ncpu//2
 
-    from pfb import set_envs
+    from pfb_imaging import set_envs
     from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
@@ -57,7 +57,7 @@ def spotless(**kw):
     pfb_logging.log_options_dict(log, opts)
 
     with ExitStack() as stack:
-        from pfb import set_client
+        from pfb_imaging import set_client
         if opts.nworkers > 1:
             client = set_client(opts.nworkers, log, stack=stack,
                                 direct_to_workers=opts.direct_to_workers,

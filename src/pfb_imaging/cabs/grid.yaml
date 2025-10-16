@@ -1,6 +1,6 @@
 cabs:
   pfb_grid:
-    command: (pfb.workers.grid)grid
+    command: (pfb.core.grid)grid
     flavour: python
     policies:
       pass_missing_as_none: true
@@ -143,8 +143,7 @@ cabs:
         abbreviation: ha
         info:
           Address where the distributed client lives.
-          Uses LocalCluster if no address is provided
-          and scheduler is set to distributed.
+          Uses LocalCluster if no address is provided.
       nworkers:
         dtype: int
         default: 1
@@ -159,12 +158,6 @@ cabs:
           Number of threads used to scale vertically (eg. for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
-      direct-to-workers:
-        dtype: bool
-        default: true
-        info:
-          Connect direct to workers i.e. bypass scheduler.
-          Faster but then the dashboard isn't very useful.
       log-level:
         dtype: str
         default: error
@@ -207,19 +200,20 @@ cabs:
       epsilon:
         dtype: float
         default: 1e-7
-        info: 'Gridder accuracy'
         abbreviation: eps
+        info:
+          Gridder accuracy
       do-wgridding:
         dtype: bool
         default: true
-        info: "Perform w-correction via improved w-stacking"
+        info:
+          Perform w-correction via improved w-stacking
       double-accum:
         dtype: bool
         default: true
-        info: "Accumulate onto grid using double precision. \
-              Only has an affect when using single precision."
-
-
+        info:
+          Accumulate onto grid using double precision.
+          Only has an affect when using single precision.
 
     outputs:
       dds-out:

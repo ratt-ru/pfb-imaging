@@ -66,7 +66,7 @@ def init(ctx, **kw):
 
     pfb_logging.log_options_dict(log, opts)
 
-    from pfb import set_envs
+    from pfb_imaging import set_envs
     from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)

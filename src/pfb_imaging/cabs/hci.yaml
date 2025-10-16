@@ -1,6 +1,6 @@
 cabs:
   pfb_hci:
-    command: (pfb.workers.hci)hci
+    command: (pfb.core.hci)hci
     flavour: python
     policies:
       pass_missing_as_none: true

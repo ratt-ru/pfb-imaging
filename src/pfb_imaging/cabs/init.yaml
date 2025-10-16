@@ -1,0 +1,179 @@
+cabs:
+  pfb_init:
+    command: (pfb.core.init)init
+    flavour: python
+    policies:
+      pass_missing_as_none: true
+    inputs:
+      ms:
+        dtype: List[URI]
+        required: true
+        abbreviation: ms
+        info:
+          Path to measurement set
+      scans:
+        dtype: List[int]
+        info:
+          List of SCAN_NUMBERS to image. Defaults to all.
+          Input as comma separated list 0,2 if running from CLI
+      ddids:
+        dtype: List[int]
+        info:
+          List of DATA_DESC_ID's to images. Defaults to all.
+          Input as comma separated list 0,2 if running from CLI
+      fields:
+        dtype: List[int]
+        info:
+          List of FIELD_ID's to image. Defaults to all.
+          Input as comma separated list 0,2 if running from CLI
+      freq-range:
+        dtype: Optional[str]
+        info:
+          Frequency range to image in Hz.
+          Specify as a string with colon delimiter eg. '1e9:1.1e9'
+      overwrite:
+        dtype: bool
+        default: false
+        info:
+          Allow overwrite of output xds
+      radec:
+        dtype: Optional[List[any]]
+        info:
+          Rephase all images to this radec specified in radians
+      data-column:
+        dtype: str
+        default: DATA
+        abbreviation: dc
+        info:
+          Data column to image. Must be the same across MSs.
+          Simple arithmetic is supported eg. 'CORRECTED_DATA-MODEL_DATA'.
+          When gains are present this column will be corrected.
+      weight-column:
+        dtype: str
+        abbreviation: wc
+        info:
+          Column containing natural weights. Must be the same across MSs
+      sigma-column:
+        dtype: str
+        abbreviation: sc
+        info:
+          Column containing standard devations.
+          Will be used to initialise natural weights if detected.
+          Must be the same across MSs
+      flag-column:
+        dtype: str
+        default: FLAG
+        abbreviation: fc
+        info:
+          Column containing data flags. Must be the same across MSs
+      gain-table:
+        dtype: List[URI]
+        info:
+          Path to Quartical gain table containing NET gains.
+          There must be a table for each MS and glob(ms) and
+          glob(gt) should match up when running from CLI.
+      integrations-per-image:
+        dtype: int
+        abbreviation: ipi
+        default: -1
+        info:
+          Number of time integrations per image.
+          Default (-1, 0, None) -> dataset per scan.
+      channels-per-image:
+        dtype: int
+        abbreviation: cpi
+        default: -1
+        info:
+          Number of channels per image for degridding resolution.
+          Any of (-1, 0, None) implies single dataset per spw.
+      precision:
+        dtype: str
+        default: double
+        choices:
+          - single
+          - double
+        info:
+          Gridding precision
+      bda-decorr:
+        dtype: float
+        default: 1.0
+        info:
+          BDA decorrelation factor.
+          Only has an effect if less than one
+      max-field-of-view:
+        dtype: float
+        default: 3.0
+        abbreviation: max-fov
+        info:
+          The maximum field of view that will be considered.
+          Used to compute decorrelation due to BDA.
+      beam-model:
+        dtype: str
+        info:
+          Beam model to use. Only katbeam currently supported.
+      chan-average:
+        dtype: int
+        default: 1
+        info:
+          Average this number if channels together
+      target:
+        dtype: str
+        info:
+          This can be predefined celestial objects known to astropy or a string in
+          the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+      progressbar:
+        dtype: bool
+        default: true
+        info:
+          Display progress.
+          Use --no-progressbar to deactivate.
+      check-ants:
+        dtype: bool
+        default: false
+        info:
+          Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.
+      output-filename:
+        dtype: str
+        required: true
+        abbreviation: o
+        info:
+          Basename of output
+      log-directory:
+        dtype: str
+        abbreviation: ldir
+        info:
+          Directory to write logs and performance reports to.
+      product:
+        dtype: str
+        abbreviation: p
+        default: I
+        info:
+          String specifying which Stokes products to produce.
+          Outputs are always be alphabetically ordered.
+      host-address:
+        dtype: str
+        abbreviation: ha
+        info:
+          Address where the distributed client lives.
+          Uses LocalCluster if no address is provided.
+      nworkers:
+        dtype: int
+        default: 1
+        abbreviation: nw
+        info:
+          Number of worker processes.
+          Use with distributed scheduler.
+      nthreads:
+        dtype: int
+        abbreviation: nt
+        info:
+          Number of threads used to scale vertically (eg. for FFTs and gridding).
+          Each dask thread can in principle spawn this many threads.
+          Will attempt to use half the available threads by default.
+
+    outputs:
+      xds-out:
+        implicit: '{current.output-filename}_{current.product}.xds'
+        dtype: Directory
+        must_exist: false
+        mkdir: false

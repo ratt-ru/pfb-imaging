@@ -1,0 +1,119 @@
+cabs:
+  pfb_model2comps:
+    command: (pfb.core.model2comps)model2comps
+    flavour: python
+    policies:
+      pass_missing_as_none: true
+    inputs:
+      overwrite:
+        dtype: bool
+        default: false
+        info:
+          Allow overwrite of existing model
+      mds:
+        dtype: str
+        info:
+          An optional input model to append to the model.
+          Will be rendered to the same resolution as the model in the dds.
+      from-fits:
+        dtype: str
+        info:
+          An optional fits input model.
+          An mds will be created that matches the model resolution.
+      nbasisf:
+        dtype: int
+        info:
+          Order of interpolating polynomial for frequency axis.
+          One less than the number of bands by default.
+      nbasist:
+        dtype: int
+        default: 1
+        info:
+          Order of interpolating polynomial for time axis.
+          This is hypothetical for the time being.
+      nthreads:
+        dtype: int
+        abbreviation: nt
+        info:
+          Number of threads
+      fit-mode:
+        dtype: str
+        default: Legendre
+      min-val:
+        dtype: float
+        info:
+          Only fit components above this flux level
+      suffix:
+        dtype: str
+        default: 'main'
+        info:
+          Can be used to specify a custom name for the image space data products
+      model-name:
+        dtype: str
+        default: MODEL
+        abbreviation: mname
+        info:
+          Name of model in mds
+      use-wsum:
+        dtype: bool
+        default: true
+        info:
+          Use wsum as weights during fit
+      sigmasq:
+        dtype: float
+        default: 1e-10
+        info:
+          Multiple of the identity to add to the hessian for stability
+      model-out:
+        dtype: str
+        info:
+          Optional explicit output name.
+          Otherwise the default naming convention is used.
+      out-format:
+        dtype: str
+        default: zarr
+        choices:
+          - zarr
+          - json
+        info:
+          Format to dump model to.
+      out-freqs:
+        dtype: str
+        info:
+          A string flow:fhigh:step of frequencies in hertz where the
+          output cube needs to be evaluated.
+      output-filename:
+        dtype: str
+        required: true
+        abbreviation: o
+        info:
+          Basename of output
+      log-directory:
+        dtype: str
+        abbreviation: ldir
+        info:
+          Directory to write logs and performance reports to.
+      product:
+        dtype: str
+        abbreviation: p
+        default: I
+        info:
+          String specifying which Stokes products to produce.
+          Outputs are always be alphabetically ordered.
+      fits-output-folder:
+        dtype: str
+        abbreviation: fitso
+        info:
+          Optional path to write fits files to.
+          Set to output-filename if not provided.
+          The same naming conventions apply.
+
+    outputs:
+      mds-out:
+        implicit: =IFSET(current.model-out, current.model-out, '{current.output-filename}_{current.product}_{current.suffix}_{current.model-name}.mds')
+        dtype: Directory
+        must_exist: false
+      # fits-out:
+      #   implicit: =IFSET(current.model-out, STRIPEXT(current.model-out)+.fits, '{current.output-filename}_{current.product}_{current.suffix}_{current.model-name}.mds')
+      #   dtype: Directory
+      #   must_exist: false

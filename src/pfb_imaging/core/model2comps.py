@@ -7,7 +7,7 @@ import psutil
 from scabha.schema_utils import clickify_parameters
 from pfb_imaging.parser.schemas import schema
 from pfb_imaging.utils.naming import set_output_names
-from pfb import set_envs
+from pfb_imaging import set_envs
 from ducc0.misc import resize_thread_pool
 import time
 import os
