@@ -5,12 +5,6 @@ inputs:
     abbreviation: ms
     info:
       Path to measurement set
-  output-filename:
-    dtype: str
-    required: true
-    abbreviation: o
-    info:
-      Basename of output
   log-directory:
     dtype: str
     abbreviation: ldir
@@ -261,11 +255,16 @@ inputs:
     - (.)cgopts.yml
 
 outputs:
-  dir-out:
-    implicit: current.output-filename
+  output-dataset:
     dtype: Directory
+    required: true
     must_exist: true
     mkdir: false
+    path_policies: 
+      write_parent: true
+    abbreviation: o
+    info:
+      Basename of output
   temp-dir:
     dtype: Directory
     info:
