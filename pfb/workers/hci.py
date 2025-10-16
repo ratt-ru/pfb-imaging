@@ -19,23 +19,23 @@ def hci(**kw):
     '''
     opts = OmegaConf.create(kw)
 
-    dir_out = opts.dir_out
+    output_dataset = opts.output_dataset
 
-    if '://' in dir_out:
-        protocol = dir_out.split('://')[0]
+    if '://' in output_dataset:
+        protocol = output_dataset.split('://')[0]
         prefix = f'{protocol}://'
     else:
         protocol = 'file'
         prefix = ''
 
     fs = fsspec.filesystem(protocol)
-    basedir = fs.expand_path('/'.join(dir_out.split('/')[:-1]))[0]
+    basedir = fs.expand_path('/'.join(output_dataset.split('/')[:-1]))[0]
     if not fs.exists(basedir):
         fs.makedirs(basedir)
 
-    oname = dir_out.split('/')[-1]
+    oname = output_dataset.split('/')[-1]
 
-    opts.dir_out = f'{prefix}{basedir}/{oname}'
+    opts.output_dataset = f'{prefix}{basedir}/{oname}'
 
     # this should be a file system
     opts.log_directory = basedir
@@ -127,7 +127,7 @@ def _hci(**kw):
     from tempfile import TemporaryDirectory
     from zarr import ProcessSynchronizer
 
-    basename = f'{opts.dir_out}'
+    basename = f'{opts.output_dataset}'
 
     if opts.stack and opts.output_format == 'fits':
         raise RuntimeError("Can't stack in fits mode")
