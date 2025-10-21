@@ -202,7 +202,7 @@ def stokes_image(
         model_vis = getattr(ds, opts.model_column).values.astype(complex_type)
         ds = ds.drop(opts.model_column)
         if opts.product.lower() == 'i':
-            model_vis = (model_vis[:, :, 0] + model_vis[:, :, -1])/2.0
+            model_vis = model_vis[..., [0, -1]].mean(axis=-1, keepdims=True)
         else:
             raise NotImplementedError(f'Model subtraction not supported for product {opts.product}')
     else:
