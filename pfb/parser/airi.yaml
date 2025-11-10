@@ -1,7 +1,7 @@
 inputs:
   _include:
     - (.)gridding.yml
-    - (.)pdopts.yml
+    # - (.)pdopts.yml Need to replace with fbopts
     - (.)pmopts.yml
     - (.)cgopts.yml
     - (.)out.yml
@@ -10,22 +10,6 @@ inputs:
     default: 'main'
     info:
       Can be used to specify a custom name for the image space data products
-  bases:
-    dtype: str
-    info: 'Wavelet bases to use. Give as comma separated str eg. '
-    default: 'self,db1,db2,db3'
-    abbreviation: bases
-  nlevels:
-    dtype: int
-    info: 'Wavelet decomposition level'
-    default: 2
-    abbreviation: nlevels
-  l1-reweight-from:
-    dtype: int
-    default: 5
-    info:
-      L1 reweighting will kick in either at convergence or after this many
-      iterations. Set to a negative value to disbale L1 reweighting.
   hess-norm:
     dtype: float
     abbreviation: hess-norm
@@ -55,12 +39,6 @@ inputs:
     default: 1.0
     info:
       Step size of update
-  alpha:
-    dtype: float
-    default: 2
-    info:
-      Controls how aggressively the l1reweighting is applied.
-      Larger values correspond to more agressive reweighting.
   nbasisf:
     dtype: int
     info:
@@ -109,11 +87,6 @@ inputs:
     info:
       Mask residual where model is non-zero when computing rms.
       This is not recommended for largely non-empty fields.
-  init-factor:
-    dtype: float
-    default: 0.5
-    info:
-      Reduce the regularisation strength by this fraction at the outset.
   verbosity:
     dtype: int
     default: 1

@@ -94,17 +94,6 @@ def airi(**kw):
                 do_cube=opts.fits_cubes,
                 psfpars_mfs=psfpars_mfs)
         log.info('Done writing UPDATE')
-        # try:
-        #     dds2fits(dds_list,
-        #          'MPSF',
-        #          f'{fits_oname}_{opts.suffix}',
-        #          norm_wsum=False,
-        #          nthreads=opts.nthreads,
-        #          do_mfs=opts.fits_mfs,
-        #          do_cube=opts.fits_cubes)
-        #     log.info('Done writing MPSF')
-        # except Exception as e:
-        #     print(e)
 
     from numba import threading_layer
     log.info(f"Numba use the {threading_layer()} threading layer")
@@ -178,7 +167,6 @@ def _airi(**kw):
 
     # drop_vars after access to avoid duplicates in memory
     # and avoid unintentional side effects?
-    output_type = dds[0].DIRTY.dtype
     if 'RESIDUAL' in dds[0]:
         residual = np.stack([ds.RESIDUAL.values[0] for ds in dds], axis=0)
         dds = [ds.drop_vars('DIRTY') for ds in dds]
@@ -224,23 +212,7 @@ def _airi(**kw):
     else:
         iter0 = 0
 
-    # Allow calling with pd_tol as float
-    try:
-        ntol = len(opts.pd_tol)
-        pd_tol = opts.pd_tol
-    except TypeError:
-        assert isinstance(opts.pd_tol, float)
-        ntol = 1
-        pd_tol = [opts.pd_tol]
-    niters = opts.niter
-    if ntol <= niters:
-        pd_tolf = pd_tol[-1]
-        pd_tol += [pd_tolf]*niters  # no harm in too many
-
     # image space hessian
-    # pre-allocate arrays for doing FFT's
-    real_type = 'f8'
-    complex_type = 'c16'
     precond = hess_psf(nx, ny, abspsf,
                        beam=beam,
                        eta=opts.eta*wsums,
@@ -314,6 +286,8 @@ def _airi(**kw):
         else:
             lam = opts.rmsfactor*rms
         log.info(f'Solving for model with lambda = {lam}')
+        
+        
         # This is where we call the new forward_backward class for AIRI
         # model, dual = primal_dual(model,
         #                           dual,
