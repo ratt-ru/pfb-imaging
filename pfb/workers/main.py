@@ -19,9 +19,10 @@ from pfb.workers.fluxtractor import fluxtractor
 from pfb.workers.hci import hci
 from pfb.workers.smoovie import smoovie
 from pfb.workers.sara import sara
+from pfb.workers.airi import airi
 
 # Add all the subcommands to the main CLI group.
-for cmd in (init, grid, degrid, kclean, restore, model2comps, fluxtractor, hci, smoovie, sara):
+for cmd in (init, grid, degrid, kclean, restore, model2comps, fluxtractor, hci, smoovie, sara, airi):
     cli.add_command(cmd)
 
 if __name__ == '__main__':

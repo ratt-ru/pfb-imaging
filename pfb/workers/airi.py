@@ -6,14 +6,14 @@ from pfb.utils import logging as pfb_logging
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
-log = pfb_logging.get_logger('SARA')
+log = pfb_logging.get_logger('AIRI')
 
 
 @click.command(context_settings={'show_default': True})
-@clickify_parameters(schema.sara)
-def sara(**kw):
+@clickify_parameters(schema.airi)
+def airi(**kw):
     '''
-    Deconvolution using SARA regularisation
+    Deconvolution using AIRI regularisation
     '''
     opts = OmegaConf.create(kw)
 
@@ -36,7 +36,7 @@ def sara(**kw):
 
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f'{str(opts.log_directory)}/sara_{timestamp}.log'
+    logname = f'{str(opts.log_directory)}/airi_{timestamp}.log'
     pfb_logging.log_to_file(logname)
     log.info(f'Logs will be written to {logname}')
 
@@ -49,7 +49,7 @@ def sara(**kw):
     dds_name = f'{basename}_{opts.suffix}.dds'
 
     ti = time.time()
-    _sara(**opts)
+    _airi(**opts)
 
     dds, dds_list = xds_from_url(dds_name)
 
@@ -111,7 +111,7 @@ def sara(**kw):
     log.info(f"All done after {time.time() - ti}s")
 
 
-def _sara(**kw):
+def _airi(**kw):
     """
     # gradient step (major cycle)
     nabla f(x) = I^D - R.H W R x  # needs full Hessian, R = degrid, R.H = grid, W = weights
@@ -122,7 +122,6 @@ def _sara(**kw):
     # backward step (primal dual)
     U = A.H Z.H F.H \hat{I} F Z A + sigma**2 I
     x_{k+1} = prox^U_{gamma r}(x) = argmin_x r(x) + frac{1}{2\gamma}(tilde{x} - x) U (tilde{x} - x)
-
 
     """
     opts = OmegaConf.create(kw)
@@ -142,7 +141,8 @@ def _sara(**kw):
     from pfb.operators.gridder import compute_residual
     from copy import deepcopy
     from ducc0.misc import thread_pool_size
-    from pfb.prox.prox_21m import prox_21m_numba as prox_21
+    # replace with AIRI prox
+    # from pfb.prox.prox_21m import prox_21m_numba as prox_21
     from pfb.utils.modelspec import fit_image_cube, eval_coeffs_to_slice
 
     basename = opts.output_filename
@@ -156,7 +156,7 @@ def _sara(**kw):
 
     if dds[0].corr.size > 1:
         log.error_and_raise("Joint polarisation deconvolution not "
-                            "yet supported for sara algorithm",
+                            "yet supported for airi algorithm",
                             NotImplementedError)
 
     nx, ny = dds[0].x.size, dds[0].y.size
@@ -270,60 +270,13 @@ def _sara(**kw):
         hess_norm = opts.hess_norm
         log.info(f"Using provided hess-norm of = {hess_norm:.3e}")
 
-    log.info("Setting up dictionary")
-    bases = tuple(opts.bases.split(','))
-    nbasis = len(bases)
-    psi = Psi(nband, nx, ny, bases, opts.nlevels, opts.nthreads)
-    Nxmax = psi.Nxmax
-    Nymax = psi.Nymax
-
-    log.info(f"Using {psi.nthreads_per_band} numba threads for each band")
     log.info(f"Using {thread_pool_size()} threads for gridding")
-
     # number of frequency basis functions
     if opts.nbasisf is None:
         nbasisf = int(np.sum(fsel))
     else:
         nbasisf = opts.nbasisf
     log.info(f"Using {nbasisf} frequency basis functions")
-
-    # a value less than zero turns L1 reweighting off
-    # we'll start on convergence or at the iteration
-    # indicated by l1-reweight-from, whichever comes first
-    l1_reweight_from = opts.l1_reweight_from
-    l1reweight_active = False
-    # we need an array to put the components in for reweighting
-    outvar = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=real_type)
-
-    dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=residual.dtype)
-    if l1_reweight_from == 0:
-        log.info('Initialising with L1 reweighted')
-        if not update.any():
-            log.error_and_raise("Cannot reweight before any updates have been performed",
-                                ValueError)
-        psi.dot(update, outvar)
-        tmp = np.sum(outvar, axis=0)
-        # exclude zeros from padding DWT's
-        # rms_comps = np.std(tmp[tmp!=0])
-        # log.info(f'rms_comps updated to {rms_comps}')
-        # per basis rms_comps
-        rms_comps = np.ones((nbasis,), dtype=float)
-        for i, base in enumerate(bases):
-            tmpb = tmp[i]
-            rms_comps[i] = np.std(tmpb[tmpb!=0])
-            log.info(f'rms_comps for base {base} is {rms_comps[i]}')
-        reweighter = partial(l1reweight_func,
-                             psiH=psi.dot,
-                             outvar=outvar,
-                             rmsfactor=opts.rmsfactor,
-                             rms_comps=rms_comps,
-                             alpha=opts.alpha)
-        l1weight = reweighter(model)
-        l1reweight_active = True
-    else:
-        l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=residual.dtype)
-        reweighter = None
-        l1reweight_active = False
 
     if opts.rms_outside_model and model.any():
         rms_mask = model_mfs == 0
@@ -361,23 +314,24 @@ def _sara(**kw):
         else:
             lam = opts.rmsfactor*rms
         log.info(f'Solving for model with lambda = {lam}')
-        model, dual = primal_dual(model,
-                                  dual,
-                                  lam,
-                                  psi.hdot,
-                                  psi.dot,
-                                  hess_norm,
-                                  prox_21,
-                                  l1weight,
-                                  reweighter,
-                                  grad21,
-                                  nu=nbasis,
-                                  positivity=opts.positivity,
-                                  tol=pd_tol[k-iter0],
-                                  maxit=opts.pd_maxit,
-                                  verbosity=opts.pd_verbose,
-                                  report_freq=opts.pd_report_freq,
-                                  gamma=opts.gamma)
+        # This is where we call the new forward_backward class for AIRI
+        # model, dual = primal_dual(model,
+        #                           dual,
+        #                           lam,
+        #                           psi.hdot,
+        #                           psi.dot,
+        #                           hess_norm,
+        #                           prox_21,
+        #                           l1weight,
+        #                           reweighter,
+        #                           grad21,
+        #                           nu=nbasis,
+        #                           positivity=opts.positivity,
+        #                           tol=pd_tol[k-iter0],
+        #                           maxit=opts.pd_maxit,
+        #                           verbosity=opts.pd_verbose,
+        #                           report_freq=opts.pd_report_freq,
+        #                           gamma=opts.gamma)
 
         # write component model
         log.info(f"Writing model to {basename}_{opts.suffix}_model.mds")
@@ -524,8 +478,6 @@ def _sara(**kw):
                 fut = executor.submit(ds.to_zarr, ds_name, mode='a')
                 write_futures.append(fut)
 
-            # ds.to_zarr(ds_name, mode='a')
-
 
         log.info(f"Iter {k+1}: peak residual = {rmax:.3e}, "
               f"rms = {rms:.3e}, eps = {eps:.3e}")
@@ -539,27 +491,6 @@ def _sara(**kw):
             else:
                 log.info(f"Converged after {k+1} iterations.")
                 break
-
-        if (k+1 - iter0 >= l1_reweight_from) and (k+1 - iter0 < opts.niter):
-            log.info('Computing L1 weights')
-            psi.dot(update, outvar)
-            tmp = np.sum(outvar, axis=0)
-            # exclude zeros from padding DWT's
-            # rms_comps = np.std(tmp[tmp!=0])
-            rms_comps = np.ones((nbasis,), dtype=float)
-            # log.info(f'rms_comps updated to {rms_comps}')
-            for i, base in enumerate(bases):
-                tmpb = tmp[i]
-                rms_comps[i] = np.std(tmpb[tmpb!=0])
-                log.info(f'rms_comps for base {base} is {rms_comps[i]}')
-            reweighter = partial(l1reweight_func,
-                                 psiH=psi.dot,
-                                 outvar=outvar,
-                                 rmsfactor=opts.rmsfactor,
-                                 rms_comps=rms_comps,
-                                 alpha=opts.alpha)
-            l1weight = reweighter(model)
-            l1reweight_active = True
 
         if (rms > rmsp) and (rmax > rmaxp):
             diverge_count += 1
