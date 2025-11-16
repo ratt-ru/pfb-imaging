@@ -143,6 +143,16 @@ def grid(**kw):
                                 do_cube=opts.fits_cubes,
                                 psfpars_mfs=psfpars_mfs)
             futures.append(fut)
+            fut = client.submit(dds2fits,
+                                dds_list,
+                                'SAMPLE',
+                                f'{fits_oname}_{opts.suffix}',
+                                norm_wsum=True,
+                                nthreads=opts.nthreads,
+                                do_mfs=opts.fits_mfs,
+                                do_cube=opts.fits_cubes,
+                                psfpars_mfs=psfpars_mfs)
+            futures.append(fut)
 
         if 'BEAM' in dds[0]:
             fut = client.submit(dds2fits,
@@ -490,6 +500,8 @@ def _grid(**kw):
     wsum = {}
     if opts.psf:
         psf_mfs = {}
+    if opts.noise:
+        sample_mfs = {}
     nds = len(futures)
     n_launched = 1
     for fut in as_completed(futures):
@@ -503,6 +515,9 @@ def _grid(**kw):
         if opts.psf:
             psf_mfs.setdefault(timeid, np.zeros((ncorr, nx_psf, ny_psf), dtype=float))
             psf_mfs[timeid] += outputs['psf']
+        if opts.noise:
+            sample_mfs.setdefault(timeid, np.zeros((ncorr, nx, ny), dtype=float))
+            sample_mfs[timeid] += outputs['sample']
         n_launched += 1
 
     print("\n")  # after progressbar above

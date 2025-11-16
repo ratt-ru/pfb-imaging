@@ -623,15 +623,15 @@ def image_data_products(dsl,
         from pfb.utils.misc import parallel_standard_normal
         noise = np.zeros((ncorr, nx, ny), dtype=float)
         for c in range(ncorr):
-            vis = (parallel_standard_normal((nrow, nchan)) +
+            visn = (parallel_standard_normal((nrow, nchan)) +
                 1j*parallel_standard_normal((nrow, nchan)))
             wmask = wgt[c] > 0.0
-            vis[wmask] /= np.sqrt(wgt[c, wmask])
-            vis[~wmask] = 0j
+            visn[wmask] /= np.sqrt(wgt[c, wmask])
+            visn[~wmask] = 0j
             vis2dirty(
                 uvw=uvw,
                 freq=freq,
-                vis=vis,
+                vis=visn,
                 wgt=wgt[c],
                 mask=mask,
                 npix_x=nx, npix_y=ny,
@@ -647,8 +647,13 @@ def image_data_products(dsl,
                 sigma_min=1.1, sigma_max=3.0,
                 double_precision_accumulation=double_accum,
                 dirty=noise[c])
+        else:
+            noise = None
+
+        sample = dirty + noise
 
         dso['NOISE'] = (('corr', 'x','y'), noise)
+        dso['SAMPLE'] = (('corr', 'x','y'), sample)
 
     if do_beam:
         if beam is not None:
@@ -673,6 +678,8 @@ def image_data_products(dsl,
     # PSF returned to fit MFS PSFPARS
     if do_psf:
         outputs['psf'] = psf
+    if do_noise:
+        outputs['sample'] = sample
     outputs['wsum'] = wsum
     outputs['timeid'] = attrs['timeid']
     return outputs
