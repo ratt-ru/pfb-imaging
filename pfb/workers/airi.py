@@ -5,6 +5,7 @@ from omegaconf import OmegaConf
 from pfb.utils import logging as pfb_logging
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
+from pfb.opt.ista_fb import ISTA
 
 log = pfb_logging.get_logger('AIRI')
 
@@ -287,7 +288,14 @@ def _airi(**kw):
             lam = opts.rmsfactor*rms
         log.info(f'Solving for model with lambda = {lam}')
         
-        
+        prox_solver = ISTA(lmbda=lam,
+                            max_iter=opts.niters,
+                            step_size=hess_norm,
+                            precond=precond,
+        )
+
+        model = prox_solver(model)
+
         # This is where we call the new forward_backward class for AIRI
         # model, dual = primal_dual(model,
         #                           dual,
