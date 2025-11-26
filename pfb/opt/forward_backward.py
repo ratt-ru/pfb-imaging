@@ -101,20 +101,20 @@ class ForwardBackward():
 
     def forward(self, y):
 
-        self._log(f"Running an instance of the {self.__str__} algorithm.") ## Add more info ?
+        self._log(f"Running an instance of the {self} algorithm.") ## Add more info ?
        
-        self._log(f"[{self.__str__}] Initializing products.")
+        self._log(f"[{self}] Initializing products.")
         x = self._initial_solution(y) 
 
         metrics = {} # Initialize a dictionary object to store metrics (run time, objective function, relative variation, rms, ...) 
-        obj_fun = self.obj_fun(x, y)
+        obj_fun = self._obj_fun(x, y)
         rel_var = float('inf') 
 
         it = 0
         while (it < self.max_iter and self._convergence_criteria(rel_var, obj_fun)):
 
             if it%self.log_iter:
-                self._log(f"[{self.__str__}] Running iteration {it}; max_iter = {self.max_iter}.")
+                self._log(f"[{self}] Running iteration {it}; max_iter = {self.max_iter}.")
 
             ## Deepcopy the previous estimate to compute convergence criteria
             x_prev = deepcopy(x)
@@ -129,9 +129,9 @@ class ForwardBackward():
 
                 current_metrics = self._get_metrics(x, x_prev, y)
                             
-                self._log(f"[{self.__str__}] Iteration : ")
+                self._log(f"[{self}] Iteration : ")
                 for key, item in current_metrics.items():
-                    self._log(f"[{self.__str__}] \t {key} : {item} ")
+                    self._log(f"[{self}] \t {key} : {item} ")
 
                 assert ("rel_var" in current_metrics.keys()) and ("obj_fun" in current_metrics.keys())
                 rel_var, obj_fun = current_metrics["rel_var"], current_metrics["obj_fun"] # at least the relative variation and the objective function should be computed.
@@ -146,9 +146,9 @@ class ForwardBackward():
             it += 1 
         
         if it < self.max_iter:
-            self._log(f"[{self.__str__}] Optimisation complete. Converged after {it} iterations.")
+            self._log(f"[{self}] Optimisation complete. Converged after {it} iterations.")
         else:
-            self._log(f"[{self.__str__}] Optimisation complete. Stoped after {it} iterations without achieving convergence.")
+            self._log(f"[{self}] Optimisation complete. Stoped after {it} iterations without achieving convergence.")
 
         # metrics['runtime'] = 
         # if self.save_metrics:
