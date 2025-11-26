@@ -57,7 +57,7 @@ class ISTA(ForwardBackward):
                 \| x - y \|_U + \|x \|_1
             $$
         """
-        val = (1/self.lmbda) (x-y).T.conjugate() @ self.precond.dot(x-y) + np.sum(np.abs(x))
+        val = (1/self.lmbda) * (x-y).T.conjugate() @ self.precond.dot(x-y) + np.sum(np.abs(x))
         return val.squeeze()
     
     def _rel_var(self, x, x_prev):
