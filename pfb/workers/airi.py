@@ -46,6 +46,7 @@ def airi(**kw):
     from pfb.utils.naming import xds_from_url, get_opts
 
     basename = opts.output_filename
+    print(basename)
     fits_oname = f'{opts.fits_output_folder}/{oname}'
     dds_name = f'{basename}_{opts.suffix}.dds'
 
@@ -289,7 +290,7 @@ def _airi(**kw):
         log.info(f'Solving for model with lambda = {lam}')
         
         prox_solver = ISTA(lmbda=lam,
-                            max_iter=opts.niters,
+                            max_iter=opts.niter,
                             step_size=hess_norm,
                             precond=precond,
         )
