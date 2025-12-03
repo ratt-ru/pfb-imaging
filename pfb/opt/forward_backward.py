@@ -67,10 +67,10 @@ class ForwardBackward():
         pass
 
     def _rel_var(self, x, x_prev):
-        return sum(x - x_prev)**2 / sum(x_prev**2)
+        return sum((x - x_prev)**2) / sum(x_prev**2)
     
     def _convergence_criteria(self, obj_fun, rel_var):
-        return rel_var < self.tol
+        return rel_var > self.tol
 
 
     def _initial_solution(self, y):
@@ -94,13 +94,12 @@ class ForwardBackward():
         By default compute the relative variation (using python standard sum function) and the objective function.
         """
 
-        rel_var = self.rel_var(x,x_prev)
-        obj_fun = self.obj_fun(x,y)
+        rel_var = self._rel_var(x,x_prev)
+        obj_fun = self._obj_fun(x,y)
         return {'rel_var' : rel_var, 
                 'obj_fun' : obj_fun }
 
     def forward(self, y):
-
         self._log(f"Running an instance of the {self} algorithm.") ## Add more info ?
        
         self._log(f"[{self}] Initializing products.")
@@ -111,7 +110,8 @@ class ForwardBackward():
         rel_var = float('inf') 
 
         it = 0
-        while (it < self.max_iter and self._convergence_criteria(rel_var, obj_fun)):
+
+        while (it < self.max_iter and self._convergence_criteria(obj_fun,rel_var)):
 
             if it%self.log_iter:
                 self._log(f"[{self}] Running iteration {it}; max_iter = {self.max_iter}.")
