@@ -131,7 +131,7 @@ def test_sara(ms_name):
                   1.0j*np.random.randn(nrow, nchan, ncorr))
 
     model_vis = da.from_array(model_vis, chunks=(-1,-1,-1))
-    xds['DATA'] = (('row','chan','coor'), model_vis)
+    xds['DATA'] = (('row','chan','corr'), model_vis)
     writes = [xds_to_table(xds, ms_name, columns='DATA')]
     dask.compute(writes)
 

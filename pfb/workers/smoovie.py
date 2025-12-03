@@ -1,14 +1,14 @@
-from pfb.workers.main import cli
+import click
 from omegaconf import OmegaConf
-import pyscilog
-pyscilog.init('pfb')
-log = pyscilog.get_logger('SMOOVIE')
+from pfb.utils import logging as pfb_logging
 import time
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
+log = pfb_logging.get_logger('SMOOVIE')
 
-@cli.command(context_settings={'show_default': True})
+
+@click.command(context_settings={'show_default': True})
 @clickify_parameters(schema.smoovie)
 def smoovie(**kw):
     '''
@@ -21,21 +21,20 @@ def smoovie(**kw):
 
     import psutil
     ncpu = psutil.cpu_count(logical=False)
-    # to prevent flickering 
+    # to prevent flickering
     opts.nthreads = 1
-    if opts.product.upper() not in ["I","Q", "U", "V"]:
-        raise NotImplementedError(f"Product {opts.product} not yet supported")
-    
+    remprod = opts.product.upper().strip('IQUV')
+    if len(remprod):
+        log.error_and_raise(f"Product {remprod} not yet supported",
+                            NotImplementedError)
+
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/smoovie_{timestamp}.log'
-    pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    pfb_logging.log_to_file(logname)
+    log.info(f'Logs will be written to {logname}')
     OmegaConf.set_struct(opts, True)
 
-    # TODO - prettier config printing
-    print('Input Options:', file=log)
-    for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+    pfb_logging.log_options_dict(log, opts)
 
     from pfb import set_envs
     set_envs(opts.nthreads, ncpu)
@@ -48,7 +47,7 @@ def smoovie(**kw):
     ti = time.time()
     _smoovie(**opts)
 
-    print(f"All done after {time.time() - ti}s", file=log)
+    log.info(f"All done after {time.time() - ti}s")
 
     try:
         from distributed import get_client
@@ -82,9 +81,10 @@ def _smoovie(**kw):
     try:
         assert fds_store.exists()
     except Exception as e:
-        raise ValueError(f"There must be a dataset at {fds_store.url}")
+        log.error_and_raise(f"There must be a dataset at {fds_store.url}",
+                            ValueError)
 
-    print(f"Lazy loading fds from {fds_store.url}", file=log)
+    log.info(f"Lazy loading fds from {fds_store.url}")
     fds, fds_list = xds_from_url(fds_store.url)
 
     # TODO - scan selection
@@ -93,14 +93,11 @@ def _smoovie(**kw):
     freqs_in = []
     times_in = []
     for ds in fds:
-        freqs_in.append(ds.freq_out)
-        times_in.append(ds.time_out)
+        freqs_in.append(ds.FREQ.values)
+        times_in.append(ds.TIME.values)
 
     freqs_in = np.unique(np.array(freqs_in))
     times_in = np.unique(np.array(times_in))
-
-    ntimes_in = times_in.size
-    nfreqs_in = freqs_in.size
 
     @wrap_matplotlib()
     def plot_frame(ds):
@@ -109,17 +106,20 @@ def _smoovie(**kw):
         scan = ds.scanid
         fnum = ds.ffrac
         band = ds.bandid
-        resid = ds.RESIDUAL.values/wsum
-        fig, ax = plt.subplots(figsize=(10, 10))
+        resid = ds.cube.values[0, 0, :, :]
+        # nstokes = resid.shape[0]
+        fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(10, 10))
         fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=None, hspace=None)
+        # for i, ax in enumerate(axs):
+        rms = ds.rms[0, 0]
         im1 = ax.imshow(resid,
-                    vmin=-opts.min_frac*ds.rms,
-                    vmax=opts.max_frac*ds.rms,
+                    vmin=-opts.min_frac*rms,
+                    vmax=opts.max_frac*rms,
                     cmap=opts.cmap)
 
         plt.xticks([]), plt.yticks([])
         ax.annotate(
-            f'{basename}_band{band:04d}_scan{scan:04d}' + '\n' + fnum + '\n' + utc,
+            f'{basename}_band{band:04d}_scan{scan:04d}_{opts.product[0]}' + '\n' + fnum + '\n' + utc,
             xy=(0.0, 0.0),
             xytext=(0.05, 0.05),
             xycoords='axes fraction',
@@ -140,9 +140,8 @@ def _smoovie(**kw):
             fds_dict[b].append(ds)
 
         for b, dslist in fds_dict.items():
-            
-            print(f"Writing movie to {basename}_band{b}_{idfy}.{outfmt}",
-                   file=log)
+
+            log.info(f"Writing movie to {basename}_band{b}_{idfy}.{outfmt}")
             rmss = [ds.rms for ds in dslist]
             medrms = np.median(rmss)
             nframe = len(dslist)
@@ -179,7 +178,8 @@ def _smoovie(**kw):
                         # client=client
                     )
             else:
-                raise ValueError(f"Unsupported format {opts.out_format}")
+                log.error_and_raise(f"Unsupported format {opts.out_format}", ValueError)
 
     else:
-        raise NotImplementedError(f"Can't animate axis {opts.animate_axis}")
+        log.error_and_raise(f"Can't animate axis {opts.animate_axis}",
+                            NotImplementedError)

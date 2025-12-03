@@ -12,8 +12,8 @@ from ducc0.misc import empty_noncritical
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
 
-# import pyscilog
-# log = pyscilog.get_logger('PCG')
+# from pfb.utils import logging as pfb_logging
+# log = pfb_logging.get_logger('PCG')
 
 @njit(nogil=True, cache=False, parallel=False)
 def update(x, xp, r, rp, p, Ap, alpha):
@@ -152,7 +152,7 @@ def pcg(A,
     r = A(x0) - b
     y = M(r)
     if not np.any(y):
-        print(f"Initial residual is zero")  #, file=log)
+        print(f"Initial residual is zero")
         return x0
     p = -y
     rnorm = np.vdot(r, y)
@@ -241,7 +241,6 @@ def pcg(A,
 
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
-                #   file=log)
     ttot = time() - tii
     ttally = tcopy + tA + tvdot + tupdate + tp + tnorm
     if verbosity > 1:
@@ -255,20 +254,19 @@ def pcg(A,
 
     if k >= maxit:
         if verbosity:
-            print(f"Max iters reached. eps = {eps:.3e}")  #, file=log)
+            print(f"Max iters reached. eps = {eps:.3e}")
     elif stall_count >= 5:
         if verbosity:
-            print(f"Stalled after {k} iterations with eps = {eps:.3e}")  #, file=log)
+            print(f"Stalled after {k} iterations with eps = {eps:.3e}")
     else:
         if verbosity:
-            print(f"Success, converged after {k} iterations")  #, file=log)
+            print(f"Success, converged after {k} iterations")
     if not return_resid:
         return x
     else:
         return x, r
 
 
-from pfb.operators.hessian import _hessian_psf_slice
 def _pcg_psf_impl(psfhat,
                   b,
                   x0,
@@ -294,7 +292,7 @@ def _pcg_psf_impl(psfhat,
         def M(x): return x / eta
     else:
         M = None
-
+    from pfb.operators.hessian import _hessian_psf_slice
     for k in range(nband):
         xpad = empty_noncritical((nx_psf, lastsize), dtype=b.dtype)
         xhat = empty_noncritical((nx_psf, nyo2), dtype=psfhat.dtype)
@@ -307,7 +305,7 @@ def _pcg_psf_impl(psfhat,
                     beam=beam[k],
                     lastsize=lastsize,
                     nthreads=nthreads,
-                    eta=eta)
+                    eta=eta[k])
 
         model[k] = pcg(A, b[k], x0[k],
                        M=M, tol=tol, maxit=maxit, minit=minit,
@@ -353,6 +351,15 @@ def pcg_psf(psfhat,
     if not isinstance(b, da.Array):
         b = da.from_array(b, chunks=(1, -1, -1),
                           name="psfhat-" + uuid4().hex)
+        
+    nband = b.shape[0]
+    if isinstance(eta, float):
+        eta = np.tile(eta, nband)
+    else:
+        eta = np.array(eta)
+        assert eta.size == nband
+    eta = da.from_array(eta, chunks=(1,),
+                        name="eta-" + uuid4().hex)
 
     if beam is None:
         bout = None
@@ -376,7 +383,7 @@ def pcg_psf(psfhat,
                          beam, bout,
                          lastsize, None,
                          nthreads, None,
-                         eta, None,
+                         eta, ('nb',),
                          cgopts, None,
                          align_arrays=False,
                          dtype=b.dtype)

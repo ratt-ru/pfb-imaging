@@ -1,8 +1,8 @@
 import numpy as np
 from distributed import get_client
 from scipy.linalg import norm
-import pyscilog
-log = pyscilog.get_logger('PM')
+from pfb.utils import logging as pfb_logging
+log = pfb_logging.get_logger('PM')
 
 
 def power_method(
@@ -34,16 +34,16 @@ def power_method(
         bp[...] = b[...]
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} eps = {eps:.3e}", file=log)
+            log.info(f"At iteration {k} eps = {eps:.3e}")
 
     if k == maxit:
         if verbosity:
-            print(f"Maximum iterations reached. "
-                  f"eps = {eps:.3e}, beta = {beta:.3e}", file=log)
+            log.info(f"Maximum iterations reached. "
+                  f"eps = {eps:.3e}, beta = {beta:.3e}")
     else:
         if verbosity:
-            print(f"Success, converged after {k} iterations. "
-                  f"beta = {beta:.3e}", file=log)
+            log.info(f"Success, converged after {k} iterations. "
+                  f"beta = {beta:.3e}")
     return beta, b
 
 
@@ -100,6 +100,6 @@ def power_method_dist(actors,
             break
 
         if not k % report_freq and verbosity > 1:
-            print(f"At iteration {k} eps = {eps:.3e}", file=log)
+            log.info(f"At iteration {k} eps = {eps:.3e}")
 
     return beta

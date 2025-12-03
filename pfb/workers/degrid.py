@@ -1,17 +1,15 @@
 # flake8: noqa
-from pfb.workers.main import cli
+import click
 import time
 from omegaconf import OmegaConf
-import pyscilog
-pyscilog.init('pfb')
-log = pyscilog.get_logger('DEGRID')
-
-
+from pfb.utils import logging as pfb_logging
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 
+log = pfb_logging.get_logger('DEGRID')
 
-@cli.command(context_settings={'show_default': True})
+
+@click.command(context_settings={'show_default': True})
 @clickify_parameters(schema.degrid)
 def degrid(**kw):
     '''
@@ -41,7 +39,7 @@ def degrid(**kw):
             assert len(mslist) > 0
             msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
         except:
-            raise ValueError(f"No MS at {ms}")
+            log.error_and_raise(f"No MS at {ms}", ValueError)
     opts.ms = msnames
 
     basename = opts.output_filename
@@ -53,7 +51,7 @@ def degrid(**kw):
         try:
             assert mds_store.exists()
         except Exception as e:
-            raise ValueError(f"No mds at {opts.mds}")
+            log.error_and_raise(f"No mds at {opts.mds}", ValueError)
     opts.mds = mds_store.url
 
     dds_store = DaskMSStore(f'{basename}_{opts.suffix}.dds')
@@ -61,25 +59,23 @@ def degrid(**kw):
         try:
             assert dds_store.exists()
         except Exception as e:
-            raise ValueError(f"There must be a dds at {dds_store.url}. "
-                             "Specify mds and channels-per-image to degrid from mds.")
+            log.error_and_raise(f"There must be a dds at {dds_store.url}. "
+                                "Specify mds and channels-per-image to degrid from mds.",
+                                ValueError)
     opts.dds = dds_store.url
     OmegaConf.set_struct(opts, True)
 
-    if opts.product.upper() not in ["I"]:
-                                    # , "Q", "U", "V", "XX", "YX", "XY",
-                                    # "YY", "RR", "RL", "LR", "LL"]:
-        raise NotImplementedError(f"Product {opts.product} not yet supported")
+    remprod = opts.product.upper().strip('IQUV')
+    if len(remprod):
+        log.error_and_raise(f"Product {remprod} not yet supported",
+                            NotImplementedError)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f'{str(opts.log_directory)}/degrid_{timestamp}.log'
-    pyscilog.log_to_file(logname)
-    print(f'Logs will be written to {logname}', file=log)
+    pfb_logging.log_to_file(logname)
+    log.info(f'Logs will be written to {logname}')
 
-    # TODO - prettier config printing
-    print('Input Options:', file=log)
-    for key in opts.keys():
-        print('     %25s = %s' % (key, opts[key]), file=log)
+    pfb_logging.log_options_dict(log, opts)
 
     # we need the collections
     from pfb import set_client
@@ -88,12 +84,12 @@ def degrid(**kw):
     ti = time.time()
     _degrid(**opts)
 
-    print(f"All done after {time.time() - ti}s.", file=log)
+    log.info(f"All done after {time.time() - ti}s.")
 
     try:
         client.close()
     except Exception as e:
-        raise e
+        pass
 
 def _degrid(**kw):
     opts = OmegaConf.create(kw)
@@ -116,6 +112,7 @@ def _degrid(**kw):
     import sympy as sm
     from sympy.utilities.lambdify import lambdify
     from sympy.parsing.sympy_parser import parse_expr
+    from africanus.model.coherency.dask import convert
     from ducc0.misc import resize_thread_pool
     resize_thread_pool(opts.nthreads)
 
@@ -130,6 +127,9 @@ def _degrid(**kw):
             cpi = 0
             for ds in dds:
                 cpi = np.maximum(ds.chan.size, cpi)
+        else:
+            log.error_and_raise("You must supply channels per image in the "
+                                "absence of a dds", ValueError)
     else:
         cpi = opts.channels_per_image
 
@@ -150,7 +150,7 @@ def _degrid(**kw):
 
     group_by = ['FIELD_ID', 'DATA_DESC_ID', 'SCAN_NUMBER']
 
-    print('Constructing mapping', file=log)
+    log.info('Constructing mapping')
     row_mapping, freq_mapping, time_mapping, \
         freqs, utimes, ms_chunks, gains, radecs, \
         chan_widths, uv_max, antpos, poltype = \
@@ -160,6 +160,9 @@ def _degrid(**kw):
                                cpi=cpi,
                                freq_min=freq_min,
                                freq_max=freq_max)
+                            #    FIELD_IDs=opts.fields,
+                            #    DDIDs=opts.ddids,
+                            #    SCANs=opts.scans)
 
     mds = xr.open_zarr(opts.mds)
     foo = client.scatter(mds, broadcast=True)
@@ -209,34 +212,47 @@ def _degrid(**kw):
             mask += region_mask
             masks.append(region_mask)
         if (mask > 1).any():
-            raise ValueError("Overlapping regions are not supported")
+            log.error_and_raise("Overlapping regions are not supported",
+                                ValueError)
         remainder = 1 - mask
         # place DI component first
         masks = [remainder] + masks
     else:
         masks = [np.ones((nx, ny), dtype=np.float64)]
 
-    print("Computing model visibilities", file=log)
+    input_schema = sorted(opts.product.upper())
+    if poltype=='linear':
+        output_schema = ['XX', 'XY', 'YX', 'YY']
+    else:
+        output_schema = ['RR', 'RL', 'LR', 'LL']
+
     writes = []
     for ms in opts.ms:
         xds = xds_from_ms(ms,
                           chunks=ms_chunks[ms],
                           group_cols=group_by)
 
+
         for i, mask in enumerate(masks):
             out_data = []
             columns = []
             for k, ds in enumerate(xds):
+                fid = ds.FIELD_ID
+                ddid = ds.DATA_DESC_ID
+                scanid = ds.SCAN_NUMBER
+                if (opts.fields is not None) and (fid not in opts.fields):
+                    continue
+                if (opts.ddids is not None) and (ddid not in opts.ddids):
+                    continue
+                if (opts.scans is not None) and (scanid not in opts.scans):
+                    continue
+                idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+
                 if i == 0:
                     column_name = opts.model_column
                 else:
                     column_name = f'{opts.model_column}{i}'
                 columns.append(column_name)
-
-                fid = ds.FIELD_ID
-                ddid = ds.DATA_DESC_ID
-                scanid = ds.SCAN_NUMBER
-                idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
 
                 # time <-> row mapping
                 utime = da.from_array(utimes[ms][idt],
@@ -271,6 +287,8 @@ def _degrid(**kw):
                 uvw = clone(ds.UVW.data)
                 assert len(uvw.chunks[0]) == len(tidx.chunks[0])
 
+                ncorr = ds.corr.size
+
                 vis = comps2vis(uvw,
                                 utime,
                                 freq,
@@ -286,10 +304,20 @@ def _degrid(**kw):
                                 epsilon=opts.epsilon,
                                 do_wgridding=opts.do_wgridding,
                                 freq_min=freq_min,
-                                freq_max=freq_max)
+                                freq_max=freq_max,
+                                product=opts.product)
 
                 # convert to single precision to write to MS
                 vis = vis.astype(np.complex64)
+
+                if ncorr==1:
+                    out_schema = output_schema[0]
+                elif ncorr==2:
+                    out_schema = [output_schema[0], output_schema[-1]]
+                else:
+                    out_schema = output_schema
+
+                vis = convert(vis, input_schema, out_schema, implicit_stokes=True)
 
                 if opts.accumulate:
                     vis += getattr(ds, column_name).data
@@ -304,5 +332,6 @@ def _degrid(**kw):
                                     rechunk=True))
 
     # optimize_graph can make things much worse
+    log.info("Computing model visibilities")
     dask.compute(writes)  #, optimize_graph=False)
 

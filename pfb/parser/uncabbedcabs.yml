@@ -52,14 +52,14 @@ pfb.fluxtractor:
   _include:
     - (.)fluxtractor.yaml
 
-pfb.spotless:
-  command: pfb.workers.spotless.spotless
-  flavour: python
-  policies:
-    pass_missing_as_none: true
+# pfb.spotless:
+#   command: pfb.workers.spotless.spotless
+#   flavour: python
+#   policies:
+#     pass_missing_as_none: true
 
-  _include:
-    - (.)spotless.yaml
+#   _include:
+#     - (.)spotless.yaml
 
 pfb.sara:
   command: pfb.workers.sara.sara

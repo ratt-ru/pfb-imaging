@@ -4,8 +4,8 @@ from pfb.opt.fista import fista
 from pfb.operators.psf import PSF
 from pfb.utils.fits import save_fits
 from pfb.opt.power_method import power_method
-import pyscilog
-log = pyscilog.get_logger('NNLS')
+from pfb.utils import logging as pfb_logging
+log = pfb_logging.get_logger('NNLS')
 
 
 def resid_func(x, dirty, hessian, mask, beam, wsum):
@@ -105,8 +105,8 @@ def nnls(psf, model, residual, mask=None, beam_image=None,
         rms = np.std(residual_mfs)
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
 
-        print("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
-              i+1, rmax, rms, eps), file=log)
+        log.info("Iter %i: peak residual = %f, rms = %f, eps = %f" % (
+              i+1, rmax, rms, eps))
 
         # save current iteration
         if outfile is not None:
@@ -123,8 +123,7 @@ def nnls(psf, model, residual, mask=None, beam_image=None,
                         residual_mfs, hdr_mfs)
 
         if eps < tol:
-            print("Success, convergence after %i iterations" % (i+1),
-                file=log)
+            log.info("Success, convergence after %i iterations" % (i+1))
             break
 
     return model

@@ -143,10 +143,9 @@ class band_actor(object):
                                                                   opts.psf_oversize)
         cell_deg = np.rad2deg(cell_rad)
         cell_size = cell_deg * 3600
-        # print(f"Super resolution factor = {cell_N/cell_rad}", file=log)
-        # print(f"Cell size set to {cell_size:.5e} arcseconds", file=log)
-        # print(f"Field of view is ({nx*cell_deg:.3e},{ny*cell_deg:.3e}) degrees",
-        #     file=log)
+        # log.info(f"Super resolution factor = {cell_N/cell_rad}")
+        # log.info(f"Cell size set to {cell_size:.5e} arcseconds")
+        # log.info(f"Field of view is ({nx*cell_deg:.3e},{ny*cell_deg:.3e}) degrees")
 
         self.cell_rad = cell_rad
         self.nx = nx
@@ -226,7 +225,7 @@ class band_actor(object):
         elif opts.hess_approx=='direct':
             self.hess = self.hess_direct
             if self.eta < 1:
-                print(f'Warning - using dangerously low value of '
+                log.info(f'Warning - using dangerously low value of '
                       f'{self.eta} with direct Hessian approximation')
         npix = np.maximum(self.nx, self.ny)
         self.taperxy = taperf((self.nx, self.ny), int(0.1*npix))
@@ -256,8 +255,8 @@ class band_actor(object):
             tlayer = numba.threading_layer()
             assert tlayer == 'tbb'
         except Exception as e:
-            print('Warning - numba threading layer not initialised correctly')
-            print('Original traceback', e)
+            log.info('Warning - numba threading layer not initialised correctly')
+            log.info('Original traceback', e)
 
 
     def get_image_info(self):
@@ -501,21 +500,21 @@ class band_actor(object):
         # ti = time.time()
         self.xp[...] = self.model[...]
         self.vp[...] = self.dual[...]
-        # print('copy = ', time.time() - ti)
+        # log.info('copy = ', time.time() - ti)
         self.dual[...] = self.vtilde * (1 - ratio)
 
         # ti = time.time()
         grad = self.backward_grad(self.xp)
-        # print('grad = ', time.time() - ti)
+        # log.info('grad = ', time.time() - ti)
         # ti = time.time()
         self.psi.hdot(2*self.dual - self.vp, self.b)
         self.model[...] = self.xp - self.tau * (self.b + grad)
-        # print('update = ', time.time() - ti)
+        # log.info('update = ', time.time() - ti)
 
         # ti = time.time()
         if self.opts.positivity:
             self.model[self.model < 0] = 0.0
-        # print('postivity = ', time.time() - ti)
+        # log.info('postivity = ', time.time() - ti)
 
         # ti = time.time()
         # do in place
@@ -523,12 +522,12 @@ class band_actor(object):
         self.vtilde *= self.sigma
         self.vtilde += self.dual
         # self.vtilde[...] = self.dual + self.sigma * self.psi_dot(x=self.model)
-        # print('vtilde = ', time.time() - ti)
+        # log.info('vtilde = ', time.time() - ti)
 
         # ti = time.time()
         eps_num = np.sum((self.model-self.xp)**2)
         eps_den = np.sum(self.model**2)
-        # print('eps = ', time.time() - ti)
+        # log.info('eps = ', time.time() - ti)
 
         # vtilde - (nbasis, nymax, nxmax)
         return self.vtilde, eps_num, eps_den, int(self.bandid)
@@ -539,7 +538,7 @@ class band_actor(object):
     #     # ti = time.time()
     #     self.xp[...] = self.model[...]
     #     self.vp[...] = self.dual[...]
-    #     # print('copy = ', time.time() - ti)
+    #     # log.info('copy = ', time.time() - ti)
     #     # self.dual[...] = self.vtilde * (1 - ratio)
     #     ne.evaluate('vtilde * (1 - ratio)', local_dict={
     #         'vtilde' : self.vtilde,
@@ -548,7 +547,7 @@ class band_actor(object):
 
     #     # ti = time.time()
     #     grad = self.backward_grad(self.xp)
-    #     # print('grad = ', time.time() - ti)
+    #     # log.info('grad = ', time.time() - ti)
     #     # ti = time.time()
     #     ne.evaluate('2*dual - vp', local_dict={
     #         'dual': self.dual,
@@ -563,12 +562,12 @@ class band_actor(object):
     #         'g': grad},
     #         out=self.model, casting='same_kind')
     #     # self.model[...] = self.xp - self.tau * (self.b + grad)
-    #     # print('update = ', time.time() - ti)
+    #     # log.info('update = ', time.time() - ti)
 
     #     # ti = time.time()
     #     if self.opts.positivity:
     #         self.model[self.model < 0] = 0.0
-    #     # print('postivity = ', time.time() - ti)
+    #     # log.info('postivity = ', time.time() - ti)
 
     #     # ti = time.time()
     #     self.psi.dot(self.model, self.vtilde)
@@ -580,7 +579,7 @@ class band_actor(object):
     #     # self.vtilde *= self.sigma
     #     # self.vtilde += self.dual
     #     # self.vtilde[...] = self.dual + self.sigma * self.psi_dot(x=self.model)
-    #     # print('vtilde = ', time.time() - ti)
+    #     # log.info('vtilde = ', time.time() - ti)
 
     #     # ti = time.time()
     #     eps_num = ne.evaluate('sum((m-xp)**2)', local_dict={
@@ -589,7 +588,7 @@ class band_actor(object):
     #         casting='same_kind')
     #     # eps_num = np.sum((self.model-self.xp)**2)
     #     eps_den = np.sum(self.model**2)
-    #     # print('eps = ', time.time() - ti)
+    #     # log.info('eps = ', time.time() - ti)
 
     #     # vtilde - (nband, nbasis, nymax, nxmax)
     #     return self.vtilde, eps_num, eps_den, int(self.bandid)

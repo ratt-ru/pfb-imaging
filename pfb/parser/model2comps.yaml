@@ -9,6 +9,11 @@ inputs:
     info:
       An optional input model to append to the model.
       Will be rendered to the same resolution as the model in the dds.
+  from-fits:
+    dtype: str
+    info:
+      An optional fits input model.
+      An mds will be created that matches the model resolution.
   nbasisf:
     dtype: int
     info:

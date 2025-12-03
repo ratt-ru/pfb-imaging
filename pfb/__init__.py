@@ -9,7 +9,10 @@ def set_envs(nthreads, ncpu):
     os.environ["VECLIB_MAXIMUM_THREADS"] = str(nthreads)
     os.environ["NPY_NUM_THREADS"] = str(nthreads)
     os.environ["NUMBA_NUM_THREADS"] = str(nthreads)
-    os.environ["JAX_PLATFORMS"] = 'cpu'
+    # os.environ["JAX_PLATFORMS"] = 'cpu'
+    # os.environ["XLA_FLAGS"] = ("--xla_cpu_multi_thread_eigen=true "
+    #                            "--xla_force_host_platform_device_count=4 "
+    #                            f"intra_op_parallelism_threads={str(nthreads)}")
     os.environ["JAX_ENABLE_X64"] = 'True'
     # this may be required for numba parallelism
     # find python and set LD_LIBRARY_PATH
@@ -52,14 +55,14 @@ def set_client(nworkers, log, stack=None, host_address=None,
     host_address = host_address or os.environ.get("DASK_SCHEDULER_ADDRESS")
     if host_address is not None:
         from distributed import Client
-        print("Initialising distributed client.", file=log)
+        log.info("Initialising distributed client.")
         if stack is not None:
             client = stack.enter_context(Client(host_address))
         else:
             client = Client(host_address)
     else:
         from dask.distributed import Client, LocalCluster
-        print("Initialising client with LocalCluster.", file=log)
+        log.info("Initialising client with LocalCluster.")
         dask.config.set({
                 'distributed.comm.compression': {
                     'on': True,
@@ -80,7 +83,7 @@ def set_client(nworkers, log, stack=None, host_address=None,
 
     client.wait_for_workers(nworkers)
     dashboard_url = client.dashboard_link
-    print(f"Dask Dashboard URL at {dashboard_url}", file=log)
+    log.info(f"Dask Dashboard URL at {dashboard_url}")
 
     return client
 
