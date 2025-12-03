@@ -135,6 +135,8 @@ def _airi(**kw):
     # replace with AIRI prox
     # from pfb.prox.prox_21m import prox_21m_numba as prox_21
     from pfb.utils.modelspec import fit_image_cube, eval_coeffs_to_slice
+    
+    ## Opening the DDS
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
@@ -149,7 +151,7 @@ def _airi(**kw):
         log.error_and_raise("Joint polarisation deconvolution not "
                             "yet supported for airi algorithm",
                             NotImplementedError)
-
+    ## Reading the image size
     nx, ny = dds[0].x.size, dds[0].y.size
 
     nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
@@ -161,11 +163,13 @@ def _airi(**kw):
         time_out.append(ds.time_out)
     freq_out = np.unique(np.array(freq_out))
     time_out = np.unique(np.array(time_out))
+    log.info(freq_out)
+
     if time_out.size > 1:
         log.error_and_raise('Only static models currently supported',
                             NotImplementedError)
 
-    nband = freq_out.size
+    nband = freq_out.size # number of independant 
 
     # drop_vars after access to avoid duplicates in memory
     # and avoid unintentional side effects?
@@ -282,39 +286,20 @@ def _airi(**kw):
 
         modelp = deepcopy(model)
         xtilde = model + opts.gamma * update
-        grad21 = lambda x: -precond.dot(xtilde - x)/opts.gamma
         if iter0 == 0:
             lam = opts.init_factor * opts.rmsfactor * rms
         else:
             lam = opts.rmsfactor*rms
         log.info(f'Solving for model with lambda = {lam}')
-        
-        prox_solver = ISTA(lmbda=lam,
-                            max_iter=opts.niter,
-                            step_size=hess_norm,
+       
+        prox_solver = ISTA(lmbda=5e-7,
+                            gamma=hess_norm,
+                            max_iter=20,
+                            step_size=1,
                             precond=precond,
         )
 
-        model = prox_solver(model)
-
-        # This is where we call the new forward_backward class for AIRI
-        # model, dual = primal_dual(model,
-        #                           dual,
-        #                           lam,
-        #                           psi.hdot,
-        #                           psi.dot,
-        #                           hess_norm,
-        #                           prox_21,
-        #                           l1weight,
-        #                           reweighter,
-        #                           grad21,
-        #                           nu=nbasis,
-        #                           positivity=opts.positivity,
-        #                           tol=pd_tol[k-iter0],
-        #                           maxit=opts.pd_maxit,
-        #                           verbosity=opts.pd_verbose,
-        #                           report_freq=opts.pd_report_freq,
-        #                           gamma=opts.gamma)
+        model = prox_solver(xtilde)
 
         # write component model
         log.info(f"Writing model to {basename}_{opts.suffix}_model.mds")
@@ -388,8 +373,9 @@ def _airi(**kw):
                 )
         except Exception as e:
             log.info(f"Exception {e} raised during model fit .")
-
-        model_mfs = np.mean(model[fsel], axis=0)
+        
+        model = model[np.newaxis, ...] if len(model.shape) == 2 else model
+        model_mfs = np.mean(model[fsel], axis=0) 
         save_fits(model_mfs,
                   fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
                   hdr_mfs)
@@ -465,15 +451,6 @@ def _airi(**kw):
         log.info(f"Iter {k+1}: peak residual = {rmax:.3e}, "
               f"rms = {rms:.3e}, eps = {eps:.3e}")
 
-        if eps < opts.tol:
-            # do not converge prematurely
-            if l1_reweight_from > 0 and not l1reweight_active:  # only happens once
-                # start reweighting
-                l1_reweight_from = k+1 - iter0
-                l1reweight_active = True
-            else:
-                log.info(f"Converged after {k+1} iterations.")
-                break
 
         if (rms > rmsp) and (rmax > rmaxp):
             diverge_count += 1
