@@ -271,6 +271,7 @@ def _airi(**kw):
     for k in mrange:
         log.info('Solving for update')
         residual *= beam  # avoid copy
+        # this is U^{-1} nabla f(x)
         update = precond.idot(residual,
                               mode=opts.hess_approx,
                               x0=update if update.any() else None)
