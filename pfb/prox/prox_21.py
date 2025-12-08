@@ -2,6 +2,21 @@ import numpy as np
 from numba import njit, prange
 
 
+# suggest using __call__ and update as in below class
+# class prox():
+#     __init__(self, lam, sigma=1.0, weight=None):
+#         self.lam = lam
+#         self.sigma = sigma
+#         self.weight = weight
+
+#     def __call__(self, v):
+#         return prox_21(v, self.sigma, weight=self.weight)
+    
+#     def update(self, vp, v):
+#         return dual_update_numba(vp, v, self.lam, self.sigma, weight=self.weight)
+
+
+
 def prox_21(v, sigma, weight=None, axis=0):
     """
     Computes weighted version of

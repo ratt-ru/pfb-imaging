@@ -281,14 +281,16 @@ def _airi(**kw):
                   hdr_mfs)
 
         modelp = deepcopy(model)
+        # set up new gradient for backward step
         xtilde = model + opts.gamma * update
-        grad21 = lambda x: -precond.dot(xtilde - x)/opts.gamma
+        grad_backward = lambda x: -precond.dot(xtilde - x)/opts.gamma
         if iter0 == 0:
             lam = opts.init_factor * opts.rmsfactor * rms
         else:
             lam = opts.rmsfactor*rms
-        log.info(f'Solving for model with lambda = {lam}')
+        # update prox for backward step (adjust regulariser based on heuristics of update, residual etc.)
         
+        log.info(f'Solving for model with lambda = {lam}')
         prox_solver = ISTA(lmbda=lam,
                             max_iter=opts.niters,
                             step_size=hess_norm,
@@ -307,7 +309,7 @@ def _airi(**kw):
         #                           prox_21,
         #                           l1weight,
         #                           reweighter,
-        #                           grad21,
+        #                           grad_backward,
         #                           nu=nbasis,
         #                           positivity=opts.positivity,
         #                           tol=pd_tol[k-iter0],
