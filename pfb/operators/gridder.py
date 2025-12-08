@@ -454,7 +454,8 @@ def image_data_products(dsl,
         else:
             wgtp = 1.0
         # mask needs to be bool here
-        ressq = (residual_vis*wgtp*residual_vis.conj()).real
+        # ressq = (residual_vis*wgtp*residual_vis.conj()).real # not sure that wgtp needs to be there
+        ressq = (residual_vis*residual_vis.conj()).real 
         # we are currently doing this per correlation
         # should it be done jointly?
         ssq = ressq[:, mask>0].sum(axis=-1)
@@ -466,9 +467,10 @@ def image_data_products(dsl,
             # stdi = np.std(ressq[:, mask>0]/ovar)
             # print(f"Band {bandid} before: mean = {meani:.3e}, std = {stdi:.3e}")
             denom = (l2_reweight_dof + ressq/ovar[:, None, None])
-            # the expectation value of the complex ressq above is 2
+            # the expectation value of the complex ressq above is 2 (why 2 ? shouldn't it be 1 ?)
             # if we do this jointly over correlations this should be 2*ncorr
-            wgt *= (l2_reweight_dof + 2)/denom
+            # wgt *= (l2_reweight_dof + 1)/denom
+            wgt = (l2_reweight_dof + 1)/denom
         else:
             wgt = None
     # re-evaluate since robustness and or wgt after reweight may change
@@ -484,8 +486,7 @@ def image_data_products(dsl,
         ny_pad = int(np.ceil(min_padding*ny))
         if ny_pad%2:
             ny_pad += 1
-        counts = _compute_counts(uvw,
-                                 freq,
+        counts = _compute_counts(uvw, freq,
                                  mask,
                                  wgt,
                                  nx_pad, ny_pad,

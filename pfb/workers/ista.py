@@ -7,14 +7,14 @@ from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 from pfb.opt.ista_fb import ISTA
 
-log = pfb_logging.get_logger('AIRI')
+log = pfb_logging.get_logger('ISTA')
 
 
 @click.command(context_settings={'show_default': True})
-@clickify_parameters(schema.airi)
-def airi(**kw):
+@clickify_parameters(schema.ista)
+def ista(**kw):
     '''
-    Deconvolution using AIRI regularisation
+    Deconvolution using ista regularisation
     '''
     opts = OmegaConf.create(kw)
 
@@ -37,7 +37,7 @@ def airi(**kw):
 
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f'{str(opts.log_directory)}/airi_{timestamp}.log'
+    logname = f'{str(opts.log_directory)}/ista{timestamp}.log'
     pfb_logging.log_to_file(logname)
     log.info(f'Logs will be written to {logname}')
 
@@ -51,7 +51,7 @@ def airi(**kw):
     dds_name = f'{basename}_{opts.suffix}.dds'
 
     ti = time.time()
-    _airi(**opts)
+    _ista(**opts)
 
     dds, dds_list = xds_from_url(dds_name)
 
@@ -102,7 +102,7 @@ def airi(**kw):
     log.info(f"All done after {time.time() - ti}s")
 
 
-def _airi(**kw):
+def _ista(**kw):
     """
     # gradient step (major cycle)
     nabla f(x) = I^D - R.H W R x  # needs full Hessian, R = degrid, R.H = grid, W = weights
@@ -132,7 +132,7 @@ def _airi(**kw):
     from pfb.operators.gridder import compute_residual
     from copy import deepcopy
     from ducc0.misc import thread_pool_size
-    # replace with AIRI prox
+    # replace with ista prox
     # from pfb.prox.prox_21m import prox_21m_numba as prox_21
     from pfb.utils.modelspec import fit_image_cube, eval_coeffs_to_slice
     
@@ -149,7 +149,7 @@ def _airi(**kw):
 
     if dds[0].corr.size > 1:
         log.error_and_raise("Joint polarisation deconvolution not "
-                            "yet supported for airi algorithm",
+                            "yet supported for ista algorithm",
                             NotImplementedError)
     ## Reading the image size
     nx, ny = dds[0].x.size, dds[0].y.size
@@ -291,7 +291,6 @@ def _airi(**kw):
         else:
             lam = opts.rmsfactor*rms
         log.info(f'Solving for model with lambda = {lam}')
-       
         prox_solver = ISTA(lmbda=5e-7,
                             gamma=hess_norm,
                             max_iter=20,
