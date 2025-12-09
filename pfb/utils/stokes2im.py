@@ -278,14 +278,11 @@ def stokes_image(
         radec[0] += 2*np.pi
     elif radec[0] > 2*np.pi:
         radec[0] -= 2*np.pi
-
+    # we need these because of flipped wgridder convention
+    # https://github.com/mreineck/ducc/issues/34
     flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
     signu = -1.0 if flip_u else 1.0
     signv = -1.0 if flip_v else 1.0
-    # we need these because of flipped wgridder convention
-    # https://github.com/mreineck/ducc/issues/34
-    signx = -1.0 if flip_u else 1.0
-    signy = -1.0 if flip_v else 1.0
     freqfactor = -2j*np.pi*freq[None, :]/lightspeed
 
     # rephase if asked
@@ -419,8 +416,8 @@ def stokes_image(
 
     
     n = np.sqrt(1 - x0**2 - y0**2)
-    psf_vis = np.exp(freqfactor*(signu*uvw[:, 0:1]*x0*signx +
-                                 signv*uvw[:, 1:2]*y0*signy -
+    psf_vis = np.exp(freqfactor*(signu*uvw[:, 0:1]*x0 +
+                                 signv*uvw[:, 1:2]*y0 -
                                  uvw[:, 2:]*(n-1))).astype(complex_type)
 
     # TODO - polarisation parameters and handle Stokes axis more elegantly
@@ -459,8 +456,8 @@ def stokes_image(
 
             # inject transient at x0t, y0t and convert to complex values
             dspec = dspec * np.exp(freqfactor*(
-                                 signu*uvw[:, 0:1]*x0t*signx +
-                                 signv*uvw[:, 1:2]*y0t*signy -
+                                 signu*uvw[:, 0:1]*x0t +
+                                 signv*uvw[:, 1:2]*y0t -
                                  uvw[:, 2:]*(n0t-1)))
             
             # currently Stokes I only
