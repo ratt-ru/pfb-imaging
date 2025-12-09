@@ -458,9 +458,10 @@ def stokes_image(
             dspec = (tprofile[:, None]) * fprofile[None, :]
 
             # inject transient at x0t, y0t and convert to complex values
+            # do not apply signx and signy as that is only flipped inside the wgridder
             dspec = dspec * np.exp(freqfactor*(
-                                 signu*uvw[:, 0:1]*x0t*signx +
-                                 signv*uvw[:, 1:2]*y0t*signy -
+                                 signu*uvw[:, 0:1]*x0t +
+                                 signv*uvw[:, 1:2]*y0t -
                                  uvw[:, 2:]*(n0t-1)))
             
             # currently Stokes I only
