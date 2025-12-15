@@ -320,7 +320,7 @@ def uvw_rotate(uvw, ra0, dec0, ra, dec):
     mat_32 = -c_new_dec * s_old_dec * c_d_ra + s_new_dec * c_old_dec
     mat_33 = c_new_dec * c_old_dec * c_d_ra + s_new_dec * s_old_dec
     uvw_new = uvw.copy()
-    uvw_new[0] = mat_11 * uvw[0] + mat_12 * uvw[1] + mat_13 * uvw[3]
-    uvw_new[1] = mat_21 * uvw[0] + mat_22 * uvw[1] + mat_23 * uvw[3]
-    uvw_new[2] = mat_31 * uvw[0] + mat_32 * uvw[1] + mat_33 * uvw[3]
+    uvw_new[0] = mat_11 * uvw[0] + mat_12 * uvw[1] + mat_13 * uvw[2]
+    uvw_new[1] = mat_21 * uvw[0] + mat_22 * uvw[1] + mat_23 * uvw[2]
+    uvw_new[2] = mat_31 * uvw[0] + mat_32 * uvw[1] + mat_33 * uvw[2]
     return uvw_new
