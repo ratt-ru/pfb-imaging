@@ -77,6 +77,10 @@ def hci(**kw):
                                     ValueError)
         opts.gain_table = gainnames
 
+    # the wgridder doesn't go beyond 2.5. Larger values will result in an error
+    if opts.min_padding > 2.5:
+        opts.min_padding = 2.5
+
     OmegaConf.set_struct(opts, True)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")

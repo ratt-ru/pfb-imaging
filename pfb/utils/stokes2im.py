@@ -167,20 +167,13 @@ def stokes_image(
         ds = ds.drop_vars(dc2)
 
     time = ds.TIME.values
-    # ds = ds.drop_vars('TIME')
     interval = ds.INTERVAL.values
-    # ds = ds.drop_vars('INTERVAL')
     ant1 = ds.ANTENNA1.values
-    # ds = ds.drop_vars('ANTENNA1')
     ant2 = ds.ANTENNA2.values
-    # ds = ds.drop_vars('ANTENNA2')
     uvw = ds.UVW.values
-    # ds = ds.drop_vars('UVW')
     flag = ds.FLAG.values
-    # ds = ds.drop_vars('FLAG')
     # MS may contain auto-correlations
     frow = ds.FLAG_ROW.values | (ant1 == ant2)
-    # ds = ds.drop_vars('FLAG_ROW')
 
     # combine flag and frow
     flag = np.logical_or(flag, frow[:, None, None])
@@ -207,11 +200,6 @@ def stokes_image(
             raise NotImplementedError(f'Model subtraction not supported for product {opts.product}')
     else:
         model_vis = None
-    
-    # # this seems to help with memory consumption
-    # # note the ds.drop_vars above
-    # del ds
-    # gc.collect()
 
     nrow, nchan, ncorr = data.shape
     ntime = utime.size
@@ -300,24 +288,8 @@ def stokes_image(
         
         from pfb.utils.astrometry import synthesize_uvw
         uvw_new = synthesize_uvw(antpos, time, ant1, ant2, radec_new)
-        # uo = uvw[:, 0:1] * freq[None, :]/lightspeed
-        # vo = uvw[:, 1:2] * freq[None, :]/lightspeed
         wo = uvw[:, 2:] * freq[None, :]/lightspeed
-        # un = uvw_new[:, 0:1] * freq[None, :]/lightspeed
-        # vn = uvw_new[:, 1:2] * freq[None, :]/lightspeed
         wn = uvw_new[:, 2:] * freq[None, :]/lightspeed
-        
-        # TODO - why is this incorrect?
-        # from africanus.coordinates import radec_to_lmn
-        # l, m, n = radec_to_lmn(radec_new[None, :], radec)[0]
-        # # original phase direction is [0,0,1]
-        # dl = l
-        # dm = m
-        # dn = n-1
-        # phase2 = uo * dl
-        # phase2 += vo * dm
-        # phase2 += wo * dn
-        # tmp2 = np.exp(-2j*np.pi*phase2)
 
         # TODO - this copies chgcentre but not sure why it gives
         # better results than computing the phase with lmn differences
@@ -385,9 +357,6 @@ def stokes_image(
 
     ra_deg = np.rad2deg(tra)
     dec_deg = np.rad2deg(tdec)
-    # why was this required?
-    # if ra_deg > 180:
-    #     ra_deg -= 360
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
@@ -440,10 +409,10 @@ def stokes_image(
             tcoords=np.zeros((1,2))
             tcoords[0,0] = ra_rad
             tcoords[0,1] = dec_rad
-            coords0 = np.array((radec[0], radec[1]))
+            coords0 = np.array((radec_new[0], radec_new[1]))
             lm0t = radec_to_lm(tcoords, coords0).squeeze()
-            x0t = lm0t[0]
-            y0t = lm0t[1]
+            x0t = -lm0t[0]
+            y0t = -lm0t[1]
             n0t = np.sqrt(1 - x0t**2 - y0t**2)
 
             # these are the profiles on the full domain so interpolate
@@ -454,7 +423,7 @@ def stokes_image(
             fprofile = np.interp(freq, all_freqs, fprofile)
 
             # outer product gives dynamic spectrum
-            # LB - why dp we need the braces?
+            # LB - why do we need the braces?
             dspec = (tprofile[:, None]) * fprofile[None, :]
 
             # inject transient at x0t, y0t and convert to complex values
