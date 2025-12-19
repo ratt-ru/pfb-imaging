@@ -1,6 +1,6 @@
 cabs:
-  pfb_model2comps:
-    command: (pfb.core.model2comps)model2comps
+  model2comps:
+    command: pfb_imaging.core.model2comps.model2comps
     flavour: python
     policies:
       pass_missing_as_none: true

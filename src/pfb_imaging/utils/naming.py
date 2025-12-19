@@ -5,15 +5,13 @@ import pickle
 import xarray as xr
 import concurrent.futures as cf
 
-def set_output_names(opts):
+def set_output_names(output_filename: str,
+                     product: str,
+                     fits_output_folder: str | None = None,
+                     log_directory: str | None = None):
     '''
     Make sure base folders exist and set default naming conventions
     '''
-    output_filename = opts.output_filename
-    product = opts.product
-    fits_output_folder = opts.fits_output_folder
-    log_directory = opts.log_directory
-
     if '://' in output_filename:
         protocol = output_filename.split('://')[0]
         prefix = f'{protocol}://'
@@ -28,7 +26,7 @@ def set_output_names(opts):
 
     oname = output_filename.split('/')[-1] + f'_{product.upper()}'
 
-    opts.output_filename = f'{prefix}{basedir}/{oname}'
+    output_filename = f'{prefix}{basedir}/{oname}'
 
     if fits_output_folder is not None:
         # this should be a file system
@@ -44,7 +42,7 @@ def set_output_names(opts):
                              f'{protocol}')
         fits_output_folder = basedir
 
-    opts.fits_output_folder = fits_output_folder
+    fits_output_folder = fits_output_folder
 
     if log_directory is not None:
         # this should be a file system
@@ -60,9 +58,9 @@ def set_output_names(opts):
                              f'{protocol}')
         log_directory = basedir
 
-    opts.log_directory = log_directory
+    log_directory = log_directory
 
-    return opts, basedir, oname
+    return output_filename, fits_output_folder, log_directory, basedir, oname
 
 
 def xds_from_url(url, columns='ALL', chunks=-1):

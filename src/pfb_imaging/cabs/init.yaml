@@ -1,6 +1,6 @@
 cabs:
-  pfb_init:
-    command: (pfb.core.init)init
+  init:
+    command: pfb_imaging.core.initinit
     flavour: python
     policies:
       pass_missing_as_none: true

@@ -1,6 +1,6 @@
 cabs:
-  pfb_restore:
-    command: (pfb.workers.restore)restore
+  restore:
+    command: pfb_imaging.workers.restore.restore
     flavour: python
     policies:
       pass_missing_as_none: true

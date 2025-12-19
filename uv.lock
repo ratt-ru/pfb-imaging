@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10, <3.13"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -822,7 +822,7 @@ name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/9f/a65090624ecf468cdca03533906e7c69ed7588582240cfe7cc9e770b50eb/exceptiongroup-1.3.0.tar.gz", hash = "sha256:b241f5885f560bc56a59ee63ca4c6a8bfa46ae4ad651af316d4e81817bb9fd88", size = 29749, upload-time = "2025-05-10T17:42:51.123Z" }
 wheels = [
@@ -1031,8 +1031,8 @@ wheels = [
 
 [[package]]
 name = "hip-cargo"
-version = "0.0.2"
-source = { git = "https://github.com/landmanbester/hip-cargo.git#1281b0ccf1f844f749c65284629cb9c2fb454409" }
+version = "0.1.2"
+source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=genfunc#c1a4aa285853c79f603f9238fe3e8e6e4939f404" }
 dependencies = [
     { name = "pyyaml" },
     { name = "typer" },
@@ -2157,7 +2157,7 @@ requires-dist = [
     { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", specifier = ">=0.4.2" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
-    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git" },
+    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=genfunc" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
     { name = "lz4", marker = "extra == 'full'", specifier = ">=4.3.3" },

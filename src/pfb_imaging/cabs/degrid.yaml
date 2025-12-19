@@ -1,6 +1,9 @@
 cabs:
-  pfb_degrid:
-    command: (pfb.core.degrid)degrid
+  degrid:
+    info: 
+      Degrid visibilities from model image(s) into measurement set.
+      The model image needs to be in component format.
+    command: pfb_imaging.core.degrid.degrid
     flavour: python
     policies:
       pass_missing_as_none: true
@@ -11,7 +14,8 @@ cabs:
         required: true
         abbreviation: ms
         info:
-          Path to measurement set.
+          Path to measurement set. \n 
+          What about this?
       scans:
         dtype: List[int]
         info:
