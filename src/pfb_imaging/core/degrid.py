@@ -58,7 +58,7 @@ def degrid(
     If channels-per-image is provided, the model is evaluated from the mds.
     """
 
-    output_filename, fits_output_folder, log_directory, basedir, oname = set_output_names(
+    output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
         product,
         "",  # no fits output for degrid worker

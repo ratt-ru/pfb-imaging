@@ -60,7 +60,7 @@ def set_output_names(output_filename: str,
 
     log_directory = log_directory
 
-    return output_filename, fits_output_folder, log_directory, basedir, oname
+    return output_filename, fits_output_folder, log_directory, oname
 
 
 def xds_from_url(url, columns='ALL', chunks=-1):

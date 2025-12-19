@@ -68,17 +68,17 @@ cabs:
         default: true
         info:
           Interpolate average beam pattern
+      weight:
+        dtype: bool
+        default: true
+        info:
+          Compute effectve image space weights
       psf-oversize:
         dtype: float
         default: 1.4
         abbreviation: psfo
         info:
           Size of PSF relative to dirty image
-      weight:
-        dtype: bool
-        default: true
-        info:
-          Compute effectve image space weights
       field-of-view:
         dtype: float
         abbreviation: fov

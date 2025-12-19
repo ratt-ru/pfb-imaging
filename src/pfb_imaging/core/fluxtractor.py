@@ -52,7 +52,7 @@ def fluxtractor(
     Forward step aka flux mop.
     """
 
-    output_filename, fits_output_folder, log_directory, basedir, oname = set_output_names(
+    output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
         product,
         fits_output_folder,
@@ -87,7 +87,12 @@ def fluxtractor(
     if nworkers == 1:
         env_vars["RAY_DEBUG_POST_MORTEM"] = "1"
 
-    ray.init(num_cpus=nworkers, logging_level="INFO", ignore_reinit_error=True, runtime_env={"env_vars": env_vars})
+    ray.init(
+        num_cpus=nworkers,
+        logging_level="INFO",
+        ignore_reinit_error=True,
+        runtime_env=env_vars,
+    )
 
     time_start = time.time()
 
@@ -208,7 +213,6 @@ def fluxtractor(
         coords = {
             "location_x": (("x",), ix),
             "location_y": (("y",), iy),
-            # 'shape_x':,
             "params": (("par",), params),  # already converted to list
             "times": (("t",), time_out),  # to allow rendering to original grid
             "freqs": (("f",), freq_out),
