@@ -29,6 +29,33 @@ inputs:
     default: 1.0
     info:
       By default will threshold by rmsfactor*rms at every iteration
+  shelf-path:
+    dtype: str
+    info:
+      Path to CSV file containing the AIRI denoiser shelf.
+    Format: sigma,/path/to/network.onnx
+  airi-heuristic-scale:
+    dtype: float
+    default: 1.0
+    info:
+      Scaling factor for the heuristic noise level estimation.
+      Can be used to fine-tune denoiser selection.
+  airi-adapt-update:
+    dtype: bool
+    default: true
+    info:
+      Adaptively update denoiser selection based on evolving peak estimates.
+  airi-peak-tol:
+    dtype: float
+    default: 0.1
+    info:
+      Relative tolerance for peak variation before updating denoiser.
+  airi-device:
+    dtype: str
+    default: 'cpu'
+    choices: ['cpu', 'cuda']
+    info:
+      Device to run AIRI denoisers on (cpu or cuda).
   eta:
     dtype: float
     default: 1.0
@@ -81,12 +108,6 @@ inputs:
     default: false
     info:
       Skip model creation i.e. use with do-res to do-res only
-  rms-outside-model:
-    dtype: bool
-    default: false
-    info:
-      Mask residual where model is non-zero when computing rms.
-      This is not recommended for largely non-empty fields.
   verbosity:
     dtype: int
     default: 1

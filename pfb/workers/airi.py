@@ -6,6 +6,7 @@ from pfb.utils import logging as pfb_logging
 from scabha.schema_utils import clickify_parameters
 from pfb.parser.schemas import schema
 from pfb.opt.ista_fb import ISTA
+import torch
 
 log = pfb_logging.get_logger('AIRI')
 
@@ -132,8 +133,7 @@ def _airi(**kw):
     from pfb.operators.gridder import compute_residual
     from copy import deepcopy
     from ducc0.misc import thread_pool_size
-    # replace with AIRI prox
-    # from pfb.prox.prox_21m import prox_21m_numba as prox_21
+    from pfb.prox.prox_airi import ProxOpAIRI
     from pfb.utils.modelspec import fit_image_cube, eval_coeffs_to_slice
     
     ## Opening the DDS
@@ -256,11 +256,51 @@ def _airi(**kw):
         nbasisf = opts.nbasisf
     log.info(f"Using {nbasisf} frequency basis functions")
 
-    if opts.rms_outside_model and model.any():
-        rms_mask = model_mfs == 0
-        rms = np.std(residual_mfs[rms_mask])
+    # Initialize AIRI prox operator
+    # The complete forward-backward AIRI algorithm is still under development
+    if opts.shelf_path is not None:
+        log.info("Initializing AIRI prox operator")
+
+        # Heuristic noise level calculation
+        # Based on BASP small-scale-radio-imaging implementation (fb_airi.py)
+        heuristic = 1.0 / np.sqrt(2 * hess_norm)
+        heuristic *= opts.airi_heuristic_scale
+        noise_scale = np.std(residual_mfs)
+        heuristic *= noise_scale
+
+        log.info(f"Hessian norm: {hess_norm:.6e}")
+        log.info(f"AIRI heuristic (before scaling): {1.0/np.sqrt(2*hess_norm):.6e}")
+        log.info(f"AIRI heuristic (after scaling): {heuristic:.6e}")
+
+        # Initialize ProxOpAIRI
+        device = torch.device(opts.airi_device if (torch.cuda.is_available()
+                              and opts.airi_device == 'cuda') else 'cpu')
+        log.info(f"AIRI prox operator will run on: {device}")
+
+        airi_prox = ProxOpAIRI(
+            shelf_path=opts.shelf_path,
+            device=device,
+            dtype=torch.float32,
+            verbose=True
+        )
+
+        # Initial peak estimate from residual
+        peak_est = np.abs(residual_mfs).max()
+        log.info(f"Using residual peak as estimate: {peak_est:.6e}")
+
+        # Initialize prox with heuristic and peak estimate
+        peak_range = airi_prox.update(heuristic, peak_est)
+        prev_peak_val = peak_est
+
+        use_airi_prox = True
+        log.info("AIRI prox operator initialized successfully")
+        log.info(f"Expected peak range: [{peak_range[0]:.6e}, {peak_range[1]:.6e}]")
     else:
-        rms = np.std(residual_mfs)
+        use_airi_prox = False
+        log.warning("No shelf-path provided, AIRI prox operator will not be used")
+        log.warning("This implementation is incomplete - using placeholder")
+
+    rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
     best_rms = rms
     best_rmax = rmax
@@ -291,15 +331,46 @@ def _airi(**kw):
         else:
             lam = opts.rmsfactor*rms
         log.info(f'Solving for model with lambda = {lam}')
-       
-        prox_solver = ISTA(lmbda=5e-7,
-                            gamma=hess_norm,
-                            max_iter=20,
-                            step_size=1,
-                            precond=precond,
-        )
 
-        model = prox_solver(xtilde)
+        if use_airi_prox:
+            # Apply AIRI prox operator (backward step)
+            # Convert to torch tensor with shape (1, 1, nx, ny) for MFS
+            # NOTE: Multi-band handling may need adjustment by team
+            xtilde_mfs = np.mean(xtilde, axis=0, keepdims=True)
+            xtilde_torch = torch.from_numpy(xtilde_mfs[None, :, :, :]).float().to(airi_prox.get_device())
+
+            model_mfs_torch = airi_prox(xtilde_torch)
+            model_mfs_denoised = model_mfs_torch.cpu().numpy().squeeze()
+
+            # Broadcast MFS result back to all bands
+            # TODO: Team to implement proper multi-band AIRI handling
+            model = np.broadcast_to(model_mfs_denoised, xtilde.shape).copy()
+
+            # Apply positivity constraint
+            if opts.positivity > 0:
+                model = np.maximum(model, 0)
+
+            # Adaptive denoiser update (from BASP fb_airi.py)
+            if opts.airi_adapt_update:
+                curr_peak_val = np.abs(model).max()
+                peak_var = abs(curr_peak_val - prev_peak_val) / (prev_peak_val + 1e-10)
+                log.info(f"Peak: {curr_peak_val:.6e}, variation: {peak_var:.6e}")
+
+                if peak_var < opts.airi_peak_tol and (
+                    curr_peak_val < peak_range[0] or curr_peak_val > peak_range[1]
+                ):
+                    log.info("Updating AIRI denoiser based on new peak estimate")
+                    peak_range = airi_prox.update(heuristic, curr_peak_val)
+                prev_peak_val = curr_peak_val
+        else:
+            # Fallback to ISTA
+            prox_solver = ISTA(lmbda=5e-7,
+                                gamma=hess_norm,
+                                max_iter=20,
+                                step_size=1,
+                                precond=precond,
+            )
+            model = prox_solver(xtilde)
 
         # write component model
         log.info(f"Writing model to {basename}_{opts.suffix}_model.mds")
@@ -408,11 +479,7 @@ def _airi(**kw):
                   fits_oname + f'_{opts.suffix}_residual_{k+1}.fits',
                   hdr_mfs)
         rmsp = rms
-        if opts.rms_outside_model:
-            rms_mask = model_mfs == 0
-            rms = np.std(residual_mfs[rms_mask])
-        else:
-            rms = np.std(residual_mfs)
+        rms = np.std(residual_mfs)
         rmaxp = rmax
         rmax = np.abs(residual_mfs).max()
         eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)

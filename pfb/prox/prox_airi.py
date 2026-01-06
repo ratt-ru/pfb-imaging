@@ -83,12 +83,13 @@ class ProxOp(ABC):
 
 class ProxOpAIRI(ProxOp):
     """
-    Largely based on code from repo: github.com/basp-group/Small-scale-RI-imaging/ on 1 December 2025'
-    AIRI proximity operator
+    AIRI proximity operator.
 
-    This class implements the AIRI proximity operator which uses AIRI denoisers for regularisations.
+    This class implements the AIRI proximity operator which uses AIRI denoisers for regularization.
     It uses a shelf of pre-trained AIRI denoisers and selects the appropriate one based on
-    the estimated maximum intensitie of target image and the heuristic noise level.
+    the estimated maximum intensity of target image and the heuristic noise level.
+
+    Based on code from github.com/basp-group/Small-scale-RI-imaging
     """
 
     def __init__(
@@ -103,6 +104,7 @@ class ProxOpAIRI(ProxOp):
 
         Args:
             shelf_path (str): Path to the CSV file containing the denoiser shelf.
+                The CSV should have format: sigma,/path/to/network.onnx
             device (torch.device, optional): The device on which the computations are
                 performed. Defaults to torch.device("cpu").
             dtype (torch.dtype, optional): The data type of the input. Defaults to torch.float.
@@ -114,67 +116,112 @@ class ProxOpAIRI(ProxOp):
         self._shelf = {}
         self._network = None
         self._verbose = verbose
-        # load paths of networks
+
+        # Load denoiser shelf from CSV
         if not os.path.isfile(shelf_path):
-            raise FileNotFoundError("Shelf file not found: " + shelf_path)
+            raise FileNotFoundError(f"Shelf file not found: {shelf_path}")
+
         with open(shelf_path, newline="", encoding="utf-8") as shelf_file:
             shelf_reader = csv.reader(shelf_file, delimiter=",")
             for row in shelf_reader:
-                self._shelf[float(row[0])] = row[1]
-                if not os.path.isfile(row[1]):
-                    raise FileNotFoundError("Denoiser file not found: " + row[1])
+                if len(row) < 2:
+                    continue  # Skip empty or malformed rows
+                sigma = float(row[0])
+                network_path = row[1].strip()
+                self._shelf[sigma] = network_path
+                if not os.path.isfile(network_path):
+                    raise FileNotFoundError(f"Denoiser file not found: {network_path}")
+
         if not self._shelf:
-            raise RuntimeError("Shelf is empty: " + shelf_path)
+            raise RuntimeError(f"Shelf is empty: {shelf_path}")
+
+        # Sort shelf by sigma values for efficient lookup
         self._shelf = dict(sorted(self._shelf.items()))
+
+        if self._verbose:
+            print(f"Loaded {len(self._shelf)} denoisers from shelf: {shelf_path}")
+            print(f"Sigma values: {list(self._shelf.keys())}")
 
     @torch.no_grad()
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply the AIRI denoiser to the input tensor.
+
+        Args:
+            x (torch.Tensor): The input tensor to denoise.
+
+        Returns:
+            torch.Tensor: The denoised tensor.
+
+        Raises:
+            RuntimeError: If update() has not been called to initialize the network.
+        """
+        if self._network is None:
+            raise RuntimeError(
+                "Network not initialized. Call update() before applying the prox operator."
+            )
+
+        # Apply network with scaling: denoise(x/scale) * scale
         result = self._network(x / self._net_scaling) * self._net_scaling
         return result
 
-    def update(self, heuristic: float, peak_est: float) -> None:
+    def update(self, heuristic: float, peak_est: float) -> tuple[float, float]:
         """
-        Updates the denoiser selection and scaling factor based on the given
-        heuristic noise level and maximum intensity.
+        Update the denoiser selection and scaling factor based on the given
+        heuristic noise level and estimated peak intensity.
+
+        The method selects the denoiser whose noise level (sigma) is closest to
+        but not exceeding heuristic/peak_est, then sets the scaling factor to
+        normalize the image intensity to match the denoiser's training scale.
 
         Args:
             heuristic (float): The heuristic noise level.
-            peak_est (float): The estimated maximum intensity.
-        """
-        peak_min = 0
-        peak_max = 0
+            peak_est (float): The estimated maximum intensity of the image.
 
+        Returns:
+            tuple[float, float]: (peak_min, peak_max) - the valid range of peak values
+                for the selected denoiser.
+        """
+        peak_min = 0.0
+        peak_max = 0.0
+
+        # Find largest sigma_s such that sigma_s <= heuristic / peak_est
         sigma_s = max(
             filter(lambda i: i <= heuristic / peak_est, self._shelf.keys()),
             default=None,
         )
+
         if sigma_s:
+            # Found a denoiser within the dynamic range
             peak_max = heuristic / sigma_s
+            # Find the next higher sigma to determine lower bound on peak
             sigma_s1 = min(
                 filter(lambda i: i > sigma_s, self._shelf.keys()), default=None
             )
             if sigma_s1:
                 peak_min = heuristic / sigma_s1
         else:
+            # No denoiser found, use the lowest sigma (most aggressive denoising)
             sigma_s = min(self._shelf.keys())
             peak_min = heuristic / sigma_s
             peak_max = float("inf")
 
+        # Load and initialize the selected network
         self._network = convert(self._shelf[sigma_s]).to(self._device).eval()
         self._net_scaling = heuristic / sigma_s
 
         if self._verbose:
             print(
-                f"\nSHELF *** Inverse of the estimated target dynamic range: {heuristic/peak_est}",
+                f"\nSHELF *** Inverse of the estimated target dynamic range: {heuristic/peak_est:.6e}",
                 flush=True,
             )
             print(f"SHELF *** Using network: {self._shelf[sigma_s]}", flush=True)
             print(
-                f"SHELF *** Peak value is expected in range: [{peak_min}, {peak_max}]",
+                f"SHELF *** Peak value is expected in range: [{peak_min:.6e}, {peak_max:.6e}]",
                 flush=True,
             )
             print(
-                f"SHELF *** scaling factor applied to the image: {self._net_scaling}",
+                f"SHELF *** Scaling factor applied to the image: {self._net_scaling:.6e}",
                 flush=True,
             )
 
