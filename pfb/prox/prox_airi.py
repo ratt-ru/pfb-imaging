@@ -156,6 +156,67 @@ class ProxOpAIRI:
 
         return (peak_min, peak_max)
 
+    @torch.no_grad()
+    def call_tiled(
+        self,
+        x: torch.Tensor,
+        tile_size: int,
+        margin: int,
+    ) -> torch.Tensor:
+        """
+        Apply the AIRI denoiser to a large image using overlapping tiles.
+
+        Splits the input into overlapping tiles, processes each through the
+        denoiser, then recombines them. The margin provides overlap so that
+        edge artifacts are avoided when tiles are merged.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch, channel, npix, npix).
+            tile_size (int): Size of the inner region of each tile (the part kept).
+            margin (int): Overlap on each side. Full tile size is (tile_size + 2*margin).
+
+        Returns:
+            torch.Tensor: Denoised tensor with same shape as input.
+        """
+        if self._network is None:
+            raise RuntimeError(
+                "Network not initialized. Call update() before applying the prox operator."
+            )
+
+        npix = x.shape[-1]
+        full_tile_size = tile_size + 2 * margin
+
+        # Calculate number of tiles and padding needed
+        n_tiles = int((npix + tile_size - 1) // tile_size)
+        padded_size = n_tiles * tile_size + 2 * margin
+        pad_needed = padded_size - npix
+
+        # Pad input with zeros
+        x_padded = torch.nn.functional.pad(
+            x, (margin, pad_needed - margin, margin, pad_needed - margin), mode='constant', value=0
+        )
+
+        # Build output on regular grid, then crop
+        grid_size = n_tiles * tile_size
+        output_grid = torch.zeros((*x.shape[:-2], grid_size, grid_size), dtype=x.dtype, device=x.device)
+
+        # Process tiles
+        for i in range(n_tiles):
+            for j in range(n_tiles):
+                h_start = i * tile_size
+                w_start = j * tile_size
+                tile = x_padded[..., h_start:h_start + full_tile_size, w_start:w_start + full_tile_size]
+
+                # Apply denoiser with scaling
+                tile_denoised = self._network(tile / self._net_scaling) * self._net_scaling
+
+                # Trim margins and place in output grid
+                inner = tile_denoised[..., margin:margin + tile_size, margin:margin + tile_size]
+                output_grid[..., h_start:h_start + tile_size, w_start:w_start + tile_size] = inner
+
+        # Crop to original size
+        return output_grid[..., :npix, :npix]
+
     def get_device(self) -> torch.device:
         """
         Return the device that the proximity operator is running on.
