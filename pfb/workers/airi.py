@@ -257,20 +257,17 @@ def _airi(**kw):
     log.info(f"Using {nbasisf} frequency basis functions")
 
     # Initialize AIRI prox operator
-    # The complete forward-backward AIRI algorithm is still under development
     if opts.shelf_path is not None:
         log.info("Initializing AIRI prox operator")
 
         # Heuristic noise level calculation
         # Based on BASP small-scale-radio-imaging implementation (fb_airi.py)
-        heuristic = 1.0 / np.sqrt(2 * hess_norm)
-        heuristic *= opts.airi_heuristic_scale
-        noise_scale = np.std(residual_mfs)
-        heuristic *= noise_scale
+        heuristic_noise_scale = 1.0 / np.sqrt(2 * hess_norm)
+        heuristic_noise_scale *= opts.airi_heuristic_scale
+        noise_std = np.std(residual_mfs)
+        heuristic_noise_scale *= noise_std
 
-        log.info(f"Hessian norm: {hess_norm:.6e}")
-        log.info(f"AIRI heuristic (before scaling): {1.0/np.sqrt(2*hess_norm):.6e}")
-        log.info(f"AIRI heuristic (after scaling): {heuristic:.6e}")
+        log.info(f"AIRI noise heuristic: {heuristic_noise_scale:.6e}")
 
         # Initialize ProxOpAIRI
         device = torch.device(opts.airi_device if (torch.cuda.is_available()
@@ -289,12 +286,14 @@ def _airi(**kw):
         log.info(f"Using residual peak as estimate: {peak_est:.6e}")
 
         # Initialize prox with heuristic and peak estimate
-        peak_range = airi_prox.update(heuristic, peak_est)
+        peak_range = airi_prox.update(heuristic_noise_scale, peak_est)
         prev_peak_val = peak_est
 
         use_airi_prox = True
         log.info("AIRI prox operator initialized successfully")
         log.info(f"Expected peak range: [{peak_range[0]:.6e}, {peak_range[1]:.6e}]")
+        if opts.airi_tile_size is not None:
+            log.info(f"Using tiled processing: tile_size={opts.airi_tile_size}, margin={opts.airi_tile_margin}")
     else:
         use_airi_prox = False
         log.warning("No shelf-path provided, AIRI prox operator will not be used")
@@ -339,7 +338,14 @@ def _airi(**kw):
             xtilde_mfs = np.mean(xtilde, axis=0, keepdims=True)
             xtilde_torch = torch.from_numpy(xtilde_mfs[None, :, :, :]).float().to(airi_prox.get_device())
 
-            model_mfs_torch = airi_prox(xtilde_torch)
+            if opts.airi_tile_size is not None:
+                model_mfs_torch = airi_prox.call_tiled(
+                    xtilde_torch,
+                    tile_size=opts.airi_tile_size,
+                    margin=opts.airi_tile_margin
+                )
+            else:
+                model_mfs_torch = airi_prox(xtilde_torch)
             model_mfs_denoised = model_mfs_torch.cpu().numpy().squeeze()
 
             # Broadcast MFS result back to all bands
@@ -360,7 +366,7 @@ def _airi(**kw):
                     curr_peak_val < peak_range[0] or curr_peak_val > peak_range[1]
                 ):
                     log.info("Updating AIRI denoiser based on new peak estimate")
-                    peak_range = airi_prox.update(heuristic, curr_peak_val)
+                    peak_range = airi_prox.update(heuristic_noise_scale, curr_peak_val)
                 prev_peak_val = curr_peak_val
         else:
             # Fallback to ISTA

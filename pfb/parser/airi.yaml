@@ -56,6 +56,16 @@ inputs:
     choices: ['cpu', 'cuda']
     info:
       Device to run AIRI denoisers on (cpu or cuda).
+  airi-tile-size:
+    dtype: int
+    info:
+      Tile size for processing large images. If set, the image will be split
+      into overlapping tiles of this size (inner region) for denoising.
+  airi-tile-margin:
+    dtype: int
+    default: 32
+    info:
+      Margin (overlap) on each side of tiles. Full tile size is tile_size + 2*margin.
   eta:
     dtype: float
     default: 1.0
