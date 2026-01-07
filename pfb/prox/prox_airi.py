@@ -2,8 +2,6 @@
 AIRI proximity operator
 """
 
-from abc import ABC, abstractmethod
-from typing import Any
 import csv
 import os
 import torch
@@ -11,77 +9,8 @@ from onnx2torch import convert
 
 # TODO: Add faceting functionality
 
-class ProxOp(ABC):
-    """
-    Base class for proximity operator. Based on code from repo: github.com/basp-group/Small-scale-RI-imaging/ on 1 December 2025'
 
-    This class provides the base functionality for a proximity operator.
-    It defines common methods for various proximity operators, such as
-    applying the operator to an input and updating the operator.
-    The actual implementation of these methods are left to the subclasses.
-    """
-
-    def __init__(
-        self,
-        device: torch.device = torch.device("cpu"),
-        dtype: torch.dtype = torch.float,
-    ) -> None:
-        """
-        Initialize the ProxOp class.
-
-        Args:
-            device (torch.device, optional): The device for the tensors.
-                Defaults to torch.device("cpu").
-            dtype (torch.dtype, optional): The data type for the tensors.
-                Defaults to torch.float.
-        """
-        self._dtype = dtype
-        self._device = device
-
-    @abstractmethod
-    def __call__(self, x: torch.Tensor) -> Any:
-        """
-        Apply proximity operator to input.
-
-        Args:
-            x (torch.Tensor): The input tensor.
-
-        Returns:
-            NotImplemented: This method should be implemented in a subclass.
-        """
-        return NotImplemented
-
-    @abstractmethod
-    def update(self, *args, **kwargs) -> Any:
-        """
-        Update proximity operator.
-
-        This method should be implemented in a subclass.
-        The input arguments can be arbitrary and should be specified in the subclass.
-        """
-        return NotImplemented
-
-    def get_device(self) -> torch.device:
-        """
-        Return the device that the proximity operator is running on.
-
-        Returns:
-            torch.device: The device that the proximity operator is running on.
-        """
-        return self._device
-
-    def get_data_type(self) -> torch.dtype:
-        """
-        Return the data type of the data that the proximity operator will accept and return.
-
-        Returns:
-            torch.dtype: The data type of the data that the proximity operator will accept
-                and return.
-        """
-        return self._dtype
-
-
-class ProxOpAIRI(ProxOp):
+class ProxOpAIRI:
     """
     AIRI proximity operator.
 
@@ -110,8 +39,8 @@ class ProxOpAIRI(ProxOp):
             dtype (torch.dtype, optional): The data type of the input. Defaults to torch.float.
             verbose (bool, optional): If True, print progress messages. Defaults to True.
         """
-        super().__init__(device=device, dtype=dtype)
-
+        self._dtype = dtype
+        self._device = device
         self._net_scaling = 1.0
         self._shelf = {}
         self._network = None
@@ -227,4 +156,21 @@ class ProxOpAIRI(ProxOp):
 
         return (peak_min, peak_max)
 
+    def get_device(self) -> torch.device:
+        """
+        Return the device that the proximity operator is running on.
 
+        Returns:
+            torch.device: The device that the proximity operator is running on.
+        """
+        return self._device
+
+    def get_data_type(self) -> torch.dtype:
+        """
+        Return the data type of the data that the proximity operator will accept and return.
+
+        Returns:
+            torch.dtype: The data type of the data that the proximity operator will accept
+                and return.
+        """
+        return self._dtype
