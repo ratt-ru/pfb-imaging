@@ -154,7 +154,7 @@ def restore(
     ] = True,
 ):
     # Lazy import the core implementation
-    from pfb_imaging.workers.restore import restore as restore_core  # noqa: E402
+    from pfb_imaging.core.restore import restore as restore_core  # noqa: E402
 
     # Parse gausspar if provided as comma-separated string
     gausspar_list = None
