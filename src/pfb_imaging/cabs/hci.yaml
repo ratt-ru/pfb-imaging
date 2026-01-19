@@ -132,7 +132,7 @@ cabs:
           Field of view in degrees
       super-resolution-factor:
         dtype: float
-        default: 1.4
+        default: 1
         abbreviation: srf
         info:
           Will over-sample Nyquist by this factor at max frequency
@@ -272,12 +272,6 @@ cabs:
           Number of threads used to scale vertically (eg. for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
-      direct-to-workers:
-        dtype: bool
-        default: true
-        info:
-          Connect direct to workers i.e. bypass scheduler.
-          Faster but then the dashboard isn't very useful.
       log-level:
         dtype: str
         default: error

@@ -215,7 +215,7 @@ def init(
     ] = None,
 ):
     # Lazy import the core implementation
-    from pfb_imaging.core import initinit as initinit_core  # noqa: E402
+    from pfb_imaging.core.init import init as init_core  # noqa: E402
 
     # Parse scans if provided as comma-separated string
     scans_list = None
@@ -233,7 +233,7 @@ def init(
         fields_list = [int(x.strip()) for x in fields.split(",")]
 
     # Call the core function with all parameters
-    initinit_core(
+    init_core(
         ms,
         output_filename,
         scans=scans_list,

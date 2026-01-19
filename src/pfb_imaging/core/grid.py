@@ -149,7 +149,11 @@ def grid(
     if nworkers == 1:
         env_vars["RAY_DEBUG_POST_MORTEM"] = "1"
 
-    ray.init(num_cpus=nworkers, logging_level="INFO", ignore_reinit_error=True, runtime_env=env_vars)
+    ray.init(num_cpus=nworkers,
+             logging_level="INFO",
+             ignore_reinit_error=True,
+             runtime_env={"env_vars": env_vars},
+    )
 
     time_start = time.time()
 

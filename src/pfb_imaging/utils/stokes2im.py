@@ -36,7 +36,6 @@ def stokes_image(
                 operator=None,
                 ds=None,
                 jones=None,
-                opts=None,
                 nx=None,
                 ny=None,
                 freq=None,
@@ -51,22 +50,50 @@ def stokes_image(
                 bandid=None,
                 timeid=None,
                 msid=None,
-                attrs=None):
+                attrs=None,
+                # Parameters previously from opts:
+                nthreads=None,
+                precision="double",
+                sigma_column=None,
+                weight_column=None,
+                model_column=None,
+                product="I",
+                check_ants=False,
+                phase_dir=None,
+                beam_model=None,
+                target=None,
+                robustness=None,
+                min_padding=2.0,
+                filter_counts_level=10.0,
+                psf_relative_size=None,
+                inject_transients=None,
+                epsilon=1e-7,
+                do_wgridding=True,
+                double_accum=True,
+                natural_grad=False,
+                eta=1e-5,
+                cg_tol=1e-3,
+                cg_maxit=150,
+                output_format="zarr",
+                psf_out=False,
+                weight_grid_out=False,
+                stack=False,
+                l2_reweight_dof=None):
     # serialization fails for these if we import them above
     from ducc0.misc import resize_thread_pool
     from ducc0.wgridder import vis2dirty
     
-    resize_thread_pool(opts.nthreads)
+    resize_thread_pool(nthreads)
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
     scanid = ds.SCAN_NUMBER
     oname = f'ms{msid:04d}_fid{fieldid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
             f'_band{bandid:04d}_time{timeid:04d}'
 
-    if opts.precision.lower() == 'single':
+    if precision.lower() == 'single':
         real_type = np.float32
         complex_type = np.complex64
-    elif opts.precision.lower() == 'double':
+    elif precision.lower() == 'double':
         real_type = np.float64
         complex_type = np.complex128
 
@@ -112,24 +139,24 @@ def stokes_image(
 
     nrow, nchan, ncorr = data.shape
 
-    if opts.sigma_column is not None:
+    if sigma_column is not None:
         weight = ne.evaluate('1.0/sigma**2',
-                             local_dict={'sigma': getattr(ds, opts.sigma_column).values})
-        ds = ds.drop_vars(opts.sigma_column)
-    elif opts.weight_column is not None:
-        weight = getattr(ds, opts.weight_column).values
-        ds = ds.drop_vars(opts.weight_column)
+                             local_dict={'sigma': getattr(ds, sigma_column).values})
+        ds = ds.drop_vars(sigma_column)
+    elif weight_column is not None:
+        weight = getattr(ds, weight_column).values
+        ds = ds.drop_vars(weight_column)
     else:
         weight = np.ones((nrow, nchan, ncorr),
                          dtype=real_type)
 
-    if opts.model_column is not None:
-        model_vis = getattr(ds, opts.model_column).values.astype(complex_type)
-        ds = ds.drop(opts.model_column)
-        if opts.product.lower() == 'i':
+    if model_column is not None:
+        model_vis = getattr(ds, model_column).values.astype(complex_type)
+        ds = ds.drop(model_column)
+        if product.lower() == 'i':
             model_vis = (model_vis[:, :, 0] + model_vis[:, :, -1])/2.0
         else:
-            raise NotImplementedError(f'Model subtraction not supported for product {opts.product}')
+            raise NotImplementedError(f'Model subtraction not supported for product {product}')
     else:
         model_vis = None
     # this seems to help with memory consumption
@@ -165,7 +192,7 @@ def stokes_image(
             pass
         else:
             raise ValueError("Incorrect number of correlations of "
-                            f"{jones_ncorr} for product {opts.product}")
+                            f"{jones_ncorr} for product {product}")
     else:
         jones = np.ones((ntime, nant, nchan, 1, 2),
                         dtype=complex_type)
@@ -177,7 +204,7 @@ def stokes_image(
 
     # check that antpos gives the correct size table
     antmax = allants.size
-    if opts.check_ants:
+    if check_ants:
         try:
             assert antmax == nant
         except Exception as e:
@@ -213,8 +240,8 @@ def stokes_image(
     freqfactor = -2j*np.pi*freq[None, :]/lightspeed
 
     # rephase if asked
-    if opts.phase_dir is not None:
-        new_ra, new_dec = opts.phase_dir.split(',')
+    if phase_dir is not None:
+        new_ra, new_dec = phase_dir.split(',')
         c = SkyCoord(new_ra, new_dec, frame='fk5', unit=(units.hourangle, units.deg))
         new_ra_rad = np.deg2rad(c.ra.value)
         new_dec_rad = np.deg2rad(c.dec.value)
@@ -254,9 +281,9 @@ def stokes_image(
     else:
         radec_new = radec
 
-    if opts.beam_model is not None:
+    if beam_model is not None:
         # should we compute a weighted mean over freq instead of interpolating here? 
-        bds = xr.open_zarr(opts.beam_model, chunks=None).interp(chan=[freq_out])
+        bds = xr.open_zarr(beam_model, chunks=None).interp(chan=[freq_out])
         l_beam = bds.l_beam.values
         m_beam = bds.m_beam.values
         # the beam is in feed plane direction cosine coordinates
@@ -271,8 +298,8 @@ def stokes_image(
         pbeam = reproject_and_interp_beam(beam, time, antpos,
                                           radec, radec_new,
                                           cell_deg_in, cell_deg, nx, ny,
-                                          poltype, opts.product,
-                                          weight=weight, nthreads=opts.nthreads)
+                                          poltype, product,
+                                          weight=weight, nthreads=nthreads)
         
         # this is a hack to get the images to align
         pbeam = np.transpose(pbeam.astype(np.float32),
@@ -280,15 +307,15 @@ def stokes_image(
         pbeam = pbeam[:, ::-1, :]
         
     else:
-        pbeam = np.ones((len(opts.product), nx, ny), dtype=real_type)
+        pbeam = np.ones((len(product), nx, ny), dtype=real_type)
     
     
     # compute lm coordinates of target if requested
-    if opts.target is not None:
-        tmp = opts.target.split(',')
-        if len(tmp) == 1 and tmp[0] == opts.target:
+    if target is not None:
+        tmp = target.split(',')
+        if len(tmp) == 1 and tmp[0] == target:
             obs_time = time_out
-            tra, tdec = get_coordinates(obs_time, target=opts.target)
+            tra, tdec = get_coordinates(obs_time, target=target)
         else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
             c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(units.hourangle, units.deg))
             tra = np.deg2rad(c.ra.value)
@@ -320,7 +347,7 @@ def stokes_image(
             tbin_idx, tbin_counts,
             ant1, ant2,
             poltype,
-            opts.product,
+            product,
             str(ncorr))
 
     # flag if any correlation is flagged
@@ -328,16 +355,16 @@ def stokes_image(
     mask = (~flag).astype(np.uint8)
 
     # TODO - this subtraction would be better to do inside weight_data
-    if opts.model_column is not None:
+    if model_column is not None:
         ne.evaluate('(data-model_vis)*mask', out=data)
 
-    if opts.l2_reweight_dof:
+    if l2_reweight_dof:
         # data should contain residual_vis at this point
         ressq = (data*data.conj()).real * mask
         wcount = mask.sum()
         if wcount:
             ovar = ressq.sum()/wcount  # use 67% quantile?
-            weight = (opts.l2_reweight_dof + 1)/(opts.l2_reweight_dof + ressq/ovar)/ovar
+            weight = (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)/ovar
         else:
             weight = None
 
@@ -350,8 +377,8 @@ def stokes_image(
     # TODO - polarisation parameters and handle Stokes axis more elegantly
     # TODO - add beam application to injected transients
     # Should this go before weight_data?
-    if opts.inject_transients is not None:
-        transient_name = opts.inject_transients.removesuffix('yaml') + 'zarr'
+    if inject_transients is not None:
+        transient_name = inject_transients.removesuffix('yaml') + 'zarr'
         transient_ds = xr.open_zarr(transient_name, chunks=None)
         all_times = transient_ds.TIME.values
         all_freqs = transient_ds.FREQ.values
@@ -390,14 +417,14 @@ def stokes_image(
     # TODO - why do we need to cast here?
     data = data.transpose(2, 0, 1).astype(complex_type)
     weight = weight.transpose(2, 0, 1).astype(real_type)
-    if opts.robustness is not None:
+    if robustness is not None:
         # we need to compute the weights on the padded grid
         # but we don't have control over the optimal gridding
         # parameters so assume a minimum
-        nx_pad = int(np.ceil(opts.min_padding*nx))
+        nx_pad = int(np.ceil(min_padding*nx))
         if nx_pad%2:
             nx_pad += 1
-        ny_pad = int(np.ceil(opts.min_padding*ny))
+        ny_pad = int(np.ceil(min_padding*ny))
         if ny_pad%2:
             ny_pad += 1
         counts = _compute_counts(uvw,
@@ -413,7 +440,7 @@ def stokes_image(
                                  vsign=1.0 if flip_v else -1.0)
 
         counts = filter_extreme_counts(counts,
-                                       level=opts.filter_counts_level)
+                                       level=filter_counts_level)
 
         weight = counts_to_weights(
             counts,
@@ -423,19 +450,19 @@ def stokes_image(
             mask,
             nx_pad, ny_pad,
             cell_rad, cell_rad,
-            opts.robustness,
+            robustness,
             usign=1.0 if flip_u else -1.0,
             vsign=1.0 if flip_v else -1.0)
 
     psf_min_size = 128
-    if opts.psf_relative_size is None:
+    if psf_relative_size is None:
         nx_psf = psf_min_size
         ny_psf = psf_min_size
     else:
-        nx_psf = good_size(int(nx * opts.psf_relative_size))
+        nx_psf = good_size(int(nx * psf_relative_size))
         while nx_psf % 2:
             nx_psf = good_size(nx_psf + 1)
-        ny_psf = good_size(int(ny * opts.psf_relative_size))
+        ny_psf = good_size(int(ny * psf_relative_size))
         while ny_psf % 2:
             ny_psf = good_size(ny_psf + 1)
         if nx_psf < psf_min_size or ny_psf < psf_min_size:
@@ -465,12 +492,12 @@ def stokes_image(
             flip_u=flip_u,
             flip_v=flip_v,
             flip_w=flip_w,
-            epsilon=opts.epsilon,
-            do_wgridding=opts.do_wgridding,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
             divide_by_n=True,  # no rephasing or smooth beam so do it here
-            nthreads=opts.nthreads,
-            sigma_min=opts.min_padding, sigma_max=3.0,
-            double_precision_accumulation=opts.double_accum,
+            nthreads=nthreads,
+            sigma_min=min_padding, sigma_max=3.0,
+            double_precision_accumulation=double_accum,
             verbosity=0,
             dirty=residual[c])
 
@@ -486,19 +513,19 @@ def stokes_image(
             flip_u=flip_u,
             flip_v=flip_v,
             flip_w=flip_w,
-            epsilon=opts.epsilon,
-            do_wgridding=opts.do_wgridding,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
             divide_by_n=True,  # no rephasing or smooth beam so do it here
-            nthreads=opts.nthreads,
-            sigma_min=opts.min_padding, sigma_max=3.0,
-            double_precision_accumulation=opts.double_accum,
+            nthreads=nthreads,
+            sigma_min=min_padding, sigma_max=3.0,
+            double_precision_accumulation=double_accum,
             verbosity=0,
             dirty=psf[c])
 
     # these will be in units of pixels
     GaussPars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
 
-    if opts.natural_grad:
+    if natural_grad:
         # TODO - add beam application
         from pfb_imaging.operators.hessian import hessian_jax
         import jax.numpy as jnp
@@ -513,17 +540,17 @@ def stokes_image(
         hess = partial(hessian_jax,
                        nx, ny,
                        2*nx, 2*ny,
-                       opts.eta,
+                       eta,
                        abspsf)
 
         residual = cg(hess,
                residual/wsum[:, None, None],
-               tol=opts.cg_tol,
-               maxiter=opts.cg_maxit)[0]
+               tol=cg_tol,
+               maxiter=cg_maxit)[0]
         
     else:
         residual /= wsum[:, None, None]
-        residual *= pbeam / (pbeam**2 + opts.eta)
+        residual *= pbeam / (pbeam**2 + eta)
 
     rms = np.std(residual, axis=(1,2))
 
@@ -531,7 +558,7 @@ def stokes_image(
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
     # set corr coords (removing duplicates and sorting)
-    corr = "".join(dict.fromkeys(sorted(opts.product)))
+    corr = "".join(dict.fromkeys(sorted(product)))
 
     out_ras = ra_deg + np.arange(nx//2, -(nx//2), -1) * cell_deg
     out_decs = dec_deg + np.arange(-(ny//2), ny//2) * cell_deg
@@ -539,7 +566,7 @@ def stokes_image(
     out_decs = np.round(out_decs, decimals=12)
 
     # save outputs
-    if opts.output_format == 'zarr':
+    if output_format == 'zarr':
         coords = {
             'FREQ': (('FREQ',), np.array([freq_out])),
             'TIME': (('TIME',), np.mean(utime, keepdims=True)),
@@ -553,8 +580,8 @@ def stokes_image(
                                 axes=(0, 2, 1))
         data_vars['cube'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
                              residual[:, None, None, :, :])
-        if opts.psf_out:
-            if opts.psf_relative_size == 1:
+        if psf_out:
+            if psf_relative_size == 1:
                 xpsf = "X"
                 ypsf = "Y"
             else:
@@ -568,7 +595,7 @@ def stokes_image(
             data_vars['psf'] = (('STOKES', 'FREQ', 'TIME', ypsf, xpsf),
                                 psf[:, None, None, :, :])
         
-        if opts.robustness is not None and opts.weight_grid_out:
+        if robustness is not None and weight_grid_out:
             ic, ix, iy = np.where(counts > 0)
             wgt = np.zeros_like(counts)
             wgt[ic, ix, iy] = 1.0/counts[ic, ix, iy]
@@ -581,8 +608,8 @@ def stokes_image(
         
         data_vars['weight'] = (('STOKES','FREQ','TIME'), wsum[:, None, None])
         
-        if opts.beam_model is not None:
-            weight = pbeam**2 + opts.eta
+        if beam_model is not None:
+            weight = pbeam**2 + eta
             weight = np.transpose(weight.astype(np.float32),
                                   axes=(0, 2, 1))
             data_vars['beam_weight'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
@@ -611,7 +638,7 @@ def stokes_image(
                 'scanid': scanid,
                 'bandid': bandid,
                 'timeid': timeid,
-                'robustness': opts.robustness,
+                'robustness': robustness,
                 'utc': utc,
             }
 
@@ -619,11 +646,11 @@ def stokes_image(
             data_vars,
             coords=coords,
             attrs=attrs)
-        if opts.stack:
+        if stack:
             out_ds.to_zarr(fds_store.url, region='auto')
         else:
             out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr', mode='w')
-    elif opts.output_format == 'fits':
+    elif output_format == 'fits':
         # if there is more than one polarisation product
         # we currently assume all have the same beam
         hdr = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
@@ -633,7 +660,7 @@ def stokes_image(
         hdr['STOKES'] = corr
         save_fits(residual/wsum[:, None, None],
                   f'{fds_store.full_path}/{oname}_image.fits', hdr)
-        if opts.robustness is not None and opts.weight_grid_out:
+        if robustness is not None and weight_grid_out:
             ic, ix, iy = np.where(counts > 0)
             wgt = np.zeros_like(counts)
             wgt[ic, ix, iy] = 1.0/counts[ic, ix, iy]
@@ -641,7 +668,7 @@ def stokes_image(
             save_fits(wgt,
                     f'{fds_store.full_path}/{oname}_weight.fits', hdr)
 
-        if opts.psf_out:
+        if psf_out:
             hdr_psf = set_wcs(cell_deg, cell_deg, nx_psf, ny_psf, [tra, tdec],
                   freq_out, GuassPar=GaussPars[0],  # fake for now
                   ms_time=time_out)
@@ -649,7 +676,7 @@ def stokes_image(
             save_fits(psf/wsum[:, None, None],
                   f'{fds_store.full_path}/{oname}_psf.fits', hdr_psf)
 
-        if opts.beam_model is not None:
+        if beam_model is not None:
             # weight = np.transpose(weight.astype(np.float32),
             #                      axes=(0, 2, 1))
             # weight = weight[:, ::-1, :]

@@ -91,7 +91,7 @@ def fluxtractor(
         num_cpus=nworkers,
         logging_level="INFO",
         ignore_reinit_error=True,
-        runtime_env=env_vars,
+        runtime_env={"env_vars": env_vars},
     )
 
     time_start = time.time()

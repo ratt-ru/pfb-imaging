@@ -26,7 +26,6 @@ def stokes_vis(
             operator=None,
             ds=None,
             jones=None,
-            opts=None,
             freq=None,
             chan_width=None,
             utime=None,
@@ -40,7 +39,17 @@ def stokes_vis(
             xds_store=None,
             bandid=None,
             timeid=None,
-            msid=None):
+            msid=None,
+            # Parameters previously from opts:
+            precision="double",
+            sigma_column=None,
+            weight_column=None,
+            product="I",
+            check_ants=False,
+            chan_average=1,
+            bda_decorr=1.0,
+            max_field_of_view=3.0,
+            beam_model=None):
 
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
@@ -48,10 +57,10 @@ def stokes_vis(
     oname = f'ms{msid:04d}_fid{fieldid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
             f'_band{bandid:04d}_time{timeid:04d}'
     
-    if opts.precision.lower() == 'single':
+    if precision.lower() == 'single':
         real_type = np.float32
         complex_type = np.complex64
-    elif opts.precision.lower() == 'double':
+    elif precision.lower() == 'double':
         real_type = np.float64
         complex_type = np.complex128
 
@@ -102,17 +111,17 @@ def stokes_vis(
 
     nrow, nchan, ncorr = data.shape
 
-    if opts.sigma_column is not None:
+    if sigma_column is not None:
         weight = ne.evaluate('1.0/sigma**2',
-                             local_dict={'sigma': getattr(ds, opts.sigma_column).values})
-        ds = ds.drop_vars(opts.sigma_column)
-    elif opts.weight_column is not None:
-        if opts.weight_column == 'WEIGHT':
-            weight = np.broadcast_to(getattr(ds, opts.weight_column).values[:, None, :],
+                             local_dict={'sigma': getattr(ds, sigma_column).values})
+        ds = ds.drop_vars(sigma_column)
+    elif weight_column is not None:
+        if weight_column == 'WEIGHT':
+            weight = np.broadcast_to(getattr(ds, weight_column).values[:, None, :],
                                              (nrow, nchan, ncorr))
         else:
-            weight = getattr(ds, opts.weight_column).values
-        ds = ds.drop_vars(opts.weight_column)
+            weight = getattr(ds, weight_column).values
+        ds = ds.drop_vars(weight_column)
     else:
         weight = np.ones((nrow, nchan, ncorr),
                          dtype=real_type)
@@ -152,7 +161,7 @@ def stokes_vis(
             pass
         else:
             raise ValueError("Incorrect number of correlations of "
-                            f"{jones_ncorr} for product {opts.product}")
+                            f"{jones_ncorr} for product {product}")
     else:
         jones = np.ones((ntime, nant, nchan, 1, 2),
                         dtype=complex_type)
@@ -164,7 +173,7 @@ def stokes_vis(
 
     # check that antpos gives the correct size table
     antmax = allants.size
-    if opts.check_ants:
+    if check_ants:
         try:
             assert antmax == nant
         except Exception as e:
@@ -185,7 +194,7 @@ def stokes_vis(
                             tbin_idx, tbin_counts,
                             ant1, ant2,
                             literally(poltype),
-                            literally(opts.product),
+                            literally(product),
                             literally(str(ncorr)))
     
     # TODO - check if wsum for any of the correlations is zero
@@ -215,11 +224,11 @@ def stokes_vis(
     max_freq = freq.max()
 
     # set corr coords (removing duplicates and sorting)
-    corr = list("".join(dict.fromkeys(sorted(opts.product))))
+    corr = list("".join(dict.fromkeys(sorted(product))))
     ncorr = len(corr)
     
     # simple average over channels
-    if opts.chan_average > 1:
+    if chan_average > 1:
         from africanus.averaging import time_and_channel
 
         res = time_and_channel(
@@ -234,7 +243,7 @@ def stokes_vis(
                     chan_freq=freq,
                     chan_width=chan_width,
                     time_bin_secs=1e-15,
-                    chan_bin_size=opts.chan_average)
+                    chan_bin_size=chan_average)
 
         data = res.visibilities
         weight = res.weight_spectrum
@@ -244,7 +253,7 @@ def stokes_vis(
         uvw = res.uvw
         nchan = freq.size
 
-    if opts.bda_decorr < 1:
+    if bda_decorr < 1:
         from africanus.averaging import bda
         res = bda(time,
                   interval,
@@ -255,9 +264,9 @@ def stokes_vis(
                   visibilities=data,
                   chan_freq=freq,
                   chan_width=chan_width,
-                  decorrelation=opts.bda_decorr,
+                  decorrelation=bda_decorr,
                   min_nchan=freq.size,
-                  max_fov=opts.max_field_of_view)
+                  max_fov=max_field_of_view)
 
         offsets = res.offsets
         uvw = res.uvw[offsets[:-1], :]
@@ -270,15 +279,15 @@ def stokes_vis(
 
 
     # TODO - better beam interpolation
-    fov = opts.max_field_of_view
+    fov = max_field_of_view
     cell_rad = 1.0 / (uv_max * max_freq / lightspeed)
     cell_deg = np.rad2deg(cell_rad)
     npix = int(fov/cell_deg)
     l_beam = (-(npix//2) + np.arange(npix)) * cell_deg
     m_beam = (-(npix//2) + np.arange(npix)) * cell_deg
-    if opts.beam_model is None:
+    if beam_model is None:
         beam = np.ones((ncorr, npix, npix), dtype=real_type)
-    elif opts.beam_model.lower() == 'katbeam':
+    elif beam_model.lower() == 'katbeam':
         if freq_min >= 8.5e8 and freq_max <= 1.8e9:
             beamo = JimBeam('MKAT-AA-L-JIM-2020')
         elif freq_min >= 5.4e8 and freq_max <= 1.1e9:
@@ -301,7 +310,7 @@ def stokes_vis(
             # how to normalise the center for other Stokes products?
             # beam[i] /= beam[i].max()
     else:
-        raise ValueError(f"Unknown beam model {opts.beam_model}")
+        raise ValueError(f"Unknown beam model {beam_model}")
 
     # for operations that follow it will be preferable to have the corr axis
     # first for contiguity
@@ -338,11 +347,11 @@ def stokes_vis(
         'time_min': utime.min(),
         'time_max': utime.max(),
         'timeid': timeid,
-        'product': opts.product,
+        'product': product,
         'utc': utc,
         'max_freq': max_freq,
         'uv_max': uv_max,
-        'beam_model': opts.beam_model
+        'beam_model': beam_model
     }
 
     out_ds = xr.Dataset(data_vars, coords=coords,

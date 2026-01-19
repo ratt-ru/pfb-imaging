@@ -100,18 +100,18 @@ def grid(
             help="Interpolate average beam pattern",
         ),
     ] = True,
-    psf_oversize: Annotated[
-        float,
-        typer.Option(
-            help="Size of PSF relative to dirty image",
-        ),
-    ] = 1.4,
     weight: Annotated[
         bool,
         typer.Option(
             help="Compute effectve image space weights",
         ),
     ] = True,
+    psf_oversize: Annotated[
+        float,
+        typer.Option(
+            help="Size of PSF relative to dirty image",
+        ),
+    ] = 1.4,
     field_of_view: Annotated[
         float | None,
         typer.Option(
