@@ -1,6 +1,6 @@
 cabs:
   sara:
-    command: pfb_imaging.workers.sara.sara
+    command: pfb_imaging.core.sara.sara
     flavour: python
     policies:
       pass_missing_as_none: true

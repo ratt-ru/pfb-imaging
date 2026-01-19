@@ -296,7 +296,7 @@ def sara(
     ] = True,
 ):
     # Lazy import the core implementation
-    from pfb_imaging.workers.sara import sara as sara_core  # noqa: E402
+    from pfb_imaging.core.sara import sara as sara_core  # noqa: E402
 
     # Parse pd_tol if provided as comma-separated string
     pd_tol_list = None

@@ -80,6 +80,8 @@ def grid(
         else:
             nthreads = nthreads // 2
             ncpu = ncpu // 2
+    else:
+        ncpu = nthreads
 
     output_filename = output_filename
     fits_oname = f"{fits_output_folder}/{oname}"

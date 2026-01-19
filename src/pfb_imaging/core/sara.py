@@ -1,144 +1,162 @@
 # flake8: noqa
 import concurrent.futures as cf
-import click
-from omegaconf import OmegaConf
+import time
+from copy import deepcopy
+from functools import partial
+
+import numpy as np
+import numexpr as ne
+import psutil
+import xarray as xr
+from daskms.fsspec_store import DaskMSStore
+from ducc0.misc import resize_thread_pool, thread_pool_size
+from numba import threading_layer
+
+from pfb_imaging import set_envs
+from pfb_imaging.operators.gridder import compute_residual
+from pfb_imaging.operators.hessian import hess_psf
+from pfb_imaging.operators.psi import Psi
+from pfb_imaging.opt.power_method import power_method
+from pfb_imaging.opt.primal_dual import primal_dual_optimised as primal_dual
+from pfb_imaging.prox.prox_21m import prox_21m_numba as prox_21
 from pfb_imaging.utils import logging as pfb_logging
-from scabha.schema_utils import clickify_parameters
-from pfb_imaging.parser.schemas import schema
+from pfb_imaging.utils.fits import dds2fits, save_fits, set_wcs
+from pfb_imaging.utils.misc import l1reweight_func
+from pfb_imaging.utils.modelspec import eval_coeffs_to_slice, fit_image_cube
+from pfb_imaging.utils.naming import get_opts, set_output_names, xds_from_url
 
 log = pfb_logging.get_logger('SARA')
 
 
-@click.command(context_settings={'show_default': True})
-@clickify_parameters(schema.sara)
-def sara(**kw):
+def sara(
+    output_filename: str,
+    suffix: str = "main",
+    bases: str = "self,db1,db2,db3",
+    nlevels: int = 2,
+    l1_reweight_from: int = 5,
+    hess_norm: float | None = None,
+    hess_approx: str = "psf",
+    rmsfactor: float = 1.0,
+    eta: float = 1.0,
+    gamma: float = 1.0,
+    alpha: float = 2,
+    nbasisf: int | None = None,
+    positivity: int = 1,
+    niter: int = 10,
+    nthreads: int | None = None,
+    tol: float = 0.0005,
+    diverge_count: int = 5,
+    skip_model: bool = False,
+    rms_outside_model: bool = False,
+    init_factor: float = 0.5,
+    verbosity: int = 1,
+    epsilon: float = 1e-7,
+    do_wgridding: bool = True,
+    double_accum: bool = True,
+    pd_tol: list[float] | None = None,
+    pd_maxit: int = 450,
+    pd_verbose: int = 1,
+    pd_report_freq: int = 50,
+    pm_tol: float = 0.001,
+    pm_maxit: int = 100,
+    pm_verbose: int = 1,
+    pm_report_freq: int = 100,
+    cg_tol: float = 0.001,
+    cg_maxit: int = 150,
+    cg_minit: int = 10,
+    cg_verbose: int = 1,
+    cg_report_freq: int = 10,
+    backtrack: bool = False,
+    log_directory: str | None = None,
+    product: str = "I",
+    fits_output_folder: str | None = None,
+    fits_mfs: bool = True,
+    fits_cubes: bool = True,
+):
     '''
     Deconvolution using SARA regularisation
     '''
-    opts = OmegaConf.create(kw)
 
-    from pfb_imaging.utils.naming import set_output_names
-    opts, basedir, oname = set_output_names(opts)
+    output_filename, fits_output_folder, log_directory, oname = set_output_names(
+        output_filename,
+        product,
+        fits_output_folder,
+        log_directory,
+    )
 
-    import psutil
-    nthreads = psutil.cpu_count(logical=True)
     ncpu = psutil.cpu_count(logical=False)
-    if opts.nthreads is None:
-        opts.nthreads = nthreads//2
-        ncpu = ncpu//2
+    if nthreads is None:
+        nthreads = psutil.cpu_count(logical=True) // 2
+        ncpu = ncpu // 2
 
-    OmegaConf.set_struct(opts, True)
+    resize_thread_pool(nthreads)
+    set_envs(nthreads, ncpu)
 
-    from pfb_imaging import set_envs
-    from ducc0.misc import resize_thread_pool
-    resize_thread_pool(opts.nthreads)
-    set_envs(opts.nthreads, ncpu)
-
-    import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f'{str(opts.log_directory)}/sara_{timestamp}.log'
+    logname = f'{str(log_directory)}/sara_{timestamp}.log'
     pfb_logging.log_to_file(logname)
     log.info(f'Logs will be written to {logname}')
 
+    opts = {
+        "output_filename": output_filename,
+        "suffix": suffix,
+        "bases": bases,
+        "nlevels": nlevels,
+        "l1_reweight_from": l1_reweight_from,
+        "hess_norm": hess_norm,
+        "hess_approx": hess_approx,
+        "rmsfactor": rmsfactor,
+        "eta": eta,
+        "gamma": gamma,
+        "alpha": alpha,
+        "nbasisf": nbasisf,
+        "positivity": positivity,
+        "niter": niter,
+        "nthreads": nthreads,
+        "tol": tol,
+        "diverge_count": diverge_count,
+        "skip_model": skip_model,
+        "rms_outside_model": rms_outside_model,
+        "init_factor": init_factor,
+        "verbosity": verbosity,
+        "epsilon": epsilon,
+        "do_wgridding": do_wgridding,
+        "double_accum": double_accum,
+        "pd_tol": pd_tol,
+        "pd_maxit": pd_maxit,
+        "pd_verbose": pd_verbose,
+        "pd_report_freq": pd_report_freq,
+        "pm_tol": pm_tol,
+        "pm_maxit": pm_maxit,
+        "pm_verbose": pm_verbose,
+        "pm_report_freq": pm_report_freq,
+        "cg_tol": cg_tol,
+        "cg_maxit": cg_maxit,
+        "cg_minit": cg_minit,
+        "cg_verbose": cg_verbose,
+        "cg_report_freq": cg_report_freq,
+        "backtrack": backtrack,
+        "log_directory": log_directory,
+        "product": product,
+        "fits_output_folder": fits_output_folder,
+        "fits_mfs": fits_mfs,
+        "fits_cubes": fits_cubes,
+    }
+
     pfb_logging.log_options_dict(log, opts)
 
-    from pfb_imaging.utils.naming import xds_from_url, get_opts
+    basename = output_filename
+    fits_oname = f'{fits_output_folder}/{oname}'
+    dds_name = f'{basename}_{suffix}.dds'
 
-    basename = opts.output_filename
-    fits_oname = f'{opts.fits_output_folder}/{oname}'
-    dds_name = f'{basename}_{opts.suffix}.dds'
+    time_start = time.time()
 
-    ti = time.time()
-    _sara(**opts)
-
-    dds, dds_list = xds_from_url(dds_name)
-
-    if opts.fits_mfs or opts.fits:
-        from daskms.fsspec_store import DaskMSStore
-        from pfb_imaging.utils.fits import dds2fits
-        # get the psfpars for the mfs cube
-        dds_store = DaskMSStore(dds_name)
-        if '://' in dds_store.url:
-            protocol = dds_store.url.split('://')[0]
-        else:
-            protocol = 'file'
-        psfpars_mfs = get_opts(dds_store.url,
-                               protocol,
-                               name='psfparsn_mfs.pkl')
-        log.info(f"Writing fits files to {fits_oname}_{opts.suffix}")
-
-        dds2fits(dds_list,
-                'RESIDUAL',
-                f'{fits_oname}_{opts.suffix}',
-                norm_wsum=True,
-                nthreads=opts.nthreads,
-                do_mfs=opts.fits_mfs,
-                do_cube=opts.fits_cubes,
-                psfpars_mfs=psfpars_mfs)
-        log.info('Done writing RESIDUAL')
-        dds2fits(dds_list,
-                'MODEL',
-                f'{fits_oname}_{opts.suffix}',
-                norm_wsum=False,
-                nthreads=opts.nthreads,
-                do_mfs=opts.fits_mfs,
-                do_cube=opts.fits_cubes,
-                psfpars_mfs=psfpars_mfs)
-        log.info('Done writing MODEL')
-        dds2fits(dds_list,
-                'UPDATE',
-                f'{fits_oname}_{opts.suffix}',
-                norm_wsum=False,
-                nthreads=opts.nthreads,
-                do_mfs=opts.fits_mfs,
-                do_cube=opts.fits_cubes,
-                psfpars_mfs=psfpars_mfs)
-        log.info('Done writing UPDATE')
-        # try:
-        #     dds2fits(dds_list,
-        #          'MPSF',
-        #          f'{fits_oname}_{opts.suffix}',
-        #          norm_wsum=False,
-        #          nthreads=opts.nthreads,
-        #          do_mfs=opts.fits_mfs,
-        #          do_cube=opts.fits_cubes)
-        #     log.info('Done writing MPSF')
-        # except Exception as e:
-        #     print(e)
-
-    from numba import threading_layer
-    log.info(f"Numba use the {threading_layer()} threading layer")
-    log.info(f"All done after {time.time() - ti}s")
-
-
-def _sara(**kw):
-    opts = OmegaConf.create(kw)
-    OmegaConf.set_struct(opts, True)
-
-    from functools import partial
-    import numpy as np
-    import xarray as xr
-    import numexpr as ne
-    from pfb_imaging.utils.fits import set_wcs, save_fits
-    from pfb_imaging.utils.naming import xds_from_url
-    from pfb_imaging.opt.power_method import power_method
-    from pfb_imaging.opt.primal_dual import primal_dual_optimised as primal_dual
-    from pfb_imaging.utils.misc import l1reweight_func
-    from pfb_imaging.operators.hessian import hess_psf
-    from pfb_imaging.operators.psi import Psi
-    from pfb_imaging.operators.gridder import compute_residual
-    from copy import deepcopy
-    from ducc0.misc import thread_pool_size
-    from pfb_imaging.prox.prox_21m import prox_21m_numba as prox_21
-    from pfb_imaging.utils.modelspec import fit_image_cube, eval_coeffs_to_slice
-
-    basename = opts.output_filename
-    if opts.fits_output_folder is not None:
-        fits_oname = opts.fits_output_folder + '/' + basename.split('/')[-1]
+    # Implementation of SARA algorithm (previously in _sara function)
+    if fits_output_folder is not None:
+        fits_oname = fits_output_folder + '/' + basename.split('/')[-1]
     else:
         fits_oname = basename
 
-    dds_name = f'{basename}_{opts.suffix}.dds'
     dds, dds_list = xds_from_url(dds_name)
 
     if dds[0].corr.size > 1:
@@ -211,15 +229,16 @@ def _sara(**kw):
     else:
         iter0 = 0
 
-    # Allow calling with pd_tol as float
+    # Allow calling with pd_tol as float or list
+    if pd_tol is None:
+        pd_tol = [3e-4]
     try:
-        ntol = len(opts.pd_tol)
-        pd_tol = opts.pd_tol
+        ntol = len(pd_tol)
     except TypeError:
-        assert isinstance(opts.pd_tol, float)
+        assert isinstance(pd_tol, float)
         ntol = 1
-        pd_tol = [opts.pd_tol]
-    niters = opts.niter
+        pd_tol = [pd_tol]
+    niters = niter
     if ntol <= niters:
         pd_tolf = pd_tol[-1]
         pd_tol += [pd_tolf]*niters  # no harm in too many
@@ -230,15 +249,15 @@ def _sara(**kw):
     complex_type = 'c16'
     precond = hess_psf(nx, ny, abspsf,
                        beam=beam,
-                       eta=opts.eta*wsums,
-                       nthreads=opts.nthreads,
-                       cgtol=opts.cg_tol,
-                       cgmaxit=opts.cg_maxit,
-                       cgverbose=opts.cg_verbose,
-                       cgrf=opts.cg_report_freq,
+                       eta=eta*wsums,
+                       nthreads=nthreads,
+                       cgtol=cg_tol,
+                       cgmaxit=cg_maxit,
+                       cgverbose=cg_verbose,
+                       cgrf=cg_report_freq,
                        taper_width=np.minimum(int(0.1*nx), 32))
 
-    if opts.hess_norm is None:
+    if hess_norm is None:
         # if the grid worker had been rerun hess_norm won't be in attrs
         if 'hess_norm' in dds[0].attrs:
             hess_norm = dds[0].hess_norm
@@ -247,20 +266,20 @@ def _sara(**kw):
             log.info("Finding spectral norm of Hessian approximation")
             hess_norm, hessbeta = power_method(
                                             precond.dot, (nband, nx, ny),
-                                            tol=opts.pm_tol,
-                                            maxit=opts.pm_maxit,
-                                            verbosity=opts.pm_verbose,
-                                            report_freq=opts.pm_report_freq)
+                                            tol=pm_tol,
+                                            maxit=pm_maxit,
+                                            verbosity=pm_verbose,
+                                            report_freq=pm_report_freq)
             # inflate slightly for stability
             hess_norm *= 1.05
     else:
-        hess_norm = opts.hess_norm
+        hess_norm = hess_norm
         log.info(f"Using provided hess-norm of = {hess_norm:.3e}")
 
     log.info("Setting up dictionary")
-    bases = tuple(opts.bases.split(','))
-    nbasis = len(bases)
-    psi = Psi(nband, nx, ny, bases, opts.nlevels, opts.nthreads)
+    bases_tuple = tuple(bases.split(','))
+    nbasis = len(bases_tuple)
+    psi = Psi(nband, nx, ny, bases_tuple, nlevels, nthreads)
     Nxmax = psi.Nxmax
     Nymax = psi.Nymax
 
@@ -268,16 +287,15 @@ def _sara(**kw):
     log.info(f"Using {thread_pool_size()} threads for gridding")
 
     # number of frequency basis functions
-    if opts.nbasisf is None:
+    if nbasisf is None:
         nbasisf = int(np.sum(fsel))
     else:
-        nbasisf = opts.nbasisf
+        nbasisf = nbasisf
     log.info(f"Using {nbasisf} frequency basis functions")
 
     # a value less than zero turns L1 reweighting off
     # we'll start on convergence or at the iteration
     # indicated by l1-reweight-from, whichever comes first
-    l1_reweight_from = opts.l1_reweight_from
     l1reweight_active = False
     # we need an array to put the components in for reweighting
     outvar = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=real_type)
@@ -295,16 +313,16 @@ def _sara(**kw):
         # log.info(f'rms_comps updated to {rms_comps}')
         # per basis rms_comps
         rms_comps = np.ones((nbasis,), dtype=float)
-        for i, base in enumerate(bases):
+        for i, base in enumerate(bases_tuple):
             tmpb = tmp[i]
             rms_comps[i] = np.std(tmpb[tmpb!=0])
             log.info(f'rms_comps for base {base} is {rms_comps[i]}')
         reweighter = partial(l1reweight_func,
                              psiH=psi.dot,
                              outvar=outvar,
-                             rmsfactor=opts.rmsfactor,
+                             rmsfactor=rmsfactor,
                              rms_comps=rms_comps,
-                             alpha=opts.alpha)
+                             alpha=alpha)
         l1weight = reweighter(model)
         l1reweight_active = True
     else:
@@ -312,7 +330,7 @@ def _sara(**kw):
         reweighter = None
         l1reweight_active = False
 
-    if opts.rms_outside_model and model.any():
+    if rms_outside_model and model.any():
         rms_mask = model_mfs == 0
         rms = np.std(residual_mfs[rms_mask])
     else:
@@ -321,29 +339,29 @@ def _sara(**kw):
     best_rms = rms
     best_rmax = rmax
     best_model = model.copy()
-    diverge_count = 0
+    diverge_count_curr = 0
     eps = 1.0
     write_futures = None
     log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
-    mrange = range(iter0, iter0 + opts.niter)
+    mrange = range(iter0, iter0 + niter)
     for k in mrange:
         log.info('Solving for update')
         residual *= beam  # avoid copy
         update = precond.idot(residual,
-                              mode=opts.hess_approx,
+                              mode=hess_approx,
                               x0=update if update.any() else None)
         update_mfs = np.mean(update, axis=0)
         save_fits(update_mfs,
-                  fits_oname + f'_{opts.suffix}_update_{k+1}.fits',
+                  fits_oname + f'_{suffix}_update_{k+1}.fits',
                   hdr_mfs)
 
         modelp = deepcopy(model)
-        xtilde = model + opts.gamma * update
-        grad21 = lambda x: -precond.dot(xtilde - x)/opts.gamma
+        xtilde = model + gamma * update
+        grad21 = lambda x: -precond.dot(xtilde - x)/gamma
         if iter0 == 0:
-            lam = opts.init_factor * opts.rmsfactor * rms
+            lam = init_factor * rmsfactor * rms
         else:
-            lam = opts.rmsfactor*rms
+            lam = rmsfactor*rms
         log.info(f'Solving for model with lambda = {lam}')
         model, dual = primal_dual(model,
                                   dual,
@@ -356,15 +374,15 @@ def _sara(**kw):
                                   reweighter,
                                   grad21,
                                   nu=nbasis,
-                                  positivity=opts.positivity,
+                                  positivity=positivity,
                                   tol=pd_tol[k-iter0],
-                                  maxit=opts.pd_maxit,
-                                  verbosity=opts.pd_verbose,
-                                  report_freq=opts.pd_report_freq,
-                                  gamma=opts.gamma)
+                                  maxit=pd_maxit,
+                                  verbosity=pd_verbose,
+                                  report_freq=pd_report_freq,
+                                  gamma=gamma)
 
         # write component model
-        log.info(f"Writing model to {basename}_{opts.suffix}_model.mds")
+        log.info(f"Writing model to {basename}_{suffix}_model.mds")
         try:
             coeffs, Ix, Iy, expr, params, texpr, fexpr = \
                 fit_image_cube(time_out,
@@ -401,7 +419,7 @@ def _sara(**kw):
                 'flip_w': dds[0].flip_w,
                 'ra': dds[0].ra,
                 'dec': dds[0].dec,
-                'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
+                'stokes': product,  # I,Q,U,V, IQ/IV, IQUV
                 'parametrisation': expr  # already converted to str
             }
             for key, val in opts.items():
@@ -413,7 +431,7 @@ def _sara(**kw):
             coeff_dataset = xr.Dataset(data_vars=data_vars,
                                coords=coords,
                                attrs=mattrs)
-            coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model.mds",
+            coeff_dataset.to_zarr(f"{basename}_{suffix}_model.mds",
                                   mode='w')
 
             # this is to make the model consistent with the fitted polynomial coefficients
@@ -439,7 +457,7 @@ def _sara(**kw):
 
         model_mfs = np.mean(model[fsel], axis=0)
         save_fits(model_mfs,
-                  fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
+                  fits_oname + f'_{suffix}_model_{k+1}.fits',
                   hdr_mfs)
 
         # make sure write futures have finished
@@ -456,21 +474,21 @@ def _sara(**kw):
                                     cell_rad, cell_rad,
                                     ds_name,
                                     model[b][None, :, :],  # add corr axis
-                                    nthreads=opts.nthreads,
-                                    epsilon=opts.epsilon,
-                                    do_wgridding=opts.do_wgridding,
-                                    double_accum=opts.double_accum,
-                                    verbosity=opts.verbosity)
+                                    nthreads=nthreads,
+                                    epsilon=epsilon,
+                                    do_wgridding=do_wgridding,
+                                    double_accum=double_accum,
+                                    verbosity=verbosity)
             write_futures.append(fut)
             residual[b] = resid[0]  # remove corr axis
 
         residual /= wsum
         residual_mfs = np.sum(residual, axis=0)
         save_fits(residual_mfs,
-                  fits_oname + f'_{opts.suffix}_residual_{k+1}.fits',
+                  fits_oname + f'_{suffix}_residual_{k+1}.fits',
                   hdr_mfs)
         rmsp = rms
-        if opts.rms_outside_model:
+        if rms_outside_model:
             rms_mask = model_mfs == 0
             rms = np.std(residual_mfs[rms_mask])
         else:
@@ -515,7 +533,7 @@ def _sara(**kw):
         log.info(f"Iter {k+1}: peak residual = {rmax:.3e}, "
               f"rms = {rms:.3e}, eps = {eps:.3e}")
 
-        if eps < opts.tol:
+        if eps < tol:
             # do not converge prematurely
             if l1_reweight_from > 0 and not l1reweight_active:  # only happens once
                 # start reweighting
@@ -525,7 +543,7 @@ def _sara(**kw):
                 log.info(f"Converged after {k+1} iterations.")
                 break
 
-        if (k+1 - iter0 >= l1_reweight_from) and (k+1 - iter0 < opts.niter):
+        if (k+1 - iter0 >= l1_reweight_from) and (k+1 - iter0 < niter):
             log.info('Computing L1 weights')
             psi.dot(update, outvar)
             tmp = np.sum(outvar, axis=0)
@@ -533,26 +551,70 @@ def _sara(**kw):
             # rms_comps = np.std(tmp[tmp!=0])
             rms_comps = np.ones((nbasis,), dtype=float)
             # log.info(f'rms_comps updated to {rms_comps}')
-            for i, base in enumerate(bases):
+            for i, base in enumerate(bases_tuple):
                 tmpb = tmp[i]
                 rms_comps[i] = np.std(tmpb[tmpb!=0])
                 log.info(f'rms_comps for base {base} is {rms_comps[i]}')
             reweighter = partial(l1reweight_func,
                                  psiH=psi.dot,
                                  outvar=outvar,
-                                 rmsfactor=opts.rmsfactor,
+                                 rmsfactor=rmsfactor,
                                  rms_comps=rms_comps,
-                                 alpha=opts.alpha)
+                                 alpha=alpha)
             l1weight = reweighter(model)
             l1reweight_active = True
 
         if (rms > rmsp) and (rmax > rmaxp):
-            diverge_count += 1
-            if diverge_count > opts.diverge_count:
+            diverge_count_curr += 1
+            if diverge_count_curr > diverge_count:
                 log.info("Algorithm is diverging. Terminating.")
                 break
 
     # make sure write futures have finished
     cf.wait(write_futures)
 
-    return
+    # Write FITS outputs
+    dds, dds_list = xds_from_url(dds_name)
+
+    if fits_mfs or fits_cubes:
+        # get the psfpars for the mfs cube
+        dds_store = DaskMSStore(dds_name)
+        if '://' in dds_store.url:
+            protocol = dds_store.url.split('://')[0]
+        else:
+            protocol = 'file'
+        psfpars_mfs = get_opts(dds_store.url,
+                               protocol,
+                               name='psfparsn_mfs.pkl')
+        log.info(f"Writing fits files to {fits_oname}_{suffix}")
+
+        dds2fits(dds_list,
+                'RESIDUAL',
+                f'{fits_oname}_{suffix}',
+                norm_wsum=True,
+                nthreads=nthreads,
+                do_mfs=fits_mfs,
+                do_cube=fits_cubes,
+                psfpars_mfs=psfpars_mfs)
+        log.info('Done writing RESIDUAL')
+        dds2fits(dds_list,
+                'MODEL',
+                f'{fits_oname}_{suffix}',
+                norm_wsum=False,
+                nthreads=nthreads,
+                do_mfs=fits_mfs,
+                do_cube=fits_cubes,
+                psfpars_mfs=psfpars_mfs)
+        log.info('Done writing MODEL')
+        dds2fits(dds_list,
+                'UPDATE',
+                f'{fits_oname}_{suffix}',
+                norm_wsum=False,
+                nthreads=nthreads,
+                do_mfs=fits_mfs,
+                do_cube=fits_cubes,
+                psfpars_mfs=psfpars_mfs)
+        log.info('Done writing UPDATE')
+
+    log.info(f"Numba use the {threading_layer()} threading layer")
+    log.info(f"All done after {time.time() - time_start}s")

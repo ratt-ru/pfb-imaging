@@ -16,7 +16,7 @@ def set_envs(nthreads, ncpu):
     # this may be required for numba parallelism
     # find python and set LD_LIBRARY_PATH
     paths = sys.path
-    ppath = [paths[i] for i in range(len(paths)) if 'pfb/bin' in paths[i]]
+    ppath = [paths[i] for i in range(len(paths)) if '/bin' in paths[i]]
     if len(ppath):
         ldpath = ppath[0].replace('bin', 'lib')
         ldcurrent = os.environ.get('LD_LIBRARY_PATH', '')

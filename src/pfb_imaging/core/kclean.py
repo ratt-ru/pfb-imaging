@@ -312,7 +312,8 @@ def kclean(
         except Exception as e:
             log.info(f"Exception {e} raised during model fit .")
 
-        save_fits(np.mean(model[fsel], axis=0), fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs)
+        if fits_mfs:
+            save_fits(np.mean(model[fsel], axis=0), fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs)
 
         log.info(f"Computing residual")
         for ds_name, ds in zip(dds_list, dds):
@@ -334,7 +335,8 @@ def kclean(
             residual[b] = resid[0]  # remove corr axis
         residual /= wsum
         residual_mfs = np.sum(residual, axis=0)
-        save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs)
+        if fits_mfs:
+            save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs)
 
         # report rms and rmax inside mask
         rmsp = rms
@@ -409,9 +411,9 @@ def kclean(
             residual /= wsum
             residual_mfs = np.sum(residual, axis=0)
 
-            save_fits(residual_mfs, f"{fits_oname}_{suffix}_postmop{k + 1}_residual_mfs.fits", hdr_mfs)
-
-            save_fits(np.mean(model[fsel], axis=0), f"{fits_oname}_{suffix}_postmop{k + 1}_model_mfs.fits", hdr_mfs)
+            if fits_mfs:
+                save_fits(residual_mfs, f"{fits_oname}_{suffix}_postmop{k + 1}_residual_mfs.fits", hdr_mfs)
+                save_fits(np.mean(model[fsel], axis=0), f"{fits_oname}_{suffix}_postmop{k + 1}_model_mfs.fits", hdr_mfs)
 
             rmsp = rms
             # tmp_mask = ~np.any(model, axis=0)
