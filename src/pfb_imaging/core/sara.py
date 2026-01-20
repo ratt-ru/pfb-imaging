@@ -27,6 +27,7 @@ from pfb_imaging.utils.naming import get_opts, set_output_names, xds_from_url
 
 log = pfb_logging.get_logger("SARA")
 
+
 @pfb_logging.log_inputs(log)
 def sara(
     output_filename: str,

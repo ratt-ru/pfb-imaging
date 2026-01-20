@@ -64,7 +64,7 @@ def explicit_wdegridder(uvw, freqs, lmn, pixel_fluxes):
             for flux, (l_coord, m_coord, n_coord) in zip(pixel_fluxes, lmn):
                 wavelength = c / freq
                 phase = (signu * u * l_coord + signv * v * m_coord - signw * w * (n_coord - 1)) / wavelength
-                vis[row, col] += flux * np.exp(-2j * np.pi *phase) / n_coord
+                vis[row, col] += flux * np.exp(-2j * np.pi * phase) / n_coord
     return vis
 
 
@@ -480,7 +480,7 @@ def test_complex_convolve(ms_name):
     # produce PSF visibilities centered at x0, y0
     n_coord = np.sqrt(1 - x0**2 - y0**2)
     freqfactor = -2j * np.pi * freq[None, :] / lightspeed
-    phase = (signu * uvw[:, 0:1] * x0 * signx + signv * uvw[:, 1:2] * y0 * signy - uvw[:, 2:] * (n_coord - 1))
+    phase = signu * uvw[:, 0:1] * x0 * signx + signv * uvw[:, 1:2] * y0 * signy - uvw[:, 2:] * (n_coord - 1)
     psf_vis = np.exp(freqfactor * phase)
 
     # create complex psf

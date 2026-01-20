@@ -44,12 +44,12 @@ def prox_21_numba(v, result, lam, sigma=1.0, weight=None):
         weightb = weight[b]
         resultb = result[:, b]
         for i in prange(ntot):
-            absvbi = np.linalg.norm(vb[:, i])/sigma
+            absvbi = np.linalg.norm(vb[:, i]) / sigma
             if not absvbi:
                 resultb[:, i] = 0.0
                 continue
-            softvbi = np.maximum(absvbi - lam*weightb[i]/sigma, 0.0) #* vbisum/absvbi
-            resultb[:, i] = vb[:, i] * softvbi / absvbi /sigma
+            softvbi = np.maximum(absvbi - lam * weightb[i] / sigma, 0.0)  # * vbisum/absvbi
+            resultb[:, i] = vb[:, i] * softvbi / absvbi / sigma
 
 
 def dual_update(v, x, psiH, lam, sigma=1.0, weight=1.0):
@@ -58,9 +58,8 @@ def dual_update(v, x, psiH, lam, sigma=1.0, weight=1.0):
     psiH(x, vout)
     vtilde = vp + sigma * vout
     # return vtilde
-    v = vtilde - sigma * prox_21(vtilde/sigma, lam/sigma, weight=weight)
+    v = vtilde - sigma * prox_21(vtilde / sigma, lam / sigma, weight=weight)
     return v
-
 
 
 @njit(nogil=True, cache=True, parallel=True)
@@ -84,8 +83,8 @@ def dual_update_numba(vp, v, lam, sigma=1.0, weight=None):
         weightb = weight[b]
         for i in prange(ntot):
             vtildebi = vtildeb[:, i]
-            absvbisum = np.linalg.norm(vtildebi)/sigma
+            absvbisum = np.linalg.norm(vtildebi) / sigma
             v[:, b, i] = vtildebi
             if absvbisum:
-                softvbi = np.maximum(absvbisum - lam*weightb[i]/sigma, 0.0)
-                v[:, b, i] *= (1-softvbi / absvbisum)
+                softvbi = np.maximum(absvbisum - lam * weightb[i] / sigma, 0.0)
+                v[:, b, i] *= 1 - softvbi / absvbisum

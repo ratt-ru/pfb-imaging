@@ -1,18 +1,13 @@
 import numpy as np
 from distributed import get_client
 from scipy.linalg import norm
+
 from pfb_imaging.utils import logging as pfb_logging
-log = pfb_logging.get_logger('PM')
+
+log = pfb_logging.get_logger("PM")
 
 
-def power_method(
-        A,
-        imsize,
-        b0=None,
-        tol=1e-5,
-        maxit=250,
-        verbosity=1,
-        report_freq=25):
+def power_method(A, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_freq=25):
     if b0 is None:
         b = np.random.randn(*imsize)
         b /= norm(b)
@@ -38,12 +33,10 @@ def power_method(
 
     if k == maxit:
         if verbosity:
-            log.info(f"Maximum iterations reached. "
-                  f"eps = {eps:.3e}, beta = {beta:.3e}")
+            log.info(f"Maximum iterations reached. eps = {eps:.3e}, beta = {beta:.3e}")
     else:
         if verbosity:
-            log.info(f"Success, converged after {k} iterations. "
-                  f"beta = {beta:.3e}")
+            log.info(f"Success, converged after {k} iterations. beta = {beta:.3e}")
     return beta, b
 
 
@@ -56,24 +49,29 @@ def power(A, bp, bnorm, eta):
 
     return b, bsumsq, beta_num, beta_den
 
+
 def sumsq(b):
     return np.sum(b**2)
+
 
 def bnormf(bsumsq):
     return np.sqrt(np.sum(bsumsq))
 
+
 def betaf(beta_num, beta_den):
-    return np.sum(beta_num)/np.sum(beta_den)
+    return np.sum(beta_num) / np.sum(beta_den)
 
-def power_method_dist(actors,
-                      nx,
-                      ny,
-                      nband,
-                      tol=1e-4,
-                      maxit=200,
-                      report_freq=10,
-                      verbosity=1,):
 
+def power_method_dist(
+    actors,
+    nx,
+    ny,
+    nband,
+    tol=1e-4,
+    maxit=200,
+    report_freq=10,
+    verbosity=1,
+):
     client = get_client()
 
     bssq = list(map(lambda a: a.init_random(), actors))
@@ -93,9 +91,9 @@ def power_method_dist(actors,
 
         bnorm = np.sqrt(np.sum(bssq))
         betap = beta
-        beta = np.sum(bnum)/np.sum(bden)
+        beta = np.sum(bnum) / np.sum(bden)
 
-        eps = np.abs(betap - beta)/betap
+        eps = np.abs(betap - beta) / betap
         if eps < tol:
             break
 

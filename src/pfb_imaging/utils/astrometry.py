@@ -1,36 +1,43 @@
 import numpy as np
+from africanus.coordinates import radec_to_lmn
+from astropy import units
+from astropy.coordinates import EarthLocation, SkyCoord, get_body, solar_system_ephemeris
+from astropy.time import Time
 from pyrap.measures import measures
 from pyrap.quanta import quantity
-from astropy.time import Time
-from astropy import units
-from astropy.coordinates import SkyCoord
-from astropy.coordinates import solar_system_ephemeris, EarthLocation, AltAz
-from astropy.coordinates import get_body
 from scipy.constants import c as lightspeed
+
 from pfb_imaging.operators.gridder import wgridder_conventions
-from africanus.coordinates import radec_to_lmn
 
 
 # Based on
 # https://github.com/tart-telescope/tart2ms/blob/master/tart2ms/fixvis.py
-def synthesize_uvw(station_ECEF, time, ant1, ant2,
-                   phase_ref,
-                   stopctr_units=["rad", "rad"], stopctr_epoch="j2000",
-                   time_TZ="UTC", time_unit="s",
-                   posframe="ITRF", posunits=["m", "m", "m"]):
+def synthesize_uvw(
+    station_ecef,
+    time,
+    ant1,
+    ant2,
+    phase_ref,
+    stopctr_units=["rad", "rad"],
+    stopctr_epoch="j2000",
+    time_tz="UTC",
+    time_unit="s",
+    posframe="ITRF",
+    posunits=["m", "m", "m"],
+):
     """
     Synthesizes new UVW coordinates based on time according to
-    NRAO CASA convention (same as in fixvis). 
+    NRAO CASA convention (same as in fixvis).
 
-    Note - this should work with missing rows as long as 
-    
+    Note - this should work with missing rows as long as
+
     inputs:
-        station_ECEF: ITRF station coordinates read from MS::ANTENNA
+        station_ecef: ITRF station coordinates read from MS::ANTENNA
         time: time column, preferably time centroid
         ant1: ANTENNA_1 index
         ant2: ANTENNA_2 index
         phase_ref: phase reference centre in radians
-    
+
     returns uvw coordinates w.r.t. phase_ref
     """
     assert time.size == ant1.size
@@ -48,31 +55,37 @@ def synthesize_uvw(station_ECEF, time, ant1, ant2,
     uvw_new = np.zeros((nrow, 3))
 
     dm = measures()
-    epoch = dm.epoch(time_TZ, quantity(unique_time[0], time_unit))
-    refdir = dm.direction(stopctr_epoch,
-                          quantity(phase_ref[0], stopctr_units[0]),
-                          quantity(phase_ref[1], stopctr_units[1]))
-    obs = dm.position(posframe,
-                      quantity(station_ECEF[0, 0], posunits[0]),
-                      quantity(station_ECEF[0, 1], posunits[1]),
-                      quantity(station_ECEF[0, 2], posunits[2]))
+    epoch = dm.epoch(time_tz, quantity(unique_time[0], time_unit))
+    refdir = dm.direction(
+        stopctr_epoch, quantity(phase_ref[0], stopctr_units[0]), quantity(phase_ref[1], stopctr_units[1])
+    )
+    obs = dm.position(
+        posframe,
+        quantity(station_ecef[0, 0], posunits[0]),
+        quantity(station_ecef[0, 1], posunits[1]),
+        quantity(station_ecef[0, 2], posunits[2]),
+    )
 
-    #setup local horizon coordinate frame with antenna 0 as reference position
+    # setup local horizon coordinate frame with antenna 0 as reference position
     dm.do_frame(obs)
     dm.do_frame(refdir)
     dm.do_frame(epoch)
     for t in unique_time:
-        epoch = dm.epoch(time_TZ, quantity(t, "s"))
+        epoch = dm.epoch(time_tz, quantity(t, "s"))
         dm.do_frame(epoch)
 
-        station_uv = np.zeros_like(station_ECEF)
-        for iapos, apos in enumerate(station_ECEF):
-            compuvw = dm.to_uvw(dm.baseline(posframe,
-                                            quantity([apos[0], station_ECEF[0, 0]], posunits[0]),
-                                            quantity([apos[1], station_ECEF[0, 1]], posunits[1]),
-                                            quantity([apos[2], station_ECEF[0, 2]], posunits[2])))
+        station_uv = np.zeros_like(station_ecef)
+        for iapos, apos in enumerate(station_ecef):
+            compuvw = dm.to_uvw(
+                dm.baseline(
+                    posframe,
+                    quantity([apos[0], station_ecef[0, 0]], posunits[0]),
+                    quantity([apos[1], station_ecef[0, 1]], posunits[1]),
+                    quantity([apos[2], station_ecef[0, 2]], posunits[2]),
+                )
+            )
             station_uv[iapos] = compuvw["xyz"].get_value()[0:3]
-        
+
         rows = np.where(time == t)[0]
 
         for row in rows:
@@ -86,19 +99,19 @@ def synthesize_uvw(station_ECEF, time, ant1, ant2,
 
 
 def rephase(vis, uvw, freq, radec_new, radec_ref, phasesign=-1):
-    '''
+    """
     vis         - (nrow, nchan, ncorr) visibilities to rephase
     uvw         - (nrow, 3) visibility space coordinates
     freq        - (nchan) frequencies in Hz
     radec_new   - new phase center in radians
     radec_ref   - old phase center in radians
-    phasesign   - opposite phase sign to im -> vis direction 
-    '''
+    phasesign   - opposite phase sign to im -> vis direction
+    """
     ra = radec_new[0]
     dec = radec_new[1]
     ra0 = radec_ref[0]
     dec0 = radec_ref[1]
-    dra = (ra - ra0)
+    dra = ra - ra0
     cos_dec = np.cos(dec)
     sin_dec = np.sin(dec)
     sin_dra = np.sin(dra)
@@ -111,9 +124,9 @@ def rephase(vis, uvw, freq, radec_new, radec_ref, phasesign=-1):
 
     nrow, _, _ = vis.shape
     uvw_freq = np.zeros((nrow, freq.size, 3))
-    uvw_freq[:, :, 0] = uvw[:, 0:1] * freq[None, :]/lightspeed
-    uvw_freq[:, :, 1] = uvw[:, 1:2] * freq[None, :]/lightspeed
-    uvw_freq[:, :, 2] = uvw[:, 2:] * freq[None, :]/lightspeed
+    uvw_freq[:, :, 0] = uvw[:, 0:1] * freq[None, :] / lightspeed
+    uvw_freq[:, :, 1] = uvw[:, 1:2] * freq[None, :] / lightspeed
+    uvw_freq[:, :, 2] = uvw[:, 2:] * freq[None, :] / lightspeed
 
     # rephasing conventions should match wgridder
     flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
@@ -122,27 +135,28 @@ def rephase(vis, uvw, freq, radec_new, radec_ref, phasesign=-1):
     wsign = -1 if flip_w else 1
     # ll *= usign
     # mm *= vsign
-    x = np.exp(phasesign * 2.0j * np.pi * (uvw_freq[:, :, 0] * ll * usign +
-                                           uvw_freq[:, :, 1] * mm * vsign -
-                                           uvw_freq[:, :, 2] * nn * wsign))
-    
+    x = np.exp(
+        phasesign
+        * 2.0j
+        * np.pi
+        * (uvw_freq[:, :, 0] * ll * usign + uvw_freq[:, :, 1] * mm * vsign - uvw_freq[:, :, 2] * nn * wsign)
+    )
+
     return vis[:, :, :] * x[:, :, None]
 
 
-def format_coords(ra0,dec0):
-    c = SkyCoord(ra0*units.deg,dec0*units.deg,frame='fk5')
+def format_coords(ra0, dec0):
+    c = SkyCoord(ra0 * units.deg, dec0 * units.deg, frame="fk5")
     hms = str(c.ra.to_string(units.hour))
     dms = str(c.dec)
-    return hms,dms
+    return hms, dms
+
 
 # Pillaged from
 # https://github.com/ratt-ru/solarkat/blob/main/solarkat-pipeline/find_sun_stimela.py
 # obs_lat and obs_lon hardcoded for MeerKAT
-def get_coordinates(obs_time,
-                    obs_lat=-30.71323598930457,
-                    obs_lon=21.443001467965008,
-                    target='Sun'):
-    '''
+def get_coordinates(obs_time, obs_lat=-30.71323598930457, obs_lon=21.443001467965008, target="Sun"):
+    """
     Give location of object given telescope location (defaults to MeerKAT)
     and time of observation.
 
@@ -151,10 +165,10 @@ def get_coordinates(obs_time,
     obs_time - should be weighted mean of TIME from MS
     obs_lat  - telescope lattitude in degrees
     obs_lon  - telescope longitude in degrees
-    '''
-    loc = EarthLocation.from_geodetic(obs_lat,obs_lon) #,obs_height,ellipsoid)
-    t = Time(obs_time/86400.0,format='mjd')  # factor converts Jsecs to Jdays 24 * 60**2
-    with solar_system_ephemeris.set('builtin'):
+    """
+    loc = EarthLocation.from_geodetic(obs_lat, obs_lon)  # ,obs_height,ellipsoid)
+    t = Time(obs_time / 86400.0, format="mjd")  # factor converts Jsecs to Jdays 24 * 60**2
+    with solar_system_ephemeris.set("builtin"):
         sun = get_body(target, t, loc)
         sun_ra = sun.ra.value
         sun_dec = sun.dec.value
@@ -166,40 +180,38 @@ def get_coordinates(obs_time,
 def create_cross_product_matrix(k):
     """
     Create the cross-product matrix (skew-symmetric matrix) for vector k.
-    
+
     For a vector k = [kx, ky, kz], the cross-product matrix K is:
     K * v = k × v for any vector v
-    
+
     Parameters:
     -----------
     k : array (3,)
         Vector to create cross-product matrix from
-    
+
     Returns:
     --------
     K : array (3, 3)
         Cross-product matrix
     """
-    return np.array([[0, -k[2], k[1]],
-                     [k[2], 0, -k[0]],
-                     [-k[1], k[0], 0]])
+    return np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
 
 
 def create_rotation_matrix_rodrigues(s0, s1):
     """
-    Create rotation matrix using Rodrigues' formula to transform UVW coordinates 
+    Create rotation matrix using Rodrigues' formula to transform UVW coordinates
     from old to new phase center.
-    
+
     Uses the hybrid approach: Rodrigues' formula to compute the matrix once,
     then apply matrix multiplication for efficiency with multiple baselines.
-    
+
     Parameters:
     -----------
     ra0, dec0 : float
         Original phase center (radians)
     ra1, dec1 : float
         New phase center (radians)
-    
+
     Returns:
     --------
     R : ndarray (3, 3)
@@ -208,7 +220,7 @@ def create_rotation_matrix_rodrigues(s0, s1):
     # Calculate rotation axis (perpendicular to both directions)
     k = np.cross(s0, s1)
     k_norm = np.linalg.norm(k)
-    
+
     # Handle special case: phase centers are identical or opposite
     if k_norm < 1e-10:
         if np.dot(s0, s1) > 0:
@@ -224,33 +236,32 @@ def create_rotation_matrix_rodrigues(s0, s1):
                 k = np.cross(s0, np.array([0, 1, 0]))
             k = k / np.linalg.norm(k)
             # 180 degree rotation matrix using Rodrigues
-            K = create_cross_product_matrix(k)
-            return np.eye(3) + 2.0 * K @ K
-    
+            kmat = create_cross_product_matrix(k)
+            return np.eye(3) + 2.0 * kmat @ kmat
+
     # Normalize rotation axis
     k = k / k_norm
-    
+
     # Calculate rotation angle
     cos_theta = np.dot(s0, s1)
     # Clamp to avoid numerical issues with arccos
     cos_theta = np.clip(cos_theta, -1.0, 1.0)
     sin_theta = k_norm  # |s0 × s1| = sin(θ) for unit vectors
-    
+
     # Build rotation matrix using Rodrigues' formula:
     # R = I + sin(θ) * K + (1 - cos(θ)) * K²
     # where K is the cross-product matrix of k
-    
-    K = create_cross_product_matrix(k)
-    K2 = K @ K
-    
-    R = np.eye(3) + sin_theta * K + (1 - cos_theta) * K2
-    
-    return R
+
+    kmat = create_cross_product_matrix(k)
+    kmat2 = kmat @ kmat
+
+    return np.eye(3) + sin_theta * kmat + (1 - cos_theta) * kmat2
+
 
 def change_phase_dir(vis, uvw, freq, radec_new, radec_ref, phasesign=-1):
     # Direction cosines for new phase center
-    l, m, n = radec_to_lmn(radec_new[None, :], radec_ref)[0]
-    s1 = np.array([l, m, n])
+    l_coord, m_coord, n_coord = radec_to_lmn(radec_new[None, :], radec_ref)[0]
+    s1 = np.array([l_coord, m_coord, n_coord])
 
     # Direction cosines for original phase center
     s0 = np.array([0, 0, 1])
@@ -259,27 +270,27 @@ def change_phase_dir(vis, uvw, freq, radec_new, radec_ref, phasesign=-1):
     dl = s1[0]
     dm = -s1[1]
     dn = s1[2] - 1
-    
+
     # Phase shift
     nrow, nchan, _ = vis.shape
     phase = np.zeros((nrow, nchan), dtype=uvw.dtype)
-    flip_u, flip_v, flip_w = wgridder_conventions(0,0)[0:3]
+    flip_u, flip_v, flip_w = wgridder_conventions(0, 0)[0:3]
     usign = -1 if flip_u else 1
-    phase += usign * dl * uvw[:, 0:1] * freq[None, :]/lightspeed
+    phase += usign * dl * uvw[:, 0:1] * freq[None, :] / lightspeed
     vsign = -1 if flip_v else 1
-    phase += vsign * dm * uvw[:, 1:2] * freq[None, :]/lightspeed
+    phase += vsign * dm * uvw[:, 1:2] * freq[None, :] / lightspeed
     wsign = -1 if flip_w else 1
-    phase -= wsign * dn * uvw[:, 2:3] * freq[None, :]/lightspeed
-    vis *= np.exp(phasesign*2j*np.pi*phase)[:, :, None]
+    phase -= wsign * dn * uvw[:, 2:3] * freq[None, :] / lightspeed
+    vis *= np.exp(phasesign * 2j * np.pi * phase)[:, :, None]
 
     # # get rotation matrix
-    # R = create_rotation_matrix_rodrigues(s0, s1)
+    rmat = create_rotation_matrix_rodrigues(s0, s1)
 
-    # # rotate uvw's (einsum is slower)
-    # uvw_new = (R @ uvw.T).T
+    # rotate uvw's (einsum is slower)
+    uvw_new = (rmat @ uvw.T).T
 
-    return vis, uvw
-    
+    return vis, uvw_new
+
 
 def uvw_rotate(uvw, ra0, dec0, ra, dec):
     """

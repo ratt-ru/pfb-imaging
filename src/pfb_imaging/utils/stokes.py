@@ -1,74 +1,73 @@
+import string
+
 import numpy as np
 import sympy as sm
-from sympy.physics.quantum import TensorProduct
-from sympy.utilities.lambdify import lambdify
 from numba import njit
 from numba.core import types
-import string
+from sympy.physics.quantum import TensorProduct
+from sympy.utilities.lambdify import lambdify
+
 
 def jones_to_mueller(gp, gq):
     shape = gp.shape
     rem_shape = shape[2:]
-    i0 = string.ascii_lowercase.index('m')
-    rem_idx = string.ascii_lowercase[i0:i0+len(rem_shape)]
-    idxp = 'ij' + rem_idx
-    idxq = 'kl' + rem_idx
-    idxo = 'ikjl' + rem_idx
-    out_shape = (4,4) + rem_shape
-    return np.einsum(f'{idxp},{idxq}->{idxo}', gp, np.conjugate(gq)).reshape(*out_shape)
+    i0 = string.ascii_lowercase.index("m")
+    rem_idx = string.ascii_lowercase[i0 : i0 + len(rem_shape)]
+    idxp = "ij" + rem_idx
+    idxq = "kl" + rem_idx
+    idxo = "ikjl" + rem_idx
+    out_shape = (4, 4) + rem_shape
+    return np.einsum(f"{idxp},{idxq}->{idxo}", gp, np.conjugate(gq)).reshape(*out_shape)
 
-def mueller_to_stokes(mueller, poltype='linear'):
-    '''
+
+def mueller_to_stokes(mueller, poltype="linear"):
+    """
     Convert a Mueller matrix into a diagonal Stokes matrix.
-    '''
-    if poltype=='linear':
-        T = np.array([[1.0, 1.0, 0, 0],
-                      [0, 0, 1.0, 1.0j],
-                      [0, 0, 1.0, -1.0j],
-                      [1.0, -1.0, 0, 0]])
-    elif poltype=='circular':
-        T = np.array([[1.0, 0, 0, 1.0],
-                      [0, 1.0, 1.0j, 0],
-                      [0, 1.0, -1.0j, 0],
-                      [1.0, 0, 0, -1.0]])
+    """
+    if poltype == "linear":
+        t_matrix = np.array([[1.0, 1.0, 0, 0], [0, 0, 1.0, 1.0j], [0, 0, 1.0, -1.0j], [1.0, -1.0, 0, 0]])
+    elif poltype == "circular":
+        t_matrix = np.array([[1.0, 0, 0, 1.0], [0, 1.0, 1.0j, 0], [0, 1.0, -1.0j, 0], [1.0, 0, 0, -1.0]])
     else:
-        raise ValueError(f'Unknown poltype {poltype}')
+        raise ValueError(f"Unknown poltype {poltype}")
     shape = mueller.shape
     rem_shape = shape[2:]
-    i0 = string.ascii_lowercase.index('m')
-    rem_idx = string.ascii_lowercase[i0:i0+len(rem_shape)]
-    idxl = 'ij' + rem_idx
-    idxr = 'ji'
-    idxo = 'i' + rem_idx
-    return np.einsum(f'{idxl},{idxr}->{idxo}', mueller, T).real
+    i0 = string.ascii_lowercase.index("m")
+    rem_idx = string.ascii_lowercase[i0 : i0 + len(rem_shape)]
+    idxl = "ij" + rem_idx
+    idxr = "ji"
+    idxo = "i" + rem_idx
+    return np.einsum(f"{idxl},{idxr}->{idxo}", mueller, t_matrix).real
 
-def corr_to_stokes(x, wsum=1.0, axis=0, poltype='linear'):
-    '''
+
+def corr_to_stokes(x, wsum=1.0, axis=0, poltype="linear"):
+    """
     x = [I+Q, U+1jV, U-1jV, I-Q]
     out = [I, Q, U, V]
-    '''
-    if poltype.lower() != 'linear':
+    """
+    if poltype.lower() != "linear":
         raise NotImplementedError("Only linear polarisation is implemented")
     if x.shape[axis] != 4:
         raise ValueError(f"Expected 4 polarisation products, got {x.shape[axis]}")
-    dirtyI = (np.take(x, 0, axis=axis) + np.take(x, 3, axis=axis)).real/wsum
-    dirtyQ = (np.take(x, 0, axis=axis) - np.take(x, 3, axis=axis)).real/wsum
-    dirtyU = (np.take(x, 1, axis=axis) + np.take(x, 2, axis=axis)).real/wsum
-    dirtyV = (np.take(x, 1, axis=axis) - np.take(x, 2, axis=axis)).imag/wsum
-    return np.stack((dirtyI, dirtyQ, dirtyU, dirtyV), axis=axis)
+    dirty_i = (np.take(x, 0, axis=axis) + np.take(x, 3, axis=axis)).real / wsum
+    dirty_q = (np.take(x, 0, axis=axis) - np.take(x, 3, axis=axis)).real / wsum
+    dirty_u = (np.take(x, 1, axis=axis) + np.take(x, 2, axis=axis)).real / wsum
+    dirty_v = (np.take(x, 1, axis=axis) - np.take(x, 2, axis=axis)).imag / wsum
+    return np.stack((dirty_i, dirty_q, dirty_u, dirty_v), axis=axis)
 
-def stokes_to_corr(x, axis=0, poltype='linear'):
-    '''
+
+def stokes_to_corr(x, axis=0, poltype="linear"):
+    """
     x = [I, Q, U, V]
     out = [I+Q, U+1jV, U-1jV, I-Q]
-    '''
-    if poltype.lower() != 'linear':
+    """
+    if poltype.lower() != "linear":
         raise NotImplementedError("Only linear polarisation is implemented")
     if x.shape[axis] != 4:
         raise ValueError(f"Expected 4 polarisation products, got {x.shape[axis]}")
     dirty0 = np.take(x, 0, axis=axis) + np.take(x, 1, axis=axis)
-    dirty1 = np.take(x, 2, axis=axis) + 1j*np.take(x, 3, axis=axis)
-    dirty2 = np.take(x, 2, axis=axis) - 1j*np.take(x, 3, axis=axis)
+    dirty1 = np.take(x, 2, axis=axis) + 1j * np.take(x, 3, axis=axis)
+    dirty2 = np.take(x, 2, axis=axis) - 1j * np.take(x, 3, axis=axis)
     dirty3 = np.take(x, 0, axis=axis) - np.take(x, 1, axis=axis)
     return np.stack((dirty0, dirty1, dirty2, dirty3), axis=axis)
 
@@ -88,226 +87,190 @@ def stokes_funcs(data, jones, product, pol, nc):
     v00, v10, v01, v11 = sm.symbols("v00 v10 v01 v11", real=False)
 
     # Jones matrices
-    Gp = sm.Matrix([[gp00, gp01],[gp10, gp11]])
-    Gq = sm.Matrix([[gq00, gq01],[gq10, gq11]])
+    gp_matrix = sm.Matrix([[gp00, gp01], [gp10, gp11]])
+    gq_matrix = sm.Matrix([[gq00, gq01], [gq10, gq11]])
 
     # Mueller matrix (row major form)
-    Mpq = TensorProduct(Gp, Gq.conjugate())
-    Mpqinv = TensorProduct(Gp.inv(), Gq.conjugate().inv())
+    mpq = TensorProduct(gp_matrix, gq_matrix.conjugate())
+    mpq_inv = TensorProduct(gp_matrix.inv(), gq_matrix.conjugate().inv())
 
     # inverse noise covariance
-    Sinv = sm.Matrix([[w0, 0, 0, 0],
-                      [0, w1, 0, 0],
-                      [0, 0, w2, 0],
-                      [0, 0, 0, w3]])
-    S = Sinv.inv()
+    s_inv = sm.Matrix([[w0, 0, 0, 0], [0, w1, 0, 0], [0, 0, w2, 0], [0, 0, 0, w3]])
+    s = s_inv.inv()
 
     # visibilities
-    Vpq = sm.Matrix([[v00], [v01], [v10], [v11]])
+    vpq = sm.Matrix([[v00], [v01], [v10], [v11]])
 
     # Full Stokes to corr operator
     # Is this the only difference between linear and circular pol?
     # What about paralactic angle rotation?
-    if pol == 'linear':
-        T = sm.Matrix([[1.0, 1.0, 0, 0],
-                       [0, 0, 1.0, 1.0j],
-                       [0, 0, 1.0, -1.0j],
-                       [1.0, -1.0, 0, 0]])
-    elif pol == 'circular':
-        T = sm.Matrix([[1.0, 0, 0, 1.0],
-                       [0, 1.0, 1.0j, 0],
-                       [0, 1.0, -1.0j, 0],
-                       [1.0, 0, 0, -1.0]])
-    Tinv = T.inv()
+    if pol == "linear":
+        t_matrix = sm.Matrix([[1.0, 1.0, 0, 0], [0, 0, 1.0, 1.0j], [0, 0, 1.0, -1.0j], [1.0, -1.0, 0, 0]])
+    elif pol == "circular":
+        t_matrix = sm.Matrix([[1.0, 0, 0, 1.0], [0, 1.0, 1.0j, 0], [0, 1.0, -1.0j, 0], [1.0, 0, 0, -1.0]])
+    t_inv = t_matrix.inv()
 
     # Full Stokes weights
-    W = T.H * Mpq.H * Sinv * Mpq * T
-    Winv = Tinv * Mpqinv * S * Mpqinv.H * Tinv.H
+    w = t_matrix.H * mpq.H * s_inv * mpq * t_matrix
+    w_inv = t_inv * mpq_inv * s * mpq_inv.H * t_inv.H
 
     # Full Stokes coherencies
-    C = Winv * (T.H * (Mpq.H * (Sinv * Vpq)))
+    c = w_inv * (t_matrix.H * (mpq.H * (s_inv * vpq)))
     # Only keep diagonal of weights
-    W = W.diagonal().T  # diagonal() returns row vector
+    w = w.diagonal().T  # diagonal() returns row vector
 
     # this should ensure that outputs are always ordered as
     # [I, Q, U, V]
     i = ()
-    if 'I' in product:
+    if "I" in product:
         i += (0,)
 
-    if 'Q' in product:
+    if "Q" in product:
         i += (1,)
-        if pol == 'circular' and nc == '2':
+        if pol == "circular" and nc == "2":
             raise ValueError("Q is not available in circular polarisation with 2 correlations")
 
-    if 'U' in product:
+    if "U" in product:
         i += (2,)
-        if pol == 'linear' and nc == '2':
+        if pol == "linear" and nc == "2":
             raise ValueError("U is not available in linear polarisation with 2 correlations")
-        elif pol == 'circular' and nc == '2':
+        elif pol == "circular" and nc == "2":
             raise ValueError("U is not available in circular polarisation with 2 correlations")
 
-    if 'V' in product:
+    if "V" in product:
         i += (3,)
-        if pol == 'linear' and nc == '2':
+        if pol == "linear" and nc == "2":
             raise ValueError("V is not available in linear polarisation with 2 correlations")
 
-    remprod = product.strip('IQUV')
+    remprod = product.strip("IQUV")
     if len(remprod):
         raise ValueError(f"Unknown polarisation product {remprod}")
 
     if jones.ndim == 6:  # Full mode
-        Wsymb = lambdify((gp00, gp01, gp10, gp11,
-                          gq00, gq01, gq10, gq11,
-                          w0, w1, w2, w3),
-                          sm.simplify(W[i,0]))
-        Wjfn = njit(nogil=True, inline='always')(Wsymb)
+        w_symb = lambdify((gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w0, w1, w2, w3), sm.simplify(w[i, 0]))
+        w_jfn = njit(nogil=True, inline="always")(w_symb)
 
+        d_symb = lambdify(
+            (gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w0, w1, w2, w3, v00, v01, v10, v11), sm.simplify(c[i, 0])
+        )
+        d_jfn = njit(nogil=True, inline="always")(d_symb)
 
-        Dsymb = lambdify((gp00, gp01, gp10, gp11,
-                          gq00, gq01, gq10, gq11,
-                          w0, w1, w2, w3,
-                          v00, v01, v10, v11),
-                          sm.simplify(C[i,0]))
-        Djfn = njit(nogil=True, inline='always')(Dsymb)
-
-        @njit(nogil=True, inline='always')
+        @njit(nogil=True, inline="always")
         def wfunc(gp, gq, W):
-            gp00 = gp[0,0]
-            gp01 = gp[0,1]
-            gp10 = gp[1,0]
-            gp11 = gp[1,1]
-            gq00 = gq[0,0]
-            gq01 = gq[0,1]
-            gq10 = gq[1,0]
-            gq11 = gq[1,1]
-            W00 = W[0]
-            W01 = W[1]
-            W10 = W[2]
-            W11 = W[3]
-            return Wjfn(gp00, gp01, gp10, gp11,
-                        gq00, gq01, gq10, gq11,
-                        W00, W01, W10, W11).real.ravel()
+            gp00 = gp[0, 0]
+            gp01 = gp[0, 1]
+            gp10 = gp[1, 0]
+            gp11 = gp[1, 1]
+            gq00 = gq[0, 0]
+            gq01 = gq[0, 1]
+            gq10 = gq[1, 0]
+            gq11 = gq[1, 1]
+            w00 = W[0]
+            w01 = W[1]
+            w10 = W[2]
+            w11 = W[3]
+            return w_jfn(gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w00, w01, w10, w11).real.ravel()
 
-        @njit(nogil=True, inline='always')
+        @njit(nogil=True, inline="always")
         def vfunc(gp, gq, W, V):
-            gp00 = gp[0,0]
-            gp01 = gp[0,1]
-            gp10 = gp[1,0]
-            gp11 = gp[1,1]
-            gq00 = gq[0,0]
-            gq01 = gq[0,1]
-            gq10 = gq[1,0]
-            gq11 = gq[1,1]
-            W00 = W[0]
-            W01 = W[1]
-            W10 = W[2]
-            W11 = W[3]
-            V00 = V[0]
-            V01 = V[1]
-            V10 = V[2]
-            V11 = V[3]
-            return Djfn(gp00, gp01, gp10, gp11,
-                        gq00, gq01, gq10, gq11,
-                        W00, W01, W10, W11,
-                        V00, V01, V10, V11).ravel()
+            gp00 = gp[0, 0]
+            gp01 = gp[0, 1]
+            gp10 = gp[1, 0]
+            gp11 = gp[1, 1]
+            gq00 = gq[0, 0]
+            gq01 = gq[0, 1]
+            gq10 = gq[1, 0]
+            gq11 = gq[1, 1]
+            w00 = W[0]
+            w01 = W[1]
+            w10 = W[2]
+            w11 = W[3]
+            v00 = V[0]
+            v01 = V[1]
+            v10 = V[2]
+            v11 = V[3]
+            return d_jfn(gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w00, w01, w10, w11, v00, v01, v10, v11).ravel()
 
     elif jones.ndim == 5:  # DIAG mode
-        W = W.subs(gp10, 0)
-        W = W.subs(gp01, 0)
-        W = W.subs(gq10, 0)
-        W = W.subs(gq01, 0)
-        C = C.subs(gp10, 0)
-        C = C.subs(gp01, 0)
-        C = C.subs(gq10, 0)
-        C = C.subs(gq01, 0)
+        w = w.subs(gp10, 0)
+        w = w.subs(gp01, 0)
+        w = w.subs(gq10, 0)
+        w = w.subs(gq01, 0)
+        c = c.subs(gp10, 0)
+        c = c.subs(gp01, 0)
+        c = c.subs(gq10, 0)
+        c = c.subs(gq01, 0)
 
-        Wsymb = lambdify((gp00, gp11,
-                          gq00, gq11,
-                          w0, w1, w2, w3),
-                          sm.simplify(W[i,0]))
-        Wjfn = njit(nogil=True, inline='always')(Wsymb)
+        w_symb = lambdify((gp00, gp11, gq00, gq11, w0, w1, w2, w3), sm.simplify(w[i, 0]))
+        w_jfn = njit(nogil=True, inline="always")(w_symb)
 
+        d_symb = lambdify((gp00, gp11, gq00, gq11, w0, w1, w2, w3, v00, v01, v10, v11), sm.simplify(c[i, 0]))
+        d_jfn = njit(nogil=True, inline="always")(d_symb)
 
-        Dsymb = lambdify((gp00, gp11,
-                          gq00, gq11,
-                          w0, w1, w2, w3,
-                          v00, v01, v10, v11),
-                          sm.simplify(C[i,0]))
-        Djfn = njit(nogil=True, inline='always')(Dsymb)
+        if nc == "4":
 
-        if nc == '4':
-            @njit(nogil=True, inline='always')
+            @njit(nogil=True, inline="always")
             def wfunc(gp, gq, W):
                 gp00 = gp[0]
                 gp11 = gp[1]
                 gq00 = gq[0]
                 gq11 = gq[1]
-                W00 = W[0]
-                W01 = W[1]
-                W10 = W[2]
-                W11 = W[3]
-                return Wjfn(gp00, gp11,
-                            gq00, gq11,
-                            W00, W01, W10, W11).real.ravel()
+                w00 = W[0]
+                w01 = W[1]
+                w10 = W[2]
+                w11 = W[3]
+                return w_jfn(gp00, gp11, gq00, gq11, w00, w01, w10, w11).real.ravel()
 
-            @njit(nogil=True, inline='always')
+            @njit(nogil=True, inline="always")
             def vfunc(gp, gq, W, V):
                 gp00 = gp[0]
                 gp11 = gp[1]
                 gq00 = gq[0]
                 gq11 = gq[1]
-                W00 = W[0]
-                W01 = W[1]
-                W10 = W[2]
-                W11 = W[3]
-                V00 = V[0]
-                V01 = V[1]
-                V10 = V[2]
-                V11 = V[3]
-                return Djfn(gp00, gp11,
-                            gq00, gq11,
-                            W00, W01, W10, W11,
-                            V00, V01, V10, V11).ravel()
-        elif nc == '2':
-            @njit(nogil=True, inline='always')
+                w00 = W[0]
+                w01 = W[1]
+                w10 = W[2]
+                w11 = W[3]
+                v00 = V[0]
+                v01 = V[1]
+                v10 = V[2]
+                v11 = V[3]
+                return d_jfn(gp00, gp11, gq00, gq11, w00, w01, w10, w11, v00, v01, v10, v11).ravel()
+        elif nc == "2":
+
+            @njit(nogil=True, inline="always")
             def wfunc(gp, gq, W):
                 gp00 = gp[0]
                 gp11 = gp[1]
                 gq00 = gq[0]
                 gq11 = gq[1]
-                W00 = W[0]
-                W01 = 1.0
-                W10 = 1.0
-                W11 = W[-1]
-                return Wjfn(gp00, gp11,
-                            gq00, gq11,
-                            W00, W01, W10, W11).real.ravel()
+                w00 = W[0]
+                w01 = 1.0
+                w10 = 1.0
+                w11 = W[-1]
+                return w_jfn(gp00, gp11, gq00, gq11, w00, w01, w10, w11).real.ravel()
 
-            @njit(nogil=True, inline='always')
+            @njit(nogil=True, inline="always")
             def vfunc(gp, gq, W, V):
                 gp00 = gp[0]
                 gp11 = gp[1]
                 gq00 = gq[0]
                 gq11 = gq[1]
-                W00 = W[0]
-                W01 = 1.0
-                W10 = 1.0
-                W11 = W[-1]
-                V00 = V[0]
-                V01 = 0j
-                V10 = 0j
-                V11 = V[-1]
-                return Djfn(gp00, gp11,
-                            gq00, gq11,
-                            W00, W01, W10, W11,
-                            V00, V01, V10, V11).ravel()
+                w00 = W[0]
+                w01 = 1.0
+                w10 = 1.0
+                w11 = W[-1]
+                v00 = V[0]
+                v01 = 0j
+                v10 = 0j
+                v11 = V[-1]
+                return d_jfn(gp00, gp11, gq00, gq11, w00, w01, w10, w11, v00, v01, v10, v11).ravel()
         else:
-            raise ValueError(f"Selected product is only available from 2 or 4"
-                             f"correlation data while you have ncorr={nc}.")
-
+            raise ValueError(
+                f"Selected product is only available from 2 or 4correlation data while you have ncorr={nc}."
+            )
 
     else:
-        raise ValueError(f"Jones term has incorrect number of dimensions")
+        raise ValueError("Jones term has incorrect number of dimensions")
 
     return vfunc, wfunc

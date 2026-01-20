@@ -5,24 +5,23 @@ This module provides a drop-in replacement for pyscilog with enhanced
 formatting using the Rich library for better console output.
 """
 
+import inspect
 import logging
-import time
-from pathlib import Path
-from typing import Optional, Dict, Any, Type, Union
 from functools import wraps
+from pathlib import Path
+from typing import Any, Dict, Optional, Type, Union
 
 from rich.console import Console
 from rich.logging import RichHandler
-from rich.traceback import install as install_rich_traceback
-from rich.table import Table, Column
 from rich.panel import Panel
+from rich.table import Column, Table
 from rich.text import Text
-import inspect
-from functools import wraps
+from rich.traceback import install as install_rich_traceback
 
 rich_console = Console()
 
 install_rich_traceback(console=rich_console, show_locals=False)
+
 
 class PFBLogger(logging.Logger):
     """
@@ -30,13 +29,7 @@ class PFBLogger(logging.Logger):
     with Rich formatting capabilities.
     """
 
-    def error_and_raise(
-        self,
-        message: str,
-        exception_type: Type[Exception] = Exception,
-        *args,
-        **kwargs
-    ) -> None:
+    def error_and_raise(self, message: str, exception_type: Type[Exception] = Exception, *args, **kwargs) -> None:
         """
         Log an error message and raise an exception.
 
@@ -54,8 +47,10 @@ class PFBLogger(logging.Logger):
 
         raise exception_type(message)
 
+
 # Any logger created hereafter will be an instance of PFBLogger.
 logging.setLoggerClass(PFBLogger)
+
 
 class LoggingManager:
     """
@@ -93,13 +88,12 @@ class LoggingManager:
             show_path=False,
             rich_tracebacks=True,
             tracebacks_show_locals=True,
-            markup=True
+            markup=True,
         )
         console_handler.setLevel(log_level)
 
         formatter = logging.Formatter(
-            fmt="%(asctime)s - %(name)-15s - %(levelname)-8s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
+            fmt="%(asctime)s - %(name)-15s - %(levelname)-8s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
         console_handler.setFormatter(formatter)
 
@@ -108,7 +102,6 @@ class LoggingManager:
         # Prevent propagation from the application logger into the Python root logger i.e.
         # the application logger is the final authority.
         self._root_logger.propagate = False
-
 
     def get_logger(self, component_name: str) -> PFBLogger:
         """
@@ -139,13 +132,13 @@ class LoggingManager:
         filename.parent.mkdir(parents=True, exist_ok=True)
 
         # Create file handler
-        file_handler = logging.FileHandler(filename, mode='a')
+        file_handler = logging.FileHandler(filename, mode="a")
         file_handler.setLevel(logging.DEBUG)  # File gets all messages
 
         # File formatter (more detailed than console)
         file_formatter = logging.Formatter(
             fmt="%(asctime)s - %(name)-15s - %(levelname)-8s - %(funcName)s:%(lineno)d - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
         file_handler.setFormatter(file_formatter)
 
@@ -159,7 +152,7 @@ class LoggingManager:
             self._root_logger.addHandler(file_handler)
 
         # Store the file reference
-        key = component_name if component_name else 'root'
+        key = component_name if component_name else "root"
         self._log_files[key] = str(filename)
 
         # Log that we've started logging to file
@@ -259,6 +252,7 @@ def log_function_call(logger: PFBLogger):
     Args:
         logger: PFBLogger instance to use for logging
     """
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -272,7 +266,9 @@ def log_function_call(logger: PFBLogger):
             except Exception as e:
                 logger.error(f"Function {func.__name__} failed with error: {e}")
                 raise
+
         return wrapper
+
     return decorator
 
 
@@ -313,11 +309,13 @@ def log_inputs(logger):
             sig = inspect.signature(func)
             bound_args = sig.bind(*args, **kwargs)
             bound_args.apply_defaults()
-            
+
             # Convert to dict for logging
             inputs_dict = dict(bound_args.arguments)
             log_options_dict(logger, inputs_dict)
-            
+
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator

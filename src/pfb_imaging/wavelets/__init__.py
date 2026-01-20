@@ -29,4 +29,4 @@ SOFTWARE.
 
 """
 
-from pfb_imaging.wavelets.wavelets import dwt2d, idwt2d, coeff_size, signal_size, copyT
+from pfb_imaging.wavelets.wavelets import coeff_size, copyT, dwt2d, idwt2d, signal_size

@@ -15,7 +15,7 @@ from pfb_imaging.core.grid import grid as grid_core
 from pfb_imaging.core.init import init as init_core
 from pfb_imaging.core.sara import sara as sara_core
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.utils.misc import Gaussian2D, give_edges
+from pfb_imaging.utils.misc import gaussian2d, give_edges
 from pfb_imaging.utils.naming import xds_from_url
 
 pmp = pytest.mark.parametrize
@@ -85,7 +85,7 @@ def test_sara(ms_name):
     for i in range(nsource):
         emaj = np.maximum(extentx[i], extenty[i])
         emin = np.minimum(extentx[i], extenty[i])
-        gauss = Gaussian2D(xin, yin, GaussPar=(emaj, emin, pas[i]))
+        gauss = gaussian2d(xin, yin, gausspar=(emaj, emin, pas[i]))
         mx, my, gx, gy = give_edges(x_index[i], y_index[i], nx, ny, nx, ny)
         spectrum = ref_flux[i] * (freq / freq0) ** alpha[i]
         model[:, mx, my] += spectrum[:, None, None] * gauss[None, gx, gy]

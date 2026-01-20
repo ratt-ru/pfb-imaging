@@ -1,31 +1,24 @@
-import numpy as np
 import numexpr as ne
-from pfb_imaging.utils.misc import give_edges
+import numpy as np
+
 from pfb_imaging.utils import logging as pfb_logging
-log = pfb_logging.get_logger('HOGBOM')
+
+log = pfb_logging.get_logger("HOGBOM")
 
 
-def hogbom(
-        ID,
-        PSF,
-        threshold=0,
-        gamma=0.1,
-        pf=0.1,
-        maxit=10000,
-        report_freq=1000,
-        verbosity=1):
+def hogbom(ID, PSF, threshold=0, gamma=0.1, pf=0.1, maxit=10000, report_freq=1000, verbosity=1):
     nband, nx, ny = ID.shape
     _, nx_psf, ny_psf = PSF.shape
-    nx0 = nx_psf//2
-    ny0 = ny_psf//2
+    nx0 = nx_psf // 2
+    ny0 = ny_psf // 2
     x = np.zeros((nband, nx, ny), dtype=ID.dtype)
     IR = ID.copy()
-    IRsearch = np.sum(IR, axis=0)**2
+    IRsearch = np.sum(IR, axis=0) ** 2
     pq = IRsearch.argmax()
-    p = pq//ny
-    q = pq - p*ny
+    p = pq // ny
+    q = pq - p * ny
     IRmax = np.sqrt(IRsearch[p, q])
-    wsums = np.amax(PSF, axis=(1,2))
+    wsums = np.amax(PSF, axis=(1, 2))
     fsel = wsums > 0
     tol = np.maximum(pf * IRmax, threshold)
     k = 0
@@ -33,17 +26,21 @@ def hogbom(
     while IRmax > tol and k < maxit and stall_count < 5:
         xhat = IR[fsel, p, q] / wsums[fsel]
         x[:, p, q] += gamma * xhat
-        ne.evaluate('IR - gamma * xhat * psf', local_dict={
-                    'IR': IR,
-                    'gamma': gamma,
-                    'xhat': xhat[:, None, None],
-                    'psf': PSF[:, nx0 - p:nx0 + nx - p,
-                                  ny0 - q:ny0 + ny - q]},
-                    out=IR, casting='same_kind')
-        IRsearch = np.sum(IR, axis=0)**2
+        ne.evaluate(
+            "IR - gamma * xhat * psf",
+            local_dict={
+                "IR": IR,
+                "gamma": gamma,
+                "xhat": xhat[:, None, None],
+                "psf": PSF[:, nx0 - p : nx0 + nx - p, ny0 - q : ny0 + ny - q],
+            },
+            out=IR,
+            casting="same_kind",
+        )
+        IRsearch = np.sum(IR, axis=0) ** 2
         pq = IRsearch.argmax()
-        p = pq//ny
-        q = pq - p*ny
+        p = pq // ny
+        q = pq - p * ny
         IRmaxp = IRmax
         IRmax = np.sqrt(IRsearch[p, q])
         k += 1
@@ -59,18 +56,15 @@ def hogbom(
 
     if k >= maxit:
         if verbosity:
-            log.info(f"Max iters reached. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}")
+            log.info(f"Max iters reached. Max resid = {IRmax:.3e}, rms = {rms:.3e}")
         return x, 1
     elif stall_count >= 5:
         if verbosity:
-            log.info(f"Stalled. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}")
+            log.info(f"Stalled. Max resid = {IRmax:.3e}, rms = {rms:.3e}")
         return x, 1
     else:
         if verbosity:
-            log.info(f"Success, converged after {k} iterations. "
-                  f"Max resid = {IRmax:.3e}, rms = {rms:.3e}")
+            log.info(f"Success, converged after {k} iterations. Max resid = {IRmax:.3e}, rms = {rms:.3e}")
         return x, 0
 
 

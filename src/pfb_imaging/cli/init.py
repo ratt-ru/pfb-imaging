@@ -1,9 +1,7 @@
 from pathlib import Path
-from typing import Annotated, NewType
-from typing import Literal
+from typing import Annotated, Literal, NewType
 
 import typer
-
 from hip_cargo.utils.decorators import stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
@@ -165,7 +163,8 @@ def init(
     target: Annotated[
         str | None,
         typer.Option(
-            help="This can be predefined celestial objects known to astropy or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
+            help="This can be predefined celestial objects known to astropy or a string in the format "
+            "'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
         ),
     ] = None,
     progressbar: Annotated[

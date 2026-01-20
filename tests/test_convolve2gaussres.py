@@ -3,7 +3,7 @@ import pytest
 from africanus.model.spi import fit_spi_components
 from numpy.testing._private.utils import assert_allclose
 
-from pfb_imaging.utils.misc import Gaussian2D, convolve2gaussres, fitcleanbeam
+from pfb_imaging.utils.misc import gaussian2d, convolve2gaussres, fitcleanbeam
 
 pmp = pytest.mark.parametrize
 
@@ -28,7 +28,7 @@ def test_convolve2gaussres(nx, ny, nband, alpha):
     restored = np.zeros((nband, nx, ny))
     conv_model = np.zeros((nband, nx, ny))
     for v in range(nband):
-        restored[v] = Gaussian2D(xx, yy, gausspari[v], normalise=False) * (freq[v] / ref_freq) ** alpha
+        restored[v] = gaussian2d(xx, yy, gausspari[v], normalise=False) * (freq[v] / ref_freq) ** alpha
 
         conv_model[v] = convolve2gaussres(
             restored[v][None], xx, yy, gausspari[0], nthreads=8, gausspari=(gausspari[v],)
@@ -55,7 +55,7 @@ def test_fitcleanbeam(nx, ny, gpars):
     y = -(ny // 2) + np.arange(ny)
     xx, yy = np.meshgrid(x, y, indexing="ij")
     print(gpars)
-    gauss = Gaussian2D(xx, yy, GaussPar=gpars, normalise=False)
+    gauss = gaussian2d(xx, yy, gausspar=gpars, normalise=False)
 
     gpars_fit = fitcleanbeam(gauss[None, :, :])[0]
 

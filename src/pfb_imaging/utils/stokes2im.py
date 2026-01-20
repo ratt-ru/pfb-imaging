@@ -1,26 +1,28 @@
-import ray
-from functools import partial
-import numpy as np
-import numexpr as ne
-import xarray as xr
-from pfb_imaging.utils.weighting import (_compute_counts, counts_to_weights,
-                                 weight_data, filter_extreme_counts)
-from pfb_imaging.utils.beam import reproject_and_interp_beam
-from pfb_imaging.utils.fits import set_wcs, save_fits
-from pfb_imaging.utils.misc import fitcleanbeam
-from pfb_imaging.operators.gridder import wgridder_conventions
-from casacore.quanta import quantity
-from datetime import datetime, timezone
-from ducc0.fft import good_size
-from pfb_imaging.utils.astrometry import get_coordinates
-from scipy.constants import c as lightspeed
 import gc
+from datetime import datetime, timezone
+from functools import partial
+
+import numexpr as ne
+import numpy as np
+import ray
+import xarray as xr
+from africanus.coordinates import radec_to_lm
 from astropy import units
 from astropy.coordinates import SkyCoord
-from africanus.coordinates import radec_to_lm
+from casacore.quanta import quantity
+from ducc0.fft import good_size
+from scipy.constants import c as lightspeed
+
+from pfb_imaging.operators.gridder import wgridder_conventions
+from pfb_imaging.utils.astrometry import get_coordinates
+from pfb_imaging.utils.beam import reproject_and_interp_beam
+from pfb_imaging.utils.fits import save_fits, set_wcs
+from pfb_imaging.utils.misc import fitcleanbeam
+from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights, filter_extreme_counts, weight_data
 
 iFs = np.fft.ifftshift
 Fs = np.fft.fftshift
+
 
 @ray.remote
 def safe_stokes_image(*args, **kwargs):
@@ -31,108 +33,109 @@ def safe_stokes_image(*args, **kwargs):
 
 
 def stokes_image(
-                dc1=None,
-                dc2=None,
-                operator=None,
-                ds=None,
-                jones=None,
-                nx=None,
-                ny=None,
-                freq=None,
-                cell_rad=None,
-                utime=None,
-                tbin_idx=None,
-                tbin_counts=None,
-                radec=None,
-                antpos=None,
-                poltype=None,
-                fds_store=None,
-                bandid=None,
-                timeid=None,
-                msid=None,
-                attrs=None,
-                # Parameters previously from opts:
-                nthreads=None,
-                precision="double",
-                sigma_column=None,
-                weight_column=None,
-                model_column=None,
-                product="I",
-                check_ants=False,
-                phase_dir=None,
-                beam_model=None,
-                target=None,
-                robustness=None,
-                min_padding=2.0,
-                filter_counts_level=10.0,
-                psf_relative_size=None,
-                inject_transients=None,
-                epsilon=1e-7,
-                do_wgridding=True,
-                double_accum=True,
-                natural_grad=False,
-                eta=1e-5,
-                cg_tol=1e-3,
-                cg_maxit=150,
-                output_format="zarr",
-                psf_out=False,
-                weight_grid_out=False,
-                stack=False,
-                l2_reweight_dof=None):
+    dc1=None,
+    dc2=None,
+    operator=None,
+    ds=None,
+    jones=None,
+    nx=None,
+    ny=None,
+    freq=None,
+    cell_rad=None,
+    utime=None,
+    tbin_idx=None,
+    tbin_counts=None,
+    radec=None,
+    antpos=None,
+    poltype=None,
+    fds_store=None,
+    bandid=None,
+    timeid=None,
+    msid=None,
+    attrs=None,
+    # Parameters previously from opts:
+    nthreads=None,
+    precision="double",
+    sigma_column=None,
+    weight_column=None,
+    model_column=None,
+    product="I",
+    check_ants=False,
+    phase_dir=None,
+    beam_model=None,
+    target=None,
+    robustness=None,
+    min_padding=2.0,
+    filter_counts_level=10.0,
+    psf_relative_size=None,
+    inject_transients=None,
+    epsilon=1e-7,
+    do_wgridding=True,
+    double_accum=True,
+    natural_grad=False,
+    eta=1e-5,
+    cg_tol=1e-3,
+    cg_maxit=150,
+    output_format="zarr",
+    psf_out=False,
+    weight_grid_out=False,
+    stack=False,
+    l2_reweight_dof=None,
+):
     # serialization fails for these if we import them above
     from ducc0.misc import resize_thread_pool
     from ducc0.wgridder import vis2dirty
-    
+
     resize_thread_pool(nthreads)
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
     scanid = ds.SCAN_NUMBER
-    oname = f'ms{msid:04d}_fid{fieldid:04d}_spw{ddid:04d}_scan{scanid:04d}' \
-            f'_band{bandid:04d}_time{timeid:04d}'
+    oname = f"ms{msid:04d}_fid{fieldid:04d}_spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}"
 
-    if precision.lower() == 'single':
+    if precision.lower() == "single":
         real_type = np.float32
         complex_type = np.complex64
-    elif precision.lower() == 'double':
+    elif precision.lower() == "double":
         real_type = np.float64
         complex_type = np.complex128
 
-    # LB - is this the correct way to do this? 
-    # we don't want it to end up in the distributed object store 
-    ds = ds.load(scheduler='sync')
+    # LB - is this the correct way to do this?
+    # we don't want it to end up in the distributed object store
+    ds = ds.load(scheduler="sync")
     if jones is not None:
         # we do it this way to force using synchronous scheduler
-        jones = jones.load(scheduler='sync').values
-    
+        jones = jones.load(scheduler="sync").values
+
     data = getattr(ds, dc1).values
     ds = ds.drop_vars(dc1)
     if dc2 is not None:
         try:
-            assert (operator=='+' or operator=='-')
+            assert operator == "+" or operator == "-"
         except Exception as e:
             raise e
-        ne.evaluate(f'data {operator} data2',
-                    local_dict={'data': data,
-                                'data2': getattr(ds, dc2).values},
-                    out=data,
-                    casting='same_kind')
+        ne.evaluate(
+            f"data {operator} data2",
+            local_dict={"data": data, "data2": getattr(ds, dc2).values},
+            out=data,
+            casting="same_kind",
+        )
         ds = ds.drop_vars(dc2)
 
     time = ds.TIME.values
-    ds = ds.drop_vars('TIME')
+    ds = ds.drop_vars("TIME")
     interval = ds.INTERVAL.values
-    ds = ds.drop_vars('INTERVAL')
+    ds = ds.drop_vars("INTERVAL")
     ant1 = ds.ANTENNA1.values
-    ds = ds.drop_vars('ANTENNA1')
+    ds = ds.drop_vars("ANTENNA1")
     ant2 = ds.ANTENNA2.values
-    ds = ds.drop_vars('ANTENNA2')
+    ds = ds.drop_vars("ANTENNA2")
     uvw = ds.UVW.values
-    ds = ds.drop_vars('UVW')
+    ds = ds.drop_vars("UVW")
     flag = ds.FLAG.values
-    ds = ds.drop_vars('FLAG')
+    ds = ds.drop_vars("FLAG")
     # MS may contain auto-correlations
     frow = ds.FLAG_ROW.values | (ant1 == ant2)
-    ds = ds.drop_vars('FLAG_ROW')
+    ds = ds.drop_vars("FLAG_ROW")
 
     # combine flag and frow
     flag = np.logical_or(flag, frow[:, None, None])
@@ -140,23 +143,21 @@ def stokes_image(
     nrow, nchan, ncorr = data.shape
 
     if sigma_column is not None:
-        weight = ne.evaluate('1.0/sigma**2',
-                             local_dict={'sigma': getattr(ds, sigma_column).values})
+        weight = ne.evaluate("1.0/sigma**2", local_dict={"sigma": getattr(ds, sigma_column).values})
         ds = ds.drop_vars(sigma_column)
     elif weight_column is not None:
         weight = getattr(ds, weight_column).values
         ds = ds.drop_vars(weight_column)
     else:
-        weight = np.ones((nrow, nchan, ncorr),
-                         dtype=real_type)
+        weight = np.ones((nrow, nchan, ncorr), dtype=real_type)
 
     if model_column is not None:
         model_vis = getattr(ds, model_column).values.astype(complex_type)
         ds = ds.drop(model_column)
-        if product.lower() == 'i':
-            model_vis = (model_vis[:, :, 0] + model_vis[:, :, -1])/2.0
+        if product.lower() == "i":
+            model_vis = (model_vis[:, :, 0] + model_vis[:, :, -1]) / 2.0
         else:
-            raise NotImplementedError(f'Model subtraction not supported for product {product}')
+            raise NotImplementedError(f"Model subtraction not supported for product {product}")
     else:
         model_vis = None
     # this seems to help with memory consumption
@@ -191,11 +192,9 @@ def stokes_image(
         elif jones_ncorr == 2:
             pass
         else:
-            raise ValueError("Incorrect number of correlations of "
-                            f"{jones_ncorr} for product {product}")
+            raise ValueError(f"Incorrect number of correlations of {jones_ncorr} for product {product}")
     else:
-        jones = np.ones((ntime, nant, nchan, 1, 2),
-                        dtype=complex_type)
+        jones = np.ones((ntime, nant, nchan, 1, 2), dtype=complex_type)
 
     # check that there are no missing antennas
     ant1u = np.unique(ant1)
@@ -207,18 +206,20 @@ def stokes_image(
     if check_ants:
         try:
             assert antmax == nant
-        except Exception as e:
-            raise ValueError('Inconsistent ANTENNA table. '
-                            'Shape does not match max number of antennas '
-                            'as inferred from ant1 and ant2. '
-                            f'Table size is {antpos.shape} but got {antmax}. '
-                            f'{oname}')
+        except Exception:
+            raise ValueError(
+                "Inconsistent ANTENNA table. "
+                "Shape does not match max number of antennas "
+                "as inferred from ant1 and ant2. "
+                f"Table size is {antpos.shape} but got {antmax}. "
+                f"{oname}"
+            )
 
     # relabel antennas by index
     # this only works because allants is sorted in ascending order
     for a, ant in enumerate(allants):
-        ant1 = np.where(ant1==ant, a, ant1)
-        ant2 = np.where(ant2==ant, a, ant2)
+        ant1 = np.where(ant1 == ant, a, ant1)
+        ant2 = np.where(ant2 == ant, a, ant2)
 
     cell_deg = np.rad2deg(cell_rad)
 
@@ -226,9 +227,9 @@ def stokes_image(
     # need a copy since write only
     radec = radec.copy()
     if radec[0] < 0:
-        radec[0] += 2*np.pi
-    elif radec[0] > 2*np.pi:
-        radec[0] -= 2*np.pi
+        radec[0] += 2 * np.pi
+    elif radec[0] > 2 * np.pi:
+        radec[0] -= 2 * np.pi
 
     flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
     signu = -1.0 if flip_u else 1.0
@@ -237,27 +238,28 @@ def stokes_image(
     # https://github.com/mreineck/ducc/issues/34
     signx = -1.0 if flip_u else 1.0
     signy = -1.0 if flip_v else 1.0
-    freqfactor = -2j*np.pi*freq[None, :]/lightspeed
+    freqfactor = -2j * np.pi * freq[None, :] / lightspeed
 
     # rephase if asked
     if phase_dir is not None:
-        new_ra, new_dec = phase_dir.split(',')
-        c = SkyCoord(new_ra, new_dec, frame='fk5', unit=(units.hourangle, units.deg))
+        new_ra, new_dec = phase_dir.split(",")
+        c = SkyCoord(new_ra, new_dec, frame="fk5", unit=(units.hourangle, units.deg))
         new_ra_rad = np.deg2rad(c.ra.value)
         new_dec_rad = np.deg2rad(c.dec.value)
         radec_new = np.array((new_ra_rad, new_dec_rad))
 
         # print(c.ra.value, c.dec.value, cell_deg)
-        
+
         from pfb_imaging.utils.astrometry import synthesize_uvw
+
         uvw_new = synthesize_uvw(antpos, time, ant1, ant2, radec_new)
         # uo = uvw[:, 0:1] * freq[None, :]/lightspeed
         # vo = uvw[:, 1:2] * freq[None, :]/lightspeed
-        wo = uvw[:, 2:] * freq[None, :]/lightspeed
+        wo = uvw[:, 2:] * freq[None, :] / lightspeed
         # un = uvw_new[:, 0:1] * freq[None, :]/lightspeed
         # vn = uvw_new[:, 1:2] * freq[None, :]/lightspeed
-        wn = uvw_new[:, 2:] * freq[None, :]/lightspeed
-        
+        wn = uvw_new[:, 2:] * freq[None, :] / lightspeed
+
         # TODO - why is this incorrect?
         # from africanus.coordinates import radec_to_lmn
         # l, m, n = radec_to_lmn(radec_new[None, :], radec)[0]
@@ -272,17 +274,17 @@ def stokes_image(
 
         # TODO - this copies chgcentre but not sure why it gives
         # better results than computing the phase with lmn differences
-        phase = 2j*np.pi*(wn - wo)
+        phase = 2j * np.pi * (wn - wo)
         data *= np.exp(-phase)[:, :, None]
         if model_vis is not None:
             model_vis *= np.exp(-phase)[:, :, None]
-        
+
         uvw = uvw_new
     else:
         radec_new = radec
 
     if beam_model is not None:
-        # should we compute a weighted mean over freq instead of interpolating here? 
+        # should we compute a weighted mean over freq instead of interpolating here?
         bds = xr.open_zarr(beam_model, chunks=None).interp(chan=[freq_out])
         l_beam = bds.l_beam.values
         m_beam = bds.m_beam.values
@@ -295,35 +297,43 @@ def stokes_image(
         # reshape for feed and spatial rotations
         beam = beam.reshape(2, 2, l_beam.size, m_beam.size)
         cell_deg_in = l_beam[1] - l_beam[0]
-        pbeam = reproject_and_interp_beam(beam, time, antpos,
-                                          radec, radec_new,
-                                          cell_deg_in, cell_deg, nx, ny,
-                                          poltype, product,
-                                          weight=weight, nthreads=nthreads)
-        
+        pbeam = reproject_and_interp_beam(
+            beam,
+            time,
+            antpos,
+            radec,
+            radec_new,
+            cell_deg_in,
+            cell_deg,
+            nx,
+            ny,
+            poltype,
+            product,
+            weight=weight,
+            nthreads=nthreads,
+        )
+
         # this is a hack to get the images to align
-        pbeam = np.transpose(pbeam.astype(np.float32),
-                             axes=(0, 2, 1))
+        pbeam = np.transpose(pbeam.astype(np.float32), axes=(0, 2, 1))
         pbeam = pbeam[:, ::-1, :]
-        
+
     else:
         pbeam = np.ones((len(product), nx, ny), dtype=real_type)
-    
-    
+
     # compute lm coordinates of target if requested
     if target is not None:
-        tmp = target.split(',')
+        tmp = target.split(",")
         if len(tmp) == 1 and tmp[0] == target:
             obs_time = time_out
             tra, tdec = get_coordinates(obs_time, target=target)
         else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
-            c = SkyCoord(tmp[0], tmp[1], frame='fk5', unit=(units.hourangle, units.deg))
+            c = SkyCoord(tmp[0], tmp[1], frame="fk5", unit=(units.hourangle, units.deg))
             tra = np.deg2rad(c.ra.value)
             tdec = np.deg2rad(c.dec.value)
 
-        tcoords=np.zeros((1,2))
-        tcoords[0,0] = tra
-        tcoords[0,1] = tdec
+        tcoords = np.zeros((1, 2))
+        tcoords[0, 0] = tra
+        tcoords[0, 1] = tdec
         lm0 = radec_to_lm(tcoords, radec_new[None, :]).squeeze()
         # flip for wgridder conventions
         x0 = -lm0[0]
@@ -343,12 +353,8 @@ def stokes_image(
     # we currently need this extra loop through the data because
     # we don't have access to the grid
     data, weight = weight_data(
-            data, weight, flag, jones,
-            tbin_idx, tbin_counts,
-            ant1, ant2,
-            poltype,
-            product,
-            str(ncorr))
+        data, weight, flag, jones, tbin_idx, tbin_counts, ant1, ant2, poltype, product, str(ncorr)
+    )
 
     # flag if any correlation is flagged
     flag = flag.any(axis=-1)
@@ -356,29 +362,28 @@ def stokes_image(
 
     # TODO - this subtraction would be better to do inside weight_data
     if model_column is not None:
-        ne.evaluate('(data-model_vis)*mask', out=data)
+        ne.evaluate("(data-model_vis)*mask", out=data)
 
     if l2_reweight_dof:
         # data should contain residual_vis at this point
-        ressq = (data*data.conj()).real * mask
+        ressq = (data * data.conj()).real * mask
         wcount = mask.sum()
         if wcount:
-            ovar = ressq.sum()/wcount  # use 67% quantile?
-            weight = (l2_reweight_dof + 1)/(l2_reweight_dof + ressq/ovar)/ovar
+            ovar = ressq.sum() / wcount  # use 67% quantile?
+            weight = (l2_reweight_dof + 1) / (l2_reweight_dof + ressq / ovar) / ovar
         else:
             weight = None
 
-    
     n = np.sqrt(1 - x0**2 - y0**2)
-    psf_vis = np.exp(freqfactor*(signu*uvw[:, 0:1]*x0*signx +
-                                 signv*uvw[:, 1:2]*y0*signy -
-                                 uvw[:, 2:]*(n-1))).astype(complex_type)
+    psf_vis = np.exp(
+        freqfactor * (signu * uvw[:, 0:1] * x0 * signx + signv * uvw[:, 1:2] * y0 * signy - uvw[:, 2:] * (n - 1))
+    ).astype(complex_type)
 
     # TODO - polarisation parameters and handle Stokes axis more elegantly
     # TODO - add beam application to injected transients
     # Should this go before weight_data?
     if inject_transients is not None:
-        transient_name = inject_transients.removesuffix('yaml') + 'zarr'
+        transient_name = inject_transients.removesuffix("yaml") + "zarr"
         transient_ds = xr.open_zarr(transient_name, chunks=None)
         all_times = transient_ds.TIME.values
         all_freqs = transient_ds.FREQ.values
@@ -388,29 +393,29 @@ def stokes_image(
         for name, ra, dec in zip(names, ras, decs):
             ra_rad = np.deg2rad(ra)
             dec_rad = np.deg2rad(dec)
-            tcoords=np.zeros((1,2))
-            tcoords[0,0] = ra_rad
-            tcoords[0,1] = dec_rad
+            tcoords = np.zeros((1, 2))
+            tcoords[0, 0] = ra_rad
+            tcoords[0, 1] = dec_rad
             coords0 = np.array((radec[0], radec[1]))
             lm0t = radec_to_lm(tcoords, coords0).squeeze()
             x0t = lm0t[0]
             y0t = lm0t[1]
 
             # these are the profiles on the full domain so interpolate
-            tprofile = getattr(transient_ds, f'{name}_time_profile').values
-            fprofile = getattr(transient_ds, f'{name}_freq_profile').values
-            
+            tprofile = getattr(transient_ds, f"{name}_time_profile").values
+            fprofile = getattr(transient_ds, f"{name}_freq_profile").values
+
             tprofile = np.interp(time, all_times, tprofile)  # note reorder to ms times
             fprofile = np.interp(freq, all_freqs, fprofile)
-            
+
             # outer product gives dynamic spectrum
             dspec = tprofile[:, None] * fprofile[None, :]
 
             # inject transient at x0t, y0t and convert to complex values
-            dspec = dspec * np.exp(freqfactor*(
-                                 signu*uvw[:, 0:1]*x0t*signx +
-                                 signv*uvw[:, 1:2]*y0t*signy -
-                                 uvw[:, 2:]*(n-1)))
+            dspec = dspec * np.exp(
+                freqfactor
+                * (signu * uvw[:, 0:1] * x0t * signx + signv * uvw[:, 1:2] * y0t * signy - uvw[:, 2:] * (n - 1))
+            )
             # currently Stokes I only
             data[:, :, 0] += dspec
 
@@ -421,26 +426,29 @@ def stokes_image(
         # we need to compute the weights on the padded grid
         # but we don't have control over the optimal gridding
         # parameters so assume a minimum
-        nx_pad = int(np.ceil(min_padding*nx))
-        if nx_pad%2:
+        nx_pad = int(np.ceil(min_padding * nx))
+        if nx_pad % 2:
             nx_pad += 1
-        ny_pad = int(np.ceil(min_padding*ny))
-        if ny_pad%2:
+        ny_pad = int(np.ceil(min_padding * ny))
+        if ny_pad % 2:
             ny_pad += 1
-        counts = _compute_counts(uvw,
-                                 freq,
-                                 mask,
-                                 weight,
-                                 nx_pad, ny_pad,
-                                 cell_rad, cell_rad,
-                                 real_type,
-                                 k=0,
-                                 ngrid=1,
-                                 usign=1.0 if flip_u else -1.0,
-                                 vsign=1.0 if flip_v else -1.0)
+        counts = _compute_counts(
+            uvw,
+            freq,
+            mask,
+            weight,
+            nx_pad,
+            ny_pad,
+            cell_rad,
+            cell_rad,
+            real_type,
+            k=0,
+            ngrid=1,
+            usign=1.0 if flip_u else -1.0,
+            vsign=1.0 if flip_v else -1.0,
+        )
 
-        counts = filter_extreme_counts(counts,
-                                       level=filter_counts_level)
+        counts = filter_extreme_counts(counts, level=filter_counts_level)
 
         weight = counts_to_weights(
             counts,
@@ -448,11 +456,14 @@ def stokes_image(
             freq,
             weight,
             mask,
-            nx_pad, ny_pad,
-            cell_rad, cell_rad,
+            nx_pad,
+            ny_pad,
+            cell_rad,
+            cell_rad,
             robustness,
             usign=1.0 if flip_u else -1.0,
-            vsign=1.0 if flip_v else -1.0)
+            vsign=1.0 if flip_v else -1.0,
+        )
 
     psf_min_size = 128
     if psf_relative_size is None:
@@ -477,7 +488,7 @@ def stokes_image(
     # required and always makes a minimum of nsupp number of wplanes
     # where nsupp is the gridding kernel support. We could check this
     # with pfb.utils.misc.wplanar if we can figure out the relationship
-    # between epsilon on the wplanar threshold parameter. 
+    # between epsilon on the wplanar threshold parameter.
     for c in range(nstokes):
         wsum[c] = weight[c, ~flag].sum()
         vis2dirty(
@@ -486,9 +497,12 @@ def stokes_image(
             vis=data[c],
             wgt=weight[c],
             mask=mask,
-            npix_x=nx, npix_y=ny,
-            pixsize_x=cell_rad, pixsize_y=cell_rad,
-            center_x=x0, center_y=y0,
+            npix_x=nx,
+            npix_y=ny,
+            pixsize_x=cell_rad,
+            pixsize_y=cell_rad,
+            center_x=x0,
+            center_y=y0,
             flip_u=flip_u,
             flip_v=flip_v,
             flip_w=flip_w,
@@ -496,10 +510,12 @@ def stokes_image(
             do_wgridding=do_wgridding,
             divide_by_n=True,  # no rephasing or smooth beam so do it here
             nthreads=nthreads,
-            sigma_min=min_padding, sigma_max=3.0,
+            sigma_min=min_padding,
+            sigma_max=3.0,
             double_precision_accumulation=double_accum,
             verbosity=0,
-            dirty=residual[c])
+            dirty=residual[c],
+        )
 
         vis2dirty(
             uvw=uvw,
@@ -507,9 +523,12 @@ def stokes_image(
             vis=psf_vis,
             wgt=weight[c],
             mask=mask,
-            npix_x=nx_psf, npix_y=ny_psf,
-            pixsize_x=cell_rad, pixsize_y=cell_rad,
-            center_x=x0, center_y=y0,
+            npix_x=nx_psf,
+            npix_y=ny_psf,
+            pixsize_x=cell_rad,
+            pixsize_y=cell_rad,
+            center_x=x0,
+            center_y=y0,
             flip_u=flip_u,
             flip_v=flip_v,
             flip_w=flip_w,
@@ -517,69 +536,61 @@ def stokes_image(
             do_wgridding=do_wgridding,
             divide_by_n=True,  # no rephasing or smooth beam so do it here
             nthreads=nthreads,
-            sigma_min=min_padding, sigma_max=3.0,
+            sigma_min=min_padding,
+            sigma_max=3.0,
             double_precision_accumulation=double_accum,
             verbosity=0,
-            dirty=psf[c])
+            dirty=psf[c],
+        )
 
     # these will be in units of pixels
-    GaussPars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
+    gausspars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
 
     if natural_grad:
         # TODO - add beam application
-        from pfb_imaging.operators.hessian import hessian_jax
         import jax.numpy as jnp
         from jax.scipy.sparse.linalg import cg
+
+        from pfb_imaging.operators.hessian import hessian_jax
+
         iFs = jnp.fft.ifftshift
 
-        abspsf = jnp.abs(jnp.fft.rfft2(
-                                    iFs(psf/wsum[:, None, None], axes=(1,2)),
-                                    axes=(1, 2),
-                                    norm='backward'))
+        abspsf = jnp.abs(jnp.fft.rfft2(iFs(psf / wsum[:, None, None], axes=(1, 2)), axes=(1, 2), norm="backward"))
 
-        hess = partial(hessian_jax,
-                       nx, ny,
-                       2*nx, 2*ny,
-                       eta,
-                       abspsf)
+        hess = partial(hessian_jax, nx, ny, 2 * nx, 2 * ny, eta, abspsf)
 
-        residual = cg(hess,
-               residual/wsum[:, None, None],
-               tol=cg_tol,
-               maxiter=cg_maxit)[0]
-        
+        residual = cg(hess, residual / wsum[:, None, None], tol=cg_tol, maxiter=cg_maxit)[0]
+
     else:
         residual /= wsum[:, None, None]
         residual *= pbeam / (pbeam**2 + eta)
 
-    rms = np.std(residual, axis=(1,2))
+    rms = np.std(residual, axis=(1, 2))
 
-    unix_time = quantity(f'{time_out}s').to_unix_time()
-    utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    unix_time = quantity(f"{time_out}s").to_unix_time()
+    utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     # set corr coords (removing duplicates and sorting)
     corr = "".join(dict.fromkeys(sorted(product)))
 
-    out_ras = ra_deg + np.arange(nx//2, -(nx//2), -1) * cell_deg
-    out_decs = dec_deg + np.arange(-(ny//2), ny//2) * cell_deg
+    out_ras = ra_deg + np.arange(nx // 2, -(nx // 2), -1) * cell_deg
+    out_decs = dec_deg + np.arange(-(ny // 2), ny // 2) * cell_deg
     out_ras = np.round(out_ras, decimals=12)
     out_decs = np.round(out_decs, decimals=12)
 
     # save outputs
-    if output_format == 'zarr':
+    if output_format == "zarr":
         coords = {
-            'FREQ': (('FREQ',), np.array([freq_out])),
-            'TIME': (('TIME',), np.mean(utime, keepdims=True)),
-            'STOKES': (('STOKES',), list(corr)),
-            'X': (('X',), out_ras),
-            'Y': (('Y',), out_decs),
+            "FREQ": (("FREQ",), np.array([freq_out])),
+            "TIME": (("TIME",), np.mean(utime, keepdims=True)),
+            "STOKES": (("STOKES",), list(corr)),
+            "X": (("X",), out_ras),
+            "Y": (("Y",), out_decs),
         }
         # X and Y are transposed for compatibility with breifast
         data_vars = {}
-        residual = np.transpose(residual.astype(np.float32),
-                                axes=(0, 2, 1))
-        data_vars['cube'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
-                             residual[:, None, None, :, :])
+        residual = np.transpose(residual.astype(np.float32), axes=(0, 2, 1))
+        data_vars["cube"] = (("STOKES", "FREQ", "TIME", "Y", "X"), residual[:, None, None, :, :])
         if psf_out:
             if psf_relative_size == 1:
                 xpsf = "X"
@@ -587,99 +598,93 @@ def stokes_image(
             else:
                 xpsf = "X_PSF"
                 ypsf = "Y_PSF"
-                coords['X_PSF'] = (('X_PSF',), ra_deg + np.arange(nx_psf//2, -(nx_psf//2), -1) * cell_deg)
-                coords['Y_PSF'] = (('Y_PSF',), dec_deg + np.arange(-(ny_psf//2), ny_psf//2) * cell_deg)
+                coords["X_PSF"] = (("X_PSF",), ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg)
+                coords["Y_PSF"] = (("Y_PSF",), dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg)
             psf /= wsum[:, None, None]
-            psf = np.transpose(psf.astype(np.float32),
-                               axes=(0, 2, 1))
-            data_vars['psf'] = (('STOKES', 'FREQ', 'TIME', ypsf, xpsf),
-                                psf[:, None, None, :, :])
-        
+            psf = np.transpose(psf.astype(np.float32), axes=(0, 2, 1))
+            data_vars["psf"] = (("STOKES", "FREQ", "TIME", ypsf, xpsf), psf[:, None, None, :, :])
+
         if robustness is not None and weight_grid_out:
             ic, ix, iy = np.where(counts > 0)
             wgt = np.zeros_like(counts)
-            wgt[ic, ix, iy] = 1.0/counts[ic, ix, iy]
-            coords['X_PAD'] = (('X_PAD',), np.arange(nx_pad) * cell_deg)
-            coords['Y_PAD'] = (('Y_PAD',), np.arange(ny_pad) * cell_deg)
-            wgt = np.transpose(wgt.astype(np.float32),
-                               axes=(0, 2, 1))
-            data_vars['wgtgrid'] = (('STOKES', 'FREQ', 'TIME', 'Y_PAD', 'X_PAD'),
-                                    wgt[:, None, None, :, :])
-        
-        data_vars['weight'] = (('STOKES','FREQ','TIME'), wsum[:, None, None])
-        
+            wgt[ic, ix, iy] = 1.0 / counts[ic, ix, iy]
+            coords["X_PAD"] = (("X_PAD",), np.arange(nx_pad) * cell_deg)
+            coords["Y_PAD"] = (("Y_PAD",), np.arange(ny_pad) * cell_deg)
+            wgt = np.transpose(wgt.astype(np.float32), axes=(0, 2, 1))
+            data_vars["wgtgrid"] = (("STOKES", "FREQ", "TIME", "Y_PAD", "X_PAD"), wgt[:, None, None, :, :])
+
+        data_vars["weight"] = (("STOKES", "FREQ", "TIME"), wsum[:, None, None])
+
         if beam_model is not None:
             weight = pbeam**2 + eta
-            weight = np.transpose(weight.astype(np.float32),
-                                  axes=(0, 2, 1))
-            data_vars['beam_weight'] = (('STOKES', 'FREQ', 'TIME', 'Y', 'X'),
-                                    weight[:, None, None, :, :])
-        
-        data_vars['rms'] = (('STOKES', 'FREQ', 'TIME'), rms[:, None, None].astype(np.float32))
+            weight = np.transpose(weight.astype(np.float32), axes=(0, 2, 1))
+            data_vars["beam_weight"] = (("STOKES", "FREQ", "TIME", "Y", "X"), weight[:, None, None, :, :])
+
+        data_vars["rms"] = (("STOKES", "FREQ", "TIME"), rms[:, None, None].astype(np.float32))
         nonzero = wsum > 0
-        data_vars['nonzero'] = (('STOKES', 'FREQ', 'TIME'), nonzero[:, None, None])
-        bmaj = np.array([gp[0] for gp in GaussPars], dtype=np.float32)
-        bmin = np.array([gp[1] for gp in GaussPars], dtype=np.float32)
+        data_vars["nonzero"] = (("STOKES", "FREQ", "TIME"), nonzero[:, None, None])
+        bmaj = np.array([gp[0] for gp in gausspars], dtype=np.float32)
+        bmin = np.array([gp[1] for gp in gausspars], dtype=np.float32)
         # convert bpa to degrees
-        bpa = np.array([gp[2]*180/np.pi for gp in GaussPars], dtype=np.float32)
-        data_vars['psf_maj'] = (('STOKES', 'FREQ', 'TIME'), bmaj[:, None, None])
-        data_vars['psf_min'] = (('STOKES', 'FREQ', 'TIME'), bmin[:, None, None])
-        data_vars['psf_pa'] = (('STOKES', 'FREQ', 'TIME'), bpa[:, None, None])
+        bpa = np.array([gp[2] * 180 / np.pi for gp in gausspars], dtype=np.float32)
+        data_vars["psf_maj"] = (("STOKES", "FREQ", "TIME"), bmaj[:, None, None])
+        data_vars["psf_min"] = (("STOKES", "FREQ", "TIME"), bmin[:, None, None])
+        data_vars["psf_pa"] = (("STOKES", "FREQ", "TIME"), bpa[:, None, None])
 
         if attrs is None:
             attrs = {
-                'ra' : tra,
-                'dec': tdec,
-                'x0': x0,
-                'y0': y0,
-                'cell_rad': cell_rad,
-                'fieldid': fieldid,
-                'ddid': ddid,
-                'scanid': scanid,
-                'bandid': bandid,
-                'timeid': timeid,
-                'robustness': robustness,
-                'utc': utc,
+                "ra": tra,
+                "dec": tdec,
+                "x0": x0,
+                "y0": y0,
+                "cell_rad": cell_rad,
+                "fieldid": fieldid,
+                "ddid": ddid,
+                "scanid": scanid,
+                "bandid": bandid,
+                "timeid": timeid,
+                "robustness": robustness,
+                "utc": utc,
             }
 
-        out_ds = xr.Dataset(
-            data_vars,
-            coords=coords,
-            attrs=attrs)
+        out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
         if stack:
-            out_ds.to_zarr(fds_store.url, region='auto')
+            out_ds.to_zarr(fds_store.url, region="auto")
         else:
-            out_ds.to_zarr(f'{fds_store.url}/{oname}.zarr', mode='w')
-    elif output_format == 'fits':
+            out_ds.to_zarr(f"{fds_store.url}/{oname}.zarr", mode="w")
+    elif output_format == "fits":
         # if there is more than one polarisation product
         # we currently assume all have the same beam
-        hdr = set_wcs(cell_deg, cell_deg, nx, ny, [tra, tdec],
-                    freq_out, GuassPar=GaussPars[0],
-                    ms_time=time_out, ncorr=len(corr))
+        hdr = set_wcs(
+            cell_deg, cell_deg, nx, ny, [tra, tdec], freq_out, GuassPar=gausspars[0], ms_time=time_out, ncorr=len(corr)
+        )
 
-        hdr['STOKES'] = corr
-        save_fits(residual/wsum[:, None, None],
-                  f'{fds_store.full_path}/{oname}_image.fits', hdr)
+        hdr["STOKES"] = corr
+        save_fits(residual / wsum[:, None, None], f"{fds_store.full_path}/{oname}_image.fits", hdr)
         if robustness is not None and weight_grid_out:
             ic, ix, iy = np.where(counts > 0)
             wgt = np.zeros_like(counts)
-            wgt[ic, ix, iy] = 1.0/counts[ic, ix, iy]
+            wgt[ic, ix, iy] = 1.0 / counts[ic, ix, iy]
             # TODO - add mirror image
-            save_fits(wgt,
-                    f'{fds_store.full_path}/{oname}_weight.fits', hdr)
+            save_fits(wgt, f"{fds_store.full_path}/{oname}_weight.fits", hdr)
 
         if psf_out:
-            hdr_psf = set_wcs(cell_deg, cell_deg, nx_psf, ny_psf, [tra, tdec],
-                  freq_out, GuassPar=GaussPars[0],  # fake for now
-                  ms_time=time_out)
-            hdr_psf['STOKES'] = corr
-            save_fits(psf/wsum[:, None, None],
-                  f'{fds_store.full_path}/{oname}_psf.fits', hdr_psf)
+            hdr_psf = set_wcs(
+                cell_deg,
+                cell_deg,
+                nx_psf,
+                ny_psf,
+                [tra, tdec],
+                freq_out,
+                GuassPar=gausspars[0],  # fake for now
+                ms_time=time_out,
+            )
+            hdr_psf["STOKES"] = corr
+            save_fits(psf / wsum[:, None, None], f"{fds_store.full_path}/{oname}_psf.fits", hdr_psf)
 
         if beam_model is not None:
             # weight = np.transpose(weight.astype(np.float32),
             #                      axes=(0, 2, 1))
             # weight = weight[:, ::-1, :]
-            save_fits(weight,
-                  f'{fds_store.full_path}/{oname}_weight.fits', hdr)
+            save_fits(weight, f"{fds_store.full_path}/{oname}_weight.fits", hdr)
     return 1

@@ -27,6 +27,7 @@ from pfb_imaging.utils.stokes2im import safe_stokes_image
 
 log = pfb_logging.get_logger("HCI")
 
+
 @pfb_logging.log_inputs(log)
 def hci(
     ms: list[Path],
@@ -227,9 +228,9 @@ def hci(
         cpi=channels_per_image,
         freq_min=freq_min,
         freq_max=freq_max,
-        FIELD_IDs=fields,
-        DDIDs=ddids,
-        SCANs=scans,
+        field_ids=fields,
+        ddids=ddids,
+        scans=scans,
     )
 
     max_freq = 0
@@ -517,7 +518,9 @@ def hci(
                         l2_reweight_dof=l2_reweight_dof,
                     )
                     tasks.append(fut)
-                    channel_width[b0 + fi] = freqs[ms_name][idt][freq_index].max() - freqs[ms_name][idt][freq_index].min()
+                    channel_width[b0 + fi] = (
+                        freqs[ms_name][idt][freq_index].max() - freqs[ms_name][idt][freq_index].min()
+                    )
 
     nds = len(tasks)
     ncomplete = 0

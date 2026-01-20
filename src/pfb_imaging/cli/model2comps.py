@@ -1,9 +1,7 @@
 from pathlib import Path
-from typing import Annotated, NewType
-from typing import Literal
+from typing import Annotated, Literal, NewType
 
 import typer
-
 from hip_cargo.utils.decorators import stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)

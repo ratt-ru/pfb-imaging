@@ -1,6 +1,8 @@
 import numpy as np
+
 from pfb_imaging.utils import logging as pfb_logging
-log = pfb_logging.get_logger('FISTA')
+
+log = pfb_logging.get_logger("FISTA")
 
 
 def back_track_func(x, xp, gradp, likp, L):
@@ -8,15 +10,16 @@ def back_track_func(x, xp, gradp, likp, L):
     return likp + np.vdot(gradp, df) + L * np.vdot(df, df) / 2
 
 
-def fista(x0,
-          L,       # spectral norm of measurement operator
-          fprime,  # function returning value and gradient
-          prox,    # function implementing prox of regulariser
-          tol=1e-3,
-          maxit=100,
-          report_freq=50,
-          verbosity=1):
-
+def fista(
+    x0,
+    L,  # spectral norm of measurement operator
+    fprime,  # function returning value and gradient
+    prox,  # function implementing prox of regulariser
+    tol=1e-3,
+    maxit=100,
+    report_freq=50,
+    verbosity=1,
+):
     # start iterations
     t = 1.0
     x = x0.copy()
@@ -59,7 +62,7 @@ def fista(x0,
 
         # fista update
         tp = t
-        t = (1. + np.sqrt(1. + 4 * tp**2)) / 2.
+        t = (1.0 + np.sqrt(1.0 + 4 * tp**2)) / 2.0
         gamma = (tp - 1) / t
         y = x + gamma * (x - xp)
 
@@ -76,9 +79,7 @@ def fista(x0,
 
     if k == maxit - 1:
         if verbosity:
-            log.info("Maximum iterations reached. "
-                  "Relative difference between updates = %f" %
-                  eps)
+            log.info("Maximum iterations reached. Relative difference between updates = %f" % eps)
     else:
         if verbosity:
             log.info("Success, converged after %i iterations" % k)

@@ -16,6 +16,7 @@ from pfb_imaging.utils.naming import set_output_names, xds_from_url
 
 log = pfb_logging.get_logger("FLUXTRACTOR")
 
+
 @pfb_logging.log_inputs(log)
 def fluxtractor(
     output_filename: str,

@@ -1,4 +1,3 @@
-
 import numpy as np
 import pytest
 from africanus.constants import c as lightspeed
@@ -6,7 +5,7 @@ from daskms import xds_from_ms, xds_from_table
 from ducc0.fft import good_size
 from numpy.testing import assert_allclose
 
-from pfb_imaging.utils.misc import Gaussian2D, give_edges
+from pfb_imaging.utils.misc import gaussian2d, give_edges
 from pfb_imaging.utils.modelspec import eval_coeffs_to_cube, eval_coeffs_to_slice, fit_image_cube
 
 pmp = pytest.mark.parametrize
@@ -70,7 +69,7 @@ def test_model2comps(ms_name):
     for i in range(nsource):
         emaj = np.maximum(extentx[i], extenty[i])
         emin = np.minimum(extentx[i], extenty[i])
-        gauss = Gaussian2D(xin, yin, GaussPar=(emaj, emin, pas[i]))
+        gauss = gaussian2d(xin, yin, gausspar=(emaj, emin, pas[i]))
         mx, my, gx, gy = give_edges(x_index[i], y_index[i], nx, ny, nx, ny)
         spectrum = ref_flux[i] * (freq / freq0) ** alpha[i]
         model[:, mx, my] += spectrum[:, None, None] * gauss[None, gx, gy]

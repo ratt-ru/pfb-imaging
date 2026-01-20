@@ -2,8 +2,7 @@ from pathlib import Path
 from typing import Annotated, NewType
 
 import typer
-
-from hip_cargo.utils.decorators import stimela_cab, stimela_output
+from hip_cargo.utils.decorators import stimela_cab
 
 URI = NewType("URI", Path)
 
@@ -110,7 +109,8 @@ def degrid(
         str | None,
         typer.Option(
             help="A region file containing regions that need to be converted to separate measurement set columns. "
-            "Each region in the file will end up in a separate column labelled as model-column{#} with the remainder going into model-column.",
+            "Each region in the file will end up in a separate column labelled as model-column{#} "
+            "with the remainder going into model-column.",
         ),
     ] = None,
     epsilon: Annotated[

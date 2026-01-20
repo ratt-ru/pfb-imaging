@@ -6,66 +6,76 @@ from pfb_imaging.utils import logging as pfb_logging
 from scabha.schema_utils import clickify_parameters
 from pfb_imaging.parser.schemas import schema
 
-log = pfb_logging.get_logger('SPOTLESS')
+log = pfb_logging.get_logger("SPOTLESS")
 
 
-@click.command(context_settings={'show_default': True})
+@click.command(context_settings={"show_default": True})
 @clickify_parameters(schema.spotless)
 def spotless(**kw):
-    '''
+    """
     Distributed spotless algorithm.
-    '''
+    """
     opts = OmegaConf.create(kw)
 
     from pfb_imaging.utils.naming import set_output_names
+
     opts, basedir, oname = set_output_names(opts)
 
     import psutil
+
     nthreads = psutil.cpu_count(logical=True)
     ncpu = psutil.cpu_count(logical=False)
     if opts.nthreads is None:
-        opts.nthreads = nthreads//2
-        ncpu = ncpu//2
+        opts.nthreads = nthreads // 2
+        ncpu = ncpu // 2
 
     from pfb_imaging import set_envs
     from ducc0.misc import resize_thread_pool
+
     resize_thread_pool(opts.nthreads)
     set_envs(opts.nthreads, ncpu)
 
     from daskms.fsspec_store import DaskMSStore
     from pfb_imaging.utils.naming import xds_from_url
 
-    basename = f'{basedir}/{oname}'
+    basename = f"{basedir}/{oname}"
     if opts.xds is not None:
-        xds_store = DaskMSStore(opts.xds.rstrip('/'))
+        xds_store = DaskMSStore(opts.xds.rstrip("/"))
         xds_name = opts.xds
     else:
-        xds_name = f'{basename}.xds'
+        xds_name = f"{basename}.xds"
         xds_store = DaskMSStore(xds_name)
         opts.xds = xds_name
-    fits_oname = f'{opts.fits_output_folder}/{oname}'
-    dds_name = f'{basename}_{opts.suffix}.dds'
+    fits_oname = f"{opts.fits_output_folder}/{oname}"
+    dds_name = f"{basename}_{opts.suffix}.dds"
 
     OmegaConf.set_struct(opts, True)
 
     import time
+
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f'{opts.log_directory}/spotless_{timestamp}.log'
+    logname = f"{opts.log_directory}/spotless_{timestamp}.log"
     pfb_logging.log_to_file(logname)
-    log.info(f'Logs will be written to {logname}')
+    log.info(f"Logs will be written to {logname}")
 
     pfb_logging.log_options_dict(log, opts)
 
     with ExitStack() as stack:
         from pfb_imaging import set_client
+
         if opts.nworkers > 1:
-            client = set_client(opts.nworkers, log, stack=stack,
-                                direct_to_workers=opts.direct_to_workers,
-                                client_log_level=opts.log_level)
+            client = set_client(
+                opts.nworkers,
+                log,
+                stack=stack,
+                direct_to_workers=opts.direct_to_workers,
+                client_log_level=opts.log_level,
+            )
             from distributed import as_completed
         else:
             log.info("Faking client")
             from pfb_imaging.utils.dist import fake_client
+
             client = fake_client()
             names = [0]
             as_completed = lambda x: x
@@ -79,46 +89,53 @@ def spotless(**kw):
         futures = []
         if opts.fits_mfs or opts.fits_cubes:
             from pfb_imaging.utils.fits import dds2fits
+
             log.info(f"Writing fits files to {fits_oname}_{opts.suffix}")
-            fut = client.submit(dds2fits,
-                                dds_list,
-                                'MODEL',
-                                f'{fits_oname}_{opts.suffix}',
-                                norm_wsum=False,
-                                nthreads=opts.nthreads,
-                                do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+            fut = client.submit(
+                dds2fits,
+                dds_list,
+                "MODEL",
+                f"{fits_oname}_{opts.suffix}",
+                norm_wsum=False,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes,
+            )
             futures.append(fut)
 
-            fut = client.submit(dds2fits,
-                                dds_list,
-                                'UPDATE',
-                                f'{fits_oname}_{opts.suffix}',
-                                norm_wsum=False,
-                                nthreads=opts.nthreads,
-                                do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+            fut = client.submit(
+                dds2fits,
+                dds_list,
+                "UPDATE",
+                f"{fits_oname}_{opts.suffix}",
+                norm_wsum=False,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes,
+            )
             futures.append(fut)
 
-            fut = client.submit(dds2fits,
-                                dds_list,
-                                'RESIDUAL',
-                                f'{fits_oname}_{opts.suffix}',
-                                norm_wsum=True,
-                                nthreads=opts.nthreads,
-                                do_mfs=opts.fits_mfs,
-                                do_cube=opts.fits_cubes)
+            fut = client.submit(
+                dds2fits,
+                dds_list,
+                "RESIDUAL",
+                f"{fits_oname}_{opts.suffix}",
+                norm_wsum=True,
+                nthreads=opts.nthreads,
+                do_mfs=opts.fits_mfs,
+                do_cube=opts.fits_cubes,
+            )
             futures.append(fut)
 
             for fut in as_completed(futures):
                 column = fut.result()
-                log.info(f'Done writing {column}')
+                log.info(f"Done writing {column}")
 
     log.info(f"All done after {time.time() - ti}s.")
 
 
 def _spotless(**kw):
-    '''
+    """
     Distributed spotless algorithm.
 
     The key inputs to the algorithm are the xds and mds.
@@ -129,7 +146,7 @@ def _spotless(**kw):
     The mds is just a single dataset which gets evaluated into a discretised cube on the runner node.
     The frequency resolution of the model is the same as the frequency resoltuion of the xds.
 
-    '''
+    """
     opts = OmegaConf.create(kw)
     OmegaConf.set_struct(opts, True)
 
@@ -153,6 +170,7 @@ def _spotless(**kw):
 
     # the runner should use all available resources
     import psutil
+
     ncpu = psutil.cpu_count(logical=False)
     numba.set_num_threads(ncpu)
 
@@ -161,54 +179,50 @@ def _spotless(**kw):
 
     try:
         client = get_client()
-        names = list(client.scheduler_info()['workers'].keys())
+        names = list(client.scheduler_info()["workers"].keys())
     except:
         from pfb_imaging.utils.dist import fake_client
+
         client = fake_client()
         names = [0]
         as_completed = lambda x: x
 
     basename = opts.output_filename
     if opts.fits_output_folder is not None:
-        fits_oname = opts.fits_output_folder + '/' + basename.split('/')[-1]
+        fits_oname = opts.fits_output_folder + "/" + basename.split("/")[-1]
     else:
         fits_oname = basename
 
     # xds contains vis products, no imaging weights applied
-    xds_name = f'{basename}.xds' if opts.xds is None else opts.xds
+    xds_name = f"{basename}.xds" if opts.xds is None else opts.xds
     xds_store = DaskMSStore(xds_name)
     try:
         assert xds_store.exists()
     except Exception as e:
-        log.error_and_raise(f"There must be a dataset at {xds_store.url}",
-                            ValueError)
+        log.error_and_raise(f"There must be a dataset at {xds_store.url}", ValueError)
 
     xds, xds_list = xds_from_url(xds_store.url)
 
     # create dds and cache
-    dds_name = opts.output_filename + f'_{opts.suffix}' + '.dds'
+    dds_name = opts.output_filename + f"_{opts.suffix}" + ".dds"
     dds_store = DaskMSStore(dds_name)
-    if '://' in dds_store.url:
-        protocol = xds_store.url.split('://')[0]
+    if "://" in dds_store.url:
+        protocol = xds_store.url.split("://")[0]
     else:
-        protocol = 'file'
+        protocol = "file"
 
     if dds_store.exists() and opts.overwrite:
         log.info(f"Removing {dds_store.url}")
         dds_store.rm(recursive=True)
 
-    optsp_name = dds_store.url + '/opts.pkl'
+    optsp_name = dds_store.url + "/opts.pkl"
     fs = fsspec.filesystem(protocol)
     if dds_store.exists() and not opts.overwrite:
         # get opts from previous run
-        optsp = get_opts(dds_store.url,
-                         protocol,
-                         name='opts.pkl')
+        optsp = get_opts(dds_store.url, protocol, name="opts.pkl")
 
         # check if we need to remake the data products
-        verify_attrs = ['epsilon',
-                        'do_wgridding', 'double_accum',
-                        'field_of_view', 'super_resolution_factor']
+        verify_attrs = ["epsilon", "do_wgridding", "double_accum", "field_of_view", "super_resolution_factor"]
         try:
             for attr in verify_attrs:
                 assert optsp[attr] == opts[attr]
@@ -218,23 +232,16 @@ def _spotless(**kw):
             dds, dds_list = xds_from_url(dds_store.url)
             iter0 = dds[0].niters
         except Exception as e:
-            log.info(f'Cache verification failed on {attr}. '
-                  'Will remake image data products')
+            log.info(f"Cache verification failed on {attr}. Will remake image data products")
             dds_store.rm(recursive=True)
             fs.makedirs(dds_store.url, exist_ok=True)
             # dump opts to validate cache on rerun
-            cache_opts(opts,
-                       dds_store.url,
-                       protocol,
-                       name='opts.pkl')
+            cache_opts(opts, dds_store.url, protocol, name="opts.pkl")
             from_cache = False
             iter0 = 0
     else:
         fs.makedirs(dds_store.url, exist_ok=True)
-        cache_opts(opts,
-                   dds_store.url,
-                   protocol,
-                   name='opts.pkl')
+        cache_opts(opts, dds_store.url, protocol, name="opts.pkl")
         from_cache = False
         log.info("Initialising from scratch.")
         iter0 = 0
@@ -250,8 +257,8 @@ def _spotless(**kw):
     # filter datasets by band
     xdsb = {}
     for ds in xds_list:
-        idx = ds.find('band') + 4
-        bid = int(ds[idx:idx+4])
+        idx = ds.find("band") + 4
+        bid = int(ds[idx : idx + 4])
         xdsb.setdefault(bid, [])
         xdsb[bid].append(ds)
 
@@ -261,17 +268,19 @@ def _spotless(**kw):
     log.info("Setting up actors")
     futures = []
     for wname, (bandid, dsl) in zip(cycle(names), xdsb.items()):
-        f = client.submit(band_actor,
-                          dsl,
-                          opts,
-                          bandid,
-                          dds_store.url,
-                          uv_max,
-                          max_freq,
-                          workers=wname,
-                          key='actor-'+uuid4().hex,
-                          actor=True,
-                          pure=False)
+        f = client.submit(
+            band_actor,
+            dsl,
+            opts,
+            bandid,
+            dds_store.url,
+            uv_max,
+            max_freq,
+            workers=wname,
+            key="actor-" + uuid4().hex,
+            actor=True,
+            pure=False,
+        )
         futures.append(f)
     actors = list(map(lambda f: f.result(), futures))
     futures = list(map(lambda a: a.get_image_info(), actors))
@@ -300,13 +309,13 @@ def _spotless(**kw):
     time_out = np.array((time_out,))
 
     # get size of dual domain
-    bases = tuple(opts.bases.split(','))
+    bases = tuple(opts.bases.split(","))
     nbasis = len(bases)
 
     if opts.mds is not None:
         mds_name = opts.mds
     else:
-        mds_name = opts.output_filename + f'_{opts.suffix}' + '.mds'
+        mds_name = opts.output_filename + f"_{opts.suffix}" + ".mds"
 
     mds_store = DaskMSStore(mds_name)
 
@@ -328,17 +337,24 @@ def _spotless(**kw):
                 time_out[0],
                 freq_out[i],
                 model_coeffs,
-                locx, locy,
+                locx,
+                locy,
                 mds.parametrisation,
                 params,
                 mds.texpr,
                 mds.fexpr,
-                mds.npix_x, mds.npix_y,
-                mds.cell_rad_x, mds.cell_rad_y,
-                mds.center_x, mds.center_y,
-                nx, ny,
-                cell_rad, cell_rad,
-                x0, y0
+                mds.npix_x,
+                mds.npix_y,
+                mds.cell_rad_x,
+                mds.cell_rad_y,
+                mds.center_x,
+                mds.center_y,
+                nx,
+                ny,
+                cell_rad,
+                cell_rad,
+                x0,
+                y0,
             )
 
     else:
@@ -347,11 +363,8 @@ def _spotless(**kw):
     log.info("Computing image data products")
     futures = []
     for b in range(nband):
-        fut = actors[b].set_image_data_products(model[b],
-                                                iter0,
-                                                from_cache=from_cache)
+        fut = actors[b].set_image_data_products(model[b], iter0, from_cache=from_cache)
         futures.append(fut)
-
 
     results = list(map(lambda f: f.result(), futures))
     residual_mfs = np.sum([r[0] for r in results], axis=0)
@@ -366,22 +379,25 @@ def _spotless(**kw):
     rmax = np.abs(residual_mfs).max()
 
     if iter0 == 0:
-        save_fits(residual_mfs,
-                  fits_oname + f'_{opts.suffix}_dirty_mfs.fits',
-                  hdr_mfs)
+        save_fits(residual_mfs, fits_oname + f"_{opts.suffix}_dirty_mfs.fits", hdr_mfs)
 
     if opts.hess_norm is None:
-        log.info('Getting spectral norm of Hessian approximation')
-        hess_norm = power_method(actors, nx, ny, nband,
-                                tol=opts.pm_tol,
-                                maxit=opts.pm_maxit,
-                                report_freq=opts.pm_report_freq,
-                                verbosity=opts.pm_verbose)
+        log.info("Getting spectral norm of Hessian approximation")
+        hess_norm = power_method(
+            actors,
+            nx,
+            ny,
+            nband,
+            tol=opts.pm_tol,
+            maxit=opts.pm_maxit,
+            report_freq=opts.pm_report_freq,
+            verbosity=opts.pm_verbose,
+        )
         # inflate so we don't have to recompute after each L2 reweight
         hess_norm *= 1.05
     else:
         hess_norm = opts.hess_norm
-    log.info(f'hess-norm = {hess_norm:.3e}')
+    log.info(f"hess-norm = {hess_norm:.3e}")
 
     # a value less than zero turns L1 reweighting off
     # we'll start on convergence or at the iteration
@@ -390,10 +406,8 @@ def _spotless(**kw):
     l1reweight_active = False
 
     if l1_reweight_from == 0:
-        log.info(f'Initialising with L1 reweighted')
-        l1weight, rms_comps = l1reweight_func(actors,
-                                   opts.rmsfactor,
-                                   alpha=opts.alpha)
+        log.info(f"Initialising with L1 reweighted")
+        l1weight, rms_comps = l1reweight_func(actors, opts.rmsfactor, alpha=opts.alpha)
         l1reweight_active = True
     else:
         rms_comps = rms  # this should not happen
@@ -407,31 +421,31 @@ def _spotless(**kw):
     l2_reweights = 0
     log.info(f"It {iter0}: max resid = {rmax:.3e}, rms = {rms:.3e}")
     for k in range(iter0, iter0 + opts.niter):
-        log.info('Solving for update')
+        log.info("Solving for update")
         futures = list(map(lambda a: a.cg_update(), actors))
         update_mfs = np.sum(list(map(lambda f: f.result(), futures)), axis=0)
         update_mfs /= np.sum(fsel)
 
-        save_fits(update_mfs,
-                  fits_oname + f'_{opts.suffix}_update_{k+1}.fits',
-                  hdr_mfs)
+        save_fits(update_mfs, fits_oname + f"_{opts.suffix}_update_{k + 1}.fits", hdr_mfs)
 
-        log.info('Solving for model')
-        primal_dual(actors,
-                    rms*opts.rmsfactor,
-                    hess_norm,
-                    l1weight,
-                    opts.rmsfactor,
-                    rms_comps,
-                    opts.alpha,
-                    nu=len(bases),
-                    tol=opts.pd_tol,
-                    maxit=opts.pd_maxit,
-                    positivity=opts.positivity,
-                    gamma=opts.gamma,
-                    verbosity=opts.pd_verbose)
+        log.info("Solving for model")
+        primal_dual(
+            actors,
+            rms * opts.rmsfactor,
+            hess_norm,
+            l1weight,
+            opts.rmsfactor,
+            rms_comps,
+            opts.alpha,
+            nu=len(bases),
+            tol=opts.pd_tol,
+            maxit=opts.pd_maxit,
+            positivity=opts.positivity,
+            gamma=opts.gamma,
+            verbosity=opts.pd_verbose,
+        )
 
-        log.info('Updating model')
+        log.info("Updating model")
         futures = list(map(lambda a: a.give_model(), actors))
         results = list(map(lambda f: f.result(), futures))
 
@@ -441,56 +455,51 @@ def _spotless(**kw):
             model[b] = results[i][0]
 
         if np.isnan(model).any():
-            log.error_and_raise('Model is nan', RuntimeError)
+            log.error_and_raise("Model is nan", RuntimeError)
 
-        save_fits(np.mean(model[fsel], axis=0),
-                  fits_oname + f'_{opts.suffix}_model_{k+1}.fits',
-                  hdr_mfs)
+        save_fits(np.mean(model[fsel], axis=0), fits_oname + f"_{opts.suffix}_model_{k + 1}.fits", hdr_mfs)
 
         log.info(f"Writing model to {mds_store.url}")
-        coeffs, x_index, y_index, expr, params, texpr, fexpr = \
-            fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
-                            wgt=wsums[None, fsel],
-                            method='Legendre')
+        coeffs, x_index, y_index, expr, params, texpr, fexpr = fit_image_cube(
+            time_out, freq_out[fsel], model[None, fsel, :, :], wgt=wsums[None, fsel], method="Legendre"
+        )
 
         data_vars = {
-            'coefficients': (('par', 'comps'), coeffs),
+            "coefficients": (("par", "comps"), coeffs),
         }
         coords = {
-            'location_x': (('x',), x_index),
-            'location_y': (('y',), y_index),
-            'params': (('par',), params),  # already converted to list
-            'times': (('t',), time_out),  # to allow rendering to original grid
-            'freqs': (('f',), freq_out)
+            "location_x": (("x",), x_index),
+            "location_y": (("y",), y_index),
+            "params": (("par",), params),  # already converted to list
+            "times": (("t",), time_out),  # to allow rendering to original grid
+            "freqs": (("f",), freq_out),
         }
         attrs = {
-            'spec': 'genesis',
-            'cell_rad_x': cell_rad,
-            'cell_rad_y': cell_rad,
-            'npix_x': nx,
-            'npix_y': ny,
-            'texpr': texpr,
-            'fexpr': fexpr,
-            'center_x': x0,
-            'center_y': y0,
-            'ra': ra,
-            'dec': dec,
-            'stokes': opts.product,  # I,Q,U,V, IQ/IV, IQUV
-            'parametrisation': expr,  # already converted to str
+            "spec": "genesis",
+            "cell_rad_x": cell_rad,
+            "cell_rad_y": cell_rad,
+            "npix_x": nx,
+            "npix_y": ny,
+            "texpr": texpr,
+            "fexpr": fexpr,
+            "center_x": x0,
+            "center_y": y0,
+            "ra": ra,
+            "dec": dec,
+            "stokes": opts.product,  # I,Q,U,V, IQ/IV, IQUV
+            "parametrisation": expr,  # already converted to str
         }
 
-        coeff_dataset = xr.Dataset(data_vars=data_vars,
-                            coords=coords,
-                            attrs=attrs)
-        coeff_dataset.to_zarr(f"{mds_store.url}", mode='w')
+        coeff_dataset = xr.Dataset(data_vars=data_vars, coords=coords, attrs=attrs)
+        coeff_dataset.to_zarr(f"{mds_store.url}", mode="w")
 
         # convergence check
-        eps = np.linalg.norm(model - modelp)/np.linalg.norm(model)
+        eps = np.linalg.norm(model - modelp) / np.linalg.norm(model)
         if eps < opts.tol:
             # do not converge prematurely
             if l1_reweight_from > 0 and not l1reweight_active:  # only happens once
                 # start reweighting
-                l1_reweight_from = k+1 - iter0
+                l1_reweight_from = k + 1 - iter0
                 # don't start L2 reweighting before L1 reweighting
                 # if it is enabled
                 dof = None
@@ -501,25 +510,21 @@ def _spotless(**kw):
                 dof = opts.l2_reweight_dof
             else:
                 # we have reached max L2 reweights so we are done
-                log.info(f"Converged after {k+1} iterations.")
+                log.info(f"Converged after {k + 1} iterations.")
                 break
         else:
             # do not perform an L2 reweight unless the M step has converged
             dof = None
 
-        if k+1 - iter0 >= opts.l2_reweight_from and l2_reweights < opts.max_l2_reweight:
+        if k + 1 - iter0 >= opts.l2_reweight_from and l2_reweights < opts.max_l2_reweight:
             dof = opts.l2_reweight_dof
 
         if dof is not None:
-            log.info('Recomputing image data products since L2 reweight '
-                  'is required.')
+            log.info("Recomputing image data products since L2 reweight is required.")
             futures = []
             for b in range(nband):
-                fut = actors[b].set_image_data_products(model[b],
-                                                        k+1,
-                                                        dof=dof)
+                fut = actors[b].set_image_data_products(model[b], k + 1, dof=dof)
                 futures.append(fut)
-
 
             results = list(map(lambda f: f.result(), futures))
             residual_mfs = np.sum([r[0] for r in results], axis=0)
@@ -541,16 +546,13 @@ def _spotless(**kw):
             l2_reweights += 1
         else:
             # compute normal residual, no need to redo PSF etc
-            log.info('Computing residual')
-            futures = list(map(lambda a: a.set_residual(k+1), actors))
+            log.info("Computing residual")
+            futures = list(map(lambda a: a.set_residual(k + 1), actors))
             resids = list(map(lambda f: f.result(), futures))
             # we never resids by wsum inside the worker
-            residual_mfs = np.sum(resids, axis=0)/wsum
+            residual_mfs = np.sum(resids, axis=0) / wsum
 
-
-        save_fits(residual_mfs,
-                  fits_oname + f'_{opts.suffix}_residual_{k+1}.fits',
-                  hdr_mfs)
+        save_fits(residual_mfs, fits_oname + f"_{opts.suffix}_residual_{k + 1}.fits", hdr_mfs)
 
         rmsp = rms
         rms = np.std(residual_mfs)
@@ -562,13 +564,11 @@ def _spotless(**kw):
             best_rmax = rmax
             best_model = model.copy()
 
-        log.info(f"It {k+1}: max resid = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}")
+        log.info(f"It {k + 1}: max resid = {rmax:.3e}, rms = {rms:.3e}, eps = {eps:.3e}")
 
-        if k+1 - iter0 >= l1_reweight_from:
-            log.info('L1 reweighting')
-            l1weight, rms_comps = l1reweight_func(actors,
-                                       opts.rmsfactor,
-                                       alpha=opts.alpha)
+        if k + 1 - iter0 >= l1_reweight_from:
+            log.info("L1 reweighting")
+            l1weight, rms_comps = l1reweight_func(actors, opts.rmsfactor, alpha=opts.alpha)
 
         if rms > rmsp:
             diverge_count += 1
@@ -577,4 +577,3 @@ def _spotless(**kw):
                 break
 
     return
-

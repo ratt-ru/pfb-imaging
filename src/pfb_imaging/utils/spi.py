@@ -1,20 +1,22 @@
-import numpy as np
-import dask.array as da
 import sys
+
+import dask.array as da
+import numpy as np
 from africanus.model.spi.dask import fit_spi_components
 
 
-def fit_spi(image: np.ndarray,
-            beam: np.ndarray,
-            freqs: np.ndarray,
-            weights: np.ndarray,
-            threshold: float,
-            nthreads: int,
-            pb_min: float,
-            padding_frac: float,
-            ref_freq: float,
-            dest=sys.stdout):
-
+def fit_spi(
+    image: np.ndarray,
+    beam: np.ndarray,
+    freqs: np.ndarray,
+    weights: np.ndarray,
+    threshold: float,
+    nthreads: int,
+    pb_min: float,
+    padding_frac: float,
+    ref_freq: float,
+    dest=sys.stdout,
+):
     try:
         assert image.ndim == 3
         assert beam.ndim == 3
@@ -34,24 +36,24 @@ def fit_spi(image: np.ndarray,
     minimage = np.amin(image, axis=0)
     maskindices = np.argwhere(minimage > threshold)
     if not maskindices.size:
-        raise ValueError("No components found above threshold. "
-                         "Try lowering your threshold."
-                         "Max of convolved model is %3.2e" % image.max())
+        raise ValueError(
+            "No components found above threshold. "
+            "Try lowering your threshold."
+            "Max of convolved model is %3.2e" % image.max()
+        )
     fitcube = image[:, maskindices[:, 0], maskindices[:, 1]].T
     beam_comps = beam[:, maskindices[:, 0], maskindices[:, 1]].T
 
     ncomps, _ = fitcube.shape
-    fitcube = da.from_array(fitcube.astype(np.float64),
-                            chunks=(ncomps//nthreads, nband))
-    beam_comps = da.from_array(beam_comps.astype(np.float64),
-                               chunks=(ncomps//nthreads, nband))
+    fitcube = da.from_array(fitcube.astype(np.float64), chunks=(ncomps // nthreads, nband))
+    beam_comps = da.from_array(beam_comps.astype(np.float64), chunks=(ncomps // nthreads, nband))
     weights = da.from_array(weights.astype(np.float64), chunks=(nband))
     freqsdask = da.from_array(freqs.astype(np.float64), chunks=(nband))
 
     print("Fitting %i components" % ncomps, file=dest)
-    alpha, alpha_err, Iref, i0_err = \
-        fit_spi_components(fitcube, weights, freqsdask, ref_freq,
-                           beam=beam_comps).compute()
+    alpha, alpha_err, Iref, i0_err = fit_spi_components(
+        fitcube, weights, freqsdask, ref_freq, beam=beam_comps
+    ).compute()
     print("Done. Writing output. \n", file=dest)
 
     alphamap = np.zeros(image[0].shape, dtype=image.dtype)

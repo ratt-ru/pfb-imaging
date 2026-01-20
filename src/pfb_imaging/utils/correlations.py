@@ -1,27 +1,31 @@
+from operator import getitem
+
+import dask.array as da
 import numpy as np
 from numba import njit
-import dask.array as da
 from xarray import Dataset
-from operator import getitem
+
 from pfb_imaging.utils.beam import interp_beam
 
-def single_corr(ds=None,
-                jones=None,
-                opts=None,
-                freq=None,
-                chan_width=None,
-                bandid=None,
-                cell_rad=None,
-                utimes=None,
-                tbin_idx=None,
-                tbin_counts=None,
-                timeid=None,
-                radec=None):
 
-    if opts.precision.lower() == 'single':
+def single_corr(
+    ds=None,
+    jones=None,
+    opts=None,
+    freq=None,
+    chan_width=None,
+    bandid=None,
+    cell_rad=None,
+    utimes=None,
+    tbin_idx=None,
+    tbin_counts=None,
+    timeid=None,
+    radec=None,
+):
+    if opts.precision.lower() == "single":
         real_type = np.float32
         complex_type = np.complex64
-    elif opts.precision.lower() == 'double':
+    elif opts.precision.lower() == "double":
         real_type = np.float64
         complex_type = np.complex128
 
@@ -32,10 +36,10 @@ def single_corr(ds=None,
     ant2 = ds.ANTENNA2.data
 
     # MS may contain auto-correlations
-    if 'FLAG_ROW' in ds:
+    if "FLAG_ROW" in ds:
         frow = ds.FLAG_ROW.data | (ant1 == ant2)
     else:
-        frow = (ant1 == ant2)
+        frow = ant1 == ant2
 
     if opts.weight_column is not None:
         weight = getattr(ds, opts.weight_column).data
@@ -52,17 +56,14 @@ def single_corr(ds=None,
         # TODO - remove unnecessary jones multiplies
         ntime = tbin_idx.size
         nant = da.maximum(ant1.max(), ant2.max()).compute() + 1
-        jones = da.ones((ntime, nchan, nant, 1, 2),
-                        chunks=(tbin_idx.chunks[0][0], -1, -1, 1, 2),
-                        dtype=complex_type)
+        jones = da.ones((ntime, nchan, nant, 1, 2), chunks=(tbin_idx.chunks[0][0], -1, -1, 1, 2), dtype=complex_type)
     elif jones.dtype != complex_type:
         jones = jones.astype(complex_type)
 
     # qcal has chan and ant axes reversed compared to pfb implementation
     jones = da.swapaxes(jones, 1, 2)
 
-    vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                           ant1, ant2)
+    vis, wgt = weight_data(data, weight, jones, tbin_idx, tbin_counts, ant1, ant2)
 
     if opts.flag_column is not None:
         flag = getattr(ds, opts.flag_column).data
@@ -74,23 +75,23 @@ def single_corr(ds=None,
     mask = ~flag
     uvw = ds.UVW.data
 
-    data_vars = {'FREQ': (('chan',), freq)}
+    data_vars = {"FREQ": (("chan",), freq)}
 
     wsum = da.sum(wgt[mask])
-    data_vars['WSUM'] = (('scalar'), da.array((wsum,)))
+    data_vars["WSUM"] = (("scalar"), da.array((wsum,)))
 
     # wgt = wgt.rechunk({0:opts.row_out_chunk})
-    data_vars['WEIGHT'] = (('row', 'chan'), wgt)
+    data_vars["WEIGHT"] = (("row", "chan"), wgt)
 
     # uvw = uvw.rechunk({0:opts.row_out_chunk})
-    data_vars['UVW'] = (('row', 'uvw'), uvw)
+    data_vars["UVW"] = (("row", "uvw"), uvw)
 
     # vis = vis.rechunk({0:opts.row_out_chunk})
-    data_vars['VIS'] = (('row', 'chan'), vis)
+    data_vars["VIS"] = (("row", "chan"), vis)
 
     # MASK = ~FLAG.astype(np.uint8) for wgridder convention
     # mask = mask.rechunk({0:opts.row_out_chunk})
-    data_vars['MASK'] = (('row', 'chan'), mask.astype(np.uint8))
+    data_vars["MASK"] = (("row", "chan"), mask.astype(np.uint8))
 
     # if opts.weight:
     #     wgt = da.where(mask, wgt, 0.0)
@@ -127,22 +128,21 @@ def single_corr(ds=None,
     #     wgt = wgt.rechunk({0:opts.row_out_chunk})
     #     data_vars['WEIGHT'] = (('row', 'chan'), wgt)
 
-
     # TODO - interpolate beam in time and freq
-    npix = int(np.deg2rad(opts.max_field_of_view)/cell_rad)
+    npix = int(np.deg2rad(opts.max_field_of_view) / cell_rad)
     freq_out = np.mean(freq)
-    beam = interp_beam(freq_out/1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
+    beam = interp_beam(freq_out / 1e6, npix, npix, np.rad2deg(cell_rad), opts.beam_model)
 
-    data_vars['BEAM'] = (('scalar'), beam)
+    data_vars["BEAM"] = (("scalar"), beam)
 
     attrs = {
-        'ra' : radec[0],
-        'dec': radec[1],
-        'fieldid': ds.FIELD_ID,
-        'ddid': ds.DATA_DESC_ID,
-        'scanid': ds.SCAN_NUMBER,
-        'bandid': int(bandid),
-        'freq_out': freq_out
+        "ra": radec[0],
+        "dec": radec[1],
+        "fieldid": ds.FIELD_ID,
+        "ddid": ds.DATA_DESC_ID,
+        "scanid": ds.SCAN_NUMBER,
+        "bandid": int(bandid),
+        "freq_out": freq_out,
     }
 
     out_ds = Dataset(data_vars, attrs=attrs)
@@ -150,43 +150,50 @@ def single_corr(ds=None,
     return out_ds
 
 
-def weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                ant1, ant2):
+def weight_data(data, weight, jones, tbin_idx, tbin_counts, ant1, ant2):
     # data are not necessarily 2x2 so we need separate labels
     # for jones correlations and data/weight correlations
     if jones.ndim == 5:
-        jout = 'rafdx'
+        jout = "rafdx"
     elif jones.ndim == 6:
-        jout = 'rafdxx'
+        jout = "rafdxx"
         # TODO - how do we know if we should return
         # jones[0][0][0] or jones[0][0][0][0] in function wrapper?
         # Not required with delayed
         raise NotImplementedError("Not yet implemented")
-    res = da.blockwise(_weight_data, 'rf',
-                       data, 'rfc',
-                       weight, 'rfc',
-                       jones, jout,
-                       tbin_idx, 'r',
-                       tbin_counts, 'r',
-                       ant1, 'r',
-                       ant2, 'r',
-                       align_arrays=False,
-                       meta=np.empty((0, 0), dtype=object))
+    res = da.blockwise(
+        _weight_data,
+        "rf",
+        data,
+        "rfc",
+        weight,
+        "rfc",
+        jones,
+        jout,
+        tbin_idx,
+        "r",
+        tbin_counts,
+        "r",
+        ant1,
+        "r",
+        ant2,
+        "r",
+        align_arrays=False,
+        meta=np.empty((0, 0), dtype=object),
+    )
 
-    vis = da.blockwise(getitem, 'rf', res, 'rf', 0, None, dtype=data.dtype)
-    wgt = da.blockwise(getitem, 'rf', res, 'rf', 1, None, dtype=weight.dtype)
-
+    vis = da.blockwise(getitem, "rf", res, "rf", 0, None, dtype=data.dtype)
+    wgt = da.blockwise(getitem, "rf", res, "rf", 1, None, dtype=weight.dtype)
 
     return vis, wgt
 
-def _weight_data(data, weight, jones, tbin_idx, tbin_counts,
-                      ant1, ant2):
-    return _weight_data_impl(data[0], weight[0], jones[0][0][0],
-                             tbin_idx, tbin_counts, ant1, ant2)
+
+def _weight_data(data, weight, jones, tbin_idx, tbin_counts, ant1, ant2):
+    return _weight_data_impl(data[0], weight[0], jones[0][0][0], tbin_idx, tbin_counts, ant1, ant2)
+
 
 @njit(nogil=True, cache=True)
-def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
-                      ant1, ant2):
+def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts, ant1, ant2):
     # for dask arrays we need to adjust the chunks to
     # start counting from zero
     tbin_idx -= tbin_idx.min()
@@ -196,34 +203,31 @@ def _weight_data_impl(data, weight, jones, tbin_idx, tbin_counts,
     wgt = np.zeros((nrow, nchan), dtype=data.real.dtype)
 
     for t in range(nt):
-        for row in range(tbin_idx[t],
-                            tbin_idx[t] + tbin_counts[t]):
+        for row in range(tbin_idx[t], tbin_idx[t] + tbin_counts[t]):
             p = int(ant1[row])
             q = int(ant2[row])
             gp = jones[t, p, :, 0]
             gq = jones[t, q, :, 0]
             for chan in range(nchan):
-                wval = wgt_func(gp[chan], gq[chan],
-                                weight[row, chan])
+                wval = wgt_func(gp[chan], gq[chan], weight[row, chan])
                 wgt[row, chan] = wval
-                vis[row, chan] = vis_func(gp[chan], gq[chan],
-                                            weight[row, chan],
-                                            data[row, chan])  #/wval
+                vis[row, chan] = vis_func(gp[chan], gq[chan], weight[row, chan], data[row, chan])  # /wval
 
     return vis, wgt
 
 
-@njit(nogil=True, cache=True, inline='always')
-def wgt_func(gp, gq, W):
+@njit(nogil=True, cache=True, inline="always")
+def wgt_func(gp, gq, w):
     gp00 = gp[0]
     gq00 = gq[0]
-    W0 = W[0]
-    return np.real(W0*gp00*gq00*np.conjugate(gp00)*np.conjugate(gq00))
+    w0 = w[0]
+    return np.real(w0 * gp00 * gq00 * np.conjugate(gp00) * np.conjugate(gq00))
 
-@njit(nogil=True, cache=True, inline='always')
-def vis_func(gp, gq, W, V):
+
+@njit(nogil=True, cache=True, inline="always")
+def vis_func(gp, gq, w, v):
     gp00 = gp[0]
     gq00 = gq[0]
-    W0 = W[0]
-    v00 = V[0]
-    return W0*gq00*v00*np.conjugate(gp00)
+    w0 = w[0]
+    v00 = v[0]
+    return w0 * gq00 * v00 * np.conjugate(gp00)

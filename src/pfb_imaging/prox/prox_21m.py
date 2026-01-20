@@ -52,13 +52,13 @@ def prox_21m_numba(v, result, lam, sigma=1.0, weight=None):
         resultb = result[:, b]
         for i in prange(nymax):
             for j in range(nxmax):
-                vbisum = np.sum(vb[:, i, j])/sigma
+                vbisum = np.sum(vb[:, i, j]) / sigma
                 if not vbisum:
                     resultb[:, i, j] = 0.0
                     continue
                 absvbi = np.abs(vbisum)
-                softvbi = np.maximum(absvbi - lam*weightb[i, j]/sigma, 0.0) #* vbisum/absvbi
-                resultb[:, i, j] = vb[:, i, j] * softvbi / absvbi /sigma
+                softvbi = np.maximum(absvbi - lam * weightb[i, j] / sigma, 0.0)  # * vbisum/absvbi
+                resultb[:, i, j] = vb[:, i, j] * softvbi / absvbi / sigma
 
 
 def dual_update(v, x, psiH, lam, sigma=1.0, weight=1.0):
@@ -67,9 +67,8 @@ def dual_update(v, x, psiH, lam, sigma=1.0, weight=1.0):
     psiH(x, vout)
     vtilde = vp + sigma * vout
     # return vtilde
-    v = vtilde - sigma * prox_21m(vtilde/sigma, lam/sigma, weight=weight)
+    v = vtilde - sigma * prox_21m(vtilde / sigma, lam / sigma, weight=weight)
     return v
-
 
 
 @njit(nogil=True, cache=True, parallel=True)
@@ -96,11 +95,11 @@ def dual_update_numba(vp, v, lam, sigma=1.0, weight=None):
             weightbi = weight[b, i]
             for j in range(nxmax):
                 vtildebij = vtildebi[:, j]
-                absvbijsum = np.abs(np.sum(vtildebij)/sigma)  # sum over band axis
+                absvbijsum = np.abs(np.sum(vtildebij) / sigma)  # sum over band axis
                 v[:, b, i, j] = vtildebij
                 if absvbijsum:
-                    softvbij = np.maximum(absvbijsum - lam*weightbi[j]/sigma, 0.0)
-                    v[:, b, i, j] *= (1 - softvbij / absvbijsum)
+                    softvbij = np.maximum(absvbijsum - lam * weightbi[j] / sigma, 0.0)
+                    v[:, b, i, j] *= 1 - softvbij / absvbijsum
 
 
 @njit(nogil=True, cache=True, parallel=True)
@@ -127,8 +126,8 @@ def dual_update_numba_dist(vp, v, lam, sigma=1.0, weight=None):
             weightbi = weight[b, i]
             for j in range(nxmax):
                 vtildebij = vtildebi[:, j]
-                absvbijsum = np.abs(np.sum(vtildebij)/sigma)  # sum over band axis
+                absvbijsum = np.abs(np.sum(vtildebij) / sigma)  # sum over band axis
                 v[:, b, i, j] = vtildebij
                 if absvbijsum:
-                    softvbij = np.maximum(absvbijsum - lam*weightbi[j]/sigma, 0.0)
-                    v[:, b, i, j] *= (1-softvbij / absvbijsum)
+                    softvbij = np.maximum(absvbijsum - lam * weightbi[j] / sigma, 0.0)
+                    v[:, b, i, j] *= 1 - softvbij / absvbijsum

@@ -17,6 +17,7 @@ from pfb_imaging.utils.stokes2vis import safe_stokes_vis
 
 log = pfb_logging.get_logger("INIT")
 
+
 @pfb_logging.log_inputs(log)
 def init(
     ms: list[Path],
@@ -167,9 +168,9 @@ def init(
         cpi=channels_per_image,
         freq_min=freq_min,
         freq_max=freq_max,
-        FIELD_IDs=fields,
-        DDIDs=ddids,
-        SCANs=scans,
+        field_ids=fields,
+        ddids=ddids,
+        scans=scans,
     )
 
     group_by = ["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"]

@@ -19,6 +19,7 @@ from pfb_imaging.utils.naming import set_output_names, xds_from_url
 
 log = pfb_logging.get_logger("MODEL2COMPS")
 
+
 @pfb_logging.log_inputs(log)
 def model2comps(
     output_filename: str,
@@ -220,7 +221,6 @@ def _model2comps(
 
     if not np.any(model):
         log.error_and_raise("Model is empty", RuntimeError)
-    radec = (dds[0].ra, dds[0].dec)
 
     if out_freqs is not None:
         flow, fhigh, step = list(map(float, out_freqs.split(":")))
@@ -419,10 +419,6 @@ def _model2comps_fits(
     from_fits: str,
 ):
     basename = output_filename
-    if fits_output_folder is not None:
-        fits_oname = fits_output_folder + "/" + basename.split("/")[-1]
-    else:
-        fits_oname = basename
 
     if model_out is not None:
         coeff_name = model_out
@@ -516,7 +512,6 @@ def _model2comps_fits(
 
     if not np.any(model):
         log.error_and_raise("Model is empty", ValueError)
-    radec = (ra, dec)
 
     if out_freqs is not None:
         flow, fhigh, step = list(map(float, out_freqs.split(":")))

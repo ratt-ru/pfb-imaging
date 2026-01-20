@@ -1,33 +1,36 @@
-import numpy as np
+from time import time
+
 import numexpr as ne
+import numpy as np
+from numba import njit, prange
+
+from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.dist import l1reweight_func
 from pfb_imaging.utils.misc import norm_diff
-from numba import njit, prange
-from uuid import uuid4
-from pfb_imaging.utils import logging as pfb_logging
-from time import time
-log = pfb_logging.get_logger('PD')
+
+log = pfb_logging.get_logger("PD")
 
 
 def primal_dual(
-        x,  # initial guess for primal variable
-        v,  # initial guess for dual variable
-        lam,  # regulariser strength
-        psi,  # linear operator in dual domain
-        psiH,  # adjoint of psi
-        L,  # spectral norm of Hessian
-        prox,  # prox of regulariser
-        grad,  # gradient of smooth term
-        nu=1.0,  # spectral norm of psi
-        sigma=None,  # step size of dual update
-        mask=None,  # regions where mask is False will be masked
-        tol=1e-5,
-        maxit=1000,
-        minit=10,
-        positivity=1,
-        report_freq=10,
-        gamma=1.0,
-        verbosity=1):
+    x,  # initial guess for primal variable
+    v,  # initial guess for dual variable
+    lam,  # regulariser strength
+    psi,  # linear operator in dual domain
+    psiH,  # adjoint of psi
+    L,  # spectral norm of Hessian
+    prox,  # prox of regulariser
+    grad,  # gradient of smooth term
+    nu=1.0,  # spectral norm of psi
+    sigma=None,  # step size of dual update
+    mask=None,  # regions where mask is False will be masked
+    tol=1e-5,
+    maxit=1000,
+    minit=10,
+    positivity=1,
+    report_freq=10,
+    gamma=1.0,
+    verbosity=1,
+):
     # initialise
     xp = x.copy()
     vp = v.copy()
@@ -57,7 +60,7 @@ def primal_dual(
         if positivity == 1:
             x[x < 0.0] = 0.0
         elif positivity == 2:
-            msk = np.any(x<=0, axis=0)
+            msk = np.any(x <= 0, axis=0)
             x[:, msk] = 0.0
 
         # convergence check
@@ -68,7 +71,9 @@ def primal_dual(
         vp[...] = v[...]
 
         if np.isnan(eps) or np.isinf(eps):
-            import pdb; pdb.set_trace()
+            import pdb
+
+            pdb.set_trace()
 
         if not k % report_freq and verbosity > 1:
             # res = xbar-x
@@ -87,28 +92,30 @@ def primal_dual(
 
 
 from pfb_imaging.prox.prox_21m import dual_update_numba
-def primal_dual_optimised(
-        x,  # initial guess for primal variable
-        v,  # initial guess for dual variable
-        lam,  # regulariser strength
-        psiH,  # linear operator in dual domain
-        psi,  # adjoint of psi
-        L,  # spectral norm of Hessian
-        prox,  # prox of regulariser
-        l1weight,
-        reweighter,
-        grad,  # gradient of smooth term
-        nu=1.0,  # spectral norm of psi
-        sigma=None,  # step size of dual update
-        mask=None,  # regions where mask is False will be masked
-        tol=1e-5,
-        maxit=1000,
-        positivity=1,
-        report_freq=10,
-        gamma=1.0,
-        verbosity=1,
-        maxreweight=20):  # max successive reweights before convergence
 
+
+def primal_dual_optimised(
+    x,  # initial guess for primal variable
+    v,  # initial guess for dual variable
+    lam,  # regulariser strength
+    psiH,  # linear operator in dual domain
+    psi,  # adjoint of psi
+    L,  # spectral norm of Hessian
+    prox,  # prox of regulariser
+    l1weight,
+    reweighter,
+    grad,  # gradient of smooth term
+    nu=1.0,  # spectral norm of psi
+    sigma=None,  # step size of dual update
+    mask=None,  # regions where mask is False will be masked
+    tol=1e-5,
+    maxit=1000,
+    positivity=1,
+    report_freq=10,
+    gamma=1.0,
+    verbosity=1,
+    maxreweight=20,
+):  # max successive reweights before convergence
     # initialise
     xp = x.copy()
     vp = v.copy()
@@ -142,11 +149,10 @@ def primal_dual_optimised(
         psi(xp, v)
         tpsi += time() - ti
         ti = time()
-        dual_update_numba(vp, v, lam,
-                          sigma=sigma, weight=l1weight)
+        dual_update_numba(vp, v, lam, sigma=sigma, weight=l1weight)
         tupdate += time() - ti
         ti = time()
-        ne.evaluate('2.0 * v - vp', out=vp)  #, casting='same_kind')
+        ne.evaluate("2.0 * v - vp", out=vp)  # , casting='same_kind')
         teval1 += time() - ti
         ti = time()
         psiH(vp, xout)
@@ -155,14 +161,14 @@ def primal_dual_optimised(
         xout += grad(xp)
         tgrad += time() - ti
         ti = time()
-        ne.evaluate('xp - tau * xout', out=x)  #, casting='same_kind')
+        ne.evaluate("xp - tau * xout", out=x)  # , casting='same_kind')
         teval2 += time() - ti
 
         ti = time()
         if positivity == 1:
             x[x < 0.0] = 0.0
         elif positivity == 2:
-            msk = np.any(x<=0, axis=0)
+            msk = np.any(x <= 0, axis=0)
             x[:, msk] = 0.0
         tpos += time() - ti
         # convergence check
@@ -171,14 +177,16 @@ def primal_dual_optimised(
             eps = norm_diff(x, xp)
             tnorm += time() - ti
         else:
-            import pdb; pdb.set_trace()
+            import pdb
+
+            pdb.set_trace()
             eps = 1.0
         if eps < tol:
             if reweighter is not None and numreweight < maxreweight:
                 # ti = time()
                 l1weight = reweighter(x)
                 # log.info("reweight = ", time() - ti)
-                if k-last_reweight_iter==1:
+                if k - last_reweight_iter == 1:
                     numreweight += 1
                 else:
                     numreweight = 0
@@ -195,7 +203,9 @@ def primal_dual_optimised(
         np.copyto(vp, v)
         tcopy += time() - ti
         if np.isnan(eps) or np.isinf(eps):
-            import pdb; pdb.set_trace()
+            import pdb
+
+            pdb.set_trace()
 
         if not k % report_freq and verbosity > 1:
             log.info(f"At iteration {k} eps = {eps:.3e}")
@@ -203,18 +213,18 @@ def primal_dual_optimised(
     ttot = time() - tii
     ttally = tpsi + tpsiH + tgrad + tupdate + teval1 + teval2 + tpos + tnorm
     if verbosity > 1:
-        log.info('Time taken per step')
-        log.info(f'psi = {tpsi/ttot}')
-        log.info(f'psiH = {tpsiH/ttot}')
-        log.info(f'grad = {tgrad/ttot}')
-        log.info(f'update = {tupdate/ttot}')
-        log.info(f'eval1 = {teval1/ttot}')
-        log.info(f'eval2 = {teval2/ttot}')
-        log.info(f'pos = {tpos/ttot}')
-        log.info(f'norm = {tnorm/ttot}')
-        log.info(f'tally = {ttally/ttot}')
+        log.info("Time taken per step")
+        log.info(f"psi = {tpsi / ttot}")
+        log.info(f"psiH = {tpsiH / ttot}")
+        log.info(f"grad = {tgrad / ttot}")
+        log.info(f"update = {tupdate / ttot}")
+        log.info(f"eval1 = {teval1 / ttot}")
+        log.info(f"eval2 = {teval2 / ttot}")
+        log.info(f"pos = {tpos / ttot}")
+        log.info(f"norm = {tnorm / ttot}")
+        log.info(f"tally = {ttally / ttot}")
 
-    if k == maxit-1:
+    if k == maxit - 1:
         if verbosity:
             log.info(f"Max iters reached. eps = {eps:.3e}")
     else:
@@ -223,27 +233,30 @@ def primal_dual_optimised(
 
     return x, v
 
+
 from distributed import as_completed
 
+
 def primal_dual_dist(
-            actors,
-            lam,  # strength of regulariser
-            L,    # spectral norm of Hessian
-            l1weight,
-            rmsfactor,
-            rms_comps,
-            alpha,
-            nu=1.0,  # spectral norm of psi
-            sigma=None,  # step size of dual update
-            mask=None,  # regions where mask is False will be masked
-            tol=1e-5,
-            maxit=1000,
-            positivity=1,
-            report_freq=10,
-            gamma=1.0,
-            verbosity=1,
-            maxreweight=50):
-    '''
+    actors,
+    lam,  # strength of regulariser
+    L,  # spectral norm of Hessian
+    l1weight,
+    rmsfactor,
+    rms_comps,
+    alpha,
+    nu=1.0,  # spectral norm of psi
+    sigma=None,  # step size of dual update
+    mask=None,  # regions where mask is False will be masked
+    tol=1e-5,
+    maxit=1000,
+    positivity=1,
+    report_freq=10,
+    gamma=1.0,
+    verbosity=1,
+    maxreweight=50,
+):
+    """
     Distributed primal dual algorithm.
     Distribution is over datasets in ddsf.
 
@@ -254,7 +267,7 @@ def primal_dual_dist(
     L           - spectral norm of hessian approximation
     l1weight    - array of L1 weights
     reweighter  - function to compute L1 reweights
-    '''
+    """
 
     # this seems to give a good trade-off between
     # primal and dual problems
@@ -267,8 +280,8 @@ def primal_dual_dist(
     # we need to do this upfront only at the outset
     futures = list(map(lambda a: a.init_pd_params(L, nu), actors))
     # we don't want to allocate at each iteration
-    eps_num = [1.0]*len(futures)
-    eps_den = [1.0]*len(futures)
+    eps_num = [1.0] * len(futures)
+    eps_den = [1.0] * len(futures)
     vtilde = np.zeros((len(actors), *l1weight.shape), dtype=l1weight.dtype)
     for fut in as_completed(futures):
         tmp, b = fut.result()
@@ -281,7 +294,7 @@ def primal_dual_dist(
         ti = time()
         get_ratio(vtilde, l1weight, sigma, lam, ratio)
         # get_ratio(np.array(vtilde), l1weight, sigma, lam, ratio)
-        log.info('ratio - ', time() - ti)
+        log.info("ratio - ", time() - ti)
 
         ti = time()
         # do on individual workers
@@ -293,27 +306,22 @@ def primal_dual_dist(
             eps_den[b] = epsd
 
         # results = list(map(lambda f: f.result(), futures))
-        log.info('update - ', time() - ti)
+        log.info("update - ", time() - ti)
 
         # vtilde = [r[0] for r in results]
         # eps_num = [r[1] for r in results]
         # eps_den = [r[2] for r in results]
-        eps = np.sqrt(np.sum(eps_num)/np.sum(eps_den))
+        eps = np.sqrt(np.sum(eps_num) / np.sum(eps_den))
 
         if np.isnan(eps):
-            log.error_and_raise("eps is nan",
-                                ValueError)
-
+            log.error_and_raise("eps is nan", ValueError)
 
         if not k % report_freq and verbosity > 1:
             log.info(f"At iteration {k} eps = {eps:.3e}")
 
         if eps < tol:
             if do_reweight and numreweight < maxreweight:
-                l1weight = l1reweight_func(actors,
-                                           rmsfactor,
-                                           rms_comps=rms_comps,
-                                           alpha=alpha)
+                l1weight = l1reweight_func(actors, rmsfactor, rms_comps=rms_comps, alpha=alpha)
                 numreweight += 1
                 log.info(f"Reweighting iter {numreweight}")
             else:
@@ -321,10 +329,10 @@ def primal_dual_dist(
                     log.info("Maximum reweighting steps reached")
                 break
 
-    if k >= maxit-1:
-        log.info(f'Maximum iterations reached. eps={eps:.3e}')
+    if k >= maxit - 1:
+        log.info(f"Maximum iterations reached. eps={eps:.3e}")
     else:
-        log.info(f'Success converged after {k} iterations')
+        log.info(f"Success converged after {k} iterations")
 
     return
 
@@ -339,13 +347,12 @@ def get_ratio(vtilde, l1weight, sigma, lam, ratio):
             for j in range(nxmax):
                 vtildebij = vtildebi[:, j]
                 weightbij = weightbi[j]
-                absvbisum = np.abs(np.sum(vtildebij)/sigma)  # sum over band axis
-                softvbisum = absvbisum - lam*weightbij/sigma
+                absvbisum = np.abs(np.sum(vtildebij) / sigma)  # sum over band axis
+                softvbisum = absvbisum - lam * weightbij / sigma
                 if absvbisum > 0 and softvbisum > 0:
-                    ratio[b, i, j] = softvbisum/absvbisum
+                    ratio[b, i, j] = softvbisum / absvbisum
                 else:
                     ratio[b, i, j] = 0.0
-
 
 
 primal_dual.__doc__ = r"""

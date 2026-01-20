@@ -1,8 +1,6 @@
 """Lightweight CLI for pfb-imaging."""
 
 import typer
-from typing import ParamSpec, TypeVar, Callable
-from functools import wraps
 
 # Main app
 app = typer.Typer(
@@ -13,32 +11,40 @@ app = typer.Typer(
 
 # Import and register commands
 from pfb_imaging.cli.degrid import degrid  # noqa: E402
-app.command(name='degrid')(degrid)
+
+app.command(name="degrid")(degrid)
 
 from pfb_imaging.cli.fluxtractor import fluxtractor  # noqa: E402
-app.command(name='fluxtractor')(fluxtractor)
+
+app.command(name="fluxtractor")(fluxtractor)
 
 from pfb_imaging.cli.grid import grid  # noqa: E402
-app.command(name='grid')(grid)
+
+app.command(name="grid")(grid)
 
 from pfb_imaging.cli.hci import hci  # noqa: E402
-app.command(name='hci')(hci)
+
+app.command(name="hci")(hci)
 
 from pfb_imaging.cli.init import init  # noqa: E402
-app.command(name='init')(init)
+
+app.command(name="init")(init)
 
 from pfb_imaging.cli.kclean import kclean  # noqa: E402
-app.command(name='kclean')(kclean)
+
+app.command(name="kclean")(kclean)
 
 from pfb_imaging.cli.model2comps import model2comps  # noqa: E402
-app.command(name='model2comps')(model2comps)
+
+app.command(name="model2comps")(model2comps)
 
 from pfb_imaging.cli.restore import restore  # noqa: E402
+
 app.command(name="restore")(restore)
 
 from pfb_imaging.cli.sara import sara  # noqa: E402
-app.command(name='sara')(sara)
 
+app.command(name="sara")(sara)
 
 
 __all__ = ["app"]

@@ -1,66 +1,60 @@
 import numpy as np
-from scipy.interpolate import RegularGridInterpolator as RGI
-from katbeam import JimBeam
+from africanus.rime import parallactic_angles
 from africanus.rime.fast_beam_cubes import beam_cube_dde
-from africanus.rime import parallactic_angles, feed_rotation
-from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
-from scipy.ndimage import rotate
-from pfb_imaging.utils.fits import set_wcs
 from astropy.wcs import WCS
+from katbeam import JimBeam
 from reproject import reproject_interp
+from scipy.interpolate import RegularGridInterpolator
 
-def interp_beam(freq, nx, ny, cell_deg, btype,
-                utime=None, ant_pos=None, phase_dir=None):
-    '''
+from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
+
+
+def interp_beam(freq, nx, ny, cell_deg, btype, utime=None, ant_pos=None, phase_dir=None):
+    """
     A function that returns an object array containing a function
     returning beam values given (l,m) coordinates at a single frequency.
     Frequency mapped to imaging band extenally. Result is meant to be
     passed into eval_beam below.
-    '''
+    """
     if isinstance(freq, np.ndarray):
         assert freq.size == 1, "Only single frequency interpolation currently supported"
         freq = freq[0]
     if btype is None:
-        l = (-(nx//2) + np.arange(nx)) * cell_deg
-        m = (-(ny//2) + np.arange(ny)) * cell_deg
-        return np.ones((nx, ny), dtype=float), l, m
-    elif btype.endswith('.npz'):
+        l_coord = (-(nx // 2) + np.arange(nx)) * cell_deg
+        m_coord = (-(ny // 2) + np.arange(ny)) * cell_deg
+        return np.ones((nx, ny), dtype=float), l_coord, m_coord
+    elif btype.endswith(".npz"):
         # these are expected to be in the format given here
         # https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
         dct = np.load(btype)
-        beam = dct['abeam']
-        l = np.deg2rad(dct['ldeg'])
-        m = np.deg2rad(dct['mdeg'])
-        ll, mm = np.meshgrid(l, m, indexing='ij')
-        bfreqs = dct['freq']
-        beam_amp = (beam[0, :, :, :] * beam[0, :, :, :].conj() +
-                    beam[-1, :, :, :] * beam[-1, :, :, :].conj())/2.0
-        beam_amp = np.transpose(beam_amp, (1,2,0))[:, :, :, None, None].real
+        beam = dct["abeam"]
+        l_coord = np.deg2rad(dct["ldeg"])
+        m_coord = np.deg2rad(dct["mdeg"])
+        ll, mm = np.meshgrid(l_coord, m_coord, indexing="ij")
+        bfreqs = dct["freq"]
+        beam_amp = (beam[0, :, :, :] * beam[0, :, :, :].conj() + beam[-1, :, :, :] * beam[-1, :, :, :].conj()) / 2.0
+        beam_amp = np.transpose(beam_amp, (1, 2, 0))[:, :, :, None, None].real
     else:
         btype = btype.lower()
-        btype = btype.replace('-', '_')
-        l = (-(nx//2) + np.arange(nx)) * cell_deg
-        m = (-(ny//2) + np.arange(ny)) * cell_deg
-        ll, mm = np.meshgrid(l, m, indexing='ij')
+        btype = btype.replace("-", "_")
+        l_coord = (-(nx // 2) + np.arange(nx)) * cell_deg
+        m_coord = (-(ny // 2) + np.arange(ny)) * cell_deg
+        ll, mm = np.meshgrid(l_coord, m_coord, indexing="ij")
         if btype in ["kbl", "kb_l", "katbeam_l"]:
             # katbeam L band
-            beam_amp = JimBeam('MKAT-AA-L-JIM-2020').I(ll.flatten(),
-                                                       mm.flatten(),
-                                                       freqMHz=freq/1e6)
+            beam_amp = JimBeam("MKAT-AA-L-JIM-2020").I(ll.flatten(), mm.flatten(), freqMHz=freq / 1e6)
         elif btype in ["kbuhf", "kb_uhf", "katbeam_uhf"]:
             # katbeam L band
-            beam_amp = JimBeam('MKAT-AA-UHF-JIM-2020').I(ll.flatten(),
-                                                       mm.flatten(),
-                                                       freqMHz=freq/1e6)
+            beam_amp = JimBeam("MKAT-AA-UHF-JIM-2020").I(ll.flatten(), mm.flatten(), freqMHz=freq / 1e6)
         else:
             raise ValueError(f"Unknown beam model {btype}")
         beam_amp = beam_amp.reshape(nx, ny)[:, :, None, None, None]
         bfreqs = np.array((freq,))
 
     if utime is None:
-        return beam_amp.squeeze(), l, m
+        return beam_amp.squeeze(), l_coord, m_coord
 
-    parangles = parallactic_angles(utime, ant_pos, phase_dir, backend='astropy')
+    parangles = parallactic_angles(utime, ant_pos, phase_dir, backend="astropy")
     # mean over antanna nant -> 1
     parangles = np.mean(parangles, axis=1, keepdims=True)
     nant = 1
@@ -69,14 +63,13 @@ def interp_beam(freq, nx, ny, cell_deg, btype,
     ntimes = utime.size
     ant_scale = np.ones((nant, nband, 2), dtype=np.float64)
     point_errs = np.zeros((ntimes, nant, nband, 2), dtype=np.float64)
-    beam_extents = np.array([[l.min(), l.max()], [m.min(), m.max()]])
+    beam_extents = np.array([[l_coord.min(), l_coord.max()], [m_coord.min(), m_coord.max()]])
     lm = np.vstack((ll.flatten(), mm.flatten())).T
-    beam_image = beam_cube_dde(np.ascontiguousarray(beam_amp),
-                            beam_extents, bfreqs,
-                            lm, parangles, point_errs,
-                            ant_scale, np.array((freq,))).squeeze()
+    beam_image = beam_cube_dde(
+        np.ascontiguousarray(beam_amp), beam_extents, bfreqs, lm, parangles, point_errs, ant_scale, np.array((freq,))
+    ).squeeze()
 
-    return beam_image.squeeze(), l, m
+    return beam_image.squeeze(), l_coord, m_coord
 
 
 def eval_beam(beam_image, l_in, m_in, l_out, m_out):
@@ -84,28 +77,32 @@ def eval_beam(beam_image, l_in, m_in, l_out, m_out):
         ll = l_out
         mm = m_out
     elif l_out.ndim == 1:
-        ll, mm = np.meshgrid(l_out, m_out, indexing='ij')
+        ll, mm = np.meshgrid(l_out, m_out, indexing="ij")
     else:
-        msg = 'Only 1 or 2D coordinates supported for beam evaluation'
+        msg = "Only 1 or 2D coordinates supported for beam evaluation"
         raise ValueError(msg)
 
     if (beam_image == 1.0).all():
         return np.ones_like(ll)
     else:  # this gets expensive
-        beamo = RGI((l_in, m_in), beam_image,
-                    bounds_error=False, method='linear', fill_value=1.0)
+        beamo = RegularGridInterpolator((l_in, m_in),
+                                        beam_image,
+                                        bounds_error=False,
+                                        method="linear",
+                                        fill_value=1.0)
         return beamo((ll, mm))
 
-def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
-                              cell_deg_in, cell_deg_out, nxo, nyo,
-                              poltype, product, weight=None, nthreads=1):
-    '''
+
+def reproject_and_interp_beam(
+    beam, time, antpos, radec0, radecf, cell_deg_in, cell_deg_out, nxo, nyo, poltype, product, weight=None, nthreads=1
+):
+    """
     beam    - (2, 2, nx, ny)
     time    - nrow
     antpos  - (nant, 3)
     radec0  - original pointing direction
     radecf  - direction to project to
-    '''
+    """
     utime = np.unique(time)
     ntime = utime.size
     # parangles = parallactic_angles(utime, antpos, np.array(radec0))
@@ -136,41 +133,43 @@ def reproject_and_interp_beam(beam, time, antpos, radec0, radecf,
 
     # Mueller to Stokes
     beamo = mueller_to_stokes(beamo, poltype=poltype)
-    
+
     # select required products
     i = ()
-    if 'I' in product:
+    if "I" in product:
         i += (0,)
-    if 'Q' in product:
+    if "Q" in product:
         i += (1,)
-    if 'U' in product:
+    if "U" in product:
         i += (2,)
-    if 'V' in product:
+    if "V" in product:
         i += (3,)
     beamo = beamo[i, ...]
-    
+
     # reproject onto target field
     wcs_ref = WCS(naxis=2)
-    wcs_ref.wcs.ctype = ['RA---SIN', 'DEC--SIN']
+    wcs_ref.wcs.ctype = ["RA---SIN", "DEC--SIN"]
     wcs_ref.wcs.cdelt = np.array((cell_deg_in, cell_deg_in))
-    wcs_ref.wcs.cunit = ['deg', 'deg']
-    wcs_ref.wcs.crval = np.array((radec0[0]*180.0/np.pi, radec0[1]*180.0/np.pi))
-    wcs_ref.wcs.crpix = [1 + nxi//2, 1 + nyi//2]
+    wcs_ref.wcs.cunit = ["deg", "deg"]
+    wcs_ref.wcs.crval = np.array((radec0[0] * 180.0 / np.pi, radec0[1] * 180.0 / np.pi))
+    wcs_ref.wcs.crpix = [1 + nxi // 2, 1 + nyi // 2]
     wcs_ref.array_shape = [nxi, nyi]
 
     # header for target field
     wcs_target = WCS(naxis=2)
-    wcs_target.wcs.ctype = ['RA---SIN', 'DEC--SIN']
+    wcs_target.wcs.ctype = ["RA---SIN", "DEC--SIN"]
     wcs_target.wcs.cdelt = np.array((cell_deg_out, cell_deg_out))
-    wcs_target.wcs.cunit = ['deg', 'deg']
-    wcs_target.wcs.crval = np.array((radecf[0]*180.0/np.pi, radecf[1]*180.0/np.pi))
-    wcs_target.wcs.crpix = [nxo//2, nyo//2]
+    wcs_target.wcs.cunit = ["deg", "deg"]
+    wcs_target.wcs.crval = np.array((radecf[0] * 180.0 / np.pi, radecf[1] * 180.0 / np.pi))
+    wcs_target.wcs.crpix = [nxo // 2, nyo // 2]
     wcs_target.array_shape = [nxo, nyo]
 
     pbeam = np.zeros((len(product), nxo, nyo), dtype=beamo.dtype)
     pmask = np.zeros((len(product), nxo, nyo), dtype=beamo.dtype)
     for i in range(len(product)):
-        pbeam[i], pmask[i] = reproject_interp((beamo[i], wcs_ref), wcs_target, shape_out=(nxo, nyo))  # , block_size='auto', parallel=nthreads
+        pbeam[i], pmask[i] = reproject_interp(
+            (beamo[i], wcs_ref), wcs_target, shape_out=(nxo, nyo)
+        )  # , block_size='auto', parallel=nthreads
 
     # set beam to zero where it is not defined
     pmask = pmask.astype(bool)

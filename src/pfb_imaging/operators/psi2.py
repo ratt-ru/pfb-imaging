@@ -1,8 +1,7 @@
-import concurrent.futures as cf
 import numpy as np
 import pywt
-from pfb_imaging.wavelets.wavelets_jsk import (get_buffer_size,
-                                       dwt2d, idwt2d)
+
+from pfb_imaging.wavelets.wavelets_jsk import dwt2d, get_buffer_size, idwt2d
 
 
 def dwt(x, buffer, dec_lo, dec_hi, nlevel, i):
@@ -24,16 +23,16 @@ class psi_band(object):
         self.nx = nx
         self.ny = ny
         self.nthreads = nthreads
-        self.dec_lo ={}
-        self.dec_hi ={}
-        self.rec_lo ={}
-        self.rec_hi ={}
+        self.dec_lo = {}
+        self.dec_hi = {}
+        self.rec_lo = {}
+        self.rec_hi = {}
         self.buffer_size = {}
         self.buffer = {}
         self.nmax = 0
         for wavelet in bases:
-            if wavelet=='self':
-                self.buffer_size[wavelet] = nx*ny
+            if wavelet == "self":
+                self.buffer_size[wavelet] = nx * ny
                 self.nmax = np.maximum(self.nmax, self.buffer_size[wavelet])
                 continue
             # Get the required filter banks from pywt.
@@ -43,17 +42,13 @@ class psi_band(object):
             self.rec_lo[wavelet] = np.array(wvlt.filter_bank[2])  # Low pass, recon.
             self.rec_hi[wavelet] = np.array(wvlt.filter_bank[3])  # Hi pass, recon.
 
-            self.buffer_size[wavelet] = get_buffer_size((nx, ny),
-                                                        self.dec_lo[wavelet].size,
-                                                        nlevel)
-            self.buffer[wavelet] = np.zeros(self.buffer_size[wavelet],
-                                            dtype=np.float64)
+            self.buffer_size[wavelet] = get_buffer_size((nx, ny), self.dec_lo[wavelet].size, nlevel)
+            self.buffer[wavelet] = np.zeros(self.buffer_size[wavelet], dtype=np.float64)
 
             self.nmax = np.maximum(self.nmax, self.buffer_size[wavelet])
 
-
     def dot(self, x):
-        '''
+        """
         signal to coeffs
 
         Input:
@@ -61,14 +56,13 @@ class psi_band(object):
 
         Output:
             alpha   - (nbasis, Nnmax) output coeffs
-        '''
-        alpha = np.zeros((self.nbasis, self.nmax),
-                         dtype=x.dtype)
+        """
+        alpha = np.zeros((self.nbasis, self.nmax), dtype=x.dtype)
 
         # comment below to eliminate the possibility of
         # wavelets/cf.futures being the culprit
         # run with bases=self only
-        alpha[0, 0:self.buffer_size[self.bases[0]]] = x.ravel()
+        alpha[0, 0 : self.buffer_size[self.bases[0]]] = x.ravel()
 
         # with cf.ThreadPoolExecutor(max_workers=self.nthreads) as executor:
         #     futures = []
@@ -93,7 +87,7 @@ class psi_band(object):
         return alpha
 
     def hdot(self, alpha):
-        '''
+        """
         coeffs to signal
 
         Input:
@@ -101,7 +95,7 @@ class psi_band(object):
 
         Output:
             x       - (nx, ny) output signal
-        '''
+        """
         nx = self.nx
         ny = self.ny
         x = np.zeros((nx, ny), dtype=alpha.dtype)
@@ -128,7 +122,6 @@ class psi_band(object):
         #                             self.nx,
         #                             self.ny,
         #                             i)
-
 
         #         futures.append(f)
 

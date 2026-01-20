@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import Annotated, NewType
 
 import typer
-
 from hip_cargo.utils.decorators import stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
@@ -52,7 +51,8 @@ def kclean(
     mop_flux: Annotated[
         bool,
         typer.Option(
-            help="Trigger PCG based flux mop if minor cycle stalls, the final threshold is reached or on the final iteration.",
+            help="Trigger PCG based flux mop if minor cycle stalls, the final threshold is reached "
+            "or on the final iteration.",
         ),
     ] = True,
     mop_gamma: Annotated[

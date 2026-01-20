@@ -27,6 +27,7 @@ from pfb_imaging.utils.naming import set_output_names, xds_from_url
 
 log = pfb_logging.get_logger("DEGRID")
 
+
 @pfb_logging.log_inputs(log)
 def degrid(
     ms: list[Path],
@@ -166,9 +167,9 @@ def degrid(
         antpos,
         poltype,
     ) = construct_mappings(ms, None, ipi=integrations_per_image, cpi=cpi, freq_min=freq_min, freq_max=freq_max)
-    #    FIELD_IDs=opts.fields,
-    #    DDIDs=opts.ddids,
-    #    SCANs=opts.scans)
+    #    field_ids=opts.fields,
+    #    ddids=opts.ddids,
+    #    scans=opts.scans)
 
     mds = xr.open_zarr(mds)
     foo = client.scatter(mds, broadcast=True)

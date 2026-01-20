@@ -1,9 +1,7 @@
 from pathlib import Path
-from typing import Annotated, NewType
-from typing import Literal
+from typing import Annotated, Literal, NewType
 
 import typer
-
 from hip_cargo.utils.decorators import stimela_cab, stimela_output
 
 File = NewType("File", Path)
@@ -53,8 +51,8 @@ def restore(
     outputs: Annotated[
         str,
         typer.Option(
-            help="Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty, (f)ft_residuals (amplitude and phase will be produced). "
-            "Use captitals to produce corresponding cubes.",
+            help="Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty, (f)ft_residuals "
+            "(amplitude and phase will be produced). Use captitals to produce corresponding cubes.",
         ),
     ] = "mMrRiI",
     overwrite: Annotated[
@@ -66,12 +64,11 @@ def restore(
     gausspar: Annotated[
         str | None,
         typer.Option(
-            help="Gaussian parameters (e-major, e-minor, position-angle) specifying the resolution to restore images to. "
-            "The major and minor axes need to be specified in units of arcseconds and the position-angle in degrees. "
-            "The default resolution is the native resolution in each imaging band. "
-            "This parameter can be used to homogenise the resolution of the cubes. "
-            "Set to (0,0,0) to use the resolution of the lowest band.. "
-            "Stimela dtype: List[float]",
+            help="Gaussian parameters (e-major, e-minor, position-angle) specifying the resolution "
+            "to restore images to. The major and minor axes need to be specified in units of arcseconds "
+            "and the position-angle in degrees. The default resolution is the native resolution in each "
+            "imaging band. This parameter can be used to homogenise the resolution of the cubes. "
+            "Set to (0,0,0) to use the resolution of the lowest band.. Stimela dtype: List[float]",
         ),
     ] = None,
     inflate_factor: Annotated[

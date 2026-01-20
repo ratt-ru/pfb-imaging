@@ -14,6 +14,7 @@ from pfb_imaging.utils.restoration import rrestore_image
 
 log = pfb_logging.get_logger("RESTORE")
 
+
 @pfb_logging.log_inputs(log)
 def restore(
     output_filename: str,
@@ -238,22 +239,22 @@ def restore(
     #               overwrite=overwrite)
 
     # if 'c' in outputs:
-    #     if GaussPar is None:
+    #     if gausspar is None:
     #         raise ValueError("Clean beam in output but no PSF in dds")
-    #     cpsf_mfs = Gaussian2D(xx, yy, GaussPar[0], normalise=False)
+    #     cpsf_mfs = gaussian2d(xx, yy, gausspar[0], normalise=False)
     #     save_fits(cpsf_mfs,
     #               f'{fits_oname}_{suffix}.cpsf_mfs.fits',
     #               hdr_mfs,
     #               overwrite=overwrite)
 
     # if 'C' in outputs:
-    #     if GaussPars is None:
+    #     if gausspars is None:
     #         raise ValueError("Clean beam in output but no PSF in dds")
     #     cpsf = np.zeros(residual.shape, dtype=output_type)
     #     for v in range(nband):
-    #         gpar = GaussPars[v]
+    #         gpar = gausspars[v]
     #         if not np.isnan(gpar).any():
-    #             cpsf[v] = Gaussian2D(xx, yy, gpar, normalise=False)
+    #             cpsf[v] = gaussian2d(xx, yy, gpar, normalise=False)
     #     save_fits(cpsf,
     #               f'{fits_oname}_{suffix}.cpsf.fits',
     #               hdr,
