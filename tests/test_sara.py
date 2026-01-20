@@ -158,7 +158,6 @@ def test_sara(ms_name):
         gamma=1.0,
         pd_tol=[1e-3],
         rmsfactor=1.0,
-        epsfactor=4.0,
         l1_reweight_from=5,
         bases="self,db1",
         nlevels=3,
@@ -185,7 +184,7 @@ def test_sara(ms_name):
         overwrite=True,
         robustness=robustness,
         do_wgridding=do_wgridding,
-        transfer_model_from=f"{outname}_main_model.mds",
+        transfer_model_from=f"{outname}_I_main_model.mds",
         suffix="subtract",
     )
 
@@ -200,7 +199,6 @@ def test_sara(ms_name):
         [str(test_dir / "test_ascii_1h60.0s.MS")],
         outname,
         mds=f"{outname}_I_main_model.mds",
-        dds=f"{outname}_I_main.dds",
         channels_per_image=1,
         nthreads=8,
         do_wgridding=do_wgridding,
@@ -232,7 +230,7 @@ def test_sara(ms_name):
         do_wgridding=do_wgridding,
     )
 
-    dds_name = f"{outname}_main.dds"
+    dds_name = f"{outname}_I_main.dds"
 
     dds2, _ = xds_from_url(dds_name)
 

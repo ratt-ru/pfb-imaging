@@ -19,7 +19,7 @@ from pfb_imaging.utils.naming import cache_opts, get_opts, set_output_names, xds
 
 log = pfb_logging.get_logger("GRID")
 
-
+@pfb_logging.log_inputs(log)
 def grid(
     output_filename: str,
     xds: str | None = None,
@@ -81,7 +81,7 @@ def grid(
             nthreads = nthreads // 2
             ncpu = ncpu // 2
     else:
-        ncpu = nthreads
+        ncpu = np.minimum(nthreads, psutil.cpu_count(logical=False))
 
     output_filename = output_filename
     fits_oname = f"{fits_output_folder}/{oname}"
@@ -104,6 +104,7 @@ def grid(
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
 
+    # need this for cache validation
     opts = {
         "output_filename": output_filename,
         "xds": xds,
@@ -141,8 +142,6 @@ def grid(
         "fits_mfs": fits_mfs,
         "fits_cubes": fits_cubes,
     }
-
-    pfb_logging.log_options_dict(log, opts)
 
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu)

@@ -27,7 +27,7 @@ from pfb_imaging.utils.naming import get_opts, set_output_names, xds_from_url
 
 log = pfb_logging.get_logger("SARA")
 
-
+@pfb_logging.log_inputs(log)
 def sara(
     output_filename: str,
     suffix: str = "main",
@@ -88,6 +88,8 @@ def sara(
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True) // 2
         ncpu = ncpu // 2
+    else:
+        ncpu = np.minimum(nthreads, psutil.cpu_count(logical=False))
 
     resize_thread_pool(nthreads)
     set_envs(nthreads, ncpu)
@@ -97,65 +99,11 @@ def sara(
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
 
-    opts = {
-        "output_filename": output_filename,
-        "suffix": suffix,
-        "bases": bases,
-        "nlevels": nlevels,
-        "l1_reweight_from": l1_reweight_from,
-        "hess_norm": hess_norm,
-        "hess_approx": hess_approx,
-        "rmsfactor": rmsfactor,
-        "eta": eta,
-        "gamma": gamma,
-        "alpha": alpha,
-        "nbasisf": nbasisf,
-        "positivity": positivity,
-        "niter": niter,
-        "nthreads": nthreads,
-        "tol": tol,
-        "diverge_count": diverge_count,
-        "skip_model": skip_model,
-        "rms_outside_model": rms_outside_model,
-        "init_factor": init_factor,
-        "verbosity": verbosity,
-        "epsilon": epsilon,
-        "do_wgridding": do_wgridding,
-        "double_accum": double_accum,
-        "pd_tol": pd_tol,
-        "pd_maxit": pd_maxit,
-        "pd_verbose": pd_verbose,
-        "pd_report_freq": pd_report_freq,
-        "pm_tol": pm_tol,
-        "pm_maxit": pm_maxit,
-        "pm_verbose": pm_verbose,
-        "pm_report_freq": pm_report_freq,
-        "cg_tol": cg_tol,
-        "cg_maxit": cg_maxit,
-        "cg_minit": cg_minit,
-        "cg_verbose": cg_verbose,
-        "cg_report_freq": cg_report_freq,
-        "backtrack": backtrack,
-        "log_directory": log_directory,
-        "product": product,
-        "fits_output_folder": fits_output_folder,
-        "fits_mfs": fits_mfs,
-        "fits_cubes": fits_cubes,
-    }
-
-    pfb_logging.log_options_dict(log, opts)
-
     basename = output_filename
     fits_oname = f"{fits_output_folder}/{oname}"
     dds_name = f"{basename}_{suffix}.dds"
 
     time_start = time.time()
-
-    # Implementation of SARA algorithm (previously in _sara function)
-    if fits_output_folder is not None:
-        fits_oname = fits_output_folder + "/" + basename.split("/")[-1]
-    else:
-        fits_oname = basename
 
     dds, dds_list = xds_from_url(dds_name)
 
@@ -165,9 +113,6 @@ def sara(
         )
 
     nx, ny = dds[0].x.size, dds[0].y.size
-
-    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
-    lastsize = ny_psf
     freq_out = []
     time_out = []
     for ds in dds:
@@ -181,8 +126,7 @@ def sara(
     nband = freq_out.size
 
     # drop_vars after access to avoid duplicates in memory
-    # and avoid unintentional side effects?
-    output_type = dds[0].DIRTY.dtype
+    # and avoid unintentional side effects
     if "RESIDUAL" in dds[0]:
         residual = np.stack([ds.RESIDUAL.values[0] for ds in dds], axis=0)
         dds = [ds.drop_vars("DIRTY") for ds in dds]
@@ -245,7 +189,6 @@ def sara(
     # image space hessian
     # pre-allocate arrays for doing FFT's
     real_type = "f8"
-    complex_type = "c16"
     precond = hess_psf(
         nx,
         ny,
@@ -305,7 +248,7 @@ def sara(
     # we need an array to put the components in for reweighting
     outvar = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=real_type)
 
-    dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=residual.dtype)
+    dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=real_type)
     if l1_reweight_from == 0:
         log.info("Initialising with L1 reweighted")
         if not update.any():
@@ -327,7 +270,7 @@ def sara(
         l1weight = reweighter(model)
         l1reweight_active = True
     else:
-        l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=residual.dtype)
+        l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=real_type)
         reweighter = None
         l1reweight_active = False
 
@@ -383,7 +326,7 @@ def sara(
         # write component model
         log.info(f"Writing model to {basename}_{suffix}_model.mds")
         try:
-            coeffs, Ix, Iy, expr, params, texpr, fexpr = fit_image_cube(
+            coeffs, x_index, y_index, expr, params, texpr, fexpr = fit_image_cube(
                 time_out,
                 freq_out[fsel],
                 model[None, fsel, :, :],
@@ -397,8 +340,8 @@ def sara(
                 "coefficients": (("par", "comps"), coeffs),
             }
             coords = {
-                "location_x": (("x",), Ix),
-                "location_y": (("y",), Iy),
+                "location_x": (("x",), x_index),
+                "location_y": (("y",), y_index),
                 # 'shape_x':,
                 "params": (("par",), params),  # already converted to list
                 "times": (("t",), time_out),  # to allow rendering to original grid
@@ -422,11 +365,6 @@ def sara(
                 "stokes": product,  # I,Q,U,V, IQ/IV, IQUV
                 "parametrisation": expr,  # already converted to str
             }
-            for key, val in opts.items():
-                if key == "pd_tol":
-                    mattrs[key] = pd_tolf
-                else:
-                    mattrs[key] = val
 
             coeff_dataset = xr.Dataset(data_vars=data_vars, coords=coords, attrs=mattrs)
             coeff_dataset.to_zarr(f"{basename}_{suffix}_model.mds", mode="w")
@@ -437,8 +375,8 @@ def sara(
                     time_out[0],
                     freq_out[b],
                     coeffs,
-                    Ix,
-                    Iy,
+                    x_index,
+                    y_index,
                     expr,
                     params,
                     texpr,

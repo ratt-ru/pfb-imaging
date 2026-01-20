@@ -27,7 +27,7 @@ from pfb_imaging.utils.naming import set_output_names, xds_from_url
 
 log = pfb_logging.get_logger("DEGRID")
 
-
+@pfb_logging.log_inputs(log)
 def degrid(
     ms: list[Path],
     output_filename: str,
@@ -45,7 +45,6 @@ def degrid(
     region_file: str | None = None,
     epsilon: float = 1e-7,
     do_wgridding: bool = True,
-    double_accum: bool = True,
     host_address: str | None = None,
     nworkers: int = 1,
     nthreads: int | None = None,
@@ -58,11 +57,10 @@ def degrid(
     If channels-per-image is provided, the model is evaluated from the mds.
     """
 
-    output_filename, fits_output_folder, log_directory, oname = set_output_names(
+    output_filename, _, log_directory, _ = set_output_names(
         output_filename,
         product,
-        "",  # no fits output for degrid worker
-        log_directory,
+        log_directory=log_directory,
     )
 
     if nthreads is None:
@@ -71,6 +69,7 @@ def degrid(
         # use half by default
         nthreads //= 2
         ncpu //= 2
+    resize_thread_pool(nthreads)
 
     msnames = []
     for ms_name in ms:
@@ -115,14 +114,10 @@ def degrid(
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
 
-    # pfb_logging.log_options_dict(log, opts)
-
     # we still need the collections interface for xds_to_table
-    client = set_client(nworkers, log, None, client_log_level=log_directory)
+    client = set_client(nworkers, log, host_address=host_address, client_log_level=log_directory)
 
     time_start = time.time()
-
-    resize_thread_pool(nthreads)
 
     client = get_client()
 
@@ -326,7 +321,7 @@ def degrid(
                 out_ds = ds.assign(**{column_name: (("row", "chan", "corr"), vis)})
                 out_data.append(out_ds)
 
-            writes.append(xds_to_table(out_data, ms, columns=columns, rechunk=True))
+            writes.append(xds_to_table(out_data, ms_name, columns=columns, rechunk=True))
 
     # optimize_graph can make things much worse
     log.info("Computing model visibilities")

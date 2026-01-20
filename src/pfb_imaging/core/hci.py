@@ -27,7 +27,7 @@ from pfb_imaging.utils.stokes2im import safe_stokes_image
 
 log = pfb_logging.get_logger("HCI")
 
-
+@pfb_logging.log_inputs(log)
 def hci(
     ms: list[Path],
     output_filename: str,
@@ -112,13 +112,15 @@ def hci(
         ncpu = psutil.cpu_count(logical=False)
         nthreads = nthreads // 2
         ncpu = ncpu // 2
+    else:
+        ncpu = np.minimum(psutil.cpu_count(logical=False), nthreads)
 
     remprod = product.upper().strip("IQUV")
     if len(remprod):
         log.error_and_raise(f"Product {remprod} not yet supported", NotImplementedError)
 
     msnames = []
-    for ms_name in ms:
+    for ms_name in map(str, ms):
         msstore = DaskMSStore(ms_name.rstrip("/"))
         mslist = msstore.fs.glob(ms_name.rstrip("/"))
         try:
@@ -129,7 +131,7 @@ def hci(
     ms = msnames
     if gain_table is not None:
         gainnames = []
-        for gt in gain_table:
+        for gt in map(str, gain_table):
             gainstore = DaskMSStore(gt.rstrip("/"))
             gtlist = gainstore.fs.glob(gt.rstrip("/"))
             try:
@@ -143,65 +145,6 @@ def hci(
     logname = f"{str(log_directory)}/hci_{timestamp}.log"
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
-
-    opts = {
-        "ms": ms,
-        "output_filename": output_filename,
-        "log_directory": log_directory,
-        "product": product,
-        "scans": scans,
-        "ddids": ddids,
-        "fields": fields,
-        "freq_range": freq_range,
-        "overwrite": overwrite,
-        "transfer_model_from": transfer_model_from,
-        "data_column": data_column,
-        "model_column": model_column,
-        "weight_column": weight_column,
-        "sigma_column": sigma_column,
-        "flag_column": flag_column,
-        "gain_table": gain_table,
-        "integrations_per_image": integrations_per_image,
-        "channels_per_image": channels_per_image,
-        "precision": precision,
-        "beam_model": beam_model,
-        "field_of_view": field_of_view,
-        "super_resolution_factor": super_resolution_factor,
-        "cell_size": cell_size,
-        "nx": nx,
-        "ny": ny,
-        "psf_relative_size": psf_relative_size,
-        "robustness": robustness,
-        "target": target,
-        "l2_reweight_dof": l2_reweight_dof,
-        "progressbar": progressbar,
-        "output_format": output_format,
-        "eta": eta,
-        "psf_out": psf_out,
-        "weight_grid_out": weight_grid_out,
-        "natural_grad": natural_grad,
-        "check_ants": check_ants,
-        "inject_transients": inject_transients,
-        "filter_counts_level": filter_counts_level,
-        "min_padding": min_padding,
-        "phase_dir": phase_dir,
-        "stack": stack,
-        "epsilon": epsilon,
-        "do_wgridding": do_wgridding,
-        "double_accum": double_accum,
-        "host_address": host_address,
-        "nworkers": nworkers,
-        "nthreads": nthreads,
-        "log_level": log_level,
-        "cg_tol": cg_tol,
-        "cg_maxit": cg_maxit,
-        "cg_minit": cg_minit,
-        "cg_verbose": cg_verbose,
-        "cg_report_freq": cg_report_freq,
-        "backtrack": backtrack,
-    }
-
-    pfb_logging.log_options_dict(log, opts)
 
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu)
@@ -294,11 +237,11 @@ def hci(
     # get the full (time, freq) domain
     all_times = []
     all_freqs = []
-    for ms in ms:
-        for idt in freqs[ms].keys():
-            freq = freqs[ms][idt]
+    for ms_name in ms:
+        for idt in freqs[ms_name].keys():
+            freq = freqs[ms_name][idt]
             all_freqs.extend(freq)
-            all_times.extend(utimes[ms][idt])
+            all_times.extend(utimes[ms_name][idt])
             mask = (freq <= freq_max) & (freq >= freq_min)
             max_freq = np.maximum(max_freq, freq[mask].max())
 
@@ -517,8 +460,8 @@ def hci(
 
                     subds = ds[{"row": row_index, "chan": freq_index}]
                     subds = subds.chunk({"row": -1, "chan": -1})
-                    if gains[ms][idt] is not None:
-                        subgds = gains[ms][idt][{"gain_time": time_index, "gain_freq": freq_index}]
+                    if gains[ms_name][idt] is not None:
+                        subgds = gains[ms_name][idt][{"gain_time": time_index, "gain_freq": freq_index}]
                         jones = subgds.gains.data
                     else:
                         jones = None
@@ -574,7 +517,7 @@ def hci(
                         l2_reweight_dof=l2_reweight_dof,
                     )
                     tasks.append(fut)
-                    channel_width[b0 + fi] = freqs[ms][idt][freq_index].max() - freqs[ms][idt][freq_index].min()
+                    channel_width[b0 + fi] = freqs[ms_name][idt][freq_index].max() - freqs[ms_name][idt][freq_index].min()
 
     nds = len(tasks)
     ncomplete = 0

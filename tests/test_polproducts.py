@@ -14,7 +14,7 @@ from ducc0.wgridder.experimental import dirty2vis
 from numpy.testing import assert_allclose
 from xarray import Dataset
 
-from pfb_imaging.core.grid import init as grid_core
+from pfb_imaging.core.grid import grid as grid_core
 from pfb_imaging.core.init import init as init_core
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.utils.misc import chunkify_rows, kron_matvec

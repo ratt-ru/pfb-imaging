@@ -300,6 +300,8 @@ def dds2fits(dsl, column, outname, norm_wsum=True,
             
             if 'PSFPARSN' in dsb:
                 beams_hdu = create_beams_table(dsb.PSFPARSN, cell2deg=cell_deg)
+            else:
+                beams_hdu = None
             save_fits(cube, name, hdr, overwrite=True,
                       dtype=otype, beams_hdu=beams_hdu)
 

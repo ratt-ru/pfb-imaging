@@ -95,11 +95,6 @@ cabs:
         default: true
         info:
           Perform w-correction via improved w-stacking
-      double-accum:
-        dtype: bool
-        default: true
-        info:
-          Accumulate onto grid using double precision. Only has an affect when using single precision.
       host-address:
         dtype: str
         abbreviation: ha

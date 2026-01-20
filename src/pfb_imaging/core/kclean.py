@@ -1,6 +1,4 @@
-# flake8: noqa
 import time
-from functools import partial
 
 import numpy as np
 import psutil
@@ -21,7 +19,7 @@ from pfb_imaging.utils.naming import get_opts, set_output_names, xds_from_url
 
 log = pfb_logging.get_logger("KCLEAN")
 
-
+@pfb_logging.log_inputs(log)
 def kclean(
     output_filename: str,
     suffix: str = "main",
@@ -73,48 +71,12 @@ def kclean(
         ncpu = ncpu // 2
 
     resize_thread_pool(nthreads)
+    set_num_threads(nthreads)
     set_envs(nthreads, ncpu)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/kclean_{timestamp}.log"
     pfb_logging.log_to_file(logname)
-
-    opts = {
-        "output_filename": output_filename,
-        "suffix": suffix,
-        "mask": mask,
-        "dirosion": dirosion,
-        "mop_flux": mop_flux,
-        "mop_gamma": mop_gamma,
-        "niter": niter,
-        "nthreads": nthreads,
-        "threshold": threshold,
-        "rmsfactor": rmsfactor,
-        "eta": eta,
-        "gamma": gamma,
-        "peak_factor": peak_factor,
-        "sub_peak_factor": sub_peak_factor,
-        "minor_maxit": minor_maxit,
-        "subminor_maxit": subminor_maxit,
-        "verbose": verbose,
-        "report_freq": report_freq,
-        "cg_tol": cg_tol,
-        "cg_maxit": cg_maxit,
-        "cg_minit": cg_minit,
-        "cg_verbose": cg_verbose,
-        "cg_report_freq": cg_report_freq,
-        "backtrack": backtrack,
-        "epsilon": epsilon,
-        "do_wgridding": do_wgridding,
-        "double_accum": double_accum,
-        "log_directory": log_directory,
-        "product": product,
-        "fits_output_folder": fits_output_folder,
-        "fits_mfs": fits_mfs,
-        "fits_cubes": fits_cubes,
-    }
-
-    pfb_logging.log_options_dict(log, opts)
 
     basename = f"{output_filename}"
     fits_oname = f"{fits_output_folder}/{oname}"
@@ -122,15 +84,12 @@ def kclean(
 
     time_start = time.time()
 
-    # Only support product='I' (full Stokes _fskclean is commented out)
+    # Only support product='I' at the moment
     if product != "I":
         log.error_and_raise(
-            "Only product='I' is currently supported. Full Stokes deconvolution (_fskclean) is not yet available.",
+            "Only product='I' is currently supported. Full Stokes deconvolution is not yet available.",
             NotImplementedError,
         )
-
-    # Implementation of kclean algorithm (previously in _kclean function)
-    set_num_threads(nthreads)
 
     if fits_output_folder is not None:
         fits_oname = fits_output_folder + "/" + basename.split("/")[-1]
@@ -145,8 +104,6 @@ def kclean(
         )
 
     nx, ny = dds[0].x.size, dds[0].y.size
-    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
-    lastsize = ny_psf
     freq_out = []
     time_out = []
     for ds in dds:
@@ -269,7 +226,7 @@ def kclean(
         # write component model
         log.info(f"Writing model at iter {k + 1} to {basename}_{suffix}_model.mds")
         try:
-            coeffs, Ix, Iy, expr, params, texpr, fexpr = fit_image_cube(
+            coeffs, x_index, y_index, expr, params, texpr, fexpr = fit_image_cube(
                 time_out,
                 freq_out[fsel],
                 model[None, fsel, :, :],
@@ -282,8 +239,8 @@ def kclean(
                 "coefficients": (("par", "comps"), coeffs),
             }
             coords = {
-                "location_x": (("x",), Ix),
-                "location_y": (("y",), Iy),
+                "location_x": (("x",), x_index),
+                "location_y": (("y",), y_index),
                 "params": (("par",), params),  # already converted to list
                 "times": (("t",), time_out),  # to allow rendering to original grid
                 "freqs": (("f",), freq_out),
@@ -315,7 +272,7 @@ def kclean(
         if fits_mfs:
             save_fits(np.mean(model[fsel], axis=0), fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs)
 
-        log.info(f"Computing residual")
+        log.info("Computing residual")
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
             resid, fut = compute_residual(
@@ -382,15 +339,14 @@ def kclean(
                 struct = ndimage.generate_binary_structure(2, dirosion)
                 mopmask = ndimage.binary_dilation(mopmask, structure=struct)
                 mopmask = ndimage.binary_erosion(mopmask, structure=struct)
-            x0 = np.zeros_like(x)
-            # x0[:, mopmask] = residual_mfs[mopmask]
+
             # TODO - applying mask as beam is wasteful
             mopmask = (mopmask.astype(residual.dtype) * mask)[None, :, :]
             precond.set_beam(mopmask * beam)
             x = precond.idot(residual * beam, mode="psf", init_x0=False)
             model += mop_gamma * x
 
-            log.info(f"Computing residual")
+            log.info("Computing residual")
             for ds_name, ds in zip(dds_list, dds):
                 b = int(ds.bandid)
                 resid, _ = compute_residual(

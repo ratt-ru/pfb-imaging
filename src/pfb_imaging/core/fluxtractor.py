@@ -16,7 +16,7 @@ from pfb_imaging.utils.naming import set_output_names, xds_from_url
 
 log = pfb_logging.get_logger("FLUXTRACTOR")
 
-
+@pfb_logging.log_inputs(log)
 def fluxtractor(
     output_filename: str,
     suffix: str = "main",
@@ -77,8 +77,6 @@ def fluxtractor(
     logname = f"{str(log_directory)}/fluxtractor_{timestamp}.log"
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
-
-    # pfb_logging.log_options_dict(log, opts)
 
     fits_oname = f"{fits_output_folder}/{oname}"
     dds_name = f"{output_filename}_{suffix}.dds"

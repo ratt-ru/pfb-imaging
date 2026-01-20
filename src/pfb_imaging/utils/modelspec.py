@@ -28,7 +28,7 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
 
     returns:
     coeffs  - fitted coefficients
-    Ix, Iy  - pixel locations of non-zero pixels in the image
+    x_index, y_index  - pixel locations of non-zero pixels in the image
     expr    - a string representing the symbolic expression describing the fit
     params  - tuple of str, parameters to pass into function (excluding t and f)
     tfunc   - function which scales the time domain appropriately for method
@@ -54,11 +54,11 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
         assert nbasisf <= nband
 
     mask = np.any(image, axis=(0,1))  # over t and f axes
-    Ix, Iy = np.where(mask)
-    ncomps = Ix.size
+    x_index, y_index = np.where(mask)
+    ncomps = x_index.size
 
     # components excluding zeros
-    beta = image[:, :, Ix, Iy].reshape(ntime*nband, ncomps)
+    beta = image[:, :, x_index, y_index].reshape(ntime*nband, ncomps)
     if wgt is not None:
         wgt = wgt.reshape(ntime*nband, 1)
     else:
@@ -136,7 +136,7 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None,
         hess_coeffs += sigmasq*np.eye(hess_coeffs.shape[0])
     coeffs = np.linalg.solve(hess_coeffs, dirty_coeffs)
 
-    return coeffs, Ix, Iy, str(expr), list(map(str,params)), str(tfunc),str(ffunc)
+    return coeffs, x_index, y_index, str(expr), list(map(str,params)), str(tfunc),str(ffunc)
 
 
 def fit_image_fscube(freq, image,
@@ -159,7 +159,7 @@ def fit_image_fscube(freq, image,
 
     returns:
     coeffs  - (ncorr, nbasisf, ncomps) fitted coefficients
-    Ix, Iy  - (ncomps,) pixel locations of non-zero pixels in the image
+    x_index, y_index  - (ncomps,) pixel locations of non-zero pixels in the image
     expr    - a string representing the symbolic expression describing the fit
     params  - tuple of str, parameters to pass into function (excluding t and f)
     ffunc   - function which scales the frequency domain appropriately for method
@@ -176,11 +176,11 @@ def fit_image_fscube(freq, image,
 
     nband, ncorr, nx, ny = image.shape
     mask = np.any(image, axis=(0,1))  # over freq and corr axes
-    Ix, Iy = np.where(mask)
-    ncomps = Ix.size
+    x_index, y_index = np.where(mask)
+    ncomps = x_index.size
 
     # components excluding zeros
-    beta = image[:, :, Ix, Iy].reshape(nband, ncorr, ncomps)
+    beta = image[:, :, x_index, y_index].reshape(nband, ncorr, ncomps)
     if wgt is not None:
         wgt = wgt.reshape(nband, ncorr, 1)
     else:
@@ -225,10 +225,10 @@ def fit_image_fscube(freq, image,
         coeffs[c] = np.linalg.solve(hess_coeffs, dirty_coeffs)
 
 
-    return coeffs, Ix, Iy, str(expr), list(map(str,params)), str(ffunc)
+    return coeffs, x_index, y_index, str(expr), list(map(str,params)), str(ffunc)
 
 
-def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy,
+def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, x_index, y_index,
                         expr, paramf, texpr, fexpr):
     ntime = time.size
     nfreq = freq.size
@@ -244,12 +244,12 @@ def eval_coeffs_to_cube(time, freq, nx, ny, coeffs, Ix, Iy,
     ffunc = lambdify(params[1], fexpr)
     for i, tval in enumerate(time):
         for j, fval in enumerate(freq):
-            image[i, j, Ix, Iy] = modelf(tfunc(tval), ffunc(fval), *coeffs)
+            image[i, j, x_index, y_index] = modelf(tfunc(tval), ffunc(fval), *coeffs)
 
     return image
 
 
-def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
+def eval_coeffs_to_slice(time, freq, coeffs, x_index, y_index,
                          expr, paramf, texpr, fexpr,
                          nxi, nyi, cellxi, cellyi, x0i, y0i,
                          nxo, nyo, cellxo, cellyo, x0o, y0o):
@@ -263,7 +263,7 @@ def eval_coeffs_to_slice(time, freq, coeffs, Ix, Iy,
     tfunc = lambdify(params[0], texpr)
     fexpr = parse_expr(fexpr)
     ffunc = lambdify(params[1], fexpr)
-    image_in[Ix, Iy] = modelf(tfunc(time), ffunc(freq), *coeffs)
+    image_in[x_index, y_index] = modelf(tfunc(time), ffunc(freq), *coeffs)
 
     pix_area_in = cellxi * cellyi
     pix_area_out = cellxo * cellyo

@@ -1,4 +1,3 @@
-# flake8: noqa
 import time
 from pathlib import Path
 
@@ -18,7 +17,7 @@ from pfb_imaging.utils.stokes2vis import safe_stokes_vis
 
 log = pfb_logging.get_logger("INIT")
 
-
+@pfb_logging.log_inputs(log)
 def init(
     ms: list[Path],
     output_filename: str,
@@ -76,7 +75,7 @@ def init(
         try:
             assert len(mslist) > 0
             msnames.append(*list(map(msstore.fs.unstrip_protocol, mslist)))
-        except:
+        except Exception:
             log.error_and_raise(f"No MS at {ms_path}", ValueError)
     ms = msnames
 
@@ -88,7 +87,7 @@ def init(
             try:
                 assert len(gtlist) > 0
                 gainnames.append(*list(map(gainstore.fs.unstrip_protocol, gtlist)))
-            except Exception as e:
+            except Exception:
                 log.error_and_raise(f"No gain table at {gt}", ValueError)
         gain_table = gainnames
 
@@ -96,39 +95,6 @@ def init(
     logname = f"{str(log_directory)}/init_{timestamp}.log"
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
-
-    opts = {
-        "ms": ms,
-        "output_filename": output_filename,
-        "log_directory": log_directory,
-        "product": product,
-        "scans": scans,
-        "ddids": ddids,
-        "fields": fields,
-        "freq_range": freq_range,
-        "overwrite": overwrite,
-        "radec": radec,
-        "data_column": data_column,
-        "weight_column": weight_column,
-        "sigma_column": sigma_column,
-        "flag_column": flag_column,
-        "gain_table": gain_table,
-        "integrations_per_image": integrations_per_image,
-        "channels_per_image": channels_per_image,
-        "precision": precision,
-        "bda_decorr": bda_decorr,
-        "max_field_of_view": max_field_of_view,
-        "beam_model": beam_model,
-        "chan_average": chan_average,
-        "target": target,
-        "progressbar": progressbar,
-        "check_ants": check_ants,
-        "host_address": host_address,
-        "nworkers": nworkers,
-        "nthreads": nthreads,
-    }
-
-    pfb_logging.log_options_dict(log, opts)
 
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu)
@@ -158,7 +124,10 @@ def init(
     log.info(f"Data products will be stored in {xds_store.url}")
 
     if gain_table is not None:
-        tmpf = lambda x: "::".join(x.rsplit("/", 1))
+
+        def tmpf(x):
+            return "::".join(x.rsplit("/", 1))
+
         gain_names = list(map(tmpf, gain_table))
     else:
         gain_names = None
@@ -241,7 +210,7 @@ def init(
         if weight_column != "WEIGHT":
             schema[weight_column] = {"dims": ("chan", "corr")}
     else:
-        log.info(f"No weights provided, using unity weights")
+        log.info("No weights provided, using unity weights")
 
     # distinct freq groups
     sgroup = 0
@@ -302,19 +271,19 @@ def init(
 
             titr = enumerate(zip(time_mapping[ms_name][idt]["start_indices"], time_mapping[ms_name][idt]["counts"]))
             for ti, (tlow, tcounts) in titr:
-                It = slice(tlow, tlow + tcounts)
-                ridx = row_mapping[ms_name][idt]["start_indices"][It]
-                rcnts = row_mapping[ms_name][idt]["counts"][It]
+                t_index = slice(tlow, tlow + tcounts)
+                ridx = row_mapping[ms_name][idt]["start_indices"][t_index]
+                rcnts = row_mapping[ms_name][idt]["counts"][t_index]
                 # select all rows for output dataset
-                Irow = slice(ridx[0], ridx[-1] + rcnts[-1])
+                row_index = slice(ridx[0], ridx[-1] + rcnts[-1])
 
                 fitr = enumerate(zip(freq_mapping[ms_name][idt]["start_indices"], freq_mapping[ms_name][idt]["counts"]))
                 b0 = msddid2bid[ms_name][idt]
                 for fi, (flow, fcounts) in fitr:
-                    Inu = slice(flow, flow + fcounts)
-                    subds = ds[{"row": Irow, "chan": Inu}]
+                    nu_index = slice(flow, flow + fcounts)
+                    subds = ds[{"row": row_index, "chan": nu_index}]
                     if gains[ms_name][idt] is not None:
-                        subgds = gains[ms_name][idt][{"gain_time": It, "gain_freq": Inu}]
+                        subgds = gains[ms_name][idt][{"gain_time": t_index, "gain_freq": nu_index}]
                         jones = subgds.gains
                     else:
                         jones = None
@@ -325,9 +294,9 @@ def init(
                         operator=operator,
                         ds=subds,
                         jones=jones,
-                        freq=freqs[ms_name][idt][Inu],
-                        chan_width=chan_widths[ms_name][idt][Inu],
-                        utime=utimes[ms_name][idt][It],
+                        freq=freqs[ms_name][idt][nu_index],
+                        chan_width=chan_widths[ms_name][idt][nu_index],
+                        utime=utimes[ms_name][idt][t_index],
                         tbin_idx=ridx,
                         tbin_counts=rcnts,
                         chan_low=flow,

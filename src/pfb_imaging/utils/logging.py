@@ -17,6 +17,8 @@ from rich.traceback import install as install_rich_traceback
 from rich.table import Table, Column
 from rich.panel import Panel
 from rich.text import Text
+import inspect
+from functools import wraps
 
 rich_console = Console()
 
@@ -301,3 +303,21 @@ def log_options_dict(logger: PFBLogger, options: Dict[str, Any], title: str = "O
     str_output = Text.from_ansi(capture.get())
     rich_console.print(str_output.markup)  # Display in terminal.
     logger.debug(f"\n{str_output}")  # Print to log - will display twice if log level is DEBUG.
+
+
+def log_inputs(logger):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Get the function signature
+            sig = inspect.signature(func)
+            bound_args = sig.bind(*args, **kwargs)
+            bound_args.apply_defaults()
+            
+            # Convert to dict for logging
+            inputs_dict = dict(bound_args.arguments)
+            log_options_dict(logger, inputs_dict)
+            
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator

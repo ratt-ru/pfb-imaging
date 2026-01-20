@@ -14,7 +14,7 @@ from pfb_imaging.utils.restoration import rrestore_image
 
 log = pfb_logging.get_logger("RESTORE")
 
-
+@pfb_logging.log_inputs(log)
 def restore(
     output_filename: str,
     model_name: str = "MODEL",
@@ -39,34 +39,12 @@ def restore(
     """
     Create fits image cubes from data products (eg. restored images).
     """
-    # Create opts dict for backward compatibility and logging
-    opts = type(
-        "Opts",
-        (),
-        {
-            "output_filename": output_filename,
-            "model_name": model_name,
-            "residual_name": residual_name,
-            "suffix": suffix,
-            "outputs": outputs,
-            "overwrite": overwrite,
-            "gausspar": gausspar,
-            "inflate_factor": inflate_factor,
-            "drop_bands": drop_bands,
-            "host_address": host_address,
-            "nworkers": nworkers,
-            "nthreads": nthreads,
-            "direct_to_workers": direct_to_workers,
-            "log_level": log_level,
-            "log_directory": log_directory,
-            "product": product,
-            "fits_output_folder": fits_output_folder,
-            "fits_mfs": fits_mfs,
-            "fits_cubes": fits_cubes,
-        },
-    )()
-
-    opts, basedir, oname = set_output_names(opts)
+    output_filename, fits_output_folder, log_directory, oname = set_output_names(
+        output_filename,
+        product,
+        fits_output_folder,
+        log_directory,
+    )
 
     nthreads_total = psutil.cpu_count(logical=True)
     ncpu = psutil.cpu_count(logical=False)
@@ -81,8 +59,6 @@ def restore(
     logname = f"{log_directory}/restore_{timestamp}.log"
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
-
-    pfb_logging.log_options_dict(log, opts)
 
     # these are passed through to child Ray processes
     renv = {"env_vars": {}}

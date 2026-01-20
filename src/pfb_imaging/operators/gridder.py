@@ -269,8 +269,8 @@ def _comps2vis_impl(uvw,
         return vis
 
     comps = mds.coefficients.values
-    Ix = mds.location_x.values
-    Iy = mds.location_y.values
+    x_index = mds.location_x.values
+    y_index = mds.location_y.values
     cellx = mds.cell_rad_x
     celly = mds.cell_rad_x
     nx = mds.npix_x
@@ -296,7 +296,7 @@ def _comps2vis_impl(uvw,
             tout = tfunc(np.mean(utime[indt]))
             fout = ffunc(np.mean(freq[indf]))
             image = np.zeros((nx, ny), dtype=comps.dtype)
-            image[Ix, Iy] = modelf(tout, fout, *comps[:, :])  # too magical?
+            image[x_index, y_index] = modelf(tout, fout, *comps[:, :])  # too magical?
             if np.any(region_mask):
                 image = np.where(region_mask, image, 0.0)
                 for c in range(nstokes_out):

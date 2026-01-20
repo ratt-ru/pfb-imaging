@@ -448,7 +448,7 @@ def _spotless(**kw):
                   hdr_mfs)
 
         log.info(f"Writing model to {mds_store.url}")
-        coeffs, Ix, Iy, expr, params, texpr, fexpr = \
+        coeffs, x_index, y_index, expr, params, texpr, fexpr = \
             fit_image_cube(time_out, freq_out[fsel], model[None, fsel, :, :],
                             wgt=wsums[None, fsel],
                             method='Legendre')
@@ -457,8 +457,8 @@ def _spotless(**kw):
             'coefficients': (('par', 'comps'), coeffs),
         }
         coords = {
-            'location_x': (('x',), Ix),
-            'location_y': (('y',), Iy),
+            'location_x': (('x',), x_index),
+            'location_y': (('y',), y_index),
             'params': (('par',), params),  # already converted to list
             'times': (('t',), time_out),  # to allow rendering to original grid
             'freqs': (('f',), freq_out)
