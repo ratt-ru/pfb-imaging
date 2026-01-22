@@ -11,7 +11,7 @@ from scipy import ndimage
 from pfb_imaging import set_envs
 from pfb_imaging.deconv.clark import clark
 from pfb_imaging.operators.gridder import compute_residual
-from pfb_imaging.operators.hessian import hess_psf
+from pfb_imaging.operators.hessian import HessPSF
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import dds2fits, load_fits, save_fits, set_wcs
 from pfb_imaging.utils.modelspec import fit_image_cube
@@ -188,7 +188,7 @@ def kclean(
     else:
         threshold = threshold
 
-    precond = hess_psf(
+    precond = HessPSF(
         nx,
         ny,
         abspsf,

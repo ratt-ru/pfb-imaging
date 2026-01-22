@@ -2,12 +2,12 @@ import dask.array as da
 import numpy as np
 from ducc0.fft import r2c
 
-iFs = np.fft.ifftshift
-Fs = np.fft.fftshift
+ifftshift = np.fft.ifftshift
+fftshift = np.fft.fftshift
 
 
 def _fft2d_impl(x, nthreads):
-    return r2c(iFs(x, axes=(0, 1)), axes=(0, 1), nthreads=nthreads, forward=True, inorm=0)
+    return r2c(ifftshift(x, axes=(0, 1)), axes=(0, 1), nthreads=nthreads, forward=True, inorm=0)
 
 
 def _fft2d(x, nthreads):
@@ -36,7 +36,7 @@ def _fft_cube_impl(x, nthreads):
     nyp = x.shape[-1] // 2 + 1
     xhat = np.zeros((nb, nx, nyp), dtype=np.result_type(x, np.complex64))
     for b in range(nb):
-        xhat[b] = r2c(iFs(x[b], axes=(0, 1)), axes=(0, 1), nthreads=nthreads, forward=True, inorm=0)
+        xhat[b] = r2c(ifftshift(x[b], axes=(0, 1)), axes=(0, 1), nthreads=nthreads, forward=True, inorm=0)
     return xhat
 
 

@@ -1,5 +1,7 @@
 from functools import partial
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 from ducc0.fft import c2r, r2c
 from ducc0.misc import empty_noncritical
@@ -10,7 +12,7 @@ from pfb_imaging.opt.pcg import pcg
 from pfb_imaging.utils.misc import taperf
 
 
-def _hessian_slice(
+def hessian_slice(
     x,
     xout=None,
     uvw=None,
@@ -98,7 +100,7 @@ def _hessian_slice(
     return convim
 
 
-def _hessian_psf_slice(
+def hessian_psf_slice(
     x,  # input image, not overwritten
     xpad=None,  # preallocated array to store padded image
     xhat=None,  # preallocated array to store FTd image
@@ -246,7 +248,7 @@ def hess_direct_slice(
     return xout
 
 
-class hess_psf(object):
+class HessPSF(object):
     def __init__(
         self,
         nx,
@@ -406,7 +408,7 @@ class hess_psf(object):
         elif mode == "psf":
             for b in range(self.nband):
                 hess = partial(
-                    _hessian_psf_slice,
+                    hessian_psf_slice,
                     xpad=self.xpad,
                     xhat=self.xhat,
                     xout=self.xout[b],
@@ -432,11 +434,6 @@ class hess_psf(object):
             raise ValueError(f"Unknown mode {mode}")
 
         return self.xout.copy()
-
-
-##################### jax #####################################
-import jax
-import jax.numpy as jnp
 
 
 @partial(jax.jit, static_argnums=(0, 1, 2, 3, 4))

@@ -11,7 +11,7 @@ from jax.scipy.sparse.linalg import cg
 from scipy.constants import c as lightspeed
 
 from pfb_imaging.operators.gridder import wgridder_conventions
-from pfb_imaging.operators.hessian import _hessian_slice, hessian_slice_jax
+from pfb_imaging.operators.hessian import hessian_slice, hessian_slice_jax
 from pfb_imaging.operators.psf import psf_convolve_slice, psf_convolve_slice_jax
 from pfb_imaging.utils.misc import set_image_size
 from pfb_imaging.utils.stokes import stokes_to_corr
@@ -293,7 +293,7 @@ def test_hessian(center_offset, ms_name):
 
     psfhat = r2c(ifftshift(psf, axes=(0, 1)), axes=(0, 1), nthreads=8, forward=True, inorm=0)
 
-    res1 = _hessian_slice(
+    res1 = hessian_slice(
         x,
         uvw=uvw,
         weight=np.ones((nrow, nchan), dtype="f8"),

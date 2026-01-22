@@ -1,9 +1,3 @@
-"""
-Dask wrappers around the wgridder. These operators are per band
-because we are not guaranteed that each imaging band has the same
-number of rows after BDA.
-"""
-
 import concurrent.futures as cf
 from time import time
 
@@ -22,8 +16,8 @@ from pfb_imaging.utils.misc import fitcleanbeam
 from pfb_imaging.utils.naming import xds_from_list
 from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights
 
-iFs = np.fft.ifftshift
-Fs = np.fft.fftshift
+ifftshift = np.fft.ifftshift
+fftshift = np.fft.fftshift
 
 
 def wgridder_conventions(l0, m0):
@@ -469,7 +463,6 @@ def image_data_products(
     vis = ds.VIS.values
     wgt = ds.WEIGHT.values
     mask = ds.MASK.values
-    bandid = int(ds.bandid)
 
     _, nrow, nchan = vis.shape
 
@@ -660,7 +653,7 @@ def image_data_products(
             )
 
         # get FT of psf
-        psfhat = r2c(iFs(psf, axes=(1, 2)), axes=(1, 2), nthreads=nthreads, forward=True, inorm=0)
+        psfhat = r2c(ifftshift(psf, axes=(1, 2)), axes=(1, 2), nthreads=nthreads, forward=True, inorm=0)
 
         dso["PSF"] = (("corr", "x_psf", "y_psf"), psf)
         dso["PSFHAT"] = (("corr", "x_psf", "yo2"), psfhat)

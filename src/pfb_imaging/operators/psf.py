@@ -1,6 +1,7 @@
-from uuid import uuid4
+from functools import partial
 
-import dask.array as da
+import jax
+import jax.numpy as jnp
 from ducc0.fft import c2r, r2c
 
 
@@ -93,54 +94,6 @@ def psf_convolve_fscube(
     )
     xout[...] = xpad[:, :, 0:nx, 0:ny]
     return xout
-
-
-def psf_convolve_xds(x, xds, psfopts, wsum, eta, mask, compute=True, use_beam=True):
-    """
-    Image space Hessian with reduction over dataset
-    """
-    if not isinstance(x, da.Array):
-        x = da.from_array(x, chunks=(1, -1, -1), name=False)
-
-    if not isinstance(mask, da.Array):
-        mask = da.from_array(mask, chunks=(-1, -1), name=False)
-
-    assert mask.ndim == 2
-
-    nband, nx, ny = x.shape
-
-    convims = [da.zeros((nx, ny), chunks=(-1, -1), name="zeros-" + uuid4().hex) for _ in range(nband)]
-
-    for ds in xds:
-        psfhat = ds.PSFHAT.data
-        b = ds.bandid
-        if use_beam:
-            beam = ds.BEAM.data * mask
-        else:
-            # TODO - separate implementation without
-            # unnecessary beam application
-            beam = mask
-
-        convim = psf_convolve(x[b], psfhat, beam, psfopts)
-
-        convims[b] += convim
-
-    convim = da.stack(convims) / wsum
-
-    if eta:
-        convim += x * eta**2
-
-    if compute:
-        return convim.compute()
-    else:
-        return convim
-
-
-##################### jax #####################################
-from functools import partial
-
-import jax
-import jax.numpy as jnp
 
 
 @partial(jax.jit, static_argnums=(0, 1, 2, 3))

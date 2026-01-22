@@ -16,8 +16,8 @@ def create_dict(items):
 
 
 def psi_band_maker(nx, ny, bases, nlevel):
-    Nbasis = len(bases)
-    sqrtNbasis = np.sqrt(Nbasis)
+    nbasis = len(bases)
+    sqrtnbasis = np.sqrt(nbasis)
     dec_lo = {}
     dec_hi = {}
     rec_lo = {}
@@ -26,12 +26,12 @@ def psi_band_maker(nx, ny, bases, nlevel):
     sy = {}
     spx = {}
     spy = {}
-    Ntotx = {}
-    Ntoty = {}
+    ntotx = {}
+    ntoty = {}
     ix = {}
     iy = {}
-    Nxmax = 0
-    Nymax = 0
+    nxmax = 0
+    nymax = 0
     for wavelet in bases:
         if wavelet == "self":
             continue
@@ -46,48 +46,48 @@ def psi_band_maker(nx, ny, bases, nlevel):
             raise ValueError(f"The requested decomposition level {nlevel} is not possible")
 
         # bookeeping
-        N2Cx = {}
-        N2Cy = {}
-        Nx = nx
-        Ny = ny
-        Nxm = 0
-        Nym = 0
+        n2cx = {}
+        n2cy = {}
+        nx = nx
+        ny = ny
+        nxm = 0
+        nym = 0
         sx[wavelet] = typed.List()
         sy[wavelet] = typed.List()
         spx[wavelet] = typed.List()
         spy[wavelet] = typed.List()
-        F = int(wavelet[-1]) * 2  # filter length
+        filter_length = int(wavelet[-1]) * 2  # filter length
         for k in range(nlevel):
-            Cx = coeff_size(Nx, F)
-            Cy = coeff_size(Ny, F)
-            N2Cx[k] = (signal_size(Cx, F), Cx)
-            N2Cy[k] = (signal_size(Cy, F), Cy)
-            Nxm += Cx
-            Nym += Cy
-            sx[wavelet].append(Cx)
-            sy[wavelet].append(Cy)
-            Nx = Cx + Cx % 2
-            Ny = Cy + Cy % 2
-            spx[wavelet].append(signal_size(Cx, F))
-            spy[wavelet].append(signal_size(Cy, F))
-        Nxm += Cx  # last approx coeffs
-        Nym += Cy
-        Ntotx[wavelet] = Nxm
-        Ntoty[wavelet] = Nym
-        Nxmax = np.maximum(Nxmax, Nxm)
-        Nymax = np.maximum(Nymax, Nym)
+            cx = coeff_size(nx, filter_length)
+            cy = coeff_size(ny, filter_length)
+            n2cx[k] = (signal_size(cx, filter_length), cx)
+            n2cy[k] = (signal_size(cy, filter_length), cy)
+            nxm += cx
+            nym += cy
+            sx[wavelet].append(cx)
+            sy[wavelet].append(cy)
+            nx = cx + cx % 2
+            ny = cy + cy % 2
+            spx[wavelet].append(signal_size(cx, filter_length))
+            spy[wavelet].append(signal_size(cy, filter_length))
+        nxm += cx  # last approx coeffs
+        nym += cy
+        ntotx[wavelet] = nxm
+        ntoty[wavelet] = nym
+        nxmax = np.maximum(nxmax, nxm)
+        nymax = np.maximum(nymax, nym)
 
         ix[wavelet] = {}
         iy[wavelet] = {}
-        lowx = N2Cx[nlevel - 1][1]
-        lowy = N2Cy[nlevel - 1][1]
+        lowx = n2cx[nlevel - 1][1]
+        lowy = n2cy[nlevel - 1][1]
         ix[wavelet][nlevel - 1] = (lowx, 2 * lowx)
         iy[wavelet][nlevel - 1] = (lowy, 2 * lowy)
         lowx *= 2
         lowy *= 2
         for k in reversed(range(nlevel - 1)):
-            highx = N2Cx[k][1]
-            highy = N2Cy[k][1]
+            highx = n2cx[k][1]
+            highy = n2cy[k][1]
             ix[wavelet][k] = (lowx, lowx + highx)
             iy[wavelet][k] = (lowy, lowy + highy)
             lowx += highx
@@ -107,20 +107,20 @@ def psi_band_maker(nx, ny, bases, nlevel):
     sy = create_dict(tuple(sy.items()))
     spx = create_dict(tuple(spx.items()))
     spy = create_dict(tuple(spy.items()))
-    Ntotx = create_dict(tuple(Ntotx.items()))
-    Ntoty = create_dict(tuple(Ntoty.items()))
+    ntotx = create_dict(tuple(ntotx.items()))
+    ntoty = create_dict(tuple(ntoty.items()))
 
     # set up buffers
-    alpha = np.zeros((Nymax, Nxmax))  # avoid destroying coeff in
-    cbuff = np.zeros((Nxmax, Nymax))
-    cbuffT = np.zeros((Nymax, Nxmax))
+    alpha = np.zeros((nymax, nxmax))  # avoid destroying coeff in
+    cbuff = np.zeros((nxmax, nymax))
+    cbufft = np.zeros((nymax, nxmax))
     image = np.zeros((nx, ny))
 
-    return psi_band(
+    return PsiBand(
         alpha,
         image,
         cbuff,
-        cbuffT,
+        cbufft,
         ix,
         iy,
         sx,
@@ -131,12 +131,12 @@ def psi_band_maker(nx, ny, bases, nlevel):
         dec_hi,
         rec_lo,
         rec_hi,
-        Ntotx,
-        Ntoty,
-        Nxmax,
-        Nymax,
-        Nbasis,
-        sqrtNbasis,
+        ntotx,
+        ntoty,
+        nxmax,
+        nymax,
+        nbasis,
+        sqrtnbasis,
         typed.List(bases),
         nlevel,
         nx,
@@ -151,7 +151,7 @@ spec = OrderedDict()
 spec["alpha"] = numba.float64[:, :]
 spec["image"] = numba.float64[:, :]
 spec["cbuff"] = numba.float64[:, :]
-spec["cbuffT"] = numba.float64[:, :]
+spec["cbufft"] = numba.float64[:, :]
 spec["ix"] = types.DictType(types.unicode_type, types.DictType(*kv_ty2))
 spec["iy"] = types.DictType(types.unicode_type, types.DictType(*kv_ty2))
 spec["sx"] = types.DictType(*kv_ty)
@@ -162,26 +162,26 @@ spec["dec_lo"] = types.DictType(*kv_ty3)
 spec["dec_hi"] = types.DictType(*kv_ty3)
 spec["rec_lo"] = types.DictType(*kv_ty3)
 spec["rec_hi"] = types.DictType(*kv_ty3)
-spec["Ntotx"] = types.DictType(types.unicode_type, numba.int64)
-spec["Ntoty"] = types.DictType(types.unicode_type, numba.int64)
-spec["Nxmax"] = numba.int64
-spec["Nymax"] = numba.int64
-spec["Nbasis"] = numba.int64
-spec["sqrtNbasis"] = numba.float64
+spec["ntotx"] = types.DictType(types.unicode_type, numba.int64)
+spec["ntoty"] = types.DictType(types.unicode_type, numba.int64)
+spec["nxmax"] = numba.int64
+spec["nymax"] = numba.int64
+spec["nbasis"] = numba.int64
+spec["sqrtnbasis"] = numba.float64
 spec["bases"] = types.ListType(types.unicode_type)
-spec["Nlevel"] = numba.int64
-spec["Nx"] = numba.int64
-spec["Ny"] = numba.int64
+spec["nlevel"] = numba.int64
+spec["nx"] = numba.int64
+spec["ny"] = numba.int64
 
 
 @jitclass(spec)
-class psi_band(object):
+class PsiBand(object):
     def __init__(
         self,
         alpha,
         image,
         cbuff,
-        cbuffT,
+        cbufft,
         ix,
         iy,
         sx,
@@ -192,21 +192,21 @@ class psi_band(object):
         dec_hi,
         rec_lo,
         rec_hi,
-        Ntotx,
-        Ntoty,
-        Nxmax,
-        Nymax,
-        Nbasis,
-        sqrtNbasis,
+        ntotx,
+        ntoty,
+        nxmax,
+        nymax,
+        nbasis,
+        sqrtnbasis,
         bases,
-        Nlevel,
-        Nx,
-        Ny,
+        nlevel,
+        nx,
+        ny,
     ):
         self.alpha = alpha
         self.image = image
         self.cbuff = cbuff
-        self.cbuffT = cbuffT
+        self.cbufft = cbufft
         self.ix = ix
         self.iy = iy
         self.sx = sx
@@ -217,31 +217,31 @@ class psi_band(object):
         self.dec_hi = dec_hi
         self.rec_lo = rec_lo
         self.rec_hi = rec_hi
-        self.Ntotx = Ntotx
-        self.Ntoty = Ntoty
-        self.Nxmax = Nxmax
-        self.Nymax = Nymax
-        self.Nbasis = Nbasis
-        self.sqrtNbasis = sqrtNbasis
+        self.ntotx = ntotx
+        self.ntoty = ntoty
+        self.nxmax = nxmax
+        self.nymax = nymax
+        self.nbasis = nbasis
+        self.sqrtnbasis = sqrtnbasis
         self.bases = bases
-        self.Nlevel = Nlevel
-        self.Nx = Nx
-        self.Ny = Ny
+        self.nlevel = nlevel
+        self.nx = nx
+        self.ny = ny
 
     def dot(self, x, alphao):
         """
         signal to coeffs
 
         x       - (nx, ny) input signal
-        alphao  - (nbasis, Nymax, Nxmax) per basis output coeffs
+        alphao  - (nbasis, nymax, nxmax) per basis output coeffs
         """
 
         alphao[...] = 0.0
 
         for i, wavelet in enumerate(self.bases):
             if wavelet == "self":
-                copyT(x, alphao[i, 0 : self.Ny, 0 : self.Nx])
-                # alphao[i, 0:self.Ny, 0:self.Nx] = x.T
+                copyT(x, alphao[i, 0 : self.ny, 0 : self.nx])
+                # alphao[i, 0:self.ny, 0:self.nx] = x.T
                 continue
             dec_lo = self.dec_lo[wavelet]
             dec_hi = self.dec_hi[wavelet]
@@ -249,24 +249,24 @@ class psi_band(object):
             sy = self.sy[wavelet]
             ix = self.ix[wavelet]
             iy = self.iy[wavelet]
-            Ntotx = self.Ntotx[wavelet]
-            Ntoty = self.Ntoty[wavelet]
+            ntotx = self.ntotx[wavelet]
+            ntoty = self.ntoty[wavelet]
 
             dwt2d(
                 x,
-                alphao[i, 0:Ntoty, 0:Ntotx],
-                self.cbuff[0:Ntotx, 0:Ntoty],
-                self.cbuffT[0:Ntoty, 0:Ntotx],
+                alphao[i, 0:ntoty, 0:ntotx],
+                self.cbuff[0:ntotx, 0:ntoty],
+                self.cbufft[0:ntoty, 0:ntotx],
                 ix,
                 iy,
                 sx,
                 sy,
                 dec_lo,
                 dec_hi,
-                self.Nlevel,
+                self.nlevel,
             )
 
-        # alphao /= self.sqrtNbasis
+        # alphao /= self.sqrtnbasis
 
         return alphao
 
@@ -274,13 +274,13 @@ class psi_band(object):
         """
         coeffs to signal
 
-        alpha   - (nbasis, Nxmax, Nymax) per basis output coeffs
+        alpha   - (nbasis, nxmax, nymax) per basis output coeffs
         xo      - (nx, ny) output signal
         """
         xo[...] = 0.0  # accumulated
         for i, wavelet in enumerate(self.bases):
             if wavelet == "self":
-                copyT(alpha[i, 0 : self.Ny, 0 : self.Nx], self.image)
+                copyT(alpha[i, 0 : self.ny, 0 : self.nx], self.image)
                 xo += self.image
                 continue
             rec_lo = self.rec_lo[wavelet]
@@ -291,14 +291,14 @@ class psi_band(object):
             spy = self.spy[wavelet]
             ix = self.ix[wavelet]
             iy = self.iy[wavelet]
-            Ntotx = self.Ntotx[wavelet]
-            Ntoty = self.Ntoty[wavelet]
+            ntotx = self.ntotx[wavelet]
+            ntoty = self.ntoty[wavelet]
             idwt2d(
-                alpha[i, 0:Ntoty, 0:Ntotx],
+                alpha[i, 0:ntoty, 0:ntotx],
                 self.image,
-                self.alpha[0:Ntoty, 0:Ntotx],
-                self.cbuff[0:Ntotx, 0:Ntoty],
-                self.cbuffT[0:Ntoty, 0:Ntotx],
+                self.alpha[0:ntoty, 0:ntotx],
+                self.cbuff[0:ntotx, 0:ntoty],
+                self.cbufft[0:ntoty, 0:ntotx],
                 ix,
                 iy,
                 sx,
@@ -307,12 +307,12 @@ class psi_band(object):
                 spy,
                 rec_lo,
                 rec_hi,
-                self.Nlevel,
+                self.nlevel,
             )
 
             xo += self.image
 
-        # xo /= self.sqrtNbasis
+        # xo /= self.sqrtnbasis
 
         return xo
 
@@ -340,8 +340,8 @@ class Psi(object):
         self.ny = ny
         self.nbasis = len(bases)
         self.nthreads = nthreads
-        self.Nxmax = self.psib[0].Nxmax
-        self.Nymax = self.psib[0].Nymax
+        self.nxmax = self.psib[0].nxmax
+        self.nymax = self.psib[0].nymax
         self.nthreads_per_band = np.maximum(1, nthreads // nband)
 
     def dot(self, x, alphao):

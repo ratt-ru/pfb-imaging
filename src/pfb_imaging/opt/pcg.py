@@ -294,14 +294,14 @@ def _pcg_psf_impl(
             return x / eta
     else:
         M = None
-    from pfb_imaging.operators.hessian import _hessian_psf_slice
+    from pfb_imaging.operators.hessian import hessian_psf_slice
 
     for k in range(nband):
         xpad = empty_noncritical((nx_psf, lastsize), dtype=b.dtype)
         xhat = empty_noncritical((nx_psf, nyo2), dtype=psfhat.dtype)
         xout = empty_noncritical((nx, ny), dtype=b.dtype)
         A = partial(
-            _hessian_psf_slice,
+            hessian_psf_slice,
             xpad=xpad,
             xhat=xhat,
             xout=xout,
@@ -413,7 +413,7 @@ def pcg_dds(
     pcg for fluxtractor
     """
     # avoid circular import
-    from pfb_imaging.operators.hessian import _hessian_slice
+    from pfb_imaging.operators.hessian import hessian_slice
 
     # expects a list
     if not isinstance(ds_name, list):
@@ -428,7 +428,7 @@ def pcg_dds(
         model = getattr(ds, model_name).values
         model = np.where(mask > 0, model, 0.0)
         print("Zeroing model outside mask")
-        resid = ds.DIRTY.values - _hessian_slice(
+        resid = ds.DIRTY.values - hessian_slice(
             model,
             uvw=ds.UVW.values,
             weight=ds.WEIGHT.values,
@@ -466,7 +466,7 @@ def pcg_dds(
         x0 = np.zeros_like(j)
 
     hess = partial(
-        _hessian_slice,
+        hessian_slice,
         uvw=ds.UVW.values,
         weight=ds.WEIGHT.values,
         vis_mask=ds.MASK.values,
@@ -502,7 +502,7 @@ def pcg_dds(
 
     model += x
 
-    resid = ds.DIRTY.values - _hessian_slice(
+    resid = ds.DIRTY.values - hessian_slice(
         model,
         uvw=ds.UVW.values,
         weight=ds.WEIGHT.values,

@@ -14,7 +14,7 @@ from numba import threading_layer
 
 from pfb_imaging import set_envs
 from pfb_imaging.operators.gridder import compute_residual
-from pfb_imaging.operators.hessian import hess_psf
+from pfb_imaging.operators.hessian import HessPSF
 from pfb_imaging.operators.psi import Psi
 from pfb_imaging.opt.power_method import power_method
 from pfb_imaging.opt.primal_dual import primal_dual_optimised as primal_dual
@@ -190,7 +190,7 @@ def sara(
     # image space hessian
     # pre-allocate arrays for doing FFT's
     real_type = "f8"
-    precond = hess_psf(
+    precond = HessPSF(
         nx,
         ny,
         abspsf,

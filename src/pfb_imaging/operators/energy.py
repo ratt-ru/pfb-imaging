@@ -1,3 +1,4 @@
+# ruff: noqa
 """
 This is an attempt to develop a minor cycle for the resolve polarisation model.
 
