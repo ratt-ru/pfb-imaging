@@ -1,11 +1,9 @@
-# flake8: noqa
 import concurrent.futures as cf
 import time
 from copy import deepcopy
 from functools import partial
 
 import numpy as np
-import numexpr as ne
 import psutil
 import xarray as xr
 from daskms.fsspec_store import DaskMSStore
@@ -229,8 +227,8 @@ def sara(
     bases_tuple = tuple(bases.split(","))
     nbasis = len(bases_tuple)
     psi = Psi(nband, nx, ny, bases_tuple, nlevels, nthreads)
-    Nxmax = psi.Nxmax
-    Nymax = psi.Nymax
+    nxmax = psi.nxmax
+    nymax = psi.nymax
 
     log.info(f"Using {psi.nthreads_per_band} numba threads for each band")
     log.info(f"Using {thread_pool_size()} threads for gridding")
@@ -247,9 +245,9 @@ def sara(
     # indicated by l1-reweight-from, whichever comes first
     l1reweight_active = False
     # we need an array to put the components in for reweighting
-    outvar = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=real_type)
+    outvar = np.zeros((nband, nbasis, nymax, nxmax), dtype=real_type)
 
-    dual = np.zeros((nband, nbasis, Nymax, Nxmax), dtype=real_type)
+    dual = np.zeros((nband, nbasis, nymax, nxmax), dtype=real_type)
     if l1_reweight_from == 0:
         log.info("Initialising with L1 reweighted")
         if not update.any():
@@ -271,7 +269,7 @@ def sara(
         l1weight = reweighter(model)
         l1reweight_active = True
     else:
-        l1weight = np.ones((nbasis, Nymax, Nxmax), dtype=real_type)
+        l1weight = np.ones((nbasis, nymax, nxmax), dtype=real_type)
         reweighter = None
         l1reweight_active = False
 
@@ -298,7 +296,10 @@ def sara(
 
         modelp = deepcopy(model)
         xtilde = model + gamma * update
-        grad21 = lambda x: -precond.dot(xtilde - x) / gamma
+
+        def grad21(x):
+            return -precond.dot(xtilde - x) / gamma
+
         if iter0 == 0:
             lam = init_factor * rmsfactor * rms
         else:
@@ -405,7 +406,7 @@ def sara(
         if write_futures is not None:
             cf.wait(write_futures)
 
-        log.info(f"Computing residual")
+        log.info("Computing residual")
         write_futures = []
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)

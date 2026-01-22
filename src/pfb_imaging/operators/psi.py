@@ -7,7 +7,7 @@ import pywt
 from numba import typed, types
 from numba.experimental import jitclass
 
-from pfb_imaging.wavelets import coeff_size, copyT, dwt2d, idwt2d, signal_size
+from pfb_imaging.wavelets import coeff_size, copyt, dwt2d, idwt2d, signal_size
 
 
 @numba.njit
@@ -15,7 +15,7 @@ def create_dict(items):
     return {k: v for k, v in items}
 
 
-def psi_band_maker(nx, ny, bases, nlevel):
+def psi_band_maker(nxi, nyi, bases, nlevel):
     nbasis = len(bases)
     sqrtnbasis = np.sqrt(nbasis)
     dec_lo = {}
@@ -41,15 +41,15 @@ def psi_band_maker(nx, ny, bases, nlevel):
         rec_lo[wavelet] = np.array(wvlt.filter_bank[2])
         rec_hi[wavelet] = np.array(wvlt.filter_bank[3])
 
-        max_level = pywt.dwt_max_level(np.minimum(nx, ny), wavelet)
+        max_level = pywt.dwt_max_level(np.minimum(nxi, nyi), wavelet)
         if nlevel > max_level:
             raise ValueError(f"The requested decomposition level {nlevel} is not possible")
 
         # bookeeping
         n2cx = {}
         n2cy = {}
-        nx = nx
-        ny = ny
+        nx = nxi
+        ny = nyi
         nxm = 0
         nym = 0
         sx[wavelet] = typed.List()
@@ -114,7 +114,7 @@ def psi_band_maker(nx, ny, bases, nlevel):
     alpha = np.zeros((nymax, nxmax))  # avoid destroying coeff in
     cbuff = np.zeros((nxmax, nymax))
     cbufft = np.zeros((nymax, nxmax))
-    image = np.zeros((nx, ny))
+    image = np.zeros((nxi, nyi))
 
     return PsiBand(
         alpha,
@@ -139,8 +139,8 @@ def psi_band_maker(nx, ny, bases, nlevel):
         sqrtnbasis,
         typed.List(bases),
         nlevel,
-        nx,
-        ny,
+        nxi,
+        nyi,
     )
 
 
@@ -240,7 +240,7 @@ class PsiBand(object):
 
         for i, wavelet in enumerate(self.bases):
             if wavelet == "self":
-                copyT(x, alphao[i, 0 : self.ny, 0 : self.nx])
+                copyt(x, alphao[i, 0 : self.ny, 0 : self.nx])
                 # alphao[i, 0:self.ny, 0:self.nx] = x.T
                 continue
             dec_lo = self.dec_lo[wavelet]
@@ -280,7 +280,7 @@ class PsiBand(object):
         xo[...] = 0.0  # accumulated
         for i, wavelet in enumerate(self.bases):
             if wavelet == "self":
-                copyT(alpha[i, 0 : self.ny, 0 : self.nx], self.image)
+                copyt(alpha[i, 0 : self.ny, 0 : self.nx], self.image)
                 xo += self.image
                 continue
             rec_lo = self.rec_lo[wavelet]

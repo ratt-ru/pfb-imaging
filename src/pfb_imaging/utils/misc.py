@@ -282,15 +282,13 @@ def construct_mappings(
         )
 
         # subtables
-        ddids = xds_from_table(ms + "::DATA_DESCRIPTION")[0]
-        fields = xds_from_table(ms + "::FIELD")[0]
-        spws = xds_from_table(ms + "::SPECTRAL_WINDOW")[0]
-        pols = xds_from_table(ms + "::POLARIZATION")[0]
-        ants = xds_from_table(ms + "::ANTENNA")[0]
+        field_tab = xds_from_table(ms + "::FIELD")[0]
+        spw_tab = xds_from_table(ms + "::SPECTRAL_WINDOW")[0]
+        pol_tab = xds_from_table(ms + "::POLARIZATION")[0]
+        ant_tab = xds_from_table(ms + "::ANTENNA")[0]
 
-        antpos[ms] = ants.POSITION.data
-        poltype[ms] = fetch_poltype(pols.CORR_TYPE.data.squeeze())
-
+        antpos[ms] = ant_tab.POSITION.data
+        poltype[ms] = fetch_poltype(pol_tab.CORR_TYPE.data.squeeze())
         idts[ms] = []
         freqs[ms] = {}
         times[ms] = {}
@@ -309,10 +307,10 @@ def construct_mappings(
 
             idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
             idts[ms].append(idt)
-            radecs[ms][idt] = fields.PHASE_DIR.data[fid].squeeze()
+            radecs[ms][idt] = field_tab.PHASE_DIR.data[fid].squeeze()
 
-            freqs[ms][idt] = spws.CHAN_FREQ.data[ddid]
-            chan_widths[ms][idt] = spws.CHAN_WIDTH.data[ddid]
+            freqs[ms][idt] = spw_tab.CHAN_FREQ.data[ddid]
+            chan_widths[ms][idt] = spw_tab.CHAN_WIDTH.data[ddid]
             times[ms][idt] = da.atleast_1d(ds.TIME.data.squeeze())
             uvw = ds.UVW.data
             u_max = abs(uvw[:, 0]).max()

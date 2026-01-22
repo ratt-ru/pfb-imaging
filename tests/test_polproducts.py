@@ -233,16 +233,6 @@ def test_polproducts(do_gains, ms_name):
         dask.compute(xds_to_table(xds, ms_name, columns="DATA"))
         gain_path = None
 
-    from scabha.cargo import _UNSET_DEFAULT
-
-    from pfb_imaging.parser.schemas import schema
-
-    # this still necessary because we are not calling through clickify_parameters
-    for worker in schema.keys():
-        for param in schema[worker]["inputs"]:
-            if schema[worker]["inputs"][param]["default"] == _UNSET_DEFAULT:
-                schema[worker]["inputs"][param]["default"] = None
-
     # test each polarisation product separately
     outname = str(test_dir / "test")
     for p in ["I", "Q", "U", "V"]:

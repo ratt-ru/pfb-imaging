@@ -15,7 +15,7 @@ pmp = pytest.mark.parametrize
 @pmp("data_shape", [(128, 256), (512, 128)])  # , (129,255), (511,257)])
 @pmp("nlevel", [1, 2, 3])
 def test_dwt_idwt_pywt(wavelet, data_shape, nlevel):
-    nx, ny = data_shape
+    nxi, nyi = data_shape
     data = np.random.random(size=data_shape)
 
     # pywt comparison
@@ -32,8 +32,8 @@ def test_dwt_idwt_pywt(wavelet, data_shape, nlevel):
     # bookeeping
     n2cx = {}
     n2cy = {}
-    nx = nx
-    ny = ny
+    nx = nxi
+    ny = nyi
     ntotx = 0
     ntoty = 0
     sx = ()
@@ -77,7 +77,7 @@ def test_dwt_idwt_pywt(wavelet, data_shape, nlevel):
     cbuff = np.zeros((ntotx, ntoty))
     cbufft = np.zeros((ntoty, ntotx))
     dwt2d(data, alpha2, cbuff, cbufft, ix, iy, sx, sy, dec_lo, dec_hi, nlevel)
-    xrec2 = np.zeros((nx, ny))
+    xrec2 = np.zeros((nxi, nyi))
     coeffs = np.zeros((ntoty, ntotx))
     idwt2d(alpha2, xrec2, coeffs, cbuff, cbufft, ix, iy, sx, sy, spx, spy, rec_lo, rec_hi, nlevel)
 

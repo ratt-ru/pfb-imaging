@@ -29,8 +29,8 @@ def test_psi(nx, ny, nband, nlevels):
     bases = ["self", "db1", "db2", "db3", "db4", "db5"]
     nbasis = len(bases)
     psi = Psi(nband, nx, ny, bases, nlevels, 1)
-    nxmax = psi.Nxmax
-    nymax = psi.Nymax
+    nxmax = psi.nxmax
+    nymax = psi.nymax
 
     # make sure this works even when output arrays are randomly populated
     alpha = np.random.randn(nband, nbasis, nymax, nxmax)  # , dtype=x.dtype)
@@ -64,8 +64,8 @@ def test_prox21(nx, ny, nband, nlevels):
     bases = ["self", "db1", "db2", "db3", "db4", "db5"]
     nbasis = len(bases)
     psi = Psi(nband, nx, ny, bases, nlevels, 1)
-    nxmax = psi.Nxmax
-    nymax = psi.Nymax
+    nxmax = psi.nxmax
+    nymax = psi.nymax
 
     weights_21 = np.random.random(nbasis * nymax * nxmax).reshape(nbasis, nymax, nxmax)
     sig_21 = 0.0
@@ -102,8 +102,8 @@ def test_prox21m(nx, ny, nband, nlevels):
     bases = ["self", "db1", "db2", "db3", "db4", "db5"]
     nbasis = len(bases)
     psi = Psi(nband, nx, ny, bases, nlevels, 1)
-    nxmax = psi.Nxmax
-    nymax = psi.Nymax
+    nxmax = psi.nxmax
+    nymax = psi.nymax
 
     weights_21 = np.random.random(nbasis * nymax * nxmax).reshape(nbasis, nymax, nxmax)
     sig_21 = 0.0
@@ -168,8 +168,8 @@ def test_dual_update(nx, ny, nband, nlevels, lam, sigma):
     bases = ["self", "db1", "db2", "db3", "db4", "db5"]
     nbasis = len(bases)
     psi = Psi(nband, nx, ny, bases, nlevels, 1)
-    nxmax = psi.Nxmax
-    nymax = psi.Nymax
+    nxmax = psi.nxmax
+    nymax = psi.nymax
 
     weight21 = np.random.random(nbasis * nymax * nxmax).reshape(nbasis, nymax, nxmax)
     # lam21 = 0.1
