@@ -15,8 +15,8 @@ def primal_dual(
     v,  # initial guess for dual variable
     lam,  # regulariser strength
     psi,  # linear operator in dual domain
-    psiH,  # adjoint of psi
-    L,  # spectral norm of Hessian
+    psih,  # adjoint of psi
+    hessnorm,  # spectral norm of Hessian
     prox,  # prox of regulariser
     grad,  # gradient of smooth term
     nu=1.0,  # spectral norm of psi
@@ -34,22 +34,21 @@ def primal_dual(
     xp = x.copy()
     vp = v.copy()
     vtilde = np.zeros_like(v)
-    vout = np.zeros_like(v)
 
     # this seems to give a good trade-off between
     # primal and dual problems
     if sigma is None:
-        sigma = L / (2.0 * gamma) / nu
+        sigma = hessnorm / (2.0 * gamma) / nu
 
     # stepsize control
-    tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
+    tau = 0.9 / (hessnorm / (2.0 * gamma) + sigma * nu**2)
 
     # start iterations
     eps = 1.0
     k = 0
     while (eps > tol or k < minit) and k < maxit:
         # tmp prox variable
-        vtilde = v + sigma * psiH(xp)
+        vtilde = v + sigma * psih(xp)
 
         # dual update
         v = vtilde - sigma * prox(vtilde / sigma, lam / sigma)
@@ -97,9 +96,9 @@ def primal_dual_optimised(
     x,  # initial guess for primal variable
     v,  # initial guess for dual variable
     lam,  # regulariser strength
-    psiH,  # linear operator in dual domain
+    psih,  # linear operator in dual domain
     psi,  # adjoint of psi
-    L,  # spectral norm of Hessian
+    hessnorm,  # spectral norm of Hessian
     prox,  # prox of regulariser
     l1weight,
     reweighter,
@@ -123,10 +122,10 @@ def primal_dual_optimised(
     # this seems to give a good trade-off between
     # primal and dual problems
     if sigma is None:
-        sigma = L / (2.0 * gamma) / nu
+        sigma = hessnorm / (2.0 * gamma) / nu
 
     # stepsize control
-    tau = 0.98 / (L / (2.0 * gamma) + sigma * nu**2)
+    tau = 0.98 / (hessnorm / (2.0 * gamma) + sigma * nu**2)
 
     # start iterations
     eps = 1.0
@@ -136,7 +135,7 @@ def primal_dual_optimised(
     tpsi = 0.0
     tupdate = 0.0
     teval1 = 0.0
-    tpsiH = 0.0
+    tpsih = 0.0
     tgrad = 0.0
     teval2 = 0.0
     tpos = 0.0
@@ -151,16 +150,18 @@ def primal_dual_optimised(
         dual_update_numba(vp, v, lam, sigma=sigma, weight=l1weight)
         tupdate += time() - ti
         ti = time()
-        ne.evaluate("2.0 * v - vp", out=vp)  # , casting='same_kind')
+        ne.evaluate("2.0 * v - vp", out=vp,
+                    local_dict={"v": v, "vp": vp})
         teval1 += time() - ti
         ti = time()
-        psiH(vp, xout)
-        tpsiH += time() - ti
+        psih(vp, xout)
+        tpsih += time() - ti
         ti = time()
         xout += grad(xp)
         tgrad += time() - ti
         ti = time()
-        ne.evaluate("xp - tau * xout", out=x)  # , casting='same_kind')
+        ne.evaluate("xp - tau * xout", out=x,
+                    local_dict={"xp": xp, "tau": tau, "xout": xout})
         teval2 += time() - ti
 
         ti = time()
@@ -210,11 +211,11 @@ def primal_dual_optimised(
             log.info(f"At iteration {k} eps = {eps:.3e}")
 
     ttot = time() - tii
-    ttally = tpsi + tpsiH + tgrad + tupdate + teval1 + teval2 + tpos + tnorm
+    ttally = tpsi + tpsih + tgrad + tupdate + teval1 + teval2 + tpos + tnorm
     if verbosity > 1:
         log.info("Time taken per step")
         log.info(f"psi = {tpsi / ttot}")
-        log.info(f"psiH = {tpsiH / ttot}")
+        log.info(f"psih = {tpsih / ttot}")
         log.info(f"grad = {tgrad / ttot}")
         log.info(f"update = {tupdate / ttot}")
         log.info(f"eval1 = {teval1 / ttot}")
@@ -231,35 +232,3 @@ def primal_dual_optimised(
             log.info(f"Success, converged after {k} iterations")
 
     return x, v
-
-
-primal_dual.__doc__ = r"""
-    Algorithm to solve problems of the form
-
-    argmin_x (xbar - x).T A (xbar - x)/2 + lam |PSI.H x|_21 s.t. x >= 0
-
-    where x is the image cube and PSI an orthogonal basis for the spatial axes
-    and the positivity constraint is optional.
-
-    A        - Positive definite Hermitian operator
-    xbar     - Data-like term
-    x0       - Initial guess for primal variable
-    v0       - Initial guess for dual variable
-    lam      - Strength of l21 regulariser
-    psi      - Orthogonal basis operator where
-               psi.hdot() does decomposition and
-               psi.dot() the reconstruction
-               for all bases and channels
-    weights  - Weights for l1 thresholding
-    L        - Lipschitz constant of A
-    nu       - Spectral norm of psi
-    sigma    - l21 step size (set to L/2 by default)
-    gamma    - step size during forward step
-
-    Note that the primal variable (i.e. x) has shape (nband, nx, ny) where
-    nband is the number of imaging bands and the dual variable (i.e. v) has
-    shape (nbasis, nband, nmax) where nmax is the total number of coefficients
-    for all bases. It is assumed that all bases are decomposed into the same
-    number of coefficients. We use zero padding to deal with the fact that the
-    basess do not necessarily have the same number of coefficients.
-    """

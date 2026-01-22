@@ -13,42 +13,42 @@ from numba.extending import overload
 from pfb_imaging.utils.misc import JIT_OPTIONS, norm_diff
 from pfb_imaging.utils.naming import xds_from_list
 
-iFs = np.fft.ifftshift
-Fs = np.fft.fftshift
+ifftshift = np.fft.ifftshift
+fftshift = np.fft.fftshift
 
 # from pfb_imaging.utils import logging as pfb_logging
 # log = pfb_logging.get_logger('PCG')
 
 
 @njit(nogil=True, cache=False, parallel=False)
-def update(x, xp, r, rp, p, Ap, alpha):
-    return update_impl(x, xp, r, rp, p, Ap, alpha)
+def update(x, xp, r, rp, p, aopp, alpha):
+    return update_impl(x, xp, r, rp, p, aopp, alpha)
 
 
-def update_impl(x, xp, r, rp, p, Ap, alpha):
+def update_impl(x, xp, r, rp, p, aopp, alpha):
     return NotImplementedError
 
 
 @overload(update_impl, jit_options={**JIT_OPTIONS})  # , "parallel":True})
-def nb_update_impl(x, xp, r, rp, p, Ap, alpha):
+def nb_update_impl(x, xp, r, rp, p, aopp, alpha):
     if x.ndim == 3:
 
-        def impl(x, xp, r, rp, p, Ap, alpha):
+        def impl(x, xp, r, rp, p, aopp, alpha):
             nband, nx, ny = x.shape
             for b in range(nband):
                 for i in prange(nx):
                     for j in range(ny):
                         x[b, i, j] = xp[b, i, j] + alpha * p[b, i, j]
-                        r[b, i, j] = rp[b, i, j] + alpha * Ap[b, i, j]
+                        r[b, i, j] = rp[b, i, j] + alpha * aopp[b, i, j]
             return x, r
     elif x.ndim == 2:
 
-        def impl(x, xp, r, rp, p, Ap, alpha):
+        def impl(x, xp, r, rp, p, aopp, alpha):
             nx, ny = x.shape
             for i in prange(nx):
                 for j in range(ny):
                     x[i, j] = xp[i, j] + alpha * p[i, j]
-                    r[i, j] = rp[i, j] + alpha * Ap[i, j]
+                    r[i, j] = rp[i, j] + alpha * aopp[i, j]
             return x, r
     else:
         raise ValueError("norm_diff is only implemented for 2D or 3D arrays")
@@ -57,32 +57,32 @@ def nb_update_impl(x, xp, r, rp, p, Ap, alpha):
 
 
 @njit(**JIT_OPTIONS, parallel=True)
-def alpha_update(r, y, p, Ap):
-    return alpha_update_impl(r, y, p, Ap)
+def alpha_update(r, y, p, aopp):
+    return alpha_update_impl(r, y, p, aopp)
 
 
-def alpha_update_impl(r, y, p, Ap):
+def alpha_update_impl(r, y, p, aopp):
     return NotImplementedError
 
 
 @overload(alpha_update_impl, jit_options={**JIT_OPTIONS, "parallel": True})
-def nb_alpha_update_impl(r, y, p, Ap):
+def nb_alpha_update_impl(r, y, p, aopp):
     if r.ndim == 2:
 
-        def impl(r, y, p, Ap):
+        def impl(r, y, p, aopp):
             rnorm = 0.0
             rnorm_den = 0.0
             nx, ny = r.shape
             for i in prange(nx):
                 for j in range(ny):
                     rnorm += r[i, j] * y[i, j]
-                    rnorm_den += p[i, j] * Ap[i, j]
+                    rnorm_den += p[i, j] * aopp[i, j]
 
             alpha = rnorm / rnorm_den
             return rnorm, alpha
     elif r.ndim == 3:
 
-        def impl(r, y, p, Ap):
+        def impl(r, y, p, aopp):
             rnorm = 0.0
             rnorm_den = 0.0
             nband, nx, ny = r.shape
@@ -90,7 +90,7 @@ def nb_alpha_update_impl(r, y, p, Ap):
                 for i in prange(nx):
                     for j in range(ny):
                         rnorm += r[b, i, j] * y[b, i, j]
-                        rnorm_den += p[b, i, j] * Ap[b, i, j]
+                        rnorm_den += p[b, i, j] * aopp[b, i, j]
 
             alpha = rnorm / rnorm_den
             return rnorm, alpha
@@ -145,10 +145,10 @@ def nb_beta_update_impl(r, y, p, rnorm):
 
 
 def pcg(
-    A,
+    aop,
     b,
     x0=None,
-    M=None,
+    precond=None,
     tol=1e-5,
     maxit=500,
     minit=100,
@@ -160,13 +160,13 @@ def pcg(
     if x0 is None:
         x0 = np.zeros(b.shape, dtype=b.dtype)
 
-    if M is None:
+    if precond is None:
 
-        def M(x):
+        def precond(x):
             return x
 
-    r = A(x0) - b
-    y = M(r)
+    r = aop(x0) - b
+    y = precond(r)
     if not np.any(y):
         print("Initial residual is zero")
         return x0
@@ -183,7 +183,7 @@ def pcg(
     xp = x.copy()
     rp = r.copy()
     tcopy = 0.0
-    tA = 0.0
+    taop = 0.0
     tvdot = 0.0
     tupdate = 0.0
     tp = 0.0
@@ -195,36 +195,21 @@ def pcg(
         np.copyto(rp, r)
         tcopy += time() - ti
         ti = time()
-        Ap = A(p)
-        tA += time() - ti
+        aopp = aop(p)
+        taop += time() - ti
         ti = time()
         rnorm = np.vdot(r, y)
-        alpha = rnorm / np.vdot(p, Ap)
+        alpha = rnorm / np.vdot(p, aopp)
         tvdot += time() - ti
         ti = time()
-        # x = xp + alpha * p
-        # r = rp + alpha * Ap
         ne.evaluate("xp + alpha*p", out=x, local_dict={"xp": xp, "alpha": alpha, "p": p}, casting="unsafe")
-        ne.evaluate("rp + alpha*Ap", out=r, local_dict={"rp": rp, "alpha": alpha, "Ap": Ap}, casting="unsafe")
-        # x, r = update(x, xp, r, rp, p, Ap, alpha)
+        ne.evaluate("rp + alpha*aopp", out=r, local_dict={"rp": rp, "alpha": alpha, "aopp": aopp}, casting="unsafe")
         tupdate += time() - ti
-        y = M(r)
-
-        # while rnorm_next > rnorm and backtrack:  # TODO - better line search
-        #     alpha *= 0.75
-        #     x = xp + alpha * p
-        #     r = rp + alpha * Ap
-        #     y = M(r)
-        #     rnorm_next = np.vdot(r, y)
-
+        y = precond(r)
         ti = time()
         rnorm_next = np.vdot(r, y)
         beta = rnorm_next / rnorm
         ne.evaluate("beta*p-y", out=p, local_dict={"beta": beta, "p": p, "y": y}, casting="unsafe")
-        # p = beta * p - y
-        # p *= beta
-        # p -= y
-        # rnorm, p = beta_update(r, y, p, rnorm)
         tp += time() - ti
         rnorm = rnorm_next
         k += 1
@@ -240,10 +225,10 @@ def pcg(
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
     ttot = time() - tii
-    ttally = tcopy + tA + tvdot + tupdate + tp + tnorm
+    ttally = tcopy + taop + tvdot + tupdate + tp + tnorm
     if verbosity > 1:
         print("tcopy = ", tcopy / ttot)
-        print("tA = ", tA / ttot)
+        print("taop = ", taop / ttot)
         print("tvdot = ", tvdot / ttot)
         print("tupdate = ", tupdate / ttot)
         print("tp = ", tp / ttot)
@@ -290,17 +275,17 @@ def _pcg_psf_impl(
     # PCG preconditioner
     if eta > 0:
 
-        def M(x):
+        def precond(x):
             return x / eta
     else:
-        M = None
+        precond = None
     from pfb_imaging.operators.hessian import hessian_psf_slice
 
     for k in range(nband):
         xpad = empty_noncritical((nx_psf, lastsize), dtype=b.dtype)
         xhat = empty_noncritical((nx_psf, nyo2), dtype=psfhat.dtype)
         xout = empty_noncritical((nx, ny), dtype=b.dtype)
-        A = partial(
+        aop = partial(
             hessian_psf_slice,
             xpad=xpad,
             xhat=xhat,
@@ -313,10 +298,10 @@ def _pcg_psf_impl(
         )
 
         model[k] = pcg(
-            A,
+            aop,
             b[k],
             x0[k],
-            M=M,
+            precond=precond,
             tol=tol,
             maxit=maxit,
             minit=minit,
@@ -490,7 +475,7 @@ def pcg_dds(
         hess,
         j,
         x0=x0.copy(),
-        M=precond,
+        precond=precond,
         tol=tol,
         maxit=maxit,
         minit=1,

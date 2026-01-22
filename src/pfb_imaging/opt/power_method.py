@@ -7,7 +7,7 @@ from pfb_imaging.utils import logging as pfb_logging
 log = pfb_logging.get_logger("PM")
 
 
-def power_method(A, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_freq=25):
+def power_method(aop, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_freq=25):
     if b0 is None:
         b = np.random.randn(*imsize)
         b /= norm(b)
@@ -18,7 +18,7 @@ def power_method(A, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_fr
     k = 0
     bp = b.copy()
     while eps > tol and k < maxit:
-        b = A(bp)
+        b = aop(bp)
         bnorm = np.linalg.norm(b)
         betap = beta
         beta = np.vdot(bp, b) / np.vdot(bp, bp)
@@ -40,9 +40,9 @@ def power_method(A, imsize, b0=None, tol=1e-5, maxit=250, verbosity=1, report_fr
     return beta, b
 
 
-def power(A, bp, bnorm, eta):
+def power(aop, bp, bnorm, eta):
     bp /= bnorm
-    b = A(bp, eta)
+    b = aop(bp, eta)
     bsumsq = np.sum(b**2)
     beta_num = np.vdot(b, bp)
     beta_den = np.vdot(bp, bp)
@@ -72,7 +72,6 @@ def power_method_dist(
     report_freq=10,
     verbosity=1,
 ):
-    client = get_client()
 
     bssq = list(map(lambda a: a.init_random(), actors))
     # custom gather?
