@@ -850,6 +850,7 @@ def setup_parametrisation(mode="id", minval=1e-5, sigma=1.0, freq=None, lscale=1
 
         def dfunc(x0, v):
             return np.exp(freqmul(lmat, x0)) * freqmul(lmat, v)
+
         def dhfunc(x0, v):
             return freqmul(lmath, v * np.exp(freqmul(lmat, x0)))
 

@@ -85,11 +85,7 @@ def eval_beam(beam_image, l_in, m_in, l_out, m_out):
     if (beam_image == 1.0).all():
         return np.ones_like(ll)
     else:  # this gets expensive
-        beamo = RegularGridInterpolator((l_in, m_in),
-                                        beam_image,
-                                        bounds_error=False,
-                                        method="linear",
-                                        fill_value=1.0)
+        beamo = RegularGridInterpolator((l_in, m_in), beam_image, bounds_error=False, method="linear", fill_value=1.0)
         return beamo((ll, mm))
 
 

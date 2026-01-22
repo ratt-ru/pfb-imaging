@@ -51,9 +51,7 @@ def fit_spi(
     freqsdask = da.from_array(freqs.astype(np.float64), chunks=(nband))
 
     print("Fitting %i components" % ncomps, file=dest)
-    alpha, alpha_err, i0, i0_err = fit_spi_components(
-        fitcube, weights, freqsdask, ref_freq, beam=beam_comps
-    ).compute()
+    alpha, alpha_err, i0, i0_err = fit_spi_components(fitcube, weights, freqsdask, ref_freq, beam=beam_comps).compute()
     print("Done. Writing output. \n", file=dest)
 
     alphamap = np.zeros(image[0].shape, dtype=image.dtype)

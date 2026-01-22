@@ -52,10 +52,10 @@ def prox_21_numba(v, result, lam, sigma=1.0, weight=None):
             resultb[:, i] = vb[:, i] * softvbi / absvbi / sigma
 
 
-def dual_update(v, x, psiH, lam, sigma=1.0, weight=1.0):
+def dual_update(v, x, psih, lam, sigma=1.0, weight=1.0):
     vp = v.copy()
     vout = np.zeros_like(v)
-    psiH(x, vout)
+    psih(x, vout)
     vtilde = vp + sigma * vout
     # return vtilde
     v = vtilde - sigma * prox_21(vtilde / sigma, lam / sigma, weight=weight)
@@ -75,7 +75,7 @@ def dual_update_numba(vp, v, lam, sigma=1.0, weight=None):
     nbasis  - number of orthogonal bases
     ntot    - total number of coefficients for each basis (must be equal)
 
-    v is initialised with psiH(xp) and will be updated
+    v is initialised with psih(xp) and will be updated
     """
     nband, nbasis, ntot = v.shape
     for b in range(nbasis):

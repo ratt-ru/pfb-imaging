@@ -89,9 +89,6 @@ def primal_dual(
     return x, v
 
 
-
-
-
 def primal_dual_optimised(
     x,  # initial guess for primal variable
     v,  # initial guess for dual variable
@@ -150,8 +147,7 @@ def primal_dual_optimised(
         dual_update_numba(vp, v, lam, sigma=sigma, weight=l1weight)
         tupdate += time() - ti
         ti = time()
-        ne.evaluate("2.0 * v - vp", out=vp,
-                    local_dict={"v": v, "vp": vp})
+        ne.evaluate("2.0 * v - vp", out=vp, local_dict={"v": v, "vp": vp})
         teval1 += time() - ti
         ti = time()
         psih(vp, xout)
@@ -160,8 +156,7 @@ def primal_dual_optimised(
         xout += grad(xp)
         tgrad += time() - ti
         ti = time()
-        ne.evaluate("xp - tau * xout", out=x,
-                    local_dict={"xp": xp, "tau": tau, "xout": xout})
+        ne.evaluate("xp - tau * xout", out=x, local_dict={"xp": xp, "tau": tau, "xout": xout})
         teval2 += time() - ti
 
         ti = time()

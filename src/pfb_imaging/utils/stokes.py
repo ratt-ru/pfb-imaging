@@ -189,8 +189,7 @@ def stokes_funcs(data, jones, product, pol, nc):
             v01 = v[1]
             v10 = v[2]
             v11 = v[3]
-            return d_jfn(gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11,
-                         w00, w01, w10, w11, v00, v01, v10, v11).ravel()
+            return d_jfn(gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w00, w01, w10, w11, v00, v01, v10, v11).ravel()
 
     elif jones.ndim == 5:  # DIAG mode
         w = w.subs(gp10, 0)

@@ -1,4 +1,3 @@
-
 import numpy as np
 from ducc0.misc import empty_noncritical
 from numba import njit, prange
@@ -106,8 +105,9 @@ def clark(
         subth = subpf * residual_max
         p_index, q_index = np.where(residual_search > subth**2)
         # run substep in active set
-        model = subminor(residual[:, p_index, q_index], psf, p_index, q_index, model, wsums, gamma=gamma,
-                         th=subth, maxit=submaxit)
+        model = subminor(
+            residual[:, p_index, q_index], psf, p_index, q_index, model, wsums, gamma=gamma, th=subth, maxit=submaxit
+        )
 
         # subtract from full image (as in major cycle)
         psf_convolve_cube(xpad, xhat, xout, psfhat, ny_psf, model, nthreads=nthreads)
@@ -248,8 +248,17 @@ def fsclark(
         subth = subpf * residual_max
         p_index, q_index = np.where(residual_search > subth**2)
         # run substep in active set
-        model = fssubminor(residual_mfs[:, :, p_index, q_index], psf, p_index, q_index, model, wsums, gamma=gamma,
-                           th=subth, maxit=submaxit)
+        model = fssubminor(
+            residual_mfs[:, :, p_index, q_index],
+            psf,
+            p_index,
+            q_index,
+            model,
+            wsums,
+            gamma=gamma,
+            th=subth,
+            maxit=submaxit,
+        )
 
         # subtract from full image (as in major cycle)
         psf_convolve_fscube(xpad, xhat, xout, psfhat, ny_psf, model, nthreads=nthreads)

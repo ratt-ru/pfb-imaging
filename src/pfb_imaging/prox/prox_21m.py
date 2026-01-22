@@ -61,10 +61,10 @@ def prox_21m_numba(v, result, lam, sigma=1.0, weight=None):
                 resultb[:, i, j] = vb[:, i, j] * softvbi / absvbi / sigma
 
 
-def dual_update(v, x, psiH, lam, sigma=1.0, weight=1.0):
+def dual_update(v, x, psih, lam, sigma=1.0, weight=1.0):
     vp = v.copy()
     vout = np.zeros_like(v)
-    psiH(x, vout)
+    psih(x, vout)
     vtilde = vp + sigma * vout
     # return vtilde
     v = vtilde - sigma * prox_21m(vtilde / sigma, lam / sigma, weight=weight)
@@ -83,7 +83,7 @@ def dual_update_numba(vp, v, lam, sigma=1.0, weight=None):
     nxmax   - number of x coefficients for each basis (must be equal)
     nymax   - number of y coefficients for each basis (must be equal)
 
-    v is initialised with psiH(xp) and will be updated
+    v is initialised with psih(xp) and will be updated
     """
     nband, nbasis, nymax, nxmax = v.shape
     for b in range(nbasis):
@@ -114,7 +114,7 @@ def dual_update_numba_dist(vp, v, lam, sigma=1.0, weight=None):
     nxmax   - number of x coefficients for each basis (must be equal)
     nymax   - number of y coefficients for each basis (must be equal)
 
-    v is initialised with psiH(xp) and will be updated
+    v is initialised with psih(xp) and will be updated
     """
     nband, nbasis, nymax, nxmax = v.shape
     for b in range(nbasis):

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from pfb_imaging.operators.gridder import wgridder_conventions
@@ -21,18 +19,11 @@ def test_counts(ms_name, srf, fov):
     from africanus.constants import c as lightspeed
     from daskms import xds_from_ms, xds_from_table
 
-    test_dir = Path(ms_name).resolve().parent
     xds = xds_from_ms(ms_name, chunks={"row": -1, "chan": -1})[0]
     spw = xds_from_table(f"{ms_name}::SPECTRAL_WINDOW")[0]
-
-    utime = np.unique(xds.TIME.values)
     freq = spw.CHAN_FREQ.values.squeeze()
-    freq0 = np.mean(freq)
 
-    ntime = utime.size
     nchan = freq.size
-    nant = np.maximum(xds.ANTENNA1.values.max(), xds.ANTENNA1.values.max()) + 1
-
     ncorr = xds.corr.size
 
     uvw = xds.UVW.values

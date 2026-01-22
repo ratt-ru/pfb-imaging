@@ -3,7 +3,7 @@ import pytest
 from africanus.model.spi import fit_spi_components
 from numpy.testing._private.utils import assert_allclose
 
-from pfb_imaging.utils.misc import gaussian2d, convolve2gaussres, fitcleanbeam
+from pfb_imaging.utils.misc import convolve2gaussres, fitcleanbeam, gaussian2d
 
 pmp = pytest.mark.parametrize
 

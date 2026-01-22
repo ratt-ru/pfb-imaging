@@ -1,5 +1,4 @@
 import numpy as np
-from distributed import get_client
 from scipy.linalg import norm
 
 from pfb_imaging.utils import logging as pfb_logging
@@ -72,7 +71,6 @@ def power_method_dist(
     report_freq=10,
     verbosity=1,
 ):
-
     bssq = list(map(lambda a: a.init_random(), actors))
     # custom gather?
     bssq = list(map(lambda o: o.result(), bssq))
