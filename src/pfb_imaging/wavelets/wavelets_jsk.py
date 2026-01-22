@@ -82,7 +82,7 @@ def quadrants_from_idwt_buffer(buffer, image_shape, filter_size, level):
     blocks = get_idwt_buffer_blocks(image_shape, filter_size, level)
 
     signal_shape = signal_size_at_level(image_shape, filter_size, level)
-    block_shape = get_block_shape_at_level(image.shape, rec_lo.size, i + 1)
+    block_shape = get_block_shape_at_level(image_shape, filter_size, level)
 
     q11 = buffer[sum(blocks[:-4]) : sum(blocks[:-3])].reshape(block_shape)
     q10 = buffer[sum(blocks[:-3]) : sum(blocks[:-2])].reshape(block_shape)

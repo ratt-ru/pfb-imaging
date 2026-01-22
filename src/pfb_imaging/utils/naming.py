@@ -93,7 +93,7 @@ def read_var(ds, var):
     """
     Access var to force loading it into memory
     """
-    val = getattr(ds, var).values
+    getattr(ds, var).values
     return 1
 
 

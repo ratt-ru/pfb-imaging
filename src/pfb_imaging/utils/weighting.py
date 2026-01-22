@@ -5,12 +5,11 @@ from numba import literally, njit, prange, types
 from numba.extending import overload
 from scipy.constants import c as lightspeed
 
-from pfb_imaging.utils.misc import JIT_OPTIONS, _es_kernel
 from pfb_imaging.utils.naming import xds_from_list
 from pfb_imaging.utils.stokes import stokes_funcs
 
-iFs = np.fft.ifftshift
-Fs = np.fft.fftshift
+ifftshift = np.fft.ifftshift
+fftshift = np.fft.fftshift
 
 JIT_OPTIONS = {
     "nogil": True,
@@ -191,15 +190,15 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny, cell_size_x, cell
     # Briggs weighting factor
     if robust > -2:
         numsqrt = 5 * 10 ** (-robust)
-        avgWnum = np.zeros(ncorr, dtype=real_type)
-        avgWden = np.zeros(ncorr, dtype=real_type)
+        avgwnum = np.zeros(ncorr, dtype=real_type)
+        avgwden = np.zeros(ncorr, dtype=real_type)
         for c in range(ncorr):
             for i in range(nx):
                 for j in range(ny):
                     cval = counts[c, i, j]
-                    avgWnum[c] += cval * cval
-                    avgWden[c] += cval
-        ssq = numsqrt * numsqrt * avgWden / avgWnum
+                    avgwnum[c] += cval * cval
+                    avgwden[c] += cval
+        ssq = numsqrt * numsqrt * avgwden / avgwnum
         counts *= ssq[:, None, None]
         counts += 1
 

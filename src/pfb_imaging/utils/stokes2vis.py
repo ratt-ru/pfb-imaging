@@ -308,10 +308,10 @@ def stokes_vis(
             raise ValueError("Freq range not covered by katbeam")
         xx, yy = np.meshgrid(l_beam, m_beam, indexing="ij")
         # katbeam expects freq in MHz
-        fMHz = freq_out / 1e6
+        fmhz = freq_out / 1e6
         beam = np.zeros((ncorr, npix, npix), dtype=np.float64)
         for i, product in enumerate(corr):
-            beam0 = getattr(beamo, product)(xx, yy, fMHz)
+            beam0 = getattr(beamo, product)(xx, yy, fmhz)
             step = 25
             angles = np.linspace(0, 359, step)
             for angle in angles:

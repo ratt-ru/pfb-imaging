@@ -156,7 +156,7 @@ def stokes_funcs(data, jones, product, pol, nc):
         d_jfn = njit(nogil=True, inline="always")(d_symb)
 
         @njit(nogil=True, inline="always")
-        def wfunc(gp, gq, W):
+        def wfunc(gp, gq, w):
             gp00 = gp[0, 0]
             gp01 = gp[0, 1]
             gp10 = gp[1, 0]
@@ -165,14 +165,14 @@ def stokes_funcs(data, jones, product, pol, nc):
             gq01 = gq[0, 1]
             gq10 = gq[1, 0]
             gq11 = gq[1, 1]
-            w00 = W[0]
-            w01 = W[1]
-            w10 = W[2]
-            w11 = W[3]
+            w00 = w[0]
+            w01 = w[1]
+            w10 = w[2]
+            w11 = w[3]
             return w_jfn(gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w00, w01, w10, w11).real.ravel()
 
         @njit(nogil=True, inline="always")
-        def vfunc(gp, gq, W, V):
+        def vfunc(gp, gq, w, v):
             gp00 = gp[0, 0]
             gp01 = gp[0, 1]
             gp10 = gp[1, 0]
@@ -181,15 +181,16 @@ def stokes_funcs(data, jones, product, pol, nc):
             gq01 = gq[0, 1]
             gq10 = gq[1, 0]
             gq11 = gq[1, 1]
-            w00 = W[0]
-            w01 = W[1]
-            w10 = W[2]
-            w11 = W[3]
-            v00 = V[0]
-            v01 = V[1]
-            v10 = V[2]
-            v11 = V[3]
-            return d_jfn(gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w00, w01, w10, w11, v00, v01, v10, v11).ravel()
+            w00 = w[0]
+            w01 = w[1]
+            w10 = w[2]
+            w11 = w[3]
+            v00 = v[0]
+            v01 = v[1]
+            v10 = v[2]
+            v11 = v[3]
+            return d_jfn(gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11,
+                         w00, w01, w10, w11, v00, v01, v10, v11).ravel()
 
     elif jones.ndim == 5:  # DIAG mode
         w = w.subs(gp10, 0)
@@ -210,60 +211,60 @@ def stokes_funcs(data, jones, product, pol, nc):
         if nc == "4":
 
             @njit(nogil=True, inline="always")
-            def wfunc(gp, gq, W):
+            def wfunc(gp, gq, w):
                 gp00 = gp[0]
                 gp11 = gp[1]
                 gq00 = gq[0]
                 gq11 = gq[1]
-                w00 = W[0]
-                w01 = W[1]
-                w10 = W[2]
-                w11 = W[3]
+                w00 = w[0]
+                w01 = w[1]
+                w10 = w[2]
+                w11 = w[3]
                 return w_jfn(gp00, gp11, gq00, gq11, w00, w01, w10, w11).real.ravel()
 
             @njit(nogil=True, inline="always")
-            def vfunc(gp, gq, W, V):
+            def vfunc(gp, gq, w, v):
                 gp00 = gp[0]
                 gp11 = gp[1]
                 gq00 = gq[0]
                 gq11 = gq[1]
-                w00 = W[0]
-                w01 = W[1]
-                w10 = W[2]
-                w11 = W[3]
-                v00 = V[0]
-                v01 = V[1]
-                v10 = V[2]
-                v11 = V[3]
+                w00 = w[0]
+                w01 = w[1]
+                w10 = w[2]
+                w11 = w[3]
+                v00 = v[0]
+                v01 = v[1]
+                v10 = v[2]
+                v11 = v[3]
                 return d_jfn(gp00, gp11, gq00, gq11, w00, w01, w10, w11, v00, v01, v10, v11).ravel()
         elif nc == "2":
 
             @njit(nogil=True, inline="always")
-            def wfunc(gp, gq, W):
+            def wfunc(gp, gq, w):
                 gp00 = gp[0]
                 gp11 = gp[1]
                 gq00 = gq[0]
                 gq11 = gq[1]
-                w00 = W[0]
+                w00 = w[0]
                 w01 = 1.0
                 w10 = 1.0
-                w11 = W[-1]
+                w11 = w[-1]
                 return w_jfn(gp00, gp11, gq00, gq11, w00, w01, w10, w11).real.ravel()
 
             @njit(nogil=True, inline="always")
-            def vfunc(gp, gq, W, V):
+            def vfunc(gp, gq, w, v):
                 gp00 = gp[0]
                 gp11 = gp[1]
                 gq00 = gq[0]
                 gq11 = gq[1]
-                w00 = W[0]
+                w00 = w[0]
                 w01 = 1.0
                 w10 = 1.0
-                w11 = W[-1]
-                v00 = V[0]
+                w11 = w[-1]
+                v00 = v[0]
                 v01 = 0j
                 v10 = 0j
-                v11 = V[-1]
+                v11 = v[-1]
                 return d_jfn(gp00, gp11, gq00, gq11, w00, w01, w10, w11, v00, v01, v10, v11).ravel()
         else:
             raise ValueError(

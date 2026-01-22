@@ -37,10 +37,10 @@ def restore_image(
         raise ValueError(f"Could not find {residual_name} in dds")
     wsum = ds.WSUM.values
     model = ds.get(model_name).values
-    ncorr, nx, ny = model.shape
-    l = -(nx // 2) + np.arange(nx)
-    m = -(ny // 2) + np.arange(ny)
-    xx, yy = np.meshgrid(l, m, indexing="ij")
+    _, nx, ny = model.shape
+    l_coord = -(nx // 2) + np.arange(nx)
+    m_coord = -(ny // 2) + np.arange(ny)
+    xx, yy = np.meshgrid(l_coord, m_coord, indexing="ij")
     residual = ds.get(residual_name).values / wsum[:, None, None]
 
     if gaussparf is not None:

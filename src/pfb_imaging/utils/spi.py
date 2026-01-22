@@ -51,7 +51,7 @@ def fit_spi(
     freqsdask = da.from_array(freqs.astype(np.float64), chunks=(nband))
 
     print("Fitting %i components" % ncomps, file=dest)
-    alpha, alpha_err, Iref, i0_err = fit_spi_components(
+    alpha, alpha_err, i0, i0_err = fit_spi_components(
         fitcube, weights, freqsdask, ref_freq, beam=beam_comps
     ).compute()
     print("Done. Writing output. \n", file=dest)
@@ -66,7 +66,7 @@ def fit_spi(
     i0_err_map[...] = np.nan
     alphamap[maskindices[:, 0], maskindices[:, 1]] = alpha
     alpha_err_map[maskindices[:, 0], maskindices[:, 1]] = alpha_err
-    i0map[maskindices[:, 0], maskindices[:, 1]] = Iref
+    i0map[maskindices[:, 0], maskindices[:, 1]] = i0
     i0_err_map[maskindices[:, 0], maskindices[:, 1]] = i0_err
 
     return alphamap, alpha_err_map, i0map, i0_err_map

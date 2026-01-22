@@ -20,8 +20,8 @@ from pfb_imaging.utils.fits import save_fits, set_wcs
 from pfb_imaging.utils.misc import fitcleanbeam
 from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights, filter_extreme_counts, weight_data
 
-iFs = np.fft.ifftshift
-Fs = np.fft.fftshift
+ifftshift = np.fft.ifftshift
+fftshift = np.fft.fftshift
 
 
 @ray.remote
@@ -123,8 +123,6 @@ def stokes_image(
 
     time = ds.TIME.values
     ds = ds.drop_vars("TIME")
-    interval = ds.INTERVAL.values
-    ds = ds.drop_vars("INTERVAL")
     ant1 = ds.ANTENNA1.values
     ds = ds.drop_vars("ANTENNA1")
     ant2 = ds.ANTENNA2.values
@@ -553,9 +551,9 @@ def stokes_image(
 
         from pfb_imaging.operators.hessian import hessian_jax
 
-        iFs = jnp.fft.ifftshift
+        ifftshift = jnp.fft.ifftshift
 
-        abspsf = jnp.abs(jnp.fft.rfft2(iFs(psf / wsum[:, None, None], axes=(1, 2)), axes=(1, 2), norm="backward"))
+        abspsf = jnp.abs(jnp.fft.rfft2(ifftshift(psf / wsum[:, None, None], axes=(1, 2)), axes=(1, 2), norm="backward"))
 
         hess = partial(hessian_jax, nx, ny, 2 * nx, 2 * ny, eta, abspsf)
 

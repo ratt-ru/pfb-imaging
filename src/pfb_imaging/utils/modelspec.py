@@ -72,15 +72,15 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None, meth
     elif method == "poly":
         wt = time / ref_time
         tfunc = t / ref_time
-        Xfit = np.tile(wt[:, None], (nband, nbasist)) ** np.arange(nbasist)
+        xfit = np.tile(wt[:, None], (nband, nbasist)) ** np.arange(nbasist)
         params = sm.symbols(f"t(0:{nbasist})")
         expr = sum(co * t**i for i, co in enumerate(params))
         # the costant offset will always be included since nbasist is at least one
         if nband > 1:
             wf = freq / ref_freq
             ffunc = f / ref_freq
-            Xf = np.tile(wf[:, None], (ntime, nbasisf - 1)) ** np.arange(1, nbasisf)
-            Xfit = np.hstack((Xfit, Xf))
+            xf = np.tile(wf[:, None], (ntime, nbasisf - 1)) ** np.arange(1, nbasisf)
+            xfit = np.hstack((xfit, xf))
             paramsf = sm.symbols(f"f(1:{nbasisf})")
             expr += sum(co * f ** (i + 1) for i, co in enumerate(paramsf))
             params += paramsf
@@ -98,21 +98,21 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None, meth
         else:
             wt = time
             tfunc = t
-        Xt = np.zeros((ntime, nbasist), dtype=float)
+        xt = np.zeros((ntime, nbasist), dtype=float)
         params = sm.symbols(f"t(0:{nbasist})")
         if nbasist > 1:
             expr = 0
             for i in range(nbasist):
                 vals = np.polynomial.Legendre.basis(i)(wt)
-                Xt[:, i] = vals
+                xt[:, i] = vals
                 expr += sm.polys.orthopolys.legendre_poly(i, t) * params[i]
         else:
-            Xt[...] = 1.0
+            xt[...] = 1.0
             expr = params[0]
-        Xfit = np.tile(Xt, (nband, 1))
+        xfit = np.tile(xt, (nband, 1))
         paramsf = sm.symbols(f"f(1:{nbasisf})")
         if nband > 1:
-            Xf = np.zeros((nband, nbasisf - 1))
+            xf = np.zeros((nband, nbasisf - 1))
             fmax = freq.max()
             fmin = freq.min()
             wf = freq - (fmax + fmin) / 2
@@ -121,16 +121,16 @@ def fit_image_cube(time, freq, image, wgt=None, nbasist=None, nbasisf=None, meth
             ffunc = (f - (fmax + fmin) / 2) / wfmax
             for i in range(1, nbasisf):
                 vals = np.polynomial.Legendre.basis(i)(wf)
-                Xf[:, i - 1] = vals
+                xf[:, i - 1] = vals
                 expr += sm.polys.orthopolys.legendre_poly(i, f) * paramsf[i - 1]
-            Xf = np.tile(Xf, (ntime, 1))
-            Xfit = np.hstack((Xfit, Xf))
+            xf = np.tile(xf, (ntime, 1))
+            xfit = np.hstack((xfit, xf))
             params += paramsf
     else:
         raise NotImplementedError(f"Method {method} not implemented")
 
-    dirty_coeffs = Xfit.T.dot(wgt * beta)
-    hess_coeffs = Xfit.T.dot(wgt * Xfit)
+    dirty_coeffs = xfit.T.dot(wgt * beta)
+    hess_coeffs = xfit.T.dot(wgt * xfit)
     # to improve conditioning
     if sigmasq:
         hess_coeffs += sigmasq * np.eye(hess_coeffs.shape[0])
@@ -192,22 +192,22 @@ def fit_image_fscube(freq, image, wgt=None, nbasisf=None, method="Legendre", sig
     elif method == "poly":
         wf = freq / ref_freq
         ffunc = f / ref_freq
-        Xf = np.tile(wf[:, None], (1, nbasisf)) ** np.arange(nbasisf)
+        xf = np.tile(wf[:, None], (1, nbasisf)) ** np.arange(nbasisf)
         expr = sum(co * f**i for i, co in enumerate(params))
 
     elif method == "Legendre":
-        Xf = np.zeros((nband, nbasisf), dtype=float)
+        xf = np.zeros((nband, nbasisf), dtype=float)
         fmax = freq.max()
         fmin = freq.min()
         wf = freq - (fmax + fmin) / 2
         wfmax = wf.max()
         wf /= wfmax
         ffunc = (f - (fmax + fmin) / 2) / wfmax
-        Xf[:, 0] = 1.0
+        xf[:, 0] = 1.0
         expr = params[0]
         for i in range(1, nbasisf):
             vals = np.polynomial.Legendre.basis(i)(wf)
-            Xf[:, i] = vals
+            xf[:, i] = vals
             expr += sm.polys.orthopolys.legendre_poly(i, f) * params[i]
     else:
         raise NotImplementedError(f"Method {method} not implemented")
@@ -215,8 +215,8 @@ def fit_image_fscube(freq, image, wgt=None, nbasisf=None, method="Legendre", sig
     # fit each correlation separately
     coeffs = np.zeros((ncorr, nbasisf, ncomps), dtype=beta.dtype)
     for c in range(ncorr):
-        dirty_coeffs = Xf.T.dot(wgt[:, c] * beta[:, c])
-        hess_coeffs = Xf.T.dot(wgt[:, c] * Xf)
+        dirty_coeffs = xf.T.dot(wgt[:, c] * beta[:, c])
+        hess_coeffs = xf.T.dot(wgt[:, c] * xf)
         # to improve conditioning
         if sigmasq:
             hess_coeffs += sigmasq * np.eye(hess_coeffs.shape[0])

@@ -103,15 +103,14 @@ def reproject_and_interp_beam(
     radec0  - original pointing direction
     radecf  - direction to project to
     """
-    utime = np.unique(time)
-    ntime = utime.size
     # parangles = parallactic_angles(utime, antpos, np.array(radec0))
     # # use the mean over antenna
     # parangles = np.mean(parangles, axis=-1, keepdims=False)
     _, _, nxi, nyi = beam.shape
     # beamo = np.zeros((ntime, 2, 2, nxi, nyi), dtype=beam.dtype)
     # for i, parang in enumerate(parangles):
-    #     # spatial rotation (assuming position angle is paralactic angle i.e. linear North-South, East-West interferometer)
+    #     # spatial rotation (assuming position angle is paralactic angle i.e. linear North-South,
+    #     East-West interferometer)
     #     beamo[i] = rotate(beam, parang, axes=(-2, -1), reshape=False, order=1, mode='nearest')
     #     # feed rotation
     #     beamo[i] = rotate(beamo[i], parang, axes=(0, 1), reshape=False, order=1, mode='nearest')

@@ -2,10 +2,9 @@ from time import time
 
 import numexpr as ne
 import numpy as np
-from numba import njit, prange
 
+from pfb_imaging.prox.prox_21m import dual_update_numba
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.dist import l1reweight_func
 from pfb_imaging.utils.misc import norm_diff
 
 log = pfb_logging.get_logger("PD")
@@ -91,7 +90,7 @@ def primal_dual(
     return x, v
 
 
-from pfb_imaging.prox.prox_21m import dual_update_numba
+
 
 
 def primal_dual_optimised(
@@ -232,127 +231,6 @@ def primal_dual_optimised(
             log.info(f"Success, converged after {k} iterations")
 
     return x, v
-
-
-from distributed import as_completed
-
-
-def primal_dual_dist(
-    actors,
-    lam,  # strength of regulariser
-    L,  # spectral norm of Hessian
-    l1weight,
-    rmsfactor,
-    rms_comps,
-    alpha,
-    nu=1.0,  # spectral norm of psi
-    sigma=None,  # step size of dual update
-    mask=None,  # regions where mask is False will be masked
-    tol=1e-5,
-    maxit=1000,
-    positivity=1,
-    report_freq=10,
-    gamma=1.0,
-    verbosity=1,
-    maxreweight=50,
-):
-    """
-    Distributed primal dual algorithm.
-    Distribution is over datasets in ddsf.
-
-    Inputs:
-
-    actors      - list of band actors
-    lam         - strength of regulariser
-    L           - spectral norm of hessian approximation
-    l1weight    - array of L1 weights
-    reweighter  - function to compute L1 reweights
-    """
-
-    # this seems to give a good trade-off between
-    # primal and dual problems
-    if sigma is None:
-        sigma = L / (2.0 * gamma) / nu
-
-    # stepsize control
-    tau = 0.9 / (L / (2.0 * gamma) + sigma * nu**2)
-
-    # we need to do this upfront only at the outset
-    futures = list(map(lambda a: a.init_pd_params(L, nu), actors))
-    # we don't want to allocate at each iteration
-    eps_num = [1.0] * len(futures)
-    eps_den = [1.0] * len(futures)
-    vtilde = np.zeros((len(actors), *l1weight.shape), dtype=l1weight.dtype)
-    for fut in as_completed(futures):
-        tmp, b = fut.result()
-        vtilde[b] = tmp
-    # vtilde = list(map(lambda f: f.result(), futures))
-    numreweight = 0
-    do_reweight = ~(l1weight == 1.0).all()  # reweighting active
-    ratio = np.zeros(l1weight.shape, dtype=l1weight.dtype)
-    for k in range(maxit):
-        ti = time()
-        get_ratio(vtilde, l1weight, sigma, lam, ratio)
-        # get_ratio(np.array(vtilde), l1weight, sigma, lam, ratio)
-        log.info("ratio - ", time() - ti)
-
-        ti = time()
-        # do on individual workers
-        futures = list(map(lambda a: a.pd_update(ratio), actors))
-        for fut in as_completed(futures):
-            tmp, epsn, epsd, b = fut.result()
-            vtilde[b] = tmp
-            eps_num[b] = epsn
-            eps_den[b] = epsd
-
-        # results = list(map(lambda f: f.result(), futures))
-        log.info("update - ", time() - ti)
-
-        # vtilde = [r[0] for r in results]
-        # eps_num = [r[1] for r in results]
-        # eps_den = [r[2] for r in results]
-        eps = np.sqrt(np.sum(eps_num) / np.sum(eps_den))
-
-        if np.isnan(eps):
-            log.error_and_raise("eps is nan", ValueError)
-
-        if not k % report_freq and verbosity > 1:
-            log.info(f"At iteration {k} eps = {eps:.3e}")
-
-        if eps < tol:
-            if do_reweight and numreweight < maxreweight:
-                l1weight = l1reweight_func(actors, rmsfactor, rms_comps=rms_comps, alpha=alpha)
-                numreweight += 1
-                log.info(f"Reweighting iter {numreweight}")
-            else:
-                if numreweight >= maxreweight:
-                    log.info("Maximum reweighting steps reached")
-                break
-
-    if k >= maxit - 1:
-        log.info(f"Maximum iterations reached. eps={eps:.3e}")
-    else:
-        log.info(f"Success converged after {k} iterations")
-
-    return
-
-
-@njit(nogil=True, cache=True, parallel=True)
-def get_ratio(vtilde, l1weight, sigma, lam, ratio):
-    nband, nbasis, nymax, nxmax = vtilde.shape
-    for b in range(nbasis):
-        for i in prange(nymax):  # WTF without the prange it segfaults when parallel=True
-            vtildebi = vtilde[:, b, i]
-            weightbi = l1weight[b, i]
-            for j in range(nxmax):
-                vtildebij = vtildebi[:, j]
-                weightbij = weightbi[j]
-                absvbisum = np.abs(np.sum(vtildebij) / sigma)  # sum over band axis
-                softvbisum = absvbisum - lam * weightbij / sigma
-                if absvbisum > 0 and softvbisum > 0:
-                    ratio[b, i, j] = softvbisum / absvbisum
-                else:
-                    ratio[b, i, j] = 0.0
 
 
 primal_dual.__doc__ = r"""
