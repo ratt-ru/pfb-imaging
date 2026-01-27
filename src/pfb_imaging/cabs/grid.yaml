@@ -123,21 +123,6 @@ cabs:
           A sensible value for this parameter depends on the level of RFI in the data.
           Small values (eg. 2) result in aggressive reweighting and should be avoided
           if the model is still incomplete.
-      epsilon:
-        dtype: float
-        default: 1e-7
-        info: 'Gridder accuracy'
-        abbreviation: eps
-      do-wgridding:
-        dtype: bool
-        default: true
-        info: "Perform w-correction via improved w-stacking"
-      double-accum:
-        dtype: bool
-        default: true
-        info: "Accumulate onto grid using double precision. \
-              Only has an affect when using single precision."
-
       host-address:
         dtype: str
         abbreviation: ha

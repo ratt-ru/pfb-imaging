@@ -6,12 +6,11 @@ permissions:
 
 on:
   push:
+    branches: [main]
     tags:
       - 'v*'
   pull_request:
-
-env:
-  POETRY_VERSION: 1.8.4
+    branches: [main]
 
 jobs:
   should-run:
@@ -23,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # This ensures we have access to the commit history
-          
+
       - id: check
         shell: bash
         run: |
@@ -34,13 +33,13 @@ jobs:
           else
             message="${{ github.event.head_commit.message }}"
           fi
-          
+
           echo "Event type: ${{ github.event_name }}"
           echo "Original message: '$message'"
-          
+
           message="${message,,}"  # Convert to lowercase
           echo "Lowercase message: '$message'"
-          
+
           skip_patterns=(
             'skip ci'
             'ci skip'
@@ -51,9 +50,9 @@ jobs:
             'ci_skip'
             'noci'
           )
-          
+
           should_run="true"
-          
+
           for pattern in "${skip_patterns[@]}"; do
             echo "Testing pattern: '$pattern'"
             if echo "$message" | grep -q "$pattern"; then
@@ -64,15 +63,46 @@ jobs:
               echo "No match for pattern: '$pattern'"
             fi
           done
-          
+
           echo "Should run: $should_run"
           echo "should_run=$should_run" >> $GITHUB_OUTPUT
+
+  quality:
+    needs: should-run
+    if: needs.should-run.outputs.run == 'true'
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install 3.10
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Check code formatting
+        run: uv run ruff format --check .
+
+      - name: Lint code
+        run: uv run ruff check .
 
   test:
     needs: should-run
     if: needs.should-run.outputs.run == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: true
 
     env:
       NUMBA_CACHE_DIR: /tmp/numba-cache
@@ -82,29 +112,28 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+      - name: Check out code
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version}}
+        run: uv python install ${{ matrix.python-version }}
 
-      - name: Install poetry
-        uses: abatilo/actions-poetry@v4
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
         with:
-          poetry-version: ${{ env.POETRY_VERSION }}
-
-      - name: Check poetry install
-        run: poetry --version
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-py${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-py${{ matrix.python-version }}-
+            ${{ runner.os }}-uv-
 
       - name: Restore repo times
         uses: chetan/git-restore-mtime-action@v2
-
-      - name: Upgrade pip and setuptools
-        run: python -m pip install -U pip setuptools
 
       - name: Create Key and Numba Cache Directory
         id: numba-key
@@ -139,46 +168,10 @@ jobs:
           echo "measures.directory: ~/measures" > ~/.casarc
 
       - name: Install pfb-imaging
-        run: poetry install
+        run: uv sync --extra full --extra dev
 
       - name: Run pfb-imaging
-        run: poetry run pfb --help
+        run: uv run pfb --help
 
       - name: Run tests
-        run: poetry run pytest -v tests/
-
-  deploy:
-    needs: [test]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.10"
-
-      - name: Install poetry
-        uses: abatilo/actions-poetry@v4
-        with:
-          poetry-version: ${{ env.POETRY_VERSION }}
-
-      - name: Check poetry install
-        run: poetry --version
-
-      - name: Install dependencies
-        run: poetry install
-
-      - name: Build distributions
-        run: poetry build
-
-      - name: Publish distribution to PyPI
-        uses: pypa/gh-action-pypi-publish@v1.13.0
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          verbose: true
+        run: uv run pytest -v tests/

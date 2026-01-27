@@ -2307,7 +2307,7 @@ requires-dist = [
     { name = "matplotlib", marker = "extra == 'full'", specifier = ">=3.9.2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "numexpr", marker = "extra == 'full'", specifier = ">=2.10.1" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "psutil", marker = "extra == 'full'", specifier = ">=5.9.8" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pywavelets", marker = "extra == 'full'", specifier = ">=1.7.0" },

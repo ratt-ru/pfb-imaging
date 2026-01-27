@@ -1,5 +1,9 @@
 _include:
-  - (pfb)stimela_cabs.yml
+  - (pfb_imaging.cabs)init.yaml
+  - (pfb_imaging.cabs)grid.yaml
+  - (pfb_imaging.cabs)sara.yaml
+  - (pfb_imaging.cabs)restore.yaml
+  - (pfb_imaging.cabs)degrid.yaml
 
 opts:
   log:
@@ -9,11 +13,11 @@ opts:
   backend:
     select: native
 
-kclean:
-  name: pfb-kclean
+sara:
+  name: pfb-sara
   info:
-    Example stimela recipe using the kclean algorithm.
-  
+    Example stimela recipe using the SARA algorithm.
+
   inputs:
     ms:
       dtype: List[URI]
@@ -34,7 +38,7 @@ kclean:
       default: DATA
       info:
         Column to image.
-        Simple arithmatic is supported e.g. one can use CORRECTED_DATA-MODEL_DATA to image residuals. 
+        Simple arithmatic is supported e.g. one can use CORRECTED_DATA-MODEL_DATA to image residuals.
     model-column:
       dtype: str
       default: MODEL_DATA
@@ -48,10 +52,6 @@ kclean:
       dtype: str
       info:
         Sigma column (preferred over weight-column if provided)
-    mask:
-      dtype: File
-      info:
-        A fits mask to use during cleaning.
     fields:
       dtype: List[int]
       info:
@@ -110,17 +110,7 @@ kclean:
       dtype: float
       default: 1.0
       info:
-        Multiple of the rms to terminate at
-    gamma:
-      dtype: float
-      default: 0.1
-      info:
-        Minor loop gain
-    peak-factor:
-      dtype: float
-      default: 0.15
-      info:
-        Clean down to peak-factor * residual.max() at each minor cycle.
+        Multiple of the rms to threshold by
     chan-average:
       dtype: int
       default: 4
@@ -137,9 +127,12 @@ kclean:
         Amount of amplitude loss that can be tolerated at edge of field
     niter:
       dtype: int
-      default: 10
+      default: 15
       info:
         Number of major cycles
+    l1-reweight-from:
+      dtype: int
+      default: 7
     l2-reweight-dof:
       dtype: float
     alpha:
@@ -167,10 +160,10 @@ kclean:
       dtype: int
       default: 8
       info:
-        Number of workers. 
+        Number of workers.
         This controls the level of horizontal scaling.
         More workers mean a larger memory footprint.
-        Set to the expected number of imaging bands if unsure. 
+        Set to the expected number of imaging bands if unsure.
     nthreads:
       dtype: int
       default: 8
@@ -183,10 +176,10 @@ kclean:
       aliases: ['*.product']
       info:
         Imaging products to produce.
-  
+
   steps:
     init:
-      cab: pfb.init
+      cab: init
       info: 'Initialise imaging data products'
       params:
         ms: =recipe.ms
@@ -209,7 +202,7 @@ kclean:
         product: =recipe.product
 
     grid:
-      cab: pfb.grid
+      cab: grid
       info: 'Setup grid for imaging'
       params:
         super-resolution-factor: =IFSET(recipe.super-resolution-factor)
@@ -226,27 +219,39 @@ kclean:
         # product: =recipe.product
         transfer-model-from: =IFSET(recipe.transfer-model-from)
 
-    kclean:
-      cab: pfb.kclean
+    sara:
+      cab: sara
       info: Deconvolution step
       params:
         niter: =recipe.niter
-        mask: =IFSET(recipe.mask)
-        gamma: =recipe.gamma
+        bases: 'self,db1,db2,db3'
+        nlevels: 2
+        l1-reweight-from: =recipe.l1-reweight-from
+        pd-tol: [1.5e-4]
+        pd-maxit: 450
+        pd-verbose: 2
+        pd-report-freq: 50
+        tol: 5e-4
+        gamma: 0.99
         rmsfactor: =recipe.rmsfactor
+        alpha: =recipe.alpha
         eta: 5e-4
+        positivity: =IF( recipe.product == 'I', 1, 0)
         nthreads: =recipe.nworkers * recipe.nthreads
+        init-factor: =IFSET(recipe.transfer-model-from, 1.0, 0.5)
+        # product: =recipe.product
 
     restore:
-      cab: pfb.restore
+      cab: restore
       info: Produce restored image.
       params:
         nworkers: =recipe.nworkers
         nthreads: =recipe.nthreads
         outputs: iI
+        # product: =recipe.product
 
     degrid:
-      cab: pfb.degrid
+      cab: degrid
       info: Render model to visibilities
       params:
         ms: =recipe.ms
@@ -254,4 +259,3 @@ kclean:
         nworkers: =recipe.nworkers
         nthreads: =recipe.nthreads
         freq-range: =IFSET(recipe.freq-range)
-

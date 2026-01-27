@@ -1,6 +1,6 @@
 cabs:
   degrid:
-    info: 
+    info:
       Degrid visibilities from model image(s) into measurement set.
       The model image needs to be in component format.
     command: pfb_imaging.core.degrid.degrid
@@ -14,7 +14,7 @@ cabs:
         required: true
         abbreviation: ms
         info:
-          Path to measurement set. \n 
+          Path to measurement set. \n
           What about this?
       scans:
         dtype: List[int]
@@ -126,11 +126,3 @@ cabs:
         abbreviation: ldir
         info:
           Directory to write logs and performance reports to.
-      product:
-        dtype: str
-        abbreviation: p
-        default: I
-        info:
-          String specifying which Stokes products to produce.
-          Outputs are always be alphabetically ordered.
-

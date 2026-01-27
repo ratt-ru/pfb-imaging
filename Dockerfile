@@ -10,7 +10,7 @@ COPY pyproject.toml README.md ./
 COPY src/ src/
 
 # Install package with full dependencies using uv (much faster than pip)
-RUN uv pip install --system --no-cache .
+RUN uv pip install --system --no-cache ".[full]"
 
 # Make CLI available
 CMD ["pfb", "--help"]
