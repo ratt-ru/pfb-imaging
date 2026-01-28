@@ -91,6 +91,7 @@ def hci(
     backtrack: bool = False,
     object_store_memory: float | None = None,
     temp_dir: str | None = None,
+    keep_ray_alive: bool = False,
 ):
     """
     Produce high cadence residual images.
@@ -596,7 +597,8 @@ def hci(
 
     log.info(f"All done after {time.time() - time_start}s")
 
-    ray.shutdown()
+    if not keep_ray_alive:
+        ray.shutdown()
 
 
 def make_dummy_dataset(

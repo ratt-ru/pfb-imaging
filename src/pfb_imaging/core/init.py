@@ -48,6 +48,7 @@ def init(
     host_address: str | None = None,
     nworkers: int = 1,
     nthreads: int | None = None,
+    keep_ray_alive: bool = False,
 ):
     """
     Initialise Stokes data products for imaging
@@ -351,6 +352,7 @@ def init(
 
     log.info(f"All done after {time.time() - time_start}s")
 
-    ray.shutdown()
+    if not keep_ray_alive:
+        ray.shutdown()
 
     return

@@ -35,6 +35,7 @@ def restore(
     fits_output_folder: str | None = None,
     fits_mfs: bool = True,
     fits_cubes: bool = True,
+    keep_ray_alive: bool = False,
 ):
     """
     Create fits image cubes from data products (eg. restored images).
@@ -264,4 +265,5 @@ def restore(
 
     log.info(f"All done after {time.time() - ti}s")
 
-    ray.shutdown()
+    if not keep_ray_alive:
+        ray.shutdown()

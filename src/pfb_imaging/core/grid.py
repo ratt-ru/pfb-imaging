@@ -57,6 +57,7 @@ def grid(
     fits_output_folder: str | None = None,
     fits_mfs: bool = True,
     fits_cubes: bool = True,
+    keep_ray_alive: bool = False,
 ):
     """
     Compute imaging weights and create a dirty image, psf etc.
@@ -570,4 +571,5 @@ def grid(
 
         log.info(f"All done after {time.time() - time_start}s")
 
-    ray.shutdown()
+    if not keep_ray_alive:
+        ray.shutdown()

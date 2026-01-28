@@ -156,7 +156,7 @@ def test_sara(ms_name):
         niter=2,
         tol=tol,
         gamma=1.0,
-        pd_tol=[1e-3],
+        pd_tol=1e-3,
         rmsfactor=1.0,
         l1_reweight_from=5,
         bases="self,db1",
