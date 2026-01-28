@@ -168,7 +168,7 @@ jobs:
           echo "measures.directory: ~/measures" > ~/.casarc
 
       - name: Install pfb-imaging
-        run: uv sync --extra full --extra dev
+        run: uv sync --extra full --extra dev --refresh
 
       - name: Run pfb-imaging
         run: uv run pfb --help
