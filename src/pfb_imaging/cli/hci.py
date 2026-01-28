@@ -39,6 +39,7 @@ def hci(
         Directory,
         typer.Option(
             ...,
+            parser=Path,
             help="Basename of output",
         ),
     ],
@@ -409,6 +410,7 @@ def hci(
     temp_dir: Annotated[
         Directory | None,
         typer.Option(
+            parser=Path,
             help="A temporary directory to store ephemeral files.",
         ),
     ] = None,
