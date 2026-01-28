@@ -4,6 +4,7 @@ cabs:
       Degrid visibilities from model image(s) into measurement set.
       The model image needs to be in component format.
     command: pfb_imaging.core.degrid.degrid
+    image: ghcr.io/ratt-ru/pfb-imaging:genfunc2
     flavour: python
     policies:
       pass_missing_as_none: true

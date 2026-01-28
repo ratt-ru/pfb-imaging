@@ -52,7 +52,7 @@ def restore(
         str,
         typer.Option(
             help="Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty, (f)ft_residuals "
-            "(amplitude and phase will be produced). Use captitals to produce corresponding cubes.",
+            "(amplitude and phase will be produced). Use capitals to produce corresponding cubes.",
         ),
     ] = "mMrRiI",
     overwrite: Annotated[

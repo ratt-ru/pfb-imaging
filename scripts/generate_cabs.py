@@ -2,6 +2,7 @@
 """Generate Stimela cab definitions from CLI functions."""
 
 import subprocess
+import sys
 from pathlib import Path
 
 from hip_cargo.core.generate_cabs import generate_cabs
@@ -52,4 +53,4 @@ def main():
 
 
 if __name__ == "__main__":
-    exit(main())
+    sys.exit(main())

@@ -29,6 +29,6 @@ repos:
         name: Generate Stimela cab definitions
         entry: python scripts/generate_cabs.py
         language: system
-        files: ^src/hip_cargo/cli/.*\.py$
+        files: ^src/pfb_imaging/cli/.*\.py$
         pass_filenames: false
         stages: [pre-commit]

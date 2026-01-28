@@ -19,7 +19,7 @@ def degrid(
         typer.Option(
             ...,
             parser=Path,
-            help="Path to measurement set. \n What about this?",
+            help="Path to measurement set.",
         ),
     ],
     output_filename: Annotated[
@@ -34,7 +34,7 @@ def degrid(
         typer.Option(
             help="List of SCAN_NUMBERS to image. "
             "Defaults to all. "
-            "Input as comma separated list 0,2 if running from CLI. "
+            "Input as comma separated string '0,2' if running from CLI. "
             "Stimela dtype: List[int]",
         ),
     ] = None,
@@ -43,7 +43,7 @@ def degrid(
         typer.Option(
             help="List of DATA_DESC_ID's to images. "
             "Defaults to all. "
-            "Input as comma separated list 0,2 if running from CLI. "
+            "Input as comma separated string '0,2' if running from CLI. "
             "Stimela dtype: List[int]",
         ),
     ] = None,
@@ -52,7 +52,7 @@ def degrid(
         typer.Option(
             help="List of FIELD_ID's to image. "
             "Defaults to all. "
-            "Input as comma separated list 0,2 if running from CLI. "
+            "Input as comma separated string '0,2' if running from CLI. "
             "Stimela dtype: List[int]",
         ),
     ] = None,

@@ -6,12 +6,14 @@ from pathlib import Path
 CAB_DIR = Path(__file__).parent
 
 # Export all available cabs
-AVAILABLE_CABS = [p.stem for p in CAB_DIR.glob("*.yml")]
+AVAILABLE_CABS = [p.stem for pattern in ("*.yaml", "*.yml") for p in CAB_DIR.glob(pattern)]
 
 
 def get_cab_path(name: str) -> Path:
     """Get path to a cab definition file."""
-    path = CAB_DIR / f"{name}.yml"
-    if not path.exists():
-        raise FileNotFoundError(f"Cab '{name}' not found")
-    return path
+    # Prefer .yaml, but fall back to .yml for backwards compatibility
+    for ext in (".yaml", ".yml"):
+        path = CAB_DIR / f"{name}{ext}"
+        if path.exists():
+            return path
+    raise FileNotFoundError(f"Cab '{name}' not found")

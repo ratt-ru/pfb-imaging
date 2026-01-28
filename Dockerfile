@@ -6,7 +6,7 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Copy package files
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.rst ./
 COPY src/ src/
 
 # Install package with full dependencies using uv (much faster than pip)

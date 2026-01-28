@@ -52,7 +52,7 @@ def sara(
         int,
         typer.Option(
             help="L1 reweighting will kick in either at convergence or after this many iterations. "
-            "Set to a negative value to disbale L1 reweighting.",
+            "Set to a negative value to disable L1 reweighting.",
         ),
     ] = 5,
     hess_norm: Annotated[
@@ -177,11 +177,11 @@ def sara(
         ),
     ] = True,
     pd_tol: Annotated[
-        str,
+        float,
         typer.Option(
             help="Tolreance of primal dual algorithm. Stimela dtype: List[float]",
         ),
-    ] = ["3e-4"],
+    ] = 3e-4,
     pd_maxit: Annotated[
         int,
         typer.Option(
@@ -296,11 +296,6 @@ def sara(
     # Lazy import the core implementation
     from pfb_imaging.core.sara import sara as sara_core  # noqa: E402
 
-    # Parse pd_tol if provided as comma-separated string
-    pd_tol_list = None
-    if pd_tol is not None:
-        pd_tol_list = [float(x.strip()) for x in pd_tol.split(",")]
-
     # Call the core function with all parameters
     sara_core(
         output_filename,
@@ -327,7 +322,7 @@ def sara(
         epsilon=epsilon,
         do_wgridding=do_wgridding,
         double_accum=double_accum,
-        pd_tol=pd_tol_list,
+        pd_tol=pd_tol,
         pd_maxit=pd_maxit,
         pd_verbose=pd_verbose,
         pd_report_freq=pd_report_freq,

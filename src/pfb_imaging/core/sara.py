@@ -52,7 +52,7 @@ def sara(
     epsilon: float = 1e-7,
     do_wgridding: bool = True,
     double_accum: bool = True,
-    pd_tol: list[float] | None = None,
+    pd_tol: float = 3e-4,
     pd_maxit: int = 450,
     pd_verbose: int = 1,
     pd_report_freq: int = 50,
@@ -170,20 +170,6 @@ def sara(
         iter0 = dds[0].niters
     else:
         iter0 = 0
-
-    # Allow calling with pd_tol as float or list
-    if pd_tol is None:
-        pd_tol = [3e-4]
-    try:
-        ntol = len(pd_tol)
-    except TypeError:
-        assert isinstance(pd_tol, float)
-        ntol = 1
-        pd_tol = [pd_tol]
-    niters = niter
-    if ntol <= niters:
-        pd_tolf = pd_tol[-1]
-        pd_tol += [pd_tolf] * niters  # no harm in too many
 
     # image space hessian
     # pre-allocate arrays for doing FFT's
@@ -318,7 +304,7 @@ def sara(
             grad21,
             nu=nbasis,
             positivity=positivity,
-            tol=pd_tol[k - iter0],
+            tol=pd_tol,
             maxit=pd_maxit,
             verbosity=pd_verbose,
             report_freq=pd_report_freq,
