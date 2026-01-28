@@ -1,266 +1,247 @@
 cabs:
   sara:
-    command: pfb_imaging.core.sara.sara
     flavour: python
-    policies:
-      pass_missing_as_none: true
-
+    command: pfb_imaging.core.sara.sara
+    image: ghcr.io/ratt-ru/pfb-imaging:typer
+    name: sara
+    info:
+      ''
     inputs:
+      output-filename:
+        info:
+          Basename of output
+        required: true
+        policies:
+          positional: true
       suffix:
-        dtype: str
-        default: 'main'
         info:
           Can be used to specify a custom name for the image space data products
+        default: main
       bases:
-        dtype: str
-        info: 'Wavelet bases to use. Give as comma separated str eg. '
-        default: 'self,db1,db2,db3'
-        abbreviation: bases
+        info:
+          Wavelet bases to use.
+          Give as comma separated str eg.
+        default: self,db1,db2,db3
       nlevels:
+        info:
+          Wavelet decomposition level
         dtype: int
-        info: 'Wavelet decomposition level'
         default: 2
-        abbreviation: nlevels
       l1-reweight-from:
+        info:
+          L1 reweighting will kick in either at convergence or after this many iterations.
+          Set to a negative value to disable L1 reweighting.
         dtype: int
         default: 5
-        info:
-          L1 reweighting will kick in either at convergence or after this many
-          iterations. Set to a negative value to disbale L1 reweighting.
       hess-norm:
-        dtype: float
-        abbreviation: hess-norm
         info:
           Spectral norm of hessian approximation
+        dtype: float
       hess-approx:
-        dtype: str
-        default: 'psf'
-        abbreviation: hess-approx
-        choices: ['wgt','psf','direct']
         info:
           Which Hessian approximation to use.
-          Set to wgt for vis space approximation, psf for zero-padded image
-          space approximation and direct for direct inversion.
+          Set to wgt for vis space approximation, psf for zero-padded image space approximation and direct for direct inversion.
+        choices:
+        - wgt
+        - psf
+        - direct
+        default: psf
       rmsfactor:
-        dtype: float
-        default: 1.0
         info:
           By default will threshold by rmsfactor*rms at every iteration
-      eta:
         dtype: float
         default: 1.0
+      eta:
         info:
           Will use eta*wsum to regularise the inversion of the Hessian approximation.
-      gamma:
         dtype: float
         default: 1.0
+      gamma:
         info:
           Step size of update
-      alpha:
         dtype: float
-        default: 2
+        default: 1.0
+      alpha:
         info:
           Controls how aggressively the l1reweighting is applied.
           Larger values correspond to more agressive reweighting.
+        dtype: float
+        default: 2
       nbasisf:
-        dtype: int
         info:
           Number of basis functions to use while fitting the frequency axis.
-          Default is to use the number of non-null imaging bands i.e. interpolation.
+          Default is to use the number of non-null imaging bands i.e.
+          interpolation.
+        dtype: int
       positivity:
+        info:
+          How to apply positivity constraint 0 -> no positivity, 1 -> normal positivity constraint 2 -> strong positivity i.e.
+          all pixels in a band > 0
         dtype: int
         default: 1
-        info:
-          How to apply positivity constraint
-          0 -> no positivity,
-          1 -> normal positivity constraint
-          2 -> strong positivity i.e. all pixels in a band > 0
       niter:
-        dtype: int
-        default: 10
-        abbreviation: niter
         info:
           Number of iterations.
-      nthreads:
         dtype: int
-        abbreviation: nt
+        default: 10
+      nthreads:
         info:
           Total number of threads to use.
           Defaults to half the total number available.
+        dtype: int
       tol:
-        dtype: float
-        default: 5e-4
         info:
           Tolerance at which to terminate algorithm.
           Will stop when norm(x-xp)/norm(x) < tol
+        dtype: float
+        default: 0.0005
       diverge-count:
-        dtype: int
-        default: 5
         info:
           Will terminate the algorithm if the rms increases this many times.
           Set to larger than niter to disable this check.
+        dtype: int
+        default: 5
       skip-model:
-        dtype: bool
-        default: false
         info:
-          Skip model creation i.e. use with do-res to do-res only
-      rms-outside-model:
+          Skip model creation i.e.
+          use with do-res to do-res only
         dtype: bool
         default: false
+      rms-outside-model:
         info:
           Mask residual where model is non-zero when computing rms.
           This is not recommended for largely non-empty fields.
-      init-factor:
-        dtype: float
-        default: 0.5
-        info:
-          Reduce the regularisation strength by this fraction at the outset.
-      verbosity:
-        dtype: int
-        default: 1
-        info:
-          Set to larger than 1 to report timings during residual computation
-      epsilon:
-        dtype: float
-        default: 1e-7
-        abbreviation: eps
-        info:
-          Gridder accuracy
-      do-wgridding:
-        dtype: bool
-        default: true
-        info:
-          Perform w-correction via improved w-stacking
-      double-accum:
-        dtype: bool
-        default: true
-        info:
-          Accumulate onto grid using double precision. Only has an affect when using single precision.
-      pd-tol:
-        dtype: List[float]
-        default: [3e-4]
-        abbreviation: pdtol
-        info:
-          Tolreance of primal dual algorithm
-      pd-maxit:
-        dtype: int
-        default: 450
-        abbreviation: pdmaxit
-        info:
-          Maximum iterations for primal dual algorithm
-      pd-verbose:
-        dtype: int
-        default: 1
-        abbreviation: pdverb
-        info:
-          Verbosity of primal dual algorithm. Set to > 1 for debugging, 0 for silence
-      pd-report-freq:
-        dtype: int
-        default: 50
-        abbreviation: pdrf
-        info:
-          Report frequency of primal dual algorithm
-      pm-tol:
-        dtype: float
-        default: 1e-3
-        abbreviation: pmol
-        info:
-          Tolreance of power method
-      pm-maxit:
-        dtype: int
-        default: 100
-        abbreviation: pmmaxit
-        info:
-          Maximum iterations for power method
-      pm-verbose:
-        dtype: int
-        default: 1
-        abbreviation: pmverb
-        info:
-          Verbosity of primal power method. Set to > 1 for debugging, 0 for silence
-      pm-report-freq:
-        dtype: int
-        default: 100
-        abbreviation: pmrf
-        info:
-          Report frequency of power method algorithm
-      cg-tol:
-        dtype: float
-        default: 1e-3
-        abbreviation: cgtol
-        info:
-          Tolreance of conjugate gradient algorithm
-      cg-maxit:
-        dtype: int
-        default: 150
-        abbreviation: cgmaxit
-        info:
-          Maximum iterations for conjugate gradient algorithm
-      cg-minit:
-        dtype: int
-        default: 10
-        abbreviation: cgminit
-        info:
-          Minimum iterations for conjugate gradient algorithm
-      cg-verbose:
-        dtype: int
-        default: 1
-        abbreviation: cgverb
-        info:
-          Verbosity of conjugate gradient algorithm. Set to > 1 for debugging, 0 for silence
-      cg-report-freq:
-        dtype: int
-        default: 10
-        abbreviation: cgrf
-        info:
-          Report frequency of conjugate gradient algorithm
-      backtrack:
         dtype: bool
         default: false
+      init-factor:
+        info:
+          Reduce the regularisation strength by this fraction at the outset.
+        dtype: float
+        default: 0.5
+      verbosity:
+        info:
+          Set to larger than 1 to report timings during residual computation
+        dtype: int
+        default: 1
+      epsilon:
+        info:
+          Gridder accuracy
+        dtype: float
+        default: 1.0e-07
+      do-wgridding:
+        info:
+          Perform w-correction via improved w-stacking
+        dtype: bool
+        default: true
+      double-accum:
+        info:
+          Accumulate onto grid using double precision.
+          Only has an affect when using single precision.
+        dtype: bool
+        default: true
+      pd-tol:
+        info:
+          'Tolreance of primal dual algorithm.
+          Stimela dtype: List[float]'
+        dtype: float
+        default: 0.0003
+      pd-maxit:
+        info:
+          Maximum iterations for primal dual algorithm
+        dtype: int
+        default: 450
+      pd-verbose:
+        info:
+          Verbosity of primal dual algorithm.
+          Set to > 1 for debugging, 0 for silence
+        dtype: int
+        default: 1
+      pd-report-freq:
+        info:
+          Report frequency of primal dual algorithm
+        dtype: int
+        default: 50
+      pm-tol:
+        info:
+          Tolreance of power method
+        dtype: float
+        default: 0.001
+      pm-maxit:
+        info:
+          Maximum iterations for power method
+        dtype: int
+        default: 100
+      pm-verbose:
+        info:
+          Verbosity of primal power method.
+          Set to > 1 for debugging, 0 for silence
+        dtype: int
+        default: 1
+      pm-report-freq:
+        info:
+          Report frequency of power method algorithm
+        dtype: int
+        default: 100
+      cg-tol:
+        info:
+          Tolreance of conjugate gradient algorithm
+        dtype: float
+        default: 0.001
+      cg-maxit:
+        info:
+          Maximum iterations for conjugate gradient algorithm
+        dtype: int
+        default: 150
+      cg-minit:
+        info:
+          Minimum iterations for conjugate gradient algorithm
+        dtype: int
+        default: 10
+      cg-verbose:
+        info:
+          Verbosity of conjugate gradient algorithm.
+          Set to > 1 for debugging, 0 for silence
+        dtype: int
+        default: 1
+      cg-report-freq:
+        info:
+          Report frequency of conjugate gradient algorithm
+        dtype: int
+        default: 10
+      backtrack:
         info:
           Ensure residual decreases at every iteration
-      output-filename:
-        dtype: str
-        required: true
-        abbreviation: o
-        info:
-          Basename of output
+        dtype: bool
+        default: false
       log-directory:
-        dtype: str
-        abbreviation: ldir
         info:
           Directory to write logs and performance reports to.
       product:
-        dtype: str
-        abbreviation: p
-        default: I
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
+        default: I
       fits-output-folder:
-        dtype: str
-        abbreviation: fitso
         info:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
       fits-mfs:
-        dtype: bool
-        default: true
         info:
           Output MFS fits files
-      fits-cubes:
         dtype: bool
         default: true
+      fits-cubes:
         info:
           Output fits cubes
-
+        dtype: bool
+        default: true
     outputs:
       dds-out:
-        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
         dtype: Directory
-        must_exist: false
+        info:
+          ''
       mds-out:
-        implicit: '{current.output-filename}_{current.product}_{current.suffix}_model.mds'
         dtype: Directory
-        must_exist: false
+        info:
+          ''

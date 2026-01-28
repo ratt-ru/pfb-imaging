@@ -1,0 +1,61 @@
+name: Publish Container
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+# Cab generation is handled by pre-commit hooks locally.
+# This workflow only builds and pushes container images so users can test
+# hotfixes using stimela (which pulls images specified in cab definitions).
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  publish-container:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for container
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # For version tags: v1.2.3 -> 1.2.3, 1.2
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # For PRs: use branch name (e.g., ghcr.io/user/repo:feature-branch)
+            type=raw,value=${{ github.head_ref }},enable=${{ github.event_name == 'pull_request' }}
+            # For main branch: use 'latest'
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

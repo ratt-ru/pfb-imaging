@@ -11,7 +11,6 @@ URI = NewType("URI", Path)
 @stimela_cab(
     name="init",
     info="",
-    policies={"pass_missing_as_none": True},
 )
 @stimela_output(
     dtype="Directory",
@@ -41,6 +40,7 @@ def init(
             "Defaults to all. "
             "Input as comma separated list 0,2 if running from CLI. "
             "Stimela dtype: List[int]",
+            rich_help_panel="Data Selection",
         ),
     ] = None,
     ddids: Annotated[

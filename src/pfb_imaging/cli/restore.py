@@ -10,7 +10,6 @@ File = NewType("File", Path)
 @stimela_cab(
     name="restore",
     info="",
-    policies={"pass_missing_as_none": True},
 )
 @stimela_output(
     dtype="File",

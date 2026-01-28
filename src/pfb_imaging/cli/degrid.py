@@ -11,7 +11,6 @@ URI = NewType("URI", Path)
     name="degrid",
     info="Degrid visibilities from model image(s) into measurement set. "
     "The model image needs to be in component format.",
-    policies={"pass_missing_as_none": True},
 )
 def degrid(
     ms: Annotated[

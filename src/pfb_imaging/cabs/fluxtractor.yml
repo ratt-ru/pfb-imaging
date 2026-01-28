@@ -1,184 +1,163 @@
 cabs:
   fluxtractor:
-    command: pfb_imaging.core.fluxtractor.fluxtractor
     flavour: python
-    policies:
-      pass_missing_as_none: true
-
+    command: pfb_imaging.core.fluxtractor.fluxtractor
+    image: ghcr.io/ratt-ru/pfb-imaging:typer
+    name: fluxtractor
+    info:
+      ''
     inputs:
+      output-filename:
+        info:
+          Basename of output
+        required: true
+        policies:
+          positional: true
       suffix:
-        dtype: str
-        default: 'main'
         info:
           Can be used to specify a custom name for the image space data product
+        default: main
       mask:
-        dtype: str
-        abbreviation: mask
         info:
           Either path to mask.fits or set to model to construct from model
       zero-model-outside-mask:
-        dtype: bool
-        default: false
         info:
           Make sure the input model is zero outside the mask.
           Only has an effect if an external mask has been passed in.
           A major cycle will be triggered to recompute the residual after zeroing.
-      or-mask-with-model:
         dtype: bool
         default: false
+      or-mask-with-model:
         info:
-          Make a new mask consisting of the union of input mask and where the MFS
-          model is larger than zero.
+          Make a new mask consisting of the union of input mask and where the MFS model is larger than zero.
+        dtype: bool
+        default: false
       min-model:
-        dtype: float
-        default: 1e-5
         info:
           If using mask to construct model construct it where model > min-model
-      eta:
         dtype: float
-        default: 1e-5
-        abbreviation: eta
+        default: 1.0e-05
+      eta:
         info:
           Standard deviation of assumed GRF prior
+        dtype: float
+        default: 1.0e-05
       model-name:
-        dtype: str
-        default: MODEL
         info:
           Name of the model to update
+        default: MODEL
       residual-name:
-        dtype: str
-        default: RESIDUAL
         info:
           Name of the residual to use
+        default: RESIDUAL
       gamma:
-        dtype: float
-        default: 1.0
         info:
           Step size of update
+        dtype: float
+        default: 1.0
       use-psf:
-        dtype: bool
-        default: true
         info:
           Whether to approximate the Hessian as a convolution by the PSF
-      memory-greedy:
         dtype: bool
-        default: false
+        default: true
+      memory-greedy:
         info:
           Holds data in memory if set
+        dtype: bool
+        default: false
       epsilon:
-        dtype: float
-        default: 1e-7
-        abbreviation: eps
         info:
           Gridder accuracy
+        dtype: float
+        default: 1.0e-07
       do-wgridding:
-        dtype: bool
-        default: true
         info:
           Perform w-correction via improved w-stacking
-      double-accum:
         dtype: bool
         default: true
+      double-accum:
         info:
           Accumulate onto grid using double precision.
           Only has an affect when using single precision.
+        dtype: bool
+        default: true
       cg-tol:
-        dtype: float
-        default: 1e-3
-        abbreviation: cgtol
         info:
           Tolreance of conjugate gradient algorithm
+        dtype: float
+        default: 0.001
       cg-maxit:
-        dtype: int
-        default: 150
-        abbreviation: cgmaxit
         info:
           Maximum iterations for conjugate gradient algorithm
-      cg-minit:
         dtype: int
-        default: 10
-        abbreviation: cgminit
+        default: 150
+      cg-minit:
         info:
           Minimum iterations for conjugate gradient algorithm
-      cg-verbose:
-        dtype: int
-        default: 1
-        abbreviation: cgverb
-        info:
-          Verbosity of conjugate gradient algorithm. Set to > 1 for debugging, 0 for silence
-      cg-report-freq:
         dtype: int
         default: 10
-        abbreviation: cgrf
+      cg-verbose:
+        info:
+          Verbosity of conjugate gradient algorithm.
+          Set to > 1 for debugging, 0 for silence
+        dtype: int
+        default: 1
+      cg-report-freq:
         info:
           Report frequency of conjugate gradient algorithm
+        dtype: int
+        default: 10
       backtrack:
-        dtype: bool
-        default: false
         info:
           Ensure residual decreases at every iteration
+        dtype: bool
+        default: false
       host-address:
-        dtype: str
-        abbreviation: ha
         info:
           Address where the distributed client lives.
           Uses LocalCluster if no address is provided.
       nworkers:
-        dtype: int
-        default: 1
-        abbreviation: nw
         info:
           Number of worker processes.
           Use with distributed scheduler.
-      nthreads:
         dtype: int
-        abbreviation: nt
+        default: 1
+      nthreads:
         info:
-          Number of threads used to scale vertically (eg. for FFTs and gridding).
+          Number of threads used to scale vertically (eg.
+          for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
-      output-filename:
-        dtype: str
-        required: true
-        abbreviation: o
-        info:
-          Basename of output
+        dtype: int
       log-directory:
-        dtype: str
-        abbreviation: ldir
         info:
           Directory to write logs and performance reports to.
       product:
-        dtype: str
-        abbreviation: p
-        default: I
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
+        default: I
       fits-output-folder:
-        dtype: str
-        abbreviation: fitso
         info:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
       fits-mfs:
-        dtype: bool
-        default: true
         info:
           Output MFS fits files
-      fits-cubes:
         dtype: bool
         default: true
+      fits-cubes:
         info:
           Output fits cubes
-
+        dtype: bool
+        default: true
     outputs:
       dds-out:
-        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
         dtype: Directory
-        must_exist: false
+        info:
+          ''
       mds-out:
-        implicit: '{current.output-filename}_{current.product}_{current.suffix}_model.mds'
         dtype: Directory
-        must_exist: false
+        info:
+          ''

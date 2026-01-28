@@ -1,201 +1,179 @@
 cabs:
   kclean:
-    command: pfb_imaging.core.kclean.kclean
     flavour: python
-    policies:
-      pass_missing_as_none: true
+    command: pfb_imaging.core.kclean.kclean
+    image: ghcr.io/ratt-ru/pfb-imaging:typer
+    name: kclean
+    info:
+      ''
     inputs:
+      output-filename:
+        info:
+          Basename of output
+        required: true
+        policies:
+          positional: true
       suffix:
-        dtype: str
-        default: 'main'
         info:
           Can be used to specify a custom name for the image space data products.
+        default: main
       mask:
-        dtype: str
-        abbreviation: mask
         info:
           Path to mask.fits
       dirosion:
-        dtype: int
-        default: 1
         info:
           Perform dilation followed by erosion with structure element of this width
+        dtype: int
+        default: 1
       mop-flux:
+        info:
+          Trigger PCG based flux mop if minor cycle stalls, the final threshold is reached or on the final iteration.
         dtype: bool
         default: true
-        info:
-          Trigger PCG based flux mop if minor cycle stalls,
-          the final threshold is reached or on the final iteration.
       mop-gamma:
+        info:
+          Step size for flux mop.
+          Should be between (0,1).
+          A value of 1 is most aggressive.
         dtype: float
         default: 0.65
-        info:
-          Step size for flux mop. Should be between (0,1).
-          A value of 1 is most aggressive.
       niter:
-        dtype: int
-        default: 5
-        abbreviation: niter
         info:
           Number of major iterations
-      nthreads:
         dtype: int
-        abbreviation: nt
+        default: 5
+      nthreads:
         info:
           Total number of threads to use.
           Defaults to half the total number available.
+        dtype: int
       threshold:
-        dtype: float
         info:
           Absolute threshold at which to stop cleaning.
           By default it is set automatically using rmsfactor parameter
-        abbreviation: th
-      rmsfactor:
         dtype: float
-        default: 3.0
+      rmsfactor:
         info:
           Multiple of the rms at which to stop cleaning
-      eta:
         dtype: float
-        default: 1e-3
+        default: 3.0
+      eta:
         info:
           Will use eta*wsum to regularise the inversion of the Hessian approximation.
-      gamma:
         dtype: float
-        default: 0.1
-        abbreviation: gamma
+        default: 0.001
+      gamma:
         info:
           Minor loop gain
-      peak-factor:
         dtype: float
-        default: 0.15
-        abbreviation: pf
+        default: 0.1
+      peak-factor:
         info:
           Peak factor
-      sub-peak-factor:
         dtype: float
-        default: 0.75
-        abbreviation: spf
+        default: 0.15
+      sub-peak-factor:
         info:
           Peak factor of sub-minor loop
+        dtype: float
+        default: 0.75
       minor-maxit:
-        dtype: int
-        default: 50
-        abbreviation: mmaxit
         info:
           Maximum number of PSF convolutions between major cycles
-      subminor-maxit:
         dtype: int
-        default: 1000
-        abbreviation: smmaxit
+        default: 50
+      subminor-maxit:
         info:
           Maximum number of iterations for the sub-minor cycle
+        dtype: int
+        default: 1000
       verbose:
+        info:
+          Verbosity level.
+          Set to 2 for maximum verbosity, 0 for silence
         dtype: int
         default: 1
-        abbreviation: verb
-        info:
-          Verbosity level. Set to 2 for maximum verbosity, 0 for silence
       report-freq:
-        dtype: int
-        default: 10
-        abbreviation: rf
         info:
           Report frequency for minor cycles
+        dtype: int
+        default: 10
       cg-tol:
-        dtype: float
-        default: 1e-2
-        abbreviation: cgtol
         info:
           Tolreance of conjugate gradient algorithm
+        dtype: float
+        default: 0.01
       cg-maxit:
-        dtype: int
-        default: 100
-        abbreviation: cgmaxit
         info:
           Maximum iterations for conjugate gradient algorithm
-      cg-minit:
         dtype: int
-        default: 1
-        abbreviation: cgminit
+        default: 100
+      cg-minit:
         info:
           Minimum iterations for conjugate gradient algorithm
-      cg-verbose:
         dtype: int
         default: 1
-        abbreviation: cgverb
+      cg-verbose:
         info:
           Verbosity of conjugate gradient algorithm.
           Set to > 1 for debugging, 0 for silence
-      cg-report_freq:
         dtype: int
-        default: 100
-        abbreviation: cgrf
+        default: 1
+      cg-report-freq:
         info:
           Report frequency of conjugate gradient algorithm
+        dtype: int
+        default: 100
       backtrack:
-        dtype: bool
-        default: false
         info:
           Ensure residual decreases at every iteration
+        dtype: bool
+        default: false
       epsilon:
-        dtype: float
-        default: 1e-7
-        abbreviation: eps
         info:
           Gridder accuracy
+        dtype: float
+        default: 1.0e-07
       do-wgridding:
-        dtype: bool
-        default: true
         info:
           Perform w-correction via improved w-stacking
-      double-accum:
         dtype: bool
         default: true
+      double-accum:
         info:
-          Accumulate onto grid using double precision. Only has an affect when using single precision.
-      output-filename:
-        dtype: str
-        required: true
-        abbreviation: o
-        info:
-          Basename of output
+          Accumulate onto grid using double precision.
+          Only has an affect when using single precision.
+        dtype: bool
+        default: true
       log-directory:
-        dtype: str
-        abbreviation: ldir
         info:
           Directory to write logs and performance reports to.
       product:
-        dtype: str
-        abbreviation: p
-        default: I
         info:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
+        default: I
       fits-output-folder:
-        dtype: str
-        abbreviation: fitso
         info:
           Optional path to write fits files to.
           Set to output-filename if not provided.
           The same naming conventions apply.
       fits-mfs:
-        dtype: bool
-        default: true
         info:
           Output MFS fits files
-      fits-cubes:
         dtype: bool
         default: true
+      fits-cubes:
         info:
           Output fits cubes
-
+        dtype: bool
+        default: true
     outputs:
       dds-out:
-        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
         dtype: Directory
-        must_exist: false
+        info:
+          ''
       mds-out:
-        implicit: '{current.output-filename}_{current.product}_{current.suffix}_model.mds'
         dtype: Directory
-        must_exist: false
+        info:
+          ''

@@ -11,7 +11,6 @@ URI = NewType("URI", Path)
 @stimela_cab(
     name="hci",
     info="",
-    policies={"pass_missing_as_none": True},
 )
 @stimela_output(
     dtype="Directory",
