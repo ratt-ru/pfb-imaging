@@ -19,7 +19,7 @@ jobs:
       run: ${{ steps.check.outputs.should_run }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0  # This ensures we have access to the commit history
 
@@ -142,18 +142,18 @@ jobs:
           echo "timestamp=$(/bin/date -u '+%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
 
       - name: Cache Numba Kernels
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           key: numba-cache-${{ matrix.python-version }}-${{ steps.numba-key.outputs.timestamp }}
           restore-keys: numba-cache-${{ matrix.python-version }}-
           path: ${{ env.NUMBA_CACHE_DIR }}
 
       - name: List the measures directory
-        run: curl ftp://ftp.astron.nl/outgoing/Measures/ > measures_dir.txt
+        run: curl --disable-epsv ftp://ftp.astron.nl/outgoing/Measures/ > measures_dir.txt
 
       - name: Load cached CASA Measures Data
         id: load-cached-casa-measures
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           key: casa-measures-${{ hashFiles('measures_dir.txt')}}
           path: |
@@ -164,7 +164,7 @@ jobs:
         if: steps.load-cached-casa-measures.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/measures
-          curl ftp://ftp.astron.nl/outgoing/Measures/WSRT_Measures.ztar | tar xvzf - -C ~/measures
+          curl --disable-epsv ftp://ftp.astron.nl/outgoing/Measures/WSRT_Measures.ztar | tar xvzf - -C ~/measures
           echo "measures.directory: ~/measures" > ~/.casarc
 
       - name: Install pfb-imaging

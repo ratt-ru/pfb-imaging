@@ -69,13 +69,6 @@ cabs:
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
         dtype: int
-      direct-to-workers:
-        info:
-          Connect direct to workers i.e.
-          bypass scheduler.
-          Faster but then the dashboard isn't very useful.
-        dtype: bool
-        default: true
       log-level:
         choices:
         - error

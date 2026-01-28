@@ -13,9 +13,18 @@ URI = NewType("URI", Path)
     info="",
 )
 @stimela_output(
+    name="output-dataset",
     dtype="Directory",
-    name="dir-out",
-    info="",
+    required=True,
+    must_exist=True,
+    mkdir=False,
+    path_policies={"write_parent": True},
+    info="Basename of output.",
+)
+@stimela_output(
+    name="temp-dir",
+    dtype="Directory",
+    info="A temporary directory to store ephemeral files.",
 )
 def hci(
     ms: Annotated[
@@ -26,8 +35,8 @@ def hci(
             help="Path to measurement set",
         ),
     ],
-    output_filename: Annotated[
-        str,
+    output_dataset: Annotated[
+        Directory,
         typer.Option(
             ...,
             help="Basename of output",
@@ -134,6 +143,18 @@ def hci(
             "There must be a table for each MS and glob(ms) and glob(gt) should match up when running from CLI.",
         ),
     ] = None,
+    max_simul_chunks: Annotated[
+        int,
+        typer.Option(
+            help="Maximum number of chunks to process simultaneously.",
+        ),
+    ] = 4,
+    images_per_chunk: Annotated[
+        int,
+        typer.Option(
+            help="Number of images per chunk.",
+        ),
+    ] = 16,
     integrations_per_image: Annotated[
         int,
         typer.Option(
@@ -379,6 +400,18 @@ def hci(
             help="Ensure residual decreases at every iteration.",
         ),
     ] = False,
+    object_store_memory: Annotated[
+        float | None,
+        typer.Option(
+            help="Object store memory (in GB) when using the distributed scheduler.",
+        ),
+    ] = None,
+    temp_dir: Annotated[
+        Directory | None,
+        typer.Option(
+            help="A temporary directory to store ephemeral files.",
+        ),
+    ] = None,
 ):
     # Lazy import the core implementation
     from pfb_imaging.core.hci import hci as hci_core  # noqa: E402
@@ -401,7 +434,7 @@ def hci(
     # Call the core function with all parameters
     hci_core(
         ms,
-        output_filename,
+        output_dataset,
         log_directory=log_directory,
         product=product,
         scans=scans_list,
@@ -416,6 +449,8 @@ def hci(
         sigma_column=sigma_column,
         flag_column=flag_column,
         gain_table=gain_table,
+        max_simul_chunks=max_simul_chunks,
+        images_per_chunk=images_per_chunk,
         integrations_per_image=integrations_per_image,
         channels_per_image=channels_per_image,
         precision=precision,
@@ -454,4 +489,6 @@ def hci(
         cg_verbose=cg_verbose,
         cg_report_freq=cg_report_freq,
         backtrack=backtrack,
+        object_store_memory=object_store_memory,
+        temp_dir=temp_dir,
     )

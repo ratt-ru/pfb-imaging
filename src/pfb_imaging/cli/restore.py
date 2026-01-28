@@ -104,12 +104,6 @@ def restore(
             "Will attempt to use half the available threads by default.",
         ),
     ] = None,
-    direct_to_workers: Annotated[
-        bool,
-        typer.Option(
-            help="Connect direct to workers i.e. bypass scheduler. Faster but then the dashboard isn't very useful.",
-        ),
-    ] = True,
     log_level: Annotated[
         Literal["error", "warning", "info", "debug"],
         typer.Option(
@@ -176,7 +170,6 @@ def restore(
         host_address=host_address,
         nworkers=nworkers,
         nthreads=nthreads,
-        direct_to_workers=direct_to_workers,
         log_level=log_level,
         log_directory=log_directory,
         product=product,

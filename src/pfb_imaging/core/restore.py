@@ -29,7 +29,6 @@ def restore(
     host_address: str | None = None,
     nworkers: int = 1,
     nthreads: int | None = None,
-    direct_to_workers: bool = True,
     log_level: str = "error",
     log_directory: str | None = None,
     product: str = "I",

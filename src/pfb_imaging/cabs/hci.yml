@@ -14,12 +14,6 @@ cabs:
         required: true
         policies:
           positional: true
-      output-filename:
-        info:
-          Basename of output
-        required: true
-        policies:
-          positional: true
       log-directory:
         info:
           Directory to write logs and performance reports to.
@@ -90,6 +84,16 @@ cabs:
           Path to Quartical gain table containing NET gains.
           There must be a table for each MS and glob(ms) and glob(gt) should match up when running from CLI.
         dtype: List[URI]
+      max-simul-chunks:
+        info:
+          Maximum number of chunks to process simultaneously.
+        dtype: int
+        default: 4
+      images-per-chunk:
+        info:
+          Number of images per chunk.
+        dtype: int
+        default: 16
       integrations-per-image:
         info:
           Number of time integrations per image.
@@ -288,8 +292,21 @@ cabs:
           Ensure residual decreases at every iteration.
         dtype: bool
         default: false
+      object-store-memory:
+        info:
+          Object store memory (in GB) when using the distributed scheduler.
+        dtype: float
     outputs:
-      dir-out:
+      output-dataset:
+        dtype: Directory
+        required: true
+        must_exist: true
+        mkdir: false
+        path_policies:
+          write_parent: true
+        info:
+          Basename of output.
+      temp-dir:
         dtype: Directory
         info:
-          ''
+          A temporary directory to store ephemeral files.

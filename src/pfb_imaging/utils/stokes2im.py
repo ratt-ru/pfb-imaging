@@ -1,7 +1,7 @@
-import gc
 from datetime import datetime, timezone
 from functools import partial
 
+import jax.numpy as jnp
 import numexpr as ne
 import numpy as np
 import ray
@@ -11,9 +11,12 @@ from astropy import units
 from astropy.coordinates import SkyCoord
 from casacore.quanta import quantity
 from ducc0.fft import good_size
+from jax.scipy.sparse.linalg import cg
+from pfb.utils.astrometry import synthesize_uvw
 from scipy.constants import c as lightspeed
 
 from pfb_imaging.operators.gridder import wgridder_conventions
+from pfb_imaging.operators.hessian import hessian_jax
 from pfb_imaging.utils.astrometry import get_coordinates
 from pfb_imaging.utils.beam import reproject_and_interp_beam
 from pfb_imaging.utils.fits import save_fits, set_wcs
@@ -25,13 +28,147 @@ fftshift = np.fft.fftshift
 
 
 @ray.remote
-def safe_stokes_image(*args, **kwargs):
-    try:
-        return stokes_image(*args, **kwargs)
-    except Exception as e:
-        raise e
+def batch_stokes_image(
+    dc1=None,
+    dc2=None,
+    operator=None,
+    ds=None,
+    jones=None,
+    nx=None,
+    ny=None,
+    freq=None,
+    cell_rad=None,
+    utime=None,
+    rbin_idx=None,
+    rbin_counts=None,
+    radec=None,
+    antpos=None,
+    poltype=None,
+    fds_store=None,
+    bandid=None,
+    timeid=None,
+    msid=None,
+    attrs=None,
+    integrations_per_image=None,
+    synchronizer=None,
+    # Parameters previously from opts:
+    nthreads=None,
+    precision="double",
+    sigma_column=None,
+    weight_column=None,
+    model_column=None,
+    product="I",
+    check_ants=False,
+    phase_dir=None,
+    beam_model=None,
+    target=None,
+    robustness=None,
+    min_padding=2.0,
+    filter_counts_level=10.0,
+    psf_relative_size=None,
+    inject_transients=None,
+    epsilon=1e-7,
+    do_wgridding=True,
+    double_accum=True,
+    natural_grad=False,
+    eta=1e-5,
+    cg_tol=1e-3,
+    cg_maxit=150,
+    output_format="zarr",
+    psf_out=False,
+    weight_grid_out=False,
+    stack=False,
+    l2_reweight_dof=None,
+):
+    # load chunk
+    ds.load(scheduler="sync")
+    if jones is not None:
+        # we do it this way to force using synchronous scheduler
+        jones = jones.load(scheduler="sync").values
+
+    # slice out rows corresponding to single images and submit compute task
+    ntime = utime.size
+    tasks = []
+    # we need to start counting from zero
+    rbin_idx = rbin_idx - rbin_idx.min()
+    for t0 in range(0, ntime, integrations_per_image):
+        nmax = np.minimum(ntime, t0 + integrations_per_image)
+        time_slice = slice(t0, nmax)
+        ridx = rbin_idx[time_slice]
+        rcnts = rbin_counts[time_slice]
+        row_slice = slice(ridx[0], ridx[-1] + rcnts[-1])
+        dsi = ds[{"row": row_slice}]
+
+        if jones is not None:
+            jones_slice = jones[time_slice]
+        else:
+            jones_slice = None
+
+        task = stokes_image.remote(
+            dc1=dc1,
+            dc2=dc2,
+            operator=operator,
+            ds=dsi,
+            jones=jones_slice,
+            nx=nx,
+            ny=ny,
+            freq=freq,
+            cell_rad=cell_rad,
+            utime=utime[time_slice],
+            tbin_idx=ridx,
+            tbin_counts=rcnts,
+            radec=radec,
+            antpos=antpos,
+            poltype=poltype,
+            fds_store=fds_store,
+            bandid=bandid,
+            timeid=timeid,
+            msid=msid,
+            attrs=attrs,
+            # Parameters previously from opts:
+            nthreads=nthreads,
+            precision=precision,
+            sigma_column=sigma_column,
+            weight_column=weight_column,
+            model_column=model_column,
+            product=product,
+            check_ants=check_ants,
+            phase_dir=phase_dir,
+            beam_model=beam_model,
+            target=target,
+            robustness=robustness,
+            min_padding=min_padding,
+            filter_counts_level=filter_counts_level,
+            psf_relative_size=psf_relative_size,
+            inject_transients=inject_transients,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+            natural_grad=natural_grad,
+            eta=eta,
+            cg_tol=cg_tol,
+            cg_maxit=cg_maxit,
+            output_format=output_format,
+            psf_out=psf_out,
+            weight_grid_out=weight_grid_out,
+            stack=stack,
+            l2_reweight_dof=l2_reweight_dof,
+        )
+
+        tasks.append(task)
+
+    # wait for all tasks to finish and get result
+    dso = ray.get(tasks)
+
+    # if the output is a dataset we stack and write the output
+    if isinstance(dso[0], xr.Dataset):
+        dso = xr.concat(dso, dim="TIME")
+        dso.to_zarr(fds_store.url, region="auto", synchronizer=synchronizer, safe_chunks=False)
+
+    return timeid, bandid
 
 
+@ray.remote
 def stokes_image(
     dc1=None,
     dc2=None,
@@ -101,13 +238,12 @@ def stokes_image(
 
     # LB - is this the correct way to do this?
     # we don't want it to end up in the distributed object store
+    # do it this way to force using synchronous scheduler
     ds = ds.load(scheduler="sync")
     if jones is not None:
-        # we do it this way to force using synchronous scheduler
         jones = jones.load(scheduler="sync").values
 
     data = getattr(ds, dc1).values
-    ds = ds.drop_vars(dc1)
     if dc2 is not None:
         try:
             assert operator == "+" or operator == "-"
@@ -119,21 +255,14 @@ def stokes_image(
             out=data,
             casting="same_kind",
         )
-        ds = ds.drop_vars(dc2)
 
     time = ds.TIME.values
-    ds = ds.drop_vars("TIME")
     ant1 = ds.ANTENNA1.values
-    ds = ds.drop_vars("ANTENNA1")
     ant2 = ds.ANTENNA2.values
-    ds = ds.drop_vars("ANTENNA2")
     uvw = ds.UVW.values
-    ds = ds.drop_vars("UVW")
     flag = ds.FLAG.values
-    ds = ds.drop_vars("FLAG")
     # MS may contain auto-correlations
     frow = ds.FLAG_ROW.values | (ant1 == ant2)
-    ds = ds.drop_vars("FLAG_ROW")
 
     # combine flag and frow
     flag = np.logical_or(flag, frow[:, None, None])
@@ -142,32 +271,23 @@ def stokes_image(
 
     if sigma_column is not None:
         weight = ne.evaluate("1.0/sigma**2", local_dict={"sigma": getattr(ds, sigma_column).values})
-        ds = ds.drop_vars(sigma_column)
     elif weight_column is not None:
         weight = getattr(ds, weight_column).values
-        ds = ds.drop_vars(weight_column)
     else:
         weight = np.ones((nrow, nchan, ncorr), dtype=real_type)
 
     if model_column is not None:
         model_vis = getattr(ds, model_column).values.astype(complex_type)
-        ds = ds.drop(model_column)
         if product.lower() == "i":
-            model_vis = (model_vis[:, :, 0] + model_vis[:, :, -1]) / 2.0
+            model_vis = model_vis[..., [0, -1]].mean(axis=-1, keepdims=True)
         else:
             raise NotImplementedError(f"Model subtraction not supported for product {product}")
     else:
         model_vis = None
-    # this seems to help with memory consumption
-    # note the ds.drop_vars above
-    del ds
-    gc.collect()
 
-    nrow, nchan, ncorr = data.shape
     ntime = utime.size
     nant = antpos.shape[0]
     time_out = np.mean(utime)
-
     freq_out = np.mean(freq)
 
     if data.dtype != complex_type:
@@ -245,37 +365,16 @@ def stokes_image(
         new_ra_rad = np.deg2rad(c.ra.value)
         new_dec_rad = np.deg2rad(c.dec.value)
         radec_new = np.array((new_ra_rad, new_dec_rad))
-
-        # print(c.ra.value, c.dec.value, cell_deg)
-
-        from pfb_imaging.utils.astrometry import synthesize_uvw
-
         uvw_new = synthesize_uvw(antpos, time, ant1, ant2, radec_new)
-        # uo = uvw[:, 0:1] * freq[None, :]/lightspeed
-        # vo = uvw[:, 1:2] * freq[None, :]/lightspeed
         wo = uvw[:, 2:] * freq[None, :] / lightspeed
-        # un = uvw_new[:, 0:1] * freq[None, :]/lightspeed
-        # vn = uvw_new[:, 1:2] * freq[None, :]/lightspeed
         wn = uvw_new[:, 2:] * freq[None, :] / lightspeed
-
-        # TODO - why is this incorrect?
-        # from africanus.coordinates import radec_to_lmn
-        # l, m, n = radec_to_lmn(radec_new[None, :], radec)[0]
-        # # original phase direction is [0,0,1]
-        # dl = l
-        # dm = m
-        # dn = n-1
-        # phase2 = uo * dl
-        # phase2 += vo * dm
-        # phase2 += wo * dn
-        # tmp2 = np.exp(-2j*np.pi*phase2)
 
         # TODO - this copies chgcentre but not sure why it gives
         # better results than computing the phase with lmn differences
         phase = 2j * np.pi * (wn - wo)
-        data *= np.exp(-phase)[:, :, None]
+        data = data * np.exp(-phase)[:, :, None]
         if model_vis is not None:
-            model_vis *= np.exp(-phase)[:, :, None]
+            model_vis = model_vis * np.exp(-phase)[:, :, None]
 
         uvw = uvw_new
     else:
@@ -344,9 +443,6 @@ def stokes_image(
 
     ra_deg = np.rad2deg(tra)
     dec_deg = np.rad2deg(tdec)
-    # why was this required?
-    # if ra_deg > 180:
-    #     ra_deg -= 360
 
     # we currently need this extra loop through the data because
     # we don't have access to the grid
@@ -360,7 +456,7 @@ def stokes_image(
 
     # TODO - this subtraction would be better to do inside weight_data
     if model_column is not None:
-        ne.evaluate("(data-model_vis)*mask", out=data)
+        data = ne.evaluate("(data-model_vis)*mask")
 
     if l2_reweight_dof:
         # data should contain residual_vis at this point
@@ -398,6 +494,7 @@ def stokes_image(
             lm0t = radec_to_lm(tcoords, coords0).squeeze()
             x0t = lm0t[0]
             y0t = lm0t[1]
+            n0t = np.sqrt(1 - x0t**2 - y0t**2)
 
             # these are the profiles on the full domain so interpolate
             tprofile = getattr(transient_ds, f"{name}_time_profile").values
@@ -407,13 +504,15 @@ def stokes_image(
             fprofile = np.interp(freq, all_freqs, fprofile)
 
             # outer product gives dynamic spectrum
-            dspec = tprofile[:, None] * fprofile[None, :]
+            # LB - why do we need the braces?
+            dspec = (tprofile[:, None]) * fprofile[None, :]
 
             # inject transient at x0t, y0t and convert to complex values
             dspec = dspec * np.exp(
                 freqfactor
-                * (signu * uvw[:, 0:1] * x0t * signx + signv * uvw[:, 1:2] * y0t * signy - uvw[:, 2:] * (n - 1))
+                * (signu * uvw[:, 0:1] * x0t * signx + signv * uvw[:, 1:2] * y0t * signy - uvw[:, 2:] * (n0t - 1))
             )
+
             # currently Stokes I only
             data[:, :, 0] += dspec
 
@@ -509,7 +608,6 @@ def stokes_image(
             divide_by_n=True,  # no rephasing or smooth beam so do it here
             nthreads=nthreads,
             sigma_min=min_padding,
-            sigma_max=3.0,
             double_precision_accumulation=double_accum,
             verbosity=0,
             dirty=residual[c],
@@ -535,22 +633,16 @@ def stokes_image(
             divide_by_n=True,  # no rephasing or smooth beam so do it here
             nthreads=nthreads,
             sigma_min=min_padding,
-            sigma_max=3.0,
             double_precision_accumulation=double_accum,
             verbosity=0,
             dirty=psf[c],
         )
 
-    # these will be in units of pixels
+    # these will be in degrees
     gausspars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
 
     if natural_grad:
         # TODO - add beam application
-        import jax.numpy as jnp
-        from jax.scipy.sparse.linalg import cg
-
-        from pfb_imaging.operators.hessian import hessian_jax
-
         ifftshift = jnp.fft.ifftshift
 
         abspsf = jnp.abs(jnp.fft.rfft2(ifftshift(psf / wsum[:, None, None], axes=(1, 2)), axes=(1, 2), norm="backward"))
@@ -647,7 +739,7 @@ def stokes_image(
 
         out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
         if stack:
-            out_ds.to_zarr(fds_store.url, region="auto")
+            return out_ds
         else:
             out_ds.to_zarr(f"{fds_store.url}/{oname}.zarr", mode="w")
     elif output_format == "fits":

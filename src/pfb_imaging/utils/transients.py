@@ -7,8 +7,7 @@ def generate_time_profile(times, peak_time, duration, shape):
 
     if shape == "gaussian":
         sigma = duration
-        profile = np.exp(-0.5 * ((times - t0) / sigma) ** 2)
-
+        profile = np.exp(-((times - t0) ** 2) / (2 * sigma**2))
     elif shape == "exponential":
         tau = duration
         profile = np.where(times >= t0, np.exp(-(times - t0) / tau), 0.0)

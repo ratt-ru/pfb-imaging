@@ -1,6 +1,7 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import dask
 import dask.array as da
@@ -19,11 +20,13 @@ from daskms import xds_from_storage_ms as xds_from_ms
 from daskms.fsspec_store import DaskMSStore
 from ducc0.fft import good_size
 from ducc0.misc import resize_thread_pool
+from zarr import ProcessSynchronizer
 
 from pfb_imaging import set_envs
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.misc import construct_mappings
 from pfb_imaging.utils.stokes2im import safe_stokes_image
+from pfb_imaging.utils.transients import generate_transient_spectra
 
 log = pfb_logging.get_logger("HCI")
 
@@ -31,7 +34,7 @@ log = pfb_logging.get_logger("HCI")
 @pfb_logging.log_inputs(log)
 def hci(
     ms: list[Path],
-    output_filename: str,
+    output_dataset: str,
     log_directory: str | None = None,
     product: str = "I",
     scans: str | None = None,
@@ -46,6 +49,8 @@ def hci(
     sigma_column: str | None = None,
     flag_column: str = "FLAG",
     gain_table: list[Path] | None = None,
+    max_simul_chunks: int = 4,
+    images_per_chunk: int = 16,
     integrations_per_image: int = 1,
     channels_per_image: int = -1,
     precision: str = "double",
@@ -84,29 +89,39 @@ def hci(
     cg_verbose: int = 1,
     cg_report_freq: int = 10,
     backtrack: bool = False,
+    object_store_memory: float | None = None,
+    temp_dir: str | None = None,
 ):
     """
     Produce high cadence residual images.
     """
+    # start timer
+    time_start = time.time()
 
-    if "://" in output_filename:
-        protocol = output_filename.split("://")[0]
+    if "://" in output_dataset:
+        protocol = output_dataset.split("://")[0]
         prefix = f"{protocol}://"
     else:
         protocol = "file"
         prefix = ""
 
     fs = fsspec.filesystem(protocol)
-    basedir = fs.expand_path("/".join(output_filename.split("/")[:-1]))[0]
+    basedir = fs.expand_path("/".join(output_dataset.split("/")[:-1]))[0]
     if not fs.exists(basedir):
         fs.makedirs(basedir)
 
-    oname = output_filename.split("/")[-1] + f"_{product.upper()}"
+    oname = output_dataset.split("/")[-1]
 
-    output_filename = f"{prefix}{basedir}/{oname}"
+    output_dataset = f"{prefix}{basedir}/{oname}"
 
     # this should be a file system
-    log_directory = basedir
+    if log_directory is None:
+        log_directory = Path(basedir) / "pfb_logs"
+    log_directory.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    logname = f"{str(log_directory)}/hci_{timestamp}.log"
+    pfb_logging.log_to_file(logname)
+    log.info(f"Logs will be written to {logname}")
 
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True)
@@ -142,38 +157,34 @@ def hci(
                 log.error_and_raise(f"No gain table  at {gt}", ValueError)
         gain_table = gainnames
 
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f"{str(log_directory)}/hci_{timestamp}.log"
-    pfb_logging.log_to_file(logname)
-    log.info(f"Logs will be written to {logname}")
-
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu)
+    runtime_env = {"env_vars": env_vars}
 
-    if nworkers == 1:
-        env_vars["RAY_DEBUG_POST_MORTEM"] = "1"
+    if object_store_memory is not None:
+        mem_limit = object_store_memory * 1e9  # convert GB -> B
     else:
-        env_vars = None
+        mem_limit = None
 
     ray.init(
         num_cpus=nworkers,
         logging_level="INFO",
         ignore_reinit_error=True,
-        runtime_env={"env_vars": env_vars},
+        object_store_memory=mem_limit,
+        local_mode=nworkers == 1,
+        runtime_env=runtime_env,
     )
-
-    time_start = time.time()
 
     if stack and output_format == "fits":
         raise RuntimeError("Can't stack in fits mode")
 
-    fds_store = DaskMSStore(f"{output_filename}.fds")
+    fds_store = DaskMSStore(f"{output_dataset}")
     if fds_store.exists():
         if overwrite:
-            log.info(f"Overwriting {output_filename}.fds")
+            log.info(f"Overwriting {output_dataset}")
             fds_store.rm(recursive=True)
         else:
-            log.error_and_raise(f"{output_filename}.fds exists. Set overwrite to overwrite it. ", RuntimeError)
+            log.error_and_raise(f"{output_dataset} exists. Set overwrite to overwrite it. ", RuntimeError)
 
     fs = fsspec.filesystem(fds_store.url.split(":", 1)[0])
     fs.makedirs(fds_store.url, exist_ok=True)
@@ -224,7 +235,7 @@ def hci(
     ) = construct_mappings(
         ms,
         gain_names,
-        ipi=integrations_per_image,
+        ipi=images_per_chunk * integrations_per_image,
         cpi=channels_per_image,
         freq_min=freq_min,
         freq_max=freq_max,
@@ -284,8 +295,6 @@ def hci(
 
     cell_deg = np.rad2deg(cell_rad)
 
-    log.info(f"Image size = (nx={nx}, ny={ny})")
-
     # crude column arithmetic
     dc = data_column.replace(" ", "")
     if "+" in dc:
@@ -321,6 +330,10 @@ def hci(
             schema[weight_column] = {"dims": ("chan", "corr")}
     else:
         log.info("No weights provided, using unity weights")
+
+    if model_column is not None:
+        columns += (model_column,)
+        schema[model_column] = {"dims": ("chan", "corr")}
 
     # distinct freq groups
     sgroup = 0
@@ -359,42 +372,43 @@ def hci(
                     msddid2bid[ms_name][idt] = sgroup
 
     # construct examplar dataset if asked to stack
-    if stack:
-        if output_format != "zarr":
-            raise ValueError("Can only stack zarr outputs not fits")
-        log.info("Creating scaffold for stacked cube")
-        cds, attrs = make_dummy_dataset(
-            ms,
-            output_filename,
-            fields,
-            ddids,
-            scans,
-            phase_dir,
-            product,
-            beam_model,
-            psf_out,
-            psf_relative_size,
-            utimes,
-            freqs,
-            radecs,
-            time_mapping,
-            freq_mapping,
-            freq_min,
-            freq_max,
-            nx,
-            ny,
-            cell_deg,
-        )
-        log.info("Scaffolding complete")
-    else:
-        cds = None
-        attrs = None
+    if stack and output_format != "zarr":
+        raise ValueError("Can only stack zarr outputs not fits")
+
+    log.info("Creating scaffold for stacked cube")
+    attrs, ntasks, n_timeo, n_freqo = make_dummy_dataset(
+        ms,
+        output_dataset,
+        fields,
+        ddids,
+        scans,
+        phase_dir,
+        product,
+        beam_model,
+        psf_out,
+        psf_relative_size,
+        utimes,
+        freqs,
+        radecs,
+        time_mapping,
+        freq_mapping,
+        freq_min,
+        freq_max,
+        nx,
+        ny,
+        cell_deg,
+        integrations_per_image=integrations_per_image,
+        stack=stack,
+    )
+    log.info("Scaffolding complete")
+
+    n_stokes = len(remprod)
+    log.info(f"Cube size = (n_stokes={n_stokes}, n_freq={n_freqo}, n_time={n_timeo}, n_y={ny}, n_x={nx})")
 
     if inject_transients is not None:
         # we need to do this here because we don't have access
         # to the full domain inside the call to stokes2im
         log.info("Computing transient spectra")
-        from pfb_imaging.utils.transients import generate_transient_spectra
 
         with open(inject_transients, "r") as f:
             config = yaml.safe_load(f)
@@ -420,121 +434,124 @@ def hci(
         transient_ds.to_zarr(f"{transient_baseoname}zarr", mode="a")
         log.info("Spectra computed")
 
-    if model_column is not None:
-        columns += (model_column,)
-        schema[model_column] = {"dims": ("chan", "corr")}
-
     tasks = []
     channel_width = {}
-    for ims, ms_name in enumerate(ms):
-        xds = xds_from_ms(ms_name, columns=columns, table_schema=schema, group_cols=group_by)
+    ncompleted = 0
+    # if opts.temp-dir is None dir will be /tmp
+    with TemporaryDirectory(prefix="hci-", dir=temp_dir) as tempdir:
+        synchronizer = ProcessSynchronizer(tempdir)
+        for ims, ms_name in enumerate(ms):
+            xds = xds_from_ms(ms_name, columns=columns, table_schema=schema, group_cols=group_by)
 
-        for ds in xds:
-            fid = ds.FIELD_ID
-            ddid = ds.DATA_DESC_ID
-            scanid = ds.SCAN_NUMBER
-            if (fields is not None) and (fid not in fields):
-                continue
-            if (ddids is not None) and (ddid not in ddids):
-                continue
-            if (scans is not None) and (scanid not in scans):
-                continue
+            for ds in xds:
+                fid = ds.FIELD_ID
+                ddid = ds.DATA_DESC_ID
+                scanid = ds.SCAN_NUMBER
+                if (fields is not None) and (fid not in fields):
+                    continue
+                if (ddids is not None) and (ddid not in ddids):
+                    continue
+                if (scans is not None) and (scanid not in scans):
+                    continue
 
-            idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
+                idt = f"FIELD{fid}_DDID{ddid}_SCAN{scanid}"
 
-            idx = (freqs[ms_name][idt] >= freq_min) & (freqs[ms_name][idt] <= freq_max)
-            if not idx.any():
-                continue
+                idx = (freqs[ms_name][idt] >= freq_min) & (freqs[ms_name][idt] <= freq_max)
+                if not idx.any():
+                    continue
 
-            titr = enumerate(zip(time_mapping[ms_name][idt]["start_indices"], time_mapping[ms_name][idt]["counts"]))
-            for ti, (tlow, tcounts) in titr:
-                time_index = slice(tlow, tlow + tcounts)
-                ridx = row_mapping[ms_name][idt]["start_indices"][time_index]
-                rcnts = row_mapping[ms_name][idt]["counts"][time_index]
-                # select all rows for output dataset
-                row_index = slice(ridx[0], ridx[-1] + rcnts[-1])
+                titr = enumerate(zip(time_mapping[ms_name][idt]["start_indices"], time_mapping[ms_name][idt]["counts"]))
+                for ti, (tlow, tcounts) in titr:
+                    time_slice = slice(tlow, tlow + tcounts)
+                    row_index = row_mapping[ms_name][idt]["start_indices"][time_slice]
+                    row_counts = row_mapping[ms_name][idt]["counts"][time_slice]
+                    # select all rows for output dataset
+                    row_slice = slice(row_index[0], row_index[-1] + row_counts[-1])
 
-                fitr = enumerate(zip(freq_mapping[ms_name][idt]["start_indices"], freq_mapping[ms_name][idt]["counts"]))
-                b0 = msddid2bid[ms_name][idt]
-                for fi, (flow, fcounts) in fitr:
-                    freq_index = slice(flow, flow + fcounts)
-
-                    subds = ds[{"row": row_index, "chan": freq_index}]
-                    subds = subds.chunk({"row": -1, "chan": -1})
-                    if gains[ms_name][idt] is not None:
-                        subgds = gains[ms_name][idt][{"gain_time": time_index, "gain_freq": freq_index}]
-                        jones = subgds.gains.data
-                    else:
-                        jones = None
-
-                    fut = safe_stokes_image.remote(
-                        dc1=dc1,
-                        dc2=dc2,
-                        operator=operator,
-                        ds=subds,
-                        jones=jones,
-                        nx=nx,
-                        ny=ny,
-                        freq=freqs[ms_name][idt][freq_index],
-                        utime=utimes[ms_name][idt][time_index],
-                        tbin_idx=ridx,
-                        tbin_counts=rcnts,
-                        cell_rad=cell_rad,
-                        radec=radecs[ms_name][idt],
-                        antpos=antpos[ms_name],
-                        poltype=poltype[ms_name],
-                        fds_store=fds_store,
-                        bandid=b0 + fi,
-                        timeid=ti,
-                        msid=ims,
-                        attrs=attrs,
-                        # Parameters previously from opts:
-                        nthreads=nthreads,
-                        precision=precision,
-                        sigma_column=sigma_column,
-                        weight_column=weight_column,
-                        model_column=model_column,
-                        product=product,
-                        check_ants=check_ants,
-                        phase_dir=phase_dir,
-                        beam_model=beam_model,
-                        target=target,
-                        robustness=robustness,
-                        min_padding=min_padding,
-                        filter_counts_level=filter_counts_level,
-                        psf_relative_size=psf_relative_size,
-                        inject_transients=inject_transients,
-                        epsilon=epsilon,
-                        do_wgridding=do_wgridding,
-                        double_accum=double_accum,
-                        natural_grad=natural_grad,
-                        eta=eta,
-                        cg_tol=cg_tol,
-                        cg_maxit=cg_maxit,
-                        output_format=output_format,
-                        psf_out=psf_out,
-                        weight_grid_out=weight_grid_out,
-                        stack=stack,
-                        l2_reweight_dof=l2_reweight_dof,
+                    fitr = enumerate(
+                        zip(freq_mapping[ms_name][idt]["start_indices"], freq_mapping[ms_name][idt]["counts"])
                     )
-                    tasks.append(fut)
-                    channel_width[b0 + fi] = (
-                        freqs[ms_name][idt][freq_index].max() - freqs[ms_name][idt][freq_index].min()
-                    )
+                    b0 = msddid2bid[ms_name][idt]
+                    for fi, (flow, fcounts) in fitr:
+                        freq_slice = slice(flow, flow + fcounts)
 
-    nds = len(tasks)
-    ncomplete = 0
-    remaining_tasks = tasks.copy()
-    while remaining_tasks:
-        # Wait for at least 1 task to complete
-        ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
+                        subds = ds[{"row": row_slice, "chan": freq_slice}]
+                        subds = subds.chunk({"row": -1, "chan": -1})
+                        if gains[ms_name][idt] is not None:
+                            subgds = gains[ms_name][idt][{"gain_time": time_slice, "gain_freq": freq_slice}]
+                            jones = subgds.gains.data
+                        else:
+                            jones = None
 
-        # Process the completed task
-        for task in ready:
-            _ = ray.get(task)
-            ncomplete += 1
-            if progressbar:
-                print(f"Completed: {ncomplete} / {nds}", end="\n", flush=True)
+                        fut = safe_stokes_image.remote(
+                            dc1=dc1,
+                            dc2=dc2,
+                            operator=operator,
+                            ds=subds,
+                            jones=jones,
+                            nx=nx,
+                            ny=ny,
+                            freq=freqs[ms_name][idt][freq_slice],
+                            utime=utimes[ms_name][idt][time_slice],
+                            tbin_idx=row_index,
+                            tbin_counts=row_counts,
+                            cell_rad=cell_rad,
+                            radec=radecs[ms_name][idt],
+                            antpos=antpos[ms_name],
+                            poltype=poltype[ms_name],
+                            fds_store=fds_store,
+                            bandid=b0 + fi,
+                            timeid=ti,
+                            msid=ims,
+                            attrs=attrs,
+                            # Parameters previously from opts:
+                            nthreads=nthreads,
+                            precision=precision,
+                            sigma_column=sigma_column,
+                            weight_column=weight_column,
+                            model_column=model_column,
+                            product=product,
+                            check_ants=check_ants,
+                            phase_dir=phase_dir,
+                            beam_model=beam_model,
+                            target=target,
+                            robustness=robustness,
+                            min_padding=min_padding,
+                            filter_counts_level=filter_counts_level,
+                            psf_relative_size=psf_relative_size,
+                            inject_transients=inject_transients,
+                            epsilon=epsilon,
+                            do_wgridding=do_wgridding,
+                            double_accum=double_accum,
+                            natural_grad=natural_grad,
+                            eta=eta,
+                            cg_tol=cg_tol,
+                            cg_maxit=cg_maxit,
+                            output_format=output_format,
+                            psf_out=psf_out,
+                            weight_grid_out=weight_grid_out,
+                            stack=stack,
+                            l2_reweight_dof=l2_reweight_dof,
+                            synchronizer=synchronizer,
+                        )
+                        tasks.append(fut)
+                        channel_width[b0 + fi] = (
+                            freqs[ms_name][idt][freq_slice].max() - freqs[ms_name][idt][freq_slice].min()
+                        )
+
+                        # limit the number of chunks that are processed simultaneously
+                        if len(tasks) > max_simul_chunks:
+                            ncompleted += 1
+                            ready, tasks = ray.wait(tasks, num_returns=1)
+                            timeid, bandid = ray.get(ready)[0]
+                            print(f"Processed {ncompleted}/{ntasks}", end="\n", flush=True)
+
+        remaining_tasks = tasks.copy()
+        while remaining_tasks:
+            ncompleted += 1
+            ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
+            timeid, bandid = ray.get(ready)[0]
+            print(f"Processed {ncompleted}/{ntasks}", end="\n", flush=True)
 
     if stack:
         log.info("Computing means")
@@ -542,7 +559,7 @@ def hci(
         for _, val in channel_width.items():
             cwidths.append(val)
         # reduction over FREQ and TIME so use max chunk sizes
-        ds = xr.open_zarr(cds, chunks={"FREQ": -1, "TIME": -1})
+        ds = xr.open_zarr(fds_store.url, chunks={"FREQ": -1, "TIME": -1})
         cube = ds.cube.data
         wsums = ds.weight.data
         # all variables have been normalised by wsum so we first
@@ -573,8 +590,8 @@ def hci(
         ds = ds.drop_vars(drop_vars)
         ds["mean"] = (("STOKES", "FREQ", "Y", "X"), weighted_mean)
         ds["channel_width"] = (("FREQ",), da.from_array(cwidths, chunks=1))
-        with dask.config.set(pool=ThreadPoolExecutor(nworkers)):
-            ds.to_zarr(cds, mode="r+")
+        with dask.config.set(pool=ThreadPoolExecutor(8)):
+            ds.to_zarr(fds_store.url, mode="r+")
         log.info("Reduction complete")
 
     log.info(f"All done after {time.time() - time_start}s")
@@ -584,7 +601,7 @@ def hci(
 
 def make_dummy_dataset(
     ms,
-    output_filename,
+    output_dataset,
     fields,
     ddids,
     scans,
@@ -603,12 +620,16 @@ def make_dummy_dataset(
     nx,
     ny,
     cell_deg,
+    time_chunk,
     spatial_chunk=128,
+    integrations_per_image=1,
+    stack=True,
 ):
     out_ra = []
     out_dec = []
     out_times = []
     out_freqs = []
+    ntasks = 0
     for ms_name in ms:
         xds = xds_from_ms(ms_name, columns="TIME", group_cols=["FIELD_ID", "DATA_DESC_ID", "SCAN_NUMBER"])
         for ds in xds:
@@ -633,13 +654,26 @@ def make_dummy_dataset(
 
             titr = enumerate(zip(time_mapping[ms_name][idt]["start_indices"], time_mapping[ms_name][idt]["counts"]))
             for ti, (tlow, tcounts) in titr:
-                time_index = slice(tlow, tlow + tcounts)
                 fitr = enumerate(zip(freq_mapping[ms_name][idt]["start_indices"], freq_mapping[ms_name][idt]["counts"]))
                 for fi, (flow, fcounts) in fitr:
-                    freq_index = slice(flow, flow + fcounts)
+                    freq_slice = slice(flow, flow + fcounts)
+                    out_freqs.append(np.mean(freqs[ms][idt][freq_slice]))
+                    ntasks += 1
 
-                    out_times.append(np.mean(utimes[ms_name][idt][time_index]))
-                    out_freqs.append(np.mean(freqs[ms_name][idt][freq_index]))
+                    for t0 in range(tlow, tlow + tcounts, integrations_per_image):
+                        tmax = np.minimum(tlow + tcounts, t0 + integrations_per_image)
+                        time_slice = slice(t0, tmax)
+                        out_times.append(np.mean(utimes[ms_name][idt][time_slice]))
+
+    # remove duplicates
+    out_times = np.unique(out_times)
+    out_freqs = np.unique(out_freqs)
+    n_times = out_times.size
+    n_freqs = out_freqs.size
+
+    # if not stacking we only run this to get the number of tasks that will be submitted
+    if not stack:
+        return None, ntasks, n_times, n_freqs
 
     # spatial coordinates
     if phase_dir is None:
@@ -810,6 +844,6 @@ def make_dummy_dataset(
         )
 
     # Write scaffold and metadata to disk.
-    cds = f"{output_filename}.fds"
+    cds = f"{output_dataset}"
     dummy_ds.to_zarr(cds, mode="w", compute=False)
     return cds, attrs
