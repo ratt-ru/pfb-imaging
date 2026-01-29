@@ -132,12 +132,6 @@ def sara(
             "Set to larger than niter to disable this check.",
         ),
     ] = 5,
-    skip_model: Annotated[
-        bool,
-        typer.Option(
-            help="Skip model creation i.e. use with do-res to do-res only",
-        ),
-    ] = False,
     rms_outside_model: Annotated[
         bool,
         typer.Option(
@@ -235,12 +229,6 @@ def sara(
             help="Maximum iterations for conjugate gradient algorithm",
         ),
     ] = 150,
-    cg_minit: Annotated[
-        int,
-        typer.Option(
-            help="Minimum iterations for conjugate gradient algorithm",
-        ),
-    ] = 10,
     cg_verbose: Annotated[
         int,
         typer.Option(
@@ -253,12 +241,6 @@ def sara(
             help="Report frequency of conjugate gradient algorithm",
         ),
     ] = 10,
-    backtrack: Annotated[
-        bool,
-        typer.Option(
-            help="Ensure residual decreases at every iteration",
-        ),
-    ] = False,
     log_directory: Annotated[
         str | None,
         typer.Option(
@@ -314,7 +296,6 @@ def sara(
         nthreads=nthreads,
         tol=tol,
         diverge_count=diverge_count,
-        skip_model=skip_model,
         rms_outside_model=rms_outside_model,
         init_factor=init_factor,
         verbosity=verbosity,
@@ -331,10 +312,8 @@ def sara(
         pm_report_freq=pm_report_freq,
         cg_tol=cg_tol,
         cg_maxit=cg_maxit,
-        cg_minit=cg_minit,
         cg_verbose=cg_verbose,
         cg_report_freq=cg_report_freq,
-        backtrack=backtrack,
         log_directory=log_directory,
         product=product,
         fits_output_folder=fits_output_folder,

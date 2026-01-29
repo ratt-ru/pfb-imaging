@@ -19,7 +19,6 @@ from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import hessian_jax
 from pfb_imaging.utils.astrometry import get_coordinates
 from pfb_imaging.utils.beam import reproject_and_interp_beam
-from pfb_imaging.utils.fits import save_fits, set_wcs
 from pfb_imaging.utils.misc import fitcleanbeam
 from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights, filter_extreme_counts, weight_data
 
@@ -74,10 +73,8 @@ def batch_stokes_image(
     eta=1e-5,
     cg_tol=1e-3,
     cg_maxit=150,
-    output_format="zarr",
     psf_out=False,
     weight_grid_out=False,
-    stack=False,
     l2_reweight_dof=None,
 ):
     # load chunk
@@ -148,10 +145,8 @@ def batch_stokes_image(
             eta=eta,
             cg_tol=cg_tol,
             cg_maxit=cg_maxit,
-            output_format=output_format,
             psf_out=psf_out,
             weight_grid_out=weight_grid_out,
-            stack=stack,
             l2_reweight_dof=l2_reweight_dof,
         )
 
@@ -160,10 +155,9 @@ def batch_stokes_image(
     # wait for all tasks to finish and get result
     dso = ray.get(tasks)
 
-    # if the output is a dataset we stack and write the output
-    if isinstance(dso[0], xr.Dataset):
-        dso = xr.concat(dso, dim="TIME")
-        dso.to_zarr(fds_store.url, region="auto", synchronizer=synchronizer, safe_chunks=False)
+    # write output chunks
+    dso = xr.concat(dso, dim="TIME")
+    dso.to_zarr(fds_store.url, region="auto", synchronizer=synchronizer, safe_chunks=False)
 
     return timeid, bandid
 
@@ -213,10 +207,8 @@ def stokes_image(
     eta=1e-5,
     cg_tol=1e-3,
     cg_maxit=150,
-    output_format="zarr",
     psf_out=False,
     weight_grid_out=False,
-    stack=False,
     l2_reweight_dof=None,
 ):
     # serialization fails for these if we import them above
@@ -669,112 +661,72 @@ def stokes_image(
     out_decs = np.round(out_decs, decimals=12)
 
     # save outputs
-    if output_format == "zarr":
-        coords = {
-            "FREQ": (("FREQ",), np.array([freq_out])),
-            "TIME": (("TIME",), np.mean(utime, keepdims=True)),
-            "STOKES": (("STOKES",), list(corr)),
-            "X": (("X",), out_ras),
-            "Y": (("Y",), out_decs),
-        }
-        # X and Y are transposed for compatibility with breifast
-        data_vars = {}
-        residual = np.transpose(residual.astype(np.float32), axes=(0, 2, 1))
-        data_vars["cube"] = (("STOKES", "FREQ", "TIME", "Y", "X"), residual[:, None, None, :, :])
-        if psf_out:
-            if psf_relative_size == 1:
-                xpsf = "X"
-                ypsf = "Y"
-            else:
-                xpsf = "X_PSF"
-                ypsf = "Y_PSF"
-                coords["X_PSF"] = (("X_PSF",), ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg)
-                coords["Y_PSF"] = (("Y_PSF",), dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg)
-            psf /= wsum[:, None, None]
-            psf = np.transpose(psf.astype(np.float32), axes=(0, 2, 1))
-            data_vars["psf"] = (("STOKES", "FREQ", "TIME", ypsf, xpsf), psf[:, None, None, :, :])
-
-        if robustness is not None and weight_grid_out:
-            ic, ix, iy = np.where(counts > 0)
-            wgt = np.zeros_like(counts)
-            wgt[ic, ix, iy] = 1.0 / counts[ic, ix, iy]
-            coords["X_PAD"] = (("X_PAD",), np.arange(nx_pad) * cell_deg)
-            coords["Y_PAD"] = (("Y_PAD",), np.arange(ny_pad) * cell_deg)
-            wgt = np.transpose(wgt.astype(np.float32), axes=(0, 2, 1))
-            data_vars["wgtgrid"] = (("STOKES", "FREQ", "TIME", "Y_PAD", "X_PAD"), wgt[:, None, None, :, :])
-
-        data_vars["weight"] = (("STOKES", "FREQ", "TIME"), wsum[:, None, None])
-
-        if beam_model is not None:
-            weight = pbeam**2 + eta
-            weight = np.transpose(weight.astype(np.float32), axes=(0, 2, 1))
-            data_vars["beam_weight"] = (("STOKES", "FREQ", "TIME", "Y", "X"), weight[:, None, None, :, :])
-
-        data_vars["rms"] = (("STOKES", "FREQ", "TIME"), rms[:, None, None].astype(np.float32))
-        nonzero = wsum > 0
-        data_vars["nonzero"] = (("STOKES", "FREQ", "TIME"), nonzero[:, None, None])
-        bmaj = np.array([gp[0] for gp in gausspars], dtype=np.float32)
-        bmin = np.array([gp[1] for gp in gausspars], dtype=np.float32)
-        # convert bpa to degrees
-        bpa = np.array([gp[2] * 180 / np.pi for gp in gausspars], dtype=np.float32)
-        data_vars["psf_maj"] = (("STOKES", "FREQ", "TIME"), bmaj[:, None, None])
-        data_vars["psf_min"] = (("STOKES", "FREQ", "TIME"), bmin[:, None, None])
-        data_vars["psf_pa"] = (("STOKES", "FREQ", "TIME"), bpa[:, None, None])
-
-        if attrs is None:
-            attrs = {
-                "ra": tra,
-                "dec": tdec,
-                "x0": x0,
-                "y0": y0,
-                "cell_rad": cell_rad,
-                "fieldid": fieldid,
-                "ddid": ddid,
-                "scanid": scanid,
-                "bandid": bandid,
-                "timeid": timeid,
-                "robustness": robustness,
-                "utc": utc,
-            }
-
-        out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
-        if stack:
-            return out_ds
+    coords = {
+        "FREQ": (("FREQ",), np.array([freq_out])),
+        "TIME": (("TIME",), np.mean(utime, keepdims=True)),
+        "STOKES": (("STOKES",), list(corr)),
+        "X": (("X",), out_ras),
+        "Y": (("Y",), out_decs),
+    }
+    # X and Y are transposed for compatibility with breifast
+    data_vars = {}
+    residual = np.transpose(residual.astype(np.float32), axes=(0, 2, 1))
+    data_vars["cube"] = (("STOKES", "FREQ", "TIME", "Y", "X"), residual[:, None, None, :, :])
+    if psf_out:
+        if psf_relative_size == 1:
+            xpsf = "X"
+            ypsf = "Y"
         else:
-            out_ds.to_zarr(f"{fds_store.url}/{oname}.zarr", mode="w")
-    elif output_format == "fits":
-        # if there is more than one polarisation product
-        # we currently assume all have the same beam
-        hdr = set_wcs(
-            cell_deg, cell_deg, nx, ny, [tra, tdec], freq_out, GuassPar=gausspars[0], ms_time=time_out, ncorr=len(corr)
-        )
+            xpsf = "X_PSF"
+            ypsf = "Y_PSF"
+            coords["X_PSF"] = (("X_PSF",), ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg)
+            coords["Y_PSF"] = (("Y_PSF",), dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg)
+        psf /= wsum[:, None, None]
+        psf = np.transpose(psf.astype(np.float32), axes=(0, 2, 1))
+        data_vars["psf"] = (("STOKES", "FREQ", "TIME", ypsf, xpsf), psf[:, None, None, :, :])
 
-        hdr["STOKES"] = corr
-        save_fits(residual / wsum[:, None, None], f"{fds_store.full_path}/{oname}_image.fits", hdr)
-        if robustness is not None and weight_grid_out:
-            ic, ix, iy = np.where(counts > 0)
-            wgt = np.zeros_like(counts)
-            wgt[ic, ix, iy] = 1.0 / counts[ic, ix, iy]
-            # TODO - add mirror image
-            save_fits(wgt, f"{fds_store.full_path}/{oname}_weight.fits", hdr)
+    if robustness is not None and weight_grid_out:
+        ic, ix, iy = np.where(counts > 0)
+        wgt = np.zeros_like(counts)
+        wgt[ic, ix, iy] = 1.0 / counts[ic, ix, iy]
+        coords["X_PAD"] = (("X_PAD",), np.arange(nx_pad) * cell_deg)
+        coords["Y_PAD"] = (("Y_PAD",), np.arange(ny_pad) * cell_deg)
+        wgt = np.transpose(wgt.astype(np.float32), axes=(0, 2, 1))
+        data_vars["wgtgrid"] = (("STOKES", "FREQ", "TIME", "Y_PAD", "X_PAD"), wgt[:, None, None, :, :])
 
-        if psf_out:
-            hdr_psf = set_wcs(
-                cell_deg,
-                cell_deg,
-                nx_psf,
-                ny_psf,
-                [tra, tdec],
-                freq_out,
-                GuassPar=gausspars[0],  # fake for now
-                ms_time=time_out,
-            )
-            hdr_psf["STOKES"] = corr
-            save_fits(psf / wsum[:, None, None], f"{fds_store.full_path}/{oname}_psf.fits", hdr_psf)
+    data_vars["weight"] = (("STOKES", "FREQ", "TIME"), wsum[:, None, None])
 
-        if beam_model is not None:
-            # weight = np.transpose(weight.astype(np.float32),
-            #                      axes=(0, 2, 1))
-            # weight = weight[:, ::-1, :]
-            save_fits(weight, f"{fds_store.full_path}/{oname}_weight.fits", hdr)
-    return 1
+    if beam_model is not None:
+        weight = pbeam**2 + eta
+        weight = np.transpose(weight.astype(np.float32), axes=(0, 2, 1))
+        data_vars["beam_weight"] = (("STOKES", "FREQ", "TIME", "Y", "X"), weight[:, None, None, :, :])
+
+    data_vars["rms"] = (("STOKES", "FREQ", "TIME"), rms[:, None, None].astype(np.float32))
+    nonzero = wsum > 0
+    data_vars["nonzero"] = (("STOKES", "FREQ", "TIME"), nonzero[:, None, None])
+    bmaj = np.array([gp[0] for gp in gausspars], dtype=np.float32)
+    bmin = np.array([gp[1] for gp in gausspars], dtype=np.float32)
+    # convert bpa to degrees
+    bpa = np.array([gp[2] * 180 / np.pi for gp in gausspars], dtype=np.float32)
+    data_vars["psf_maj"] = (("STOKES", "FREQ", "TIME"), bmaj[:, None, None])
+    data_vars["psf_min"] = (("STOKES", "FREQ", "TIME"), bmin[:, None, None])
+    data_vars["psf_pa"] = (("STOKES", "FREQ", "TIME"), bpa[:, None, None])
+
+    if attrs is None:
+        attrs = {
+            "ra": tra,
+            "dec": tdec,
+            "x0": x0,
+            "y0": y0,
+            "cell_rad": cell_rad,
+            "fieldid": fieldid,
+            "ddid": ddid,
+            "scanid": scanid,
+            "bandid": bandid,
+            "timeid": timeid,
+            "robustness": robustness,
+            "utc": utc,
+        }
+
+    out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
+    return out_ds

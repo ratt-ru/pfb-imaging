@@ -9,7 +9,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml README.rst ./
 COPY src/ src/
 
-# Install package with full dependencies using uv (much faster than pip)
+# install git in case we need to install a package from a git repo
+RUN apt-get update && apt-get install -y git
+
+# Install package with full dependencies using uv
 RUN uv pip install --system --no-cache ".[full]"
 
 # Make CLI available

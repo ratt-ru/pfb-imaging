@@ -48,9 +48,6 @@ cabs:
           Allow overwrite of output xds
         dtype: bool
         default: false
-      radec:
-        info:
-          Rephase all images to this radec specified in radians
       data-column:
         info:
           Data column to image.
@@ -118,9 +115,6 @@ cabs:
           Average this number if channels together
         dtype: int
         default: 1
-      target:
-        info:
-          This can be predefined celestial objects known to astropy or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
       progressbar:
         info:
           Display progress.
@@ -140,10 +134,6 @@ cabs:
           String specifying which Stokes products to produce.
           Outputs are always be alphabetically ordered.
         default: I
-      host-address:
-        info:
-          Address where the distributed client lives.
-          Uses LocalCluster if no address is provided.
       nworkers:
         info:
           Number of worker processes.

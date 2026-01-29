@@ -145,12 +145,6 @@ def kclean(
             help="Maximum iterations for conjugate gradient algorithm",
         ),
     ] = 100,
-    cg_minit: Annotated[
-        int,
-        typer.Option(
-            help="Minimum iterations for conjugate gradient algorithm",
-        ),
-    ] = 1,
     cg_verbose: Annotated[
         int,
         typer.Option(
@@ -163,12 +157,6 @@ def kclean(
             help="Report frequency of conjugate gradient algorithm",
         ),
     ] = 100,
-    backtrack: Annotated[
-        bool,
-        typer.Option(
-            help="Ensure residual decreases at every iteration",
-        ),
-    ] = False,
     epsilon: Annotated[
         float,
         typer.Option(
@@ -245,10 +233,8 @@ def kclean(
         report_freq=report_freq,
         cg_tol=cg_tol,
         cg_maxit=cg_maxit,
-        cg_minit=cg_minit,
         cg_verbose=cg_verbose,
         cg_report_freq=cg_report_freq,
-        backtrack=backtrack,
         epsilon=epsilon,
         do_wgridding=do_wgridding,
         double_accum=double_accum,

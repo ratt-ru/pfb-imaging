@@ -49,12 +49,6 @@ def model2comps(
             help="Order of interpolating polynomial for frequency axis. One less than the number of bands by default.",
         ),
     ] = None,
-    nbasist: Annotated[
-        int,
-        typer.Option(
-            help="Order of interpolating polynomial for time axis. This is hypothetical for the time being.",
-        ),
-    ] = 1,
     nthreads: Annotated[
         int | None,
         typer.Option(
@@ -146,7 +140,6 @@ def model2comps(
         mds=mds,
         from_fits=from_fits,
         nbasisf=nbasisf,
-        nbasist=nbasist,
         nthreads=nthreads,
         fit_mode=fit_mode,
         min_val=min_val,

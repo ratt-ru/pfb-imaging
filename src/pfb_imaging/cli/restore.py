@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, Literal, NewType
+from typing import Annotated, NewType
 
 import typer
 from hip_cargo.utils.decorators import stimela_cab, stimela_output
@@ -54,12 +54,6 @@ def restore(
             "(amplitude and phase will be produced). Use capitals to produce corresponding cubes.",
         ),
     ] = "mMrRiI",
-    overwrite: Annotated[
-        bool,
-        typer.Option(
-            help="Allow overwriting fits files",
-        ),
-    ] = True,
     gausspar: Annotated[
         str | None,
         typer.Option(
@@ -70,23 +64,10 @@ def restore(
             "Set to (0,0,0) to use the resolution of the lowest band.. Stimela dtype: List[float]",
         ),
     ] = None,
-    inflate_factor: Annotated[
-        float,
-        typer.Option(
-            help="Inflate the intrinsic resolution of the uniformly blurred image by this amount.",
-        ),
-    ] = 1.5,
     drop_bands: Annotated[
         str | None,
         typer.Option(
             help="List of bands to discard. Stimela dtype: List[int]",
-        ),
-    ] = None,
-    host_address: Annotated[
-        str | None,
-        typer.Option(
-            help="Address where the distributed client lives. "
-            "Uses LocalCluster if no address is provided and scheduler is set to distributed.",
         ),
     ] = None,
     nworkers: Annotated[
@@ -104,12 +85,6 @@ def restore(
             "Will attempt to use half the available threads by default.",
         ),
     ] = None,
-    log_level: Annotated[
-        Literal["error", "warning", "info", "debug"],
-        typer.Option(
-            help="",
-        ),
-    ] = "error",
     log_directory: Annotated[
         str | None,
         typer.Option(
@@ -130,18 +105,6 @@ def restore(
             "The same naming conventions apply.",
         ),
     ] = None,
-    fits_mfs: Annotated[
-        bool,
-        typer.Option(
-            help="Output MFS fits files",
-        ),
-    ] = True,
-    fits_cubes: Annotated[
-        bool,
-        typer.Option(
-            help="Output fits cubes",
-        ),
-    ] = True,
 ):
     # Lazy import the core implementation
     from pfb_imaging.core.restore import restore as restore_core  # noqa: E402
@@ -163,17 +126,11 @@ def restore(
         residual_name=residual_name,
         suffix=suffix,
         outputs=outputs,
-        overwrite=overwrite,
         gausspar=gausspar_list,
-        inflate_factor=inflate_factor,
         drop_bands=drop_bands_list,
-        host_address=host_address,
         nworkers=nworkers,
         nthreads=nthreads,
-        log_level=log_level,
         log_directory=log_directory,
         product=product,
         fits_output_folder=fits_output_folder,
-        fits_mfs=fits_mfs,
-        fits_cubes=fits_cubes,
     )

@@ -108,11 +108,6 @@ cabs:
           Maximum iterations for conjugate gradient algorithm
         dtype: int
         default: 100
-      cg-minit:
-        info:
-          Minimum iterations for conjugate gradient algorithm
-        dtype: int
-        default: 1
       cg-verbose:
         info:
           Verbosity of conjugate gradient algorithm.
@@ -124,11 +119,6 @@ cabs:
           Report frequency of conjugate gradient algorithm
         dtype: int
         default: 100
-      backtrack:
-        info:
-          Ensure residual decreases at every iteration
-        dtype: bool
-        default: false
       epsilon:
         info:
           Gridder accuracy

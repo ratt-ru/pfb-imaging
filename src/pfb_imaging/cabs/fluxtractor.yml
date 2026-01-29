@@ -50,21 +50,11 @@ cabs:
         info:
           Name of the residual to use
         default: RESIDUAL
-      gamma:
-        info:
-          Step size of update
-        dtype: float
-        default: 1.0
       use-psf:
         info:
           Whether to approximate the Hessian as a convolution by the PSF
         dtype: bool
         default: true
-      memory-greedy:
-        info:
-          Holds data in memory if set
-        dtype: bool
-        default: false
       epsilon:
         info:
           Gridder accuracy
@@ -91,11 +81,6 @@ cabs:
           Maximum iterations for conjugate gradient algorithm
         dtype: int
         default: 150
-      cg-minit:
-        info:
-          Minimum iterations for conjugate gradient algorithm
-        dtype: int
-        default: 10
       cg-verbose:
         info:
           Verbosity of conjugate gradient algorithm.
@@ -107,15 +92,6 @@ cabs:
           Report frequency of conjugate gradient algorithm
         dtype: int
         default: 10
-      backtrack:
-        info:
-          Ensure residual decreases at every iteration
-        dtype: bool
-        default: false
-      host-address:
-        info:
-          Address where the distributed client lives.
-          Uses LocalCluster if no address is provided.
       nworkers:
         info:
           Number of worker processes.

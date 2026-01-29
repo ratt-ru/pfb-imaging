@@ -92,12 +92,6 @@ cabs:
           Perform w-correction via improved w-stacking
         dtype: bool
         default: true
-      double-accum:
-        info:
-          Accumulate onto grid using double precision.
-          Only has an affect when using single precision.
-        dtype: bool
-        default: true
       host-address:
         info:
           Address where the distributed client lives.

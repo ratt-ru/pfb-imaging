@@ -124,12 +124,6 @@ def degrid(
             help="Perform w-correction via improved w-stacking",
         ),
     ] = True,
-    double_accum: Annotated[
-        bool,
-        typer.Option(
-            help="Accumulate onto grid using double precision. Only has an affect when using single precision.",
-        ),
-    ] = True,
     host_address: Annotated[
         str | None,
         typer.Option(
@@ -198,7 +192,6 @@ def degrid(
         region_file=region_file,
         epsilon=epsilon,
         do_wgridding=do_wgridding,
-        double_accum=double_accum,
         host_address=host_address,
         nworkers=nworkers,
         nthreads=nthreads,

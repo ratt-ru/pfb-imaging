@@ -244,18 +244,6 @@ def hci(
             "2) result in aggressive reweighting and should be avoided if the model is still incomplete.",
         ),
     ] = None,
-    progressbar: Annotated[
-        bool,
-        typer.Option(
-            help="Display progress. Use --no-progressbar to deactivate.",
-        ),
-    ] = True,
-    output_format: Annotated[
-        str,
-        typer.Option(
-            help="zarr or fits output",
-        ),
-    ] = "zarr",
     eta: Annotated[
         float,
         typer.Option(
@@ -313,12 +301,6 @@ def hci(
             "Should be a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
         ),
     ] = None,
-    stack: Annotated[
-        bool,
-        typer.Option(
-            help="Stack everything into a single xarray dataset",
-        ),
-    ] = False,
     epsilon: Annotated[
         float,
         typer.Option(
@@ -337,13 +319,6 @@ def hci(
             help="Accumulate onto grid using double precision. Only has an affect when using single precision.",
         ),
     ] = True,
-    host_address: Annotated[
-        str | None,
-        typer.Option(
-            help="Address where the distributed client lives. "
-            "Uses LocalCluster if no address is provided and scheduler is set to distributed.",
-        ),
-    ] = None,
     nworkers: Annotated[
         int,
         typer.Option(
@@ -359,12 +334,6 @@ def hci(
             "Will attempt to use half the available threads by default.",
         ),
     ] = None,
-    log_level: Annotated[
-        Literal["error", "warning", "info", "debug"],
-        typer.Option(
-            help="",
-        ),
-    ] = "error",
     cg_tol: Annotated[
         float,
         typer.Option(
@@ -377,30 +346,6 @@ def hci(
             help="Maximum iterations for conjugate gradient algorithm",
         ),
     ] = 150,
-    cg_minit: Annotated[
-        int,
-        typer.Option(
-            help="Minimum iterations for conjugate gradient algorithm",
-        ),
-    ] = 10,
-    cg_verbose: Annotated[
-        int,
-        typer.Option(
-            help="Verbosity of conjugate gradient algorithm. Set to > 1 for debugging, 0 for silence.",
-        ),
-    ] = 1,
-    cg_report_freq: Annotated[
-        int,
-        typer.Option(
-            help="Report frequency of conjugate gradient algorithm.",
-        ),
-    ] = 10,
-    backtrack: Annotated[
-        bool,
-        typer.Option(
-            help="Ensure residual decreases at every iteration.",
-        ),
-    ] = False,
     object_store_memory: Annotated[
         float | None,
         typer.Option(
@@ -466,8 +411,6 @@ def hci(
         robustness=robustness,
         target=target,
         l2_reweight_dof=l2_reweight_dof,
-        progressbar=progressbar,
-        output_format=output_format,
         eta=eta,
         psf_out=psf_out,
         weight_grid_out=weight_grid_out,
@@ -477,20 +420,13 @@ def hci(
         filter_counts_level=filter_counts_level,
         min_padding=min_padding,
         phase_dir=phase_dir,
-        stack=stack,
         epsilon=epsilon,
         do_wgridding=do_wgridding,
         double_accum=double_accum,
-        host_address=host_address,
         nworkers=nworkers,
         nthreads=nthreads,
-        log_level=log_level,
         cg_tol=cg_tol,
         cg_maxit=cg_maxit,
-        cg_minit=cg_minit,
-        cg_verbose=cg_verbose,
-        cg_report_freq=cg_report_freq,
-        backtrack=backtrack,
         object_store_memory=object_store_memory,
         temp_dir=temp_dir,
     )

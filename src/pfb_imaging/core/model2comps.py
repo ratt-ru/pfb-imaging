@@ -27,7 +27,6 @@ def model2comps(
     mds: str | None = None,
     from_fits: str | None = None,
     nbasisf: int | None = None,
-    nbasist: int = 1,
     nthreads: int | None = None,
     fit_mode: str = "Legendre",
     min_val: float | None = None,

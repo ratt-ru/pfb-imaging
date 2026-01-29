@@ -48,10 +48,8 @@ def grid(
     epsilon: float = 1e-7,
     do_wgridding: bool = True,
     double_accum: bool = True,
-    host_address: str | None = None,
     nworkers: int = 1,
     nthreads: int | None = None,
-    log_level: str = "error",
     log_directory: str | None = None,
     product: str = "I",
     fits_output_folder: str | None = None,
@@ -108,41 +106,11 @@ def grid(
 
     # need this for cache validation
     opts = {
-        "output_filename": output_filename,
-        "xds": xds,
-        "suffix": suffix,
-        "concat_row": concat_row,
-        "overwrite": overwrite,
-        "transfer_model_from": transfer_model_from,
-        "use_best_model": use_best_model,
-        "robustness": robustness,
-        "dirty": dirty,
-        "psf": psf,
-        "residual": residual,
-        "noise": noise,
-        "beam": beam,
-        "weight": weight,
-        "psf_oversize": psf_oversize,
         "field_of_view": field_of_view,
         "super_resolution_factor": super_resolution_factor,
-        "cell_size": cell_size,
-        "nx": nx,
-        "ny": ny,
-        "filter_counts_level": filter_counts_level,
-        "target": target,
-        "l2_reweight_dof": l2_reweight_dof,
         "epsilon": epsilon,
         "do_wgridding": do_wgridding,
         "double_accum": double_accum,
-        "host_address": host_address,
-        "nworkers": nworkers,
-        "nthreads": nthreads,
-        "log_level": log_level,
-        "log_directory": log_directory,
-        "product": product,
-        "fits_output_folder": fits_output_folder,
-        "fits_mfs": fits_mfs,
-        "fits_cubes": fits_cubes,
     }
 
     resize_thread_pool(nthreads)
@@ -219,7 +187,14 @@ def grid(
         optsp = get_opts(dds_store.url, protocol, name="opts.pkl")
 
         # check if we need to remake the data products
-        verify_attrs = ["epsilon", "do_wgridding", "double_accum", "field_of_view", "super_resolution_factor"]
+        verify_attrs = [
+            "epsilon",
+            "do_wgridding",
+            "double_accum",
+            "field_of_view",
+            "super_resolution_factor",
+            "psf_oversize",
+        ]
         try:
             for attr in verify_attrs:
                 assert optsp[attr] == opts[attr]
@@ -429,6 +404,7 @@ def grid(
             do_residual=residual,
             do_noise=noise,
             do_beam=beam,
+            filter_counts_level=filter_counts_level,
         )
         tasks.append(task)
 

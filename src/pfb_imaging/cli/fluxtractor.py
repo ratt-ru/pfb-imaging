@@ -79,24 +79,12 @@ def fluxtractor(
             help="Name of the residual to use",
         ),
     ] = "RESIDUAL",
-    gamma: Annotated[
-        float,
-        typer.Option(
-            help="Step size of update",
-        ),
-    ] = 1.0,
     use_psf: Annotated[
         bool,
         typer.Option(
             help="Whether to approximate the Hessian as a convolution by the PSF",
         ),
     ] = True,
-    memory_greedy: Annotated[
-        bool,
-        typer.Option(
-            help="Holds data in memory if set",
-        ),
-    ] = False,
     epsilon: Annotated[
         float,
         typer.Option(
@@ -127,12 +115,6 @@ def fluxtractor(
             help="Maximum iterations for conjugate gradient algorithm",
         ),
     ] = 150,
-    cg_minit: Annotated[
-        int,
-        typer.Option(
-            help="Minimum iterations for conjugate gradient algorithm",
-        ),
-    ] = 10,
     cg_verbose: Annotated[
         int,
         typer.Option(
@@ -145,18 +127,6 @@ def fluxtractor(
             help="Report frequency of conjugate gradient algorithm",
         ),
     ] = 10,
-    backtrack: Annotated[
-        bool,
-        typer.Option(
-            help="Ensure residual decreases at every iteration",
-        ),
-    ] = False,
-    host_address: Annotated[
-        str | None,
-        typer.Option(
-            help="Address where the distributed client lives. Uses LocalCluster if no address is provided.",
-        ),
-    ] = None,
     nworkers: Annotated[
         int,
         typer.Option(
@@ -219,19 +189,14 @@ def fluxtractor(
         eta=eta,
         model_name=model_name,
         residual_name=residual_name,
-        gamma=gamma,
         use_psf=use_psf,
-        memory_greedy=memory_greedy,
         epsilon=epsilon,
         do_wgridding=do_wgridding,
         double_accum=double_accum,
         cg_tol=cg_tol,
         cg_maxit=cg_maxit,
-        cg_minit=cg_minit,
         cg_verbose=cg_verbose,
         cg_report_freq=cg_report_freq,
-        backtrack=backtrack,
-        host_address=host_address,
         nworkers=nworkers,
         nthreads=nthreads,
         log_directory=log_directory,

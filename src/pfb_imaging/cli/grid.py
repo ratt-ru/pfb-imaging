@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, Literal, NewType
+from typing import Annotated, NewType
 
 import typer
 from hip_cargo.utils.decorators import stimela_cab, stimela_output
@@ -181,12 +181,6 @@ def grid(
             help="Accumulate onto grid using double precision. Only has an affect when using single precision.",
         ),
     ] = True,
-    host_address: Annotated[
-        str | None,
-        typer.Option(
-            help="Address where the distributed client lives. Uses LocalCluster if no address is provided.",
-        ),
-    ] = None,
     nworkers: Annotated[
         int,
         typer.Option(
@@ -202,12 +196,6 @@ def grid(
             "Will attempt to use half the available threads by default.",
         ),
     ] = None,
-    log_level: Annotated[
-        Literal["error", "warning", "info", "debug"],
-        typer.Option(
-            help="",
-        ),
-    ] = "error",
     log_directory: Annotated[
         str | None,
         typer.Option(
@@ -272,10 +260,8 @@ def grid(
         epsilon=epsilon,
         do_wgridding=do_wgridding,
         double_accum=double_accum,
-        host_address=host_address,
         nworkers=nworkers,
         nthreads=nthreads,
-        log_level=log_level,
         log_directory=log_directory,
         product=product,
         fits_output_folder=fits_output_folder,

@@ -73,12 +73,6 @@ def init(
             help="Allow overwrite of output xds",
         ),
     ] = False,
-    radec: Annotated[
-        str | None,
-        typer.Option(
-            help="Rephase all images to this radec specified in radians",
-        ),
-    ] = None,
     data_column: Annotated[
         str,
         typer.Option(
@@ -160,13 +154,6 @@ def init(
             help="Average this number if channels together",
         ),
     ] = 1,
-    target: Annotated[
-        str | None,
-        typer.Option(
-            help="This can be predefined celestial objects known to astropy or a string in the format "
-            "'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
-        ),
-    ] = None,
     progressbar: Annotated[
         bool,
         typer.Option(
@@ -191,12 +178,6 @@ def init(
             help="String specifying which Stokes products to produce. Outputs are always be alphabetically ordered.",
         ),
     ] = "I",
-    host_address: Annotated[
-        str | None,
-        typer.Option(
-            help="Address where the distributed client lives. Uses LocalCluster if no address is provided.",
-        ),
-    ] = None,
     nworkers: Annotated[
         int,
         typer.Option(
@@ -240,7 +221,6 @@ def init(
         fields=fields_list,
         freq_range=freq_range,
         overwrite=overwrite,
-        radec=radec,
         data_column=data_column,
         weight_column=weight_column,
         sigma_column=sigma_column,
@@ -253,12 +233,10 @@ def init(
         max_field_of_view=max_field_of_view,
         beam_model=beam_model,
         chan_average=chan_average,
-        target=target,
         progressbar=progressbar,
         check_ants=check_ants,
         log_directory=log_directory,
         product=product,
-        host_address=host_address,
         nworkers=nworkers,
         nthreads=nthreads,
     )

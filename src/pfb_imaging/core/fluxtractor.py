@@ -10,7 +10,7 @@ from ducc0.misc import resize_thread_pool
 from pfb_imaging import set_envs
 from pfb_imaging.opt.pcg import pcg_dds
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.fits import load_fits
+from pfb_imaging.utils.fits import load_fits, rdds2fits
 from pfb_imaging.utils.modelspec import fit_image_cube
 from pfb_imaging.utils.naming import set_output_names, xds_from_url
 
@@ -28,19 +28,14 @@ def fluxtractor(
     eta: float = 1e-5,
     model_name: str = "MODEL",
     residual_name: str = "RESIDUAL",
-    gamma: float = 1.0,
     use_psf: bool = True,
-    memory_greedy: bool = False,
     epsilon: float = 1e-7,
     do_wgridding: bool = True,
     double_accum: bool = True,
     cg_tol: float = 1e-3,
     cg_maxit: int = 150,
-    cg_minit: int = 10,
     cg_verbose: int = 1,
     cg_report_freq: int = 10,
-    backtrack: bool = False,
-    host_address: str | None = None,
     nworkers: int = 1,
     nthreads: int | None = None,
     log_directory: str | None = None,
@@ -247,8 +242,6 @@ def fluxtractor(
 
     # convert to fits files
     if fits_mfs or fits_cubes:
-        from pfb_imaging.utils.fits import rdds2fits
-
         log.info(f"Writing fits files to {fits_oname}_{suffix}")
         tasks = []
         task = rdds2fits.remote(

@@ -31,12 +31,6 @@ cabs:
           Order of interpolating polynomial for frequency axis.
           One less than the number of bands by default.
         dtype: int
-      nbasist:
-        info:
-          Order of interpolating polynomial for time axis.
-          This is hypothetical for the time being.
-        dtype: int
-        default: 1
       nthreads:
         info:
           Number of threads

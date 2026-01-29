@@ -162,16 +162,6 @@ cabs:
           Small values (eg.
           2) result in aggressive reweighting and should be avoided if the model is still incomplete.
         dtype: float
-      progressbar:
-        info:
-          Display progress.
-          Use --no-progressbar to deactivate.
-        dtype: bool
-        default: true
-      output-format:
-        info:
-          zarr or fits output
-        default: zarr
       eta:
         info:
           Value to add to Hessian to make it invertible.
@@ -216,11 +206,6 @@ cabs:
         info:
           Rephase visibilities to this phase center.
           Should be a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
-      stack:
-        info:
-          Stack everything into a single xarray dataset
-        dtype: bool
-        default: false
       epsilon:
         info:
           Gridder accuracy
@@ -237,10 +222,6 @@ cabs:
           Only has an affect when using single precision.
         dtype: bool
         default: true
-      host-address:
-        info:
-          Address where the distributed client lives.
-          Uses LocalCluster if no address is provided and scheduler is set to distributed.
       nworkers:
         info:
           Number of worker processes.
@@ -254,13 +235,6 @@ cabs:
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
         dtype: int
-      log-level:
-        choices:
-        - error
-        - warning
-        - info
-        - debug
-        default: error
       cg-tol:
         info:
           Tolreance of conjugate gradient algorithm
@@ -271,27 +245,6 @@ cabs:
           Maximum iterations for conjugate gradient algorithm
         dtype: int
         default: 150
-      cg-minit:
-        info:
-          Minimum iterations for conjugate gradient algorithm
-        dtype: int
-        default: 10
-      cg-verbose:
-        info:
-          Verbosity of conjugate gradient algorithm.
-          Set to > 1 for debugging, 0 for silence.
-        dtype: int
-        default: 1
-      cg-report-freq:
-        info:
-          Report frequency of conjugate gradient algorithm.
-        dtype: int
-        default: 10
-      backtrack:
-        info:
-          Ensure residual decreases at every iteration.
-        dtype: bool
-        default: false
       object-store-memory:
         info:
           Object store memory (in GB) when using the distributed scheduler.

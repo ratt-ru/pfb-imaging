@@ -64,8 +64,6 @@ def hci(
     robustness: float = None,
     target: str | None = None,
     l2_reweight_dof: int | None = None,
-    progressbar: bool = True,
-    output_format: str = "zarr",
     eta: float = 1e-05,
     psf_out: bool = False,
     weight_grid_out: bool = False,
@@ -75,20 +73,13 @@ def hci(
     filter_counts_level: float = 10,
     min_padding: float = 2.0,
     phase_dir: str | None = None,
-    stack: bool = False,
     epsilon: float = 1e-07,
     do_wgridding: bool = True,
     double_accum: bool = True,
-    host_address: str | None = None,
     nworkers: int = 1,
     nthreads: int | None = None,
-    log_level: str = "error",
     cg_tol: float = 1e-3,
     cg_maxit: int = 150,
-    cg_minit: int = 10,
-    cg_verbose: int = 1,
-    cg_report_freq: int = 10,
-    backtrack: bool = False,
     object_store_memory: float | None = None,
     temp_dir: str | None = None,
     keep_ray_alive: bool = False,
@@ -175,9 +166,6 @@ def hci(
         local_mode=nworkers == 1,
         runtime_env=runtime_env,
     )
-
-    if stack and output_format == "fits":
-        raise RuntimeError("Can't stack in fits mode")
 
     fds_store = DaskMSStore(f"{output_dataset}")
     if fds_store.exists():
@@ -372,10 +360,6 @@ def hci(
                 if freq.size == fs.size and np.all(freq == fs):
                     msddid2bid[ms_name][idt] = sgroup
 
-    # construct examplar dataset if asked to stack
-    if stack and output_format != "zarr":
-        raise ValueError("Can only stack zarr outputs not fits")
-
     log.info("Creating scaffold for stacked cube")
     attrs, ntasks, n_timeo, n_freqo = make_dummy_dataset(
         ms,
@@ -399,7 +383,6 @@ def hci(
         ny,
         cell_deg,
         integrations_per_image=integrations_per_image,
-        stack=stack,
     )
     log.info("Scaffolding complete")
 
@@ -528,10 +511,8 @@ def hci(
                             eta=eta,
                             cg_tol=cg_tol,
                             cg_maxit=cg_maxit,
-                            output_format=output_format,
                             psf_out=psf_out,
                             weight_grid_out=weight_grid_out,
-                            stack=stack,
                             l2_reweight_dof=l2_reweight_dof,
                             synchronizer=synchronizer,
                         )
@@ -554,46 +535,45 @@ def hci(
             timeid, bandid = ray.get(ready)[0]
             print(f"Processed {ncompleted}/{ntasks}", end="\n", flush=True)
 
-    if stack:
-        log.info("Computing means")
-        cwidths = []
-        for _, val in channel_width.items():
-            cwidths.append(val)
-        # reduction over FREQ and TIME so use max chunk sizes
-        ds = xr.open_zarr(fds_store.url, chunks={"FREQ": -1, "TIME": -1})
-        cube = ds.cube.data
-        wsums = ds.weight.data
-        # all variables have been normalised by wsum so we first
-        # undo the normalisation (wsum=0 where there is no data)
-        weighted_cube = cube * wsums[:, :, :, None, None]
-        taxis = ds.cube.get_axis_num("TIME")
-        faxis = ds.cube.get_axis_num("FREQ")
-        wsum = da.sum(wsums, axis=taxis)
-        # we need this for the where clause in da.divide, should be cheap
-        wsumc = wsum.compute()[:, :, None, None]
-        weighted_sum = da.sum(weighted_cube, axis=taxis)
-        weighted_mean = da.divide(weighted_sum, wsum[:, :, None, None], where=wsumc > 0)
-        if psf_out:
-            psfsq = (ds.psf.data * wsums[:, :, :, None, None]) ** 2
-            weighted_psfsq_sum = da.sum(psfsq, axis=(faxis, taxis))
-            wsumsq = da.sum(wsums**2, axis=(faxis, taxis))
-            wsumsqc = wsumsq.compute()[:, None, None]
-            weighted_psfsq_mean = da.divide(weighted_psfsq_sum, wsumsq[:, None, None], where=wsumsqc > 0)
-            if psf_relative_size == 1:
-                xpsf = "X"
-                ypsf = "Y"
-            else:
-                xpsf = "X_PSF"
-                ypsf = "Y_PSF"
-            ds["psf2"] = (("STOKES", ypsf, xpsf), weighted_psfsq_mean)
-        # only write new variables
-        drop_vars = [key for key in ds.data_vars.keys() if key != "psf2"]
-        ds = ds.drop_vars(drop_vars)
-        ds["mean"] = (("STOKES", "FREQ", "Y", "X"), weighted_mean)
-        ds["channel_width"] = (("FREQ",), da.from_array(cwidths, chunks=1))
-        with dask.config.set(pool=ThreadPoolExecutor(8)):
-            ds.to_zarr(fds_store.url, mode="r+")
-        log.info("Reduction complete")
+    log.info("Computing means")
+    cwidths = []
+    for _, val in channel_width.items():
+        cwidths.append(val)
+    # reduction over FREQ and TIME so use max chunk sizes
+    ds = xr.open_zarr(fds_store.url, chunks={"FREQ": -1, "TIME": -1})
+    cube = ds.cube.data
+    wsums = ds.weight.data
+    # all variables have been normalised by wsum so we first
+    # undo the normalisation (wsum=0 where there is no data)
+    weighted_cube = cube * wsums[:, :, :, None, None]
+    taxis = ds.cube.get_axis_num("TIME")
+    faxis = ds.cube.get_axis_num("FREQ")
+    wsum = da.sum(wsums, axis=taxis)
+    # we need this for the where clause in da.divide, should be cheap
+    wsumc = wsum.compute()[:, :, None, None]
+    weighted_sum = da.sum(weighted_cube, axis=taxis)
+    weighted_mean = da.divide(weighted_sum, wsum[:, :, None, None], where=wsumc > 0)
+    if psf_out:
+        psfsq = (ds.psf.data * wsums[:, :, :, None, None]) ** 2
+        weighted_psfsq_sum = da.sum(psfsq, axis=(faxis, taxis))
+        wsumsq = da.sum(wsums**2, axis=(faxis, taxis))
+        wsumsqc = wsumsq.compute()[:, None, None]
+        weighted_psfsq_mean = da.divide(weighted_psfsq_sum, wsumsq[:, None, None], where=wsumsqc > 0)
+        if psf_relative_size == 1:
+            xpsf = "X"
+            ypsf = "Y"
+        else:
+            xpsf = "X_PSF"
+            ypsf = "Y_PSF"
+        ds["psf2"] = (("STOKES", ypsf, xpsf), weighted_psfsq_mean)
+    # only write new variables
+    drop_vars = [key for key in ds.data_vars.keys() if key != "psf2"]
+    ds = ds.drop_vars(drop_vars)
+    ds["mean"] = (("STOKES", "FREQ", "Y", "X"), weighted_mean)
+    ds["channel_width"] = (("FREQ",), da.from_array(cwidths, chunks=1))
+    with dask.config.set(pool=ThreadPoolExecutor(8)):
+        ds.to_zarr(fds_store.url, mode="r+")
+    log.info("Reduction complete")
 
     log.info(f"All done after {time.time() - time_start}s")
 
@@ -625,7 +605,6 @@ def make_dummy_dataset(
     time_chunk,
     spatial_chunk=128,
     integrations_per_image=1,
-    stack=True,
 ):
     out_ra = []
     out_dec = []
@@ -672,10 +651,6 @@ def make_dummy_dataset(
     out_freqs = np.unique(out_freqs)
     n_times = out_times.size
     n_freqs = out_freqs.size
-
-    # if not stacking we only run this to get the number of tasks that will be submitted
-    if not stack:
-        return None, ntasks, n_times, n_freqs
 
     # spatial coordinates
     if phase_dir is None:

@@ -101,12 +101,6 @@ cabs:
           Set to larger than niter to disable this check.
         dtype: int
         default: 5
-      skip-model:
-        info:
-          Skip model creation i.e.
-          use with do-res to do-res only
-        dtype: bool
-        default: false
       rms-outside-model:
         info:
           Mask residual where model is non-zero when computing rms.
@@ -192,11 +186,6 @@ cabs:
           Maximum iterations for conjugate gradient algorithm
         dtype: int
         default: 150
-      cg-minit:
-        info:
-          Minimum iterations for conjugate gradient algorithm
-        dtype: int
-        default: 10
       cg-verbose:
         info:
           Verbosity of conjugate gradient algorithm.
@@ -208,11 +197,6 @@ cabs:
           Report frequency of conjugate gradient algorithm
         dtype: int
         default: 10
-      backtrack:
-        info:
-          Ensure residual decreases at every iteration
-        dtype: bool
-        default: false
       log-directory:
         info:
           Directory to write logs and performance reports to.

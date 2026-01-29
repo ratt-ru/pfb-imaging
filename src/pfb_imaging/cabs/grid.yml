@@ -135,10 +135,6 @@ cabs:
           Only has an affect when using single precision.
         dtype: bool
         default: true
-      host-address:
-        info:
-          Address where the distributed client lives.
-          Uses LocalCluster if no address is provided.
       nworkers:
         info:
           Number of worker processes.
@@ -152,13 +148,6 @@ cabs:
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
         dtype: int
-      log-level:
-        choices:
-        - error
-        - warning
-        - info
-        - debug
-        default: error
       log-directory:
         info:
           Directory to write logs and performance reports to.

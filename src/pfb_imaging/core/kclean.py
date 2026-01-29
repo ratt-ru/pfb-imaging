@@ -42,10 +42,8 @@ def kclean(
     report_freq: int = 10,
     cg_tol: float = 0.01,
     cg_maxit: int = 100,
-    cg_minit: int = 1,
     cg_verbose: int = 1,
     cg_report_freq: int = 100,
-    backtrack: bool = False,
     epsilon: float = 1e-7,
     do_wgridding: bool = True,
     double_accum: bool = True,
@@ -167,15 +165,6 @@ def kclean(
         log.info("Using provided fits mask")
     else:
         mask = np.ones((nx, ny), dtype=residual.dtype)
-
-    # PCG related options for flux mop
-    cgopts = {}
-    cgopts["tol"] = cg_tol
-    cgopts["maxit"] = cg_maxit
-    cgopts["minit"] = cg_minit
-    cgopts["verbosity"] = cg_verbose
-    cgopts["report_freq"] = cg_report_freq
-    cgopts["backtrack"] = backtrack
 
     rms = np.std(residual_mfs)
     rmax = np.abs(residual_mfs).max()
