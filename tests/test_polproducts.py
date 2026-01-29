@@ -104,7 +104,7 @@ def test_polproducts(do_gains, ms_name):
             flip_w=flip_w,
             epsilon=epsilon,
             do_wgridding=True,
-            nthreads=1,
+            nthreads=2,
         )
     model_vis_q = np.zeros((nrow, nchan), dtype=np.complex128)
     for c in range(nchan):
@@ -121,7 +121,7 @@ def test_polproducts(do_gains, ms_name):
             flip_w=flip_w,
             epsilon=epsilon,
             do_wgridding=True,
-            nthreads=1,
+            nthreads=2,
         )
     model_vis_u = np.zeros((nrow, nchan), dtype=np.complex128)
     for c in range(nchan):
@@ -138,7 +138,7 @@ def test_polproducts(do_gains, ms_name):
             flip_w=flip_w,
             epsilon=epsilon,
             do_wgridding=True,
-            nthreads=1,
+            nthreads=2,
         )
     model_vis_v = np.zeros((nrow, nchan), dtype=np.complex128)
     for c in range(nchan):
@@ -155,7 +155,7 @@ def test_polproducts(do_gains, ms_name):
             flip_w=flip_w,
             epsilon=epsilon,
             do_wgridding=True,
-            nthreads=1,
+            nthreads=2,
         )
 
     model_vis = np.zeros((nrow, nchan, ncorr), dtype=np.complex128)
@@ -251,6 +251,7 @@ def test_polproducts(do_gains, ms_name):
             overwrite=True,
             channels_per_image=1,
             product=p,
+            keep_ray_alive=True,
         )
 
         # grid data to produce dirty image
@@ -263,11 +264,12 @@ def test_polproducts(do_gains, ms_name):
             residual=False,
             beam=False,
             noise=False,
-            nthreads=1,
+            nthreads=2,
             overwrite=True,
             robustness=0.0,
             do_wgridding=True,
             product=p,
+            keep_ray_alive=True,
         )
 
         dds, _ = xds_from_url(dds_name)
@@ -295,6 +297,7 @@ def test_polproducts(do_gains, ms_name):
             overwrite=True,
             channels_per_image=1,
             product=p,
+            keep_ray_alive=True,
         )
 
         # grid data to produce dirty image
@@ -307,11 +310,12 @@ def test_polproducts(do_gains, ms_name):
             residual=False,
             beam=False,
             noise=False,
-            nthreads=1,
+            nthreads=2,
             overwrite=True,
             robustness=0.0,
             do_wgridding=True,
             product=p,
+            keep_ray_alive=True,
         )
 
         dds, _ = xds_from_url(dds_name)

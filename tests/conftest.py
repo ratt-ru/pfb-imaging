@@ -6,6 +6,8 @@ import pytest
 import ray
 import requests
 
+from pfb_imaging import set_envs
+
 test_root_path = Path(__file__).resolve().parent
 test_data_path = Path(test_root_path, "data")
 test_data_path.mkdir(parents=True, exist_ok=True)
@@ -55,24 +57,24 @@ def manage_ray():
 
     # Define the environment once
     os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
-    os.environ["JAX_ENABLE_X64"] = "True"
     os.environ["PYTHONWARNINGS"] = "ignore:.*CUDA-enabled jaxlib is not installed.*"
     os.environ["RAY_PROCESS_SPAWN"] = "1"
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.50"
+
+    env_vars = set_envs(2, 1)
+    env_vars["JAX_LOGGING_LEVEL"] = "ERROR"
+    env_vars["PYTHONWARNINGS"] = "ignore:.*CUDA-enabled jaxlib is not installed.*"
+    env_vars["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
+    env_vars["RAY_RUNTIME_ENV_WORKING_DIR_MAX_SIZE_MB"] = "2048"
 
     runtime_env = {
-        "env_vars": {
-            "JAX_ENABLE_X64": "True",
-            "JAX_LOGGING_LEVEL": "ERROR",
-            "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*",
-            "RAY_RUNTIME_ENV_WORKING_DIR_MAX_SIZE_MB": "2048",
-            "RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO": "0",
-        },
+        "env_vars": env_vars,
         "working_dir": root_dir,
         "excludes": get_excludes(),
     }
 
     # Start Ray
-    ray.init(runtime_env=runtime_env, ignore_reinit_error=True)
+    ray.init(num_cpus=1, runtime_env=runtime_env, ignore_reinit_error=True, include_dashboard=False)
 
     yield
 

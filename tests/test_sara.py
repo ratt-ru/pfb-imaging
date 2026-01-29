@@ -107,7 +107,7 @@ def test_sara(ms_name):
             flip_u=flip_u,
             flip_v=flip_v,
             flip_w=flip_w,
-            nthreads=8,
+            nthreads=2,
             sigma_min=1.1,
             sigma_max=3.0,
         )
@@ -133,6 +133,8 @@ def test_sara(ms_name):
         max_field_of_view=fov * 1.1,
         overwrite=True,
         channels_per_image=1,
+        keep_ray_alive=True,
+        nthreads=2,
     )
 
     # grid data to produce dirty image
@@ -143,10 +145,11 @@ def test_sara(ms_name):
         psf=True,
         residual=False,
         noise=False,
-        nthreads=8,
+        nthreads=2,
         overwrite=True,
         robustness=robustness,
         do_wgridding=do_wgridding,
+        keep_ray_alive=True,
     )
 
     # run sara
@@ -161,7 +164,7 @@ def test_sara(ms_name):
         l1_reweight_from=5,
         bases="self,db1",
         nlevels=3,
-        nthreads=8,
+        nthreads=2,
         do_wgridding=do_wgridding,
         epsilon=epsilon,
         fits_mfs=False,
@@ -180,12 +183,13 @@ def test_sara(ms_name):
         weight=False,
         noise=False,
         residual=True,
-        nthreads=8,
+        nthreads=2,
         overwrite=True,
         robustness=robustness,
         do_wgridding=do_wgridding,
         transfer_model_from=f"{outname}_I_main_model.mds",
         suffix="subtract",
+        keep_ray_alive=True,
     )
 
     dds2, _ = xds_from_url(f"{outname}_I_subtract.dds")
@@ -200,7 +204,7 @@ def test_sara(ms_name):
         outname,
         mds=f"{outname}_I_main_model.mds",
         channels_per_image=1,
-        nthreads=8,
+        nthreads=2,
         do_wgridding=do_wgridding,
     )
 
@@ -215,6 +219,7 @@ def test_sara(ms_name):
         bda_decorr=1.0,
         overwrite=True,
         channels_per_image=1,
+        keep_ray_alive=True,
     )
 
     # grid data to produce dirty image
@@ -224,10 +229,11 @@ def test_sara(ms_name):
         fits_mfs=False,
         psf=False,
         residual=False,
-        nthreads=8,
+        nthreads=2,
         overwrite=True,
         robustness=robustness,
         do_wgridding=do_wgridding,
+        keep_ray_alive=True,
     )
 
     dds_name = f"{outname}_I_main.dds"

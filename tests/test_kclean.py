@@ -102,7 +102,7 @@ def test_kclean(do_gains, ms_name):
             flip_v=flip_v,
             flip_w=flip_w,
             do_wgridding=True,
-            nthreads=1,
+            nthreads=2,
         )
         model_vis[:, c, -1] = model_vis[:, c, 0]
 
@@ -187,6 +187,7 @@ def test_kclean(do_gains, ms_name):
         overwrite=True,
         channels_per_image=1,
         bda_decorr=1.0,
+        keep_ray_alive=True,
     )
 
     grid_core(
@@ -196,11 +197,12 @@ def test_kclean(do_gains, ms_name):
         fits_cubes=False,
         psf=True,
         residual=False,
-        nthreads=1,
+        nthreads=2,
         overwrite=True,
         robustness=0.0,
         do_wgridding=True,
         psf_oversize=2.0,
+        keep_ray_alive=True,
     )
 
     # run kclean
@@ -213,7 +215,7 @@ def test_kclean(do_gains, ms_name):
         gamma=0.1,
         peak_factor=0.75,
         sub_peak_factor=0.75,
-        nthreads=1,
+        nthreads=2,
         do_wgridding=True,
         epsilon=epsilon,
         mop_flux=True,

@@ -114,7 +114,7 @@ def test_gridder_conventions(center_offset, negate_w):
         do_wgridding=True,
         flip_v=False,
         divide_by_n=True,
-        nthreads=1,
+        nthreads=2,
         verbosity=0,
     )
 
@@ -174,7 +174,7 @@ def test_wgridder_conventions(center_offset):
         flip_v=flip_v,
         flip_w=flip_w,
         divide_by_n=True,
-        nthreads=1,
+        nthreads=2,
         verbosity=0,
     )
 
@@ -229,7 +229,7 @@ def test_psfvis(center_offset, ms_name):
         flip_v=flip_v,
         flip_w=flip_w,
         epsilon=epsilon,
-        nthreads=8,
+        nthreads=2,
         do_wgridding=True,
         divide_by_n=False,
     )
@@ -287,12 +287,11 @@ def test_hessian(center_offset, ms_name):
         epsilon=epsilon,
         do_wgridding=False,
         divide_by_n=False,  # else we also need it in PSF convolve
-        nthreads=8,
+        nthreads=2,
         verbosity=0,
     )
 
-    psfhat = r2c(ifftshift(psf, axes=(0, 1)), axes=(0, 1), nthreads=8, forward=True, inorm=0)
-
+    psfhat = r2c(ifftshift(psf, axes=(0, 1)), axes=(0, 1), nthreads=2, forward=True, inorm=0)
     res1 = hessian_slice(
         x,
         uvw=uvw,
@@ -308,11 +307,11 @@ def test_hessian(center_offset, ms_name):
         do_wgridding=False,
         epsilon=epsilon,
         double_accum=True,
-        nthreads=8,
+        nthreads=2,
     )
 
     res2 = psf_convolve_slice(
-        np.zeros((nx_psf, ny_psf)), np.zeros_like(psfhat), np.zeros_like(x), psfhat, ny_psf, x, nthreads=8
+        np.zeros((nx_psf, ny_psf)), np.zeros_like(psfhat), np.zeros_like(x), psfhat, ny_psf, x, nthreads=2
     )
 
     scale = np.abs(res2).max()
@@ -366,14 +365,13 @@ def test_hessian_jax(ms_name):
         epsilon=epsilon,
         do_wgridding=False,
         divide_by_n=False,  # else we also need it in PSF convolve
-        nthreads=8,
+        nthreads=2,
         verbosity=0,
     )
 
-    psfhat = r2c(ifftshift(psf, axes=(0, 1)), axes=(0, 1), nthreads=8, forward=True, inorm=0)
-
+    psfhat = r2c(ifftshift(psf, axes=(0, 1)), axes=(0, 1), nthreads=2, forward=True, inorm=0)
     res1 = psf_convolve_slice(
-        np.zeros((nx_psf, ny_psf)), np.zeros_like(psfhat), np.zeros_like(x), psfhat, ny_psf, x, nthreads=8
+        np.zeros((nx_psf, ny_psf)), np.zeros_like(psfhat), np.zeros_like(x), psfhat, ny_psf, x, nthreads=2
     )
 
     x = jnp.array(x)
@@ -432,11 +430,11 @@ def test_hessian_inv_jax(ms_name):
         epsilon=epsilon,
         do_wgridding=False,
         divide_by_n=False,  # else we also need it in PSF convolve
-        nthreads=8,
+        nthreads=2,
         verbosity=0,
     )
 
-    psfhat = r2c(ifftshift(psf, axes=(0, 1)), axes=(0, 1), nthreads=8, forward=True, inorm=0)
+    psfhat = r2c(ifftshift(psf, axes=(0, 1)), axes=(0, 1), nthreads=2, forward=True, inorm=0)
 
     abspsf = jnp.array(jnp.abs(psfhat))
 
@@ -448,7 +446,7 @@ def test_hessian_inv_jax(ms_name):
     xrec = cg(hess_op, dirty, tol=1e-8, maxiter=nx_psf)
 
     res1 = psf_convolve_slice(
-        np.zeros((nx_psf, ny_psf)), np.zeros_like(psfhat), np.zeros_like(x), psfhat, ny_psf, xrec[0], nthreads=8
+        np.zeros((nx_psf, ny_psf)), np.zeros_like(psfhat), np.zeros_like(x), psfhat, ny_psf, xrec[0], nthreads=2
     )
     eps = (np.abs(res1 - dirty) / np.abs(dirty).max()).max()
     assert eps < 0.05  # max diff is less than 5%
@@ -501,7 +499,7 @@ def test_complex_convolve(ms_name):
         epsilon=epsilon,
         do_wgridding=False,
         divide_by_n=False,  # else we also need it in PSF convolve
-        nthreads=8,
+        nthreads=2,
         verbosity=0,
     ) + 1j * vis2dirty(
         uvw=uvw,
@@ -520,7 +518,7 @@ def test_complex_convolve(ms_name):
         epsilon=epsilon,
         do_wgridding=False,
         divide_by_n=False,  # else we also need it in PSF convolve
-        nthreads=8,
+        nthreads=2,
         verbosity=0,
     )
 
@@ -551,7 +549,7 @@ def test_complex_convolve(ms_name):
         epsilon=epsilon,
         do_wgridding=False,
         divide_by_n=False,  # else we also need it in PSF convolve
-        nthreads=8,
+        nthreads=2,
         verbosity=0,
         flip_u=flip_u,
         flip_v=flip_v,
@@ -569,7 +567,7 @@ def test_complex_convolve(ms_name):
         epsilon=epsilon,
         do_wgridding=False,
         divide_by_n=False,  # else we also need it in PSF convolve
-        nthreads=8,
+        nthreads=2,
         verbosity=0,
         flip_u=flip_u,
         flip_v=flip_v,
@@ -587,7 +585,7 @@ def test_complex_convolve(ms_name):
         epsilon=epsilon,
         do_wgridding=False,
         divide_by_n=False,  # else we also need it in PSF convolve
-        nthreads=8,
+        nthreads=2,
         verbosity=0,
         flip_u=flip_u,
         flip_v=flip_v,
@@ -605,7 +603,7 @@ def test_complex_convolve(ms_name):
         epsilon=epsilon,
         do_wgridding=False,
         divide_by_n=False,  # else we also need it in PSF convolve
-        nthreads=8,
+        nthreads=2,
         verbosity=0,
         flip_u=flip_u,
         flip_v=flip_v,
@@ -629,7 +627,7 @@ def test_complex_convolve(ms_name):
         pixsize_y=cell_rad,
         epsilon=epsilon,
         do_wgridding=False,
-        nthreads=8,
+        nthreads=2,
         flip_u=flip_u,
         flip_v=flip_v,
         flip_w=flip_w,
@@ -645,7 +643,7 @@ def test_complex_convolve(ms_name):
         pixsize_y=cell_rad,
         epsilon=epsilon,
         do_wgridding=False,
-        nthreads=8,
+        nthreads=2,
         flip_u=flip_u,
         flip_v=flip_v,
         flip_w=flip_w,
@@ -662,7 +660,7 @@ def test_complex_convolve(ms_name):
         pixsize_y=cell_rad,
         epsilon=epsilon,
         do_wgridding=False,
-        nthreads=8,
+        nthreads=2,
         flip_u=flip_u,
         flip_v=flip_v,
         flip_w=flip_w,
@@ -678,7 +676,7 @@ def test_complex_convolve(ms_name):
         pixsize_y=cell_rad,
         epsilon=epsilon,
         do_wgridding=False,
-        nthreads=8,
+        nthreads=2,
         flip_u=flip_u,
         flip_v=flip_v,
         flip_w=flip_w,
@@ -695,7 +693,7 @@ def test_complex_convolve(ms_name):
         pixsize_y=cell_rad,
         epsilon=epsilon,
         do_wgridding=False,
-        nthreads=8,
+        nthreads=2,
         flip_u=flip_u,
         flip_v=flip_v,
         flip_w=flip_w,
@@ -711,7 +709,7 @@ def test_complex_convolve(ms_name):
         pixsize_y=cell_rad,
         epsilon=epsilon,
         do_wgridding=False,
-        nthreads=8,
+        nthreads=2,
         flip_u=flip_u,
         flip_v=flip_v,
         flip_w=flip_w,
@@ -728,7 +726,7 @@ def test_complex_convolve(ms_name):
         pixsize_y=cell_rad,
         epsilon=epsilon,
         do_wgridding=False,
-        nthreads=8,
+        nthreads=2,
         flip_u=flip_u,
         flip_v=flip_v,
         flip_w=flip_w,
@@ -744,7 +742,7 @@ def test_complex_convolve(ms_name):
         pixsize_y=cell_rad,
         epsilon=epsilon,
         do_wgridding=False,
-        nthreads=8,
+        nthreads=2,
         flip_u=flip_u,
         flip_v=flip_v,
         flip_w=flip_w,
