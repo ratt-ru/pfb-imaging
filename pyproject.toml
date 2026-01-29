@@ -32,7 +32,7 @@ Homepage = "https://github.com/ratt-ru/pfb-imaging"
 # Full scientific stack
 full = [
     "katbeam>=0.1",
-    "codex-africanus[dask,scipy,astropy,python-casacore]>=0.4.2",
+    "codex-africanus[dask,scipy,astropy,python-casacore] @ git+https://github.com/ratt-ru/codex-africanus.git@issue348",
     "dask-ms[s3,xarray,zarr]>=0.2.23",
     "reproject",
     "ray[default]",
