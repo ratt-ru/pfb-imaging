@@ -119,18 +119,13 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          # This ensures the venv is created and ready before the test step
+          activate-environment: true
 
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
-
-      - name: Cache uv dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-py${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-py${{ matrix.python-version }}-
-            ${{ runner.os }}-uv-
 
       - name: Restore repo times
         uses: chetan/git-restore-mtime-action@v2
@@ -168,10 +163,19 @@ jobs:
           echo "measures.directory: ~/measures" > ~/.casarc
 
       - name: Install pfb-imaging
-        run: uv sync --extra full --extra dev --refresh
+        run: uv sync --extra full --extra dev --frozen
 
       - name: Run pfb-imaging
         run: uv run pfb --help
 
       - name: Run tests
-        run: time uv run pytest -v tests/
+        run: |
+          # Force Ray and JAX to stay within the 2-core limit of the GHA runner
+          export RAY_NUM_CPUS=2
+          export XLA_PYTHON_CLIENT_MEM_FRACTION=0.50
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
+          export OPENBLAS_NUM_THREADS=1
+          export NUMEXPR_NUM_THREADS=1
+
+          uv run --active pytest -v tests/

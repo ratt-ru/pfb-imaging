@@ -48,9 +48,6 @@ def ms_name():
 
 @pytest.fixture(scope="session", autouse=True)
 def manage_ray():
-    current_dir = os.path.dirname(__file__)
-    root_dir = os.path.abspath(os.path.join(current_dir, ".."))
-
     def get_excludes():
         if os.path.exists(".rayignore"):
             return [line.strip() for line in open(".rayignore") if line.strip() and not line.startswith("#")]
@@ -69,7 +66,7 @@ def manage_ray():
 
     runtime_env = {
         "env_vars": env_vars,
-        "working_dir": root_dir,
+        "working_dir": None,
         "excludes": get_excludes(),
     }
 

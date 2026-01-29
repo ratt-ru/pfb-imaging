@@ -32,7 +32,6 @@ docs-env/
 CLAUDE.md
 Dockerfile
 LICENSE
-README.rst
 docs-deploy.sh
 recipes/
 setup-docs.sh

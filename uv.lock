@@ -1050,7 +1050,7 @@ wheels = [
 [[package]]
 name = "hip-cargo"
 version = "0.1.2"
-source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=genfunc2#23d10b2570e19a413d799d4cd902618e8a9471ef" }
+source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=6e99758670f661ab6b3288bfea35126897f75f8d#6e99758670f661ab6b3288bfea35126897f75f8d" }
 dependencies = [
     { name = "pyyaml" },
     { name = "typer" },
@@ -2299,7 +2299,7 @@ requires-dist = [
     { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", specifier = ">=0.4.2" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
-    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=genfunc2" },
+    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=6e99758670f661ab6b3288bfea35126897f75f8d" },
     { name = "ipdb", marker = "extra == 'dev'" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },

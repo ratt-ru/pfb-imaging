@@ -45,6 +45,7 @@ jobs:
     needs: [quality]
     environment:
       name: pypi
+      url: https://pypi.org/project/pfb-imaging/
     permissions:
       id-token: write  # Required for trusted publishing
       contents: read
