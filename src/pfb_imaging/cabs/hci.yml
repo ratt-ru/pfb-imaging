@@ -237,7 +237,7 @@ cabs:
         dtype: int
       cg-tol:
         info:
-          Tolreance of conjugate gradient algorithm
+          Tolerance of conjugate gradient algorithm
         dtype: float
         default: 0.001
       cg-maxit:

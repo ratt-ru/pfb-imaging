@@ -337,7 +337,7 @@ def hci(
     cg_tol: Annotated[
         float,
         typer.Option(
-            help="Tolreance of conjugate gradient algorithm",
+            help="Tolerance of conjugate gradient algorithm",
         ),
     ] = 0.001,
     cg_maxit: Annotated[
