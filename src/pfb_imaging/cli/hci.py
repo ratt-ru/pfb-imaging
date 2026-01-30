@@ -141,7 +141,8 @@ def hci(
         typer.Option(
             parser=Path,
             help="Path to Quartical gain table containing NET gains. "
-            "There must be a table for each MS and glob(ms) and glob(gt) should match up when running from CLI.",
+            "There must be a table for each MS. "
+            "glob(ms) and glob(gt) should match up when running from CLI.",
         ),
     ] = None,
     max_simul_chunks: Annotated[
@@ -218,7 +219,7 @@ def hci(
             help="Relative size of the PSF in pixels. "
             "A value of 1.0 means the PSF will be the same size as the image. "
             "The default is to make the PSF just big enough to extract the PSF parameters. "
-            "If the natural gradient is required the PSF needs to ideally be twice the size of the image.",
+            "Ideally requires double sized PSF.",
         ),
     ] = None,
     robustness: Annotated[
@@ -230,8 +231,8 @@ def hci(
     target: Annotated[
         str | None,
         typer.Option(
-            help="This can be predefined celestial objects known to astropy or a string in the format "
-            "'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
+            help="Predefined celestial objects known to astropy. "
+            "Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
         ),
     ] = None,
     l2_reweight_dof: Annotated[
@@ -241,7 +242,8 @@ def hci(
             "The default (None) means no reweighting. "
             "A sensible value for this parameter depends on the level of RFI in the data. "
             "Small values (eg. "
-            "2) result in aggressive reweighting and should be avoided if the model is still incomplete.",
+            "2) result in aggressive reweighting. "
+            "This should be avoided if the model is still incomplete.",
         ),
     ] = None,
     eta: Annotated[

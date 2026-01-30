@@ -149,8 +149,8 @@ def grid(
     target: Annotated[
         str | None,
         typer.Option(
-            help="This can be predefined celestial objects known to astropy or a string in the format "
-            "'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
+            help="Predefined celestial objects known to astropy. "
+            "Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)",
         ),
     ] = None,
     l2_reweight_dof: Annotated[

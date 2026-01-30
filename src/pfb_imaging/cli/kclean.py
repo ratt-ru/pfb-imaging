@@ -50,8 +50,7 @@ def kclean(
     mop_flux: Annotated[
         bool,
         typer.Option(
-            help="Trigger PCG based flux mop if minor cycle stalls, the final threshold is reached "
-            "or on the final iteration.",
+            help="Use PCG based flux mop.",
         ),
     ] = True,
     mop_gamma: Annotated[

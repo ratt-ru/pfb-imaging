@@ -27,7 +27,7 @@ cabs:
         default: 1
       mop-flux:
         info:
-          Trigger PCG based flux mop if minor cycle stalls, the final threshold is reached or on the final iteration.
+          Use PCG based flux mop.
         dtype: bool
         default: true
       mop-gamma:

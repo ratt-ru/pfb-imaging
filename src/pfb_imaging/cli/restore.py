@@ -50,18 +50,20 @@ def restore(
     outputs: Annotated[
         str,
         typer.Option(
-            help="Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty, (f)ft_residuals "
-            "(amplitude and phase will be produced). Use capitals to produce corresponding cubes.",
+            help="Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty, (f)ft_residuals. "
+            "Use capitals to produce corresponding cubes.",
         ),
     ] = "mMrRiI",
     gausspar: Annotated[
         str | None,
         typer.Option(
-            help="Gaussian parameters (e-major, e-minor, position-angle) specifying the resolution "
-            "to restore images to. The major and minor axes need to be specified in units of arcseconds "
-            "and the position-angle in degrees. The default resolution is the native resolution in each "
-            "imaging band. This parameter can be used to homogenise the resolution of the cubes. "
-            "Set to (0,0,0) to use the resolution of the lowest band.. Stimela dtype: List[float]",
+            help="Gaussian parameters (e-major, e-minor, position-angle) specifying restoring resolution. "
+            "The major and minor axes need to be specified in units of arcseconds. "
+            "The position-angle should be in degrees. "
+            "The default resolution is the native resolution in each imaging band. "
+            "This parameter can be used to homogenise the resolution of the cubes. "
+            "Set to (0,0,0) to use the resolution of the lowest band. "
+            "Stimela dtype: List[float]",
         ),
     ] = None,
     drop_bands: Annotated[

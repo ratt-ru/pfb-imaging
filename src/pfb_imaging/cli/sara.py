@@ -63,8 +63,10 @@ def sara(
     hess_approx: Annotated[
         Literal["wgt", "psf", "direct"],
         typer.Option(
-            help="Which Hessian approximation to use. Set to wgt for vis space approximation, "
-            "psf for zero-padded image space approximation and direct for direct inversion.",
+            help="Which Hessian approximation to use. "
+            "wgt -> vis space approximation. "
+            "psf -> for zero-padded image space approximation. "
+            "direct -> for direct inversion.",
         ),
     ] = "psf",
     rmsfactor: Annotated[
@@ -103,8 +105,10 @@ def sara(
     positivity: Annotated[
         int,
         typer.Option(
-            help="How to apply positivity constraint 0 -> no positivity, 1 -> normal positivity constraint "
-            "2 -> strong positivity i.e. all pixels in a band > 0",
+            help="How to apply positivity constraint. "
+            "0 -> no positivity. "
+            "1 -> normal positivity constraint. "
+            "2 -> strong positivity i.e. all pixels in a band > 0.",
         ),
     ] = 1,
     niter: Annotated[

@@ -110,7 +110,8 @@ cabs:
         default: 5.0
       target:
         info:
-          This can be predefined celestial objects known to astropy or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
+          Predefined celestial objects known to astropy.
+          Or a string in the format 'HH:MM:SS,DD:MM:SS' (note the , delimiter)
       l2-reweight-dof:
         info:
           The degrees of freedom parameter for L2 reweighting.
