@@ -509,17 +509,13 @@ wheels = [
 [[package]]
 name = "codex-africanus"
 version = "0.4.3"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/ratt-ru/codex-africanus.git?rev=master#80152a2304691a3c8a38a933763865d51f9ae677" }
 dependencies = [
     { name = "appdirs" },
     { name = "decorator" },
     { name = "numba" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2f/50/731235cfa214b7958ed9a79869325c21a19b486f5df8a771cb70cd4e096f/codex_africanus-0.4.3.tar.gz", hash = "sha256:5b05e5df7f66c3af78828d0c871481b113b957f7656c7bb2308e0164f9e146c8", size = 298114, upload-time = "2025-10-10T10:05:10.456Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/f7/6377a03cae58b3ae65990f89c5ea3b7027f65bdd55f9cc4760af7c9940d4/codex_africanus-0.4.3-py3-none-any.whl", hash = "sha256:97e9e60553b5cd9c7ec7faa85f18d87231191b99b861c77eb5dfedbbc7beefbf", size = 375707, upload-time = "2025-10-10T10:05:08.492Z" },
 ]
 
 [package.optional-dependencies]
@@ -2296,7 +2292,7 @@ full = [
 [package.metadata]
 requires-dist = [
     { name = "bokeh", marker = "extra == 'full'", specifier = ">=3.1.0" },
-    { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", specifier = ">=0.4.2" },
+    { name = "codex-africanus", extras = ["dask", "scipy", "astropy", "python-casacore"], marker = "extra == 'full'", git = "https://github.com/ratt-ru/codex-africanus.git?rev=master" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
     { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=6e99758670f661ab6b3288bfea35126897f75f8d" },
