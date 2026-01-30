@@ -108,8 +108,8 @@ def degrid(
         str | None,
         typer.Option(
             help="A region file containing regions that need to be converted to separate measurement set columns. "
-            "Each region in the file will end up in a separate column labelled as model-column{#} "
-            "with the remainder going into model-column.",
+            "Each region in the file will end up in a separate column labelled as model-column{#}. "
+            "The remainder of the fields goes into model-column.",
         ),
     ] = None,
     epsilon: Annotated[
