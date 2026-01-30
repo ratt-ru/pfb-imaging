@@ -159,8 +159,8 @@ def grid(
             help="The degrees of freedom parameter for L2 reweighting. "
             "The default (None) means no reweighting. "
             "A sensible value for this parameter depends on the level of RFI in the data. "
-            "Small values (eg. "
-            "2) result in aggressive reweighting and should be avoided if the model is still incomplete.",
+            "Small values result in aggressive reweighting. "
+            "This should be avoided if the model is still incomplete.",
         ),
     ] = None,
     epsilon: Annotated[
@@ -190,8 +190,7 @@ def grid(
     nthreads: Annotated[
         int | None,
         typer.Option(
-            help="Number of threads used to scale vertically (eg. "
-            "for FFTs and gridding). "
+            help="Number of threads used to scale vertically (for FFTs and gridding). "
             "Each dask thread can in principle spawn this many threads. "
             "Will attempt to use half the available threads by default.",
         ),

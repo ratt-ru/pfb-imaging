@@ -19,8 +19,9 @@ cabs:
         default: main
       bases:
         info:
-          Wavelet bases to use.
-          Give as comma separated str eg.
+          'Wavelet bases to use.
+          Give as comma separated str.
+          '
         default: self,db1,db2,db3
       nlevels:
         info:
@@ -72,16 +73,14 @@ cabs:
       nbasisf:
         info:
           Number of basis functions to use while fitting the frequency axis.
-          Default is to use the number of non-null imaging bands i.e.
-          interpolation.
+          Default is to use the number of non-null imaging bands (interpolation).
         dtype: int
       positivity:
         info:
           How to apply positivity constraint.
           0 -> no positivity.
           1 -> normal positivity constraint.
-          2 -> strong positivity i.e.
-          all pixels in a band > 0.
+          2 -> strong positivity (zero all pixels if < 0 in any band).
         dtype: int
         default: 1
       niter:

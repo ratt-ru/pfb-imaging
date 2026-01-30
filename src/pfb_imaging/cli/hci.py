@@ -85,7 +85,7 @@ def hci(
     freq_range: Annotated[
         str | None,
         typer.Option(
-            help="Frequency range to image in Hz. Specify as a string with colon delimiter eg. '1e9:1.1e9'",
+            help="Frequency range to image in Hz. Specify as a string with colon delimiter ('1e9:1.1e9'). ",
         ),
     ] = None,
     overwrite: Annotated[
@@ -105,8 +105,7 @@ def hci(
         typer.Option(
             help="Data column to image. "
             "Must be the same across MSs. "
-            "Simple arithmetic is supported eg. "
-            "'CORRECTED_DATA-MODEL_DATA'. "
+            "Simple arithmetic is supported ('CORRECTED_DATA-MODEL_DATA'). "
             "When gains are present this column will be corrected.",
         ),
     ] = "DATA",
@@ -241,8 +240,7 @@ def hci(
             help="The degrees of freedom parameter for L2 reweighting. "
             "The default (None) means no reweighting. "
             "A sensible value for this parameter depends on the level of RFI in the data. "
-            "Small values (eg. "
-            "2) result in aggressive reweighting. "
+            "Small values result in aggressive reweighting. "
             "This should be avoided if the model is still incomplete.",
         ),
     ] = None,
@@ -330,8 +328,7 @@ def hci(
     nthreads: Annotated[
         int | None,
         typer.Option(
-            help="Number of threads used to scale vertically (eg. "
-            "for FFTs and gridding). "
+            help="Number of threads used to scale vertically (for FFTs and gridding). "
             "Each dask thread can in principle spawn this many threads. "
             "Will attempt to use half the available threads by default.",
         ),

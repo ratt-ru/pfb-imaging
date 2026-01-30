@@ -59,8 +59,7 @@ cabs:
       freq-range:
         info:
           Frequency range to image in Hz.
-          Specify as a string with colon delimiter eg.
-          '1e9:1.1e9'
+          Specify as a string with colon delimiter ('1e9:1.1e9')
       integrations-per-image:
         info:
           Number of time integrations corresponding to each image.
@@ -105,8 +104,7 @@ cabs:
         default: 1
       nthreads:
         info:
-          Number of threads used to scale vertically (eg.
-          for FFTs and gridding).
+          Number of threads used to scale vertically (for FFTs and gridding).
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
         dtype: int

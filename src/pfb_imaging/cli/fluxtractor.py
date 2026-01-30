@@ -136,8 +136,7 @@ def fluxtractor(
     nthreads: Annotated[
         int | None,
         typer.Option(
-            help="Number of threads used to scale vertically (eg. "
-            "for FFTs and gridding). "
+            help="Number of threads used to scale vertically (for FFTs and gridding). "
             "Each dask thread can in principle spawn this many threads. "
             "Will attempt to use half the available threads by default.",
         ),

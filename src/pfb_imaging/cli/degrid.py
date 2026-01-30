@@ -82,7 +82,7 @@ def degrid(
     freq_range: Annotated[
         str | None,
         typer.Option(
-            help="Frequency range to image in Hz. Specify as a string with colon delimiter eg. '1e9:1.1e9'",
+            help="Frequency range to image in Hz. Specify as a string with colon delimiter ('1e9:1.1e9')",
         ),
     ] = None,
     integrations_per_image: Annotated[
@@ -139,8 +139,7 @@ def degrid(
     nthreads: Annotated[
         int | None,
         typer.Option(
-            help="Number of threads used to scale vertically (eg. "
-            "for FFTs and gridding). "
+            help="Number of threads used to scale vertically (for FFTs and gridding). "
             "Each dask thread can in principle spawn this many threads. "
             "Will attempt to use half the available threads by default.",
         ),

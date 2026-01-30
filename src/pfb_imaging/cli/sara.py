@@ -38,7 +38,7 @@ def sara(
     bases: Annotated[
         str,
         typer.Option(
-            help="Wavelet bases to use. Give as comma separated str eg.",
+            help="Wavelet bases to use. Give as comma separated str. ",
         ),
     ] = "self,db1,db2,db3",
     nlevels: Annotated[
@@ -98,8 +98,7 @@ def sara(
         int | None,
         typer.Option(
             help="Number of basis functions to use while fitting the frequency axis. "
-            "Default is to use the number of non-null imaging bands i.e. "
-            "interpolation.",
+            "Default is to use the number of non-null imaging bands (interpolation).",
         ),
     ] = None,
     positivity: Annotated[
@@ -108,7 +107,7 @@ def sara(
             help="How to apply positivity constraint. "
             "0 -> no positivity. "
             "1 -> normal positivity constraint. "
-            "2 -> strong positivity i.e. all pixels in a band > 0.",
+            "2 -> strong positivity (zero all pixels if < 0 in any band).",
         ),
     ] = 1,
     niter: Annotated[
