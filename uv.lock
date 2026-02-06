@@ -989,7 +989,7 @@ wheels = [
 [[package]]
 name = "hip-cargo"
 version = "0.1.2"
-source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=main#a7a5c50897993972c494d8e2d470f8190b18561d" }
+source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=main#c050eda3ee067727659379b7ce1be0677c8a930e" }
 dependencies = [
     { name = "libcst" },
     { name = "pyyaml" },
