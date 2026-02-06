@@ -13,63 +13,7 @@ on:
     branches: [main]
 
 jobs:
-  should-run:
-    runs-on: ubuntu-latest
-    outputs:
-      run: ${{ steps.check.outputs.should_run }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0  # This ensures we have access to the commit history
-
-      - id: check
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" == "pull_request" ] || [ "${{ github.event_name }}" == "pull_request_target" ]; then
-            message="${{ github.event.pull_request.head.sha }}"
-            # Fetch the actual commit message since we only get the SHA in PR context
-            message=$(git ls-remote "${{ github.event.pull_request.head.repo.clone_url }}" "${{ github.event.pull_request.head.ref }}" | cut -f1 | xargs git show --format=%B -s)
-          else
-            message="${{ github.event.head_commit.message }}"
-          fi
-
-          echo "Event type: ${{ github.event_name }}"
-          echo "Original message: '$message'"
-
-          message="${message,,}"  # Convert to lowercase
-          echo "Lowercase message: '$message'"
-
-          skip_patterns=(
-            'skip ci'
-            'ci skip'
-            'no ci'
-            'skip-ci'
-            'ci-skip'
-            'skip_ci'
-            'ci_skip'
-            'noci'
-          )
-
-          should_run="true"
-
-          for pattern in "${skip_patterns[@]}"; do
-            echo "Testing pattern: '$pattern'"
-            if echo "$message" | grep -q "$pattern"; then
-              echo "MATCH FOUND for pattern: '$pattern'"
-              should_run="false"
-              break
-            else
-              echo "No match for pattern: '$pattern'"
-            fi
-          done
-
-          echo "Should run: $should_run"
-          echo "should_run=$should_run" >> $GITHUB_OUTPUT
-
   quality:
-    needs: should-run
-    if: needs.should-run.outputs.run == 'true'
     name: Code Quality
     runs-on: ubuntu-latest
     steps:
@@ -83,7 +27,7 @@ jobs:
         run: uv python install 3.10
 
       - name: Cache uv dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
@@ -100,8 +44,6 @@ jobs:
         run: uv run ruff check .
 
   test:
-    needs: should-run
-    if: needs.should-run.outputs.run == 'true'
     runs-on: ubuntu-latest
 
     env:
@@ -178,4 +120,4 @@ jobs:
           export OPENBLAS_NUM_THREADS=1
           export NUMEXPR_NUM_THREADS=1
 
-          uv run --active pytest -v tests/
+          uv run pytest -v tests/

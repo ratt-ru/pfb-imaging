@@ -6,11 +6,9 @@ on:
       - 'v*.*.*'
     branches:
       - main
-      - master
   pull_request:
     branches:
       - main
-      - master
   workflow_dispatch:
 
 # Cab generation is handled by pre-commit hooks locally.
