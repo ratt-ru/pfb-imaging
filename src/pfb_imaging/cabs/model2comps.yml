@@ -5,7 +5,7 @@ cabs:
     image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: model2comps
     info:
-      ''
+      Convert model image to components.
     inputs:
       output-filename:
         info:
@@ -90,4 +90,6 @@ cabs:
       mds-out:
         dtype: Directory
         info:
-          ''
+          Output component model.
+        implicit: '=IFSET(current.model-out, current.model-out, {current.output-filename}_{current.product}_{current.suffix}_{current.model-name}.mds)'  # noqa: E501
+        must_exist: false

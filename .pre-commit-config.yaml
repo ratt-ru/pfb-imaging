@@ -2,6 +2,16 @@
 # See https://pre-commit.com for more information
 
 repos:
+  - repo: local
+    hooks:
+      - id: generate-cabs
+        name: Generate Stimela cab definitions
+        entry: python scripts/generate_cabs.py
+        language: system
+        files: ^src/pfb_imaging/cli/.*\.py$
+        pass_filenames: false
+        stages: [pre-commit]
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.13.2
     hooks:
@@ -22,13 +32,3 @@ repos:
       - id: check-merge-conflict
       - id: check-toml
       - id: mixed-line-ending
-
-  - repo: local
-    hooks:
-      - id: generate-cabs
-        name: Generate Stimela cab definitions
-        entry: python scripts/generate_cabs.py
-        language: system
-        files: ^src/pfb_imaging/cli/.*\.py$
-        pass_filenames: false
-        stages: [pre-commit]

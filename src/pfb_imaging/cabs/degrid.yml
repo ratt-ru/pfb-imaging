@@ -23,22 +23,22 @@ cabs:
           positional: true
       scans:
         info:
-          'List of SCAN_NUMBERS to image.
+          List of SCAN_NUMBERS to image.
           Defaults to all.
-          Input as comma separated string ''0,2'' if running from CLI.
-          Stimela dtype: List[int]'
+          Input as comma separated string '0,2' if running from CLI.
+        dtype: List[int]
       ddids:
         info:
-          'List of DATA_DESC_ID''s to images.
+          List of DATA_DESC_ID's to images.
           Defaults to all.
-          Input as comma separated string ''0,2'' if running from CLI.
-          Stimela dtype: List[int]'
+          Input as comma separated string '0,2' if running from CLI.
+        dtype: List[int]
       fields:
         info:
-          'List of FIELD_ID''s to image.
+          List of FIELD_ID's to image.
           Defaults to all.
-          Input as comma separated string ''0,2'' if running from CLI.
-          Stimela dtype: List[int]'
+          Input as comma separated string '0,2' if running from CLI.
+        dtype: List[int]
       suffix:
         info:
           Can be used to specify a custom name for the image space data products
@@ -59,13 +59,13 @@ cabs:
       freq-range:
         info:
           Frequency range to image in Hz.
-          Specify as a string with colon delimiter ('1e9:1.1e9')
+          Specify as a string with colon delimiter ('1e9:1.1e9').
       integrations-per-image:
         info:
           Number of time integrations corresponding to each image.
           Default -1 (equivalently 0 or None) implies degrid per scan.
         dtype: int
-        default: -1
+        default: '-1'
       channels-per-image:
         info:
           Number of channels per image.

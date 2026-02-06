@@ -5,7 +5,7 @@ cabs:
     image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: restore
     info:
-      ''
+      Restore model images and.or convolved images to common resolution.
     inputs:
       output-filename:
         info:
@@ -32,17 +32,17 @@ cabs:
         default: mMrRiI
       gausspar:
         info:
-          'Gaussian parameters (e-major, e-minor, position-angle) specifying restoring resolution.
+          Gaussian parameters (e-major, e-minor, position-angle) specifying restoring resolution.
           The major and minor axes need to be specified in units of arcseconds.
           The position-angle should be in degrees.
           The default resolution is the native resolution in each imaging band.
           This parameter can be used to homogenise the resolution of the cubes.
           Set to (0,0,0) to use the resolution of the lowest band.
-          Stimela dtype: List[float]'
+        dtype: List[float]
       drop-bands:
         info:
-          'List of bands to discard.
-          Stimela dtype: List[int]'
+          List of bands to discard.
+        dtype: List[int]
       nworkers:
         info:
           Number of worker processes.
@@ -71,9 +71,7 @@ cabs:
     outputs:
       mfs-image:
         dtype: File
-        info:
-          ''
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}_image_mfs.fits'
       image:
         dtype: File
-        info:
-          ''
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}_image.fits'

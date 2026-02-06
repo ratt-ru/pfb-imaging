@@ -9,42 +9,46 @@ Directory = NewType("Directory", Path)
 
 @stimela_cab(
     name="sara",
-    info="",
+    info="pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.",
 )
 @stimela_output(
     dtype="Directory",
     name="dds-out",
-    info="",
+    info="Output dataset directory.",
+    implicit="{current.output-filename}_{current.product}_{current.suffix}.dds",
+    must_exist=False,
 )
 @stimela_output(
     dtype="Directory",
     name="mds-out",
-    info="",
+    info="Output component model.",
+    implicit="{current.output-filename}_{current.product}_{current.suffix}.mds",
+    must_exist=False,
 )
 def sara(
     output_filename: Annotated[
         str,
         typer.Option(
             ...,
-            help="Basename of output",
+            help="Basename of output.",
         ),
     ],
     suffix: Annotated[
         str,
         typer.Option(
-            help="Can be used to specify a custom name for the image space data products",
+            help="Can be used to specify a custom name for the image space data products.",
         ),
     ] = "main",
     bases: Annotated[
         str,
         typer.Option(
-            help="Wavelet bases to use. Give as comma separated str. ",
+            help="Wavelet bases to use. Give as comma separated str.",
         ),
     ] = "self,db1,db2,db3",
     nlevels: Annotated[
         int,
         typer.Option(
-            help="Wavelet decomposition level",
+            help="Wavelet decomposition level.",
         ),
     ] = 2,
     l1_reweight_from: Annotated[
@@ -57,7 +61,7 @@ def sara(
     hess_norm: Annotated[
         float | None,
         typer.Option(
-            help="Spectral norm of hessian approximation",
+            help="Spectral norm of hessian approximation.",
         ),
     ] = None,
     hess_approx: Annotated[
@@ -72,7 +76,7 @@ def sara(
     rmsfactor: Annotated[
         float,
         typer.Option(
-            help="By default will threshold by rmsfactor*rms at every iteration",
+            help="By default will threshold by rmsfactor*rms at every iteration.",
         ),
     ] = 1.0,
     eta: Annotated[
@@ -84,7 +88,7 @@ def sara(
     gamma: Annotated[
         float,
         typer.Option(
-            help="Step size of update",
+            help="Step size of update.",
         ),
     ] = 1.0,
     alpha: Annotated[
@@ -125,7 +129,7 @@ def sara(
     tol: Annotated[
         float,
         typer.Option(
-            help="Tolerance at which to terminate algorithm. Will stop when norm(x-xp)/norm(x) < tol",
+            help="Tolerance at which to terminate algorithm. Will stop when norm(x-xp)/norm(x) < tol.",
         ),
     ] = 0.0005,
     diverge_count: Annotated[
@@ -151,19 +155,19 @@ def sara(
     verbosity: Annotated[
         int,
         typer.Option(
-            help="Set to larger than 1 to report timings during residual computation",
+            help="Set to larger than 1 to report timings during residual computation.",
         ),
     ] = 1,
     epsilon: Annotated[
         float,
         typer.Option(
-            help="Gridder accuracy",
+            help="Gridder accuracy.",
         ),
     ] = 1e-07,
     do_wgridding: Annotated[
         bool,
         typer.Option(
-            help="Perform w-correction via improved w-stacking",
+            help="Perform w-correction via improved w-stacking.",
         ),
     ] = True,
     double_accum: Annotated[
@@ -175,13 +179,13 @@ def sara(
     pd_tol: Annotated[
         float,
         typer.Option(
-            help="Tolreance of primal dual algorithm. Stimela dtype: List[float]",
+            help="Tolreance of primal dual algorithm.",
         ),
-    ] = 3e-4,
+    ] = 0.0003,
     pd_maxit: Annotated[
         int,
         typer.Option(
-            help="Maximum iterations for primal dual algorithm",
+            help="Maximum iterations for primal dual algorithm.",
         ),
     ] = 450,
     pd_verbose: Annotated[
@@ -277,6 +281,9 @@ def sara(
         ),
     ] = True,
 ):
+    """
+    pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.
+    """
     # Lazy import the core implementation
     from pfb_imaging.core.sara import sara as sara_core  # noqa: E402
 

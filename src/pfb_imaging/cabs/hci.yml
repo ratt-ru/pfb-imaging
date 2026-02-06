@@ -5,7 +5,7 @@ cabs:
     image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: hci
     info:
-      ''
+      High cadence imaging algorithm.
     inputs:
       ms:
         info:
@@ -24,27 +24,26 @@ cabs:
         default: I
       scans:
         info:
-          'List of SCAN_NUMBERS to image.
+          List of SCAN_NUMBERS to image.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
-          Stimela dtype: List[int]'
+        dtype: List[int]
       ddids:
         info:
-          'List of DATA_DESC_ID''s to images.
+          List of DATA_DESC_ID's to images.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
-          Stimela dtype: List[int]'
+        dtype: List[int]
       fields:
         info:
-          'List of FIELD_ID''s to image.
+          List of FIELD_ID's to image.
           Defaults to all.
           Input as comma separated list 0,2 if running from CLI.
-          Stimela dtype: List[int]'
+        dtype: List[int]
       freq-range:
         info:
-          'Frequency range to image in Hz.
-          Specify as a string with colon delimiter (''1e9:1.1e9'').
-          '
+          Frequency range to image in Hz.
+          Specify as a string with colon delimiter ('1e9:1.1e9').
       overwrite:
         info:
           Allow overwrite of output xds
@@ -105,7 +104,7 @@ cabs:
           Number of channels per image for gridding resolution.
           Default of (-1, 0, None) implies a single dataset per spw.
         dtype: int
-        default: -1
+        default: '-1'
       precision:
         info:
           Gridding precision
@@ -252,13 +251,15 @@ cabs:
     outputs:
       output-dataset:
         dtype: Directory
+        info:
+          Basename of output.
         required: true
+        policies:
+          positional: true
         must_exist: true
         mkdir: false
         path_policies:
           write_parent: true
-        info:
-          Basename of output.
       temp-dir:
         dtype: Directory
         info:

@@ -9,17 +9,21 @@ Directory = NewType("Directory", Path)
 
 @stimela_cab(
     name="kclean",
-    info="",
+    info="Modified single scale clean algorithm.",
 )
 @stimela_output(
     dtype="Directory",
     name="dds-out",
-    info="",
+    info="Output dataset directory.",
+    implicit="{current.output-filename}_{current.product}_{current.suffix}.dds",
+    must_exist=False,
 )
 @stimela_output(
     dtype="Directory",
     name="mds-out",
-    info="",
+    info="Output component model.",
+    implicit="{current.output-filename}_{current.product}_{current.suffix}.mds",
+    must_exist=False,
 )
 def kclean(
     output_filename: Annotated[
@@ -207,6 +211,9 @@ def kclean(
         ),
     ] = True,
 ):
+    """
+    Modified single scale clean algorithm.
+    """
     # Lazy import the core implementation
     from pfb_imaging.core.kclean import kclean as kclean_core  # noqa: E402
 

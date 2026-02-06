@@ -5,27 +5,26 @@ cabs:
     image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: sara
     info:
-      ''
+      pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.
     inputs:
       output-filename:
         info:
-          Basename of output
+          Basename of output.
         required: true
         policies:
           positional: true
       suffix:
         info:
-          Can be used to specify a custom name for the image space data products
+          Can be used to specify a custom name for the image space data products.
         default: main
       bases:
         info:
-          'Wavelet bases to use.
+          Wavelet bases to use.
           Give as comma separated str.
-          '
         default: self,db1,db2,db3
       nlevels:
         info:
-          Wavelet decomposition level
+          Wavelet decomposition level.
         dtype: int
         default: 2
       l1-reweight-from:
@@ -36,7 +35,7 @@ cabs:
         default: 5
       hess-norm:
         info:
-          Spectral norm of hessian approximation
+          Spectral norm of hessian approximation.
         dtype: float
       hess-approx:
         info:
@@ -51,7 +50,7 @@ cabs:
         default: psf
       rmsfactor:
         info:
-          By default will threshold by rmsfactor*rms at every iteration
+          By default will threshold by rmsfactor*rms at every iteration.
         dtype: float
         default: 1.0
       eta:
@@ -61,7 +60,7 @@ cabs:
         default: 1.0
       gamma:
         info:
-          Step size of update
+          Step size of update.
         dtype: float
         default: 1.0
       alpha:
@@ -96,7 +95,7 @@ cabs:
       tol:
         info:
           Tolerance at which to terminate algorithm.
-          Will stop when norm(x-xp)/norm(x) < tol
+          Will stop when norm(x-xp)/norm(x) < tol.
         dtype: float
         default: 0.0005
       diverge-count:
@@ -118,17 +117,17 @@ cabs:
         default: 0.5
       verbosity:
         info:
-          Set to larger than 1 to report timings during residual computation
+          Set to larger than 1 to report timings during residual computation.
         dtype: int
         default: 1
       epsilon:
         info:
-          Gridder accuracy
+          Gridder accuracy.
         dtype: float
         default: 1.0e-07
       do-wgridding:
         info:
-          Perform w-correction via improved w-stacking
+          Perform w-correction via improved w-stacking.
         dtype: bool
         default: true
       double-accum:
@@ -139,13 +138,12 @@ cabs:
         default: true
       pd-tol:
         info:
-          'Tolreance of primal dual algorithm.
-          Stimela dtype: List[float]'
+          Tolreance of primal dual algorithm.
         dtype: float
         default: 0.0003
       pd-maxit:
         info:
-          Maximum iterations for primal dual algorithm
+          Maximum iterations for primal dual algorithm.
         dtype: int
         default: 450
       pd-verbose:
@@ -228,8 +226,12 @@ cabs:
       dds-out:
         dtype: Directory
         info:
-          ''
+          Output dataset directory.
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
+        must_exist: false
       mds-out:
         dtype: Directory
         info:
-          ''
+          Output component model.
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.mds'
+        must_exist: false

@@ -9,17 +9,19 @@ File = NewType("File", Path)
 
 @stimela_cab(
     name="restore",
-    info="",
+    info="Restore model images and.or convolved images to common resolution.",
 )
 @stimela_output(
     dtype="File",
     name="mfs-image",
     info="",
+    implicit="{current.output-filename}_{current.product}_{current.suffix}_image_mfs.fits",
 )
 @stimela_output(
     dtype="File",
     name="image",
     info="",
+    implicit="{current.output-filename}_{current.product}_{current.suffix}_image.fits",
 )
 def restore(
     output_filename: Annotated[
@@ -62,15 +64,24 @@ def restore(
             "The position-angle should be in degrees. "
             "The default resolution is the native resolution in each imaging band. "
             "This parameter can be used to homogenise the resolution of the cubes. "
-            "Set to (0,0,0) to use the resolution of the lowest band. "
-            "Stimela dtype: List[float]",
+            "Set to (0,0,0) to use the resolution of the lowest band.",
         ),
+        {
+            "stimela": {
+                "dtype": "List[float]",
+            },
+        },
     ] = None,
     drop_bands: Annotated[
         str | None,
         typer.Option(
-            help="List of bands to discard. Stimela dtype: List[int]",
+            help="List of bands to discard.",
         ),
+        {
+            "stimela": {
+                "dtype": "List[int]",
+            },
+        },
     ] = None,
     nworkers: Annotated[
         int,
@@ -107,6 +118,9 @@ def restore(
         ),
     ] = None,
 ):
+    """
+    Restore model images and.or convolved images to common resolution.
+    """
     # Lazy import the core implementation
     from pfb_imaging.core.restore import restore as restore_core  # noqa: E402
 

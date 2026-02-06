@@ -9,17 +9,21 @@ Directory = NewType("Directory", Path)
 
 @stimela_cab(
     name="fluxtractor",
-    info="",
+    info="Otherwise knows as the fluxmop.",
 )
 @stimela_output(
     dtype="Directory",
     name="dds-out",
-    info="",
+    info="Output dataset directory.",
+    implicit="{current.output-filename}_{current.product}_{current.suffix}.dds",
+    must_exist=False,
 )
 @stimela_output(
     dtype="Directory",
     name="mds-out",
-    info="",
+    info="Output component model.",
+    implicit="{current.output-filename}_{current.product}_{current.suffix}.mds",
+    must_exist=False,
 )
 def fluxtractor(
     output_filename: Annotated[
@@ -174,6 +178,9 @@ def fluxtractor(
         ),
     ] = True,
 ):
+    """
+    Otherwise knows as the fluxmop.
+    """
     # Lazy import the core implementation
     from pfb_imaging.core.fluxtractor import fluxtractor as fluxtractor_core  # noqa: E402
 

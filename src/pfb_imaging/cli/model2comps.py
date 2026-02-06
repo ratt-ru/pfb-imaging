@@ -9,12 +9,14 @@ Directory = NewType("Directory", Path)
 
 @stimela_cab(
     name="model2comps",
-    info="",
+    info="Convert model image to components.",
 )
 @stimela_output(
     dtype="Directory",
     name="mds-out",
-    info="",
+    info="Output component model.",
+    implicit="=IFSET(current.model-out, current.model-out, {current.output-filename}_{current.product}_{current.suffix}_{current.model-name}.mds)",  # noqa: E501
+    must_exist=False,
 )
 def model2comps(
     output_filename: Annotated[
@@ -130,6 +132,9 @@ def model2comps(
         ),
     ] = None,
 ):
+    """
+    Convert model image to components.
+    """
     # Lazy import the core implementation
     from pfb_imaging.core.model2comps import model2comps as model2comps_core  # noqa: E402
 

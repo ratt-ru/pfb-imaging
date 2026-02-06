@@ -5,7 +5,7 @@ cabs:
     image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: grid
     info:
-      ''
+      Initialise image data products.
     inputs:
       output-filename:
         info:
@@ -175,4 +175,6 @@ cabs:
       dds-out:
         dtype: Directory
         info:
-          ''
+          Output dataset directory.
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
+        must_exist: false

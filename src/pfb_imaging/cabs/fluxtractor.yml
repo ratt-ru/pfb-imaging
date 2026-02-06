@@ -5,7 +5,7 @@ cabs:
     image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: fluxtractor
     info:
-      ''
+      Otherwise knows as the fluxmop.
     inputs:
       output-filename:
         info:
@@ -131,8 +131,12 @@ cabs:
       dds-out:
         dtype: Directory
         info:
-          ''
+          Output dataset directory.
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
+        must_exist: false
       mds-out:
         dtype: Directory
         info:
-          ''
+          Output component model.
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.mds'
+        must_exist: false

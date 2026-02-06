@@ -9,12 +9,14 @@ Directory = NewType("Directory", Path)
 
 @stimela_cab(
     name="grid",
-    info="",
+    info="Initialise image data products.",
 )
 @stimela_output(
     dtype="Directory",
     name="dds-out",
-    info="",
+    info="Output dataset directory.",
+    implicit="{current.output-filename}_{current.product}_{current.suffix}.dds",
+    must_exist=False,
 )
 def grid(
     output_filename: Annotated[
@@ -228,6 +230,9 @@ def grid(
         ),
     ] = True,
 ):
+    """
+    Initialise image data products.
+    """
     # Lazy import the core implementation
     from pfb_imaging.core.grid import grid as grid_core  # noqa: E402
 
@@ -246,8 +251,8 @@ def grid(
         residual=residual,
         noise=noise,
         beam=beam,
-        psf_oversize=psf_oversize,
         weight=weight,
+        psf_oversize=psf_oversize,
         field_of_view=field_of_view,
         super_resolution_factor=super_resolution_factor,
         cell_size=cell_size,

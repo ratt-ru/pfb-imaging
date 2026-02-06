@@ -33,27 +33,39 @@ def degrid(
         typer.Option(
             help="List of SCAN_NUMBERS to image. "
             "Defaults to all. "
-            "Input as comma separated string '0,2' if running from CLI. "
-            "Stimela dtype: List[int]",
+            "Input as comma separated string '0,2' if running from CLI.",
         ),
+        {
+            "stimela": {
+                "dtype": "List[int]",
+            },
+        },
     ] = None,
     ddids: Annotated[
         str | None,
         typer.Option(
             help="List of DATA_DESC_ID's to images. "
             "Defaults to all. "
-            "Input as comma separated string '0,2' if running from CLI. "
-            "Stimela dtype: List[int]",
+            "Input as comma separated string '0,2' if running from CLI.",
         ),
+        {
+            "stimela": {
+                "dtype": "List[int]",
+            },
+        },
     ] = None,
     fields: Annotated[
         str | None,
         typer.Option(
             help="List of FIELD_ID's to image. "
             "Defaults to all. "
-            "Input as comma separated string '0,2' if running from CLI. "
-            "Stimela dtype: List[int]",
+            "Input as comma separated string '0,2' if running from CLI.",
         ),
+        {
+            "stimela": {
+                "dtype": "List[int]",
+            },
+        },
     ] = None,
     suffix: Annotated[
         str,
@@ -82,7 +94,7 @@ def degrid(
     freq_range: Annotated[
         str | None,
         typer.Option(
-            help="Frequency range to image in Hz. Specify as a string with colon delimiter ('1e9:1.1e9')",
+            help="Frequency range to image in Hz. Specify as a string with colon delimiter ('1e9:1.1e9').",
         ),
     ] = None,
     integrations_per_image: Annotated[
@@ -117,7 +129,7 @@ def degrid(
         typer.Option(
             help="Gridder accuracy",
         ),
-    ] = 1e-7,
+    ] = 1e-07,
     do_wgridding: Annotated[
         bool,
         typer.Option(
