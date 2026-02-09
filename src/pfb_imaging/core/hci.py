@@ -25,7 +25,7 @@ from zarr import ProcessSynchronizer
 from pfb_imaging import set_envs
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.misc import construct_mappings
-from pfb_imaging.utils.stokes2im import safe_stokes_image
+from pfb_imaging.utils.stokes2im import batch_stokes_image
 from pfb_imaging.utils.transients import generate_transient_spectra
 
 log = pfb_logging.get_logger("HCI")
@@ -467,7 +467,7 @@ def hci(
                         else:
                             jones = None
 
-                        fut = safe_stokes_image.remote(
+                        fut = batch_stokes_image.remote(
                             dc1=dc1,
                             dc2=dc2,
                             operator=operator,
