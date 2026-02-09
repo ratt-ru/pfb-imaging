@@ -35,10 +35,10 @@ def batch_stokes_image(
     nx=None,
     ny=None,
     freq=None,
-    cell_rad=None,
     utime=None,
     rbin_idx=None,
     rbin_counts=None,
+    cell_rad=None,
     radec=None,
     antpos=None,
     poltype=None,
@@ -48,8 +48,6 @@ def batch_stokes_image(
     msid=None,
     attrs=None,
     integrations_per_image=None,
-    synchronizer=None,
-    # Parameters previously from opts:
     nthreads=None,
     precision="double",
     sigma_column=None,
@@ -75,6 +73,7 @@ def batch_stokes_image(
     psf_out=False,
     weight_grid_out=False,
     l2_reweight_dof=None,
+    synchronizer=None,
 ):
     # load chunk
     ds.load(scheduler="sync")

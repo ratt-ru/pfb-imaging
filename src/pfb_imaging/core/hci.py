@@ -90,25 +90,27 @@ def hci(
     # start timer
     time_start = time.time()
 
-    if "://" in output_dataset:
-        protocol = output_dataset.split("://")[0]
+    if "://" in str(output_dataset):
+        protocol = str(output_dataset).split("://")[0]
         prefix = f"{protocol}://"
     else:
         protocol = "file"
         prefix = ""
 
     fs = fsspec.filesystem(protocol)
-    basedir = fs.expand_path("/".join(output_dataset.split("/")[:-1]))[0]
+    basedir = fs.expand_path("/".join(str(output_dataset).split("/")[:-1]))[0]
     if not fs.exists(basedir):
         fs.makedirs(basedir)
 
-    oname = output_dataset.split("/")[-1]
+    oname = str(output_dataset).split("/")[-1]
 
     output_dataset = f"{prefix}{basedir}/{oname}"
 
     # this should be a file system
     if log_directory is None:
         log_directory = Path(basedir) / "pfb_logs"
+    else:
+        log_directory = Path(log_directory)
     log_directory.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/hci_{timestamp}.log"
@@ -384,6 +386,7 @@ def hci(
         cell_deg,
         integrations_per_image=integrations_per_image,
     )
+
     log.info("Scaffolding complete")
 
     n_stokes = len(remprod)
@@ -477,8 +480,8 @@ def hci(
                             ny=ny,
                             freq=freqs[ms_name][idt][freq_slice],
                             utime=utimes[ms_name][idt][time_slice],
-                            tbin_idx=row_index,
-                            tbin_counts=row_counts,
+                            rbin_idx=row_index,
+                            rbin_counts=row_counts,
                             cell_rad=cell_rad,
                             radec=radecs[ms_name][idt],
                             antpos=antpos[ms_name],
@@ -488,7 +491,7 @@ def hci(
                             timeid=ti,
                             msid=ims,
                             attrs=attrs,
-                            # Parameters previously from opts:
+                            integrations_per_image=integrations_per_image,
                             nthreads=nthreads,
                             precision=precision,
                             sigma_column=sigma_column,
@@ -602,7 +605,6 @@ def make_dummy_dataset(
     nx,
     ny,
     cell_deg,
-    time_chunk,
     spatial_chunk=128,
     integrations_per_image=1,
 ):
@@ -638,7 +640,7 @@ def make_dummy_dataset(
                 fitr = enumerate(zip(freq_mapping[ms_name][idt]["start_indices"], freq_mapping[ms_name][idt]["counts"]))
                 for fi, (flow, fcounts) in fitr:
                     freq_slice = slice(flow, flow + fcounts)
-                    out_freqs.append(np.mean(freqs[ms][idt][freq_slice]))
+                    out_freqs.append(np.mean(freqs[ms_name][idt][freq_slice]))
                     ntasks += 1
 
                     for t0 in range(tlow, tlow + tcounts, integrations_per_image):
@@ -823,4 +825,4 @@ def make_dummy_dataset(
     # Write scaffold and metadata to disk.
     cds = f"{output_dataset}"
     dummy_ds.to_zarr(cds, mode="w", compute=False)
-    return cds, attrs
+    return attrs, ntasks, n_times, n_freqs
