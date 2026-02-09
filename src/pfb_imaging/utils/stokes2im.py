@@ -239,10 +239,9 @@ def stokes_image(
             assert operator == "+" or operator == "-"
         except Exception as e:
             raise e
-        ne.evaluate(
+        data = ne.evaluate(
             f"data {operator} data2",
             local_dict={"data": data, "data2": getattr(ds, dc2).values},
-            out=data,
             casting="same_kind",
         )
 
