@@ -12,12 +12,11 @@ from astropy.coordinates import SkyCoord
 from casacore.quanta import quantity
 from ducc0.fft import good_size
 from jax.scipy.sparse.linalg import cg
-from pfb.utils.astrometry import synthesize_uvw
 from scipy.constants import c as lightspeed
 
 from pfb_imaging.operators.gridder import wgridder_conventions
 from pfb_imaging.operators.hessian import hessian_jax
-from pfb_imaging.utils.astrometry import get_coordinates
+from pfb_imaging.utils.astrometry import get_coordinates, synthesize_uvw
 from pfb_imaging.utils.beam import reproject_and_interp_beam
 from pfb_imaging.utils.misc import fitcleanbeam
 from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights, filter_extreme_counts, weight_data
