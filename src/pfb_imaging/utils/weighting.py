@@ -1,5 +1,6 @@
 import concurrent.futures as cf
 
+import numba
 import numpy as np
 from numba import literally, njit, prange, types
 from numba.extending import overload
@@ -255,24 +256,90 @@ def filter_extreme_counts(counts, level=10.0):
 
 
 @njit(nogil=True, cache=False, parallel=False)
-def weight_data(data, weight, flag, jones, tbin_idx, tbin_counts, ant1, ant2, pol, product, nc):
+def weight_data(
+    data,
+    weight,
+    flag,
+    jones,
+    tbin_idx,
+    tbin_counts,
+    ant1,
+    ant2,
+    pol,
+    product,
+    nc,
+    wgt_mode,
+):
     vis, wgt = _weight_data_impl(
-        data, weight, flag, jones, tbin_idx, tbin_counts, ant1, ant2, literally(pol), literally(product), literally(nc)
+        data,
+        weight,
+        flag,
+        jones,
+        tbin_idx,
+        tbin_counts,
+        ant1,
+        ant2,
+        literally(pol),
+        literally(product),
+        literally(nc),
+        literally(wgt_mode),
     )
 
     return vis, wgt
 
 
-def _weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts, ant1, ant2, pol, product, nc):
+def _weight_data_impl(
+    data,
+    weight,
+    flag,
+    jones,
+    tbin_idx,
+    tbin_counts,
+    ant1,
+    ant2,
+    pol,
+    product,
+    nc,
+    wgt_mode,
+):
     raise NotImplementedError
 
 
 @overload(_weight_data_impl, prefer_literal=True, jit_options={**JIT_OPTIONS, "parallel": True})
-def nb_weight_data_impl(data, weight, flag, jones, tbin_idx, tbin_counts, ant1, ant2, pol, product, nc):
-    vis_func, wgt_func = stokes_funcs(data, jones, product, pol, nc)
+def nb_weight_data_impl(
+    data,
+    weight,
+    flag,
+    jones,
+    tbin_idx,
+    tbin_counts,
+    ant1,
+    ant2,
+    pol,
+    product,
+    nc,
+    wgt_mode,
+):
+    try:
+        vis_func, wgt_func = stokes_funcs(data, jones, product, pol, nc, wgt_mode)
+    except Exception as e:
+        raise numba.core.errors.TypingError(f"Failed in overload resolution: {e}") from e
     ns = len(product.literal_value)
 
-    def _impl(data, weight, flag, jones, tbin_idx, tbin_counts, ant1, ant2, pol, product, nc):
+    def _impl(
+        data,
+        weight,
+        flag,
+        jones,
+        tbin_idx,
+        tbin_counts,
+        ant1,
+        ant2,
+        pol,
+        product,
+        nc,
+        wgt_mode,
+    ):
         # for dask arrays we need to adjust the chunks to
         # start counting from zero
         tbin_idx = tbin_idx - tbin_idx.min()

@@ -74,6 +74,7 @@ def batch_stokes_image(
     weight_grid_out=False,
     l2_reweight_dof=None,
     synchronizer=None,
+    wgt_mode="l2",
 ):
     # load chunk
     ds.load(scheduler="sync")
@@ -146,6 +147,7 @@ def batch_stokes_image(
             psf_out=psf_out,
             weight_grid_out=weight_grid_out,
             l2_reweight_dof=l2_reweight_dof,
+            wgt_mode=wgt_mode,
         )
 
         tasks.append(task)
@@ -208,6 +210,7 @@ def stokes_image(
     psf_out=False,
     weight_grid_out=False,
     l2_reweight_dof=None,
+    wgt_mode="l2",
 ):
     # serialization fails for these if we import them above
     from ducc0.misc import resize_thread_pool
@@ -436,7 +439,18 @@ def stokes_image(
     # we currently need this extra loop through the data because
     # we don't have access to the grid
     data, weight = weight_data(
-        data, weight, flag, jones, tbin_idx, tbin_counts, ant1, ant2, poltype, product, str(ncorr)
+        data,
+        weight,
+        flag,
+        jones,
+        tbin_idx,
+        tbin_counts,
+        ant1,
+        ant2,
+        poltype,
+        product,
+        str(ncorr),
+        wgt_mode,
     )
 
     # flag if any correlation is flagged

@@ -7,7 +7,6 @@ import ray
 import xarray as xr
 from casacore.quanta import quantity
 from katbeam import JimBeam
-from numba import literally
 from scipy import ndimage
 from scipy.constants import c as lightspeed
 
@@ -52,6 +51,7 @@ def stokes_vis(
     bda_decorr=1.0,
     max_field_of_view=3.0,
     beam_model=None,
+    wgt_mode="l2",
 ):
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID
@@ -198,9 +198,10 @@ def stokes_vis(
         tbin_counts,
         ant1,
         ant2,
-        literally(poltype),
-        literally(product),
-        literally(str(ncorr)),
+        poltype,
+        product,
+        str(ncorr),
+        wgt_mode,
     )
 
     # TODO - check if wsum for any of the correlations is zero

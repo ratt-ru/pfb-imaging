@@ -1,24 +1,17 @@
-# Pre-commit hooks for hip-cargo
+# Pre-commit hooks for pfb-imaging
 # See https://pre-commit.com for more information
+#
+# NOTE: When hooks modify files, pre-commit will "fail" and abort the commit.
+# This is expected behavior - it allows you to review the changes.
+# Simply run `git add -u && git commit` again. The second attempt will succeed
+# because the files are already correctly formatted/updated.
 
 repos:
-  - repo: local
-    hooks:
-      - id: generate-cabs
-        name: Generate Stimela cab definitions
-        entry: python scripts/generate_cabs.py
-        language: system
-        always_run: true
-        pass_filenames: false
-        stages: [pre-commit]
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.13.2
     hooks:
-      # Run the linter
       - id: ruff-check
         args: [--fix]
-      # Run the formatter
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -32,3 +25,14 @@ repos:
       - id: check-merge-conflict
       - id: check-toml
       - id: mixed-line-ending
+
+  # Local hooks run after external hooks, ensuring they see formatted code
+  - repo: local
+    hooks:
+
+      - id: generate-cabs
+        name: Generate Stimela cab definitions
+        entry: python scripts/generate_cabs.py
+        language: system
+        always_run: true
+        pass_filenames: false

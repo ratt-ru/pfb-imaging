@@ -202,6 +202,14 @@ def init(
             "Will attempt to use half the available threads by default.",
         ),
     ] = None,
+    wgt_mode: Annotated[
+        Literal["l2", "minvar"],
+        typer.Option(
+            help="Controls how the Stokes weights are computed. "
+            "l2 -> use standard Gaussian formula. "
+            "minvar -> use minimum between correlations (wsclean Stokes I style).",
+        ),
+    ] = "l2",
 ):
     """
     Initialise Stokes data products.
@@ -251,4 +259,5 @@ def init(
         product=product,
         nworkers=nworkers,
         nthreads=nthreads,
+        wgt_mode=wgt_mode,
     )

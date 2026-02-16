@@ -144,6 +144,15 @@ cabs:
           Each dask thread can in principle spawn this many threads.
           Will attempt to use half the available threads by default.
         dtype: int
+      wgt-mode:
+        info:
+          Controls how the Stokes weights are computed.
+          l2 -> use standard Gaussian formula.
+          minvar -> use minimum between correlations (wsclean Stokes I style).
+        choices:
+        - l2
+        - minvar
+        default: l2
     outputs:
       xds-out:
         dtype: Directory

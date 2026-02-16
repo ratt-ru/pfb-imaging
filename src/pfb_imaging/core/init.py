@@ -45,7 +45,8 @@ def init(
     product: str = "I",
     nworkers: int = 1,
     nthreads: int | None = None,
-    keep_ray_alive: bool = False,
+    wgt_mode: str = "l2",
+    keep_ray_alive: bool = False,  # not used by CLI
 ):
     """
     Initialise Stokes data products for imaging
@@ -317,6 +318,7 @@ def init(
                         bda_decorr=bda_decorr,
                         max_field_of_view=max_field_of_view,
                         beam_model=beam_model,
+                        wgt_mode=wgt_mode,
                     )
                     tasks.append(fut)
 

@@ -248,6 +248,20 @@ cabs:
         info:
           Object store memory (in GB) when using the distributed scheduler.
         dtype: float
+      cube-to-fits:
+        info:
+          Whether to convert the output cube to FITS format.
+        dtype: bool
+        default: false
+      wgt-mode:
+        info:
+          Controls how the Stokes weights are computed.
+          l2 -> use standard Gaussian formula.
+          minvar -> use minimum between correlations (wsclean Stokes I style).
+        choices:
+        - l2
+        - minvar
+        default: l2
     outputs:
       output-dataset:
         dtype: Directory

@@ -82,7 +82,9 @@ def hci(
     cg_maxit: int = 150,
     object_store_memory: float | None = None,
     temp_dir: str | None = None,
-    keep_ray_alive: bool = False,
+    cube_to_fits: bool = False,
+    wgt_mode: str = "l2",
+    keep_ray_alive: bool = False,  # not used by CLI
 ):
     """
     Produce high cadence residual images.
@@ -165,7 +167,6 @@ def hci(
         logging_level="INFO",
         ignore_reinit_error=True,
         object_store_memory=mem_limit,
-        local_mode=nworkers == 1,
         runtime_env=runtime_env,
     )
 
@@ -389,7 +390,7 @@ def hci(
 
     log.info("Scaffolding complete")
 
-    n_stokes = len(remprod)
+    n_stokes = len(set(product))
     log.info(f"Cube size = (n_stokes={n_stokes}, n_freq={n_freqo}, n_time={n_timeo}, n_y={ny}, n_x={nx})")
 
     if inject_transients is not None:
@@ -518,6 +519,7 @@ def hci(
                             weight_grid_out=weight_grid_out,
                             l2_reweight_dof=l2_reweight_dof,
                             synchronizer=synchronizer,
+                            wgt_mode=wgt_mode,
                         )
                         tasks.append(fut)
                         channel_width[b0 + fi] = (

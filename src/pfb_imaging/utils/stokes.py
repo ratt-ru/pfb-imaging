@@ -5,7 +5,6 @@ import sympy as sm
 from numba import njit
 from numba.core import types
 from sympy.physics.quantum import TensorProduct
-from sympy.utilities.lambdify import lambdify
 
 
 def jones_to_mueller(gp, gq):
@@ -72,13 +71,23 @@ def stokes_to_corr(x, axis=0, poltype="linear"):
     return np.stack((dirty0, dirty1, dirty2, dirty3), axis=axis)
 
 
-def stokes_funcs(data, jones, product, pol, nc):
+def stokes_funcs(data, jones, product, pol, nc, wgt_mode):
     if isinstance(product, types.StringLiteral):
         product = product.literal_value
     if isinstance(pol, types.StringLiteral):
         pol = pol.literal_value
     if isinstance(nc, types.StringLiteral):
         nc = nc.literal_value
+    if isinstance(wgt_mode, types.StringLiteral):
+        wgt_mode = wgt_mode.literal_value
+
+    # check validity of inputs
+    if pol not in ("linear", "circular"):
+        raise ValueError(f"Unknown polarisation type {pol}")
+    if nc not in ("1", "2", "4"):
+        raise ValueError(f"Unsupported number of correlations {nc}")
+    if wgt_mode not in ("l2", "minvar"):
+        raise ValueError(f"Unknown weighting mode {wgt_mode}")
 
     # set up symbolic expressions
     gp00, gp10, gp01, gp11 = sm.symbols("gp00 gp10 gp01 gp11", real=False)
@@ -108,6 +117,8 @@ def stokes_funcs(data, jones, product, pol, nc):
         t_matrix = sm.Matrix([[1.0, 1.0, 0, 0], [0, 0, 1.0, 1.0j], [0, 0, 1.0, -1.0j], [1.0, -1.0, 0, 0]])
     elif pol == "circular":
         t_matrix = sm.Matrix([[1.0, 0, 0, 1.0], [0, 1.0, 1.0j, 0], [0, 1.0, -1.0j, 0], [1.0, 0, 0, -1.0]])
+    else:
+        raise ValueError(f"Unknown pol {pol}")
     t_inv = t_matrix.inv()
 
     # Full Stokes weights
@@ -147,11 +158,18 @@ def stokes_funcs(data, jones, product, pol, nc):
         raise ValueError(f"Unknown polarisation product {remprod}")
 
     if jones.ndim == 6:  # Full mode
-        w_symb = lambdify((gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w0, w1, w2, w3), sm.simplify(w[i, 0]))
+        if wgt_mode == "minvar":
+            raise NotImplementedError("Minvar weighting not yet implemented for full-Stokes")
+
+        w_symb = sm.lambdify(
+            (gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w0, w1, w2, w3),
+            sm.simplify(w[i, 0]),
+        )
         w_jfn = njit(nogil=True, inline="always")(w_symb)
 
-        d_symb = lambdify(
-            (gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w0, w1, w2, w3, v00, v01, v10, v11), sm.simplify(c[i, 0])
+        d_symb = sm.lambdify(
+            (gp00, gp01, gp10, gp11, gq00, gq01, gq10, gq11, w0, w1, w2, w3, v00, v01, v10, v11),
+            sm.simplify(c[i, 0]),
         )
         d_jfn = njit(nogil=True, inline="always")(d_symb)
 
@@ -201,10 +219,30 @@ def stokes_funcs(data, jones, product, pol, nc):
         c = c.subs(gq10, 0)
         c = c.subs(gq01, 0)
 
-        w_symb = lambdify((gp00, gp11, gq00, gq11, w0, w1, w2, w3), sm.simplify(w[i, 0]))
+        if wgt_mode == "minvar":
+            # Take the minimum of the two terms in the sum
+            # Inspired by https://wsclean.readthedocs.io/en/latest/polarizations_and_weights.html
+            w_expr = w[i, 0].applyfunc(lambda element: 4 * sm.Min(*sm.expand(element).args))
+        elif wgt_mode == "l2":
+            # Standard Gaussian case
+            w_expr = sm.simplify(w[i, 0])
+        else:
+            raise ValueError(f"Unknown weighting mode {wgt_mode}")
+
+        w_symb = sm.lambdify(
+            (gp00, gp11, gq00, gq11, w0, w1, w2, w3),
+            w_expr,
+            modules=[
+                {
+                    "Min": np.minimum,  # can't use 'numpy' here else Min -> reduce(min(.))
+                    "conjugate": np.conjugate,
+                    "ImmutableDenseMatrix": np.array,
+                }
+            ],
+        )
         w_jfn = njit(nogil=True, inline="always")(w_symb)
 
-        d_symb = lambdify((gp00, gp11, gq00, gq11, w0, w1, w2, w3, v00, v01, v10, v11), sm.simplify(c[i, 0]))
+        d_symb = sm.lambdify((gp00, gp11, gq00, gq11, w0, w1, w2, w3, v00, v01, v10, v11), sm.simplify(c[i, 0]))
         d_jfn = njit(nogil=True, inline="always")(d_symb)
 
         if nc == "4":

@@ -378,6 +378,20 @@ def hci(
             help="A temporary directory to store ephemeral files.",
         ),
     ] = None,
+    cube_to_fits: Annotated[
+        bool,
+        typer.Option(
+            help="Whether to convert the output cube to FITS format.",
+        ),
+    ] = False,
+    wgt_mode: Annotated[
+        Literal["l2", "minvar"],
+        typer.Option(
+            help="Controls how the Stokes weights are computed. "
+            "l2 -> use standard Gaussian formula. "
+            "minvar -> use minimum between correlations (wsclean Stokes I style).",
+        ),
+    ] = "l2",
 ):
     """
     High cadence imaging algorithm.
@@ -451,4 +465,6 @@ def hci(
         cg_maxit=cg_maxit,
         object_store_memory=object_store_memory,
         temp_dir=temp_dir,
+        cube_to_fits=cube_to_fits,
+        wgt_mode=wgt_mode,
     )
