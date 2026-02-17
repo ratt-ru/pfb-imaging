@@ -746,7 +746,7 @@ def make_dummy_dataset(
     dummy_ds = xr.Dataset(
         data_vars={
             "cube": (("STOKES", "FREQ", "TIME", "Y", "X"), da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32)),
-            "mean": (("STOKES", "FREQ", "Y", "X"), da.empty(mean_dims, chunks=mean_chunks, dtype=np.float32)),
+            "cube_mean": (("STOKES", "FREQ", "Y", "X"), da.empty(mean_dims, chunks=mean_chunks, dtype=np.float32)),
             "rms": (("STOKES", "FREQ", "TIME"), da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)),
             "weight": (("STOKES", "FREQ", "TIME"), da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)),
             "nonzero": (
