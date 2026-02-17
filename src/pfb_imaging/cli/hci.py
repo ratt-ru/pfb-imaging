@@ -385,17 +385,17 @@ def hci(
             "minvar -> use minimum between correlations (wsclean Stokes I style).",
         ),
     ] = "l2",
+    obs_label: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional observation label to include in the stacked cube.",
+        ),
+    ] = None,
     temp_dir: Annotated[
         Directory | None,
         typer.Option(
             parser=Path,
             help="A temporary directory to store ephemeral files.",
-        ),
-    ] = None,
-    obs_label: Annotated[
-        str | None,
-        typer.Option(
-            help="Optional observation label to include in the stacked cube.",
         ),
     ] = None,
 ):
@@ -472,6 +472,6 @@ def hci(
         object_store_memory=object_store_memory,
         cube_to_fits=cube_to_fits,
         wgt_mode=wgt_mode,
-        temp_dir=temp_dir,
         obs_label=obs_label,
+        temp_dir=temp_dir,
     )
