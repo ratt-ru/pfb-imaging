@@ -15,5 +15,8 @@ RUN apt-get update && apt-get install -y git
 # Install package with full dependencies using uv
 RUN uv pip install --system --no-cache ".[full]"
 
+# So that TBB is visible to numba
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages:$LD_LIBRARY_PATH
+
 # Make CLI available
 CMD ["pfb", "--help"]

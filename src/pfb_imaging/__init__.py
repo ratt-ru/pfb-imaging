@@ -1,6 +1,7 @@
+import importlib
 import logging
 import os
-import sys
+from pathlib import Path
 
 
 def set_envs(nthreads, ncpu):
@@ -14,17 +15,16 @@ def set_envs(nthreads, ncpu):
     os.environ["JAX_LOGGING_LEVEL"] = "INFO"  # for th emain process
     ne_threads = min(ncpu, nthreads)
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
-    # this may be required for numba parallelism
-    # find python and set LD_LIBRARY_PATH
-    paths = sys.path
-    ppath = [paths[i] for i in range(len(paths)) if "/bin" in paths[i]]
-    if len(ppath):
-        ldpath = ppath[0].replace("bin", "lib")
-        ldcurrent = os.environ.get("LD_LIBRARY_PATH", "")
-        os.environ["LD_LIBRARY_PATH"] = ":".join([ldpath, ldcurrent]).rstrip(":")
-    else:
-        raise RuntimeError("Could not set LD_LIBRARY_PATH for TBB")
     os.environ["PYTHONWARNINGS"] = "ignore:.*CUDA-enabled jaxlib is not installed.*"
+    # this may be required for efficient numba parallelism
+    # find python and set LD_LIBRARY_PATH
+    dist = importlib.metadata.distribution("tbb")
+    tbb_path = Path(dist.locate_file("."))
+    if tbb_path:
+        os.environ["LD_LIBRARY_PATH"] = f"{tbb_path}:{os.environ.get('LD_LIBRARY_PATH', '')}".strip(":")
+        logging.info(f"Set LD_LIBRARY_PATH for TBB to: {tbb_path}")
+    else:
+        logging.warning("Could not set LD_LIBRARY_PATH for TBB")
 
     # these get passed to child processes
     env_vars = {
