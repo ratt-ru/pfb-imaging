@@ -262,6 +262,9 @@ cabs:
         - l2
         - minvar
         default: l2
+      obs-label:
+        info:
+          Optional observation label to include in the stacked cube.
     outputs:
       output-dataset:
         dtype: Directory

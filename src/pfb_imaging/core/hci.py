@@ -84,6 +84,7 @@ def hci(
     temp_dir: str | None = None,
     cube_to_fits: bool = False,
     wgt_mode: str = "l2",
+    obs_label: str | None = None,
     keep_ray_alive: bool = False,  # not used by CLI
 ):
     """
@@ -386,6 +387,7 @@ def hci(
         ny,
         cell_deg,
         integrations_per_image=integrations_per_image,
+        obs_label=obs_label,
     )
 
     log.info("Scaffolding complete")
@@ -609,6 +611,7 @@ def make_dummy_dataset(
     cell_deg,
     spatial_chunk=128,
     integrations_per_image=1,
+    obs_label=None,
 ):
     out_ra = []
     out_dec = []
@@ -724,6 +727,8 @@ def make_dummy_dataset(
     hdr["BTYPE"] = "Intensity"
     hdr.update(wcs_hdr)
     hdr["TIMESCAL"] = delta_time
+    if obs_label is not None:
+        hdr["OBSLABEL"] = obs_label
 
     # if we don't pass these into stokes2im they get overwritten
     attrs = {

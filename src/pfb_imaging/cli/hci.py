@@ -392,6 +392,12 @@ def hci(
             help="A temporary directory to store ephemeral files.",
         ),
     ] = None,
+    obs_label: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional observation label to include in the stacked cube.",
+        ),
+    ] = None,
 ):
     """
     High cadence imaging algorithm.
@@ -467,4 +473,5 @@ def hci(
         cube_to_fits=cube_to_fits,
         wgt_mode=wgt_mode,
         temp_dir=temp_dir,
+        obs_label=obs_label,
     )
