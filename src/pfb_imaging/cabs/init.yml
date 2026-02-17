@@ -1,0 +1,162 @@
+cabs:
+  init:
+    flavour: python
+    command: pfb_imaging.core.init.init
+    image: ghcr.io/ratt-ru/pfb-imaging:prox_op_Tariq
+    name: init
+    info:
+      Initialise Stokes data products.
+    inputs:
+      ms:
+        info:
+          Path to measurement set
+        dtype: List[URI]
+        required: true
+        policies:
+          positional: true
+      output-filename:
+        info:
+          Basename of output
+        required: true
+        policies:
+          positional: true
+      scans:
+        info:
+          List of SCAN_NUMBERS to image.
+          Defaults to all.
+          Input as comma separated list 0,2 if running from CLI.
+        dtype: List[int]
+      ddids:
+        info:
+          List of DATA_DESC_ID's to images.
+          Defaults to all.
+          Input as comma separated list 0,2 if running from CLI.
+        dtype: List[int]
+      fields:
+        info:
+          List of FIELD_ID's to image.
+          Defaults to all.
+          Input as comma separated list 0,2 if running from CLI.
+        dtype: List[int]
+      freq-range:
+        info:
+          Frequency range to image in Hz.
+          Specify as a string with colon delimiter ('1e9:1.1e9').
+      overwrite:
+        info:
+          Allow overwrite of output xds
+        dtype: bool
+        default: false
+      data-column:
+        info:
+          Data column to image.
+          Must be the same across MSs.
+          Simple arithmetic is supported ('CORRECTED_DATA-MODEL_DATA').
+          When gains are present this column will be corrected.
+        default: DATA
+      weight-column:
+        info:
+          Column containing natural weights.
+          Must be the same across MSs
+      sigma-column:
+        info:
+          Column containing standard devations.
+          Will be used to initialise natural weights if detected.
+          Must be the same across MSs
+      flag-column:
+        info:
+          Column containing data flags.
+          Must be the same across MSs
+        default: FLAG
+      gain-table:
+        info:
+          Path to Quartical gain table containing NET gains.
+          There must be a table for each MS and glob(ms) and glob(gt) should match up when running from CLI.
+        dtype: List[URI]
+      integrations-per-image:
+        info:
+          Number of time integrations per image.
+          Default (-1, 0, None) -> dataset per scan.
+        dtype: int
+        default: '-1'
+      channels-per-image:
+        info:
+          Number of channels per image for degridding resolution.
+          Any of (-1, 0, None) implies single dataset per spw.
+        dtype: int
+        default: '-1'
+      precision:
+        info:
+          Gridding precision
+        choices:
+        - single
+        - double
+        default: double
+      bda-decorr:
+        info:
+          BDA decorrelation factor.
+          Only has an effect if less than one
+        dtype: float
+        default: 1.0
+      max-field-of-view:
+        info:
+          The maximum field of view that will be considered.
+          Used to compute decorrelation due to BDA.
+        dtype: float
+        default: 3.0
+      beam-model:
+        info:
+          Beam model to use.
+          Only katbeam currently supported.
+      chan-average:
+        info:
+          Average this number if channels together
+        dtype: int
+        default: 1
+      progressbar:
+        info:
+          Display progress.
+          Use --no-progressbar to deactivate.
+        dtype: bool
+        default: true
+      check-ants:
+        info:
+          Check that ANTENNA1 and ANTENNA2 tables are consistent with the ANTENNA table.
+        dtype: bool
+        default: false
+      log-directory:
+        info:
+          Directory to write logs and performance reports to.
+      product:
+        info:
+          String specifying which Stokes products to produce.
+          Outputs are always be alphabetically ordered.
+        default: I
+      nworkers:
+        info:
+          Number of worker processes.
+          Use with distributed scheduler.
+        dtype: int
+        default: 1
+      nthreads:
+        info:
+          Number of threads used to scale vertically (for FFTs and gridding).
+          Each dask thread can in principle spawn this many threads.
+          Will attempt to use half the available threads by default.
+        dtype: int
+      wgt-mode:
+        info:
+          Controls how the Stokes weights are computed.
+          l2 -> use standard Gaussian formula.
+          minvar -> use minimum between correlations (wsclean Stokes I style).
+        choices:
+        - l2
+        - minvar
+        default: l2
+    outputs:
+      xds-out:
+        dtype: Directory
+        info:
+          Output dataset directory.
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
+        must_exist: false

@@ -1,0 +1,95 @@
+cabs:
+  model2comps:
+    flavour: python
+    command: pfb_imaging.core.model2comps.model2comps
+    image: ghcr.io/ratt-ru/pfb-imaging:prox_op_Tariq
+    name: model2comps
+    info:
+      Convert model image to components.
+    inputs:
+      output-filename:
+        info:
+          Basename of output
+        required: true
+        policies:
+          positional: true
+      overwrite:
+        info:
+          Allow overwrite of existing model
+        dtype: bool
+        default: false
+      mds:
+        info:
+          An optional input model to append to the model.
+          Will be rendered to the same resolution as the model in the dds.
+      from-fits:
+        info:
+          An optional fits input model.
+          An mds will be created that matches the model resolution.
+      nbasisf:
+        info:
+          Order of interpolating polynomial for frequency axis.
+          One less than the number of bands by default.
+        dtype: int
+      nthreads:
+        info:
+          Number of threads
+        dtype: int
+      fit-mode:
+        default: Legendre
+      min-val:
+        info:
+          Only fit components above this flux level
+        dtype: float
+      suffix:
+        info:
+          Can be used to specify a custom name for the image space data products
+        default: main
+      model-name:
+        info:
+          Name of model in mds
+        default: MODEL
+      use-wsum:
+        info:
+          Use wsum as weights during fit
+        dtype: bool
+        default: true
+      sigmasq:
+        info:
+          Multiple of the identity to add to the hessian for stability
+        dtype: float
+        default: 1.0e-10
+      model-out:
+        info:
+          Optional explicit output name.
+          Otherwise the default naming convention is used.
+      out-format:
+        info:
+          Format to dump model to.
+        choices:
+        - zarr
+        - json
+        default: zarr
+      out-freqs:
+        info:
+          A string flow:fhigh:step of frequencies in hertz where the output cube needs to be evaluated.
+      log-directory:
+        info:
+          Directory to write logs and performance reports to.
+      product:
+        info:
+          String specifying which Stokes products to produce.
+          Outputs are always be alphabetically ordered.
+        default: I
+      fits-output-folder:
+        info:
+          Optional path to write fits files to.
+          Set to output-filename if not provided.
+          The same naming conventions apply.
+    outputs:
+      mds-out:
+        dtype: Directory
+        info:
+          Output component model.
+        implicit: '=IFSET(current.model-out, current.model-out, {current.output-filename}_{current.product}_{current.suffix}_{current.model-name}.mds)'  # noqa: E501
+        must_exist: false

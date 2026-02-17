@@ -1,0 +1,517 @@
+from functools import partial
+from time import time
+from uuid import uuid4
+
+import dask.array as da
+import numexpr as ne
+import numpy as np
+import ray
+from ducc0.misc import empty_noncritical
+from numba import njit, prange
+from numba.extending import overload
+
+from pfb_imaging.utils.misc import JIT_OPTIONS, norm_diff
+from pfb_imaging.utils.naming import xds_from_list
+
+ifftshift = np.fft.ifftshift
+fftshift = np.fft.fftshift
+
+# from pfb_imaging.utils import logging as pfb_logging
+# log = pfb_logging.get_logger('PCG')
+
+
+@njit(nogil=True, cache=False, parallel=False)
+def update(x, xp, r, rp, p, aopp, alpha):
+    return update_impl(x, xp, r, rp, p, aopp, alpha)
+
+
+def update_impl(x, xp, r, rp, p, aopp, alpha):
+    return NotImplementedError
+
+
+@overload(update_impl, jit_options={**JIT_OPTIONS})  # , "parallel":True})
+def nb_update_impl(x, xp, r, rp, p, aopp, alpha):
+    if x.ndim == 3:
+
+        def impl(x, xp, r, rp, p, aopp, alpha):
+            nband, nx, ny = x.shape
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        x[b, i, j] = xp[b, i, j] + alpha * p[b, i, j]
+                        r[b, i, j] = rp[b, i, j] + alpha * aopp[b, i, j]
+            return x, r
+    elif x.ndim == 2:
+
+        def impl(x, xp, r, rp, p, aopp, alpha):
+            nx, ny = x.shape
+            for i in prange(nx):
+                for j in range(ny):
+                    x[i, j] = xp[i, j] + alpha * p[i, j]
+                    r[i, j] = rp[i, j] + alpha * aopp[i, j]
+            return x, r
+    else:
+        raise ValueError("norm_diff is only implemented for 2D or 3D arrays")
+
+    return impl
+
+
+@njit(**JIT_OPTIONS, parallel=True)
+def alpha_update(r, y, p, aopp):
+    return alpha_update_impl(r, y, p, aopp)
+
+
+def alpha_update_impl(r, y, p, aopp):
+    return NotImplementedError
+
+
+@overload(alpha_update_impl, jit_options={**JIT_OPTIONS, "parallel": True})
+def nb_alpha_update_impl(r, y, p, aopp):
+    if r.ndim == 2:
+
+        def impl(r, y, p, aopp):
+            rnorm = 0.0
+            rnorm_den = 0.0
+            nx, ny = r.shape
+            for i in prange(nx):
+                for j in range(ny):
+                    rnorm += r[i, j] * y[i, j]
+                    rnorm_den += p[i, j] * aopp[i, j]
+
+            alpha = rnorm / rnorm_den
+            return rnorm, alpha
+    elif r.ndim == 3:
+
+        def impl(r, y, p, aopp):
+            rnorm = 0.0
+            rnorm_den = 0.0
+            nband, nx, ny = r.shape
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        rnorm += r[b, i, j] * y[b, i, j]
+                        rnorm_den += p[b, i, j] * aopp[b, i, j]
+
+            alpha = rnorm / rnorm_den
+            return rnorm, alpha
+
+    return impl
+
+
+@njit(**JIT_OPTIONS, parallel=True)
+def beta_update(r, y, p, rnorm):
+    return beta_update_impl(r, y, p, rnorm)
+
+
+def beta_update_impl(r, y, p, rnorm):
+    return NotImplementedError
+
+
+@overload(beta_update_impl, jit_options={**JIT_OPTIONS, "parallel": True})
+def nb_beta_update_impl(r, y, p, rnorm):
+    if r.ndim == 2:
+
+        def impl(r, y, p, rnorm):
+            rnorm_next = 0.0
+            nx, ny = r.shape
+            for i in prange(nx):
+                for j in range(ny):
+                    rnorm_next += r[i, j] * y[i, j]
+
+            beta = rnorm_next / rnorm
+
+            for i in prange(nx):
+                for j in range(ny):
+                    p[i, j] = beta * p[i, j] - y[i, j]
+            return rnorm_next, p
+    elif r.ndim == 3:
+
+        def impl(r, y, p, rnorm):
+            rnorm_next = 0.0
+            nband, nx, ny = r.shape
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        rnorm_next += r[b, i, j] * y[b, i, j]
+
+            beta = rnorm_next / rnorm
+            for b in range(nband):
+                for i in prange(nx):
+                    for j in range(ny):
+                        p[b, i, j] = beta * p[b, i, j] - y[b, i, j]
+            return rnorm_next, p
+
+    return impl
+
+
+def pcg(
+    aop,
+    b,
+    x0=None,
+    precond=None,
+    tol=1e-5,
+    maxit=500,
+    minit=100,
+    verbosity=1,
+    report_freq=10,
+    backtrack=True,
+    return_resid=False,
+):
+    if x0 is None:
+        x0 = np.zeros(b.shape, dtype=b.dtype)
+
+    if precond is None:
+
+        def precond(x):
+            return x
+
+    r = aop(x0) - b
+    y = precond(r)
+    if not np.any(y):
+        print("Initial residual is zero")
+        return x0
+    p = -y
+    rnorm = np.vdot(r, y)
+    if np.isnan(rnorm) or rnorm == 0.0:
+        phi0 = 1.0
+    else:
+        phi0 = rnorm
+    k = 0
+    x = x0
+    eps = 1.0
+    stall_count = 0
+    xp = x.copy()
+    rp = r.copy()
+    tcopy = 0.0
+    taop = 0.0
+    tvdot = 0.0
+    tupdate = 0.0
+    tp = 0.0
+    tnorm = 0.0
+    tii = time()
+    while (eps > tol or k < minit) and k < maxit and stall_count < 5:
+        ti = time()
+        np.copyto(xp, x)
+        np.copyto(rp, r)
+        tcopy += time() - ti
+        ti = time()
+        aopp = aop(p)
+        taop += time() - ti
+        ti = time()
+        rnorm = np.vdot(r, y)
+        alpha = rnorm / np.vdot(p, aopp)
+        tvdot += time() - ti
+        ti = time()
+        ne.evaluate("xp + alpha*p", out=x, local_dict={"xp": xp, "alpha": alpha, "p": p}, casting="unsafe")
+        ne.evaluate("rp + alpha*aopp", out=r, local_dict={"rp": rp, "alpha": alpha, "aopp": aopp}, casting="unsafe")
+        tupdate += time() - ti
+        y = precond(r)
+        ti = time()
+        rnorm_next = np.vdot(r, y)
+        beta = rnorm_next / rnorm
+        ne.evaluate("beta*p-y", out=p, local_dict={"beta": beta, "p": p, "y": y}, casting="unsafe")
+        tp += time() - ti
+        rnorm = rnorm_next
+        k += 1
+        epsp = eps
+        ti = time()
+        eps = norm_diff(x, xp)
+        phi = rnorm / phi0
+        tnorm += time() - ti
+
+        if np.abs(epsp - eps) < 1e-3 * tol:
+            stall_count += 1
+
+        if not k % report_freq and verbosity > 1:
+            print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
+    ttot = time() - tii
+    ttally = tcopy + taop + tvdot + tupdate + tp + tnorm
+    if verbosity > 1:
+        print("tcopy = ", tcopy / ttot)
+        print("taop = ", taop / ttot)
+        print("tvdot = ", tvdot / ttot)
+        print("tupdate = ", tupdate / ttot)
+        print("tp = ", tp / ttot)
+        print("tnorm = ", tnorm / ttot)
+        print("ttally = ", ttally / ttot)
+
+    if k >= maxit:
+        if verbosity:
+            print(f"Max iters reached. eps = {eps:.3e}")
+    elif stall_count >= 5:
+        if verbosity:
+            print(f"Stalled after {k} iterations with eps = {eps:.3e}")
+    else:
+        if verbosity:
+            print(f"Success, converged after {k} iterations")
+    if not return_resid:
+        return x
+    else:
+        return x, r
+
+
+def _pcg_psf_impl(
+    psfhat,
+    b,
+    x0,
+    beam,
+    lastsize,
+    nthreads,
+    eta,
+    tol=1e-5,
+    maxit=500,
+    minit=100,
+    verbosity=1,
+    report_freq=10,
+    backtrack=True,
+):
+    """
+    A specialised distributed version of pcg when the operator implements
+    convolution with the psf (+ L2 regularisation by sigma**2)
+    """
+    nband, nx, ny = b.shape
+    _, nx_psf, nyo2 = psfhat.shape
+    model = np.zeros((nband, nx, ny), dtype=b.dtype, order="C")
+    # PCG preconditioner
+    if eta > 0:
+
+        def precond(x):
+            return x / eta
+    else:
+        precond = None
+    from pfb_imaging.operators.hessian import hessian_psf_slice
+
+    for k in range(nband):
+        xpad = empty_noncritical((nx_psf, lastsize), dtype=b.dtype)
+        xhat = empty_noncritical((nx_psf, nyo2), dtype=psfhat.dtype)
+        xout = empty_noncritical((nx, ny), dtype=b.dtype)
+        aop = partial(
+            hessian_psf_slice,
+            xpad=xpad,
+            xhat=xhat,
+            xout=xout,
+            abspsf=np.abs(psfhat[k]),
+            beam=beam[k],
+            lastsize=lastsize,
+            nthreads=nthreads,
+            eta=eta[k],
+        )
+
+        model[k] = pcg(
+            aop,
+            b[k],
+            x0[k],
+            precond=precond,
+            tol=tol,
+            maxit=maxit,
+            minit=minit,
+            verbosity=verbosity,
+            report_freq=report_freq,
+            backtrack=backtrack,
+        )
+
+    return model
+
+
+def _pcg_psf(psfhat, b, x0, beam, lastsize, nthreads, eta, cgopts):
+    return _pcg_psf_impl(psfhat, b, x0, beam, lastsize, nthreads, eta, **cgopts)
+
+
+def pcg_psf(psfhat, b, x0, beam, lastsize, nthreads, eta, cgopts, compute=True):
+    if not isinstance(x0, da.Array):
+        x0 = da.from_array(x0, chunks=(1, -1, -1), name="x-" + uuid4().hex)
+
+    if not isinstance(psfhat, da.Array):
+        psfhat = da.from_array(psfhat, chunks=(1, -1, -1), name="psfhat-" + uuid4().hex)
+    if not isinstance(b, da.Array):
+        b = da.from_array(b, chunks=(1, -1, -1), name="psfhat-" + uuid4().hex)
+
+    nband = b.shape[0]
+    if isinstance(eta, float):
+        eta = np.tile(eta, nband)
+    else:
+        eta = np.array(eta)
+        assert eta.size == nband
+    eta = da.from_array(eta, chunks=(1,), name="eta-" + uuid4().hex)
+
+    if beam is None:
+        bout = None
+    else:
+        bout = ("nb", "nx", "ny")
+        if beam.ndim == 2:
+            beam = beam[None]
+
+        if not isinstance(beam, da.Array):
+            beam = da.from_array(beam, chunks=(1, -1, -1), name="beam-" + uuid4().hex)
+        if beam.shape[0] == 1:
+            beam = da.tile(beam, (psfhat.shape[0], 1, 1))
+        elif beam.shape[0] != psfhat.shape[0]:
+            raise ValueError("Beam has incorrect shape")
+
+    model = da.blockwise(
+        _pcg_psf,
+        ("nb", "nx", "ny"),
+        psfhat,
+        ("nb", "nx", "ny"),
+        b,
+        ("nb", "nx", "ny"),
+        x0,
+        ("nb", "nx", "ny"),
+        beam,
+        bout,
+        lastsize,
+        None,
+        nthreads,
+        None,
+        eta,
+        ("nb",),
+        cgopts,
+        None,
+        align_arrays=False,
+        dtype=b.dtype,
+    )
+    if compute:
+        return model.compute()
+    else:
+        return model
+
+
+@ray.remote
+def pcg_dds(
+    ds_name,
+    eta,  # regularisation for Hessian approximation
+    mask=1.0,
+    use_psf=True,
+    residual_name="RESIDUAL",
+    model_name="MODEL",
+    do_wgridding=True,
+    epsilon=5e-4,
+    double_accum=True,
+    nthreads=1,
+    zero_model_outside_mask=False,
+    tol=1e-5,
+    maxit=500,
+    verbosity=1,
+    report_freq=10,
+):
+    """
+    pcg for fluxtractor
+    """
+    # avoid circular import
+    from pfb_imaging.operators.hessian import hessian_slice
+
+    # expects a list
+    if not isinstance(ds_name, list):
+        ds_name = [ds_name]
+
+    drop_vars = ["PSF", "PSFHAT"]
+    ds = xds_from_list(ds_name, nthreads=nthreads, drop_vars=drop_vars)[0]
+    beam = mask * ds.BEAM.values
+    if zero_model_outside_mask:
+        if model_name not in ds:
+            raise RuntimeError(f"Asked to zero model outside mask but {model_name} not in dds")
+        model = getattr(ds, model_name).values
+        model = np.where(mask > 0, model, 0.0)
+        print("Zeroing model outside mask")
+        resid = ds.DIRTY.values - hessian_slice(
+            model,
+            uvw=ds.UVW.values,
+            weight=ds.WEIGHT.values,
+            vis_mask=ds.MASK.values,
+            freq=ds.FREQ.values,
+            beam=ds.BEAM.values,
+            cell=ds.cell_rad,
+            x0=ds.x0,
+            y0=ds.y0,
+            do_wgridding=do_wgridding,
+            epsilon=epsilon,
+            double_accum=double_accum,
+            nthreads=nthreads,
+        )
+        j = resid * beam
+    else:
+        if model_name in ds:
+            model = getattr(ds, model_name).values
+        else:
+            model = np.zeros(mask.shape, dtype=float)
+
+        if residual_name in ds:
+            j = getattr(ds, residual_name).values * beam
+            ds = ds.drop_vars(residual_name)
+        else:
+            j = ds.DIRTY.values * beam
+
+    nx, ny = j.shape
+    wsum = ds.wsum
+    j /= wsum
+    precond = None
+    if "UPDATE" in ds:
+        x0 = ds.UPDATE.values * mask
+    else:
+        x0 = np.zeros_like(j)
+
+    hess = partial(
+        hessian_slice,
+        uvw=ds.UVW.values,
+        weight=ds.WEIGHT.values,
+        vis_mask=ds.MASK.values,
+        freq=ds.FREQ.values,
+        beam=beam,
+        cell=ds.cell_rad,
+        x0=ds.x0,
+        y0=ds.y0,
+        flip_u=ds.flip_u,
+        flip_v=ds.flip_v,
+        flip_w=ds.flip_w,
+        do_wgridding=do_wgridding,
+        epsilon=epsilon,
+        double_accum=double_accum,
+        nthreads=nthreads,
+        eta=eta,
+        wsum=wsum,
+    )
+
+    x = pcg(
+        hess,
+        j,
+        x0=x0.copy(),
+        precond=precond,
+        tol=tol,
+        maxit=maxit,
+        minit=1,
+        verbosity=verbosity,
+        report_freq=report_freq,
+        backtrack=False,
+        return_resid=False,
+    )
+
+    model += x
+
+    resid = ds.DIRTY.values - hessian_slice(
+        model,
+        uvw=ds.UVW.values,
+        weight=ds.WEIGHT.values,
+        vis_mask=ds.MASK.values,
+        freq=ds.FREQ.values,
+        beam=ds.BEAM.values,
+        cell=ds.cell_rad,
+        x0=ds.x0,
+        y0=ds.y0,
+        do_wgridding=do_wgridding,
+        epsilon=epsilon,
+        double_accum=double_accum,
+        nthreads=nthreads,
+    )
+
+    ds = ds.assign(
+        **{
+            "MODEL_MOPPED": (("x", "y"), model),
+            "RESIDUAL_MOPPED": (("x", "y"), resid),
+            "UPDATE": (("x", "y"), x),
+            "X0": (("x", "y"), x0),
+        }
+    )
+
+    ds.to_zarr(ds_name[0], mode="a")
+
+    return resid, int(ds.bandid)

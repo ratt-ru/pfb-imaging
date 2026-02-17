@@ -1,0 +1,142 @@
+cabs:
+  fluxtractor:
+    flavour: python
+    command: pfb_imaging.core.fluxtractor.fluxtractor
+    image: ghcr.io/ratt-ru/pfb-imaging:prox_op_Tariq
+    name: fluxtractor
+    info:
+      Otherwise knows as the fluxmop.
+    inputs:
+      output-filename:
+        info:
+          Basename of output
+        required: true
+        policies:
+          positional: true
+      suffix:
+        info:
+          Can be used to specify a custom name for the image space data product
+        default: main
+      mask:
+        info:
+          Either path to mask.fits or set to model to construct from model
+      zero-model-outside-mask:
+        info:
+          Make sure the input model is zero outside the mask.
+          Only has an effect if an external mask has been passed in.
+          A major cycle will be triggered to recompute the residual after zeroing.
+        dtype: bool
+        default: false
+      or-mask-with-model:
+        info:
+          Make a new mask consisting of the union of input mask and where the MFS model is larger than zero.
+        dtype: bool
+        default: false
+      min-model:
+        info:
+          If using mask to construct model construct it where model > min-model
+        dtype: float
+        default: 1.0e-05
+      eta:
+        info:
+          Standard deviation of assumed GRF prior
+        dtype: float
+        default: 1.0e-05
+      model-name:
+        info:
+          Name of the model to update
+        default: MODEL
+      residual-name:
+        info:
+          Name of the residual to use
+        default: RESIDUAL
+      use-psf:
+        info:
+          Whether to approximate the Hessian as a convolution by the PSF
+        dtype: bool
+        default: true
+      epsilon:
+        info:
+          Gridder accuracy
+        dtype: float
+        default: 1.0e-07
+      do-wgridding:
+        info:
+          Perform w-correction via improved w-stacking
+        dtype: bool
+        default: true
+      double-accum:
+        info:
+          Accumulate onto grid using double precision.
+          Only has an affect when using single precision.
+        dtype: bool
+        default: true
+      cg-tol:
+        info:
+          Tolreance of conjugate gradient algorithm
+        dtype: float
+        default: 0.001
+      cg-maxit:
+        info:
+          Maximum iterations for conjugate gradient algorithm
+        dtype: int
+        default: 150
+      cg-verbose:
+        info:
+          Verbosity of conjugate gradient algorithm.
+          Set to > 1 for debugging, 0 for silence
+        dtype: int
+        default: 1
+      cg-report-freq:
+        info:
+          Report frequency of conjugate gradient algorithm
+        dtype: int
+        default: 10
+      nworkers:
+        info:
+          Number of worker processes.
+          Use with distributed scheduler.
+        dtype: int
+        default: 1
+      nthreads:
+        info:
+          Number of threads used to scale vertically (for FFTs and gridding).
+          Each dask thread can in principle spawn this many threads.
+          Will attempt to use half the available threads by default.
+        dtype: int
+      log-directory:
+        info:
+          Directory to write logs and performance reports to.
+      product:
+        info:
+          String specifying which Stokes products to produce.
+          Outputs are always be alphabetically ordered.
+        default: I
+      fits-output-folder:
+        info:
+          Optional path to write fits files to.
+          Set to output-filename if not provided.
+          The same naming conventions apply.
+      fits-mfs:
+        info:
+          Output MFS fits files
+        dtype: bool
+        default: true
+      fits-cubes:
+        info:
+          Output fits cubes
+        dtype: bool
+        default: true
+    outputs:
+      dds-out:
+        dtype: Directory
+        info:
+          Output dataset directory.
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
+        must_exist: false
+      mds-out:
+        dtype: Directory
+        info:
+          Output component model.
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.mds'
+        must_exist: false
