@@ -386,6 +386,7 @@ def hci(
         nx,
         ny,
         cell_deg,
+        images_per_chunk=images_per_chunk,
         integrations_per_image=integrations_per_image,
         obs_label=obs_label,
     )
@@ -610,6 +611,7 @@ def make_dummy_dataset(
     ny,
     cell_deg,
     spatial_chunk=128,
+    images_per_chunk=16,
     integrations_per_image=1,
     obs_label=None,
 ):
@@ -680,13 +682,13 @@ def make_dummy_dataset(
     n_freqs = out_freqs.size
 
     cube_dims = (n_stokes, n_freqs, n_times, ny, nx)
-    cube_chunks = (1, 1, 1, spatial_chunk, spatial_chunk)
+    cube_chunks = (n_stokes, 1, images_per_chunk, spatial_chunk, spatial_chunk)
 
     mean_dims = (n_stokes, n_freqs, ny, nx)
-    mean_chunks = (1, 1, spatial_chunk, spatial_chunk)
+    mean_chunks = (n_stokes, 1, spatial_chunk, spatial_chunk)
 
     rms_dims = (n_stokes, n_freqs, n_times)
-    rms_chunks = (1, 1, 1)
+    rms_chunks = (n_stokes, 1, images_per_chunk)
 
     ra_dim = "RA--SIN"
     dec_dim = "DEC--SIN"
