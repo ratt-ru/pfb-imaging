@@ -576,7 +576,7 @@ def hci(
     # only write new variables
     drop_vars = [key for key in ds.data_vars.keys() if key != "psf2"]
     ds = ds.drop_vars(drop_vars)
-    ds["mean"] = (("STOKES", "FREQ", "Y", "X"), weighted_mean)
+    ds["cube_mean"] = (("STOKES", "FREQ", "Y", "X"), weighted_mean)
     ds["channel_width"] = (("FREQ",), da.from_array(cwidths, chunks=1))
     with dask.config.set(pool=ThreadPoolExecutor(8)):
         ds.to_zarr(fds_store.url, mode="r+")
