@@ -46,5 +46,13 @@ from pfb_imaging.cli.sara import sara  # noqa: E402
 
 app.command(name="sara")(sara)
 
+from pfb_imaging.cli.airi import airi  # noqa: E402
+
+app.command(name="airi")(airi)
+
+from pfb_imaging.cli.ista import ista  # noqa: E402
+
+app.command(name="ista")(ista)
+
 
 __all__ = ["app"]

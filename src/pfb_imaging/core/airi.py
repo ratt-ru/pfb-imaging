@@ -1,171 +1,113 @@
-# flake8: noqa
 import concurrent.futures as cf
-import click
-from omegaconf import OmegaConf
-from pfb.utils import logging as pfb_logging
-from scabha.schema_utils import clickify_parameters
-from pfb.parser.schemas import schema
-from pfb.opt.ista_fb import ISTA
+import time
+from copy import deepcopy
+from pathlib import Path
+
+import numpy as np
+import psutil
 import torch
+import xarray as xr
+from daskms.fsspec_store import DaskMSStore
+from ducc0.misc import resize_thread_pool, thread_pool_size
+from numba import threading_layer
+
+from pfb_imaging import set_envs
+from pfb_imaging.operators.gridder import compute_residual
+from pfb_imaging.operators.hessian import HessPSF
+from pfb_imaging.opt.ista import ISTA
+from pfb_imaging.opt.power_method import power_method
+from pfb_imaging.prox.prox_airi import ProxOpAIRI
+from pfb_imaging.utils import logging as pfb_logging
+from pfb_imaging.utils.fits import dds2fits, save_fits, set_wcs
+from pfb_imaging.utils.modelspec import eval_coeffs_to_slice, fit_image_cube
+from pfb_imaging.utils.naming import get_opts, set_output_names, xds_from_url
 
 log = pfb_logging.get_logger("AIRI")
 
 
-@click.command(context_settings={"show_default": True})
-@clickify_parameters(schema.airi)
-def airi(**kw):
+@pfb_logging.log_inputs(log)
+def airi(
+    output_filename: str,
+    suffix: str = "main",
+    hess_norm: float | None = None,
+    hess_approx: str = "psf",
+    rmsfactor: float = 1.0,
+    eta: float = 1.0,
+    gamma: float = 1.0,
+    nbasisf: int | None = None,
+    positivity: int = 1,
+    niter: int = 10,
+    nthreads: int | None = None,
+    tol: float = 0.0005,
+    diverge_count: int = 5,
+    verbosity: int = 1,
+    epsilon: float = 1e-7,
+    do_wgridding: bool = True,
+    double_accum: bool = True,
+    fb_tol: float = 3e-4,
+    fb_maxit: int = 450,
+    fb_verbose: int = 1,
+    fb_report_freq: int = 50,
+    pm_tol: float = 0.001,
+    pm_maxit: int = 100,
+    pm_verbose: int = 1,
+    pm_report_freq: int = 100,
+    cg_tol: float = 0.001,
+    cg_maxit: int = 150,
+    cg_verbose: int = 1,
+    cg_report_freq: int = 10,
+    log_directory: str | None = None,
+    product: str = "I",
+    fits_output_folder: str | None = None,
+    fits_mfs: bool = True,
+    fits_cubes: bool = True,
+    shelf_path: Path | None = None,
+    airi_heuristic_scale: float = 1.0,
+    airi_adapt_update: bool = True,
+    airi_peak_tol: float = 0.05,
+    airi_device: str = "cuda",
+    airi_tile_size: int | None = None,
+    airi_tile_margin: int = 16,
+):
     """
     Deconvolution using AIRI regularisation
     """
-    opts = OmegaConf.create(kw)
+    output_filename, fits_output_folder, log_directory, oname = set_output_names(
+        output_filename,
+        product,
+        fits_output_folder,
+        log_directory,
+    )
 
-    from pfb.utils.naming import set_output_names
-
-    opts, basedir, oname = set_output_names(opts)
-
-    import psutil
-
-    nthreads = psutil.cpu_count(logical=True)
     ncpu = psutil.cpu_count(logical=False)
-    if opts.nthreads is None:
-        opts.nthreads = nthreads // 2
+    if nthreads is None:
+        nthreads = psutil.cpu_count(logical=True) // 2
         ncpu = ncpu // 2
+    else:
+        ncpu = np.minimum(nthreads, psutil.cpu_count(logical=False))
 
-    OmegaConf.set_struct(opts, True)
-
-    from pfb import set_envs
-    from ducc0.misc import resize_thread_pool
-
-    resize_thread_pool(opts.nthreads)
-    set_envs(opts.nthreads, ncpu)
-
-    import time
+    resize_thread_pool(nthreads)
+    set_envs(nthreads, ncpu)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    logname = f"{str(opts.log_directory)}/airi_{timestamp}.log"
+    logname = f"{str(log_directory)}/airi_{timestamp}.log"
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
 
-    pfb_logging.log_options_dict(log, opts)
+    basename = output_filename
+    fits_oname = f"{fits_output_folder}/{oname}"
+    dds_name = f"{basename}_{suffix}.dds"
 
-    from pfb.utils.naming import xds_from_url, get_opts
+    time_start = time.time()
 
-    basename = opts.output_filename
-    print(basename)
-    fits_oname = f"{opts.fits_output_folder}/{oname}"
-    dds_name = f"{basename}_{opts.suffix}.dds"
-
-    ti = time.time()
-    _airi(**opts)
-
-    dds, dds_list = xds_from_url(dds_name)
-
-    if opts.fits_mfs or opts.fits:
-        from daskms.fsspec_store import DaskMSStore
-        from pfb.utils.fits import dds2fits
-
-        # get the psfpars for the mfs cube
-        dds_store = DaskMSStore(dds_name)
-        if "://" in dds_store.url:
-            protocol = dds_store.url.split("://")[0]
-        else:
-            protocol = "file"
-        psfpars_mfs = get_opts(dds_store.url, protocol, name="psfparsn_mfs.pkl")
-        log.info(f"Writing fits files to {fits_oname}_{opts.suffix}")
-
-        dds2fits(
-            dds_list,
-            "RESIDUAL",
-            f"{fits_oname}_{opts.suffix}",
-            norm_wsum=True,
-            nthreads=opts.nthreads,
-            do_mfs=opts.fits_mfs,
-            do_cube=opts.fits_cubes,
-            psfpars_mfs=psfpars_mfs,
-        )
-        log.info("Done writing RESIDUAL")
-        dds2fits(
-            dds_list,
-            "MODEL",
-            f"{fits_oname}_{opts.suffix}",
-            norm_wsum=False,
-            nthreads=opts.nthreads,
-            do_mfs=opts.fits_mfs,
-            do_cube=opts.fits_cubes,
-            psfpars_mfs=psfpars_mfs,
-        )
-        log.info("Done writing MODEL")
-        dds2fits(
-            dds_list,
-            "UPDATE",
-            f"{fits_oname}_{opts.suffix}",
-            norm_wsum=False,
-            nthreads=opts.nthreads,
-            do_mfs=opts.fits_mfs,
-            do_cube=opts.fits_cubes,
-            psfpars_mfs=psfpars_mfs,
-        )
-        log.info("Done writing UPDATE")
-
-    from numba import threading_layer
-
-    log.info(f"Numba use the {threading_layer()} threading layer")
-    log.info(f"All done after {time.time() - ti}s")
-
-
-def _airi(**kw):
-    """
-    # gradient step (major cycle)
-    nabla f(x) = I^D - R.H W R x  # needs full Hessian, R = degrid, R.H = grid, W = weights
-
-    # forward step (invert Hessian using PCG)
-    tilde{x} = x_k + gamma delta,   where   delta = -U^{-1} nabla f(x)
-
-    # backward step (primal dual)
-    U = A.H Z.H F.H \hat{I} F Z A + sigma**2 I
-    x_{k+1} = prox^U_{gamma r}(x) = argmin_x r(x) + frac{1}{2\gamma}(tilde{x} - x) U (tilde{x} - x)
-
-    """
-    opts = OmegaConf.create(kw)
-    OmegaConf.set_struct(opts, True)
-
-    from functools import partial
-    import numpy as np
-    import xarray as xr
-    import numexpr as ne
-    from pfb.utils.fits import set_wcs, save_fits
-    from pfb.utils.naming import xds_from_url
-    from pfb.opt.power_method import power_method
-    from pfb.opt.primal_dual import primal_dual_optimised as primal_dual
-    from pfb.utils.misc import l1reweight_func
-    from pfb.operators.hessian import hess_psf
-    from pfb.operators.psi import Psi
-    from pfb.operators.gridder import compute_residual
-    from copy import deepcopy
-    from ducc0.misc import thread_pool_size
-    from pfb.prox.prox_airi import ProxOpAIRI
-    from pfb.utils.modelspec import fit_image_cube, eval_coeffs_to_slice
-
-    ## Opening the DDS
-
-    basename = opts.output_filename
-    if opts.fits_output_folder is not None:
-        fits_oname = opts.fits_output_folder + "/" + basename.split("/")[-1]
-    else:
-        fits_oname = basename
-
-    dds_name = f"{basename}_{opts.suffix}.dds"
     dds, dds_list = xds_from_url(dds_name)
 
     if dds[0].corr.size > 1:
         log.error_and_raise(
-            "Joint polarisation deconvolution not yet supported for airi algorithm", NotImplementedError
+            "Joint polarisation deconvolution not yet supported for sara algorithm", NotImplementedError
         )
-    ## Reading the image size
-    nx, ny = dds[0].x.size, dds[0].y.size
 
-    nx_psf, ny_psf = dds[0].x_psf.size, dds[0].y_psf.size
-    lastsize = ny_psf
+    nx, ny = dds[0].x.size, dds[0].y.size
     freq_out = []
     time_out = []
     for ds in dds:
@@ -173,12 +115,10 @@ def _airi(**kw):
         time_out.append(ds.time_out)
     freq_out = np.unique(np.array(freq_out))
     time_out = np.unique(np.array(time_out))
-    log.info(freq_out)
-
     if time_out.size > 1:
         log.error_and_raise("Only static models currently supported", NotImplementedError)
 
-    nband = freq_out.size  # number of independant
+    nband = freq_out.size
 
     # drop_vars after access to avoid duplicates in memory
     # and avoid unintentional side effects?
@@ -228,21 +168,21 @@ def _airi(**kw):
         iter0 = 0
 
     # image space hessian
-    precond = hess_psf(
+    precond = HessPSF(
         nx,
         ny,
         abspsf,
         beam=beam,
-        eta=opts.eta * wsums,
-        nthreads=opts.nthreads,
-        cgtol=opts.cg_tol,
-        cgmaxit=opts.cg_maxit,
-        cgverbose=opts.cg_verbose,
-        cgrf=opts.cg_report_freq,
+        eta=eta * wsums,
+        nthreads=nthreads,
+        cgtol=cg_tol,
+        cgmaxit=cg_maxit,
+        cgverbose=cg_verbose,
+        cgrf=cg_report_freq,
         taper_width=np.minimum(int(0.1 * nx), 32),
     )
 
-    if opts.hess_norm is None:
+    if hess_norm is None:
         # if the grid worker had been rerun hess_norm won't be in attrs
         if "hess_norm" in dds[0].attrs:
             hess_norm = dds[0].hess_norm
@@ -252,43 +192,43 @@ def _airi(**kw):
             hess_norm, hessbeta = power_method(
                 precond.dot,
                 (nband, nx, ny),
-                tol=opts.pm_tol,
-                maxit=opts.pm_maxit,
-                verbosity=opts.pm_verbose,
-                report_freq=opts.pm_report_freq,
+                tol=pm_tol,
+                maxit=pm_maxit,
+                verbosity=pm_verbose,
+                report_freq=pm_report_freq,
             )
             # inflate slightly for stability
             hess_norm *= 1.05
     else:
-        hess_norm = opts.hess_norm
+        hess_norm = hess_norm
         log.info(f"Using provided hess-norm of = {hess_norm:.3e}")
 
     log.info(f"Using {thread_pool_size()} threads for gridding")
     # number of frequency basis functions
-    if opts.nbasisf is None:
+    if nbasisf is None:
         nbasisf = int(np.sum(fsel))
     else:
-        nbasisf = opts.nbasisf
+        nbasisf = nbasisf
     log.info(f"Using {nbasisf} frequency basis functions")
 
     # Initialize AIRI prox operator
-    if opts.shelf_path is not None:
+    if shelf_path is not None:
         log.info("Initializing AIRI prox operator")
 
         # Heuristic noise level calculation
         # Based on BASP small-scale-radio-imaging implementation (fb_airi.py)
         heuristic_noise_scale = 1.0 / np.sqrt(2 * hess_norm)
-        heuristic_noise_scale *= opts.airi_heuristic_scale
+        heuristic_noise_scale *= airi_heuristic_scale
         noise_std = np.std(residual_mfs)
         heuristic_noise_scale *= noise_std
 
         log.info(f"AIRI noise heuristic: {heuristic_noise_scale:.6e}")
 
         # Initialize ProxOpAIRI
-        device = torch.device(opts.airi_device if (torch.cuda.is_available() and opts.airi_device == "cuda") else "cpu")
+        device = torch.device(airi_device if (torch.cuda.is_available() and airi_device == "cuda") else "cpu")
         log.info(f"AIRI prox operator will run on: {device}")
 
-        airi_prox = ProxOpAIRI(shelf_path=opts.shelf_path, device=device, dtype=torch.float32, verbose=True)
+        airi_prox = ProxOpAIRI(shelf_path=shelf_path, device=device, dtype=torch.float32, verbose=True)
 
         # Initial peak estimate from residual
         peak_est = np.abs(residual_mfs).max()
@@ -301,8 +241,8 @@ def _airi(**kw):
         use_airi_prox = True
         log.info("AIRI prox operator initialized successfully")
         log.info(f"Expected peak range: [{peak_range[0]:.6e}, {peak_range[1]:.6e}]")
-        if opts.airi_tile_size is not None:
-            log.info(f"Using tiled processing: tile_size={opts.airi_tile_size}, margin={opts.airi_tile_margin}")
+        if airi_tile_size is not None:
+            log.info(f"Using tiled processing: tile_size={airi_tile_size}, margin={airi_tile_margin}")
     else:
         use_airi_prox = False
         log.warning("No shelf-path provided, AIRI prox operator will not be used")
@@ -317,23 +257,17 @@ def _airi(**kw):
     eps = 1.0
     write_futures = None
     log.info(f"Iter {iter0}: peak residual = {rmax:.3e}, rms = {rms:.3e}")
-    if opts.skip_model:
-        mrange = []
-    else:
-        mrange = range(iter0, iter0 + opts.niter)
+    mrange = range(iter0, iter0 + niter)
     for k in mrange:
         log.info("Solving for update")
         residual *= beam  # avoid copy
-        update = precond.idot(residual, mode=opts.hess_approx, x0=update if update.any() else None)
+        update = precond.idot(residual, mode=hess_approx, x0=update if update.any() else None)
         update_mfs = np.mean(update, axis=0)
-        save_fits(update_mfs, fits_oname + f"_{opts.suffix}_update_{k + 1}.fits", hdr_mfs)
+        save_fits(update_mfs, fits_oname + f"_{suffix}_update_{k + 1}.fits", hdr_mfs)
 
         modelp = deepcopy(model)
-        xtilde = model + opts.gamma * update
-        if iter0 == 0:
-            lam = opts.init_factor * opts.rmsfactor * rms
-        else:
-            lam = opts.rmsfactor * rms
+        xtilde = model + gamma * update
+        lam = rmsfactor * rms
         log.info(f"Solving for model with lambda = {lam}")
 
         if use_airi_prox:
@@ -343,10 +277,8 @@ def _airi(**kw):
             xtilde_mfs = np.mean(xtilde, axis=0, keepdims=True)
             xtilde_torch = torch.from_numpy(xtilde_mfs[None, :, :, :]).float().to(airi_prox.get_device())
 
-            if opts.airi_tile_size is not None:
-                model_mfs_torch = airi_prox.call_tiled(
-                    xtilde_torch, tile_size=opts.airi_tile_size, margin=opts.airi_tile_margin
-                )
+            if airi_tile_size is not None:
+                model_mfs_torch = airi_prox.call_tiled(xtilde_torch, tile_size=airi_tile_size, margin=airi_tile_margin)
             else:
                 model_mfs_torch = airi_prox(xtilde_torch)
             model_mfs_denoised = model_mfs_torch.cpu().numpy().squeeze()
@@ -356,16 +288,16 @@ def _airi(**kw):
             model = np.broadcast_to(model_mfs_denoised, xtilde.shape).copy()
 
             # Apply positivity constraint
-            if opts.positivity > 0:
+            if positivity > 0:
                 model = np.maximum(model, 0)
 
             # Adaptive denoiser update (from BASP fb_airi.py)
-            if opts.airi_adapt_update:
+            if airi_adapt_update:
                 curr_peak_val = np.abs(model).max()
                 peak_var = abs(curr_peak_val - prev_peak_val) / (prev_peak_val + 1e-10)
                 log.info(f"Peak: {curr_peak_val:.6e}, variation: {peak_var:.6e}")
 
-                if peak_var < opts.airi_peak_tol and (curr_peak_val < peak_range[0] or curr_peak_val > peak_range[1]):
+                if peak_var < airi_peak_tol and (curr_peak_val < peak_range[0] or curr_peak_val > peak_range[1]):
                     log.info("Updating AIRI denoiser based on new peak estimate")
                     peak_range = airi_prox.update(heuristic_noise_scale, curr_peak_val)
                 prev_peak_val = curr_peak_val
@@ -381,9 +313,9 @@ def _airi(**kw):
             model = prox_solver(xtilde)
 
         # write component model
-        log.info(f"Writing model to {basename}_{opts.suffix}_model.mds")
+        log.info(f"Writing model to {basename}_{suffix}_model.mds")
         try:
-            coeffs, Ix, Iy, expr, params, texpr, fexpr = fit_image_cube(
+            coeffs, x_index, y_index, expr, params, texpr, fexpr = fit_image_cube(
                 time_out,
                 freq_out[fsel],
                 model[None, fsel, :, :],
@@ -397,8 +329,8 @@ def _airi(**kw):
                 "coefficients": (("par", "comps"), coeffs),
             }
             coords = {
-                "location_x": (("x",), Ix),
-                "location_y": (("y",), Iy),
+                "location_x": (("x",), x_index),
+                "location_y": (("y",), y_index),
                 # 'shape_x':,
                 "params": (("par",), params),  # already converted to list
                 "times": (("t",), time_out),  # to allow rendering to original grid
@@ -419,25 +351,20 @@ def _airi(**kw):
                 "flip_w": dds[0].flip_w,
                 "ra": dds[0].ra,
                 "dec": dds[0].dec,
-                "stokes": opts.product,  # I,Q,U,V, IQ/IV, IQUV
+                "stokes": product,  # I,Q,U,V, IQ/IV, IQUV
                 "parametrisation": expr,  # already converted to str
             }
-            for key, val in opts.items():
-                if key == "pd_tol":
-                    mattrs[key] = pd_tolf
-                else:
-                    mattrs[key] = val
 
             coeff_dataset = xr.Dataset(data_vars=data_vars, coords=coords, attrs=mattrs)
-            coeff_dataset.to_zarr(f"{basename}_{opts.suffix}_model.mds", mode="w")
+            coeff_dataset.to_zarr(f"{basename}_{suffix}_model.mds", mode="w")
 
             for b in range(nband):
                 model[b] = eval_coeffs_to_slice(
                     time_out[0],
                     freq_out[b],
                     coeffs,
-                    Ix,
-                    Iy,
+                    x_index,
+                    y_index,
                     expr,
                     params,
                     texpr,
@@ -460,13 +387,13 @@ def _airi(**kw):
 
         model = model[np.newaxis, ...] if len(model.shape) == 2 else model
         model_mfs = np.mean(model[fsel], axis=0)
-        save_fits(model_mfs, fits_oname + f"_{opts.suffix}_model_{k + 1}.fits", hdr_mfs)
+        save_fits(model_mfs, fits_oname + f"_{suffix}_model_{k + 1}.fits", hdr_mfs)
 
         # make sure write futures have finished
         if write_futures is not None:
             cf.wait(write_futures)
 
-        log.info(f"Computing residual")
+        log.info("Computing residual")
         write_futures = []
         for ds_name, ds in zip(dds_list, dds):
             b = int(ds.bandid)
@@ -478,18 +405,18 @@ def _airi(**kw):
                 cell_rad,
                 ds_name,
                 model[b][None, :, :],  # add corr axis
-                nthreads=opts.nthreads,
-                epsilon=opts.epsilon,
-                do_wgridding=opts.do_wgridding,
-                double_accum=opts.double_accum,
-                verbosity=opts.verbosity,
+                nthreads=nthreads,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                double_accum=double_accum,
+                verbosity=verbosity,
             )
             write_futures.append(fut)
             residual[b] = resid[0]  # remove corr axis
 
         residual /= wsum
         residual_mfs = np.sum(residual, axis=0)
-        save_fits(residual_mfs, fits_oname + f"_{opts.suffix}_residual_{k + 1}.fits", hdr_mfs)
+        save_fits(residual_mfs, fits_oname + f"_{suffix}_residual_{k + 1}.fits", hdr_mfs)
         rmsp = rms
         rms = np.std(residual_mfs)
         rmaxp = rmax
@@ -529,11 +456,59 @@ def _airi(**kw):
 
         if (rms > rmsp) and (rmax > rmaxp):
             diverge_count += 1
-            if diverge_count > opts.diverge_count:
+            if diverge_count > diverge_count:
                 log.info("Algorithm is diverging. Terminating.")
                 break
 
     # make sure write futures have finished
     cf.wait(write_futures)
 
-    return
+    # Write FITS outputs
+    dds, dds_list = xds_from_url(dds_name)
+
+    if fits_mfs or fits_cubes:
+        # get the psfpars for the mfs cube
+        dds_store = DaskMSStore(dds_name)
+        if "://" in dds_store.url:
+            protocol = dds_store.url.split("://")[0]
+        else:
+            protocol = "file"
+        psfpars_mfs = get_opts(dds_store.url, protocol, name="psfparsn_mfs.pkl")
+        log.info(f"Writing fits files to {fits_oname}_{suffix}")
+
+        dds2fits(
+            dds_list,
+            "RESIDUAL",
+            f"{fits_oname}_{suffix}",
+            norm_wsum=True,
+            nthreads=nthreads,
+            do_mfs=fits_mfs,
+            do_cube=fits_cubes,
+            psfpars_mfs=psfpars_mfs,
+        )
+        log.info("Done writing RESIDUAL")
+        dds2fits(
+            dds_list,
+            "MODEL",
+            f"{fits_oname}_{suffix}",
+            norm_wsum=False,
+            nthreads=nthreads,
+            do_mfs=fits_mfs,
+            do_cube=fits_cubes,
+            psfpars_mfs=psfpars_mfs,
+        )
+        log.info("Done writing MODEL")
+        dds2fits(
+            dds_list,
+            "UPDATE",
+            f"{fits_oname}_{suffix}",
+            norm_wsum=False,
+            nthreads=nthreads,
+            do_mfs=fits_mfs,
+            do_cube=fits_cubes,
+            psfpars_mfs=psfpars_mfs,
+        )
+        log.info("Done writing UPDATE")
+
+    log.info(f"Numba used the {threading_layer()} threading layer")
+    log.info(f"All done after {time.time() - time_start}s")
