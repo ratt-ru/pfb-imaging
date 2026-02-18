@@ -198,7 +198,7 @@ def test_psfvis(center_offset, ms_name):
     uv_max = np.maximum(umax, vmax)
     max_freq = freq.max()
 
-    nx, ny, _, _, _, cell_rad = set_image_size(uv_max, max_freq, 1.0, 2.0)
+    nx, ny, _, _, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.0, 2.0)
     x0, y0 = center_offset
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
@@ -253,7 +253,7 @@ def test_hessian(center_offset, ms_name):
     max_freq = freq.max()
 
     x0, y0 = center_offset
-    nx, ny, nx_psf, ny_psf, _, cell_rad = set_image_size(uv_max, max_freq, 1.5, 2.0)
+    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.5, 2.0)
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
@@ -331,7 +331,7 @@ def test_hessian_jax(ms_name):
     max_freq = freq.max()
 
     x0, y0 = 0.0, 0.0
-    nx, ny, nx_psf, ny_psf, _, cell_rad = set_image_size(uv_max, max_freq, 1.5, 2.0)
+    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.5, 2.0)
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
@@ -396,7 +396,7 @@ def test_hessian_inv_jax(ms_name):
     max_freq = freq.max()
 
     x0, y0 = 0.0, 0.0
-    nx, ny, nx_psf, ny_psf, _, cell_rad = set_image_size(uv_max, max_freq, 1.0, 1.1)
+    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.0, 1.1)
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10
@@ -464,7 +464,7 @@ def test_complex_convolve(ms_name):
     max_freq = freq.max()
 
     x0, y0 = 0.0, 0.0
-    nx, ny, nx_psf, ny_psf, _, cell_rad = set_image_size(uv_max, max_freq, 1.0, 1.1)
+    nx, ny, nx_psf, ny_psf, _, cell_rad, _ = set_image_size(uv_max, max_freq, 1.0, 1.1)
 
     flip_u, flip_v, flip_w, x0, y0 = wgridder_conventions(x0, y0)
     epsilon = 1e-10

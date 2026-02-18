@@ -1,3 +1,4 @@
+import logging
 import pdb
 import sys
 from contextlib import nullcontext
@@ -876,19 +877,34 @@ def combine_columns(x, y, dc, dc1, dc2):
 
 
 def set_image_size(
-    uv_max, max_freq, field_of_view, super_resolution_factor, cell_size=None, nx=None, ny=None, psf_oversize=2.0
+    uv_max,
+    max_freq,
+    field_of_view,
+    super_resolution_factor,
+    cell_size=None,
+    nx=None,
+    ny=None,
+    psf_oversize=2.0,
+    log=None,
 ):
+    if log is None:
+        log = logging.getLogger(__name__)
+
     # max cell size
     cell_n = 1.0 / (2 * uv_max * max_freq / lightspeed)
 
     if cell_size is not None:
         cell_rad = cell_size * np.pi / 60 / 60 / 180
-        if cell_n / cell_rad < 1:
-            raise ValueError("Requested cell size too large. Super resolution factor = ", cell_n / cell_rad)
+        if cell_n / cell_rad < 1 and log is not None:
+            log.info(f"Warning - requested cell size of {cell_size} arcseconds could be sub-Nyquist.")
+        log.info(f"Super resolution factor = {cell_n / cell_rad}")
 
     else:
         cell_rad = cell_n / super_resolution_factor
         cell_size = cell_rad * 60 * 60 * 180 / np.pi
+        log.info(f"Cell size set to {cell_size} arcseconds")
+
+    cell_deg = np.rad2deg(cell_rad)
 
     if nx is None:
         fov = field_of_view * 3600
@@ -903,19 +919,29 @@ def set_image_size(
         nx = nx
         ny = ny if ny is not None else nx
         if nx % 2 or ny % 2:
+            log.error("Only even number of pixels currently supported")
             raise NotImplementedError("Only even number of pixels currently supported")
+        fovx = nx * cell_deg
+        fovy = ny * cell_deg
+        log.info(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
 
-    nx_psf = good_size(int(psf_oversize * nx))
+    if psf_oversize:
+        nx_psf = good_size(int(psf_oversize * nx))
+    else:
+        nx_psf = 128  # min size
     while nx_psf % 2:
         nx_psf += 1
         nx_psf = good_size(nx_psf)
 
-    ny_psf = good_size(int(psf_oversize * ny))
+    if psf_oversize:
+        ny_psf = good_size(int(psf_oversize * ny))
+    else:
+        ny_psf = 128  # min size
     while ny_psf % 2:
         ny_psf += 1
         ny_psf = good_size(ny_psf)
 
-    return nx, ny, nx_psf, ny_psf, cell_n, cell_rad
+    return nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg
 
 
 @njit(parallel=True)

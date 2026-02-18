@@ -160,10 +160,9 @@ def grid(
         uv_max = np.maximum(uv_max, ds.uv_max)
         max_freq = np.maximum(max_freq, ds.max_freq)
 
-    nx, ny, nx_psf, ny_psf, cell_n, cell_rad = set_image_size(
+    nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg = set_image_size(
         uv_max, max_freq, field_of_view, super_resolution_factor, cell_size, nx, ny, psf_oversize
     )
-    cell_deg = np.rad2deg(cell_rad)
     cell_size = cell_deg * 3600
     log.info(f"Super resolution factor = {cell_n / cell_rad}")
     log.info(f"Cell size set to {cell_size:.5e} arcseconds")

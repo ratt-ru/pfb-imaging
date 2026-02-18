@@ -11,20 +11,18 @@ import psutil
 import ray
 import xarray as xr
 import yaml
-from africanus.constants import c as lightspeed
 from astropy import units
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
 from daskms import xds_from_storage_ms as xds_from_ms
 from daskms.fsspec_store import DaskMSStore
-from ducc0.fft import good_size
 from ducc0.misc import resize_thread_pool
 from zarr import ProcessSynchronizer
 
 from pfb_imaging import set_envs
 from pfb_imaging.utils import logging as pfb_logging
-from pfb_imaging.utils.misc import construct_mappings
+from pfb_imaging.utils.misc import construct_mappings, set_image_size
 from pfb_imaging.utils.stokes2im import batch_stokes_image
 from pfb_imaging.utils.transients import generate_transient_spectra
 
@@ -253,40 +251,18 @@ def hci(
     all_freqs = np.unique(all_freqs)
     all_times = np.unique(all_times)
 
-    # cell size
-    cell_n = 1.0 / (2 * uv_max * max_freq / lightspeed)
-
-    if cell_size is not None:
-        cell_size = cell_size
-        cell_rad = cell_size * np.pi / 60 / 60 / 180
-        if cell_n / cell_rad < 1:
-            log.info(f"Requested cell size of {cell_size} arcseconds could be sub-Nyquist.")
-        log.info(f"Super resolution factor = {cell_n / cell_rad}")
-    else:
-        cell_rad = cell_n / super_resolution_factor
-        cell_size = cell_rad * 60 * 60 * 180 / np.pi
-        log.info(f"Cell size set to {cell_size} arcseconds")
-
-    if nx is None:
-        fov = field_of_view * 3600
-        npix = int(fov / cell_size)
-        npix = good_size(npix)
-        while npix % 2:
-            npix += 1
-            npix = good_size(npix)
-        nx = npix
-        ny = npix
-    else:
-        nx = nx
-        ny = ny if ny is not None else nx
-        cell_deg = np.rad2deg(cell_rad)
-        if nx % 2 or ny % 2:
-            raise NotImplementedError("Only even number of pixels currently supported")
-        fovx = nx * cell_deg
-        fovy = ny * cell_deg
-        log.info(f"Field of view is ({fovx:.3e},{fovy:.3e}) degrees")
-
-    cell_deg = np.rad2deg(cell_rad)
+    # image size
+    nx, ny, nx_psf, ny_psf, cell_n, cell_rad, cell_deg = set_image_size(
+        uv_max,
+        max_freq,
+        field_of_view,
+        super_resolution_factor,
+        cell_size=cell_size,
+        nx=nx,
+        ny=ny,
+        psf_oversize=psf_relative_size,  # 128 pix if not specified
+        log=log,
+    )
 
     # crude column arithmetic
     dc = data_column.replace(" ", "")
@@ -385,7 +361,10 @@ def hci(
         freq_max,
         nx,
         ny,
+        nx_psf,
+        ny_psf,
         cell_deg,
+        spatial_chunk=128,  # hardcode for now
         images_per_chunk=images_per_chunk,
         integrations_per_image=integrations_per_image,
         obs_label=obs_label,
@@ -395,6 +374,7 @@ def hci(
 
     n_stokes = len(set(product))
     log.info(f"Cube size = (n_stokes={n_stokes}, n_freq={n_freqo}, n_time={n_timeo}, n_y={ny}, n_x={nx})")
+    log.info(f"Cube chunks = (n_stokes={n_stokes}, n_freq={1}, n_time={images_per_chunk}, n_y={128}, n_x={128})")
 
     if inject_transients is not None:
         # we need to do this here because we don't have access
@@ -534,14 +514,14 @@ def hci(
                             ncompleted += 1
                             ready, tasks = ray.wait(tasks, num_returns=1)
                             timeid, bandid = ray.get(ready)[0]
-                            print(f"Processed {ncompleted}/{ntasks}", end="\n", flush=True)
+                            log.info(f"Processed {ncompleted}/{ntasks}")
 
         remaining_tasks = tasks.copy()
         while remaining_tasks:
             ncompleted += 1
             ready, remaining_tasks = ray.wait(remaining_tasks, num_returns=1)
             timeid, bandid = ray.get(ready)[0]
-            print(f"Processed {ncompleted}/{ntasks}", end="\n", flush=True)
+            log.info(f"Processed {ncompleted}/{ntasks}")
 
     log.info("Computing means")
     cwidths = []
@@ -609,6 +589,8 @@ def make_dummy_dataset(
     freq_max,
     nx,
     ny,
+    nx_psf,
+    ny_psf,
     cell_deg,
     spatial_chunk=128,
     images_per_chunk=16,
@@ -642,10 +624,10 @@ def make_dummy_dataset(
             out_ra.append(radecs[ms_name][idt][0])
             out_dec.append(radecs[ms_name][idt][1])
 
-            titr = enumerate(zip(time_mapping[ms_name][idt]["start_indices"], time_mapping[ms_name][idt]["counts"]))
-            for ti, (tlow, tcounts) in titr:
-                fitr = enumerate(zip(freq_mapping[ms_name][idt]["start_indices"], freq_mapping[ms_name][idt]["counts"]))
-                for fi, (flow, fcounts) in fitr:
+            titr = zip(time_mapping[ms_name][idt]["start_indices"], time_mapping[ms_name][idt]["counts"])
+            for tlow, tcounts in titr:
+                fitr = zip(freq_mapping[ms_name][idt]["start_indices"], freq_mapping[ms_name][idt]["counts"])
+                for flow, fcounts in fitr:
                     freq_slice = slice(flow, flow + fcounts)
                     out_freqs.append(np.mean(freqs[ms_name][idt][freq_slice]))
                     ntasks += 1
@@ -677,7 +659,7 @@ def make_dummy_dataset(
     out_times = np.unique(out_times)
     out_freqs = np.unique(out_freqs)
 
-    n_stokes = len(product)
+    n_stokes = len(set(product))
     n_times = out_times.size
     n_freqs = out_freqs.size
 
@@ -747,47 +729,43 @@ def make_dummy_dataset(
 
     dummy_ds = xr.Dataset(
         data_vars={
-            "cube": (("STOKES", "FREQ", "TIME", "Y", "X"), da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32)),
+            "cube": (
+                ("STOKES", "FREQ", "TIME", "Y", "X"),
+                da.empty(cube_dims, chunks=cube_chunks, dtype=np.float32),
+            ),
             "cube_mean": (("STOKES", "FREQ", "Y", "X"), da.empty(mean_dims, chunks=mean_chunks, dtype=np.float32)),
-            "rms": (("STOKES", "FREQ", "TIME"), da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)),
-            "weight": (("STOKES", "FREQ", "TIME"), da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32)),
+            "rms": (
+                ("STOKES", "FREQ", "TIME"),
+                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32),
+            ),
+            "weight": (
+                ("STOKES", "FREQ", "TIME"),
+                da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32),
+            ),
             "nonzero": (
-                (
-                    "STOKES",
-                    "FREQ",
-                    "TIME",
-                ),
+                ("STOKES", "FREQ", "TIME"),
                 da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_),
             ),
             "psf_maj": (
-                (
-                    "STOKES",
-                    "FREQ",
-                    "TIME",
-                ),
+                ("STOKES", "FREQ", "TIME"),
                 da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32),
             ),
             "psf_min": (
-                (
-                    "STOKES",
-                    "FREQ",
-                    "TIME",
-                ),
+                ("STOKES", "FREQ", "TIME"),
                 da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32),
             ),
             "psf_pa": (
-                (
-                    "STOKES",
-                    "FREQ",
-                    "TIME",
-                ),
+                ("STOKES", "FREQ", "TIME"),
                 da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32),
             ),
-            "channel_width": (("FREQ",), da.empty((n_freqs), chunks=(1), dtype=np.float32)),
+            "channel_width": (
+                ("FREQ",),
+                da.empty((n_freqs), chunks=(1), dtype=np.float32),
+            ),
         },
         coords={
             "TIME": (("TIME",), out_times),
-            "STOKES": (("STOKES",), list(sorted(product))),
+            "STOKES": (("STOKES",), list(sorted(set(product)))),
             "FREQ": (("FREQ",), out_freqs),
             "X": (("X",), out_ras),
             "Y": (("Y",), out_decs),
@@ -803,12 +781,6 @@ def make_dummy_dataset(
         )
 
     if psf_out:
-        nx_psf = good_size(int(psf_relative_size * nx))
-        while nx_psf % 2:
-            nx_psf = good_size(nx_psf + 1)
-        ny_psf = good_size(int(psf_relative_size * ny))
-        while ny_psf % 2:
-            ny_psf = good_size(ny_psf + 1)
         psf_dims = (n_stokes, n_freqs, n_times, ny_psf, nx_psf)
         if psf_relative_size == 1:
             xpsf = "X"
@@ -828,7 +800,7 @@ def make_dummy_dataset(
         )
         dummy_ds["psf2"] = (
             ("STOKES", ypsf, xpsf),
-            da.empty((n_stokes, ny_psf, nx_psf), chunks=(1, spatial_chunk, spatial_chunk), dtype=np.float32),
+            da.empty((n_stokes, ny_psf, nx_psf), chunks=rms_chunks, dtype=np.float32),
         )
 
     # Write scaffold and metadata to disk.
