@@ -988,13 +988,17 @@ wheels = [
 
 [[package]]
 name = "hip-cargo"
-version = "0.1.2"
-source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=main#c050eda3ee067727659379b7ce1be0677c8a930e" }
+version = "0.1.3"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "libcst" },
     { name = "pyyaml" },
     { name = "typer" },
     { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/89/21/eb9d968990723a5ff53dba83b9330db8677848a291a332f92d2d136580af/hip_cargo-0.1.3.tar.gz", hash = "sha256:384c3a74808feaf614ad9c1cf1092104bea47a5f7aefea5d93274214696bca39", size = 24993, upload-time = "2026-02-10T19:58:10.476Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/8c/8c6b4c4c2d815ce16c73751d1ae3e19a038a220f98f2668db038f9ac556f/hip_cargo-0.1.3-py3-none-any.whl", hash = "sha256:b2431c90f0ce21d1fe32b1b06e9d8ad17a59491038b9f48df66ec92be80d6724", size = 33043, upload-time = "2026-02-10T19:58:09.323Z" },
 ]
 
 [[package]]
@@ -2217,7 +2221,6 @@ version = "0.0.8"
 source = { editable = "." }
 dependencies = [
     { name = "hip-cargo" },
-    { name = "typer" },
 ]
 
 [package.optional-dependencies]
@@ -2261,7 +2264,7 @@ requires-dist = [
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
     { name = "distributed", marker = "extra == 'full'", specifier = "<2024.11.0" },
     { name = "ducc0", marker = "extra == 'full'", specifier = ">=0.35.0" },
-    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=main" },
+    { name = "hip-cargo", specifier = ">=0.1.3" },
     { name = "ipdb", marker = "extra == 'dev'" },
     { name = "jax", extras = ["cpu"], marker = "extra == 'full'", specifier = ">=0.4.31" },
     { name = "katbeam", marker = "extra == 'full'", specifier = ">=0.1" },
@@ -2282,7 +2285,6 @@ requires-dist = [
     { name = "sympy", marker = "extra == 'full'", specifier = ">=1.9" },
     { name = "tbb", marker = "extra == 'full'", specifier = ">=2021.13.1" },
     { name = "tbump", marker = "extra == 'dev'", specifier = ">=6.11.0" },
-    { name = "typer", specifier = ">=0.12.0" },
 ]
 provides-extras = ["full", "dev"]
 
