@@ -7,6 +7,7 @@ formatting using the Rich library for better console output.
 
 import inspect
 import logging
+import shutil
 from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, Optional, Type, Union
@@ -281,6 +282,8 @@ def log_options_dict(logger: PFBLogger, options: Dict[str, Any], title: str = "O
         options: Dictionary of options to log
         title: Title for the options section
     """
+    terminal_width = shutil.get_terminal_size().columns
+    panel_width = terminal_width - 2
 
     name_col = Column(justify="left")
     spacer_col = Column(justify="center")
@@ -294,7 +297,7 @@ def log_options_dict(logger: PFBLogger, options: Dict[str, Any], title: str = "O
     # We cannot log the table neatly, so instead we use console's print command directly
     # and capture the output so we can add an unformatted version to the log.
     with rich_console.capture() as capture:
-        rich_console.print(Panel(options_table, style="cyan", title=f"[cyan]{title}[/cyan]"))
+        rich_console.print(Panel(options_table, style="cyan", title=f"[cyan]{title}[/cyan]", width=panel_width))
 
     str_output = Text.from_ansi(capture.get())
     rich_console.print(str_output.markup)  # Display in terminal.
