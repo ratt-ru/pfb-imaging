@@ -265,6 +265,11 @@ cabs:
       obs-label:
         info:
           Optional observation label to include in the stacked cube.
+      flag-excess-rms:
+        info:
+          Flag data with RMS values exceeding the median by this factor.
+        dtype: float
+        default: 1.5
     outputs:
       output-dataset:
         dtype: Directory

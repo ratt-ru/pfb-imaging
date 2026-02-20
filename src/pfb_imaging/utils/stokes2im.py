@@ -19,6 +19,7 @@ from pfb_imaging.operators.hessian import hessian_jax
 from pfb_imaging.utils.astrometry import get_coordinates, synthesize_uvw
 from pfb_imaging.utils.beam import reproject_and_interp_beam
 from pfb_imaging.utils.misc import fitcleanbeam
+from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
 from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights, filter_extreme_counts, weight_data
 
 ifftshift = np.fft.ifftshift
@@ -116,7 +117,6 @@ def batch_stokes_image(
             radec=radec,
             antpos=antpos,
             poltype=poltype,
-            fds_store=fds_store,
             bandid=bandid,
             timeid=timeid,
             msid=msid,
@@ -179,7 +179,6 @@ def stokes_image(
     radec=None,
     antpos=None,
     poltype=None,
-    fds_store=None,
     bandid=None,
     timeid=None,
     msid=None,
@@ -229,13 +228,6 @@ def stokes_image(
         real_type = np.float64
         complex_type = np.complex128
 
-    # LB - is this the correct way to do this?
-    # we don't want it to end up in the distributed object store
-    # do it this way to force using synchronous scheduler
-    ds = ds.load(scheduler="sync")
-    if jones is not None:
-        jones = jones.load(scheduler="sync").values
-
     data = getattr(ds, dc1).values
     if dc2 is not None:
         try:
@@ -273,7 +265,10 @@ def stokes_image(
         if product.lower() == "i":
             model_vis = model_vis[..., [0, -1]].mean(axis=-1, keepdims=True)
         else:
-            raise NotImplementedError(f"Model subtraction not supported for product {product}")
+            raise NotImplementedError(
+                f"Applying Jones matrcies on the fly is not supported for product {product}. "
+                f"Use --data-column 'CORRECTED_DATA - MODEL_DATA' for model subtraction."
+            )
     else:
         model_vis = None
 
@@ -312,6 +307,8 @@ def stokes_image(
     allants = np.unique(np.concatenate((ant1u, ant2u)))
 
     # check that antpos gives the correct size table
+    # TODO - this is probably wrong as flagged antennas usually persist
+    # in the ANTENNA table even when the rows have been deleted
     antmax = allants.size
     if check_ants:
         try:
@@ -358,18 +355,21 @@ def stokes_image(
         new_dec_rad = np.deg2rad(c.dec.value)
         radec_new = np.array((new_ra_rad, new_dec_rad))
         uvw_new = synthesize_uvw(antpos, time, ant1, ant2, radec_new)
-        wo = uvw[:, 2:] * freq[None, :] / lightspeed
-        wn = uvw_new[:, 2:] * freq[None, :] / lightspeed
+        wo = uvw[:, 2:]
+        wn = uvw_new[:, 2:]
 
         # TODO - this copies chgcentre but not sure why it gives
         # better results than computing the phase with lmn differences
-        phase = 2j * np.pi * (wn - wo)
-        data = data * np.exp(-phase)[:, :, None]
+        w_diff = wn - wo
+        # data and model_vis could still be read_only at this point
+        data = data * np.exp(freqfactor * w_diff)[:, :, None]
         if model_vis is not None:
-            model_vis = model_vis * np.exp(-phase)[:, :, None]
+            model_vis = model_vis * np.exp(freqfactor * w_diff)[:, :, None]
 
+        uvw_old = uvw.copy()
         uvw = uvw_new
     else:
+        uvw_old = uvw
         radec_new = radec
 
     if beam_model is not None:
@@ -477,8 +477,8 @@ def stokes_image(
     ).astype(complex_type)
 
     # TODO - polarisation parameters and handle Stokes axis more elegantly
-    # TODO - add beam application to injected transients
-    # Should this go before weight_data?
+    # We simulate the transient at the old uvw coordinates to make the beam application easier
+    # The simulated data then gets rephased to the new phase center
     if inject_transients is not None:
         transient_name = inject_transients.removesuffix("yaml") + "zarr"
         transient_ds = xr.open_zarr(transient_name, chunks=None)
@@ -487,12 +487,15 @@ def stokes_image(
         names = transient_ds.names
         ras = transient_ds.ras
         decs = transient_ds.decs
+        if beam_model is not None:
+            bds = xr.open_zarr(beam_model, chunks=None)
         for name, ra, dec in zip(names, ras, decs):
             ra_rad = np.deg2rad(ra)
             dec_rad = np.deg2rad(dec)
             tcoords = np.zeros((1, 2))
             tcoords[0, 0] = ra_rad
             tcoords[0, 1] = dec_rad
+            # use initial radec as reference since rephasing happens after beam application
             coords0 = np.array((radec[0], radec[1]))
             lm0t = radec_to_lm(tcoords, coords0).squeeze()
             x0t = lm0t[0]
@@ -503,18 +506,44 @@ def stokes_image(
             tprofile = getattr(transient_ds, f"{name}_time_profile").values
             fprofile = getattr(transient_ds, f"{name}_freq_profile").values
 
-            tprofile = np.interp(time, all_times, tprofile)  # note reorder to ms times
+            tprofile = np.interp(time, all_times, tprofile)  # interpolate and reorder to ms times
             fprofile = np.interp(freq, all_freqs, fprofile)
 
             # outer product gives dynamic spectrum
             # LB - why do we need the braces?
             dspec = (tprofile[:, None]) * fprofile[None, :]
 
+            # apply beam in original frame
+            # TODO - make sure loaded chunks don't persist after the interp call (doesn't look like it does)
+            # TODO - add time axis (parallactic angle rotation)
+            if beam_model is not None:
+                beam_source = bds.interp(
+                    chan=freq,
+                    l_beam=np.array([x0t]),
+                    m_beam=np.array([y0t]),
+                ).BEAM.values
+                beam_source = beam_source.reshape(2, 2, *beam_source.shape[1:])
+                beam_source = jones_to_mueller(beam_source, beam_source)
+                # select Stokes I power beam as a function of frequency only
+                beam_source = mueller_to_stokes(beam_source, poltype=poltype)[0, :, 0, 0]
+
+                # apply beam to the transient spectrum
+                dspec *= beam_source[None, :]
+
             # inject transient at x0t, y0t and convert to complex values
-            dspec = dspec * np.exp(
-                freqfactor
-                * (signu * uvw[:, 0:1] * x0t * signx + signv * uvw[:, 1:2] * y0t * signy - uvw[:, 2:] * (n0t - 1))
-            )
+            # phase_u = signu * uvw_old[:, 0:1] * x0t * signx
+            # phase_v = signv * uvw_old[:, 1:2] * y0t * signy
+            # phase_w = uvw_old[:, 2:] * (n0t - 1)
+            # phase = phase_u + phase_v - phase_w + phase_wdiff
+            # this is equivalent to the above
+            if phase_dir is not None:
+                phase = w_diff
+            else:
+                phase = np.zeros((nrow, 1), dtype=real_type)
+            phase += signu * uvw_old[:, 0:1] * x0t * signx
+            phase += signv * uvw_old[:, 1:2] * y0t * signy
+            phase -= uvw_old[:, 2:] * (n0t - 1)
+            dspec *= np.exp(freqfactor * phase)
 
             # currently Stokes I only
             data[:, :, 0] += dspec
@@ -526,12 +555,12 @@ def stokes_image(
         # we need to compute the weights on the padded grid
         # but we don't have control over the optimal gridding
         # parameters so assume a minimum
-        nx_pad = int(np.ceil(min_padding * nx))
-        if nx_pad % 2:
-            nx_pad += 1
-        ny_pad = int(np.ceil(min_padding * ny))
-        if ny_pad % 2:
-            ny_pad += 1
+        nx_pad = good_size(int(min_padding * nx))
+        while nx_pad % 2:
+            nx_pad = good_size(nx_pad + 1)
+        ny_pad = good_size(int(min_padding * ny))
+        while ny_pad % 2:
+            ny_pad = good_size(ny_pad + 1)
         counts = _compute_counts(
             uvw,
             freq,
@@ -608,7 +637,7 @@ def stokes_image(
             flip_w=flip_w,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
-            divide_by_n=True,  # no rephasing or smooth beam so do it here
+            divide_by_n=True,
             nthreads=nthreads,
             sigma_min=min_padding,
             double_precision_accumulation=double_accum,
@@ -633,7 +662,7 @@ def stokes_image(
             flip_w=flip_w,
             epsilon=epsilon,
             do_wgridding=do_wgridding,
-            divide_by_n=True,  # no rephasing or smooth beam so do it here
+            divide_by_n=True,
             nthreads=nthreads,
             sigma_min=min_padding,
             double_precision_accumulation=double_accum,
@@ -664,7 +693,7 @@ def stokes_image(
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     # set corr coords (removing duplicates and sorting)
-    corr = "".join(dict.fromkeys(sorted(product)))
+    corr = list(sorted(set(product)))
 
     out_ras = ra_deg + np.arange(nx // 2, -(nx // 2), -1) * cell_deg
     out_decs = dec_deg + np.arange(-(ny // 2), ny // 2) * cell_deg
@@ -675,7 +704,7 @@ def stokes_image(
     coords = {
         "FREQ": (("FREQ",), np.array([freq_out])),
         "TIME": (("TIME",), np.mean(utime, keepdims=True)),
-        "STOKES": (("STOKES",), list(corr)),
+        "STOKES": (("STOKES",), corr),
         "X": (("X",), out_ras),
         "Y": (("Y",), out_decs),
     }
@@ -684,17 +713,11 @@ def stokes_image(
     residual = np.transpose(residual.astype(np.float32), axes=(0, 2, 1))
     data_vars["cube"] = (("STOKES", "FREQ", "TIME", "Y", "X"), residual[:, None, None, :, :])
     if psf_out:
-        if psf_relative_size == 1:
-            xpsf = "X"
-            ypsf = "Y"
-        else:
-            xpsf = "X_PSF"
-            ypsf = "Y_PSF"
-            coords["X_PSF"] = (("X_PSF",), ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg)
-            coords["Y_PSF"] = (("Y_PSF",), dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg)
+        coords["X_PSF"] = (("X_PSF",), ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg)
+        coords["Y_PSF"] = (("Y_PSF",), dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg)
         psf /= wsum[:, None, None]
         psf = np.transpose(psf.astype(np.float32), axes=(0, 2, 1))
-        data_vars["psf"] = (("STOKES", "FREQ", "TIME", ypsf, xpsf), psf[:, None, None, :, :])
+        data_vars["psf"] = (("STOKES", "FREQ", "TIME", "Y_PSF", "X_PSF"), psf[:, None, None, :, :])
 
     if robustness is not None and weight_grid_out:
         ic, ix, iy = np.where(counts > 0)

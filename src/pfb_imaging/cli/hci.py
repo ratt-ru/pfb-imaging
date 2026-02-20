@@ -391,6 +391,12 @@ def hci(
             help="Optional observation label to include in the stacked cube.",
         ),
     ] = None,
+    flag_excess_rms: Annotated[
+        float,
+        typer.Option(
+            help="Flag data with RMS values exceeding the median by this factor. ",
+        ),
+    ] = 1.5,
     temp_dir: Annotated[
         Directory | None,
         typer.Option(
@@ -473,5 +479,6 @@ def hci(
         cube_to_fits=cube_to_fits,
         wgt_mode=wgt_mode,
         obs_label=obs_label,
+        flag_excess_rms=flag_excess_rms,
         temp_dir=temp_dir,
     )

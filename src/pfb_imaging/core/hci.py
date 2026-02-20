@@ -79,10 +79,11 @@ def hci(
     cg_tol: float = 1e-3,
     cg_maxit: int = 150,
     object_store_memory: float | None = None,
-    temp_dir: str | None = None,
     cube_to_fits: bool = False,
     wgt_mode: str = "l2",
     obs_label: str | None = None,
+    flag_excess_rms: float = 1.5,
+    temp_dir: str | None = None,
     keep_ray_alive: bool = False,  # not used by CLI
 ):
     """
@@ -529,17 +530,32 @@ def hci(
         cwidths.append(val)
     # reduction over FREQ and TIME so use max chunk sizes
     ds = xr.open_zarr(fds_store.url, chunks={"FREQ": -1, "TIME": -1})
+    chunk_sizes = ds.chunks
+    x_chunk = chunk_sizes["X"][0]
+    y_chunk = chunk_sizes["Y"][0]
     cube = ds.cube.data
     wsums = ds.weight.data
+    # needed for flagging
+    nonzero = ds.nonzero.values
+    rms = ds.rms.values
+    ncorr, nband, ntime = nonzero.shape
+    flag = np.zeros((ncorr, nband, ntime), dtype=bool)
+    for corr in range(ncorr):
+        for band in range(nband):
+            nzero = nonzero[corr, band, :]
+            medianrms = np.median(rms[corr, band, nzero])
+            flag[corr, band, :] = (rms[corr, band, :] > flag_excess_rms * medianrms) | ~nzero
+    # need flag (as mask) in dask graph
+    mask = da.from_array((~flag).astype(np.uint8), chunks=(1, -1, -1))
+    wsums = wsums * mask
     # all variables have been normalised by wsum so we first
     # undo the normalisation (wsum=0 where there is no data)
-    weighted_cube = cube * wsums[:, :, :, None, None]
     taxis = ds.cube.get_axis_num("TIME")
     faxis = ds.cube.get_axis_num("FREQ")
     wsum = da.sum(wsums, axis=taxis)
     # we need this for the where clause in da.divide, should be cheap
     wsumc = wsum.compute()[:, :, None, None]
-    weighted_sum = da.sum(weighted_cube, axis=taxis)
+    weighted_sum = da.sum(cube * wsums[:, :, :, None, None], axis=taxis)
     weighted_mean = da.divide(weighted_sum, wsum[:, :, None, None], where=wsumc > 0)
     if psf_out:
         psfsq = (ds.psf.data * wsums[:, :, :, None, None]) ** 2
@@ -547,18 +563,13 @@ def hci(
         wsumsq = da.sum(wsums**2, axis=(faxis, taxis))
         wsumsqc = wsumsq.compute()[:, None, None]
         weighted_psfsq_mean = da.divide(weighted_psfsq_sum, wsumsq[:, None, None], where=wsumsqc > 0)
-        if psf_relative_size == 1:
-            xpsf = "X"
-            ypsf = "Y"
-        else:
-            xpsf = "X_PSF"
-            ypsf = "Y_PSF"
-        ds["psf2"] = (("STOKES", ypsf, xpsf), weighted_psfsq_mean)
+        ds["psf2"] = (("STOKES", "Y_PSF", "X_PSF"), weighted_psfsq_mean)
     # only write new variables
     drop_vars = [key for key in ds.data_vars.keys() if key != "psf2"]
     ds = ds.drop_vars(drop_vars)
-    ds["cube_mean"] = (("STOKES", "FREQ", "Y", "X"), weighted_mean)
+    ds["cube_mean"] = (("STOKES", "FREQ", "Y", "X"), weighted_mean.rechunk(chunks=(n_stokes, 1, y_chunk, x_chunk)))
     ds["channel_width"] = (("FREQ",), da.from_array(cwidths, chunks=1))
+    ds["flag"] = (("STOKES", "FREQ", "TIME"), da.from_array(flag, chunks=(n_stokes, 1, images_per_chunk)))
     with dask.config.set(pool=ThreadPoolExecutor(8)):
         ds.to_zarr(fds_store.url, mode="r+")
     log.info("Reduction complete")
@@ -743,6 +754,10 @@ def make_dummy_dataset(
                 da.empty(rms_dims, chunks=rms_chunks, dtype=np.float32),
             ),
             "nonzero": (
+                ("STOKES", "FREQ", "TIME"),
+                da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_),
+            ),
+            "flag": (
                 ("STOKES", "FREQ", "TIME"),
                 da.empty(rms_dims, chunks=rms_chunks, dtype=np.bool_),
             ),
