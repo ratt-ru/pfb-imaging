@@ -394,7 +394,7 @@ def hci(
     flag_excess_rms: Annotated[
         float,
         typer.Option(
-            help="Flag data with RMS values exceeding the median by this factor. ",
+            help="Flag data with RMS values exceeding the median by this factor.",
         ),
     ] = 1.5,
     temp_dir: Annotated[
