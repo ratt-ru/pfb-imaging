@@ -154,30 +154,30 @@ def airi(
             help="Accumulate onto grid using double precision. Only has an affect when using single precision.",
         ),
     ] = True,
-    pd_tol: Annotated[
-        float,
-        typer.Option(
-            help="Tolreance of primal dual algorithm.",
-        ),
-    ] = 0.0003,
-    pd_maxit: Annotated[
-        int,
-        typer.Option(
-            help="Maximum iterations for primal dual algorithm.",
-        ),
-    ] = 450,
-    pd_verbose: Annotated[
-        int,
-        typer.Option(
-            help="Verbosity of primal dual algorithm. Set to > 1 for debugging, 0 for silence",
-        ),
-    ] = 1,
-    pd_report_freq: Annotated[
-        int,
-        typer.Option(
-            help="Report frequency of primal dual algorithm",
-        ),
-    ] = 50,
+    # pd_tol: Annotated[
+    #     float,
+    #     typer.Option(
+    #         help="Tolreance of primal dual algorithm.",
+    #     ),
+    # ] = 0.0003,
+    # pd_maxit: Annotated[
+    #     int,
+    #     typer.Option(
+    #         help="Maximum iterations for primal dual algorithm.",
+    #     ),
+    # ] = 450,
+    # pd_verbose: Annotated[
+    #     int,
+    #     typer.Option(
+    #         help="Verbosity of primal dual algorithm. Set to > 1 for debugging, 0 for silence",
+    #     ),
+    # ] = 1,
+    # pd_report_freq: Annotated[
+    #     int,
+    #     typer.Option(
+    #         help="Report frequency of primal dual algorithm",
+    #     ),
+    # ] = 50,
     pm_tol: Annotated[
         float,
         typer.Option(
@@ -333,10 +333,10 @@ def airi(
         epsilon=epsilon,
         do_wgridding=do_wgridding,
         double_accum=double_accum,
-        pd_tol=pd_tol,
-        pd_maxit=pd_maxit,
-        pd_verbose=pd_verbose,
-        pd_report_freq=pd_report_freq,
+        # pd_tol=pd_tol,
+        # pd_maxit=pd_maxit,
+        # pd_verbose=pd_verbose,
+        # pd_report_freq=pd_report_freq,
         pm_tol=pm_tol,
         pm_maxit=pm_maxit,
         pm_verbose=pm_verbose,

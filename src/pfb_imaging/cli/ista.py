@@ -39,13 +39,13 @@ def ista(
             help="Can be used to specify a custom name for the image space data products.",
         ),
     ] = "main",
-    l1_reweight_from: Annotated[
-        int,
-        typer.Option(
-            help="L1 reweighting will kick in either at convergence or after this many iterations. "
-            "Set to a negative value to disable L1 reweighting.",
-        ),
-    ] = 5,
+    # l1_reweight_from: Annotated[
+    #     int,
+    #     typer.Option(
+    #         help="L1 reweighting will kick in either at convergence or after this many iterations. "
+    #         "Set to a negative value to disable L1 reweighting.",
+    #     ),
+    # ] = 5,
     hess_norm: Annotated[
         float | None,
         typer.Option(
@@ -79,13 +79,13 @@ def ista(
             help="Step size of update.",
         ),
     ] = 1.0,
-    alpha: Annotated[
-        float,
-        typer.Option(
-            help="Controls how aggressively the l1reweighting is applied. "
-            "Larger values correspond to more agressive reweighting.",
-        ),
-    ] = 2,
+    # alpha: Annotated[
+    #     float,
+    #     typer.Option(
+    #         help="Controls how aggressively the l1reweighting is applied. "
+    #         "Larger values correspond to more agressive reweighting.",
+    #     ),
+    # ] = 2,
     nbasisf: Annotated[
         int | None,
         typer.Option(
@@ -127,19 +127,19 @@ def ista(
             "Set to larger than niter to disable this check.",
         ),
     ] = 5,
-    rms_outside_model: Annotated[
-        bool,
-        typer.Option(
-            help="Mask residual where model is non-zero when computing rms. "
-            "This is not recommended for largely non-empty fields.",
-        ),
-    ] = False,
-    init_factor: Annotated[
-        float,
-        typer.Option(
-            help="Reduce the regularisation strength by this fraction at the outset.",
-        ),
-    ] = 0.5,
+    # rms_outside_model: Annotated[
+    #     bool,
+    #     typer.Option(
+    #         help="Mask residual where model is non-zero when computing rms. "
+    #         "This is not recommended for largely non-empty fields.",
+    #     ),
+    # ] = False,
+    # init_factor: Annotated[
+    #     float,
+    #     typer.Option(
+    #         help="Reduce the regularisation strength by this fraction at the outset.",
+    #     ),
+    # ] = 0.5,
     verbosity: Annotated[
         int,
         typer.Option(
@@ -279,21 +279,20 @@ def ista(
     ista_core(
         output_filename,
         suffix=suffix,
-        l1_reweight_from=l1_reweight_from,
         hess_norm=hess_norm,
         hess_approx=hess_approx,
         rmsfactor=rmsfactor,
         eta=eta,
         gamma=gamma,
-        alpha=alpha,
+        # alpha=alpha,
         nbasisf=nbasisf,
         positivity=positivity,
         niter=niter,
         nthreads=nthreads,
         tol=tol,
         diverge_count=diverge_count,
-        rms_outside_model=rms_outside_model,
-        init_factor=init_factor,
+        # rms_outside_model=rms_outside_model,
+        # init_factor=init_factor,
         verbosity=verbosity,
         epsilon=epsilon,
         do_wgridding=do_wgridding,
