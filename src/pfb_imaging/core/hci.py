@@ -29,7 +29,6 @@ from pfb_imaging.utils.transients import generate_transient_spectra
 log = pfb_logging.get_logger("HCI")
 
 
-@pfb_logging.log_inputs(log)
 def hci(
     ms: list[Path],
     output_dataset: str,
@@ -89,6 +88,9 @@ def hci(
     """
     Produce high cadence residual images.
     """
+    # for logging options
+    opts_dict = locals().copy()
+
     # start timer
     time_start = time.time()
 
@@ -107,12 +109,14 @@ def hci(
     oname = str(output_dataset).split("/")[-1]
 
     output_dataset = f"{prefix}{basedir}/{oname}"
+    opts_dict["output_dataset"] = output_dataset
 
     # this should be a file system
     if log_directory is None:
         log_directory = Path(basedir) / "pfb_logs"
     else:
         log_directory = Path(log_directory)
+    opts_dict["log_directory"] = log_directory
     log_directory.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/hci_{timestamp}.log"
@@ -126,6 +130,8 @@ def hci(
         ncpu = ncpu // 2
     else:
         ncpu = np.minimum(psutil.cpu_count(logical=False), nthreads)
+    opts_dict["nthreads"] = nthreads
+    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
 
     remprod = product.upper().strip("IQUV")
     if len(remprod):
@@ -141,6 +147,7 @@ def hci(
         except Exception:
             log.error_and_raise(f"No MS at {ms_name}", ValueError)
     ms = msnames
+    opts_dict["ms"] = ms
     if gain_table is not None:
         gainnames = []
         for gt in map(str, gain_table):
@@ -152,6 +159,9 @@ def hci(
             except Exception:
                 log.error_and_raise(f"No gain table  at {gt}", ValueError)
         gain_table = gainnames
+        opts_dict["gain_table"] = gain_table
+
+    log.log_options_dict(opts_dict, title="HCI options")
 
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu)
@@ -563,7 +573,7 @@ def hci(
         wsumsq = da.sum(wsums**2, axis=(faxis, taxis))
         wsumsqc = wsumsq.compute()[:, None, None]
         weighted_psfsq_mean = da.divide(weighted_psfsq_sum, wsumsq[:, None, None], where=wsumsqc > 0)
-        ds["psf2"] = (("STOKES", "Y_PSF", "X_PSF"), weighted_psfsq_mean)
+        ds["psf2"] = (("STOKES", "Y_PSF", "X_PSF"), weighted_psfsq_mean.rechunk(chunks=(n_stokes, y_chunk, x_chunk)))
     # only write new variables
     drop_vars = [key for key in ds.data_vars.keys() if key != "psf2"]
     ds = ds.drop_vars(drop_vars)
@@ -815,7 +825,7 @@ def make_dummy_dataset(
         )
         dummy_ds["psf2"] = (
             ("STOKES", ypsf, xpsf),
-            da.empty((n_stokes, ny_psf, nx_psf), chunks=rms_chunks, dtype=np.float32),
+            da.empty((n_stokes, ny_psf, nx_psf), chunks=(n_stokes, spatial_chunk, spatial_chunk), dtype=np.float32),
         )
 
     # Write scaffold and metadata to disk.

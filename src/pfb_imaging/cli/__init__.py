@@ -46,5 +46,4 @@ from pfb_imaging.cli.sara import sara  # noqa: E402
 
 app.command(name="sara")(sara)
 
-
 __all__ = ["app"]

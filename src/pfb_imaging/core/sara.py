@@ -26,7 +26,6 @@ from pfb_imaging.utils.naming import get_opts, set_output_names, xds_from_url
 log = pfb_logging.get_logger("SARA")
 
 
-@pfb_logging.log_inputs(log)
 def sara(
     output_filename: str,
     suffix: str = "main",
@@ -72,6 +71,8 @@ def sara(
     """
     Deconvolution using SARA regularisation
     """
+    # for logging options
+    opts_dict = locals().copy()
 
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
@@ -79,6 +80,9 @@ def sara(
         fits_output_folder,
         log_directory,
     )
+    opts_dict["output_filename"] = output_filename
+    opts_dict["fits_output_folder"] = fits_output_folder
+    opts_dict["log_directory"] = log_directory
 
     ncpu = psutil.cpu_count(logical=False)
     if nthreads is None:
@@ -86,7 +90,8 @@ def sara(
         ncpu = ncpu // 2
     else:
         ncpu = np.minimum(nthreads, psutil.cpu_count(logical=False))
-
+    opts_dict["nthreads"] = nthreads
+    log.info(f"Using {nthreads} threads total")
     resize_thread_pool(nthreads)
     set_envs(nthreads, ncpu)
 
@@ -94,6 +99,7 @@ def sara(
     logname = f"{str(log_directory)}/sara_{timestamp}.log"
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
+    log.log_options_dict(opts_dict, title="SARA options")
 
     basename = output_filename
     fits_oname = f"{fits_output_folder}/{oname}"

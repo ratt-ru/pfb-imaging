@@ -1,0 +1,3 @@
+cabs:
+  init:
+    image: ghcr.io/ratt-ru/pfb-imaging

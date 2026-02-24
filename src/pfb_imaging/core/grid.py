@@ -20,7 +20,6 @@ from pfb_imaging.utils.naming import cache_opts, get_opts, set_output_names, xds
 log = pfb_logging.get_logger("GRID")
 
 
-@pfb_logging.log_inputs(log)
 def grid(
     output_filename: str,
     xds: str | None = None,
@@ -62,6 +61,8 @@ def grid(
 
     TODO - enable single precision gridding
     """
+    # for logging options
+    opts_dict = locals().copy()
 
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
@@ -69,6 +70,9 @@ def grid(
         fits_output_folder,
         log_directory,
     )
+    opts_dict["output_filename"] = output_filename
+    opts_dict["fits_output_folder"] = fits_output_folder
+    opts_dict["log_directory"] = log_directory
 
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True)
@@ -82,8 +86,9 @@ def grid(
             ncpu = ncpu // 2
     else:
         ncpu = np.minimum(nthreads, psutil.cpu_count(logical=False))
+    opts_dict["nthreads"] = nthreads
+    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
 
-    output_filename = output_filename
     fits_oname = f"{fits_output_folder}/{oname}"
     dds_store = DaskMSStore(f"{output_filename}_{suffix}.dds")
 
@@ -103,6 +108,8 @@ def grid(
     logname = f"{str(log_directory)}/grid_{timestamp}.log"
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
+
+    log.log_options_dict(opts_dict, title="GRID options")
 
     # need this for cache validation
     opts = {

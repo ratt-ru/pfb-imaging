@@ -5,10 +5,8 @@ This module provides a drop-in replacement for pyscilog with enhanced
 formatting using the Rich library for better console output.
 """
 
-import inspect
 import logging
 import shutil
-from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, Optional, Type, Union
 
@@ -47,6 +45,16 @@ class PFBLogger(logging.Logger):
         self.error(bold_message, *args, **kwargs)
 
         raise exception_type(message)
+
+    def log_options_dict(self, options: Dict[str, Any], title: str = "Options") -> None:
+        """
+        Log a dictionary of options in a formatted way.
+
+        Args:
+            options: Dictionary of options to log
+            title: Title for the options section
+        """
+        log_options_dict(self, options, title)
 
 
 # Any logger created hereafter will be an instance of PFBLogger.
@@ -240,37 +248,10 @@ def get_log_files() -> Dict[str, str]:
     return _logging_manager.get_log_files()
 
 
+# TODO - is this used anywhere? Should it be used?
 def close_log_files() -> None:
     """Close all file handlers."""
     _logging_manager.close_log_files()
-
-
-# Utility functions for common logging patterns
-def log_function_call(logger: PFBLogger):
-    """
-    Decorator to log function calls with arguments.
-
-    Args:
-        logger: PFBLogger instance to use for logging
-    """
-
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Log function entry
-            logger.debug(f"Calling {func.__name__} with args={args}, kwargs={kwargs}")
-
-            try:
-                result = func(*args, **kwargs)
-                logger.debug(f"Function {func.__name__} completed successfully")
-                return result
-            except Exception as e:
-                logger.error(f"Function {func.__name__} failed with error: {e}")
-                raise
-
-        return wrapper
-
-    return decorator
 
 
 def log_options_dict(logger: PFBLogger, options: Dict[str, Any], title: str = "Options") -> None:
@@ -302,23 +283,3 @@ def log_options_dict(logger: PFBLogger, options: Dict[str, Any], title: str = "O
     str_output = Text.from_ansi(capture.get())
     rich_console.print(str_output.markup)  # Display in terminal.
     logger.debug(f"\n{str_output}")  # Print to log - will display twice if log level is DEBUG.
-
-
-def log_inputs(logger):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Get the function signature
-            sig = inspect.signature(func)
-            bound_args = sig.bind(*args, **kwargs)
-            bound_args.apply_defaults()
-
-            # Convert to dict for logging
-            inputs_dict = dict(bound_args.arguments)
-            log_options_dict(logger, inputs_dict)
-
-            return func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator

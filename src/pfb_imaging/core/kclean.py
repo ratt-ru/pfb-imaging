@@ -20,7 +20,6 @@ from pfb_imaging.utils.naming import get_opts, set_output_names, xds_from_url
 log = pfb_logging.get_logger("KCLEAN")
 
 
-@pfb_logging.log_inputs(log)
 def kclean(
     output_filename: str,
     suffix: str = "main",
@@ -56,6 +55,8 @@ def kclean(
     """
     Modified single-scale clean.
     """
+    # for logging options
+    opts_dict = locals().copy()
 
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
@@ -63,6 +64,9 @@ def kclean(
         fits_output_folder,
         log_directory,
     )
+    opts_dict["output_filename"] = output_filename
+    opts_dict["fits_output_folder"] = fits_output_folder
+    opts_dict["log_directory"] = log_directory
 
     ncpu = psutil.cpu_count(logical=False)
     if nthreads is None:
@@ -76,6 +80,9 @@ def kclean(
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/kclean_{timestamp}.log"
     pfb_logging.log_to_file(logname)
+    log.info(f"Logs will be written to {logname}")
+
+    log.log_options_dict(opts_dict, title="KCLEAN options")
 
     basename = f"{output_filename}"
     fits_oname = f"{fits_output_folder}/{oname}"

@@ -17,7 +17,6 @@ from pfb_imaging.utils.naming import set_output_names, xds_from_url
 log = pfb_logging.get_logger("FLUXTRACTOR")
 
 
-@pfb_logging.log_inputs(log)
 def fluxtractor(
     output_filename: str,
     suffix: str = "main",
@@ -48,6 +47,8 @@ def fluxtractor(
     """
     Forward step aka flux mop.
     """
+    # for logging options
+    opts_dict = locals().copy()
 
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
@@ -55,6 +56,9 @@ def fluxtractor(
         fits_output_folder,
         log_directory,
     )
+    opts_dict["output_filename"] = output_filename
+    opts_dict["fits_output_folder"] = fits_output_folder
+    opts_dict["log_directory"] = log_directory
 
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True)
@@ -66,14 +70,19 @@ def fluxtractor(
         else:
             nthreads = nthreads // 2
             ncpu = ncpu // 2
-
+    else:
+        ncpu = np.minimum(psutil.cpu_count(logical=False), nthreads)
+    opts_dict["nthreads"] = nthreads
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu)
+    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/fluxtractor_{timestamp}.log"
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
+
+    log.log_options_dict(opts_dict, title="FLUXTRACTOR options")
 
     fits_oname = f"{fits_output_folder}/{oname}"
     dds_name = f"{output_filename}_{suffix}.dds"

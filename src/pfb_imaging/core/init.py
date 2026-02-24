@@ -18,7 +18,6 @@ from pfb_imaging.utils.stokes2vis import safe_stokes_vis
 log = pfb_logging.get_logger("INIT")
 
 
-@pfb_logging.log_inputs(log)
 def init(
     ms: list[Path],
     output_filename: str,
@@ -51,6 +50,8 @@ def init(
     """
     Initialise Stokes data products for imaging
     """
+    # for logging options
+    opts_dict = locals().copy()
 
     output_filename, _, log_directory, oname = set_output_names(
         output_filename,
@@ -58,11 +59,14 @@ def init(
         None,
         log_directory,
     )
+    opts_dict["output_filename"] = output_filename
+    opts_dict["log_directory"] = log_directory
 
     ncpu = psutil.cpu_count(logical=False)
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True) // 2
         ncpu = ncpu // 2
+    log.info(f"Using {nworkers} workers with {nthreads} per worker")
 
     remprod = product.upper().strip("IQUV")
     if len(remprod):
@@ -78,6 +82,7 @@ def init(
         except Exception:
             log.error_and_raise(f"No MS at {ms_path}", ValueError)
     ms = msnames
+    opts_dict["ms"] = ms
 
     if gain_table is not None:
         gainnames = []
@@ -90,18 +95,17 @@ def init(
             except Exception:
                 log.error_and_raise(f"No gain table at {gt}", ValueError)
         gain_table = gainnames
+        opts_dict["gain_table"] = gain_table
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/init_{timestamp}.log"
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
 
+    log.log_options_dict(opts_dict, title="INIT options")
+
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu)
-
-    # these are passed through to child Ray processes
-    if nworkers == 1:
-        env_vars["RAY_DEBUG_POST_MORTEM"] = "1"
 
     ray.init(num_cpus=nworkers, logging_level="INFO", ignore_reinit_error=True, runtime_env={"env_vars": env_vars})
 

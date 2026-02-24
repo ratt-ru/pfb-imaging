@@ -28,7 +28,6 @@ from pfb_imaging.utils.naming import set_output_names, xds_from_url
 log = pfb_logging.get_logger("DEGRID")
 
 
-@pfb_logging.log_inputs(log)
 def degrid(
     ms: list[Path],
     output_filename: str,
@@ -57,12 +56,16 @@ def degrid(
     degrid one image per band.
     If channels-per-image is provided, the model is evaluated from the mds.
     """
+    # to log options
+    opts_dict = locals().copy()
 
     output_filename, _, log_directory, _ = set_output_names(
         output_filename,
         product,
         log_directory=log_directory,
     )
+    opts_dict["output_filename"] = output_filename
+    opts_dict["log_directory"] = log_directory
 
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True)
@@ -71,6 +74,8 @@ def degrid(
         nthreads //= 2
         ncpu //= 2
     resize_thread_pool(nthreads)
+    opts_dict["nthreads"] = nthreads
+    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
 
     msnames = []
     for ms_name in ms:
@@ -82,6 +87,7 @@ def degrid(
         except Exception:
             log.error_and_raise(f"No MS at {ms_name}", ValueError)
     ms = msnames
+    opts_dict["ms"] = ms
 
     basename = output_filename
 
@@ -94,6 +100,7 @@ def degrid(
         except Exception:
             log.error_and_raise(f"No mds at {mds}", ValueError)
     mds = mds_store.url
+    opts_dict["mds"] = mds
 
     dds_store = DaskMSStore(f"{basename}_{suffix}.dds")
     if channels_per_image is None and not mds_store.exists():
@@ -114,6 +121,8 @@ def degrid(
     logname = f"{str(log_directory)}/degrid_{timestamp}.log"
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
+
+    log.log_options_dict(opts_dict, title="DEGRID options")
 
     # we still need the collections interface for xds_to_table
     client = set_client(nworkers, log, host_address=host_address, client_log_level=log_directory)

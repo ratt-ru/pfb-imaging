@@ -15,7 +15,6 @@ from pfb_imaging.utils.restoration import rrestore_image
 log = pfb_logging.get_logger("RESTORE")
 
 
-@pfb_logging.log_inputs(log)
 def restore(
     output_filename: str,
     model_name: str = "MODEL",
@@ -34,18 +33,26 @@ def restore(
     """
     Create fits image cubes from data products (eg. restored images).
     """
+    # for logging options
+    opts_dict = locals().copy()
+
     output_filename, fits_output_folder, log_directory, oname = set_output_names(
         output_filename,
         product,
         fits_output_folder,
         log_directory,
     )
+    opts_dict["output_filename"] = output_filename
+    opts_dict["fits_output_folder"] = fits_output_folder
+    opts_dict["log_directory"] = log_directory
 
     nthreads_total = psutil.cpu_count(logical=True)
     ncpu = psutil.cpu_count(logical=False)
     if nthreads is None:
         nthreads = nthreads_total // 2
         ncpu = ncpu // 2
+    opts_dict["nthreads"] = nthreads
+    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
 
     resize_thread_pool(nthreads)
     set_envs(nthreads, ncpu)
@@ -54,6 +61,7 @@ def restore(
     logname = f"{log_directory}/restore_{timestamp}.log"
     pfb_logging.log_to_file(logname)
     log.info(f"Logs will be written to {logname}")
+    log.log_options_dict(opts_dict, title="RESTORE options")
 
     # these are passed through to child Ray processes
     renv = {"env_vars": {}}
