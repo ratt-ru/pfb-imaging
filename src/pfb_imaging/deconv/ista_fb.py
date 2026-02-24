@@ -1,6 +1,6 @@
 import numpy as np
 
-from .forward_backward import ForwardBackward
+from pfb_imaging.opt.forward_backward import ForwardBackward
 
 
 class ISTA(ForwardBackward):
