@@ -12,7 +12,7 @@ With the environment activated, update pip etc.
 
 :code:`pip install -U pip setuptools wheel`
 
-Now install the package 
+Now install the package
 
 :code:`pip install pfb-imaging`
 
@@ -20,7 +20,7 @@ For maximum performance it is strongly recommended to install ducc in no binary 
 
 :code:`pip install ducc0 --no-binary ducc0`
 
-This might take some time to compile. 
+This might take some time to compile.
 
 Quick start
 ~~~~~~~~~~~
@@ -29,19 +29,19 @@ The easiest way to use ``pfb-imaging`` is via the stimela recipes given in the `
 Once the package is installed, a recipe can be queried for its input and output parameters using the ``stimela doc`` command.
 For example, to see the inputs and outputs of the ``sara`` recipe, simply run
 
-:code:`stimela doc pfb-imaging/recipes/sara.yml`
+:code:`stimela doc 'pfb_imaging.recipes::sara.yaml'`
 
 The recipe can then be run with the ``stimela run`` command.
-For example, to run the recipe with all parameters set to the defaults, use 
+For example, to run the recipe with all parameters set to the defaults, use
 
-:code:`stimela run pfb-imaging/recipes/sara.yml sara ms=path/to/data.ms base-dir=path/to/base/output/directory image-name=saraout`
+:code:`stimela run 'pfb_imaging.recipes::sara.yaml' sara ms=path/to/data.ms base-dir=path/to/base/output/directory image-name=saraout`
 
-The recipe should contain sensible defaults for MeerKAT data at L-band. 
+The recipe should contain sensible defaults for MeerKAT data at L-band.
 Note that the recipe exposes a minimal set of functional parameters.
 More exotic parameters appear lower down in the list and some parameters are not exposed at all.
 These can be exposed by passing the ``--obscure`` flag to `stimela doc`
 
-:code:`stimela doc --obscure pfb-imaging/recipes/sara.yml`
+:code:`stimela doc --obscure 'pfb_imaging.recipes::sara.yaml'`
 
 These can be specified explicitly either by setting it from the command line or by adding (or adjusting) it in the recipe schema.
 Usage through stimela is still a bit limited as the structure of the recipe is fixed (although steps can be run in isolation if required, see `stimela run --help` for further details).
