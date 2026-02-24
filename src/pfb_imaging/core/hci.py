@@ -807,24 +807,18 @@ def make_dummy_dataset(
 
     if psf_out:
         psf_dims = (n_stokes, n_freqs, n_times, ny_psf, nx_psf)
-        if psf_relative_size == 1:
-            xpsf = "X"
-            ypsf = "Y"
-        else:
-            xpsf = "X_PSF"
-            ypsf = "Y_PSF"
-            dummy_ds = dummy_ds.assign_coords(
-                {
-                    "Y_PSF": ((ypsf,), out_dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg),
-                    "X_PSF": ((xpsf,), out_ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg),
-                }
-            )
+        dummy_ds = dummy_ds.assign_coords(
+            {
+                "Y_PSF": (("Y_PSF",), out_dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg),
+                "X_PSF": (("X_PSF",), out_ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg),
+            }
+        )
         dummy_ds["psf"] = (
-            ("STOKES", "FREQ", "TIME", ypsf, xpsf),
+            ("STOKES", "FREQ", "TIME", "Y_PSF", "X_PSF"),
             da.empty(psf_dims, chunks=cube_chunks, dtype=np.float32),
         )
         dummy_ds["psf2"] = (
-            ("STOKES", ypsf, xpsf),
+            ("STOKES", "Y_PSF", "X_PSF"),
             da.empty((n_stokes, ny_psf, nx_psf), chunks=(n_stokes, spatial_chunk, spatial_chunk), dtype=np.float32),
         )
 

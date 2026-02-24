@@ -137,7 +137,7 @@ def _compute_counts(
                 wrf = wgt_row[:, f]
 
                 # LB - is there an easier check for this?
-                if (u_idx < 0) or (u_idx > nx) or (v_idx < 0) or (v_idx > ny):
+                if (u_idx < 0) or (u_idx >= nx) or (v_idx < 0) or (v_idx >= ny):
                     # out of bounds so continue.
                     # raising an error means we can't grid at sub-Nyquist
                     continue
@@ -208,7 +208,7 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny, cell_size_x, cell
         wgt_row = weight[:, r]
         mask_row = mask[r]
         for f in range(nchan):
-            if not mask_row[f]:
+            if mask_row[f] == 0:
                 continue
             # current uv coords
             chan_normfreq = freq[f] / lightspeed
@@ -225,7 +225,7 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny, cell_size_x, cell
             u_idx = np.int32(np.floor(ug))
             v_idx = np.int32(np.floor(vg))
 
-            if (u_idx < 0) or (u_idx > nx) or (v_idx < 0) or (v_idx > ny):
+            if (u_idx < 0) or (u_idx >= nx) or (v_idx < 0) or (v_idx >= ny):
                 # out of bounds so continue.
                 # raising an error means we can't grid at sub-Nyquist
                 continue

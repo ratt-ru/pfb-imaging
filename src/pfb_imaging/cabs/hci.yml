@@ -2,7 +2,7 @@ cabs:
   hci:
     flavour: python
     command: pfb_imaging.core.hci.hci
-    image: ghcr.io/ratt-ru/pfb-imaging:typer
+    image: ghcr.io/ratt-ru/pfb-imaging:HEAD
     name: hci
     info:
       High cadence imaging algorithm.

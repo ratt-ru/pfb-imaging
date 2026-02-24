@@ -2,7 +2,7 @@ cabs:
   init:
     flavour: python
     command: pfb_imaging.core.init.init
-    image: ghcr.io/ratt-ru/pfb-imaging:typer
+    image: ghcr.io/ratt-ru/pfb-imaging:HEAD
     name: init
     info:
       Initialise Stokes data products.

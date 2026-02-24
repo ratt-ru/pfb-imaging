@@ -620,6 +620,8 @@ def stokes_image(
     # between epsilon on the wplanar threshold parameter.
     for c in range(nstokes):
         wsum[c] = weight[c, ~flag].sum()
+        if wsum[c] == 0:
+            continue
         vis2dirty(
             uvw=uvw,
             freq=freq,
@@ -684,7 +686,7 @@ def stokes_image(
         residual = cg(hess, residual / wsum[:, None, None], tol=cg_tol, maxiter=cg_maxit)[0]
 
     else:
-        residual /= wsum[:, None, None]
+        np.divide(residual, wsum[:, None, None], out=residual, where=wsum[:, None, None] > 0)
         residual *= pbeam / (pbeam**2 + eta)
 
     rms = np.std(residual, axis=(1, 2))
@@ -715,14 +717,14 @@ def stokes_image(
     if psf_out:
         coords["X_PSF"] = (("X_PSF",), ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg)
         coords["Y_PSF"] = (("Y_PSF",), dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg)
-        psf /= wsum[:, None, None]
+        np.divide(psf, wsum[:, None, None], out=psf, where=wsum[:, None, None] > 0)
         psf = np.transpose(psf.astype(np.float32), axes=(0, 2, 1))
         data_vars["psf"] = (("STOKES", "FREQ", "TIME", "Y_PSF", "X_PSF"), psf[:, None, None, :, :])
 
     if robustness is not None and weight_grid_out:
         ic, ix, iy = np.where(counts > 0)
         wgt = np.zeros_like(counts)
-        wgt[ic, ix, iy] = 1.0 / counts[ic, ix, iy]
+        np.divide(1.0, counts, out=wgt, where=counts > 0)
         coords["X_PAD"] = (("X_PAD",), np.arange(nx_pad) * cell_deg)
         coords["Y_PAD"] = (("Y_PAD",), np.arange(ny_pad) * cell_deg)
         wgt = np.transpose(wgt.astype(np.float32), axes=(0, 2, 1))

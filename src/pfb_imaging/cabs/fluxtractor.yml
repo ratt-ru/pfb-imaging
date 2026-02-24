@@ -2,7 +2,7 @@ cabs:
   fluxtractor:
     flavour: python
     command: pfb_imaging.core.fluxtractor.fluxtractor
-    image: ghcr.io/ratt-ru/pfb-imaging:typer
+    image: ghcr.io/ratt-ru/pfb-imaging:HEAD
     name: fluxtractor
     info:
       Otherwise knows as the fluxmop.
