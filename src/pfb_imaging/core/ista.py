@@ -438,5 +438,5 @@ def ista(
         )
         log.info("Done writing UPDATE")
 
-    log.info(f"Numba used the {threading_layer()} threading layer")
+    # log.info(f"Numba used the {threading_layer()} threading layer")
     log.info(f"All done after {time.time() - time_start}s")

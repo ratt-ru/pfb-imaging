@@ -14,7 +14,7 @@ from numba import threading_layer
 from pfb_imaging import set_envs
 from pfb_imaging.operators.gridder import compute_residual
 from pfb_imaging.operators.hessian import HessPSF
-from pfb_imaging.opt.ista import ISTA
+from pfb_imaging.deconv.ista_fb import ISTA
 from pfb_imaging.opt.power_method import power_method
 from pfb_imaging.prox.prox_airi import ProxOpAIRI
 from pfb_imaging.utils import logging as pfb_logging
