@@ -2,7 +2,7 @@ cabs:
   degrid:
     flavour: python
     command: pfb_imaging.core.degrid.degrid
-    image: ghcr.io/ratt-ru/pfb-imaging:HEAD
+    image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: degrid
     info:
       Degrid visibilities from model image(s) into measurement set.

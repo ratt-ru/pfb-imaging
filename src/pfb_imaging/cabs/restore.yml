@@ -2,7 +2,7 @@ cabs:
   restore:
     flavour: python
     command: pfb_imaging.core.restore.restore
-    image: ghcr.io/ratt-ru/pfb-imaging:HEAD
+    image: ghcr.io/ratt-ru/pfb-imaging:typer
     name: restore
     info:
       Restore model images and.or convolved images to common resolution.
