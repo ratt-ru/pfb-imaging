@@ -121,7 +121,6 @@ def hci(
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/hci_{timestamp}.log"
     pfb_logging.log_to_file(logname)
-    log.info(f"Logs will be written to {logname}")
 
     if nthreads is None:
         nthreads = psutil.cpu_count(logical=True)
@@ -683,6 +682,9 @@ def make_dummy_dataset(
     n_stokes = len(set(product))
     n_times = out_times.size
     n_freqs = out_freqs.size
+
+    # gaurd against chunk sizes larger than the image size
+    spatial_chunk = np.minimum(spatial_chunk, min(nx, ny, nx_psf, ny_psf))
 
     cube_dims = (n_stokes, n_freqs, n_times, ny, nx)
     cube_chunks = (n_stokes, 1, images_per_chunk, spatial_chunk, spatial_chunk)

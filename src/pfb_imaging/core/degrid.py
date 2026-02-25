@@ -120,7 +120,6 @@ def degrid(
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/degrid_{timestamp}.log"
     pfb_logging.log_to_file(logname)
-    log.info(f"Logs will be written to {logname}")
 
     log.log_options_dict(opts_dict, title="DEGRID options")
 

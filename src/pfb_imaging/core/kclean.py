@@ -80,7 +80,6 @@ def kclean(
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/kclean_{timestamp}.log"
     pfb_logging.log_to_file(logname)
-    log.info(f"Logs will be written to {logname}")
 
     log.log_options_dict(opts_dict, title="KCLEAN options")
 

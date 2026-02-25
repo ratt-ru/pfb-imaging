@@ -467,7 +467,10 @@ def stokes_image(
         wcount = mask.sum()
         if wcount:
             ovar = ressq.sum() / wcount  # use 67% quantile?
-            weight = (l2_reweight_dof + 1) / (l2_reweight_dof + ressq / ovar) / ovar
+            if ovar > 0:
+                weight = (l2_reweight_dof + 1) / (l2_reweight_dof + ressq / ovar) / ovar
+            else:
+                raise ValueError("Residual visibilities are exactly zero. Cannot compute L2 reweighting.")
         else:
             weight = None
 
@@ -671,6 +674,13 @@ def stokes_image(
             verbosity=0,
             dirty=psf[c],
         )
+        # normalize by sum of weights to get Jy/beam units
+        rms = np.zeros(nstokes, dtype=real_type)
+        for c in range(nstokes):
+            if wsum[c] > 0:
+                psf[c] /= wsum[c]
+                residual[c] /= wsum[c]
+                rms[c] = np.std(residual[c], axis=(0, 1))
 
     # these will be in degrees
     gausspars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
@@ -679,22 +689,14 @@ def stokes_image(
         # TODO - add beam application
         ifftshift = jnp.fft.ifftshift
 
-        abspsf = jnp.abs(jnp.fft.rfft2(ifftshift(psf / wsum[:, None, None], axes=(1, 2)), axes=(1, 2), norm="backward"))
+        abspsf = jnp.abs(jnp.fft.rfft2(ifftshift(psf, axes=(1, 2)), axes=(1, 2), norm="backward"))
 
         hess = partial(hessian_jax, nx, ny, 2 * nx, 2 * ny, eta, abspsf)
 
-        residual = cg(hess, residual / wsum[:, None, None], tol=cg_tol, maxiter=cg_maxit)[0]
+        residual = cg(hess, residual, tol=cg_tol, maxiter=cg_maxit)[0]
 
     else:
-        for c in range(nstokes):
-            if wsum[c] > 0:
-                residual[c] /= wsum[c]
         residual *= pbeam / (pbeam**2 + eta)
-
-    rms = np.zeros_like(wsum)
-    for c in range(nstokes):
-        if wsum[c] > 0:
-            rms[c] = np.std(residual[c], axis=(0, 1))
 
     unix_time = quantity(f"{time_out}s").to_unix_time()
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -722,9 +724,6 @@ def stokes_image(
     if psf_out:
         coords["X_PSF"] = (("X_PSF",), ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg)
         coords["Y_PSF"] = (("Y_PSF",), dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg)
-        for c in range(nstokes):
-            if wsum[c] > 0:
-                psf[c] /= wsum[c]
         psf = np.transpose(psf.astype(np.float32), axes=(0, 2, 1))
         data_vars["psf"] = (("STOKES", "FREQ", "TIME", "Y_PSF", "X_PSF"), psf[:, None, None, :, :])
 

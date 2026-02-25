@@ -64,7 +64,6 @@ def model2comps(
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/model2comps_{timestamp}.log"
     pfb_logging.log_to_file(logname)
-    log.info(f"Logs will be written to {logname}")
 
     ti = time.time()
     if from_fits:
