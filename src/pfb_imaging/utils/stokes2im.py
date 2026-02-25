@@ -686,10 +686,15 @@ def stokes_image(
         residual = cg(hess, residual / wsum[:, None, None], tol=cg_tol, maxiter=cg_maxit)[0]
 
     else:
-        np.divide(residual, wsum[:, None, None], out=residual, where=wsum[:, None, None] > 0)
+        for c in range(nstokes):
+            if wsum[c] > 0:
+                residual[c] /= wsum[c]
         residual *= pbeam / (pbeam**2 + eta)
 
-    rms = np.std(residual, axis=(1, 2))
+    rms = np.zeros_like(wsum)
+    for c in range(nstokes):
+        if wsum[c] > 0:
+            rms[c] = np.std(residual[c], axis=(0, 1))
 
     unix_time = quantity(f"{time_out}s").to_unix_time()
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -717,14 +722,16 @@ def stokes_image(
     if psf_out:
         coords["X_PSF"] = (("X_PSF",), ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg)
         coords["Y_PSF"] = (("Y_PSF",), dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg)
-        np.divide(psf, wsum[:, None, None], out=psf, where=wsum[:, None, None] > 0)
+        for c in range(nstokes):
+            if wsum[c] > 0:
+                psf[c] /= wsum[c]
         psf = np.transpose(psf.astype(np.float32), axes=(0, 2, 1))
         data_vars["psf"] = (("STOKES", "FREQ", "TIME", "Y_PSF", "X_PSF"), psf[:, None, None, :, :])
 
     if robustness is not None and weight_grid_out:
         ic, ix, iy = np.where(counts > 0)
         wgt = np.zeros_like(counts)
-        np.divide(1.0, counts, out=wgt, where=counts > 0)
+        wgt[ic, ix, iy] = 1.0 / counts[ic, ix, iy]
         coords["X_PAD"] = (("X_PAD",), np.arange(nx_pad) * cell_deg)
         coords["Y_PAD"] = (("Y_PAD",), np.arange(ny_pad) * cell_deg)
         wgt = np.transpose(wgt.astype(np.float32), axes=(0, 2, 1))

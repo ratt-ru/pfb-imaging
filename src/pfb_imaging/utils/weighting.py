@@ -231,8 +231,9 @@ def counts_to_weights(counts, uvw, freq, weight, mask, nx, ny, cell_size_x, cell
                 continue
 
             # counts can be zero if there are zero weights
-            if not np.any(counts[:, u_idx, v_idx] == 0):
-                wgt_row[:, f] /= counts[:, u_idx, v_idx]
+            for c in range(ncorr):
+                if counts[c, u_idx, v_idx] > 0:
+                    wgt_row[c, f] /= counts[c, u_idx, v_idx]
 
     return weight
 
