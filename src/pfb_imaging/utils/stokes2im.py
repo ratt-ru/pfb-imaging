@@ -616,6 +616,7 @@ def stokes_image(
     wsum = np.zeros(nstokes)
     residual = np.zeros((nstokes, nx, ny), dtype=real_type)
     psf = np.zeros((nstokes, nx_psf, ny_psf), dtype=real_type)
+    rms = np.zeros(nstokes, dtype=real_type)
     # TODO - the wgridder doesn't check if wgridding is actually
     # required and always makes a minimum of nsupp number of wplanes
     # where nsupp is the gridding kernel support. We could check this
@@ -675,7 +676,6 @@ def stokes_image(
             dirty=psf[c],
         )
         # normalize by sum of weights to get Jy/beam units
-        rms = np.zeros(nstokes, dtype=real_type)
         for c in range(nstokes):
             if wsum[c] > 0:
                 psf[c] /= wsum[c]
