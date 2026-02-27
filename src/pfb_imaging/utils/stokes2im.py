@@ -676,6 +676,7 @@ def stokes_image(
             dirty=psf[c],
         )
         # normalize by sum of weights to get Jy/beam units
+        # TODO - test with psf.max() when running sub-Nyquist
         for c in range(nstokes):
             if wsum[c] > 0:
                 psf[c] /= wsum[c]

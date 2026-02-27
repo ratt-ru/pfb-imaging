@@ -209,6 +209,7 @@ def restore(
             do_mfs="i" in outputs,
             do_cube="I" in outputs,
             psfpars_mfs=psfpars_mfs,
+            force_unit="Jy/beam",
         )
         tasks.append(task)
 

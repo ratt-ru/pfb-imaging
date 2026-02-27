@@ -8,6 +8,7 @@ from astropy.time import Time
 from astropy.wcs import WCS
 from casacore.quanta import quantity
 
+from pfb_imaging import pfb_version
 from pfb_imaging.utils.naming import xds_from_list
 
 
@@ -114,7 +115,7 @@ def set_wcs(
         header.update(wcs_header)
 
         header["RESTFRQ"] = ref_freq
-        header["ORIGIN"] = "pfb-imaging"
+        header["ORIGIN"] = f"pfb-imaging: v{pfb_version}"
         header["SPECSYS"] = "TOPOCENT"
         if ms_time is not None:
             # TODO - probably a round about way of doing this
@@ -236,13 +237,24 @@ def rdds2fits(*args, **kwargs):
 
 
 def dds2fits(
-    dsl, column, outname, norm_wsum=True, otype=np.float32, nthreads=1, do_mfs=True, do_cube=True, psfpars_mfs=None
+    dsl,
+    column,
+    outname,
+    norm_wsum=True,
+    otype=np.float32,
+    nthreads=1,
+    do_mfs=True,
+    do_cube=True,
+    psfpars_mfs=None,
+    force_unit=None,
 ):
     basename = outname + "_" + column.lower()
     if norm_wsum:
         unit = "Jy/beam"
     else:
         unit = "Jy/pixel"
+    if force_unit is not None:
+        unit = force_unit
     dds = xds_from_list(dsl, drop_all_but=[column, "PSFPARSN", "WSUM"], nthreads=nthreads, order_freq=False)
     timeids = np.unique(np.array([int(ds.timeid) for ds in dds]))
     freqs = [ds.freq_out for ds in dds]
@@ -266,6 +278,8 @@ def dds2fits(
         if do_mfs:
             # we need a single freq_mfs for the cube
             freq_mfs = np.sum(freqs[:, None] * wsums) / wsum.sum()
+            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_mfs, unit=unit, ms_time=dsb.time_out)
+            hdr["WSUM"] = wsum
             if norm_wsum:
                 # already weighted by wsum
                 cube_mfs = np.sum(cube, axis=0) / wsum[:, None, None]
@@ -274,8 +288,6 @@ def dds2fits(
                 cube_mfs = np.sum(cube * wsums[:, :, None, None], axis=0) / wsum[:, None, None]
 
             name = basename + f"_time{dsb.timeid}_mfs.fits"
-            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_mfs, unit=unit, ms_time=dsb.time_out)
-            # hdr['WSUM'] = wsum
             if psfpars_mfs is not None:
                 da_mfs = xr.DataArray(
                     data=np.array(psfpars_mfs[dsb.timeid])[None, :, :],
@@ -292,6 +304,8 @@ def dds2fits(
                 cube = cube / wsums[:, :, None, None]
             name = basename + f"_time{dsb.timeid}.fits"
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freqs, unit=unit, ms_time=dsb.time_out)
+            for i in range(nband):
+                hdr[f"WSUM{i + 1}"] = wsums[i]
 
             if "PSFPARSN" in dsb:
                 beams_hdu = create_beams_table(dsb.PSFPARSN, cell2deg=cell_deg)

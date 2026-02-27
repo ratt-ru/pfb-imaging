@@ -11,7 +11,7 @@ from astropy.io import fits
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 
-from pfb_imaging import set_envs
+from pfb_imaging import pfb_version, set_envs
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import save_fits, set_wcs
 from pfb_imaging.utils.modelspec import eval_coeffs_to_slice, fit_image_cube
@@ -288,6 +288,7 @@ def _model2comps(
         "freqs": (("f",), mfreqs),
     }
     attrs = {
+        "pfb-imaging-version": pfb_version,
         "spec": "genesis",
         "cell_rad_x": cell_rad,
         "cell_rad_y": cell_rad,
@@ -579,6 +580,7 @@ def _model2comps_fits(
         "freqs": (("f",), mfreqs),
     }
     attrs = {
+        "pfb-imaging-version": pfb_version,
         "spec": "genesis",
         "cell_rad_x": cell_rad,
         "cell_rad_y": cell_rad,

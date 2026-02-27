@@ -38,7 +38,7 @@ cabs:
           The default resolution is the native resolution in each imaging band.
           This parameter can be used to homogenise the resolution of the cubes.
           Set to (0,0,0) to use the resolution of the lowest band.
-        dtype: List[float]
+        dtype: Tuple[float, float, float]
       drop-bands:
         info:
           List of bands to discard.

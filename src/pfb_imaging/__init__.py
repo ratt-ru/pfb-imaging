@@ -1,7 +1,10 @@
 import importlib
 import logging
 import os
+from importlib.metadata import version
 from pathlib import Path
+
+pfb_version = version("pfb-imaging")
 
 
 def set_envs(nthreads, ncpu):

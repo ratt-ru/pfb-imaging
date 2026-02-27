@@ -151,7 +151,7 @@ def convolve2gaussres(image, xx, yy, gaussparf, nthreads=1, gausspari=None, pfra
     nthreads    - number of threads to use for the FFT's.
     pfrac       - padding used for the FFT based convolution.
                   Will pad by pfrac/2 on both sides of image
-    norm_kernel -
+    norm_kernel - Normalise the Gaussian kernel to have volume 1.
     """
     nband, nx, ny = image.shape
     if gausspari is not None and len(gausspari) != nband:

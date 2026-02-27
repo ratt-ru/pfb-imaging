@@ -9,7 +9,7 @@ from africanus.coordinates import radec_to_lm
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 
-from pfb_imaging import set_envs
+from pfb_imaging import pfb_version, set_envs
 from pfb_imaging.operators.gridder import rimage_data_products, wgridder_conventions
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.astrometry import get_coordinates
@@ -325,6 +325,7 @@ def grid(
             tdec = ds.dec
 
         attrs = {
+            "pfb-imaging-version": pfb_version,
             "ra": tra,
             "dec": tdec,
             "l0": l0,
@@ -490,7 +491,7 @@ def grid(
                 psfpars_mfs=psfparsn,
             )
             tasks.append(fut)
-        if residual and "RESIDUAL" in dds[0]:
+        if residual and "MODEL" in dds[0]:
             fut = rdds2fits.remote(
                 dds_list,
                 "MODEL",
@@ -502,7 +503,7 @@ def grid(
                 psfpars_mfs=psfparsn,
             )
             tasks.append(fut)
-        if "MODEL" in dds[0]:
+        if "RESIDUAL" in dds[0]:
             fut = rdds2fits.remote(
                 dds_list,
                 "RESIDUAL",

@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo.utils.decorators import stimela_cab, stimela_output
+from hip_cargo import ListInt, parse_list_int, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 URI = NewType("URI", Path)
@@ -66,41 +66,29 @@ def hci(
         ),
     ] = "I",
     scans: Annotated[
-        str | None,
+        ListInt | None,
         typer.Option(
+            parser=parse_list_int,
             help="List of SCAN_NUMBERS to image. "
             "Defaults to all. "
             "Input as comma separated list 0,2 if running from CLI.",
         ),
-        {
-            "stimela": {
-                "dtype": "List[int]",
-            },
-        },
     ] = None,
     ddids: Annotated[
-        str | None,
+        ListInt | None,
         typer.Option(
+            parser=parse_list_int,
             help="List of DATA_DESC_ID's to images. "
             "Defaults to all. "
             "Input as comma separated list 0,2 if running from CLI.",
         ),
-        {
-            "stimela": {
-                "dtype": "List[int]",
-            },
-        },
     ] = None,
     fields: Annotated[
-        str | None,
+        ListInt | None,
         typer.Option(
+            parser=parse_list_int,
             help="List of FIELD_ID's to image. Defaults to all. Input as comma separated list 0,2 if running from CLI.",
         ),
-        {
-            "stimela": {
-                "dtype": "List[int]",
-            },
-        },
     ] = None,
     freq_range: Annotated[
         str | None,
@@ -411,30 +399,15 @@ def hci(
     # Lazy import the core implementation
     from pfb_imaging.core.hci import hci as hci_core  # noqa: E402
 
-    # Parse scans if provided as comma-separated string
-    scans_list = None
-    if scans is not None:
-        scans_list = [int(x.strip()) for x in scans.split(",")]
-
-    # Parse ddids if provided as comma-separated string
-    ddids_list = None
-    if ddids is not None:
-        ddids_list = [int(x.strip()) for x in ddids.split(",")]
-
-    # Parse fields if provided as comma-separated string
-    fields_list = None
-    if fields is not None:
-        fields_list = [int(x.strip()) for x in fields.split(",")]
-
     # Call the core function with all parameters
     hci_core(
         ms,
         output_dataset,
         log_directory=log_directory,
         product=product,
-        scans=scans_list,
-        ddids=ddids_list,
-        fields=fields_list,
+        scans=scans,
+        ddids=ddids,
+        fields=fields,
         freq_range=freq_range,
         overwrite=overwrite,
         transfer_model_from=transfer_model_from,

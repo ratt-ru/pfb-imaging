@@ -7,7 +7,7 @@ import xarray as xr
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 
-from pfb_imaging import set_envs
+from pfb_imaging import pfb_version, set_envs
 from pfb_imaging.opt.pcg import pcg_dds
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import load_fits, rdds2fits
@@ -221,6 +221,7 @@ def fluxtractor(
             "freqs": (("f",), freq_out),
         }
         mattrs = {
+            "pfb-imaging-version": pfb_version,
             "spec": "genesis",
             "cell_rad_x": cell_rad,
             "cell_rad_y": cell_rad,

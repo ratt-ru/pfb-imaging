@@ -20,7 +20,7 @@ from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 from zarr import ProcessSynchronizer
 
-from pfb_imaging import set_envs
+from pfb_imaging import pfb_version, set_envs
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.misc import construct_mappings, set_image_size
 from pfb_imaging.utils.stokes2im import batch_stokes_image
@@ -683,7 +683,7 @@ def make_dummy_dataset(
     n_times = out_times.size
     n_freqs = out_freqs.size
 
-    # gaurd against chunk sizes larger than the image size
+    # guard against chunk sizes larger than the image size
     spatial_chunk = np.minimum(spatial_chunk, min(nx, ny, nx_psf, ny_psf))
 
     cube_dims = (n_stokes, n_freqs, n_times, ny, nx)
@@ -739,6 +739,7 @@ def make_dummy_dataset(
 
     # if we don't pass these into stokes2im they get overwritten
     attrs = {
+        "pfb-imaging-version": pfb_version,
         "fits_header": list(dict(hdr).items()),
         "radec_dims": (ra_dim, dec_dim),
         "fits_dims": (("X", ra_dim), ("Y", dec_dim), ("TIME", "TIME"), ("FREQ", "FREQ"), ("STOKES", "STOKES")),

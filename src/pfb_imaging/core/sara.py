@@ -10,7 +10,7 @@ from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool, thread_pool_size
 from numba import threading_layer
 
-from pfb_imaging import set_envs
+from pfb_imaging import pfb_version, set_envs
 from pfb_imaging.operators.gridder import compute_residual
 from pfb_imaging.operators.hessian import HessPSF
 from pfb_imaging.operators.psi import Psi
@@ -338,6 +338,7 @@ def sara(
                 "freqs": (("f",), freq_out),
             }
             mattrs = {
+                "pfb-imaging-version": pfb_version,
                 "spec": "genesis",
                 "cell_rad_x": cell_rad,
                 "cell_rad_y": cell_rad,

@@ -10,6 +10,7 @@ from katbeam import JimBeam
 from scipy import ndimage
 from scipy.constants import c as lightspeed
 
+from pfb_imaging import pfb_version
 from pfb_imaging.utils.weighting import weight_data
 
 
@@ -344,6 +345,7 @@ def stokes_vis(
     utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     attrs = {
+        "pfb-imaging-version": pfb_version,
         "ra": radec[0],
         "dec": radec[1],
         "fieldid": fieldid,

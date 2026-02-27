@@ -8,7 +8,7 @@ from ducc0.misc import resize_thread_pool
 from numba import set_num_threads
 from scipy import ndimage
 
-from pfb_imaging import set_envs
+from pfb_imaging import pfb_version, set_envs
 from pfb_imaging.deconv.clark import clark
 from pfb_imaging.operators.gridder import compute_residual
 from pfb_imaging.operators.hessian import HessPSF
@@ -242,6 +242,7 @@ def kclean(
                 "freqs": (("f",), freq_out),
             }
             attrs = {
+                "pfb-imaging-version": pfb_version,
                 "spec": "genesis",
                 "cell_rad_x": cell_rad,
                 "cell_rad_y": cell_rad,
