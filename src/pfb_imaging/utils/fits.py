@@ -306,7 +306,7 @@ def dds2fits(
                 freq_mfs,
                 unit=unit,
                 ms_time=dsb.time_out,
-                gausspar=psfpars_mfs[dsb.timeid][0],
+                gausspar=psfpars_mfs[dsb.timeid][0] if psfpars_mfs is not None else None,
             )  # always Stokes I in the header
             hdr["WSUM"] = wsum[0]  # always Stokes I in the header
             if norm_wsum:
@@ -356,8 +356,8 @@ def dds2fits(
                 freqs,
                 unit=unit,
                 ms_time=dsb.time_out,
-                gausspar=psfpars_mfs[dsb.timeid][0],  # always Stokes I in the header
-                gausspars=psfparsf.values[:, 0],
+                gausspar=psfpars_mfs[dsb.timeid][0] if psfpars_mfs is not None else None,  # always Stokes I in header
+                gausspars=psfparsf.values[:, 0] if psfparsf is not None else None,
             )  # always Stokes I in the header
             for i in range(nband):
                 hdr[f"WSUM{i + 1}"] = wsums[i, 0]  # always Stokes I value in fits header
