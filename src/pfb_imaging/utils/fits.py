@@ -52,7 +52,19 @@ def save_fits(data, name, hdr, overwrite=True, dtype=np.float32, beams_hdu=None)
 
 
 def set_wcs(
-    cell_x, cell_y, nx, ny, radec, freq, unit="Jy/beam", gausspar=None, ms_time=None, header=True, casambm=True, ncorr=1
+    cell_x,
+    cell_y,
+    nx,
+    ny,
+    radec,
+    freq,
+    unit="Jy/beam",
+    gausspar=None,
+    gausspars=None,
+    ms_time=None,
+    header=True,
+    casambm=True,
+    ncorr=1,
 ):
     """
     cell_x/y - cell sizes in degrees
@@ -141,8 +153,8 @@ def set_wcs(
         if casambm:
             header["CASAMBM"] = casambm  # we need this to pick up the beams table
 
-        if gausspar is not None:
-            header = add_beampars(header, gausspar)
+        if gausspar is not None or gausspars is not None:
+            header = add_beampars(header, gausspar, gausspars=gausspars, unit2deg=cell_x)
 
         return header
     else:
@@ -161,9 +173,11 @@ def add_beampars(hdr, gausspar, gausspars=None, unit2deg=1.0):
     pfb/utils/misc/gaussian2d
 
     """
-    if len(gausspar) == 1:
+    if not isinstance(gausspar, np.ndarray):
+        gausspar = np.asarray(gausspar)
+    if len(gausspar.shape) == 2:
         gausspar = gausspar[0]
-    elif len(gausspar) != 3:
+    elif gausspar.shape[0] != 3:
         raise ValueError("Invalid value for gausspar")
 
     if not np.isnan(gausspar).any():
@@ -172,11 +186,15 @@ def add_beampars(hdr, gausspar, gausspars=None, unit2deg=1.0):
         hdr["BPA"] = gausspar[2] * 180 / np.pi
 
     if gausspars is not None:
-        for i in range(len(gausspars)):
+        gausspars = np.asarray(gausspars)
+        if len(gausspars.shape) != 2:
+            raise ValueError("gausspars should have shape (nband, 3)")
+        nband = gausspars.shape[0]
+        for i in range(nband):
             if not np.isnan(gausspars[i]).any():
-                hdr["BMAJ" + str(i + 1)] = gausspars[i][0] * unit2deg
-                hdr["BMIN" + str(i + 1)] = gausspars[i][1] * unit2deg
-                hdr["BPA" + str(i + 1)] = gausspars[i][2] * 180 / np.pi
+                hdr["BMAJ" + str(i + 1)] = gausspars[i, 0] * unit2deg
+                hdr["BMIN" + str(i + 1)] = gausspars[i, 1] * unit2deg
+                hdr["BPA" + str(i + 1)] = gausspars[i, 2] * 180 / np.pi
 
     return hdr
 
@@ -246,6 +264,7 @@ def dds2fits(
     do_mfs=True,
     do_cube=True,
     psfpars_mfs=None,
+    psfparsf=None,
     force_unit=None,
 ):
     basename = outname + "_" + column.lower()
@@ -278,8 +297,18 @@ def dds2fits(
         if do_mfs:
             # we need a single freq_mfs for the cube
             freq_mfs = np.sum(freqs[:, None] * wsums) / wsum.sum()
-            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freq_mfs, unit=unit, ms_time=dsb.time_out)
-            hdr["WSUM"] = wsum
+            hdr = set_wcs(
+                cell_deg,
+                cell_deg,
+                nx,
+                ny,
+                radec,
+                freq_mfs,
+                unit=unit,
+                ms_time=dsb.time_out,
+                gausspar=psfpars_mfs[dsb.timeid][0],
+            )  # always Stokes I in the header
+            hdr["WSUM"] = wsum[0]  # always Stokes I in the header
             if norm_wsum:
                 # already weighted by wsum
                 cube_mfs = np.sum(cube, axis=0) / wsum[:, None, None]
@@ -303,12 +332,38 @@ def dds2fits(
             if norm_wsum:
                 cube = cube / wsums[:, :, None, None]
             name = basename + f"_time{dsb.timeid}.fits"
-            hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freqs, unit=unit, ms_time=dsb.time_out)
+            if psfparsf is None:
+                psfparsf = dsb.PSFPARSN if "PSFPARSN" in dsb else None
+            else:
+                psfparsf = np.asarray(psfparsf)
+                if len(psfparsf.shape) == 2:  # shape is (ncorr, 3)
+                    assert psfparsf.shape[0] == dsb.corr.size, "Number of corr in psfparsf does not match ncorr in dds"
+                    assert psfparsf.shape[1] == 3, "psfparsf should have shape (ncorr, 3)"
+                    psfparsf = np.tile(psfparsf[None, :, :], (nband, 1, 1))  # shape is (nband, ncorr, 3)
+                elif len(psfparsf.shape) == 1:  # shape is (3,)
+                    assert psfparsf.shape[0] == 3, "psfparsf should have shape (3,) or (ncorr, 3)"
+                    psfparsf = np.tile(psfparsf[None, None, :], (nband, dsb.corr.size, 1))  # shape is (nband, ncorr, 3)
+                psfparsf = xr.DataArray(
+                    data=psfparsf,
+                    coords={"band": np.arange(nband), "corr": dsb.corr.values, "bpar": dsb.bpar.values},
+                )
+            hdr = set_wcs(
+                cell_deg,
+                cell_deg,
+                nx,
+                ny,
+                radec,
+                freqs,
+                unit=unit,
+                ms_time=dsb.time_out,
+                gausspar=psfpars_mfs[dsb.timeid][0],  # always Stokes I in the header
+                gausspars=psfparsf.values[:, 0],
+            )  # always Stokes I in the header
             for i in range(nband):
                 hdr[f"WSUM{i + 1}"] = wsums[i, 0]  # always Stokes I value in fits header
 
-            if "PSFPARSN" in dsb:
-                beams_hdu = create_beams_table(dsb.PSFPARSN, cell2deg=cell_deg)
+            if psfparsf is not None:
+                beams_hdu = create_beams_table(psfparsf, cell2deg=cell_deg)
             else:
                 beams_hdu = None
             save_fits(cube, name, hdr, overwrite=True, dtype=otype, beams_hdu=beams_hdu)

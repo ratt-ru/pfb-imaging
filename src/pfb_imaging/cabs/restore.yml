@@ -33,8 +33,7 @@ cabs:
       gausspar:
         info:
           Gaussian parameters (e-major, e-minor, position-angle) specifying restoring resolution.
-          The major and minor axes need to be specified in units of arcseconds.
-          The position-angle should be in degrees.
+          All parameters need to be specified in units of degrees.
           The default resolution is the native resolution in each imaging band.
           This parameter can be used to homogenise the resolution of the cubes.
           Set to (0,0,0) to use the resolution of the lowest band.

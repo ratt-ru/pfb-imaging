@@ -676,11 +676,13 @@ def stokes_image(
             dirty=psf[c],
         )
         # normalize by sum of weights to get Jy/beam units
-        # TODO - test with psf.max() when running sub-Nyquist
+        # done using psf_max in case some of the data points fell off the grid (sub-Nyquist imaging)
         for c in range(nstokes):
             if wsum[c] > 0:
-                psf[c] /= wsum[c]
-                residual[c] /= wsum[c]
+                psf_max = psf[c].max()
+                wsum[c] = psf_max
+                psf[c] /= psf_max
+                residual[c] /= psf_max
                 rms[c] = np.std(residual[c], axis=(0, 1))
 
     # these will be in degrees

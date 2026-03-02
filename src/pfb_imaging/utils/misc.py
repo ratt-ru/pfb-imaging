@@ -476,7 +476,7 @@ def gaussian2d(xin, yin, gausspar=(1.0, 1.0, 0.0), normalise=True, nsigma=5):
     """
     xin         - grid of x coordinates
     yin         - grid of y coordinates
-    gausspar    - (emaj, emin, pa) with emaj/emin in units x and pa in radians.
+    gausspar    - (emaj, emin, pa) with emaj/emin in units of xin/yin and pa in radians.
     normalise   - normalise kernel to have volume 1
     nsigma      - compute kernel out to this many sigmas
     """

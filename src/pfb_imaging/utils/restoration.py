@@ -43,12 +43,15 @@ def restore_image(
     xx, yy = np.meshgrid(l_coord, m_coord, indexing="ij")
     residual = ds.get(residual_name).values / wsum[:, None, None]
 
-    if gaussparf is not None:
+    # units are (pixel, pixel, radians)
+    gausspari = ds.PSFPARSN.values
+
+    if gaussparf is not None:  # passed in in pixel units
         rconv = convolve2gaussres(
-            residual, xx, yy, gaussparf, nthreads=nthreads, gausspari=ds.PSFPARSN.values, pfrac=0.2, norm_kernel=False
+            residual, xx, yy, gaussparf, nthreads=nthreads, gausspari=gausspari, pfrac=0.2, norm_kernel=False
         )
     else:
-        gaussparf = ds.PSFPARSN.values
+        gaussparf = gausspari
         rconv = residual
     mconv = convolve2gaussres(model, xx, yy, gaussparf, nthreads=nthreads, pfrac=0.2, norm_kernel=False)
 
@@ -58,3 +61,4 @@ def restore_image(
     # only write updates
     ds = ds[["IMAGE", "PSFPARSF"]]
     ds.to_zarr(ds_name[0], mode="a")
+    return gaussparf, ds.bandid
