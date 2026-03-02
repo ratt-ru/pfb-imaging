@@ -305,7 +305,7 @@ def dds2fits(
             name = basename + f"_time{dsb.timeid}.fits"
             hdr = set_wcs(cell_deg, cell_deg, nx, ny, radec, freqs, unit=unit, ms_time=dsb.time_out)
             for i in range(nband):
-                hdr[f"WSUM{i + 1}"] = wsums[i]
+                hdr[f"WSUM{i + 1}"] = wsums[i, 0]  # always Stokes I value in fits header
 
             if "PSFPARSN" in dsb:
                 beams_hdu = create_beams_table(dsb.PSFPARSN, cell2deg=cell_deg)
