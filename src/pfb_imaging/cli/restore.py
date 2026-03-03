@@ -55,7 +55,7 @@ def restore(
             help="Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty, (f)ft_residuals. "
             "Use capitals to produce corresponding cubes.",
         ),
-    ] = "mMrRiI",
+    ] = "iI",
     gausspar: Annotated[
         tuple[float, float, float] | None,
         typer.Option(

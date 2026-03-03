@@ -9,7 +9,7 @@ from ducc0.misc import resize_thread_pool
 from pfb_imaging import set_envs
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import rdds2fits
-from pfb_imaging.utils.naming import get_opts, set_output_names, xds_from_list, xds_from_url
+from pfb_imaging.utils.naming import get_opts, set_output_names, xds_from_url
 from pfb_imaging.utils.restoration import rrestore_image
 
 log = pfb_logging.get_logger("RESTORE")
@@ -110,56 +110,54 @@ def restore(
     ntime = timeids.size
     ncorr = dds[0].corr.size
     cell_deg = dds[0].cell_rad * 180 / np.pi
-    if ntime > 1:
-        log.info(f"Number of output times = {ntime}")
-        raise NotImplementedError("Multiple time ids not currently supported")
-    timeid = list(psfpars_mfs.keys())[0]
+    log.info(f"Number of output times = {ntime}")
     log.info(f"Number of output bands = {nband}")
+    for timeid in timeids:
+        # collect datasets for this timeid
+        dst = [ds for ds in dds if int(ds.timeid) == timeid]
+        # we don't want a reference to the ds lying around so pass list of ds_list to child processes instead
+        dst_list = [dsl for ds, dsl in zip(dds, dds_list) if int(ds.timeid) == timeid]
+        # need this loop before scatter to extract lowest resolution
+        if not np.array(gausspar).any():  # if gausspar is None or all elements are zero (allow float comparison)
+            emaj = 0.0
+            emin = 0.0
+            pas = []
+            for ds in dst:
+                gausspars = ds.PSFPARSN.values
+                emaj = np.maximum(emaj, gausspars[:, 0].max())
+                emin = np.maximum(emin, gausspars[:, 1].max())
+                pas.append(np.mean(gausspars[:, 2]))
+            pa = np.mean(np.array(pas))
+            log.info(
+                f"Using lowest resolution of ({emaj * cell_deg:.3e} deg, "
+                f"{emin * cell_deg:.3e} deg, {pa * 180 / np.pi:.3e} deg) for restored images"
+            )
+            # these are in pixel units
+            # restore needs corr axis
+            gaussparf = np.tile([emaj, emin, pa], (ncorr, 1))
+        elif gausspar is not None:
+            # these are passed in in degrees
+            emaj = gausspar[0]
+            emin = gausspar[1]
+            pa = gausspar[2]
+            log.info(f"Using specified resolution of ({emaj:.3e} deg, {emin:.3e} deg, {pa:.3e} deg)")
+            # convert to pixel units
+            emaj /= cell_deg
+            emin /= cell_deg
+            # convert degrees to radians
+            pa *= np.pi / 180
+            # restore needs corr axis
+            gaussparf = np.tile([emaj, emin, pa], (ncorr, 1))
 
-    if gausspar is None:
-        gaussparf = None
-        gaussparf_mfs = psfpars_mfs[timeid]
-        log.info("Using native resolution")
-    elif gausspar == (0, 0, 0):
-        # This is just to figure out what resolution to convolve to
-        dds = xds_from_list(dds_list, nthreads=nthreads, drop_all_but=["PSFPARSN"])
-        emaj = 0.0
-        emin = 0.0
-        pas = []
-        for ds in dds:
-            gausspars = ds.PSFPARSN.values
-            emaj = np.maximum(emaj, gausspars[:, 0].max())
-            emin = np.maximum(emin, gausspars[:, 1].max())
-            pas.append(np.mean(gausspars[:, 2]))
-        pa = np.mean(np.array(pas))
-        log.info(
-            f"Using lowest resolution of ({emaj * cell_deg:.3e} deg, "
-            f"{emin * cell_deg:.3e} deg, {pa * 180 / np.pi:.3e} deg) for restored images"
-        )
-        # these are in pixel units
-        gaussparf_mfs = [emaj, emin, pa]
-        gaussparf = [gaussparf_mfs] * ncorr
-    else:
-        # these are passed in in degrees
-        gaussparf_mfs = list(gausspar)
-        emaj = gaussparf_mfs[0]
-        emin = gaussparf_mfs[1]
-        pa = gaussparf_mfs[2]
-        if "i" in outputs.lower():
-            log.info(f"Using specified resolution of ({emaj:.3e} deg, {emin:.3e} deg, {pa:.3e} deg) for restored image")
-        # convert to pixel units
-        for i in range(2):
-            gaussparf_mfs[i] /= cell_deg
-        # convert to radians
-        gaussparf_mfs[2] *= np.pi / 180
-        gaussparf = [gaussparf_mfs] * ncorr
+        # create restored images
+        tasksi = []
+        for ds, ds_name in zip(dst, dst_list):
+            if gausspar is None:
+                gaussparf = ds.PSFPARSN.values
+            task = rrestore_image.remote(ds_name, model_name, residual_name, gaussparf, nthreads=nthreads)
+            tasksi.append(task)
 
-    # create restored images
-    tasksi = []
-    for ds_name in dds_list:
-        task = rrestore_image.remote(ds_name, model_name, residual_name, gaussparf=gaussparf, nthreads=nthreads)
-        tasksi.append(task)
-
+    # the loop over timeid happens inside dds2fits
     tasks = []
     if "d" in outputs.lower():
         task = rdds2fits.remote(
@@ -200,15 +198,16 @@ def restore(
         )
         tasks.append(task)
 
-    # we need to wait for tasksiI before rendering restored to fits
+    # we need to wait for tasksi before rendering restored to fits
     tasksc = ray.get(tasksi)
 
     if "i" in outputs.lower():
         # recompute the mean PSF parameters
-        psfparsf = np.zeros((nband, ncorr, 3))
-        for psfpar, bandid in tasksc:
-            psfparsf[int(bandid)] = psfpar
-        psfpars_mfs = psfparsf.mean(axis=0)
+        psfparsf = {}
+        for psfpar, bandid, timeid in tasksc:
+            psfparsf.setdefault(timeid, np.zeros((nband, ncorr, 3)))
+            psfparsf[timeid][int(bandid)] = psfpar
+        psfpars_mfs = {timeid: psfparsf[timeid].mean(axis=0) for timeid in psfparsf}
         task = rdds2fits.remote(
             dds_list,
             "IMAGE",
@@ -217,7 +216,7 @@ def restore(
             nthreads=nthreads,
             do_mfs="i" in outputs,
             do_cube="I" in outputs,
-            psfpars_mfs={timeid: psfpars_mfs},
+            psfpars_mfs=psfpars_mfs,
             psfparsf=psfparsf,
             force_unit="Jy/beam",
         )

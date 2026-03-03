@@ -128,6 +128,7 @@ def xds_from_list(ds_list, drop_vars=None, drop_all_but=None, chunks=-1, nthread
                     drop_vars.pop(drop_vars.index(var))
             xds[i] = ds.drop_vars(drop_vars, errors="ignore")
 
+    # use thread pool so all vars end up in the same process (no pickling overhead)
     futures = []
     with cf.ThreadPoolExecutor(max_workers=nthreads) as executor:
         for ds in xds:

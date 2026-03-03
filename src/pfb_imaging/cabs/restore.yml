@@ -29,7 +29,7 @@ cabs:
         info:
           Output products (m)odel, (r)esidual, (i)mage, (c)lean beam, (d)irty, (f)ft_residuals.
           Use capitals to produce corresponding cubes.
-        default: mMrRiI
+        default: iI
       gausspar:
         info:
           Gaussian parameters (e-major, e-minor, position-angle) specifying restoring resolution.

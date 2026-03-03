@@ -267,6 +267,26 @@ def dds2fits(
     psfparsf=None,
     force_unit=None,
 ):
+    """Render data variables in dds to FITS files.
+
+    Args:
+        dsl: List of dataset names.
+        column: Data variable to render.
+        outname: Output name for FITS files. Will be appended with _time{timeid}.
+        norm_wsum: If True, divide by wsum to get Jy/beam, otherwise output Jy/pixel.
+        otype: Output data type for FITS file.
+        nthreads: Number of threads to use for loading data.
+        do_mfs: If True, render the MFS image.
+        do_cube: If True, render the cube.
+        psfpars_mfs: Dict mapping timeid to MFS beam parameters (emaj, emin, pa)
+            in degrees with shape (ncorr, 3).
+        psfparsf: Dict mapping timeid to beam parameters for cube with shape
+            (nband, ncorr, 3) in degrees.
+        force_unit: If not None, override the unit in the FITS header with this value.
+
+    Returns:
+        The column name that was rendered.
+    """
     basename = outname + "_" + column.lower()
     if norm_wsum:
         unit = "Jy/beam"
@@ -293,6 +313,21 @@ def dds2fits(
         # these should be the same across band and corr axes
         radec = (dsb.ra, dsb.dec)
         cell_deg = np.rad2deg(dsb.cell_rad)
+        nband = dsb.band.size
+        ncorr = dsb.corr.size
+
+        if psfpars_mfs is not None:
+            psfpars_mfs_timeid = psfpars_mfs[dsb.timeid]
+            assert psfpars_mfs_timeid.shape == (ncorr, 3), "psfpars_mfs should have shape (ncorr, 3)"
+            da_mfs_timeid = xr.DataArray(
+                data=np.array(psfpars_mfs_timeid)[None, :, :],
+                coords={"band": np.arange(1), "corr": dsb.corr.values, "bpar": dsb.bpar.values},
+            )
+            beams_hdu = create_beams_table(da_mfs_timeid, cell2deg=cell_deg)
+            psfpars_mfs_timeid = psfpars_mfs_timeid[0]  # always Stokes I in fits header
+        else:
+            psfpars_mfs_timeid = None
+            beams_hdu = None
 
         if do_mfs:
             # we need a single freq_mfs for the cube
@@ -306,9 +341,9 @@ def dds2fits(
                 freq_mfs,
                 unit=unit,
                 ms_time=dsb.time_out,
-                gausspar=psfpars_mfs[dsb.timeid][0] if psfpars_mfs is not None else None,
-            )  # always Stokes I in the header
-            hdr["WSUM"] = wsum[0]  # always Stokes I in the header
+                gausspar=psfpars_mfs_timeid,
+            )
+            hdr["WSUM"] = wsum[0]  # always Stokes I in fits header
             if norm_wsum:
                 # already weighted by wsum
                 cube_mfs = np.sum(cube, axis=0) / wsum[:, None, None]
@@ -317,36 +352,26 @@ def dds2fits(
                 cube_mfs = np.sum(cube * wsums[:, :, None, None], axis=0) / wsum[:, None, None]
 
             name = basename + f"_time{dsb.timeid}_mfs.fits"
-            if psfpars_mfs is not None:
-                da_mfs = xr.DataArray(
-                    data=np.array(psfpars_mfs[dsb.timeid])[None, :, :],
-                    coords={"band": np.arange(1), "corr": dsb.corr.values, "bpar": dsb.bpar.values},
-                )
-                beams_hdu = create_beams_table(da_mfs, cell2deg=cell_deg)
-            else:
-                beams_hdu = None
-
             save_fits(cube_mfs, name, hdr, overwrite=True, dtype=otype, beams_hdu=beams_hdu)
 
         if do_cube:
             if norm_wsum:
                 cube = cube / wsums[:, :, None, None]
             name = basename + f"_time{dsb.timeid}.fits"
-            if psfparsf is None:
-                psfparsf = dsb.PSFPARSN if "PSFPARSN" in dsb else None
-            else:
-                psfparsf = np.asarray(psfparsf)
-                if len(psfparsf.shape) == 2:  # shape is (ncorr, 3)
-                    assert psfparsf.shape[0] == dsb.corr.size, "Number of corr in psfparsf does not match ncorr in dds"
-                    assert psfparsf.shape[1] == 3, "psfparsf should have shape (ncorr, 3)"
-                    psfparsf = np.tile(psfparsf[None, :, :], (nband, 1, 1))  # shape is (nband, ncorr, 3)
-                elif len(psfparsf.shape) == 1:  # shape is (3,)
-                    assert psfparsf.shape[0] == 3, "psfparsf should have shape (3,) or (ncorr, 3)"
-                    psfparsf = np.tile(psfparsf[None, None, :], (nband, dsb.corr.size, 1))  # shape is (nband, ncorr, 3)
-                psfparsf = xr.DataArray(
-                    data=psfparsf,
-                    coords={"band": np.arange(nband), "corr": dsb.corr.values, "bpar": dsb.bpar.values},
+            if psfparsf is not None:
+                psfparsf_timeid = psfparsf[dsb.timeid]
+                assert psfparsf_timeid.shape == (nband, ncorr, 3), "psfparsf should have shape (nband, ncorr, 3)"
+                da_timeid = xr.DataArray(
+                    data=psfparsf_timeid,
+                    coords={"band": dsb.band.values, "corr": dsb.corr.values, "bpar": dsb.bpar.values},
                 )
+                psfparsf_timeid = psfparsf_timeid[:, 0]  # always Stokes I in fits header
+                beams_hdu = create_beams_table(da_timeid, cell2deg=cell_deg)
+            else:
+                da_timeid = dsb.PSFPARSN
+                psfparsf_timeid = da_timeid.values[:, 0]  # always Stokes I in fits header
+                beams_hdu = None
+
             hdr = set_wcs(
                 cell_deg,
                 cell_deg,
@@ -356,16 +381,11 @@ def dds2fits(
                 freqs,
                 unit=unit,
                 ms_time=dsb.time_out,
-                gausspar=psfpars_mfs[dsb.timeid][0] if psfpars_mfs is not None else None,  # always Stokes I in header
-                gausspars=psfparsf.values[:, 0] if psfparsf is not None else None,
-            )  # always Stokes I in the header
+                gausspar=psfpars_mfs_timeid,
+                gausspars=psfparsf_timeid,
+            )
             for i in range(nband):
                 hdr[f"WSUM{i + 1}"] = wsums[i, 0]  # always Stokes I value in fits header
-
-            if psfparsf is not None:
-                beams_hdu = create_beams_table(psfparsf, cell2deg=cell_deg)
-            else:
-                beams_hdu = None
             save_fits(cube, name, hdr, overwrite=True, dtype=otype, beams_hdu=beams_hdu)
 
     return column
