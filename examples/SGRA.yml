@@ -1,3 +1,54 @@
-cabs:
-  init:
-    image: ghcr.io/ratt-ru/pfb-imaging
+_include:
+  - (pfb_imaging.cabs)init.yml
+  - (pfb_imaging.cabs)grid.yml
+  - (pfb_imaging.cabs)sara.yml
+  - (pfb_imaging.cabs)restore.yml
+  - (pfb_imaging.cabs)degrid.yml
+
+opts:
+  log:
+    dir: logs
+    nest: 2
+
+sara:
+  name: pfb-sara
+  info:
+    Example stimela recipe using the SARA algorithm on GC data.
+
+  # make them all the same size
+  assign:
+    cell-size: 2.0
+    nx: 6720
+    ny: 6720
+
+  assign_based_on:
+    obs:
+      sgra:
+        ms: [/home/bester/projects/GC/msdir/1590089458_sdp_l0_1024ch_SGRA.ms]
+        data-column: CORRECTED_DATA
+        tmf: /home/bester/projects/GC/output/sgra/run0_I_main_model.mds
+      gcx17:
+        ms: [/home/bester/projects/GC/msdir/1590089458_sdp_l0_1024ch_GCX17.ms]
+        data-column: CORRECTED_DATA+MODEL_DATA
+        tmf: /home/bester/projects/GC/output/gcx17/run0_I_main_model.mds
+      gcx30:
+        ms: [/home/bester/projects/GC/msdir/1590089458_sdp_l0_1024ch_GCX30.ms]
+        data-column: CORRECTED_DATA+MODEL_DATA
+        tmf: /home/bester/projects/GC/output/gcx30/run0_I_main_model.mds
+
+  inputs:
+    base-dir:
+      dtype: Directory
+      default: '/home/bester/projects/GC/output'
+      info:
+        Base directory in which to place output data products.
+    obs:
+      default: sgra
+      choices: ['sgra','gcx17','gcx30']
+      info:
+        Which observation to image. This will determine which measurement set(s) to use as input.
+    image-name:
+      dtype: str
+      default: ={recipe.obs}_I_main
+      info:
+        A descriptive name for the outputs to be placed in base-dir.

@@ -538,6 +538,14 @@ def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, exte
     First find the main lobe by identifying where PSF > level
     then fit Gaussian out to a radius of extent * max(x, y) where
     x and y are the coordinates where PSF > level.
+
+    Args:
+        psf     - (nband, nx, ny) array containing the PSF for each band.
+        level   - level at which to identify the main lobe. Should be between 0 and 1 (assumes peak of the PSF is 1).
+        pixsize - pixel size in same units as desired Gaussian parameters.
+        extent   - fit Gaussian out to this many times the radius of the main lobe. Should be a positive number.
+    Returns:
+        Array of Gaussian parameters (emaj, emin, pa) for each band in same units
     """
     nband, nx, ny = psf.shape
 
@@ -618,7 +626,7 @@ def fitcleanbeam(psf: np.ndarray, level: float = 0.5, pixsize: float = 1.0, exte
 
         gausspars.append([emaj * pixsize, emin * pixsize, pa])
 
-    return gausspars
+    return np.array(gausspars)
 
 
 def init_mask(mask, model, output_type, log):

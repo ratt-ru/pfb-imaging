@@ -266,9 +266,9 @@ def log_options_dict(logger: PFBLogger, options: Dict[str, Any], title: str = "O
     terminal_width = shutil.get_terminal_size().columns
     panel_width = terminal_width - 2
 
-    name_col = Column(justify="left")
-    spacer_col = Column(justify="center")
-    val_col = Column(justify="left")
+    name_col = Column(justify="left", overflow="fold")
+    spacer_col = Column(justify="center", overflow="fold")
+    val_col = Column(justify="left", overflow="fold")
 
     options_table = Table.grid(name_col, spacer_col, val_col, expand=True)
 

@@ -367,9 +367,12 @@ def dds2fits(
                 )
                 psfparsf_timeid = psfparsf_timeid[:, 0]  # always Stokes I in fits header
                 beams_hdu = create_beams_table(da_timeid, cell2deg=cell_deg)
-            else:
+            elif "PSFPARSN" in dsb:
                 da_timeid = dsb.PSFPARSN
                 psfparsf_timeid = da_timeid.values[:, 0]  # always Stokes I in fits header
+                beams_hdu = create_beams_table(da_timeid, cell2deg=cell_deg)
+            else:
+                psfparsf_timeid = None
                 beams_hdu = None
 
             hdr = set_wcs(
