@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, NewType
+from typing import Annotated, Literal, NewType
 
 import typer
 from hip_cargo import stimela_cab, stimela_output
@@ -10,6 +10,7 @@ Directory = NewType("Directory", Path)
 @stimela_cab(
     name="grid",
     info="Initialise image data products.",
+    image="ghcr.io/ratt-ru/pfb-imaging:typer",
 )
 @stimela_output(
     dtype="Directory",
@@ -231,46 +232,110 @@ def grid(
             help="Output fits cubes",
         ),
     ] = True,
+    backend: Annotated[
+        Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
+        typer.Option(
+            help="Execution backend.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = "auto",
+    always_pull_images: Annotated[
+        bool,
+        typer.Option(
+            help="Always pull container images, even if cached locally.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = False,
 ):
     """
     Initialise image data products.
     """
-    # Lazy import the core implementation
-    from pfb_imaging.core.grid import grid as grid_core  # noqa: E402
+    if backend == "native" or backend == "auto":
+        try:
+            # Lazy import the core implementation
+            from pfb_imaging.core.grid import grid as grid_core  # noqa: E402
 
-    # Call the core function with all parameters
-    grid_core(
-        output_filename,
-        xds=xds,
-        suffix=suffix,
-        concat_row=concat_row,
-        overwrite=overwrite,
-        transfer_model_from=transfer_model_from,
-        use_best_model=use_best_model,
-        robustness=robustness,
-        dirty=dirty,
-        psf=psf,
-        residual=residual,
-        noise=noise,
-        beam=beam,
-        weight=weight,
-        psf_oversize=psf_oversize,
-        field_of_view=field_of_view,
-        super_resolution_factor=super_resolution_factor,
-        cell_size=cell_size,
-        nx=nx,
-        ny=ny,
-        filter_counts_level=filter_counts_level,
-        target=target,
-        l2_reweight_dof=l2_reweight_dof,
-        epsilon=epsilon,
-        do_wgridding=do_wgridding,
-        double_accum=double_accum,
-        nworkers=nworkers,
-        nthreads=nthreads,
-        log_directory=log_directory,
-        product=product,
-        fits_output_folder=fits_output_folder,
-        fits_mfs=fits_mfs,
-        fits_cubes=fits_cubes,
+            # Call the core function with all parameters
+            grid_core(
+                output_filename,
+                xds=xds,
+                suffix=suffix,
+                concat_row=concat_row,
+                overwrite=overwrite,
+                transfer_model_from=transfer_model_from,
+                use_best_model=use_best_model,
+                robustness=robustness,
+                dirty=dirty,
+                psf=psf,
+                residual=residual,
+                noise=noise,
+                beam=beam,
+                weight=weight,
+                psf_oversize=psf_oversize,
+                field_of_view=field_of_view,
+                super_resolution_factor=super_resolution_factor,
+                cell_size=cell_size,
+                nx=nx,
+                ny=ny,
+                filter_counts_level=filter_counts_level,
+                target=target,
+                l2_reweight_dof=l2_reweight_dof,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                double_accum=double_accum,
+                nworkers=nworkers,
+                nthreads=nthreads,
+                log_directory=log_directory,
+                product=product,
+                fits_output_folder=fits_output_folder,
+                fits_mfs=fits_mfs,
+                fits_cubes=fits_cubes,
+            )
+            return
+        except ImportError:
+            if backend == "native":
+                raise
+
+    # Fall back to container execution
+    from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    run_in_container(
+        grid,
+        dict(
+            output_filename=output_filename,
+            xds=xds,
+            suffix=suffix,
+            concat_row=concat_row,
+            overwrite=overwrite,
+            transfer_model_from=transfer_model_from,
+            use_best_model=use_best_model,
+            robustness=robustness,
+            dirty=dirty,
+            psf=psf,
+            residual=residual,
+            noise=noise,
+            beam=beam,
+            weight=weight,
+            psf_oversize=psf_oversize,
+            field_of_view=field_of_view,
+            super_resolution_factor=super_resolution_factor,
+            cell_size=cell_size,
+            nx=nx,
+            ny=ny,
+            filter_counts_level=filter_counts_level,
+            target=target,
+            l2_reweight_dof=l2_reweight_dof,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+            nworkers=nworkers,
+            nthreads=nthreads,
+            log_directory=log_directory,
+            product=product,
+            fits_output_folder=fits_output_folder,
+            fits_mfs=fits_mfs,
+            fits_cubes=fits_cubes,
+        ),
+        backend=backend,
+        always_pull_images=always_pull_images,
     )
