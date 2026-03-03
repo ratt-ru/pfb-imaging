@@ -36,7 +36,9 @@ def kclean(
     suffix: Annotated[
         str,
         typer.Option(
-            help="Can be used to specify a custom name for the image space data products.",
+            help="Can be used to specify a custom name for the image space data products. "
+            "This is useful for distinguishing runs with different imaging paramaters. "
+            "For example, different image sizes of robustness factors.",
         ),
     ] = "main",
     mask: Annotated[
