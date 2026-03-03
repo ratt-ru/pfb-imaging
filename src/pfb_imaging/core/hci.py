@@ -17,6 +17,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from daskms import xds_from_storage_ms as xds_from_ms
 from daskms.fsspec_store import DaskMSStore
+from ducc0.fft import good_size
 from ducc0.misc import resize_thread_pool
 from zarr import ProcessSynchronizer
 
@@ -382,8 +383,16 @@ def hci(
 
     log.info("Scaffolding complete")
 
+    # get the size of the padded grid
+    nx_pad = good_size(int(min_padding * nx))
+    while nx_pad % 2:
+        nx_pad = good_size(nx_pad + 1)
+    ny_pad = good_size(int(min_padding * ny))
+    while ny_pad % 2:
+        ny_pad = good_size(ny_pad + 1)
     n_stokes = len(set(product))
     log.info(f"Cube size = (n_stokes={n_stokes}, n_freq={n_freqo}, n_time={n_timeo}, n_y={ny}, n_x={nx})")
+    log.info(f"Padded grid size = (n_y={ny_pad}, n_x={nx_pad})")
     log.info(f"Cube chunks = (n_stokes={n_stokes}, n_freq={1}, n_time={images_per_chunk}, n_y={128}, n_x={128})")
 
     if inject_transients is not None:

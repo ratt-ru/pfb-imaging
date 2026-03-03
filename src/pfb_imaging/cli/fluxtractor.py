@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, NewType
+from typing import Annotated, Literal, NewType
 
 import typer
 from hip_cargo import stimela_cab, stimela_output
@@ -10,6 +10,7 @@ Directory = NewType("Directory", Path)
 @stimela_cab(
     name="fluxtractor",
     info="Otherwise knows as the fluxmop.",
+    image="ghcr.io/ratt-ru/pfb-imaging:typer",
 )
 @stimela_output(
     dtype="Directory",
@@ -179,37 +180,92 @@ def fluxtractor(
             help="Output fits cubes",
         ),
     ] = True,
+    backend: Annotated[
+        Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
+        typer.Option(
+            help="Execution backend.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = "auto",
+    always_pull_images: Annotated[
+        bool,
+        typer.Option(
+            help="Always pull container images, even if cached locally.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = False,
 ):
     """
     Otherwise knows as the fluxmop.
     """
-    # Lazy import the core implementation
-    from pfb_imaging.core.fluxtractor import fluxtractor as fluxtractor_core  # noqa: E402
+    if backend == "native" or backend == "auto":
+        try:
+            # Lazy import the core implementation
+            from pfb_imaging.core.fluxtractor import fluxtractor as fluxtractor_core  # noqa: E402
 
-    # Call the core function with all parameters
-    fluxtractor_core(
-        output_filename,
-        suffix=suffix,
-        mask=mask,
-        zero_model_outside_mask=zero_model_outside_mask,
-        or_mask_with_model=or_mask_with_model,
-        min_model=min_model,
-        eta=eta,
-        model_name=model_name,
-        residual_name=residual_name,
-        use_psf=use_psf,
-        epsilon=epsilon,
-        do_wgridding=do_wgridding,
-        double_accum=double_accum,
-        cg_tol=cg_tol,
-        cg_maxit=cg_maxit,
-        cg_verbose=cg_verbose,
-        cg_report_freq=cg_report_freq,
-        nworkers=nworkers,
-        nthreads=nthreads,
-        log_directory=log_directory,
-        product=product,
-        fits_output_folder=fits_output_folder,
-        fits_mfs=fits_mfs,
-        fits_cubes=fits_cubes,
+            # Call the core function with all parameters
+            fluxtractor_core(
+                output_filename,
+                suffix=suffix,
+                mask=mask,
+                zero_model_outside_mask=zero_model_outside_mask,
+                or_mask_with_model=or_mask_with_model,
+                min_model=min_model,
+                eta=eta,
+                model_name=model_name,
+                residual_name=residual_name,
+                use_psf=use_psf,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                double_accum=double_accum,
+                cg_tol=cg_tol,
+                cg_maxit=cg_maxit,
+                cg_verbose=cg_verbose,
+                cg_report_freq=cg_report_freq,
+                nworkers=nworkers,
+                nthreads=nthreads,
+                log_directory=log_directory,
+                product=product,
+                fits_output_folder=fits_output_folder,
+                fits_mfs=fits_mfs,
+                fits_cubes=fits_cubes,
+            )
+            return
+        except ImportError:
+            if backend == "native":
+                raise
+
+    # Fall back to container execution
+    from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    run_in_container(
+        fluxtractor,
+        dict(
+            output_filename=output_filename,
+            suffix=suffix,
+            mask=mask,
+            zero_model_outside_mask=zero_model_outside_mask,
+            or_mask_with_model=or_mask_with_model,
+            min_model=min_model,
+            eta=eta,
+            model_name=model_name,
+            residual_name=residual_name,
+            use_psf=use_psf,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+            cg_tol=cg_tol,
+            cg_maxit=cg_maxit,
+            cg_verbose=cg_verbose,
+            cg_report_freq=cg_report_freq,
+            nworkers=nworkers,
+            nthreads=nthreads,
+            log_directory=log_directory,
+            product=product,
+            fits_output_folder=fits_output_folder,
+            fits_mfs=fits_mfs,
+            fits_cubes=fits_cubes,
+        ),
+        backend=backend,
+        always_pull_images=always_pull_images,
     )

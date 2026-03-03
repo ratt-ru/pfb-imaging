@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, NewType
+from typing import Annotated, Literal, NewType
 
 import typer
 from hip_cargo import ListInt, parse_list_int, stimela_cab, stimela_output
@@ -10,6 +10,7 @@ File = NewType("File", Path)
 @stimela_cab(
     name="restore",
     info="Restore model images and.or convolved images to common resolution.",
+    image="ghcr.io/ratt-ru/pfb-imaging:typer",
 )
 @stimela_output(
     dtype="File",
@@ -109,25 +110,68 @@ def restore(
             "The same naming conventions apply.",
         ),
     ] = None,
+    backend: Annotated[
+        Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
+        typer.Option(
+            help="Execution backend.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = "auto",
+    always_pull_images: Annotated[
+        bool,
+        typer.Option(
+            help="Always pull container images, even if cached locally.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = False,
 ):
     """
     Restore model images and.or convolved images to common resolution.
     """
-    # Lazy import the core implementation
-    from pfb_imaging.core.restore import restore as restore_core  # noqa: E402
+    if backend == "native" or backend == "auto":
+        try:
+            # Lazy import the core implementation
+            from pfb_imaging.core.restore import restore as restore_core  # noqa: E402
 
-    # Call the core function with all parameters
-    restore_core(
-        output_filename,
-        model_name=model_name,
-        residual_name=residual_name,
-        suffix=suffix,
-        outputs=outputs,
-        gausspar=gausspar,
-        drop_bands=drop_bands,
-        nworkers=nworkers,
-        nthreads=nthreads,
-        log_directory=log_directory,
-        product=product,
-        fits_output_folder=fits_output_folder,
+            # Call the core function with all parameters
+            restore_core(
+                output_filename,
+                model_name=model_name,
+                residual_name=residual_name,
+                suffix=suffix,
+                outputs=outputs,
+                gausspar=gausspar,
+                drop_bands=drop_bands,
+                nworkers=nworkers,
+                nthreads=nthreads,
+                log_directory=log_directory,
+                product=product,
+                fits_output_folder=fits_output_folder,
+            )
+            return
+        except ImportError:
+            if backend == "native":
+                raise
+
+    # Fall back to container execution
+    from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    run_in_container(
+        restore,
+        dict(
+            output_filename=output_filename,
+            model_name=model_name,
+            residual_name=residual_name,
+            suffix=suffix,
+            outputs=outputs,
+            gausspar=gausspar,
+            drop_bands=drop_bands,
+            nworkers=nworkers,
+            nthreads=nthreads,
+            log_directory=log_directory,
+            product=product,
+            fits_output_folder=fits_output_folder,
+        ),
+        backend=backend,
+        always_pull_images=always_pull_images,
     )

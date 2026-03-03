@@ -10,6 +10,7 @@ Directory = NewType("Directory", Path)
 @stimela_cab(
     name="model2comps",
     info="Convert model image to components.",
+    image="ghcr.io/ratt-ru/pfb-imaging:typer",
 )
 @stimela_output(
     dtype="Directory",
@@ -133,31 +134,80 @@ def model2comps(
             "The same naming conventions apply.",
         ),
     ] = None,
+    backend: Annotated[
+        Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
+        typer.Option(
+            help="Execution backend.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = "auto",
+    always_pull_images: Annotated[
+        bool,
+        typer.Option(
+            help="Always pull container images, even if cached locally.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = False,
 ):
     """
     Convert model image to components.
     """
-    # Lazy import the core implementation
-    from pfb_imaging.core.model2comps import model2comps as model2comps_core  # noqa: E402
+    if backend == "native" or backend == "auto":
+        try:
+            # Lazy import the core implementation
+            from pfb_imaging.core.model2comps import model2comps as model2comps_core  # noqa: E402
 
-    # Call the core function with all parameters
-    model2comps_core(
-        output_filename,
-        overwrite=overwrite,
-        mds=mds,
-        from_fits=from_fits,
-        nbasisf=nbasisf,
-        nthreads=nthreads,
-        fit_mode=fit_mode,
-        min_val=min_val,
-        suffix=suffix,
-        model_name=model_name,
-        use_wsum=use_wsum,
-        sigmasq=sigmasq,
-        model_out=model_out,
-        out_format=out_format,
-        out_freqs=out_freqs,
-        log_directory=log_directory,
-        product=product,
-        fits_output_folder=fits_output_folder,
+            # Call the core function with all parameters
+            model2comps_core(
+                output_filename,
+                overwrite=overwrite,
+                mds=mds,
+                from_fits=from_fits,
+                nbasisf=nbasisf,
+                nthreads=nthreads,
+                fit_mode=fit_mode,
+                min_val=min_val,
+                suffix=suffix,
+                model_name=model_name,
+                use_wsum=use_wsum,
+                sigmasq=sigmasq,
+                model_out=model_out,
+                out_format=out_format,
+                out_freqs=out_freqs,
+                log_directory=log_directory,
+                product=product,
+                fits_output_folder=fits_output_folder,
+            )
+            return
+        except ImportError:
+            if backend == "native":
+                raise
+
+    # Fall back to container execution
+    from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    run_in_container(
+        model2comps,
+        dict(
+            output_filename=output_filename,
+            overwrite=overwrite,
+            mds=mds,
+            from_fits=from_fits,
+            nbasisf=nbasisf,
+            nthreads=nthreads,
+            fit_mode=fit_mode,
+            min_val=min_val,
+            suffix=suffix,
+            model_name=model_name,
+            use_wsum=use_wsum,
+            sigmasq=sigmasq,
+            model_out=model_out,
+            out_format=out_format,
+            out_freqs=out_freqs,
+            log_directory=log_directory,
+            product=product,
+            fits_output_folder=fits_output_folder,
+        ),
+        backend=backend,
+        always_pull_images=always_pull_images,
     )

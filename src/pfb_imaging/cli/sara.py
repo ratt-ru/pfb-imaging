@@ -10,6 +10,7 @@ Directory = NewType("Directory", Path)
 @stimela_cab(
     name="sara",
     info="pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.",
+    image="ghcr.io/ratt-ru/pfb-imaging:typer",
 )
 @stimela_output(
     dtype="Directory",
@@ -282,53 +283,124 @@ def sara(
             help="Output fits cubes",
         ),
     ] = True,
+    backend: Annotated[
+        Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
+        typer.Option(
+            help="Execution backend.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = "auto",
+    always_pull_images: Annotated[
+        bool,
+        typer.Option(
+            help="Always pull container images, even if cached locally.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = False,
 ):
     """
     pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.
     """
-    # Lazy import the core implementation
-    from pfb_imaging.core.sara import sara as sara_core  # noqa: E402
+    if backend == "native" or backend == "auto":
+        try:
+            # Lazy import the core implementation
+            from pfb_imaging.core.sara import sara as sara_core  # noqa: E402
 
-    # Call the core function with all parameters
-    sara_core(
-        output_filename,
-        suffix=suffix,
-        bases=bases,
-        nlevels=nlevels,
-        l1_reweight_from=l1_reweight_from,
-        hess_norm=hess_norm,
-        hess_approx=hess_approx,
-        rmsfactor=rmsfactor,
-        eta=eta,
-        gamma=gamma,
-        alpha=alpha,
-        nbasisf=nbasisf,
-        positivity=positivity,
-        niter=niter,
-        nthreads=nthreads,
-        tol=tol,
-        diverge_count=diverge_count,
-        rms_outside_model=rms_outside_model,
-        init_factor=init_factor,
-        verbosity=verbosity,
-        epsilon=epsilon,
-        do_wgridding=do_wgridding,
-        double_accum=double_accum,
-        pd_tol=pd_tol,
-        pd_maxit=pd_maxit,
-        pd_verbose=pd_verbose,
-        pd_report_freq=pd_report_freq,
-        pm_tol=pm_tol,
-        pm_maxit=pm_maxit,
-        pm_verbose=pm_verbose,
-        pm_report_freq=pm_report_freq,
-        cg_tol=cg_tol,
-        cg_maxit=cg_maxit,
-        cg_verbose=cg_verbose,
-        cg_report_freq=cg_report_freq,
-        log_directory=log_directory,
-        product=product,
-        fits_output_folder=fits_output_folder,
-        fits_mfs=fits_mfs,
-        fits_cubes=fits_cubes,
+            # Call the core function with all parameters
+            sara_core(
+                output_filename,
+                suffix=suffix,
+                bases=bases,
+                nlevels=nlevels,
+                l1_reweight_from=l1_reweight_from,
+                hess_norm=hess_norm,
+                hess_approx=hess_approx,
+                rmsfactor=rmsfactor,
+                eta=eta,
+                gamma=gamma,
+                alpha=alpha,
+                nbasisf=nbasisf,
+                positivity=positivity,
+                niter=niter,
+                nthreads=nthreads,
+                tol=tol,
+                diverge_count=diverge_count,
+                rms_outside_model=rms_outside_model,
+                init_factor=init_factor,
+                verbosity=verbosity,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                double_accum=double_accum,
+                pd_tol=pd_tol,
+                pd_maxit=pd_maxit,
+                pd_verbose=pd_verbose,
+                pd_report_freq=pd_report_freq,
+                pm_tol=pm_tol,
+                pm_maxit=pm_maxit,
+                pm_verbose=pm_verbose,
+                pm_report_freq=pm_report_freq,
+                cg_tol=cg_tol,
+                cg_maxit=cg_maxit,
+                cg_verbose=cg_verbose,
+                cg_report_freq=cg_report_freq,
+                log_directory=log_directory,
+                product=product,
+                fits_output_folder=fits_output_folder,
+                fits_mfs=fits_mfs,
+                fits_cubes=fits_cubes,
+            )
+            return
+        except ImportError:
+            if backend == "native":
+                raise
+
+    # Fall back to container execution
+    from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    run_in_container(
+        sara,
+        dict(
+            output_filename=output_filename,
+            suffix=suffix,
+            bases=bases,
+            nlevels=nlevels,
+            l1_reweight_from=l1_reweight_from,
+            hess_norm=hess_norm,
+            hess_approx=hess_approx,
+            rmsfactor=rmsfactor,
+            eta=eta,
+            gamma=gamma,
+            alpha=alpha,
+            nbasisf=nbasisf,
+            positivity=positivity,
+            niter=niter,
+            nthreads=nthreads,
+            tol=tol,
+            diverge_count=diverge_count,
+            rms_outside_model=rms_outside_model,
+            init_factor=init_factor,
+            verbosity=verbosity,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+            pd_tol=pd_tol,
+            pd_maxit=pd_maxit,
+            pd_verbose=pd_verbose,
+            pd_report_freq=pd_report_freq,
+            pm_tol=pm_tol,
+            pm_maxit=pm_maxit,
+            pm_verbose=pm_verbose,
+            pm_report_freq=pm_report_freq,
+            cg_tol=cg_tol,
+            cg_maxit=cg_maxit,
+            cg_verbose=cg_verbose,
+            cg_report_freq=cg_report_freq,
+            log_directory=log_directory,
+            product=product,
+            fits_output_folder=fits_output_folder,
+            fits_mfs=fits_mfs,
+            fits_cubes=fits_cubes,
+        ),
+        backend=backend,
+        always_pull_images=always_pull_images,
     )

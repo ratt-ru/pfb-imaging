@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, NewType
+from typing import Annotated, Literal, NewType
 
 import typer
 from hip_cargo import stimela_cab, stimela_output
@@ -10,6 +10,7 @@ Directory = NewType("Directory", Path)
 @stimela_cab(
     name="kclean",
     info="Modified single scale clean algorithm.",
+    image="ghcr.io/ratt-ru/pfb-imaging:typer",
 )
 @stimela_output(
     dtype="Directory",
@@ -212,43 +213,104 @@ def kclean(
             help="Output fits cubes",
         ),
     ] = True,
+    backend: Annotated[
+        Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
+        typer.Option(
+            help="Execution backend.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = "auto",
+    always_pull_images: Annotated[
+        bool,
+        typer.Option(
+            help="Always pull container images, even if cached locally.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = False,
 ):
     """
     Modified single scale clean algorithm.
     """
-    # Lazy import the core implementation
-    from pfb_imaging.core.kclean import kclean as kclean_core  # noqa: E402
+    if backend == "native" or backend == "auto":
+        try:
+            # Lazy import the core implementation
+            from pfb_imaging.core.kclean import kclean as kclean_core  # noqa: E402
 
-    # Call the core function with all parameters
-    kclean_core(
-        output_filename,
-        suffix=suffix,
-        mask=mask,
-        dirosion=dirosion,
-        mop_flux=mop_flux,
-        mop_gamma=mop_gamma,
-        niter=niter,
-        nthreads=nthreads,
-        threshold=threshold,
-        rmsfactor=rmsfactor,
-        eta=eta,
-        gamma=gamma,
-        peak_factor=peak_factor,
-        sub_peak_factor=sub_peak_factor,
-        minor_maxit=minor_maxit,
-        subminor_maxit=subminor_maxit,
-        verbose=verbose,
-        report_freq=report_freq,
-        cg_tol=cg_tol,
-        cg_maxit=cg_maxit,
-        cg_verbose=cg_verbose,
-        cg_report_freq=cg_report_freq,
-        epsilon=epsilon,
-        do_wgridding=do_wgridding,
-        double_accum=double_accum,
-        log_directory=log_directory,
-        product=product,
-        fits_output_folder=fits_output_folder,
-        fits_mfs=fits_mfs,
-        fits_cubes=fits_cubes,
+            # Call the core function with all parameters
+            kclean_core(
+                output_filename,
+                suffix=suffix,
+                mask=mask,
+                dirosion=dirosion,
+                mop_flux=mop_flux,
+                mop_gamma=mop_gamma,
+                niter=niter,
+                nthreads=nthreads,
+                threshold=threshold,
+                rmsfactor=rmsfactor,
+                eta=eta,
+                gamma=gamma,
+                peak_factor=peak_factor,
+                sub_peak_factor=sub_peak_factor,
+                minor_maxit=minor_maxit,
+                subminor_maxit=subminor_maxit,
+                verbose=verbose,
+                report_freq=report_freq,
+                cg_tol=cg_tol,
+                cg_maxit=cg_maxit,
+                cg_verbose=cg_verbose,
+                cg_report_freq=cg_report_freq,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                double_accum=double_accum,
+                log_directory=log_directory,
+                product=product,
+                fits_output_folder=fits_output_folder,
+                fits_mfs=fits_mfs,
+                fits_cubes=fits_cubes,
+            )
+            return
+        except ImportError:
+            if backend == "native":
+                raise
+
+    # Fall back to container execution
+    from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    run_in_container(
+        kclean,
+        dict(
+            output_filename=output_filename,
+            suffix=suffix,
+            mask=mask,
+            dirosion=dirosion,
+            mop_flux=mop_flux,
+            mop_gamma=mop_gamma,
+            niter=niter,
+            nthreads=nthreads,
+            threshold=threshold,
+            rmsfactor=rmsfactor,
+            eta=eta,
+            gamma=gamma,
+            peak_factor=peak_factor,
+            sub_peak_factor=sub_peak_factor,
+            minor_maxit=minor_maxit,
+            subminor_maxit=subminor_maxit,
+            verbose=verbose,
+            report_freq=report_freq,
+            cg_tol=cg_tol,
+            cg_maxit=cg_maxit,
+            cg_verbose=cg_verbose,
+            cg_report_freq=cg_report_freq,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+            log_directory=log_directory,
+            product=product,
+            fits_output_folder=fits_output_folder,
+            fits_mfs=fits_mfs,
+            fits_cubes=fits_cubes,
+        ),
+        backend=backend,
+        always_pull_images=always_pull_images,
     )

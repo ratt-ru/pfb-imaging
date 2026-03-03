@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, NewType
+from typing import Annotated, Literal, NewType
 
 import typer
 from hip_cargo import ListInt, parse_list_int, stimela_cab
@@ -11,6 +11,7 @@ URI = NewType("URI", Path)
     name="degrid",
     info="Degrid visibilities from model image(s) into measurement set. "
     "The model image needs to be in component format.",
+    image="ghcr.io/ratt-ru/pfb-imaging:typer",
 )
 def degrid(
     ms: Annotated[
@@ -152,34 +153,85 @@ def degrid(
             help="Directory to write logs and performance reports to.",
         ),
     ] = None,
+    backend: Annotated[
+        Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
+        typer.Option(
+            help="Execution backend.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = "auto",
+    always_pull_images: Annotated[
+        bool,
+        typer.Option(
+            help="Always pull container images, even if cached locally.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = False,
 ):
     """
     Degrid visibilities from model image(s) into measurement set.
     The model image needs to be in component format.
     """
-    # Lazy import the core implementation
-    from pfb_imaging.core.degrid import degrid as degrid_core  # noqa: E402
+    if backend == "native" or backend == "auto":
+        try:
+            # Lazy import the core implementation
+            from pfb_imaging.core.degrid import degrid as degrid_core  # noqa: E402
 
-    # Call the core function with all parameters
-    degrid_core(
-        ms,
-        output_filename,
-        scans=scans,
-        ddids=ddids,
-        fields=fields,
-        suffix=suffix,
-        mds=mds,
-        model_column=model_column,
-        product=product,
-        freq_range=freq_range,
-        integrations_per_image=integrations_per_image,
-        channels_per_image=channels_per_image,
-        accumulate=accumulate,
-        region_file=region_file,
-        epsilon=epsilon,
-        do_wgridding=do_wgridding,
-        host_address=host_address,
-        nworkers=nworkers,
-        nthreads=nthreads,
-        log_directory=log_directory,
+            # Call the core function with all parameters
+            degrid_core(
+                ms,
+                output_filename,
+                scans=scans,
+                ddids=ddids,
+                fields=fields,
+                suffix=suffix,
+                mds=mds,
+                model_column=model_column,
+                product=product,
+                freq_range=freq_range,
+                integrations_per_image=integrations_per_image,
+                channels_per_image=channels_per_image,
+                accumulate=accumulate,
+                region_file=region_file,
+                epsilon=epsilon,
+                do_wgridding=do_wgridding,
+                host_address=host_address,
+                nworkers=nworkers,
+                nthreads=nthreads,
+                log_directory=log_directory,
+            )
+            return
+        except ImportError:
+            if backend == "native":
+                raise
+
+    # Fall back to container execution
+    from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    run_in_container(
+        degrid,
+        dict(
+            ms=ms,
+            output_filename=output_filename,
+            scans=scans,
+            ddids=ddids,
+            fields=fields,
+            suffix=suffix,
+            mds=mds,
+            model_column=model_column,
+            product=product,
+            freq_range=freq_range,
+            integrations_per_image=integrations_per_image,
+            channels_per_image=channels_per_image,
+            accumulate=accumulate,
+            region_file=region_file,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            host_address=host_address,
+            nworkers=nworkers,
+            nthreads=nthreads,
+            log_directory=log_directory,
+        ),
+        backend=backend,
+        always_pull_images=always_pull_images,
     )
