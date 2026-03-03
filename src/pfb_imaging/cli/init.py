@@ -11,6 +11,7 @@ URI = NewType("URI", Path)
 @stimela_cab(
     name="init",
     info="Initialise Stokes data products.",
+    image="ghcr.io/ratt-ru/pfb-imaging:typer",
 )
 @stimela_output(
     dtype="Directory",
@@ -198,39 +199,96 @@ def init(
             "minvar -> use minimum between correlations (wsclean Stokes I style).",
         ),
     ] = "l2",
+    backend: Annotated[
+        Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
+        typer.Option(
+            help="Execution backend.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = "auto",
+    always_pull_images: Annotated[
+        bool,
+        typer.Option(
+            help="Always pull container images, even if cached locally.",
+        ),
+        {"stimela": {"skip": True}},
+    ] = False,
 ):
     """
     Initialise Stokes data products.
     """
-    # Lazy import the core implementation
-    from pfb_imaging.core.init import init as init_core  # noqa: E402
+    if backend == "native" or backend == "auto":
+        try:
+            # Lazy import the core implementation
+            from pfb_imaging.core.init import init as init_core  # noqa: E402
 
-    # Call the core function with all parameters
-    init_core(
-        ms,
-        output_filename,
-        scans=scans,
-        ddids=ddids,
-        fields=fields,
-        freq_range=freq_range,
-        overwrite=overwrite,
-        data_column=data_column,
-        weight_column=weight_column,
-        sigma_column=sigma_column,
-        flag_column=flag_column,
-        gain_table=gain_table,
-        integrations_per_image=integrations_per_image,
-        channels_per_image=channels_per_image,
-        precision=precision,
-        bda_decorr=bda_decorr,
-        max_field_of_view=max_field_of_view,
-        beam_model=beam_model,
-        chan_average=chan_average,
-        progressbar=progressbar,
-        check_ants=check_ants,
-        log_directory=log_directory,
-        product=product,
-        nworkers=nworkers,
-        nthreads=nthreads,
-        wgt_mode=wgt_mode,
+            # Call the core function with all parameters
+            init_core(
+                ms,
+                output_filename,
+                scans=scans,
+                ddids=ddids,
+                fields=fields,
+                freq_range=freq_range,
+                overwrite=overwrite,
+                data_column=data_column,
+                weight_column=weight_column,
+                sigma_column=sigma_column,
+                flag_column=flag_column,
+                gain_table=gain_table,
+                integrations_per_image=integrations_per_image,
+                channels_per_image=channels_per_image,
+                precision=precision,
+                bda_decorr=bda_decorr,
+                max_field_of_view=max_field_of_view,
+                beam_model=beam_model,
+                chan_average=chan_average,
+                progressbar=progressbar,
+                check_ants=check_ants,
+                log_directory=log_directory,
+                product=product,
+                nworkers=nworkers,
+                nthreads=nthreads,
+                wgt_mode=wgt_mode,
+            )
+            return
+        except ImportError:
+            if backend == "native":
+                raise
+
+    # Fall back to container execution
+    from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    run_in_container(
+        init,
+        dict(
+            ms=ms,
+            output_filename=output_filename,
+            scans=scans,
+            ddids=ddids,
+            fields=fields,
+            freq_range=freq_range,
+            overwrite=overwrite,
+            data_column=data_column,
+            weight_column=weight_column,
+            sigma_column=sigma_column,
+            flag_column=flag_column,
+            gain_table=gain_table,
+            integrations_per_image=integrations_per_image,
+            channels_per_image=channels_per_image,
+            precision=precision,
+            bda_decorr=bda_decorr,
+            max_field_of_view=max_field_of_view,
+            beam_model=beam_model,
+            chan_average=chan_average,
+            progressbar=progressbar,
+            check_ants=check_ants,
+            log_directory=log_directory,
+            product=product,
+            nworkers=nworkers,
+            nthreads=nthreads,
+            wgt_mode=wgt_mode,
+        ),
+        backend=backend,
+        always_pull_images=always_pull_images,
     )
