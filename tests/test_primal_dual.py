@@ -1,5 +1,3 @@
-"""Tests for the PrimalDual ABC and L21PrimalDual concrete class."""
-
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose

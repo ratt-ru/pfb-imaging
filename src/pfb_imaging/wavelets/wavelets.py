@@ -178,7 +178,7 @@ def dwt2d_level(image, coeffs, cbuff, cbufft, dec_lo, dec_hi):
     return coeffs[0:midy, 0:midx].T.copy()
 
 
-@numba.njit(nogil=True, cache=True, parallel=True)
+@numba.njit(nogil=True, cache=True)
 def dwt2d(image, coeffs, cbuff, cbufft, ix, iy, sx, sy, dec_lo, dec_hi, nlevel):
     """
     Multi-level 2D image to coeffs transform
@@ -265,7 +265,7 @@ def idwt2d_level(coeffs, image, cbuff, cbufft, rec_lo, rec_hi):
         upsampling_convolution_valid_sf(cbuff[i, midy:], rec_hi, image[i, :])
 
 
-@numba.njit(nogil=True, cache=True, parallel=True)
+@numba.njit(nogil=True, cache=True)
 def idwt2d(coeffs, image, alpha, cbuff, cbufft, ix, iy, sx, sy, spx, spy, rec_lo, rec_hi, nlevel):
     """
     Multi-level 2D coeffs to image transform
