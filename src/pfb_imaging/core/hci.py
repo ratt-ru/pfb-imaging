@@ -21,7 +21,7 @@ from ducc0.fft import good_size
 from ducc0.misc import resize_thread_pool
 from zarr import ProcessSynchronizer
 
-from pfb_imaging import pfb_version, set_envs
+from pfb_imaging import pfb_version, set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.misc import construct_mappings, set_image_size
 from pfb_imaging.utils.stokes2im import batch_stokes_image
@@ -165,7 +165,10 @@ def hci(
 
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu)
-    runtime_env = {"env_vars": env_vars}
+    runtime_env = {
+        "env_vars": env_vars,
+        "worker_process_setup_hook": setup_ray_worker,
+    }
 
     if object_store_memory is not None:
         mem_limit = object_store_memory * 1e9  # convert GB -> B

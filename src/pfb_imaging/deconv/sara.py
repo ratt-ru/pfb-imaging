@@ -3,8 +3,8 @@ from scipy.stats import expon
 
 from pfb_imaging.operators.psf import PSF
 from pfb_imaging.operators.psi import DaskPSI
-from pfb_imaging.opt.pcg import pcg
-from pfb_imaging.opt.power_method import power_method
+from pfb_imaging.opt.pcg import pcg_numba as pcg
+from pfb_imaging.opt.power_method import power_method_numba as power_method
 from pfb_imaging.opt.primal_dual import primal_dual
 from pfb_imaging.prox.prox_21 import prox_21
 from pfb_imaging.utils import logging as pfb_logging

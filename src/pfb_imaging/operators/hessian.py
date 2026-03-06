@@ -8,7 +8,7 @@ from ducc0.misc import empty_noncritical
 from ducc0.wgridder.experimental import dirty2vis, vis2dirty
 
 from pfb_imaging.operators.psf import psf_convolve_cube
-from pfb_imaging.opt.pcg import pcg
+from pfb_imaging.opt.pcg import pcg_numba as pcg
 from pfb_imaging.utils.misc import taperf
 
 

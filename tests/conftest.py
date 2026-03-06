@@ -6,7 +6,7 @@ import pytest
 import ray
 import requests
 
-from pfb_imaging import set_envs
+from pfb_imaging import set_envs, setup_ray_worker
 
 test_root_path = Path(__file__).resolve().parent
 test_data_path = Path(test_root_path, "data")
@@ -68,6 +68,7 @@ def manage_ray():
         "env_vars": env_vars,
         "working_dir": None,
         "excludes": get_excludes(),
+        "worker_process_setup_hook": setup_ray_worker,
     }
 
     # Start Ray

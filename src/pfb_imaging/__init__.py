@@ -1,8 +1,10 @@
+import ctypes
 import importlib
 import logging
 import os
 from importlib.metadata import version
-from pathlib import Path
+
+from pfb_imaging.utils import logging as pfb_logging
 
 pfb_version = version("pfb-imaging")
 # This need to happen before importing numba
@@ -21,21 +23,19 @@ def set_envs(nthreads, ncpu, log=None):
     ne_threads = min(ncpu, nthreads)
     os.environ["NUMEXPR_NUM_THREADS"] = str(ne_threads)
     os.environ["PYTHONWARNINGS"] = "ignore:.*CUDA-enabled jaxlib is not installed.*"
-    # this may be required for efficient numba parallelism
-    # find python and set LD_LIBRARY_PATH
+    # this is required for numba to use the tbb threaing layer
     dist = importlib.metadata.distribution("tbb")
-    tbb_path = Path(dist.locate_file("."))
-    if tbb_path:
-        os.environ["LD_LIBRARY_PATH"] = f"{tbb_path}:{os.environ.get('LD_LIBRARY_PATH', '')}".strip(":")
+    tbb_path = None
+    for f in dist.files:
+        if str(f).endswith("/libtbb.so"):
+            tbb_path = str(dist.locate_file(f).resolve())
+            ctypes.CDLL(tbb_path)
+            break
+    if tbb_path is None:
         if log:
-            log.info(f"Set LD_LIBRARY_PATH for TBB to: {tbb_path}")
+            log.warning("Could not initialse TBB threading layer for numba.")
         else:
-            logging.info(f"Set LD_LIBRARY_PATH for TBB to: {tbb_path}")
-    else:
-        if log:
-            log.warning("Could not set LD_LIBRARY_PATH for TBB")
-        else:
-            logging.warning("Could not set LD_LIBRARY_PATH for TBB")
+            logging.warning("Could not initialse TBB threading layer for numba.")
 
     # these get passed to child processes
     env_vars = {
@@ -47,11 +47,24 @@ def set_envs(nthreads, ncpu, log=None):
         "JAX_ENABLE_X64": "True",
         "JAX_LOGGING_LEVEL": "ERROR",  # for the workers
         "NUMEXPR_NUM_THREADS": str(ne_threads),
-        "LD_LIBRARY_PATH": os.environ["LD_LIBRARY_PATH"],
         "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*",
         "NUMBA_THREADING_LAYER": "tbb",
     }
     return env_vars
+
+
+def setup_ray_worker():
+    logger = pfb_logging.get_logger("RAY_WORKER")
+    logger.setLevel(logging.ERROR)
+    dist = importlib.metadata.distribution("tbb")
+    tbb_path = None
+    for f in dist.files:
+        if str(f).endswith("/libtbb.so"):
+            tbb_path = str(dist.locate_file(f).resolve())
+            ctypes.CDLL(tbb_path)
+            break
+    if tbb_path is None:
+        logger.error_and_raise("Could not initialse TBB threading layer for numba in worker process.", RuntimeError)
 
 
 def set_client(nworkers, log, stack=None, host_address=None, direct_to_workers=False, client_log_level=None):

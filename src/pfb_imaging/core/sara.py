@@ -14,8 +14,8 @@ from pfb_imaging import pfb_version, set_envs
 from pfb_imaging.operators.gridder import compute_residual
 from pfb_imaging.operators.hessian import HessPSF
 from pfb_imaging.operators.psi import Psi
-from pfb_imaging.opt.power_method import power_method
-from pfb_imaging.opt.primal_dual import primal_dual_optimised as primal_dual
+from pfb_imaging.opt.power_method import power_method_numba as power_method
+from pfb_imaging.opt.primal_dual import primal_dual_numba as primal_dual
 from pfb_imaging.prox.prox_21m import prox_21m_numba as prox_21
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import dds2fits, save_fits, set_wcs

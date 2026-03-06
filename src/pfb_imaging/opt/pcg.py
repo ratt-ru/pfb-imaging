@@ -8,140 +8,181 @@ import numpy as np
 import ray
 from ducc0.misc import empty_noncritical
 from numba import njit, prange
-from numba.extending import overload
 
-from pfb_imaging.utils.misc import JIT_OPTIONS, norm_diff
+from pfb_imaging.utils.misc import norm_diff
 from pfb_imaging.utils.naming import xds_from_list
 
 ifftshift = np.fft.ifftshift
 fftshift = np.fft.fftshift
 
-# from pfb_imaging.utils import logging as pfb_logging
-# log = pfb_logging.get_logger('PCG')
+
+_FAST_JIT = {"nogil": True, "cache": True, "parallel": True, "fastmath": True}
 
 
-@njit(nogil=True, cache=False, parallel=False)
-def update(x, xp, r, rp, p, aopp, alpha):
-    return update_impl(x, xp, r, rp, p, aopp, alpha)
+@njit(**_FAST_JIT)
+def _nb_fused_alpha_update(r, y, p, aopp, x, xp, rp):
+    """Compute alpha = (r·y)/(p·aopp), then x = xp + alpha*p, r = rp + alpha*aopp."""
+    n = r.size
+    r_f = r.ravel()
+    y_f = y.ravel()
+    p_f = p.ravel()
+    a_f = aopp.ravel()
+    x_f = x.ravel()
+    xp_f = xp.ravel()
+    rp_f = rp.ravel()
+
+    rnorm = 0.0
+    denom = 0.0
+    for i in prange(n):
+        rnorm += r_f[i] * y_f[i]
+        denom += p_f[i] * a_f[i]
+
+    alpha = rnorm / denom
+
+    for i in prange(n):
+        x_f[i] = xp_f[i] + alpha * p_f[i]
+        r_f[i] = rp_f[i] + alpha * a_f[i]
+
+    return rnorm
 
 
-def update_impl(x, xp, r, rp, p, aopp, alpha):
-    return NotImplementedError
+@njit(**_FAST_JIT)
+def _nb_fused_beta_update(r, y, p, rnorm):
+    """Compute beta = (r·y)/rnorm, then p = beta*p - y."""
+    n = r.size
+    r_f = r.ravel()
+    y_f = y.ravel()
+    p_f = p.ravel()
+
+    rnorm_next = 0.0
+    for i in prange(n):
+        rnorm_next += r_f[i] * y_f[i]
+
+    beta = rnorm_next / rnorm
+
+    for i in prange(n):
+        p_f[i] = beta * p_f[i] - y_f[i]
+
+    return rnorm_next
 
 
-@overload(update_impl, jit_options={**JIT_OPTIONS})  # , "parallel":True})
-def nb_update_impl(x, xp, r, rp, p, aopp, alpha):
-    if x.ndim == 3:
+@njit(**_FAST_JIT)
+def _nb_norm_diff(x, xp):
+    """Relative norm of difference: ||x - xp|| / ||x||."""
+    n = x.size
+    x_f = x.ravel()
+    xp_f = xp.ravel()
 
-        def impl(x, xp, r, rp, p, aopp, alpha):
-            nband, nx, ny = x.shape
-            for b in range(nband):
-                for i in prange(nx):
-                    for j in range(ny):
-                        x[b, i, j] = xp[b, i, j] + alpha * p[b, i, j]
-                        r[b, i, j] = rp[b, i, j] + alpha * aopp[b, i, j]
-            return x, r
-    elif x.ndim == 2:
+    num = 0.0
+    den = 0.0
+    for i in prange(n):
+        d = x_f[i] - xp_f[i]
+        num += d * d
+        den += x_f[i] * x_f[i]
 
-        def impl(x, xp, r, rp, p, aopp, alpha):
-            nx, ny = x.shape
-            for i in prange(nx):
-                for j in range(ny):
-                    x[i, j] = xp[i, j] + alpha * p[i, j]
-                    r[i, j] = rp[i, j] + alpha * aopp[i, j]
-            return x, r
+    den = max(den, 1e-12)
+    return np.sqrt(num / den)
+
+
+def pcg_numba(
+    aop,
+    b,
+    x0=None,
+    precond=None,
+    tol=1e-5,
+    maxit=500,
+    minit=100,
+    verbosity=1,
+    report_freq=10,
+    backtrack=True,
+    return_resid=False,
+):
+    if x0 is None:
+        x0 = np.zeros(b.shape, dtype=b.dtype)
+
+    if precond is None:
+
+        def precond(x):
+            return x
+
+    r = aop(x0) - b
+    y = precond(r)
+    if not np.any(y):
+        print("Initial residual is zero")
+        return x0
+    p = -y
+    rnorm = np.vdot(r, y)
+    if np.isnan(rnorm) or rnorm == 0.0:
+        phi0 = 1.0
     else:
-        raise ValueError("norm_diff is only implemented for 2D or 3D arrays")
+        phi0 = rnorm
+    k = 0
+    x = x0
+    eps = 1.0
+    stall_count = 0
+    xp = x.copy()
+    rp = r.copy()
+    tcopy = 0.0
+    taop = 0.0
+    talpha = 0.0
+    tprecond = 0.0
+    tbeta = 0.0
+    tnorm = 0.0
+    tii = time()
+    while (eps > tol or k < minit) and k < maxit and stall_count < 5:
+        ti = time()
+        np.copyto(xp, x)
+        np.copyto(rp, r)
+        tcopy += time() - ti
+        ti = time()
+        aopp = aop(p)
+        taop += time() - ti
+        ti = time()
+        rnorm = _nb_fused_alpha_update(r, y, p, aopp, x, xp, rp)
+        talpha += time() - ti
+        ti = time()
+        y = precond(r)
+        tprecond += time() - ti
+        ti = time()
+        rnorm = _nb_fused_beta_update(r, y, p, rnorm)
+        tbeta += time() - ti
+        k += 1
+        epsp = eps
+        ti = time()
+        eps = _nb_norm_diff(x, xp)
+        tnorm += time() - ti
+        phi = rnorm / phi0
 
-    return impl
+        if np.abs(epsp - eps) < 1e-3 * tol:
+            stall_count += 1
 
+        if not k % report_freq and verbosity > 1:
+            print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
+    ttot = time() - tii
+    if verbosity > 1:
+        print(f"pcg_numba timing breakdown (fraction of {ttot:.3f}s):")
+        print(f"  copyto:       {tcopy / ttot:.3f}")
+        print(f"  aop:          {taop / ttot:.3f}")
+        print(f"  alpha_update: {talpha / ttot:.3f}")
+        print(f"  precond:      {tprecond / ttot:.3f}")
+        print(f"  beta_update:  {tbeta / ttot:.3f}")
+        print(f"  norm_diff:    {tnorm / ttot:.3f}")
+        ttally = tcopy + taop + talpha + tprecond + tbeta + tnorm
+        print(f"  accounted:    {ttally / ttot:.3f}")
 
-@njit(**JIT_OPTIONS, parallel=True)
-def alpha_update(r, y, p, aopp):
-    return alpha_update_impl(r, y, p, aopp)
-
-
-def alpha_update_impl(r, y, p, aopp):
-    return NotImplementedError
-
-
-@overload(alpha_update_impl, jit_options={**JIT_OPTIONS, "parallel": True})
-def nb_alpha_update_impl(r, y, p, aopp):
-    if r.ndim == 2:
-
-        def impl(r, y, p, aopp):
-            rnorm = 0.0
-            rnorm_den = 0.0
-            nx, ny = r.shape
-            for i in prange(nx):
-                for j in range(ny):
-                    rnorm += r[i, j] * y[i, j]
-                    rnorm_den += p[i, j] * aopp[i, j]
-
-            alpha = rnorm / rnorm_den
-            return rnorm, alpha
-    elif r.ndim == 3:
-
-        def impl(r, y, p, aopp):
-            rnorm = 0.0
-            rnorm_den = 0.0
-            nband, nx, ny = r.shape
-            for b in range(nband):
-                for i in prange(nx):
-                    for j in range(ny):
-                        rnorm += r[b, i, j] * y[b, i, j]
-                        rnorm_den += p[b, i, j] * aopp[b, i, j]
-
-            alpha = rnorm / rnorm_den
-            return rnorm, alpha
-
-    return impl
-
-
-@njit(**JIT_OPTIONS, parallel=True)
-def beta_update(r, y, p, rnorm):
-    return beta_update_impl(r, y, p, rnorm)
-
-
-def beta_update_impl(r, y, p, rnorm):
-    return NotImplementedError
-
-
-@overload(beta_update_impl, jit_options={**JIT_OPTIONS, "parallel": True})
-def nb_beta_update_impl(r, y, p, rnorm):
-    if r.ndim == 2:
-
-        def impl(r, y, p, rnorm):
-            rnorm_next = 0.0
-            nx, ny = r.shape
-            for i in prange(nx):
-                for j in range(ny):
-                    rnorm_next += r[i, j] * y[i, j]
-
-            beta = rnorm_next / rnorm
-
-            for i in prange(nx):
-                for j in range(ny):
-                    p[i, j] = beta * p[i, j] - y[i, j]
-            return rnorm_next, p
-    elif r.ndim == 3:
-
-        def impl(r, y, p, rnorm):
-            rnorm_next = 0.0
-            nband, nx, ny = r.shape
-            for b in range(nband):
-                for i in prange(nx):
-                    for j in range(ny):
-                        rnorm_next += r[b, i, j] * y[b, i, j]
-
-            beta = rnorm_next / rnorm
-            for b in range(nband):
-                for i in prange(nx):
-                    for j in range(ny):
-                        p[b, i, j] = beta * p[b, i, j] - y[b, i, j]
-            return rnorm_next, p
-
-    return impl
+    if k >= maxit:
+        if verbosity:
+            print(f"Max iters reached. eps = {eps:.3e}")
+    elif stall_count >= 5:
+        if verbosity:
+            print(f"Stalled after {k} iterations with eps = {eps:.3e}")
+    else:
+        if verbosity:
+            print(f"Success, converged after {k} iterations")
+    if not return_resid:
+        return x
+    else:
+        return x, r
 
 
 def pcg(
@@ -184,9 +225,9 @@ def pcg(
     rp = r.copy()
     tcopy = 0.0
     taop = 0.0
-    tvdot = 0.0
-    tupdate = 0.0
-    tp = 0.0
+    talpha = 0.0
+    tprecond = 0.0
+    tbeta = 0.0
     tnorm = 0.0
     tii = time()
     while (eps > tol or k < minit) and k < maxit and stall_count < 5:
@@ -200,17 +241,17 @@ def pcg(
         ti = time()
         rnorm = np.vdot(r, y)
         alpha = rnorm / np.vdot(p, aopp)
-        tvdot += time() - ti
-        ti = time()
         ne.evaluate("xp + alpha*p", out=x, local_dict={"xp": xp, "alpha": alpha, "p": p}, casting="unsafe")
         ne.evaluate("rp + alpha*aopp", out=r, local_dict={"rp": rp, "alpha": alpha, "aopp": aopp}, casting="unsafe")
-        tupdate += time() - ti
+        talpha += time() - ti
+        ti = time()
         y = precond(r)
+        tprecond += time() - ti
         ti = time()
         rnorm_next = np.vdot(r, y)
         beta = rnorm_next / rnorm
         ne.evaluate("beta*p-y", out=p, local_dict={"beta": beta, "p": p, "y": y}, casting="unsafe")
-        tp += time() - ti
+        tbeta += time() - ti
         rnorm = rnorm_next
         k += 1
         epsp = eps
@@ -225,15 +266,17 @@ def pcg(
         if not k % report_freq and verbosity > 1:
             print(f"At iteration {k} eps = {eps:.3e}, phi = {phi:.3e}")
     ttot = time() - tii
-    ttally = tcopy + taop + tvdot + tupdate + tp + tnorm
+    ttally = tcopy + taop + talpha + tprecond + tbeta + tnorm
     if verbosity > 1:
-        print("tcopy = ", tcopy / ttot)
-        print("taop = ", taop / ttot)
-        print("tvdot = ", tvdot / ttot)
-        print("tupdate = ", tupdate / ttot)
-        print("tp = ", tp / ttot)
-        print("tnorm = ", tnorm / ttot)
-        print("ttally = ", ttally / ttot)
+        print(f"pcg_numexpr timing breakdown (fraction of {ttot:.3f}s):")
+        print(f"  copyto:       {tcopy / ttot:.3f}")
+        print(f"  aop:          {taop / ttot:.3f}")
+        print(f"  alpha_update: {talpha / ttot:.3f}")
+        print(f"  precond:      {tprecond / ttot:.3f}")
+        print(f"  beta_update:  {tbeta / ttot:.3f}")
+        print(f"  norm_diff:    {tnorm / ttot:.3f}")
+        ttally = tcopy + taop + talpha + tprecond + tbeta + tnorm
+        print(f"  accounted:    {ttally / ttot:.3f}")
 
     if k >= maxit:
         if verbosity:

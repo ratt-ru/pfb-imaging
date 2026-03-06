@@ -88,3 +88,34 @@ def dual_update_numba(vp, v, lam, sigma=1.0, weight=None):
             if absvbisum:
                 softvbi = np.maximum(absvbisum - lam * weightb[i] / sigma, 0.0)
                 v[:, b, i] *= 1 - softvbi / absvbisum
+
+
+@njit(nogil=True, cache=True, parallel=True, fastmath=True)
+def dual_update_numba_fast(vp, v, lam, sigma=1.0, weight=None):
+    """
+    Numerically stable + fastmath-safe version of dual_update_numba.
+
+    Computes v = vtilde * min(1, lam*w / ||vtilde||) where
+    vtilde = vp + sigma * v. The sigma factors cancel algebraically
+    so we avoid redundant divisions. The threshold/norm form avoids
+    the catastrophic cancellation in 1 - softvbi/absvbisum.
+
+    v has shape (nband, nbasis, ntot), initialised with psih(xp).
+    """
+    nband, nbasis, ntot = v.shape
+    for b in range(nbasis):
+        weightb = weight[b]
+        for i in prange(ntot):
+            # compute vtilde and its L2 norm over band axis inline
+            norm_sq = 0.0
+            for k in range(nband):
+                vt = vp[k, b, i] + sigma * v[k, b, i]
+                v[k, b, i] = vt
+                norm_sq += vt * vt
+            norm_vt = np.sqrt(norm_sq)
+            threshold = lam * weightb[i]
+            if norm_vt > threshold:
+                # stable form: threshold / norm_vt is always in (0, 1)
+                scale = threshold / norm_vt
+                for k in range(nband):
+                    v[k, b, i] *= scale

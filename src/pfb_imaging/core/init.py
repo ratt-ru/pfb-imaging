@@ -9,7 +9,7 @@ from daskms import xds_from_storage_ms as xds_from_ms
 from daskms.fsspec_store import DaskMSStore
 from ducc0.misc import resize_thread_pool
 
-from pfb_imaging import set_envs
+from pfb_imaging import set_envs, setup_ray_worker
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.misc import construct_mappings
 from pfb_imaging.utils.naming import set_output_names
@@ -106,7 +106,15 @@ def init(
     resize_thread_pool(nthreads)
     env_vars = set_envs(nthreads, ncpu)
 
-    ray.init(num_cpus=nworkers, logging_level="INFO", ignore_reinit_error=True, runtime_env={"env_vars": env_vars})
+    ray.init(
+        num_cpus=nworkers,
+        logging_level="INFO",
+        ignore_reinit_error=True,
+        runtime_env={
+            "env_vars": env_vars,
+            "worker_process_setup_hook": setup_ray_worker,
+        },
+    )
 
     time_start = time.time()
 

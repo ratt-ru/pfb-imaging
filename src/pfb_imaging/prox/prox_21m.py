@@ -102,32 +102,34 @@ def dual_update_numba(vp, v, lam, sigma=1.0, weight=None):
                     v[:, b, i, j] *= 1 - softvbij / absvbijsum
 
 
-@njit(nogil=True, cache=True, parallel=True)
-def dual_update_numba_dist(vp, v, lam, sigma=1.0, weight=None):
+@njit(nogil=True, cache=True, parallel=True, fastmath=True)
+def dual_update_numba_fast(vp, v, lam, sigma=1.0, weight=None):
     """
-    Computes dual update
+    Numerically stable + fastmath-safe version of dual_update_numba.
 
-    Assumed that v has shape (nband, nbasis, nymax, nxmax) where
+    Computes v = vtilde * min(1, lam*w / |sum(vtilde)|) where
+    vtilde = vp + sigma * v. The sigma factors cancel algebraically
+    so we avoid redundant divisions. The threshold/|sum| form avoids
+    the catastrophic cancellation in 1 - softvbij/absvbijsum.
 
-    nband   - number of imaging bands
-    nbasis  - number of orthogonal bases
-    nxmax   - number of x coefficients for each basis (must be equal)
-    nymax   - number of y coefficients for each basis (must be equal)
-
-    v is initialised with psih(xp) and will be updated
+    v has shape (nband, nbasis, nymax, nxmax), initialised with psih(xp).
     """
     nband, nbasis, nymax, nxmax = v.shape
     for b in range(nbasis):
-        # select out basis
-        # vtildeb = vp[:, b] + sigma * v[:, b]
-        # weightb = weight[b]
-        for i in prange(nymax):  # WTF without the prange it segfaults when parallel=True
-            vtildebi = vp[:, b, i] + sigma * v[:, b, i]
-            weightbi = weight[b, i]
+        weightbi_base = weight[b]
+        for i in prange(nymax):
+            weightbi = weightbi_base[i]
             for j in range(nxmax):
-                vtildebij = vtildebi[:, j]
-                absvbijsum = np.abs(np.sum(vtildebij) / sigma)  # sum over band axis
-                v[:, b, i, j] = vtildebij
-                if absvbijsum:
-                    softvbij = np.maximum(absvbijsum - lam * weightbi[j] / sigma, 0.0)
-                    v[:, b, i, j] *= 1 - softvbij / absvbijsum
+                # compute vtilde and band-axis sum inline
+                band_sum = 0.0
+                for k in range(nband):
+                    vt = vp[k, b, i, j] + sigma * v[k, b, i, j]
+                    v[k, b, i, j] = vt
+                    band_sum += vt
+                abs_band_sum = np.abs(band_sum)
+                threshold = lam * weightbi[j]
+                if abs_band_sum > threshold:
+                    # stable form: threshold / abs_band_sum is always in (0, 1)
+                    scale = threshold / abs_band_sum
+                    for k in range(nband):
+                        v[k, b, i, j] *= scale

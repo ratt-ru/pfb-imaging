@@ -4,7 +4,7 @@ import numpy as np
 
 from pfb_imaging.operators.psf import PSF
 from pfb_imaging.opt.fista import fista
-from pfb_imaging.opt.power_method import power_method
+from pfb_imaging.opt.power_method import power_method_numba as power_method
 from pfb_imaging.utils import logging as pfb_logging
 from pfb_imaging.utils.fits import save_fits
 
