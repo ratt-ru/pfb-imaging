@@ -12,6 +12,7 @@ from astropy.coordinates import SkyCoord
 from casacore.quanta import quantity
 from ducc0.fft import good_size
 from jax.scipy.sparse.linalg import cg
+from numba import set_num_threads
 from scipy.constants import c as lightspeed
 
 from pfb_imaging.operators.gridder import wgridder_conventions
@@ -49,7 +50,7 @@ def batch_stokes_image(
     msid=None,
     attrs=None,
     integrations_per_image=None,
-    nthreads=None,
+    nthreads=1,
     precision="double",
     sigma_column=None,
     weight_column=None,
@@ -184,7 +185,7 @@ def stokes_image(
     msid=None,
     attrs=None,
     # Parameters previously from opts:
-    nthreads=None,
+    nthreads=1,
     precision="double",
     sigma_column=None,
     weight_column=None,
@@ -215,6 +216,7 @@ def stokes_image(
     from ducc0.misc import resize_thread_pool
     from ducc0.wgridder import vis2dirty
 
+    set_num_threads(nthreads)
     resize_thread_pool(nthreads)
     fieldid = ds.FIELD_ID
     ddid = ds.DATA_DESC_ID

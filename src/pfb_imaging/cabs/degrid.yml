@@ -15,6 +15,7 @@ cabs:
         required: true
         policies:
           positional: true
+        writable: true
       output-filename:
         info:
           Basename of output

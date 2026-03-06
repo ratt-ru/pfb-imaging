@@ -21,6 +21,11 @@ def degrid(
             parser=Path,
             help="Path to measurement set.",
         ),
+        {
+            "stimela": {
+                "writable": True,
+            },
+        },
     ],
     output_filename: Annotated[
         str,

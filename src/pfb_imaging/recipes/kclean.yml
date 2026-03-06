@@ -1,4 +1,5 @@
 _include:
+  - (pfb_imaging.cabs)restore.yaml
   - (pfb_imaging.cabs)init.yaml
   - (pfb_imaging.cabs)grid.yaml
   - (pfb_imaging.cabs)kclean.yaml
