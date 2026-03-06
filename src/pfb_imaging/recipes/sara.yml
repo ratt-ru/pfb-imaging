@@ -239,7 +239,6 @@ sara:
         positivity: =IF( recipe.product == 'I', 1, 0)
         nthreads: =recipe.nworkers * recipe.nthreads
         init-factor: =IFSET(recipe.transfer-model-from, 1.0, 0.5)
-        # product: =recipe.product
 
     restore:
       cab: restore
@@ -248,7 +247,6 @@ sara:
         nworkers: =recipe.nworkers
         nthreads: =recipe.nthreads
         outputs: iI
-        # product: =recipe.product
 
     degrid:
       cab: degrid

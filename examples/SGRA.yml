@@ -37,18 +37,16 @@ sara:
         tmf: /home/bester/projects/GC/output/gcx30/run0_I_main_model.mds
 
   inputs:
-    base-dir:
-      dtype: Directory
-      default: '/home/bester/projects/GC/output'
-      info:
-        Base directory in which to place output data products.
     obs:
       default: sgra
       choices: ['sgra','gcx17','gcx30']
       info:
         Which observation to image. This will determine which measurement set(s) to use as input.
+    base-dir:
+      default: '/home/bester/projects/GC/output/{recipe.obs}'
     image-name:
-      dtype: str
-      default: ={recipe.obs}_I_main
+      default: =sara_{recipe.obs}
+    field-of-view:
+      default: 3.5
       info:
-        A descriptive name for the outputs to be placed in base-dir.
+        Field of view in degrees. This is used to determine the image size and cell size.
