@@ -76,6 +76,9 @@ target-version = "py310"
 select = ["E", "F", "I", "N", "W"]
 ignore = []
 
+[tool.ruff.lint.isort]
+known-first-party = ["pfb_imaging"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
