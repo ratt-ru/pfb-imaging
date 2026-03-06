@@ -1,9 +1,9 @@
 _include:
-  - (pfb_imaging.cabs)init.yaml
-  - (pfb_imaging.cabs)grid.yaml
-  - (pfb_imaging.cabs)sara.yaml
-  - (pfb_imaging.cabs)restore.yaml
-  - (pfb_imaging.cabs)degrid.yaml
+  - (pfb_imaging.cabs)init.yml
+  - (pfb_imaging.cabs)grid.yml
+  - (pfb_imaging.cabs)sara.yml
+  - (pfb_imaging.cabs)restore.yml
+  - (pfb_imaging.cabs)degrid.yml
 
 opts:
   log:
@@ -13,7 +13,7 @@ opts:
   backend:
     select: native
 
-sara:
+gosara:
   name: pfb-sara
   info:
     Example stimela recipe using the SARA algorithm.
@@ -178,7 +178,7 @@ sara:
         Imaging products to produce.
 
   steps:
-    init:
+    initialize:
       cab: init
       info: 'Initialise imaging data products'
       params:
@@ -201,7 +201,7 @@ sara:
         scans: =IFSET(recipe.scans)
         product: =recipe.product
 
-    grid:
+    gridimage:
       cab: grid
       info: 'Setup grid for imaging'
       params:
@@ -219,7 +219,7 @@ sara:
         # product: =recipe.product
         transfer-model-from: =IFSET(recipe.transfer-model-from)
 
-    sara:
+    saradeconv:
       cab: sara
       info: Deconvolution step
       params:
@@ -227,7 +227,7 @@ sara:
         bases: 'self,db1,db2,db3'
         nlevels: 2
         l1-reweight-from: =recipe.l1-reweight-from
-        pd-tol: [1.5e-4]
+        pd-tol: 1.5e-4
         pd-maxit: 450
         pd-verbose: 2
         pd-report-freq: 50
@@ -240,7 +240,7 @@ sara:
         nthreads: =recipe.nworkers * recipe.nthreads
         init-factor: =IFSET(recipe.transfer-model-from, 1.0, 0.5)
 
-    restore:
+    restoreimage:
       cab: restore
       info: Produce restored image.
       params:
@@ -248,7 +248,7 @@ sara:
         nthreads: =recipe.nthreads
         outputs: iI
 
-    degrid:
+    degridimage:
       cab: degrid
       info: Render model to visibilities
       params:

@@ -19,7 +19,12 @@ ESO137
 
 Galactic Center
 ---------------
+The [SGRA recipe](SGRA.yml) has preconfigured config for three Galactic center pointings at UHF band. The recipe expects the data to live in a sub-directory called `msdir` (data available on request). Once `pfb-imaging` and `stimela` are installed, and the data has beem placed in the `msdir` sub-directory, the recipe can be invoked using e.g.
 
+```bash
+stimela run pfb_imaging.recipes::sara.yml SGRA.yml gosara obs=<obs>
+```
+where `<obs>` can be one of `sgra`, `gcx17` or `gcx30`. Outputs will be placed in folders called `output/<obs>` by default, with fits files and logs appearing in `output/<obs>/fits` and `output/<obs>/logs`, respectively.
 
 Tarantula (A.K.A. 30 Doradus)
 -----------------------------

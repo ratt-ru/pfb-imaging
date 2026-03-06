@@ -1,16 +1,9 @@
-_include:
-  - (pfb_imaging.cabs)init.yml
-  - (pfb_imaging.cabs)grid.yml
-  - (pfb_imaging.cabs)sara.yml
-  - (pfb_imaging.cabs)restore.yml
-  - (pfb_imaging.cabs)degrid.yml
-
 opts:
   log:
     dir: logs
     nest: 2
 
-sara:
+gosara:
   name: pfb-sara
   info:
     Example stimela recipe using the SARA algorithm on GC data.
@@ -45,7 +38,7 @@ sara:
     base-dir:
       default: '/home/bester/projects/GC/output/{recipe.obs}'
     image-name:
-      default: =sara_{recipe.obs}
+      default: 'sara_{recipe.obs}'
     field-of-view:
       default: 3.5
       info:

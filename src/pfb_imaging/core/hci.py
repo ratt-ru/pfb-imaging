@@ -696,13 +696,13 @@ def make_dummy_dataset(
     spatial_chunk = np.minimum(spatial_chunk, min(nx, ny, nx_psf, ny_psf))
 
     cube_dims = (n_stokes, n_freqs, n_times, ny, nx)
-    cube_chunks = (n_stokes, 1, images_per_chunk, spatial_chunk, spatial_chunk)
+    cube_chunks = (1, 1, images_per_chunk, spatial_chunk, spatial_chunk)
 
     mean_dims = (n_stokes, n_freqs, ny, nx)
-    mean_chunks = (n_stokes, 1, spatial_chunk, spatial_chunk)
+    mean_chunks = (1, 1, spatial_chunk, spatial_chunk)
 
     rms_dims = (n_stokes, n_freqs, n_times)
-    rms_chunks = (n_stokes, 1, images_per_chunk)
+    rms_chunks = (1, 1, images_per_chunk)
 
     ra_dim = "RA--SIN"
     dec_dim = "DEC--SIN"
@@ -831,7 +831,7 @@ def make_dummy_dataset(
         )
         dummy_ds["psf2"] = (
             ("STOKES", "Y_PSF", "X_PSF"),
-            da.empty((n_stokes, ny_psf, nx_psf), chunks=(n_stokes, spatial_chunk, spatial_chunk), dtype=np.float32),
+            da.empty((n_stokes, ny_psf, nx_psf), chunks=(1, spatial_chunk, spatial_chunk), dtype=np.float32),
         )
 
     # Write scaffold and metadata to disk.

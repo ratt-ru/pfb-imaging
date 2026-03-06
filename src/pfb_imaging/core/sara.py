@@ -93,7 +93,7 @@ def sara(
     opts_dict["nthreads"] = nthreads
     log.info(f"Using {nthreads} threads total")
     resize_thread_pool(nthreads)
-    set_envs(nthreads, ncpu)
+    set_envs(nthreads, ncpu, log)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/sara_{timestamp}.log"

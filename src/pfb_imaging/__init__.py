@@ -5,9 +5,11 @@ from importlib.metadata import version
 from pathlib import Path
 
 pfb_version = version("pfb-imaging")
+# This need to happen before importing numba
+os.environ["NUMBA_THREADING_LAYER"] = "tbb"
 
 
-def set_envs(nthreads, ncpu):
+def set_envs(nthreads, ncpu, log=None):
     # these seem to have more sensible defaults
     os.environ["OMP_NUM_THREADS"] = str(nthreads)
     os.environ["OPENBLAS_NUM_THREADS"] = str(nthreads)
@@ -25,9 +27,15 @@ def set_envs(nthreads, ncpu):
     tbb_path = Path(dist.locate_file("."))
     if tbb_path:
         os.environ["LD_LIBRARY_PATH"] = f"{tbb_path}:{os.environ.get('LD_LIBRARY_PATH', '')}".strip(":")
-        logging.info(f"Set LD_LIBRARY_PATH for TBB to: {tbb_path}")
+        if log:
+            log.info(f"Set LD_LIBRARY_PATH for TBB to: {tbb_path}")
+        else:
+            logging.info(f"Set LD_LIBRARY_PATH for TBB to: {tbb_path}")
     else:
-        logging.warning("Could not set LD_LIBRARY_PATH for TBB")
+        if log:
+            log.warning("Could not set LD_LIBRARY_PATH for TBB")
+        else:
+            logging.warning("Could not set LD_LIBRARY_PATH for TBB")
 
     # these get passed to child processes
     env_vars = {
@@ -41,6 +49,7 @@ def set_envs(nthreads, ncpu):
         "NUMEXPR_NUM_THREADS": str(ne_threads),
         "LD_LIBRARY_PATH": os.environ["LD_LIBRARY_PATH"],
         "PYTHONWARNINGS": "ignore:.*CUDA-enabled jaxlib is not installed.*",
+        "NUMBA_THREADING_LAYER": "tbb",
     }
     return env_vars
 
