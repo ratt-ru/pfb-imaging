@@ -164,7 +164,7 @@ def hci(
     log.log_options_dict(opts_dict, title="HCI options")
 
     resize_thread_pool(nthreads)
-    env_vars = set_envs(nthreads, ncpu)
+    env_vars = set_envs(nthreads, ncpu, log=log)
     runtime_env = {
         "env_vars": env_vars,
         "worker_process_setup_hook": setup_ray_worker,

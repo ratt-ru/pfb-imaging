@@ -104,7 +104,7 @@ def init(
     log.log_options_dict(opts_dict, title="INIT options")
 
     resize_thread_pool(nthreads)
-    env_vars = set_envs(nthreads, ncpu)
+    env_vars = set_envs(nthreads, ncpu, log=log)
 
     ray.init(
         num_cpus=nworkers,

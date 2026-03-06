@@ -75,7 +75,7 @@ def kclean(
 
     resize_thread_pool(nthreads)
     set_num_threads(nthreads)
-    set_envs(nthreads, ncpu)
+    set_envs(nthreads, ncpu, log=log)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/kclean_{timestamp}.log"

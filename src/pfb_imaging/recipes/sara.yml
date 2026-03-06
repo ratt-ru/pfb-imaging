@@ -229,7 +229,7 @@ gosara:
         l1-reweight-from: =recipe.l1-reweight-from
         pd-tol: 1.5e-4
         pd-maxit: 450
-        pd-verbose: 2
+        pd-verbose: 1
         pd-report-freq: 50
         tol: 5e-4
         gamma: 0.99

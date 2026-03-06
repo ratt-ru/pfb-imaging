@@ -59,7 +59,7 @@ def model2comps(
         ncpu = ncpu // 2
 
     resize_thread_pool(nthreads)
-    set_envs(nthreads, ncpu)
+    set_envs(nthreads, ncpu, log=log)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{str(log_directory)}/model2comps_{timestamp}.log"

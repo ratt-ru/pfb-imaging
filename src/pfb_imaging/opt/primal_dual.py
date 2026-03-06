@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from time import time
 
 import numexpr as ne
@@ -434,3 +435,183 @@ def primal_dual_numba(
             log.info(f"Success, converged after {k} iterations")
 
     return x, v
+
+
+class PrimalDual(ABC):
+    """Abstract base class for primal-dual splitting algorithms.
+
+    The fixed algorithm loop lives in :meth:`solve`.  Subclasses override
+    problem-specific methods (:meth:`dual_step` and :meth:`prox_primal`).
+
+    Operators use the following convention (matching the existing functions):
+      - ``psi(x, v)``:    analysis operator, image → coefficients, fills ``v`` in-place
+      - ``psih(v, xout)``: synthesis operator, coefficients → image, fills ``xout`` in-place
+
+    Args:
+        psi: Analysis operator ``psi(x, v)`` filling ``v = Ψ†x`` in-place.
+        psih: Synthesis operator ``psih(v, xout)`` filling ``xout = Ψv`` in-place.
+        hessnorm: Spectral norm of the data-fidelity Hessian.
+        nu: Spectral norm of ``psi`` (default 1.0).
+        gamma: Step-size safety factor (default 1.0).
+        sigma: Dual step size.  Computed from ``hessnorm``, ``gamma``, ``nu``
+            when ``None``.
+        tol: Convergence tolerance on relative primal change (default 1e-5).
+        maxit: Maximum number of iterations (default 1000).
+        report_freq: Log progress every this many iterations at verbosity > 1
+            (default 10).
+        verbosity: 0 = silent, 1 = convergence message, 2 = per-iter logging
+            (default 1).
+    """
+
+    def __init__(
+        self,
+        psi,
+        psih,
+        hessnorm,
+        nu=1.0,
+        gamma=1.0,
+        sigma=None,
+        tol=1e-5,
+        maxit=1000,
+        report_freq=10,
+        verbosity=1,
+    ):
+        self.psi = psi
+        self.psih = psih
+        self.hessnorm = hessnorm
+        self.nu = nu
+        self.gamma = gamma
+        self.tol = tol
+        self.maxit = maxit
+        self.report_freq = report_freq
+        self.verbosity = verbosity
+        self._grad = None
+
+        if sigma is None:
+            sigma = hessnorm / (2.0 * gamma) / nu
+        self.sigma = sigma
+        self.tau = 0.98 / (hessnorm / (2.0 * gamma) + sigma * nu**2)
+
+    def set_grad(self, grad):
+        """Set (or replace) the gradient of the smooth data-fidelity term.
+
+        Called before the first :meth:`solve` and between outer iterations
+        (e.g. in SARA when the Hessian is re-estimated).
+
+        Args:
+            grad: Callable ``grad(x) -> array`` returning the gradient.
+        """
+        self._grad = grad
+
+    @abstractmethod
+    def dual_step(self, xp, v, vp):
+        """Dual update: analyse ``xp`` into ``v``, then update ``v`` in-place.
+
+        Should call ``self.psi(xp, v)`` first, then apply the proximal step
+        using ``vp`` (the previous dual iterate) to produce the new ``v``.
+
+        Args:
+            xp: Previous primal iterate (read-only).
+            v: Dual variable array; overwritten with the new dual iterate.
+            vp: Previous dual iterate (read-only inside this method; will be
+                overwritten by :meth:`extrapolate_dual` immediately after).
+        """
+
+    @abstractmethod
+    def prox_primal(self, x):
+        """Apply the primal proximal operator in-place (e.g. positivity).
+
+        Args:
+            x: Primal variable; modified in-place.
+        """
+
+    # --- methods with default numba implementations ---
+
+    def extrapolate_dual(self, v, vp):
+        """Overwrite ``vp`` with ``2*v - vp`` (over-relaxation step)."""
+        _nb_extrapolate_dual(v, vp)
+
+    def primal_step(self, x, xp, xout, tau):
+        """Overwrite ``x`` with ``xp - tau * xout``."""
+        _nb_primal_step(x, xp, xout, tau)
+
+    def norm_diff(self, x, xp):
+        """Return relative norm of change: ``||x - xp|| / ||x||``."""
+        return _nb_norm_diff(x, xp)
+
+    def any_nonzero(self, x):
+        """Return ``True`` if any element of ``x`` is nonzero."""
+        return _nb_any_nonzero(x)
+
+    def on_converge(self, x, k):
+        """Hook called when ``eps < tol``.  Return ``True`` to stop.
+
+        Override in subclasses to implement reweighting or other outer-loop
+        logic.  The default always returns ``True`` (stop immediately).
+
+        Args:
+            x: Current primal iterate.
+            k: Current iteration index.
+
+        Returns:
+            ``True`` to terminate the solve loop, ``False`` to continue.
+        """
+        return True
+
+    def solve(self, x, v):
+        """Run the primal-dual loop.
+
+        Args:
+            x: Initial primal variable (modified in-place and returned).
+            v: Initial dual variable (modified in-place and returned).
+
+        Returns:
+            Tuple ``(x, v)`` of final primal and dual iterates.
+
+        Raises:
+            RuntimeError: If :meth:`set_grad` has not been called.
+        """
+        if self._grad is None:
+            raise RuntimeError("grad not set; call set_grad() before solve()")
+
+        xp = x.copy()
+        vp = v.copy()
+        xout = np.zeros_like(x)
+
+        eps = 1.0
+        tii = time()
+        for k in range(self.maxit):
+            self.dual_step(xp, v, vp)
+            self.extrapolate_dual(v, vp)
+            self.psih(vp, xout)
+            xout += self._grad(xp)
+            self.primal_step(x, xp, xout, self.tau)
+            self.prox_primal(x)
+
+            if self.any_nonzero(x):
+                eps = self.norm_diff(x, xp)
+            else:
+                eps = 1.0
+
+            if eps < self.tol:
+                if self.on_converge(x, k):
+                    break
+
+            np.copyto(xp, x)
+            np.copyto(vp, v)
+
+            if not k % self.report_freq and self.verbosity > 1:
+                log.info(f"At iteration {k} eps = {eps:.3e}")
+
+        ttot = time() - tii
+        if self.verbosity > 1:
+            log.info(f"Total time: {ttot:.3f}s  ({ttot / max(k + 1, 1) * 1e3:.1f} ms/iter)")
+
+        if k == self.maxit - 1:
+            if self.verbosity:
+                log.info(f"Max iters reached. eps = {eps:.3e}")
+        else:
+            if self.verbosity:
+                log.info(f"Success, converged after {k} iterations")
+
+        return x, v

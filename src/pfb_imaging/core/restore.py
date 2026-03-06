@@ -55,7 +55,7 @@ def restore(
     log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
 
     resize_thread_pool(nthreads)
-    set_envs(nthreads, ncpu)
+    set_envs(nthreads, ncpu, log=log)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     logname = f"{log_directory}/restore_{timestamp}.log"

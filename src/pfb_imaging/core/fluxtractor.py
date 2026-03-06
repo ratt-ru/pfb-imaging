@@ -74,7 +74,7 @@ def fluxtractor(
         ncpu = np.minimum(psutil.cpu_count(logical=False), nthreads)
     opts_dict["nthreads"] = nthreads
     resize_thread_pool(nthreads)
-    env_vars = set_envs(nthreads, ncpu)
+    env_vars = set_envs(nthreads, ncpu, log=log)
     log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")

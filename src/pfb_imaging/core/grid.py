@@ -120,7 +120,7 @@ def grid(
     }
 
     resize_thread_pool(nthreads)
-    env_vars = set_envs(nthreads, ncpu)
+    env_vars = set_envs(nthreads, ncpu, log=log)
 
     # these are passed through to child Ray processes
     if nworkers == 1:
