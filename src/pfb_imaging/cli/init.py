@@ -17,7 +17,7 @@ URI = NewType("URI", Path)
     dtype="Directory",
     name="xds-out",
     info="Output dataset directory.",
-    implicit="{current.output-filename}_{current.product}_{current.suffix}.dds",
+    implicit="{current.output-filename}_{current.product}.xds",
     must_exist=False,
 )
 def init(
