@@ -252,7 +252,7 @@ def sara(
             rms_comps[i] = np.std(tmpb[tmpb != 0])
             log.info(f"rms_comps for base {base} is {rms_comps[i]}")
         reweighter = partial(
-            l1reweight_func, psiH=psi.dot, outvar=outvar, rmsfactor=rmsfactor, rms_comps=rms_comps, alpha=alpha
+            l1reweight_func, psih=psi.dot, outvar=outvar, rmsfactor=rmsfactor, rms_comps=rms_comps, alpha=alpha
         )
         l1weight = reweighter(model)
         l1reweight_active = True
@@ -485,7 +485,7 @@ def sara(
                 rms_comps[i] = np.std(tmpb[tmpb != 0])
                 log.info(f"rms_comps for base {base} is {rms_comps[i]}")
             reweighter = partial(
-                l1reweight_func, psiH=psi.dot, outvar=outvar, rmsfactor=rmsfactor, rms_comps=rms_comps, alpha=alpha
+                l1reweight_func, psih=psi.dot, outvar=outvar, rmsfactor=rmsfactor, rms_comps=rms_comps, alpha=alpha
             )
             l1weight = reweighter(model)
             l1reweight_active = True
