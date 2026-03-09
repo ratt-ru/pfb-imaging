@@ -46,4 +46,8 @@ from pfb_imaging.cli.sara import sara  # noqa: E402
 
 app.command(name="sara")(sara)
 
+from pfb_imaging.cli.deconv import deconv  # noqa: E402
+
+app.command(name="deconv")(deconv)
+
 __all__ = ["app"]

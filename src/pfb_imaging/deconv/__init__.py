@@ -28,3 +28,53 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 """
+
+from typing import Protocol, runtime_checkable
+
+import numpy as np
+
+
+@runtime_checkable
+class DeconvSolver(Protocol):
+    """Protocol for deconvolution solvers used within the outer PFB loop.
+
+    Each solver is responsible for all regulariser-specific setup in
+    ``__init__`` and implements the forward/backward split of the
+    preconditioned forward-backward (PFB) algorithm.
+
+    The outer loop calls these methods in order each major iteration::
+
+        solver.first(residual)
+        update = solver.forward(residual)
+        lam = rmsfactor * rms           # computed externally
+        model = solver.backward(lam)
+        solver.last()
+        residual = compute_residual(model)  # gridder, always external
+    """
+
+    def first(self, residual: np.ndarray) -> None:
+        """Per-iteration preprocessing (e.g. beam application)."""
+        ...
+
+    def forward(self, residual: np.ndarray) -> np.ndarray:
+        """Solve the forward (preconditioned gradient) step.
+
+        Returns:
+            update: preconditioned gradient image, shape ``(nband, nx, ny)``.
+        """
+        ...
+
+    def backward(self, lam: float) -> np.ndarray:
+        """Solve the backward (proximal) step.
+
+        Args:
+            lam: Regularisation strength for this outer iteration.
+
+        Returns:
+            model: updated model image, shape ``(nband, nx, ny)``.
+        """
+        ...
+
+    def last(self) -> None:
+        """Per-iteration post-processing (e.g. L1 weight updates)."""
+        ...

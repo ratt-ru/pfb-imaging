@@ -1,5 +1,6 @@
 import concurrent.futures as cf
 from collections import OrderedDict
+from typing import Protocol, runtime_checkable
 
 import numba
 import numpy as np
@@ -371,3 +372,10 @@ class Psi(object):
             # wait for result
             for f in cf.as_completed(futures):
                 b = f.result()
+
+
+@runtime_checkable
+class PsiOperatorProtocol(Protocol):
+    def dot(self, x, alphao): ...
+
+    def hdot(self, alpha, xo): ...

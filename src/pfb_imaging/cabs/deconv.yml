@@ -1,0 +1,330 @@
+cabs:
+  deconv:
+    flavour: python
+    command: pfb_imaging.core.deconv.deconv
+    image: ghcr.io/ratt-ru/pfb-imaging:typer
+    name: deconv
+    info:
+      pfb version of the Sparsity Averaging Reweighting Analysis (SARA) algorithm.
+    inputs:
+      output-filename:
+        info:
+          Basename of output.
+        required: true
+        policies:
+          positional: true
+        metadata:
+          rich_help_panel: Naming
+      suffix:
+        info:
+          Can be used to specify a custom name for the image space data products.
+          This is useful for distinguishing runs with different imaging paramaters.
+          For example, different image sizes of robustness factors.
+        default: main
+        metadata:
+          rich_help_panel: Naming
+      log-directory:
+        info:
+          Directory to write logs and performance reports to.
+        metadata:
+          rich_help_panel: Naming
+      product:
+        info:
+          String specifying which Stokes products to produce.
+          Outputs are always be alphabetically ordered.
+        default: I
+        metadata:
+          rich_help_panel: Naming
+      fits-output-folder:
+        info:
+          Optional path to write fits files to.
+          Set to output-filename if not provided.
+          The same naming conventions apply.
+        metadata:
+          rich_help_panel: Naming
+      fits-mfs:
+        info:
+          Output MFS fits files
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Fits
+      fits-cubes:
+        info:
+          Output fits cubes
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: Fits
+      minor-cycle:
+        info:
+          Which minor cycle algorithm to use.
+          Options are 'sara' and 'kclean'.
+        choices:
+        - sara
+        - kclean
+        default: sara
+        metadata:
+          rich_help_panel: PFB
+      bases:
+        info:
+          Wavelet bases to use.
+          Give as comma separated str.
+        dtype: List[str]
+        default: self,db1,db2,db3
+        metadata:
+          rich_help_panel: SARA
+      nlevels:
+        info:
+          Wavelet decomposition level.
+        dtype: int
+        default: 2
+        metadata:
+          rich_help_panel: SARA
+      l1-reweight-from:
+        info:
+          L1 reweighting will kick in either at convergence or after this many iterations.
+          Set to a negative value to disable L1 reweighting.
+        dtype: int
+        default: 5
+        metadata:
+          rich_help_panel: SARA
+      alpha:
+        info:
+          Controls how aggressively the l1reweighting is applied.
+          Larger values correspond to more agressive reweighting.
+        dtype: float
+        default: 2.0
+        metadata:
+          rich_help_panel: SARA
+      hess-norm:
+        info:
+          Spectral norm of hessian approximation.
+        dtype: float
+        metadata:
+          rich_help_panel: Hessian
+      hess-approx:
+        info:
+          Which Hessian approximation to use.
+          wgt -> vis space approximation.
+          psf -> for zero-padded image space approximation.
+          direct -> for direct inversion.
+        choices:
+        - wgt
+        - psf
+        - direct
+        default: psf
+        metadata:
+          rich_help_panel: Hessian
+      rmsfactor:
+        info:
+          By default will threshold by rmsfactor*rms at every iteration.
+        dtype: float
+        default: 1.0
+        metadata:
+          rich_help_panel: PFB
+      eta:
+        info:
+          Will use eta*wsum to regularise the inversion of the Hessian approximation.
+        dtype: float
+        default: 1.0
+        metadata:
+          rich_help_panel: PFB
+      gamma:
+        info:
+          Step size of update.
+        dtype: float
+        default: 1.0
+        metadata:
+          rich_help_panel: PFB
+      nbasisf:
+        info:
+          Number of basis functions to use while fitting the frequency axis.
+          Default is to use the number of non-null imaging bands (interpolation).
+        dtype: int
+        metadata:
+          rich_help_panel: PFB
+      positivity:
+        info:
+          How to apply positivity constraint.
+          0 -> no positivity.
+          1 -> normal positivity constraint.
+          2 -> strong positivity (zero all pixels if < 0 in any band).
+        dtype: int
+        default: 1
+        metadata:
+          rich_help_panel: PFB
+      niter:
+        info:
+          Number of iterations.
+        dtype: int
+        default: 10
+        metadata:
+          rich_help_panel: PFB
+      tol:
+        info:
+          Tolerance at which to terminate algorithm.
+          Will stop when norm(x-xp)/norm(x) < tol.
+        dtype: float
+        default: 0.0005
+        metadata:
+          rich_help_panel: PFB
+      diverge-count:
+        info:
+          Will terminate the algorithm if the rms increases this many times.
+          Set to larger than niter to disable this check.
+        dtype: int
+        default: 5
+        metadata:
+          rich_help_panel: PFB
+      rms-outside-model:
+        info:
+          Mask residual where model is non-zero when computing rms.
+          This is not recommended for largely non-empty fields.
+        dtype: bool
+        default: false
+        metadata:
+          rich_help_panel: PFB
+      init-factor:
+        info:
+          Reduce the regularisation strength by this fraction at the outset.
+        dtype: float
+        default: 0.5
+        metadata:
+          rich_help_panel: PFB
+      verbosity:
+        info:
+          Set to larger than 1 to report timings during residual computation.
+        dtype: int
+        default: 1
+        metadata:
+          rich_help_panel: PFB
+      nthreads:
+        info:
+          Total number of threads to use.
+          Defaults to half the total number available.
+        dtype: int
+        metadata:
+          rich_help_panel: WGridder
+      epsilon:
+        info:
+          Gridder accuracy.
+        dtype: float
+        default: 1.0e-07
+        metadata:
+          rich_help_panel: WGridder
+      do-wgridding:
+        info:
+          Perform w-correction via improved w-stacking.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: WGridder
+      double-accum:
+        info:
+          Accumulate onto grid using double precision.
+          Only has an affect when using single precision.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: WGridder
+      pd-tol:
+        info:
+          Tolreance of primal dual algorithm.
+        dtype: float
+        default: 0.0003
+        metadata:
+          rich_help_panel: PrimalDual
+      pd-maxit:
+        info:
+          Maximum iterations for primal dual algorithm.
+        dtype: int
+        default: 450
+        metadata:
+          rich_help_panel: PrimalDual
+      pd-verbose:
+        info:
+          Verbosity of primal dual algorithm.
+          Set to > 1 for debugging, 0 for silence
+        dtype: int
+        default: 1
+        metadata:
+          rich_help_panel: PrimalDual
+      pd-report-freq:
+        info:
+          Report frequency of primal dual algorithm
+        dtype: int
+        default: 50
+        metadata:
+          rich_help_panel: PrimalDual
+      pm-tol:
+        info:
+          Tolreance of power method
+        dtype: float
+        default: 0.001
+        metadata:
+          rich_help_panel: PowerMethod
+      pm-maxit:
+        info:
+          Maximum iterations for power method
+        dtype: int
+        default: 100
+        metadata:
+          rich_help_panel: PowerMethod
+      pm-verbose:
+        info:
+          Verbosity of power method.
+          Set to > 1 for debugging, 0 for silence
+        dtype: int
+        default: 1
+        metadata:
+          rich_help_panel: PowerMethod
+      pm-report-freq:
+        info:
+          Report frequency of power method algorithm
+        dtype: int
+        default: 100
+        metadata:
+          rich_help_panel: PowerMethod
+      cg-tol:
+        info:
+          Tolreance of conjugate gradient algorithm
+        dtype: float
+        default: 0.001
+        metadata:
+          rich_help_panel: ConjugateGradient
+      cg-maxit:
+        info:
+          Maximum iterations for conjugate gradient algorithm
+        dtype: int
+        default: 150
+        metadata:
+          rich_help_panel: ConjugateGradient
+      cg-verbose:
+        info:
+          Verbosity of conjugate gradient algorithm.
+          Set to > 1 for debugging, 0 for silence
+        dtype: int
+        default: 1
+        metadata:
+          rich_help_panel: ConjugateGradient
+      cg-report-freq:
+        info:
+          Report frequency of conjugate gradient algorithm
+        dtype: int
+        default: 10
+        metadata:
+          rich_help_panel: ConjugateGradient
+    outputs:
+      dds-out:
+        dtype: Directory
+        info:
+          Output dataset directory.
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.dds'
+        must_exist: false
+      mds-out:
+        dtype: Directory
+        info:
+          Output component model.
+        implicit: '{current.output-filename}_{current.product}_{current.suffix}.mds'
+        must_exist: false
