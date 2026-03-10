@@ -66,6 +66,15 @@ cabs:
         default: sara
         metadata:
           rich_help_panel: PFB
+      opt-backend:
+        info:
+          Optimization backend for the inner backward step.
+        choices:
+        - primal-dual
+        - forward-backward
+        default: primal-dual
+        metadata:
+          rich_help_panel: PFB
       bases:
         info:
           Wavelet bases to use.
@@ -257,6 +266,42 @@ cabs:
         default: 50
         metadata:
           rich_help_panel: PrimalDual
+      fb-tol:
+        info:
+          Tolerance of forward-backward algorithm.
+        dtype: float
+        default: 0.0003
+        metadata:
+          rich_help_panel: ForwardBackward
+      fb-maxit:
+        info:
+          Maximum iterations for forward-backward algorithm.
+        dtype: int
+        default: 450
+        metadata:
+          rich_help_panel: ForwardBackward
+      fb-verbose:
+        info:
+          Verbosity of forward-backward algorithm.
+          Set to > 1 for debugging, 0 for silence.
+        dtype: int
+        default: 1
+        metadata:
+          rich_help_panel: ForwardBackward
+      fb-report-freq:
+        info:
+          Report frequency of forward-backward algorithm.
+        dtype: int
+        default: 50
+        metadata:
+          rich_help_panel: ForwardBackward
+      acceleration:
+        info:
+          Enable FISTA acceleration for forward-backward backend.
+        dtype: bool
+        default: true
+        metadata:
+          rich_help_panel: ForwardBackward
       pm-tol:
         info:
           Tolreance of power method

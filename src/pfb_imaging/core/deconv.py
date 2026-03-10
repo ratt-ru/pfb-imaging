@@ -29,6 +29,7 @@ def deconv(
     fits_mfs: bool = True,
     fits_cubes: bool = True,
     minor_cycle: str = "sara",
+    opt_backend: str = "primal-dual",
     bases: list[str] = ["self", "db1", "db2", "db3"],
     nlevels: int = 3,
     l1_reweight_from: int = 5,
@@ -54,6 +55,11 @@ def deconv(
     pd_maxit: int = 1000,
     pd_verbose: int = 1,
     pd_report_freq: int = 100,
+    fb_tol: float = 0.0003,
+    fb_maxit: int = 1000,
+    fb_verbose: int = 1,
+    fb_report_freq: int = 100,
+    acceleration: bool = True,
     pm_tol: float = 0.001,
     pm_maxit: int = 500,
     pm_verbose: int = 1,
@@ -172,45 +178,62 @@ def deconv(
     if hess_norm is not None:
         log.info(f"Using previously estimated hess_norm of {hess_norm:.3e}")
 
-    # construct solver
+    # construct solver based on minor_cycle + opt_backend
+    sara_common = dict(
+        nband=nband,
+        nx=nx,
+        ny=ny,
+        abspsf=abspsf,
+        beam=beam,
+        wsums=wsums,
+        model=model,
+        update=update,
+        nthreads=nthreads,
+        eta=eta,
+        hess_approx=hess_approx,
+        hess_norm=hess_norm,
+        cg_tol=cg_tol,
+        cg_maxit=cg_maxit,
+        cg_verbose=cg_verbose,
+        cg_report_freq=cg_report_freq,
+        pm_tol=pm_tol,
+        pm_maxit=pm_maxit,
+        pm_verbose=pm_verbose,
+        pm_report_freq=pm_report_freq,
+        bases=bases,
+        nlevels=nlevels,
+        gamma=gamma,
+        positivity=positivity,
+        l1_reweight_from=l1_reweight_from,
+        rmsfactor=rmsfactor,
+        alpha=alpha,
+    )
     if minor_cycle == "sara":
-        from pfb_imaging.deconv.sara_pd import SARAPrimalDual  # noqa: F401
+        if opt_backend == "primal-dual":
+            from pfb_imaging.deconv.sara_pd import SARAPrimalDual
 
-        solver = SARAPrimalDual(
-            nband,
-            nx,
-            ny,
-            abspsf,
-            beam,
-            wsums,
-            model,
-            update,
-            nthreads=nthreads,
-            eta=eta,
-            hess_approx=hess_approx,
-            hess_norm=hess_norm,
-            cg_tol=cg_tol,
-            cg_maxit=cg_maxit,
-            cg_verbose=cg_verbose,
-            cg_report_freq=cg_report_freq,
-            pm_tol=pm_tol,
-            pm_maxit=pm_maxit,
-            pm_verbose=pm_verbose,
-            pm_report_freq=pm_report_freq,
-            bases=bases,
-            nlevels=nlevels,
-            gamma=gamma,
-            positivity=positivity,
-            l1_reweight_from=l1_reweight_from,
-            rmsfactor=rmsfactor,
-            alpha=alpha,
-            pd_tol=pd_tol,
-            pd_maxit=pd_maxit,
-            pd_verbose=pd_verbose,
-            pd_report_freq=pd_report_freq,
-        )
+            solver = SARAPrimalDual(
+                **sara_common,
+                pd_tol=pd_tol,
+                pd_maxit=pd_maxit,
+                pd_verbose=pd_verbose,
+                pd_report_freq=pd_report_freq,
+            )
+        elif opt_backend == "forward-backward":
+            from pfb_imaging.deconv.sara_fb import SARAForwardBackward
+
+            solver = SARAForwardBackward(
+                **sara_common,
+                fb_tol=fb_tol,
+                fb_maxit=fb_maxit,
+                fb_verbose=fb_verbose,
+                fb_report_freq=fb_report_freq,
+                acceleration=acceleration,
+            )
+        else:
+            raise ValueError(f"Unknown opt_backend '{opt_backend}' for minor cycle 'sara'")
     else:
-        raise NotImplementedError(f"Minor cycle {minor_cycle} not implemented")
+        raise NotImplementedError(f"Minor cycle '{minor_cycle}' not implemented")
 
     if not isinstance(solver, DeconvSolver):
         raise TypeError(f"Solver must be a DeconvSolver, got {type(solver)}")

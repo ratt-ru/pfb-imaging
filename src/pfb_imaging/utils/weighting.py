@@ -79,7 +79,7 @@ def compute_counts(dsl, nx, ny, cell_size_x, cell_size_y, tbid=0, k=6, nthreads=
 
 @njit(nogil=True, cache=True, parallel=True)
 def _compute_counts(
-    uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtype, k=6, ngrid=1, usign=1.0, vsign=-1.0
+    uvw, freq, mask, wgt, nx, ny, cell_size_x, cell_size_y, dtype, ngrid=1, usign=1.0, vsign=-1.0
 ):  # support hardcoded for now
     # ufreq
     u_cell = 1 / (nx * cell_size_x)
@@ -102,15 +102,6 @@ def _compute_counts(
     bin_counts = np.asarray(bin_counts).astype(bin_idx.dtype)
     bin_idx[1:] = np.cumsum(bin_counts)[0:-1]
 
-    ko2 = k // 2
-    betak = 2.3 * k
-    pos = np.arange(k) - ko2
-    xkern = np.zeros(k, dtype=dtype)
-    ykern = np.zeros(k, dtype=dtype)
-    x = np.zeros(k, dtype=dtype)
-    y = np.zeros(k, dtype=dtype)
-    x_idx = np.zeros(k, dtype=np.int64)
-    y_idx = np.zeros(k, dtype=np.int64)
     for g in prange(ngrid):
         for r in range(bin_idx[g], bin_idx[g] + bin_counts[g]):
             uvw_row = uvw[r]
@@ -143,29 +134,7 @@ def _compute_counts(
                     continue
 
                 # nearest neighbour
-                if k == 0:
-                    counts[g, :, u_idx, v_idx] += wrf
-                    continue
-
-                # the kernel is separable and only defined on [-1,1]
-                x_idx[:] = pos + u_idx
-                x[:] = (x_idx - ug + 0.5) / ko2
-                y_idx[:] = pos + v_idx
-                y[:] = (y_idx - vg + 0.5) / ko2
-                _es_kernel(x, y, xkern, ykern, betak)
-                # check bounds
-                valid_ix = np.nonzero((x_idx >= 0) & (x_idx < nx))[0]
-                valid_iy = np.nonzero((y_idx >= 0) & (y_idx < ny))[0]
-
-                for c in range(ncorr):
-                    wrfc = wrf[c]
-                    for i in valid_ix:
-                        ix = x_idx[i]
-                        xi = xkern[i]
-                        for j in valid_iy:
-                            iy = y_idx[j]
-                            yi = ykern[j]
-                            counts[g, c, ix, iy] += xi * yi * wrfc
+                counts[g, :, u_idx, v_idx] += wrf
 
     return counts.sum(axis=0)
 

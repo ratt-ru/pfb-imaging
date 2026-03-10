@@ -88,6 +88,13 @@ def deconv(
             rich_help_panel="PFB",
         ),
     ] = "sara",
+    opt_backend: Annotated[
+        Literal["primal-dual", "forward-backward"],
+        typer.Option(
+            help="Optimization backend for the inner backward step.",
+            rich_help_panel="PFB",
+        ),
+    ] = "primal-dual",
     bases: Annotated[
         ListStr,
         typer.Option(
@@ -275,6 +282,41 @@ def deconv(
             rich_help_panel="PrimalDual",
         ),
     ] = 50,
+    fb_tol: Annotated[
+        float,
+        typer.Option(
+            help="Tolerance of forward-backward algorithm.",
+            rich_help_panel="ForwardBackward",
+        ),
+    ] = 0.0003,
+    fb_maxit: Annotated[
+        int,
+        typer.Option(
+            help="Maximum iterations for forward-backward algorithm.",
+            rich_help_panel="ForwardBackward",
+        ),
+    ] = 450,
+    fb_verbose: Annotated[
+        int,
+        typer.Option(
+            help="Verbosity of forward-backward algorithm. Set to > 1 for debugging, 0 for silence.",
+            rich_help_panel="ForwardBackward",
+        ),
+    ] = 1,
+    fb_report_freq: Annotated[
+        int,
+        typer.Option(
+            help="Report frequency of forward-backward algorithm.",
+            rich_help_panel="ForwardBackward",
+        ),
+    ] = 50,
+    acceleration: Annotated[
+        bool,
+        typer.Option(
+            help="Enable FISTA acceleration for forward-backward backend.",
+            rich_help_panel="ForwardBackward",
+        ),
+    ] = True,
     pm_tol: Annotated[
         float,
         typer.Option(
@@ -364,6 +406,7 @@ def deconv(
                 fits_mfs=fits_mfs,
                 fits_cubes=fits_cubes,
                 minor_cycle=minor_cycle,
+                opt_backend=opt_backend,
                 bases=bases,
                 nlevels=nlevels,
                 l1_reweight_from=l1_reweight_from,
@@ -389,6 +432,11 @@ def deconv(
                 pd_maxit=pd_maxit,
                 pd_verbose=pd_verbose,
                 pd_report_freq=pd_report_freq,
+                fb_tol=fb_tol,
+                fb_maxit=fb_maxit,
+                fb_verbose=fb_verbose,
+                fb_report_freq=fb_report_freq,
+                acceleration=acceleration,
                 pm_tol=pm_tol,
                 pm_maxit=pm_maxit,
                 pm_verbose=pm_verbose,
@@ -417,6 +465,7 @@ def deconv(
             fits_mfs=fits_mfs,
             fits_cubes=fits_cubes,
             minor_cycle=minor_cycle,
+            opt_backend=opt_backend,
             bases=bases,
             nlevels=nlevels,
             l1_reweight_from=l1_reweight_from,
@@ -442,6 +491,11 @@ def deconv(
             pd_maxit=pd_maxit,
             pd_verbose=pd_verbose,
             pd_report_freq=pd_report_freq,
+            fb_tol=fb_tol,
+            fb_maxit=fb_maxit,
+            fb_verbose=fb_verbose,
+            fb_report_freq=fb_report_freq,
+            acceleration=acceleration,
             pm_tol=pm_tol,
             pm_maxit=pm_maxit,
             pm_verbose=pm_verbose,

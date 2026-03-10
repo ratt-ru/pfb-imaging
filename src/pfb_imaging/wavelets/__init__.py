@@ -29,6 +29,24 @@ SOFTWARE.
 
 """
 
-from pfb_imaging.wavelets.wavelets import coeff_size, copyt, dwt2d, idwt2d, signal_size
+from pfb_imaging.wavelets.wavelets import (
+    coeff_size,
+    copyt,
+    copyt_seq,
+    dwt2d,
+    dwt2d_seq,
+    idwt2d,
+    idwt2d_seq,
+    signal_size,
+)
 
-__all__ = ["dwt2d", "idwt2d", "signal_size", "coeff_size", "copyt"]
+__all__ = [
+    "dwt2d",
+    "dwt2d_seq",
+    "idwt2d",
+    "idwt2d_seq",
+    "signal_size",
+    "coeff_size",
+    "copyt",
+    "copyt_seq",
+]

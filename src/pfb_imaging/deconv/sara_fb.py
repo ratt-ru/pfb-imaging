@@ -1,18 +1,24 @@
-"""SARA deconvolution using l21 regularisation and primal-dual splitting."""
+"""SARA deconvolution using l21 regularisation and forward-backward splitting."""
 
 import numpy as np
 
 from pfb_imaging.deconv.sara import SARABase
 from pfb_imaging.operators.psi import PsiOperatorProtocol
-from pfb_imaging.opt.primal_dual import PrimalDual, _nb_positivity, _nb_positivity_band
-from pfb_imaging.prox.prox_21m import dual_update_numba_fast
+from pfb_imaging.opt.forward_backward import ForwardBackward
+from pfb_imaging.opt.primal_dual import _nb_positivity, _nb_positivity_band
+from pfb_imaging.prox.prox_21m import prox_21m_numba
 from pfb_imaging.utils import logging as pfb_logging
 
-log = pfb_logging.get_logger("SARA-PD")
+log = pfb_logging.get_logger("SARA-FB")
 
 
-class L21PrimalDual(PrimalDual):
-    """Primal-dual inner solver for the l21-regularised problem (SARA).
+class L21ForwardBackward(ForwardBackward):
+    """Forward-backward inner solver for the l21-regularised problem (SARA).
+
+    Uses the tight-frame proximal trick to handle composition of
+    the l21 norm with the wavelet analysis operator Psi::
+
+        prox(x) = x + (1/nu) * Psi * (soft_thresh(Psi^T x) - Psi^T x)
 
     Args:
         psi: Analysis/synthesis operator satisfying ``PsiOperatorProtocol``.
@@ -24,11 +30,11 @@ class L21PrimalDual(PrimalDual):
         positivity: Positivity constraint mode (0, 1, or 2).
         nu: Spectral norm of ``psi`` (default 1.0).
         gamma: Step-size safety factor (default 1.0).
-        sigma: Dual step size (computed when ``None``).
         tol: Convergence tolerance (default 1e-5).
         maxit: Maximum iterations (default 1000).
         report_freq: Logging frequency (default 10).
         verbosity: Verbosity level 0-2 (default 1).
+        acceleration: Enable FISTA acceleration (default True).
         maxreweight: Maximum consecutive inner reweighting steps (default 20).
     """
 
@@ -42,21 +48,32 @@ class L21PrimalDual(PrimalDual):
         positivity: int = 1,
         nu: float = 1.0,
         gamma: float = 1.0,
-        sigma: float | None = None,
         tol: float = 1e-5,
         maxit: int = 1000,
         report_freq: int = 10,
         verbosity: int = 1,
+        acceleration: bool = True,
         maxreweight: int = 20,
     ):
-        super().__init__(psi, hessnorm, nu, gamma, sigma, tol, maxit, report_freq, verbosity)
+        super().__init__(hessnorm, gamma, tol, maxit, report_freq, verbosity, acceleration)
+        self.psi = psi
         self.lam = lam
         self.l1weight = l1weight
         self.reweighter = reweighter
         self.positivity = positivity
+        self.nu = nu
         self.maxreweight = maxreweight
         self._numreweight = 0
         self._last_reweight_iter = 0
+
+        # buffers for tight-frame prox
+        nband = psi.nband
+        nbasis = psi.nbasis
+        nymax = psi.nymax
+        nxmax = psi.nxmax
+        self._alpha = np.zeros((nband, nbasis, nymax, nxmax), dtype="f8")
+        self._alpha_buf = np.zeros_like(self._alpha)
+        self._xout = np.zeros((nband, psi.nx, psi.ny), dtype="f8")
 
     def set_lam(self, lam: float) -> None:
         """Update the regularisation strength."""
@@ -67,17 +84,35 @@ class L21PrimalDual(PrimalDual):
         self._numreweight = 0
         self._last_reweight_iter = 0
 
-    def dual_step(self, xp, v, vp):
-        """Analysis + proximal dual update for the l21 norm."""
-        self.psi.dot(xp, v)
-        dual_update_numba_fast(vp, v, self.lam, sigma=self.sigma, weight=self.l1weight)
+    def prox(self, x, step):
+        """Tight-frame proximal operator for lam * ||W * Psi^T x||_{2,1}.
 
-    def prox_primal(self, x):
-        """Apply positivity constraint in-place."""
+        Followed by positivity constraint.
+        """
+        # analysis: alpha = Psi^T x
+        self.psi.dot(x, self._alpha)
+
+        # soft-threshold in coefficient domain
+        prox_21m_numba(
+            self._alpha,
+            self._alpha_buf,
+            step * self.lam,
+            sigma=1.0,
+            weight=self.l1weight,
+        )
+
+        # tight-frame correction: x += (1/nu) * Psi * (prox(alpha) - alpha)
+        self._alpha_buf -= self._alpha
+        self.psi.hdot(self._alpha_buf, self._xout)
+        x += self._xout / self.nu
+
+        # positivity constraint
         if self.positivity == 1:
             _nb_positivity(x)
         elif self.positivity == 2:
             _nb_positivity_band(x)
+
+        return x
 
     def on_converge(self, x, k):
         """Perform one reweighting step; return ``True`` when done."""
@@ -95,18 +130,18 @@ class L21PrimalDual(PrimalDual):
             return True  # stop
 
 
-class SARAPrimalDual(SARABase):
-    """SARA deconvolution using the primal-dual opt backend.
+class SARAForwardBackward(SARABase):
+    """SARA deconvolution using the forward-backward opt backend.
 
     Satisfies the :class:`~pfb_imaging.deconv.DeconvSolver` Protocol.
-    Inherits shared SARA setup from :class:`SARABase` and adds the
-    primal-dual inner solver and dual variable.
+    Uses FISTA acceleration by default.
 
     Args:
-        pd_tol: Primal-dual convergence tolerance.
-        pd_maxit: Maximum primal-dual iterations.
-        pd_verbose: Primal-dual verbosity level.
-        pd_report_freq: Primal-dual logging frequency.
+        fb_tol: Forward-backward convergence tolerance.
+        fb_maxit: Maximum forward-backward iterations.
+        fb_verbose: Forward-backward verbosity level.
+        fb_report_freq: Forward-backward logging frequency.
+        acceleration: Enable FISTA acceleration.
         maxreweight: Maximum consecutive inner reweighting steps.
 
     All other args are forwarded to :class:`SARABase`.
@@ -146,11 +181,12 @@ class SARAPrimalDual(SARABase):
         l1_reweight_from: int = 5,
         rmsfactor: float = 1.0,
         alpha: float = 2.0,
-        # inner PD params
-        pd_tol: float = 3e-4,
-        pd_maxit: int = 450,
-        pd_verbose: int = 1,
-        pd_report_freq: int = 50,
+        # inner FB params
+        fb_tol: float = 3e-4,
+        fb_maxit: int = 450,
+        fb_verbose: int = 1,
+        fb_report_freq: int = 50,
+        acceleration: bool = True,
         maxreweight: int = 20,
     ):
         super().__init__(
@@ -184,14 +220,8 @@ class SARAPrimalDual(SARABase):
             alpha=alpha,
         )
 
-        # dual variable
-        nbasis = self._psi.nbasis
-        nxmax = self._psi.nxmax
-        nymax = self._psi.nymax
-        self._dual = np.zeros((nband, nbasis, nymax, nxmax), dtype="f8")
-
         # inner solver
-        self._solver = L21PrimalDual(
+        self._solver = L21ForwardBackward(
             self._psi,
             self.hess_norm,
             lam=1.0,  # updated each outer iteration in backward()
@@ -199,20 +229,21 @@ class SARAPrimalDual(SARABase):
             reweighter=None,  # set via last() once reweighting is active
             positivity=positivity,
             gamma=gamma,
-            tol=pd_tol,
-            maxit=pd_maxit,
-            verbosity=pd_verbose,
-            report_freq=pd_report_freq,
+            tol=fb_tol,
+            maxit=fb_maxit,
+            verbosity=fb_verbose,
+            report_freq=fb_report_freq,
+            acceleration=acceleration,
             maxreweight=maxreweight,
         )
 
     def backward(self, lam: float) -> np.ndarray:
-        """Run inner primal-dual solve; return updated model."""
+        """Run inner forward-backward solve; return updated model."""
         self._solver.set_lam(lam)
         # sync l1 weights from base (updated by last() on previous iteration)
         self._solver.l1weight = self._l1weight
         self._solver.reweighter = self._reweighter
         self._solver.reset()
-        self._model, self._dual = self._solver.solve(self._model, self._dual)
+        self._model = self._solver.solve(self._model)
         self._iter += 1
         return self._model
