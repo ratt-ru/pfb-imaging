@@ -33,7 +33,7 @@ def _es_kernel(x, y, xkern, ykern, betak):
             ykern[i] = 0.0
 
 
-def compute_counts(dsl, nx, ny, cell_size_x, cell_size_y, tbid=0, k=6, nthreads=1):
+def compute_counts(dsl, nx, ny, cell_size_x, cell_size_y, tbid=0, nthreads=1):
     """
     Sum the weights on the grid over all datasets
     """
@@ -65,7 +65,6 @@ def compute_counts(dsl, nx, ny, cell_size_x, cell_size_y, tbid=0, k=6, nthreads=
                 cell_size_x,
                 cell_size_y,
                 ds.WEIGHT.dtype,
-                k=6,
                 ngrid=ngrid,
             )
             futures.append(fut)

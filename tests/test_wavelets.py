@@ -3,7 +3,14 @@ import pytest
 import pywt
 from numpy.testing import assert_array_almost_equal
 
-from pfb_imaging.wavelets import coeff_size, dwt2d, idwt2d, signal_size
+from pfb_imaging.wavelets import (
+    coeff_size,
+    dwt2d,
+    dwt2d_nocopyt,
+    idwt2d,
+    idwt2d_nocopyt,
+    signal_size,
+)
 
 pmp = pytest.mark.parametrize
 
@@ -83,13 +90,13 @@ def test_dwt_idwt_pywt(wavelet, data_shape, nlevel):
     ix, iy, sx, sy, spx, spy, ntotx, ntoty = build_wavelet_arrays(nxi, nyi, wavelet, nlevel)
 
     alpha2 = np.zeros((ntoty, ntotx))
-    cbuff_flat = np.zeros(ntotx * ntoty)
-    cbufft_flat = np.zeros(ntoty * ntotx)
+    cbuff = np.zeros((ntotx, ntoty))
+    cbufft = np.zeros((ntoty, ntotx))
     approx = np.zeros((ntotx, ntoty))
-    dwt2d(data, alpha2, cbuff_flat, cbufft_flat, ix, iy, sx, sy, dec_lo, dec_hi, nlevel, approx)
+    dwt2d(data, alpha2, cbuff, cbufft, ix, iy, sx, sy, dec_lo, dec_hi, nlevel, approx)
     xrec2 = np.zeros((nxi, nyi))
     coeffs = np.zeros((ntoty, ntotx))
-    idwt2d(alpha2, xrec2, coeffs, cbuff_flat, cbufft_flat, ix, iy, sx, sy, spx, spy, rec_lo, rec_hi, nlevel)
+    idwt2d(alpha2, xrec2, coeffs, cbuff, cbufft, ix, iy, sx, sy, spx, spy, rec_lo, rec_hi, nlevel)
 
     assert_array_almost_equal(data, xrec2)
 
@@ -119,3 +126,152 @@ def test_dwt_idwt_pywt(wavelet, data_shape, nlevel):
         alpha3[lowx:highx, lowy2 : lowy2 + npix_y] = a
 
     assert_array_almost_equal(alpha2.T, alpha3)
+
+
+@pmp("wavelet", ["db1", "db4", "db5"])
+@pmp("data_shape", [(128, 256), (512, 128)])
+@pmp("nlevel", [1, 2, 3])
+def test_nocopyt_perfect_reconstruction(wavelet, data_shape, nlevel):
+    """The nocopyt round-trip must recover the original signal."""
+    nxi, nyi = data_shape
+    data = np.random.random(size=data_shape)
+
+    wvlt = pywt.Wavelet(wavelet)
+    dec_lo = np.array(wvlt.filter_bank[0])
+    dec_hi = np.array(wvlt.filter_bank[1])
+    rec_lo = np.array(wvlt.filter_bank[2])
+    rec_hi = np.array(wvlt.filter_bank[3])
+
+    ix, iy, sx, sy, spx, spy, ntotx, ntoty = build_wavelet_arrays(nxi, nyi, wavelet, nlevel)
+
+    alpha = np.zeros((ntotx, ntoty))
+    cbuff = np.zeros((ntotx, ntoty))
+    dwt2d_nocopyt(data, alpha, cbuff, ix, iy, sx, sy, dec_lo, dec_hi, nlevel)
+
+    xrec = np.zeros((nxi, nyi))
+    alpha_work = np.zeros((ntotx, ntoty))
+    idwt2d_nocopyt(alpha, xrec, alpha_work, cbuff, ix, iy, sx, sy, spx, spy, rec_lo, rec_hi, nlevel)
+
+    assert_array_almost_equal(data, xrec)
+
+
+@pmp("wavelet", ["db1", "db4", "db5"])
+@pmp("data_shape", [(128, 256), (512, 128)])
+@pmp("nlevel", [1, 2, 3])
+def test_nocopyt_matches_copyt(wavelet, data_shape, nlevel):
+    """The nocopyt coefficients must equal the transpose of the copyt coefficients."""
+    nxi, nyi = data_shape
+    data = np.random.random(size=data_shape)
+
+    wvlt = pywt.Wavelet(wavelet)
+    dec_lo = np.array(wvlt.filter_bank[0])
+    dec_hi = np.array(wvlt.filter_bank[1])
+    rec_lo = np.array(wvlt.filter_bank[2])
+    rec_hi = np.array(wvlt.filter_bank[3])
+
+    ix, iy, sx, sy, spx, spy, ntotx, ntoty = build_wavelet_arrays(nxi, nyi, wavelet, nlevel)
+
+    # Old (copyt) — coefficients in (ntoty, ntotx) layout
+    alpha_old = np.zeros((ntoty, ntotx))
+    cbuff = np.zeros((ntotx, ntoty))
+    cbufft = np.zeros((ntoty, ntotx))
+    approx = np.zeros((ntotx, ntoty))
+    dwt2d(data, alpha_old, cbuff, cbufft, ix, iy, sx, sy, dec_lo, dec_hi, nlevel, approx)
+
+    # New (nocopyt) — coefficients in (ntotx, ntoty) layout
+    alpha_new = np.zeros((ntotx, ntoty))
+    cbuff_new = np.zeros((ntotx, ntoty))
+    dwt2d_nocopyt(data, alpha_new, cbuff_new, ix, iy, sx, sy, dec_lo, dec_hi, nlevel)
+
+    assert_array_almost_equal(alpha_new, alpha_old.T)
+
+    # Verify both reconstructions match
+    xrec_old = np.zeros((nxi, nyi))
+    coeffs_tmp = np.zeros((ntoty, ntotx))
+    idwt2d(
+        alpha_old,
+        xrec_old,
+        coeffs_tmp,
+        cbuff,
+        cbufft,
+        ix,
+        iy,
+        sx,
+        sy,
+        spx,
+        spy,
+        rec_lo,
+        rec_hi,
+        nlevel,
+    )
+
+    xrec_new = np.zeros((nxi, nyi))
+    alpha_work = np.zeros((ntotx, ntoty))
+    idwt2d_nocopyt(
+        alpha_new,
+        xrec_new,
+        alpha_work,
+        cbuff_new,
+        ix,
+        iy,
+        sx,
+        sy,
+        spx,
+        spy,
+        rec_lo,
+        rec_hi,
+        nlevel,
+    )
+
+    assert_array_almost_equal(xrec_old, xrec_new)
+
+
+@pmp("wavelet", ["db1", "db4", "db5"])
+@pmp("data_shape", [(128, 256), (512, 128)])
+@pmp("nlevel", [1, 2, 3])
+def test_nocopyt_matches_pywt(wavelet, data_shape, nlevel):
+    """The nocopyt coefficients must match pywt's wavedec2 output."""
+    nxi, nyi = data_shape
+    data = np.random.random(size=data_shape)
+
+    # pywt reference
+    alpha_pywt = pywt.wavedec2(data, wavelet, mode="zero", level=nlevel)
+
+    wvlt = pywt.Wavelet(wavelet)
+    dec_lo = np.array(wvlt.filter_bank[0])
+    dec_hi = np.array(wvlt.filter_bank[1])
+
+    ix, iy, sx, sy, spx, spy, ntotx, ntoty = build_wavelet_arrays(nxi, nyi, wavelet, nlevel)
+
+    alpha = np.zeros((ntotx, ntoty))
+    cbuff = np.zeros((ntotx, ntoty))
+    dwt2d_nocopyt(data, alpha, cbuff, ix, iy, sx, sy, dec_lo, dec_hi, nlevel)
+
+    # Pack pywt coefficients into the nocopyt (ntotx, ntoty) layout.
+    # pywt returns (cA, (cH, cV, cD), ...) where:
+    #   cH = horizontal detail = hi_x, lo_y = our HL
+    #   cV = vertical detail   = lo_x, hi_y = our LH
+    #   cD = diagonal detail   = hi_x, hi_y = our HH
+    # Our layout per block: [0:sx,0:sy]=LL, [sx:,0:sy]=HL, [0:sx,sy:]=LH, [sx:,sy:]=HH
+    alpha_ref = np.zeros((ntotx, ntoty))
+
+    # Approximation coefficients at the deepest level
+    nxa = ix[nlevel - 1, 0]
+    nya = iy[nlevel - 1, 0]
+    alpha_ref[0:nxa, 0:nya] = alpha_pywt[0]
+
+    # Detail coefficients per level
+    for i, j in zip(range(1, nlevel + 1), reversed(range(nlevel))):
+        highx = ix[j, 1]
+        nax = sx[j]
+        lowx = highx - 2 * nax
+        highy = iy[j, 1]
+        nay = sy[j]
+        lowy = highy - 2 * nay
+
+        ch, cv, cd = alpha_pywt[i]
+        alpha_ref[lowx + nax : highx, lowy : lowy + nay] = ch  # HL
+        alpha_ref[lowx : lowx + nax, lowy + nay : highy] = cv  # LH
+        alpha_ref[lowx + nax : highx, lowy + nay : highy] = cd  # HH
+
+    assert_array_almost_equal(alpha, alpha_ref)

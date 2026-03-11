@@ -9,6 +9,39 @@ pmp = pytest.mark.parametrize
 
 
 # ---------------------------------------------------------------------------
+# Simple PsiOperatorProtocol implementations for testing
+# ---------------------------------------------------------------------------
+
+
+class IdentityPsi:
+    """Identity operator satisfying PsiOperatorProtocol."""
+
+    def dot(self, x, v):
+        np.copyto(v, x)
+
+    def hdot(self, v, xout):
+        np.copyto(xout, v)
+
+
+class SlicePsi:
+    """Psi operator that embeds/extracts via slicing (for L21 tests)."""
+
+    def __init__(self, nx, ny, nbasis, nymax, nxmax):
+        self.nx = nx
+        self.ny = ny
+        self.nbasis = nbasis
+        self.nymax = nymax
+        self.nxmax = nxmax
+
+    def dot(self, x, v):
+        v[:] = 0.0
+        v[:, 0, : self.ny, : self.nx] = x
+
+    def hdot(self, v, xout):
+        xout[:] = v[:, 0, : self.ny, : self.nx]
+
+
+# ---------------------------------------------------------------------------
 # QuadraticL1PrimalDual — test-only subclass for the LASSO problem
 #
 #   min_x  0.5 * ||x - b||^2  +  lam * ||x||_1
@@ -22,25 +55,19 @@ class QuadraticL1PrimalDual(PrimalDual):
 
     Uses pure-numpy dual step (no numba kernels needed for testing).
 
-    psi  = identity: psi(x, v)  copies x into v
-    psih = identity: psih(v, xout) copies v into xout
+    psi.dot  = identity: copies x into v
+    psi.hdot = identity: copies v into xout
     """
 
     def __init__(self, b, lam, **kwargs):
-        def _psi(x, v):
-            np.copyto(v, x)
-
-        def _psih(v, xout):
-            np.copyto(xout, v)
-
         # hessnorm = 1 for A = I
-        super().__init__(_psi, _psih, hessnorm=1.0, **kwargs)
+        super().__init__(IdentityPsi(), hessnorm=1.0, **kwargs)
         self.lam = lam
         self.set_grad(lambda x: x - b)
 
     def dual_step(self, xp, v, vp):
         # v_new = clip(vp + sigma * Ψ†xp, -lam, lam)
-        self.psi(xp, v)  # v = xp
+        self.psi.dot(xp, v)  # v = xp
         np.clip(vp + self.sigma * v, -self.lam, self.lam, out=v)
 
     def prox_primal(self, x):
@@ -67,16 +94,19 @@ def make_l21_problem(shape_x, shape_v, seed=42):
     def grad(x):
         return diag_sq * x - diag_dirty
 
-    def psi(x, v):
+    psi_op = SlicePsi(nx, ny, nbasis, nymax, nxmax)
+
+    # bare functions for primal_dual_numba (legacy interface)
+    def psi_func(x, v):
         v[:] = 0.0
         v[:, 0, :ny, :nx] = x
 
-    def psih(v, xout):
+    def psih_func(v, xout):
         xout[:] = v[:, 0, :ny, :nx]
 
     l1weight = rng.uniform(0.01, 0.1, size=(nbasis, nymax, nxmax)).astype(np.float64)
 
-    return psi, psih, grad, l1weight, hessnorm
+    return psi_op, psi_func, psih_func, grad, l1weight, hessnorm
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +142,7 @@ def test_l21_matches_primal_dual_numba(nband, nx, positivity):
     shape_x = (nband, nx, ny)
     shape_v = (nband, nbasis, nymax, nxmax)
 
-    psi, psih, grad, l1weight, hessnorm = make_l21_problem(shape_x, shape_v)
+    psi_op, psi_func, psih_func, grad, l1weight, hessnorm = make_l21_problem(shape_x, shape_v)
 
     lam = 0.05
     tol = 1e-8
@@ -128,8 +158,8 @@ def test_l21_matches_primal_dual_numba(nband, nx, positivity):
         x0.copy(),
         v0.copy(),
         lam,
-        psih,  # 4th positional = psih param (synthesis in the body)
-        psi,  # 5th positional = psi param (analysis in the body)
+        psih_func,  # 4th positional = psih param (synthesis in the body)
+        psi_func,  # 5th positional = psi param (analysis in the body)
         hessnorm,
         prox=None,
         l1weight=l1weight,
@@ -144,8 +174,7 @@ def test_l21_matches_primal_dual_numba(nband, nx, positivity):
 
     # --- new class ---
     solver = L21PrimalDual(
-        psi,
-        psih,
+        psi_op,
         hessnorm,
         lam=lam,
         l1weight=l1weight,
@@ -169,20 +198,14 @@ def test_l21_matches_primal_dual_numba(nband, nx, positivity):
 def test_solve_raises_without_grad():
     """solve() raises RuntimeError when set_grad has not been called."""
 
-    def psi(x, v):
-        np.copyto(v, x)
-
-    def psih(v, xout):
-        np.copyto(xout, v)
-
     class _MinimalPD(PrimalDual):
         def dual_step(self, xp, v, vp):
-            self.psi(xp, v)
+            self.psi.dot(xp, v)
             np.clip(vp + self.sigma * v, -1.0, 1.0, out=v)
 
         def prox_primal(self, x):
             pass
 
-    solver = _MinimalPD(psi, psih, hessnorm=1.0, verbosity=0)
+    solver = _MinimalPD(IdentityPsi(), hessnorm=1.0, verbosity=0)
     with pytest.raises(RuntimeError, match="set_grad"):
         solver.solve(np.zeros(5), np.zeros(5))

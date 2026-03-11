@@ -1,4 +1,5 @@
 import os
+import shutil
 import tarfile
 from pathlib import Path
 
@@ -7,6 +8,19 @@ import ray
 import requests
 
 from pfb_imaging import set_envs, setup_ray_worker
+
+# ── Clear stale Numba caches ────────────────────────────────────────
+# Numba's file cache (`cache=True`) is keyed per-function by source hash.
+# Functions decorated with `inline="always"` get compiled into their callers,
+# but Numba does NOT track this cross-function dependency.  If an inlined
+# function changes while the caller's source stays the same, the caller's
+# cached machine code is stale and loading it can segfault.
+#
+# Clearing __pycache__ dirs on every session start is cheap (~ms) and
+# eliminates the problem entirely during development.
+_src_root = Path(__file__).resolve().parent.parent / "src" / "pfb_imaging"
+for _cache_dir in _src_root.rglob("__pycache__"):
+    shutil.rmtree(_cache_dir, ignore_errors=True)
 
 test_root_path = Path(__file__).resolve().parent
 test_data_path = Path(test_root_path, "data")

@@ -552,7 +552,6 @@ def image_data_products(
             cellx,
             celly,
             uvw.dtype,
-            k=0,
             # limit number of grids
             ngrid=np.minimum(numba_threads, 8),
             usign=1.0 if flip_u else -1.0,

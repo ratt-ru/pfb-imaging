@@ -58,7 +58,7 @@ def test_counts(ms_name, srf, fov):
     wgt = np.exp(np.random.randn(ncorr, nrow, nchan))
 
     counts = _compute_counts(
-        uvw, freq, mask, wgt, nx, ny, cell_rad, cell_rad, dtype=np.float64, k=0, ngrid=1, usign=usign, vsign=vsign
+        uvw, freq, mask, wgt, nx, ny, cell_rad, cell_rad, dtype=np.float64, ngrid=1, usign=usign, vsign=vsign
     )
 
     # convert counts to imaging weights
@@ -78,7 +78,6 @@ def test_counts(ms_name, srf, fov):
         cell_rad,
         cell_rad,
         dtype=np.float64,
-        k=0,
         ngrid=1,
         usign=usign,
         vsign=vsign,

@@ -218,7 +218,7 @@ def sara(
     nxmax = psi.nxmax
     nymax = psi.nymax
 
-    log.info(f"Using {psi.nthreads_per_band} numba threads for each band")
+    # log.info(f"Using {psi.nthreads_per_band} numba threads for each band")
     log.info(f"Using {thread_pool_size()} threads for gridding")
 
     # number of frequency basis functions
