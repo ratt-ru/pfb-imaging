@@ -1,0 +1,45 @@
+opts:
+  log:
+    dir: logs
+    nest: 2
+
+gosara:
+  name: pfb-sara
+  info:
+    Example stimela recipe using the SARA algorithm on GC data.
+
+  # make them all the same size
+  assign:
+    cell-size: 2.0
+    nx: 6720
+    ny: 6720
+
+  assign_based_on:
+    obs:
+      sgra:
+        ms: [/home/bester/projects/GC/msdir/1590089458_sdp_l0_1024ch_SGRA.ms]
+        data-column: CORRECTED_DATA
+        tmf: /home/bester/projects/GC/output/sgra/run0_I_main_model.mds
+      gcx17:
+        ms: [/home/bester/projects/GC/msdir/1590089458_sdp_l0_1024ch_GCX17.ms]
+        data-column: CORRECTED_DATA+MODEL_DATA
+        tmf: /home/bester/projects/GC/output/gcx17/run0_I_main_model.mds
+      gcx30:
+        ms: [/home/bester/projects/GC/msdir/1590089458_sdp_l0_1024ch_GCX30.ms]
+        data-column: CORRECTED_DATA+MODEL_DATA
+        tmf: /home/bester/projects/GC/output/gcx30/run0_I_main_model.mds
+
+  inputs:
+    obs:
+      default: sgra
+      choices: ['sgra','gcx17','gcx30']
+      info:
+        Which observation to image. This will determine which measurement set(s) to use as input.
+    base-dir:
+      default: '/home/bester/projects/GC/output/{recipe.obs}'
+    image-name:
+      default: 'sara_{recipe.obs}'
+    field-of-view:
+      default: 3.5
+      info:
+        Field of view in degrees. This is used to determine the image size and cell size.

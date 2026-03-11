@@ -1,0 +1,288 @@
+import time
+
+import numpy as np
+import psutil
+import ray
+from daskms.fsspec_store import DaskMSStore
+from ducc0.misc import resize_thread_pool
+
+from pfb_imaging import set_envs, setup_ray_worker
+from pfb_imaging.utils import logging as pfb_logging
+from pfb_imaging.utils.fits import rdds2fits
+from pfb_imaging.utils.naming import get_opts, set_output_names, xds_from_url
+from pfb_imaging.utils.restoration import rrestore_image
+
+log = pfb_logging.get_logger("RESTORE")
+
+
+def restore(
+    output_filename: str,
+    model_name: str = "MODEL",
+    residual_name: str = "RESIDUAL",
+    suffix: str = "main",
+    outputs: str = "mMrRiI",
+    gausspar: tuple[float, float, float] | None = None,
+    drop_bands: list[int] | None = None,
+    nworkers: int = 1,
+    nthreads: int | None = None,
+    log_directory: str | None = None,
+    product: str = "I",
+    fits_output_folder: str | None = None,
+    keep_ray_alive: bool = False,
+):
+    """
+    Create fits image cubes from data products (eg. restored images).
+    """
+    # for logging options
+    opts_dict = locals().copy()
+
+    output_filename, fits_output_folder, log_directory, oname = set_output_names(
+        output_filename,
+        product,
+        fits_output_folder,
+        log_directory,
+    )
+    opts_dict["output_filename"] = output_filename
+    opts_dict["fits_output_folder"] = fits_output_folder
+    opts_dict["log_directory"] = log_directory
+
+    nthreads_total = psutil.cpu_count(logical=True)
+    ncpu = psutil.cpu_count(logical=False)
+    if nthreads is None:
+        nthreads = nthreads_total // 2
+        ncpu = ncpu // 2
+    opts_dict["nthreads"] = nthreads
+    log.info(f"Using {nworkers} workers with {nthreads} threads per worker")
+
+    resize_thread_pool(nthreads)
+    set_envs(nthreads, ncpu, log=log)
+
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    logname = f"{log_directory}/restore_{timestamp}.log"
+    pfb_logging.log_to_file(logname)
+    log.log_options_dict(opts_dict, title="RESTORE options")
+
+    # these are passed through to child Ray processes
+    renv = {"env_vars": {}}
+    if nworkers == 1:
+        renv["env_vars"]["RAY_DEBUG_POST_MORTEM"] = "1"
+
+    ray.init(
+        num_cpus=nworkers,
+        logging_level="INFO",
+        ignore_reinit_error=True,
+        runtime_env={
+            "env_vars": renv["env_vars"],
+            "worker_process_setup_hook": setup_ray_worker,
+        },
+    )
+
+    ti = time.time()
+
+    # Inlined _restore() function logic
+    basename = output_filename
+    if fits_output_folder is not None:
+        fits_oname = fits_output_folder + "/" + basename.split("/")[-1]
+    else:
+        fits_oname = basename
+
+    dds_name = f"{basename}_{suffix}.dds"
+    dds, dds_list = xds_from_url(dds_name)
+    dds_store = DaskMSStore(dds_name)
+    if "://" in dds_store.url:
+        protocol = dds_store.url.split("://")[0]
+    else:
+        protocol = "file"
+
+    # get MFS PSF PARS
+    try:
+        psfpars_mfs = get_opts(dds_store.url, protocol, name="psfparsn_mfs.pkl")
+    except Exception:
+        log.error_and_raise("Could not load MFS PSF pamaters. Run grid worker with psf=true to remake.", RuntimeError)
+
+    if drop_bands is not None:
+        ddso = []
+        ddso_list = []
+        for ds, dsl in zip(dds, dds_list):
+            b = int(ds.bandid)
+            if b not in drop_bands:
+                ddso.append(ds)
+                ddso_list.append(dsl)
+        dds = ddso
+        dds_list = ddso_list
+
+    timeids = np.unique(np.array([int(ds.timeid) for ds in dds]))
+    freqs = [ds.freq_out for ds in dds]
+    freqs = np.unique(freqs)
+    nband = freqs.size
+    ntime = timeids.size
+    ncorr = dds[0].corr.size
+    cell_deg = dds[0].cell_rad * 180 / np.pi
+    log.info(f"Number of output times = {ntime}")
+    log.info(f"Number of output bands = {nband}")
+    for timeid in timeids:
+        # collect datasets for this timeid
+        dst = [ds for ds in dds if int(ds.timeid) == timeid]
+        # we don't want a reference to the ds lying around so pass list of ds_list to child processes instead
+        dst_list = [dsl for ds, dsl in zip(dds, dds_list) if int(ds.timeid) == timeid]
+        # need this loop before scatter to extract lowest resolution
+        if not np.array(gausspar).any():  # if gausspar is None or all elements are zero (allow float comparison)
+            emaj = 0.0
+            emin = 0.0
+            pas = []
+            for ds in dst:
+                gausspars = ds.PSFPARSN.values
+                emaj = np.maximum(emaj, gausspars[:, 0].max())
+                emin = np.maximum(emin, gausspars[:, 1].max())
+                pas.append(np.mean(gausspars[:, 2]))
+            pa = np.mean(np.array(pas))
+            log.info(
+                f"Using lowest resolution of ({emaj * cell_deg:.3e} deg, "
+                f"{emin * cell_deg:.3e} deg, {pa * 180 / np.pi:.3e} deg) for restored images"
+            )
+            # these are in pixel units
+            # restore needs corr axis
+            gaussparf = np.tile([emaj, emin, pa], (ncorr, 1))
+        elif gausspar is not None:
+            # these are passed in in degrees
+            emaj = gausspar[0]
+            emin = gausspar[1]
+            pa = gausspar[2]
+            log.info(f"Using specified resolution of ({emaj:.3e} deg, {emin:.3e} deg, {pa:.3e} deg)")
+            # convert to pixel units
+            emaj /= cell_deg
+            emin /= cell_deg
+            # convert degrees to radians
+            pa *= np.pi / 180
+            # restore needs corr axis
+            gaussparf = np.tile([emaj, emin, pa], (ncorr, 1))
+
+        # create restored images
+        tasksi = []
+        for ds, ds_name in zip(dst, dst_list):
+            if gausspar is None:
+                gaussparf = ds.PSFPARSN.values
+            task = rrestore_image.remote(ds_name, model_name, residual_name, gaussparf, nthreads=nthreads)
+            tasksi.append(task)
+
+    # the loop over timeid happens inside dds2fits
+    tasks = []
+    if "d" in outputs.lower():
+        task = rdds2fits.remote(
+            dds_list,
+            "DIRTY",
+            f"{fits_oname}_{suffix}",
+            norm_wsum=True,
+            nthreads=nthreads,
+            do_mfs="d" in outputs,
+            do_cube="D" in outputs,
+            psfpars_mfs=psfpars_mfs,
+        )
+        tasks.append(task)
+
+    if "m" in outputs.lower():
+        task = rdds2fits.remote(
+            dds_list,
+            model_name,
+            f"{fits_oname}_{suffix}",
+            norm_wsum=False,
+            nthreads=nthreads,
+            do_mfs="m" in outputs,
+            do_cube="M" in outputs,
+            psfpars_mfs=psfpars_mfs,
+        )
+        tasks.append(task)
+
+    if "r" in outputs.lower():
+        task = rdds2fits.remote(
+            dds_list,
+            residual_name,
+            f"{fits_oname}_{suffix}",
+            norm_wsum=True,
+            nthreads=nthreads,
+            do_mfs="r" in outputs,
+            do_cube="R" in outputs,
+            psfpars_mfs=psfpars_mfs,
+        )
+        tasks.append(task)
+
+    # we need to wait for tasksi before rendering restored to fits
+    tasksc = ray.get(tasksi)
+
+    if "i" in outputs.lower():
+        # recompute the mean PSF parameters
+        psfparsf = {}
+        for psfpar, bandid, timeid in tasksc:
+            psfparsf.setdefault(timeid, np.zeros((nband, ncorr, 3)))
+            psfparsf[timeid][int(bandid)] = psfpar
+        psfpars_mfs = {timeid: psfparsf[timeid].mean(axis=0) for timeid in psfparsf}
+        task = rdds2fits.remote(
+            dds_list,
+            "IMAGE",
+            f"{fits_oname}_{suffix}",
+            norm_wsum=False,
+            nthreads=nthreads,
+            do_mfs="i" in outputs,
+            do_cube="I" in outputs,
+            psfpars_mfs=psfpars_mfs,
+            psfparsf=psfparsf,
+            force_unit="Jy/beam",
+        )
+        tasks.append(task)
+
+    # TODO(LB) - we may want to add these outputs back in, at least the useful ones
+    # if 'f' in outputs:
+    #     rhat_mfs = c2c(residual_mfs, forward=True,
+    #                    nthreads=nthreads, inorm=0)
+    #     rhat_mfs = np.fft.fftshift(rhat_mfs)
+    #     save_fits(np.abs(rhat_mfs),
+    #               f'{fits_oname}_{suffix}.abs_fft_residual_mfs.fits',
+    #               hdr_mfs,
+    #               overwrite=overwrite)
+    #     save_fits(np.angle(rhat_mfs),
+    #               f'{fits_oname}_{suffix}.phase_fft_residual_mfs.fits',
+    #               hdr_mfs,
+    #               overwrite=overwrite)
+
+    # if 'F' in outputs:
+    #     rhat = c2c(residual, axes=(1,2), forward=True,
+    #                nthreads=nthreads, inorm=0)
+    #     rhat = np.fft.fftshift(rhat, axes=(1,2))
+    #     save_fits(np.abs(rhat),
+    #               f'{fits_oname}_{suffix}.abs_fft_residual.fits',
+    #               hdr,
+    #               overwrite=overwrite)
+    #     save_fits(np.angle(rhat),
+    #               f'{fits_oname}_{suffix}.phase_fft_residual.fits',
+    #               hdr,
+    #               overwrite=overwrite)
+
+    # if 'c' in outputs:
+    #     if gausspar is None:
+    #         raise ValueError("Clean beam in output but no PSF in dds")
+    #     cpsf_mfs = gaussian2d(xx, yy, gausspar[0], normalise=False)
+    #     save_fits(cpsf_mfs,
+    #               f'{fits_oname}_{suffix}.cpsf_mfs.fits',
+    #               hdr_mfs,
+    #               overwrite=overwrite)
+
+    # if 'C' in outputs:
+    #     if gausspars is None:
+    #         raise ValueError("Clean beam in output but no PSF in dds")
+    #     cpsf = np.zeros(residual.shape, dtype=output_type)
+    #     for v in range(nband):
+    #         gpar = gausspars[v]
+    #         if not np.isnan(gpar).any():
+    #             cpsf[v] = gaussian2d(xx, yy, gpar, normalise=False)
+    #     save_fits(cpsf,
+    #               f'{fits_oname}_{suffix}.cpsf.fits',
+    #               hdr,
+    #               overwrite=overwrite)
+
+    # wait for all tasks to finish before returning
+    ray.get(tasks)
+
+    log.info(f"All done after {time.time() - ti}s")
+
+    if not keep_ray_alive:
+        ray.shutdown()

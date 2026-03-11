@@ -1,0 +1,113 @@
+History
+=======
+
+Unreleased
+----------
+
+**Wavelet performance overhaul**
+
+* Added polyphase axis-0 convolutions (``conv_downsample_axis0_polyphase_pair``,
+  ``conv_upsample_axis0_polyphase_pair``) that convolve along axis 0 without
+  transposing the array, eliminating the ``copyt`` transpose that was a
+  significant fraction of DWT compute time.
+* New ``dwt2d_nocopyt`` / ``idwt2d_nocopyt`` implementations that use the
+  polyphase kernels.  Coefficients are stored in x-first ``(nxmax, nymax)``
+  layout instead of the old ``(nymax, nxmax)`` layout.
+* ``PsiNocopyt`` operator: thread-parallel multi-band wavelet analysis/synthesis
+  using the nocopyt DWT.  ~1.4x faster round-trip than the original ``Psi``.
+* ``PsiNocopytRay`` operator: Ray actor-based process-level parallelism across
+  bands.  Avoids GIL contention and achieves ~1.6x speedup over ``Psi`` for
+  large images.  Each actor loads TBB via ``ctypes.CDLL`` to ensure proper
+  multi-threaded numba execution.
+* Unrolled and fastmath-enabled convolution kernels for filter sizes
+  2, 4, 6, 8, 10 (Daubechies db1--db5).
+* Added profiling scripts for all layers of the wavelet stack
+  (see ``scripts/profiling.md``):
+  ``profile_dwt_convolutions.py`` (kernels + SIMD analysis),
+  ``profile_polyphase.py`` (row-wise vs polyphase),
+  ``profile_dwt2d.py`` (copyt vs nocopyt 2D transforms),
+  ``profile_wavelets.py`` (full Psi operator variants).
+
+**Deconvolution**
+
+* Started adding general ``deconv`` application to replace individual
+  per-algorithm applications.
+* Added abstract ``PrimalDual`` class and tests for the primal-dual algorithm.
+
+**Build and infrastructure**
+
+* TBB threading layer set via ``ctypes.CDLL`` to avoid numba falling back to
+  the single-threaded workqueue backend.
+* ``setup_ray_worker`` helper for initialising Ray workers with the correct
+  numba threading configuration.
+
+
+0.0.8 (2025-10-21)
+-------------------
+
+* Keep dims when converting model to Stokes in ``stokes2im``.
+* Add ``temp-dir`` for synchronizer.
+* Remove upper padding limit, make output name explicit.
+
+
+0.0.7 (2025-10-06)
+-------------------
+
+* High cadence imaging (HCI) improvements: on-the-fly rephasing and beam
+  interpolation/reprojection, cube mean support, ``.zarr`` / ``.fds``
+  extension handling based on stack mode.
+* Simple transient simulation functionality.
+* Simplify degrid.
+* Separate wsum and beam weights in HCI worker.
+* Add ``OBSLABEL`` to FITS header and stacked cube attributes.
+* Fix uninitialised variables in restore.
+* Logging improvements.
+
+
+0.0.6 (2025-07-15)
+-------------------
+
+* Development release with internal refactoring.
+
+
+0.0.5 (2024-12-13)
+-------------------
+
+* Major refactor: all algorithms use the same data formats, simplified
+  parallelism, direct preconditioning, uniformly blurred output images.
+* Add ``pyproject.toml`` and relax dependency constraints.
+* Clean up schema and dependencies.
+
+
+0.0.4 (2024-05-02)
+-------------------
+
+* Version bump (no user-facing changes beyond 0.0.3).
+
+
+0.0.3 (2024-05-02)
+-------------------
+
+* High cadence imaging worker with movie generation.
+* AWS/Kubernetes integration.
+* Fix divide-by-zero in ``fitcleanbeam``.
+* Set min counts to fraction of median.
+
+
+0.0.1 (2023-07-30)
+-------------------
+
+* First tagged release.
+* Preconditioned forward-backward deconvolution (SARA, Hogbom, Clark).
+* Dask-based distributed processing.
+* Stimela cab integration.
+* L2 reweighting, SPI fitting, FITS mask support.
+
+
+Pre-release (2020-03 -- 2023-07)
+--------------------------------
+
+* Initial project structure and CI setup.
+* Core imaging pipeline: init, grid, degrid, kclean, sara, restore.
+* Numba-accelerated gridding and wavelet transforms.
+* Dask scheduler integration for distributed computing.

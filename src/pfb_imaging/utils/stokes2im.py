@@ -1,0 +1,778 @@
+from datetime import datetime, timezone
+from functools import partial
+
+import jax.numpy as jnp
+import numexpr as ne
+import numpy as np
+import ray
+import xarray as xr
+from africanus.coordinates import radec_to_lm
+from astropy import units
+from astropy.coordinates import SkyCoord
+from casacore.quanta import quantity
+from ducc0.fft import good_size
+from jax.scipy.sparse.linalg import cg
+from numba import set_num_threads
+from scipy.constants import c as lightspeed
+
+from pfb_imaging.operators.gridder import wgridder_conventions
+from pfb_imaging.operators.hessian import hessian_jax
+from pfb_imaging.utils.astrometry import get_coordinates, synthesize_uvw
+from pfb_imaging.utils.beam import reproject_and_interp_beam
+from pfb_imaging.utils.misc import fitcleanbeam
+from pfb_imaging.utils.stokes import jones_to_mueller, mueller_to_stokes
+from pfb_imaging.utils.weighting import _compute_counts, counts_to_weights, filter_extreme_counts, weight_data
+
+ifftshift = np.fft.ifftshift
+fftshift = np.fft.fftshift
+
+
+@ray.remote
+def batch_stokes_image(
+    dc1=None,
+    dc2=None,
+    operator=None,
+    ds=None,
+    jones=None,
+    nx=None,
+    ny=None,
+    freq=None,
+    utime=None,
+    rbin_idx=None,
+    rbin_counts=None,
+    cell_rad=None,
+    radec=None,
+    antpos=None,
+    poltype=None,
+    fds_store=None,
+    bandid=None,
+    timeid=None,
+    msid=None,
+    attrs=None,
+    integrations_per_image=None,
+    nthreads=1,
+    precision="double",
+    sigma_column=None,
+    weight_column=None,
+    model_column=None,
+    product="I",
+    check_ants=False,
+    phase_dir=None,
+    beam_model=None,
+    target=None,
+    robustness=None,
+    min_padding=2.0,
+    filter_counts_level=10.0,
+    psf_relative_size=None,
+    inject_transients=None,
+    epsilon=1e-7,
+    do_wgridding=True,
+    double_accum=True,
+    natural_grad=False,
+    eta=1e-5,
+    cg_tol=1e-3,
+    cg_maxit=150,
+    psf_out=False,
+    weight_grid_out=False,
+    l2_reweight_dof=None,
+    synchronizer=None,
+    wgt_mode="l2",
+):
+    # load chunk
+    ds.load(scheduler="sync")
+    if jones is not None:
+        # we do it this way to force using synchronous scheduler
+        jones = jones.load(scheduler="sync").values
+
+    # slice out rows corresponding to single images and submit compute task
+    ntime = utime.size
+    tasks = []
+    # we need to start counting from zero
+    rbin_idx = rbin_idx - rbin_idx.min()
+    for t0 in range(0, ntime, integrations_per_image):
+        nmax = np.minimum(ntime, t0 + integrations_per_image)
+        time_slice = slice(t0, nmax)
+        ridx = rbin_idx[time_slice]
+        rcnts = rbin_counts[time_slice]
+        row_slice = slice(ridx[0], ridx[-1] + rcnts[-1])
+        dsi = ds[{"row": row_slice}]
+
+        if jones is not None:
+            jones_slice = jones[time_slice]
+        else:
+            jones_slice = None
+
+        task = stokes_image.remote(
+            dc1=dc1,
+            dc2=dc2,
+            operator=operator,
+            ds=dsi,
+            jones=jones_slice,
+            nx=nx,
+            ny=ny,
+            freq=freq,
+            cell_rad=cell_rad,
+            utime=utime[time_slice],
+            tbin_idx=ridx,
+            tbin_counts=rcnts,
+            radec=radec,
+            antpos=antpos,
+            poltype=poltype,
+            bandid=bandid,
+            timeid=timeid,
+            msid=msid,
+            attrs=attrs,
+            # Parameters previously from opts:
+            nthreads=nthreads,
+            precision=precision,
+            sigma_column=sigma_column,
+            weight_column=weight_column,
+            model_column=model_column,
+            product=product,
+            check_ants=check_ants,
+            phase_dir=phase_dir,
+            beam_model=beam_model,
+            target=target,
+            robustness=robustness,
+            min_padding=min_padding,
+            filter_counts_level=filter_counts_level,
+            psf_relative_size=psf_relative_size,
+            inject_transients=inject_transients,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            double_accum=double_accum,
+            natural_grad=natural_grad,
+            eta=eta,
+            cg_tol=cg_tol,
+            cg_maxit=cg_maxit,
+            psf_out=psf_out,
+            weight_grid_out=weight_grid_out,
+            l2_reweight_dof=l2_reweight_dof,
+            wgt_mode=wgt_mode,
+        )
+
+        tasks.append(task)
+
+    # wait for all tasks to finish and get result
+    dso = ray.get(tasks)
+
+    # write output chunks
+    dso = xr.concat(dso, dim="TIME")
+    dso.to_zarr(fds_store.url, region="auto", synchronizer=synchronizer, safe_chunks=False)
+
+    return timeid, bandid
+
+
+@ray.remote
+def stokes_image(
+    dc1=None,
+    dc2=None,
+    operator=None,
+    ds=None,
+    jones=None,
+    nx=None,
+    ny=None,
+    freq=None,
+    cell_rad=None,
+    utime=None,
+    tbin_idx=None,
+    tbin_counts=None,
+    radec=None,
+    antpos=None,
+    poltype=None,
+    bandid=None,
+    timeid=None,
+    msid=None,
+    attrs=None,
+    # Parameters previously from opts:
+    nthreads=1,
+    precision="double",
+    sigma_column=None,
+    weight_column=None,
+    model_column=None,
+    product="I",
+    check_ants=False,
+    phase_dir=None,
+    beam_model=None,
+    target=None,
+    robustness=None,
+    min_padding=2.0,
+    filter_counts_level=10.0,
+    psf_relative_size=None,
+    inject_transients=None,
+    epsilon=1e-7,
+    do_wgridding=True,
+    double_accum=True,
+    natural_grad=False,
+    eta=1e-5,
+    cg_tol=1e-3,
+    cg_maxit=150,
+    psf_out=False,
+    weight_grid_out=False,
+    l2_reweight_dof=None,
+    wgt_mode="l2",
+):
+    # serialization fails for these if we import them above
+    from ducc0.misc import resize_thread_pool
+    from ducc0.wgridder import vis2dirty
+
+    set_num_threads(nthreads)
+    resize_thread_pool(nthreads)
+    fieldid = ds.FIELD_ID
+    ddid = ds.DATA_DESC_ID
+    scanid = ds.SCAN_NUMBER
+    oname = f"ms{msid:04d}_fid{fieldid:04d}_spw{ddid:04d}_scan{scanid:04d}_band{bandid:04d}_time{timeid:04d}"
+
+    if precision.lower() == "single":
+        real_type = np.float32
+        complex_type = np.complex64
+    elif precision.lower() == "double":
+        real_type = np.float64
+        complex_type = np.complex128
+
+    data = getattr(ds, dc1).values
+    if dc2 is not None:
+        try:
+            assert operator == "+" or operator == "-"
+        except Exception as e:
+            raise e
+        data = ne.evaluate(
+            f"data {operator} data2",
+            local_dict={"data": data, "data2": getattr(ds, dc2).values},
+            casting="same_kind",
+        )
+
+    time = ds.TIME.values
+    ant1 = ds.ANTENNA1.values
+    ant2 = ds.ANTENNA2.values
+    uvw = ds.UVW.values
+    flag = ds.FLAG.values
+    # MS may contain auto-correlations
+    frow = ds.FLAG_ROW.values | (ant1 == ant2)
+
+    # combine flag and frow
+    flag = np.logical_or(flag, frow[:, None, None])
+
+    nrow, nchan, ncorr = data.shape
+
+    if sigma_column is not None:
+        weight = ne.evaluate("1.0/sigma**2", local_dict={"sigma": getattr(ds, sigma_column).values})
+    elif weight_column is not None:
+        weight = getattr(ds, weight_column).values
+    else:
+        weight = np.ones((nrow, nchan, ncorr), dtype=real_type)
+
+    if model_column is not None:
+        model_vis = getattr(ds, model_column).values.astype(complex_type)
+        if product.lower() == "i":
+            model_vis = model_vis[..., [0, -1]].mean(axis=-1, keepdims=True)
+        else:
+            raise NotImplementedError(
+                f"Applying Jones matrcies on the fly is not supported for product {product}. "
+                f"Use --data-column 'CORRECTED_DATA - MODEL_DATA' for model subtraction."
+            )
+    else:
+        model_vis = None
+
+    ntime = utime.size
+    nant = antpos.shape[0]
+    time_out = np.mean(utime)
+    freq_out = np.mean(freq)
+
+    if data.dtype != complex_type:
+        data = data.astype(complex_type)
+
+    if weight.dtype != real_type:
+        weight = weight.astype(real_type)
+
+    if jones is not None:
+        if jones.dtype != complex_type:
+            jones = jones.astype(complex_type)
+        # qcal has chan and ant axes reversed compared to pfb implementation
+        jones = np.swapaxes(jones, 1, 2)
+        # data are not 2x2 so we need separate labels
+        # for jones correlations and data/weight correlations
+        # reshape to dispatch with overload
+        jones_ncorr = jones.shape[-1]
+        if jones_ncorr == 4:
+            jones = jones.reshape(ntime, nant, nchan, 1, 2, 2)
+        elif jones_ncorr == 2:
+            pass
+        else:
+            raise ValueError(f"Incorrect number of correlations of {jones_ncorr} for product {product}")
+    else:
+        jones = np.ones((ntime, nant, nchan, 1, 2), dtype=complex_type)
+
+    # check that there are no missing antennas
+    ant1u = np.unique(ant1)
+    ant2u = np.unique(ant2)
+    allants = np.unique(np.concatenate((ant1u, ant2u)))
+
+    # check that antpos gives the correct size table
+    # TODO - this is probably wrong as flagged antennas usually persist
+    # in the ANTENNA table even when the rows have been deleted
+    antmax = allants.size
+    if check_ants:
+        try:
+            assert antmax == nant
+        except Exception:
+            raise ValueError(
+                "Inconsistent ANTENNA table. "
+                "Shape does not match max number of antennas "
+                "as inferred from ant1 and ant2. "
+                f"Table size is {antpos.shape} but got {antmax}. "
+                f"{oname}"
+            )
+
+    # relabel antennas by index
+    # this only works because allants is sorted in ascending order
+    for a, ant in enumerate(allants):
+        ant1 = np.where(ant1 == ant, a, ant1)
+        ant2 = np.where(ant2 == ant, a, ant2)
+
+    cell_deg = np.rad2deg(cell_rad)
+
+    # make sure ra is in (0, 2pi)
+    # need a copy since write only
+    radec = radec.copy()
+    if radec[0] < 0:
+        radec[0] += 2 * np.pi
+    elif radec[0] > 2 * np.pi:
+        radec[0] -= 2 * np.pi
+
+    flip_u, flip_v, flip_w, _, _ = wgridder_conventions(0, 0)
+    signu = -1.0 if flip_u else 1.0
+    signv = -1.0 if flip_v else 1.0
+    # we need these because of flipped wgridder convention
+    # https://github.com/mreineck/ducc/issues/34
+    signx = -1.0 if flip_u else 1.0
+    signy = -1.0 if flip_v else 1.0
+    freqfactor = -2j * np.pi * freq[None, :] / lightspeed
+
+    # rephase if asked
+    if phase_dir is not None:
+        new_ra, new_dec = phase_dir.split(",")
+        c = SkyCoord(new_ra, new_dec, frame="fk5", unit=(units.hourangle, units.deg))
+        new_ra_rad = np.deg2rad(c.ra.value)
+        new_dec_rad = np.deg2rad(c.dec.value)
+        radec_new = np.array((new_ra_rad, new_dec_rad))
+        uvw_new = synthesize_uvw(antpos, time, ant1, ant2, radec_new)
+        wo = uvw[:, 2:]
+        wn = uvw_new[:, 2:]
+
+        # TODO - this copies chgcentre but not sure why it gives
+        # better results than computing the phase with lmn differences
+        w_diff = wn - wo
+        # data and model_vis could still be read_only at this point
+        data = data * np.exp(freqfactor * w_diff)[:, :, None]
+        if model_vis is not None:
+            model_vis = model_vis * np.exp(freqfactor * w_diff)[:, :, None]
+
+        uvw_old = uvw.copy()
+        uvw = uvw_new
+    else:
+        uvw_old = uvw
+        radec_new = radec
+
+    if beam_model is not None:
+        # should we compute a weighted mean over freq instead of interpolating here?
+        bds = xr.open_zarr(beam_model, chunks=None).interp(chan=[freq_out])
+        l_beam = bds.l_beam.values
+        m_beam = bds.m_beam.values
+        # the beam is in feed plane direction cosine coordinates
+        # we need to flip the beam upside down because of the beam orientation
+        # see https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/index.html
+        # shape is (corr, chan, X, Y) -> squeeze out freq
+        beam = bds.BEAM.values[:, 0, :, :]
+        # are the MdV beams transmissive or receptive?
+        # reshape for feed and spatial rotations
+        beam = beam.reshape(2, 2, l_beam.size, m_beam.size)
+        cell_deg_in = l_beam[1] - l_beam[0]
+        pbeam = reproject_and_interp_beam(
+            beam,
+            time,
+            antpos,
+            radec,
+            radec_new,
+            cell_deg_in,
+            cell_deg,
+            nx,
+            ny,
+            poltype,
+            product,
+            weight=weight,
+            nthreads=nthreads,
+        )
+
+        # this is a hack to get the images to align
+        pbeam = np.transpose(pbeam.astype(np.float32), axes=(0, 2, 1))
+        pbeam = pbeam[:, ::-1, :]
+
+    else:
+        pbeam = np.ones((len(product), nx, ny), dtype=real_type)
+
+    # compute lm coordinates of target if requested
+    if target is not None:
+        tmp = target.split(",")
+        if len(tmp) == 1 and tmp[0] == target:
+            obs_time = time_out
+            tra, tdec = get_coordinates(obs_time, target=target)
+        else:  # we assume a HH:MM:SS,DD:MM:SS format has been passed in
+            c = SkyCoord(tmp[0], tmp[1], frame="fk5", unit=(units.hourangle, units.deg))
+            tra = np.deg2rad(c.ra.value)
+            tdec = np.deg2rad(c.dec.value)
+
+        tcoords = np.zeros((1, 2))
+        tcoords[0, 0] = tra
+        tcoords[0, 1] = tdec
+        lm0 = radec_to_lm(tcoords, radec_new[None, :]).squeeze()
+        # flip for wgridder conventions
+        x0 = -lm0[0]
+        y0 = -lm0[1]
+    else:
+        x0 = 0.0
+        y0 = 0.0
+        tra = radec_new[0]
+        tdec = radec_new[1]
+
+    ra_deg = np.rad2deg(tra)
+    dec_deg = np.rad2deg(tdec)
+
+    # we currently need this extra loop through the data because
+    # we don't have access to the grid
+    data, weight = weight_data(
+        data,
+        weight,
+        flag,
+        jones,
+        tbin_idx,
+        tbin_counts,
+        ant1,
+        ant2,
+        poltype,
+        product,
+        str(ncorr),
+        wgt_mode,
+    )
+
+    # flag if any correlation is flagged
+    flag = flag.any(axis=-1)
+    mask = (~flag).astype(np.uint8)
+
+    # TODO - this subtraction would be better to do inside weight_data
+    if model_column is not None:
+        data = ne.evaluate("(data-model_vis)*mask")
+
+    if l2_reweight_dof:
+        # data should contain residual_vis at this point
+        ressq = (data * data.conj()).real * mask
+        wcount = mask.sum()
+        if wcount:
+            ovar = ressq.sum() / wcount  # use 67% quantile?
+            if ovar > 0:
+                weight = (l2_reweight_dof + 1) / (l2_reweight_dof + ressq / ovar) / ovar
+            else:
+                raise ValueError("Residual visibilities are exactly zero. Cannot compute L2 reweighting.")
+        else:
+            weight = None
+
+    n = np.sqrt(1 - x0**2 - y0**2)
+    psf_vis = np.exp(
+        freqfactor * (signu * uvw[:, 0:1] * x0 * signx + signv * uvw[:, 1:2] * y0 * signy - uvw[:, 2:] * (n - 1))
+    ).astype(complex_type)
+
+    # TODO - polarisation parameters and handle Stokes axis more elegantly
+    # We simulate the transient at the old uvw coordinates to make the beam application easier
+    # The simulated data then gets rephased to the new phase center
+    if inject_transients is not None:
+        transient_name = inject_transients.removesuffix("yaml") + "zarr"
+        transient_ds = xr.open_zarr(transient_name, chunks=None)
+        all_times = transient_ds.TIME.values
+        all_freqs = transient_ds.FREQ.values
+        names = transient_ds.names
+        ras = transient_ds.ras
+        decs = transient_ds.decs
+        if beam_model is not None:
+            bds = xr.open_zarr(beam_model, chunks=None)
+        for name, ra, dec in zip(names, ras, decs):
+            ra_rad = np.deg2rad(ra)
+            dec_rad = np.deg2rad(dec)
+            tcoords = np.zeros((1, 2))
+            tcoords[0, 0] = ra_rad
+            tcoords[0, 1] = dec_rad
+            # use initial radec as reference since rephasing happens after beam application
+            coords0 = np.array((radec[0], radec[1]))
+            lm0t = radec_to_lm(tcoords, coords0).squeeze()
+            x0t = lm0t[0]
+            y0t = lm0t[1]
+            n0t = np.sqrt(1 - x0t**2 - y0t**2)
+
+            # these are the profiles on the full domain so interpolate
+            tprofile = getattr(transient_ds, f"{name}_time_profile").values
+            fprofile = getattr(transient_ds, f"{name}_freq_profile").values
+
+            tprofile = np.interp(time, all_times, tprofile)  # interpolate and reorder to ms times
+            fprofile = np.interp(freq, all_freqs, fprofile)
+
+            # outer product gives dynamic spectrum
+            # LB - why do we need the braces?
+            dspec = (tprofile[:, None]) * fprofile[None, :]
+
+            # apply beam in original frame
+            # TODO - make sure loaded chunks don't persist after the interp call (doesn't look like it does)
+            # TODO - add time axis (parallactic angle rotation)
+            if beam_model is not None:
+                beam_source = bds.interp(
+                    chan=freq,
+                    l_beam=np.array([x0t]),
+                    m_beam=np.array([y0t]),
+                ).BEAM.values
+                beam_source = beam_source.reshape(2, 2, *beam_source.shape[1:])
+                beam_source = jones_to_mueller(beam_source, beam_source)
+                # select Stokes I power beam as a function of frequency only
+                beam_source = mueller_to_stokes(beam_source, poltype=poltype)[0, :, 0, 0]
+
+                # apply beam to the transient spectrum
+                dspec *= beam_source[None, :]
+
+            # inject transient at x0t, y0t and convert to complex values
+            # phase_u = signu * uvw_old[:, 0:1] * x0t * signx
+            # phase_v = signv * uvw_old[:, 1:2] * y0t * signy
+            # phase_w = uvw_old[:, 2:] * (n0t - 1)
+            # phase = phase_u + phase_v - phase_w + phase_wdiff
+            # this is equivalent to the above
+            if phase_dir is not None:
+                phase = w_diff
+            else:
+                phase = np.zeros((nrow, 1), dtype=real_type)
+            phase += signu * uvw_old[:, 0:1] * x0t * signx
+            phase += signv * uvw_old[:, 1:2] * y0t * signy
+            phase -= uvw_old[:, 2:] * (n0t - 1)
+            dspec *= np.exp(freqfactor * phase)
+
+            # currently Stokes I only
+            data[:, :, 0] += dspec
+
+    # TODO - why do we need to cast here?
+    data = data.transpose(2, 0, 1).astype(complex_type)
+    weight = weight.transpose(2, 0, 1).astype(real_type)
+    if robustness is not None:
+        # we need to compute the weights on the padded grid
+        # but we don't have control over the optimal gridding
+        # parameters so assume a minimum
+        nx_pad = good_size(int(min_padding * nx))
+        while nx_pad % 2:
+            nx_pad = good_size(nx_pad + 1)
+        ny_pad = good_size(int(min_padding * ny))
+        while ny_pad % 2:
+            ny_pad = good_size(ny_pad + 1)
+        counts = _compute_counts(
+            uvw,
+            freq,
+            mask,
+            weight,
+            nx_pad,
+            ny_pad,
+            cell_rad,
+            cell_rad,
+            real_type,
+            ngrid=1,
+            usign=1.0 if flip_u else -1.0,
+            vsign=1.0 if flip_v else -1.0,
+        )
+
+        counts = filter_extreme_counts(counts, level=filter_counts_level)
+
+        weight = counts_to_weights(
+            counts,
+            uvw,
+            freq,
+            weight,
+            mask,
+            nx_pad,
+            ny_pad,
+            cell_rad,
+            cell_rad,
+            robustness,
+            usign=1.0 if flip_u else -1.0,
+            vsign=1.0 if flip_v else -1.0,
+        )
+
+    psf_min_size = 128
+    if psf_relative_size is None:
+        nx_psf = psf_min_size
+        ny_psf = psf_min_size
+    else:
+        nx_psf = good_size(int(nx * psf_relative_size))
+        while nx_psf % 2:
+            nx_psf = good_size(nx_psf + 1)
+        ny_psf = good_size(int(ny * psf_relative_size))
+        while ny_psf % 2:
+            ny_psf = good_size(ny_psf + 1)
+        if nx_psf < psf_min_size or ny_psf < psf_min_size:
+            nx_psf = psf_min_size
+            ny_psf = psf_min_size
+
+    nstokes = weight.shape[0]
+    wsum = np.zeros(nstokes)
+    residual = np.zeros((nstokes, nx, ny), dtype=real_type)
+    psf = np.zeros((nstokes, nx_psf, ny_psf), dtype=real_type)
+    rms = np.zeros(nstokes, dtype=real_type)
+    # TODO - the wgridder doesn't check if wgridding is actually
+    # required and always makes a minimum of nsupp number of wplanes
+    # where nsupp is the gridding kernel support. We could check this
+    # with pfb.utils.misc.wplanar if we can figure out the relationship
+    # between epsilon on the wplanar threshold parameter.
+    for c in range(nstokes):
+        wsum[c] = weight[c, ~flag].sum()
+        if wsum[c] == 0:
+            continue
+        vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=data[c],
+            wgt=weight[c],
+            mask=mask,
+            npix_x=nx,
+            npix_y=ny,
+            pixsize_x=cell_rad,
+            pixsize_y=cell_rad,
+            center_x=x0,
+            center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            divide_by_n=True,
+            nthreads=nthreads,
+            sigma_min=min_padding,
+            double_precision_accumulation=double_accum,
+            verbosity=0,
+            dirty=residual[c],
+        )
+
+        vis2dirty(
+            uvw=uvw,
+            freq=freq,
+            vis=psf_vis,
+            wgt=weight[c],
+            mask=mask,
+            npix_x=nx_psf,
+            npix_y=ny_psf,
+            pixsize_x=cell_rad,
+            pixsize_y=cell_rad,
+            center_x=x0,
+            center_y=y0,
+            flip_u=flip_u,
+            flip_v=flip_v,
+            flip_w=flip_w,
+            epsilon=epsilon,
+            do_wgridding=do_wgridding,
+            divide_by_n=True,
+            nthreads=nthreads,
+            sigma_min=min_padding,
+            double_precision_accumulation=double_accum,
+            verbosity=0,
+            dirty=psf[c],
+        )
+        # normalize by sum of weights to get Jy/beam units
+        # done using psf_max in case some of the data points fell off the grid (sub-Nyquist imaging)
+        for c in range(nstokes):
+            if wsum[c] > 0:
+                psf_max = psf[c].max()
+                wsum[c] = psf_max
+                psf[c] /= psf_max
+                residual[c] /= psf_max
+                rms[c] = np.std(residual[c], axis=(0, 1))
+
+    # these will be in degrees
+    gausspars = fitcleanbeam(psf, level=0.5, pixsize=cell_deg)
+
+    if natural_grad:
+        # TODO - add beam application
+        ifftshift = jnp.fft.ifftshift
+
+        abspsf = jnp.abs(jnp.fft.rfft2(ifftshift(psf, axes=(1, 2)), axes=(1, 2), norm="backward"))
+
+        hess = partial(hessian_jax, nx, ny, 2 * nx, 2 * ny, eta, abspsf)
+
+        residual = cg(hess, residual, tol=cg_tol, maxiter=cg_maxit)[0]
+
+    else:
+        residual *= pbeam / (pbeam**2 + eta)
+
+    unix_time = quantity(f"{time_out}s").to_unix_time()
+    utc = datetime.fromtimestamp(unix_time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    # set corr coords (removing duplicates and sorting)
+    corr = list(sorted(set(product)))
+
+    out_ras = ra_deg + np.arange(nx // 2, -(nx // 2), -1) * cell_deg
+    out_decs = dec_deg + np.arange(-(ny // 2), ny // 2) * cell_deg
+    out_ras = np.round(out_ras, decimals=12)
+    out_decs = np.round(out_decs, decimals=12)
+
+    # save outputs
+    coords = {
+        "FREQ": (("FREQ",), np.array([freq_out])),
+        "TIME": (("TIME",), np.mean(utime, keepdims=True)),
+        "STOKES": (("STOKES",), corr),
+        "X": (("X",), out_ras),
+        "Y": (("Y",), out_decs),
+    }
+    # X and Y are transposed for compatibility with breifast
+    data_vars = {}
+    residual = np.transpose(residual.astype(np.float32), axes=(0, 2, 1))
+    data_vars["cube"] = (("STOKES", "FREQ", "TIME", "Y", "X"), residual[:, None, None, :, :])
+    if psf_out:
+        coords["X_PSF"] = (("X_PSF",), ra_deg + np.arange(nx_psf // 2, -(nx_psf // 2), -1) * cell_deg)
+        coords["Y_PSF"] = (("Y_PSF",), dec_deg + np.arange(-(ny_psf // 2), ny_psf // 2) * cell_deg)
+        psf = np.transpose(psf.astype(np.float32), axes=(0, 2, 1))
+        data_vars["psf"] = (("STOKES", "FREQ", "TIME", "Y_PSF", "X_PSF"), psf[:, None, None, :, :])
+
+    if robustness is not None and weight_grid_out:
+        ic, ix, iy = np.where(counts > 0)
+        wgt = np.zeros_like(counts)
+        wgt[ic, ix, iy] = 1.0 / counts[ic, ix, iy]
+        coords["X_PAD"] = (("X_PAD",), np.arange(nx_pad) * cell_deg)
+        coords["Y_PAD"] = (("Y_PAD",), np.arange(ny_pad) * cell_deg)
+        wgt = np.transpose(wgt.astype(np.float32), axes=(0, 2, 1))
+        data_vars["wgtgrid"] = (("STOKES", "FREQ", "TIME", "Y_PAD", "X_PAD"), wgt[:, None, None, :, :])
+
+    data_vars["weight"] = (("STOKES", "FREQ", "TIME"), wsum[:, None, None])
+
+    if beam_model is not None:
+        weight = pbeam**2 + eta
+        weight = np.transpose(weight.astype(np.float32), axes=(0, 2, 1))
+        data_vars["beam_weight"] = (("STOKES", "FREQ", "TIME", "Y", "X"), weight[:, None, None, :, :])
+
+    data_vars["rms"] = (("STOKES", "FREQ", "TIME"), rms[:, None, None].astype(np.float32))
+    nonzero = wsum > 0
+    data_vars["nonzero"] = (("STOKES", "FREQ", "TIME"), nonzero[:, None, None])
+    bmaj = np.array([gp[0] for gp in gausspars], dtype=np.float32)
+    bmin = np.array([gp[1] for gp in gausspars], dtype=np.float32)
+    # convert bpa to degrees
+    bpa = np.array([gp[2] * 180 / np.pi for gp in gausspars], dtype=np.float32)
+    data_vars["psf_maj"] = (("STOKES", "FREQ", "TIME"), bmaj[:, None, None])
+    data_vars["psf_min"] = (("STOKES", "FREQ", "TIME"), bmin[:, None, None])
+    data_vars["psf_pa"] = (("STOKES", "FREQ", "TIME"), bpa[:, None, None])
+
+    if attrs is None:
+        attrs = {
+            "ra": tra,
+            "dec": tdec,
+            "x0": x0,
+            "y0": y0,
+            "cell_rad": cell_rad,
+            "fieldid": fieldid,
+            "ddid": ddid,
+            "scanid": scanid,
+            "bandid": bandid,
+            "timeid": timeid,
+            "robustness": robustness,
+            "utc": utc,
+        }
+
+    out_ds = xr.Dataset(data_vars, coords=coords, attrs=attrs)
+    return out_ds

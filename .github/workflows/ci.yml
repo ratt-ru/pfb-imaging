@@ -6,70 +6,45 @@ permissions:
 
 on:
   push:
+    branches: [main]
     tags:
       - 'v*'
   pull_request:
+    branches: [main]
 
 jobs:
-  should-run:
+  quality:
+    name: Code Quality
     runs-on: ubuntu-latest
-    outputs:
-      run: ${{ steps.check.outputs.should_run }}
     steps:
-      - name: Checkout repository
+      - name: Check out code
         uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install 3.10
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v5
         with:
-          fetch-depth: 0  # This ensures we have access to the commit history
-          
-      - id: check
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" == "pull_request" ] || [ "${{ github.event_name }}" == "pull_request_target" ]; then
-            message="${{ github.event.pull_request.head.sha }}"
-            # Fetch the actual commit message since we only get the SHA in PR context
-            message=$(git ls-remote "${{ github.event.pull_request.head.repo.clone_url }}" "${{ github.event.pull_request.head.ref }}" | cut -f1 | xargs git show --format=%B -s)
-          else
-            message="${{ github.event.head_commit.message }}"
-          fi
-          
-          echo "Event type: ${{ github.event_name }}"
-          echo "Original message: '$message'"
-          
-          message="${message,,}"  # Convert to lowercase
-          echo "Lowercase message: '$message'"
-          
-          skip_patterns=(
-            'skip ci'
-            'ci skip'
-            'no ci'
-            'skip-ci'
-            'ci-skip'
-            'skip_ci'
-            'ci_skip'
-            'noci'
-          )
-          
-          should_run="true"
-          
-          for pattern in "${skip_patterns[@]}"; do
-            echo "Testing pattern: '$pattern'"
-            if echo "$message" | grep -q "$pattern"; then
-              echo "MATCH FOUND for pattern: '$pattern'"
-              should_run="false"
-              break
-            else
-              echo "No match for pattern: '$pattern'"
-            fi
-          done
-          
-          echo "Should run: $should_run"
-          echo "should_run=$should_run" >> $GITHUB_OUTPUT
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Check code formatting
+        run: uv run ruff format --check .
+
+      - name: Lint code
+        run: uv run ruff check .
 
   test:
-    needs: should-run
-    if: needs.should-run.outputs.run == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: true
 
     env:
       NUMBA_CACHE_DIR: /tmp/numba-cache
@@ -79,21 +54,23 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
-      - name: Checkout source
+      - name: Check out code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
         with:
-          python-version: ${{ matrix.python-version}}
+          enable-cache: true
+          # This ensures the venv is created and ready before the test step
+          activate-environment: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Restore repo times
         uses: chetan/git-restore-mtime-action@v2
-
-      - name: Upgrade pip and setuptools
-        run: python -m pip install -U pip setuptools --verbose
 
       - name: Create Key and Numba Cache Directory
         id: numba-key
@@ -124,46 +101,33 @@ jobs:
         if: steps.load-cached-casa-measures.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/measures
-          curl --disable-epsv ftp://ftp.astron.nl/outgoing/Measures/WSRT_Measures.ztar | tar xvzf - -C ~/measures
+          set -e
+          for i in {1..3}; do
+            if curl --disable-epsv ftp://ftp.astron.nl/outgoing/Measures/WSRT_Measures.ztar --output WSRT_Measures.ztar; then
+              break
+            elif [ $i -eq 3 ]; then
+              echo "Download failed after 3 attempts."; exit 1
+            else
+              echo "Retrying download..."; sleep 5
+            fi
+          done
+          tar xvzf WSRT_Measures.ztar -C ~/measures
           echo "measures.directory: ~/measures" > ~/.casarc
 
       - name: Install pfb-imaging
-        run: pip install -e .
-        timeout-minutes: 15
+        run: uv sync --extra full --extra dev --frozen
 
       - name: Run pfb-imaging
-        run: pfb --help
+        run: uv run pfb --help
 
       - name: Run tests
-        run: pytest -v tests/
+        run: |
+          # Force Ray and JAX to stay within the 2-core limit of the GHA runner
+          export RAY_NUM_CPUS=2
+          export XLA_PYTHON_CLIENT_MEM_FRACTION=0.50
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
+          export OPENBLAS_NUM_THREADS=1
+          export NUMEXPR_NUM_THREADS=1
 
-  deploy:
-    needs: [test]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.10"
-
-      - name: Upgrade pip and setuptools
-        run: python -m pip install -U pip build twine --verbose
-
-      - name: Create distribution files
-        run: python -m build
-
-      - name: Check package
-        run: twine check dist/*
-
-      - name: Publish distribution to PyPI
-        uses: pypa/gh-action-pypi-publish@v1.13.0
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          verbose: true
+          uv run pytest -v tests/

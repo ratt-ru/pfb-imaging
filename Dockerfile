@@ -1,16 +1,22 @@
-FROM ubuntu:focal
+FROM python:3.11-slim
 
-ARG DEBIAN_FRONTEND=noninteractive
-RUN apt -y update && \
-    apt -y upgrade && \
-    apt install -y \
-        git \
-        python3-pip \
-        python3-minimal \
-        python-is-python3 && \
-    apt clean
+WORKDIR /app
 
+# Install uv for fast package installation
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-RUN python -m pip install -U pip setuptools wheel && \
-    python -m pip install -U pfb-imaging@git+https://github.com/ratt-ru/pfb-imaging@main && \
-    python -m pip cache purge
+# Copy package files
+COPY pyproject.toml README.rst ./
+COPY src/ src/
+
+# install git in case we need to install a package from a git repo
+RUN apt-get update && apt-get install -y git
+
+# Install package with full dependencies using uv
+RUN uv pip install --system --no-cache ".[full]"
+
+# So that TBB is visible to numba
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages:$LD_LIBRARY_PATH
+
+# Make CLI available
+CMD ["pfb", "--help"]
